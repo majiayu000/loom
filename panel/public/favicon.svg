@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Loom cute yarn icon">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#fff4d6"/>
+      <stop offset="1" stop-color="#ffe3a3"/>
+    </linearGradient>
+    <linearGradient id="yarn" x1="0.1" y1="0.1" x2="0.9" y2="0.9">
+      <stop offset="0" stop-color="#ffc4d8"/>
+      <stop offset="1" stop-color="#ff8fb8"/>
+    </linearGradient>
+  </defs>
+  <rect x="6" y="6" width="116" height="116" rx="26" fill="url(#bg)"/>
+  <path d="M98 31c10 2 16 10 15 20-1 8-8 15-17 16" fill="none" stroke="#ff8fb8" stroke-width="7" stroke-linecap="round"/>
+  <path d="M66 101c-20 0-36-14-36-33s16-33 36-33 36 14 36 33-16 33-36 33z" fill="url(#yarn)" stroke="#ff6ea6" stroke-width="4"/>
+  <path d="M38 65c18-13 36-13 56 0M41 79c15-10 30-10 45 0M44 51c13-9 26-9 40 0" fill="none" stroke="#ffdeea" stroke-width="4" stroke-linecap="round"/>
+  <circle cx="58" cy="69" r="4.2" fill="#52313d"/>
+  <circle cx="75" cy="69" r="4.2" fill="#52313d"/>
+  <path d="M56 82c5 6 16 6 21 0" fill="none" stroke="#52313d" stroke-width="3.5" stroke-linecap="round"/>
+  <circle cx="52" cy="77" r="2.2" fill="#ff6ea6" opacity="0.7"/>
+  <circle cx="80" cy="77" r="2.2" fill="#ff6ea6" opacity="0.7"/>
+</svg>

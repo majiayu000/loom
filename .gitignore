@@ -1,0 +1,7 @@
+state/locks/
+state/panel.log
+state/targets.json
+state/pending_ops.jsonl
+panel/node_modules/
+panel/dist/
+target/

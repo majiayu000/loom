@@ -100,6 +100,28 @@ pub enum OpsCommand {
     List,
     Retry,
     Purge,
+    History {
+        #[command(subcommand)]
+        command: OpsHistoryCommand,
+    },
+}
+
+#[derive(Debug, Clone, Subcommand)]
+pub enum OpsHistoryCommand {
+    Diagnose,
+    Repair(HistoryRepairArgs),
+}
+
+#[derive(Debug, Clone, Args)]
+pub struct HistoryRepairArgs {
+    #[arg(long, value_enum)]
+    pub strategy: HistoryRepairStrategyArg,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum HistoryRepairStrategyArg {
+    Local,
+    Remote,
 }
 
 #[derive(Debug, Clone, Args)]

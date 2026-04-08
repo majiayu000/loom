@@ -66,10 +66,35 @@ pub enum SyncState {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PendingOp {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub op_id: Option<String>,
     pub request_id: String,
     pub command: String,
     pub created_at: DateTime<Utc>,
     pub details: serde_json::Value,
+}
+
+impl PendingOp {
+    pub fn new(command: &str, details: serde_json::Value, request_id: String) -> Self {
+        Self {
+            op_id: Some(uuid::Uuid::new_v4().to_string()),
+            request_id,
+            command: command.to_string(),
+            created_at: Utc::now(),
+            details,
+        }
+    }
+
+    pub fn stable_id(&self) -> String {
+        self.op_id.clone().unwrap_or_else(|| {
+            format!(
+                "legacy:{}:{}:{}",
+                self.request_id,
+                self.command,
+                self.created_at.timestamp_micros()
+            )
+        })
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

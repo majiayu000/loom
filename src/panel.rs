@@ -1,4 +1,3 @@
-use std::env;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
@@ -7,7 +6,7 @@ use axum::{Json, Router, extract::State, response::Html, response::IntoResponse,
 use serde_json::json;
 
 use crate::commands::{list_skills, remote_status_payload};
-use crate::state::AppContext;
+use crate::state::{AppContext, resolve_agent_skill_dirs};
 
 #[derive(Clone)]
 struct PanelState {
@@ -803,7 +802,7 @@ async fn health() -> Json<serde_json::Value> {
 }
 
 async fn info(State(state): State<PanelState>) -> Json<serde_json::Value> {
-    let (claude_dir, codex_dir) = resolve_target_dirs();
+    let target_dirs = resolve_agent_skill_dirs();
     let remote_url = crate::gitops::remote_url(&state.ctx)
         .ok()
         .flatten()
@@ -813,20 +812,24 @@ async fn info(State(state): State<PanelState>) -> Json<serde_json::Value> {
         "root": state.ctx.root.display().to_string(),
         "state_dir": state.ctx.state_dir.display().to_string(),
         "targets_file": state.ctx.targets_file.display().to_string(),
-        "claude_dir": claude_dir,
-        "codex_dir": codex_dir,
+        "claude_dir": target_dirs.claude.display().to_string(),
+        "codex_dir": target_dirs.codex.display().to_string(),
         "remote_url": remote_url,
     }))
 }
 
 async fn skills(State(state): State<PanelState>) -> Json<serde_json::Value> {
-    let skills = list_skills(&state.ctx).unwrap_or_default();
-    Json(json!({"skills": skills}))
+    match list_skills(&state.ctx) {
+        Ok(skills) => Json(json!({"skills": skills})),
+        Err(err) => Json(json!({"skills": [], "error": err.to_string()})),
+    }
 }
 
 async fn targets(State(state): State<PanelState>) -> Json<serde_json::Value> {
-    let targets = state.ctx.load_targets().unwrap_or_default();
-    Json(json!({"targets": targets}))
+    match state.ctx.load_targets() {
+        Ok(targets) => Json(json!({"targets": targets})),
+        Err(err) => Json(json!({"targets": {"skills": {}}, "error": err.to_string()})),
+    }
 }
 
 async fn remote_status(State(state): State<PanelState>) -> Json<serde_json::Value> {
@@ -837,15 +840,14 @@ async fn remote_status(State(state): State<PanelState>) -> Json<serde_json::Valu
 }
 
 async fn pending(State(state): State<PanelState>) -> Json<serde_json::Value> {
-    let ops = state.ctx.read_pending().unwrap_or_default();
-    Json(json!({"count": ops.len(), "ops": ops}))
-}
-
-fn resolve_target_dirs() -> (String, String) {
-    let home = env::var("HOME").unwrap_or_else(|_| "~".to_string());
-    let claude =
-        env::var("CLAUDE_SKILLS_DIR").unwrap_or_else(|_| format!("{}/.claude/skills", home));
-    let codex =
-        env::var("CODEX_SKILLS_DIR").unwrap_or_else(|_| format!("{}/.codex/skills", home));
-    (claude, codex)
+    match state.ctx.read_pending_report() {
+        Ok(report) => Json(json!({
+            "count": report.ops.len(),
+            "ops": report.ops,
+            "journal_events": report.journal_events,
+            "history_events": report.history_events,
+            "warnings": report.warnings
+        })),
+        Err(err) => Json(json!({"count": 0, "ops": [], "error": err.to_string()})),
+    }
 }

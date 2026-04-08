@@ -9,13 +9,13 @@ use uuid::Uuid;
 use walkdir::WalkDir;
 
 use crate::cli::{
-    AddArgs, Cli, Command, DiffArgs, ImportArgs, InitArgs, LinkArgs, OpsCommand, ReleaseArgs,
-    RemoteCommand, RollbackArgs, SaveArgs, SkillCommand, SkillOnlyArgs, SyncCommand, Target,
-    WorkspaceCommand,
+    AddArgs, Cli, Command, DiffArgs, HistoryRepairStrategyArg, ImportArgs, InitArgs, LinkArgs,
+    OpsCommand, OpsHistoryCommand, ReleaseArgs, RemoteCommand, RollbackArgs, SaveArgs,
+    SkillCommand, SkillOnlyArgs, SyncCommand, Target, WorkspaceCommand,
 };
 use crate::envelope::{Envelope, Meta};
 use crate::gitops;
-use crate::state::{AppContext, remove_path_if_exists};
+use crate::state::{AppContext, remove_path_if_exists, resolve_agent_skill_dirs};
 use crate::types::{ErrorCode, SkillTargetConfig, SyncState};
 
 #[derive(Debug)]
@@ -52,10 +52,20 @@ struct InitResolved {
 impl App {
     pub fn new(root: Option<PathBuf>) -> Result<Self> {
         let ctx = AppContext::new(root)?;
-        gitops::ensure_repo_initialized(&ctx)?;
-        ctx.ensure_gitignore_entries()?;
-        ensure_initial_commit(&ctx)?;
         Ok(Self { ctx })
+    }
+
+    fn ensure_write_layout(&self) -> std::result::Result<(), CommandFailure> {
+        self.ctx.ensure_state_layout().map_err(map_io)?;
+        Ok(())
+    }
+
+    fn ensure_write_repo_ready(&self) -> std::result::Result<(), CommandFailure> {
+        self.ensure_write_layout()?;
+        gitops::ensure_repo_initialized(&self.ctx).map_err(map_git)?;
+        self.ctx.ensure_gitignore_entries().map_err(map_io)?;
+        ensure_initial_commit(&self.ctx).map_err(map_git)?;
+        Ok(())
     }
 
     pub fn execute(&self, cli: Cli) -> Result<(Envelope, i32)> {
@@ -88,13 +98,9 @@ impl App {
             Command::LegacyLink(_) => self.unsupported_v1_command("link", "skill link"),
             Command::LegacyUse(_) => self.unsupported_v1_command("use", "skill use"),
             Command::LegacySave(_) => self.unsupported_v1_command("save", "skill save"),
-            Command::LegacySnapshot(_) => {
-                self.unsupported_v1_command("snapshot", "skill snapshot")
-            }
+            Command::LegacySnapshot(_) => self.unsupported_v1_command("snapshot", "skill snapshot"),
             Command::LegacyRelease(_) => self.unsupported_v1_command("release", "skill release"),
-            Command::LegacyRollback(_) => {
-                self.unsupported_v1_command("rollback", "skill rollback")
-            }
+            Command::LegacyRollback(_) => self.unsupported_v1_command("rollback", "skill rollback"),
             Command::LegacyDiff(_) => self.unsupported_v1_command("diff", "skill diff"),
             Command::LegacyStatus => self.unsupported_v1_command("status", "workspace status"),
             Command::LegacyDoctor => self.unsupported_v1_command("doctor", "workspace doctor"),
@@ -126,6 +132,8 @@ impl App {
         args: &InitArgs,
         request_id: &str,
     ) -> std::result::Result<(serde_json::Value, Meta), CommandFailure> {
+        let _workspace = self.ctx.lock_workspace().map_err(map_lock)?;
+        self.ensure_write_repo_ready()?;
         let resolved = resolve_init_args(args).map_err(map_arg)?;
 
         let (backup, mut backup_warnings) = if resolved.skip_backup {
@@ -152,7 +160,7 @@ impl App {
             force: resolved.force,
         };
 
-        let (import_data, mut import_meta) = self.cmd_import(&import_args, request_id)?;
+        let (import_data, mut import_meta) = self.import_impl(&import_args, request_id)?;
 
         let mut link_names = std::collections::BTreeSet::<String>::new();
         for item in import_data["imported"]
@@ -232,6 +240,9 @@ impl App {
         args: &AddArgs,
         request_id: &str,
     ) -> std::result::Result<(serde_json::Value, Meta), CommandFailure> {
+        validate_skill_name(&args.name).map_err(map_arg)?;
+        let _workspace = self.ctx.lock_workspace().map_err(map_lock)?;
+        self.ensure_write_repo_ready()?;
         let dst = self.ctx.skill_path(&args.name);
         if dst.exists() {
             return Err(CommandFailure::new(
@@ -283,13 +294,23 @@ impl App {
                 request_id,
                 json!({"skill": args.name, "commit": commit}),
                 &mut meta,
-            );
+            )?;
         }
 
         Ok((json!({"skill": args.name, "path": dst}), meta))
     }
 
     pub fn cmd_import(
+        &self,
+        args: &ImportArgs,
+        request_id: &str,
+    ) -> std::result::Result<(serde_json::Value, Meta), CommandFailure> {
+        let _workspace = self.ctx.lock_workspace().map_err(map_lock)?;
+        self.ensure_write_repo_ready()?;
+        self.import_impl(args, request_id)
+    }
+
+    fn import_impl(
         &self,
         args: &ImportArgs,
         request_id: &str,
@@ -367,7 +388,7 @@ impl App {
                     "commit": sha
                 }),
                 &mut meta,
-            );
+            )?;
             commit = Some(sha);
         }
 
@@ -415,6 +436,16 @@ impl App {
         &self,
         args: &LinkArgs,
     ) -> std::result::Result<(serde_json::Value, Meta), CommandFailure> {
+        validate_skill_name(&args.skill).map_err(map_arg)?;
+        let _workspace = self.ctx.lock_workspace().map_err(map_lock)?;
+        self.ensure_write_layout()?;
+        self.link_impl(args)
+    }
+
+    fn link_impl(
+        &self,
+        args: &LinkArgs,
+    ) -> std::result::Result<(serde_json::Value, Meta), CommandFailure> {
         let (linked, warnings) = link_skill(&self.ctx, args)?;
 
         Ok((
@@ -431,6 +462,9 @@ impl App {
         args: &SaveArgs,
         request_id: &str,
     ) -> std::result::Result<(serde_json::Value, Meta), CommandFailure> {
+        validate_skill_name(&args.skill).map_err(map_arg)?;
+        let _workspace = self.ctx.lock_workspace().map_err(map_lock)?;
+        self.ensure_write_repo_ready()?;
         let _lock = self.ctx.lock_skill(&args.skill).map_err(map_lock)?;
         let skill_rel = format!("skills/{}", args.skill);
         let skill_path = self.ctx.root.join(&skill_rel);
@@ -460,7 +494,7 @@ impl App {
             request_id,
             json!({"skill": args.skill, "commit": commit}),
             &mut meta,
-        );
+        )?;
 
         Ok((
             json!({"skill": args.skill, "commit": commit, "noop": false}),
@@ -473,13 +507,17 @@ impl App {
         args: &SkillOnlyArgs,
         request_id: &str,
     ) -> std::result::Result<(serde_json::Value, Meta), CommandFailure> {
+        validate_skill_name(&args.skill).map_err(map_arg)?;
+        let _workspace = self.ctx.lock_workspace().map_err(map_lock)?;
+        self.ensure_write_repo_ready()?;
         ensure_skill_exists(&self.ctx, &args.skill)?;
         let _lock = self.ctx.lock_skill(&args.skill).map_err(map_lock)?;
 
         let short = gitops::short_head(&self.ctx).map_err(map_git)?;
-        let ts = Utc::now().format("%Y%m%dT%H%M%SZ");
+        let ts = Utc::now().format("%Y%m%dT%H%M%S%fZ");
         let tag = format!("snapshot/{}/{}-{}", args.skill, ts, short);
-        gitops::create_tag(&self.ctx, &tag).map_err(map_git)?;
+        gitops::create_annotated_tag(&self.ctx, &tag, &format!("snapshot {}", args.skill))
+            .map_err(map_git)?;
 
         let mut meta = Meta::default();
         maybe_autosync_or_queue(
@@ -488,7 +526,7 @@ impl App {
             request_id,
             json!({"skill": args.skill, "tag": tag}),
             &mut meta,
-        );
+        )?;
 
         Ok((json!({"skill": args.skill, "tag": tag}), meta))
     }
@@ -498,6 +536,9 @@ impl App {
         args: &ReleaseArgs,
         request_id: &str,
     ) -> std::result::Result<(serde_json::Value, Meta), CommandFailure> {
+        validate_skill_name(&args.skill).map_err(map_arg)?;
+        let _workspace = self.ctx.lock_workspace().map_err(map_lock)?;
+        self.ensure_write_repo_ready()?;
         ensure_skill_exists(&self.ctx, &args.skill)?;
         let _lock = self.ctx.lock_skill(&args.skill).map_err(map_lock)?;
 
@@ -516,7 +557,7 @@ impl App {
             request_id,
             json!({"skill": args.skill, "tag": tag}),
             &mut meta,
-        );
+        )?;
 
         Ok((
             json!({"skill": args.skill, "version": args.version, "tag": tag}),
@@ -529,6 +570,9 @@ impl App {
         args: &RollbackArgs,
         request_id: &str,
     ) -> std::result::Result<(serde_json::Value, Meta), CommandFailure> {
+        validate_skill_name(&args.skill).map_err(map_arg)?;
+        let _workspace = self.ctx.lock_workspace().map_err(map_lock)?;
+        self.ensure_write_repo_ready()?;
         ensure_skill_exists(&self.ctx, &args.skill)?;
         if args.to.is_some() && args.steps.is_some() {
             return Err(CommandFailure::new(
@@ -570,7 +614,7 @@ impl App {
             request_id,
             json!({"skill": args.skill, "commit": commit, "reference": reference}),
             &mut meta,
-        );
+        )?;
 
         Ok((
             json!({"skill": args.skill, "reference": reference, "commit": commit, "noop": false}),
@@ -582,6 +626,7 @@ impl App {
         &self,
         args: &DiffArgs,
     ) -> std::result::Result<(serde_json::Value, Meta), CommandFailure> {
+        validate_skill_name(&args.skill).map_err(map_arg)?;
         ensure_skill_exists(&self.ctx, &args.skill)?;
         let skill_rel = format!("skills/{}", args.skill);
         let diff = gitops::diff_path(&self.ctx, &args.from, &args.to, Path::new(&skill_rel))
@@ -594,19 +639,30 @@ impl App {
 
     pub fn cmd_status(&self) -> std::result::Result<(serde_json::Value, Meta), CommandFailure> {
         let skills = list_skills(&self.ctx).map_err(map_io)?;
-        let head = gitops::head(&self.ctx).ok();
-        let branch = gitops::run_git(&self.ctx, &["rev-parse", "--abbrev-ref", "HEAD"]).ok();
-        let pending = self.ctx.pending_count().map_err(map_io)?;
+        let pending_report = self.ctx.read_pending_report().map_err(map_io)?;
+        let target_dirs = resolve_agent_skill_dirs();
+        let mut warnings = pending_report.warnings;
+        let head = read_git_field(&self.ctx, &["rev-parse", "HEAD"], &mut warnings);
+        let branch = read_git_field(
+            &self.ctx,
+            &["rev-parse", "--abbrev-ref", "HEAD"],
+            &mut warnings,
+        );
+        let status_short = read_git_field(&self.ctx, &["status", "--short"], &mut warnings);
 
-        let (remote, meta) = remote_status_payload(&self.ctx)?;
-        let status_short = gitops::run_git(&self.ctx, &["status", "--short"]).unwrap_or_default();
+        let (remote, mut meta) = remote_status_payload(&self.ctx)?;
+        meta.warnings.splice(0..0, warnings);
 
         Ok((
             json!({
                 "skills": skills,
                 "git": {"head": head, "branch": branch, "status_short": status_short},
+                "targets": {
+                    "claude_dir": target_dirs.claude.display().to_string(),
+                    "codex_dir": target_dirs.codex.display().to_string()
+                },
                 "remote": remote,
-                "pending_ops": pending
+                "pending_ops": pending_report.ops.len()
             }),
             meta,
         ))
@@ -616,10 +672,11 @@ impl App {
         let fsck = gitops::fsck(&self.ctx);
         let fsck_ok = fsck.is_ok();
         let fsck_output = fsck.unwrap_or_else(|e| e.to_string());
-        let pending = self.ctx.pending_count().map_err(map_io)?;
+        let pending_report = self.ctx.read_pending_report().map_err(map_io)?;
         let targets_ok = self.ctx.load_targets().is_ok();
+        let history = gitops::history_status(&self.ctx).map_err(map_git)?;
 
-        let healthy = fsck_ok && targets_ok;
+        let healthy = fsck_ok && targets_ok && history.conflicts.is_empty();
 
         Ok((
             json!({
@@ -627,7 +684,13 @@ impl App {
                 "checks": {
                     "git_fsck": {"ok": fsck_ok, "output": fsck_output},
                     "targets_file": {"ok": targets_ok},
-                    "pending_queue": {"count": pending}
+                    "pending_queue": {
+                        "count": pending_report.ops.len(),
+                        "journal_events": pending_report.journal_events,
+                        "history_events": pending_report.history_events,
+                        "warnings": pending_report.warnings
+                    },
+                    "history_branch": history
                 }
             }),
             Meta::default(),
@@ -640,6 +703,8 @@ impl App {
     ) -> std::result::Result<(serde_json::Value, Meta), CommandFailure> {
         match command {
             RemoteCommand::Set { url } => {
+                let _workspace = self.ctx.lock_workspace().map_err(map_lock)?;
+                self.ensure_write_repo_ready()?;
                 gitops::set_remote_origin(&self.ctx, url).map_err(map_git)?;
                 Ok((json!({"remote": "origin", "url": url}), Meta::default()))
             }
@@ -660,25 +725,52 @@ impl App {
                 Ok((json!({"remote": remote}), meta))
             }
             SyncCommand::Push => {
+                let _workspace = self.ctx.lock_workspace().map_err(map_lock)?;
+                self.ensure_write_repo_ready()?;
                 let res = sync_push_internal(&self.ctx)?;
                 Ok((json!({"result": res}), Meta::default()))
             }
             SyncCommand::Pull => {
+                let _workspace = self.ctx.lock_workspace().map_err(map_lock)?;
+                self.ensure_write_repo_ready()?;
                 if !gitops::remote_exists(&self.ctx) {
                     return Err(CommandFailure::new(
                         ErrorCode::ArgInvalid,
                         "remote origin not configured",
                     ));
                 }
-                gitops::fetch_origin_main(&self.ctx).map_err(map_remote_unreachable)?;
+                if !gitops::fetch_origin_main_if_present(&self.ctx)
+                    .map_err(map_remote_unreachable)?
+                {
+                    return Ok((
+                        json!({"result": "remote_empty", "replay": "no_pending_ops"}),
+                        Meta::default(),
+                    ));
+                }
+                let history_fetch = gitops::fetch_origin_history_branch_if_present(&self.ctx);
                 gitops::pull_rebase_main(&self.ctx).map_err(map_replay_conflict)?;
                 let replay = sync_replay_internal(&self.ctx)?;
-                Ok((
-                    json!({"result": "pulled", "replay": replay}),
-                    Meta::default(),
-                ))
+                let mut meta = Meta::default();
+                match history_fetch {
+                    Ok(true) => {
+                        if let Some(warning) =
+                            gitops::sync_history_branch_from_remote(&self.ctx).map_err(map_git)?
+                        {
+                            meta.warnings.push(warning);
+                        }
+                    }
+                    Ok(false) => {}
+                    Err(err) => meta.warnings.push(format!(
+                        "failed to fetch origin/{}: {}",
+                        gitops::HISTORY_BRANCH,
+                        err
+                    )),
+                }
+                Ok((json!({"result": "pulled", "replay": replay}), meta))
             }
             SyncCommand::Replay => {
+                let _workspace = self.ctx.lock_workspace().map_err(map_lock)?;
+                self.ensure_write_repo_ready()?;
                 let replay = sync_replay_internal(&self.ctx)?;
                 Ok((json!({"result": replay}), Meta::default()))
             }
@@ -691,10 +783,23 @@ impl App {
     ) -> std::result::Result<(serde_json::Value, Meta), CommandFailure> {
         match command {
             OpsCommand::List => {
-                let ops = self.ctx.read_pending().map_err(map_io)?;
-                Ok((json!({"count": ops.len(), "ops": ops}), Meta::default()))
+                let report = self.ctx.read_pending_report().map_err(map_io)?;
+                Ok((
+                    json!({
+                        "count": report.ops.len(),
+                        "ops": report.ops,
+                        "journal_events": report.journal_events,
+                        "history_events": report.history_events
+                    }),
+                    Meta {
+                        warnings: report.warnings,
+                        sync_state: None,
+                    },
+                ))
             }
             OpsCommand::Retry => {
+                let _workspace = self.ctx.lock_workspace().map_err(map_lock)?;
+                self.ensure_write_repo_ready()?;
                 let pending_before = self.ctx.pending_count().map_err(map_io)?;
                 let result = sync_replay_internal(&self.ctx)?;
                 let pending_after = self.ctx.pending_count().map_err(map_io)?;
@@ -708,9 +813,33 @@ impl App {
                 ))
             }
             OpsCommand::Purge => {
-                let purged = self.ctx.pending_count().map_err(map_io)?;
-                self.ctx.clear_pending().map_err(map_io)?;
+                let _workspace = self.ctx.lock_workspace().map_err(map_lock)?;
+                self.ensure_write_layout()?;
+                let purged = self.ctx.purge_pending().map_err(map_io)?;
                 Ok((json!({"purged": purged}), Meta::default()))
+            }
+            OpsCommand::History { command } => self.cmd_ops_history(command),
+        }
+    }
+
+    fn cmd_ops_history(
+        &self,
+        command: &OpsHistoryCommand,
+    ) -> std::result::Result<(serde_json::Value, Meta), CommandFailure> {
+        match command {
+            OpsHistoryCommand::Diagnose => {
+                let report = gitops::history_status(&self.ctx).map_err(map_git)?;
+                Ok((json!(report), Meta::default()))
+            }
+            OpsHistoryCommand::Repair(args) => {
+                let _workspace = self.ctx.lock_workspace().map_err(map_lock)?;
+                self.ensure_write_repo_ready()?;
+                let strategy = match args.strategy {
+                    HistoryRepairStrategyArg::Local => gitops::HistoryRepairStrategy::Local,
+                    HistoryRepairStrategyArg::Remote => gitops::HistoryRepairStrategy::Remote,
+                };
+                let report = gitops::repair_history_branch(&self.ctx, strategy).map_err(map_git)?;
+                Ok((json!(report), Meta::default()))
             }
         }
     }
@@ -885,6 +1014,7 @@ fn ensure_initial_commit(ctx: &AppContext) -> Result<()> {
 }
 
 fn ensure_skill_exists(ctx: &AppContext, skill: &str) -> std::result::Result<(), CommandFailure> {
+    validate_skill_name(skill).map_err(map_arg)?;
     if !ctx.skill_path(skill).exists() {
         return Err(CommandFailure::new(
             ErrorCode::SkillNotFound,
@@ -894,16 +1024,43 @@ fn ensure_skill_exists(ctx: &AppContext, skill: &str) -> std::result::Result<(),
     Ok(())
 }
 
+fn validate_skill_name(skill: &str) -> Result<()> {
+    if skill.is_empty() {
+        return Err(anyhow!("skill name cannot be empty"));
+    }
+    if skill == "." || skill == ".." {
+        return Err(anyhow!("skill name cannot be '.' or '..'"));
+    }
+    if skill
+        .chars()
+        .any(|ch| !(ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.')))
+    {
+        return Err(anyhow!(
+            "skill name '{}' contains unsupported characters; use [A-Za-z0-9._-]",
+            skill
+        ));
+    }
+    Ok(())
+}
+
+fn read_git_field(ctx: &AppContext, args: &[&str], warnings: &mut Vec<String>) -> Option<String> {
+    match gitops::run_git(ctx, args) {
+        Ok(value) if value.is_empty() => None,
+        Ok(value) => Some(value),
+        Err(err) => {
+            warnings.push(format!("git {:?} unavailable: {}", args, err));
+            None
+        }
+    }
+}
+
 fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<()> {
     if !src.exists() {
         return Err(anyhow!("source does not exist: {}", src.display()));
     }
     fs::create_dir_all(dst).with_context(|| format!("failed to create {}", dst.display()))?;
     for entry in WalkDir::new(src).follow_links(true).into_iter() {
-        let entry = match entry {
-            Ok(e) => e,
-            Err(_) => continue,
-        };
+        let entry = entry.with_context(|| format!("failed to walk {}", src.display()))?;
         let rel = entry.path().strip_prefix(src)?;
         let target = dst.join(rel);
         if entry.file_type().is_dir() {
@@ -931,19 +1088,12 @@ fn create_symlink_dir(src: &Path, dst: &Path) -> Result<()> {
 }
 
 fn resolve_targets(target: Target) -> Result<Vec<(&'static str, PathBuf)>> {
-    let home = std::env::var("HOME").map_err(|_| anyhow!("HOME is not set"))?;
-    let claude =
-        std::env::var("CLAUDE_SKILLS_DIR").unwrap_or_else(|_| format!("{}/.claude/skills", home));
-    let codex =
-        std::env::var("CODEX_SKILLS_DIR").unwrap_or_else(|_| format!("{}/.codex/skills", home));
+    let dirs = resolve_agent_skill_dirs();
 
     let out = match target {
-        Target::Claude => vec![("claude", PathBuf::from(claude))],
-        Target::Codex => vec![("codex", PathBuf::from(codex))],
-        Target::Both => vec![
-            ("claude", PathBuf::from(claude)),
-            ("codex", PathBuf::from(codex)),
-        ],
+        Target::Claude => vec![("claude", dirs.claude)],
+        Target::Codex => vec![("codex", dirs.codex)],
+        Target::Both => vec![("claude", dirs.claude), ("codex", dirs.codex)],
     };
     Ok(out)
 }
@@ -977,6 +1127,10 @@ fn command_name(command: &Command) -> &'static str {
             OpsCommand::List => "ops.list",
             OpsCommand::Retry => "ops.retry",
             OpsCommand::Purge => "ops.purge",
+            OpsCommand::History { command } => match command {
+                OpsHistoryCommand::Diagnose => "ops.history.diagnose",
+                OpsHistoryCommand::Repair(_) => "ops.history.repair",
+            },
         },
         Command::Panel(_) => "panel",
         Command::LegacyInit(_) => "init",
@@ -1065,6 +1219,9 @@ fn collect_import_candidates(args: &ImportArgs) -> Result<(Vec<ImportCandidate>,
             "use exactly one source mode: --source <dir> or --from-agent <claude|codex|both>"
         ));
     }
+    if let Some(skill) = &args.skill {
+        validate_skill_name(skill)?;
+    }
 
     let mut warnings = Vec::new();
     let mut raw_candidates = Vec::new();
@@ -1084,6 +1241,7 @@ fn collect_import_candidates(args: &ImportArgs) -> Result<(Vec<ImportCandidate>,
                     .to_string_lossy()
                     .to_string()
             });
+            validate_skill_name(&skill_name)?;
             raw_candidates.push(ImportCandidate {
                 skill: skill_name,
                 source: source_path.clone(),
@@ -1100,6 +1258,14 @@ fn collect_import_candidates(args: &ImportArgs) -> Result<(Vec<ImportCandidate>,
                     if &skill_name != filter {
                         continue;
                     }
+                }
+                if let Err(err) = validate_skill_name(&skill_name) {
+                    warnings.push(format!(
+                        "skipping invalid skill directory {}: {}",
+                        skill_dir.display(),
+                        err
+                    ));
+                    continue;
                 }
                 raw_candidates.push(ImportCandidate {
                     skill: skill_name,
@@ -1129,6 +1295,14 @@ fn collect_import_candidates(args: &ImportArgs) -> Result<(Vec<ImportCandidate>,
                     if &skill_name != filter {
                         continue;
                     }
+                }
+                if let Err(err) = validate_skill_name(&skill_name) {
+                    warnings.push(format!(
+                        "skipping invalid agent skill directory {}: {}",
+                        skill_dir.display(),
+                        err
+                    ));
+                    continue;
                 }
                 raw_candidates.push(ImportCandidate {
                     skill: skill_name,
@@ -1262,10 +1436,7 @@ fn discover_skill_dirs(root: &Path) -> Result<Vec<PathBuf>> {
 
     let mut out = std::collections::BTreeSet::new();
     for entry in WalkDir::new(root).follow_links(true).into_iter() {
-        let entry = match entry {
-            Ok(e) => e,
-            Err(_) => continue,
-        };
+        let entry = entry.with_context(|| format!("failed to walk {}", root.display()))?;
         if !entry.file_type().is_file() {
             continue;
         }
@@ -1280,6 +1451,9 @@ fn discover_skill_dirs(root: &Path) -> Result<Vec<PathBuf>> {
 }
 
 pub fn list_skills(ctx: &AppContext) -> Result<Vec<String>> {
+    if !ctx.skills_dir.exists() {
+        return Ok(Vec::new());
+    }
     let mut skills = Vec::new();
     for entry in fs::read_dir(&ctx.skills_dir).context("failed to read skills dir")? {
         let entry = entry?;
@@ -1294,7 +1468,8 @@ pub fn list_skills(ctx: &AppContext) -> Result<Vec<String>> {
 pub fn remote_status_payload(
     ctx: &AppContext,
 ) -> std::result::Result<(serde_json::Value, Meta), CommandFailure> {
-    let pending = ctx.pending_count().map_err(map_io)?;
+    let pending_report = ctx.read_pending_report().map_err(map_io)?;
+    let pending = pending_report.ops.len();
 
     if !gitops::remote_exists(ctx) {
         return Ok((
@@ -1304,7 +1479,11 @@ pub fn remote_status_payload(
                 "sync_state": SyncState::LocalOnly,
             }),
             Meta {
-                warnings: vec!["remote origin not configured".to_string()],
+                warnings: pending_report
+                    .warnings
+                    .into_iter()
+                    .chain(std::iter::once("remote origin not configured".to_string()))
+                    .collect(),
                 sync_state: Some(SyncState::LocalOnly),
             },
         ));
@@ -1313,18 +1492,29 @@ pub fn remote_status_payload(
     let url = gitops::remote_url(ctx)
         .map_err(map_git)?
         .unwrap_or_default();
-    let mut meta = Meta::default();
+    let mut meta = Meta {
+        warnings: pending_report.warnings,
+        sync_state: None,
+    };
 
-    if let Err(err) = gitops::fetch_origin_main(ctx) {
-        meta.warnings.push(format!("remote fetch failed: {}", err));
-        meta.sync_state = Some(SyncState::PendingPush);
+    if !gitops::remote_tracking_main_exists(ctx).map_err(map_git)? {
+        let sync_state = if pending > 0 {
+            SyncState::PendingPush
+        } else {
+            SyncState::LocalOnly
+        };
+        meta.warnings.push(
+            "origin/main has not been fetched yet; status is based on local state".to_string(),
+        );
+        meta.sync_state = Some(sync_state.clone());
         return Ok((
             json!({
                 "configured": true,
                 "remote": "origin",
                 "url": url,
                 "pending_ops": pending,
-                "sync_state": SyncState::PendingPush,
+                "tracking_ref": false,
+                "sync_state": sync_state,
             }),
             meta,
         ));
@@ -1335,6 +1525,8 @@ pub fn remote_status_payload(
         SyncState::PendingPush
     } else if ahead == 0 && behind == 0 {
         SyncState::Synced
+    } else if ahead > 0 && behind == 0 {
+        SyncState::PendingPush
     } else {
         SyncState::Diverged
     };
@@ -1348,6 +1540,7 @@ pub fn remote_status_payload(
             "ahead": ahead,
             "behind": behind,
             "pending_ops": pending,
+            "tracking_ref": true,
             "sync_state": sync_state,
         }),
         meta,
@@ -1360,13 +1553,14 @@ fn maybe_autosync_or_queue(
     request_id: &str,
     details: serde_json::Value,
     meta: &mut Meta,
-) {
+) -> std::result::Result<(), CommandFailure> {
     if !gitops::remote_exists(ctx) {
-        let _ = ctx.append_pending(command, details, request_id.to_string());
+        ctx.append_pending(command, details, request_id.to_string())
+            .map_err(map_queue)?;
         meta.sync_state = Some(SyncState::PendingPush);
         meta.warnings
             .push("remote origin not configured, operation queued".to_string());
-        return;
+        return Ok(());
     }
 
     match sync_push_internal(ctx) {
@@ -1374,7 +1568,8 @@ fn maybe_autosync_or_queue(
             meta.sync_state = Some(SyncState::Synced);
         }
         Err(err) => {
-            let _ = ctx.append_pending(command, details, request_id.to_string());
+            ctx.append_pending(command, details, request_id.to_string())
+                .map_err(map_queue)?;
             meta.sync_state = Some(match err.code {
                 ErrorCode::RemoteDiverged => SyncState::Diverged,
                 ErrorCode::ReplayConflict => SyncState::Conflicted,
@@ -1386,6 +1581,7 @@ fn maybe_autosync_or_queue(
             ));
         }
     }
+    Ok(())
 }
 
 fn sync_push_internal(ctx: &AppContext) -> std::result::Result<&'static str, CommandFailure> {
@@ -1396,16 +1592,30 @@ fn sync_push_internal(ctx: &AppContext) -> std::result::Result<&'static str, Com
         ));
     }
 
-    gitops::fetch_origin_main(ctx).map_err(map_remote_unreachable)?;
-    let (_ahead, behind) = gitops::ahead_behind_main(ctx).map_err(map_git)?;
-    if behind > 0 {
-        return Err(CommandFailure::new(
-            ErrorCode::RemoteDiverged,
-            "local branch is behind origin/main",
-        ));
+    let pending_report = ctx.read_pending_report().map_err(map_io)?;
+    let queued_ids = pending_report
+        .ops
+        .iter()
+        .map(|op| op.stable_id())
+        .collect::<std::collections::BTreeSet<_>>();
+    let remote_main_exists =
+        gitops::fetch_origin_main_if_present(ctx).map_err(map_remote_unreachable)?;
+    let remote_history_exists =
+        gitops::fetch_origin_history_branch_if_present(ctx).map_err(map_remote_unreachable)?;
+    if remote_history_exists {
+        let _ = gitops::sync_history_branch_from_remote(ctx).map_err(map_git)?;
+    }
+    if remote_main_exists {
+        let (_ahead, behind) = gitops::ahead_behind_main(ctx).map_err(map_git)?;
+        if behind > 0 {
+            return Err(CommandFailure::new(
+                ErrorCode::RemoteDiverged,
+                "local branch is behind origin/main",
+            ));
+        }
     }
     gitops::push_main_with_tags(ctx).map_err(map_push_rejected)?;
-    ctx.clear_pending().map_err(map_io)?;
+    ctx.remove_pending_ops(&queued_ids).map_err(map_queue)?;
     Ok("pushed")
 }
 
@@ -1424,6 +1634,10 @@ fn map_arg(err: anyhow::Error) -> CommandFailure {
 
 fn map_io<E: std::fmt::Display>(err: E) -> CommandFailure {
     CommandFailure::new(ErrorCode::IoError, err.to_string())
+}
+
+fn map_queue<E: std::fmt::Display>(err: E) -> CommandFailure {
+    CommandFailure::new(ErrorCode::QueueBlocked, err.to_string())
 }
 
 fn map_git(err: anyhow::Error) -> CommandFailure {

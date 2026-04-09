@@ -987,17 +987,15 @@ impl App {
                         format!("target '{}' not found", args.target_id),
                     )
                 })?;
-                let rules = snapshot.target_rules(&target.target_id);
-                let projections = snapshot.target_projections(&target.target_id);
-                let bindings = snapshot.target_bindings(&target.target_id);
+                let relations = snapshot.target_relations(&target.target_id);
 
                 Ok((
                     json!({
                         "state_model": "v3",
                         "target": target,
-                        "bindings": bindings,
-                        "rules": rules,
-                        "projections": projections
+                        "bindings": relations.bindings,
+                        "rules": relations.rules,
+                        "projections": relations.projections
                     }),
                     Meta::default(),
                 ))
@@ -1288,10 +1286,11 @@ impl App {
             )
         })?;
 
-        let bindings = snapshot.target_bindings(&args.target_id);
-        let rules = snapshot.target_rules(&args.target_id);
-        let projections = snapshot.target_projections(&args.target_id);
-        if !bindings.is_empty() || !rules.is_empty() || !projections.is_empty() {
+        let relations = snapshot.target_relations(&args.target_id);
+        if !relations.bindings.is_empty()
+            || !relations.rules.is_empty()
+            || !relations.projections.is_empty()
+        {
             let mut failure = CommandFailure::new(
                 ErrorCode::ArgInvalid,
                 format!(
@@ -1300,9 +1299,9 @@ impl App {
                 ),
             );
             failure.details = json!({
-                "binding_ids": bindings.iter().map(|binding| binding.binding_id.clone()).collect::<Vec<_>>(),
-                "rule_skills": rules.iter().map(|rule| rule.skill_id.clone()).collect::<Vec<_>>(),
-                "projection_ids": projections.iter().map(|projection| projection.instance_id.clone()).collect::<Vec<_>>(),
+                "binding_ids": relations.bindings.iter().map(|binding| binding.binding_id.clone()).collect::<Vec<_>>(),
+                "rule_skills": relations.rules.iter().map(|rule| rule.skill_id.clone()).collect::<Vec<_>>(),
+                "projection_ids": relations.projections.iter().map(|projection| projection.instance_id.clone()).collect::<Vec<_>>(),
             });
             return Err(failure);
         }

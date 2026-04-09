@@ -306,6 +306,48 @@ impl V3Snapshot {
             .cloned()
             .collect()
     }
+
+    pub fn target_relations(&self, target_id: &str) -> V3TargetRelations {
+        let rules: Vec<_> = self
+            .rules
+            .rules
+            .iter()
+            .filter(|rule| rule.target_id == target_id)
+            .cloned()
+            .collect();
+        let projections: Vec<_> = self
+            .projections
+            .projections
+            .iter()
+            .filter(|projection| projection.target_id == target_id)
+            .cloned()
+            .collect();
+        let linked_binding_ids: HashSet<&str> = rules
+            .iter()
+            .map(|rule| rule.binding_id.as_str())
+            .chain(
+                projections
+                    .iter()
+                    .map(|projection| projection.binding_id.as_str()),
+            )
+            .collect();
+        let bindings = self
+            .bindings
+            .bindings
+            .iter()
+            .filter(|binding| {
+                binding.default_target_id == target_id
+                    || linked_binding_ids.contains(binding.binding_id.as_str())
+            })
+            .cloned()
+            .collect();
+
+        V3TargetRelations {
+            bindings,
+            rules,
+            projections,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -317,6 +359,13 @@ pub struct V3Snapshot {
     pub projections: V3ProjectionsFile,
     pub operations: Vec<V3OperationRecord>,
     pub checkpoint: V3OpsCheckpoint,
+}
+
+#[derive(Debug, Clone)]
+pub struct V3TargetRelations {
+    pub bindings: Vec<V3WorkspaceBinding>,
+    pub rules: Vec<V3BindingRule>,
+    pub projections: Vec<V3ProjectionInstance>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -805,10 +854,11 @@ mod tests {
         assert_eq!(snapshot.target_rules("target_claude").len(), 2);
         assert_eq!(snapshot.target_projections("target_claude").len(), 2);
 
-        let target_binding_ids: Vec<_> = snapshot
-            .target_bindings("target_claude")
-            .into_iter()
-            .map(|binding| binding.binding_id)
+        let target_relations = snapshot.target_relations("target_claude");
+        let target_binding_ids: Vec<_> = target_relations
+            .bindings
+            .iter()
+            .map(|binding| binding.binding_id.clone())
             .collect();
         assert_eq!(
             target_binding_ids,
@@ -818,5 +868,7 @@ mod tests {
                 "binding_project_c".to_string(),
             ]
         );
+        assert_eq!(target_relations.rules.len(), 2);
+        assert_eq!(target_relations.projections.len(), 2);
     }
 }

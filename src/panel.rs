@@ -1992,13 +1992,14 @@ async fn v3_target_show(
             );
         }
     };
+    let relations = snapshot.target_relations(&target_id);
 
     v3_ok(json!({
         "state_model": "v3",
         "target": target,
-        "bindings": snapshot.target_bindings(&target_id),
-        "rules": snapshot.target_rules(&target_id),
-        "projections": snapshot.target_projections(&target_id)
+        "bindings": relations.bindings,
+        "rules": relations.rules,
+        "projections": relations.projections
     }))
 }
 

@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 
+use std::collections::HashSet;
 use std::fs;
 use std::fs::OpenOptions;
 use std::io::{BufRead, BufReader, Write};
@@ -280,20 +281,27 @@ impl V3Snapshot {
     }
 
     pub fn target_bindings(&self, target_id: &str) -> Vec<V3WorkspaceBinding> {
-        let rules = self.target_rules(target_id);
-        let projections = self.target_projections(target_id);
+        let linked_binding_ids: HashSet<&str> = self
+            .rules
+            .rules
+            .iter()
+            .filter(|rule| rule.target_id == target_id)
+            .map(|rule| rule.binding_id.as_str())
+            .chain(
+                self.projections
+                    .projections
+                    .iter()
+                    .filter(|projection| projection.target_id == target_id)
+                    .map(|projection| projection.binding_id.as_str()),
+            )
+            .collect();
 
         self.bindings
             .bindings
             .iter()
             .filter(|binding| {
                 binding.default_target_id == target_id
-                    || rules
-                        .iter()
-                        .any(|rule| rule.binding_id == binding.binding_id)
-                    || projections
-                        .iter()
-                        .any(|projection| projection.binding_id == binding.binding_id)
+                    || linked_binding_ids.contains(binding.binding_id.as_str())
             })
             .cloned()
             .collect()
@@ -666,45 +674,110 @@ mod tests {
             },
             bindings: V3BindingsFile {
                 schema_version: 3,
-                bindings: vec![V3WorkspaceBinding {
-                    binding_id: "binding_project_a".to_string(),
-                    agent: "claude".to_string(),
-                    profile_id: "default".to_string(),
-                    workspace_matcher: V3WorkspaceMatcher {
-                        kind: "path_prefix".to_string(),
-                        value: "/tmp/project-a".to_string(),
+                bindings: vec![
+                    V3WorkspaceBinding {
+                        binding_id: "binding_project_a".to_string(),
+                        agent: "claude".to_string(),
+                        profile_id: "default".to_string(),
+                        workspace_matcher: V3WorkspaceMatcher {
+                            kind: "path_prefix".to_string(),
+                            value: "/tmp/project-a".to_string(),
+                        },
+                        default_target_id: "target_claude".to_string(),
+                        policy_profile: "safe-capture".to_string(),
+                        active: true,
+                        created_at: Some(now),
                     },
-                    default_target_id: "target_claude".to_string(),
-                    policy_profile: "safe-capture".to_string(),
-                    active: true,
-                    created_at: Some(now),
-                }],
+                    V3WorkspaceBinding {
+                        binding_id: "binding_project_b".to_string(),
+                        agent: "claude".to_string(),
+                        profile_id: "default".to_string(),
+                        workspace_matcher: V3WorkspaceMatcher {
+                            kind: "path_prefix".to_string(),
+                            value: "/tmp/project-b".to_string(),
+                        },
+                        default_target_id: "target_other".to_string(),
+                        policy_profile: "safe-capture".to_string(),
+                        active: true,
+                        created_at: Some(now),
+                    },
+                    V3WorkspaceBinding {
+                        binding_id: "binding_project_c".to_string(),
+                        agent: "claude".to_string(),
+                        profile_id: "default".to_string(),
+                        workspace_matcher: V3WorkspaceMatcher {
+                            kind: "path_prefix".to_string(),
+                            value: "/tmp/project-c".to_string(),
+                        },
+                        default_target_id: "target_other".to_string(),
+                        policy_profile: "safe-capture".to_string(),
+                        active: true,
+                        created_at: Some(now),
+                    },
+                    V3WorkspaceBinding {
+                        binding_id: "binding_project_d".to_string(),
+                        agent: "claude".to_string(),
+                        profile_id: "default".to_string(),
+                        workspace_matcher: V3WorkspaceMatcher {
+                            kind: "path_prefix".to_string(),
+                            value: "/tmp/project-d".to_string(),
+                        },
+                        default_target_id: "target_other".to_string(),
+                        policy_profile: "safe-capture".to_string(),
+                        active: true,
+                        created_at: Some(now),
+                    },
+                ],
             },
             rules: super::V3RulesFile {
                 schema_version: 3,
-                rules: vec![V3BindingRule {
-                    binding_id: "binding_project_a".to_string(),
-                    skill_id: "model-onboarding".to_string(),
-                    target_id: "target_claude".to_string(),
-                    method: "symlink".to_string(),
-                    watch_policy: "observe_only".to_string(),
-                    created_at: Some(now),
-                }],
+                rules: vec![
+                    V3BindingRule {
+                        binding_id: "binding_project_a".to_string(),
+                        skill_id: "model-onboarding".to_string(),
+                        target_id: "target_claude".to_string(),
+                        method: "symlink".to_string(),
+                        watch_policy: "observe_only".to_string(),
+                        created_at: Some(now),
+                    },
+                    V3BindingRule {
+                        binding_id: "binding_project_b".to_string(),
+                        skill_id: "model-onboarding".to_string(),
+                        target_id: "target_claude".to_string(),
+                        method: "symlink".to_string(),
+                        watch_policy: "observe_only".to_string(),
+                        created_at: Some(now),
+                    },
+                ],
             },
             projections: V3ProjectionsFile {
                 schema_version: 3,
-                projections: vec![V3ProjectionInstance {
-                    instance_id: "instance_1".to_string(),
-                    skill_id: "model-onboarding".to_string(),
-                    binding_id: "binding_project_a".to_string(),
-                    target_id: "target_claude".to_string(),
-                    materialized_path: "/tmp/claude/skills/model-onboarding".to_string(),
-                    method: "symlink".to_string(),
-                    last_applied_rev: "abc123".to_string(),
-                    health: "healthy".to_string(),
-                    observed_drift: Some(false),
-                    updated_at: Some(now),
-                }],
+                projections: vec![
+                    V3ProjectionInstance {
+                        instance_id: "instance_1".to_string(),
+                        skill_id: "model-onboarding".to_string(),
+                        binding_id: "binding_project_a".to_string(),
+                        target_id: "target_claude".to_string(),
+                        materialized_path: "/tmp/claude/skills/model-onboarding".to_string(),
+                        method: "symlink".to_string(),
+                        last_applied_rev: "abc123".to_string(),
+                        health: "healthy".to_string(),
+                        observed_drift: Some(false),
+                        updated_at: Some(now),
+                    },
+                    V3ProjectionInstance {
+                        instance_id: "instance_2".to_string(),
+                        skill_id: "model-onboarding".to_string(),
+                        binding_id: "binding_project_c".to_string(),
+                        target_id: "target_claude".to_string(),
+                        materialized_path: "/tmp/claude/skills/model-onboarding".to_string(),
+                        method: "symlink".to_string(),
+                        last_applied_rev: "abc456".to_string(),
+                        health: "healthy".to_string(),
+                        observed_drift: Some(false),
+                        updated_at: Some(now),
+                    },
+                ],
             },
             operations: vec![V3OperationRecord {
                 op_id: "op_001".to_string(),
@@ -729,8 +802,21 @@ mod tests {
         assert!(snapshot.target("target_claude").is_some());
         assert_eq!(snapshot.binding_rules("binding_project_a").len(), 1);
         assert_eq!(snapshot.binding_projections("binding_project_a").len(), 1);
-        assert_eq!(snapshot.target_rules("target_claude").len(), 1);
-        assert_eq!(snapshot.target_projections("target_claude").len(), 1);
-        assert_eq!(snapshot.target_bindings("target_claude").len(), 1);
+        assert_eq!(snapshot.target_rules("target_claude").len(), 2);
+        assert_eq!(snapshot.target_projections("target_claude").len(), 2);
+
+        let target_binding_ids: Vec<_> = snapshot
+            .target_bindings("target_claude")
+            .into_iter()
+            .map(|binding| binding.binding_id)
+            .collect();
+        assert_eq!(
+            target_binding_ids,
+            vec![
+                "binding_project_a".to_string(),
+                "binding_project_b".to_string(),
+                "binding_project_c".to_string(),
+            ]
+        );
     }
 }

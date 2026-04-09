@@ -2379,27 +2379,27 @@ fn resolve_capture_projection(
                     format!("projection instance '{}' not found", instance_id),
                 )
             })?;
-        if let Some(skill) = args.skill.as_deref() {
-            if projection.skill_id != skill {
-                return Err(CommandFailure::new(
-                    ErrorCode::ArgInvalid,
-                    format!(
-                        "instance '{}' belongs to skill '{}' not '{}'",
-                        instance_id, projection.skill_id, skill
-                    ),
-                ));
-            }
+        if let Some(skill) = args.skill.as_deref()
+            && projection.skill_id != skill
+        {
+            return Err(CommandFailure::new(
+                ErrorCode::ArgInvalid,
+                format!(
+                    "instance '{}' belongs to skill '{}' not '{}'",
+                    instance_id, projection.skill_id, skill
+                ),
+            ));
         }
-        if let Some(binding_id) = args.binding.as_deref() {
-            if projection.binding_id != binding_id {
-                return Err(CommandFailure::new(
-                    ErrorCode::ArgInvalid,
-                    format!(
-                        "instance '{}' belongs to binding '{}' not '{}'",
-                        instance_id, projection.binding_id, binding_id
-                    ),
-                ));
-            }
+        if let Some(binding_id) = args.binding.as_deref()
+            && projection.binding_id != binding_id
+        {
+            return Err(CommandFailure::new(
+                ErrorCode::ArgInvalid,
+                format!(
+                    "instance '{}' belongs to binding '{}' not '{}'",
+                    instance_id, projection.binding_id, binding_id
+                ),
+            ));
         }
         return Ok(projection);
     }
@@ -2615,10 +2615,10 @@ fn collect_import_candidates(args: &ImportArgs) -> Result<(Vec<ImportCandidate>,
                     .unwrap_or_default()
                     .to_string_lossy()
                     .to_string();
-                if let Some(filter) = &args.skill {
-                    if &skill_name != filter {
-                        continue;
-                    }
+                if let Some(filter) = &args.skill
+                    && &skill_name != filter
+                {
+                    continue;
                 }
                 if let Err(err) = validate_skill_name(&skill_name) {
                     warnings.push(format!(
@@ -2652,10 +2652,10 @@ fn collect_import_candidates(args: &ImportArgs) -> Result<(Vec<ImportCandidate>,
                     .unwrap_or_default()
                     .to_string_lossy()
                     .to_string();
-                if let Some(filter) = &args.skill {
-                    if &skill_name != filter {
-                        continue;
-                    }
+                if let Some(filter) = &args.skill
+                    && &skill_name != filter
+                {
+                    continue;
                 }
                 if let Err(err) = validate_skill_name(&skill_name) {
                     warnings.push(format!(
@@ -2801,10 +2801,10 @@ fn discover_skill_dirs(root: &Path) -> Result<Vec<PathBuf>> {
         if !entry.file_type().is_file() {
             continue;
         }
-        if entry.file_name() == "SKILL.md" {
-            if let Some(parent) = entry.path().parent() {
-                out.insert(parent.to_path_buf());
-            }
+        if entry.file_name() == "SKILL.md"
+            && let Some(parent) = entry.path().parent()
+        {
+            out.insert(parent.to_path_buf());
         }
     }
 

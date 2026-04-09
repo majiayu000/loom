@@ -1,13 +1,13 @@
 use std::fs;
 use std::net::SocketAddr;
-use std::path::{Component, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::{Result, anyhow};
 use axum::{
-    body::Body,
     Json, Router,
-    extract::{Path, State},
+    body::Body,
+    extract::{Path as AxumPath, State},
     http::StatusCode,
     response::{Html, IntoResponse, Response},
     routing::{get, post},
@@ -116,6 +116,9 @@ pub async fn run_panel(ctx: AppContext, port: u16) -> Result<()> {
     Ok(())
 }
 
+// The compiled Vite bundle is the authoritative panel surface. Keep the legacy
+// inline fallback deck around for future recovery-mode work without shipping a warning.
+#[allow(dead_code)]
 async fn index() -> Html<&'static str> {
     Html(
         r#"<!doctype html>
@@ -1780,6 +1783,8 @@ async fn index() -> Html<&'static str> {
     )
 }
 
+// Keep the embedded icon with the fallback deck so both assets can be reactivated together.
+#[allow(dead_code)]
 async fn favicon() -> impl IntoResponse {
     (
         [
@@ -1795,7 +1800,7 @@ async fn frontend_index(State(state): State<PanelState>) -> Response {
 }
 
 async fn frontend_static_asset(
-    Path(path): Path<String>,
+    AxumPath(path): AxumPath<String>,
     State(state): State<PanelState>,
 ) -> Response {
     let asset_path = match resolve_panel_asset_path(&state.dist_dir, &path) {
@@ -1811,7 +1816,7 @@ async fn frontend_static_asset(
     serve_panel_asset(asset_path)
 }
 
-fn ensure_panel_dist(dist_dir: &PathBuf) -> Result<()> {
+fn ensure_panel_dist(dist_dir: &Path) -> Result<()> {
     let index_path = dist_dir.join("index.html");
     if index_path.is_file() {
         Ok(())
@@ -1823,7 +1828,7 @@ fn ensure_panel_dist(dist_dir: &PathBuf) -> Result<()> {
     }
 }
 
-fn resolve_panel_asset_path(dist_dir: &PathBuf, requested: &str) -> Option<PathBuf> {
+fn resolve_panel_asset_path(dist_dir: &Path, requested: &str) -> Option<PathBuf> {
     let mut relative = PathBuf::new();
     for component in PathBuf::from(requested).components() {
         match component {
@@ -1839,7 +1844,7 @@ fn serve_panel_asset(path: PathBuf) -> Response {
     match fs::read(&path) {
         Ok(bytes) => Response::builder()
             .status(StatusCode::OK)
-            .header("content-type", content_type_for(&path))
+            .header("content-type", content_type_for(path.as_path()))
             .body(Body::from(bytes))
             .unwrap_or_else(|err| {
                 (
@@ -1861,8 +1866,12 @@ fn serve_panel_asset(path: PathBuf) -> Response {
     }
 }
 
-fn content_type_for(path: &PathBuf) -> &'static str {
-    match path.extension().and_then(|value| value.to_str()).unwrap_or("") {
+fn content_type_for(path: &Path) -> &'static str {
+    match path
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or("")
+    {
         "html" => "text/html; charset=utf-8",
         "js" => "text/javascript; charset=utf-8",
         "css" => "text/css; charset=utf-8",
@@ -1929,7 +1938,7 @@ async fn v3_bindings(State(state): State<PanelState>) -> Json<serde_json::Value>
 }
 
 async fn v3_binding_show(
-    Path(binding_id): Path<String>,
+    AxumPath(binding_id): AxumPath<String>,
     State(state): State<PanelState>,
 ) -> Json<serde_json::Value> {
     let snapshot = match load_v3_snapshot(&state.ctx) {
@@ -1967,7 +1976,7 @@ async fn v3_targets(State(state): State<PanelState>) -> Json<serde_json::Value> 
 }
 
 async fn v3_target_show(
-    Path(target_id): Path<String>,
+    AxumPath(target_id): AxumPath<String>,
     State(state): State<PanelState>,
 ) -> Json<serde_json::Value> {
     let snapshot = match load_v3_snapshot(&state.ctx) {
@@ -2034,7 +2043,7 @@ async fn v3_target_add(
 }
 
 async fn v3_target_remove(
-    Path(target_id): Path<String>,
+    AxumPath(target_id): AxumPath<String>,
     State(state): State<PanelState>,
 ) -> Json<serde_json::Value> {
     run_panel_command(
@@ -2069,7 +2078,7 @@ async fn v3_binding_add(
 }
 
 async fn v3_binding_remove(
-    Path(binding_id): Path<String>,
+    AxumPath(binding_id): AxumPath<String>,
     State(state): State<PanelState>,
 ) -> Json<serde_json::Value> {
     run_panel_command(
@@ -2192,5 +2201,49 @@ fn run_panel_command(state: &PanelState, command: Command) -> Json<serde_json::V
                 "message": err.to_string()
             }
         })),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{content_type_for, resolve_panel_asset_path};
+    use std::path::Path;
+
+    #[test]
+    fn resolve_panel_asset_path_rejects_invalid_components() {
+        let dist_dir = Path::new("/tmp/panel-dist");
+
+        assert_eq!(
+            resolve_panel_asset_path(dist_dir, "assets/index.js"),
+            Some(dist_dir.join("assets/index.js"))
+        );
+        assert_eq!(
+            resolve_panel_asset_path(dist_dir, "./assets/index.css"),
+            Some(dist_dir.join("assets/index.css"))
+        );
+        assert_eq!(resolve_panel_asset_path(dist_dir, "../secret.txt"), None);
+        assert_eq!(resolve_panel_asset_path(dist_dir, "/etc/passwd"), None);
+    }
+
+    #[test]
+    fn content_type_for_maps_known_panel_extensions() {
+        assert_eq!(
+            content_type_for(Path::new("index.html")),
+            "text/html; charset=utf-8"
+        );
+        assert_eq!(
+            content_type_for(Path::new("bundle.js")),
+            "text/javascript; charset=utf-8"
+        );
+        assert_eq!(
+            content_type_for(Path::new("styles.css")),
+            "text/css; charset=utf-8"
+        );
+        assert_eq!(content_type_for(Path::new("favicon.svg")), "image/svg+xml");
+        assert_eq!(content_type_for(Path::new("font.woff2")), "font/woff2");
+        assert_eq!(
+            content_type_for(Path::new("artifact.bin")),
+            "application/octet-stream"
+        );
     }
 }

@@ -174,27 +174,19 @@ impl V3StatePaths {
 
 impl V3Snapshot {
     pub fn status_view(&self) -> serde_json::Value {
-        let unique_skills = self
-            .rules
-            .rules
-            .iter()
-            .map(|rule| rule.skill_id.as_str())
-            .chain(
-                self.projections
-                    .projections
-                    .iter()
-                    .map(|p| p.skill_id.as_str()),
-            )
-            .collect::<std::collections::BTreeSet<_>>();
+        let mut unique_skills =
+            HashSet::with_capacity(self.rules.rules.len() + self.projections.projections.len());
+        for rule in &self.rules.rules {
+            unique_skills.insert(rule.skill_id.as_str());
+        }
 
-        let drifted = self
-            .projections
-            .projections
-            .iter()
-            .filter(|projection| {
-                projection.observed_drift.unwrap_or(false) || projection.health != "healthy"
-            })
-            .count();
+        let mut drifted = 0;
+        for projection in &self.projections.projections {
+            unique_skills.insert(projection.skill_id.as_str());
+            if projection.observed_drift.unwrap_or(false) || projection.health != "healthy" {
+                drifted += 1;
+            }
+        }
 
         let active_bindings = self
             .bindings
@@ -846,5 +838,10 @@ mod tests {
         );
         assert_eq!(target_relations.rules.len(), 2);
         assert_eq!(target_relations.projections.len(), 2);
+
+        let status = snapshot.status_view();
+        assert_eq!(status["counts"]["skills"], json!(1));
+        assert_eq!(status["counts"]["active_bindings"], json!(4));
+        assert_eq!(status["counts"]["drifted_projections"], json!(0));
     }
 }

@@ -263,64 +263,41 @@ impl V3Snapshot {
     }
 
     pub fn target_rules(&self, target_id: &str) -> Vec<V3BindingRule> {
-        self.rules
+        self.target_relations(target_id)
             .rules
-            .iter()
-            .filter(|rule| rule.target_id == target_id)
+            .into_iter()
             .cloned()
             .collect()
     }
 
     pub fn target_projections(&self, target_id: &str) -> Vec<V3ProjectionInstance> {
-        self.projections
+        self.target_relations(target_id)
             .projections
-            .iter()
-            .filter(|projection| projection.target_id == target_id)
+            .into_iter()
             .cloned()
             .collect()
     }
 
     pub fn target_bindings(&self, target_id: &str) -> Vec<V3WorkspaceBinding> {
-        let linked_binding_ids: HashSet<&str> = self
-            .rules
-            .rules
-            .iter()
-            .filter(|rule| rule.target_id == target_id)
-            .map(|rule| rule.binding_id.as_str())
-            .chain(
-                self.projections
-                    .projections
-                    .iter()
-                    .filter(|projection| projection.target_id == target_id)
-                    .map(|projection| projection.binding_id.as_str()),
-            )
-            .collect();
-
-        self.bindings
+        self.target_relations(target_id)
             .bindings
-            .iter()
-            .filter(|binding| {
-                binding.default_target_id == target_id
-                    || linked_binding_ids.contains(binding.binding_id.as_str())
-            })
+            .into_iter()
             .cloned()
             .collect()
     }
 
-    pub fn target_relations(&self, target_id: &str) -> V3TargetRelations {
+    pub fn target_relations(&self, target_id: &str) -> V3TargetRelations<'_> {
         let rules: Vec<_> = self
             .rules
             .rules
             .iter()
             .filter(|rule| rule.target_id == target_id)
-            .cloned()
             .collect();
         let projections: Vec<_> = self
             .projections
             .projections
             .iter()
             .filter(|projection| projection.target_id == target_id)
-            .cloned()
             .collect();
         let linked_binding_ids: HashSet<&str> = rules
             .iter()
@@ -339,7 +316,6 @@ impl V3Snapshot {
                 binding.default_target_id == target_id
                     || linked_binding_ids.contains(binding.binding_id.as_str())
             })
-            .cloned()
             .collect();
 
         V3TargetRelations {
@@ -362,10 +338,10 @@ pub struct V3Snapshot {
 }
 
 #[derive(Debug, Clone)]
-pub struct V3TargetRelations {
-    pub bindings: Vec<V3WorkspaceBinding>,
-    pub rules: Vec<V3BindingRule>,
-    pub projections: Vec<V3ProjectionInstance>,
+pub struct V3TargetRelations<'a> {
+    pub bindings: Vec<&'a V3WorkspaceBinding>,
+    pub rules: Vec<&'a V3BindingRule>,
+    pub projections: Vec<&'a V3ProjectionInstance>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

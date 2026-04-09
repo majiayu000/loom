@@ -1983,7 +1983,7 @@ async fn v3_target_show(
         Ok(snapshot) => snapshot,
         Err(err) => return err,
     };
-    let target = match snapshot.target(&target_id).cloned() {
+    let target = match snapshot.target(&target_id) {
         Some(target) => target,
         None => {
             return v3_error(

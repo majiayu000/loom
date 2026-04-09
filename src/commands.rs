@@ -981,7 +981,7 @@ impl App {
             )),
             TargetCommand::Show(args) => {
                 let snapshot = self.require_v3_snapshot()?;
-                let target = snapshot.target(&args.target_id).cloned().ok_or_else(|| {
+                let target = snapshot.target(&args.target_id).ok_or_else(|| {
                     CommandFailure::new(
                         ErrorCode::TargetNotFound,
                         format!("target '{}' not found", args.target_id),

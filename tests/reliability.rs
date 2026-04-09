@@ -6,44 +6,9 @@ use std::sync::{Arc, Barrier};
 use std::thread;
 
 use serde_json::Value;
-use uuid::Uuid;
+mod common;
 
-struct TestDir {
-    path: PathBuf,
-}
-
-impl TestDir {
-    fn new(prefix: &str) -> Self {
-        let path = std::env::temp_dir().join(format!("loom-{}-{}", prefix, Uuid::new_v4()));
-        fs::create_dir_all(&path).expect("create temp dir");
-        Self { path }
-    }
-
-    fn path(&self) -> &Path {
-        &self.path
-    }
-}
-
-impl Drop for TestDir {
-    fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.path);
-    }
-}
-
-fn loom_bin() -> &'static str {
-    env!("CARGO_BIN_EXE_loom")
-}
-
-fn run_loom_with_env(root: &Path, envs: &[(&str, &str)], args: &[&str]) -> (Output, Value) {
-    let mut cmd = Command::new(loom_bin());
-    cmd.arg("--json").arg("--root").arg(root).args(args);
-    for (key, value) in envs {
-        cmd.env(key, value);
-    }
-    let output = cmd.output().expect("run loom");
-    let env = serde_json::from_slice(&output.stdout).expect("parse loom json");
-    (output, env)
-}
+use common::{TestDir, run_loom_with_env};
 
 fn run_loom_ok(root: &Path, args: &[&str]) -> Value {
     let (output, env) = run_loom_with_env(root, &[], args);

@@ -30,13 +30,16 @@ impl Drop for TestDir {
 }
 
 pub fn run_loom(root: &Path, args: &[&str]) -> (Output, Value) {
-    let output = Command::new(env!("CARGO_BIN_EXE_loom"))
-        .arg("--json")
-        .arg("--root")
-        .arg(root)
-        .args(args)
-        .output()
-        .expect("run loom");
+    run_loom_with_env(root, &[], args)
+}
+
+pub fn run_loom_with_env(root: &Path, envs: &[(&str, &str)], args: &[&str]) -> (Output, Value) {
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_loom"));
+    cmd.arg("--json").arg("--root").arg(root).args(args);
+    for (key, value) in envs {
+        cmd.env(key, value);
+    }
+    let output = cmd.output().expect("run loom");
     let env = serde_json::from_slice(&output.stdout).expect("parse loom json");
     (output, env)
 }

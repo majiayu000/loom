@@ -1,57 +1,10 @@
 use std::fs;
-use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
 
 use serde_json::{Value, json};
-use uuid::Uuid;
 
-struct TestDir {
-    path: PathBuf,
-}
+mod common;
 
-impl TestDir {
-    fn new(prefix: &str) -> Self {
-        let path = std::env::temp_dir().join(format!("loom-{}-{}", prefix, Uuid::new_v4()));
-        fs::create_dir_all(&path).expect("create temp dir");
-        Self { path }
-    }
-
-    fn path(&self) -> &Path {
-        &self.path
-    }
-}
-
-impl Drop for TestDir {
-    fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.path);
-    }
-}
-
-fn loom_bin() -> &'static str {
-    env!("CARGO_BIN_EXE_loom")
-}
-
-fn run_loom(root: &Path, args: &[&str]) -> (Output, Value) {
-    let output = Command::new(loom_bin())
-        .arg("--json")
-        .arg("--root")
-        .arg(root)
-        .args(args)
-        .output()
-        .expect("run loom");
-    let env = serde_json::from_slice(&output.stdout).expect("parse loom json");
-    (output, env)
-}
-
-fn write_legacy_targets(root: &Path, payload: Value) {
-    let state_dir = root.join("state");
-    fs::create_dir_all(&state_dir).expect("create state dir");
-    fs::write(
-        state_dir.join("targets.json"),
-        serde_json::to_string_pretty(&payload).expect("serialize legacy targets"),
-    )
-    .expect("write legacy targets");
-}
+use common::{TestDir, legacy_target_payload, run_loom, write_legacy_targets};
 
 #[test]
 fn migrate_plan_surfaces_observed_target_candidates_from_v2() {
@@ -61,15 +14,11 @@ fn migrate_plan_surfaces_observed_target_candidates_from_v2() {
 
     write_legacy_targets(
         root.path(),
-        json!({
-            "skills": {
-                "demo": {
-                    "method": "symlink",
-                    "claude_path": legacy_skill_path.display().to_string(),
-                    "codex_path": null
-                }
-            }
-        }),
+        legacy_target_payload(
+            "symlink",
+            Some(legacy_skill_path.display().to_string()),
+            None,
+        ),
     );
 
     let (output, env) = run_loom(root.path(), &["migrate", "v2-to-v3", "--plan"]);
@@ -108,15 +57,7 @@ fn migrate_apply_writes_v3_targets_and_keeps_v2_state() {
 
     write_legacy_targets(
         root.path(),
-        json!({
-            "skills": {
-                "demo": {
-                    "method": "copy",
-                    "claude_path": null,
-                    "codex_path": legacy_skill_path.display().to_string()
-                }
-            }
-        }),
+        legacy_target_payload("copy", None, Some(legacy_skill_path.display().to_string())),
     );
 
     let legacy_before = fs::read_to_string(root.path().join("state/targets.json"))

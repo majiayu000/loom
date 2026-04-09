@@ -1,47 +1,8 @@
-use std::fs;
-use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+mod common;
 
 use serde_json::Value;
-use uuid::Uuid;
 
-struct TestDir {
-    path: PathBuf,
-}
-
-impl TestDir {
-    fn new(prefix: &str) -> Self {
-        let path = std::env::temp_dir().join(format!("loom-{}-{}", prefix, Uuid::new_v4()));
-        fs::create_dir_all(&path).expect("create temp dir");
-        Self { path }
-    }
-
-    fn path(&self) -> &Path {
-        &self.path
-    }
-}
-
-impl Drop for TestDir {
-    fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.path);
-    }
-}
-
-fn loom_bin() -> &'static str {
-    env!("CARGO_BIN_EXE_loom")
-}
-
-fn run_loom(root: &Path, args: &[&str]) -> (Output, Value) {
-    let output = Command::new(loom_bin())
-        .arg("--json")
-        .arg("--root")
-        .arg(root)
-        .args(args)
-        .output()
-        .expect("run loom");
-    let env = serde_json::from_slice(&output.stdout).expect("parse loom json");
-    (output, env)
-}
+use common::{TestDir, run_loom};
 
 #[test]
 fn target_add_bootstraps_v3_state_and_records_op() {

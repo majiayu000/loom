@@ -1,62 +1,19 @@
 use std::fs;
-use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
 
 use serde_json::Value;
-use uuid::Uuid;
 
-struct TestDir {
-    path: PathBuf,
-}
+mod common;
 
-impl TestDir {
-    fn new(prefix: &str) -> Self {
-        let path = std::env::temp_dir().join(format!("loom-{}-{}", prefix, Uuid::new_v4()));
-        fs::create_dir_all(&path).expect("create temp dir");
-        Self { path }
-    }
+use common::{TestDir, run_loom, write_skill};
 
-    fn path(&self) -> &Path {
-        &self.path
-    }
-}
-
-impl Drop for TestDir {
-    fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.path);
-    }
-}
-
-fn loom_bin() -> &'static str {
-    env!("CARGO_BIN_EXE_loom")
-}
-
-fn run_loom(root: &Path, args: &[&str]) -> (Output, Value) {
-    let output = Command::new(loom_bin())
-        .arg("--json")
-        .arg("--root")
-        .arg(root)
-        .args(args)
-        .output()
-        .expect("run loom");
-    let env = serde_json::from_slice(&output.stdout).expect("parse loom json");
-    (output, env)
-}
-
-fn write_skill(root: &Path, skill: &str) {
-    let skill_dir = root.join("skills").join(skill);
-    fs::create_dir_all(&skill_dir).expect("create skill dir");
-    fs::write(
-        skill_dir.join("SKILL.md"),
-        format!("# {}\n\nexample skill\n", skill),
-    )
-    .expect("write skill file");
+fn write_example_skill(root: &std::path::Path, skill: &str) {
+    write_skill(root, skill, &format!("# {}\n\nexample skill\n", skill));
 }
 
 #[test]
 fn skill_project_creates_projection_rule_and_instance() {
     let root = TestDir::new("v3-skill-project");
-    write_skill(root.path(), "model-onboarding");
+    write_example_skill(root.path(), "model-onboarding");
 
     let (save_output, _) = run_loom(root.path(), &["skill", "save", "model-onboarding"]);
     assert!(save_output.status.success(), "save should succeed");
@@ -163,7 +120,7 @@ fn skill_project_creates_projection_rule_and_instance() {
 #[test]
 fn skill_project_rejects_unmanaged_target_ownership() {
     let root = TestDir::new("v3-skill-project-observed");
-    write_skill(root.path(), "model-onboarding");
+    write_example_skill(root.path(), "model-onboarding");
 
     let (save_output, _) = run_loom(root.path(), &["skill", "save", "model-onboarding"]);
     assert!(save_output.status.success(), "save should succeed");

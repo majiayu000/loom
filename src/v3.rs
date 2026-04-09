@@ -583,6 +583,14 @@ where
 {
     let file = fs::File::open(path)
         .with_context(|| format!("failed to open v3 jsonl file {}", path.display()))?;
+    if file
+        .metadata()
+        .with_context(|| format!("failed to stat v3 jsonl file {}", path.display()))?
+        .len()
+        == 0
+    {
+        return Ok(Vec::new());
+    }
     let reader = BufReader::new(file);
     let mut items = Vec::new();
     for (index, line) in reader.lines().enumerate() {

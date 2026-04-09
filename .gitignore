@@ -5,3 +5,4 @@ state/pending_ops.jsonl
 panel/node_modules/
 panel/dist/
 target/
+.omx/

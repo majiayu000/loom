@@ -67,20 +67,38 @@ fn print_envelope(env: &Envelope, force_json: bool) {
             }
         }
         if !env.data.is_null() {
-            println!(
-                "{}",
-                serde_json::to_string_pretty(&env.data).unwrap_or_else(|_| "{}".to_string())
-            );
+            println!("{}", pretty_json_or_empty_object(&env.data));
         }
     } else if let Some(err) = &env.error {
         eprintln!("{} failed: {} ({})", env.cmd, err.message, err.code);
         if !err.details.is_null() {
-            eprintln!(
-                "{}",
-                serde_json::to_string_pretty(&err.details).unwrap_or_else(|_| "{}".to_string())
-            );
+            eprintln!("{}", pretty_json_or_empty_object(&err.details));
         }
     } else {
         eprintln!("{} failed", env.cmd);
+    }
+}
+
+fn pretty_json_or_empty_object(value: &serde_json::Value) -> String {
+    serde_json::to_string_pretty(value).unwrap_or_else(|_| "{}".to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::pretty_json_or_empty_object;
+    use serde_json::{Value, json};
+
+    #[test]
+    fn pretty_json_or_empty_object_formats_regular_values() {
+        let rendered = pretty_json_or_empty_object(&json!({"ok": true}));
+        assert!(rendered.contains("\"ok\": true"));
+    }
+
+    #[test]
+    fn pretty_json_or_empty_object_preserves_empty_objects() {
+        assert_eq!(
+            pretty_json_or_empty_object(&Value::Object(Default::default())),
+            "{}"
+        );
     }
 }

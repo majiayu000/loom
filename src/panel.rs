@@ -2191,22 +2191,27 @@ fn run_panel_command(state: &PanelState, command: Command) -> Json<serde_json::V
     match app.execute(cli) {
         Ok((envelope, _code)) => {
             let payload = serde_json::to_value(envelope)
-                .unwrap_or_else(|err| json!({"ok": false, "error": {"code": "INTERNAL_ERROR", "message": err.to_string()}}));
+                .unwrap_or_else(|err| internal_error_payload(err.to_string()));
             Json(payload)
         }
-        Err(err) => Json(json!({
-            "ok": false,
-            "error": {
-                "code": "INTERNAL_ERROR",
-                "message": err.to_string()
-            }
-        })),
+        Err(err) => Json(internal_error_payload(err.to_string())),
     }
+}
+
+fn internal_error_payload(message: String) -> serde_json::Value {
+    json!({
+        "ok": false,
+        "error": {
+            "code": "INTERNAL_ERROR",
+            "message": message
+        }
+    })
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{content_type_for, resolve_panel_asset_path};
+    use super::{content_type_for, internal_error_payload, resolve_panel_asset_path};
+    use serde_json::json;
     use std::path::Path;
 
     #[test]
@@ -2244,6 +2249,20 @@ mod tests {
         assert_eq!(
             content_type_for(Path::new("artifact.bin")),
             "application/octet-stream"
+        );
+    }
+
+    #[test]
+    fn internal_error_payload_uses_expected_shape() {
+        assert_eq!(
+            internal_error_payload("boom".to_string()),
+            json!({
+                "ok": false,
+                "error": {
+                    "code": "INTERNAL_ERROR",
+                    "message": "boom"
+                }
+            })
         );
     }
 }

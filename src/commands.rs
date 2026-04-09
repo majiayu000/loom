@@ -19,7 +19,7 @@ use crate::cli::{
 };
 use crate::envelope::{Envelope, Meta};
 use crate::gitops;
-use crate::state::{AppContext, remove_path_if_exists, resolve_agent_skill_dirs};
+use crate::state::{AppContext, PendingOpsReport, remove_path_if_exists, resolve_agent_skill_dirs};
 use crate::types::{ErrorCode, SkillTargetConfig, SyncState};
 use crate::v3::{
     V3BindingRule, V3BindingsFile, V3OperationRecord, V3ProjectionInstance, V3ProjectionTarget,
@@ -851,20 +851,21 @@ impl App {
     pub fn cmd_status(&self) -> std::result::Result<(serde_json::Value, Meta), CommandFailure> {
         let skills = list_skills(&self.ctx).map_err(map_io)?;
         let pending_report = self.ctx.read_pending_report().map_err(map_io)?;
+        let pending_ops = pending_report.ops.len();
         let target_dirs = resolve_agent_skill_dirs();
         let v3_paths = V3StatePaths::from_root(&self.ctx.root);
         let v3_status = v3_paths.maybe_load_snapshot().map_err(map_v3_state)?;
-        let mut warnings = pending_report.warnings;
-        let head = read_git_field(&self.ctx, &["rev-parse", "HEAD"], &mut warnings);
+        let mut git_warnings = Vec::new();
+        let head = read_git_field(&self.ctx, &["rev-parse", "HEAD"], &mut git_warnings);
         let branch = read_git_field(
             &self.ctx,
             &["rev-parse", "--abbrev-ref", "HEAD"],
-            &mut warnings,
+            &mut git_warnings,
         );
-        let status_short = read_git_field(&self.ctx, &["status", "--short"], &mut warnings);
+        let status_short = read_git_field(&self.ctx, &["status", "--short"], &mut git_warnings);
 
-        let (remote, mut meta) = remote_status_payload(&self.ctx)?;
-        meta.warnings.splice(0..0, warnings);
+        let (remote, mut meta) = remote_status_payload_with_pending(&self.ctx, pending_report)?;
+        meta.warnings.splice(0..0, git_warnings);
 
         let mut data = json!({
             "state_model": if v3_status.is_some() { "v3" } else { "v2" },
@@ -875,7 +876,7 @@ impl App {
                 "codex_dir": target_dirs.codex.display().to_string()
             },
             "remote": remote,
-            "pending_ops": pending_report.ops.len()
+            "pending_ops": pending_ops
         });
 
         if let Some(snapshot) = v3_status {
@@ -2829,6 +2830,13 @@ pub fn remote_status_payload(
     ctx: &AppContext,
 ) -> std::result::Result<(serde_json::Value, Meta), CommandFailure> {
     let pending_report = ctx.read_pending_report().map_err(map_io)?;
+    remote_status_payload_with_pending(ctx, pending_report)
+}
+
+fn remote_status_payload_with_pending(
+    ctx: &AppContext,
+    pending_report: PendingOpsReport,
+) -> std::result::Result<(serde_json::Value, Meta), CommandFailure> {
     let pending = pending_report.ops.len();
 
     if !gitops::remote_exists(ctx) {

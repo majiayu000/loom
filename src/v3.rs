@@ -279,36 +279,36 @@ impl V3Snapshot {
     }
 
     pub fn target_relations(&self, target_id: &str) -> V3TargetRelations<'_> {
-        let rules: Vec<_> = self
-            .rules
-            .rules
-            .iter()
-            .filter(|rule| rule.target_id == target_id)
-            .collect();
-        let projections: Vec<_> = self
-            .projections
-            .projections
-            .iter()
-            .filter(|projection| projection.target_id == target_id)
-            .collect();
-        let linked_binding_ids: HashSet<&str> = rules
-            .iter()
-            .map(|rule| rule.binding_id.as_str())
-            .chain(
-                projections
-                    .iter()
-                    .map(|projection| projection.binding_id.as_str()),
-            )
-            .collect();
-        let bindings = self
-            .bindings
-            .bindings
-            .iter()
-            .filter(|binding| {
-                binding.default_target_id == target_id
-                    || linked_binding_ids.contains(binding.binding_id.as_str())
-            })
-            .collect();
+        let mut rules = Vec::with_capacity(self.rules.rules.len());
+        for rule in &self.rules.rules {
+            if rule.target_id == target_id {
+                rules.push(rule);
+            }
+        }
+
+        let mut projections = Vec::with_capacity(self.projections.projections.len());
+        for projection in &self.projections.projections {
+            if projection.target_id == target_id {
+                projections.push(projection);
+            }
+        }
+
+        let mut linked_binding_ids = HashSet::with_capacity(rules.len() + projections.len());
+        linked_binding_ids.extend(rules.iter().map(|rule| rule.binding_id.as_str()));
+        linked_binding_ids.extend(
+            projections
+                .iter()
+                .map(|projection| projection.binding_id.as_str()),
+        );
+
+        let mut bindings = Vec::with_capacity(self.bindings.bindings.len());
+        for binding in &self.bindings.bindings {
+            if binding.default_target_id == target_id
+                || linked_binding_ids.contains(binding.binding_id.as_str())
+            {
+                bindings.push(binding);
+            }
+        }
 
         V3TargetRelations {
             bindings,

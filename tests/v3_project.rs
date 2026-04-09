@@ -4,6 +4,7 @@ use serde_json::Value;
 
 mod common;
 
+use common::v3::{binding_add, save_skill, skill_project, target_add};
 use common::{TestDir, run_loom, write_skill};
 
 fn write_example_skill(root: &std::path::Path, skill: &str) {
@@ -15,58 +16,31 @@ fn skill_project_creates_projection_rule_and_instance() {
     let root = TestDir::new("v3-skill-project");
     write_example_skill(root.path(), "model-onboarding");
 
-    let (save_output, _) = run_loom(root.path(), &["skill", "save", "model-onboarding"]);
+    let (save_output, _) = save_skill(root.path(), "model-onboarding");
     assert!(save_output.status.success(), "save should succeed");
 
     let target_path = root.path().join("live/claude-project-a");
-    let target_path_str = target_path.to_string_lossy().to_string();
-    let (target_output, _) = run_loom(
-        root.path(),
-        &[
-            "target",
-            "add",
-            "--agent",
-            "claude",
-            "--path",
-            &target_path_str,
-            "--ownership",
-            "managed",
-        ],
-    );
+    let (target_output, _) = target_add(root.path(), "claude", &target_path, "managed");
     assert!(target_output.status.success(), "target add should succeed");
 
-    let (binding_output, _) = run_loom(
+    let (binding_output, _) = binding_add(
         root.path(),
-        &[
-            "workspace",
-            "binding",
-            "add",
-            "--agent",
-            "claude",
-            "--profile",
-            "default",
-            "--matcher-kind",
-            "path-prefix",
-            "--matcher-value",
-            "/tmp/project-a",
-            "--target",
-            "target_claude_claude_project_a",
-        ],
+        "claude",
+        "default",
+        "path-prefix",
+        "/tmp/project-a",
+        "target_claude_claude_project_a",
     );
     assert!(
         binding_output.status.success(),
         "binding add should succeed"
     );
 
-    let (project_output, project_env) = run_loom(
+    let (project_output, project_env) = skill_project(
         root.path(),
-        &[
-            "skill",
-            "project",
-            "model-onboarding",
-            "--binding",
-            "bind_claude_project_a",
-        ],
+        "model-onboarding",
+        "bind_claude_project_a",
+        None,
     );
     assert!(
         project_output.status.success(),
@@ -122,59 +96,32 @@ fn skill_project_rejects_unmanaged_target_ownership() {
     let root = TestDir::new("v3-skill-project-observed");
     write_example_skill(root.path(), "model-onboarding");
 
-    let (save_output, _) = run_loom(root.path(), &["skill", "save", "model-onboarding"]);
+    let (save_output, _) = save_skill(root.path(), "model-onboarding");
     assert!(save_output.status.success(), "save should succeed");
 
     let target_path = root.path().join("live/observed-claude");
     fs::create_dir_all(&target_path).expect("create observed target path");
-    let target_path_str = target_path.to_string_lossy().to_string();
-    let (target_output, _) = run_loom(
-        root.path(),
-        &[
-            "target",
-            "add",
-            "--agent",
-            "claude",
-            "--path",
-            &target_path_str,
-            "--ownership",
-            "observed",
-        ],
-    );
+    let (target_output, _) = target_add(root.path(), "claude", &target_path, "observed");
     assert!(target_output.status.success(), "target add should succeed");
 
-    let (binding_output, _) = run_loom(
+    let (binding_output, _) = binding_add(
         root.path(),
-        &[
-            "workspace",
-            "binding",
-            "add",
-            "--agent",
-            "claude",
-            "--profile",
-            "default",
-            "--matcher-kind",
-            "path-prefix",
-            "--matcher-value",
-            "/tmp/project-a",
-            "--target",
-            "target_claude_observed_claude",
-        ],
+        "claude",
+        "default",
+        "path-prefix",
+        "/tmp/project-a",
+        "target_claude_observed_claude",
     );
     assert!(
         binding_output.status.success(),
         "binding add should succeed"
     );
 
-    let (project_output, project_env) = run_loom(
+    let (project_output, project_env) = skill_project(
         root.path(),
-        &[
-            "skill",
-            "project",
-            "model-onboarding",
-            "--binding",
-            "bind_claude_project_a",
-        ],
+        "model-onboarding",
+        "bind_claude_project_a",
+        None,
     );
     assert!(
         !project_output.status.success(),

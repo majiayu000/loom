@@ -4,6 +4,7 @@ use serde_json::Value;
 
 mod common;
 
+use common::v3::{binding_add, save_skill, skill_project, target_add};
 use common::{TestDir, run_loom, write_skill};
 
 #[test]
@@ -15,64 +16,35 @@ fn skill_capture_copies_live_projection_back_into_source_and_commits() {
         "# model-onboarding\n\nsource v1\n",
     );
 
-    let (save_output, _) = run_loom(root.path(), &["skill", "save", "model-onboarding"]);
+    let (save_output, _) = save_skill(root.path(), "model-onboarding");
     assert!(save_output.status.success(), "save should succeed");
 
     let target_path = root.path().join("live/claude-project-a");
-    let target_path_str = target_path.to_string_lossy().to_string();
     assert!(
-        run_loom(
+        target_add(root.path(), "claude", &target_path, "managed")
+            .0
+            .status
+            .success()
+    );
+    assert!(
+        binding_add(
             root.path(),
-            &[
-                "target",
-                "add",
-                "--agent",
-                "claude",
-                "--path",
-                &target_path_str,
-                "--ownership",
-                "managed",
-            ],
+            "claude",
+            "default",
+            "path-prefix",
+            "/tmp/project-a",
+            "target_claude_claude_project_a",
         )
         .0
         .status
         .success()
     );
     assert!(
-        run_loom(
+        skill_project(
             root.path(),
-            &[
-                "workspace",
-                "binding",
-                "add",
-                "--agent",
-                "claude",
-                "--profile",
-                "default",
-                "--matcher-kind",
-                "path-prefix",
-                "--matcher-value",
-                "/tmp/project-a",
-                "--target",
-                "target_claude_claude_project_a",
-            ],
-        )
-        .0
-        .status
-        .success()
-    );
-    assert!(
-        run_loom(
-            root.path(),
-            &[
-                "skill",
-                "project",
-                "model-onboarding",
-                "--binding",
-                "bind_claude_project_a",
-                "--method",
-                "copy",
-            ],
+            "model-onboarding",
+            "bind_claude_project_a",
+            Some("copy"),
         )
         .0
         .status

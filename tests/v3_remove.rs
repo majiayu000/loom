@@ -4,66 +4,33 @@ use serde_json::Value;
 
 mod common;
 
+use common::v3::{binding_add, skill_project, target_add};
 use common::{TestDir, run_loom, write_skill};
 
 fn bootstrap_projected_skill(root: &Path) -> (String, String, String) {
     write_skill(root, "demo", "# Demo\n");
 
     let target_path = root.join("live/claude-a");
-    let target_path_str = target_path.to_string_lossy().to_string();
-    let (_, target_env) = run_loom(
-        root,
-        &[
-            "target",
-            "add",
-            "--agent",
-            "claude",
-            "--path",
-            &target_path_str,
-            "--ownership",
-            "managed",
-        ],
-    );
+    let (_, target_env) = target_add(root, "claude", &target_path, "managed");
     let target_id = target_env["data"]["target"]["target_id"]
         .as_str()
         .expect("target id")
         .to_string();
 
-    let (_, binding_env) = run_loom(
+    let (_, binding_env) = binding_add(
         root,
-        &[
-            "workspace",
-            "binding",
-            "add",
-            "--agent",
-            "claude",
-            "--profile",
-            "default",
-            "--matcher-kind",
-            "path-prefix",
-            "--matcher-value",
-            &root.display().to_string(),
-            "--target",
-            &target_id,
-        ],
+        "claude",
+        "default",
+        "path-prefix",
+        &root.display().to_string(),
+        &target_id,
     );
     let binding_id = binding_env["data"]["binding"]["binding_id"]
         .as_str()
         .expect("binding id")
         .to_string();
 
-    let (_, project_env) = run_loom(
-        root,
-        &[
-            "skill",
-            "project",
-            "demo",
-            "--binding",
-            &binding_id,
-            "--method",
-            "copy",
-        ],
-    );
+    let (_, project_env) = skill_project(root, "demo", &binding_id, Some("copy"));
     let instance_id = project_env["data"]["projection"]["instance_id"]
         .as_str()
         .expect("instance id")

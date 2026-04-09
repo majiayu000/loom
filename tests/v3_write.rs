@@ -1,5 +1,6 @@
 mod common;
 
+use common::v3::{binding_add, target_add};
 use serde_json::Value;
 
 use common::{TestDir, run_loom};
@@ -8,21 +9,7 @@ use common::{TestDir, run_loom};
 fn target_add_bootstraps_v3_state_and_records_op() {
     let root = TestDir::new("v3-target-add");
     let target_path = root.path().join("live/claude-project-a");
-    let target_path_str = target_path.to_string_lossy().to_string();
-
-    let (output, env) = run_loom(
-        root.path(),
-        &[
-            "target",
-            "add",
-            "--agent",
-            "claude",
-            "--path",
-            &target_path_str,
-            "--ownership",
-            "managed",
-        ],
-    );
+    let (output, env) = target_add(root.path(), "claude", &target_path, "managed");
 
     assert!(
         output.status.success(),
@@ -51,36 +38,10 @@ fn target_add_bootstraps_v3_state_and_records_op() {
 fn target_add_is_idempotent_for_same_agent_and_path() {
     let root = TestDir::new("v3-target-add-idempotent");
     let target_path = root.path().join("live/codex-workbench");
-    let target_path_str = target_path.to_string_lossy().to_string();
-
-    let (first_output, _) = run_loom(
-        root.path(),
-        &[
-            "target",
-            "add",
-            "--agent",
-            "codex",
-            "--path",
-            &target_path_str,
-            "--ownership",
-            "managed",
-        ],
-    );
+    let (first_output, _) = target_add(root.path(), "codex", &target_path, "managed");
     assert!(first_output.status.success(), "first add should succeed");
 
-    let (second_output, second_env) = run_loom(
-        root.path(),
-        &[
-            "target",
-            "add",
-            "--agent",
-            "codex",
-            "--path",
-            &target_path_str,
-            "--ownership",
-            "managed",
-        ],
-    );
+    let (second_output, second_env) = target_add(root.path(), "codex", &target_path, "managed");
     assert!(second_output.status.success(), "second add should succeed");
     assert_eq!(second_env["data"]["noop"], Value::Bool(true));
 
@@ -93,40 +54,16 @@ fn target_add_is_idempotent_for_same_agent_and_path() {
 fn workspace_binding_add_uses_existing_target_and_records_op() {
     let root = TestDir::new("v3-binding-add");
     let target_path = root.path().join("live/claude-project-a");
-    let target_path_str = target_path.to_string_lossy().to_string();
-
-    let (target_output, _) = run_loom(
-        root.path(),
-        &[
-            "target",
-            "add",
-            "--agent",
-            "claude",
-            "--path",
-            &target_path_str,
-            "--ownership",
-            "managed",
-        ],
-    );
+    let (target_output, _) = target_add(root.path(), "claude", &target_path, "managed");
     assert!(target_output.status.success(), "target add should succeed");
 
-    let (binding_output, binding_env) = run_loom(
+    let (binding_output, binding_env) = binding_add(
         root.path(),
-        &[
-            "workspace",
-            "binding",
-            "add",
-            "--agent",
-            "claude",
-            "--profile",
-            "default",
-            "--matcher-kind",
-            "path-prefix",
-            "--matcher-value",
-            "/tmp/project-a",
-            "--target",
-            "target_claude_claude_project_a",
-        ],
+        "claude",
+        "default",
+        "path-prefix",
+        "/tmp/project-a",
+        "target_claude_claude_project_a",
     );
     assert!(
         binding_output.status.success(),

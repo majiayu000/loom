@@ -25,6 +25,10 @@ pub enum Command {
         #[command(subcommand)]
         command: WorkspaceCommand,
     },
+    Target {
+        #[command(subcommand)]
+        command: TargetCommand,
+    },
     Skill {
         #[command(subcommand)]
         command: SkillCommand,
@@ -36,6 +40,10 @@ pub enum Command {
     Ops {
         #[command(subcommand)]
         command: OpsCommand,
+    },
+    Migrate {
+        #[command(subcommand)]
+        command: MigrateCommand,
     },
     Panel(PanelArgs),
 
@@ -76,6 +84,10 @@ pub enum WorkspaceCommand {
     Init(InitArgs),
     Status,
     Doctor,
+    Binding {
+        #[command(subcommand)]
+        command: WorkspaceBindingCommand,
+    },
     Remote {
         #[command(subcommand)]
         command: RemoteCommand,
@@ -83,9 +95,27 @@ pub enum WorkspaceCommand {
 }
 
 #[derive(Debug, Clone, Subcommand)]
+pub enum WorkspaceBindingCommand {
+    Add(BindingAddArgs),
+    List,
+    Show(BindingShowArgs),
+    Remove(BindingShowArgs),
+}
+
+#[derive(Debug, Clone, Subcommand)]
+pub enum TargetCommand {
+    Add(TargetAddArgs),
+    List,
+    Show(TargetShowArgs),
+    Remove(TargetShowArgs),
+}
+
+#[derive(Debug, Clone, Subcommand)]
 pub enum SkillCommand {
     Add(AddArgs),
     Import(ImportArgs),
+    Project(ProjectArgs),
+    Capture(CaptureArgs),
     Link(LinkArgs),
     Use(LinkArgs),
     Save(SaveArgs),
@@ -104,6 +134,21 @@ pub enum OpsCommand {
         #[command(subcommand)]
         command: OpsHistoryCommand,
     },
+}
+
+#[derive(Debug, Clone, Subcommand)]
+pub enum MigrateCommand {
+    #[command(name = "v2-to-v3")]
+    V2ToV3(MigrateV2ToV3Args),
+}
+
+#[derive(Debug, Clone, Args)]
+pub struct MigrateV2ToV3Args {
+    #[arg(long, conflicts_with = "apply")]
+    pub plan: bool,
+
+    #[arg(long, conflicts_with = "plan")]
+    pub apply: bool,
 }
 
 #[derive(Debug, Clone, Subcommand)]
@@ -192,6 +237,34 @@ pub struct LinkArgs {
 }
 
 #[derive(Debug, Clone, Args)]
+pub struct ProjectArgs {
+    pub skill: String,
+
+    #[arg(long)]
+    pub binding: String,
+
+    #[arg(long)]
+    pub target: Option<String>,
+
+    #[arg(long, value_enum, default_value_t = ProjectionMethod::Symlink)]
+    pub method: ProjectionMethod,
+}
+
+#[derive(Debug, Clone, Args)]
+pub struct CaptureArgs {
+    pub skill: Option<String>,
+
+    #[arg(long)]
+    pub binding: Option<String>,
+
+    #[arg(long)]
+    pub instance: Option<String>,
+
+    #[arg(long)]
+    pub message: Option<String>,
+}
+
+#[derive(Debug, Clone, Args)]
 pub struct SaveArgs {
     pub skill: String,
 
@@ -234,6 +307,49 @@ pub struct PanelArgs {
     pub port: u16,
 }
 
+#[derive(Debug, Clone, Args)]
+pub struct BindingShowArgs {
+    pub binding_id: String,
+}
+
+#[derive(Debug, Clone, Args)]
+pub struct BindingAddArgs {
+    #[arg(long, value_enum)]
+    pub agent: AgentKind,
+
+    #[arg(long)]
+    pub profile: String,
+
+    #[arg(long, value_enum)]
+    pub matcher_kind: WorkspaceMatcherKind,
+
+    #[arg(long)]
+    pub matcher_value: String,
+
+    #[arg(long)]
+    pub target: String,
+
+    #[arg(long, default_value = "safe-capture")]
+    pub policy_profile: String,
+}
+
+#[derive(Debug, Clone, Args)]
+pub struct TargetShowArgs {
+    pub target_id: String,
+}
+
+#[derive(Debug, Clone, Args)]
+pub struct TargetAddArgs {
+    #[arg(long, value_enum)]
+    pub agent: AgentKind,
+
+    #[arg(long)]
+    pub path: String,
+
+    #[arg(long, value_enum, default_value_t = TargetOwnership::Managed)]
+    pub ownership: TargetOwnership,
+}
+
 #[derive(Debug, Clone, Subcommand)]
 pub enum RemoteCommand {
     Set { url: String },
@@ -248,10 +364,70 @@ pub enum SyncCommand {
     Replay,
 }
 
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    ValueEnum,
+    serde::Serialize,
+    serde::Deserialize,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+)]
+#[serde(rename_all = "lowercase")]
+pub enum AgentKind {
+    Claude,
+    Codex,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkspaceMatcherKind {
+    #[serde(alias = "path-prefix")]
+    PathPrefix,
+    #[serde(alias = "exact-path")]
+    ExactPath,
+    Name,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum TargetOwnership {
+    Managed,
+    Observed,
+    External,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ProjectionMethod {
+    Symlink,
+    Copy,
+    Materialize,
+}
+
 #[derive(Debug, Clone, Copy, ValueEnum, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Target {
     Claude,
     Codex,
     Both,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::WorkspaceMatcherKind;
+
+    #[test]
+    fn workspace_matcher_kind_deserializes_cli_and_api_spellings() {
+        let kebab: WorkspaceMatcherKind =
+            serde_json::from_str("\"path-prefix\"").expect("deserialize kebab-case matcher");
+        let snake: WorkspaceMatcherKind =
+            serde_json::from_str("\"path_prefix\"").expect("deserialize snake_case matcher");
+
+        assert_eq!(kebab, WorkspaceMatcherKind::PathPrefix);
+        assert_eq!(snake, WorkspaceMatcherKind::PathPrefix);
+    }
 }

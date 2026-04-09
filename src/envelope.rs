@@ -14,6 +14,8 @@ pub struct Meta {
     pub warnings: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sync_state: Option<SyncState>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub op_id: Option<String>,
 }
 
 #[derive(Debug, Serialize)]

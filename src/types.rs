@@ -5,8 +5,12 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum ErrorCode {
     ArgInvalid,
+    SchemaMismatch,
+    StateCorrupt,
     UnsupportedV1Command,
     SkillNotFound,
+    BindingNotFound,
+    TargetNotFound,
     LockBusy,
     RemoteUnreachable,
     RemoteDiverged,
@@ -22,8 +26,12 @@ impl ErrorCode {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::ArgInvalid => "ARG_INVALID",
+            Self::SchemaMismatch => "SCHEMA_MISMATCH",
+            Self::StateCorrupt => "STATE_CORRUPT",
             Self::UnsupportedV1Command => "UNSUPPORTED_V1_COMMAND",
             Self::SkillNotFound => "SKILL_NOT_FOUND",
+            Self::BindingNotFound => "BINDING_NOT_FOUND",
+            Self::TargetNotFound => "TARGET_NOT_FOUND",
             Self::LockBusy => "LOCK_BUSY",
             Self::RemoteUnreachable => "REMOTE_UNREACHABLE",
             Self::RemoteDiverged => "REMOTE_DIVERGED",
@@ -39,6 +47,8 @@ impl ErrorCode {
     pub fn exit_code(self) -> i32 {
         match self {
             Self::ArgInvalid => 2,
+            Self::SchemaMismatch => 3,
+            Self::StateCorrupt => 3,
             Self::UnsupportedV1Command => 2,
             Self::LockBusy => 4,
             Self::RemoteUnreachable => 10,
@@ -50,6 +60,8 @@ impl ErrorCode {
             Self::IoError => 5,
             Self::InternalError => 3,
             Self::SkillNotFound => 3,
+            Self::BindingNotFound => 3,
+            Self::TargetNotFound => 3,
         }
     }
 }

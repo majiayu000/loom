@@ -5,6 +5,7 @@ mod gitops;
 mod panel;
 mod state;
 mod types;
+mod v3;
 
 use clap::Parser;
 

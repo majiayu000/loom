@@ -4,9 +4,11 @@
 
 推荐先触发 `loom` 技能（`SKILL.md`），再执行本文档中的非交互命令。
 
+> v2 为 breaking 版本：旧顶层命令（`loom init/save/status/...`）已移除，Agent 必须使用 `workspace/skill/sync/ops` 命令组。
+
 ## 1. 双模式约定
 
-- 人类操作者：优先 `loom init --wizard`（交互式选择）。
+- 人类操作者：优先 `loom workspace init --wizard`（交互式选择）。
 - Agent：优先非交互模式，固定使用 `--json` + 明确参数。
 
 ## 2. Agent 基本调用契约
@@ -34,7 +36,7 @@ JSON envelope 关键字段：
 Agent 首次接管本机 skills 时，执行：
 
 ```bash
-loom --json --root <repo_root> init --from-agent both --target both
+loom --json --root <repo_root> workspace init --from-agent both --target both
 ```
 
 该命令默认顺序为：
@@ -52,11 +54,11 @@ loom --json --root <repo_root> init --from-agent both --target both
 
 ## 4. 日常操作建议（Agent）
 
-1. 读取状态：`loom --json --root <repo_root> status`
-2. 保存变更：`loom --json --root <repo_root> save <skill>`
-3. 关键节点快照：`loom --json --root <repo_root> snapshot <skill>`
-4. 发布版本：`loom --json --root <repo_root> release <skill> vX.Y.Z`
-5. 差异检查：`loom --json --root <repo_root> diff <skill> <from> <to>`
+1. 读取状态：`loom --json --root <repo_root> workspace status`
+2. 保存变更：`loom --json --root <repo_root> skill save <skill>`
+3. 关键节点快照：`loom --json --root <repo_root> skill snapshot <skill>`
+4. 发布版本：`loom --json --root <repo_root> skill release <skill> vX.Y.Z`
+5. 差异检查：`loom --json --root <repo_root> skill diff <skill> <from> <to>`
 6. 远端同步：`loom --json --root <repo_root> sync push` / `sync pull`
 
 ## 5. 安全护栏
@@ -81,10 +83,10 @@ loom --json --root <repo_root> init --from-agent both --target both
 
 ```bash
 # 1) 初始化（首次）
-loom --json --root "$ROOT" init --from-agent both --target both
+loom --json --root "$ROOT" workspace init --from-agent both --target both
 
 # 2) 日常保存
-loom --json --root "$ROOT" save "$SKILL"
+loom --json --root "$ROOT" skill save "$SKILL"
 
 # 3) 同步
 loom --json --root "$ROOT" sync push
@@ -93,7 +95,7 @@ loom --json --root "$ROOT" sync push
 ## 8. 人类快速入口
 
 ```bash
-loom init --wizard
+loom workspace init --wizard
 ```
 
 该入口用于“安装后首跑”或“不想记参数”的场景；Agent 不应依赖交互式输入。

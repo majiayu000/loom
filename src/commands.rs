@@ -1,3 +1,4 @@
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -9,14 +10,22 @@ use uuid::Uuid;
 use walkdir::WalkDir;
 
 use crate::cli::{
-    AddArgs, Cli, Command, DiffArgs, HistoryRepairStrategyArg, ImportArgs, InitArgs, LinkArgs,
-    OpsCommand, OpsHistoryCommand, ReleaseArgs, RemoteCommand, RollbackArgs, SaveArgs,
-    SkillCommand, SkillOnlyArgs, SyncCommand, Target, WorkspaceCommand,
+    AddArgs, AgentKind, BindingAddArgs, CaptureArgs, Cli, Command, DiffArgs,
+    HistoryRepairStrategyArg, ImportArgs, InitArgs, LinkArgs, MigrateCommand, MigrateV2ToV3Args,
+    OpsCommand, OpsHistoryCommand, ProjectArgs, ProjectionMethod, ReleaseArgs, RemoteCommand,
+    RollbackArgs, SaveArgs, SkillCommand, SkillOnlyArgs, SyncCommand, Target, TargetAddArgs,
+    TargetCommand, TargetOwnership, WorkspaceBindingCommand, WorkspaceCommand,
+    WorkspaceMatcherKind,
 };
 use crate::envelope::{Envelope, Meta};
 use crate::gitops;
 use crate::state::{AppContext, remove_path_if_exists, resolve_agent_skill_dirs};
 use crate::types::{ErrorCode, SkillTargetConfig, SyncState};
+use crate::v3::{
+    V3BindingRule, V3BindingsFile, V3OperationRecord, V3ProjectionInstance, V3ProjectionTarget,
+    V3ProjectionsFile, V3RulesFile, V3Snapshot, V3StatePaths, V3TargetCapabilities, V3TargetsFile,
+    V3WorkspaceBinding, V3WorkspaceMatcher,
+};
 
 #[derive(Debug)]
 pub struct CommandFailure {
@@ -76,11 +85,17 @@ impl App {
                 WorkspaceCommand::Init(args) => self.cmd_init(args, &request_id),
                 WorkspaceCommand::Status => self.cmd_status(),
                 WorkspaceCommand::Doctor => self.cmd_doctor(),
+                WorkspaceCommand::Binding { command } => {
+                    self.cmd_workspace_binding(command, &request_id)
+                }
                 WorkspaceCommand::Remote { command } => self.cmd_remote(command),
             },
+            Command::Target { command } => self.cmd_target(command, &request_id),
             Command::Skill { command } => match command {
                 SkillCommand::Add(args) => self.cmd_add(args, &request_id),
                 SkillCommand::Import(args) => self.cmd_import(args, &request_id),
+                SkillCommand::Project(args) => self.cmd_project(args, &request_id),
+                SkillCommand::Capture(args) => self.cmd_capture(args, &request_id),
                 SkillCommand::Link(args) | SkillCommand::Use(args) => self.cmd_link(args),
                 SkillCommand::Save(args) => self.cmd_save(args, &request_id),
                 SkillCommand::Snapshot(args) => self.cmd_snapshot(args, &request_id),
@@ -90,6 +105,7 @@ impl App {
             },
             Command::Sync { command } => self.cmd_sync(command),
             Command::Ops { command } => self.cmd_ops(command),
+            Command::Migrate { command } => self.cmd_migrate(command, &request_id),
             Command::Panel(_) => Ok((json!({"message": "panel handled in main"}), Meta::default())),
 
             Command::LegacyInit(_) => self.unsupported_v1_command("init", "workspace init"),
@@ -366,6 +382,7 @@ impl App {
                 Meta {
                     warnings,
                     sync_state: None,
+                    op_id: None,
                 },
             ));
         }
@@ -432,6 +449,199 @@ impl App {
         ))
     }
 
+    pub fn cmd_project(
+        &self,
+        args: &ProjectArgs,
+        request_id: &str,
+    ) -> std::result::Result<(serde_json::Value, Meta), CommandFailure> {
+        validate_skill_name(&args.skill).map_err(map_arg)?;
+        let _workspace = self.ctx.lock_workspace().map_err(map_lock)?;
+        self.ensure_write_repo_ready()?;
+        ensure_skill_exists(&self.ctx, &args.skill)?;
+
+        let paths = self.ensure_v3_layout()?;
+        let snapshot = paths.load_snapshot().map_err(map_v3_state)?;
+        let binding = snapshot.binding(&args.binding).cloned().ok_or_else(|| {
+            CommandFailure::new(
+                ErrorCode::BindingNotFound,
+                format!("binding '{}' not found", args.binding),
+            )
+        })?;
+
+        let target_id = args
+            .target
+            .clone()
+            .unwrap_or_else(|| binding.default_target_id.clone());
+        let target = snapshot.target(&target_id).cloned().ok_or_else(|| {
+            CommandFailure::new(
+                ErrorCode::TargetNotFound,
+                format!("target '{}' not found", target_id),
+            )
+        })?;
+
+        if target.ownership != "managed" {
+            return Err(CommandFailure::new(
+                ErrorCode::ArgInvalid,
+                format!(
+                    "target '{}' has ownership '{}' and cannot be projected into",
+                    target.target_id, target.ownership
+                ),
+            ));
+        }
+
+        validate_projection_method(&target, args.method)?;
+
+        let skill_src = self.ctx.skill_path(&args.skill);
+        let target_base = PathBuf::from(&target.path);
+        fs::create_dir_all(&target_base).map_err(map_io)?;
+        let materialized_path = target_base.join(&args.skill);
+        remove_path_if_exists(&materialized_path).map_err(map_io)?;
+        project_skill_to_target(&skill_src, &materialized_path, args.method)
+            .map_err(map_project_io(args.method))?;
+
+        let mut rules = snapshot.rules;
+        upsert_rule(
+            &mut rules,
+            V3BindingRule {
+                binding_id: binding.binding_id.clone(),
+                skill_id: args.skill.clone(),
+                target_id: target.target_id.clone(),
+                method: projection_method_as_str(args.method).to_string(),
+                watch_policy: "observe_only".to_string(),
+                created_at: Some(Utc::now()),
+            },
+        );
+        paths.save_rules(&rules).map_err(map_v3_state)?;
+
+        let mut projections = snapshot.projections;
+        let instance_id =
+            projection_instance_id(&args.skill, &binding.binding_id, &target.target_id);
+        let projection = V3ProjectionInstance {
+            instance_id: instance_id.clone(),
+            skill_id: args.skill.clone(),
+            binding_id: binding.binding_id.clone(),
+            target_id: target.target_id.clone(),
+            materialized_path: materialized_path.display().to_string(),
+            method: projection_method_as_str(args.method).to_string(),
+            last_applied_rev: gitops::head(&self.ctx).map_err(map_git)?,
+            health: "healthy".to_string(),
+            observed_drift: Some(false),
+            updated_at: Some(Utc::now()),
+        };
+        upsert_projection(&mut projections, projection.clone());
+        paths.save_projections(&projections).map_err(map_v3_state)?;
+
+        let op_id = record_v3_operation(
+            &paths,
+            "skill.project",
+            json!({
+                "skill_id": args.skill,
+                "binding_id": binding.binding_id,
+                "target_id": target.target_id,
+                "method": projection_method_as_str(args.method),
+                "request_id": request_id
+            }),
+            json!({
+                "instance_id": instance_id
+            }),
+        )
+        .map_err(map_v3_state)?;
+
+        Ok((
+            json!({"projection": projection, "noop": false}),
+            Meta {
+                op_id: Some(op_id),
+                ..Meta::default()
+            },
+        ))
+    }
+
+    pub fn cmd_capture(
+        &self,
+        args: &CaptureArgs,
+        request_id: &str,
+    ) -> std::result::Result<(serde_json::Value, Meta), CommandFailure> {
+        let _workspace = self.ctx.lock_workspace().map_err(map_lock)?;
+        self.ensure_write_repo_ready()?;
+        let paths = self.ensure_v3_layout()?;
+        let snapshot = paths.load_snapshot().map_err(map_v3_state)?;
+        let projection = resolve_capture_projection(&snapshot, args)?;
+        ensure_skill_exists(&self.ctx, &projection.skill_id)?;
+
+        let skill_rel = format!("skills/{}", projection.skill_id);
+        let skill_path = self.ctx.root.join(&skill_rel);
+        let live_path = PathBuf::from(&projection.materialized_path);
+        if !live_path.exists() {
+            return Err(CommandFailure::new(
+                ErrorCode::ArgInvalid,
+                format!("projection path '{}' does not exist", live_path.display()),
+            ));
+        }
+
+        if projection.method != "symlink" {
+            let tmp_path = self
+                .ctx
+                .state_dir
+                .join(format!("tmp-capture-{}", Uuid::new_v4()));
+            let _ = remove_path_if_exists(&tmp_path);
+            copy_dir_recursive(&live_path, &tmp_path).map_err(map_io)?;
+            remove_path_if_exists(&skill_path).map_err(map_io)?;
+            fs::rename(&tmp_path, &skill_path).map_err(map_io)?;
+        }
+
+        gitops::stage_path(&self.ctx, Path::new(&skill_rel)).map_err(map_git)?;
+        let changed = gitops::has_staged_changes_for_path(&self.ctx, Path::new(&skill_rel))
+            .map_err(map_git)?;
+        let commit = if changed {
+            let message = args.message.clone().unwrap_or_else(|| {
+                format!(
+                    "capture({}): from {}",
+                    projection.skill_id, projection.instance_id
+                )
+            });
+            Some(gitops::commit(&self.ctx, &message).map_err(map_git)?)
+        } else {
+            None
+        };
+        let current_rev = gitops::head(&self.ctx).map_err(map_git)?;
+
+        let mut projections = snapshot.projections;
+        update_projection_after_capture(&mut projections, &projection.instance_id, &current_rev)?;
+        paths.save_projections(&projections).map_err(map_v3_state)?;
+
+        let op_id = record_v3_operation(
+            &paths,
+            "skill.capture",
+            json!({
+                "skill_id": projection.skill_id,
+                "binding_id": projection.binding_id,
+                "instance_id": projection.instance_id,
+                "request_id": request_id
+            }),
+            json!({
+                "instance_id": projection.instance_id,
+                "commit": commit
+            }),
+        )
+        .map_err(map_v3_state)?;
+
+        Ok((
+            json!({
+                "capture": {
+                    "skill_id": projection.skill_id,
+                    "binding_id": projection.binding_id,
+                    "instance_id": projection.instance_id,
+                    "commit": commit,
+                    "noop": !changed
+                }
+            }),
+            Meta {
+                op_id: Some(op_id),
+                ..Meta::default()
+            },
+        ))
+    }
+
     pub fn cmd_link(
         &self,
         args: &LinkArgs,
@@ -453,6 +663,7 @@ impl App {
             Meta {
                 warnings,
                 sync_state: None,
+                op_id: None,
             },
         ))
     }
@@ -641,6 +852,8 @@ impl App {
         let skills = list_skills(&self.ctx).map_err(map_io)?;
         let pending_report = self.ctx.read_pending_report().map_err(map_io)?;
         let target_dirs = resolve_agent_skill_dirs();
+        let v3_paths = V3StatePaths::from_root(&self.ctx.root);
+        let v3_status = v3_paths.maybe_load_snapshot().map_err(map_v3_state)?;
         let mut warnings = pending_report.warnings;
         let head = read_git_field(&self.ctx, &["rev-parse", "HEAD"], &mut warnings);
         let branch = read_git_field(
@@ -653,19 +866,23 @@ impl App {
         let (remote, mut meta) = remote_status_payload(&self.ctx)?;
         meta.warnings.splice(0..0, warnings);
 
-        Ok((
-            json!({
-                "skills": skills,
-                "git": {"head": head, "branch": branch, "status_short": status_short},
-                "targets": {
-                    "claude_dir": target_dirs.claude.display().to_string(),
-                    "codex_dir": target_dirs.codex.display().to_string()
-                },
-                "remote": remote,
-                "pending_ops": pending_report.ops.len()
-            }),
-            meta,
-        ))
+        let mut data = json!({
+            "state_model": if v3_status.is_some() { "v3" } else { "v2" },
+            "skills": skills,
+            "git": {"head": head, "branch": branch, "status_short": status_short},
+            "targets": {
+                "claude_dir": target_dirs.claude.display().to_string(),
+                "codex_dir": target_dirs.codex.display().to_string()
+            },
+            "remote": remote,
+            "pending_ops": pending_report.ops.len()
+        });
+
+        if let Some(snapshot) = v3_status {
+            data["v3"] = snapshot.status_view();
+        }
+
+        Ok((data, meta))
     }
 
     pub fn cmd_doctor(&self) -> std::result::Result<(serde_json::Value, Meta), CommandFailure> {
@@ -697,6 +914,432 @@ impl App {
         ))
     }
 
+    pub fn cmd_workspace_binding(
+        &self,
+        command: &WorkspaceBindingCommand,
+        request_id: &str,
+    ) -> std::result::Result<(serde_json::Value, Meta), CommandFailure> {
+        match command {
+            WorkspaceBindingCommand::Add(args) => self.cmd_workspace_binding_add(args, request_id),
+            WorkspaceBindingCommand::List => Ok((
+                {
+                    let snapshot = self.require_v3_snapshot()?;
+                    json!({
+                        "state_model": "v3",
+                        "count": snapshot.bindings.bindings.len(),
+                        "bindings": snapshot.bindings.bindings
+                    })
+                },
+                Meta::default(),
+            )),
+            WorkspaceBindingCommand::Show(args) => {
+                let snapshot = self.require_v3_snapshot()?;
+                let binding = snapshot.binding(&args.binding_id).cloned().ok_or_else(|| {
+                    CommandFailure::new(
+                        ErrorCode::BindingNotFound,
+                        format!("binding '{}' not found", args.binding_id),
+                    )
+                })?;
+                let default_target = snapshot.binding_default_target(&binding);
+                let rules = snapshot.binding_rules(&binding.binding_id);
+                let projections = snapshot.binding_projections(&binding.binding_id);
+
+                Ok((
+                    json!({
+                        "state_model": "v3",
+                        "binding": binding,
+                        "default_target": default_target,
+                        "rules": rules,
+                        "projections": projections
+                    }),
+                    Meta::default(),
+                ))
+            }
+            WorkspaceBindingCommand::Remove(args) => {
+                self.cmd_workspace_binding_remove(args, request_id)
+            }
+        }
+    }
+
+    pub fn cmd_target(
+        &self,
+        command: &TargetCommand,
+        request_id: &str,
+    ) -> std::result::Result<(serde_json::Value, Meta), CommandFailure> {
+        match command {
+            TargetCommand::Add(args) => self.cmd_target_add(args, request_id),
+            TargetCommand::List => Ok((
+                {
+                    let snapshot = self.require_v3_snapshot()?;
+                    json!({
+                        "state_model": "v3",
+                        "count": snapshot.targets.targets.len(),
+                        "targets": snapshot.targets.targets
+                    })
+                },
+                Meta::default(),
+            )),
+            TargetCommand::Show(args) => {
+                let snapshot = self.require_v3_snapshot()?;
+                let target = snapshot.target(&args.target_id).cloned().ok_or_else(|| {
+                    CommandFailure::new(
+                        ErrorCode::TargetNotFound,
+                        format!("target '{}' not found", args.target_id),
+                    )
+                })?;
+                let rules = snapshot.target_rules(&target.target_id);
+                let projections = snapshot.target_projections(&target.target_id);
+                let bindings = snapshot.target_bindings(&target.target_id);
+
+                Ok((
+                    json!({
+                        "state_model": "v3",
+                        "target": target,
+                        "bindings": bindings,
+                        "rules": rules,
+                        "projections": projections
+                    }),
+                    Meta::default(),
+                ))
+            }
+            TargetCommand::Remove(args) => self.cmd_target_remove(args, request_id),
+        }
+    }
+
+    fn cmd_target_add(
+        &self,
+        args: &TargetAddArgs,
+        request_id: &str,
+    ) -> std::result::Result<(serde_json::Value, Meta), CommandFailure> {
+        let _workspace = self.ctx.lock_workspace().map_err(map_lock)?;
+        self.ensure_write_layout()?;
+        let target_path = PathBuf::from(&args.path);
+        if !target_path.is_absolute() {
+            return Err(CommandFailure::new(
+                ErrorCode::ArgInvalid,
+                "--path must be absolute",
+            ));
+        }
+
+        match args.ownership {
+            TargetOwnership::Managed => fs::create_dir_all(&target_path).map_err(map_io)?,
+            TargetOwnership::Observed | TargetOwnership::External => {
+                if !target_path.exists() {
+                    return Err(CommandFailure::new(
+                        ErrorCode::ArgInvalid,
+                        format!(
+                            "target path '{}' must exist for ownership '{}'",
+                            target_path.display(),
+                            target_ownership_as_str(args.ownership)
+                        ),
+                    ));
+                }
+            }
+        }
+
+        let paths = self.ensure_v3_layout()?;
+        let mut targets = paths.load_targets().map_err(map_v3_state)?;
+
+        if let Some(existing) = targets
+            .targets
+            .iter()
+            .find(|target| {
+                target.agent == agent_kind_as_str(args.agent) && target.path == args.path
+            })
+            .cloned()
+        {
+            if existing.ownership != target_ownership_as_str(args.ownership) {
+                return Err(CommandFailure::new(
+                    ErrorCode::ArgInvalid,
+                    format!(
+                        "target '{}' already exists with ownership '{}'",
+                        existing.target_id, existing.ownership
+                    ),
+                ));
+            }
+            return Ok((json!({"target": existing, "noop": true}), Meta::default()));
+        }
+
+        let target_id = unique_target_id(&targets, args);
+        let target = V3ProjectionTarget {
+            target_id: target_id.clone(),
+            agent: agent_kind_as_str(args.agent).to_string(),
+            path: args.path.clone(),
+            ownership: target_ownership_as_str(args.ownership).to_string(),
+            capabilities: target_capabilities(args.ownership),
+            created_at: Some(Utc::now()),
+        };
+
+        targets.targets.push(target.clone());
+        targets
+            .targets
+            .sort_by(|left, right| left.target_id.cmp(&right.target_id));
+        paths.save_targets(&targets).map_err(map_v3_state)?;
+
+        let op_id = record_v3_operation(
+            &paths,
+            "target.add",
+            json!({
+                "target_id": target.target_id,
+                "agent": target.agent,
+                "path": target.path,
+                "ownership": target.ownership,
+                "request_id": request_id
+            }),
+            json!({
+                "target_id": target.target_id
+            }),
+        )
+        .map_err(map_v3_state)?;
+
+        Ok((
+            json!({"target": target, "noop": false}),
+            Meta {
+                op_id: Some(op_id),
+                ..Meta::default()
+            },
+        ))
+    }
+
+    fn cmd_workspace_binding_add(
+        &self,
+        args: &BindingAddArgs,
+        request_id: &str,
+    ) -> std::result::Result<(serde_json::Value, Meta), CommandFailure> {
+        let _workspace = self.ctx.lock_workspace().map_err(map_lock)?;
+        self.ensure_write_layout()?;
+        validate_non_empty("profile", &args.profile)?;
+        validate_non_empty("matcher_value", &args.matcher_value)?;
+        validate_non_empty("target", &args.target)?;
+        validate_non_empty("policy_profile", &args.policy_profile)?;
+
+        let paths = self.ensure_v3_layout()?;
+        let snapshot = paths.load_snapshot().map_err(map_v3_state)?;
+        if snapshot.target(&args.target).is_none() {
+            return Err(CommandFailure::new(
+                ErrorCode::TargetNotFound,
+                format!("target '{}' not found", args.target),
+            ));
+        }
+
+        if let Some(existing) = snapshot
+            .bindings
+            .bindings
+            .iter()
+            .find(|binding| {
+                binding.agent == agent_kind_as_str(args.agent)
+                    && binding.profile_id == args.profile
+                    && binding.workspace_matcher.kind
+                        == workspace_matcher_kind_as_str(args.matcher_kind)
+                    && binding.workspace_matcher.value == args.matcher_value
+                    && binding.default_target_id == args.target
+                    && binding.policy_profile == args.policy_profile
+            })
+            .cloned()
+        {
+            return Ok((json!({"binding": existing, "noop": true}), Meta::default()));
+        }
+
+        let mut bindings = snapshot.bindings;
+        let binding_id = unique_binding_id(&bindings, args);
+        let binding = V3WorkspaceBinding {
+            binding_id: binding_id.clone(),
+            agent: agent_kind_as_str(args.agent).to_string(),
+            profile_id: args.profile.clone(),
+            workspace_matcher: V3WorkspaceMatcher {
+                kind: workspace_matcher_kind_as_str(args.matcher_kind).to_string(),
+                value: args.matcher_value.clone(),
+            },
+            default_target_id: args.target.clone(),
+            policy_profile: args.policy_profile.clone(),
+            active: true,
+            created_at: Some(Utc::now()),
+        };
+
+        bindings.bindings.push(binding.clone());
+        bindings
+            .bindings
+            .sort_by(|left, right| left.binding_id.cmp(&right.binding_id));
+        paths.save_bindings(&bindings).map_err(map_v3_state)?;
+
+        let op_id = record_v3_operation(
+            &paths,
+            "workspace.binding.add",
+            json!({
+                "binding_id": binding.binding_id,
+                "agent": binding.agent,
+                "profile_id": binding.profile_id,
+                "matcher_kind": binding.workspace_matcher.kind,
+                "matcher_value": binding.workspace_matcher.value,
+                "target_id": binding.default_target_id,
+                "request_id": request_id
+            }),
+            json!({
+                "binding_id": binding.binding_id
+            }),
+        )
+        .map_err(map_v3_state)?;
+
+        Ok((
+            json!({"binding": binding, "noop": false}),
+            Meta {
+                op_id: Some(op_id),
+                ..Meta::default()
+            },
+        ))
+    }
+
+    fn cmd_workspace_binding_remove(
+        &self,
+        args: &crate::cli::BindingShowArgs,
+        request_id: &str,
+    ) -> std::result::Result<(serde_json::Value, Meta), CommandFailure> {
+        let _workspace = self.ctx.lock_workspace().map_err(map_lock)?;
+        self.ensure_write_layout()?;
+        let paths = self.ensure_v3_layout()?;
+        let mut snapshot = paths.load_snapshot().map_err(map_v3_state)?;
+        let binding = snapshot.binding(&args.binding_id).cloned().ok_or_else(|| {
+            CommandFailure::new(
+                ErrorCode::BindingNotFound,
+                format!("binding '{}' not found", args.binding_id),
+            )
+        })?;
+
+        let removed_rules = snapshot.binding_rules(&args.binding_id);
+        let removed_projections = snapshot.binding_projections(&args.binding_id);
+        let orphaned_paths = removed_projections
+            .iter()
+            .map(|projection| projection.materialized_path.clone())
+            .filter(|path| Path::new(path).exists())
+            .collect::<Vec<_>>();
+
+        snapshot
+            .bindings
+            .bindings
+            .retain(|item| item.binding_id != args.binding_id);
+        snapshot
+            .rules
+            .rules
+            .retain(|item| item.binding_id != args.binding_id);
+        snapshot
+            .projections
+            .projections
+            .retain(|item| item.binding_id != args.binding_id);
+
+        paths
+            .save_bindings(&snapshot.bindings)
+            .map_err(map_v3_state)?;
+        paths.save_rules(&snapshot.rules).map_err(map_v3_state)?;
+        paths
+            .save_projections(&snapshot.projections)
+            .map_err(map_v3_state)?;
+
+        let op_id = record_v3_operation(
+            &paths,
+            "workspace.binding.remove",
+            json!({
+                "binding_id": binding.binding_id,
+                "request_id": request_id
+            }),
+            json!({
+                "binding_id": binding.binding_id,
+                "removed_rules": removed_rules.iter().map(|rule| rule.skill_id.clone()).collect::<Vec<_>>(),
+                "removed_projection_ids": removed_projections.iter().map(|projection| projection.instance_id.clone()).collect::<Vec<_>>(),
+            }),
+        )
+        .map_err(map_v3_state)?;
+
+        let mut meta = Meta {
+            op_id: Some(op_id),
+            ..Meta::default()
+        };
+        if !orphaned_paths.is_empty() {
+            meta.warnings.push(format!(
+                "binding removed from state; {} live projection path(s) were left in place",
+                orphaned_paths.len()
+            ));
+        }
+
+        Ok((
+            json!({
+                "binding": binding,
+                "removed_rules": removed_rules,
+                "removed_projections": removed_projections,
+                "orphaned_paths": orphaned_paths,
+                "noop": false
+            }),
+            meta,
+        ))
+    }
+
+    fn cmd_target_remove(
+        &self,
+        args: &crate::cli::TargetShowArgs,
+        request_id: &str,
+    ) -> std::result::Result<(serde_json::Value, Meta), CommandFailure> {
+        let _workspace = self.ctx.lock_workspace().map_err(map_lock)?;
+        self.ensure_write_layout()?;
+        let paths = self.ensure_v3_layout()?;
+        let mut snapshot = paths.load_snapshot().map_err(map_v3_state)?;
+        let target = snapshot.target(&args.target_id).cloned().ok_or_else(|| {
+            CommandFailure::new(
+                ErrorCode::TargetNotFound,
+                format!("target '{}' not found", args.target_id),
+            )
+        })?;
+
+        let bindings = snapshot.target_bindings(&args.target_id);
+        let rules = snapshot.target_rules(&args.target_id);
+        let projections = snapshot.target_projections(&args.target_id);
+        if !bindings.is_empty() || !rules.is_empty() || !projections.is_empty() {
+            let mut failure = CommandFailure::new(
+                ErrorCode::ArgInvalid,
+                format!(
+                    "target '{}' is still referenced; remove dependent bindings or projections first",
+                    args.target_id
+                ),
+            );
+            failure.details = json!({
+                "binding_ids": bindings.iter().map(|binding| binding.binding_id.clone()).collect::<Vec<_>>(),
+                "rule_skills": rules.iter().map(|rule| rule.skill_id.clone()).collect::<Vec<_>>(),
+                "projection_ids": projections.iter().map(|projection| projection.instance_id.clone()).collect::<Vec<_>>(),
+            });
+            return Err(failure);
+        }
+
+        snapshot
+            .targets
+            .targets
+            .retain(|item| item.target_id != args.target_id);
+        paths
+            .save_targets(&snapshot.targets)
+            .map_err(map_v3_state)?;
+
+        let op_id = record_v3_operation(
+            &paths,
+            "target.remove",
+            json!({
+                "target_id": target.target_id,
+                "request_id": request_id
+            }),
+            json!({
+                "target_id": target.target_id
+            }),
+        )
+        .map_err(map_v3_state)?;
+
+        Ok((
+            json!({
+                "target": target,
+                "noop": false
+            }),
+            Meta {
+                op_id: Some(op_id),
+                ..Meta::default()
+            },
+        ))
+    }
+
     pub fn cmd_remote(
         &self,
         command: &RemoteCommand,
@@ -713,6 +1356,23 @@ impl App {
                 Ok((json!({"remote": remote}), meta))
             }
         }
+    }
+
+    fn require_v3_snapshot(&self) -> std::result::Result<V3Snapshot, CommandFailure> {
+        let paths = V3StatePaths::from_root(&self.ctx.root);
+        match paths.maybe_load_snapshot().map_err(map_v3_state)? {
+            Some(snapshot) => Ok(snapshot),
+            None => Err(CommandFailure::new(
+                ErrorCode::ArgInvalid,
+                format!("v3 state not initialized under {}", paths.v3_dir.display()),
+            )),
+        }
+    }
+
+    fn ensure_v3_layout(&self) -> std::result::Result<V3StatePaths, CommandFailure> {
+        let paths = V3StatePaths::from_root(&self.ctx.root);
+        paths.ensure_layout().map_err(map_v3_state)?;
+        Ok(paths)
     }
 
     pub fn cmd_sync(
@@ -794,6 +1454,7 @@ impl App {
                     Meta {
                         warnings: report.warnings,
                         sync_state: None,
+                        op_id: None,
                     },
                 ))
             }
@@ -844,6 +1505,202 @@ impl App {
         }
     }
 
+    fn cmd_migrate(
+        &self,
+        command: &MigrateCommand,
+        request_id: &str,
+    ) -> std::result::Result<(serde_json::Value, Meta), CommandFailure> {
+        match command {
+            MigrateCommand::V2ToV3(args) => self.cmd_migrate_v2_to_v3(args, request_id),
+        }
+    }
+
+    fn cmd_migrate_v2_to_v3(
+        &self,
+        args: &MigrateV2ToV3Args,
+        request_id: &str,
+    ) -> std::result::Result<(serde_json::Value, Meta), CommandFailure> {
+        let plan = self.build_v2_to_v3_migration_plan().map_err(map_io)?;
+        if !args.apply {
+            return Ok((
+                json!({ "migration": plan.as_json("plan") }),
+                Meta::default(),
+            ));
+        }
+
+        if !plan.unresolved.is_empty() {
+            let mut failure = CommandFailure::new(
+                ErrorCode::ArgInvalid,
+                "migration has unresolved legacy targets; run --plan and fix them before --apply",
+            );
+            failure.details = json!({ "migration": plan.as_json("apply") });
+            return Err(failure);
+        }
+
+        let _workspace = self.ctx.lock_workspace().map_err(map_lock)?;
+        let paths = V3StatePaths::from_root(&self.ctx.root);
+        let mut snapshot = paths.load_or_init_snapshot().map_err(map_io)?;
+        let mut meta = Meta::default();
+        let now = Utc::now();
+        let before_count = snapshot.targets.targets.len();
+        let mut created = Vec::new();
+        let mut skipped = Vec::new();
+
+        for candidate in &plan.candidate_targets {
+            if candidate.existing_target_id.is_some() {
+                skipped.push(json!({
+                    "target_id": candidate.target_id,
+                    "path": candidate.path,
+                    "reason": "already_exists"
+                }));
+                continue;
+            }
+
+            snapshot.targets.targets.push(V3ProjectionTarget {
+                target_id: candidate.target_id.clone(),
+                agent: agent_kind_as_str(candidate.agent).to_string(),
+                path: candidate.path.clone(),
+                ownership: target_ownership_as_str(TargetOwnership::Observed).to_string(),
+                capabilities: target_capabilities(TargetOwnership::Observed),
+                created_at: Some(now),
+            });
+            created.push(json!({
+                "target_id": candidate.target_id,
+                "agent": agent_kind_as_str(candidate.agent),
+                "path": candidate.path,
+                "ownership": "observed",
+                "source_skills": candidate.source_skills
+            }));
+        }
+
+        if snapshot.targets.targets.len() != before_count {
+            paths.save_targets(&snapshot.targets).map_err(map_io)?;
+            let op_id = record_v3_operation(
+                &paths,
+                "migrate.v2-to-v3.apply",
+                json!({
+                    "request_id": request_id,
+                    "candidate_targets": plan.candidate_targets.len()
+                }),
+                json!({
+                    "created_targets": created,
+                    "skipped_targets": skipped
+                }),
+            )
+            .map_err(map_io)?;
+            meta.op_id = Some(op_id);
+        }
+
+        meta.warnings.extend(plan.warnings.clone());
+
+        Ok((
+            json!({
+                "migration": plan.as_json("apply"),
+                "created_targets": created,
+                "skipped_targets": skipped,
+                "noop": meta.op_id.is_none()
+            }),
+            meta,
+        ))
+    }
+
+    fn build_v2_to_v3_migration_plan(&self) -> Result<V2ToV3MigrationPlan> {
+        let legacy = self.ctx.load_targets()?;
+        let existing_v3 = V3StatePaths::from_root(&self.ctx.root).maybe_load_snapshot()?;
+        let mut candidate_paths = BTreeMap::<(AgentKind, PathBuf), BTreeSet<String>>::new();
+        let mut unresolved = Vec::new();
+
+        for (skill_id, config) in &legacy.skills {
+            collect_legacy_target_candidate(
+                skill_id,
+                AgentKind::Claude,
+                config.claude_path.as_deref(),
+                &mut candidate_paths,
+                &mut unresolved,
+            );
+            collect_legacy_target_candidate(
+                skill_id,
+                AgentKind::Codex,
+                config.codex_path.as_deref(),
+                &mut candidate_paths,
+                &mut unresolved,
+            );
+        }
+
+        let mut synthetic_targets = existing_v3
+            .as_ref()
+            .map(|snapshot| snapshot.targets.clone())
+            .unwrap_or_else(|| V3TargetsFile {
+                schema_version: 3,
+                targets: Vec::new(),
+            });
+
+        let mut candidate_targets = Vec::new();
+        for ((agent, path), source_skills) in candidate_paths {
+            let existing_target_id = synthetic_targets
+                .targets
+                .iter()
+                .find(|target| {
+                    target.agent == agent_kind_as_str(agent)
+                        && Path::new(&target.path) == path.as_path()
+                })
+                .map(|target| target.target_id.clone());
+
+            let target_id = existing_target_id.clone().unwrap_or_else(|| {
+                let next_id = unique_target_id_for(
+                    agent,
+                    path.to_string_lossy().as_ref(),
+                    &synthetic_targets,
+                );
+                synthetic_targets.targets.push(V3ProjectionTarget {
+                    target_id: next_id.clone(),
+                    agent: agent_kind_as_str(agent).to_string(),
+                    path: path.display().to_string(),
+                    ownership: target_ownership_as_str(TargetOwnership::Observed).to_string(),
+                    capabilities: target_capabilities(TargetOwnership::Observed),
+                    created_at: None,
+                });
+                next_id
+            });
+
+            candidate_targets.push(V2ToV3CandidateTarget {
+                target_id,
+                agent,
+                path: path.display().to_string(),
+                ownership: TargetOwnership::Observed,
+                action: if existing_target_id.is_some() {
+                    "skip_existing".to_string()
+                } else {
+                    "create".to_string()
+                },
+                existing_target_id,
+                source_skills: source_skills.into_iter().collect(),
+            });
+        }
+
+        let mut warnings = Vec::new();
+        if legacy.skills.is_empty() {
+            warnings.push("no legacy v2 targets.json entries found".to_string());
+        }
+        if candidate_targets.is_empty() && unresolved.is_empty() && !legacy.skills.is_empty() {
+            warnings
+                .push("legacy targets did not yield any migratable target directories".to_string());
+        }
+        if existing_v3.is_some() {
+            warnings.push(
+                "existing v3 state detected; migration will merge missing observed targets only"
+                    .to_string(),
+            );
+        }
+
+        Ok(V2ToV3MigrationPlan {
+            legacy_skill_count: legacy.skills.len(),
+            candidate_targets,
+            unresolved,
+            warnings,
+        })
+    }
+
     fn unsupported_v1_command(
         &self,
         legacy: &'static str,
@@ -864,6 +1721,54 @@ impl App {
     }
 }
 
+#[derive(Debug, Clone)]
+struct V2ToV3MigrationPlan {
+    legacy_skill_count: usize,
+    candidate_targets: Vec<V2ToV3CandidateTarget>,
+    unresolved: Vec<V2ToV3Unresolved>,
+    warnings: Vec<String>,
+}
+
+impl V2ToV3MigrationPlan {
+    fn as_json(&self, mode: &str) -> serde_json::Value {
+        json!({
+            "mode": mode,
+            "legacy_skill_count": self.legacy_skill_count,
+            "candidate_targets": self.candidate_targets,
+            "candidate_bindings": [],
+            "unresolved": self.unresolved,
+            "warnings": self.warnings,
+            "next_steps": [
+                "review observed targets",
+                "create workspace bindings manually",
+                "project skills explicitly after migration"
+            ]
+        })
+    }
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+struct V2ToV3CandidateTarget {
+    target_id: String,
+    agent: AgentKind,
+    path: String,
+    ownership: TargetOwnership,
+    action: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    existing_target_id: Option<String>,
+    source_skills: Vec<String>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+struct V2ToV3Unresolved {
+    skill_id: String,
+    agent: AgentKind,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    path: Option<String>,
+    reason: String,
+    details: serde_json::Value,
+}
+
 fn resolve_init_args(args: &InitArgs) -> Result<InitResolved> {
     if args.wizard {
         return run_init_wizard(args);
@@ -876,6 +1781,62 @@ fn resolve_init_args(args: &InitArgs) -> Result<InitResolved> {
         skip_backup: args.skip_backup,
         backup_dir: args.backup_dir.clone(),
     })
+}
+
+fn collect_legacy_target_candidate(
+    skill_id: &str,
+    agent: AgentKind,
+    raw_path: Option<&str>,
+    out: &mut BTreeMap<(AgentKind, PathBuf), BTreeSet<String>>,
+    unresolved: &mut Vec<V2ToV3Unresolved>,
+) {
+    let Some(raw_path) = raw_path.map(str::trim).filter(|value| !value.is_empty()) else {
+        return;
+    };
+    let legacy_path = PathBuf::from(raw_path);
+    if !legacy_path.is_absolute() {
+        unresolved.push(V2ToV3Unresolved {
+            skill_id: skill_id.to_string(),
+            agent,
+            path: Some(raw_path.to_string()),
+            reason: "relative_path".to_string(),
+            details: json!({
+                "message": "legacy target path must be absolute to migrate safely"
+            }),
+        });
+        return;
+    }
+
+    let Some(parent) = legacy_path.parent() else {
+        unresolved.push(V2ToV3Unresolved {
+            skill_id: skill_id.to_string(),
+            agent,
+            path: Some(raw_path.to_string()),
+            reason: "missing_parent".to_string(),
+            details: json!({
+                "message": "legacy target path has no parent directory"
+            }),
+        });
+        return;
+    };
+
+    if !parent.exists() {
+        unresolved.push(V2ToV3Unresolved {
+            skill_id: skill_id.to_string(),
+            agent,
+            path: Some(parent.display().to_string()),
+            reason: "target_directory_missing".to_string(),
+            details: json!({
+                "legacy_path": raw_path,
+                "message": "observed target directory does not exist"
+            }),
+        });
+        return;
+    }
+
+    out.entry((agent, parent.to_path_buf()))
+        .or_default()
+        .insert(skill_id.to_string());
 }
 
 fn run_init_wizard(args: &InitArgs) -> Result<InitResolved> {
@@ -1104,11 +2065,25 @@ fn command_name(command: &Command) -> &'static str {
             WorkspaceCommand::Init(_) => "workspace.init",
             WorkspaceCommand::Status => "workspace.status",
             WorkspaceCommand::Doctor => "workspace.doctor",
+            WorkspaceCommand::Binding { command } => match command {
+                WorkspaceBindingCommand::Add(_) => "workspace.binding.add",
+                WorkspaceBindingCommand::List => "workspace.binding.list",
+                WorkspaceBindingCommand::Show(_) => "workspace.binding.show",
+                WorkspaceBindingCommand::Remove(_) => "workspace.binding.remove",
+            },
             WorkspaceCommand::Remote { .. } => "workspace.remote",
+        },
+        Command::Target { command } => match command {
+            TargetCommand::Add(_) => "target.add",
+            TargetCommand::List => "target.list",
+            TargetCommand::Show(_) => "target.show",
+            TargetCommand::Remove(_) => "target.remove",
         },
         Command::Skill { command } => match command {
             SkillCommand::Add(_) => "skill.add",
             SkillCommand::Import(_) => "skill.import",
+            SkillCommand::Project(_) => "skill.project",
+            SkillCommand::Capture(_) => "skill.capture",
             SkillCommand::Link(_) => "skill.link",
             SkillCommand::Use(_) => "skill.use",
             SkillCommand::Save(_) => "skill.save",
@@ -1132,6 +2107,15 @@ fn command_name(command: &Command) -> &'static str {
                 OpsHistoryCommand::Repair(_) => "ops.history.repair",
             },
         },
+        Command::Migrate { command } => match command {
+            MigrateCommand::V2ToV3(args) => {
+                if args.apply {
+                    "migrate.v2-to-v3.apply"
+                } else {
+                    "migrate.v2-to-v3.plan"
+                }
+            }
+        },
         Command::Panel(_) => "panel",
         Command::LegacyInit(_) => "init",
         Command::LegacyAdd(_) => "add",
@@ -1146,6 +2130,383 @@ fn command_name(command: &Command) -> &'static str {
         Command::LegacyStatus => "status",
         Command::LegacyDoctor => "doctor",
         Command::LegacyRemote { .. } => "remote",
+    }
+}
+
+fn agent_kind_as_str(agent: AgentKind) -> &'static str {
+    match agent {
+        AgentKind::Claude => "claude",
+        AgentKind::Codex => "codex",
+    }
+}
+
+fn workspace_matcher_kind_as_str(kind: WorkspaceMatcherKind) -> &'static str {
+    match kind {
+        WorkspaceMatcherKind::PathPrefix => "path_prefix",
+        WorkspaceMatcherKind::ExactPath => "exact_path",
+        WorkspaceMatcherKind::Name => "name",
+    }
+}
+
+fn target_ownership_as_str(ownership: TargetOwnership) -> &'static str {
+    match ownership {
+        TargetOwnership::Managed => "managed",
+        TargetOwnership::Observed => "observed",
+        TargetOwnership::External => "external",
+    }
+}
+
+fn target_capabilities(ownership: TargetOwnership) -> V3TargetCapabilities {
+    match ownership {
+        TargetOwnership::Managed => V3TargetCapabilities {
+            symlink: true,
+            copy: true,
+            watch: true,
+        },
+        TargetOwnership::Observed => V3TargetCapabilities {
+            symlink: false,
+            copy: false,
+            watch: true,
+        },
+        TargetOwnership::External => V3TargetCapabilities {
+            symlink: false,
+            copy: false,
+            watch: false,
+        },
+    }
+}
+
+fn projection_method_as_str(method: ProjectionMethod) -> &'static str {
+    match method {
+        ProjectionMethod::Symlink => "symlink",
+        ProjectionMethod::Copy => "copy",
+        ProjectionMethod::Materialize => "materialize",
+    }
+}
+
+fn validate_non_empty(name: &str, value: &str) -> std::result::Result<(), CommandFailure> {
+    if value.trim().is_empty() {
+        return Err(CommandFailure::new(
+            ErrorCode::ArgInvalid,
+            format!("--{} must not be empty", name),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_projection_method(
+    target: &V3ProjectionTarget,
+    method: ProjectionMethod,
+) -> std::result::Result<(), CommandFailure> {
+    match method {
+        ProjectionMethod::Symlink if !target.capabilities.symlink => Err(CommandFailure::new(
+            ErrorCode::ArgInvalid,
+            format!(
+                "target '{}' does not support symlink projections",
+                target.target_id
+            ),
+        )),
+        ProjectionMethod::Copy | ProjectionMethod::Materialize if !target.capabilities.copy => {
+            Err(CommandFailure::new(
+                ErrorCode::ArgInvalid,
+                format!(
+                    "target '{}' does not support copy/materialize projections",
+                    target.target_id
+                ),
+            ))
+        }
+        _ => Ok(()),
+    }
+}
+
+fn unique_target_id(targets: &V3TargetsFile, args: &TargetAddArgs) -> String {
+    unique_target_id_for(args.agent, &args.path, targets)
+}
+
+fn unique_target_id_for(agent: AgentKind, path: &str, targets: &V3TargetsFile) -> String {
+    let leaf = Path::new(path)
+        .file_name()
+        .and_then(|value| value.to_str())
+        .filter(|value| !value.is_empty())
+        .unwrap_or(agent_kind_as_str(agent));
+    let base = format!("target_{}_{}", agent_kind_as_str(agent), slugify(leaf));
+    unique_id(
+        &base,
+        targets
+            .targets
+            .iter()
+            .map(|target| target.target_id.as_str())
+            .collect(),
+    )
+}
+
+fn unique_binding_id(bindings: &V3BindingsFile, args: &BindingAddArgs) -> String {
+    let matcher_token = binding_matcher_token(args);
+    let base = format!(
+        "bind_{}_{}",
+        agent_kind_as_str(args.agent),
+        slugify(&matcher_token)
+    );
+    unique_id(
+        &base,
+        bindings
+            .bindings
+            .iter()
+            .map(|binding| binding.binding_id.as_str())
+            .collect(),
+    )
+}
+
+fn binding_matcher_token(args: &BindingAddArgs) -> String {
+    match args.matcher_kind {
+        WorkspaceMatcherKind::PathPrefix | WorkspaceMatcherKind::ExactPath => {
+            Path::new(&args.matcher_value)
+                .file_name()
+                .and_then(|value| value.to_str())
+                .filter(|value| !value.is_empty())
+                .unwrap_or(&args.profile)
+                .to_string()
+        }
+        WorkspaceMatcherKind::Name => args.matcher_value.clone(),
+    }
+}
+
+fn slugify(value: &str) -> String {
+    let mut out = String::new();
+    let mut last_was_sep = false;
+    for ch in value.chars() {
+        if ch.is_ascii_alphanumeric() {
+            out.push(ch.to_ascii_lowercase());
+            last_was_sep = false;
+        } else if !last_was_sep {
+            out.push('_');
+            last_was_sep = true;
+        }
+    }
+
+    let normalized = out.trim_matches('_');
+    if normalized.is_empty() {
+        "item".to_string()
+    } else {
+        normalized.to_string()
+    }
+}
+
+fn unique_id(base: &str, existing: Vec<&str>) -> String {
+    let existing = existing
+        .into_iter()
+        .collect::<std::collections::BTreeSet<_>>();
+    if !existing.contains(base) {
+        return base.to_string();
+    }
+
+    for index in 2..1000 {
+        let candidate = format!("{}_{}", base, index);
+        if !existing.contains(candidate.as_str()) {
+            return candidate;
+        }
+    }
+
+    format!("{}_{}", base, Uuid::new_v4().simple())
+}
+
+fn projection_instance_id(skill: &str, binding_id: &str, target_id: &str) -> String {
+    format!(
+        "inst_{}_{}_{}",
+        slugify(skill),
+        slugify(binding_id),
+        slugify(target_id)
+    )
+}
+
+fn upsert_rule(rules: &mut V3RulesFile, rule: V3BindingRule) {
+    if let Some(existing) = rules.rules.iter_mut().find(|existing| {
+        existing.binding_id == rule.binding_id
+            && existing.skill_id == rule.skill_id
+            && existing.target_id == rule.target_id
+    }) {
+        existing.method = rule.method;
+        existing.watch_policy = rule.watch_policy;
+        return;
+    }
+
+    rules.rules.push(rule);
+    rules.rules.sort_by(|left, right| {
+        left.binding_id
+            .cmp(&right.binding_id)
+            .then_with(|| left.skill_id.cmp(&right.skill_id))
+            .then_with(|| left.target_id.cmp(&right.target_id))
+    });
+}
+
+fn upsert_projection(projections: &mut V3ProjectionsFile, projection: V3ProjectionInstance) {
+    if let Some(existing) = projections
+        .projections
+        .iter_mut()
+        .find(|existing| existing.instance_id == projection.instance_id)
+    {
+        *existing = projection;
+        return;
+    }
+
+    projections.projections.push(projection);
+    projections
+        .projections
+        .sort_by(|left, right| left.instance_id.cmp(&right.instance_id));
+}
+
+fn project_skill_to_target(src: &Path, dst: &Path, method: ProjectionMethod) -> Result<()> {
+    match method {
+        ProjectionMethod::Symlink => create_symlink_dir(src, dst),
+        ProjectionMethod::Copy | ProjectionMethod::Materialize => copy_dir_recursive(src, dst),
+    }
+}
+
+fn resolve_capture_projection(
+    snapshot: &V3Snapshot,
+    args: &CaptureArgs,
+) -> std::result::Result<V3ProjectionInstance, CommandFailure> {
+    if let Some(instance_id) = args.instance.as_deref() {
+        let projection = snapshot
+            .projections
+            .projections
+            .iter()
+            .find(|projection| projection.instance_id == instance_id)
+            .cloned()
+            .ok_or_else(|| {
+                CommandFailure::new(
+                    ErrorCode::ArgInvalid,
+                    format!("projection instance '{}' not found", instance_id),
+                )
+            })?;
+        if let Some(skill) = args.skill.as_deref() {
+            if projection.skill_id != skill {
+                return Err(CommandFailure::new(
+                    ErrorCode::ArgInvalid,
+                    format!(
+                        "instance '{}' belongs to skill '{}' not '{}'",
+                        instance_id, projection.skill_id, skill
+                    ),
+                ));
+            }
+        }
+        if let Some(binding_id) = args.binding.as_deref() {
+            if projection.binding_id != binding_id {
+                return Err(CommandFailure::new(
+                    ErrorCode::ArgInvalid,
+                    format!(
+                        "instance '{}' belongs to binding '{}' not '{}'",
+                        instance_id, projection.binding_id, binding_id
+                    ),
+                ));
+            }
+        }
+        return Ok(projection);
+    }
+
+    let skill = args.skill.as_deref().ok_or_else(|| {
+        CommandFailure::new(
+            ErrorCode::ArgInvalid,
+            "capture requires <skill> or --instance",
+        )
+    })?;
+    let binding_id = args.binding.as_deref().ok_or_else(|| {
+        CommandFailure::new(
+            ErrorCode::ArgInvalid,
+            "capture requires --binding when --instance is not provided",
+        )
+    })?;
+
+    let matches = snapshot
+        .projections
+        .projections
+        .iter()
+        .filter(|projection| projection.skill_id == skill && projection.binding_id == binding_id)
+        .cloned()
+        .collect::<Vec<_>>();
+
+    match matches.len() {
+        0 => Err(CommandFailure::new(
+            ErrorCode::ArgInvalid,
+            format!(
+                "no projection found for skill '{}' and binding '{}'",
+                skill, binding_id
+            ),
+        )),
+        1 => Ok(matches.into_iter().next().expect("single projection")),
+        _ => Err(CommandFailure::new(
+            ErrorCode::ArgInvalid,
+            format!(
+                "multiple projections found for skill '{}' and binding '{}'; use --instance",
+                skill, binding_id
+            ),
+        )),
+    }
+}
+
+fn update_projection_after_capture(
+    projections: &mut V3ProjectionsFile,
+    instance_id: &str,
+    rev: &str,
+) -> std::result::Result<(), CommandFailure> {
+    let projection = projections
+        .projections
+        .iter_mut()
+        .find(|projection| projection.instance_id == instance_id)
+        .ok_or_else(|| {
+            CommandFailure::new(
+                ErrorCode::ArgInvalid,
+                format!(
+                    "projection instance '{}' not found during capture update",
+                    instance_id
+                ),
+            )
+        })?;
+    projection.last_applied_rev = rev.to_string();
+    projection.health = "healthy".to_string();
+    projection.observed_drift = Some(false);
+    projection.updated_at = Some(Utc::now());
+    Ok(())
+}
+
+fn record_v3_operation(
+    paths: &V3StatePaths,
+    intent: &str,
+    payload: serde_json::Value,
+    effects: serde_json::Value,
+) -> Result<String> {
+    let op_id = format!("op_{}", Uuid::new_v4().simple());
+    let now = Utc::now();
+    let record = V3OperationRecord {
+        op_id: op_id.clone(),
+        intent: intent.to_string(),
+        status: "succeeded".to_string(),
+        ack: false,
+        payload,
+        effects,
+        last_error: None,
+        created_at: now,
+        updated_at: now,
+    };
+    paths.append_operation(&record)?;
+
+    let mut checkpoint = paths.load_checkpoint()?;
+    checkpoint.last_scanned_op_id = Some(op_id.clone());
+    checkpoint.updated_at = now;
+    paths.save_checkpoint(&checkpoint)?;
+    Ok(op_id)
+}
+
+fn map_project_io(method: ProjectionMethod) -> impl FnOnce(anyhow::Error) -> CommandFailure {
+    move |err| {
+        CommandFailure::new(
+            ErrorCode::IoError,
+            format!(
+                "failed to project skill using {}: {}",
+                projection_method_as_str(method),
+                err
+            ),
+        )
     }
 }
 
@@ -1485,6 +2846,7 @@ pub fn remote_status_payload(
                     .chain(std::iter::once("remote origin not configured".to_string()))
                     .collect(),
                 sync_state: Some(SyncState::LocalOnly),
+                op_id: None,
             },
         ));
     }
@@ -1495,6 +2857,7 @@ pub fn remote_status_payload(
     let mut meta = Meta {
         warnings: pending_report.warnings,
         sync_state: None,
+        op_id: None,
     };
 
     if !gitops::remote_tracking_main_exists(ctx).map_err(map_git)? {
@@ -1658,4 +3021,13 @@ fn map_push_rejected(err: anyhow::Error) -> CommandFailure {
 
 fn map_replay_conflict(err: anyhow::Error) -> CommandFailure {
     CommandFailure::new(ErrorCode::ReplayConflict, err.to_string())
+}
+
+fn map_v3_state(err: anyhow::Error) -> CommandFailure {
+    let message = err.to_string();
+    if message.contains("schema version mismatch") {
+        CommandFailure::new(ErrorCode::SchemaMismatch, message)
+    } else {
+        CommandFailure::new(ErrorCode::StateCorrupt, message)
+    }
 }

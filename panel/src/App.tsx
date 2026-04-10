@@ -23,7 +23,17 @@ import {
 } from "./i18n";
 import "./styles.css";
 import type { Locale } from "./i18n";
-import type { PageId, PanelData, SkillView, V3Binding, V3Model, V3Payload, V3Projection, V3Target } from "./types";
+import type {
+  PageId,
+  PanelData,
+  PendingOp,
+  SkillView,
+  V3Binding,
+  V3Model,
+  V3Payload,
+  V3Projection,
+  V3Target,
+} from "./types";
 
 const NAV_ITEMS: Array<{ id: PageId; icon: string }> = [
   { id: "overview", icon: "dashboard" },
@@ -50,7 +60,6 @@ const EMPTY_PANEL_DATA: PanelData = {
   health: {},
   info: {},
   skills: [],
-  legacyTargets: { skills: {} },
   remote: {},
   pending: {
     count: 0,
@@ -113,12 +122,227 @@ function agentDisplayName(agent?: string) {
   return agent ?? "Unknown";
 }
 
+function truncateText(value: string, limit = 40) {
+  if (value.length <= limit) return value;
+  return `${value.slice(0, limit - 1)}…`;
+}
+
+function detailLabel(key: string, locale: Locale) {
+  switch (key) {
+    case "commit":
+      return pick(locale, "Commit", "提交");
+    case "skill":
+      return pick(locale, "Skill", "技能");
+    case "skills":
+      return pick(locale, "Skills", "技能数");
+    case "binding":
+    case "binding_id":
+      return pick(locale, "Binding", "绑定");
+    case "target":
+    case "target_id":
+      return pick(locale, "Target", "目标");
+    case "request_id":
+      return pick(locale, "Request", "请求");
+    default:
+      return key.replaceAll("_", " ");
+  }
+}
+
+function pendingSkillList(details: Record<string, unknown>) {
+  const raw = details.skills;
+  if (!Array.isArray(raw)) return [];
+  return raw.filter((value): value is string => typeof value === "string");
+}
+
+function formatDetailValue(key: string, value: unknown) {
+  if (Array.isArray(value)) {
+    return `${value.length}`;
+  }
+  if (value && typeof value === "object") {
+    return "{…}";
+  }
+  const text = String(value ?? "—");
+  if (key === "commit") return truncateText(text, 12);
+  if (key.endsWith("_id") || key === "request_id") return truncateText(text, 18);
+  return truncateText(text, 36);
+}
+
 function summarizeDetails(details: Record<string, unknown>) {
+  const skills = pendingSkillList(details);
   const summary = Object.entries(details)
     .slice(0, 3)
-    .map(([key, value]) => `${key}:${String(value)}`)
+    .map(([key, value]) => {
+      if (key === "skills" && skills.length > 0) {
+        const preview = skills.slice(0, 2).join(", ");
+        const overflow = skills.length > 2 ? ` +${skills.length - 2}` : "";
+        return `skills[${skills.length}]: ${preview}${overflow}`;
+      }
+      if (Array.isArray(value)) return `${key}[${value.length}]`;
+      if (value && typeof value === "object") return `${key}:{…}`;
+      return `${key}:${formatDetailValue(key, value)}`;
+    })
     .join(" · ");
   return summary || "no-details";
+}
+
+function explainPendingOp(op: PendingOp, locale: Locale) {
+  const commit =
+    typeof op.details.commit === "string" ? truncateText(op.details.commit, 12) : null;
+  const skill = typeof op.details.skill === "string" ? op.details.skill : null;
+  const skills = pendingSkillList(op.details);
+
+  switch (op.command) {
+    case "import":
+      return pick(
+        locale,
+        `Imported ${skills.length} skills from commit ${commit ?? "unknown"} into the local workspace. The import is already done; this record is only waiting to sync out.`,
+        `把提交 ${commit ?? "未知"} 里的 ${skills.length} 个技能导入到了本地。导入已经做完，这里只是还没同步出去的记录。`,
+      );
+    case "save":
+      return pick(
+        locale,
+        `Saved the local skill ${skill ?? "unknown"} and recorded commit ${commit ?? "unknown"}. The save is already done; this record is only waiting to sync out.`,
+        `把本地技能 ${skill ?? "未知"} 做了一次保存，并记录到了提交 ${commit ?? "未知"}。保存已经做完，这里只是还没同步出去的记录。`,
+      );
+    default:
+      return pick(
+        locale,
+        `Recorded a local ${op.command} operation. The change already happened; this page is showing the unsynced record.`,
+        `记录了一条本地 ${op.command} 操作。改动本身已经发生，这里显示的是尚未同步的记录。`,
+      );
+  }
+}
+
+function queueStateLabel(index: number, remoteState: string | undefined, locale: Locale) {
+  if (remoteState === "LOCAL_ONLY") {
+    return pick(locale, "local only", "仅存在本地");
+  }
+  if (remoteState === "DIVERGED" || remoteState === "CONFLICTED") {
+    return pick(locale, "sync blocked", "同步受阻");
+  }
+  return index === 0 ? pick(locale, "waiting to sync", "等待同步") : pick(locale, "queued", "队列中");
+}
+
+function explainPendingQueue(data: PanelData, locale: Locale) {
+  const count = data.pending.count;
+  const syncState = data.remote.sync_state;
+
+  if (count === 0) {
+    return pick(
+      locale,
+      "This page shows local operations that are still waiting to sync. The queue is empty right now.",
+      "这页显示的是本地操作的待同步记录。当前队列是空的。",
+    );
+  }
+
+  if (syncState === "LOCAL_ONLY") {
+    return pick(
+      locale,
+      `${count} local operations are parked here because the workspace has no usable remote sync target.`,
+      `这里有 ${count} 条本地操作记录，因为当前工作区没有可用的远端同步目标，所以它们先停在本地。`,
+    );
+  }
+
+  if (syncState === "DIVERGED" || syncState === "CONFLICTED") {
+    return pick(
+      locale,
+      `${count} local operations are queued, but sync is blocked by a remote divergence or conflict.`,
+      `这里有 ${count} 条本地操作记录，但因为远端分叉或冲突，同步目前被卡住了。`,
+    );
+  }
+
+  return pick(
+    locale,
+    `${count} local operations are queued here until the next successful sync or push.`,
+    `这里有 ${count} 条本地操作记录，等下次同步或推送成功后才会离开队列。`,
+  );
+}
+
+function pendingNextStep(data: PanelData, locale: Locale) {
+  const syncState = data.remote.sync_state;
+
+  if (syncState === "LOCAL_ONLY") {
+    return pick(
+      locale,
+      "Configure a remote first. Until then, these records stay local and will not leave the queue.",
+      "先配置远端仓库。否则这些记录只会留在本地，不会离开队列。",
+    );
+  }
+
+  if (syncState === "DIVERGED" || syncState === "CONFLICTED") {
+    return pick(
+      locale,
+      "Resolve the remote divergence or replay conflict, then sync again.",
+      "先解决远端分叉或回放冲突，再重新同步。",
+    );
+  }
+
+  return pick(
+    locale,
+    "Run the next sync or push. Once it succeeds, these records will be removed from the queue.",
+    "执行下一次同步或推送。成功后，这些记录就会从队列里移除。",
+  );
+}
+
+function pendingFactEntries(details: Record<string, unknown>) {
+  const priority = ["commit", "skill", "binding", "binding_id", "target", "target_id", "request_id"];
+  const facts = Object.entries(details)
+    .filter(([, value]) => !Array.isArray(value) && (!value || typeof value !== "object"))
+    .sort((left, right) => {
+      const leftIndex = priority.indexOf(left[0]);
+      const rightIndex = priority.indexOf(right[0]);
+      return (leftIndex === -1 ? priority.length : leftIndex) - (rightIndex === -1 ? priority.length : rightIndex);
+    })
+    .slice(0, 4)
+    .map(([key, value]) => ({
+      key,
+      value: formatDetailValue(key, value),
+    }));
+
+  const skills = pendingSkillList(details);
+  if (skills.length > 0 && !facts.some((fact) => fact.key === "skills")) {
+    facts.push({ key: "skills", value: String(skills.length) });
+  }
+
+  return facts.slice(0, 4);
+}
+
+function OperationPayload({
+  op,
+  locale,
+}: {
+  op: PendingOp;
+  locale: Locale;
+}) {
+  const facts = pendingFactEntries(op.details);
+  const skills = pendingSkillList(op.details);
+
+  return (
+    <>
+      <p className="stitch-op-meaning">{explainPendingOp(op, locale)}</p>
+      <p className="stitch-op-summary">{summarizeDetails(op.details)}</p>
+      {facts.length > 0 ? (
+        <div className="stitch-op-facts">
+          {facts.map((fact) => (
+            <article className="stitch-op-fact" key={fact.key}>
+              <span>{detailLabel(fact.key, locale)}</span>
+              <strong>{fact.value}</strong>
+            </article>
+          ))}
+        </div>
+      ) : null}
+      {skills.length > 0 ? (
+        <div className="stitch-op-skill-list">
+          {skills.slice(0, 6).map((skill) => (
+            <span className="stitch-status-tag" key={skill}>{skill}</span>
+          ))}
+          {skills.length > 6 ? (
+            <span className="stitch-status-tag is-primary">{`+${skills.length - 6}`}</span>
+          ) : null}
+        </div>
+      ) : null}
+    </>
+  );
 }
 
 function projectionProgress(projection?: V3Projection | null) {
@@ -186,14 +410,6 @@ function opToneClass(op: PanelData["pending"]["ops"][number] | null, remoteState
   return "is-warning";
 }
 
-function opProgress(op: PanelData["pending"]["ops"][number] | null) {
-  if (!op) return 0;
-  if (op.command.includes("sync")) return 65;
-  if (op.command.includes("capture")) return 100;
-  if (op.command.includes("repair")) return 24;
-  return 48;
-}
-
 function scheduledOpIcon(index: number) {
   return index === 0 ? "timer" : "sync_problem";
 }
@@ -259,11 +475,10 @@ function normalizeV3(payload: V3Payload, locale: Locale): V3Model {
 }
 
 async function loadPanelData(locale: Locale): Promise<PanelData> {
-  const [health, info, skills, targets, v3, remote, pending] = await Promise.all([
+  const [health, info, skills, v3, remote, pending] = await Promise.all([
     fetchRequiredJson<PanelData["health"]>("/api/health"),
     fetchRequiredJson<PanelData["info"]>("/api/info"),
     fetchRequiredJson<{ skills?: string[] }>("/api/skills"),
-    fetchRequiredJson<{ targets?: PanelData["legacyTargets"] }>("/api/targets"),
     fetchRequiredJson<V3Payload>("/api/v3/status"),
     fetchRequiredJson<{ remote?: PanelData["remote"]; warnings?: string[] }>("/api/remote/status"),
     fetchRequiredJson<PanelData["pending"]>("/api/pending"),
@@ -273,7 +488,6 @@ async function loadPanelData(locale: Locale): Promise<PanelData> {
     health,
     info,
     skills: skills.skills ?? [],
-    legacyTargets: targets.targets ?? { skills: {} },
     v3: normalizeV3(v3, locale),
     remote: remote.remote ?? {},
     pending: {
@@ -294,7 +508,6 @@ function buildSkillViews(data: PanelData): SkillView[] {
   const targetMap = new Map(data.v3.targets.map((target) => [target.target_id, target]));
   const allNames = new Set<string>([
     ...data.skills,
-    ...Object.keys(data.legacyTargets.skills),
     ...data.v3.rules.map((rule) => rule.skill_id),
     ...data.v3.projections.map((projection) => projection.skill_id),
   ]);
@@ -331,7 +544,6 @@ function buildSkillViews(data: PanelData): SkillView[] {
       targets: [...targets.values()],
       methods: [...methods.values()],
       driftedCount: projections.filter(projectionIsDrifted).length,
-      legacyTarget: data.legacyTargets.skills[name],
     });
   }
 
@@ -1557,15 +1769,19 @@ function OpsPage({ data, locale }: { data: PanelData; locale: Locale }) {
   const scheduledOps = data.pending.ops.slice(3, 5);
   const drifted = data.v3.projections.filter(projectionIsDrifted);
   const repairTarget = activeOp?.op_id ?? activeOp?.request_id ?? "902-X-FAIL";
+  const activeOpIndex = activeOp
+    ? data.pending.ops.findIndex((op) => op.request_id === activeOp.request_id) + 1
+    : 0;
 
   return (
     <div className="stitch-screen-column">
       <div className="ops-grid stitch-ops-layout">
         <section className="panel stitch-queue-panel">
           <div className="stitch-queue-head">
-            <h2 className="panel-title">{pick(locale, "Active Queue", "活跃队列")}</h2>
-            <span className="minor-chip is-primary">{locale === "zh-CN" ? `${data.pending.count} 待处理` : `${data.pending.count} PENDING`}</span>
+            <h2 className="panel-title">{pick(locale, "Unsynced Local Changes", "待同步的本地改动")}</h2>
+            <span className="minor-chip is-primary">{locale === "zh-CN" ? `${data.pending.count} 条待同步` : `${data.pending.count} UNSYNCED`}</span>
           </div>
+          <p className="stitch-ops-explainer">{explainPendingQueue(data, locale)}</p>
           <div className="stitch-queue-body">
             {queuedOps.length === 0 ? (
               <div className="empty-state">{pick(locale, "queue empty", "队列为空")}</div>
@@ -1584,39 +1800,22 @@ function OpsPage({ data, locale }: { data: PanelData; locale: Locale }) {
                       <span>{formatTime(locale, op.created_at)}</span>
                     </div>
                     <h3>{op.command.toUpperCase().replaceAll(" ", "_")}</h3>
-                    <p>{summarizeDetails(op.details)}</p>
-                    {tone === "is-primary" ? (
-                      <>
-                        <div className="stitch-progress-bar">
-                          <div className="stitch-progress-fill is-primary" style={{ width: `${opProgress(op)}%` }} />
-                        </div>
-                        <div className="stitch-op-card-processing">
-                          <span className="stitch-inline-meta is-accent">
-                            <Icon name="refresh" />
-                            <span>{pick(locale, "Processing", "处理中")}</span>
-                          </span>
-                          <span>{`${opProgress(op)}% ${pick(locale, "Complete", "完成")}`}</span>
-                        </div>
-                      </>
-                    ) : tone === "is-danger" ? (
-                      <div className="stitch-op-card-actions">
-                        <button className="stitch-op-inline-button is-danger" type="button">Repair_Force</button>
-                        <button className="stitch-op-inline-button" type="button">Details</button>
-                      </div>
-                    ) : (
-                      <div className="stitch-op-card-tags">
-                        {Object.entries(op.details).slice(0, 2).map(([key, value]) => (
-                          <span className="stitch-status-tag" key={key}>{`${key}:${String(value)}`}</span>
-                        ))}
-                      </div>
-                    )}
+                    <OperationPayload locale={locale} op={op} />
+                    <div className="stitch-op-card-tags">
+                      <span className="stitch-status-tag">{queueStateLabel(index, data.remote.sync_state, locale)}</span>
+                      {pendingFactEntries(op.details).slice(0, 2).map((fact) => (
+                        <span className="stitch-status-tag" key={fact.key}>
+                          {`${detailLabel(fact.key, locale)}: ${fact.value}`}
+                        </span>
+                      ))}
+                    </div>
                   </button>
                 );
               })
             )}
 
             <div className="stitch-queue-divider">
-              <span>{pick(locale, "Pending Schedule", "等待调度")}</span>
+              <span>{pick(locale, "More queued records", "后续待同步记录")}</span>
             </div>
 
             {scheduledOps.map((op, index) => (
@@ -1625,12 +1824,10 @@ function OpsPage({ data, locale }: { data: PanelData; locale: Locale }) {
                   <Icon name={scheduledOpIcon(index)} />
                   <div>
                     <h4>{op.command.toUpperCase().replaceAll(" ", "_")}</h4>
-                    <p>{pick(locale, "Awaiting previous job", "等待前序任务")}</p>
+                    <p>{pick(locale, "Waiting for earlier queued records", "等待前面的记录先同步")}</p>
                   </div>
                 </div>
-                <button className="icon-button" type="button">
-                  <Icon name={index === 0 ? "more_vert" : "pause"} />
-                </button>
+                <span className="stitch-status-tag">{queueStateLabel(index + queuedOps.length, data.remote.sync_state, locale)}</span>
               </div>
             ))}
           </div>
@@ -1639,31 +1836,37 @@ function OpsPage({ data, locale }: { data: PanelData; locale: Locale }) {
         <section className="panel stitch-terminal-panel">
           <div className="stitch-terminal-metadata">
             <div>
-              <span>{pick(locale, "Target Instance", "目标实例")}</span>
-              <strong>{activeOp?.request_id ?? "Loom-Core"}</strong>
+              <span>{pick(locale, "Selected Record", "当前记录")}</span>
+              <strong>{activeOp?.command.toUpperCase().replaceAll(" ", "_") ?? "IDLE"}</strong>
             </div>
             <div>
-              <span>{pick(locale, "Exit Status", "退出状态")}</span>
-              <strong>{drifted.length > 0 ? "1 (FATAL_ERROR)" : "0 (OK)"}</strong>
+              <span>{pick(locale, "Queue Position", "队列位置")}</span>
+              <strong>{activeOp ? `${activeOpIndex}/${data.pending.count}` : "—"}</strong>
             </div>
             <div>
-              <span>{pick(locale, "Execution Time", "执行时间")}</span>
-              <strong>{`${452 + (data.pending.journal_events ?? 0)}ms`}</strong>
+              <span>{pick(locale, "Queued At", "入队时间")}</span>
+              <strong>{activeOp ? formatTime(locale, activeOp.created_at) : "—"}</strong>
             </div>
             <div>
-              <span>{pick(locale, "Process Owner", "进程所有者")}</span>
-              <strong className="stitch-terminal-owner">
-                <span>{pick(locale, "SYSTEM:ROOT", "SYSTEM:ROOT")}</span>
-                <Icon name="verified_user" />
-              </strong>
+              <span>{pick(locale, "Internal Id", "内部 ID")}</span>
+              <strong className="mono-copy">{truncateText(activeOp?.op_id ?? activeOp?.request_id ?? "—", 28)}</strong>
             </div>
           </div>
 
           <div className="stitch-terminal-output">
+            {activeOp ? (
+              <div className="stitch-terminal-detail-card">
+                <div className="stitch-terminal-detail-head">
+                  <span>{pick(locale, "What This Record Means", "这条记录表示什么")}</span>
+                  <span>{pick(locale, "Local unsynced entry", "本地未同步记录")}</span>
+                </div>
+                <OperationPayload locale={locale} op={activeOp} />
+              </div>
+            ) : null}
             <div className="stitch-terminal-row stitch-terminal-head-row">
-              <span>T-STAMP</span>
-              <span>LOG_LEVEL</span>
-              <span>TRACE_MESSAGE</span>
+              <span>{pick(locale, "Time", "时间")}</span>
+              <span>{pick(locale, "Operation", "操作")}</span>
+              <span>{pick(locale, "Meaning", "含义")}</span>
             </div>
             {(activeOp ? [activeOp, ...data.pending.ops.filter((op) => op.request_id !== activeOp.request_id)] : data.pending.ops)
               .slice(0, 6)
@@ -1671,28 +1874,19 @@ function OpsPage({ data, locale }: { data: PanelData; locale: Locale }) {
                 <div className="stitch-terminal-row" key={op.request_id}>
                   <span>{formatTime(locale, op.created_at)}</span>
                   <span className={opToneClass(op, data.remote.sync_state)}>{`[${op.command.split(" ")[0].toUpperCase()}]`}</span>
-                  <span>{summarizeDetails(op.details)}</span>
+                  <span className="stitch-terminal-message">{explainPendingOp(op, locale)}</span>
                 </div>
               ))}
-            <div className="stitch-terminal-row stitch-terminal-cursor-row">
-              <span className="is-primary">$</span>
-              <span className="is-primary">_</span>
-              <span />
-            </div>
           </div>
 
           <div className="stitch-terminal-footer">
-            <div className="stitch-terminal-repl">
-              <span>REPL:</span>
-              <div className="stitch-terminal-input">
-                <span>loom-cli:</span>
-                <input readOnly type="text" value={`loom-repair --target ${repairTarget} --force`} />
-              </div>
+            <div className="stitch-terminal-next-step">
+              <span>{pick(locale, "Next Step", "下一步")}</span>
+              <strong>{pendingNextStep(data, locale)}</strong>
             </div>
-            <div className="page-actions">
-              <button className="button-ghost" type="button">Clear_Logs</button>
-              <button className="button-ghost" type="button">Download_Trace</button>
-              <button className="button" type="button">Execute_Command</button>
+            <div className="stitch-terminal-owner">
+              <span className="stitch-status-tag">{pick(locale, "Not executing live", "这不是实时执行")}</span>
+              <span className="stitch-status-tag">{pick(locale, `Queue size: ${data.pending.count}`, `队列数量: ${data.pending.count}`)}</span>
             </div>
           </div>
         </section>
@@ -1705,7 +1899,7 @@ function SettingsPage({ data, locale }: { data: PanelData; locale: Locale }) {
   const paths = [
     { label: pick(locale, "Workspace Root", "工作区根目录"), value: data.info.root },
     { label: pick(locale, "State Directory", "状态目录"), value: data.info.state_dir },
-    { label: pick(locale, "Targets File", "目标文件"), value: data.info.targets_file },
+    { label: pick(locale, "V3 Targets File", "V3 目标文件"), value: data.info.v3_targets_file },
     { label: pick(locale, "Claude Directory", "Claude 目录"), value: data.info.claude_dir },
     { label: pick(locale, "Codex Directory", "Codex 目录"), value: data.info.codex_dir },
     { label: pick(locale, "Remote URL", "远端 URL"), value: data.info.remote_url },
@@ -1836,7 +2030,7 @@ function SettingsPage({ data, locale }: { data: PanelData; locale: Locale }) {
             <div className="mono-copy">loom --json --root "{data.info.root ?? "<root>"}" workspace status</div>
             <div className="mono-copy">loom --json --root "{data.info.root ?? "<root>"}" workspace doctor</div>
             <div className="mono-copy">loom --json --root "{data.info.root ?? "<root>"}" sync status</div>
-            <div className="mono-copy">loom --json --root "{data.info.root ?? "<root>"}" migrate v2-to-v3 --plan</div>
+            <div className="mono-copy">loom --json --root "{data.info.root ?? "<root>"}" target list</div>
           </div>
         </section>
       </div>

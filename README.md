@@ -1,68 +1,66 @@
 # Loom
 
-Rust-based Skill 管理工具（Git 原生后端）。
+Rust-based skill registry and projection control plane (v3-only).
 
-## 已实现能力
+## 说明
 
-- Skill 目录管理：`skills/<skill>/...`
-- 支持批量导入：从本地目录或 `claude/codex` skills 目录导入
-- Git 版本语义映射：
-  - `save` -> commit（event）
-  - `snapshot` -> `snapshot/<skill>/<ts>-<sha>` 标签
-  - `release` -> `release/<skill>/vX.Y.Z` 注释标签
-  - `rollback` -> 从目标 ref 恢复 skill 路径并提交 revert commit
-- Claude/Codex 投影：`symlink-first`，支持 `--copy` fallback
-- 远端同步：`workspace remote set/status` + `sync status/push/pull/replay`
-- 离线暂存：`state/pending_ops.jsonl`
-- 纯文件元数据：`state/locks/`、`state/targets.json`、`state/pending_ops.jsonl`
-- `workspace doctor`：包含 `git fsck` 和队列/目标文件检查
-- 本地 panel：`loom panel --port 43117`
+- 不提供向后兼容命令。
+- 已移除：`workspace init`、`skill import/link/use`、`migrate v2-to-v3`。
+- 多目录通过 `target add` 显式注册，不再靠隐式目录推断。
+- 写操作硬保护：当 `--root` 指向 loom 工具仓库本身时会拒绝执行，请使用独立 skill registry 仓库。
 
-## 命令
+## 命令面（当前实现）
 
 ```bash
-loom workspace init [--from-agent claude|codex|both] [--target claude|codex|both] [--copy] [--force] [--backup-dir <dir>] [--skip-backup]
-loom workspace init --wizard
 loom workspace status
 loom workspace doctor
+loom workspace binding add --agent <claude|codex> --profile <id> --matcher-kind <path-prefix|exact-path|name> --matcher-value <value> --target <target-id> [--policy-profile <id>]
+loom workspace binding list
+loom workspace binding show <binding-id>
+loom workspace binding remove <binding-id>
 loom workspace remote set <git-url>
 loom workspace remote status
+
+loom target add --agent <claude|codex> --path <abs-path> [--ownership <managed|observed|external>]
+loom target list
+loom target show <target-id>
+loom target remove <target-id>
+
 loom skill add <path|git-url> --name <skill>
-loom skill import --source <dir> [--skill <name>] [--link] [--target claude|codex|both] [--copy] [--force]
-loom skill import --from-agent claude|codex|both [--skill <name>] [--link] [--target claude|codex|both] [--copy] [--force]
-loom skill link <skill> --target claude|codex|both [--copy]
-loom skill use <skill> --target claude|codex|both [--copy]
-loom skill save <skill>
+loom skill project <skill> --binding <binding-id> [--target <target-id>] [--method <symlink|copy|materialize>]
+loom skill capture [<skill>] [--binding <binding-id>] [--instance <instance-id>] [--message <msg>]
+loom skill save <skill> [--message <msg>]
 loom skill snapshot <skill>
 loom skill release <skill> <version>
 loom skill rollback <skill> [--to <ref> | --steps <n>]
 loom skill diff <skill> <from> <to>
+
 loom sync status
 loom sync push
 loom sync pull
 loom sync replay
+
 loom ops list
 loom ops retry
 loom ops purge
+loom ops history diagnose
+loom ops history repair --strategy <local|remote>
+
 loom panel [--port 43117]
 ```
 
-> 注意：v2 起已移除旧顶层命令（如 `loom init`、`loom save`、`loom status`）。必须使用 `workspace/skill/sync/ops` 命令组。
-
-推荐导入到可被 agent 直接操作的模式：
+## 多目录示例（Claude）
 
 ```bash
-# 首次安装推荐：自动备份 + 导入 + 重建 symlink
-loom workspace init --from-agent both --target both
+loom target add --agent claude --path "$HOME/.claude/skills" --ownership observed
+loom target add --agent claude --path "$HOME/.claude-work/skills" --ownership observed
 
-# 交互式终端选择模式（推荐手动使用）
-loom workspace init --wizard
-
-# 从现有 agent 目录导入，并立刻重建 symlink
-loom skill import --from-agent both --link --target both
+loom target list
 ```
 
-`--json` 可用于机读输出，envelope 固定为：
+## JSON Envelope
+
+`--json` 输出固定 envelope：
 
 - `ok`
 - `cmd`
@@ -74,13 +72,13 @@ loom skill import --from-agent both --link --target both
 
 ## 状态文件
 
-- `state/pending_ops.jsonl`: 离线/同步失败待回放操作
-- `state/locks/<skill>.lock`: skill 粒度锁
-- `state/targets.json`: `link/use` 目标映射
-
-## 说明
-
-- `sync push` 仅 fast-forward 语义（通过 fetch + behind 检查实现）。
-- 无远端时，写操作会进入 `PENDING_PUSH` 并写入 pending 队列。
-- 当前 panel 是可运行的本地监控面板（health/skills/remote/pending）。
-- Agent 调用规范见 `docs/AGENT_USAGE.md`。
+- `state/locks/`
+- `state/pending_ops.jsonl`
+- `state/pending_ops_snapshot.json`
+- `state/pending_ops_history/`
+- `state/v3/schema.json`
+- `state/v3/targets.json`
+- `state/v3/bindings.json`
+- `state/v3/rules.json`
+- `state/v3/projections.json`
+- `state/v3/ops/`

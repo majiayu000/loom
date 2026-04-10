@@ -182,25 +182,22 @@ Acceptance:
 
 ## 8. Proposed Migration Command
 
-Recommended shape:
+Historical note:
 
 ```bash
-loom migrate v2-to-v3 --plan
-loom migrate v2-to-v3 --apply
+# removed from runtime CLI
+# use explicit v3 bootstrap:
+loom target add --agent claude --path /Users/foo/.claude/skills --ownership observed
+loom target add --agent claude --path /Users/foo/.claude-work/skills --ownership observed
+loom target add --agent codex --path /Users/foo/.codex/skills --ownership observed
+loom workspace binding add --agent claude --profile <profile> --matcher-kind path-prefix --matcher-value <workspace> --target <target-id>
 ```
 
-`--plan` should:
+Runtime policy:
 
-1. inspect existing v2 state
-2. enumerate candidate targets
-3. enumerate unresolved ambiguities
-4. produce a migration report without writing
-
-`--apply` should:
-
-1. write v3 state
-2. preserve v2 state untouched
-3. never rewrite live agent directories as part of migration
+1. no in-tool migration subcommand
+2. no implicit read of `state/targets.json`
+3. multi-directory support is explicit via repeated `target add`
 
 ## 9. Operator Workflow During Migration
 

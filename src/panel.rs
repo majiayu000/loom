@@ -17,9 +17,9 @@ use serde_json::json;
 use uuid::Uuid;
 
 use crate::cli::{
-    AgentKind, BindingAddArgs, CaptureArgs, Cli, Command, MigrateCommand, MigrateV2ToV3Args,
-    ProjectArgs, ProjectionMethod, TargetAddArgs, TargetCommand, TargetOwnership,
-    WorkspaceBindingCommand, WorkspaceCommand, WorkspaceMatcherKind,
+    AgentKind, BindingAddArgs, CaptureArgs, Cli, Command, ProjectArgs, ProjectionMethod,
+    TargetAddArgs, TargetCommand, TargetOwnership, WorkspaceBindingCommand, WorkspaceCommand,
+    WorkspaceMatcherKind,
 };
 use crate::commands::{list_skills, remote_status_payload};
 use crate::state::{AppContext, resolve_agent_skill_dirs};
@@ -86,14 +86,11 @@ pub async fn run_panel(ctx: AppContext, port: u16) -> Result<()> {
         .route("/api/health", get(health))
         .route("/api/info", get(info))
         .route("/api/skills", get(skills))
-        .route("/api/targets", get(targets))
         .route("/api/v3/status", get(v3_status))
         .route("/api/v3/bindings", get(v3_bindings))
         .route("/api/v3/bindings/{binding_id}", get(v3_binding_show))
         .route("/api/v3/targets", get(v3_targets))
         .route("/api/v3/targets/{target_id}", get(v3_target_show))
-        .route("/api/v3/migration/plan", get(v3_migration_plan))
-        .route("/api/v3/migration/apply", post(v3_migration_apply))
         .route("/api/v3/targets", post(v3_target_add))
         .route("/api/v3/targets/{target_id}/remove", post(v3_target_remove))
         .route("/api/v3/bindings", post(v3_binding_add))
@@ -700,13 +697,11 @@ async fn index() -> Html<&'static str> {
         info: null,
         health: null,
         skills: [],
-        legacyTargets: { skills: {} },
         v3: { ok: false, error: null, data: null },
         v3View: null,
         remote: null,
         remoteWarnings: [],
         pending: { count: 0, ops: [] },
-        migration: { ok: false, data: null, error: null },
         query: '',
         route: 'overview',
         selectedSkill: null,
@@ -1225,20 +1220,12 @@ async fn index() -> Html<&'static str> {
           ? `<div class='event'>No skill matches your search.</div>`
           : `<div class='skills-grid'>${filtered.map((name) => {
               const info = skillInfo(name);
-              const linked = state.legacyTargets?.skills?.[name];
               const chips = [];
-              if (state.v3View?.available) {
-                chips.push(`<span class='tiny-chip ${info.projections.length > 0 ? 'linked' : 'unlinked'}'>${info.projections.length || 0} projection${info.projections.length === 1 ? '' : 's'}</span>`);
-                chips.push(`<span class='tiny-chip'>${info.bindingIds.length || 0} binding${info.bindingIds.length === 1 ? '' : 's'}</span>`);
-                if (info.driftedCount) chips.push(`<span class='tiny-chip drift'>Drift ${info.driftedCount}</span>`);
-                info.methods.slice(0, 2).forEach((method) => chips.push(`<span class='tiny-chip'>${esc(method)}</span>`));
-                if (chips.length === 2 && info.methods.length === 0) chips.push(`<span class='tiny-chip unlinked'>No projection rule</span>`);
-              } else {
-                if (linked?.claude_path) chips.push(`<span class='tiny-chip linked'>Claude</span>`);
-                if (linked?.codex_path) chips.push(`<span class='tiny-chip linked'>Codex</span>`);
-                if (!linked) chips.push(`<span class='tiny-chip unlinked'>Unlinked</span>`);
-                if (linked?.method) chips.push(`<span class='tiny-chip'>${esc(linked.method)}</span>`);
-              }
+              chips.push(`<span class='tiny-chip ${info.projections.length > 0 ? 'linked' : 'unlinked'}'>${info.projections.length || 0} projection${info.projections.length === 1 ? '' : 's'}</span>`);
+              chips.push(`<span class='tiny-chip'>${info.bindingIds.length || 0} binding${info.bindingIds.length === 1 ? '' : 's'}</span>`);
+              if (info.driftedCount) chips.push(`<span class='tiny-chip drift'>Drift ${info.driftedCount}</span>`);
+              info.methods.slice(0, 2).forEach((method) => chips.push(`<span class='tiny-chip'>${esc(method)}</span>`));
+              if (chips.length === 2 && info.methods.length === 0) chips.push(`<span class='tiny-chip unlinked'>No projection rule</span>`);
               return `
                 <article class='skill-card ${state.selectedSkill === name ? 'active' : ''}' data-skill='${esc(name)}'>
                   <h3 class='skill-name'>${esc(name)}</h3>
@@ -1256,7 +1243,6 @@ async fn index() -> Html<&'static str> {
           const targets = info.targetIds
             .map((targetId) => state.v3View.targets.find((target) => target.target_id === targetId))
             .filter(Boolean);
-          const linked = state.legacyTargets?.skills?.[state.selectedSkill] || {};
           const saveCmd = `loom --json --root "${root}" skill save ${state.selectedSkill}`;
           const snapCmd = `loom --json --root "${root}" skill snapshot ${state.selectedSkill}`;
           const relCmd = `loom --json --root "${root}" skill release ${state.selectedSkill} v1.0.0`;
@@ -1271,54 +1257,46 @@ async fn index() -> Html<&'static str> {
             <div class='card skill-detail'>
               <h3 style='margin:0 0 8px;'>${esc(state.selectedSkill)}</h3>
               <p class='note'>Canonical source: <span class='mono'>skills/${esc(state.selectedSkill)}</span></p>
-              ${state.v3View?.available ? `
-                <div class='skill-stat-grid'>
-                  <div class='stat'><div class='metric-k'>Bindings</div><div class='metric-v'>${info.bindingIds.length}</div></div>
-                  <div class='stat'><div class='metric-k'>Targets</div><div class='metric-v'>${info.targetIds.length}</div></div>
-                  <div class='stat'><div class='metric-k'>Projections</div><div class='metric-v'>${info.projections.length}</div></div>
-                  <div class='stat'><div class='metric-k'>Drift</div><div class='metric-v'>${info.driftedCount}</div></div>
+              <div class='skill-stat-grid'>
+                <div class='stat'><div class='metric-k'>Bindings</div><div class='metric-v'>${info.bindingIds.length}</div></div>
+                <div class='stat'><div class='metric-k'>Targets</div><div class='metric-v'>${info.targetIds.length}</div></div>
+                <div class='stat'><div class='metric-k'>Projections</div><div class='metric-v'>${info.projections.length}</div></div>
+                <div class='stat'><div class='metric-k'>Drift</div><div class='metric-v'>${info.driftedCount}</div></div>
+              </div>
+              <div class='stack'>
+                <div>
+                  <div class='section-label'>Bindings</div>
+                  ${bindings.length > 0 ? `<div class='entity-list'>
+                    ${bindings.map((binding) => `
+                      <article class='entity-row'>
+                        <div class='entity-title'>${esc(binding.binding_id)}</div>
+                        <div class='entity-path'>${esc(binding.agent)} • ${esc(binding.profile_id)} • ${esc(matcherText(binding.workspace_matcher))}</div>
+                        <div class='chip-wrap' style='margin-top:8px;'>
+                          <span class='tiny-chip ${binding.active ? 'linked' : 'unlinked'}'>${binding.active ? 'active' : 'inactive'}</span>
+                          <span class='tiny-chip'>${esc(binding.policy_profile)}</span>
+                          <span class='tiny-chip'>target ${esc(binding.default_target_id)}</span>
+                        </div>
+                      </article>
+                    `).join('')}
+                  </div>` : `<div class='event'>No v3 binding rules for this skill yet.</div>`}
                 </div>
-                <div class='stack'>
-                  <div>
-                    <div class='section-label'>Bindings</div>
-                    ${bindings.length > 0 ? `<div class='entity-list'>
-                      ${bindings.map((binding) => `
-                        <article class='entity-row'>
-                          <div class='entity-title'>${esc(binding.binding_id)}</div>
-                          <div class='entity-path'>${esc(binding.agent)} • ${esc(binding.profile_id)} • ${esc(matcherText(binding.workspace_matcher))}</div>
-                          <div class='chip-wrap' style='margin-top:8px;'>
-                            <span class='tiny-chip ${binding.active ? 'linked' : 'unlinked'}'>${binding.active ? 'active' : 'inactive'}</span>
-                            <span class='tiny-chip'>${esc(binding.policy_profile)}</span>
-                            <span class='tiny-chip'>target ${esc(binding.default_target_id)}</span>
-                          </div>
-                        </article>
-                      `).join('')}
-                    </div>` : `<div class='event'>No v3 binding rules for this skill yet.</div>`}
-                  </div>
-                  <div>
-                    <div class='section-label'>Projections</div>
-                    ${info.projections.length > 0 ? `<div class='entity-list'>
-                      ${info.projections.map((projection) => `
-                        <article class='entity-row ${projectionIsDrifted(projection) ? 'drift' : ''}'>
-                          <div class='entity-title'>${esc(projection.target?.target_id || projection.target_id)}</div>
-                          <div class='entity-path'>${esc(projection.materialized_path)}</div>
-                          <div class='chip-wrap' style='margin-top:8px;'>
-                            <span class='tiny-chip ${projectionIsDrifted(projection) ? 'drift' : 'linked'}'>${esc(projection.health || 'unknown')}</span>
-                            <span class='tiny-chip'>${esc(projection.method)}</span>
-                            <span class='tiny-chip'>rev ${esc(projection.last_applied_rev || '-')}</span>
-                          </div>
-                        </article>
-                      `).join('')}
-                    </div>` : `<div class='event'>No active projections yet.</div>`}
-                  </div>
+                <div>
+                  <div class='section-label'>Projections</div>
+                  ${info.projections.length > 0 ? `<div class='entity-list'>
+                    ${info.projections.map((projection) => `
+                      <article class='entity-row ${projectionIsDrifted(projection) ? 'drift' : ''}'>
+                        <div class='entity-title'>${esc(projection.target?.target_id || projection.target_id)}</div>
+                        <div class='entity-path'>${esc(projection.materialized_path)}</div>
+                        <div class='chip-wrap' style='margin-top:8px;'>
+                          <span class='tiny-chip ${projectionIsDrifted(projection) ? 'drift' : 'linked'}'>${esc(projection.health || 'unknown')}</span>
+                          <span class='tiny-chip'>${esc(projection.method)}</span>
+                          <span class='tiny-chip'>rev ${esc(projection.last_applied_rev || '-')}</span>
+                        </div>
+                      </article>
+                    `).join('')}
+                  </div>` : `<div class='event'>No active projections yet.</div>`}
                 </div>
-              ` : `
-                <div class='event mono'>
-                  <div>Method: ${esc(linked.method || 'n/a')}</div>
-                  <div>Claude: ${esc(linked.claude_path || '-')}</div>
-                  <div>Codex: ${esc(linked.codex_path || '-')}</div>
-                </div>
-              `}
+              </div>
               <div class='commands'>
                 ${[saveCmd, snapCmd, relCmd, diffCmd, bindingCmd, targetCmd].filter(Boolean).map((cmd) => `
                   <div class='command-item mono'>
@@ -1398,14 +1376,11 @@ async fn index() -> Html<&'static str> {
       function renderSettings(root) {
         const info = state.info || {};
         const v3 = state.v3View || emptyV3View();
-        const migration = state.migration || { ok: false, data: null, error: null };
-        const migrationData = migration.data?.migration || null;
         const commands = [
           `loom --json --root "${root}" sync status`,
           `loom --json --root "${root}" workspace doctor`,
           `loom --json --root "${root}" workspace binding list`,
           `loom --json --root "${root}" target list`,
-          `loom --json --root "${root}" migrate v2-to-v3 --plan`,
         ];
 
         return `
@@ -1417,6 +1392,7 @@ async fn index() -> Html<&'static str> {
               <div>Root: ${esc(info.root || '-')}</div>
               <div>State dir: ${esc(info.state_dir || '-')}</div>
               <div>V3 dir: ${esc(info.state_dir ? `${info.state_dir}/v3` : '-')}</div>
+              <div>V3 targets: ${esc(info.v3_targets_file || '-')}</div>
             </div>
             <div class='card mono'>
               <div>Claude dir: ${esc(info.claude_dir || '-')}</div>
@@ -1428,7 +1404,7 @@ async fn index() -> Html<&'static str> {
             <div class='card'>
               <div class='section-label'>State Model</div>
               <div class='chip-wrap'>
-                <span class='tiny-chip ${v3.available ? 'linked' : 'unlinked'}'>${v3.available ? 'v3 loaded' : 'legacy fallback'}</span>
+                <span class='tiny-chip ${v3.available ? 'linked' : 'unlinked'}'>${v3.available ? 'v3 loaded' : 'v3 unavailable'}</span>
                 <span class='tiny-chip'>bindings ${esc(v3.counts.bindings || 0)}</span>
                 <span class='tiny-chip'>targets ${esc(v3.counts.targets || 0)}</span>
                 <span class='tiny-chip'>projections ${esc(v3.counts.projections || 0)}</span>
@@ -1439,28 +1415,6 @@ async fn index() -> Html<&'static str> {
               <div class='mono'>last_scanned: ${esc(v3.checkpoint?.last_scanned_op_id || '-')}</div>
               <div class='mono'>updated_at: ${esc(ts(v3.checkpoint?.updated_at))}</div>
             </div>
-          </div>
-          <div class='card' style='margin-top:12px;'>
-            <div class='section-label'>Migration Review</div>
-            ${migration.ok && migrationData ? `
-              <div class='chip-wrap'>
-                <span class='tiny-chip'>legacy skills ${esc(migrationData.legacy_skill_count || 0)}</span>
-                <span class='tiny-chip'>candidate targets ${esc((migrationData.candidate_targets || []).length)}</span>
-                <span class='tiny-chip ${((migrationData.unresolved || []).length > 0) ? 'drift' : 'linked'}'>unresolved ${esc((migrationData.unresolved || []).length)}</span>
-              </div>
-              <div class='action-row' style='margin-top:10px;'>
-                <div class='action-note'>Apply only writes observed targets into <span class='mono'>state/v3</span>. It does not rewrite live agent directories.</div>
-                <button class='btn' id='migration-apply-btn' ${((migrationData.unresolved || []).length > 0 || (migrationData.candidate_targets || []).length === 0) ? 'disabled' : ''}>Apply Migration</button>
-              </div>
-              ${(migrationData.warnings || []).length > 0 ? `
-                <aside class='warning' style='margin-top:10px;'>
-                  <strong>Warnings</strong>
-                  <ul>${migrationData.warnings.map((item) => `<li>${esc(item)}</li>`).join('')}</ul>
-                </aside>
-              ` : `<p class='action-note' style='margin-top:10px;'>No migration warnings.</p>`}
-            ` : `
-              <p class='action-note'>${esc(migration.error?.message || 'Migration plan unavailable.')}</p>
-            `}
           </div>
           <div class='split-grid'>
             <form class='action-card form-grid' id='target-add-form'>
@@ -1710,10 +1664,6 @@ async fn index() -> Html<&'static str> {
           });
         });
 
-        document.getElementById('migration-apply-btn')?.addEventListener('click', () => {
-          void runAction('/api/v3/migration/apply', {}, 'Migration applied');
-        });
-
         document.querySelectorAll('.skill-card').forEach((node) => {
           node.addEventListener('click', () => {
             state.selectedSkill = node.getAttribute('data-skill');
@@ -1737,27 +1687,23 @@ async fn index() -> Html<&'static str> {
       }
 
       async function load() {
-        const [h, i, s, t, v, r, p, m] = await Promise.all([
+        const [h, i, s, v, r, p] = await Promise.all([
           fetch('/api/health').then((x) => x.json()),
           fetch('/api/info').then((x) => x.json()),
           fetch('/api/skills').then((x) => x.json()),
-          fetch('/api/targets').then((x) => x.json()),
           fetch('/api/v3/status').then((x) => x.json()),
           fetch('/api/remote/status').then((x) => x.json()),
           fetch('/api/pending').then((x) => x.json()),
-          fetch('/api/v3/migration/plan').then((x) => x.json()),
         ]);
 
         state.health = h;
         state.info = i;
         state.skills = s.skills || [];
-        state.legacyTargets = t.targets || { skills: {} };
         state.v3 = v || { ok: false, error: { message: 'Missing v3 payload' } };
         state.v3View = buildV3View(state.skills, v);
         state.remote = r.remote || {};
         state.remoteWarnings = r.warnings || [];
         state.pending = p || { count: 0, ops: [] };
-        state.migration = m || { ok: false, error: { message: 'Missing migration payload' } };
         state.loadedAt = new Date().toISOString();
         state.route = routeFromHash();
 
@@ -1894,11 +1840,12 @@ async fn info(State(state): State<PanelState>) -> Json<serde_json::Value> {
         .ok()
         .flatten()
         .unwrap_or_default();
+    let v3_paths = V3StatePaths::from_root(&state.ctx.root);
 
     Json(json!({
         "root": state.ctx.root.display().to_string(),
         "state_dir": state.ctx.state_dir.display().to_string(),
-        "targets_file": state.ctx.targets_file.display().to_string(),
+        "v3_targets_file": v3_paths.targets_file.display().to_string(),
         "claude_dir": target_dirs.claude.display().to_string(),
         "codex_dir": target_dirs.codex.display().to_string(),
         "remote_url": remote_url,
@@ -1909,13 +1856,6 @@ async fn skills(State(state): State<PanelState>) -> Json<serde_json::Value> {
     match list_skills(&state.ctx) {
         Ok(skills) => Json(json!({"skills": skills})),
         Err(err) => Json(json!({"skills": [], "error": err.to_string()})),
-    }
-}
-
-async fn targets(State(state): State<PanelState>) -> Json<serde_json::Value> {
-    match state.ctx.load_targets() {
-        Ok(targets) => Json(json!({"targets": targets})),
-        Err(err) => Json(json!({"targets": {"skills": {}}, "error": err.to_string()})),
     }
 }
 
@@ -2001,30 +1941,6 @@ async fn v3_target_show(
         "rules": relations.rules,
         "projections": relations.projections
     }))
-}
-
-async fn v3_migration_plan(State(state): State<PanelState>) -> Json<serde_json::Value> {
-    run_panel_command(
-        &state,
-        Command::Migrate {
-            command: MigrateCommand::V2ToV3(MigrateV2ToV3Args {
-                plan: true,
-                apply: false,
-            }),
-        },
-    )
-}
-
-async fn v3_migration_apply(State(state): State<PanelState>) -> Json<serde_json::Value> {
-    run_panel_command(
-        &state,
-        Command::Migrate {
-            command: MigrateCommand::V2ToV3(MigrateV2ToV3Args {
-                plan: false,
-                apply: true,
-            }),
-        },
-    )
 }
 
 async fn v3_target_add(

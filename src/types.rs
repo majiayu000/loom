@@ -7,7 +7,6 @@ pub enum ErrorCode {
     ArgInvalid,
     SchemaMismatch,
     StateCorrupt,
-    UnsupportedV1Command,
     SkillNotFound,
     BindingNotFound,
     TargetNotFound,
@@ -28,7 +27,6 @@ impl ErrorCode {
             Self::ArgInvalid => "ARG_INVALID",
             Self::SchemaMismatch => "SCHEMA_MISMATCH",
             Self::StateCorrupt => "STATE_CORRUPT",
-            Self::UnsupportedV1Command => "UNSUPPORTED_V1_COMMAND",
             Self::SkillNotFound => "SKILL_NOT_FOUND",
             Self::BindingNotFound => "BINDING_NOT_FOUND",
             Self::TargetNotFound => "TARGET_NOT_FOUND",
@@ -49,7 +47,6 @@ impl ErrorCode {
             Self::ArgInvalid => 2,
             Self::SchemaMismatch => 3,
             Self::StateCorrupt => 3,
-            Self::UnsupportedV1Command => 2,
             Self::LockBusy => 4,
             Self::RemoteUnreachable => 10,
             Self::RemoteDiverged => 10,
@@ -107,16 +104,4 @@ impl PendingOp {
             )
         })
     }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SkillTargetConfig {
-    pub method: String,
-    pub claude_path: Option<String>,
-    pub codex_path: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct TargetsState {
-    pub skills: std::collections::BTreeMap<String, SkillTargetConfig>,
 }

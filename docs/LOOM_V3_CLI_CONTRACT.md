@@ -34,7 +34,12 @@ Top-level command groups:
 3. `skill`
 4. `sync`
 5. `ops`
-6. `migrate`
+6. `panel`
+
+Removed from runtime surface:
+
+1. `skill import`
+2. `migrate v2-to-v3`
 
 The legacy v2 mental model is rejected:
 
@@ -169,8 +174,7 @@ Base error codes:
 13. `REMOTE_DIVERGED`
 14. `PUSH_REJECTED`
 15. `REPLAY_CONFLICT`
-16. `UNSUPPORTED_V1_COMMAND`
-17. `INTERNAL_ERROR`
+16. `INTERNAL_ERROR`
 
 Semantics:
 
@@ -319,19 +323,18 @@ Rules:
 
 ## 11. Skill Commands
 
-### 11.1 `skill import`
-
-Two supported forms:
+### 11.1 `skill add`
 
 ```bash
-loom --json --root <root> skill import --source <dir>
-loom --json --root <root> skill import --from-binding <binding-id> [--skill <skill-id>]
+loom --json --root <root> skill add <path|git-url> --name <skill-id>
 ```
+
+Write command.
 
 Rules:
 
-1. `--source` and `--from-binding` are mutually exclusive
-2. importing from a binding treats the live directory as bootstrap input, not canonical truth
+1. adds canonical source under `skills/<skill-id>`
+2. must fail when target skill already exists
 
 ### 11.2 `skill project`
 
@@ -494,41 +497,15 @@ loom --json --root <root> ops show <op-id>
 
 Read-only.
 
-## 14. Migrate Commands
+## 14. Migration Policy
 
-### 14.1 `migrate v2-to-v3 --plan`
-
-```bash
-loom --json --root <root> migrate v2-to-v3 --plan
-```
-
-Read-only.
-
-Expected response shape:
-
-```json
-{
-  "migration": {
-    "mode": "plan",
-    "candidate_targets": [],
-    "candidate_bindings": [],
-    "unresolved": []
-  }
-}
-```
-
-### 14.2 `migrate v2-to-v3 --apply`
-
-```bash
-loom --json --root <root> migrate v2-to-v3 --apply
-```
-
-Write command.
+Migration commands are intentionally removed from the runtime CLI surface.
 
 Rules:
 
-1. must fail if unresolved ambiguities remain
-2. must not rewrite live agent directories as part of migration
+1. no in-tool `v2-to-v3` migration entrypoint
+2. operators must register targets explicitly with `target add`
+3. binding resolution must be explicit with `workspace binding add`
 
 ## 15. Response Requirements by Command Type
 
@@ -558,7 +535,6 @@ Examples:
 4. `skill capture`
 5. `skill save`
 6. `sync push`
-7. `migrate ... --apply`
 
 Requirements:
 
@@ -601,4 +577,4 @@ The CLI contract is acceptable only if:
 2. every projection write is binding-scoped
 3. every response needed by agents is available in `--json`
 4. no core workflow depends on path guessing
-5. migration and projection errors are structured and typed
+5. projection and capture errors are structured and typed

@@ -10,9 +10,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::gitops;
-use crate::types::{PendingOp, TargetsState};
-
-const TARGETS_TEMPLATE: &str = "{\n  \"skills\": {}\n}\n";
+use crate::types::PendingOp;
 const LOCK_STALE_AFTER: Duration = Duration::from_secs(60 * 60);
 const OPS_COMPACTION_THRESHOLD: usize = 16;
 
@@ -25,7 +23,6 @@ pub struct AppContext {
     pub pending_ops_file: PathBuf,
     pub pending_ops_history_dir: PathBuf,
     pub pending_ops_snapshot_file: PathBuf,
-    pub targets_file: PathBuf,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -73,7 +70,6 @@ impl AppContext {
         let pending_ops_file = state_dir.join("pending_ops.jsonl");
         let pending_ops_history_dir = state_dir.join("pending_ops_history");
         let pending_ops_snapshot_file = state_dir.join("pending_ops_snapshot.json");
-        let targets_file = state_dir.join("targets.json");
 
         Ok(Self {
             root,
@@ -83,7 +79,6 @@ impl AppContext {
             pending_ops_file,
             pending_ops_history_dir,
             pending_ops_snapshot_file,
-            targets_file,
         })
     }
 
@@ -93,33 +88,11 @@ impl AppContext {
         fs::create_dir_all(&self.pending_ops_history_dir)
             .context("failed to create pending ops history directory")?;
         ensure_file_with_contents(&self.pending_ops_file, "")?;
-        ensure_file_with_contents(&self.targets_file, TARGETS_TEMPLATE)?;
         Ok(())
     }
 
     pub fn skill_path(&self, skill: &str) -> PathBuf {
         self.skills_dir.join(skill)
-    }
-
-    pub fn load_targets(&self) -> Result<TargetsState> {
-        let raw = match fs::read_to_string(&self.targets_file) {
-            Ok(raw) => raw,
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-                return Ok(TargetsState::default());
-            }
-            Err(err) => return Err(err).context("failed to read targets.json"),
-        };
-        let parsed =
-            serde_json::from_str::<TargetsState>(&raw).context("failed to parse targets.json")?;
-        Ok(parsed)
-    }
-
-    pub fn save_targets(&self, value: &TargetsState) -> Result<()> {
-        self.ensure_state_layout()?;
-        let raw =
-            serde_json::to_string_pretty(value).context("failed to serialize targets state")?;
-        write_atomic(&self.targets_file, &(raw + "\n")).context("failed to write targets.json")?;
-        Ok(())
     }
 
     pub fn append_pending(
@@ -219,6 +192,12 @@ impl AppContext {
     }
 
     fn lock_named(&self, name: &str) -> Result<LockGuard> {
+        if is_loom_tool_repo_root(&self.root) {
+            anyhow::bail!(
+                "ARG_INVALID:refusing write operations in Loom tool repository root '{}'; use --root <separate skill registry repo>",
+                self.root.display()
+            );
+        }
         self.ensure_state_layout()?;
         let lock_path = self.locks_dir.join(format!("{}.lock", name));
 
@@ -712,6 +691,30 @@ fn sanitize_segment_token(token: &str) -> String {
 
 fn shorten_segment_token(token: &str) -> String {
     token.chars().take(12).collect()
+}
+
+fn is_loom_tool_repo_root(root: &Path) -> bool {
+    let manifest_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    if canonicalize_or_self(root) == canonicalize_or_self(&manifest_root) {
+        return true;
+    }
+
+    let cargo_toml = root.join("Cargo.toml");
+    if !cargo_toml.exists() {
+        return false;
+    }
+    if !root.join("src/main.rs").exists() || !root.join("src/commands.rs").exists() {
+        return false;
+    }
+
+    match fs::read_to_string(&cargo_toml) {
+        Ok(content) => content.contains("name = \"skillloom\""),
+        Err(_) => false,
+    }
+}
+
+fn canonicalize_or_self(path: &Path) -> PathBuf {
+    fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
 fn write_atomic(path: &Path, contents: &str) -> Result<()> {

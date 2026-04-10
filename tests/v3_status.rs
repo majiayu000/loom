@@ -28,6 +28,23 @@ fn workspace_status_reports_v3_snapshot_when_present() {
 }
 
 #[test]
+fn workspace_status_succeeds_when_v3_state_is_missing() {
+    let root = TestDir::new("v3-status-missing");
+
+    let (output, env) = run_loom(root.path(), &["workspace", "status"]);
+    assert!(
+        output.status.success(),
+        "loom failed: stderr={} stdout={}",
+        String::from_utf8_lossy(&output.stderr),
+        String::from_utf8_lossy(&output.stdout)
+    );
+
+    assert_eq!(env["ok"], Value::Bool(true));
+    assert_eq!(env["data"]["state_model"], Value::String("v3".to_string()));
+    assert_eq!(env["data"]["v3"]["available"], Value::Bool(false));
+}
+
+#[test]
 fn workspace_status_fails_with_schema_mismatch_for_invalid_v3_state() {
     let root = TestDir::new("v3-status-bad-schema");
     write_minimal_v3_state(root.path(), 99);

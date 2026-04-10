@@ -1861,6 +1861,73 @@ a {
   color: rgba(223, 228, 255, 0.58);
 }
 
+.stitch-op-summary {
+  margin: 8px 0 0;
+  line-height: 1.5;
+  color: rgba(223, 228, 255, 0.56);
+  font-size: 0.72rem;
+}
+
+.stitch-op-meaning {
+  margin: 8px 0 0;
+  line-height: 1.6;
+  color: rgba(223, 228, 255, 0.82);
+}
+
+.stitch-ops-explainer {
+  margin: 0;
+  padding: 14px 16px;
+  border: 1px solid rgba(83, 214, 255, 0.2);
+  background: rgba(20, 45, 88, 0.46);
+  color: rgba(223, 228, 255, 0.8);
+  line-height: 1.6;
+}
+
+.stitch-op-facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(108px, 1fr));
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.stitch-op-fact {
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid rgba(96, 115, 173, 0.14);
+  background: rgba(7, 13, 31, 0.4);
+}
+
+.stitch-op-fact span {
+  display: block;
+  font-size: 0.58rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: rgba(223, 228, 255, 0.48);
+}
+
+.stitch-op-fact strong {
+  display: block;
+  margin-top: 6px;
+  font-size: 0.76rem;
+  line-height: 1.4;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.stitch-op-skill-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.stitch-op-skill-list .stitch-status-tag {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .stitch-op-card-tags,
 .stitch-op-card-actions,
 .stitch-op-card-processing {
@@ -1869,6 +1936,18 @@ a {
   justify-content: space-between;
   gap: 8px;
   margin-top: 12px;
+}
+
+.stitch-op-card-tags {
+  flex-wrap: wrap;
+  justify-content: flex-start;
+}
+
+.stitch-op-card-tags .stitch-status-tag {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .stitch-op-inline-button {
@@ -1988,10 +2067,33 @@ a {
   font-size: 0.74rem;
 }
 
+.stitch-terminal-detail-card {
+  padding: 16px;
+  border: 1px solid rgba(96, 115, 173, 0.12);
+  background: rgba(10, 24, 57, 0.52);
+}
+
+.stitch-terminal-detail-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+  font-size: 0.62rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(223, 228, 255, 0.48);
+}
+
 .stitch-terminal-row {
   display: grid;
   grid-template-columns: 180px 120px 1fr;
   gap: 16px;
+}
+
+.stitch-terminal-message {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .stitch-terminal-head-row {
@@ -2018,6 +2120,27 @@ a {
   align-items: center;
   justify-content: space-between;
   gap: 16px;
+}
+
+.stitch-terminal-next-step {
+  min-width: 0;
+  flex: 1;
+}
+
+.stitch-terminal-next-step span {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 0.62rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: rgba(223, 228, 255, 0.52);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+}
+
+.stitch-terminal-next-step strong {
+  display: block;
+  line-height: 1.6;
+  color: var(--text);
 }
 
 .stitch-terminal-repl {

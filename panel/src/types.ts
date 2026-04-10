@@ -15,20 +15,10 @@ export type HealthPayload = {
 export type InfoPayload = {
   root?: string;
   state_dir?: string;
-  targets_file?: string;
+  v3_targets_file?: string;
   claude_dir?: string;
   codex_dir?: string;
   remote_url?: string;
-};
-
-export type SkillTargetConfig = {
-  method?: string;
-  claude_path?: string;
-  codex_path?: string;
-};
-
-export type LegacyTargetsPayload = {
-  skills: Record<string, SkillTargetConfig>;
 };
 
 export type RemotePayload = {
@@ -153,7 +143,6 @@ export type PanelData = {
   health: HealthPayload;
   info: InfoPayload;
   skills: string[];
-  legacyTargets: LegacyTargetsPayload;
   remote: RemotePayload;
   pending: PendingPayload;
   v3: V3Model;
@@ -170,5 +159,4 @@ export type SkillView = {
   targets: V3Target[];
   methods: string[];
   driftedCount: number;
-  legacyTarget?: SkillTargetConfig;
 };

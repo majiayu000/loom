@@ -1,6 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
-use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, anyhow};
@@ -11,16 +9,15 @@ use walkdir::WalkDir;
 
 use crate::cli::{
     AddArgs, AgentKind, BindingAddArgs, CaptureArgs, Cli, Command, DiffArgs,
-    HistoryRepairStrategyArg, ImportArgs, InitArgs, LinkArgs, MigrateCommand, MigrateV2ToV3Args,
-    OpsCommand, OpsHistoryCommand, ProjectArgs, ProjectionMethod, ReleaseArgs, RemoteCommand,
-    RollbackArgs, SaveArgs, SkillCommand, SkillOnlyArgs, SyncCommand, Target, TargetAddArgs,
-    TargetCommand, TargetOwnership, WorkspaceBindingCommand, WorkspaceCommand,
+    HistoryRepairStrategyArg, OpsCommand, OpsHistoryCommand, ProjectArgs, ProjectionMethod,
+    ReleaseArgs, RemoteCommand, RollbackArgs, SaveArgs, SkillCommand, SkillOnlyArgs, SyncCommand,
+    TargetAddArgs, TargetCommand, TargetOwnership, WorkspaceBindingCommand, WorkspaceCommand,
     WorkspaceMatcherKind,
 };
 use crate::envelope::{Envelope, Meta};
 use crate::gitops;
 use crate::state::{AppContext, PendingOpsReport, remove_path_if_exists, resolve_agent_skill_dirs};
-use crate::types::{ErrorCode, SkillTargetConfig, SyncState};
+use crate::types::{ErrorCode, SyncState};
 use crate::v3::{
     V3BindingRule, V3BindingsFile, V3OperationRecord, V3ProjectionInstance, V3ProjectionTarget,
     V3ProjectionsFile, V3RulesFile, V3Snapshot, V3StatePaths, V3TargetCapabilities, V3TargetsFile,
@@ -48,16 +45,6 @@ pub struct App {
     pub ctx: AppContext,
 }
 
-#[derive(Debug, Clone)]
-struct InitResolved {
-    from_agent: Target,
-    target: Target,
-    copy: bool,
-    force: bool,
-    skip_backup: bool,
-    backup_dir: Option<String>,
-}
-
 impl App {
     pub fn new(root: Option<PathBuf>) -> Result<Self> {
         let ctx = AppContext::new(root)?;
@@ -82,7 +69,6 @@ impl App {
 
         let result = match &cli.command {
             Command::Workspace { command } => match command {
-                WorkspaceCommand::Init(args) => self.cmd_init(args, &request_id),
                 WorkspaceCommand::Status => self.cmd_status(),
                 WorkspaceCommand::Doctor => self.cmd_doctor(),
                 WorkspaceCommand::Binding { command } => {
@@ -93,10 +79,8 @@ impl App {
             Command::Target { command } => self.cmd_target(command, &request_id),
             Command::Skill { command } => match command {
                 SkillCommand::Add(args) => self.cmd_add(args, &request_id),
-                SkillCommand::Import(args) => self.cmd_import(args, &request_id),
                 SkillCommand::Project(args) => self.cmd_project(args, &request_id),
                 SkillCommand::Capture(args) => self.cmd_capture(args, &request_id),
-                SkillCommand::Link(args) | SkillCommand::Use(args) => self.cmd_link(args),
                 SkillCommand::Save(args) => self.cmd_save(args, &request_id),
                 SkillCommand::Snapshot(args) => self.cmd_snapshot(args, &request_id),
                 SkillCommand::Release(args) => self.cmd_release(args, &request_id),
@@ -105,24 +89,7 @@ impl App {
             },
             Command::Sync { command } => self.cmd_sync(command),
             Command::Ops { command } => self.cmd_ops(command),
-            Command::Migrate { command } => self.cmd_migrate(command, &request_id),
             Command::Panel(_) => Ok((json!({"message": "panel handled in main"}), Meta::default())),
-
-            Command::LegacyInit(_) => self.unsupported_v1_command("init", "workspace init"),
-            Command::LegacyAdd(_) => self.unsupported_v1_command("add", "skill add"),
-            Command::LegacyImport(_) => self.unsupported_v1_command("import", "skill import"),
-            Command::LegacyLink(_) => self.unsupported_v1_command("link", "skill link"),
-            Command::LegacyUse(_) => self.unsupported_v1_command("use", "skill use"),
-            Command::LegacySave(_) => self.unsupported_v1_command("save", "skill save"),
-            Command::LegacySnapshot(_) => self.unsupported_v1_command("snapshot", "skill snapshot"),
-            Command::LegacyRelease(_) => self.unsupported_v1_command("release", "skill release"),
-            Command::LegacyRollback(_) => self.unsupported_v1_command("rollback", "skill rollback"),
-            Command::LegacyDiff(_) => self.unsupported_v1_command("diff", "skill diff"),
-            Command::LegacyStatus => self.unsupported_v1_command("status", "workspace status"),
-            Command::LegacyDoctor => self.unsupported_v1_command("doctor", "workspace doctor"),
-            Command::LegacyRemote { .. } => {
-                self.unsupported_v1_command("remote", "workspace remote <set|status>")
-            }
         };
 
         match result {
@@ -141,114 +108,6 @@ impl App {
                 Ok((env, f.code.exit_code()))
             }
         }
-    }
-
-    pub fn cmd_init(
-        &self,
-        args: &InitArgs,
-        request_id: &str,
-    ) -> std::result::Result<(serde_json::Value, Meta), CommandFailure> {
-        let _workspace = self.ctx.lock_workspace().map_err(map_lock)?;
-        self.ensure_write_repo_ready()?;
-        let resolved = resolve_init_args(args).map_err(map_arg)?;
-
-        let (backup, mut backup_warnings) = if resolved.skip_backup {
-            (
-                serde_json::Value::Null,
-                vec!["backup skipped by flag".to_string()],
-            )
-        } else {
-            backup_agent_skills(
-                &self.ctx,
-                resolved.from_agent,
-                resolved.backup_dir.as_deref(),
-            )
-            .map_err(map_io)?
-        };
-
-        let import_args = ImportArgs {
-            source: None,
-            from_agent: Some(resolved.from_agent),
-            skill: None,
-            link: false,
-            target: resolved.target,
-            copy: resolved.copy,
-            force: resolved.force,
-        };
-
-        let (import_data, mut import_meta) = self.import_impl(&import_args, request_id)?;
-
-        let mut link_names = std::collections::BTreeSet::<String>::new();
-        for item in import_data["imported"]
-            .as_array()
-            .cloned()
-            .unwrap_or_default()
-        {
-            if let Some(name) = item["skill"].as_str() {
-                link_names.insert(name.to_string());
-            }
-        }
-        for item in import_data["skipped"]
-            .as_array()
-            .cloned()
-            .unwrap_or_default()
-        {
-            if let Some(name) = item["skill"].as_str() {
-                link_names.insert(name.to_string());
-            }
-        }
-
-        let mut linked = Vec::new();
-        let mut link_warnings = Vec::new();
-        for skill in link_names {
-            let link_args = LinkArgs {
-                skill: skill.clone(),
-                target: resolved.target,
-                copy: resolved.copy,
-            };
-            let (links, mut warnings) = link_skill(&self.ctx, &link_args)?;
-            link_warnings.append(&mut warnings);
-            linked.push(json!({
-                "skill": skill,
-                "links": links
-            }));
-        }
-
-        let imported_len = import_data["imported"]
-            .as_array()
-            .map(|arr| arr.len())
-            .unwrap_or(0);
-        let skipped_len = import_data["skipped"]
-            .as_array()
-            .map(|arr| arr.len())
-            .unwrap_or(0);
-        let summary = json!({
-            "candidates": imported_len + skipped_len,
-            "imported": imported_len,
-            "skipped": skipped_len,
-            "linked": linked.len(),
-        });
-
-        import_meta.warnings.append(&mut backup_warnings);
-        import_meta.warnings.append(&mut link_warnings);
-
-        Ok((
-            json!({
-                "options": {
-                    "from_agent": target_as_str(resolved.from_agent),
-                    "target": target_as_str(resolved.target),
-                    "copy": resolved.copy,
-                    "force": resolved.force,
-                    "skip_backup": resolved.skip_backup,
-                    "backup_dir": resolved.backup_dir
-                },
-                "backup": backup,
-                "import": import_data,
-                "linked": linked,
-                "summary": summary
-            }),
-            import_meta,
-        ))
     }
 
     pub fn cmd_add(
@@ -314,139 +173,6 @@ impl App {
         }
 
         Ok((json!({"skill": args.name, "path": dst}), meta))
-    }
-
-    pub fn cmd_import(
-        &self,
-        args: &ImportArgs,
-        request_id: &str,
-    ) -> std::result::Result<(serde_json::Value, Meta), CommandFailure> {
-        let _workspace = self.ctx.lock_workspace().map_err(map_lock)?;
-        self.ensure_write_repo_ready()?;
-        self.import_impl(args, request_id)
-    }
-
-    fn import_impl(
-        &self,
-        args: &ImportArgs,
-        request_id: &str,
-    ) -> std::result::Result<(serde_json::Value, Meta), CommandFailure> {
-        let (candidates, mut warnings) = collect_import_candidates(args).map_err(map_arg)?;
-        if candidates.is_empty() {
-            return Err(CommandFailure::new(
-                ErrorCode::ArgInvalid,
-                "no skills found to import",
-            ));
-        }
-
-        let mut imported = Vec::new();
-        let mut skipped = Vec::new();
-
-        for candidate in candidates {
-            let dst = self.ctx.skill_path(&candidate.skill);
-            if dst.exists() && !args.force {
-                skipped.push(json!({
-                    "skill": candidate.skill,
-                    "reason": "already_exists",
-                    "source": candidate.source,
-                }));
-                continue;
-            }
-
-            if dst.exists() {
-                remove_path_if_exists(&dst).map_err(map_io)?;
-            }
-            copy_dir_recursive(&candidate.source, &dst).map_err(map_io)?;
-            imported.push(json!({
-                "skill": candidate.skill,
-                "source": candidate.source,
-                "origin": candidate.origin,
-                "destination": dst,
-            }));
-        }
-
-        if imported.is_empty() {
-            return Ok((
-                json!({
-                    "imported": [],
-                    "skipped": skipped,
-                    "linked": [],
-                    "commit": serde_json::Value::Null,
-                    "summary": {
-                        "candidates": 0,
-                        "imported": 0,
-                        "skipped": skipped.len(),
-                        "linked": 0
-                    }
-                }),
-                Meta {
-                    warnings,
-                    sync_state: None,
-                    op_id: None,
-                },
-            ));
-        }
-
-        gitops::stage_path(&self.ctx, Path::new("skills")).map_err(map_git)?;
-        let mut meta = Meta::default();
-        let mut commit = None;
-        if gitops::has_staged_changes_for_path(&self.ctx, Path::new("skills")).map_err(map_git)? {
-            let message = format!("import: {} skill(s)", imported.len());
-            let sha = gitops::commit(&self.ctx, &message).map_err(map_git)?;
-            maybe_autosync_or_queue(
-                &self.ctx,
-                "import",
-                request_id,
-                json!({
-                    "skills": imported
-                        .iter()
-                        .filter_map(|item| item["skill"].as_str())
-                        .collect::<Vec<_>>(),
-                    "commit": sha
-                }),
-                &mut meta,
-            )?;
-            commit = Some(sha);
-        }
-
-        let mut linked = Vec::new();
-        if args.link {
-            let skill_names: Vec<String> = imported
-                .iter()
-                .filter_map(|item| item["skill"].as_str().map(|s| s.to_string()))
-                .collect();
-            for skill in skill_names {
-                let link_args = LinkArgs {
-                    skill: skill.clone(),
-                    target: args.target,
-                    copy: args.copy,
-                };
-                let (links, mut link_warnings) = link_skill(&self.ctx, &link_args)?;
-                warnings.append(&mut link_warnings);
-                linked.push(json!({
-                    "skill": skill,
-                    "links": links
-                }));
-            }
-        }
-
-        meta.warnings.extend(warnings);
-
-        Ok((
-            json!({
-                "imported": imported,
-                "skipped": skipped,
-                "linked": linked,
-                "commit": commit,
-                "summary": {
-                    "candidates": imported.len() + skipped.len(),
-                    "imported": imported.len(),
-                    "skipped": skipped.len(),
-                    "linked": linked.len()
-                }
-            }),
-            meta,
-        ))
     }
 
     pub fn cmd_project(
@@ -642,32 +368,6 @@ impl App {
         ))
     }
 
-    pub fn cmd_link(
-        &self,
-        args: &LinkArgs,
-    ) -> std::result::Result<(serde_json::Value, Meta), CommandFailure> {
-        validate_skill_name(&args.skill).map_err(map_arg)?;
-        let _workspace = self.ctx.lock_workspace().map_err(map_lock)?;
-        self.ensure_write_layout()?;
-        self.link_impl(args)
-    }
-
-    fn link_impl(
-        &self,
-        args: &LinkArgs,
-    ) -> std::result::Result<(serde_json::Value, Meta), CommandFailure> {
-        let (linked, warnings) = link_skill(&self.ctx, args)?;
-
-        Ok((
-            json!({"skill": args.skill, "links": linked}),
-            Meta {
-                warnings,
-                sync_state: None,
-                op_id: None,
-            },
-        ))
-    }
-
     pub fn cmd_save(
         &self,
         args: &SaveArgs,
@@ -854,7 +554,20 @@ impl App {
         let pending_ops = pending_report.ops.len();
         let target_dirs = resolve_agent_skill_dirs();
         let v3_paths = V3StatePaths::from_root(&self.ctx.root);
-        let v3_status = v3_paths.maybe_load_snapshot().map_err(map_v3_state)?;
+        let v3_status = v3_paths
+            .maybe_load_snapshot()
+            .map_err(map_v3_state)?
+            .map(|snapshot| snapshot.status_view())
+            .unwrap_or_else(|| {
+                json!({
+                    "state_model": "v3",
+                    "available": false,
+                    "error": {
+                        "code": "STATE_CORRUPT",
+                        "message": format!("v3 state not initialized under {}", v3_paths.v3_dir.display())
+                    }
+                })
+            });
         let mut git_warnings = Vec::new();
         let head = read_git_field(&self.ctx, &["rev-parse", "HEAD"], &mut git_warnings);
         let branch = read_git_field(
@@ -867,8 +580,8 @@ impl App {
         let (remote, mut meta) = remote_status_payload_with_pending(&self.ctx, pending_report)?;
         meta.warnings.splice(0..0, git_warnings);
 
-        let mut data = json!({
-            "state_model": if v3_status.is_some() { "v3" } else { "v2" },
+        let data = json!({
+            "state_model": "v3",
             "skills": skills,
             "git": {"head": head, "branch": branch, "status_short": status_short},
             "targets": {
@@ -876,12 +589,9 @@ impl App {
                 "codex_dir": target_dirs.codex.display().to_string()
             },
             "remote": remote,
-            "pending_ops": pending_ops
+            "pending_ops": pending_ops,
+            "v3": v3_status
         });
-
-        if let Some(snapshot) = v3_status {
-            data["v3"] = snapshot.status_view();
-        }
 
         Ok((data, meta))
     }
@@ -891,17 +601,23 @@ impl App {
         let fsck_ok = fsck.is_ok();
         let fsck_output = fsck.unwrap_or_else(|e| e.to_string());
         let pending_report = self.ctx.read_pending_report().map_err(map_io)?;
-        let targets_ok = self.ctx.load_targets().is_ok();
+        let v3_paths = V3StatePaths::from_root(&self.ctx.root);
+        let v3_schema_ok = v3_paths.schema_file.exists();
+        let v3_snapshot_ok = v3_paths
+            .maybe_load_snapshot()
+            .map_err(map_v3_state)?
+            .is_some();
         let history = gitops::history_status(&self.ctx).map_err(map_git)?;
 
-        let healthy = fsck_ok && targets_ok && history.conflicts.is_empty();
+        let healthy = fsck_ok && v3_schema_ok && v3_snapshot_ok && history.conflicts.is_empty();
 
         Ok((
             json!({
                 "healthy": healthy,
                 "checks": {
                     "git_fsck": {"ok": fsck_ok, "output": fsck_output},
-                    "targets_file": {"ok": targets_ok},
+                    "v3_schema_file": {"ok": v3_schema_ok},
+                    "v3_snapshot": {"ok": v3_snapshot_ok},
                     "pending_queue": {
                         "count": pending_report.ops.len(),
                         "journal_events": pending_report.journal_events,
@@ -1504,458 +1220,6 @@ impl App {
             }
         }
     }
-
-    fn cmd_migrate(
-        &self,
-        command: &MigrateCommand,
-        request_id: &str,
-    ) -> std::result::Result<(serde_json::Value, Meta), CommandFailure> {
-        match command {
-            MigrateCommand::V2ToV3(args) => self.cmd_migrate_v2_to_v3(args, request_id),
-        }
-    }
-
-    fn cmd_migrate_v2_to_v3(
-        &self,
-        args: &MigrateV2ToV3Args,
-        request_id: &str,
-    ) -> std::result::Result<(serde_json::Value, Meta), CommandFailure> {
-        let plan = self.build_v2_to_v3_migration_plan().map_err(map_io)?;
-        if !args.apply {
-            return Ok((
-                json!({ "migration": plan.as_json("plan") }),
-                Meta::default(),
-            ));
-        }
-
-        if !plan.unresolved.is_empty() {
-            let mut failure = CommandFailure::new(
-                ErrorCode::ArgInvalid,
-                "migration has unresolved legacy targets; run --plan and fix them before --apply",
-            );
-            failure.details = json!({ "migration": plan.as_json("apply") });
-            return Err(failure);
-        }
-
-        let _workspace = self.ctx.lock_workspace().map_err(map_lock)?;
-        let paths = V3StatePaths::from_root(&self.ctx.root);
-        let mut snapshot = paths.load_or_init_snapshot().map_err(map_io)?;
-        let mut meta = Meta::default();
-        let now = Utc::now();
-        let before_count = snapshot.targets.targets.len();
-        let mut created = Vec::new();
-        let mut skipped = Vec::new();
-
-        for candidate in &plan.candidate_targets {
-            if candidate.existing_target_id.is_some() {
-                skipped.push(json!({
-                    "target_id": candidate.target_id,
-                    "path": candidate.path,
-                    "reason": "already_exists"
-                }));
-                continue;
-            }
-
-            snapshot.targets.targets.push(V3ProjectionTarget {
-                target_id: candidate.target_id.clone(),
-                agent: agent_kind_as_str(candidate.agent).to_string(),
-                path: candidate.path.clone(),
-                ownership: target_ownership_as_str(TargetOwnership::Observed).to_string(),
-                capabilities: target_capabilities(TargetOwnership::Observed),
-                created_at: Some(now),
-            });
-            created.push(json!({
-                "target_id": candidate.target_id,
-                "agent": agent_kind_as_str(candidate.agent),
-                "path": candidate.path,
-                "ownership": "observed",
-                "source_skills": candidate.source_skills
-            }));
-        }
-
-        if snapshot.targets.targets.len() != before_count {
-            paths.save_targets(&snapshot.targets).map_err(map_io)?;
-            let op_id = record_v3_operation(
-                &paths,
-                "migrate.v2-to-v3.apply",
-                json!({
-                    "request_id": request_id,
-                    "candidate_targets": plan.candidate_targets.len()
-                }),
-                json!({
-                    "created_targets": created,
-                    "skipped_targets": skipped
-                }),
-            )
-            .map_err(map_io)?;
-            meta.op_id = Some(op_id);
-        }
-
-        meta.warnings.extend(plan.warnings.clone());
-
-        Ok((
-            json!({
-                "migration": plan.as_json("apply"),
-                "created_targets": created,
-                "skipped_targets": skipped,
-                "noop": meta.op_id.is_none()
-            }),
-            meta,
-        ))
-    }
-
-    fn build_v2_to_v3_migration_plan(&self) -> Result<V2ToV3MigrationPlan> {
-        let legacy = self.ctx.load_targets()?;
-        let existing_v3 = V3StatePaths::from_root(&self.ctx.root).maybe_load_snapshot()?;
-        let mut candidate_paths = BTreeMap::<(AgentKind, PathBuf), BTreeSet<String>>::new();
-        let mut unresolved = Vec::new();
-
-        for (skill_id, config) in &legacy.skills {
-            collect_legacy_target_candidate(
-                skill_id,
-                AgentKind::Claude,
-                config.claude_path.as_deref(),
-                &mut candidate_paths,
-                &mut unresolved,
-            );
-            collect_legacy_target_candidate(
-                skill_id,
-                AgentKind::Codex,
-                config.codex_path.as_deref(),
-                &mut candidate_paths,
-                &mut unresolved,
-            );
-        }
-
-        let mut synthetic_targets = existing_v3
-            .as_ref()
-            .map(|snapshot| snapshot.targets.clone())
-            .unwrap_or_else(|| V3TargetsFile {
-                schema_version: 3,
-                targets: Vec::new(),
-            });
-
-        let mut candidate_targets = Vec::new();
-        for ((agent, path), source_skills) in candidate_paths {
-            let existing_target_id = synthetic_targets
-                .targets
-                .iter()
-                .find(|target| {
-                    target.agent == agent_kind_as_str(agent)
-                        && Path::new(&target.path) == path.as_path()
-                })
-                .map(|target| target.target_id.clone());
-
-            let target_id = existing_target_id.clone().unwrap_or_else(|| {
-                let next_id = unique_target_id_for(
-                    agent,
-                    path.to_string_lossy().as_ref(),
-                    &synthetic_targets,
-                );
-                synthetic_targets.targets.push(V3ProjectionTarget {
-                    target_id: next_id.clone(),
-                    agent: agent_kind_as_str(agent).to_string(),
-                    path: path.display().to_string(),
-                    ownership: target_ownership_as_str(TargetOwnership::Observed).to_string(),
-                    capabilities: target_capabilities(TargetOwnership::Observed),
-                    created_at: None,
-                });
-                next_id
-            });
-
-            candidate_targets.push(V2ToV3CandidateTarget {
-                target_id,
-                agent,
-                path: path.display().to_string(),
-                ownership: TargetOwnership::Observed,
-                action: if existing_target_id.is_some() {
-                    "skip_existing".to_string()
-                } else {
-                    "create".to_string()
-                },
-                existing_target_id,
-                source_skills: source_skills.into_iter().collect(),
-            });
-        }
-
-        let mut warnings = Vec::new();
-        if legacy.skills.is_empty() {
-            warnings.push("no legacy v2 targets.json entries found".to_string());
-        }
-        if candidate_targets.is_empty() && unresolved.is_empty() && !legacy.skills.is_empty() {
-            warnings
-                .push("legacy targets did not yield any migratable target directories".to_string());
-        }
-        if existing_v3.is_some() {
-            warnings.push(
-                "existing v3 state detected; migration will merge missing observed targets only"
-                    .to_string(),
-            );
-        }
-
-        Ok(V2ToV3MigrationPlan {
-            legacy_skill_count: legacy.skills.len(),
-            candidate_targets,
-            unresolved,
-            warnings,
-        })
-    }
-
-    fn unsupported_v1_command(
-        &self,
-        legacy: &'static str,
-        replacement: &'static str,
-    ) -> std::result::Result<(serde_json::Value, Meta), CommandFailure> {
-        let mut failure = CommandFailure::new(
-            ErrorCode::UnsupportedV1Command,
-            format!(
-                "command '{}' was removed in v2, use '{}'",
-                legacy, replacement
-            ),
-        );
-        failure.details = json!({
-            "removed_command": legacy,
-            "replacement": replacement
-        });
-        Err(failure)
-    }
-}
-
-#[derive(Debug, Clone)]
-struct V2ToV3MigrationPlan {
-    legacy_skill_count: usize,
-    candidate_targets: Vec<V2ToV3CandidateTarget>,
-    unresolved: Vec<V2ToV3Unresolved>,
-    warnings: Vec<String>,
-}
-
-impl V2ToV3MigrationPlan {
-    fn as_json(&self, mode: &str) -> serde_json::Value {
-        json!({
-            "mode": mode,
-            "legacy_skill_count": self.legacy_skill_count,
-            "candidate_targets": self.candidate_targets,
-            "candidate_bindings": [],
-            "unresolved": self.unresolved,
-            "warnings": self.warnings,
-            "next_steps": [
-                "review observed targets",
-                "create workspace bindings manually",
-                "project skills explicitly after migration"
-            ]
-        })
-    }
-}
-
-#[derive(Debug, Clone, serde::Serialize)]
-struct V2ToV3CandidateTarget {
-    target_id: String,
-    agent: AgentKind,
-    path: String,
-    ownership: TargetOwnership,
-    action: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    existing_target_id: Option<String>,
-    source_skills: Vec<String>,
-}
-
-#[derive(Debug, Clone, serde::Serialize)]
-struct V2ToV3Unresolved {
-    skill_id: String,
-    agent: AgentKind,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    path: Option<String>,
-    reason: String,
-    details: serde_json::Value,
-}
-
-fn resolve_init_args(args: &InitArgs) -> Result<InitResolved> {
-    if args.wizard {
-        return run_init_wizard(args);
-    }
-    Ok(InitResolved {
-        from_agent: args.from_agent,
-        target: args.target,
-        copy: args.copy,
-        force: args.force,
-        skip_backup: args.skip_backup,
-        backup_dir: args.backup_dir.clone(),
-    })
-}
-
-fn collect_legacy_target_candidate(
-    skill_id: &str,
-    agent: AgentKind,
-    raw_path: Option<&str>,
-    out: &mut BTreeMap<(AgentKind, PathBuf), BTreeSet<String>>,
-    unresolved: &mut Vec<V2ToV3Unresolved>,
-) {
-    let Some(raw_path) = raw_path.map(str::trim).filter(|value| !value.is_empty()) else {
-        return;
-    };
-    let legacy_path = PathBuf::from(raw_path);
-    if !legacy_path.is_absolute() {
-        unresolved.push(V2ToV3Unresolved {
-            skill_id: skill_id.to_string(),
-            agent,
-            path: Some(raw_path.to_string()),
-            reason: "relative_path".to_string(),
-            details: json!({
-                "message": "legacy target path must be absolute to migrate safely"
-            }),
-        });
-        return;
-    }
-
-    let Some(parent) = legacy_path.parent() else {
-        unresolved.push(V2ToV3Unresolved {
-            skill_id: skill_id.to_string(),
-            agent,
-            path: Some(raw_path.to_string()),
-            reason: "missing_parent".to_string(),
-            details: json!({
-                "message": "legacy target path has no parent directory"
-            }),
-        });
-        return;
-    };
-
-    if !parent.exists() {
-        unresolved.push(V2ToV3Unresolved {
-            skill_id: skill_id.to_string(),
-            agent,
-            path: Some(parent.display().to_string()),
-            reason: "target_directory_missing".to_string(),
-            details: json!({
-                "legacy_path": raw_path,
-                "message": "observed target directory does not exist"
-            }),
-        });
-        return;
-    }
-
-    out.entry((agent, parent.to_path_buf()))
-        .or_default()
-        .insert(skill_id.to_string());
-}
-
-fn run_init_wizard(args: &InitArgs) -> Result<InitResolved> {
-    println!("Loom init wizard");
-    println!("Flow: backup -> import -> symlink");
-
-    let from_agent = prompt_target("Import source agent [both/claude/codex]", args.from_agent)?;
-    let target = prompt_target("Link target agent [both/claude/codex]", args.target)?;
-    let copy = prompt_bool(
-        "Use copy mode instead of symlink? (default: no, symlink-first)",
-        args.copy,
-    )?;
-    let force = prompt_bool(
-        "Overwrite existing skills with same name? (default: no)",
-        args.force,
-    )?;
-    let skip_backup = prompt_bool(
-        "Skip backup before import? (default: no, recommended keep backup)",
-        args.skip_backup,
-    )?;
-    let backup_dir = if skip_backup {
-        None
-    } else {
-        prompt_optional(
-            "Backup directory (empty = default state/backups)",
-            args.backup_dir.clone(),
-        )?
-    };
-
-    println!(
-        "Selected: from_agent={}, target={}, copy={}, force={}, skip_backup={}, backup_dir={}",
-        target_as_str(from_agent),
-        target_as_str(target),
-        copy,
-        force,
-        skip_backup,
-        backup_dir.as_deref().unwrap_or("default(state/backups)")
-    );
-
-    let proceed = prompt_bool("Proceed with init?", true)?;
-    if !proceed {
-        return Err(anyhow!("init canceled by user"));
-    }
-
-    Ok(InitResolved {
-        from_agent,
-        target,
-        copy,
-        force,
-        skip_backup,
-        backup_dir,
-    })
-}
-
-fn target_as_str(target: Target) -> &'static str {
-    match target {
-        Target::Claude => "claude",
-        Target::Codex => "codex",
-        Target::Both => "both",
-    }
-}
-
-fn prompt_target(message: &str, default: Target) -> Result<Target> {
-    loop {
-        let input = prompt(message, Some(target_as_str(default)))?;
-        if input.is_empty() {
-            return Ok(default);
-        }
-        let value = input.to_lowercase();
-        match value.as_str() {
-            "both" | "b" | "1" => return Ok(Target::Both),
-            "claude" | "c" | "2" => return Ok(Target::Claude),
-            "codex" | "x" | "3" => return Ok(Target::Codex),
-            _ => {
-                eprintln!("invalid value: {} (allowed: both/claude/codex)", input);
-            }
-        }
-    }
-}
-
-fn prompt_bool(message: &str, default: bool) -> Result<bool> {
-    loop {
-        let default_str = if default { "Y/n" } else { "y/N" };
-        let input = prompt(message, Some(default_str))?;
-        if input.is_empty() {
-            return Ok(default);
-        }
-        let value = input.to_lowercase();
-        match value.as_str() {
-            "y" | "yes" | "true" | "1" => return Ok(true),
-            "n" | "no" | "false" | "0" => return Ok(false),
-            _ => {
-                eprintln!("invalid value: {} (allowed: y/n)", input);
-            }
-        }
-    }
-}
-
-fn prompt_optional(message: &str, default: Option<String>) -> Result<Option<String>> {
-    let default_hint = default.as_deref();
-    let input = prompt(message, default_hint)?;
-    if input.is_empty() {
-        return Ok(default);
-    }
-    Ok(Some(input))
-}
-
-fn prompt(message: &str, default: Option<&str>) -> Result<String> {
-    match default {
-        Some(v) => print!("{} [{}]: ", message, v),
-        None => print!("{}: ", message),
-    }
-    io::stdout().flush().context("failed to flush prompt")?;
-
-    let mut line = String::new();
-    io::stdin()
-        .read_line(&mut line)
-        .context("failed to read user input")?;
-    Ok(line.trim().to_string())
 }
 
 fn ensure_initial_commit(ctx: &AppContext) -> Result<()> {
@@ -2048,21 +1312,9 @@ fn create_symlink_dir(src: &Path, dst: &Path) -> Result<()> {
     Ok(())
 }
 
-fn resolve_targets(target: Target) -> Result<Vec<(&'static str, PathBuf)>> {
-    let dirs = resolve_agent_skill_dirs();
-
-    let out = match target {
-        Target::Claude => vec![("claude", dirs.claude)],
-        Target::Codex => vec![("codex", dirs.codex)],
-        Target::Both => vec![("claude", dirs.claude), ("codex", dirs.codex)],
-    };
-    Ok(out)
-}
-
 fn command_name(command: &Command) -> &'static str {
     match command {
         Command::Workspace { command } => match command {
-            WorkspaceCommand::Init(_) => "workspace.init",
             WorkspaceCommand::Status => "workspace.status",
             WorkspaceCommand::Doctor => "workspace.doctor",
             WorkspaceCommand::Binding { command } => match command {
@@ -2081,11 +1333,8 @@ fn command_name(command: &Command) -> &'static str {
         },
         Command::Skill { command } => match command {
             SkillCommand::Add(_) => "skill.add",
-            SkillCommand::Import(_) => "skill.import",
             SkillCommand::Project(_) => "skill.project",
             SkillCommand::Capture(_) => "skill.capture",
-            SkillCommand::Link(_) => "skill.link",
-            SkillCommand::Use(_) => "skill.use",
             SkillCommand::Save(_) => "skill.save",
             SkillCommand::Snapshot(_) => "skill.snapshot",
             SkillCommand::Release(_) => "skill.release",
@@ -2107,29 +1356,7 @@ fn command_name(command: &Command) -> &'static str {
                 OpsHistoryCommand::Repair(_) => "ops.history.repair",
             },
         },
-        Command::Migrate { command } => match command {
-            MigrateCommand::V2ToV3(args) => {
-                if args.apply {
-                    "migrate.v2-to-v3.apply"
-                } else {
-                    "migrate.v2-to-v3.plan"
-                }
-            }
-        },
         Command::Panel(_) => "panel",
-        Command::LegacyInit(_) => "init",
-        Command::LegacyAdd(_) => "add",
-        Command::LegacyImport(_) => "import",
-        Command::LegacyLink(_) => "link",
-        Command::LegacyUse(_) => "use",
-        Command::LegacySave(_) => "save",
-        Command::LegacySnapshot(_) => "snapshot",
-        Command::LegacyRelease(_) => "release",
-        Command::LegacyRollback(_) => "rollback",
-        Command::LegacyDiff(_) => "diff",
-        Command::LegacyStatus => "status",
-        Command::LegacyDoctor => "doctor",
-        Command::LegacyRemote { .. } => "remote",
     }
 }
 
@@ -2510,307 +1737,6 @@ fn map_project_io(method: ProjectionMethod) -> impl FnOnce(anyhow::Error) -> Com
     }
 }
 
-#[derive(Debug, Clone)]
-struct ImportCandidate {
-    skill: String,
-    source: PathBuf,
-    origin: String,
-}
-
-fn link_skill(
-    ctx: &AppContext,
-    args: &LinkArgs,
-) -> std::result::Result<(Vec<serde_json::Value>, Vec<String>), CommandFailure> {
-    let skill_src = ctx.skill_path(&args.skill);
-    if !skill_src.exists() {
-        return Err(CommandFailure::new(
-            ErrorCode::SkillNotFound,
-            format!("skill '{}' not found", args.skill),
-        ));
-    }
-
-    let targets = resolve_targets(args.target).map_err(map_arg)?;
-    let mut linked = Vec::new();
-    let mut warnings = Vec::new();
-    let mut method_used = if args.copy { "copy" } else { "symlink" }.to_string();
-
-    for (name, base) in targets {
-        fs::create_dir_all(&base).map_err(map_io)?;
-        let dst = base.join(&args.skill);
-        remove_path_if_exists(&dst).map_err(map_io)?;
-
-        if args.copy {
-            copy_dir_recursive(&skill_src, &dst).map_err(map_io)?;
-        } else if let Err(e) = create_symlink_dir(&skill_src, &dst) {
-            copy_dir_recursive(&skill_src, &dst).map_err(map_io)?;
-            warnings.push(format!(
-                "symlink failed for {} ({}), fallback to copy",
-                name, e
-            ));
-            method_used = "copy".to_string();
-        }
-
-        linked.push(json!({"target": name, "path": dst}));
-    }
-
-    let mut state = ctx.load_targets().map_err(map_io)?;
-    let mut config = SkillTargetConfig {
-        method: method_used,
-        claude_path: None,
-        codex_path: None,
-    };
-    for item in &linked {
-        let target = item["target"].as_str().unwrap_or_default();
-        let path = item["path"].as_str().unwrap_or_default().to_string();
-        match target {
-            "claude" => config.claude_path = Some(path),
-            "codex" => config.codex_path = Some(path),
-            _ => {}
-        }
-    }
-    state.skills.insert(args.skill.clone(), config);
-    ctx.save_targets(&state).map_err(map_io)?;
-
-    Ok((linked, warnings))
-}
-
-fn collect_import_candidates(args: &ImportArgs) -> Result<(Vec<ImportCandidate>, Vec<String>)> {
-    if args.source.is_some() == args.from_agent.is_some() {
-        return Err(anyhow!(
-            "use exactly one source mode: --source <dir> or --from-agent <claude|codex|both>"
-        ));
-    }
-    if let Some(skill) = &args.skill {
-        validate_skill_name(skill)?;
-    }
-
-    let mut warnings = Vec::new();
-    let mut raw_candidates = Vec::new();
-
-    if let Some(source) = &args.source {
-        let source_path = PathBuf::from(source);
-        if !source_path.exists() {
-            return Err(anyhow!("source does not exist: {}", source_path.display()));
-        }
-
-        let has_skill_file = source_path.join("SKILL.md").exists();
-        if has_skill_file {
-            let skill_name = args.skill.clone().unwrap_or_else(|| {
-                source_path
-                    .file_name()
-                    .unwrap_or_default()
-                    .to_string_lossy()
-                    .to_string()
-            });
-            validate_skill_name(&skill_name)?;
-            raw_candidates.push(ImportCandidate {
-                skill: skill_name,
-                source: source_path.clone(),
-                origin: format!("source:{}", source_path.display()),
-            });
-        } else {
-            for skill_dir in discover_skill_dirs(&source_path)? {
-                let skill_name = skill_dir
-                    .file_name()
-                    .unwrap_or_default()
-                    .to_string_lossy()
-                    .to_string();
-                if let Some(filter) = &args.skill
-                    && &skill_name != filter
-                {
-                    continue;
-                }
-                if let Err(err) = validate_skill_name(&skill_name) {
-                    warnings.push(format!(
-                        "skipping invalid skill directory {}: {}",
-                        skill_dir.display(),
-                        err
-                    ));
-                    continue;
-                }
-                raw_candidates.push(ImportCandidate {
-                    skill: skill_name,
-                    source: skill_dir,
-                    origin: format!("source:{}", source_path.display()),
-                });
-            }
-        }
-    } else if let Some(from_agent) = args.from_agent {
-        for (agent_name, base) in resolve_targets(from_agent)? {
-            if !base.exists() {
-                warnings.push(format!(
-                    "agent skills directory does not exist: {} ({})",
-                    agent_name,
-                    base.display()
-                ));
-                continue;
-            }
-
-            for skill_dir in discover_skill_dirs(&base)? {
-                let skill_name = skill_dir
-                    .file_name()
-                    .unwrap_or_default()
-                    .to_string_lossy()
-                    .to_string();
-                if let Some(filter) = &args.skill
-                    && &skill_name != filter
-                {
-                    continue;
-                }
-                if let Err(err) = validate_skill_name(&skill_name) {
-                    warnings.push(format!(
-                        "skipping invalid agent skill directory {}: {}",
-                        skill_dir.display(),
-                        err
-                    ));
-                    continue;
-                }
-                raw_candidates.push(ImportCandidate {
-                    skill: skill_name,
-                    source: skill_dir,
-                    origin: format!("agent:{}:{}", agent_name, base.display()),
-                });
-            }
-        }
-    }
-
-    let mut dedup = std::collections::BTreeMap::<String, ImportCandidate>::new();
-    for candidate in raw_candidates {
-        if dedup.contains_key(&candidate.skill) {
-            warnings.push(format!(
-                "duplicate skill '{}' detected; keeping first candidate",
-                candidate.skill
-            ));
-            continue;
-        }
-        dedup.insert(candidate.skill.clone(), candidate);
-    }
-
-    Ok((dedup.into_values().collect(), warnings))
-}
-
-fn backup_agent_skills(
-    ctx: &AppContext,
-    from_agent: Target,
-    backup_dir: Option<&str>,
-) -> Result<(serde_json::Value, Vec<String>)> {
-    let backup_root = match backup_dir {
-        Some(path) => PathBuf::from(path),
-        None => ctx.state_dir.join("backups"),
-    };
-    fs::create_dir_all(&backup_root)
-        .with_context(|| format!("failed to create backup root {}", backup_root.display()))?;
-
-    let ts = Utc::now().format("%Y%m%d_%H%M%S").to_string();
-    let destination = backup_root.join(ts);
-    fs::create_dir_all(&destination).with_context(|| {
-        format!(
-            "failed to create backup destination {}",
-            destination.display()
-        )
-    })?;
-
-    let mut warnings = Vec::new();
-    let mut sources = Vec::new();
-    let mut total_skills = 0usize;
-
-    for (agent_name, src) in resolve_targets(from_agent)? {
-        if !src.exists() {
-            warnings.push(format!(
-                "backup skipped: {} source not found ({})",
-                agent_name,
-                src.display()
-            ));
-            continue;
-        }
-
-        let dst = destination.join(format!("{}_skills", agent_name));
-        copy_dir_recursive(&src, &dst)?;
-        let count = count_skill_dirs(&src)?;
-        total_skills += count;
-        sources.push(json!({
-            "agent": agent_name,
-            "source": src,
-            "backup": dst,
-            "skill_dirs": count
-        }));
-    }
-
-    let manifest_path = destination.join("backup_manifest.txt");
-    let mut manifest = String::new();
-    manifest.push_str(&format!(
-        "backup_time={}\n",
-        Utc::now().format("%Y-%m-%d %H:%M:%S UTC")
-    ));
-    manifest.push_str(&format!("destination={}\n", destination.display()));
-    manifest.push_str("sources=\n");
-    for source in &sources {
-        let line = format!(
-            "- {} ({})\n",
-            source["source"].as_str().unwrap_or_default(),
-            source["agent"].as_str().unwrap_or_default()
-        );
-        manifest.push_str(&line);
-    }
-    manifest.push_str("counts=\n");
-    for source in &sources {
-        let line = format!(
-            "{}_dirs={}\n",
-            source["agent"].as_str().unwrap_or_default(),
-            source["skill_dirs"].as_u64().unwrap_or(0)
-        );
-        manifest.push_str(&line);
-    }
-    manifest.push_str(&format!("total_skill_dirs={}\n", total_skills));
-    fs::write(&manifest_path, manifest)
-        .with_context(|| format!("failed to write {}", manifest_path.display()))?;
-
-    Ok((
-        json!({
-            "destination": destination,
-            "manifest": manifest_path,
-            "total_skill_dirs": total_skills,
-            "sources": sources
-        }),
-        warnings,
-    ))
-}
-
-fn count_skill_dirs(root: &Path) -> Result<usize> {
-    let mut count = 0usize;
-    for entry in fs::read_dir(root)? {
-        let entry = entry?;
-        if entry.file_type()?.is_dir() {
-            count += 1;
-        }
-    }
-    Ok(count)
-}
-
-fn discover_skill_dirs(root: &Path) -> Result<Vec<PathBuf>> {
-    if !root.is_dir() {
-        return Err(anyhow!(
-            "import source must be a directory: {}",
-            root.display()
-        ));
-    }
-
-    let mut out = std::collections::BTreeSet::new();
-    for entry in WalkDir::new(root).follow_links(true).into_iter() {
-        let entry = entry.with_context(|| format!("failed to walk {}", root.display()))?;
-        if !entry.file_type().is_file() {
-            continue;
-        }
-        if entry.file_name() == "SKILL.md"
-            && let Some(parent) = entry.path().parent()
-        {
-            out.insert(parent.to_path_buf());
-        }
-    }
-
-    Ok(out.into_iter().collect())
-}
-
 pub fn list_skills(ctx: &AppContext) -> Result<Vec<String>> {
     if !ctx.skills_dir.exists() {
         return Ok(Vec::new());
@@ -3015,7 +1941,11 @@ fn map_git(err: anyhow::Error) -> CommandFailure {
 }
 
 fn map_lock(err: anyhow::Error) -> CommandFailure {
-    CommandFailure::new(ErrorCode::LockBusy, err.to_string())
+    let message = err.to_string();
+    if let Some(rest) = message.strip_prefix("ARG_INVALID:") {
+        return CommandFailure::new(ErrorCode::ArgInvalid, rest.trim());
+    }
+    CommandFailure::new(ErrorCode::LockBusy, message)
 }
 
 fn map_remote_unreachable(err: anyhow::Error) -> CommandFailure {

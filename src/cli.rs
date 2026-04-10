@@ -41,47 +41,11 @@ pub enum Command {
         #[command(subcommand)]
         command: OpsCommand,
     },
-    Migrate {
-        #[command(subcommand)]
-        command: MigrateCommand,
-    },
     Panel(PanelArgs),
-
-    // v1 commands are intentionally unsupported in v2.
-    #[command(name = "init", hide = true)]
-    LegacyInit(InitArgs),
-    #[command(name = "add", hide = true)]
-    LegacyAdd(AddArgs),
-    #[command(name = "import", hide = true)]
-    LegacyImport(ImportArgs),
-    #[command(name = "link", hide = true)]
-    LegacyLink(LinkArgs),
-    #[command(name = "use", hide = true)]
-    LegacyUse(LinkArgs),
-    #[command(name = "save", hide = true)]
-    LegacySave(SaveArgs),
-    #[command(name = "snapshot", hide = true)]
-    LegacySnapshot(SkillOnlyArgs),
-    #[command(name = "release", hide = true)]
-    LegacyRelease(ReleaseArgs),
-    #[command(name = "rollback", hide = true)]
-    LegacyRollback(RollbackArgs),
-    #[command(name = "diff", hide = true)]
-    LegacyDiff(DiffArgs),
-    #[command(name = "status", hide = true)]
-    LegacyStatus,
-    #[command(name = "doctor", hide = true)]
-    LegacyDoctor,
-    #[command(name = "remote", hide = true)]
-    LegacyRemote {
-        #[command(subcommand)]
-        command: RemoteCommand,
-    },
 }
 
 #[derive(Debug, Clone, Subcommand)]
 pub enum WorkspaceCommand {
-    Init(InitArgs),
     Status,
     Doctor,
     Binding {
@@ -113,11 +77,8 @@ pub enum TargetCommand {
 #[derive(Debug, Clone, Subcommand)]
 pub enum SkillCommand {
     Add(AddArgs),
-    Import(ImportArgs),
     Project(ProjectArgs),
     Capture(CaptureArgs),
-    Link(LinkArgs),
-    Use(LinkArgs),
     Save(SaveArgs),
     Snapshot(SkillOnlyArgs),
     Release(ReleaseArgs),
@@ -134,21 +95,6 @@ pub enum OpsCommand {
         #[command(subcommand)]
         command: OpsHistoryCommand,
     },
-}
-
-#[derive(Debug, Clone, Subcommand)]
-pub enum MigrateCommand {
-    #[command(name = "v2-to-v3")]
-    V2ToV3(MigrateV2ToV3Args),
-}
-
-#[derive(Debug, Clone, Args)]
-pub struct MigrateV2ToV3Args {
-    #[arg(long, conflicts_with = "apply")]
-    pub plan: bool,
-
-    #[arg(long, conflicts_with = "plan")]
-    pub apply: bool,
 }
 
 #[derive(Debug, Clone, Subcommand)]
@@ -170,70 +116,11 @@ pub enum HistoryRepairStrategyArg {
 }
 
 #[derive(Debug, Clone, Args)]
-pub struct InitArgs {
-    #[arg(long)]
-    pub wizard: bool,
-
-    #[arg(long, value_enum, default_value_t = Target::Both)]
-    pub from_agent: Target,
-
-    #[arg(long, value_enum, default_value_t = Target::Both)]
-    pub target: Target,
-
-    #[arg(long)]
-    pub copy: bool,
-
-    #[arg(long)]
-    pub force: bool,
-
-    #[arg(long)]
-    pub skip_backup: bool,
-
-    #[arg(long)]
-    pub backup_dir: Option<String>,
-}
-
-#[derive(Debug, Clone, Args)]
 pub struct AddArgs {
     pub source: String,
 
     #[arg(long)]
     pub name: String,
-}
-
-#[derive(Debug, Clone, Args)]
-pub struct ImportArgs {
-    #[arg(long)]
-    pub source: Option<String>,
-
-    #[arg(long, value_enum)]
-    pub from_agent: Option<Target>,
-
-    #[arg(long)]
-    pub skill: Option<String>,
-
-    #[arg(long)]
-    pub link: bool,
-
-    #[arg(long, value_enum, default_value_t = Target::Both)]
-    pub target: Target,
-
-    #[arg(long)]
-    pub copy: bool,
-
-    #[arg(long)]
-    pub force: bool,
-}
-
-#[derive(Debug, Clone, Args)]
-pub struct LinkArgs {
-    pub skill: String,
-
-    #[arg(long, value_enum, default_value_t = Target::Both)]
-    pub target: Target,
-
-    #[arg(long)]
-    pub copy: bool,
 }
 
 #[derive(Debug, Clone, Args)]
@@ -406,14 +293,6 @@ pub enum ProjectionMethod {
     Symlink,
     Copy,
     Materialize,
-}
-
-#[derive(Debug, Clone, Copy, ValueEnum, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Target {
-    Claude,
-    Codex,
-    Both,
 }
 
 #[cfg(test)]

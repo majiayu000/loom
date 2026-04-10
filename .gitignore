@@ -1,3 +1,5 @@
+# Loom tool repo should not keep runtime registry state.
+state/
 state/locks/
 state/panel.log
 state/targets.json

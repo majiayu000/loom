@@ -1,8 +1,35 @@
 mod common;
 
+use std::fs;
+use std::path::Path;
+
 use serde_json::Value;
 
 use common::{TestDir, run_loom, write_minimal_v3_state};
+
+fn overwrite_schema_version(path: &Path, version: u32) {
+    let raw = fs::read_to_string(path).expect("read v3 file");
+    let updated = raw.replacen(
+        "\"schema_version\":3",
+        &format!("\"schema_version\":{}", version),
+        1,
+    );
+    fs::write(path, updated).expect("write v3 file");
+}
+
+fn assert_workspace_status_schema_mismatch_for(path_suffix: &str) {
+    let root = TestDir::new("v3-status-per-file-mismatch");
+    write_minimal_v3_state(root.path(), 3);
+    overwrite_schema_version(&root.path().join(path_suffix), 99);
+
+    let (output, env) = run_loom(root.path(), &["workspace", "status"]);
+    assert!(!output.status.success(), "loom unexpectedly succeeded");
+    assert_eq!(env["ok"], Value::Bool(false));
+    assert_eq!(
+        env["error"]["code"],
+        Value::String("SCHEMA_MISMATCH".to_string())
+    );
+}
 
 #[test]
 fn workspace_status_reports_v3_snapshot_when_present() {
@@ -56,6 +83,36 @@ fn workspace_status_fails_with_schema_mismatch_for_invalid_v3_state() {
         env["error"]["code"],
         Value::String("SCHEMA_MISMATCH".to_string())
     );
+}
+
+#[test]
+fn workspace_status_schema_mismatch_schema_file() {
+    assert_workspace_status_schema_mismatch_for("state/v3/schema.json");
+}
+
+#[test]
+fn workspace_status_schema_mismatch_targets_file() {
+    assert_workspace_status_schema_mismatch_for("state/v3/targets.json");
+}
+
+#[test]
+fn workspace_status_schema_mismatch_bindings_file() {
+    assert_workspace_status_schema_mismatch_for("state/v3/bindings.json");
+}
+
+#[test]
+fn workspace_status_schema_mismatch_rules_file() {
+    assert_workspace_status_schema_mismatch_for("state/v3/rules.json");
+}
+
+#[test]
+fn workspace_status_schema_mismatch_projections_file() {
+    assert_workspace_status_schema_mismatch_for("state/v3/projections.json");
+}
+
+#[test]
+fn workspace_status_schema_mismatch_checkpoint_file() {
+    assert_workspace_status_schema_mismatch_for("state/v3/ops/checkpoint.json");
 }
 
 #[test]

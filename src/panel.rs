@@ -7,8 +7,8 @@ use anyhow::{Result, anyhow};
 use axum::{
     Json, Router,
     body::Body,
-    extract::{Path as AxumPath, State},
-    http::StatusCode,
+    extract::{ConnectInfo, Path as AxumPath, State},
+    http::{HeaderMap, StatusCode, Uri},
     response::{Html, IntoResponse, Response},
     routing::{get, post},
 };
@@ -29,6 +29,7 @@ use crate::v3::V3StatePaths;
 struct PanelState {
     ctx: Arc<AppContext>,
     dist_dir: PathBuf,
+    panel_origin: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -73,12 +74,14 @@ struct CaptureRequest {
 }
 
 pub async fn run_panel(ctx: AppContext, port: u16) -> Result<()> {
+    let addr = SocketAddr::from(([127, 0, 0, 1], port));
     let dist_dir = ctx.root.join("panel/dist");
     ensure_panel_dist(&dist_dir)?;
 
     let state = PanelState {
         ctx: Arc::new(ctx),
         dist_dir,
+        panel_origin: format!("http://{}", addr),
     };
 
     let app = Router::new()
@@ -105,11 +108,14 @@ pub async fn run_panel(ctx: AppContext, port: u16) -> Result<()> {
         .route("/{*path}", get(frontend_static_asset))
         .with_state(state);
 
-    let addr = SocketAddr::from(([127, 0, 0, 1], port));
     println!("panel listening on http://{}", addr);
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
-    axum::serve(listener, app).await?;
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .await?;
     Ok(())
 }
 
@@ -1944,11 +1950,18 @@ async fn v3_target_show(
 }
 
 async fn v3_target_add(
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
     State(state): State<PanelState>,
     Json(req): Json<TargetAddRequest>,
-) -> Json<serde_json::Value> {
+) -> (StatusCode, Json<serde_json::Value>) {
+    if let Some(response) = ensure_mutation_authorized(&state, peer, &headers, "target.add") {
+        return response;
+    }
     run_panel_command(
         &state,
+        "target.add",
+        StatusCode::CREATED,
         Command::Target {
             command: TargetCommand::Add(TargetAddArgs {
                 agent: req.agent,
@@ -1961,10 +1974,17 @@ async fn v3_target_add(
 
 async fn v3_target_remove(
     AxumPath(target_id): AxumPath<String>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
     State(state): State<PanelState>,
-) -> Json<serde_json::Value> {
+) -> (StatusCode, Json<serde_json::Value>) {
+    if let Some(response) = ensure_mutation_authorized(&state, peer, &headers, "target.remove") {
+        return response;
+    }
     run_panel_command(
         &state,
+        "target.remove",
+        StatusCode::OK,
         Command::Target {
             command: TargetCommand::Remove(crate::cli::TargetShowArgs { target_id }),
         },
@@ -1972,11 +1992,20 @@ async fn v3_target_remove(
 }
 
 async fn v3_binding_add(
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
     State(state): State<PanelState>,
     Json(req): Json<BindingAddRequest>,
-) -> Json<serde_json::Value> {
+) -> (StatusCode, Json<serde_json::Value>) {
+    if let Some(response) =
+        ensure_mutation_authorized(&state, peer, &headers, "workspace.binding.add")
+    {
+        return response;
+    }
     run_panel_command(
         &state,
+        "workspace.binding.add",
+        StatusCode::CREATED,
         Command::Workspace {
             command: WorkspaceCommand::Binding {
                 command: WorkspaceBindingCommand::Add(BindingAddArgs {
@@ -1996,10 +2025,19 @@ async fn v3_binding_add(
 
 async fn v3_binding_remove(
     AxumPath(binding_id): AxumPath<String>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
     State(state): State<PanelState>,
-) -> Json<serde_json::Value> {
+) -> (StatusCode, Json<serde_json::Value>) {
+    if let Some(response) =
+        ensure_mutation_authorized(&state, peer, &headers, "workspace.binding.remove")
+    {
+        return response;
+    }
     run_panel_command(
         &state,
+        "workspace.binding.remove",
+        StatusCode::OK,
         Command::Workspace {
             command: WorkspaceCommand::Binding {
                 command: WorkspaceBindingCommand::Remove(crate::cli::BindingShowArgs {
@@ -2011,11 +2049,18 @@ async fn v3_binding_remove(
 }
 
 async fn v3_project(
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
     State(state): State<PanelState>,
     Json(req): Json<ProjectRequest>,
-) -> Json<serde_json::Value> {
+) -> (StatusCode, Json<serde_json::Value>) {
+    if let Some(response) = ensure_mutation_authorized(&state, peer, &headers, "skill.project") {
+        return response;
+    }
     run_panel_command(
         &state,
+        "skill.project",
+        StatusCode::OK,
         Command::Skill {
             command: crate::cli::SkillCommand::Project(ProjectArgs {
                 skill: req.skill,
@@ -2028,11 +2073,18 @@ async fn v3_project(
 }
 
 async fn v3_capture(
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
     State(state): State<PanelState>,
     Json(req): Json<CaptureRequest>,
-) -> Json<serde_json::Value> {
+) -> (StatusCode, Json<serde_json::Value>) {
+    if let Some(response) = ensure_mutation_authorized(&state, peer, &headers, "skill.capture") {
+        return response;
+    }
     run_panel_command(
         &state,
+        "skill.capture",
+        StatusCode::OK,
         Command::Skill {
             command: crate::cli::SkillCommand::Capture(CaptureArgs {
                 skill: req.skill,
@@ -2094,42 +2146,162 @@ fn v3_error(code: &str, message: String) -> Json<serde_json::Value> {
     Json(json!({"ok": false, "error": {"code": code, "message": message}}))
 }
 
-fn run_panel_command(state: &PanelState, command: Command) -> Json<serde_json::Value> {
+fn ensure_mutation_authorized(
+    state: &PanelState,
+    peer: SocketAddr,
+    headers: &HeaderMap,
+    cmd: &str,
+) -> Option<(StatusCode, Json<serde_json::Value>)> {
+    if peer.ip().is_loopback() && request_origin_matches(&state.panel_origin, headers) {
+        return None;
+    }
+    let request_id = Uuid::new_v4().to_string();
+    Some((
+        StatusCode::FORBIDDEN,
+        Json(error_envelope(
+            cmd,
+            &request_id,
+            "UNAUTHORIZED",
+            "unauthorized panel mutation request",
+        )),
+    ))
+}
+
+fn request_origin_matches(panel_origin: &str, headers: &HeaderMap) -> bool {
+    let origin_matches = headers
+        .get("origin")
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| value == panel_origin);
+    if origin_matches {
+        return true;
+    }
+
+    headers
+        .get("referer")
+        .and_then(|value| value.to_str().ok())
+        .and_then(referer_origin)
+        .is_some_and(|value| value == panel_origin)
+}
+
+fn referer_origin(referer: &str) -> Option<String> {
+    let uri: Uri = referer.parse().ok()?;
+    Some(format!(
+        "{}://{}",
+        uri.scheme_str()?,
+        uri.authority()?.as_str()
+    ))
+}
+
+fn run_panel_command(
+    state: &PanelState,
+    cmd: &str,
+    success_status: StatusCode,
+    command: Command,
+) -> (StatusCode, Json<serde_json::Value>) {
     let app = crate::commands::App {
         ctx: (*state.ctx).clone(),
     };
+    let request_id = Uuid::new_v4().to_string();
     let cli = Cli {
         json: true,
-        request_id: Some(Uuid::new_v4().to_string()),
+        request_id: Some(request_id.clone()),
         root: Some(state.ctx.root.clone()),
         command,
     };
 
     match app.execute(cli) {
         Ok((envelope, _code)) => {
-            let payload = serde_json::to_value(envelope)
-                .unwrap_or_else(|err| internal_error_payload(err.to_string()));
-            Json(payload)
+            let status = if envelope.ok {
+                success_status
+            } else {
+                status_for_error_code(envelope.error.as_ref().map(|error| error.code.as_str()))
+            };
+            let payload = serde_json::to_value(envelope).unwrap_or_else(|err| {
+                error_envelope(cmd, &request_id, "INTERNAL_ERROR", &err.to_string())
+            });
+            (status, Json(payload))
         }
-        Err(err) => Json(internal_error_payload(err.to_string())),
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(error_envelope(
+                cmd,
+                &request_id,
+                "INTERNAL_ERROR",
+                &err.to_string(),
+            )),
+        ),
     }
 }
 
-fn internal_error_payload(message: String) -> serde_json::Value {
+fn status_for_error_code(code: Option<&str>) -> StatusCode {
+    match code.unwrap_or("INTERNAL_ERROR") {
+        "ARG_INVALID" => StatusCode::BAD_REQUEST,
+        "SKILL_NOT_FOUND" | "BINDING_NOT_FOUND" | "TARGET_NOT_FOUND" => StatusCode::NOT_FOUND,
+        "LOCK_BUSY"
+        | "DEPENDENCY_CONFLICT"
+        | "REMOTE_DIVERGED"
+        | "PUSH_REJECTED"
+        | "REPLAY_CONFLICT" => StatusCode::CONFLICT,
+        "UNAUTHORIZED" => StatusCode::FORBIDDEN,
+        "REMOTE_UNREACHABLE" => StatusCode::BAD_GATEWAY,
+        _ => StatusCode::INTERNAL_SERVER_ERROR,
+    }
+}
+
+fn error_envelope(cmd: &str, request_id: &str, code: &str, message: &str) -> serde_json::Value {
     json!({
         "ok": false,
+        "cmd": cmd,
+        "request_id": request_id,
+        "version": env!("CARGO_PKG_VERSION"),
+        "data": {},
         "error": {
-            "code": "INTERNAL_ERROR",
-            "message": message
+            "code": code,
+            "message": message,
+            "details": {}
+        },
+        "meta": {
+            "warnings": []
         }
     })
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{content_type_for, internal_error_payload, resolve_panel_asset_path};
+    use super::{
+        PanelState, content_type_for, ensure_mutation_authorized, error_envelope,
+        request_origin_matches, resolve_panel_asset_path, run_panel_command, status_for_error_code,
+    };
+    use crate::cli::{
+        BindingAddArgs, CaptureArgs, Command, ProjectArgs, ProjectionMethod, SkillCommand,
+        TargetAddArgs, TargetCommand, TargetOwnership, WorkspaceBindingCommand, WorkspaceCommand,
+        WorkspaceMatcherKind,
+    };
+    use crate::state::AppContext;
+    use axum::{
+        Json,
+        http::{HeaderMap, HeaderValue, StatusCode},
+    };
     use serde_json::json;
-    use std::path::Path;
+    use std::{
+        fs,
+        net::{IpAddr, Ipv4Addr, SocketAddr},
+        path::Path,
+        sync::Arc,
+    };
+    use uuid::Uuid;
+
+    fn make_test_state() -> (std::path::PathBuf, PanelState) {
+        let root = std::env::temp_dir().join(format!("loom-panel-test-{}", Uuid::new_v4()));
+        fs::create_dir_all(&root).expect("create panel test root");
+        let ctx = AppContext::new(Some(root.clone())).expect("build app context");
+        let state = PanelState {
+            ctx: Arc::new(ctx),
+            dist_dir: root.join("panel/dist"),
+            panel_origin: "http://127.0.0.1:43117".to_string(),
+        };
+        (root, state)
+    }
 
     #[test]
     fn resolve_panel_asset_path_rejects_invalid_components() {
@@ -2170,16 +2342,172 @@ mod tests {
     }
 
     #[test]
-    fn internal_error_payload_uses_expected_shape() {
+    fn error_envelope_uses_expected_shape() {
         assert_eq!(
-            internal_error_payload("boom".to_string()),
+            error_envelope("skill.capture", "req-1", "INTERNAL_ERROR", "boom"),
             json!({
                 "ok": false,
+                "cmd": "skill.capture",
+                "request_id": "req-1",
+                "version": env!("CARGO_PKG_VERSION"),
+                "data": {},
                 "error": {
                     "code": "INTERNAL_ERROR",
-                    "message": "boom"
+                    "message": "boom",
+                    "details": {}
+                },
+                "meta": {
+                    "warnings": []
                 }
             })
         );
+    }
+
+    #[test]
+    fn request_origin_matches_origin_or_referer() {
+        let panel_origin = "http://127.0.0.1:43117";
+        let mut headers = HeaderMap::new();
+        headers.insert("origin", HeaderValue::from_static("http://127.0.0.1:43117"));
+        assert!(request_origin_matches(panel_origin, &headers));
+
+        let mut referer_only = HeaderMap::new();
+        referer_only.insert(
+            "referer",
+            HeaderValue::from_static("http://127.0.0.1:43117/ops?x=1"),
+        );
+        assert!(request_origin_matches(panel_origin, &referer_only));
+
+        let mut mismatched = HeaderMap::new();
+        mismatched.insert("origin", HeaderValue::from_static("http://127.0.0.1:9999"));
+        assert!(!request_origin_matches(panel_origin, &mismatched));
+    }
+
+    #[test]
+    fn ensure_mutation_authorized_rejects_invalid_context_with_envelope() {
+        let (root, state) = make_test_state();
+
+        let peer = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 40000);
+        let headers = HeaderMap::new();
+        let response = ensure_mutation_authorized(&state, peer, &headers, "target.add")
+            .expect("guard should reject request without origin headers");
+        assert_eq!(response.0, StatusCode::FORBIDDEN);
+        let Json(payload) = response.1;
+        assert_eq!(payload["ok"], json!(false));
+        assert_eq!(payload["cmd"], json!("target.add"));
+        assert_eq!(payload["error"]["code"], json!("UNAUTHORIZED"));
+        assert!(payload["request_id"].as_str().is_some());
+        assert!(payload.get("meta").is_some());
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn status_for_error_code_maps_lock_busy_to_conflict() {
+        assert_eq!(
+            status_for_error_code(Some("LOCK_BUSY")),
+            StatusCode::CONFLICT
+        );
+        assert_eq!(
+            status_for_error_code(Some("TARGET_NOT_FOUND")),
+            StatusCode::NOT_FOUND
+        );
+        assert_eq!(
+            status_for_error_code(Some("ARG_INVALID")),
+            StatusCode::BAD_REQUEST
+        );
+    }
+
+    #[test]
+    fn run_panel_command_returns_non_2xx_for_logical_failures_across_mutations() {
+        let (root, state) = make_test_state();
+        let cases = vec![
+            (
+                "target.add",
+                StatusCode::CREATED,
+                Command::Target {
+                    command: TargetCommand::Add(TargetAddArgs {
+                        agent: crate::cli::AgentKind::Claude,
+                        path: "relative/path".to_string(),
+                        ownership: TargetOwnership::Managed,
+                    }),
+                },
+            ),
+            (
+                "target.remove",
+                StatusCode::OK,
+                Command::Target {
+                    command: TargetCommand::Remove(crate::cli::TargetShowArgs {
+                        target_id: "missing".to_string(),
+                    }),
+                },
+            ),
+            (
+                "workspace.binding.add",
+                StatusCode::CREATED,
+                Command::Workspace {
+                    command: WorkspaceCommand::Binding {
+                        command: WorkspaceBindingCommand::Add(BindingAddArgs {
+                            agent: crate::cli::AgentKind::Claude,
+                            profile: "default".to_string(),
+                            matcher_kind: WorkspaceMatcherKind::PathPrefix,
+                            matcher_value: "/tmp/x".to_string(),
+                            target: "missing-target".to_string(),
+                            policy_profile: "safe-capture".to_string(),
+                        }),
+                    },
+                },
+            ),
+            (
+                "workspace.binding.remove",
+                StatusCode::OK,
+                Command::Workspace {
+                    command: WorkspaceCommand::Binding {
+                        command: WorkspaceBindingCommand::Remove(crate::cli::BindingShowArgs {
+                            binding_id: "missing-binding".to_string(),
+                        }),
+                    },
+                },
+            ),
+            (
+                "skill.project",
+                StatusCode::OK,
+                Command::Skill {
+                    command: SkillCommand::Project(ProjectArgs {
+                        skill: "missing-skill".to_string(),
+                        binding: "missing-binding".to_string(),
+                        target: None,
+                        method: ProjectionMethod::Symlink,
+                    }),
+                },
+            ),
+            (
+                "skill.capture",
+                StatusCode::OK,
+                Command::Skill {
+                    command: SkillCommand::Capture(CaptureArgs {
+                        skill: None,
+                        binding: None,
+                        instance: None,
+                        message: None,
+                    }),
+                },
+            ),
+        ];
+
+        for (cmd, success_status, command) in cases {
+            let (status, Json(payload)) = run_panel_command(&state, cmd, success_status, command);
+            assert!(
+                !status.is_success(),
+                "expected non-2xx for {cmd}, got {status}"
+            );
+            assert_eq!(payload["ok"], json!(false));
+            assert_eq!(payload["cmd"], json!(cmd));
+            assert!(payload["request_id"].as_str().is_some());
+            assert!(payload["error"]["code"].as_str().is_some());
+            assert!(payload["error"]["message"].as_str().is_some());
+            assert!(payload.get("meta").is_some());
+        }
+
+        let _ = fs::remove_dir_all(root);
     }
 }

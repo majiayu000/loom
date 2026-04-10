@@ -97,14 +97,24 @@ impl V3StatePaths {
     pub fn load_snapshot(&self) -> Result<V3Snapshot> {
         let schema = self.load_schema()?;
         validate_schema_version(schema.schema_version)?;
+        let targets = self.load_targets()?;
+        validate_schema_version(targets.schema_version)?;
+        let bindings = self.load_bindings()?;
+        validate_schema_version(bindings.schema_version)?;
+        let rules = self.load_rules()?;
+        validate_schema_version(rules.schema_version)?;
+        let projections = self.load_projections()?;
+        validate_schema_version(projections.schema_version)?;
+        let checkpoint = self.load_checkpoint()?;
+        validate_schema_version(checkpoint.schema_version)?;
         Ok(V3Snapshot {
             schema,
-            targets: self.load_targets()?,
-            bindings: self.load_bindings()?,
-            rules: self.load_rules()?,
-            projections: self.load_projections()?,
+            targets,
+            bindings,
+            rules,
+            projections,
             operations: self.load_operations()?,
-            checkpoint: self.load_checkpoint()?,
+            checkpoint,
         })
     }
 

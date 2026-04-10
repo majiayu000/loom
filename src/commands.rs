@@ -126,13 +126,28 @@ impl App {
             ));
         }
 
+        let staging_root = self
+            .ctx
+            .state_dir
+            .join(format!("tmp-add-{}", Uuid::new_v4()));
+        let staging_skill = staging_root.join(&args.name);
+        let clone_tmp = staging_root.join("clone");
+
+        let cleanup_staging = || {
+            let _ = remove_path_if_exists(&staging_root);
+        };
+
+        remove_path_if_exists(&staging_root).map_err(map_io)?;
+        fs::create_dir_all(&staging_root).map_err(map_io)?;
+
         if Path::new(&args.source).exists() {
-            copy_dir_recursive(Path::new(&args.source), &dst).map_err(map_io)?;
+            if let Err(err) =
+                copy_dir_recursive_without_symlinks(Path::new(&args.source), &staging_skill)
+            {
+                cleanup_staging();
+                return Err(map_io(err));
+            }
         } else {
-            let tmp = self
-                .ctx
-                .state_dir
-                .join(format!("tmp-add-{}", Uuid::new_v4()));
             let source = args.source.as_str();
             let clone = gitops::run_git_allow_failure(
                 &self.ctx,
@@ -141,35 +156,62 @@ impl App {
                     "--depth",
                     "1",
                     source,
-                    tmp.to_string_lossy().as_ref(),
+                    clone_tmp.to_string_lossy().as_ref(),
                 ],
             )
             .map_err(map_git)?;
             if !clone.status.success() {
                 let stderr = String::from_utf8_lossy(&clone.stderr).to_string();
-                let _ = remove_path_if_exists(&tmp);
+                cleanup_staging();
                 return Err(CommandFailure::new(
                     ErrorCode::ArgInvalid,
                     format!("failed to clone source: {}", stderr.trim()),
                 ));
             }
-            copy_dir_recursive(&tmp, &dst).map_err(map_io)?;
-            let _ = remove_path_if_exists(&tmp);
+            if let Err(err) = copy_dir_recursive_without_symlinks(&clone_tmp, &staging_skill) {
+                cleanup_staging();
+                return Err(map_io(err));
+            }
         }
+
+        if let Err(err) = fs::rename(&staging_skill, &dst) {
+            cleanup_staging();
+            return Err(map_io(err));
+        }
+        cleanup_staging();
 
         let mut meta = Meta::default();
         let skill_rel = format!("skills/{}", args.name);
-        gitops::stage_path(&self.ctx, Path::new(&skill_rel)).map_err(map_git)?;
-        if gitops::has_staged_changes_for_path(&self.ctx, Path::new(&skill_rel)).map_err(map_git)? {
+        if let Err(err) = gitops::stage_path(&self.ctx, Path::new(&skill_rel)) {
+            rollback_added_skill(&self.ctx, &skill_rel, &dst);
+            return Err(map_git(err));
+        }
+        let staged = match gitops::has_staged_changes_for_path(&self.ctx, Path::new(&skill_rel)) {
+            Ok(staged) => staged,
+            Err(err) => {
+                rollback_added_skill(&self.ctx, &skill_rel, &dst);
+                return Err(map_git(err));
+            }
+        };
+        if staged {
             let message = format!("add({}): import {}", args.name, args.source);
-            let commit = gitops::commit(&self.ctx, &message).map_err(map_git)?;
-            maybe_autosync_or_queue(
+            let commit = match gitops::commit(&self.ctx, &message) {
+                Ok(commit) => commit,
+                Err(err) => {
+                    rollback_added_skill(&self.ctx, &skill_rel, &dst);
+                    return Err(map_git(err));
+                }
+            };
+            if let Err(err) = maybe_autosync_or_queue(
                 &self.ctx,
                 "add",
                 request_id,
                 json!({"skill": args.name, "commit": commit}),
                 &mut meta,
-            )?;
+            ) {
+                rollback_added_skill(&self.ctx, &skill_rel, &dst);
+                return Err(err);
+            }
         }
 
         Ok((json!({"skill": args.name, "path": dst}), meta))
@@ -1295,6 +1337,11 @@ fn read_git_field(ctx: &AppContext, args: &[&str], warnings: &mut Vec<String>) -
     }
 }
 
+fn rollback_added_skill(ctx: &AppContext, skill_rel: &str, dst: &Path) {
+    let _ = remove_path_if_exists(dst);
+    let _ = gitops::run_git_allow_failure(ctx, &["reset", "HEAD", "--", skill_rel]);
+}
+
 fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<()> {
     if !src.exists() {
         return Err(anyhow!("source does not exist: {}", src.display()));
@@ -1313,6 +1360,39 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<()> {
             fs::copy(entry.path(), &target)?;
         }
     }
+    Ok(())
+}
+
+fn copy_dir_recursive_without_symlinks(src: &Path, dst: &Path) -> Result<()> {
+    if !src.exists() {
+        return Err(anyhow!("source does not exist: {}", src.display()));
+    }
+    fs::create_dir_all(dst).with_context(|| format!("failed to create {}", dst.display()))?;
+
+    for entry in WalkDir::new(src).follow_links(false).into_iter() {
+        let entry = entry.with_context(|| format!("failed to walk {}", src.display()))?;
+        let rel = entry.path().strip_prefix(src)?;
+        if rel.as_os_str().is_empty() {
+            continue;
+        }
+        if entry.file_type().is_symlink() {
+            return Err(anyhow!(
+                "source contains unsupported symlink entry '{}'",
+                rel.display()
+            ));
+        }
+
+        let target = dst.join(rel);
+        if entry.file_type().is_dir() {
+            fs::create_dir_all(&target)?;
+        } else if entry.file_type().is_file() {
+            if let Some(parent) = target.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            fs::copy(entry.path(), &target)?;
+        }
+    }
+
     Ok(())
 }
 

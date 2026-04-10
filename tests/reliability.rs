@@ -115,6 +115,11 @@ fn make_skill_source_with_contents(root: &Path, name: &str, contents: &str) -> P
     skill_dir
 }
 
+#[cfg(unix)]
+fn symlink_dir(src: &Path, dst: &Path) {
+    std::os::unix::fs::symlink(src, dst).expect("create symlink dir");
+}
+
 fn replace_history_branch(
     repo_target: &Path,
     branch: &str,
@@ -1137,5 +1142,131 @@ fn ops_history_diagnose_and_repair_resolve_path_conflicts() {
             .unwrap()
             .len(),
         0
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn skill_add_blocks_root_symlink_source() {
+    let root = TestDir::new("skill-add-root-symlink");
+    let target = root.path().join("outside-target");
+    fs::create_dir_all(&target).expect("create outside target");
+    fs::write(target.join("SKILL.md"), "# outside\n").expect("write outside skill");
+
+    let source = root.path().join("source-root-symlink");
+    fs::create_dir_all(&source).expect("create source dir");
+    symlink_dir(&target, &source.join("linked-skill"));
+
+    let (output, env) = run_loom_with_env(
+        root.path(),
+        &[],
+        &["skill", "add", source.to_str().unwrap(), "--name", "demo"],
+    );
+
+    assert!(!output.status.success(), "skill add unexpectedly succeeded");
+    assert_eq!(env["ok"], Value::Bool(false));
+    assert!(!root.path().join("skills/demo").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn skill_add_blocks_nested_symlink_source() {
+    let root = TestDir::new("skill-add-nested-symlink");
+    let target = root.path().join("outside-nested-target");
+    fs::create_dir_all(&target).expect("create outside nested target");
+    fs::write(target.join("SKILL.md"), "# nested outside\n").expect("write outside nested skill");
+
+    let source = root.path().join("source-nested-symlink");
+    fs::create_dir_all(source.join("nested")).expect("create nested source dir");
+    fs::write(source.join("README.md"), "ok").expect("write seed file");
+    symlink_dir(&target, &source.join("nested").join("linked-skill"));
+
+    let (output, env) = run_loom_with_env(
+        root.path(),
+        &[],
+        &["skill", "add", source.to_str().unwrap(), "--name", "demo"],
+    );
+
+    assert!(!output.status.success(), "skill add unexpectedly succeeded");
+    assert_eq!(env["ok"], Value::Bool(false));
+    assert!(!root.path().join("skills/demo").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn skill_add_rolls_back_on_copy_failure_no_partial_tree() {
+    let root = TestDir::new("skill-add-copy-rollback");
+    let target = root.path().join("outside-copy-target");
+    fs::create_dir_all(&target).expect("create outside copy target");
+    fs::write(target.join("SKILL.md"), "# outside copy\n").expect("write outside copy skill");
+
+    let source = root.path().join("source-copy-rollback");
+    fs::create_dir_all(source.join("nested")).expect("create rollback source dir");
+    fs::write(source.join("ROOT.md"), "root").expect("write rollback root file");
+    symlink_dir(&target, &source.join("nested").join("break-copy"));
+
+    let (output, env) = run_loom_with_env(
+        root.path(),
+        &[],
+        &["skill", "add", source.to_str().unwrap(), "--name", "demo"],
+    );
+
+    assert!(!output.status.success(), "skill add unexpectedly succeeded");
+    assert_eq!(env["ok"], Value::Bool(false));
+    assert!(!root.path().join("skills/demo").exists());
+
+    let tmp_add_leftovers = fs::read_dir(root.path().join("state"))
+        .map(|entries| {
+            entries
+                .filter_map(|entry| entry.ok())
+                .map(|entry| entry.file_name().to_string_lossy().to_string())
+                .filter(|name| name.starts_with("tmp-add-"))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    assert!(
+        tmp_add_leftovers.is_empty(),
+        "tmp-add leftovers should be cleaned up, found: {:?}",
+        tmp_add_leftovers
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn skill_add_rolls_back_on_commit_failure_and_cleans_staged_path() {
+    let root = TestDir::new("skill-add-commit-rollback");
+    let source = make_skill_source(root.path(), "source-commit-rollback");
+
+    let remote = root.path().join("origin.git");
+    git_ok(["init", "--bare", remote.to_str().unwrap()]);
+    run_loom_ok(
+        root.path(),
+        &["workspace", "remote", "set", remote.to_str().unwrap()],
+    );
+
+    let hook = root.path().join(".git/hooks/pre-commit");
+    fs::create_dir_all(hook.parent().unwrap()).expect("create hooks dir");
+    fs::write(&hook, "#!/bin/sh\nexit 1\n").expect("write pre-commit hook");
+    #[allow(clippy::permissions_set_readonly_false)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = fs::metadata(&hook).expect("hook metadata").permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&hook, perms).expect("set hook executable");
+    }
+
+    let (output, env) = run_loom_with_env(
+        root.path(),
+        &[],
+        &["skill", "add", source.to_str().unwrap(), "--name", "demo"],
+    );
+    assert!(!output.status.success(), "skill add unexpectedly succeeded");
+    assert_eq!(env["ok"], Value::Bool(false));
+    assert!(!root.path().join("skills/demo").exists());
+
+    let status = git_ok_in(root.path(), &["status", "--short", "--", "skills/demo"]);
+    assert!(
+        status.trim().is_empty(),
+        "staged residue for skills/demo should be cleaned up: {status}"
     );
 }

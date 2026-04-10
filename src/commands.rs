@@ -1467,12 +1467,8 @@ fn unique_target_id(targets: &V3TargetsFile, args: &TargetAddArgs) -> String {
 }
 
 fn unique_target_id_for(agent: AgentKind, path: &str, targets: &V3TargetsFile) -> String {
-    let leaf = Path::new(path)
-        .file_name()
-        .and_then(|value| value.to_str())
-        .filter(|value| !value.is_empty())
-        .unwrap_or(agent_kind_as_str(agent));
-    let base = format!("target_{}_{}", agent_kind_as_str(agent), slugify(leaf));
+    let token = target_path_token(path, agent);
+    let base = format!("target_{}_{}", agent_kind_as_str(agent), slugify(&token));
     unique_id(
         &base,
         targets
@@ -1481,6 +1477,29 @@ fn unique_target_id_for(agent: AgentKind, path: &str, targets: &V3TargetsFile) -
             .map(|target| target.target_id.as_str())
             .collect(),
     )
+}
+
+fn target_path_token(path: &str, agent: AgentKind) -> String {
+    let route = Path::new(path);
+    let leaf = route
+        .file_name()
+        .and_then(|value| value.to_str())
+        .filter(|value| !value.is_empty())
+        .unwrap_or(agent_kind_as_str(agent));
+
+    // Names like ".../skills" are too generic. Include the parent to keep ids readable:
+    // ".claude/skills" => "claude_skills", ".claude-work/skills" => "claude-work_skills".
+    if (leaf.eq_ignore_ascii_case("skills") || leaf.eq_ignore_ascii_case("skill"))
+        && let Some(parent) = route
+            .parent()
+            .and_then(|value| value.file_name())
+            .and_then(|value| value.to_str())
+            .filter(|value| !value.is_empty())
+    {
+        return format!("{}_{}", parent, leaf);
+    }
+
+    leaf.to_string()
 }
 
 fn unique_binding_id(bindings: &V3BindingsFile, args: &BindingAddArgs) -> String {

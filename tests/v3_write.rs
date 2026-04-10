@@ -128,3 +128,34 @@ fn workspace_binding_add_fails_for_unknown_target() {
         Value::String("TARGET_NOT_FOUND".to_string())
     );
 }
+
+#[test]
+fn target_add_uses_parent_context_for_generic_skills_leaf() {
+    let root = TestDir::new("v3-target-add-generic-skills-leaf");
+    let claude_path = root.path().join("agent/.claude/skills");
+    let claude_work_path = root.path().join("agent/.claude-work/skills");
+
+    let (a_output, a_env) = target_add(root.path(), "claude", &claude_path, "managed");
+    assert!(
+        a_output.status.success(),
+        "first target add failed: stderr={} stdout={}",
+        String::from_utf8_lossy(&a_output.stderr),
+        String::from_utf8_lossy(&a_output.stdout)
+    );
+    assert_eq!(
+        a_env["data"]["target"]["target_id"],
+        Value::String("target_claude_claude_skills".to_string())
+    );
+
+    let (b_output, b_env) = target_add(root.path(), "claude", &claude_work_path, "managed");
+    assert!(
+        b_output.status.success(),
+        "second target add failed: stderr={} stdout={}",
+        String::from_utf8_lossy(&b_output.stderr),
+        String::from_utf8_lossy(&b_output.stdout)
+    );
+    assert_eq!(
+        b_env["data"]["target"]["target_id"],
+        Value::String("target_claude_claude_work_skills".to_string())
+    );
+}

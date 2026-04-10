@@ -72,6 +72,17 @@ loom target list
 ./scripts/e2e-agent-flow.sh /tmp/my-loom-e2e
 ```
 
+## 本地验证入口
+
+```bash
+make fmt-check
+make lint
+make test
+make panel-build
+make e2e
+make ci
+```
+
 ## JSON Envelope
 
 `--json` 输出固定 envelope：

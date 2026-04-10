@@ -6,7 +6,15 @@ if ! command -v jq >/dev/null 2>&1; then
   exit 1
 fi
 
-ROOT_BASE="${1:-/tmp/loom-agent-e2e-$(uuidgen)}"
+new_run_id() {
+  if command -v uuidgen >/dev/null 2>&1; then
+    uuidgen
+    return
+  fi
+  printf '%s-%s-%s' "$(date +%s)" "$$" "$RANDOM"
+}
+
+ROOT_BASE="${1:-/tmp/loom-agent-e2e-$(new_run_id)}"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 LOOM_BIN="${LOOM_BIN:-$REPO_ROOT/target/debug/loom}"
 

@@ -58,6 +58,20 @@ loom target add --agent claude --path "$HOME/.claude-work/skills" --ownership ob
 loom target list
 ```
 
+## Agent E2E（推荐）
+
+一键运行四个真实场景（`.claude/skills`、`.claude-work/skills`、多目录选择、`.codex/skills` + 失败反馈）：
+
+```bash
+./scripts/e2e-agent-flow.sh
+```
+
+可指定输出根目录：
+
+```bash
+./scripts/e2e-agent-flow.sh /tmp/my-loom-e2e
+```
+
 ## JSON Envelope
 
 `--json` 输出固定 envelope：

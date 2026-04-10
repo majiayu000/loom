@@ -116,7 +116,7 @@ fn target_remove_rejects_referenced_target() {
     assert_eq!(env["ok"], Value::Bool(false));
     assert_eq!(
         env["error"]["code"],
-        Value::String("ARG_INVALID".to_string())
+        Value::String("DEPENDENCY_CONFLICT".to_string())
     );
     assert!(
         env["error"]["details"]["binding_ids"]

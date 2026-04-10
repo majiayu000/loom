@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum ErrorCode {
     ArgInvalid,
+    DependencyConflict,
     SchemaMismatch,
     StateCorrupt,
     SkillNotFound,
@@ -25,6 +26,7 @@ impl ErrorCode {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::ArgInvalid => "ARG_INVALID",
+            Self::DependencyConflict => "DEPENDENCY_CONFLICT",
             Self::SchemaMismatch => "SCHEMA_MISMATCH",
             Self::StateCorrupt => "STATE_CORRUPT",
             Self::SkillNotFound => "SKILL_NOT_FOUND",
@@ -45,6 +47,7 @@ impl ErrorCode {
     pub fn exit_code(self) -> i32 {
         match self {
             Self::ArgInvalid => 2,
+            Self::DependencyConflict => 3,
             Self::SchemaMismatch => 3,
             Self::StateCorrupt => 3,
             Self::LockBusy => 4,

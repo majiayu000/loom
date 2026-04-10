@@ -568,6 +568,18 @@ impl App {
                     }
                 })
             });
+        let (registered_target_count, registered_target_ids) = v3_status
+            .get("targets")
+            .and_then(|value| value.as_array())
+            .map(|targets| {
+                let ids = targets
+                    .iter()
+                    .filter_map(|target| target.get("target_id").and_then(|id| id.as_str()))
+                    .map(|id| id.to_string())
+                    .collect::<Vec<_>>();
+                (targets.len(), ids)
+            })
+            .unwrap_or((0, Vec::new()));
         let mut git_warnings = Vec::new();
         let head = read_git_field(&self.ctx, &["rev-parse", "HEAD"], &mut git_warnings);
         let branch = read_git_field(
@@ -584,9 +596,13 @@ impl App {
             "state_model": "v3",
             "skills": skills,
             "git": {"head": head, "branch": branch, "status_short": status_short},
-            "targets": {
+            "agent_dir_defaults": {
                 "claude_dir": target_dirs.claude.display().to_string(),
                 "codex_dir": target_dirs.codex.display().to_string()
+            },
+            "registered_targets": {
+                "count": registered_target_count,
+                "target_ids": registered_target_ids
             },
             "remote": remote,
             "pending_ops": pending_ops,
@@ -1009,7 +1025,7 @@ impl App {
             || !relations.projections.is_empty()
         {
             let mut failure = CommandFailure::new(
-                ErrorCode::ArgInvalid,
+                ErrorCode::DependencyConflict,
                 format!(
                     "target '{}' is still referenced; remove dependent bindings or projections first",
                     args.target_id

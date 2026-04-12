@@ -4,8 +4,8 @@ mod envelope;
 mod gitops;
 mod panel;
 mod state;
+mod state_model;
 mod types;
-mod v3;
 
 use clap::Parser;
 

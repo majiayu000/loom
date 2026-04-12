@@ -1,10 +1,11 @@
 use std::fs;
+use std::path::Path;
 
 use serde_json::Value;
 
 mod common;
 
-use common::v3::{binding_add, save_skill, skill_project, target_add};
+use common::actions::{binding_add, save_skill, skill_project, target_add};
 use common::{TestDir, run_loom, write_skill};
 
 #[test]
@@ -95,6 +96,15 @@ fn skill_capture_copies_live_projection_back_into_source_and_commits() {
             .map(|value| !value.is_empty()),
         Some(true)
     );
+
+    let backup_path = capture_env["data"]["capture"]["backup"]["backup_path"]
+        .as_str()
+        .expect("capture backup path should be returned");
+    let backup_path = Path::new(backup_path);
+    assert!(backup_path.exists(), "capture backup path should exist");
+    let backup_body =
+        fs::read_to_string(backup_path.join("SKILL.md")).expect("read captured backup source");
+    assert!(backup_body.contains("source v1"));
 
     let source_file = root.path().join("skills/model-onboarding/SKILL.md");
     let source_body = fs::read_to_string(source_file).expect("read source skill");

@@ -1,10 +1,11 @@
 use std::fs;
+use std::path::Path;
 
 use serde_json::Value;
 
 mod common;
 
-use common::v3::{binding_add, save_skill, skill_project, target_add};
+use common::actions::{binding_add, save_skill, skill_project, target_add};
 use common::{TestDir, run_loom, write_skill};
 
 fn write_example_skill(root: &std::path::Path, skill: &str) {
@@ -131,5 +132,62 @@ fn skill_project_rejects_unmanaged_target_ownership() {
     assert_eq!(
         project_env["error"]["code"],
         Value::String("ARG_INVALID".to_string())
+    );
+}
+
+#[test]
+fn skill_project_backs_up_existing_projection_path_before_replace() {
+    let root = TestDir::new("v3-skill-project-backup");
+    write_example_skill(root.path(), "model-onboarding");
+
+    let (save_output, _) = save_skill(root.path(), "model-onboarding");
+    assert!(save_output.status.success(), "save should succeed");
+
+    let target_path = root.path().join("live/claude-project-a");
+    let (target_output, _) = target_add(root.path(), "claude", &target_path, "managed");
+    assert!(target_output.status.success(), "target add should succeed");
+
+    let (binding_output, _) = binding_add(
+        root.path(),
+        "claude",
+        "default",
+        "path-prefix",
+        "/tmp/project-a",
+        "target_claude_claude_project_a",
+    );
+    assert!(
+        binding_output.status.success(),
+        "binding add should succeed"
+    );
+
+    let existing_projection = target_path.join("model-onboarding");
+    fs::create_dir_all(&existing_projection).expect("create existing projection path");
+    fs::write(
+        existing_projection.join("legacy.txt"),
+        "legacy projection content",
+    )
+    .expect("write legacy projection marker");
+
+    let (project_output, project_env) = skill_project(
+        root.path(),
+        "model-onboarding",
+        "bind_claude_project_a",
+        Some("copy"),
+    );
+    assert!(
+        project_output.status.success(),
+        "project failed: stderr={} stdout={}",
+        String::from_utf8_lossy(&project_output.stderr),
+        String::from_utf8_lossy(&project_output.stdout)
+    );
+
+    let backup_path = project_env["data"]["backup"]["backup_path"]
+        .as_str()
+        .expect("backup path should be returned");
+    let backup_path = Path::new(backup_path);
+    assert!(backup_path.exists(), "backup path should exist");
+    assert!(
+        backup_path.join("legacy.txt").exists(),
+        "backup should preserve replaced content"
     );
 }

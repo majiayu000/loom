@@ -4,7 +4,7 @@ use serde_json::Value;
 
 mod common;
 
-use common::v3::{binding_add, skill_project, target_add};
+use common::actions::{binding_add, skill_project, target_add};
 use common::{TestDir, run_loom, write_skill};
 
 fn bootstrap_projected_skill(root: &Path) -> (String, String, String) {

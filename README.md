@@ -1,15 +1,18 @@
 # Loom
 
-Rust-based skill registry and projection control plane (v3-only).
+Rust-based skill registry and projection control plane.
 
-## 说明
+## Language
 
-- 不提供向后兼容命令。
-- 已移除：`workspace init`、`skill import/link/use`、`migrate v2-to-v3`。
-- 多目录通过 `target add` 显式注册，不再靠隐式目录推断。
-- 写操作硬保护：当 `--root` 指向 loom 工具仓库本身时会拒绝执行，请使用独立 skill registry 仓库。
+- English is the primary documentation language in this repository.
+- Chinese guide: [中文说明](docs/LOOM_COMPLETE_GUIDE_ZH.md)
 
-## 命令面（当前实现）
+## Notes
+
+- Multi-directory behavior is explicit via `target add`; no implicit directory inference.
+- Hard write guard: if `--root` points to the Loom tool repo itself, write operations are rejected. Use an independent skill registry repo for mutable operations.
+
+## Command Surface
 
 ```bash
 loom workspace status
@@ -49,7 +52,7 @@ loom ops history repair --strategy <local|remote>
 loom panel [--port 43117]
 ```
 
-## 多目录示例（Claude）
+## Multi-Directory Example (Claude)
 
 ```bash
 loom target add --agent claude --path "$HOME/.claude/skills" --ownership observed
@@ -58,21 +61,21 @@ loom target add --agent claude --path "$HOME/.claude-work/skills" --ownership ob
 loom target list
 ```
 
-## Agent E2E（推荐）
+## Agent E2E (Recommended)
 
-一键运行四个真实场景（`.claude/skills`、`.claude-work/skills`、多目录选择、`.codex/skills` + 失败反馈）：
+Run four real scenarios in one command (`.claude/skills`, `.claude-work/skills`, multi-directory selection, `.codex/skills` + failure feedback):
 
 ```bash
 ./scripts/e2e-agent-flow.sh
 ```
 
-可指定输出根目录：
+Optional output root:
 
 ```bash
 ./scripts/e2e-agent-flow.sh /tmp/my-loom-e2e
 ```
 
-## 本地验证入口
+## Local Verification Entrypoints
 
 ```bash
 make fmt-check
@@ -85,25 +88,4 @@ make ci
 
 ## JSON Envelope
 
-`--json` 输出固定 envelope：
-
-- `ok`
-- `cmd`
-- `request_id`
-- `version`
-- `data`
-- `error`
-- `meta`
-
-## 状态文件
-
-- `state/locks/`
-- `state/pending_ops.jsonl`
-- `state/pending_ops_snapshot.json`
-- `state/pending_ops_history/`
-- `state/v3/schema.json`
-- `state/v3/targets.json`
-- `state/v3/bindings.json`
-- `state/v3/rules.json`
-- `state/v3/projections.json`
-- `state/v3/ops/`
+Most commands support `--json` for machine-readable output.

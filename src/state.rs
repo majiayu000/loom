@@ -39,25 +39,116 @@ pub struct AgentSkillDirs {
     pub codex: PathBuf,
 }
 
-pub fn resolve_agent_skill_dirs() -> AgentSkillDirs {
+pub fn resolve_agent_skill_dirs(root: &Path) -> AgentSkillDirs {
     let home = env::var("HOME").unwrap_or_else(|_| "~".to_string());
+    let dotenv = load_dotenv_map(root);
 
-    let claude = env::var("CLAUDE_SKILLS_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| {
-            let claude_work = PathBuf::from(format!("{}/.claude-work/skills", home));
-            if claude_work.exists() {
-                claude_work
-            } else {
-                PathBuf::from(format!("{}/.claude/skills", home))
-            }
-        });
+    let claude = env_or_dotenv("CLAUDE_SKILLS_DIR", &dotenv)
+        .and_then(|raw| parse_dir_list_env(&raw).into_iter().next())
+        .unwrap_or_else(|| PathBuf::from(format!("{}/.claude/skills", home)));
 
-    let codex = env::var("CODEX_SKILLS_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from(format!("{}/.codex/skills", home)));
+    let codex = env_or_dotenv("CODEX_SKILLS_DIR", &dotenv)
+        .and_then(|raw| parse_dir_list_env(&raw).into_iter().next())
+        .unwrap_or_else(|| PathBuf::from(format!("{}/.codex/skills", home)));
 
     AgentSkillDirs { claude, codex }
+}
+
+pub fn resolve_agent_skill_source_dirs(root: &Path) -> Vec<PathBuf> {
+    let home = env::var("HOME").unwrap_or_else(|_| "~".to_string());
+    let dotenv = load_dotenv_map(root);
+    let mut dirs = Vec::new();
+
+    if let Some(raw) = env_or_dotenv("CODEX_SKILLS_DIR", &dotenv) {
+        dirs.extend(parse_dir_list_env(&raw));
+    } else {
+        dirs.push(PathBuf::from(format!("{}/.codex/skills", home)));
+    }
+
+    if let Some(raw) = env_or_dotenv("CLAUDE_SKILLS_DIR", &dotenv) {
+        dirs.extend(parse_dir_list_env(&raw));
+    } else {
+        dirs.push(PathBuf::from(format!("{}/.claude/skills", home)));
+    }
+
+    dedupe_paths_keep_order(dirs)
+}
+
+fn env_or_dotenv(key: &str, dotenv: &BTreeMap<String, String>) -> Option<String> {
+    env::var(key).ok().or_else(|| dotenv.get(key).cloned())
+}
+
+fn load_dotenv_map(root: &Path) -> BTreeMap<String, String> {
+    let path = root.join(".env");
+    let raw = match fs::read_to_string(path) {
+        Ok(raw) => raw,
+        Err(_) => return BTreeMap::new(),
+    };
+
+    let mut vars = BTreeMap::new();
+    for line in raw.lines() {
+        if let Some((key, value)) = parse_dotenv_line(line) {
+            vars.insert(key, value);
+        }
+    }
+    vars
+}
+
+fn parse_dotenv_line(line: &str) -> Option<(String, String)> {
+    let trimmed = line.trim();
+    if trimmed.is_empty() || trimmed.starts_with('#') {
+        return None;
+    }
+
+    let assignment = trimmed.strip_prefix("export ").unwrap_or(trimmed);
+    let (key, raw_value) = assignment.split_once('=')?;
+    let key = key.trim();
+    if key.is_empty() {
+        return None;
+    }
+
+    Some((key.to_string(), parse_dotenv_value(raw_value)))
+}
+
+fn parse_dotenv_value(raw: &str) -> String {
+    let value = raw.trim();
+
+    if value.len() >= 2 && value.starts_with('"') && value.ends_with('"') {
+        return value[1..value.len() - 1].replace("\\n", "\n");
+    }
+
+    if value.len() >= 2 && value.starts_with('\'') && value.ends_with('\'') {
+        return value[1..value.len() - 1].to_string();
+    }
+
+    let without_comment = match value.split_once(" #") {
+        Some((v, _)) => v.trim_end(),
+        None => value,
+    };
+
+    without_comment.trim().to_string()
+}
+
+fn parse_dir_list_env(raw: &str) -> Vec<PathBuf> {
+    raw.split(',')
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .collect()
+}
+
+fn dedupe_paths_keep_order(paths: Vec<PathBuf>) -> Vec<PathBuf> {
+    let mut seen = BTreeSet::new();
+    let mut unique = Vec::new();
+
+    for path in paths {
+        let key = path.to_string_lossy().to_string();
+        if seen.insert(key) {
+            unique.push(path);
+        }
+    }
+
+    unique
 }
 
 impl AppContext {

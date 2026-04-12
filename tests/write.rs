@@ -1,6 +1,6 @@
 mod common;
 
-use common::v3::{binding_add, target_add};
+use common::actions::{binding_add, target_add};
 use serde_json::Value;
 
 use common::{TestDir, run_loom};

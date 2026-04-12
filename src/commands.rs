@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -16,13 +17,16 @@ use crate::cli::{
 };
 use crate::envelope::{Envelope, Meta};
 use crate::gitops;
-use crate::state::{AppContext, PendingOpsReport, remove_path_if_exists, resolve_agent_skill_dirs};
-use crate::types::{ErrorCode, SyncState};
-use crate::v3::{
+use crate::state::{
+    AppContext, PendingOpsReport, remove_path_if_exists, resolve_agent_skill_dirs,
+    resolve_agent_skill_source_dirs,
+};
+use crate::state_model::{
     V3BindingRule, V3BindingsFile, V3OperationRecord, V3ProjectionInstance, V3ProjectionTarget,
     V3ProjectionsFile, V3RulesFile, V3Snapshot, V3StatePaths, V3TargetCapabilities, V3TargetsFile,
     V3WorkspaceBinding, V3WorkspaceMatcher,
 };
+use crate::types::{ErrorCode, SyncState};
 
 #[derive(Debug)]
 pub struct CommandFailure {
@@ -263,6 +267,9 @@ impl App {
         let target_base = PathBuf::from(&target.path);
         fs::create_dir_all(&target_base).map_err(map_io)?;
         let materialized_path = target_base.join(&args.skill);
+        let replaced_projection_backup =
+            backup_path_if_exists(&self.ctx, &materialized_path, "project.replace_projection")
+                .map_err(map_io)?;
         remove_path_if_exists(&materialized_path).map_err(map_io)?;
         project_skill_to_target(&skill_src, &materialized_path, args.method)
             .map_err(map_project_io(args.method))?;
@@ -316,7 +323,7 @@ impl App {
         .map_err(map_v3_state)?;
 
         Ok((
-            json!({"projection": projection, "noop": false}),
+            json!({"projection": projection, "backup": replaced_projection_backup, "noop": false}),
             Meta {
                 op_id: Some(op_id),
                 ..Meta::default()
@@ -346,6 +353,7 @@ impl App {
             ));
         }
 
+        let mut source_backup = None;
         if projection.method != "symlink" {
             let tmp_path = self
                 .ctx
@@ -353,6 +361,8 @@ impl App {
                 .join(format!("tmp-capture-{}", Uuid::new_v4()));
             let _ = remove_path_if_exists(&tmp_path);
             copy_dir_recursive(&live_path, &tmp_path).map_err(map_io)?;
+            source_backup = backup_path_if_exists(&self.ctx, &skill_path, "capture.replace_source")
+                .map_err(map_io)?;
             remove_path_if_exists(&skill_path).map_err(map_io)?;
             fs::rename(&tmp_path, &skill_path).map_err(map_io)?;
         }
@@ -400,6 +410,7 @@ impl App {
                     "binding_id": projection.binding_id,
                     "instance_id": projection.instance_id,
                     "commit": commit,
+                    "backup": source_backup,
                     "noop": !changed
                 }
             }),
@@ -591,10 +602,10 @@ impl App {
     }
 
     pub fn cmd_status(&self) -> std::result::Result<(serde_json::Value, Meta), CommandFailure> {
-        let skills = list_skills(&self.ctx).map_err(map_io)?;
+        let skill_inventory = collect_skill_inventory(&self.ctx);
         let pending_report = self.ctx.read_pending_report().map_err(map_io)?;
         let pending_ops = pending_report.ops.len();
-        let target_dirs = resolve_agent_skill_dirs();
+        let target_dirs = resolve_agent_skill_dirs(&self.ctx.root);
         let v3_paths = V3StatePaths::from_root(&self.ctx.root);
         let v3_status = v3_paths
             .maybe_load_snapshot()
@@ -633,10 +644,21 @@ impl App {
 
         let (remote, mut meta) = remote_status_payload_with_pending(&self.ctx, pending_report)?;
         meta.warnings.splice(0..0, git_warnings);
+        meta.warnings.extend(skill_inventory.warnings);
 
         let data = json!({
             "state_model": "v3",
-            "skills": skills,
+            "skills": skill_inventory.source_skills,
+            "backup_skills": skill_inventory.backup_skills,
+            "skill_sources": {
+                "dirs": skill_inventory
+                    .source_dirs
+                    .iter()
+                    .map(|path| path.display().to_string())
+                    .collect::<Vec<_>>(),
+                "count": skill_inventory.source_dirs.len(),
+            },
+            "backup_dir": self.ctx.skills_dir.display().to_string(),
             "git": {"head": head, "branch": branch, "status_short": status_short},
             "agent_dir_defaults": {
                 "claude_dir": target_dirs.claude.display().to_string(),
@@ -1342,6 +1364,86 @@ fn rollback_added_skill(ctx: &AppContext, skill_rel: &str, dst: &Path) {
     let _ = gitops::run_git_allow_failure(ctx, &["reset", "HEAD", "--", skill_rel]);
 }
 
+fn backup_path_if_exists(
+    ctx: &AppContext,
+    path: &Path,
+    reason: &str,
+) -> Result<Option<serde_json::Value>> {
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => {
+            return Err(err).with_context(|| {
+                format!("failed to inspect path before backup: {}", path.display())
+            });
+        }
+    };
+
+    let ts = Utc::now().format("%Y%m%dT%H%M%S%3fZ").to_string();
+    let entry = format!(
+        "{}-{}-{}",
+        slugify(reason),
+        slugify(
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("path")
+        ),
+        Uuid::new_v4().simple()
+    );
+    let backup_root = ctx.state_dir.join("backups").join(ts);
+    fs::create_dir_all(&backup_root)
+        .with_context(|| format!("failed to create backup root {}", backup_root.display()))?;
+    let backup_path = backup_root.join(entry);
+
+    let kind = if metadata.file_type().is_symlink() {
+        backup_symlink_metadata(path, &backup_path)?;
+        "symlink"
+    } else if metadata.is_dir() {
+        copy_dir_recursive(path, &backup_path)?;
+        "dir"
+    } else {
+        if let Some(parent) = backup_path.parent() {
+            fs::create_dir_all(parent)
+                .with_context(|| format!("failed to create backup parent {}", parent.display()))?;
+        }
+        fs::copy(path, &backup_path).with_context(|| {
+            format!(
+                "failed to copy file {} to {}",
+                path.display(),
+                backup_path.display()
+            )
+        })?;
+        "file"
+    };
+
+    Ok(Some(json!({
+        "reason": reason,
+        "kind": kind,
+        "original_path": path.display().to_string(),
+        "backup_path": backup_path.display().to_string()
+    })))
+}
+
+fn backup_symlink_metadata(src: &Path, dst: &Path) -> Result<()> {
+    fs::create_dir_all(dst)
+        .with_context(|| format!("failed to create symlink backup dir {}", dst.display()))?;
+    let target = fs::read_link(src)
+        .with_context(|| format!("failed to resolve symlink {}", src.display()))?;
+
+    let payload = json!({
+        "source": src.display().to_string(),
+        "target": target.display().to_string()
+    });
+    let raw = serde_json::to_string_pretty(&payload)?;
+    fs::write(dst.join("symlink.json"), raw + "\n").with_context(|| {
+        format!(
+            "failed to write symlink backup metadata for {}",
+            src.display()
+        )
+    })?;
+    Ok(())
+}
+
 fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<()> {
     if !src.exists() {
         return Err(anyhow!("source does not exist: {}", src.display()));
@@ -1852,19 +1954,97 @@ fn map_project_io(method: ProjectionMethod) -> impl FnOnce(anyhow::Error) -> Com
     }
 }
 
-pub fn list_skills(ctx: &AppContext) -> Result<Vec<String>> {
-    if !ctx.skills_dir.exists() {
-        return Ok(Vec::new());
+#[derive(Debug, Clone, Default)]
+pub struct SkillInventory {
+    pub source_skills: Vec<String>,
+    pub backup_skills: Vec<String>,
+    pub source_dirs: Vec<PathBuf>,
+    pub warnings: Vec<String>,
+}
+
+pub fn collect_skill_inventory(ctx: &AppContext) -> SkillInventory {
+    let source_dirs = resolve_agent_skill_source_dirs(&ctx.root);
+    let mut warnings = Vec::new();
+
+    let source_skills = list_unique_skills_from_dirs(&source_dirs, "source", &mut warnings);
+    let backup_skills = list_unique_skills_from_dirs(
+        std::slice::from_ref(&ctx.skills_dir),
+        "backup",
+        &mut warnings,
+    );
+
+    SkillInventory {
+        source_skills,
+        backup_skills,
+        source_dirs,
+        warnings,
     }
-    let mut skills = Vec::new();
-    for entry in fs::read_dir(&ctx.skills_dir).context("failed to read skills dir")? {
-        let entry = entry?;
-        if entry.file_type()?.is_dir() {
-            skills.push(entry.file_name().to_string_lossy().to_string());
+}
+
+fn list_unique_skills_from_dirs(
+    dirs: &[PathBuf],
+    label: &str,
+    warnings: &mut Vec<String>,
+) -> Vec<String> {
+    let mut skills = BTreeSet::new();
+
+    for dir in dirs {
+        if !dir.exists() {
+            continue;
+        }
+
+        let entries = match fs::read_dir(dir) {
+            Ok(entries) => entries,
+            Err(err) => {
+                warnings.push(format!(
+                    "failed to read {} skills dir {}: {}",
+                    label,
+                    dir.display(),
+                    err
+                ));
+                continue;
+            }
+        };
+
+        for entry in entries {
+            let entry = match entry {
+                Ok(entry) => entry,
+                Err(err) => {
+                    warnings.push(format!(
+                        "failed to read entry in {} skills dir {}: {}",
+                        label,
+                        dir.display(),
+                        err
+                    ));
+                    continue;
+                }
+            };
+
+            let is_dir = match entry.file_type() {
+                Ok(kind) if kind.is_dir() => true,
+                Ok(kind) if kind.is_symlink() => fs::metadata(entry.path())
+                    .map(|meta| meta.is_dir())
+                    .unwrap_or(false),
+                Ok(_) => false,
+                Err(err) => {
+                    warnings.push(format!(
+                        "failed to inspect entry {} in {} skills dir {}: {}",
+                        entry.file_name().to_string_lossy(),
+                        label,
+                        dir.display(),
+                        err
+                    ));
+                    false
+                }
+            };
+
+            if is_dir {
+                skills.insert(entry.file_name().to_string_lossy().to_string());
+            }
         }
     }
-    skills.sort();
-    Ok(skills)
+
+    skills.into_iter().collect()
 }
 
 pub fn remote_status_payload(

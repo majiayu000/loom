@@ -21,9 +21,9 @@ use crate::cli::{
     TargetAddArgs, TargetCommand, TargetOwnership, WorkspaceBindingCommand, WorkspaceCommand,
     WorkspaceMatcherKind,
 };
-use crate::commands::{list_skills, remote_status_payload};
+use crate::commands::{collect_skill_inventory, remote_status_payload};
 use crate::state::{AppContext, resolve_agent_skill_dirs};
-use crate::v3::V3StatePaths;
+use crate::state_model::V3StatePaths;
 
 #[derive(Clone)]
 struct PanelState {
@@ -703,6 +703,9 @@ async fn index() -> Html<&'static str> {
         info: null,
         health: null,
         skills: [],
+        backupSkills: [],
+        sourceDirs: [],
+        skillWarnings: [],
         v3: { ok: false, error: null, data: null },
         v3View: null,
         remote: null,
@@ -1016,7 +1019,8 @@ async fn index() -> Html<&'static str> {
         const html = [
           `<span class='chip'>Health: ${state.health?.ok ? 'OK' : 'UNKNOWN'}</span>`,
           `<span class='chip sync ${syncClass(remote.sync_state)}'>Sync: ${esc(remote.sync_state || 'UNKNOWN')}</span>`,
-          `<span class='chip'>Skills: ${esc(state.skills.length)}</span>`,
+          `<span class='chip'>Source Skills: ${esc(state.skills.length)}</span>`,
+          `<span class='chip'>Backups: ${esc(state.backupSkills.length)}</span>`,
           `<span class='chip'>Bindings: ${esc(v3.counts.bindings || 0)}</span>`,
           `<span class='chip'>Targets: ${esc(v3.counts.targets || 0)}</span>`,
           `<span class='chip'>Drift: ${esc(v3.counts.drifted_projections || 0)}</span>`,
@@ -1051,7 +1055,8 @@ async fn index() -> Html<&'static str> {
           <p class='view-sub'>Runtime summary and quick commands • ${esc(ts(state.loadedAt))}</p>
           ${renderV3Notice()}
           <div class='grid overview'>
-            <div class='card'><div class='metric-k'>Skills</div><div class='metric-v'>${state.skills.length}</div></div>
+            <div class='card'><div class='metric-k'>Source Skills</div><div class='metric-v'>${state.skills.length}</div></div>
+            <div class='card'><div class='metric-k'>Backups</div><div class='metric-v'>${state.backupSkills.length}</div></div>
             <div class='card'><div class='metric-k'>Projected Skills</div><div class='metric-v'>${projectedSkills}</div></div>
             <div class='card'><div class='metric-k'>Bindings</div><div class='metric-v'>${esc(v3.counts.bindings || 0)}</div></div>
             <div class='card'><div class='metric-k'>Targets</div><div class='metric-v'>${esc(v3.counts.targets || 0)}</div></div>
@@ -1217,6 +1222,7 @@ async fn index() -> Html<&'static str> {
       function renderSkills(root) {
         const query = state.query.trim().toLowerCase();
         const filtered = state.skills.filter((name) => name.toLowerCase().includes(query));
+        const backupSet = new Set(state.backupSkills);
 
         if (!state.selectedSkill || !filtered.includes(state.selectedSkill)) {
           state.selectedSkill = filtered[0] || null;
@@ -1229,9 +1235,10 @@ async fn index() -> Html<&'static str> {
               const chips = [];
               chips.push(`<span class='tiny-chip ${info.projections.length > 0 ? 'linked' : 'unlinked'}'>${info.projections.length || 0} projection${info.projections.length === 1 ? '' : 's'}</span>`);
               chips.push(`<span class='tiny-chip'>${info.bindingIds.length || 0} binding${info.bindingIds.length === 1 ? '' : 's'}</span>`);
+              chips.push(`<span class='tiny-chip ${backupSet.has(name) ? 'linked' : 'unlinked'}'>${backupSet.has(name) ? 'backed up' : 'backup missing'}</span>`);
               if (info.driftedCount) chips.push(`<span class='tiny-chip drift'>Drift ${info.driftedCount}</span>`);
               info.methods.slice(0, 2).forEach((method) => chips.push(`<span class='tiny-chip'>${esc(method)}</span>`));
-              if (chips.length === 2 && info.methods.length === 0) chips.push(`<span class='tiny-chip unlinked'>No projection rule</span>`);
+              if (chips.length === 3 && info.methods.length === 0) chips.push(`<span class='tiny-chip unlinked'>No projection rule</span>`);
               return `
                 <article class='skill-card ${state.selectedSkill === name ? 'active' : ''}' data-skill='${esc(name)}'>
                   <h3 class='skill-name'>${esc(name)}</h3>
@@ -1243,6 +1250,7 @@ async fn index() -> Html<&'static str> {
         let detail = `<div class='event'>Select a skill to inspect command shortcuts.</div>`;
         if (state.selectedSkill) {
           const info = skillInfo(state.selectedSkill);
+          const backedUp = backupSet.has(state.selectedSkill);
           const bindings = info.bindingIds
             .map((bindingId) => state.v3View.bindings.find((binding) => binding.binding_id === bindingId))
             .filter(Boolean);
@@ -1259,10 +1267,13 @@ async fn index() -> Html<&'static str> {
             ${renderProjectForm(state.selectedSkill, info)}
             ${renderCaptureForm(state.selectedSkill, info)}
           `;
+          const sourceSummary = state.sourceDirs.length > 0 ? state.sourceDirs.join(' • ') : 'unknown';
+          const sourceControlCmds = backedUp ? [saveCmd, snapCmd, relCmd, diffCmd] : [];
           detail = `
             <div class='card skill-detail'>
               <h3 style='margin:0 0 8px;'>${esc(state.selectedSkill)}</h3>
-              <p class='note'>Canonical source: <span class='mono'>skills/${esc(state.selectedSkill)}</span></p>
+              <p class='note'>Source directories: <span class='mono'>${esc(sourceSummary)}</span></p>
+              <p class='note'>Backup snapshot: <span class='mono'>skills/${esc(state.selectedSkill)}</span> • ${backedUp ? 'ready' : 'missing'}</p>
               <div class='skill-stat-grid'>
                 <div class='stat'><div class='metric-k'>Bindings</div><div class='metric-v'>${info.bindingIds.length}</div></div>
                 <div class='stat'><div class='metric-k'>Targets</div><div class='metric-v'>${info.targetIds.length}</div></div>
@@ -1303,8 +1314,9 @@ async fn index() -> Html<&'static str> {
                   </div>` : `<div class='event'>No active projections yet.</div>`}
                 </div>
               </div>
+              ${backedUp ? '' : `<aside class='warning'><strong class='status-danger'>Backup missing</strong><div style='margin-top:6px;'>This skill is visible from source directories but not yet present under <span class='mono'>skills/${esc(state.selectedSkill)}</span>.</div></aside>`}
               <div class='commands'>
-                ${[saveCmd, snapCmd, relCmd, diffCmd, bindingCmd, targetCmd].filter(Boolean).map((cmd) => `
+                ${[...sourceControlCmds, bindingCmd, targetCmd].filter(Boolean).map((cmd) => `
                   <div class='command-item mono'>
                     <code>${esc(cmd)}</code>
                     <button class='cmd-btn copy-btn' data-cmd='${esc(cmd)}'>Copy</button>
@@ -1320,11 +1332,12 @@ async fn index() -> Html<&'static str> {
 
         return `
           <h2 class='view-title'>Skills</h2>
-          <p class='view-sub'>Search and inspect managed skills with agent-ready commands.</p>
+          <p class='view-sub'>Read from source skill directories; local <span class='mono'>skills/</span> is treated as backup snapshot.</p>
           ${renderV3Notice()}
           <div class='skills-head'>
             <div class='chips'>
-              <span class='chip'>Total: ${state.skills.length}</span>
+              <span class='chip'>Source: ${state.skills.length}</span>
+              <span class='chip'>Backups: ${state.backupSkills.length}</span>
               <span class='chip'>Filtered: ${filtered.length}</span>
             </div>
             <input id='skill-query' class='skills-search' placeholder='Search skills...' value='${esc(state.query)}' />
@@ -1335,7 +1348,6 @@ async fn index() -> Html<&'static str> {
           </div>
         `;
       }
-
       function renderOps() {
         const ops = state.pending?.ops || [];
         const v3 = state.v3View || emptyV3View();
@@ -1351,7 +1363,7 @@ async fn index() -> Html<&'static str> {
               </article>
             `).join('');
 
-        const warnings = state.remoteWarnings || [];
+        const warnings = [...(state.remoteWarnings || []), ...(state.skillWarnings || [])];
 
         return `
           <h2 class='view-title'>Ops</h2>
@@ -1372,7 +1384,7 @@ async fn index() -> Html<&'static str> {
           ` : ''}
           ${warnings.length > 0 ? `
             <aside class='warning'>
-              <strong class='status-danger'>Remote warnings</strong>
+              <strong class='status-danger'>Warnings</strong>
               <ul>${warnings.map((w) => `<li>${esc(w)}</li>`).join('')}</ul>
             </aside>
           ` : ''}
@@ -1705,6 +1717,9 @@ async fn index() -> Html<&'static str> {
         state.health = h;
         state.info = i;
         state.skills = s.skills || [];
+        state.backupSkills = s.backup_skills || [];
+        state.sourceDirs = s.source_dirs || [];
+        state.skillWarnings = s.warnings || [];
         state.v3 = v || { ok: false, error: { message: 'Missing v3 payload' } };
         state.v3View = buildV3View(state.skills, v);
         state.remote = r.remote || {};
@@ -1841,7 +1856,7 @@ async fn health() -> Json<serde_json::Value> {
 }
 
 async fn info(State(state): State<PanelState>) -> Json<serde_json::Value> {
-    let target_dirs = resolve_agent_skill_dirs();
+    let target_dirs = resolve_agent_skill_dirs(&state.ctx.root);
     let remote_url = crate::gitops::remote_url(&state.ctx)
         .ok()
         .flatten()
@@ -1859,10 +1874,17 @@ async fn info(State(state): State<PanelState>) -> Json<serde_json::Value> {
 }
 
 async fn skills(State(state): State<PanelState>) -> Json<serde_json::Value> {
-    match list_skills(&state.ctx) {
-        Ok(skills) => Json(json!({"skills": skills})),
-        Err(err) => Json(json!({"skills": [], "error": err.to_string()})),
-    }
+    let inventory = collect_skill_inventory(&state.ctx);
+    Json(json!({
+        "skills": inventory.source_skills,
+        "backup_skills": inventory.backup_skills,
+        "source_dirs": inventory
+            .source_dirs
+            .iter()
+            .map(|path| path.display().to_string())
+            .collect::<Vec<_>>(),
+        "warnings": inventory.warnings
+    }))
 }
 
 async fn v3_status(State(state): State<PanelState>) -> Json<serde_json::Value> {
@@ -2118,7 +2140,7 @@ async fn pending(State(state): State<PanelState>) -> Json<serde_json::Value> {
 
 fn load_v3_snapshot(
     ctx: &AppContext,
-) -> std::result::Result<crate::v3::V3Snapshot, Json<serde_json::Value>> {
+) -> std::result::Result<crate::state_model::V3Snapshot, Json<serde_json::Value>> {
     let paths = V3StatePaths::from_root(&ctx.root);
     match paths.maybe_load_snapshot() {
         Ok(Some(snapshot)) => Ok(snapshot),

@@ -45,13 +45,31 @@ body {
 }
 
 .material-symbols-outlined {
+  font-family: "Material Symbols Outlined", "Material Icons Outlined", "Material Icons", sans-serif;
+  font-style: normal;
+  font-weight: 400;
   font-variation-settings:
     "FILL" 0,
     "wght" 400,
     "GRAD" 0,
     "opsz" 20;
+  display: inline-block;
   font-size: 18px;
   line-height: 1;
+  white-space: nowrap;
+  letter-spacing: normal;
+  text-transform: none;
+}
+
+.material-symbols-fallback {
+  display: inline-grid;
+  place-items: center;
+  width: 1em;
+  height: 1em;
+  font-size: 0.95em;
+  line-height: 1;
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-weight: 700;
 }
 
 button,

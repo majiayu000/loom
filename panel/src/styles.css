@@ -614,6 +614,28 @@ a {
   cursor: not-allowed;
 }
 
+.target-capability-list {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.target-capability-list-spaced {
+  margin-top: 10px;
+}
+
+.target-mini-stats {
+  margin-top: 12px;
+}
+
+.target-detail-list {
+  margin-top: 12px;
+}
+
+.settings-path-value {
+  margin-top: 8px;
+}
+
 .panel,
 .card {
   border: 1px solid var(--line);

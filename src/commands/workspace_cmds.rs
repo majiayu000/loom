@@ -1,0 +1,578 @@
+use std::fs;
+use std::path::{Path, PathBuf};
+
+use chrono::Utc;
+use serde_json::json;
+
+use crate::cli::{
+    BindingAddArgs, RemoteCommand, TargetAddArgs, TargetCommand, TargetOwnership,
+    WorkspaceBindingCommand,
+};
+use crate::envelope::Meta;
+use crate::gitops;
+use crate::state::resolve_agent_skill_dirs;
+use crate::state_model::{V3StatePaths, V3WorkspaceBinding, V3WorkspaceMatcher};
+use crate::types::ErrorCode;
+
+use super::helpers::{
+    agent_kind_as_str, collect_skill_inventory, map_git, map_io, map_lock, map_v3_state,
+    read_git_field, record_v3_operation, remote_status_payload, remote_status_payload_with_pending,
+    target_capabilities, target_ownership_as_str, unique_binding_id, unique_target_id,
+    validate_non_empty, workspace_matcher_kind_as_str,
+};
+use super::{App, CommandFailure};
+
+impl App {
+    pub fn cmd_status(&self) -> std::result::Result<(serde_json::Value, Meta), CommandFailure> {
+        let skill_inventory = collect_skill_inventory(&self.ctx);
+        let pending_report = self.ctx.read_pending_report().map_err(map_io)?;
+        let pending_ops = pending_report.ops.len();
+        let target_dirs = resolve_agent_skill_dirs(&self.ctx.root);
+        let v3_paths = V3StatePaths::from_root(&self.ctx.root);
+        let v3_status = v3_paths
+            .maybe_load_snapshot()
+            .map_err(map_v3_state)?
+            .map(|snapshot| snapshot.status_view())
+            .unwrap_or_else(|| {
+                json!({
+                    "state_model": "v3",
+                    "available": false,
+                    "error": {
+                        "code": "STATE_CORRUPT",
+                        "message": format!("v3 state not initialized under {}", v3_paths.v3_dir.display())
+                    }
+                })
+            });
+        let (registered_target_count, registered_target_ids) = v3_status
+            .get("targets")
+            .and_then(|value| value.as_array())
+            .map(|targets| {
+                let ids = targets
+                    .iter()
+                    .filter_map(|target| target.get("target_id").and_then(|id| id.as_str()))
+                    .map(|id| id.to_string())
+                    .collect::<Vec<_>>();
+                (targets.len(), ids)
+            })
+            .unwrap_or((0, Vec::new()));
+        let mut git_warnings = Vec::new();
+        let head = read_git_field(&self.ctx, &["rev-parse", "HEAD"], &mut git_warnings);
+        let branch = read_git_field(
+            &self.ctx,
+            &["rev-parse", "--abbrev-ref", "HEAD"],
+            &mut git_warnings,
+        );
+        let status_short = read_git_field(&self.ctx, &["status", "--short"], &mut git_warnings);
+
+        let (remote, mut meta) = remote_status_payload_with_pending(&self.ctx, pending_report)?;
+        meta.warnings.splice(0..0, git_warnings);
+        meta.warnings.extend(skill_inventory.warnings);
+
+        let data = json!({
+            "state_model": "v3",
+            "skills": skill_inventory.source_skills,
+            "backup_skills": skill_inventory.backup_skills,
+            "skill_sources": {
+                "dirs": skill_inventory
+                    .source_dirs
+                    .iter()
+                    .map(|path| path.display().to_string())
+                    .collect::<Vec<_>>(),
+                "count": skill_inventory.source_dirs.len(),
+            },
+            "backup_dir": self.ctx.skills_dir.display().to_string(),
+            "git": {"head": head, "branch": branch, "status_short": status_short},
+            "agent_dir_defaults": {
+                "claude_dir": target_dirs.claude.display().to_string(),
+                "codex_dir": target_dirs.codex.display().to_string()
+            },
+            "registered_targets": {
+                "count": registered_target_count,
+                "target_ids": registered_target_ids
+            },
+            "remote": remote,
+            "pending_ops": pending_ops,
+            "v3": v3_status
+        });
+
+        Ok((data, meta))
+    }
+
+    pub fn cmd_doctor(&self) -> std::result::Result<(serde_json::Value, Meta), CommandFailure> {
+        let fsck = gitops::fsck(&self.ctx);
+        let fsck_ok = fsck.is_ok();
+        let fsck_output = fsck.unwrap_or_else(|e| e.to_string());
+        let pending_report = self.ctx.read_pending_report().map_err(map_io)?;
+        let v3_paths = V3StatePaths::from_root(&self.ctx.root);
+        let v3_schema_ok = v3_paths.schema_file.exists();
+        let v3_snapshot_ok = v3_paths
+            .maybe_load_snapshot()
+            .map_err(map_v3_state)?
+            .is_some();
+        let history = gitops::history_status(&self.ctx).map_err(map_git)?;
+
+        let healthy = fsck_ok && v3_schema_ok && v3_snapshot_ok && history.conflicts.is_empty();
+
+        Ok((
+            json!({
+                "healthy": healthy,
+                "checks": {
+                    "git_fsck": {"ok": fsck_ok, "output": fsck_output},
+                    "v3_schema_file": {"ok": v3_schema_ok},
+                    "v3_snapshot": {"ok": v3_snapshot_ok},
+                    "pending_queue": {
+                        "count": pending_report.ops.len(),
+                        "journal_events": pending_report.journal_events,
+                        "history_events": pending_report.history_events,
+                        "warnings": pending_report.warnings
+                    },
+                    "history_branch": history
+                }
+            }),
+            Meta::default(),
+        ))
+    }
+
+    pub fn cmd_workspace_binding(
+        &self,
+        command: &WorkspaceBindingCommand,
+        request_id: &str,
+    ) -> std::result::Result<(serde_json::Value, Meta), CommandFailure> {
+        match command {
+            WorkspaceBindingCommand::Add(args) => self.cmd_workspace_binding_add(args, request_id),
+            WorkspaceBindingCommand::List => Ok((
+                {
+                    let snapshot = self.require_v3_snapshot()?;
+                    json!({
+                        "state_model": "v3",
+                        "count": snapshot.bindings.bindings.len(),
+                        "bindings": snapshot.bindings.bindings
+                    })
+                },
+                Meta::default(),
+            )),
+            WorkspaceBindingCommand::Show(args) => {
+                let snapshot = self.require_v3_snapshot()?;
+                let binding = snapshot.binding(&args.binding_id).cloned().ok_or_else(|| {
+                    CommandFailure::new(
+                        ErrorCode::BindingNotFound,
+                        format!("binding '{}' not found", args.binding_id),
+                    )
+                })?;
+                let default_target = snapshot.binding_default_target(&binding);
+                let rules = snapshot.binding_rules(&binding.binding_id);
+                let projections = snapshot.binding_projections(&binding.binding_id);
+
+                Ok((
+                    json!({
+                        "state_model": "v3",
+                        "binding": binding,
+                        "default_target": default_target,
+                        "rules": rules,
+                        "projections": projections
+                    }),
+                    Meta::default(),
+                ))
+            }
+            WorkspaceBindingCommand::Remove(args) => {
+                self.cmd_workspace_binding_remove(args, request_id)
+            }
+        }
+    }
+
+    pub fn cmd_target(
+        &self,
+        command: &TargetCommand,
+        request_id: &str,
+    ) -> std::result::Result<(serde_json::Value, Meta), CommandFailure> {
+        match command {
+            TargetCommand::Add(args) => self.cmd_target_add(args, request_id),
+            TargetCommand::List => Ok((
+                {
+                    let snapshot = self.require_v3_snapshot()?;
+                    json!({
+                        "state_model": "v3",
+                        "count": snapshot.targets.targets.len(),
+                        "targets": snapshot.targets.targets
+                    })
+                },
+                Meta::default(),
+            )),
+            TargetCommand::Show(args) => {
+                let snapshot = self.require_v3_snapshot()?;
+                let target = snapshot.target(&args.target_id).ok_or_else(|| {
+                    CommandFailure::new(
+                        ErrorCode::TargetNotFound,
+                        format!("target '{}' not found", args.target_id),
+                    )
+                })?;
+                let relations = snapshot.target_relations(&target.target_id);
+
+                Ok((
+                    json!({
+                        "state_model": "v3",
+                        "target": target,
+                        "bindings": relations.bindings,
+                        "rules": relations.rules,
+                        "projections": relations.projections
+                    }),
+                    Meta::default(),
+                ))
+            }
+            TargetCommand::Remove(args) => self.cmd_target_remove(args, request_id),
+        }
+    }
+
+    fn cmd_target_add(
+        &self,
+        args: &TargetAddArgs,
+        request_id: &str,
+    ) -> std::result::Result<(serde_json::Value, Meta), CommandFailure> {
+        let _workspace = self.ctx.lock_workspace().map_err(map_lock)?;
+        self.ensure_write_layout()?;
+        let target_path = PathBuf::from(&args.path);
+        if !target_path.is_absolute() {
+            return Err(CommandFailure::new(
+                ErrorCode::ArgInvalid,
+                "--path must be absolute",
+            ));
+        }
+
+        match args.ownership {
+            TargetOwnership::Managed => fs::create_dir_all(&target_path).map_err(map_io)?,
+            TargetOwnership::Observed | TargetOwnership::External => {
+                if !target_path.exists() {
+                    return Err(CommandFailure::new(
+                        ErrorCode::ArgInvalid,
+                        format!(
+                            "target path '{}' must exist for ownership '{}'",
+                            target_path.display(),
+                            target_ownership_as_str(args.ownership)
+                        ),
+                    ));
+                }
+            }
+        }
+
+        let paths = self.ensure_v3_layout()?;
+        let mut targets = paths.load_targets().map_err(map_v3_state)?;
+
+        if let Some(existing) = targets
+            .targets
+            .iter()
+            .find(|target| {
+                target.agent == agent_kind_as_str(args.agent) && target.path == args.path
+            })
+            .cloned()
+        {
+            if existing.ownership != target_ownership_as_str(args.ownership) {
+                return Err(CommandFailure::new(
+                    ErrorCode::ArgInvalid,
+                    format!(
+                        "target '{}' already exists with ownership '{}'",
+                        existing.target_id, existing.ownership
+                    ),
+                ));
+            }
+            return Ok((json!({"target": existing, "noop": true}), Meta::default()));
+        }
+
+        let target_id = unique_target_id(&targets, args);
+        let target = crate::state_model::V3ProjectionTarget {
+            target_id: target_id.clone(),
+            agent: agent_kind_as_str(args.agent).to_string(),
+            path: args.path.clone(),
+            ownership: target_ownership_as_str(args.ownership).to_string(),
+            capabilities: target_capabilities(args.ownership),
+            created_at: Some(Utc::now()),
+        };
+
+        targets.targets.push(target.clone());
+        targets
+            .targets
+            .sort_by(|left, right| left.target_id.cmp(&right.target_id));
+        paths.save_targets(&targets).map_err(map_v3_state)?;
+
+        let op_id = record_v3_operation(
+            &paths,
+            "target.add",
+            json!({
+                "target_id": target.target_id,
+                "agent": target.agent,
+                "path": target.path,
+                "ownership": target.ownership,
+                "request_id": request_id
+            }),
+            json!({
+                "target_id": target.target_id
+            }),
+        )
+        .map_err(map_v3_state)?;
+
+        Ok((
+            json!({"target": target, "noop": false}),
+            Meta {
+                op_id: Some(op_id),
+                ..Meta::default()
+            },
+        ))
+    }
+
+    fn cmd_workspace_binding_add(
+        &self,
+        args: &BindingAddArgs,
+        request_id: &str,
+    ) -> std::result::Result<(serde_json::Value, Meta), CommandFailure> {
+        let _workspace = self.ctx.lock_workspace().map_err(map_lock)?;
+        self.ensure_write_layout()?;
+        validate_non_empty("profile", &args.profile)?;
+        validate_non_empty("matcher_value", &args.matcher_value)?;
+        validate_non_empty("target", &args.target)?;
+        validate_non_empty("policy_profile", &args.policy_profile)?;
+
+        let paths = self.ensure_v3_layout()?;
+        let snapshot = paths.load_snapshot().map_err(map_v3_state)?;
+        if snapshot.target(&args.target).is_none() {
+            return Err(CommandFailure::new(
+                ErrorCode::TargetNotFound,
+                format!("target '{}' not found", args.target),
+            ));
+        }
+
+        if let Some(existing) = snapshot
+            .bindings
+            .bindings
+            .iter()
+            .find(|binding| {
+                binding.agent == agent_kind_as_str(args.agent)
+                    && binding.profile_id == args.profile
+                    && binding.workspace_matcher.kind
+                        == workspace_matcher_kind_as_str(args.matcher_kind)
+                    && binding.workspace_matcher.value == args.matcher_value
+                    && binding.default_target_id == args.target
+                    && binding.policy_profile == args.policy_profile
+            })
+            .cloned()
+        {
+            return Ok((json!({"binding": existing, "noop": true}), Meta::default()));
+        }
+
+        let mut bindings = snapshot.bindings;
+        let binding_id = unique_binding_id(&bindings, args);
+        let binding = V3WorkspaceBinding {
+            binding_id: binding_id.clone(),
+            agent: agent_kind_as_str(args.agent).to_string(),
+            profile_id: args.profile.clone(),
+            workspace_matcher: V3WorkspaceMatcher {
+                kind: workspace_matcher_kind_as_str(args.matcher_kind).to_string(),
+                value: args.matcher_value.clone(),
+            },
+            default_target_id: args.target.clone(),
+            policy_profile: args.policy_profile.clone(),
+            active: true,
+            created_at: Some(Utc::now()),
+        };
+
+        bindings.bindings.push(binding.clone());
+        bindings
+            .bindings
+            .sort_by(|left, right| left.binding_id.cmp(&right.binding_id));
+        paths.save_bindings(&bindings).map_err(map_v3_state)?;
+
+        let op_id = record_v3_operation(
+            &paths,
+            "workspace.binding.add",
+            json!({
+                "binding_id": binding.binding_id,
+                "agent": binding.agent,
+                "profile_id": binding.profile_id,
+                "matcher_kind": binding.workspace_matcher.kind,
+                "matcher_value": binding.workspace_matcher.value,
+                "target_id": binding.default_target_id,
+                "request_id": request_id
+            }),
+            json!({
+                "binding_id": binding.binding_id
+            }),
+        )
+        .map_err(map_v3_state)?;
+
+        Ok((
+            json!({"binding": binding, "noop": false}),
+            Meta {
+                op_id: Some(op_id),
+                ..Meta::default()
+            },
+        ))
+    }
+
+    fn cmd_workspace_binding_remove(
+        &self,
+        args: &crate::cli::BindingShowArgs,
+        request_id: &str,
+    ) -> std::result::Result<(serde_json::Value, Meta), CommandFailure> {
+        let _workspace = self.ctx.lock_workspace().map_err(map_lock)?;
+        self.ensure_write_layout()?;
+        let paths = self.ensure_v3_layout()?;
+        let mut snapshot = paths.load_snapshot().map_err(map_v3_state)?;
+        let binding = snapshot.binding(&args.binding_id).cloned().ok_or_else(|| {
+            CommandFailure::new(
+                ErrorCode::BindingNotFound,
+                format!("binding '{}' not found", args.binding_id),
+            )
+        })?;
+
+        let removed_rules = snapshot.binding_rules(&args.binding_id);
+        let removed_projections = snapshot.binding_projections(&args.binding_id);
+        let orphaned_paths = removed_projections
+            .iter()
+            .map(|projection| projection.materialized_path.clone())
+            .filter(|path| Path::new(path).exists())
+            .collect::<Vec<_>>();
+
+        snapshot
+            .bindings
+            .bindings
+            .retain(|item| item.binding_id != args.binding_id);
+        snapshot
+            .rules
+            .rules
+            .retain(|item| item.binding_id != args.binding_id);
+        snapshot
+            .projections
+            .projections
+            .retain(|item| item.binding_id != args.binding_id);
+
+        paths
+            .save_bindings(&snapshot.bindings)
+            .map_err(map_v3_state)?;
+        paths.save_rules(&snapshot.rules).map_err(map_v3_state)?;
+        paths
+            .save_projections(&snapshot.projections)
+            .map_err(map_v3_state)?;
+
+        let op_id = record_v3_operation(
+            &paths,
+            "workspace.binding.remove",
+            json!({
+                "binding_id": binding.binding_id,
+                "request_id": request_id
+            }),
+            json!({
+                "binding_id": binding.binding_id,
+                "removed_rules": removed_rules.iter().map(|rule| rule.skill_id.clone()).collect::<Vec<_>>(),
+                "removed_projection_ids": removed_projections.iter().map(|projection| projection.instance_id.clone()).collect::<Vec<_>>(),
+            }),
+        )
+        .map_err(map_v3_state)?;
+
+        let mut meta = Meta {
+            op_id: Some(op_id),
+            ..Meta::default()
+        };
+        if !orphaned_paths.is_empty() {
+            meta.warnings.push(format!(
+                "binding removed from state; {} live projection path(s) were left in place",
+                orphaned_paths.len()
+            ));
+        }
+
+        Ok((
+            json!({
+                "binding": binding,
+                "removed_rules": removed_rules,
+                "removed_projections": removed_projections,
+                "orphaned_paths": orphaned_paths,
+                "noop": false
+            }),
+            meta,
+        ))
+    }
+
+    fn cmd_target_remove(
+        &self,
+        args: &crate::cli::TargetShowArgs,
+        request_id: &str,
+    ) -> std::result::Result<(serde_json::Value, Meta), CommandFailure> {
+        let _workspace = self.ctx.lock_workspace().map_err(map_lock)?;
+        self.ensure_write_layout()?;
+        let paths = self.ensure_v3_layout()?;
+        let mut snapshot = paths.load_snapshot().map_err(map_v3_state)?;
+        let target = snapshot.target(&args.target_id).cloned().ok_or_else(|| {
+            CommandFailure::new(
+                ErrorCode::TargetNotFound,
+                format!("target '{}' not found", args.target_id),
+            )
+        })?;
+
+        let relations = snapshot.target_relations(&args.target_id);
+        if !relations.bindings.is_empty()
+            || !relations.rules.is_empty()
+            || !relations.projections.is_empty()
+        {
+            let mut failure = CommandFailure::new(
+                ErrorCode::DependencyConflict,
+                format!(
+                    "target '{}' is still referenced; remove dependent bindings or projections first",
+                    args.target_id
+                ),
+            );
+            failure.details = json!({
+                "binding_ids": relations.bindings.iter().map(|binding| binding.binding_id.clone()).collect::<Vec<_>>(),
+                "rule_skills": relations.rules.iter().map(|rule| rule.skill_id.clone()).collect::<Vec<_>>(),
+                "projection_ids": relations.projections.iter().map(|projection| projection.instance_id.clone()).collect::<Vec<_>>(),
+            });
+            return Err(failure);
+        }
+
+        snapshot
+            .targets
+            .targets
+            .retain(|item| item.target_id != args.target_id);
+        paths
+            .save_targets(&snapshot.targets)
+            .map_err(map_v3_state)?;
+
+        let op_id = record_v3_operation(
+            &paths,
+            "target.remove",
+            json!({
+                "target_id": target.target_id,
+                "request_id": request_id
+            }),
+            json!({
+                "target_id": target.target_id
+            }),
+        )
+        .map_err(map_v3_state)?;
+
+        Ok((
+            json!({
+                "target": target,
+                "noop": false
+            }),
+            Meta {
+                op_id: Some(op_id),
+                ..Meta::default()
+            },
+        ))
+    }
+
+    pub fn cmd_remote(
+        &self,
+        command: &RemoteCommand,
+    ) -> std::result::Result<(serde_json::Value, Meta), CommandFailure> {
+        match command {
+            RemoteCommand::Set { url } => {
+                let _workspace = self.ctx.lock_workspace().map_err(map_lock)?;
+                self.ensure_write_repo_ready()?;
+                gitops::set_remote_origin(&self.ctx, url).map_err(map_git)?;
+                Ok((json!({"remote": "origin", "url": url}), Meta::default()))
+            }
+            RemoteCommand::Status => {
+                let (remote, meta) = remote_status_payload(&self.ctx)?;
+                Ok((json!({"remote": remote}), meta))
+            }
+        }
+    }
+}

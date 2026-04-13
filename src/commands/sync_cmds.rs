@@ -6,8 +6,8 @@ use crate::gitops;
 use crate::types::ErrorCode;
 
 use super::helpers::{
-    map_git, map_io, map_lock, map_replay_conflict, remote_status_payload,
-    sync_push_internal, sync_replay_internal,
+    map_git, map_io, map_lock, map_replay_conflict, remote_status_payload, sync_push_internal,
+    sync_replay_internal,
 };
 use super::{App, CommandFailure};
 

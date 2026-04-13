@@ -1,8 +1,7 @@
 mod ops;
 
 pub use ops::{
-    summarize_history_body, synthesize_snapshot_raw_from_segment_bodies,
-    remove_path_if_exists,
+    remove_path_if_exists, summarize_history_body, synthesize_snapshot_raw_from_segment_bodies,
 };
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -488,6 +487,7 @@ fn is_pid_alive(pid: u32) -> bool {
     #[cfg(not(unix))]
     {
         let _ = pid;
-        false
+        // Cannot check PID on non-unix; assume alive, fall back to time-based staleness.
+        true
     }
 }

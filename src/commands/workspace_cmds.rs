@@ -594,10 +594,7 @@ impl App {
     }
 }
 
-fn check_projection_drift(
-    ctx: &AppContext,
-    snapshot: &V3Snapshot,
-) -> Vec<serde_json::Value> {
+fn check_projection_drift(ctx: &AppContext, snapshot: &V3Snapshot) -> Vec<serde_json::Value> {
     let mut results = Vec::new();
     for projection in &snapshot.projections.projections {
         let materialized = Path::new(&projection.materialized_path);

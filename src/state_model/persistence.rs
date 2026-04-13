@@ -5,12 +5,12 @@ use std::path::Path;
 
 use anyhow::{Context, Result, anyhow};
 use chrono::Utc;
-use serde::de::DeserializeOwned;
 use serde::Serialize;
+use serde::de::DeserializeOwned;
 
 use super::{
-    V3BindingsFile, V3ObservationEvent, V3OperationRecord, V3OpsCheckpoint, V3ProjectionsFile,
-    V3RulesFile, V3SchemaFile, V3Snapshot, V3StatePaths, V3TargetsFile, V3_SCHEMA_VERSION,
+    V3_SCHEMA_VERSION, V3BindingsFile, V3ObservationEvent, V3OperationRecord, V3OpsCheckpoint,
+    V3ProjectionsFile, V3RulesFile, V3SchemaFile, V3Snapshot, V3StatePaths, V3TargetsFile,
     empty_bindings_file, empty_projections_file, empty_rules_file, empty_targets_file,
 };
 

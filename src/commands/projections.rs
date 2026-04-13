@@ -18,10 +18,8 @@ use crate::state_model::{
 use crate::types::{ErrorCode, SyncState};
 
 use super::CommandFailure;
-use super::helpers::{
-    map_git, map_io, map_push_rejected, map_queue, map_remote_unreachable,
-};
 use super::file_ops::{copy_dir_recursive, create_symlink_dir};
+use super::helpers::{map_git, map_io, map_push_rejected, map_queue, map_remote_unreachable};
 use crate::state::remove_path_if_exists;
 
 // ---------------------------------------------------------------------------

@@ -4,6 +4,9 @@ use std::path::{Path, PathBuf};
 use chrono::Utc;
 use serde_json::json;
 
+use crate::state::AppContext;
+use crate::state_model::V3Snapshot;
+
 use crate::cli::{
     BindingAddArgs, RemoteCommand, TargetAddArgs, TargetCommand, TargetOwnership,
     WorkspaceBindingCommand,
@@ -105,13 +108,23 @@ impl App {
         let pending_report = self.ctx.read_pending_report().map_err(map_io)?;
         let v3_paths = V3StatePaths::from_root(&self.ctx.root);
         let v3_schema_ok = v3_paths.schema_file.exists();
-        let v3_snapshot_ok = v3_paths
-            .maybe_load_snapshot()
-            .map_err(map_v3_state)?
-            .is_some();
+        let v3_snapshot = v3_paths.maybe_load_snapshot().map_err(map_v3_state)?;
+        let v3_snapshot_ok = v3_snapshot.is_some();
         let history = gitops::history_status(&self.ctx).map_err(map_git)?;
 
-        let healthy = fsck_ok && v3_schema_ok && v3_snapshot_ok && history.conflicts.is_empty();
+        let projection_checks = v3_snapshot
+            .as_ref()
+            .map(|snapshot| check_projection_drift(&self.ctx, snapshot))
+            .unwrap_or_default();
+        let projections_ok = projection_checks
+            .iter()
+            .all(|check| check.get("ok").and_then(|v| v.as_bool()).unwrap_or(false));
+
+        let healthy = fsck_ok
+            && v3_schema_ok
+            && v3_snapshot_ok
+            && history.conflicts.is_empty()
+            && projections_ok;
 
         Ok((
             json!({
@@ -126,7 +139,11 @@ impl App {
                         "history_events": pending_report.history_events,
                         "warnings": pending_report.warnings
                     },
-                    "history_branch": history
+                    "history_branch": history,
+                    "projection_drift": {
+                        "ok": projections_ok,
+                        "projections": projection_checks
+                    }
                 }
             }),
             Meta::default(),
@@ -444,11 +461,11 @@ impl App {
             .retain(|item| item.binding_id != args.binding_id);
 
         paths
-            .save_bindings(&snapshot.bindings)
-            .map_err(map_v3_state)?;
-        paths.save_rules(&snapshot.rules).map_err(map_v3_state)?;
-        paths
-            .save_projections(&snapshot.projections)
+            .save_bindings_rules_projections(
+                &snapshot.bindings,
+                &snapshot.rules,
+                &snapshot.projections,
+            )
             .map_err(map_v3_state)?;
 
         let op_id = record_v3_operation(
@@ -575,4 +592,53 @@ impl App {
             }
         }
     }
+}
+
+fn check_projection_drift(
+    ctx: &AppContext,
+    snapshot: &V3Snapshot,
+) -> Vec<serde_json::Value> {
+    let mut results = Vec::new();
+    for projection in &snapshot.projections.projections {
+        let materialized = Path::new(&projection.materialized_path);
+        let skill_src = ctx.skill_path(&projection.skill_id);
+        let mut issues: Vec<&str> = Vec::new();
+
+        if !materialized.exists() {
+            issues.push("materialized_path does not exist");
+        }
+        if !skill_src.exists() {
+            issues.push("source skill not found in registry");
+        }
+
+        if projection.method == "symlink" && materialized.exists() {
+            match fs::read_link(materialized) {
+                Ok(link_target) => {
+                    if !link_target.exists() {
+                        issues.push("symlink target does not exist (dangling)");
+                    } else {
+                        let canon_link = fs::canonicalize(&link_target).ok();
+                        let canon_src = fs::canonicalize(&skill_src).ok();
+                        if canon_link != canon_src {
+                            issues.push("symlink points to wrong target");
+                        }
+                    }
+                }
+                Err(_) => {
+                    if materialized.exists() {
+                        issues.push("expected symlink but path is not a symlink");
+                    }
+                }
+            }
+        }
+
+        results.push(json!({
+            "instance_id": projection.instance_id,
+            "skill_id": projection.skill_id,
+            "method": projection.method,
+            "ok": issues.is_empty(),
+            "issues": issues,
+        }));
+    }
+    results
 }

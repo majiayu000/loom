@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use chrono::Utc;
 use serde_json::json;
 use uuid::Uuid;
@@ -22,6 +22,7 @@ use super::helpers::{
     map_git, map_io, map_push_rejected, map_queue, map_remote_unreachable,
 };
 use super::file_ops::{copy_dir_recursive, create_symlink_dir};
+use crate::state::remove_path_if_exists;
 
 // ---------------------------------------------------------------------------
 // V3 state mutators
@@ -73,7 +74,21 @@ pub(crate) fn project_skill_to_target(
 ) -> Result<()> {
     match method {
         ProjectionMethod::Symlink => create_symlink_dir(src, dst),
-        ProjectionMethod::Copy | ProjectionMethod::Materialize => copy_dir_recursive(src, dst),
+        ProjectionMethod::Copy | ProjectionMethod::Materialize => {
+            let parent = dst
+                .parent()
+                .context("projection target has no parent directory")?;
+            let tmp_dir = parent.join(format!(".loom-tmp-{}", Uuid::new_v4()));
+            if let Err(err) = copy_dir_recursive(src, &tmp_dir) {
+                let _ = remove_path_if_exists(&tmp_dir);
+                return Err(err);
+            }
+            if let Err(err) = std::fs::rename(&tmp_dir, dst) {
+                let _ = remove_path_if_exists(&tmp_dir);
+                return Err(err).context("failed to atomically place projection");
+            }
+            Ok(())
+        }
     }
 }
 

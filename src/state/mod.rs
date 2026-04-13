@@ -276,7 +276,13 @@ pub struct LockGuard {
 
 impl Drop for LockGuard {
     fn drop(&mut self) {
-        let _ = fs::remove_file(&self.lock_path);
+        if let Err(err) = fs::remove_file(&self.lock_path) {
+            eprintln!(
+                "loom: failed to release lock {}: {}",
+                self.lock_path.display(),
+                err
+            );
+        }
     }
 }
 
@@ -447,6 +453,9 @@ fn is_lock_stale(lock_path: &Path) -> Result<bool> {
     };
 
     if let Ok(metadata) = serde_json::from_str::<LockMetadata>(raw.trim()) {
+        if !is_pid_alive(metadata.pid) {
+            return Ok(true);
+        }
         let age = Utc::now().signed_duration_since(metadata.created_at);
         if let Ok(age) = age.to_std() {
             return Ok(age > LOCK_STALE_AFTER);
@@ -463,4 +472,22 @@ fn is_lock_stale(lock_path: &Path) -> Result<bool> {
         Err(_) => return Ok(false),
     };
     Ok(age > LOCK_STALE_AFTER)
+}
+
+fn is_pid_alive(pid: u32) -> bool {
+    #[cfg(unix)]
+    {
+        std::process::Command::new("kill")
+            .args(["-0", &pid.to_string()])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|status| status.success())
+            .unwrap_or(false)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = pid;
+        false
+    }
 }

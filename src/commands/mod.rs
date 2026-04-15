@@ -1,4 +1,5 @@
 mod file_ops;
+mod fs_probe;
 mod helpers;
 mod projections;
 mod skill_cmds;

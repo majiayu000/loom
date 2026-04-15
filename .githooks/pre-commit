@@ -1,0 +1,28 @@
+#!/bin/sh
+# Loom pre-commit hook.
+#
+# Installed via `make install-hooks` (sets core.hooksPath=.githooks).
+# Keeps CI's Rust format gate local so fmt drift fails at commit time,
+# not after a push.
+#
+# Disable with `git config --unset core.hooksPath`.
+
+set -e
+
+# Skip the cargo probe when no Rust files are staged — keeps docs/config
+# commits fast.
+if ! git diff --cached --name-only --diff-filter=ACM | grep -qE '\.rs$'; then
+    exit 0
+fi
+
+if ! command -v cargo >/dev/null 2>&1; then
+    echo "[pre-commit] cargo not found on PATH — skipping fmt check" >&2
+    exit 0
+fi
+
+if ! cargo fmt --all -- --check; then
+    echo "" >&2
+    echo "[pre-commit] cargo fmt check FAILED." >&2
+    echo "[pre-commit] Fix with 'cargo fmt --all' (or 'make fmt'), then re-stage." >&2
+    exit 1
+fi

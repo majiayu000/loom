@@ -86,6 +86,18 @@ make e2e
 make ci
 ```
 
+## Pre-Commit Hook (Recommended)
+
+Bind `cargo fmt` to every `git commit` so CI never flags format drift:
+
+```bash
+make install-hooks
+```
+
+The hook runs `cargo fmt --all -- --check` only when `.rs` files are staged,
+and fails the commit if rustfmt would make changes. Disable with
+`git config --unset core.hooksPath`.
+
 ## JSON Envelope
 
 Most commands support `--json` for machine-readable output.

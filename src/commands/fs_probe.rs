@@ -114,11 +114,7 @@ mod tests {
         let leftover: Vec<_> = fs::read_dir(&dir)
             .unwrap()
             .filter_map(|e| e.ok())
-            .filter(|e| {
-                e.file_name()
-                    .to_string_lossy()
-                    .starts_with(".loom-probe-")
-            })
+            .filter(|e| e.file_name().to_string_lossy().starts_with(".loom-probe-"))
             .collect();
         assert!(leftover.is_empty(), "probe files must be cleaned up");
         let _ = fs::remove_dir_all(&dir);
@@ -135,5 +131,4 @@ mod tests {
         assert!(deep.exists(), "probe must create missing parent");
         let _ = fs::remove_dir_all(&base);
     }
-
 }

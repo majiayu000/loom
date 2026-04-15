@@ -10,8 +10,8 @@ use serde::{Deserialize, Serialize};
 use crate::gitops;
 use crate::types::PendingOp;
 
-use super::{append_lines, maybe_fault_inject, write_atomic, write_history_segment_if_missing};
 use super::{AppContext, OPS_COMPACTION_THRESHOLD};
+use super::{append_lines, maybe_fault_inject, write_atomic, write_history_segment_if_missing};
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "event", rename_all = "snake_case")]

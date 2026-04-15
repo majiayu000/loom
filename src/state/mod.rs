@@ -1,8 +1,7 @@
 mod ops;
 
 pub use ops::{
-    summarize_history_body, synthesize_snapshot_raw_from_segment_bodies,
-    remove_path_if_exists,
+    remove_path_if_exists, summarize_history_body, synthesize_snapshot_raw_from_segment_bodies,
 };
 
 use std::collections::{BTreeMap, BTreeSet};

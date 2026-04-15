@@ -452,7 +452,13 @@ fn is_lock_stale(lock_path: &Path) -> Result<bool> {
     };
 
     if let Ok(metadata) = serde_json::from_str::<LockMetadata>(raw.trim()) {
-        if !is_pid_alive(metadata.pid) {
+        // Holder definitely gone — reap immediately. Any other outcome
+        // (alive *or* indeterminate) falls through to the time-based check
+        // below, so a crashed process that left a stale PID record still gets
+        // reaped after LOCK_STALE_AFTER. We deliberately do NOT treat
+        // indeterminate probes as "dead" — that previously deleted live locks
+        // on Windows and in environments without `kill` on PATH.
+        if let Some(false) = pid_status(metadata.pid) {
             return Ok(true);
         }
         let age = Utc::now().signed_duration_since(metadata.created_at);
@@ -473,21 +479,52 @@ fn is_lock_stale(lock_path: &Path) -> Result<bool> {
     Ok(age > LOCK_STALE_AFTER)
 }
 
-fn is_pid_alive(pid: u32) -> bool {
+/// Probes whether a PID is still alive.
+///
+/// Returns `Some(true)` when the process is definitely alive, `Some(false)` when it
+/// is definitely gone, and `None` when the probe was indeterminate (e.g. running on
+/// a platform we cannot probe, or the syscall failed for an unexpected reason).
+///
+/// Callers MUST treat `None` as "unknown — do not reap on this evidence alone".
+fn pid_status(pid: u32) -> Option<bool> {
     #[cfg(unix)]
     {
-        std::process::Command::new("kill")
-            .args(["-0", &pid.to_string()])
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status()
-            .map(|status| status.success())
-            .unwrap_or(false)
+        // SAFETY: signal 0 only checks for existence; no signal is delivered.
+        let res = unsafe { libc::kill(pid as libc::pid_t, 0) };
+        if res == 0 {
+            Some(true)
+        } else {
+            match std::io::Error::last_os_error().raw_os_error() {
+                // No such process — definitely dead.
+                Some(libc::ESRCH) => Some(false),
+                // Process exists but we lack permission to signal it (different uid).
+                // Crucially, this means the holder is *alive*, not dead — never reap.
+                Some(libc::EPERM) => Some(true),
+                // Anything else (EINVAL, etc.) is unexpected; refuse to guess.
+                _ => None,
+            }
+        }
     }
     #[cfg(not(unix))]
     {
         let _ = pid;
-        // Cannot check PID on non-unix; assume alive, fall back to time-based staleness.
-        true
+        // No portable cheap probe on non-unix without pulling in a winapi dep.
+        // Returning None forces the caller into the time-based staleness branch,
+        // which is the safer default than guessing alive/dead.
+        None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Regression: the previous `is_pid_alive` returned `false` for *any*
+    /// non-zero `kill -0` exit (including EPERM or missing `kill` binary),
+    /// causing live locks to be reaped. The current process must always
+    /// be reported as alive.
+    #[test]
+    fn pid_status_reports_self_alive() {
+        assert_eq!(pid_status(std::process::id()), Some(true));
     }
 }

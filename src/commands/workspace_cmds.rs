@@ -611,10 +611,23 @@ fn check_projection_drift(ctx: &AppContext, snapshot: &V3Snapshot) -> Vec<serde_
         if projection.method == "symlink" && materialized.exists() {
             match fs::read_link(materialized) {
                 Ok(link_target) => {
-                    if !link_target.exists() {
+                    // Relative symlink targets resolve against the symlink's parent
+                    // directory, NOT the process CWD. `Path::exists` and
+                    // `fs::canonicalize` both fall back to CWD for relative inputs,
+                    // so a valid relative projection (e.g. `../../skills/foo`)
+                    // would otherwise be reported as dangling/wrong-target.
+                    let resolved = if link_target.is_absolute() {
+                        link_target.clone()
+                    } else {
+                        materialized
+                            .parent()
+                            .map(|parent| parent.join(&link_target))
+                            .unwrap_or_else(|| link_target.clone())
+                    };
+                    if !resolved.exists() {
                         issues.push("symlink target does not exist (dangling)");
                     } else {
-                        let canon_link = fs::canonicalize(&link_target).ok();
+                        let canon_link = fs::canonicalize(&resolved).ok();
                         let canon_src = fs::canonicalize(&skill_src).ok();
                         if canon_link != canon_src {
                             issues.push("symlink points to wrong target");
@@ -638,4 +651,53 @@ fn check_projection_drift(ctx: &AppContext, snapshot: &V3Snapshot) -> Vec<serde_
         }));
     }
     results
+}
+
+#[cfg(test)]
+#[cfg(unix)]
+mod tests {
+    use std::fs;
+    use std::path::PathBuf;
+    use uuid::Uuid;
+
+    fn unique_temp_dir() -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("loom-symlink-test-{}", Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// Regression for PR #1 review: `check_projection_drift` previously called
+    /// `link_target.exists()` and `fs::canonicalize(&link_target)` on the raw
+    /// `read_link` result, which resolves relative paths against the process
+    /// CWD instead of the symlink's parent directory. A valid relative
+    /// projection (e.g. `../skills/foo`) was therefore mis-reported as
+    /// dangling/wrong-target. This test mirrors the production resolution
+    /// rule and asserts it canonicalizes to the actual source.
+    #[test]
+    fn relative_symlink_resolves_against_parent_directory() {
+        let base = unique_temp_dir();
+        let src = base.join("skill_src");
+        fs::create_dir(&src).unwrap();
+        let materialized = base.join("link");
+        std::os::unix::fs::symlink("skill_src", &materialized).unwrap();
+
+        let link_target = fs::read_link(&materialized).unwrap();
+        assert!(link_target.is_relative(), "fixture must be a relative link");
+
+        let resolved = if link_target.is_absolute() {
+            link_target.clone()
+        } else {
+            materialized
+                .parent()
+                .map(|parent| parent.join(&link_target))
+                .unwrap()
+        };
+
+        assert!(resolved.exists(), "resolved relative link must exist");
+        let canon_link = fs::canonicalize(&resolved).unwrap();
+        let canon_src = fs::canonicalize(&src).unwrap();
+        assert_eq!(canon_link, canon_src);
+
+        let _ = fs::remove_dir_all(&base);
+    }
 }

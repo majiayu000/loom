@@ -522,9 +522,19 @@ mod tests {
     /// Regression: the previous `is_pid_alive` returned `false` for *any*
     /// non-zero `kill -0` exit (including EPERM or missing `kill` binary),
     /// causing live locks to be reaped. The current process must always
-    /// be reported as alive.
+    /// be reported as alive on Unix.
+    #[cfg(unix)]
     #[test]
     fn pid_status_reports_self_alive() {
         assert_eq!(pid_status(std::process::id()), Some(true));
+    }
+
+    /// Contract: non-Unix builds have no cheap probe, so `pid_status` returns
+    /// `None` and callers MUST fall through to time-based staleness. Asserting
+    /// `Some(true)` here on Windows would misrepresent the API.
+    #[cfg(not(unix))]
+    #[test]
+    fn pid_status_is_indeterminate_on_non_unix() {
+        assert_eq!(pid_status(std::process::id()), None);
     }
 }

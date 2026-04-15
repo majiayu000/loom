@@ -16,8 +16,8 @@ use super::CommandFailure;
 
 // Re-export items from sibling modules so existing `use super::helpers::*` paths keep working.
 pub(crate) use super::file_ops::{
-    backup_path_if_exists, copy_dir_recursive, copy_dir_recursive_without_symlinks,
-    read_git_field, rollback_added_skill,
+    backup_path_if_exists, copy_dir_recursive, copy_dir_recursive_without_symlinks, read_git_field,
+    rollback_added_skill,
 };
 pub use super::projections::{collect_skill_inventory, remote_status_payload};
 pub(crate) use super::projections::{
@@ -163,9 +163,7 @@ pub(crate) fn target_ownership_as_str(ownership: crate::cli::TargetOwnership) ->
     }
 }
 
-pub(crate) fn target_capabilities(
-    ownership: crate::cli::TargetOwnership,
-) -> V3TargetCapabilities {
+pub(crate) fn target_capabilities(ownership: crate::cli::TargetOwnership) -> V3TargetCapabilities {
     match ownership {
         crate::cli::TargetOwnership::Managed => V3TargetCapabilities {
             symlink: true,
@@ -352,11 +350,7 @@ fn unique_id(base: &str, existing: Vec<&str>) -> String {
     format!("{}_{}", base, Uuid::new_v4().simple())
 }
 
-pub(crate) fn projection_instance_id(
-    skill: &str,
-    binding_id: &str,
-    target_id: &str,
-) -> String {
+pub(crate) fn projection_instance_id(skill: &str, binding_id: &str, target_id: &str) -> String {
     format!(
         "inst_{}_{}_{}",
         slugify(skill),

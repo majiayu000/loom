@@ -6,8 +6,7 @@ use serde_json::json;
 use uuid::Uuid;
 
 use crate::cli::{
-    AddArgs, CaptureArgs, DiffArgs, ProjectArgs, ReleaseArgs, RollbackArgs, SaveArgs,
-    SkillOnlyArgs,
+    AddArgs, CaptureArgs, DiffArgs, ProjectArgs, ReleaseArgs, RollbackArgs, SaveArgs, SkillOnlyArgs,
 };
 use crate::envelope::Meta;
 use crate::gitops;
@@ -15,15 +14,15 @@ use crate::state::remove_path_if_exists;
 use crate::state_model::{V3BindingRule, V3ProjectionInstance};
 use crate::types::ErrorCode;
 
+use super::fs_probe::probe_symlink;
 use super::helpers::{
     backup_path_if_exists, copy_dir_recursive, copy_dir_recursive_without_symlinks,
     ensure_skill_exists, map_arg, map_git, map_io, map_lock, map_project_io, map_v3_state,
-    maybe_autosync_or_queue, projection_instance_id, projection_method_as_str,
-    project_skill_to_target, record_v3_operation, resolve_capture_projection, rollback_added_skill,
-    update_projection_after_capture, upsert_projection, upsert_rule, validate_projection_method,
-    validate_skill_name,
+    maybe_autosync_or_queue, project_skill_to_target, projection_instance_id,
+    projection_method_as_str, record_v3_operation, resolve_capture_projection,
+    rollback_added_skill, update_projection_after_capture, upsert_projection, upsert_rule,
+    validate_projection_method, validate_skill_name,
 };
-use super::fs_probe::probe_symlink;
 use super::{App, CommandFailure};
 
 impl App {
@@ -195,9 +194,7 @@ impl App {
                         "target '{}' filesystem does not support symlink projection: {}. \
                          retry with --method copy",
                         target.target_id,
-                        probe
-                            .reason
-                            .unwrap_or_else(|| "unknown reason".to_string())
+                        probe.reason.unwrap_or_else(|| "unknown reason".to_string())
                     ),
                 ));
             }

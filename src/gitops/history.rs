@@ -14,9 +14,10 @@ use super::{
 };
 
 use super::history_impl::{
-    apply_history_retention, build_tree_from_entries, compact_local_history_branch,
-    compose_history_state, create_commit_tree, detect_history_conflicts, history_tree_entries,
-    load_history_branch_state, synthesize_history_snapshot_blob, update_ref, ComposedHistoryState,
+    ComposedHistoryState, apply_history_retention, build_tree_from_entries,
+    compact_local_history_branch, compose_history_state, create_commit_tree,
+    detect_history_conflicts, history_tree_entries, load_history_branch_state,
+    synthesize_history_snapshot_blob, update_ref,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

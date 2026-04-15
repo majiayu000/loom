@@ -15,12 +15,10 @@ use crate::commands::{collect_skill_inventory, remote_status_payload};
 use crate::state::resolve_agent_skill_dirs;
 use crate::state_model::V3StatePaths;
 
-use super::{
-    BindingAddRequest, CaptureRequest, PanelState, ProjectRequest, TargetAddRequest,
-};
 use super::auth::{
     ensure_mutation_authorized, load_v3_snapshot, run_panel_command, v3_error, v3_ok,
 };
+use super::{BindingAddRequest, CaptureRequest, PanelState, ProjectRequest, TargetAddRequest};
 
 pub(super) async fn health() -> Json<serde_json::Value> {
     Json(json!({"ok": true, "service": "loom-panel"}))

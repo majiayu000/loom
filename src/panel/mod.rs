@@ -13,9 +13,7 @@ use axum::{
 };
 use serde::Deserialize;
 
-use crate::cli::{
-    AgentKind, ProjectionMethod, TargetOwnership, WorkspaceMatcherKind,
-};
+use crate::cli::{AgentKind, ProjectionMethod, TargetOwnership, WorkspaceMatcherKind};
 use crate::state::AppContext;
 
 use handlers::*;

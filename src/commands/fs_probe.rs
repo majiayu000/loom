@@ -62,7 +62,11 @@ pub fn probe_symlink(parent: &Path) -> SymlinkProbe {
     let probe_target = parent.join(".loom-probe-target-does-not-exist");
 
     let result = create_symlink_probe(&probe_target, &probe_path);
-    let _ = fs::remove_file(&probe_path);
+    // Best-effort cleanup. Windows creates the probe via `symlink_dir`,
+    // which produces a *directory* symlink: `remove_file` errors on those
+    // entries and would leak `.loom-probe-*` on every successful probe.
+    // `remove_symlink_probe` dispatches to the right API per platform.
+    let _ = remove_symlink_probe(&probe_path);
 
     match result {
         Ok(()) => SymlinkProbe::supported(),
@@ -78,6 +82,16 @@ fn create_symlink_probe(src: &Path, dst: &Path) -> std::io::Result<()> {
 #[cfg(windows)]
 fn create_symlink_probe(src: &Path, dst: &Path) -> std::io::Result<()> {
     std::os::windows::fs::symlink_dir(src, dst)
+}
+
+#[cfg(unix)]
+fn remove_symlink_probe(path: &Path) -> std::io::Result<()> {
+    fs::remove_file(path)
+}
+
+#[cfg(windows)]
+fn remove_symlink_probe(path: &Path) -> std::io::Result<()> {
+    fs::remove_dir(path)
 }
 
 #[cfg(test)]

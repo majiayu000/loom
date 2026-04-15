@@ -513,6 +513,23 @@ impl App {
             &mut meta,
         )?;
 
+        let paths = crate::state_model::V3StatePaths::from_root(&self.ctx.root);
+        if let Ok(Some(snapshot)) = paths.maybe_load_snapshot() {
+            let stale: Vec<_> = snapshot
+                .projections
+                .projections
+                .iter()
+                .filter(|p| p.skill_id == args.skill && p.method != "symlink")
+                .map(|p| p.instance_id.clone())
+                .collect();
+            if !stale.is_empty() {
+                meta.warnings.push(format!(
+                    "rollback does not update live projections; re-run 'loom skill project' for: {}",
+                    stale.join(", ")
+                ));
+            }
+        }
+
         Ok((
             json!({"skill": args.skill, "reference": reference, "commit": commit, "noop": false}),
             meta,

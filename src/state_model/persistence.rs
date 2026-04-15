@@ -157,6 +157,24 @@ impl V3StatePaths {
         write_json_file(&self.projections_file, value)
     }
 
+    /// Two-phase batch write: write all temp files first, then rename all.
+    /// Minimizes the crash window for multi-file state updates.
+    pub fn save_bindings_rules_projections(
+        &self,
+        bindings: &V3BindingsFile,
+        rules: &V3RulesFile,
+        projections: &V3ProjectionsFile,
+    ) -> Result<()> {
+        let bindings_json = serialize_json_file(bindings)?;
+        let rules_json = serialize_json_file(rules)?;
+        let projections_json = serialize_json_file(projections)?;
+        write_atomic_batch(&[
+            (&self.bindings_file, &bindings_json),
+            (&self.rules_file, &rules_json),
+            (&self.projections_file, &projections_json),
+        ])
+    }
+
     pub fn save_checkpoint(&self, value: &V3OpsCheckpoint) -> Result<()> {
         write_json_file(&self.checkpoint_file, value)
     }
@@ -198,10 +216,54 @@ fn write_json_file<T>(path: &Path, value: &T) -> Result<()>
 where
     T: Serialize,
 {
-    let raw = serde_json::to_string_pretty(value)
-        .with_context(|| format!("failed to encode v3 json file {}", path.display()))?;
-    write_atomic(path, &(raw + "\n"))
+    let raw = serialize_json_file(value)?;
+    write_atomic(path, &raw)
 }
+
+fn serialize_json_file<T: Serialize>(value: &T) -> Result<String> {
+    let raw = serde_json::to_string_pretty(value).context("failed to encode v3 json")?;
+    Ok(raw + "\n")
+}
+
+fn write_atomic_batch(files: &[(&Path, &str)]) -> Result<()> {
+    let mut staged: Vec<(PathBuf, &Path)> = Vec::with_capacity(files.len());
+
+    // Phase 1: write all temp files
+    for &(target, contents) in files {
+        let parent = target
+            .parent()
+            .context("cannot write batch file without parent")?;
+        fs::create_dir_all(parent)?;
+        let tmp_path = parent.join(format!(
+            ".{}.tmp-{}",
+            target.file_name().unwrap_or_default().to_string_lossy(),
+            uuid::Uuid::new_v4()
+        ));
+        let mut file = OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&tmp_path)
+            .with_context(|| format!("failed to create temp file {}", tmp_path.display()))?;
+        file.write_all(contents.as_bytes())?;
+        file.sync_all()?;
+        staged.push((tmp_path, target));
+    }
+
+    // Phase 2: rename all (minimal crash window)
+    for (tmp, target) in &staged {
+        if let Err(err) = fs::rename(tmp, target) {
+            for (remaining, _) in &staged {
+                let _ = fs::remove_file(remaining);
+            }
+            return Err(err)
+                .with_context(|| format!("batch rename failed for {}", target.display()));
+        }
+    }
+
+    Ok(())
+}
+
+use std::path::PathBuf;
 
 fn append_json_line<T>(path: &Path, value: &T) -> Result<()>
 where

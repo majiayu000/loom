@@ -4,6 +4,9 @@ use std::path::{Path, PathBuf};
 use chrono::Utc;
 use serde_json::json;
 
+use crate::state::AppContext;
+use crate::state_model::V3Snapshot;
+
 use crate::cli::{
     BindingAddArgs, RemoteCommand, TargetAddArgs, TargetCommand, TargetOwnership,
     WorkspaceBindingCommand,
@@ -105,13 +108,23 @@ impl App {
         let pending_report = self.ctx.read_pending_report().map_err(map_io)?;
         let v3_paths = V3StatePaths::from_root(&self.ctx.root);
         let v3_schema_ok = v3_paths.schema_file.exists();
-        let v3_snapshot_ok = v3_paths
-            .maybe_load_snapshot()
-            .map_err(map_v3_state)?
-            .is_some();
+        let v3_snapshot = v3_paths.maybe_load_snapshot().map_err(map_v3_state)?;
+        let v3_snapshot_ok = v3_snapshot.is_some();
         let history = gitops::history_status(&self.ctx).map_err(map_git)?;
 
-        let healthy = fsck_ok && v3_schema_ok && v3_snapshot_ok && history.conflicts.is_empty();
+        let projection_checks = v3_snapshot
+            .as_ref()
+            .map(|snapshot| check_projection_drift(&self.ctx, snapshot))
+            .unwrap_or_default();
+        let projections_ok = projection_checks
+            .iter()
+            .all(|check| check.get("ok").and_then(|v| v.as_bool()).unwrap_or(false));
+
+        let healthy = fsck_ok
+            && v3_schema_ok
+            && v3_snapshot_ok
+            && history.conflicts.is_empty()
+            && projections_ok;
 
         Ok((
             json!({
@@ -126,7 +139,11 @@ impl App {
                         "history_events": pending_report.history_events,
                         "warnings": pending_report.warnings
                     },
-                    "history_branch": history
+                    "history_branch": history,
+                    "projection_drift": {
+                        "ok": projections_ok,
+                        "projections": projection_checks
+                    }
                 }
             }),
             Meta::default(),
@@ -444,11 +461,11 @@ impl App {
             .retain(|item| item.binding_id != args.binding_id);
 
         paths
-            .save_bindings(&snapshot.bindings)
-            .map_err(map_v3_state)?;
-        paths.save_rules(&snapshot.rules).map_err(map_v3_state)?;
-        paths
-            .save_projections(&snapshot.projections)
+            .save_bindings_rules_projections(
+                &snapshot.bindings,
+                &snapshot.rules,
+                &snapshot.projections,
+            )
             .map_err(map_v3_state)?;
 
         let op_id = record_v3_operation(
@@ -574,5 +591,113 @@ impl App {
                 Ok((json!({"remote": remote}), meta))
             }
         }
+    }
+}
+
+fn check_projection_drift(ctx: &AppContext, snapshot: &V3Snapshot) -> Vec<serde_json::Value> {
+    let mut results = Vec::new();
+    for projection in &snapshot.projections.projections {
+        let materialized = Path::new(&projection.materialized_path);
+        let skill_src = ctx.skill_path(&projection.skill_id);
+        let mut issues: Vec<&str> = Vec::new();
+
+        if !materialized.exists() {
+            issues.push("materialized_path does not exist");
+        }
+        if !skill_src.exists() {
+            issues.push("source skill not found in registry");
+        }
+
+        if projection.method == "symlink" && materialized.exists() {
+            match fs::read_link(materialized) {
+                Ok(link_target) => {
+                    // Relative symlink targets resolve against the symlink's parent
+                    // directory, NOT the process CWD. `Path::exists` and
+                    // `fs::canonicalize` both fall back to CWD for relative inputs,
+                    // so a valid relative projection (e.g. `../../skills/foo`)
+                    // would otherwise be reported as dangling/wrong-target.
+                    let resolved = if link_target.is_absolute() {
+                        link_target.clone()
+                    } else {
+                        materialized
+                            .parent()
+                            .map(|parent| parent.join(&link_target))
+                            .unwrap_or_else(|| link_target.clone())
+                    };
+                    if !resolved.exists() {
+                        issues.push("symlink target does not exist (dangling)");
+                    } else {
+                        let canon_link = fs::canonicalize(&resolved).ok();
+                        let canon_src = fs::canonicalize(&skill_src).ok();
+                        if canon_link != canon_src {
+                            issues.push("symlink points to wrong target");
+                        }
+                    }
+                }
+                Err(_) => {
+                    if materialized.exists() {
+                        issues.push("expected symlink but path is not a symlink");
+                    }
+                }
+            }
+        }
+
+        results.push(json!({
+            "instance_id": projection.instance_id,
+            "skill_id": projection.skill_id,
+            "method": projection.method,
+            "ok": issues.is_empty(),
+            "issues": issues,
+        }));
+    }
+    results
+}
+
+#[cfg(test)]
+#[cfg(unix)]
+mod tests {
+    use std::fs;
+    use std::path::PathBuf;
+    use uuid::Uuid;
+
+    fn unique_temp_dir() -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("loom-symlink-test-{}", Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// Regression for PR #1 review: `check_projection_drift` previously called
+    /// `link_target.exists()` and `fs::canonicalize(&link_target)` on the raw
+    /// `read_link` result, which resolves relative paths against the process
+    /// CWD instead of the symlink's parent directory. A valid relative
+    /// projection (e.g. `../skills/foo`) was therefore mis-reported as
+    /// dangling/wrong-target. This test mirrors the production resolution
+    /// rule and asserts it canonicalizes to the actual source.
+    #[test]
+    fn relative_symlink_resolves_against_parent_directory() {
+        let base = unique_temp_dir();
+        let src = base.join("skill_src");
+        fs::create_dir(&src).unwrap();
+        let materialized = base.join("link");
+        std::os::unix::fs::symlink("skill_src", &materialized).unwrap();
+
+        let link_target = fs::read_link(&materialized).unwrap();
+        assert!(link_target.is_relative(), "fixture must be a relative link");
+
+        let resolved = if link_target.is_absolute() {
+            link_target.clone()
+        } else {
+            materialized
+                .parent()
+                .map(|parent| parent.join(&link_target))
+                .unwrap()
+        };
+
+        assert!(resolved.exists(), "resolved relative link must exist");
+        let canon_link = fs::canonicalize(&resolved).unwrap();
+        let canon_src = fs::canonicalize(&src).unwrap();
+        assert_eq!(canon_link, canon_src);
+
+        let _ = fs::remove_dir_all(&base);
     }
 }

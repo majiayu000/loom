@@ -58,8 +58,15 @@ pub fn probe_symlink(parent: &Path) -> SymlinkProbe {
         ));
     }
 
-    let probe_path: PathBuf = parent.join(format!(".loom-probe-{}", Uuid::new_v4().simple()));
-    let probe_target = parent.join(".loom-probe-target-does-not-exist");
+    // Both paths share the same UUID suffix so a single probe run leaves
+    // nothing colliding, and the target side is ALSO unique-per-run: a
+    // fixed target name could collide with a user-owned entry of an
+    // incompatible type (a real `.loom-probe-target-does-not-exist` dir or
+    // file), which on Windows makes `symlink_dir` fail and turns a
+    // symlink-capable filesystem into a false "symlink not supported".
+    let suffix = Uuid::new_v4().simple();
+    let probe_path: PathBuf = parent.join(format!(".loom-probe-{}", suffix));
+    let probe_target = parent.join(format!(".loom-probe-target-{}", suffix));
 
     let result = create_symlink_probe(&probe_target, &probe_path);
     // Best-effort cleanup. Windows creates the probe via `symlink_dir`,

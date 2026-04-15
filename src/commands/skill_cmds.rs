@@ -23,6 +23,7 @@ use super::helpers::{
     update_projection_after_capture, upsert_projection, upsert_rule, validate_projection_method,
     validate_skill_name,
 };
+use super::fs_probe::probe_symlink;
 use super::{App, CommandFailure};
 
 impl App {
@@ -179,6 +180,29 @@ impl App {
         let target_base = PathBuf::from(&target.path);
         fs::create_dir_all(&target_base).map_err(map_io)?;
         let materialized_path = target_base.join(&args.skill);
+
+        // Fail-fast physical probe for symlink requests — run BEFORE any
+        // destructive operation (backup, remove) so a filesystem that cannot
+        // host symlinks (Windows without Developer Mode, FAT32, etc.) does
+        // not corrupt an existing projection. Policy allowed it via
+        // V3TargetCapabilities; here we verify the filesystem actually can.
+        if matches!(args.method, crate::cli::ProjectionMethod::Symlink) {
+            let probe = probe_symlink(&target_base);
+            if !probe.supported {
+                return Err(CommandFailure::new(
+                    ErrorCode::ArgInvalid,
+                    format!(
+                        "target '{}' filesystem does not support symlink projection: {}. \
+                         retry with --method copy",
+                        target.target_id,
+                        probe
+                            .reason
+                            .unwrap_or_else(|| "unknown reason".to_string())
+                    ),
+                ));
+            }
+        }
+
         let replaced_projection_backup =
             backup_path_if_exists(&self.ctx, &materialized_path, "project.replace_projection")
                 .map_err(map_io)?;

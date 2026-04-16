@@ -4,8 +4,9 @@
 # Intended for README walkthroughs and asciinema recordings.
 #
 # Usage:
-#   ./scripts/demo.sh              # uses a fresh temp registry (auto-cleaned)
-#   ./scripts/demo.sh /custom/dir  # reuses /custom/dir (left on disk)
+#   ./scripts/demo.sh              # uses a fresh temp registry (left on disk
+#                                  # so the printed `loom panel` command works)
+#   ./scripts/demo.sh /custom/dir  # reuses /custom/dir (also left on disk)
 
 set -euo pipefail
 
@@ -21,10 +22,8 @@ if [[ ! -x "$LOOM_BIN" ]]; then
   exit 1
 fi
 
-KEEP_ARTIFACTS=0
 if [[ $# -ge 1 ]]; then
   ROOT="$1"
-  KEEP_ARTIFACTS=1
 else
   ROOT="$(mktemp -d -t loom-demo-XXXXXX)"
 fi
@@ -32,14 +31,9 @@ fi
 TARGET_DIR="$ROOT/skills-target"
 
 cleanup() {
-  if [[ "$KEEP_ARTIFACTS" -eq 1 ]]; then
-    echo
-    echo "ℹ️  Demo artifacts left at: $ROOT"
-  else
-    echo
-    echo "🧹 Cleaning up: $ROOT"
-    rm -rf "$ROOT"
-  fi
+  echo
+  echo "ℹ️  Demo artifacts left at: $ROOT"
+  echo "    Remove with: rm -rf \"$ROOT\""
 }
 trap cleanup EXIT
 

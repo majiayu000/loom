@@ -31,7 +31,7 @@ impl App {
         let pending_report = self.ctx.read_pending_report().map_err(map_io)?;
         let pending_ops = pending_report.ops.len();
         let target_dirs = resolve_agent_skill_dirs(&self.ctx.root);
-        let v3_paths = V3StatePaths::from_root(&self.ctx.root);
+        let v3_paths = V3StatePaths::from_app_context(&self.ctx);
         let v3_status = v3_paths
             .maybe_load_snapshot()
             .map_err(map_v3_state)?
@@ -106,7 +106,7 @@ impl App {
         let fsck_ok = fsck.is_ok();
         let fsck_output = fsck.unwrap_or_else(|e| e.to_string());
         let pending_report = self.ctx.read_pending_report().map_err(map_io)?;
-        let v3_paths = V3StatePaths::from_root(&self.ctx.root);
+        let v3_paths = V3StatePaths::from_app_context(&self.ctx);
         let v3_schema_ok = v3_paths.schema_file.exists();
         let v3_snapshot = v3_paths.maybe_load_snapshot().map_err(map_v3_state)?;
         let v3_snapshot_ok = v3_snapshot.is_some();

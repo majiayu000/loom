@@ -139,7 +139,7 @@ pub(crate) fn error_envelope(
 pub(super) fn load_v3_snapshot(
     ctx: &AppContext,
 ) -> std::result::Result<crate::state_model::V3Snapshot, Json<serde_json::Value>> {
-    let paths = V3StatePaths::from_root(&ctx.root);
+    let paths = V3StatePaths::from_app_context(ctx);
     match paths.maybe_load_snapshot() {
         Ok(Some(snapshot)) => Ok(snapshot),
         Ok(None) => Err(v3_error(

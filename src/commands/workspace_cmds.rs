@@ -8,11 +8,11 @@ use crate::cli::{
     AgentKind, BindingAddArgs, RemoteCommand, TargetAddArgs, TargetCommand, TargetOwnership,
     WorkspaceBindingCommand, WorkspaceInitArgs,
 };
-use crate::state::AppContext;
-use crate::state_model::V3Snapshot;
 use crate::envelope::Meta;
 use crate::gitops;
+use crate::state::AppContext;
 use crate::state::resolve_agent_skill_dirs;
+use crate::state_model::V3Snapshot;
 use crate::state_model::{V3StatePaths, V3WorkspaceBinding, V3WorkspaceMatcher};
 use crate::types::ErrorCode;
 

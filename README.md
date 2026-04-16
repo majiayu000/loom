@@ -50,7 +50,19 @@ loom --root ~/.loom-registry target add \
 loom --root ~/.loom-registry panel        # → http://localhost:43117
 ```
 
-Prefer the guided walkthrough? Run `./scripts/e2e-agent-flow.sh` for four real scenarios end-to-end.
+Prefer a guided walkthrough? Run `./scripts/demo.sh` for a scripted end-to-end tour (init → target add → status → panel hint) against a throwaway registry. `./scripts/e2e-agent-flow.sh` runs the four real integration scenarios used in CI.
+
+## Panel
+
+<!-- TODO: replace with a real screenshot at ./assets/panel-screenshot.png once captured locally. -->
+<!-- Capture steps:                                                                                   -->
+<!--   1. ./scripts/demo.sh /tmp/loom-panel-demo                                                      -->
+<!--   2. target/debug/loom --root /tmp/loom-panel-demo panel                                         -->
+<!--   3. Screenshot http://localhost:43117 (overview + skills views), save as PNG into assets/.      -->
+
+> Visual control panel for the registry. Launches on `http://localhost:43117`
+> via `loom panel`; diff projections, inspect bindings, and replay pending ops
+> in a single-page React app served by the same Rust binary.
 
 ## Features
 

@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 
+mod json_io;
 mod persistence;
 use std::collections::HashSet;
 

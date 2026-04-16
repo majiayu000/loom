@@ -1,3 +1,19 @@
+// V3 schema types are generated from Rust via ts-rs.
+// Do not hand-edit under ./generated/ — run `cargo test` to regenerate.
+export type { V3Target } from "./generated/V3Target";
+export type { V3TargetCapabilities } from "./generated/V3TargetCapabilities";
+export type { V3Binding } from "./generated/V3Binding";
+export type { V3WorkspaceMatcher } from "./generated/V3WorkspaceMatcher";
+export type { V3Rule } from "./generated/V3Rule";
+export type { V3Projection } from "./generated/V3Projection";
+export type { V3Checkpoint } from "./generated/V3Checkpoint";
+
+import type { V3Binding } from "./generated/V3Binding";
+import type { V3Target } from "./generated/V3Target";
+import type { V3Rule } from "./generated/V3Rule";
+import type { V3Projection } from "./generated/V3Projection";
+import type { V3Checkpoint } from "./generated/V3Checkpoint";
+
 export type PageId =
   | "overview"
   | "skills"
@@ -46,61 +62,6 @@ export type PendingPayload = {
   journal_events?: number;
   history_events?: number;
   warnings?: string[];
-};
-
-export type V3Binding = {
-  binding_id: string;
-  agent: string;
-  profile_id: string;
-  workspace_matcher: {
-    kind: string;
-    value: string;
-  };
-  default_target_id: string;
-  policy_profile: string;
-  active: boolean;
-  created_at?: string;
-};
-
-export type V3Target = {
-  target_id: string;
-  agent: string;
-  path: string;
-  ownership: string;
-  capabilities: {
-    symlink: boolean;
-    copy: boolean;
-    watch: boolean;
-  };
-  created_at?: string;
-};
-
-export type V3Rule = {
-  binding_id: string;
-  skill_id: string;
-  target_id: string;
-  method: string;
-  watch_policy: string;
-  created_at?: string;
-};
-
-export type V3Projection = {
-  instance_id: string;
-  skill_id: string;
-  binding_id: string;
-  target_id: string;
-  materialized_path: string;
-  method: string;
-  last_applied_rev: string;
-  health: string;
-  observed_drift?: boolean;
-  updated_at?: string;
-};
-
-export type V3Checkpoint = {
-  last_scanned_op_id?: string | null;
-  last_acked_op_id?: string | null;
-  updated_at?: string;
 };
 
 export type V3Payload = {

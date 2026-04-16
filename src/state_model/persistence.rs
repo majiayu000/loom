@@ -15,13 +15,32 @@ use super::{
 };
 
 impl V3StatePaths {
+    /// Derive V3 paths from a bare root path.
+    ///
+    /// Prefer [`V3StatePaths::from_app_context`] in production code — it
+    /// inherits the state directory decision from [`crate::state::AppContext`]
+    /// so any future change to how `state_dir` is computed lands in exactly
+    /// one place. This entry point remains for tests and ad-hoc path
+    /// derivation where an AppContext isn't constructed.
     pub fn from_root(root: &Path) -> Self {
         let state_dir = root.join("state");
+        Self::from_parts(root.to_path_buf(), state_dir)
+    }
+
+    /// Derive V3 paths from an existing [`crate::state::AppContext`].
+    ///
+    /// This avoids re-deriving `state_dir` from `root`, keeping the AppContext
+    /// as the single source of truth for where state lives on disk.
+    pub fn from_app_context(ctx: &crate::state::AppContext) -> Self {
+        Self::from_parts(ctx.root.clone(), ctx.state_dir.clone())
+    }
+
+    fn from_parts(root: std::path::PathBuf, state_dir: std::path::PathBuf) -> Self {
         let v3_dir = state_dir.join("v3");
         let ops_dir = v3_dir.join("ops");
         let observations_dir = v3_dir.join("observations");
         Self {
-            root: root.to_path_buf(),
+            root,
             state_dir,
             v3_dir: v3_dir.clone(),
             schema_file: v3_dir.join("schema.json"),

@@ -111,7 +111,7 @@ impl App {
     pub(crate) fn require_v3_snapshot(
         &self,
     ) -> std::result::Result<crate::state_model::V3Snapshot, CommandFailure> {
-        let paths = V3StatePaths::from_root(&self.ctx.root);
+        let paths = V3StatePaths::from_app_context(&self.ctx);
         match paths.maybe_load_snapshot().map_err(helpers::map_v3_state)? {
             Some(snapshot) => Ok(snapshot),
             None => Err(CommandFailure::new(
@@ -122,7 +122,7 @@ impl App {
     }
 
     pub(crate) fn ensure_v3_layout(&self) -> std::result::Result<V3StatePaths, CommandFailure> {
-        let paths = V3StatePaths::from_root(&self.ctx.root);
+        let paths = V3StatePaths::from_app_context(&self.ctx);
         paths.ensure_layout().map_err(helpers::map_v3_state)?;
         Ok(paths)
     }

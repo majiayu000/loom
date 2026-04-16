@@ -30,7 +30,7 @@ pub(super) async fn info(State(state): State<PanelState>) -> Json<serde_json::Va
         .ok()
         .flatten()
         .unwrap_or_default();
-    let v3_paths = V3StatePaths::from_root(&state.ctx.root);
+    let v3_paths = V3StatePaths::from_app_context(&state.ctx);
 
     Json(json!({
         "root": state.ctx.root.display().to_string(),

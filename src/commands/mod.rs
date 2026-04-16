@@ -71,6 +71,7 @@ impl App {
             Command::Workspace { command } => match command {
                 WorkspaceCommand::Status => self.cmd_status(),
                 WorkspaceCommand::Doctor => self.cmd_doctor(),
+                WorkspaceCommand::Init(args) => self.cmd_workspace_init(args, &request_id),
                 WorkspaceCommand::Binding { command } => {
                     self.cmd_workspace_binding(command, &request_id)
                 }

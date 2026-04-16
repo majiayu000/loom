@@ -93,6 +93,7 @@ pub(crate) fn command_name(command: &Command) -> &'static str {
         Command::Workspace { command } => match command {
             WorkspaceCommand::Status => "workspace.status",
             WorkspaceCommand::Doctor => "workspace.doctor",
+            WorkspaceCommand::Init(_) => "workspace.init",
             WorkspaceCommand::Binding { command } => match command {
                 WorkspaceBindingCommand::Add(_) => "workspace.binding.add",
                 WorkspaceBindingCommand::List => "workspace.binding.list",

@@ -42,6 +42,13 @@ jobs:
       - name: Rust Tests
         run: make test
 
+      - name: TS Bindings Drift Check
+        run: |
+          if ! git diff --exit-code panel/src/generated/; then
+            echo "::error::ts-rs generated bindings are out of date. Run 'cargo test' locally and commit panel/src/generated/ changes."
+            exit 1
+          fi
+
       - name: Panel Build
         run: make panel-build
 

@@ -6,6 +6,7 @@ use std::collections::HashSet;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use ts_rs::TS;
 
 pub const V3_SCHEMA_VERSION: u32 = 3;
 
@@ -78,7 +79,8 @@ pub struct V3ProjectionsFile {
     pub projections: Vec<V3ProjectionInstance>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../panel/src/generated/", rename = "V3Target")]
 pub struct V3ProjectionTarget {
     pub target_id: String,
     pub agent: String,
@@ -86,17 +88,20 @@ pub struct V3ProjectionTarget {
     pub ownership: String,
     pub capabilities: V3TargetCapabilities,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional, type = "string")]
     pub created_at: Option<DateTime<Utc>>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../panel/src/generated/")]
 pub struct V3TargetCapabilities {
     pub symlink: bool,
     pub copy: bool,
     pub watch: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../panel/src/generated/", rename = "V3Binding")]
 pub struct V3WorkspaceBinding {
     pub binding_id: String,
     pub agent: String,
@@ -106,16 +111,19 @@ pub struct V3WorkspaceBinding {
     pub policy_profile: String,
     pub active: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional, type = "string")]
     pub created_at: Option<DateTime<Utc>>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../panel/src/generated/")]
 pub struct V3WorkspaceMatcher {
     pub kind: String,
     pub value: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../panel/src/generated/", rename = "V3Rule")]
 pub struct V3BindingRule {
     pub binding_id: String,
     pub skill_id: String,
@@ -123,10 +131,12 @@ pub struct V3BindingRule {
     pub method: String,
     pub watch_policy: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional, type = "string")]
     pub created_at: Option<DateTime<Utc>>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../panel/src/generated/", rename = "V3Projection")]
 pub struct V3ProjectionInstance {
     pub instance_id: String,
     pub skill_id: String,
@@ -137,8 +147,10 @@ pub struct V3ProjectionInstance {
     pub last_applied_rev: String,
     pub health: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub observed_drift: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional, type = "string")]
     pub updated_at: Option<DateTime<Utc>>,
 }
 
@@ -162,13 +174,17 @@ pub struct V3OperationError {
     pub message: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../panel/src/generated/", rename = "V3Checkpoint")]
 pub struct V3OpsCheckpoint {
     pub schema_version: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub last_scanned_op_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub last_acked_op_id: Option<String>,
+    #[ts(type = "string")]
     pub updated_at: DateTime<Utc>,
 }
 

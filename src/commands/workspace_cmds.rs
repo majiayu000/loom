@@ -153,8 +153,15 @@ impl App {
         args: &WorkspaceInitArgs,
         request_id: &str,
     ) -> std::result::Result<(serde_json::Value, Meta), CommandFailure> {
-        self.ensure_write_repo_ready()?;
-        self.ensure_v3_layout()?;
+        // Gate the init writes behind the workspace lock (matches every other
+        // write path) and release before the per-target adds, because
+        // `lock_workspace` is a non-reentrant file lock and each cmd_target
+        // call below acquires it again internally.
+        {
+            let _workspace = self.ctx.lock_workspace().map_err(map_lock)?;
+            self.ensure_write_repo_ready()?;
+            self.ensure_v3_layout()?;
+        }
 
         let mut imported: Vec<serde_json::Value> = Vec::new();
         let mut skipped: Vec<serde_json::Value> = Vec::new();

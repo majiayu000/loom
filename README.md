@@ -211,8 +211,7 @@ and fails the commit if rustfmt would make changes. Disable with
 ## Roadmap
 
 - Per-agent default path conventions & env overrides (beyond `CLAUDE_SKILLS_DIR` / `CODEX_SKILLS_DIR`) for the 8 newly added agents — paths are currently supplied explicitly via `target add --path`
-- `loom workspace init` onboarding migration: auto-import existing `.claude/.codex/skills`
-- TypeScript type generation for the Panel API (eliminate hand-written `panel/src/types.ts`)
+- Extend `loom workspace init --scan-existing` auto-import to the 8 newly added agents once their skill-directory conventions stabilize (currently scans Claude and Codex only)
 - Desktop packaging (Tauri) for users who prefer a GUI
 - Skill marketplace integration (upstream catalogs such as `agent-skills`)
 

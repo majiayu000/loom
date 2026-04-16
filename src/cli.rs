@@ -48,6 +48,7 @@ pub enum Command {
 pub enum WorkspaceCommand {
     Status,
     Doctor,
+    Init(WorkspaceInitArgs),
     Binding {
         #[command(subcommand)]
         command: WorkspaceBindingCommand,
@@ -56,6 +57,15 @@ pub enum WorkspaceCommand {
         #[command(subcommand)]
         command: RemoteCommand,
     },
+}
+
+#[derive(Debug, Clone, Args)]
+pub struct WorkspaceInitArgs {
+    /// Also scan default agent skill directories (~/.claude/skills,
+    /// ~/.codex/skills) and auto-register any that exist as observed
+    /// targets. Safe to re-run: existing targets are not duplicated.
+    #[arg(long)]
+    pub scan_existing: bool,
 }
 
 #[derive(Debug, Clone, Subcommand)]

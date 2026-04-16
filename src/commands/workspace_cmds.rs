@@ -4,7 +4,10 @@ use std::path::Path;
 use chrono::Utc;
 use serde_json::json;
 
-use crate::cli::{BindingAddArgs, RemoteCommand, WorkspaceBindingCommand};
+use crate::cli::{
+    AgentKind, BindingAddArgs, RemoteCommand, TargetAddArgs, TargetCommand, TargetOwnership,
+    WorkspaceBindingCommand, WorkspaceInitArgs,
+};
 use crate::state::AppContext;
 use crate::state_model::V3Snapshot;
 use crate::envelope::Meta;
@@ -140,6 +143,67 @@ impl App {
                         "projections": projection_checks
                     }
                 }
+            }),
+            Meta::default(),
+        ))
+    }
+
+    pub fn cmd_workspace_init(
+        &self,
+        args: &WorkspaceInitArgs,
+        request_id: &str,
+    ) -> std::result::Result<(serde_json::Value, Meta), CommandFailure> {
+        self.ensure_write_repo_ready()?;
+        self.ensure_v3_layout()?;
+
+        let mut imported: Vec<serde_json::Value> = Vec::new();
+        let mut skipped: Vec<serde_json::Value> = Vec::new();
+
+        if args.scan_existing {
+            let home = std::env::var("HOME").map_err(|_| {
+                CommandFailure::new(
+                    ErrorCode::ArgInvalid,
+                    "--scan-existing requires HOME to be set",
+                )
+            })?;
+            let candidates = [
+                (AgentKind::Claude, format!("{}/.claude/skills", home)),
+                (AgentKind::Codex, format!("{}/.codex/skills", home)),
+            ];
+            for (agent, path_str) in candidates {
+                let p = Path::new(&path_str);
+                if !p.exists() {
+                    skipped.push(json!({
+                        "agent": agent_kind_as_str(agent),
+                        "path": path_str,
+                        "reason": "does-not-exist",
+                    }));
+                    continue;
+                }
+                if !p.is_dir() {
+                    skipped.push(json!({
+                        "agent": agent_kind_as_str(agent),
+                        "path": path_str,
+                        "reason": "not-a-directory",
+                    }));
+                    continue;
+                }
+                let add_args = TargetAddArgs {
+                    agent,
+                    path: path_str.clone(),
+                    ownership: TargetOwnership::Observed,
+                };
+                let (value, _meta) = self.cmd_target(&TargetCommand::Add(add_args), request_id)?;
+                imported.push(value);
+            }
+        }
+
+        Ok((
+            json!({
+                "initialized": true,
+                "scanned": args.scan_existing,
+                "imported": imported,
+                "skipped": skipped,
             }),
             Meta::default(),
         ))

@@ -4,6 +4,7 @@ mod helpers;
 mod projections;
 mod skill_cmds;
 mod sync_cmds;
+mod target_cmds;
 mod workspace_cmds;
 
 use anyhow::Result;

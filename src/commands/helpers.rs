@@ -144,6 +144,14 @@ pub(crate) fn agent_kind_as_str(agent: AgentKind) -> &'static str {
     match agent {
         AgentKind::Claude => "claude",
         AgentKind::Codex => "codex",
+        AgentKind::Cursor => "cursor",
+        AgentKind::Windsurf => "windsurf",
+        AgentKind::Cline => "cline",
+        AgentKind::Copilot => "copilot",
+        AgentKind::Aider => "aider",
+        AgentKind::Opencode => "opencode",
+        AgentKind::GeminiCli => "gemini-cli",
+        AgentKind::Goose => "goose",
     }
 }
 

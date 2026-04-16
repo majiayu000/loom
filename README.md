@@ -110,7 +110,7 @@ Four core concepts:
 | Git-native sync + replay | ❌ | cloud sync | ❌ | **✅** |
 | Hard write guard | ❌ | ❌ | ❌ | **✅** |
 | CLI-first + Web panel | GUI only | GUI only | CLI only | **✅** |
-| Breadth of agents supported | 44 | 5 | 18 | 2 (Claude, Codex) |
+| Breadth of agents supported | 44 | 5 | 18 | 10 (Claude, Codex, Cursor, Windsurf, Cline, Copilot, Aider, OpenCode, Gemini CLI, Goose) |
 | Desktop app (dmg/msi) | ✅ | ✅ | ❌ | — |
 
 **Pick Loom when** you want fine-grained control (multi-project routing, versioned lifecycle, git-tracked audit trail) and are comfortable on the CLI. **Pick skills-hub or cc-switch** when you want a one-click GUI with broad agent coverage and don't need projection/binding semantics.
@@ -210,7 +210,7 @@ and fails the commit if rustfmt would make changes. Disable with
 
 ## Roadmap
 
-- Broaden agent coverage beyond Claude & Codex (Cursor, Windsurf, Cline, Copilot, Aider, OpenCode, Gemini CLI, Goose)
+- Per-agent default path conventions & env overrides (beyond `CLAUDE_SKILLS_DIR` / `CODEX_SKILLS_DIR`) for the 8 newly added agents — paths are currently supplied explicitly via `target add --path`
 - `loom workspace init` onboarding migration: auto-import existing `.claude/.codex/skills`
 - TypeScript type generation for the Panel API (eliminate hand-written `panel/src/types.ts`)
 - Desktop packaging (Tauri) for users who prefer a GUI

@@ -94,7 +94,7 @@ impl AppContext {
     pub fn read_pending_report(&self) -> Result<super::PendingOpsReport> {
         let model = self.read_ops_model()?;
         let mut ops = model.active_ops.into_values().collect::<Vec<_>>();
-        ops.sort_by(|left, right| left.created_at.cmp(&right.created_at));
+        ops.sort_by_key(|op| op.created_at);
         Ok(super::PendingOpsReport {
             ops,
             warnings: model.warnings,

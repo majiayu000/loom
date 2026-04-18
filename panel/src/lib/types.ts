@@ -1,4 +1,12 @@
-export type AgentKind =
+/**
+ * Known agent slugs — MUST match backend `AgentKind` serde wire values
+ * (see `src/cli.rs`, kebab-case for multi-word variants).
+ *
+ * `AgentSlug` is the string alias used across UI models. Unknown values
+ * from the server are preserved as-is (no coercion) — see `toAgentSlug`
+ * in `lib/api/adapters.ts`.
+ */
+export type KnownAgent =
   | "claude"
   | "codex"
   | "cursor"
@@ -7,8 +15,15 @@ export type AgentKind =
   | "copilot"
   | "aider"
   | "opencode"
-  | "gemini"
+  | "gemini-cli"
   | "goose";
+
+// Allow unknown slugs so future backend agents render with their real
+// name instead of being relabelled. `string & {}` keeps editor hints.
+export type AgentSlug = KnownAgent | (string & {});
+
+// Back-compat alias for older call sites that still import AgentKind.
+export type AgentKind = AgentSlug;
 
 export type Ownership = "managed" | "observed" | "external";
 export type ProjectionMethod = "symlink" | "copy" | "materialize";
@@ -16,7 +31,7 @@ export type OpStatus = "ok" | "pending" | "err";
 
 export interface Target {
   id: string;
-  agent: AgentKind;
+  agent: AgentSlug;
   profile: string;
   path: string;
   ownership: Ownership;

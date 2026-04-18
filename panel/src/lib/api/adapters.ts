@@ -3,24 +3,16 @@ import type { V3Projection } from "../../generated/V3Projection";
 import type { V3Rule } from "../../generated/V3Rule";
 import type { V3Target } from "../../generated/V3Target";
 import type { PendingOp } from "../../types";
-import type { AgentKind, Binding, Op, Ownership, ProjectionMethod, Skill, Target } from "../types";
+import { normalizeAgentSlug } from "../agent_options";
+import type { AgentSlug, Binding, Op, Ownership, ProjectionMethod, Skill, Target } from "../types";
 
-const KNOWN_AGENTS: AgentKind[] = [
-  "claude",
-  "codex",
-  "cursor",
-  "windsurf",
-  "cline",
-  "copilot",
-  "aider",
-  "opencode",
-  "gemini",
-  "goose",
-];
-
-function toAgent(value: string): AgentKind {
-  const normalized = value.toLowerCase() as AgentKind;
-  return KNOWN_AGENTS.includes(normalized) ? normalized : "claude";
+/**
+ * Return the backend slug verbatim (lowercased + trimmed). Unknown slugs
+ * are preserved so the UI renders them with their real identity instead
+ * of being silently relabelled as Claude (cf. Codex P2 on PR #7).
+ */
+function toAgentSlug(value: string): AgentSlug {
+  return normalizeAgentSlug(value) as AgentSlug;
 }
 
 function toOwnership(value: string): Ownership {
@@ -47,7 +39,7 @@ export function adaptTarget(t: V3Target, projections: V3Projection[]): Target {
   const skillsOnTarget = new Set(projections.filter((p) => p.target_id === t.target_id).map((p) => p.skill_id));
   return {
     id: t.target_id,
-    agent: toAgent(t.agent),
+    agent: toAgentSlug(t.agent),
     profile: profileFromPath(t.path),
     path: shortPath(t.path),
     ownership: toOwnership(t.ownership),
@@ -132,7 +124,7 @@ export function adaptProjectionOp(p: V3Projection, t: V3Target | undefined): Op 
     status,
     kind: "project",
     skill: `${p.skill_id}@${(p.last_applied_rev ?? "").slice(0, 7) || "—"}`,
-    target: t ? `${t.agent}/${profileFromPath(t.path)}` : p.target_id,
+    target: t ? `${toAgentSlug(t.agent)}/${profileFromPath(t.path)}` : p.target_id,
     method: toMethod(p.method),
     time: p.updated_at ? relativeTime(p.updated_at) : "—",
     reason: drifted ? `health=${p.health}${p.observed_drift ? "; drift observed" : ""}` : undefined,

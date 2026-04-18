@@ -74,18 +74,23 @@ export function PanelApp() {
     setSelectedSkill(null);
   };
 
-  // Data source: live when reachable, mock fallback labeled so the UI never claims false live data.
-  const skills = live.live && live.skills.length > 0 ? live.skills : SKILLS;
-  const targets = live.live && live.targets.length > 0 ? live.targets : TARGETS;
-  const bindings = live.live && live.bindings.length > 0 ? live.bindings : BINDINGS;
-  const ops = live.live && live.ops.length > 0 ? live.ops : OPS;
-  const usingMock =
-    !live.live ||
-    (live.skills.length === 0 && live.targets.length === 0 && live.bindings.length === 0 && live.ops.length === 0);
+  // Data source rule (cf. Codex P1 on PR #7):
+  //   - live.live=true  -> ALWAYS show live data verbatim, even when lists
+  //     are empty. An empty real registry is a legitimate state and must
+  //     render as "0 targets" rather than silently swapping in mock rows.
+  //   - live.live=false -> mock data as placeholder preview + explicit
+  //     offline banner in <MockBanner>.
+  // Writes are only enabled when live=true, so users can never act on
+  // nonexistent mock IDs and hit confusing mutation errors.
+  const usingMock = !live.live;
+  const skills = usingMock ? SKILLS : live.skills;
+  const targets = usingMock ? TARGETS : live.targets;
+  const bindings = usingMock ? BINDINGS : live.bindings;
+  const ops = usingMock ? OPS : live.ops;
 
   const densityClass = tweaks.density === "dense" ? " dense" : tweaks.density === "cozy" ? " cozy" : "";
 
-  const readOnly = !live.live || usingMock;
+  const readOnly = usingMock;
   const onMutation = live.refetch;
   const onNewBinding = () => setPage("bindings");
 

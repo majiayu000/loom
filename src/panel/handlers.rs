@@ -287,6 +287,12 @@ pub(super) async fn v3_capture(
     )
 }
 
+// Sync handlers wrap `App::cmd_sync` one-to-one with the corresponding
+// `SyncCommand` variant so the panel exposes the same git-backed flow as
+// the `loom sync {push,pull,replay}` CLI. Each route goes through
+// `ensure_mutation_authorized` + `run_panel_command`, so the JSON envelope,
+// error-code mapping, and audit-log semantics match other mutations.
+
 pub(super) async fn sync_push(
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
     headers: HeaderMap,

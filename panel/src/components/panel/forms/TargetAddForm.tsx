@@ -1,12 +1,8 @@
 import { useState } from "react";
+import { AGENT_OPTIONS } from "../../../lib/agent_options";
 import { api } from "../../../lib/api/client";
 
-type Agent = "claude" | "codex" | "cursor" | "windsurf" | "cline" | "copilot" | "aider" | "opencode" | "gemini" | "goose";
 type Ownership = "managed" | "observed" | "external";
-
-const AGENTS: Agent[] = [
-  "claude", "codex", "cursor", "windsurf", "cline", "copilot", "aider", "opencode", "gemini", "goose",
-];
 const OWNERSHIPS: Ownership[] = ["managed", "observed", "external"];
 
 interface TargetAddFormProps {
@@ -15,7 +11,7 @@ interface TargetAddFormProps {
 }
 
 export function TargetAddForm({ onCancel, onSuccess }: TargetAddFormProps) {
-  const [agent, setAgent] = useState<Agent>("claude");
+  const [agent, setAgent] = useState<string>(AGENT_OPTIONS[0].slug);
   const [path, setPath] = useState("");
   const [ownership, setOwnership] = useState<Ownership>("managed");
   const [busy, setBusy] = useState(false);
@@ -43,8 +39,12 @@ export function TargetAddForm({ onCancel, onSuccess }: TargetAddFormProps) {
     <form onSubmit={submit} className="card" style={{ padding: 16, marginBottom: 12 }}>
       <div style={{ display: "grid", gridTemplateColumns: "120px 1fr", gap: 8, alignItems: "center" }}>
         <label className="hint">agent</label>
-        <select value={agent} onChange={(e) => setAgent(e.target.value as Agent)} style={inputStyle}>
-          {AGENTS.map((a) => <option key={a} value={a}>{a}</option>)}
+        <select value={agent} onChange={(e) => setAgent(e.target.value)} style={inputStyle}>
+          {AGENT_OPTIONS.map((a) => (
+            <option key={a.slug} value={a.slug}>
+              {a.label}
+            </option>
+          ))}
         </select>
         <label className="hint">path</label>
         <input
@@ -56,12 +56,18 @@ export function TargetAddForm({ onCancel, onSuccess }: TargetAddFormProps) {
         />
         <label className="hint">ownership</label>
         <select value={ownership} onChange={(e) => setOwnership(e.target.value as Ownership)} style={inputStyle}>
-          {OWNERSHIPS.map((o) => <option key={o} value={o}>{o}</option>)}
+          {OWNERSHIPS.map((o) => (
+            <option key={o} value={o}>
+              {o}
+            </option>
+          ))}
         </select>
       </div>
       {error && <div style={errorStyle}>{error}</div>}
       <div style={{ display: "flex", gap: 8, marginTop: 12, justifyContent: "flex-end" }}>
-        <button type="button" className="btn ghost" onClick={onCancel} disabled={busy}>Cancel</button>
+        <button type="button" className="btn ghost" onClick={onCancel} disabled={busy}>
+          Cancel
+        </button>
         <button type="submit" className="btn primary" disabled={busy}>
           {busy ? "adding…" : "target add"}
         </button>

@@ -99,6 +99,9 @@ pub async fn run_panel(ctx: AppContext, port: u16) -> Result<()> {
         .route("/api/v3/capture", post(v3_capture))
         .route("/api/remote/status", get(remote_status))
         .route("/api/pending", get(pending))
+        .route("/api/sync/push", post(sync_push))
+        .route("/api/sync/pull", post(sync_pull))
+        .route("/api/sync/replay", post(sync_replay))
         .route("/{*path}", get(frontend_static_asset))
         .with_state(state);
 
@@ -125,8 +128,8 @@ mod tests {
     };
     use crate::cli::{
         BindingAddArgs, CaptureArgs, Command, ProjectArgs, ProjectionMethod, SkillCommand,
-        TargetAddArgs, TargetCommand, TargetOwnership, WorkspaceBindingCommand, WorkspaceCommand,
-        WorkspaceMatcherKind,
+        SyncCommand, TargetAddArgs, TargetCommand, TargetOwnership, WorkspaceBindingCommand,
+        WorkspaceCommand, WorkspaceMatcherKind,
     };
     use crate::state::AppContext;
     use axum::{
@@ -239,15 +242,35 @@ mod tests {
 
         let peer = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 40000);
         let headers = HeaderMap::new();
-        let response = ensure_mutation_authorized(&state, peer, &headers, "target.add")
-            .expect("guard should reject request without origin headers");
-        assert_eq!(response.0, StatusCode::FORBIDDEN);
-        let Json(payload) = response.1;
-        assert_eq!(payload["ok"], json!(false));
-        assert_eq!(payload["cmd"], json!("target.add"));
-        assert_eq!(payload["error"]["code"], json!("UNAUTHORIZED"));
-        assert!(payload["request_id"].as_str().is_some());
-        assert!(payload.get("meta").is_some());
+
+        // Covers every mutation surface the panel exposes, including the
+        // new sync routes. Without origin headers they must all return
+        // UNAUTHORIZED so writes cannot be driven from an untrusted origin.
+        for cmd in [
+            "target.add",
+            "target.remove",
+            "workspace.binding.add",
+            "workspace.binding.remove",
+            "skill.project",
+            "skill.capture",
+            "sync.push",
+            "sync.pull",
+            "sync.replay",
+        ] {
+            let response = ensure_mutation_authorized(&state, peer, &headers, cmd)
+                .unwrap_or_else(|| panic!("guard should reject {cmd} without origin headers"));
+            assert_eq!(response.0, StatusCode::FORBIDDEN, "{cmd} status");
+            let Json(payload) = response.1;
+            assert_eq!(payload["ok"], json!(false), "{cmd} ok");
+            assert_eq!(payload["cmd"], json!(cmd), "{cmd} cmd");
+            assert_eq!(
+                payload["error"]["code"],
+                json!("UNAUTHORIZED"),
+                "{cmd} code"
+            );
+            assert!(payload["request_id"].as_str().is_some(), "{cmd} req id");
+            assert!(payload.get("meta").is_some(), "{cmd} meta");
+        }
 
         let _ = fs::remove_dir_all(root);
     }
@@ -341,6 +364,26 @@ mod tests {
                         instance: None,
                         message: None,
                     }),
+                },
+            ),
+            // Note: sync.push / sync.pull need a configured remote, so on a
+            // fresh workspace they correctly return an ARG_INVALID (non-2xx)
+            // envelope. Covered separately in
+            // `sync_routes_without_remote_return_arg_invalid` so the happy
+            // path of `sync.replay` (which is a valid no-op on empty state)
+            // is not conflated with logical-failure coverage.
+            (
+                "sync.push",
+                StatusCode::OK,
+                Command::Sync {
+                    command: SyncCommand::Push,
+                },
+            ),
+            (
+                "sync.pull",
+                StatusCode::OK,
+                Command::Sync {
+                    command: SyncCommand::Pull,
                 },
             ),
         ];

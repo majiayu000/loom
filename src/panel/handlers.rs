@@ -8,17 +8,30 @@ use axum::{
 use serde_json::json;
 
 use crate::cli::{
-    CaptureArgs, Command, ProjectArgs, ProjectionMethod, TargetCommand, TargetOwnership,
-    WorkspaceBindingCommand, WorkspaceCommand,
+    CaptureArgs, Command, ProjectArgs, ProjectionMethod, SyncCommand, TargetCommand,
+    TargetOwnership, WorkspaceBindingCommand, WorkspaceCommand,
 };
 use crate::commands::{collect_skill_inventory, remote_status_payload};
 use crate::state::resolve_agent_skill_dirs;
 use crate::state_model::V3StatePaths;
 
 use super::auth::{
-    ensure_mutation_authorized, load_v3_snapshot, run_panel_command, v3_error, v3_ok,
+    ensure_mutation_authorized, error_envelope, load_v3_snapshot, run_panel_command, v3_error,
+    v3_ok,
 };
 use super::{BindingAddRequest, CaptureRequest, PanelState, ProjectRequest, TargetAddRequest};
+
+/// Accept `[a-z0-9_-]{1,64}` for `policy_profile`. The backend does not
+/// maintain a closed whitelist (users may extend profiles over time),
+/// but the panel surface should refuse obviously malformed input so the
+/// V3 bindings file stays auditable. CLI users may still submit other
+/// formats directly via `loom workspace binding add`.
+fn policy_profile_looks_sane(value: &str) -> bool {
+    (1..=64).contains(&value.len())
+        && value
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_')
+}
 
 pub(super) async fn health() -> Json<serde_json::Value> {
     Json(json!({"ok": true, "service": "loom-panel"}))
@@ -193,6 +206,21 @@ pub(super) async fn v3_binding_add(
     {
         return response;
     }
+    let policy_profile = req
+        .policy_profile
+        .unwrap_or_else(|| "safe-capture".to_string());
+    if !policy_profile_looks_sane(&policy_profile) {
+        let request_id = uuid::Uuid::new_v4().to_string();
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(error_envelope(
+                "workspace.binding.add",
+                &request_id,
+                "ARG_INVALID",
+                "policy_profile must match [a-z0-9_-]{1,64}",
+            )),
+        );
+    }
     run_panel_command(
         &state,
         "workspace.binding.add",
@@ -205,9 +233,7 @@ pub(super) async fn v3_binding_add(
                     matcher_kind: req.matcher_kind,
                     matcher_value: req.matcher_value,
                     target: req.target,
-                    policy_profile: req
-                        .policy_profile
-                        .unwrap_or_else(|| "safe-capture".to_string()),
+                    policy_profile,
                 }),
             },
         },
@@ -283,6 +309,66 @@ pub(super) async fn v3_capture(
                 instance: req.instance,
                 message: req.message,
             }),
+        },
+    )
+}
+
+// Sync handlers wrap `App::cmd_sync` one-to-one with the corresponding
+// `SyncCommand` variant so the panel exposes the same git-backed flow as
+// the `loom sync {push,pull,replay}` CLI. Each route goes through
+// `ensure_mutation_authorized` + `run_panel_command`, so the JSON envelope,
+// error-code mapping, and audit-log semantics match other mutations.
+
+pub(super) async fn sync_push(
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    State(state): State<PanelState>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    if let Some(response) = ensure_mutation_authorized(&state, peer, &headers, "sync.push") {
+        return response;
+    }
+    run_panel_command(
+        &state,
+        "sync.push",
+        StatusCode::OK,
+        Command::Sync {
+            command: SyncCommand::Push,
+        },
+    )
+}
+
+pub(super) async fn sync_pull(
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    State(state): State<PanelState>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    if let Some(response) = ensure_mutation_authorized(&state, peer, &headers, "sync.pull") {
+        return response;
+    }
+    run_panel_command(
+        &state,
+        "sync.pull",
+        StatusCode::OK,
+        Command::Sync {
+            command: SyncCommand::Pull,
+        },
+    )
+}
+
+pub(super) async fn sync_replay(
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    State(state): State<PanelState>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    if let Some(response) = ensure_mutation_authorized(&state, peer, &headers, "sync.replay") {
+        return response;
+    }
+    run_panel_command(
+        &state,
+        "sync.replay",
+        StatusCode::OK,
+        Command::Sync {
+            command: SyncCommand::Replay,
         },
     )
 }

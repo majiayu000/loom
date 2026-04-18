@@ -1,0 +1,71 @@
+.feature-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1px;
+  background: var(--line);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  overflow: hidden;
+}
+
+.feature {
+  background: var(--bg-1);
+  padding: 28px 26px;
+  position: relative;
+  transition: background 0.15s;
+}
+.feature:hover {
+  background: var(--bg-2);
+}
+
+.feature .f-icon {
+  width: 38px;
+  height: 38px;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  background: var(--bg-3);
+  border: 1px solid var(--line-hi);
+  margin-bottom: 16px;
+  color: var(--accent);
+}
+
+.feature h3 {
+  font-family: var(--font-display);
+  font-size: 19px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  margin-bottom: 8px;
+}
+
+.feature p {
+  font-size: 13.5px;
+  color: var(--ink-2);
+  line-height: 1.55;
+}
+
+.feature .tag {
+  position: absolute;
+  top: 22px;
+  right: 22px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  color: var(--ink-3);
+  text-transform: uppercase;
+}
+
+.feature .emph-managed {
+  color: #e9a679;
+}
+.feature .emph-observed {
+  color: #a4d1b4;
+}
+.feature .emph-external {
+  color: var(--ink-2);
+}
+.feature .inline-mono {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--ink-0);
+}

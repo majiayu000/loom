@@ -263,7 +263,11 @@ mod tests {
             let Json(payload) = response.1;
             assert_eq!(payload["ok"], json!(false), "{cmd} ok");
             assert_eq!(payload["cmd"], json!(cmd), "{cmd} cmd");
-            assert_eq!(payload["error"]["code"], json!("UNAUTHORIZED"), "{cmd} code");
+            assert_eq!(
+                payload["error"]["code"],
+                json!("UNAUTHORIZED"),
+                "{cmd} code"
+            );
             assert!(payload["request_id"].as_str().is_some(), "{cmd} req id");
             assert!(payload.get("meta").is_some(), "{cmd} meta");
         }

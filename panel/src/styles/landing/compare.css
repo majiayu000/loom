@@ -1,0 +1,85 @@
+.compare-table {
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  overflow: hidden;
+  font-size: 13.5px;
+}
+
+.compare-table table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.compare-table th,
+.compare-table td {
+  padding: 14px 18px;
+  text-align: left;
+}
+
+.compare-table thead th {
+  background: var(--bg-2);
+  font-family: var(--font-display);
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--ink-1);
+  border-bottom: 1px solid var(--line);
+}
+
+.compare-table thead th.highlight {
+  background: rgba(217, 119, 54, 0.12);
+  color: var(--accent);
+}
+
+.compare-table tbody td {
+  border-bottom: 1px solid var(--line-soft);
+  color: var(--ink-1);
+  text-align: center;
+}
+
+.compare-table tbody td:first-child {
+  text-align: left;
+  color: var(--ink-0);
+  font-weight: 500;
+}
+
+.compare-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.compare-table tbody td.loom-col {
+  background: rgba(217, 119, 54, 0.06);
+  color: var(--accent);
+  font-weight: 600;
+}
+.compare-table tbody td.loom-col.dim {
+  color: var(--ink-3);
+  font-weight: 400;
+  font-style: italic;
+}
+
+.compare-table .check {
+  color: var(--accent);
+  font-weight: 700;
+}
+.compare-table .dash {
+  color: var(--ink-3);
+}
+.compare-table .dim {
+  color: var(--ink-3);
+  font-size: 12.5px;
+  font-style: italic;
+}
+
+.compare-note {
+  text-align: center;
+  margin-top: 22px;
+  font-size: 13px;
+  color: var(--ink-3);
+  font-style: italic;
+}
+.compare-note a {
+  color: var(--ink-1);
+  text-decoration: underline;
+  text-decoration-color: var(--ink-3);
+}

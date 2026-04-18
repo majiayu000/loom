@@ -99,6 +99,9 @@ pub async fn run_panel(ctx: AppContext, port: u16) -> Result<()> {
         .route("/api/v3/capture", post(v3_capture))
         .route("/api/remote/status", get(remote_status))
         .route("/api/pending", get(pending))
+        .route("/api/sync/push", post(sync_push))
+        .route("/api/sync/pull", post(sync_pull))
+        .route("/api/sync/replay", post(sync_replay))
         .route("/{*path}", get(frontend_static_asset))
         .with_state(state);
 

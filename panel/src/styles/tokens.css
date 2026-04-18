@@ -1,0 +1,43 @@
+:root {
+  --bg-0: #0e0d0b;
+  --bg-1: #15130f;
+  --bg-2: #1c1915;
+  --bg-3: #23201a;
+  --bg-hi: #2b2720;
+
+  --line: #2a2620;
+  --line-soft: #201d18;
+  --line-hi: #3a342a;
+
+  --ink-0: #f4ede0;
+  --ink-1: #c9c0ae;
+  --ink-2: #8a8271;
+  --ink-3: #5a5346;
+  --ink-4: #3a3528;
+
+  --accent: #d97736;
+  --accent-soft: #9e5423;
+  --accent-bg: #2a1810;
+  --accent-2: #6fb78a;
+  --accent-3: #c79ee0;
+
+  --thread-warp: #d97736;
+  --thread-weft: #6fb78a;
+
+  --ok: #6fb78a;
+  --warn: #e6b450;
+  --err: #d85a5a;
+  --pending: #c2a05e;
+
+  --managed: #d97736;
+  --observed: #6fb78a;
+  --external: #8a8271;
+
+  --font-sans: "Inter", -apple-system, "Helvetica Neue", sans-serif;
+  --font-mono: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
+  --font-display: "Fraunces", "Iowan Old Style", Georgia, serif;
+
+  --radius-sm: 4px;
+  --radius: 6px;
+  --radius-lg: 10px;
+}

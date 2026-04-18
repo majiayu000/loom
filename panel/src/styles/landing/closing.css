@@ -1,0 +1,143 @@
+.pull {
+  text-align: center;
+  padding: 100px 0;
+  position: relative;
+}
+
+.pull-text {
+  font-family: var(--font-display);
+  font-style: italic;
+  font-size: 42px;
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+  max-width: 920px;
+  margin: 0 auto;
+  text-wrap: balance;
+  color: var(--ink-0);
+}
+.pull-text em {
+  color: var(--accent);
+}
+
+.pull-sig {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--ink-3);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  margin-top: 28px;
+}
+
+.cta {
+  padding: 90px 0;
+  text-align: center;
+  background:
+    radial-gradient(600px 300px at 50% 100%, rgba(217, 119, 54, 0.14), transparent 70%),
+    var(--bg-1);
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+
+.cta h2 {
+  font-family: var(--font-display);
+  font-size: 48px;
+  font-weight: 400;
+  letter-spacing: -0.02em;
+  line-height: 1.05;
+  margin-bottom: 18px;
+  text-wrap: balance;
+}
+.cta h2 em {
+  font-style: italic;
+  color: var(--accent);
+}
+
+.cta p {
+  color: var(--ink-2);
+  font-size: 17px;
+  max-width: 540px;
+  margin: 0 auto 32px;
+}
+
+.cta-row {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+}
+
+footer {
+  padding: 50px 0 40px;
+}
+
+.foot-grid {
+  display: grid;
+  grid-template-columns: 2fr 1fr 1fr 1fr;
+  gap: 40px;
+  padding-bottom: 30px;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.foot-brand {
+  max-width: 340px;
+}
+.foot-brand p {
+  font-size: 13px;
+  color: var(--ink-2);
+  margin-top: 14px;
+}
+
+.foot-col h5 {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  margin-bottom: 14px;
+  font-weight: 500;
+}
+.foot-col a {
+  display: block;
+  font-size: 13.5px;
+  color: var(--ink-1);
+  padding: 4px 0;
+}
+.foot-col a:hover {
+  color: var(--ink-0);
+}
+
+.foot-bottom {
+  padding-top: 24px;
+  display: flex;
+  justify-content: space-between;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--ink-3);
+}
+
+@media (max-width: 960px) {
+  .hero-grid {
+    grid-template-columns: 1fr;
+  }
+  .hero-viz {
+    max-width: 520px;
+    margin: 0 auto;
+  }
+  h1.headline {
+    font-size: 48px;
+  }
+  h2.section-title {
+    font-size: 34px;
+  }
+  .feature-grid {
+    grid-template-columns: 1fr;
+  }
+  .how-concepts {
+    grid-template-columns: 1fr 1fr;
+  }
+  .foot-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+  .pull-text {
+    font-size: 30px;
+  }
+}

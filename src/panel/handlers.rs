@@ -8,8 +8,8 @@ use axum::{
 use serde_json::json;
 
 use crate::cli::{
-    CaptureArgs, Command, ProjectArgs, ProjectionMethod, TargetCommand, TargetOwnership,
-    WorkspaceBindingCommand, WorkspaceCommand,
+    CaptureArgs, Command, ProjectArgs, ProjectionMethod, SyncCommand, TargetCommand,
+    TargetOwnership, WorkspaceBindingCommand, WorkspaceCommand,
 };
 use crate::commands::{collect_skill_inventory, remote_status_payload};
 use crate::state::resolve_agent_skill_dirs;
@@ -283,6 +283,60 @@ pub(super) async fn v3_capture(
                 instance: req.instance,
                 message: req.message,
             }),
+        },
+    )
+}
+
+pub(super) async fn sync_push(
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    State(state): State<PanelState>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    if let Some(response) = ensure_mutation_authorized(&state, peer, &headers, "sync.push") {
+        return response;
+    }
+    run_panel_command(
+        &state,
+        "sync.push",
+        StatusCode::OK,
+        Command::Sync {
+            command: SyncCommand::Push,
+        },
+    )
+}
+
+pub(super) async fn sync_pull(
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    State(state): State<PanelState>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    if let Some(response) = ensure_mutation_authorized(&state, peer, &headers, "sync.pull") {
+        return response;
+    }
+    run_panel_command(
+        &state,
+        "sync.pull",
+        StatusCode::OK,
+        Command::Sync {
+            command: SyncCommand::Pull,
+        },
+    )
+}
+
+pub(super) async fn sync_replay(
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    State(state): State<PanelState>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    if let Some(response) = ensure_mutation_authorized(&state, peer, &headers, "sync.replay") {
+        return response;
+    }
+    run_panel_command(
+        &state,
+        "sync.replay",
+        StatusCode::OK,
+        Command::Sync {
+            command: SyncCommand::Replay,
         },
     )
 }

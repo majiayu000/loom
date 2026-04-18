@@ -1,5 +1,12 @@
 import { useMemo } from "react";
-import type { Ownership, ProjectionMethod, Skill, Target, VizMode } from "../../lib/types";
+import type {
+  Ownership,
+  ProjectionLink,
+  ProjectionMethod,
+  Skill,
+  Target,
+  VizMode,
+} from "../../lib/types";
 
 interface SkillNode {
   id: string;
@@ -127,17 +134,30 @@ interface ProjectionRecord {
   ownership: Ownership;
 }
 
-function buildProjections(skills: Skill[], targets: Target[]): ProjectionRecord[] {
-  const methods: ProjectionMethod[] = ["symlink", "copy", "materialize"];
+/**
+ * Translate the caller-supplied `ProjectionLink[]` (backed by real
+ * `V3Projection` data in live mode, or synthesised in mock mode) into
+ * the renderer's internal shape, attaching `ownership` from the target
+ * lookup. The graph never fabricates `method` on its own — Codex P1 on
+ * PR #7 flagged the previous `id.length % 3` heuristic as incorrect.
+ */
+function buildProjectionRecords(
+  links: ProjectionLink[],
+  targets: Target[],
+): ProjectionRecord[] {
+  const targetsById = new Map<string, Target>();
+  for (const t of targets) targetsById.set(t.id, t);
   const out: ProjectionRecord[] = [];
-  skills.forEach((s) => {
-    s.targets.forEach((tid) => {
-      const t = targets.find((x) => x.id === tid);
-      if (!t) return;
-      const method = methods[(s.id.length + t.id.length) % 3];
-      out.push({ skill: s.id, target: tid, method, ownership: t.ownership });
+  for (const link of links) {
+    const target = targetsById.get(link.targetId);
+    if (!target) continue;
+    out.push({
+      skill: link.skillId,
+      target: link.targetId,
+      method: link.method,
+      ownership: target.ownership,
     });
-  });
+  }
   return out;
 }
 
@@ -149,6 +169,8 @@ interface ProjectionGraphProps {
   onSelectTarget: (id: string) => void;
   skills: Skill[];
   targets: Target[];
+  /** Backend-provided projections; each link's `method` is authoritative. */
+  projections: ProjectionLink[];
 }
 
 export function ProjectionGraph({
@@ -159,9 +181,13 @@ export function ProjectionGraph({
   onSelectTarget,
   skills,
   targets,
+  projections: projectionLinks,
 }: ProjectionGraphProps) {
   const layout = useLayout(mode, skills, targets);
-  const projections = useMemo(() => buildProjections(skills, targets), [skills, targets]);
+  const projections = useMemo(
+    () => buildProjectionRecords(projectionLinks, targets),
+    [projectionLinks, targets],
+  );
 
   const isHi = (sid: string | null, tid: string | null): boolean => {
     if (!selectedSkill && !selectedTarget) return true;

@@ -71,8 +71,8 @@ export function SkillsPage({ skills, targets, selectedSkill, onSelectSkill, onMu
                 <tr>
                   <th>Name</th>
                   <th>Tag</th>
-                  <th>Released</th>
-                  <th>Captures</th>
+                  <th>Latest rev</th>
+                  <th>Rules</th>
                   <th>Targets</th>
                   <th>Changed</th>
                 </tr>
@@ -88,8 +88,8 @@ export function SkillsPage({ skills, targets, selectedSkill, onSelectSkill, onMu
                     <td>
                       <span className="chip">{s.tag}</span>
                     </td>
-                    <td className="mono">{s.released}</td>
-                    <td className="mono dim">{s.captures}</td>
+                    <td className="mono">{s.latestRev}</td>
+                    <td className="mono dim">{s.ruleCount}</td>
                     <td className="mono">{s.targets.length}</td>
                     <td className="mono dim">{s.changed}</td>
                   </tr>
@@ -124,6 +124,10 @@ const KIND_COLOR: Record<LifecycleEvent["kind"], string> = {
   project: "var(--ok)",
 };
 
+// Lifecycle is illustrative filler — the registry does not yet surface
+// per-skill timelines via the panel API. The most recent entry anchors
+// to the skill's actual latest revision so users see a real hash rather
+// than a fabricated version tag.
 function lifecycleFor(skill: Skill): LifecycleEvent[] {
   return [
     { kind: "release", v: "v0.4", time: "4 days ago", who: "you", desc: "released after 3 captures" },
@@ -131,7 +135,7 @@ function lifecycleFor(skill: Skill): LifecycleEvent[] {
     { kind: "save", v: "—", time: "2 days ago", who: "you", desc: "saved working tree" },
     { kind: "snapshot", v: "sn-8f1", time: "2 days ago", who: "auto", desc: "pre-projection snapshot" },
     { kind: "project", v: "—", time: "2 days ago", who: "auto", desc: "projected → claude/work, codex/home" },
-    { kind: "release", v: skill.version, time: "6h ago", who: "you", desc: "promoted capture to release" },
+    { kind: "project", v: skill.latestRev, time: "6h ago", who: "auto", desc: "latest applied revision" },
   ];
 }
 
@@ -144,16 +148,14 @@ function SkillDetail({ skill, targets }: { skill: Skill; targets: Target[] }) {
   return (
     <div className="detail">
       <h4>{skill.name}</h4>
-      <div className="dpath">
-        skills/{skill.name}/versions/{skill.version}
-      </div>
+      <div className="dpath">skills/{skill.name}@{skill.latestRev}</div>
       <div className="kv">
         <div className="k">Tag</div>
         <div className="v">{skill.tag}</div>
-        <div className="k">Released</div>
-        <div className="v">{skill.released}</div>
-        <div className="k">Captures</div>
-        <div className="v">{skill.captures} on chain</div>
+        <div className="k">Latest rev</div>
+        <div className="v">{skill.latestRev}</div>
+        <div className="k">Rules</div>
+        <div className="v">{skill.ruleCount} on chain</div>
         <div className="k">Policy</div>
         <div className="v">auto-project on binding match</div>
       </div>
@@ -171,7 +173,7 @@ function SkillDetail({ skill, targets }: { skill: Skill; targets: Target[] }) {
       </div>
 
       {tab === "history" && <Lifecycle events={lifecycleFor(skill)} />}
-      {tab === "diff" && <DiffView version={skill.version} />}
+      {tab === "diff" && <DiffView latestRev={skill.latestRev} />}
       {tab === "targets" && <TargetsTab targets={targetObjs} />}
     </div>
   );
@@ -211,10 +213,10 @@ function Lifecycle({ events }: { events: LifecycleEvent[] }) {
   );
 }
 
-function DiffView({ version }: { version: string }) {
+function DiffView({ latestRev }: { latestRev: string }) {
   return (
     <div>
-      <div className="section-title">{version} vs v0.4.1</div>
+      <div className="section-title">{latestRev} vs v0.4.1</div>
       <div style={{ border: "1px solid var(--line)", borderRadius: 6, overflow: "hidden" }}>
         <div className="diff-row">
           <div className="mark">4</div>

@@ -43,9 +43,15 @@ export interface Skill {
   id: string;
   name: string;
   tag: string;
-  version: string;
-  captures: number;
-  released: string;
+  /**
+   * Short form of the latest applied projection revision (first 8 chars
+   * of the git hash). Displayed as "latest rev" in UI. Distinct from any
+   * notion of "release tag" — the registry may not carry release tags.
+   */
+  latestRev: string;
+  /** Number of rules (binding → target routing entries) that mention this skill. */
+  ruleCount: number;
+  /** Relative time since the skill's newest projection was last updated. */
   changed: string;
   targets: string[];
 }
@@ -81,6 +87,17 @@ export type PanelPageKey =
   | "settings";
 
 export type VizMode = "loom" | "force" | "tree";
+
+/**
+ * One edge on the projection graph — a skill rendered into a specific
+ * target via a specific method. Backed by `V3Projection` in live mode;
+ * synthesised from mock skills in offline mode.
+ */
+export interface ProjectionLink {
+  skillId: string;
+  targetId: string;
+  method: ProjectionMethod;
+}
 
 export interface TweakState {
   vizMode: VizMode;

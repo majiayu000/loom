@@ -16,9 +16,22 @@ use crate::state::resolve_agent_skill_dirs;
 use crate::state_model::V3StatePaths;
 
 use super::auth::{
-    ensure_mutation_authorized, load_v3_snapshot, run_panel_command, v3_error, v3_ok,
+    ensure_mutation_authorized, error_envelope, load_v3_snapshot, run_panel_command, v3_error,
+    v3_ok,
 };
 use super::{BindingAddRequest, CaptureRequest, PanelState, ProjectRequest, TargetAddRequest};
+
+/// Accept `[a-z0-9_-]{1,64}` for `policy_profile`. The backend does not
+/// maintain a closed whitelist (users may extend profiles over time),
+/// but the panel surface should refuse obviously malformed input so the
+/// V3 bindings file stays auditable. CLI users may still submit other
+/// formats directly via `loom workspace binding add`.
+fn policy_profile_looks_sane(value: &str) -> bool {
+    (1..=64).contains(&value.len())
+        && value
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_')
+}
 
 pub(super) async fn health() -> Json<serde_json::Value> {
     Json(json!({"ok": true, "service": "loom-panel"}))
@@ -193,6 +206,21 @@ pub(super) async fn v3_binding_add(
     {
         return response;
     }
+    let policy_profile = req
+        .policy_profile
+        .unwrap_or_else(|| "safe-capture".to_string());
+    if !policy_profile_looks_sane(&policy_profile) {
+        let request_id = uuid::Uuid::new_v4().to_string();
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(error_envelope(
+                "workspace.binding.add",
+                &request_id,
+                "ARG_INVALID",
+                "policy_profile must match [a-z0-9_-]{1,64}",
+            )),
+        );
+    }
     run_panel_command(
         &state,
         "workspace.binding.add",
@@ -205,9 +233,7 @@ pub(super) async fn v3_binding_add(
                     matcher_kind: req.matcher_kind,
                     matcher_value: req.matcher_value,
                     target: req.target,
-                    policy_profile: req
-                        .policy_profile
-                        .unwrap_or_else(|| "safe-capture".to_string()),
+                    policy_profile,
                 }),
             },
         },

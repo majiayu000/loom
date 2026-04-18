@@ -1,4 +1,4 @@
-import type { Op, Skill, Target, VizMode } from "../../lib/types";
+import type { Op, ProjectionLink, Skill, Target, VizMode } from "../../lib/types";
 import { OpRow } from "../../components/panel/OpRow";
 import { ProjectionGraph } from "../../components/panel/ProjectionGraph";
 import { PlusIcon, RefreshIcon, ShieldIcon, SyncIcon } from "../../components/icons/nav_icons";
@@ -9,6 +9,7 @@ interface OverviewPageProps {
   skills: Skill[];
   targets: Target[];
   ops: Op[];
+  projections: ProjectionLink[];
   vizMode: VizMode;
   setVizMode: (m: VizMode) => void;
   selectedSkill: string | null;
@@ -25,6 +26,7 @@ export function OverviewPage({
   skills,
   targets,
   ops,
+  projections,
   vizMode,
   setVizMode,
   selectedSkill,
@@ -63,6 +65,14 @@ export function OverviewPage({
             title={readOnly ? "registry offline" : undefined}
           >
             <SyncIcon /> Sync pull
+          </button>
+          <button
+            className="btn ghost"
+            disabled={readOnly || sync.busy}
+            onClick={() => sync.run("sync push", api.syncPush, onMutation)}
+            title={readOnly ? "registry offline" : undefined}
+          >
+            <SyncIcon /> Sync push
           </button>
           <button
             className="btn ghost"
@@ -155,6 +165,7 @@ export function OverviewPage({
               onSelectTarget={onSelectTarget}
               skills={skills}
               targets={targets}
+              projections={projections}
             />
             <div className="proj-legend">
               <span>

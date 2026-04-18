@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import type { PanelPageKey, TweakState, VizMode } from "../lib/types";
+import { useEffect, useMemo, useState } from "react";
+import type { PanelPageKey, ProjectionLink, ProjectionMethod, TweakState, VizMode } from "../lib/types";
 import { usePanelData } from "../lib/api/usePanelData";
 import { BINDINGS, OPS, SKILLS, TARGETS } from "../lib/mock_data";
 import { Sidebar } from "../components/panel/Sidebar";
@@ -88,6 +88,35 @@ export function PanelApp() {
   const bindings = usingMock ? BINDINGS : live.bindings;
   const ops = usingMock ? OPS : live.ops;
 
+  // Projection links for the graph:
+  //   - live mode: use V3Projection.method verbatim (authoritative).
+  //   - mock mode: derive from SKILLS.targets; the MockBanner already warns
+  //     the user the data is synthetic, so a deterministic hash-based
+  //     method distribution is acceptable purely for visual variety.
+  const mockMethods: ProjectionMethod[] = ["symlink", "copy", "materialize"];
+  const projectionLinks: ProjectionLink[] = useMemo(() => {
+    if (!usingMock) {
+      return live.projections.map((p) => {
+        const method: ProjectionMethod =
+          p.method === "symlink" || p.method === "copy" || p.method === "materialize"
+            ? p.method
+            : "symlink";
+        return { skillId: p.skill_id, targetId: p.target_id, method };
+      });
+    }
+    const out: ProjectionLink[] = [];
+    for (const s of skills) {
+      for (const tid of s.targets) {
+        out.push({
+          skillId: s.id,
+          targetId: tid,
+          method: mockMethods[(s.id.length + tid.length) % 3],
+        });
+      }
+    }
+    return out;
+  }, [usingMock, live.projections, skills]);
+
   const densityClass = tweaks.density === "dense" ? " dense" : tweaks.density === "cozy" ? " cozy" : "";
 
   const readOnly = usingMock;
@@ -102,6 +131,7 @@ export function PanelApp() {
           skills={skills}
           targets={targets}
           ops={ops}
+          projections={projectionLinks}
           vizMode={tweaks.vizMode}
           setVizMode={setVizMode}
           selectedSkill={selectedSkill}

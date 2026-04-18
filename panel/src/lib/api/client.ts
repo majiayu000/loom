@@ -45,9 +45,34 @@ async function postJson(path: string, body: unknown): Promise<CommandEnvelope> {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
-  const envelope = (await res.json().catch(() => ({}))) as CommandEnvelope;
-  if (!res.ok || envelope.ok === false) {
-    const msg = envelope.error?.message ?? `POST ${path} returned ${res.status}`;
+  // Parse the body, but don't conflate "server returned non-JSON (e.g.
+  // upstream proxy error page)" with "envelope says ok=false" (cf. PR
+  // #7 review H2). Keep the HTTP statusText so ApiError surfaces the
+  // real cause instead of silently masking it.
+  let envelope: CommandEnvelope | null = null;
+  let parseError: string | null = null;
+  try {
+    envelope = (await res.json()) as CommandEnvelope;
+  } catch (err) {
+    parseError = err instanceof Error ? err.message : String(err);
+  }
+
+  if (!res.ok) {
+    const msg =
+      envelope?.error?.message ??
+      parseError ??
+      `POST ${path} returned ${res.status} ${res.statusText || ""}`.trim();
+    throw new ApiError(path, res.status, msg);
+  }
+  if (!envelope) {
+    throw new ApiError(
+      path,
+      res.status,
+      `POST ${path} returned non-JSON body: ${parseError ?? "unknown parse error"}`,
+    );
+  }
+  if (envelope.ok === false) {
+    const msg = envelope.error?.message ?? `POST ${path} envelope ok=false with no message`;
     throw new ApiError(path, res.status, msg);
   }
   return envelope;

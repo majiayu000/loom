@@ -12,13 +12,17 @@ interface BindingAddFormProps {
   onSuccess: () => void;
 }
 
+// NOTE: `policy_profile` is intentionally NOT exposed as a free-text
+// input here (cf. PR #7 review M3). The backend accepts extensible
+// profile names but the panel surface defaults to `safe-capture`; users
+// wanting a custom profile should use `loom workspace binding add`,
+// which round-trips through the same panel API after CLI validation.
 export function BindingAddForm({ targets, onCancel, onSuccess }: BindingAddFormProps) {
   const [agent, setAgent] = useState<string>(AGENT_OPTIONS[0].slug);
   const [profile, setProfile] = useState("home");
   const [matcherKind, setMatcherKind] = useState<MatcherKind>("path-prefix");
   const [matcherValue, setMatcherValue] = useState("");
   const [targetId, setTargetId] = useState(targets[0]?.id ?? "");
-  const [policyProfile, setPolicyProfile] = useState("safe-capture");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -37,7 +41,6 @@ export function BindingAddForm({ targets, onCancel, onSuccess }: BindingAddFormP
         matcher_kind: matcherKind,
         matcher_value: matcherValue.trim(),
         target: targetId,
-        policy_profile: policyProfile.trim() || undefined,
       });
       onSuccess();
     } catch (err) {
@@ -85,8 +88,9 @@ export function BindingAddForm({ targets, onCancel, onSuccess }: BindingAddFormP
             </option>
           ))}
         </select>
-        <label className="hint">policy profile</label>
-        <input value={policyProfile} onChange={(e) => setPolicyProfile(e.target.value)} style={inputStyle} />
+      </div>
+      <div className="hint" style={{ marginTop: 10, color: "var(--ink-3)" }}>
+        Policy profile defaults to <code>safe-capture</code>. Use the CLI (<code>loom workspace binding add --policy-profile</code>) for custom profiles.
       </div>
       {error && <div style={errorStyle}>{error}</div>}
       <div style={{ display: "flex", gap: 8, marginTop: 12, justifyContent: "flex-end" }}>

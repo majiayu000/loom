@@ -35,8 +35,39 @@ function shortPath(path: string): string {
   return path.replace(/^\/Users\/[^/]+/, "~");
 }
 
-export function adaptTarget(t: V3Target, projections: V3Projection[]): Target {
-  const skillsOnTarget = new Set(projections.filter((p) => p.target_id === t.target_id).map((p) => p.skill_id));
+/**
+ * Build a snapshot-wide projection index so adapters avoid O(projections × targets)
+ * `Array.find` sweeps every poll cycle (cf. PR #7 review L1).
+ */
+export interface AdapterIndex {
+  targetsById: Map<string, V3Target>;
+  projectionsBySkill: Map<string, V3Projection[]>;
+  projectionsByTarget: Map<string, V3Projection[]>;
+}
+
+export function buildAdapterIndex(
+  targets: V3Target[],
+  projections: V3Projection[],
+): AdapterIndex {
+  const targetsById = new Map<string, V3Target>();
+  for (const t of targets) targetsById.set(t.target_id, t);
+
+  const projectionsBySkill = new Map<string, V3Projection[]>();
+  const projectionsByTarget = new Map<string, V3Projection[]>();
+  for (const p of projections) {
+    const sArr = projectionsBySkill.get(p.skill_id);
+    if (sArr) sArr.push(p);
+    else projectionsBySkill.set(p.skill_id, [p]);
+    const tArr = projectionsByTarget.get(p.target_id);
+    if (tArr) tArr.push(p);
+    else projectionsByTarget.set(p.target_id, [p]);
+  }
+  return { targetsById, projectionsBySkill, projectionsByTarget };
+}
+
+export function adaptTarget(t: V3Target, index: AdapterIndex): Target {
+  const projections = index.projectionsByTarget.get(t.target_id) ?? [];
+  const skillsOnTarget = new Set(projections.map((p) => p.skill_id));
   return {
     id: t.target_id,
     agent: toAgentSlug(t.agent),
@@ -48,26 +79,36 @@ export function adaptTarget(t: V3Target, projections: V3Projection[]): Target {
   };
 }
 
-export function adaptSkill(name: string, projections: V3Projection[], rules: V3Rule[]): Skill {
-  const targetIds = Array.from(new Set(projections.filter((p) => p.skill_id === name).map((p) => p.target_id)));
+/**
+ * Pick the projection with the newest `updated_at` — NOT by lex-comparing
+ * commit hashes (cf. Codex P1 on PR #7; git hashes are not time-ordered).
+ * Falls back to `created_at` on the target if the skill has no projections.
+ */
+export function adaptSkill(
+  name: string,
+  index: AdapterIndex,
+  rules: V3Rule[],
+): Skill {
+  const projForSkill = index.projectionsBySkill.get(name) ?? [];
+  const targetIds = Array.from(new Set(projForSkill.map((p) => p.target_id)));
   const ruleCount = rules.filter((r) => r.skill_id === name).length;
-  const projForSkill = projections.filter((p) => p.skill_id === name);
-  const latestRev = projForSkill.reduce<string | undefined>(
-    (acc, p) => (p.last_applied_rev && (!acc || p.last_applied_rev > acc) ? p.last_applied_rev : acc),
-    undefined,
-  );
-  const latestUpdate = projForSkill.reduce<string | undefined>(
-    (acc, p) => (p.updated_at && (!acc || p.updated_at > acc) ? p.updated_at : acc),
-    undefined,
-  );
+
+  const newest = projForSkill.reduce<V3Projection | undefined>((acc, p) => {
+    if (!p.updated_at) return acc;
+    if (!acc || !acc.updated_at) return p;
+    return p.updated_at > acc.updated_at ? p : acc;
+  }, undefined);
+
+  const latestRev = newest?.last_applied_rev ? newest.last_applied_rev.slice(0, 8) : "—";
+  const changed = newest?.updated_at ? relativeTime(newest.updated_at) : "—";
+
   return {
     id: `s-${name}`,
     name,
     tag: inferTag(name),
-    version: latestRev ? latestRev.slice(0, 8) : "—",
-    captures: ruleCount,
-    released: latestRev ? latestRev.slice(0, 8) : "—",
-    changed: latestUpdate ? relativeTime(latestUpdate) : "—",
+    latestRev,
+    ruleCount,
+    changed,
     targets: targetIds,
   };
 }
@@ -116,7 +157,8 @@ export function adaptPendingOp(op: PendingOp, index: number): Op {
   };
 }
 
-export function adaptProjectionOp(p: V3Projection, t: V3Target | undefined): Op {
+export function adaptProjectionOp(p: V3Projection, index: AdapterIndex): Op {
+  const t = index.targetsById.get(p.target_id);
   const drifted = Boolean(p.observed_drift) || p.health !== "healthy";
   const status: Op["status"] = drifted ? "err" : "ok";
   return {

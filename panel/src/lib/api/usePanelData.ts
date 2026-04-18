@@ -1,7 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { V3Projection } from "../../generated/V3Projection";
 import type { HealthPayload, RemotePayload, V3Payload } from "../../types";
 import type { Binding, Op, Skill, Target } from "../types";
-import { adaptBinding, adaptPendingOp, adaptProjectionOp, adaptSkill, adaptTarget } from "./adapters";
+import {
+  adaptBinding,
+  adaptPendingOp,
+  adaptProjectionOp,
+  adaptSkill,
+  adaptTarget,
+  buildAdapterIndex,
+} from "./adapters";
 import { ApiError, api } from "./client";
 
 type V3Counts = NonNullable<NonNullable<V3Payload["data"]>["counts"]>;
@@ -19,6 +27,9 @@ export interface PanelLiveData {
   targets: Target[];
   bindings: Binding[];
   ops: Op[];
+  /** Raw V3 projections — exposed so consumers like `ProjectionGraph` can
+   *  use the backend-reported `method`/`health` instead of fabricating it. */
+  projections: V3Projection[];
   pendingCount: number;
   refetch: () => void;
 }
@@ -27,36 +38,50 @@ const EMPTY_COUNTS: V3Counts = {};
 
 const POLL_MS = 10_000;
 
+type LiveState = Omit<PanelLiveData, "refetch">;
+
+const INITIAL_STATE: LiveState = {
+  live: false,
+  loading: true,
+  error: null,
+  lastUpdated: null,
+  registryRoot: null,
+  remote: null,
+  health: null,
+  counts: EMPTY_COUNTS,
+  skills: [],
+  targets: [],
+  bindings: [],
+  ops: [],
+  projections: [],
+  pendingCount: 0,
+};
+
 export function usePanelData(): PanelLiveData {
-  const [state, setState] = useState<Omit<PanelLiveData, "refetch">>({
-    live: false,
-    loading: true,
-    error: null,
-    lastUpdated: null,
-    registryRoot: null,
-    remote: null,
-    health: null,
-    counts: EMPTY_COUNTS,
-    skills: [],
-    targets: [],
-    bindings: [],
-    ops: [],
-    pendingCount: 0,
-  });
+  const [state, setState] = useState<LiveState>(INITIAL_STATE);
 
-  const tickRef = useRef(0);
+  // Single in-flight controller. `refetch` aborts the old one before
+  // starting a new fetch so stale responses can never overwrite fresher
+  // ones (cf. PR #7 review H1: race + AbortController leak).
+  const controllerRef = useRef<AbortController | null>(null);
+  const generationRef = useRef(0);
 
-  const runFetch = useCallback(async (signal: AbortSignal) => {
+  const runFetch = useCallback(async () => {
+    controllerRef.current?.abort();
+    const controller = new AbortController();
+    controllerRef.current = controller;
+    const generation = ++generationRef.current;
+
     try {
       const [health, info, skillsPayload, v3, remote, pending] = await Promise.all([
-        api.health(signal),
-        api.info(signal),
-        api.skills(signal),
-        api.v3Status(signal),
-        api.remoteStatus(signal),
-        api.pending(signal),
+        api.health(controller.signal),
+        api.info(controller.signal),
+        api.skills(controller.signal),
+        api.v3Status(controller.signal),
+        api.remoteStatus(controller.signal),
+        api.pending(controller.signal),
       ]);
-      if (signal.aborted) return;
+      if (controller.signal.aborted || generation !== generationRef.current) return;
 
       const v3Data = v3.ok && v3.data ? v3.data : {};
       const projections = v3Data.projections ?? [];
@@ -64,13 +89,14 @@ export function usePanelData(): PanelLiveData {
       const v3Targets = v3Data.targets ?? [];
       const v3Bindings = v3Data.bindings ?? [];
 
-      const targets = v3Targets.map((t) => adaptTarget(t, projections));
+      const index = buildAdapterIndex(v3Targets, projections);
+      const targets = v3Targets.map((t) => adaptTarget(t, index));
       const skillNames = skillsPayload.skills ?? [];
-      const skills = skillNames.map((name) => adaptSkill(name, projections, rules));
+      const skills = skillNames.map((name) => adaptSkill(name, index, rules));
       const bindings = v3Bindings.map((b) => adaptBinding(b, rules));
 
       const pendingOps: Op[] = (pending.ops ?? []).map(adaptPendingOp);
-      const projectionOps: Op[] = projections.map((p) => adaptProjectionOp(p, v3Targets.find((x) => x.target_id === p.target_id)));
+      const projectionOps: Op[] = projections.map((p) => adaptProjectionOp(p, index));
       const ops = [...pendingOps, ...projectionOps].slice(0, 30);
 
       setState({
@@ -86,37 +112,28 @@ export function usePanelData(): PanelLiveData {
         targets,
         bindings,
         ops,
+        projections,
         pendingCount: pending.count ?? 0,
       });
     } catch (err) {
-      if (signal.aborted) return;
+      if (controller.signal.aborted || generation !== generationRef.current) return;
       const message = err instanceof ApiError ? err.message : err instanceof Error ? err.message : String(err);
       setState((cur) => ({ ...cur, loading: false, live: false, error: message }));
     }
   }, []);
 
   useEffect(() => {
-    let active = true;
-    const controller = new AbortController();
-
-    const kick = () => {
-      if (!active) return;
-      runFetch(controller.signal);
-    };
-
-    kick();
-    const id = window.setInterval(kick, POLL_MS);
+    runFetch();
+    const id = window.setInterval(runFetch, POLL_MS);
     return () => {
-      active = false;
-      controller.abort();
       window.clearInterval(id);
+      controllerRef.current?.abort();
+      controllerRef.current = null;
     };
   }, [runFetch]);
 
   const refetch = useCallback(() => {
-    tickRef.current += 1;
-    const controller = new AbortController();
-    runFetch(controller.signal);
+    runFetch();
   }, [runFetch]);
 
   return { ...state, refetch };

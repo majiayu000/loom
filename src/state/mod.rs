@@ -4,11 +4,12 @@ pub use ops::{
     remove_path_if_exists, summarize_history_body, synthesize_snapshot_raw_from_segment_bodies,
 };
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::env;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use anyhow::{Context, Result};
@@ -29,6 +30,7 @@ pub struct AppContext {
     pub pending_ops_file: PathBuf,
     pub pending_ops_history_dir: PathBuf,
     pub pending_ops_snapshot_file: PathBuf,
+    in_proc: Arc<Mutex<HashMap<String, (PathBuf, usize)>>>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -176,6 +178,7 @@ impl AppContext {
             pending_ops_file,
             pending_ops_history_dir,
             pending_ops_snapshot_file,
+            in_proc: Arc::new(Mutex::new(HashMap::new())),
         })
     }
 
@@ -210,6 +213,19 @@ impl AppContext {
         self.ensure_state_layout()?;
         let lock_path = self.locks_dir.join(format!("{}.lock", name));
 
+        // Fast path: same-process reentrant acquire via ref-count table.
+        {
+            let mut map = self.in_proc.lock().expect("in_proc mutex poisoned");
+            if let Some((_path, count)) = map.get_mut(name) {
+                *count += 1;
+                return Ok(LockGuard {
+                    name: name.to_string(),
+                    in_proc: Arc::clone(&self.in_proc),
+                });
+            }
+        }
+
+        // Slow path: first acquire — attempt filesystem lock.
         for _ in 0..2 {
             match OpenOptions::new()
                 .create_new(true)
@@ -222,10 +238,17 @@ impl AppContext {
                         .context("failed to encode lock metadata")?;
                     writeln!(file, "{}", payload).context("failed to write lock file")?;
                     file.sync_all().context("failed to sync lock file")?;
-                    return Ok(LockGuard { lock_path });
+                    self.in_proc
+                        .lock()
+                        .expect("in_proc mutex poisoned")
+                        .insert(name.to_string(), (lock_path, 1));
+                    return Ok(LockGuard {
+                        name: name.to_string(),
+                        in_proc: Arc::clone(&self.in_proc),
+                    });
                 }
                 Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
-                    if try_reap_stale_lock(&lock_path)? {
+                    if try_reap_stale_lock(&self.locks_dir.join(format!("{}.lock", name)))? {
                         continue;
                     }
                     anyhow::bail!("LOCK_BUSY:{}", name);
@@ -270,17 +293,36 @@ impl AppContext {
 
 #[derive(Debug)]
 pub struct LockGuard {
-    lock_path: PathBuf,
+    name: String,
+    in_proc: Arc<Mutex<HashMap<String, (PathBuf, usize)>>>,
 }
 
 impl Drop for LockGuard {
     fn drop(&mut self) {
-        if let Err(err) = fs::remove_file(&self.lock_path) {
-            eprintln!(
-                "loom: failed to release lock {}: {}",
-                self.lock_path.display(),
-                err
-            );
+        let mut map = match self.in_proc.lock() {
+            Ok(m) => m,
+            Err(_) => {
+                eprintln!(
+                    "loom: in_proc lock poisoned during drop for '{}'",
+                    self.name
+                );
+                return;
+            }
+        };
+        if let Some((lock_path, count)) = map.get_mut(&self.name) {
+            *count -= 1;
+            if *count == 0 {
+                let lock_path = lock_path.clone();
+                map.remove(&self.name);
+                drop(map);
+                if let Err(err) = fs::remove_file(&lock_path) {
+                    eprintln!(
+                        "loom: failed to release lock {}: {}",
+                        lock_path.display(),
+                        err
+                    );
+                }
+            }
         }
     }
 }
@@ -637,5 +679,79 @@ mod tests {
         );
 
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn reentrant_lock_succeeds() {
+        let dir =
+            std::env::temp_dir().join(format!("loom-reentrant-{}", uuid::Uuid::new_v4().simple()));
+        let ctx = AppContext::new(Some(dir.clone())).unwrap();
+        let guard1 = ctx.lock_workspace().expect("first lock must succeed");
+        let guard2 = ctx
+            .lock_workspace()
+            .expect("second reentrant lock must succeed");
+        let lock_path = ctx.locks_dir.join("workspace.lock");
+        assert!(
+            lock_path.exists(),
+            "lock file must exist while guards are held"
+        );
+        drop(guard1);
+        drop(guard2);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn inner_drop_does_not_release_file() {
+        let dir =
+            std::env::temp_dir().join(format!("loom-inner-drop-{}", uuid::Uuid::new_v4().simple()));
+        let ctx = AppContext::new(Some(dir.clone())).unwrap();
+        let guard1 = ctx.lock_workspace().unwrap();
+        let guard2 = ctx.lock_workspace().unwrap();
+        let lock_path = ctx.locks_dir.join("workspace.lock");
+        drop(guard2);
+        assert!(
+            lock_path.exists(),
+            "lock file must exist after inner guard drop"
+        );
+        drop(guard1);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn outer_drop_releases_file() {
+        let dir =
+            std::env::temp_dir().join(format!("loom-outer-drop-{}", uuid::Uuid::new_v4().simple()));
+        let ctx = AppContext::new(Some(dir.clone())).unwrap();
+        let guard1 = ctx.lock_workspace().unwrap();
+        let guard2 = ctx.lock_workspace().unwrap();
+        let lock_path = ctx.locks_dir.join("workspace.lock");
+        drop(guard2);
+        drop(guard1);
+        assert!(
+            !lock_path.exists(),
+            "lock file must not exist after all guards dropped"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn cross_context_lock_is_busy() {
+        let dir =
+            std::env::temp_dir().join(format!("loom-cross-ctx-{}", uuid::Uuid::new_v4().simple()));
+        let ctx_a = AppContext::new(Some(dir.clone())).unwrap();
+        let ctx_b = AppContext::new(Some(dir.clone())).unwrap();
+        let _guard = ctx_a.lock_workspace().expect("context A must acquire lock");
+        let result = ctx_b.lock_workspace();
+        assert!(
+            result.is_err(),
+            "context B must not acquire lock while A holds it"
+        );
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("LOCK_BUSY"),
+            "error must indicate LOCK_BUSY, got: {}",
+            err_msg
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

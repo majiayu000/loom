@@ -2,7 +2,7 @@ import { useState } from "react";
 import type { PanelPageKey } from "../../lib/types";
 import { api } from "../../lib/api/client";
 import { LoomMark } from "../icons/LoomMark";
-import { GitIcon, PlayIcon, SearchIcon } from "../icons/nav_icons";
+import { GitIcon, PlayIcon } from "../icons/nav_icons";
 
 const CRUMBS: Record<PanelPageKey, string> = {
   overview: "Overview",
@@ -97,17 +97,12 @@ export function Topbar(props: TopbarProps) {
         <span className="cur">{CRUMBS[props.page]}</span>
       </div>
       <div className="spacer" />
-      <div className="searchbar" style={{ width: 240 }}>
-        <SearchIcon />
-        <input placeholder="Jump to skill or target…" />
-        <kbd>⌘K</kbd>
-      </div>
       <div className="top-actions">
         <button className="top-btn" title={props.error ?? undefined}>
           <span className="status-dot" style={status.dotStyle} /> {status.label}
         </button>
-        <button className="top-btn">
-          <GitIcon /> {props.remoteState ? props.remoteState.toLowerCase() : "main"}
+        <button className="top-btn" title={props.live ? "remote sync state" : "registry offline"}>
+          <GitIcon /> {props.live ? (props.remoteState ? props.remoteState.toLowerCase() : "local only") : "offline"}
         </button>
         <button
           className="top-btn primary"

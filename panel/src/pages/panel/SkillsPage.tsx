@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { Skill, Target } from "../../lib/types";
+import type { Binding, Skill, Target } from "../../lib/types";
 import { AgentAvatar } from "../../components/panel/AgentAvatar";
 import { PlusIcon, SearchIcon } from "../../components/icons/nav_icons";
 import { api } from "../../lib/api/client";
@@ -8,13 +8,14 @@ import { useMutation } from "../../lib/useMutation";
 interface SkillsPageProps {
   skills: Skill[];
   targets: Target[];
+  bindings: Binding[];
   selectedSkill: string | null;
   onSelectSkill: (id: string) => void;
   onMutation: () => void;
   readOnly: boolean;
 }
 
-export function SkillsPage({ skills, targets, selectedSkill, onSelectSkill, onMutation, readOnly }: SkillsPageProps) {
+export function SkillsPage({ skills, targets, bindings, selectedSkill, onSelectSkill, onMutation, readOnly }: SkillsPageProps) {
   const [q, setQ] = useState("");
   const filtered = skills.filter((s) => s.name.includes(q) || s.tag.includes(q));
   const sel = skills.find((s) => s.id === selectedSkill) ?? skills[0];
@@ -98,7 +99,11 @@ export function SkillsPage({ skills, targets, selectedSkill, onSelectSkill, onMu
             </table>
           </div>
           <div style={{ padding: 20, overflow: "auto" }}>
-            {sel ? <SkillDetail skill={sel} targets={targets} /> : <div className="empty">Select a skill.</div>}
+            {sel ? (
+              <SkillDetail skill={sel} targets={targets} bindings={bindings} />
+            ) : (
+              <div className="empty">Select a skill.</div>
+            )}
           </div>
         </div>
       </div>
@@ -107,6 +112,17 @@ export function SkillsPage({ skills, targets, selectedSkill, onSelectSkill, onMu
 }
 
 type DetailTab = "history" | "diff" | "targets";
+
+function summarizePolicy(skillBindings: Binding[]): string {
+  if (skillBindings.length === 0) return "— (no bindings)";
+  const counts = skillBindings.reduce<Record<string, number>>((acc, b) => {
+    acc[b.policy] = (acc[b.policy] ?? 0) + 1;
+    return acc;
+  }, {});
+  const kinds = Object.keys(counts);
+  if (kinds.length === 1) return `${kinds[0]} · ${skillBindings.length} binding${skillBindings.length === 1 ? "" : "s"}`;
+  return kinds.map((k) => `${counts[k]} ${k}`).join(" · ");
+}
 
 interface LifecycleEvent {
   kind: "release" | "capture" | "save" | "snapshot" | "project";
@@ -124,26 +140,17 @@ const KIND_COLOR: Record<LifecycleEvent["kind"], string> = {
   project: "var(--ok)",
 };
 
-// Lifecycle is illustrative filler — the registry does not yet surface
-// per-skill timelines via the panel API. The most recent entry anchors
-// to the skill's actual latest revision so users see a real hash rather
-// than a fabricated version tag.
-function lifecycleFor(skill: Skill): LifecycleEvent[] {
-  return [
-    { kind: "release", v: "v0.4", time: "4 days ago", who: "you", desc: "released after 3 captures" },
-    { kind: "capture", v: "#c7", time: "2 days ago", who: "you", desc: "precondition relaxed, added harness pairing" },
-    { kind: "save", v: "—", time: "2 days ago", who: "you", desc: "saved working tree" },
-    { kind: "snapshot", v: "sn-8f1", time: "2 days ago", who: "auto", desc: "pre-projection snapshot" },
-    { kind: "project", v: "—", time: "2 days ago", who: "auto", desc: "projected → claude/work, codex/home" },
-    { kind: "project", v: skill.latestRev, time: "6h ago", who: "auto", desc: "latest applied revision" },
-  ];
-}
+// Lifecycle events come from the panel API (per-skill observation stream);
+// until that endpoint ships (Wave 3) the component renders an empty state.
 
-function SkillDetail({ skill, targets }: { skill: Skill; targets: Target[] }) {
+function SkillDetail({ skill, targets, bindings }: { skill: Skill; targets: Target[]; bindings: Binding[] }) {
   const [tab, setTab] = useState<DetailTab>("history");
   const targetObjs = skill.targets
     .map((tid) => targets.find((t) => t.id === tid))
     .filter((t): t is Target => t !== undefined);
+
+  const skillBindings = bindings.filter((b) => b.skill === skill.name);
+  const policyLabel = summarizePolicy(skillBindings);
 
   return (
     <div className="detail">
@@ -157,7 +164,7 @@ function SkillDetail({ skill, targets }: { skill: Skill; targets: Target[] }) {
         <div className="k">Rules</div>
         <div className="v">{skill.ruleCount} on chain</div>
         <div className="k">Policy</div>
-        <div className="v">auto-project on binding match</div>
+        <div className="v">{policyLabel}</div>
       </div>
 
       <div className="tabs">
@@ -172,14 +179,24 @@ function SkillDetail({ skill, targets }: { skill: Skill; targets: Target[] }) {
         </button>
       </div>
 
-      {tab === "history" && <Lifecycle events={lifecycleFor(skill)} />}
-      {tab === "diff" && <DiffView latestRev={skill.latestRev} />}
+      {tab === "history" && <Lifecycle events={[]} skillName={skill.name} />}
+      {tab === "diff" && <DiffEmpty />}
       {tab === "targets" && <TargetsTab targets={targetObjs} />}
     </div>
   );
 }
 
-function Lifecycle({ events }: { events: LifecycleEvent[] }) {
+function Lifecycle({ events, skillName }: { events: LifecycleEvent[]; skillName: string }) {
+  if (events.length === 0) {
+    return (
+      <div style={{ padding: "18px 4px", fontSize: 12, color: "var(--ink-2)" }}>
+        <div style={{ marginBottom: 6 }}>No lifecycle events yet.</div>
+        <div className="mono" style={{ fontSize: 11, color: "var(--ink-3)" }}>
+          Run <span style={{ color: "var(--ink-1)" }}>loom capture {skillName}</span> to start the chain.
+        </div>
+      </div>
+    );
+  }
   return (
     <div style={{ position: "relative", paddingLeft: 22 }}>
       <div style={{ position: "absolute", left: 7, top: 4, bottom: 4, width: 1, background: "var(--line)" }} />
@@ -213,43 +230,13 @@ function Lifecycle({ events }: { events: LifecycleEvent[] }) {
   );
 }
 
-function DiffView({ latestRev }: { latestRev: string }) {
+function DiffEmpty() {
   return (
-    <div>
-      <div className="section-title">{latestRev} vs v0.4.1</div>
-      <div style={{ border: "1px solid var(--line)", borderRadius: 6, overflow: "hidden" }}>
-        <div className="diff-row">
-          <div className="mark">4</div>
-          <div className="l" style={{ color: "var(--ink-2)" }}>
-            ## When to use
-          </div>
-        </div>
-        <div className="diff-row del">
-          <div className="mark">-</div>
-          <div className="l">- for simple function extractions only</div>
-        </div>
-        <div className="diff-row add">
-          <div className="mark">+</div>
-          <div className="l">+ for both function + module-level refactors</div>
-        </div>
-        <div className="diff-row add">
-          <div className="mark">+</div>
-          <div className="l">+ pairs well with rust-test-harness for verification</div>
-        </div>
-        <div className="diff-row">
-          <div className="mark">7</div>
-          <div className="l" style={{ color: "var(--ink-2)" }}>
-            ## Preconditions
-          </div>
-        </div>
-        <div className="diff-row del">
-          <div className="mark">-</div>
-          <div className="l">- all tests green on HEAD</div>
-        </div>
-        <div className="diff-row add">
-          <div className="mark">+</div>
-          <div className="l">+ all tests green on HEAD OR baseline noted in capture</div>
-        </div>
+    <div style={{ padding: "18px 4px", fontSize: 12, color: "var(--ink-2)" }}>
+      <div style={{ marginBottom: 6 }}>No diff available.</div>
+      <div className="mono" style={{ fontSize: 11, color: "var(--ink-3)" }}>
+        Per-revision diff view coming in v1.0. Use{" "}
+        <span style={{ color: "var(--ink-1)" }}>git -C skills/&lt;name&gt; diff</span> for now.
       </div>
     </div>
   );

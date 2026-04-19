@@ -21,6 +21,8 @@ use crate::types::PendingOp;
 const LOCK_STALE_AFTER: Duration = Duration::from_secs(60 * 60);
 const OPS_COMPACTION_THRESHOLD: usize = 16;
 
+type InProcMap = Arc<Mutex<HashMap<String, (PathBuf, std::thread::ThreadId, usize)>>>;
+
 #[derive(Debug, Clone)]
 pub struct AppContext {
     pub root: PathBuf,
@@ -30,7 +32,7 @@ pub struct AppContext {
     pub pending_ops_file: PathBuf,
     pub pending_ops_history_dir: PathBuf,
     pub pending_ops_snapshot_file: PathBuf,
-    in_proc: Arc<Mutex<HashMap<String, (PathBuf, usize)>>>,
+    in_proc: InProcMap,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -212,16 +214,24 @@ impl AppContext {
         }
         self.ensure_state_layout()?;
         let lock_path = self.locks_dir.join(format!("{}.lock", name));
+        let current_thread = std::thread::current().id();
 
-        // Fast path: same-process reentrant acquire via ref-count table.
+        // Fast path: same-process same-thread reentrant acquire via ref-count table.
+        // Reentrancy is scoped to the current thread so that concurrent threads
+        // sharing the same Arc (e.g. cloned AppContext across panel requests) still
+        // block at the filesystem layer rather than bypassing it.
         {
             let mut map = self.in_proc.lock().expect("in_proc mutex poisoned");
-            if let Some((_path, count)) = map.get_mut(name) {
+            if let Some((_path, holder, count)) = map.get_mut(name)
+                && *holder == current_thread
+            {
                 *count += 1;
                 return Ok(LockGuard {
                     name: name.to_string(),
                     in_proc: Arc::clone(&self.in_proc),
                 });
+                // If a different thread holds the entry, fall through to the
+                // filesystem acquire which will fail AlreadyExists → LOCK_BUSY.
             }
         }
 
@@ -241,7 +251,7 @@ impl AppContext {
                     self.in_proc
                         .lock()
                         .expect("in_proc mutex poisoned")
-                        .insert(name.to_string(), (lock_path, 1));
+                        .insert(name.to_string(), (lock_path, current_thread, 1));
                     return Ok(LockGuard {
                         name: name.to_string(),
                         in_proc: Arc::clone(&self.in_proc),
@@ -294,7 +304,7 @@ impl AppContext {
 #[derive(Debug)]
 pub struct LockGuard {
     name: String,
-    in_proc: Arc<Mutex<HashMap<String, (PathBuf, usize)>>>,
+    in_proc: InProcMap,
 }
 
 impl Drop for LockGuard {
@@ -309,7 +319,7 @@ impl Drop for LockGuard {
                 return;
             }
         };
-        if let Some((lock_path, count)) = map.get_mut(&self.name) {
+        if let Some((lock_path, _holder, count)) = map.get_mut(&self.name) {
             *count -= 1;
             if *count == 0 {
                 let lock_path = lock_path.clone();
@@ -745,6 +755,36 @@ mod tests {
         assert!(
             result.is_err(),
             "context B must not acquire lock while A holds it"
+        );
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("LOCK_BUSY"),
+            "error must indicate LOCK_BUSY, got: {}",
+            err_msg
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn cloned_context_on_different_thread_is_busy() {
+        // A cloned AppContext shares the same Arc<in_proc> as the original.
+        // A thread holding the lock must block another thread even when that
+        // other thread uses a clone of the same AppContext (the panel path).
+        let dir = std::env::temp_dir().join(format!(
+            "loom-clone-thread-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let ctx_a = AppContext::new(Some(dir.clone())).unwrap();
+        let ctx_b = ctx_a.clone();
+        let _guard = ctx_a
+            .lock_workspace()
+            .expect("main thread must acquire lock");
+        let result = std::thread::spawn(move || ctx_b.lock_workspace())
+            .join()
+            .expect("thread must not panic");
+        assert!(
+            result.is_err(),
+            "cloned context on a different thread must not reenter held lock"
         );
         let err_msg = result.unwrap_err().to_string();
         assert!(

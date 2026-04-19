@@ -1,5 +1,6 @@
 mod auth;
 mod handlers;
+mod skill_diff;
 mod static_serve;
 
 use std::net::SocketAddr;
@@ -17,6 +18,7 @@ use crate::cli::{AgentKind, ProjectionMethod, TargetOwnership, WorkspaceMatcherK
 use crate::state::AppContext;
 
 use handlers::*;
+use skill_diff::v3_skill_diff;
 use static_serve::{ensure_panel_dist, frontend_index, frontend_static_asset};
 
 #[derive(Clone)]

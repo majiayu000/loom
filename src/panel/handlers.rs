@@ -387,6 +387,37 @@ fn is_valid_git_rev(rev: &str) -> bool {
     (7..=40).contains(&len) && rev.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
 }
 
+fn is_valid_skill_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 128
+        && name
+            .bytes()
+            .all(|b| matches!(b, b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'-' | b'_'))
+}
+
+/// Returns the SHA of the second-newest commit that touched `skill_path`, if any.
+fn skill_parent_rev(root: &std::path::Path, skill_path: &str) -> Option<String> {
+    let out = std::process::Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .arg("log")
+        .arg("--format=%H")
+        .arg("-n")
+        .arg("2")
+        .arg("--")
+        .arg(skill_path)
+        .output()
+        .ok()?;
+    if out.status.success() {
+        let s = String::from_utf8_lossy(&out.stdout);
+        let mut lines = s.lines();
+        lines.next()?; // newest commit (will be rev_b)
+        lines.next().map(|s| s.to_string())
+    } else {
+        None
+    }
+}
+
 fn resolve_rev(root: &std::path::Path, rev: &str) -> Option<String> {
     let out = std::process::Command::new("git")
         .arg("-C")
@@ -445,7 +476,7 @@ fn parse_unified_diff(diff_text: &str) -> Vec<serde_json::Value> {
                     "header": std::mem::take(&mut h_hdr),
                     "lines": std::mem::take(&mut h_lines),
                 }));
-                h_count = 0;
+                // h_count is intentionally NOT reset here — cap is per file, not per hunk
             }
             h_hdr = line.to_string();
         } else if line.starts_with('+') && !line.starts_with("+++") {
@@ -492,6 +523,16 @@ pub(super) async fn v3_skill_diff(
     Query(params): Query<DiffParams>,
     State(state): State<PanelState>,
 ) -> (StatusCode, Json<serde_json::Value>) {
+    if !is_valid_skill_name(&skill_name) {
+        return (
+            StatusCode::BAD_REQUEST,
+            v3_error(
+                "GIT_DIFF_FAILED",
+                "skill name must contain only [a-zA-Z0-9_-]".to_string(),
+            ),
+        );
+    }
+
     if let Some(ref r) = params.rev_a
         && !is_valid_git_rev(r)
     {
@@ -509,25 +550,25 @@ pub(super) async fn v3_skill_diff(
         );
     }
 
+    let skill_path = format!("skills/{}/", skill_name);
     let rev_b = params.rev_b.unwrap_or_else(|| "HEAD".to_string());
 
     let rev_a = match params.rev_a {
         Some(r) => r,
-        None => match resolve_rev(&state.ctx.root, "HEAD~1") {
+        None => match skill_parent_rev(&state.ctx.root, &skill_path) {
             Some(sha) => sha,
             None => {
                 return (
                     StatusCode::BAD_REQUEST,
                     v3_error(
                         "GIT_DIFF_FAILED",
-                        "no parent commit available; provide rev_a explicitly".to_string(),
+                        "fewer than 2 commits touch this skill; provide rev_a explicitly"
+                            .to_string(),
                     ),
                 );
             }
         },
     };
-
-    let skill_path = format!("skills/{}/", skill_name);
     let range = format!("{}..{}", rev_a, rev_b);
 
     let output = match std::process::Command::new("git")
@@ -554,6 +595,17 @@ pub(super) async fn v3_skill_diff(
         return (
             StatusCode::BAD_REQUEST,
             v3_error("GIT_DIFF_FAILED", stderr.trim().to_string()),
+        );
+    }
+
+    const MAX_DIFF_BYTES: usize = 4 * 1024 * 1024; // 4 MiB
+    if output.stdout.len() > MAX_DIFF_BYTES {
+        return (
+            StatusCode::BAD_REQUEST,
+            v3_error(
+                "GIT_DIFF_FAILED",
+                format!("diff exceeds {MAX_DIFF_BYTES} bytes; narrow the revision range"),
+            ),
         );
     }
 

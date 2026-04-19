@@ -237,6 +237,8 @@ function SkillDiff({ skillName }: { skillName: string }) {
       .catch((err: Error) => {
         if (err.name !== "AbortError") {
           setError(err.message);
+          setFiles(null);
+          setHeader("");
           setLoading(false);
         }
       });

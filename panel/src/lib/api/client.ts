@@ -10,6 +10,29 @@ import type { V3Projection } from "../../generated/V3Projection";
 import type { V3Rule } from "../../generated/V3Rule";
 import type { V3Target } from "../../generated/V3Target";
 
+export interface V3OperationRecord {
+  op_id: string;
+  intent: string;
+  status: string;
+  ack: boolean;
+  payload: unknown;
+  effects: unknown;
+  last_error?: { code: string; message: string };
+  created_at: string;
+  updated_at: string;
+}
+
+export interface OpsPayload {
+  ok: boolean;
+  data?: {
+    state_model?: string;
+    count: number;
+    operations: V3OperationRecord[];
+    checkpoint?: { last_scanned_op_id?: string; last_acked_op_id?: string; updated_at?: string };
+  };
+  error?: { code?: string; message?: string };
+}
+
 export interface BindingShowPayload {
   ok: boolean;
   data?: {
@@ -235,6 +258,7 @@ export const api = {
   info: (signal?: AbortSignal) => getJson<InfoPayload>("/api/info", signal),
   skills: (signal?: AbortSignal) => getJson<SkillsPayload>("/api/skills", signal),
   v3Status: (signal?: AbortSignal) => getJson<V3Payload>("/api/v3/status", signal),
+  ops: (signal?: AbortSignal) => getJson<OpsPayload>("/api/v3/ops", signal),
   bindingShow: (id: string, signal?: AbortSignal) =>
     getJson<BindingShowPayload>(`/api/v3/bindings/${encodeURIComponent(id)}`, signal),
   targetShow: (id: string, signal?: AbortSignal) =>

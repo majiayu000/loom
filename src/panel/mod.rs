@@ -96,6 +96,7 @@ pub async fn run_panel(ctx: AppContext, port: u16) -> Result<()> {
         .route("/api/info", get(info))
         .route("/api/skills", get(skills))
         .route("/api/v3/status", get(v3_status))
+        .route("/api/v3/ops", get(v3_ops))
         .route("/api/v3/bindings", get(v3_bindings))
         .route("/api/v3/bindings/{binding_id}", get(v3_binding_show))
         .route("/api/v3/targets", get(v3_targets))

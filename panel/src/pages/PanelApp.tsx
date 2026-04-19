@@ -9,6 +9,7 @@ import { OverviewPage } from "./panel/OverviewPage";
 import { SkillsPage } from "./panel/SkillsPage";
 import { TargetsPage } from "./panel/TargetsPage";
 import { BindingsPage } from "./panel/BindingsPage";
+import { HistoryPage } from "./panel/HistoryPage";
 import { OpsPage } from "./panel/OpsPage";
 import { PlaceholderPage } from "./panel/PlaceholderPage";
 import { SettingsPage } from "./panel/SettingsPage";
@@ -193,6 +194,9 @@ export function PanelApp() {
       break;
     case "ops":
       view = <OpsPage ops={ops} />;
+      break;
+    case "history":
+      view = <HistoryPage live={live.live} />;
       break;
     case "sync":
       view = (

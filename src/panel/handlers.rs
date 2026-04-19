@@ -81,6 +81,23 @@ pub(super) async fn v3_status(
     }
 }
 
+/// Return the full operations journal (`.loom/v3/operations.jsonl`). The panel
+/// History page reads this to show every state-changing op, not just the
+/// in-flight ones surfaced by `/api/pending`. Entries are returned in append
+/// order; callers paginate client-side (total volume is bounded by the
+/// checkpoint watermark and `loom sync replay`).
+pub(super) async fn v3_ops(State(state): State<PanelState>) -> Json<serde_json::Value> {
+    match load_v3_snapshot(&state.ctx) {
+        Ok(snapshot) => v3_ok(json!({
+            "state_model": "v3",
+            "count": snapshot.operations.len(),
+            "operations": snapshot.operations,
+            "checkpoint": snapshot.checkpoint,
+        })),
+        Err(err) => err,
+    }
+}
+
 pub(super) async fn v3_bindings(State(state): State<PanelState>) -> Json<serde_json::Value> {
     match load_v3_snapshot(&state.ctx) {
         Ok(snapshot) => v3_ok(json!({

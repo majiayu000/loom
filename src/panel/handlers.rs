@@ -19,9 +19,7 @@ use super::auth::{
     ensure_mutation_authorized, error_envelope, load_v3_snapshot, run_panel_command, v3_error,
     v3_ok,
 };
-use super::{
-    BindingAddRequest, CaptureRequest, PanelState, ProjectRequest, TargetAddRequest,
-};
+use super::{BindingAddRequest, CaptureRequest, PanelState, ProjectRequest, TargetAddRequest};
 
 /// Accept `[a-z0-9_-]{1,64}` for `policy_profile`. The backend does not
 /// maintain a closed whitelist (users may extend profiles over time),

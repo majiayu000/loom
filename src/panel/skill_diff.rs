@@ -194,7 +194,10 @@ pub(super) async fn v3_skill_diff(
     {
         return (
             StatusCode::BAD_REQUEST,
-            v3_error("GIT_DIFF_FAILED", "rev_a must match [a-f0-9]{7,40}".to_string()),
+            v3_error(
+                "GIT_DIFF_FAILED",
+                "rev_a must match [a-f0-9]{7,40}".to_string(),
+            ),
         );
     }
     if let Some(ref r) = params.rev_b
@@ -202,7 +205,10 @@ pub(super) async fn v3_skill_diff(
     {
         return (
             StatusCode::BAD_REQUEST,
-            v3_error("GIT_DIFF_FAILED", "rev_b must match [a-f0-9]{7,40}".to_string()),
+            v3_error(
+                "GIT_DIFF_FAILED",
+                "rev_b must match [a-f0-9]{7,40}".to_string(),
+            ),
         );
     }
 

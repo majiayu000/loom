@@ -5,7 +5,7 @@ pub use ops::{
     remove_path_if_exists, summarize_history_body, synthesize_snapshot_raw_from_segment_bodies,
 };
 
-use lock::{try_reap_stale_lock, LockMetadata};
+use lock::{LockMetadata, try_reap_stale_lock};
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::env;

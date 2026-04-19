@@ -107,6 +107,24 @@ export interface CaptureBody {
   message?: string;
 }
 
+export interface SkillDiffFile {
+  path: string;
+  added: number;
+  removed: number;
+  hunks: Array<{ header: string; lines: string[] }>;
+}
+
+export interface SkillDiffPayload {
+  ok: boolean;
+  data?: {
+    skill: string;
+    rev_a: string;
+    rev_b: string;
+    files: SkillDiffFile[];
+  };
+  error?: { code?: string; message?: string };
+}
+
 export const api = {
   health: (signal?: AbortSignal) => getJson<HealthPayload>("/api/health", signal),
   info: (signal?: AbortSignal) => getJson<InfoPayload>("/api/info", signal),
@@ -125,4 +143,15 @@ export const api = {
   syncPush: () => postJson("/api/sync/push", {}),
   syncPull: () => postJson("/api/sync/pull", {}),
   syncReplay: () => postJson("/api/sync/replay", {}),
+
+  skillDiff: (name: string, revA?: string, revB?: string, signal?: AbortSignal) => {
+    const params = new URLSearchParams();
+    if (revA) params.set("rev_a", revA);
+    if (revB) params.set("rev_b", revB);
+    const qs = params.size > 0 ? `?${params.toString()}` : "";
+    return getJson<SkillDiffPayload>(
+      `/api/v3/skills/${encodeURIComponent(name)}/diff${qs}`,
+      signal,
+    );
+  },
 };

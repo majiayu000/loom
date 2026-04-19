@@ -67,6 +67,14 @@ pub(super) struct CaptureRequest {
     pub(super) message: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+pub(super) struct DiffParams {
+    #[serde(default)]
+    pub(super) rev_a: Option<String>,
+    #[serde(default)]
+    pub(super) rev_b: Option<String>,
+}
+
 pub async fn run_panel(ctx: AppContext, port: u16) -> Result<()> {
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
     let dist_dir = ctx.root.join("panel/dist");
@@ -97,6 +105,7 @@ pub async fn run_panel(ctx: AppContext, port: u16) -> Result<()> {
         )
         .route("/api/v3/project", post(v3_project))
         .route("/api/v3/capture", post(v3_capture))
+        .route("/api/v3/skills/{skill_name}/diff", get(v3_skill_diff))
         .route("/api/remote/status", get(remote_status))
         .route("/api/pending", get(pending))
         .route("/api/sync/push", post(sync_push))

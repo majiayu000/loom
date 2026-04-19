@@ -11,6 +11,8 @@ import { TargetsPage } from "./panel/TargetsPage";
 import { BindingsPage } from "./panel/BindingsPage";
 import { OpsPage } from "./panel/OpsPage";
 import { PlaceholderPage } from "./panel/PlaceholderPage";
+import { SettingsPage } from "./panel/SettingsPage";
+import { SyncPage } from "./panel/SyncPage";
 
 const DEFAULT_TWEAKS: TweakState = {
   vizMode: "loom",
@@ -22,6 +24,7 @@ const DEFAULT_TWEAKS: TweakState = {
 };
 
 const PAGE_STORAGE_KEY = "loom.page";
+const TWEAKS_STORAGE_KEY = "loom.tweaks";
 const VALID_PAGES: PanelPageKey[] = [
   "overview",
   "skills",
@@ -38,9 +41,20 @@ function loadInitialPage(): PanelPageKey {
   return VALID_PAGES.includes(stored as PanelPageKey) ? (stored as PanelPageKey) : "overview";
 }
 
+function loadInitialTweaks(): TweakState {
+  const raw = localStorage.getItem(TWEAKS_STORAGE_KEY);
+  if (!raw) return DEFAULT_TWEAKS;
+  try {
+    const parsed = JSON.parse(raw) as Partial<TweakState>;
+    return { ...DEFAULT_TWEAKS, ...parsed };
+  } catch {
+    return DEFAULT_TWEAKS;
+  }
+}
+
 export function PanelApp() {
   const [page, setPage] = useState<PanelPageKey>(loadInitialPage);
-  const [tweaks, setTweaks] = useState<TweakState>(DEFAULT_TWEAKS);
+  const [tweaks, setTweaks] = useState<TweakState>(loadInitialTweaks);
   const [tweakVisible, setTweakVisible] = useState(false);
   const [selectedSkill, setSelectedSkill] = useState<string | null>(null);
   const [selectedTarget, setSelectedTarget] = useState<string | null>(null);
@@ -50,6 +64,10 @@ export function PanelApp() {
   useEffect(() => {
     localStorage.setItem(PAGE_STORAGE_KEY, page);
   }, [page]);
+
+  useEffect(() => {
+    localStorage.setItem(TWEAKS_STORAGE_KEY, JSON.stringify(tweaks));
+  }, [tweaks]);
 
   useEffect(() => {
     document.documentElement.style.setProperty("--accent", tweaks.accent);
@@ -150,6 +168,7 @@ export function PanelApp() {
         <SkillsPage
           skills={skills}
           targets={targets}
+          bindings={bindings}
           selectedSkill={selectedSkill}
           onSelectSkill={(id) => setSelectedSkill(id)}
           onMutation={onMutation}
@@ -174,6 +193,20 @@ export function PanelApp() {
       break;
     case "ops":
       view = <OpsPage ops={ops} />;
+      break;
+    case "sync":
+      view = (
+        <SyncPage
+          remote={live.remote}
+          pendingCount={live.pendingCount}
+          registryRoot={live.registryRoot}
+          readOnly={readOnly}
+          onMutation={onMutation}
+        />
+      );
+      break;
+    case "settings":
+      view = <SettingsPage live={live.live} registryRoot={live.registryRoot} />;
       break;
     default:
       view = <PlaceholderPage page={page} />;

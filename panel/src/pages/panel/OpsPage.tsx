@@ -3,7 +3,6 @@ import type { Op, OpStatus } from "../../lib/types";
 import { OpRow } from "../../components/panel/OpRow";
 import { RefreshIcon } from "../../components/icons/nav_icons";
 
-const SPARK = [3, 5, 2, 6, 4, 7, 9, 5, 8, 6, 4, 3, 5, 7, 11, 6, 4, 5, 8, 9, 6, 4, 3, 5];
 type FilterKey = "all" | OpStatus;
 
 export function OpsPage({ ops }: { ops: Op[] }) {
@@ -15,6 +14,9 @@ export function OpsPage({ ops }: { ops: Op[] }) {
     ok: ops.filter((o) => o.status === "ok").length,
     err: ops.filter((o) => o.status === "err").length,
   };
+  const finalized = counts.ok + counts.err;
+  const successRate = finalized > 0 ? (counts.ok / finalized) * 100 : null;
+  const oldestPending = ops.find((o) => o.status === "pending");
 
   return (
     <>
@@ -24,31 +26,33 @@ export function OpsPage({ ops }: { ops: Op[] }) {
           <div className="subtitle">Every state change is an op. Retry the pending, repair the failed, diagnose the rest.</div>
         </div>
         <div className="header-actions">
-          <button className="btn ghost">
+          <button className="btn ghost" disabled title="Coming in v1.0 — use `loom ops retry` via CLI">
             <RefreshIcon /> Retry failed
           </button>
-          <button className="btn ghost">Purge completed</button>
+          <button className="btn ghost" disabled title="Coming in v1.0 — use `loom ops purge` via CLI">
+            Purge completed
+          </button>
         </div>
       </div>
       <div className="page-body">
         <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12, marginBottom: 18 }}>
           <div className="card">
             <div className="card-body">
-              <div style={section_label}>Last 24h</div>
-              <div style={{ fontFamily: "var(--font-display)", fontSize: 24 }}>47 ops</div>
-              <div className="spark" style={{ marginTop: 10 }}>
-                {SPARK.map((v, i) => (
-                  <div key={i} className={`bar ${v > 7 ? "hi" : ""}`} style={{ height: `${v * 2.4}px` }} />
-                ))}
+              <div style={section_label}>Tracked ops</div>
+              <div style={{ fontFamily: "var(--font-display)", fontSize: 24 }}>{counts.all}</div>
+              <div style={{ fontSize: 11, color: "var(--ink-2)", marginTop: 10 }}>
+                {counts.ok} ok · {counts.err} failed · {counts.pending} pending
               </div>
             </div>
           </div>
           <div className="card">
             <div className="card-body">
               <div style={section_label}>Success rate</div>
-              <div style={{ fontFamily: "var(--font-display)", fontSize: 24, color: "var(--ok)" }}>96.2%</div>
+              <div style={{ fontFamily: "var(--font-display)", fontSize: 24, color: successRate === null ? "var(--ink-3)" : "var(--ok)" }}>
+                {successRate === null ? "—" : `${successRate.toFixed(1)}%`}
+              </div>
               <div style={{ fontSize: 11, color: "var(--ink-2)", marginTop: 10 }}>
-                45 / 47 clean · 1 failed · 1 pending
+                {finalized === 0 ? "no finalized ops yet" : `${counts.ok} / ${finalized} clean`}
               </div>
             </div>
           </div>
@@ -59,7 +63,7 @@ export function OpsPage({ ops }: { ops: Op[] }) {
                 {counts.pending}
               </div>
               <div style={{ fontSize: 11, color: "var(--ink-2)", marginTop: 10 }}>
-                project refactor-patterns → claude/work
+                {oldestPending ? `${oldestPending.kind} ${oldestPending.skill} → ${oldestPending.target}` : "queue empty"}
               </div>
             </div>
           </div>

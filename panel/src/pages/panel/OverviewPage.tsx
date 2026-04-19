@@ -43,6 +43,13 @@ export function OverviewPage({
   const pendingOps = ops.filter((o) => o.status === "pending").length;
   const errOps = ops.filter((o) => o.status === "err").length;
   const totalProjections = skills.reduce((a, s) => a + s.targets.length, 0);
+  const totalRules = skills.reduce((a, s) => a + s.ruleCount, 0);
+  const uniqueAgents = new Set(targets.map((t) => t.agent)).size;
+  const uniqueProfiles = new Set(targets.map((t) => `${t.agent}/${t.profile}`)).size;
+  const methodCounts = projections.reduce<Record<string, number>>((acc, p) => {
+    acc[p.method] = (acc[p.method] ?? 0) + 1;
+    return acc;
+  }, {});
   const rootDisplay = registryRoot
     ? registryRoot.replace(/^\/Users\/[^/]+/, "~")
     : "~/.loom-registry";
@@ -107,9 +114,29 @@ export function OverviewPage({
       )}
       <div className="page-body">
         <div className="kpi-row">
-          <Kpi label="Skills" value={skills.length} meta={<><span className="trend">+2</span> · 52 captures · 38 releases</>} />
-          <Kpi label="Targets" value={targets.length} meta="6 agents · 4 profiles" />
-          <Kpi label="Projections" value={totalProjections} meta="symlink · copy · materialize" />
+          <Kpi
+            label="Skills"
+            value={skills.length}
+            meta={totalRules > 0 ? `${totalRules} rule${totalRules === 1 ? "" : "s"} on chain` : "no rules yet"}
+          />
+          <Kpi
+            label="Targets"
+            value={targets.length}
+            meta={
+              targets.length === 0
+                ? "no targets"
+                : `${uniqueAgents} agent${uniqueAgents === 1 ? "" : "s"} · ${uniqueProfiles} profile${uniqueProfiles === 1 ? "" : "s"}`
+            }
+          />
+          <Kpi
+            label="Projections"
+            value={totalProjections}
+            meta={
+              totalProjections === 0
+                ? "no projections"
+                : `${methodCounts.symlink ?? 0} symlink · ${methodCounts.copy ?? 0} copy · ${methodCounts.materialize ?? 0} materialize`
+            }
+          />
           <Kpi
             label="Ops"
             value={pendingOps + errOps}
@@ -223,13 +250,10 @@ export function OverviewPage({
                 <span className="c"># Current registry</span>
                 {"\n"}
                 <span className="k">--root</span> <span className="s">{rootDisplay}</span>
-                {"\n"}
-                <span className="c"># Git HEAD</span>
-                {"\n"}
-                <span className="n">2a3f8c1</span> <span className="s">"release: commit-message-writer v1.2.0"</span>
               </pre>
               <div style={{ color: "var(--ink-3)", fontSize: 11 }}>
-                Last pull from <span className="mono">origin/main</span> · 6h ago
+                Run <span className="mono" style={{ color: "var(--ink-1)" }}>loom status</span> for git HEAD · sync state
+                available via the Topbar.
               </div>
             </div>
           </div>

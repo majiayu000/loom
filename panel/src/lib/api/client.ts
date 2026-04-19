@@ -5,6 +5,34 @@ import type {
   RemotePayload,
   V3Payload,
 } from "../../types";
+import type { V3Binding } from "../../generated/V3Binding";
+import type { V3Projection } from "../../generated/V3Projection";
+import type { V3Rule } from "../../generated/V3Rule";
+import type { V3Target } from "../../generated/V3Target";
+
+export interface BindingShowPayload {
+  ok: boolean;
+  data?: {
+    state_model?: string;
+    binding: V3Binding;
+    default_target?: V3Target | null;
+    rules?: V3Rule[];
+    projections?: V3Projection[];
+  };
+  error?: { code?: string; message?: string };
+}
+
+export interface TargetShowPayload {
+  ok: boolean;
+  data?: {
+    state_model?: string;
+    target: V3Target;
+    bindings?: V3Binding[];
+    rules?: V3Rule[];
+    projections?: V3Projection[];
+  };
+  error?: { code?: string; message?: string };
+}
 
 export interface SkillsPayload {
   skills?: string[];
@@ -207,6 +235,10 @@ export const api = {
   info: (signal?: AbortSignal) => getJson<InfoPayload>("/api/info", signal),
   skills: (signal?: AbortSignal) => getJson<SkillsPayload>("/api/skills", signal),
   v3Status: (signal?: AbortSignal) => getJson<V3Payload>("/api/v3/status", signal),
+  bindingShow: (id: string, signal?: AbortSignal) =>
+    getJson<BindingShowPayload>(`/api/v3/bindings/${encodeURIComponent(id)}`, signal),
+  targetShow: (id: string, signal?: AbortSignal) =>
+    getJson<TargetShowPayload>(`/api/v3/targets/${encodeURIComponent(id)}`, signal),
   remoteStatus: async (signal?: AbortSignal) =>
     parseRemoteStatusResponse("/api/remote/status", await getJson<unknown>("/api/remote/status", signal)),
   pending: (signal?: AbortSignal) => getJson<PendingPayload>("/api/pending", signal),

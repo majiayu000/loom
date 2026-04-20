@@ -141,10 +141,8 @@ fn parse_diff_git_path(line: &str) -> Option<String> {
             }
             let b_path = String::from_utf8_lossy(&decoded).into_owned();
             b_path.strip_prefix("b/").map(|s| s.to_string())
-        } else if let Some(stripped) = after_a.strip_prefix(" b/") {
-            Some(stripped.to_string())
         } else {
-            None
+            after_a.strip_prefix(" b/").map(|s| s.to_string())
         }
     } else {
         // Unquoted form: `a/path b/path` — take the b-side (after last ` b/`).

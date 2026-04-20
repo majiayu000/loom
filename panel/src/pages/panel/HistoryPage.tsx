@@ -13,14 +13,23 @@ interface HistoryPageProps {
   live: boolean;
 }
 
+const REFRESH_INTERVAL_MS = 3000;
+
 export function HistoryPage({ live }: HistoryPageProps) {
   const [state, setState] = useState<LoadState>({ kind: "idle" });
   const [filter, setFilter] = useState<FilterKey>("all");
   const [query, setQuery] = useState("");
+  const [refreshTick, setRefreshTick] = useState(0);
+
+  useEffect(() => {
+    if (!live) return;
+    const id = setInterval(() => setRefreshTick((t) => t + 1), REFRESH_INTERVAL_MS);
+    return () => clearInterval(id);
+  }, [live]);
 
   useEffect(() => {
     const controller = new AbortController();
-    setState({ kind: "loading" });
+    setState((prev) => (prev.kind === "idle" ? { kind: "loading" } : prev));
     api
       .ops(controller.signal)
       .then((res) => {
@@ -37,7 +46,7 @@ export function HistoryPage({ live }: HistoryPageProps) {
         setState({ kind: "error", message });
       });
     return () => controller.abort();
-  }, [live]);
+  }, [live, refreshTick]);
 
   const operations = state.kind === "ready" ? state.payload.operations : [];
   const ordered = useMemo(

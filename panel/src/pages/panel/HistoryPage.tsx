@@ -220,7 +220,9 @@ function bucket(op: V3OperationRecord): "pending" | "ok" | "err" {
   if (op.last_error) return "err";
   const s = op.status.toLowerCase();
   if (s === "pending" || s === "enqueued" || s === "in_flight" || s === "retrying") return "pending";
-  if (s === "ok" || s === "applied" || s === "completed" || s === "done") return "ok";
+  // "succeeded" is what the backend actually writes (src/commands/projections.rs,
+  // src/state_model/persistence.rs); the rest are tolerated synonyms.
+  if (s === "ok" || s === "succeeded" || s === "applied" || s === "completed" || s === "done") return "ok";
   if (s === "err" || s === "error" || s === "failed") return "err";
   return op.ack ? "ok" : "pending";
 }

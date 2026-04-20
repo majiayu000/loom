@@ -1,3 +1,8 @@
+use std::cmp::{Ordering, Reverse};
+use std::collections::BinaryHeap;
+use std::io::{BufRead, BufReader};
+use std::path::Path;
+
 use axum::{
     Json,
     extract::{Path as AxumPath, State},
@@ -8,7 +13,85 @@ use serde_json::json;
 use super::PanelState;
 use super::auth::{load_v3_snapshot, status_for_error_code, v3_error, v3_ok};
 use super::skill_diff::is_valid_skill_name;
-use crate::state_model::V3StatePaths;
+use crate::state_model::{V3ObservationEvent, V3StatePaths};
+
+/// Wrapper that orders `V3ObservationEvent` by `observed_at` (ascending) so
+/// that a `BinaryHeap<Reverse<OrdEvent>>` acts as a min-heap keyed by time.
+/// `pop()` on such a heap removes the OLDEST event, letting us keep the newest.
+struct OrdEvent(V3ObservationEvent);
+
+impl PartialEq for OrdEvent {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.observed_at == other.0.observed_at
+    }
+}
+impl Eq for OrdEvent {}
+impl PartialOrd for OrdEvent {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+impl Ord for OrdEvent {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.0.observed_at.cmp(&other.0.observed_at)
+    }
+}
+
+/// Stream `path` line-by-line and return at most `limit` events with the
+/// newest `observed_at` timestamps.  Allocates O(limit) memory regardless
+/// of how many lines the file contains.
+fn load_obs_bounded(
+    path: &Path,
+    limit: usize,
+) -> Result<Vec<V3ObservationEvent>, anyhow::Error> {
+    let file = match std::fs::File::open(path) {
+        Ok(f) => f,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => {
+            return Err(anyhow::anyhow!(
+                "failed to open {}: {}",
+                path.display(),
+                e
+            ))
+        }
+    };
+    if file
+        .metadata()
+        .map_err(|e| anyhow::anyhow!("failed to stat {}: {}", path.display(), e))?
+        .len()
+        == 0
+    {
+        return Ok(Vec::new());
+    }
+
+    // Min-heap (via Reverse) capped at `limit`; pop discards the oldest entry.
+    let mut heap: BinaryHeap<Reverse<OrdEvent>> = BinaryHeap::with_capacity(limit + 1);
+    let reader = BufReader::new(file);
+    for (idx, line) in reader.lines().enumerate() {
+        let line = line.map_err(|e| {
+            anyhow::anyhow!("failed to read line {} from {}: {}", idx + 1, path.display(), e)
+        })?;
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let event: V3ObservationEvent =
+            serde_json::from_str(trimmed).map_err(|e| {
+                anyhow::anyhow!(
+                    "failed to parse line {} from {}: {}",
+                    idx + 1,
+                    path.display(),
+                    e
+                )
+            })?;
+        heap.push(Reverse(OrdEvent(event)));
+        if heap.len() > limit {
+            heap.pop(); // drops the oldest event
+        }
+    }
+
+    Ok(heap.into_iter().map(|Reverse(OrdEvent(e))| e).collect())
+}
 
 pub(super) async fn v3_skill_history(
     AxumPath(skill_name): AxumPath<String>,
@@ -56,29 +139,17 @@ pub(super) async fn v3_skill_history(
     let paths = V3StatePaths::from_app_context(&state.ctx);
     let mut events = Vec::new();
     for instance_id in &instance_ids {
-        let filename = format!("{instance_id}.jsonl");
-        match paths.load_observations_file(&filename) {
-            Ok(mut obs) => {
-                // Cap per-file before merging so we never hold more than
-                // instances×200 events in memory regardless of file size.
-                obs.sort_by(|a, b| b.observed_at.cmp(&a.observed_at));
-                obs.truncate(200);
-                events.extend(obs);
-            }
+        let obs_path = paths.observations_dir.join(format!("{instance_id}.jsonl"));
+        match load_obs_bounded(&obs_path, 200) {
+            Ok(obs) => events.extend(obs),
             Err(e) => {
-                let is_not_found = e
-                    .root_cause()
-                    .downcast_ref::<std::io::Error>()
-                    .map_or(false, |io| io.kind() == std::io::ErrorKind::NotFound);
-                if !is_not_found {
-                    return (
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        v3_error(
-                            "OBS_READ_ERROR",
-                            format!("failed to read observations for {instance_id}: {e:#}"),
-                        ),
-                    );
-                }
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    v3_error(
+                        "OBS_READ_ERROR",
+                        format!("failed to read observations for {instance_id}: {e:#}"),
+                    ),
+                );
             }
         }
     }

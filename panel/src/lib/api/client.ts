@@ -34,7 +34,14 @@ export class ApiError extends Error {
 async function getJson<T>(path: string, signal?: AbortSignal): Promise<T> {
   const res = await fetch(path, { signal });
   if (!res.ok) {
-    throw new ApiError(path, res.status, `GET ${path} returned ${res.status}`);
+    let msg = `GET ${path} returned ${res.status}`;
+    try {
+      const body = (await res.json()) as { error?: { message?: string } };
+      if (body?.error?.message) msg = body.error.message;
+    } catch {
+      // non-JSON body — keep generic message
+    }
+    throw new ApiError(path, res.status, msg);
   }
   return (await res.json()) as T;
 }

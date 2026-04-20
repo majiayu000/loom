@@ -47,6 +47,20 @@ pub(super) fn skill_parent_rev(root: &std::path::Path, skill_path: &str) -> Opti
     }
 }
 
+fn skill_exists_in_rev(root: &std::path::Path, rev: &str, skill_path: &str) -> bool {
+    let out = std::process::Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .arg("ls-tree")
+        .arg("--name-only")
+        .arg(rev)
+        .arg("--")
+        .arg(skill_path)
+        .output()
+        .ok();
+    matches!(out, Some(o) if o.status.success() && !o.stdout.is_empty())
+}
+
 fn resolve_rev(root: &std::path::Path, rev: &str) -> Option<String> {
     let out = std::process::Command::new("git")
         .arg("-C")
@@ -62,30 +76,77 @@ fn resolve_rev(root: &std::path::Path, rev: &str) -> Option<String> {
     }
 }
 
-/// Extract the b-side path from a `diff --git` header line, handling both
-/// unquoted (`diff --git a/path b/path`) and git-quoted forms
-/// (`diff --git "a/path" "b/path"`) used for Unicode or special filenames.
+/// Extract the b-side (new) path from a `diff --git` header line.
+///
+/// Handles unquoted (`diff --git a/path b/path`) and git-quoted forms
+/// (`diff --git "a/path" "b/path"`), decoding git octal escape sequences
+/// (e.g. `\346\226\207` for UTF-8 bytes of non-ASCII filenames).
+/// Returns the b-side so rename diffs report the new filename.
 fn parse_diff_git_path(line: &str) -> Option<String> {
     let rest = line.strip_prefix("diff --git ")?;
     if rest.starts_with('"') {
-        // Quoted form — scan for the closing unescaped `"` to find the a-side path.
+        // Quoted form: skip the a-side quoted string, then decode the b-side.
         let bytes = rest.as_bytes();
-        let mut i = 1; // skip opening quote
+        let mut i = 1; // skip opening quote of a-side
         while i < bytes.len() {
-            if bytes[i] == b'\\' {
-                i += 2; // skip escape sequence (e.g. \nnn or \")
+            if bytes[i] == b'\\' && i + 1 < bytes.len() {
+                i += 1; // skip backslash
+                if bytes[i].is_ascii_digit() {
+                    i += 3; // skip 3-digit octal NNN
+                } else {
+                    i += 1; // skip single escape char (e.g. `"` or `\`)
+                }
             } else if bytes[i] == b'"' {
-                let a_path = &rest[1..i];
-                return a_path.strip_prefix("a/").map(|s| s.to_string());
+                i += 1; // step past closing quote of a-side
+                break;
             } else {
                 i += 1;
             }
         }
-        None
+        // After a-side, expect ` "b/..."`.
+        let after_a = &rest[i..];
+        if after_a.starts_with(" \"") {
+            let b_bytes = after_a.as_bytes();
+            let mut j = 2; // skip ` "`
+            let mut decoded: Vec<u8> = Vec::new();
+            while j < b_bytes.len() && b_bytes[j] != b'"' {
+                if b_bytes[j] == b'\\' && j + 1 < b_bytes.len() {
+                    j += 1;
+                    if b_bytes[j].is_ascii_digit()
+                        && j + 2 < b_bytes.len()
+                        && b_bytes[j + 1].is_ascii_digit()
+                        && b_bytes[j + 2].is_ascii_digit()
+                    {
+                        // Octal escape \NNN → single byte
+                        let v = (b_bytes[j] - b'0') as u32 * 64
+                            + (b_bytes[j + 1] - b'0') as u32 * 8
+                            + (b_bytes[j + 2] - b'0') as u32;
+                        decoded.push(v as u8);
+                        j += 3;
+                    } else {
+                        decoded.push(match b_bytes[j] {
+                            b'n' => b'\n',
+                            b't' => b'\t',
+                            b'r' => b'\r',
+                            c => c,
+                        });
+                        j += 1;
+                    }
+                } else {
+                    decoded.push(b_bytes[j]);
+                    j += 1;
+                }
+            }
+            let b_path = String::from_utf8_lossy(&decoded).into_owned();
+            b_path.strip_prefix("b/").map(|s| s.to_string())
+        } else if after_a.starts_with(" b/") {
+            Some(after_a[3..].to_string())
+        } else {
+            None
+        }
     } else {
-        // Unquoted form: `a/path b/path`
-        let r = rest.strip_prefix("a/")?;
-        r.rfind(" b/").map(|i| r[..i].to_string())
+        // Unquoted form: `a/path b/path` — take the b-side (after last ` b/`).
+        rest.rfind(" b/").map(|i| rest[i + 3..].to_string())
     }
 }
 
@@ -233,12 +294,26 @@ pub(super) async fn v3_skill_diff(
     };
     let range = format!("{}..{}", rev_a, rev_b);
 
+    if !skill_exists_in_rev(&state.ctx.root, &rev_b, &skill_path)
+        && !skill_exists_in_rev(&state.ctx.root, &rev_a, &skill_path)
+    {
+        return (
+            StatusCode::BAD_REQUEST,
+            v3_error(
+                "GIT_DIFF_FAILED",
+                format!("skill '{skill_name}' not found in revision range"),
+            ),
+        );
+    }
+
     const MAX_DIFF_BYTES: usize = 4 * 1024 * 1024; // 4 MiB
 
     let mut child = match tokio::process::Command::new("git")
         .arg("-C")
         .arg(&state.ctx.root)
         .arg("diff")
+        .arg("--no-ext-diff")
+        .arg("--no-textconv")
         .arg("--unified=3")
         .arg(&range)
         .arg("--")
@@ -332,7 +407,7 @@ pub(super) async fn v3_skill_diff(
 
 #[cfg(test)]
 mod tests {
-    use super::{is_valid_git_rev, parse_unified_diff, v3_skill_diff};
+    use super::{is_valid_git_rev, parse_diff_git_path, parse_unified_diff, v3_skill_diff};
     use crate::panel::PanelState;
     use crate::state::AppContext;
     use axum::{
@@ -432,6 +507,72 @@ index abc1234..def5678 100644
         assert_eq!(files.len(), 1, "quoted-path file must be parsed");
         assert_eq!(files[0]["path"], json!("skills/foo/my file.md"));
         assert_eq!(files[0]["added"], json!(1));
+    }
+
+    #[test]
+    fn parse_diff_git_path_returns_b_side_for_rename() {
+        // Unquoted rename: a-side is old.md, b-side is new.md.
+        assert_eq!(
+            parse_diff_git_path("diff --git a/skills/foo/old.md b/skills/foo/new.md"),
+            Some("skills/foo/new.md".to_string()),
+        );
+    }
+
+    #[test]
+    fn parse_diff_git_path_decodes_octal_in_quoted_path() {
+        // \346\226\207 is the UTF-8 encoding of the kanji 文 (U+6587).
+        let line = r#"diff --git "a/skills/foo/\346\226\207" "b/skills/foo/\346\226\207""#;
+        assert_eq!(parse_diff_git_path(line), Some("skills/foo/文".to_string()),);
+    }
+
+    #[tokio::test]
+    async fn v3_skill_diff_returns_error_for_nonexistent_skill() {
+        let root = std::env::temp_dir().join(format!("loom-diff-nopath-{}", Uuid::new_v4()));
+        fs::create_dir_all(root.join("skills/other")).unwrap();
+
+        let git = |args: &[&str]| {
+            std::process::Command::new("git")
+                .arg("-C")
+                .arg(&root)
+                .args(args)
+                .output()
+                .expect("git")
+        };
+
+        git(&["init"]);
+        git(&["config", "user.email", "test@example.com"]);
+        git(&["config", "user.name", "Test"]);
+
+        fs::write(root.join("skills/other/other.md"), "v1\n").unwrap();
+        git(&["add", "-A"]);
+        git(&["commit", "-m", "initial"]);
+        let rev_a = String::from_utf8_lossy(&git(&["rev-parse", "HEAD"]).stdout)
+            .trim()
+            .to_string();
+
+        fs::write(root.join("skills/other/other.md"), "v2\n").unwrap();
+        git(&["add", "-A"]);
+        git(&["commit", "-m", "update"]);
+        let rev_b = String::from_utf8_lossy(&git(&["rev-parse", "HEAD"]).stdout)
+            .trim()
+            .to_string();
+
+        let state = make_state(&root);
+        let (status, Json(payload)) = v3_skill_diff(
+            AxumPath("nonexistent".to_string()),
+            Query(super::super::DiffParams {
+                rev_a: Some(rev_a),
+                rev_b: Some(rev_b),
+            }),
+            State(state),
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(payload["ok"], json!(false));
+        assert_eq!(payload["error"]["code"], json!("GIT_DIFF_FAILED"));
+
+        let _ = fs::remove_dir_all(&root);
     }
 
     #[tokio::test]

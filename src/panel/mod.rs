@@ -1,5 +1,6 @@
 mod auth;
 mod handlers;
+mod skill_diff;
 mod static_serve;
 
 use std::net::SocketAddr;
@@ -17,6 +18,7 @@ use crate::cli::{AgentKind, ProjectionMethod, TargetOwnership, WorkspaceMatcherK
 use crate::state::AppContext;
 
 use handlers::*;
+use skill_diff::v3_skill_diff;
 use static_serve::{ensure_panel_dist, frontend_index, frontend_static_asset};
 
 #[derive(Clone)]
@@ -67,6 +69,14 @@ pub(super) struct CaptureRequest {
     pub(super) message: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+pub(super) struct DiffParams {
+    #[serde(default)]
+    pub(super) rev_a: Option<String>,
+    #[serde(default)]
+    pub(super) rev_b: Option<String>,
+}
+
 pub async fn run_panel(ctx: AppContext, port: u16) -> Result<()> {
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
     let dist_dir = ctx.root.join("panel/dist");
@@ -97,6 +107,7 @@ pub async fn run_panel(ctx: AppContext, port: u16) -> Result<()> {
         )
         .route("/api/v3/project", post(v3_project))
         .route("/api/v3/capture", post(v3_capture))
+        .route("/api/v3/skills/{skill_name}/diff", get(v3_skill_diff))
         .route("/api/remote/status", get(remote_status))
         .route("/api/pending", get(pending))
         .route("/api/sync/push", post(sync_push))

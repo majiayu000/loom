@@ -1,8 +1,8 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import type { Skill, Target } from "../../lib/types";
 import { AgentAvatar } from "../../components/panel/AgentAvatar";
 import { PlusIcon, SearchIcon } from "../../components/icons/nav_icons";
-import { api } from "../../lib/api/client";
+import { api, type SkillDiffFile } from "../../lib/api/client";
 import { useMutation } from "../../lib/useMutation";
 
 interface SkillsPageProps {
@@ -173,7 +173,7 @@ function SkillDetail({ skill, targets }: { skill: Skill; targets: Target[] }) {
       </div>
 
       {tab === "history" && <Lifecycle events={lifecycleFor(skill)} />}
-      {tab === "diff" && <DiffView latestRev={skill.latestRev} />}
+      {tab === "diff" && <SkillDiff skillName={skill.name} />}
       {tab === "targets" && <TargetsTab targets={targetObjs} />}
     </div>
   );
@@ -213,44 +213,120 @@ function Lifecycle({ events }: { events: LifecycleEvent[] }) {
   );
 }
 
-function DiffView({ latestRev }: { latestRev: string }) {
+function SkillDiff({ skillName }: { skillName: string }) {
+  const [revA, setRevA] = useState("");
+  const [revB, setRevB] = useState("");
+  const [files, setFiles] = useState<SkillDiffFile[] | null>(null);
+  const [header, setHeader] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const ctrl = new AbortController();
+    setLoading(true);
+    setError(null);
+    api
+      .skillDiff(skillName, revA || undefined, revB || undefined, ctrl.signal)
+      .then((payload) => {
+        if (payload.data) {
+          setFiles(payload.data.files);
+          setHeader(`${payload.data.rev_a.slice(0, 7)} → ${payload.data.rev_b.slice(0, 7)}`);
+        }
+        setLoading(false);
+      })
+      .catch((err: Error) => {
+        if (err.name !== "AbortError") {
+          setError(err.message);
+          setFiles(null);
+          setHeader("");
+          setLoading(false);
+        }
+      });
+    return () => ctrl.abort();
+  }, [skillName, revA, revB]);
+
+  const inputStyle: React.CSSProperties = {
+    fontSize: 11,
+    padding: "2px 6px",
+    background: "var(--bg-1)",
+    border: "1px solid var(--line)",
+    borderRadius: 4,
+    color: "var(--ink-0)",
+    width: 130,
+    fontFamily: "var(--font-mono)",
+  };
+
   return (
     <div>
-      <div className="section-title">{latestRev} vs v0.4.1</div>
-      <div style={{ border: "1px solid var(--line)", borderRadius: 6, overflow: "hidden" }}>
-        <div className="diff-row">
-          <div className="mark">4</div>
-          <div className="l" style={{ color: "var(--ink-2)" }}>
-            ## When to use
-          </div>
-        </div>
-        <div className="diff-row del">
-          <div className="mark">-</div>
-          <div className="l">- for simple function extractions only</div>
-        </div>
-        <div className="diff-row add">
-          <div className="mark">+</div>
-          <div className="l">+ for both function + module-level refactors</div>
-        </div>
-        <div className="diff-row add">
-          <div className="mark">+</div>
-          <div className="l">+ pairs well with rust-test-harness for verification</div>
-        </div>
-        <div className="diff-row">
-          <div className="mark">7</div>
-          <div className="l" style={{ color: "var(--ink-2)" }}>
-            ## Preconditions
-          </div>
-        </div>
-        <div className="diff-row del">
-          <div className="mark">-</div>
-          <div className="l">- all tests green on HEAD</div>
-        </div>
-        <div className="diff-row add">
-          <div className="mark">+</div>
-          <div className="l">+ all tests green on HEAD OR baseline noted in capture</div>
-        </div>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+        <input
+          style={inputStyle}
+          placeholder="rev_a (default: prev)"
+          value={revA}
+          onChange={(e) => setRevA(e.target.value)}
+        />
+        <span style={{ color: "var(--ink-3)", fontSize: 11 }}>→</span>
+        <input
+          style={inputStyle}
+          placeholder="rev_b (default: HEAD)"
+          value={revB}
+          onChange={(e) => setRevB(e.target.value)}
+        />
       </div>
+
+      {loading && (
+        <div style={{ color: "var(--ink-3)", fontSize: 12 }}>Loading diff…</div>
+      )}
+      {error && (
+        <div style={{ color: "var(--err)", fontSize: 11, fontFamily: "var(--font-mono)" }}>
+          {error}
+        </div>
+      )}
+
+      {!loading && files !== null && (
+        <>
+          {header && <div className="section-title">{header}</div>}
+          {files.length === 0 ? (
+            <div style={{ color: "var(--ink-3)", fontSize: 12 }}>
+              No changes in skills/{skillName}/
+            </div>
+          ) : (
+            files.map((file) => (
+              <div key={file.path} style={{ marginBottom: 16 }}>
+                <div
+                  className="mono"
+                  style={{ fontSize: 11, color: "var(--ink-2)", marginBottom: 4 }}
+                >
+                  {file.path}{" "}
+                  <span style={{ color: "var(--ok)" }}>+{file.added}</span>{" "}
+                  <span style={{ color: "var(--err)" }}>-{file.removed}</span>
+                </div>
+                <div style={{ border: "1px solid var(--line)", borderRadius: 6, overflow: "hidden" }}>
+                  {file.hunks.map((hunk, hi) => (
+                    <div key={hi}>
+                      <div className="diff-row" style={{ background: "var(--bg-1)" }}>
+                        <div className="mark" />
+                        <div className="l" style={{ color: "var(--ink-3)" }}>{hunk.header}</div>
+                      </div>
+                      {hunk.lines.map((line, li) => (
+                        <div
+                          key={li}
+                          className={`diff-row${line.startsWith("+") ? " add" : line.startsWith("-") ? " del" : ""}`}
+                        >
+                          <div className="mark">
+                            {line.startsWith("+") ? "+" : line.startsWith("-") ? "-" : ""}
+                          </div>
+                          <div className="l">{line.slice(1)}</div>
+                        </div>
+                      ))}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))
+          )}
+        </>
+      )}
     </div>
   );
 }

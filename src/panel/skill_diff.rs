@@ -193,16 +193,19 @@ pub(super) fn parse_unified_diff(diff_text: &str) -> Vec<serde_json::Value> {
                 // h_count is intentionally NOT reset here — cap is per file, not per hunk
             }
             h_hdr = line.to_string();
-        } else if line.starts_with('+') && !line.starts_with("+++ ") {
-            // Guard against matching the `+++ b/file` header — real headers always
-            // have a space after `+++`; content lines starting with `++` must not
-            // be silently dropped.
+        } else if !h_hdr.is_empty() && line.starts_with('+') {
+            // Inside a hunk (we've seen `@@`), any `+`-prefixed line is an
+            // addition. Headers like `+++ b/file` only appear BEFORE the first
+            // `@@`, where h_hdr is still empty and this branch is skipped —
+            // so we don't need the fragile `!starts_with("+++ ")` string match,
+            // which incorrectly dropped content lines such as `++ i;` (which
+            // appears as `+++ i;` in unified diff).
             f_added += 1;
             if h_count < MAX_HUNK_LINES {
                 h_lines.push(line.to_string());
                 h_count += 1;
             }
-        } else if line.starts_with('-') && !line.starts_with("--- ") {
+        } else if !h_hdr.is_empty() && line.starts_with('-') {
             f_removed += 1;
             if h_count < MAX_HUNK_LINES {
                 h_lines.push(line.to_string());
@@ -475,22 +478,31 @@ index abc1234..def5678 100644
 
     #[test]
     fn parse_unified_diff_preserves_double_plus_minus_content() {
-        // A source file line starting with `++` appears as `+++...` in the diff.
-        // The old `!starts_with("+++")` check would drop it; the fixed check
-        // `!starts_with("+++ ")` (with trailing space) keeps it.
+        // A source file line starting with `++` or `--` appears as `+++…` /
+        // `---…` in unified diff output. Header detection must use hunk state
+        // (only treat `+++ b/…` / `--- a/…` as headers BEFORE the first `@@`),
+        // not a prefix string match — otherwise real code lines get dropped.
+        //
+        // Covered content shapes:
+        //   - `++content`          → `+++content`        (no space)
+        //   - `++ i;`              → `+++ i;`            (space after +++)  ← Codex P1
+        //   - `--code`             → `---code`           (no space, deletion)
+        //   - `-- old;`            → `--- old;`          (space after ---, deletion)
         let diff = "\
 diff --git a/skills/foo/foo.md b/skills/foo/foo.md
 index abc1234..def5678 100644
 --- a/skills/foo/foo.md
 +++ b/skills/foo/foo.md
-@@ -1,2 +1,3 @@
+@@ -1,3 +1,3 @@
  context
--old line
-+++content that starts with ++
+--- old;
+---deletion with no space
++++ i;
++++addition with no space
 ";
         let files = parse_unified_diff(diff);
-        assert_eq!(files[0]["removed"], json!(1));
-        assert_eq!(files[0]["added"], json!(1));
+        assert_eq!(files[0]["removed"], json!(2));
+        assert_eq!(files[0]["added"], json!(2));
         let hunks = files[0]["hunks"].as_array().unwrap();
         let lines: Vec<&str> = hunks[0]["lines"]
             .as_array()
@@ -499,8 +511,20 @@ index abc1234..def5678 100644
             .filter_map(|l| l.as_str())
             .collect();
         assert!(
-            lines.contains(&"+++content that starts with ++"),
-            "content line starting with ++ must not be dropped"
+            lines.contains(&"+++ i;"),
+            "addition line `++ i;` (emitted as `+++ i;`) must not be dropped"
+        );
+        assert!(
+            lines.contains(&"+++addition with no space"),
+            "addition line starting with ++ must not be dropped"
+        );
+        assert!(
+            lines.contains(&"--- old;"),
+            "deletion line `-- old;` (emitted as `--- old;`) must not be dropped"
+        );
+        assert!(
+            lines.contains(&"---deletion with no space"),
+            "deletion line starting with -- must not be dropped"
         );
     }
 

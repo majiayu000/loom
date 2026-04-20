@@ -57,8 +57,29 @@ pub(super) async fn v3_skill_history(
     let mut events = Vec::new();
     for instance_id in &instance_ids {
         let filename = format!("{instance_id}.jsonl");
-        if let Ok(obs) = paths.load_observations_file(&filename) {
-            events.extend(obs);
+        match paths.load_observations_file(&filename) {
+            Ok(mut obs) => {
+                // Cap per-file before merging so we never hold more than
+                // instances×200 events in memory regardless of file size.
+                obs.sort_by(|a, b| b.observed_at.cmp(&a.observed_at));
+                obs.truncate(200);
+                events.extend(obs);
+            }
+            Err(e) => {
+                let is_not_found = e
+                    .root_cause()
+                    .downcast_ref::<std::io::Error>()
+                    .map_or(false, |io| io.kind() == std::io::ErrorKind::NotFound);
+                if !is_not_found {
+                    return (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        v3_error(
+                            "OBS_READ_ERROR",
+                            format!("failed to read observations for {instance_id}: {e:#}"),
+                        ),
+                    );
+                }
+            }
         }
     }
 

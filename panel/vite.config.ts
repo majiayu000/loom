@@ -1,10 +1,8 @@
+/// <reference types="vitest" />
 import { defineConfig } from "vite";
 import { resolve } from "path";
 
 export default defineConfig({
-  test: {
-    environment: "jsdom",
-  },
   server: {
     port: 5173,
     proxy: {
@@ -21,5 +19,10 @@ export default defineConfig({
         landing: resolve(__dirname, "landing.html"),
       },
     },
+  },
+  test: {
+    environment: "jsdom",
+    globals: true,
+    setupFiles: ["./src/test/setup.ts"],
   },
 });

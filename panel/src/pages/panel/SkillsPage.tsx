@@ -130,6 +130,8 @@ const KIND_MAP: Record<string, LifecycleEvent["kind"]> = {
   snapshot: "snapshot",
   released: "release",
   saved: "save",
+  file_changed: "save",
+  health_changed: "snapshot",
 };
 
 function toRelative(iso: string): string {

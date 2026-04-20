@@ -141,8 +141,8 @@ fn parse_diff_git_path(line: &str) -> Option<String> {
             }
             let b_path = String::from_utf8_lossy(&decoded).into_owned();
             b_path.strip_prefix("b/").map(|s| s.to_string())
-        } else if after_a.starts_with(" b/") {
-            Some(after_a[3..].to_string())
+        } else if let Some(stripped) = after_a.strip_prefix(" b/") {
+            Some(stripped.to_string())
         } else {
             None
         }
@@ -343,18 +343,17 @@ pub(super) async fn v3_skill_diff(
     });
 
     let mut stdout_buf = Vec::with_capacity(64 * 1024);
-    if let Some(stdout) = child.stdout.take() {
-        if let Err(e) = stdout
+    if let Some(stdout) = child.stdout.take()
+        && let Err(e) = stdout
             .take(MAX_DIFF_BYTES as u64 + 1)
             .read_to_end(&mut stdout_buf)
             .await
-        {
-            let _ = child.kill().await;
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                v3_error("GIT_DIFF_FAILED", format!("reading git output: {e}")),
-            );
-        }
+    {
+        let _ = child.kill().await;
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            v3_error("GIT_DIFF_FAILED", format!("reading git output: {e}")),
+        );
     }
 
     if stdout_buf.len() > MAX_DIFF_BYTES {
@@ -502,7 +501,7 @@ index abc1234..def5678 100644
             .filter_map(|l| l.as_str())
             .collect();
         assert!(
-            lines.iter().any(|l| *l == "+++content that starts with ++"),
+            lines.contains(&"+++content that starts with ++"),
             "content line starting with ++ must not be dropped"
         );
     }

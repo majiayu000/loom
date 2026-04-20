@@ -18,10 +18,12 @@ pub(super) fn is_valid_git_rev(rev: &str) -> bool {
 
 pub(super) fn is_valid_skill_name(name: &str) -> bool {
     !name.is_empty()
+        && name != "."
+        && name != ".."
         && name.len() <= 128
         && name
             .bytes()
-            .all(|b| matches!(b, b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'-' | b'_'))
+            .all(|b| matches!(b, b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'-' | b'_' | b'.'))
 }
 
 /// Returns the SHA of the second-newest commit that touched `skill_path`, if any.
@@ -245,7 +247,7 @@ pub(super) async fn v3_skill_diff(
             StatusCode::BAD_REQUEST,
             v3_error(
                 "GIT_DIFF_FAILED",
-                "skill name must contain only [a-zA-Z0-9_-]".to_string(),
+                "skill name must contain only [a-zA-Z0-9._-]".to_string(),
             ),
         );
     }
@@ -426,6 +428,20 @@ mod tests {
             dist_dir: root.join("panel/dist"),
             panel_origin: "http://127.0.0.1:43117".to_string(),
         }
+    }
+
+    #[test]
+    fn is_valid_skill_name_accepts_dotted_names() {
+        use super::is_valid_skill_name;
+        assert!(
+            is_valid_skill_name("foo.bar"),
+            "dotted names must be accepted"
+        );
+        assert!(is_valid_skill_name("foo-bar_baz.v2"));
+        assert!(!is_valid_skill_name("."), ". must be rejected");
+        assert!(!is_valid_skill_name(".."), ".. must be rejected");
+        assert!(!is_valid_skill_name("foo/bar"), "/ must be rejected");
+        assert!(!is_valid_skill_name(""), "empty must be rejected");
     }
 
     #[test]

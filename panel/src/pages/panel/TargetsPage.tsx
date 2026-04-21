@@ -4,6 +4,7 @@ import { AgentAvatar } from "../../components/panel/AgentAvatar";
 import { PlusIcon } from "../../components/icons/nav_icons";
 import { TargetAddForm } from "../../components/panel/forms/TargetAddForm";
 import { api, ApiError, type TargetShowPayload } from "../../lib/api/client";
+import { useMutation } from "../../lib/useMutation";
 
 interface TargetsPageProps {
   targets: Target[];
@@ -17,6 +18,10 @@ interface TargetsPageProps {
 export function TargetsPage({ targets, skills, selectedTarget, onSelectTarget, onMutation, readOnly }: TargetsPageProps) {
   const [addOpen, setAddOpen] = useState(false);
   const sel = targets.find((t) => t.id === selectedTarget) ?? null;
+
+  useEffect(() => {
+    if (readOnly) setAddOpen(false);
+  }, [readOnly]);
 
   return (
     <>
@@ -114,7 +119,12 @@ export function TargetsPage({ targets, skills, selectedTarget, onSelectTarget, o
               </span>
             </div>
             <div className="card-body">
-              <TargetDetail target={sel} readOnly={readOnly} />
+              <TargetDetail
+                target={sel}
+                readOnly={readOnly}
+                onMutation={onMutation}
+                onRemoved={() => onSelectTarget(sel.id)}
+              />
             </div>
           </div>
         )}
@@ -129,8 +139,19 @@ type DetailState =
   | { kind: "ready"; payload: NonNullable<TargetShowPayload["data"]> }
   | { kind: "error"; message: string };
 
-function TargetDetail({ target, readOnly }: { target: Target; readOnly: boolean }) {
+function TargetDetail({
+  target,
+  readOnly,
+  onMutation,
+  onRemoved,
+}: {
+  target: Target;
+  readOnly: boolean;
+  onMutation: () => void;
+  onRemoved: () => void;
+}) {
   const [state, setState] = useState<DetailState>({ kind: "idle" });
+  const remove = useMutation();
 
   useEffect(() => {
     if (readOnly) {
@@ -160,9 +181,58 @@ function TargetDetail({ target, readOnly }: { target: Target; readOnly: boolean 
 
   const bindings = state.kind === "ready" ? state.payload.bindings ?? [] : [];
   const projections = state.kind === "ready" ? state.payload.projections ?? [] : [];
+  const canRemove = !readOnly && state.kind === "ready" && bindings.length === 0;
+
+  const runRemove = () => {
+    if (!canRemove) return;
+    if (!window.confirm(`Delete target ${target.id}? The target directory itself is not removed.`)) return;
+    remove.run("delete target", () => api.targetRemove(target.id), () => {
+      onRemoved();
+      onMutation();
+    });
+  };
 
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 18, fontSize: 12 }}>
+    <div>
+      <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 14 }}>
+        <button
+          className="btn ghost danger"
+          onClick={runRemove}
+          disabled={!canRemove || remove.busy}
+          title={
+            readOnly
+              ? "registry offline"
+              : state.kind !== "ready"
+              ? "load target details first"
+              : bindings.length > 0
+              ? "remove bindings that reference this target first"
+              : "delete this target"
+          }
+        >
+          {remove.busy ? "Deleting…" : "Delete target"}
+        </button>
+        {!readOnly && bindings.length > 0 && (
+          <span className="hint">Target is referenced by {bindings.length} binding{bindings.length === 1 ? "" : "s"}.</span>
+        )}
+      </div>
+      {(remove.error || remove.success) && (
+        <div
+          style={{
+            marginBottom: 12,
+            padding: "6px 10px",
+            borderRadius: 6,
+            border: "1px solid",
+            borderColor: remove.error ? "rgba(216,90,90,0.3)" : "rgba(111,183,138,0.25)",
+            background: remove.error ? "rgba(216,90,90,0.08)" : "rgba(111,183,138,0.08)",
+            color: remove.error ? "var(--err)" : "var(--ok)",
+            fontFamily: "var(--font-mono)",
+            fontSize: 11,
+          }}
+        >
+          {remove.error ?? `✓ ${remove.success}`}
+        </div>
+      )}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 18, fontSize: 12 }}>
       <div>
         <div className="section-title">Bindings → this target</div>
         {readOnly && (
@@ -209,6 +279,7 @@ function TargetDetail({ target, readOnly }: { target: Target; readOnly: boolean 
             ))}
           </ul>
         )}
+      </div>
       </div>
     </div>
   );

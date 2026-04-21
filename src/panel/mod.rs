@@ -114,6 +114,8 @@ pub async fn run_panel(ctx: AppContext, port: u16) -> Result<()> {
         .route("/api/v3/skills/{skill_name}/history", get(v3_skill_history))
         .route("/api/remote/status", get(remote_status))
         .route("/api/pending", get(pending))
+        .route("/api/ops/retry", post(ops_retry))
+        .route("/api/ops/purge", post(ops_purge))
         .route("/api/sync/push", post(sync_push))
         .route("/api/sync/pull", post(sync_pull))
         .route("/api/sync/replay", post(sync_replay))
@@ -143,9 +145,9 @@ mod tests {
         static_serve::{content_type_for, ensure_panel_dist, resolve_panel_asset_path},
     };
     use crate::cli::{
-        BindingAddArgs, CaptureArgs, Command, ProjectArgs, ProjectionMethod, SkillCommand,
-        SyncCommand, TargetAddArgs, TargetCommand, TargetOwnership, WorkspaceBindingCommand,
-        WorkspaceCommand, WorkspaceMatcherKind,
+        BindingAddArgs, CaptureArgs, Command, OpsCommand, ProjectArgs, ProjectionMethod,
+        SkillCommand, SyncCommand, TargetAddArgs, TargetCommand, TargetOwnership,
+        WorkspaceBindingCommand, WorkspaceCommand, WorkspaceMatcherKind,
     };
     use crate::state::AppContext;
     use crate::state_model::{
@@ -411,8 +413,8 @@ mod tests {
         let peer = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 40000);
         let headers = HeaderMap::new();
 
-        // Covers every mutation surface the panel exposes, including the
-        // new sync routes. Without origin headers they must all return
+        // Covers every mutation surface the panel exposes, including queue
+        // maintenance and sync routes. Without origin headers they must all return
         // UNAUTHORIZED so writes cannot be driven from an untrusted origin.
         for cmd in [
             "target.add",
@@ -421,6 +423,8 @@ mod tests {
             "workspace.binding.remove",
             "skill.project",
             "skill.capture",
+            "ops.retry",
+            "ops.purge",
             "sync.push",
             "sync.pull",
             "sync.replay",
@@ -438,6 +442,34 @@ mod tests {
             );
             assert!(payload["request_id"].as_str().is_some(), "{cmd} req id");
             assert!(payload.get("meta").is_some(), "{cmd} meta");
+        }
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn run_panel_command_exposes_pending_queue_maintenance() {
+        let (root, state) = make_test_state();
+
+        for (cmd, command) in [
+            (
+                "ops.retry",
+                Command::Ops {
+                    command: OpsCommand::Retry,
+                },
+            ),
+            (
+                "ops.purge",
+                Command::Ops {
+                    command: OpsCommand::Purge,
+                },
+            ),
+        ] {
+            let (status, Json(payload)) = run_panel_command(&state, cmd, StatusCode::OK, command);
+            assert_eq!(status, StatusCode::OK, "{cmd} status: {payload}");
+            assert_eq!(payload["ok"], json!(true), "{cmd} ok");
+            assert_eq!(payload["cmd"], json!(cmd), "{cmd} cmd");
+            assert!(payload["request_id"].as_str().is_some(), "{cmd} req id");
         }
 
         let _ = fs::remove_dir_all(root);

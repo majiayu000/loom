@@ -8,7 +8,7 @@ use axum::{
 use serde_json::json;
 
 use crate::cli::{
-    CaptureArgs, Command, ProjectArgs, ProjectionMethod, SyncCommand, TargetCommand,
+    CaptureArgs, Command, OpsCommand, ProjectArgs, ProjectionMethod, SyncCommand, TargetCommand,
     TargetOwnership, WorkspaceBindingCommand, WorkspaceCommand,
 };
 use crate::commands::{collect_skill_inventory, remote_status_payload};
@@ -331,6 +331,47 @@ pub(super) async fn v3_capture(
                 instance: req.instance,
                 message: req.message,
             }),
+        },
+    )
+}
+
+// Ops handlers expose the same pending-queue maintenance as
+// `loom ops {retry,purge}`. Keep them separate from sync routes because
+// retry returns queue before/after counts, while purge intentionally clears
+// the pending queue without touching the durable operations history.
+
+pub(super) async fn ops_retry(
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    State(state): State<PanelState>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    if let Some(response) = ensure_mutation_authorized(&state, peer, &headers, "ops.retry") {
+        return response;
+    }
+    run_panel_command(
+        &state,
+        "ops.retry",
+        StatusCode::OK,
+        Command::Ops {
+            command: OpsCommand::Retry,
+        },
+    )
+}
+
+pub(super) async fn ops_purge(
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    State(state): State<PanelState>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    if let Some(response) = ensure_mutation_authorized(&state, peer, &headers, "ops.purge") {
+        return response;
+    }
+    run_panel_command(
+        &state,
+        "ops.purge",
+        StatusCode::OK,
+        Command::Ops {
+            command: OpsCommand::Purge,
         },
     )
 }

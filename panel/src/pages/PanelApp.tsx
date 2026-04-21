@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import type { PanelPageKey, ProjectionLink, ProjectionMethod, TweakState, VizMode } from "../lib/types";
 import { usePanelData } from "../lib/api/usePanelData";
-import { BINDINGS, OPS, SKILLS, TARGETS } from "../lib/mock_data";
 import { Sidebar } from "../components/panel/Sidebar";
 import { Topbar } from "../components/panel/Topbar";
 import { TweakPanel } from "../components/panel/TweakPanel";
@@ -11,7 +10,6 @@ import { TargetsPage } from "./panel/TargetsPage";
 import { BindingsPage } from "./panel/BindingsPage";
 import { HistoryPage } from "./panel/HistoryPage";
 import { OpsPage } from "./panel/OpsPage";
-import { PlaceholderPage } from "./panel/PlaceholderPage";
 import { SettingsPage } from "./panel/SettingsPage";
 import { SyncPage } from "./panel/SyncPage";
 
@@ -93,54 +91,34 @@ export function PanelApp() {
     setSelectedSkill(null);
   };
 
-  // Data source rule (cf. Codex P1 on PR #7):
-  //   - live.live=true  -> ALWAYS show live data verbatim, even when lists
-  //     are empty. An empty real registry is a legitimate state and must
-  //     render as "0 targets" rather than silently swapping in mock rows.
-  //   - live.live=false -> mock data as placeholder preview + explicit
-  //     offline banner in <MockBanner>.
-  // Writes are only enabled when live=true, so users can never act on
-  // nonexistent mock IDs and hit confusing mutation errors.
-  const usingMock = !live.live;
-  const skills = usingMock ? SKILLS : live.skills;
-  const targets = usingMock ? TARGETS : live.targets;
-  const bindings = usingMock ? BINDINGS : live.bindings;
-  const ops = usingMock ? OPS : live.ops;
+  // Never substitute local examples for registry data. If the API is offline,
+  // render empty live state with an explicit banner so the panel cannot
+  // masquerade any fabricated skills as a real registry.
+  const skills = live.skills;
+  const targets = live.targets;
+  const bindings = live.bindings;
+  const ops = live.ops;
 
   // Projection links for the graph:
-  //   - live mode: use V3Projection.method verbatim (authoritative).
-  //   - mock mode: derive from SKILLS.targets; the MockBanner already warns
-  //     the user the data is synthetic, so a deterministic hash-based
-  //     method distribution is acceptable purely for visual variety.
-  const mockMethods: ProjectionMethod[] = ["symlink", "copy", "materialize"];
+  //   - use V3Projection.method verbatim (authoritative).
   const projectionLinks: ProjectionLink[] = useMemo(() => {
-    if (!usingMock) {
-      return live.projections.map((p) => {
-        const method: ProjectionMethod =
-          p.method === "symlink" || p.method === "copy" || p.method === "materialize"
-            ? p.method
-            : "symlink";
-        return { skillId: p.skill_id, targetId: p.target_id, method };
-      });
-    }
-    const out: ProjectionLink[] = [];
-    for (const s of skills) {
-      for (const tid of s.targets) {
-        out.push({
-          skillId: s.id,
-          targetId: tid,
-          method: mockMethods[(s.id.length + tid.length) % 3],
-        });
-      }
-    }
-    return out;
-  }, [usingMock, live.projections, skills]);
+    return live.projections.map((p) => {
+      const method: ProjectionMethod =
+        p.method === "symlink" || p.method === "copy" || p.method === "materialize"
+          ? p.method
+          : "symlink";
+      return { skillId: `s-${p.skill_id}`, targetId: p.target_id, method };
+    });
+  }, [live.projections]);
 
   const densityClass = tweaks.density === "dense" ? " dense" : tweaks.density === "cozy" ? " cozy" : "";
 
-  const readOnly = usingMock;
+  const readOnly = !live.live;
   const onMutation = live.refetch;
+  const onNewTarget = () => setPage("targets");
   const onNewBinding = () => setPage("bindings");
+  const onOpenSync = () => setPage("sync");
+  const onViewActivity = () => setPage("ops");
 
   let view: React.ReactNode;
   switch (page) {
@@ -159,7 +137,10 @@ export function PanelApp() {
           onSelectTarget={toggleTarget}
           registryRoot={live.registryRoot}
           onMutation={onMutation}
+          onNewTarget={onNewTarget}
           onNewBinding={onNewBinding}
+          onViewActivity={onViewActivity}
+          onOpenSync={onOpenSync}
           readOnly={readOnly}
         />
       );
@@ -193,10 +174,10 @@ export function PanelApp() {
       view = <BindingsPage bindings={bindings} targets={targets} onMutation={onMutation} readOnly={readOnly} />;
       break;
     case "ops":
-      view = <OpsPage ops={ops} />;
+      view = <OpsPage ops={ops} onMutation={onMutation} readOnly={readOnly} />;
       break;
     case "history":
-      view = <HistoryPage live={live.live} />;
+      view = <HistoryPage live={live.live} mode={live.mode} />;
       break;
     case "sync":
       view = (
@@ -210,10 +191,8 @@ export function PanelApp() {
       );
       break;
     case "settings":
-      view = <SettingsPage live={live.live} registryRoot={live.registryRoot} />;
+      view = <SettingsPage live={live.live} mode={live.mode} registryRoot={live.registryRoot} />;
       break;
-    default:
-      view = <PlaceholderPage page={page} />;
   }
 
   return (
@@ -223,6 +202,7 @@ export function PanelApp() {
         live={live.live}
         loading={live.loading}
         error={live.error}
+        mode={live.mode}
         registryRoot={live.registryRoot}
         remoteState={live.remote?.sync_state}
         pendingCount={live.pendingCount}
@@ -242,7 +222,7 @@ export function PanelApp() {
         registryRoot={live.registryRoot}
       />
       <div className="main">
-        {usingMock && <MockBanner error={live.error} loading={live.loading} />}
+        {(live.loading || live.mode !== "live") && <LiveDataBanner error={live.error} loading={live.loading} mode={live.mode} />}
         {view}
       </div>
       <button
@@ -269,8 +249,16 @@ export function PanelApp() {
   );
 }
 
-function MockBanner({ error, loading }: { error: string | null; loading: boolean }) {
-  if (loading) {
+function LiveDataBanner({
+  error,
+  loading,
+  mode,
+}: {
+  error: string | null;
+  loading: boolean;
+  mode: "live" | "offline-empty" | "offline-stale";
+}) {
+  if (loading && mode === "offline-empty") {
     return (
       <div
         style={{
@@ -286,23 +274,32 @@ function MockBanner({ error, loading }: { error: string | null; loading: boolean
       </div>
     );
   }
+
+  const tone = mode === "offline-stale" ? "rgba(216,90,90,0.08)" : "rgba(230,180,80,0.08)";
+  const border = mode === "offline-stale" ? "rgba(216,90,90,0.25)" : "rgba(230,180,80,0.25)";
+  const label = mode === "offline-stale" ? "⚠ live API offline — showing last known data" : "⚠ live API offline";
+  const body =
+    mode === "offline-stale"
+      ? error
+        ? `/api unreachable — ${error}. The panel is keeping the last successful registry snapshot in read-only mode.`
+        : "The live API is unavailable. The panel is keeping the last successful registry snapshot in read-only mode."
+      : error
+      ? `/api unreachable — ${error}. Start \`loom panel\` or the panel backend to see real registry data.`
+      : "Registry API is unavailable. No real registry rows are being shown.";
+
   return (
     <div
       style={{
         padding: "8px 28px",
-        background: "rgba(230,180,80,0.08)",
-        borderBottom: "1px solid rgba(230,180,80,0.25)",
+        background: tone,
+        borderBottom: `1px solid ${border}`,
         fontFamily: "var(--font-mono)",
         fontSize: 11,
-        color: "var(--warn)",
+        color: mode === "offline-stale" ? "var(--err)" : "var(--warn)",
       }}
     >
-      <span style={{ color: "var(--warn)", marginRight: 6 }}>⚠ mock data</span>
-      <span style={{ color: "var(--ink-2)" }}>
-        {error
-          ? `Registry state unavailable — ${error}. Start with \`loom panel\` to see real registry.`
-          : "Registry is empty or unreachable — showing sample data."}
-      </span>
+      <span style={{ marginRight: 6 }}>{label}</span>
+      <span style={{ color: "var(--ink-2)" }}>{body}</span>
     </div>
   );
 }

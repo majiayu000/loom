@@ -1,9 +1,11 @@
 import { useEffect, useState } from "react";
+import type { PanelDataMode } from "../../lib/api/usePanelData";
 import type { InfoPayload } from "../../types";
 import { api, ApiError } from "../../lib/api/client";
 
 interface SettingsPageProps {
   live: boolean;
+  mode: PanelDataMode;
   registryRoot: string | null;
 }
 
@@ -13,11 +15,16 @@ type InfoState =
   | { kind: "ready"; info: InfoPayload }
   | { kind: "error"; message: string };
 
-export function SettingsPage({ live, registryRoot }: SettingsPageProps) {
+export function SettingsPage({ live, mode, registryRoot }: SettingsPageProps) {
   const [info, setInfo] = useState<InfoState>({ kind: "idle" });
   const [cleared, setCleared] = useState(false);
 
   useEffect(() => {
+    if (!live) {
+      setInfo({ kind: "idle" });
+      return;
+    }
+
     const controller = new AbortController();
     setInfo({ kind: "loading" });
     api
@@ -33,6 +40,11 @@ export function SettingsPage({ live, registryRoot }: SettingsPageProps) {
       });
     return () => controller.abort();
   }, [live]);
+
+  const offlineHint =
+    mode === "offline-stale"
+      ? "Settings are in read-only mode because the live API is offline. Registry paths below show the last known panel context."
+      : "Settings need the live panel API. Start `loom panel` to load the current registry paths.";
 
   const resetTweaks = () => {
     localStorage.removeItem("loom.tweaks");
@@ -66,6 +78,7 @@ export function SettingsPage({ live, registryRoot }: SettingsPageProps) {
         </div>
       </div>
       <div className="page-body">
+        {!live && <div className="empty" style={{ marginBottom: 16 }}>{offlineHint}</div>}
         <div className="card" style={{ marginBottom: 16 }}>
           <div className="card-head">
             <h3>Registry paths</h3>

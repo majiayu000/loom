@@ -267,6 +267,9 @@ export const api = {
     parseRemoteStatusResponse("/api/remote/status", await getJson<unknown>("/api/remote/status", signal)),
   pending: (signal?: AbortSignal) => getJson<PendingPayload>("/api/pending", signal),
 
+  opsRetry: () => postJson("/api/ops/retry", {}),
+  opsPurge: () => postJson("/api/ops/purge", {}),
+
   targetAdd: (body: TargetAddBody) => postJson("/api/v3/targets", body),
   targetRemove: (targetId: string) => postJson(`/api/v3/targets/${encodeURIComponent(targetId)}/remove`, {}),
   bindingAdd: (body: BindingAddBody) => postJson("/api/v3/bindings", body),

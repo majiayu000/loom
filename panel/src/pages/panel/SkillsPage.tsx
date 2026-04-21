@@ -20,12 +20,19 @@ export function SkillsPage({ skills, targets, bindings, selectedSkill, onSelectS
   const filtered = skills.filter((s) => s.name.includes(q) || s.tag.includes(q));
   const sel = skills.find((s) => s.id === selectedSkill) ?? skills[0];
   const capture = useMutation();
+  const captureDisabled = capture.busy || readOnly || !sel;
+  const emptyMessage = readOnly
+    ? "Live registry API is offline. Start the panel backend to load real skills."
+    : q
+    ? "No skills match the current filter."
+    : "No skills in this registry yet.";
 
   const runCapture = () => {
+    if (!sel) return;
     const skillName = sel?.name;
     capture.run(
-      `capture ${skillName ?? "all pending"}`,
-      () => api.capture(skillName ? { skill: skillName } : {}),
+      `capture ${skillName}`,
+      () => api.capture({ skill: skillName }),
       onMutation,
     );
   };
@@ -45,7 +52,12 @@ export function SkillsPage({ skills, targets, bindings, selectedSkill, onSelectS
             <input placeholder="Filter skills…" value={q} onChange={(e) => setQ(e.target.value)} />
             <kbd>⌘K</kbd>
           </div>
-          <button className="btn primary" onClick={runCapture} disabled={capture.busy || readOnly} title={readOnly ? "registry offline" : undefined}>
+          <button
+            className="btn primary"
+            onClick={runCapture}
+            disabled={captureDisabled}
+            title={readOnly ? "registry offline" : !sel ? "select a skill first" : undefined}
+          >
             <PlusIcon /> {capture.busy ? "capturing…" : "Capture"}
           </button>
         </div>
@@ -95,6 +107,13 @@ export function SkillsPage({ skills, targets, bindings, selectedSkill, onSelectS
                     <td className="mono dim">{s.changed}</td>
                   </tr>
                 ))}
+                {filtered.length === 0 && (
+                  <tr>
+                    <td colSpan={6} style={{ color: "var(--ink-3)", padding: 22, textAlign: "center" }}>
+                      {emptyMessage}
+                    </td>
+                  </tr>
+                )}
               </tbody>
             </table>
           </div>
@@ -102,7 +121,7 @@ export function SkillsPage({ skills, targets, bindings, selectedSkill, onSelectS
             {sel ? (
               <SkillDetail skill={sel} targets={targets} bindings={bindings} />
             ) : (
-              <div className="empty">Select a skill.</div>
+              <div className="empty">{emptyMessage}</div>
             )}
           </div>
         </div>
@@ -110,8 +129,6 @@ export function SkillsPage({ skills, targets, bindings, selectedSkill, onSelectS
     </>
   );
 }
-
-type DetailTab = "history" | "diff" | "targets";
 
 function summarizePolicy(skillBindings: Binding[]): string {
   if (skillBindings.length === 0) return "— (no bindings)";
@@ -123,6 +140,8 @@ function summarizePolicy(skillBindings: Binding[]): string {
   if (kinds.length === 1) return `${kinds[0]} · ${skillBindings.length} binding${skillBindings.length === 1 ? "" : "s"}`;
   return kinds.map((k) => `${counts[k]} ${k}`).join(" · ");
 }
+
+type DetailTab = "history" | "diff" | "targets";
 
 interface LifecycleEvent {
   kind: "release" | "capture" | "save" | "snapshot" | "project";
@@ -170,6 +189,7 @@ function mapObsToLifecycle(ev: V3ObservationEvent): LifecycleEvent {
     desc: ev.path ?? (ev.from && ev.to ? `${ev.from} → ${ev.to}` : ev.kind),
   };
 }
+
 
 function SkillDetail({ skill, targets, bindings }: { skill: Skill; targets: Target[]; bindings: Binding[] }) {
   const [tab, setTab] = useState<DetailTab>("history");
@@ -415,6 +435,10 @@ function SkillDiff({ skillName }: { skillName: string }) {
 }
 
 function TargetsTab({ targets }: { targets: Target[] }) {
+  if (targets.length === 0) {
+    return <div className="empty" style={{ padding: "18px 4px" }}>This skill is not projected to any target.</div>;
+  }
+
   return (
     <div>
       {targets.map((t) => (

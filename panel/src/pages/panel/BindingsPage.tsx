@@ -4,6 +4,7 @@ import { AgentAvatar } from "../../components/panel/AgentAvatar";
 import { PlusIcon } from "../../components/icons/nav_icons";
 import { BindingAddForm } from "../../components/panel/forms/BindingAddForm";
 import { api, ApiError, type BindingShowPayload } from "../../lib/api/client";
+import { useMutation } from "../../lib/useMutation";
 
 interface BindingsPageProps {
   bindings: Binding[];
@@ -16,6 +17,10 @@ export function BindingsPage({ bindings, targets, onMutation, readOnly }: Bindin
   const [addOpen, setAddOpen] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const sel = bindings.find((b) => b.id === selectedId) ?? null;
+
+  useEffect(() => {
+    if (readOnly) setAddOpen(false);
+  }, [readOnly]);
 
   return (
     <>
@@ -105,7 +110,13 @@ export function BindingsPage({ bindings, targets, onMutation, readOnly }: Bindin
           </div>
           <div style={{ padding: 20, overflow: "auto" }}>
             {sel ? (
-              <BindingDetail binding={sel} targets={targets} />
+              <BindingDetail
+                binding={sel}
+                targets={targets}
+                readOnly={readOnly}
+                onMutation={onMutation}
+                onRemoved={() => setSelectedId(null)}
+              />
             ) : (
               <div className="empty">Select a binding to inspect its rules, projections, and default target.</div>
             )}
@@ -122,10 +133,29 @@ type DetailState =
   | { kind: "ready"; payload: NonNullable<BindingShowPayload["data"]> }
   | { kind: "error"; message: string };
 
-function BindingDetail({ binding, targets }: { binding: Binding; targets: Target[] }) {
+function BindingDetail({
+  binding,
+  targets,
+  readOnly,
+  onMutation,
+  onRemoved,
+}: {
+  binding: Binding;
+  targets: Target[];
+  readOnly: boolean;
+  onMutation: () => void;
+  onRemoved: () => void;
+}) {
   const [state, setState] = useState<DetailState>({ kind: "idle" });
+  const project = useMutation();
+  const remove = useMutation();
 
   useEffect(() => {
+    if (readOnly) {
+      setState({ kind: "idle" });
+      return;
+    }
+
     const controller = new AbortController();
     setState({ kind: "loading" });
     api
@@ -144,11 +174,37 @@ function BindingDetail({ binding, targets }: { binding: Binding; targets: Target
         setState({ kind: "error", message });
       });
     return () => controller.abort();
-  }, [binding.id]);
+  }, [binding.id, readOnly]);
 
   const t = targets.find((x) => x.id === binding.target);
   const rules = state.kind === "ready" ? state.payload.rules ?? [] : [];
   const projections = state.kind === "ready" ? state.payload.projections ?? [] : [];
+  const canProject = !readOnly && binding.skill !== "—" && Boolean(t);
+  const actionBusy = project.busy || remove.busy;
+
+  const runProject = () => {
+    if (!canProject) return;
+    project.run(
+      `project ${binding.skill}`,
+      () =>
+        api.project({
+          skill: binding.skill,
+          binding: binding.id,
+          target: binding.target,
+          method: binding.method,
+        }),
+      onMutation,
+    );
+  };
+
+  const runRemove = () => {
+    if (readOnly) return;
+    if (!window.confirm(`Delete binding ${binding.id}? This removes the binding metadata from the registry.`)) return;
+    remove.run("delete binding", () => api.bindingRemove(binding.id), () => {
+      onRemoved();
+      onMutation();
+    });
+  };
 
   return (
     <div className="detail">
@@ -156,6 +212,49 @@ function BindingDetail({ binding, targets }: { binding: Binding; targets: Target
       <div className="dpath">
         {binding.skill} → {binding.target}
       </div>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", margin: "14px 0" }}>
+        <button
+          className="btn primary"
+          onClick={runProject}
+          disabled={!canProject || actionBusy}
+          title={
+            readOnly
+              ? "registry offline"
+              : binding.skill === "—"
+              ? "binding has no skill rule"
+              : !t
+              ? "binding target is missing"
+              : "project this binding to its target"
+          }
+        >
+          {project.busy ? "Projecting…" : "Project now"}
+        </button>
+        <button
+          className="btn ghost danger"
+          onClick={runRemove}
+          disabled={readOnly || actionBusy}
+          title={readOnly ? "registry offline" : "delete this binding"}
+        >
+          {remove.busy ? "Deleting…" : "Delete binding"}
+        </button>
+      </div>
+      {(project.error || project.success || remove.error || remove.success) && (
+        <div
+          style={{
+            marginBottom: 12,
+            padding: "6px 10px",
+            borderRadius: 6,
+            border: "1px solid",
+            borderColor: project.error || remove.error ? "rgba(216,90,90,0.3)" : "rgba(111,183,138,0.25)",
+            background: project.error || remove.error ? "rgba(216,90,90,0.08)" : "rgba(111,183,138,0.08)",
+            color: project.error || remove.error ? "var(--err)" : "var(--ok)",
+            fontFamily: "var(--font-mono)",
+            fontSize: 11,
+          }}
+        >
+          {project.error ?? remove.error ?? `✓ ${project.success ?? remove.success}`}
+        </div>
+      )}
       <div className="kv">
         <div className="k">Skill</div>
         <div className="v">{binding.skill}</div>
@@ -173,10 +272,13 @@ function BindingDetail({ binding, targets }: { binding: Binding; targets: Target
 
       <div style={{ marginTop: 18 }}>
         <div className="section-title">Rules on chain</div>
+        {readOnly && (
+          <div className="empty">Registry offline. Start with <span className="mono">loom panel</span> to load live binding rules.</div>
+        )}
         {state.kind === "loading" && <div className="empty mono">loading…</div>}
         {state.kind === "error" && <div className="empty" style={{ color: "var(--err)" }}>{state.message}</div>}
-        {state.kind === "ready" && rules.length === 0 && <div className="empty">No rules bound.</div>}
-        {state.kind === "ready" && rules.length > 0 && (
+        {!readOnly && state.kind === "ready" && rules.length === 0 && <div className="empty">No rules bound.</div>}
+        {!readOnly && state.kind === "ready" && rules.length > 0 && (
           <ul style={{ fontSize: 12, paddingLeft: 0, listStyle: "none" }}>
             {rules.map((r, i) => (
               <li key={i} style={{ padding: "6px 0", borderBottom: "1px solid var(--line-soft)" }}>
@@ -194,11 +296,14 @@ function BindingDetail({ binding, targets }: { binding: Binding; targets: Target
 
       <div style={{ marginTop: 18 }}>
         <div className="section-title">Projections</div>
+        {readOnly && (
+          <div className="empty">Registry offline. Start with <span className="mono">loom panel</span> to load live projections.</div>
+        )}
         {state.kind === "loading" && <div className="empty mono">loading…</div>}
-        {state.kind === "ready" && projections.length === 0 && (
+        {!readOnly && state.kind === "ready" && projections.length === 0 && (
           <div className="empty">No projections realized yet for this binding.</div>
         )}
-        {state.kind === "ready" && projections.length > 0 && (
+        {!readOnly && state.kind === "ready" && projections.length > 0 && (
           <ul style={{ fontSize: 12, paddingLeft: 0, listStyle: "none" }}>
             {projections.map((p, i) => (
               <li key={i} style={{ padding: "6px 0", borderBottom: "1px solid var(--line-soft)" }}>

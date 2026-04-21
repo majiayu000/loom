@@ -54,7 +54,7 @@ export function SyncPage({ remote, pendingCount, registryRoot, readOnly, onMutat
           <Kpi label="Ahead" value={remote?.ahead ?? 0} />
           <Kpi label="Behind" value={remote?.behind ?? 0} />
           <Kpi
-            label="Pending ops"
+            label="Pending writes"
             value={pendingCount}
             tone={pendingCount > 0 ? "pending" : undefined}
           />
@@ -130,7 +130,7 @@ export function SyncPage({ remote, pendingCount, registryRoot, readOnly, onMutat
               className="btn ghost"
               disabled={readOnly}
               onClick={onMutation}
-              title="re-fetch remote status + pending ops"
+              title="re-fetch remote status + pending writes"
             >
               <RefreshIcon /> Refresh
             </button>

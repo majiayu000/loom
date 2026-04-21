@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import type { PanelDataMode } from "../../lib/api/usePanelData";
 import { api, ApiError, type OpsPayload, type V3OperationRecord } from "../../lib/api/client";
 
 type FilterKey = "all" | "pending" | "ok" | "err";
@@ -11,14 +12,20 @@ type LoadState =
 
 interface HistoryPageProps {
   live: boolean;
+  mode: PanelDataMode;
 }
 
-export function HistoryPage({ live }: HistoryPageProps) {
+export function HistoryPage({ live, mode }: HistoryPageProps) {
   const [state, setState] = useState<LoadState>({ kind: "idle" });
   const [filter, setFilter] = useState<FilterKey>("all");
   const [query, setQuery] = useState("");
 
   useEffect(() => {
+    if (!live) {
+      setState({ kind: "idle" });
+      return;
+    }
+
     const controller = new AbortController();
     setState({ kind: "loading" });
     api
@@ -26,7 +33,7 @@ export function HistoryPage({ live }: HistoryPageProps) {
       .then((res) => {
         if (controller.signal.aborted) return;
         if (!res.ok || !res.data) {
-          setState({ kind: "error", message: res.error?.message ?? "ops fetch returned ok=false" });
+          setState({ kind: "error", message: res.error?.message ?? "activity fetch returned ok=false" });
           return;
         }
         setState({ kind: "ready", payload: res.data });
@@ -38,6 +45,11 @@ export function HistoryPage({ live }: HistoryPageProps) {
       });
     return () => controller.abort();
   }, [live]);
+
+  const offlineHint =
+    mode === "offline-stale"
+      ? "Activity history is unavailable while the live API is offline. The panel is keeping the last known overview data in read-only mode."
+      : "Activity history needs the live panel API. Start `loom panel` to load real registry activity.";
 
   const operations = state.kind === "ready" ? state.payload.operations : [];
   const ordered = useMemo(
@@ -78,10 +90,10 @@ export function HistoryPage({ live }: HistoryPageProps) {
     <>
       <div className="page-header">
         <div className="title-block">
-          <h1>Ops history</h1>
+          <h1>Activity history</h1>
           <div className="subtitle">
-            Every mutation Loom has applied to the registry, oldest writes first on disk. Pending ops also surface in the
-            Ops tab; failed ops point to a replay with <span className="mono">loom sync replay</span>.
+            Every registry change Loom has recorded. Pending work also appears in Activity; failed work points to a replay with{" "}
+            <span className="mono">loom sync replay</span>.
           </div>
         </div>
         <div className="header-actions">
@@ -109,8 +121,9 @@ export function HistoryPage({ live }: HistoryPageProps) {
             {state.message}
           </div>
         )}
+        {!live && <div className="empty" style={{ marginBottom: 18 }}>{offlineHint}</div>}
         <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 18 }}>
-          <Kpi label="Tracked ops" value={counts.all} />
+          <Kpi label="Tracked changes" value={counts.all} />
           <Kpi label="Pending" value={counts.pending} tone={counts.pending > 0 ? "pending" : undefined} />
           <Kpi label="Succeeded" value={counts.ok} />
           <Kpi label="Failed" value={counts.err} tone={counts.err > 0 ? "err" : undefined} />
@@ -129,7 +142,7 @@ export function HistoryPage({ live }: HistoryPageProps) {
                 color: filter === k ? "var(--ink-0)" : "var(--ink-2)",
               }}
             >
-              {k === "err" ? "failed" : k}{" "}
+              {k === "err" ? "failed" : k === "ok" ? "done" : k}{" "}
               <span className="mono" style={{ color: "var(--ink-3)", marginLeft: 4 }}>
                 {counts[k]}
               </span>
@@ -148,7 +161,7 @@ export function HistoryPage({ live }: HistoryPageProps) {
           <table className="tbl">
             <thead>
               <tr>
-                <th>Op id</th>
+                <th>Change id</th>
                 <th>Intent</th>
                 <th>Status</th>
                 <th>ack</th>
@@ -168,8 +181,8 @@ export function HistoryPage({ live }: HistoryPageProps) {
                 <tr>
                   <td colSpan={6} style={{ textAlign: "center", color: "var(--ink-3)", padding: 18 }}>
                     {counts.all === 0
-                      ? "No operations recorded yet — every mutation via CLI or Panel will show up here."
-                      : "No operations match the current filter."}
+                      ? "No activity recorded yet — every CLI or Panel change will show up here."
+                      : "No activity matches the current filter."}
                   </td>
                 </tr>
               )}

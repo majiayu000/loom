@@ -178,6 +178,7 @@ export interface SkillHistoryPayload {
     events: V3ObservationEvent[];
   };
   error?: { code?: string; message?: string };
+  meta?: { warnings?: string[] };
 }
 
 export const api = {

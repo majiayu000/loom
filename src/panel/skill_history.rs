@@ -1,7 +1,7 @@
 use std::cmp::{Ordering, Reverse};
 use std::collections::BinaryHeap;
 use std::io::{BufRead, BufReader};
-use std::path::Path;
+use std::path::{Component, Path};
 
 use axum::{
     Json,
@@ -11,10 +11,17 @@ use axum::{
 use serde_json::json;
 
 use super::PanelState;
-use super::auth::{load_v3_snapshot, status_for_error_code, v3_error, v3_ok};
-use super::skill_diff::is_valid_skill_name;
+use super::auth::{load_v3_snapshot, status_for_error_code, v3_error};
 use crate::commands::collect_skill_inventory;
 use crate::state_model::{V3ObservationEvent, V3StatePaths};
+
+fn skill_name_looks_sane(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 255
+        && Path::new(name)
+            .components()
+            .all(|component| matches!(component, Component::Normal(_)))
+}
 
 /// Wrapper that orders `V3ObservationEvent` by `observed_at` (ascending) so
 /// that a `BinaryHeap<Reverse<OrdEvent>>` acts as a min-heap keyed by time.
@@ -39,12 +46,16 @@ impl Ord for OrdEvent {
 }
 
 /// Stream `path` line-by-line and return at most `limit` events with the
-/// newest `observed_at` timestamps.  Allocates O(limit) memory regardless
-/// of how many lines the file contains.
-fn load_obs_bounded(path: &Path, limit: usize) -> Result<Vec<V3ObservationEvent>, anyhow::Error> {
+/// newest `observed_at` timestamps. Allocates O(limit) memory regardless
+/// of how many lines the file contains, and records malformed lines as
+/// warnings instead of failing the whole file.
+fn load_obs_bounded(
+    path: &Path,
+    limit: usize,
+) -> Result<(Vec<V3ObservationEvent>, Vec<String>), anyhow::Error> {
     let file = match std::fs::File::open(path) {
         Ok(f) => f,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok((Vec::new(), Vec::new())),
         Err(e) => return Err(anyhow::anyhow!("failed to open {}: {}", path.display(), e)),
     };
     if file
@@ -53,9 +64,10 @@ fn load_obs_bounded(path: &Path, limit: usize) -> Result<Vec<V3ObservationEvent>
         .len()
         == 0
     {
-        return Ok(Vec::new());
+        return Ok((Vec::new(), Vec::new()));
     }
 
+    let mut warnings = Vec::new();
     // Min-heap (via Reverse) capped at `limit`; pop discards the oldest entry.
     let mut heap: BinaryHeap<Reverse<OrdEvent>> = BinaryHeap::with_capacity(limit + 1);
     let reader = BufReader::new(file);
@@ -72,33 +84,40 @@ fn load_obs_bounded(path: &Path, limit: usize) -> Result<Vec<V3ObservationEvent>
         if trimmed.is_empty() {
             continue;
         }
-        let event: V3ObservationEvent = serde_json::from_str(trimmed).map_err(|e| {
-            anyhow::anyhow!(
-                "failed to parse line {} from {}: {}",
-                idx + 1,
-                path.display(),
-                e
-            )
-        })?;
+        let event: V3ObservationEvent = match serde_json::from_str(trimmed) {
+            Ok(event) => event,
+            Err(e) => {
+                warnings.push(format!(
+                    "skipped malformed observation line {} from {}: {}",
+                    idx + 1,
+                    path.display(),
+                    e
+                ));
+                continue;
+            }
+        };
         heap.push(Reverse(OrdEvent(event)));
         if heap.len() > limit {
-            heap.pop(); // drops the oldest event
+            heap.pop();
         }
     }
 
-    Ok(heap.into_iter().map(|Reverse(OrdEvent(e))| e).collect())
+    Ok((
+        heap.into_iter().map(|Reverse(OrdEvent(e))| e).collect(),
+        warnings,
+    ))
 }
 
 pub(super) async fn v3_skill_history(
     AxumPath(skill_name): AxumPath<String>,
     State(state): State<PanelState>,
 ) -> (StatusCode, Json<serde_json::Value>) {
-    if !is_valid_skill_name(&skill_name) {
+    if !skill_name_looks_sane(&skill_name) {
         return (
             StatusCode::BAD_REQUEST,
             v3_error(
                 "ARG_INVALID",
-                "skill name must contain only [a-zA-Z0-9._-]".to_string(),
+                "skill name must be a single path segment".to_string(),
             ),
         );
     }
@@ -138,10 +157,14 @@ pub(super) async fn v3_skill_history(
 
     let paths = V3StatePaths::from_app_context(&state.ctx);
     let mut events = Vec::new();
+    let mut warnings = Vec::new();
     for instance_id in &instance_ids {
         let obs_path = paths.observations_dir.join(format!("{instance_id}.jsonl"));
         match load_obs_bounded(&obs_path, 200) {
-            Ok(obs) => events.extend(obs),
+            Ok((obs, obs_warnings)) => {
+                events.extend(obs);
+                warnings.extend(obs_warnings);
+            }
             Err(e) => {
                 return (
                     StatusCode::INTERNAL_SERVER_ERROR,
@@ -157,15 +180,29 @@ pub(super) async fn v3_skill_history(
     events.sort_by(|a, b| b.observed_at.cmp(&a.observed_at));
     events.truncate(200);
 
-    let count = events.len();
     (
         StatusCode::OK,
-        v3_ok(json!({
+        history_ok_payload(skill_name, events, warnings),
+    )
+}
+
+fn history_ok_payload(
+    skill_name: String,
+    events: Vec<V3ObservationEvent>,
+    warnings: Vec<String>,
+) -> Json<serde_json::Value> {
+    let count = events.len();
+    Json(json!({
+        "ok": true,
+        "data": {
             "skill": skill_name,
             "count": count,
             "events": events,
-        })),
-    )
+        },
+        "meta": {
+            "warnings": warnings,
+        }
+    }))
 }
 
 #[cfg(test)]
@@ -340,22 +377,77 @@ mod tests {
         assert_eq!(payload["data"]["skill"], json!("inventory-skill"));
         assert_eq!(payload["data"]["count"], json!(0));
         assert!(payload["data"]["events"].as_array().unwrap().is_empty());
+        assert!(payload["meta"]["warnings"].as_array().unwrap().is_empty());
 
         let _ = fs::remove_dir_all(&root);
     }
 
     #[tokio::test]
-    async fn returns_error_for_malformed_observation_file() {
+    async fn accepts_inventory_skill_with_spaces_and_unicode() {
+        let root = std::env::temp_dir().join(format!("loom-hist-unicode-{}", Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let _paths = setup_v3(&root);
+        let skill_name = "多词 skill";
+        add_inventory_skill(&root, skill_name);
+        let state = make_state(&root);
+
+        let (status, Json(payload)) =
+            v3_skill_history(AxumPath(skill_name.to_string()), State(state)).await;
+
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(payload["ok"], json!(true));
+        assert_eq!(payload["data"]["skill"], json!(skill_name));
+        assert_eq!(payload["data"]["count"], json!(0));
+        assert!(payload["data"]["events"].as_array().unwrap().is_empty());
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[tokio::test]
+    async fn skips_malformed_observation_lines_and_returns_valid_events() {
         let root = std::env::temp_dir().join(format!("loom-hist-bad-{}", Uuid::new_v4()));
         fs::create_dir_all(&root).unwrap();
         let paths = setup_v3(&root);
         add_skill_rule(&paths, "bad-skill");
         add_projection(&paths, "bad-skill", "inst-1");
-        fs::write(
-            paths.observations_dir.join("inst-1.jsonl"),
-            "{not valid json}\n",
-        )
-        .unwrap();
+        let file_path = paths.observations_dir.join("inst-1.jsonl");
+        fs::write(&file_path, "{not valid json}\n").unwrap();
+        append_obs(
+            &paths,
+            "inst-1",
+            &obs("ev-1", "inst-1", "captured", "2024-01-01T10:00:00Z"),
+        );
+        let state = make_state(&root);
+
+        let (status, Json(payload)) =
+            v3_skill_history(AxumPath("bad-skill".to_string()), State(state)).await;
+
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(payload["ok"], json!(true));
+        assert_eq!(payload["data"]["count"], json!(1));
+        let events = payload["data"]["events"].as_array().unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0]["event_id"], json!("ev-1"));
+        let warnings = payload["meta"]["warnings"].as_array().unwrap();
+        assert_eq!(warnings.len(), 1);
+        assert!(
+            warnings[0]
+                .as_str()
+                .unwrap()
+                .contains("skipped malformed observation line 1")
+        );
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[tokio::test]
+    async fn still_returns_error_for_unreadable_observation_file() {
+        let root = std::env::temp_dir().join(format!("loom-hist-ioerr-{}", Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let paths = setup_v3(&root);
+        add_skill_rule(&paths, "bad-skill");
+        add_projection(&paths, "bad-skill", "inst-1");
+        fs::create_dir_all(paths.observations_dir.join("inst-1.jsonl")).unwrap();
         let state = make_state(&root);
 
         let (status, Json(payload)) =

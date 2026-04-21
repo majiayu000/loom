@@ -222,7 +222,7 @@ export function PanelApp() {
         registryRoot={live.registryRoot}
       />
       <div className="main">
-        {(live.loading || live.mode !== "live") && <LiveDataBanner error={live.error} loading={live.loading} mode={live.mode} />}
+        {live.mode !== "live" && <LiveDataBanner error={live.error} loading={live.loading} mode={live.mode} />}
         {view}
       </div>
       <button

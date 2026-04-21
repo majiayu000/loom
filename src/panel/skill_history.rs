@@ -13,6 +13,7 @@ use serde_json::json;
 use super::PanelState;
 use super::auth::{load_v3_snapshot, status_for_error_code, v3_error, v3_ok};
 use super::skill_diff::is_valid_skill_name;
+use crate::commands::collect_skill_inventory;
 use crate::state_model::{V3ObservationEvent, V3StatePaths};
 
 /// Wrapper that orders `V3ObservationEvent` by `observed_at` (ascending) so
@@ -40,20 +41,11 @@ impl Ord for OrdEvent {
 /// Stream `path` line-by-line and return at most `limit` events with the
 /// newest `observed_at` timestamps.  Allocates O(limit) memory regardless
 /// of how many lines the file contains.
-fn load_obs_bounded(
-    path: &Path,
-    limit: usize,
-) -> Result<Vec<V3ObservationEvent>, anyhow::Error> {
+fn load_obs_bounded(path: &Path, limit: usize) -> Result<Vec<V3ObservationEvent>, anyhow::Error> {
     let file = match std::fs::File::open(path) {
         Ok(f) => f,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(e) => {
-            return Err(anyhow::anyhow!(
-                "failed to open {}: {}",
-                path.display(),
-                e
-            ))
-        }
+        Err(e) => return Err(anyhow::anyhow!("failed to open {}: {}", path.display(), e)),
     };
     if file
         .metadata()
@@ -69,21 +61,25 @@ fn load_obs_bounded(
     let reader = BufReader::new(file);
     for (idx, line) in reader.lines().enumerate() {
         let line = line.map_err(|e| {
-            anyhow::anyhow!("failed to read line {} from {}: {}", idx + 1, path.display(), e)
+            anyhow::anyhow!(
+                "failed to read line {} from {}: {}",
+                idx + 1,
+                path.display(),
+                e
+            )
         })?;
         let trimmed = line.trim();
         if trimmed.is_empty() {
             continue;
         }
-        let event: V3ObservationEvent =
-            serde_json::from_str(trimmed).map_err(|e| {
-                anyhow::anyhow!(
-                    "failed to parse line {} from {}: {}",
-                    idx + 1,
-                    path.display(),
-                    e
-                )
-            })?;
+        let event: V3ObservationEvent = serde_json::from_str(trimmed).map_err(|e| {
+            anyhow::anyhow!(
+                "failed to parse line {} from {}: {}",
+                idx + 1,
+                path.display(),
+                e
+            )
+        })?;
         heap.push(Reverse(OrdEvent(event)));
         if heap.len() > limit {
             heap.pop(); // drops the oldest event
@@ -128,8 +124,12 @@ pub(super) async fn v3_skill_history(
         .rules
         .iter()
         .any(|r| r.skill_id == skill_name);
+    let skill_in_inventory = collect_skill_inventory(&state.ctx)
+        .source_skills
+        .iter()
+        .any(|skill| skill == &skill_name);
 
-    if instance_ids.is_empty() && !skill_in_rules {
+    if instance_ids.is_empty() && !skill_in_rules && !skill_in_inventory {
         return (
             StatusCode::NOT_FOUND,
             v3_error("SKILL_NOT_FOUND", format!("skill '{skill_name}' not found")),
@@ -173,8 +173,7 @@ mod tests {
     use super::*;
     use crate::state::AppContext;
     use crate::state_model::{
-        V3BindingRule, V3ObservationEvent, V3ProjectionInstance, V3RulesFile,
-        V3StatePaths,
+        V3BindingRule, V3ObservationEvent, V3ProjectionInstance, V3RulesFile, V3StatePaths,
     };
     use axum::http::StatusCode;
     use axum::{
@@ -235,6 +234,17 @@ mod tests {
             updated_at: Some(now),
         });
         paths.save_projections(&existing).expect("save_projections");
+    }
+
+    fn add_inventory_skill(root: &std::path::Path, skill_id: &str) {
+        let source_dir = root.join("source-skills");
+        fs::write(
+            root.join(".env"),
+            format!("CLAUDE_SKILLS_DIR={}\n", source_dir.display()),
+        )
+        .expect("write dotenv");
+        let skill_dir = source_dir.join(skill_id);
+        fs::create_dir_all(&skill_dir).expect("create skill dir");
     }
 
     fn append_obs(paths: &V3StatePaths, instance_id: &str, event: &V3ObservationEvent) {
@@ -310,6 +320,50 @@ mod tests {
         assert_eq!(payload["data"]["skill"], json!("my-skill"));
         assert_eq!(payload["data"]["count"], json!(0));
         assert!(payload["data"]["events"].as_array().unwrap().is_empty());
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[tokio::test]
+    async fn returns_empty_events_for_inventory_skill_without_v3_bindings() {
+        let root = std::env::temp_dir().join(format!("loom-hist-inventory-{}", Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let _paths = setup_v3(&root);
+        add_inventory_skill(&root, "inventory-skill");
+        let state = make_state(&root);
+
+        let (status, Json(payload)) =
+            v3_skill_history(AxumPath("inventory-skill".to_string()), State(state)).await;
+
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(payload["ok"], json!(true));
+        assert_eq!(payload["data"]["skill"], json!("inventory-skill"));
+        assert_eq!(payload["data"]["count"], json!(0));
+        assert!(payload["data"]["events"].as_array().unwrap().is_empty());
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[tokio::test]
+    async fn returns_error_for_malformed_observation_file() {
+        let root = std::env::temp_dir().join(format!("loom-hist-bad-{}", Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let paths = setup_v3(&root);
+        add_skill_rule(&paths, "bad-skill");
+        add_projection(&paths, "bad-skill", "inst-1");
+        fs::write(
+            paths.observations_dir.join("inst-1.jsonl"),
+            "{not valid json}\n",
+        )
+        .unwrap();
+        let state = make_state(&root);
+
+        let (status, Json(payload)) =
+            v3_skill_history(AxumPath("bad-skill".to_string()), State(state)).await;
+
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(payload["ok"], json!(false));
+        assert_eq!(payload["error"]["code"], json!("OBS_READ_ERROR"));
 
         let _ = fs::remove_dir_all(&root);
     }

@@ -432,7 +432,7 @@ fn is_loom_tool_repo_root(root: &Path) -> bool {
     if !cargo_toml.exists() {
         return false;
     }
-    if !root.join("src/main.rs").exists() || !root.join("src/commands.rs").exists() {
+    if !root.join("src/main.rs").exists() || !root.join("src/commands/mod.rs").exists() {
         return false;
     }
 

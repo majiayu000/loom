@@ -83,7 +83,25 @@ export function usePanelData(): PanelLiveData {
       ]);
       if (controller.signal.aborted || generation !== generationRef.current) return;
 
-      const v3Data = v3.ok && v3.data ? v3.data : {};
+      if (!v3.ok) {
+        throw new ApiError(
+          "/api/v3/status",
+          200,
+          v3.error?.message ?? v3.error?.code ?? "GET /api/v3/status returned ok=false",
+        );
+      }
+      if (!v3.data) {
+        throw new ApiError("/api/v3/status", 200, "GET /api/v3/status returned no data");
+      }
+      if (remote.error) {
+        throw new ApiError(
+          "/api/remote/status",
+          200,
+          remote.error.message ?? remote.error.code ?? "GET /api/remote/status returned an error",
+        );
+      }
+
+      const v3Data = v3.data;
       const projections = v3Data.projections ?? [];
       const rules = v3Data.rules ?? [];
       const v3Targets = v3Data.targets ?? [];

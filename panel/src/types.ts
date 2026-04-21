@@ -48,6 +48,11 @@ export type RemotePayload = {
   sync_state?: string;
 };
 
+export type RemoteStatusError = {
+  code?: string;
+  message?: string;
+};
+
 export type PendingOp = {
   op_id?: string;
   request_id: string;

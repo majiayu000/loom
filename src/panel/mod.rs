@@ -142,7 +142,11 @@ mod tests {
         SyncCommand, TargetAddArgs, TargetCommand, TargetOwnership, WorkspaceBindingCommand,
         WorkspaceCommand, WorkspaceMatcherKind,
     };
-    use crate::state::AppContext;
+    use crate::{
+        commands::CommandFailure,
+        state::AppContext,
+        types::ErrorCode,
+    };
     use axum::{
         Json,
         http::{HeaderMap, HeaderValue, StatusCode},
@@ -414,5 +418,21 @@ mod tests {
         }
 
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn remote_status_error_shape_nests_message_and_code_under_error_object() {
+        let err = CommandFailure::new(ErrorCode::InternalError, "git status failed");
+        let payload = json!({
+            "error": {
+                "message": err.message,
+                "code": err.code.as_str()
+            }
+        });
+
+        assert_eq!(payload["error"]["code"], json!("INTERNAL_ERROR"));
+        assert_eq!(payload["error"]["message"], json!("git status failed"));
+        assert!(payload.get("code").is_none());
+        assert!(payload.get("message").is_none());
     }
 }

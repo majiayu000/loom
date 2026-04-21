@@ -3,6 +3,7 @@ import type {
   InfoPayload,
   PendingPayload,
   RemotePayload,
+  RemoteStatusError,
   V3Payload,
 } from "../../types";
 
@@ -13,6 +14,7 @@ export interface SkillsPayload {
 export interface RemoteStatusResponse {
   remote?: RemotePayload;
   warnings?: string[];
+  error?: RemoteStatusError;
 }
 
 export interface CommandEnvelope {
@@ -65,10 +67,8 @@ async function postJson(path: string, body: unknown): Promise<CommandEnvelope> {
   }
 
   if (!res.ok) {
-    const msg =
-      envelope?.error?.message ??
-      parseError ??
-      `POST ${path} returned ${res.status} ${res.statusText || ""}`.trim();
+    const statusMessage = `POST ${path} returned ${res.status} ${res.statusText || ""}`.trim();
+    const msg = envelope?.error?.message ?? statusMessage;
     throw new ApiError(path, res.status, msg);
   }
   if (!envelope) {

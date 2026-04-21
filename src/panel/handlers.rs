@@ -376,7 +376,12 @@ pub(super) async fn sync_replay(
 pub(super) async fn remote_status(State(state): State<PanelState>) -> Json<serde_json::Value> {
     match remote_status_payload(&state.ctx) {
         Ok((remote, meta)) => Json(json!({"remote": remote, "warnings": meta.warnings})),
-        Err(err) => Json(json!({"error": err.message, "code": err.code.as_str()})),
+        Err(err) => Json(json!({
+            "error": {
+                "message": err.message,
+                "code": err.code.as_str()
+            }
+        })),
     }
 }
 

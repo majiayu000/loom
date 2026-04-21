@@ -113,8 +113,12 @@ export function PanelApp() {
 
   const densityClass = tweaks.density === "dense" ? " dense" : tweaks.density === "cozy" ? " cozy" : "";
 
+  const [mutationVersion, setMutationVersion] = useState(0);
   const readOnly = !live.live;
-  const onMutation = live.refetch;
+  const onMutation = () => {
+    setMutationVersion((cur) => cur + 1);
+    live.refetch();
+  };
   const onNewTarget = () => setPage("targets");
   const onNewBinding = () => setPage("bindings");
   const onOpenSync = () => setPage("sync");
@@ -171,13 +175,21 @@ export function PanelApp() {
       );
       break;
     case "bindings":
-      view = <BindingsPage bindings={bindings} targets={targets} onMutation={onMutation} readOnly={readOnly} />;
+      view = (
+        <BindingsPage
+          bindings={bindings}
+          targets={targets}
+          onMutation={onMutation}
+          readOnly={readOnly}
+          mutationVersion={mutationVersion}
+        />
+      );
       break;
     case "ops":
       view = <OpsPage ops={ops} onMutation={onMutation} readOnly={readOnly} />;
       break;
     case "history":
-      view = <HistoryPage live={live.live} mode={live.mode} />;
+      view = <HistoryPage live={live.live} mode={live.mode} mutationVersion={mutationVersion} />;
       break;
     case "sync":
       view = (

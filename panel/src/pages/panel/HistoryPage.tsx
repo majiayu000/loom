@@ -13,9 +13,10 @@ type LoadState =
 interface HistoryPageProps {
   live: boolean;
   mode: PanelDataMode;
+  mutationVersion: number;
 }
 
-export function HistoryPage({ live, mode }: HistoryPageProps) {
+export function HistoryPage({ live, mode, mutationVersion }: HistoryPageProps) {
   const [state, setState] = useState<LoadState>({ kind: "idle" });
   const [filter, setFilter] = useState<FilterKey>("all");
   const [query, setQuery] = useState("");
@@ -44,7 +45,7 @@ export function HistoryPage({ live, mode }: HistoryPageProps) {
         setState({ kind: "error", message });
       });
     return () => controller.abort();
-  }, [live]);
+  }, [live, mutationVersion]);
 
   const offlineHint =
     mode === "offline-stale"

@@ -3,4 +3,5 @@ declare module "bun:test" {
     toBe: (expected: unknown) => void;
   };
   export const test: (name: string, fn: () => void | Promise<void>) => void;
+  export const afterAll: (fn: () => void | Promise<void>) => void;
 }

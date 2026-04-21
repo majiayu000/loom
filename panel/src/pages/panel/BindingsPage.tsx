@@ -11,9 +11,10 @@ interface BindingsPageProps {
   targets: Target[];
   onMutation: () => void;
   readOnly: boolean;
+  mutationVersion: number;
 }
 
-export function BindingsPage({ bindings, targets, onMutation, readOnly }: BindingsPageProps) {
+export function BindingsPage({ bindings, targets, onMutation, readOnly, mutationVersion }: BindingsPageProps) {
   const [addOpen, setAddOpen] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const sel = bindings.find((b) => b.id === selectedId) ?? null;
@@ -115,6 +116,7 @@ export function BindingsPage({ bindings, targets, onMutation, readOnly }: Bindin
                 targets={targets}
                 readOnly={readOnly}
                 onMutation={onMutation}
+                mutationVersion={mutationVersion}
                 onRemoved={() => setSelectedId(null)}
               />
             ) : (
@@ -138,12 +140,14 @@ function BindingDetail({
   targets,
   readOnly,
   onMutation,
+  mutationVersion,
   onRemoved,
 }: {
   binding: Binding;
   targets: Target[];
   readOnly: boolean;
   onMutation: () => void;
+  mutationVersion: number;
   onRemoved: () => void;
 }) {
   const [state, setState] = useState<DetailState>({ kind: "idle" });
@@ -174,7 +178,7 @@ function BindingDetail({
         setState({ kind: "error", message });
       });
     return () => controller.abort();
-  }, [binding.id, readOnly]);
+  }, [binding.id, mutationVersion, readOnly]);
 
   const t = targets.find((x) => x.id === binding.target);
   const rules = state.kind === "ready" ? state.payload.rules ?? [] : [];

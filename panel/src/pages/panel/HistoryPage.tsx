@@ -220,7 +220,7 @@ export function HistoryPage({ live, mode }: HistoryPageProps) {
   );
 }
 
-function bucket(op: V3OperationRecord): "pending" | "ok" | "err" {
+export function bucket(op: V3OperationRecord): "pending" | "ok" | "err" {
   if (op.last_error) return "err";
   const s = op.status.toLowerCase();
   if (s === "pending" || s === "enqueued" || s === "in_flight" || s === "retrying") return "pending";

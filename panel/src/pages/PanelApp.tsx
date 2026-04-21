@@ -249,7 +249,7 @@ export function PanelApp() {
   );
 }
 
-function LiveDataBanner({
+export function LiveDataBanner({
   error,
   loading,
   mode,
@@ -258,6 +258,8 @@ function LiveDataBanner({
   loading: boolean;
   mode: "live" | "offline-empty" | "offline-stale";
 }) {
+  if (mode === "live") return null;
+
   if (loading && mode === "offline-empty") {
     return (
       <div

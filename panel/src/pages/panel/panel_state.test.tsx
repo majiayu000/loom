@@ -7,6 +7,7 @@ import { BindingsPage } from "./BindingsPage";
 import { HistoryPage, bucket } from "./HistoryPage";
 import { TargetsPage } from "./TargetsPage";
 import { SettingsPage } from "./SettingsPage";
+import { OverviewPage } from "./OverviewPage";
 import { api, type BindingShowPayload, type OpsPayload, type TargetShowPayload, type V3OperationRecord } from "../../lib/api/client";
 import type { Binding, Skill, Target } from "../../lib/types";
 
@@ -202,6 +203,37 @@ test("HistoryPage treats succeeded operations as successful", () => {
 test("LiveDataBanner renders nothing during live refetch loading", () => {
   const html = renderToStaticMarkup(<LiveDataBanner error={null} loading={true} mode="live" />);
   expect(html).toBe("");
+});
+
+test("OverviewPage disables add binding until a target exists", async () => {
+  let renderer: ReactTestRenderer;
+  await act(async () => {
+    renderer = create(
+      <OverviewPage
+        skills={[]}
+        targets={[]}
+        ops={[]}
+        projections={[]}
+        vizMode="loom"
+        setVizMode={() => {}}
+        selectedSkill={null}
+        selectedTarget={null}
+        onSelectSkill={() => {}}
+        onSelectTarget={() => {}}
+        registryRoot={null}
+        onMutation={() => {}}
+        onNewTarget={() => {}}
+        onNewBinding={() => {}}
+        onViewActivity={() => {}}
+        onOpenSync={() => {}}
+        readOnly={false}
+      />,
+    );
+  });
+
+  const addBinding = buttonByLabel(renderer!, "Add binding");
+  expect(addBinding.props.disabled).toBe(true);
+  expect(addBinding.props.title).toBe("add a target first");
 });
 
 test("BindingsPage refetches selected binding details after a successful project", async () => {

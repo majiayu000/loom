@@ -55,6 +55,8 @@ export function OverviewPage({
   }, {});
   const rootDisplay = registryRoot ? registryRoot.replace(/^\/Users\/[^/]+/, "~") : "not connected";
   const writeGuardTone = readOnly ? "warn" : "ok";
+  const canAddBinding = !readOnly && targets.length > 0;
+  const addBindingTitle = readOnly ? "registry offline" : !canAddBinding ? "add a target first" : undefined;
 
   return (
     <>
@@ -69,7 +71,7 @@ export function OverviewPage({
           <button className="btn primary" onClick={onNewTarget} disabled={readOnly} title={readOnly ? "registry offline" : undefined}>
             <TargetIcon /> Add target
           </button>
-          <button className="btn ghost" onClick={onNewBinding} disabled={readOnly} title={readOnly ? "registry offline" : undefined}>
+          <button className="btn ghost" onClick={onNewBinding} disabled={!canAddBinding} title={addBindingTitle}>
             <PlusIcon /> Add binding
           </button>
           <button className="btn ghost" onClick={onOpenSync}>

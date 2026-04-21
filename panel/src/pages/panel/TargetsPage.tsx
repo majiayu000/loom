@@ -114,7 +114,7 @@ export function TargetsPage({ targets, skills, selectedTarget, onSelectTarget, o
               </span>
             </div>
             <div className="card-body">
-              <TargetDetail target={sel} />
+              <TargetDetail target={sel} readOnly={readOnly} />
             </div>
           </div>
         )}
@@ -129,10 +129,15 @@ type DetailState =
   | { kind: "ready"; payload: NonNullable<TargetShowPayload["data"]> }
   | { kind: "error"; message: string };
 
-function TargetDetail({ target }: { target: Target }) {
+function TargetDetail({ target, readOnly }: { target: Target; readOnly: boolean }) {
   const [state, setState] = useState<DetailState>({ kind: "idle" });
 
   useEffect(() => {
+    if (readOnly) {
+      setState({ kind: "idle" });
+      return;
+    }
+
     const controller = new AbortController();
     setState({ kind: "loading" });
     api
@@ -151,7 +156,7 @@ function TargetDetail({ target }: { target: Target }) {
         setState({ kind: "error", message });
       });
     return () => controller.abort();
-  }, [target.id]);
+  }, [readOnly, target.id]);
 
   const bindings = state.kind === "ready" ? state.payload.bindings ?? [] : [];
   const projections = state.kind === "ready" ? state.payload.projections ?? [] : [];
@@ -160,10 +165,13 @@ function TargetDetail({ target }: { target: Target }) {
     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 18, fontSize: 12 }}>
       <div>
         <div className="section-title">Bindings → this target</div>
+        {readOnly && (
+          <div className="empty">Registry offline. Start with <span className="mono">loom panel</span> to load live bindings.</div>
+        )}
         {state.kind === "loading" && <div className="empty mono">loading…</div>}
         {state.kind === "error" && <div className="empty" style={{ color: "var(--err)" }}>{state.message}</div>}
-        {state.kind === "ready" && bindings.length === 0 && <div className="empty">No bindings point here yet.</div>}
-        {state.kind === "ready" && bindings.length > 0 && (
+        {!readOnly && state.kind === "ready" && bindings.length === 0 && <div className="empty">No bindings point here yet.</div>}
+        {!readOnly && state.kind === "ready" && bindings.length > 0 && (
           <ul style={{ paddingLeft: 0, listStyle: "none" }}>
             {bindings.map((b) => (
               <li key={b.binding_id} style={{ padding: "6px 0", borderBottom: "1px solid var(--line-soft)" }}>
@@ -180,11 +188,14 @@ function TargetDetail({ target }: { target: Target }) {
       </div>
       <div>
         <div className="section-title">Projections realized</div>
+        {readOnly && (
+          <div className="empty">Registry offline. Start with <span className="mono">loom panel</span> to load live projections.</div>
+        )}
         {state.kind === "loading" && <div className="empty mono">loading…</div>}
-        {state.kind === "ready" && projections.length === 0 && (
+        {!readOnly && state.kind === "ready" && projections.length === 0 && (
           <div className="empty">No projections realized yet.</div>
         )}
-        {state.kind === "ready" && projections.length > 0 && (
+        {!readOnly && state.kind === "ready" && projections.length > 0 && (
           <ul style={{ paddingLeft: 0, listStyle: "none" }}>
             {projections.map((p, i) => (
               <li key={i} style={{ padding: "6px 0", borderBottom: "1px solid var(--line-soft)" }}>

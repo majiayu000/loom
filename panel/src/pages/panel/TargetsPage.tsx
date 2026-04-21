@@ -11,11 +11,22 @@ interface TargetsPageProps {
   skills: Skill[];
   selectedTarget: string | null;
   onSelectTarget: (id: string) => void;
+  onRemoveTarget: (id: string) => void;
   onMutation: () => void;
   readOnly: boolean;
+  mutationVersion: number;
 }
 
-export function TargetsPage({ targets, skills, selectedTarget, onSelectTarget, onMutation, readOnly }: TargetsPageProps) {
+export function TargetsPage({
+  targets,
+  skills,
+  selectedTarget,
+  onSelectTarget,
+  onRemoveTarget,
+  onMutation,
+  readOnly,
+  mutationVersion,
+}: TargetsPageProps) {
   const [addOpen, setAddOpen] = useState(false);
   const sel = targets.find((t) => t.id === selectedTarget) ?? null;
 
@@ -123,7 +134,8 @@ export function TargetsPage({ targets, skills, selectedTarget, onSelectTarget, o
                 target={sel}
                 readOnly={readOnly}
                 onMutation={onMutation}
-                onRemoved={() => onSelectTarget(sel.id)}
+                mutationVersion={mutationVersion}
+                onRemoved={onRemoveTarget}
               />
             </div>
           </div>
@@ -143,12 +155,14 @@ function TargetDetail({
   target,
   readOnly,
   onMutation,
+  mutationVersion,
   onRemoved,
 }: {
   target: Target;
   readOnly: boolean;
   onMutation: () => void;
-  onRemoved: () => void;
+  mutationVersion: number;
+  onRemoved: (id: string) => void;
 }) {
   const [state, setState] = useState<DetailState>({ kind: "idle" });
   const remove = useMutation();
@@ -177,7 +191,7 @@ function TargetDetail({
         setState({ kind: "error", message });
       });
     return () => controller.abort();
-  }, [readOnly, target.id]);
+  }, [readOnly, target.id, mutationVersion]);
 
   const bindings = state.kind === "ready" ? state.payload.bindings ?? [] : [];
   const projections = state.kind === "ready" ? state.payload.projections ?? [] : [];
@@ -187,7 +201,7 @@ function TargetDetail({
     if (!canRemove) return;
     if (!window.confirm(`Delete target ${target.id}? The target directory itself is not removed.`)) return;
     remove.run("delete target", () => api.targetRemove(target.id), () => {
-      onRemoved();
+      onRemoved(target.id);
       onMutation();
     });
   };

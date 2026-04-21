@@ -119,6 +119,9 @@ export function PanelApp() {
     setMutationVersion((cur) => cur + 1);
     live.refetch();
   };
+  const onRemoveTarget = (id: string) => {
+    setSelectedTarget((cur) => (cur === id ? null : cur));
+  };
   const onNewTarget = () => setPage("targets");
   const onNewBinding = () => setPage("bindings");
   const onOpenSync = () => setPage("sync");
@@ -169,8 +172,10 @@ export function PanelApp() {
           skills={skills}
           selectedTarget={selectedTarget}
           onSelectTarget={toggleTarget}
+          onRemoveTarget={onRemoveTarget}
           onMutation={onMutation}
           readOnly={readOnly}
+          mutationVersion={mutationVersion}
         />
       );
       break;

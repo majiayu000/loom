@@ -77,7 +77,7 @@ function makeOperation(status: string, ack = false, opId = "op_123", intent = "s
   };
 }
 
-function makeTarget(): Target {
+function makeTarget(overrides: Partial<Target> = {}): Target {
   return {
     id: "target-1",
     agent: "claude",
@@ -86,6 +86,7 @@ function makeTarget(): Target {
     ownership: "managed",
     skills: 0,
     lastSync: "now",
+    ...overrides,
   };
 }
 
@@ -165,7 +166,7 @@ function bindingPayload(projectionCount: number): BindingShowPayload {
   };
 }
 
-function targetPayload(): TargetShowPayload {
+function targetPayload(projectionCount = 0): TargetShowPayload {
   return {
     ok: true,
     data: {
@@ -179,7 +180,22 @@ function targetPayload(): TargetShowPayload {
         created_at: "2026-04-09T10:05:00Z",
       },
       bindings: [],
-      projections: [],
+      projections:
+        projectionCount === 0
+          ? []
+          : [
+              {
+                instance_id: "target-proj-1",
+                skill_id: "skill.writer",
+                binding_id: "binding-1",
+                target_id: "target-1",
+                materialized_path: "/tmp/target-proj-1",
+                method: "symlink",
+                last_applied_rev: "deadbeefcafebabe",
+                health: "ok",
+                updated_at: "2026-04-09T10:05:00Z",
+              },
+            ],
       rules: [],
     },
   };
@@ -328,6 +344,128 @@ test("HistoryPage refetches when a panel mutation completes", async () => {
   }
 });
 
+test("TargetsPage refetches selected target details when a panel mutation completes", async () => {
+  const originalTargetShow = api.targetShow;
+  const targetShowCalls: string[] = [];
+  let detailRevision = 0;
+
+  api.targetShow = async (id: string) => {
+    targetShowCalls.push(id);
+    return targetPayload(detailRevision);
+  };
+
+  try {
+    const props = {
+      targets: [makeTarget()],
+      skills: [makeSkill()],
+      selectedTarget: "target-1",
+      onSelectTarget: () => {},
+      onRemoveTarget: () => {},
+      onMutation: () => {},
+      readOnly: false,
+    };
+
+    let renderer: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(<TargetsPage {...props} mutationVersion={0} />);
+    });
+    await flush();
+
+    expect(targetShowCalls.length).toBe(1);
+    expect(markup(renderer!).includes("No projections realized yet.")).toBe(true);
+
+    detailRevision = 1;
+    await act(async () => {
+      renderer!.update(<TargetsPage {...props} mutationVersion={1} />);
+    });
+    await flush();
+
+    expect(targetShowCalls.length).toBe(2);
+    expect(markup(renderer!).includes("No projections realized yet.")).toBe(false);
+    expect(markup(renderer!).includes("deadbeef")).toBe(true);
+  } finally {
+    api.targetShow = originalTargetShow;
+  }
+});
+
+test("TargetsPage keeps a newer selection when a previous target delete completes", async () => {
+  const originalTargetShow = api.targetShow;
+  const originalTargetRemove = api.targetRemove;
+  let resolveRemove: ((value: { ok: true; cmd: string; request_id: string }) => void) | null = null;
+
+  api.targetShow = async () => targetPayload();
+  api.targetRemove = async () =>
+    new Promise((resolve) => {
+      resolveRemove = resolve;
+    });
+
+  try {
+    function Harness() {
+      const [selectedTarget, setSelectedTarget] = React.useState<string | null>("target-1");
+      return (
+        <TargetsPage
+          targets={[
+            makeTarget(),
+            makeTarget({
+              id: "target-2",
+              agent: "codex",
+              profile: "work",
+              path: "~/.codex/skills",
+            }),
+          ]}
+          skills={[]}
+          selectedTarget={selectedTarget}
+          onSelectTarget={(id) => {
+            setSelectedTarget((cur) => (cur === id ? null : id));
+          }}
+          onRemoveTarget={(id) => {
+            setSelectedTarget((cur) => (cur === id ? null : cur));
+          }}
+          onMutation={() => {}}
+          readOnly={false}
+          mutationVersion={0}
+        />
+      );
+    }
+
+    let renderer: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(<Harness />);
+    });
+    await flush();
+
+    await act(async () => {
+      buttonByLabel(renderer!, "Delete target").props.onClick();
+      await Promise.resolve();
+    });
+
+    const targetTwoCard = renderer!.root.findAll(
+      (node: ReactTestInstance) =>
+        node.type === "div" &&
+        typeof node.props.onClick === "function" &&
+        textOf(node.props.children).includes("codex"),
+    )[0];
+    await act(async () => {
+      targetTwoCard.props.onClick();
+    });
+
+    await act(async () => {
+      resolveRemove?.({ ok: true, cmd: "target remove", request_id: "req-1" });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const selectedCards = renderer!.root.findAll(
+      (node: ReactTestInstance) => node.type === "div" && node.props.style?.borderColor === "var(--accent)",
+    );
+    expect(selectedCards.length).toBe(1);
+    expect(textOf(selectedCards[0].props.children).includes("codex")).toBe(true);
+  } finally {
+    api.targetShow = originalTargetShow;
+    api.targetRemove = originalTargetRemove;
+  }
+});
+
 test("BindingsPage skips live detail fetches in read-only mode", async () => {
   const originalBindingShow = api.bindingShow;
   let calls = 0;
@@ -378,8 +516,10 @@ test("TargetsPage skips live detail fetches in read-only mode", async () => {
           skills={[makeSkill()]}
           selectedTarget="target-1"
           onSelectTarget={() => {}}
+          onRemoveTarget={() => {}}
           onMutation={() => {}}
           readOnly={true}
+          mutationVersion={0}
         />,
       );
     });

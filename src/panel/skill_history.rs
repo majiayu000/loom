@@ -177,7 +177,7 @@ pub(super) async fn v3_skill_history(
         }
     }
 
-    events.sort_by(|a, b| b.observed_at.cmp(&a.observed_at));
+    events.sort_by_key(|event| Reverse(event.observed_at));
     events.truncate(200);
 
     (

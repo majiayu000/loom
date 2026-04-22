@@ -33,17 +33,42 @@ export class ApiError extends Error {
 
 async function getJson<T>(path: string, signal?: AbortSignal): Promise<T> {
   const res = await fetch(path, { signal });
+  let body: unknown;
+  let parseError: string | null = null;
+  try {
+    body = await res.json();
+  } catch (err) {
+    parseError = err instanceof Error ? err.message : String(err);
+  }
+
+  const messageFromBody =
+    typeof body === "object" && body !== null && "error" in body
+      ? ((body as { error?: { message?: string } }).error?.message ?? null)
+      : null;
+
   if (!res.ok) {
-    let msg = `GET ${path} returned ${res.status}`;
-    try {
-      const body = (await res.json()) as { error?: { message?: string } };
-      if (body?.error?.message) msg = body.error.message;
-    } catch {
-      // non-JSON body — keep generic message
-    }
+    const msg = messageFromBody ?? parseError ?? `GET ${path} returned ${res.status}`;
     throw new ApiError(path, res.status, msg);
   }
-  return (await res.json()) as T;
+
+  if (parseError !== null) {
+    throw new ApiError(path, res.status, `GET ${path} returned non-JSON body: ${parseError}`);
+  }
+
+  if (
+    typeof body === "object" &&
+    body !== null &&
+    "ok" in body &&
+    (body as { ok?: boolean }).ok === false
+  ) {
+    throw new ApiError(
+      path,
+      res.status,
+      messageFromBody ?? `GET ${path} envelope ok=false with no message`,
+    );
+  }
+
+  return body as T;
 }
 
 async function postJson(path: string, body: unknown): Promise<CommandEnvelope> {

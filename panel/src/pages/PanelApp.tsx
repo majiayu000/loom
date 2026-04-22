@@ -263,7 +263,7 @@ function MockBanner({ error, loading }: { error: string | null; loading: boolean
       <span style={{ color: "var(--warn)", marginRight: 6 }}>⚠ mock data</span>
       <span style={{ color: "var(--ink-2)" }}>
         {error
-          ? `/api unreachable — ${error}. Start with \`loom panel\` to see real registry.`
+          ? `Registry state unavailable — ${error}. Start with \`loom panel\` to see real registry.`
           : "Registry is empty or unreachable — showing sample data."}
       </span>
     </div>

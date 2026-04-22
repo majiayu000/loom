@@ -28,6 +28,12 @@ interface TopbarProps {
 }
 
 function statusDisplay(props: TopbarProps): { label: string; dotStyle: React.CSSProperties } {
+  if (props.error) {
+    return {
+      label: "registry error",
+      dotStyle: { background: "var(--err)", boxShadow: "0 0 0 3px rgba(216,90,90,0.18)" },
+    };
+  }
   if (props.loading) {
     return {
       label: "connecting…",

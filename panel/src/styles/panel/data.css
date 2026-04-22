@@ -74,6 +74,17 @@
   .target-detail-grid {
     grid-template-columns: minmax(0, 1fr);
   }
+
+  .proj-head {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .viz-switch {
+    max-width: 100%;
+    overflow-x: auto;
+  }
 }
 
 .detail h4 {

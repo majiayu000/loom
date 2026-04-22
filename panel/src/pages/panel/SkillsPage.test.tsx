@@ -38,6 +38,13 @@ function renderPage() {
   );
 }
 
+function makeSkill(overrides: Partial<Skill> = {}): Skill {
+  return {
+    ...mockSkill,
+    ...overrides,
+  };
+}
+
 describe("SkillsPage — history tab", () => {
   beforeEach(() => {
     vi.resetAllMocks();
@@ -104,6 +111,60 @@ describe("SkillsPage — history tab", () => {
     await waitFor(() => {
       expect(screen.getByText("save")).toBeInTheDocument();
       expect(screen.getByText("snapshot")).toBeInTheDocument();
+    });
+  });
+
+  it("refetches history when the selected skill revision changes", async () => {
+    (api.skillHistory as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce({
+        ok: true,
+        data: { skill: "my-skill", count: 0, events: [] },
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        data: {
+          skill: "my-skill",
+          count: 1,
+          events: [
+            {
+              event_id: "rev-2-event",
+              instance_id: "inst-aabbccdd",
+              kind: "captured",
+              path: "SKILL.md",
+              observed_at: new Date().toISOString(),
+            },
+          ],
+        },
+      });
+
+    const { rerender } = render(
+      <SkillsPage
+        skills={[makeSkill({ latestRev: "abc12345" })]}
+        targets={[]}
+        selectedSkill="skill-1"
+        onSelectSkill={() => {}}
+        onMutation={() => {}}
+        readOnly={false}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(api.skillHistory).toHaveBeenCalledTimes(1);
+    });
+
+    rerender(
+      <SkillsPage
+        skills={[makeSkill({ latestRev: "def67890" })]}
+        targets={[]}
+        selectedSkill="skill-1"
+        onSelectSkill={() => {}}
+        onMutation={() => {}}
+        readOnly={false}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(api.skillHistory).toHaveBeenCalledTimes(2);
     });
   });
 });

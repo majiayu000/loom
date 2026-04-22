@@ -183,7 +183,7 @@ function SkillDetail({ skill, targets }: { skill: Skill; targets: Target[] }) {
         }
       });
     return () => ctrl.abort();
-  }, [skill.name, tab]);
+  }, [skill.name, skill.latestRev, tab]);
 
   return (
     <div className="detail">

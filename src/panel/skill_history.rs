@@ -15,6 +15,9 @@ use super::auth::{load_v3_snapshot, status_for_error_code, v3_error};
 use crate::commands::collect_skill_inventory;
 use crate::state_model::{V3ObservationEvent, V3StatePaths};
 
+const MAX_HISTORY_WARNINGS: usize = 20;
+const MAX_HISTORY_WARNING_DETAILS: usize = MAX_HISTORY_WARNINGS - 1;
+
 fn skill_name_looks_sane(name: &str) -> bool {
     !name.is_empty()
         && name.len() <= 255
@@ -68,6 +71,7 @@ fn load_obs_bounded(
     }
 
     let mut warnings = Vec::new();
+    let mut skipped_warning_count = 0usize;
     // Min-heap (via Reverse) capped at `limit`; pop discards the oldest entry.
     let mut heap: BinaryHeap<Reverse<OrdEvent>> = BinaryHeap::with_capacity(limit + 1);
     let reader = BufReader::new(file);
@@ -87,12 +91,16 @@ fn load_obs_bounded(
         let event: V3ObservationEvent = match serde_json::from_str(trimmed) {
             Ok(event) => event,
             Err(e) => {
-                warnings.push(format!(
-                    "skipped malformed observation line {} from {}: {}",
-                    idx + 1,
-                    path.display(),
-                    e
-                ));
+                if warnings.len() < MAX_HISTORY_WARNING_DETAILS {
+                    warnings.push(format!(
+                        "skipped malformed observation line {} from {}: {}",
+                        idx + 1,
+                        path.display(),
+                        e
+                    ));
+                } else {
+                    skipped_warning_count += 1;
+                }
                 continue;
             }
         };
@@ -100,6 +108,14 @@ fn load_obs_bounded(
         if heap.len() > limit {
             heap.pop();
         }
+    }
+
+    if skipped_warning_count > 0 {
+        warnings.push(format!(
+            "skipped {} additional malformed observation line(s) from {}",
+            skipped_warning_count,
+            path.display()
+        ));
     }
 
     Ok((
@@ -158,12 +174,19 @@ pub(super) async fn v3_skill_history(
     let paths = V3StatePaths::from_app_context(&state.ctx);
     let mut events = Vec::new();
     let mut warnings = Vec::new();
+    let mut skipped_warning_count = 0usize;
     for instance_id in &instance_ids {
         let obs_path = paths.observations_dir.join(format!("{instance_id}.jsonl"));
         match load_obs_bounded(&obs_path, 200) {
             Ok((obs, obs_warnings)) => {
                 events.extend(obs);
-                warnings.extend(obs_warnings);
+                for warning in obs_warnings {
+                    if warnings.len() < MAX_HISTORY_WARNINGS {
+                        warnings.push(warning);
+                    } else {
+                        skipped_warning_count += 1;
+                    }
+                }
             }
             Err(e) => {
                 return (
@@ -175,6 +198,13 @@ pub(super) async fn v3_skill_history(
                 );
             }
         }
+    }
+
+    if skipped_warning_count > 0 {
+        warnings.push(format!(
+            "skipped {} additional warning(s) across observation files",
+            skipped_warning_count
+        ));
     }
 
     events.sort_by_key(|event| Reverse(event.observed_at));
@@ -435,6 +465,38 @@ mod tests {
                 .as_str()
                 .unwrap()
                 .contains("skipped malformed observation line 1")
+        );
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[tokio::test]
+    async fn caps_malformed_observation_warnings() {
+        let root = std::env::temp_dir().join(format!("loom-hist-warn-cap-{}", Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let paths = setup_v3(&root);
+        add_skill_rule(&paths, "warn-cap-skill");
+        add_projection(&paths, "warn-cap-skill", "inst-1");
+        let file_path = paths.observations_dir.join("inst-1.jsonl");
+        let mut contents = String::new();
+        for _ in 0..(MAX_HISTORY_WARNINGS + 3) {
+            contents.push_str("{not valid json}\n");
+        }
+        fs::write(&file_path, contents).unwrap();
+        let state = make_state(&root);
+
+        let (status, Json(payload)) =
+            v3_skill_history(AxumPath("warn-cap-skill".to_string()), State(state)).await;
+
+        assert_eq!(status, StatusCode::OK);
+        let warnings = payload["meta"]["warnings"].as_array().unwrap();
+        assert_eq!(warnings.len(), MAX_HISTORY_WARNINGS);
+        assert_eq!(
+            warnings.last().unwrap(),
+            &json!(format!(
+                "skipped 4 additional malformed observation line(s) from {}",
+                file_path.display()
+            ))
         );
 
         let _ = fs::remove_dir_all(&root);

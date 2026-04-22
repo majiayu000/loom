@@ -31,6 +31,27 @@ export class ApiError extends Error {
   }
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function parseRemoteStatusResponse(path: string, body: unknown): RemoteStatusResponse {
+  if (!isRecord(body)) {
+    throw new ApiError(path, 200, `GET ${path} returned malformed remote status payload`);
+  }
+  if (isRecord(body.error)) {
+    const message =
+      typeof body.error.message === "string"
+        ? body.error.message
+        : `GET ${path} returned error-shaped payload`;
+    throw new ApiError(path, 200, message);
+  }
+  if (!isRecord(body.remote)) {
+    throw new ApiError(path, 200, `GET ${path} returned malformed remote status payload`);
+  }
+  return body as RemoteStatusResponse;
+}
+
 async function getJson<T>(path: string, signal?: AbortSignal): Promise<T> {
   const res = await fetch(path, { signal });
   let body: unknown;
@@ -165,7 +186,8 @@ export const api = {
   info: (signal?: AbortSignal) => getJson<InfoPayload>("/api/info", signal),
   skills: (signal?: AbortSignal) => getJson<SkillsPayload>("/api/skills", signal),
   v3Status: (signal?: AbortSignal) => getJson<V3Payload>("/api/v3/status", signal),
-  remoteStatus: (signal?: AbortSignal) => getJson<RemoteStatusResponse>("/api/remote/status", signal),
+  remoteStatus: async (signal?: AbortSignal) =>
+    parseRemoteStatusResponse("/api/remote/status", await getJson<unknown>("/api/remote/status", signal)),
   pending: (signal?: AbortSignal) => getJson<PendingPayload>("/api/pending", signal),
 
   targetAdd: (body: TargetAddBody) => postJson("/api/v3/targets", body),

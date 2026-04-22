@@ -47,7 +47,7 @@ async function getJson<T>(path: string, signal?: AbortSignal): Promise<T> {
       : null;
 
   if (!res.ok) {
-    const msg = messageFromBody ?? parseError ?? `GET ${path} returned ${res.status}`;
+    const msg = messageFromBody ?? `GET ${path} returned ${res.status}`;
     throw new ApiError(path, res.status, msg);
   }
 

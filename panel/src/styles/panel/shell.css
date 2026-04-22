@@ -319,3 +319,130 @@ body,
 .page-body {
   padding: 22px 28px 28px;
 }
+
+@media (max-width: 720px) {
+  .app,
+  .app.compact {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto auto minmax(0, 1fr);
+  }
+
+  .topbar {
+    grid-column: 1;
+    min-width: 0;
+    padding: 0 10px;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  .topbar .brand,
+  .compact .topbar .brand {
+    width: auto;
+    min-width: 48px;
+    height: 46px;
+    padding-right: 10px;
+    justify-content: flex-start;
+  }
+
+  .compact .topbar .brand .brand-text {
+    display: inline;
+  }
+
+  .topbar .crumbs {
+    min-width: 0;
+    flex: 1 1 150px;
+  }
+
+  .topbar .crumbs .registry {
+    min-width: 0;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .topbar .spacer {
+    display: none;
+  }
+
+  .topbar .top-actions {
+    flex: 1 0 100%;
+    justify-content: flex-start;
+    overflow-x: auto;
+    padding-bottom: 6px;
+  }
+
+  .sidebar {
+    grid-column: 1;
+    grid-row: 2;
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+    padding: 8px 10px;
+    flex-direction: row;
+    gap: 10px;
+    overflow-x: auto;
+    overflow-y: hidden;
+  }
+
+  .sidebar .group {
+    display: flex;
+    gap: 6px;
+    margin-bottom: 0;
+    flex: 0 0 auto;
+  }
+
+  .sidebar .group-label,
+  .sidebar .foot {
+    display: none;
+  }
+
+  .sidebar .nav-item {
+    width: auto;
+    margin-bottom: 0;
+    white-space: nowrap;
+  }
+
+  .sidebar .nav-item.active::before {
+    left: 8px;
+    right: 8px;
+    top: auto;
+    bottom: 0;
+    width: auto;
+    height: 2px;
+    border-radius: 2px 2px 0 0;
+  }
+
+  .main {
+    grid-column: 1;
+    grid-row: 3;
+    min-width: 0;
+  }
+
+  .page-header {
+    padding: 20px 16px 14px;
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .page-header .title-block .subtitle {
+    max-width: none;
+  }
+
+  .page-header .header-actions {
+    justify-content: flex-start;
+  }
+
+  .page-body {
+    padding: 16px;
+  }
+
+  .card .card-head {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .card .card-head h3 {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+}

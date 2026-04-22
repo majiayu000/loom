@@ -56,6 +56,26 @@
   height: 100%;
 }
 
+.target-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.target-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+  font-size: 12px;
+}
+
+@media (max-width: 720px) {
+  .target-grid,
+  .target-detail-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 .detail h4 {
   font-family: var(--font-display);
   font-size: 17px;

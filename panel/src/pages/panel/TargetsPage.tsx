@@ -65,7 +65,7 @@ export function TargetsPage({
             }}
           />
         )}
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 12 }}>
+        <div className="target-grid">
           {targets.map((t) => {
             const isSel = selectedTarget === t.id;
             const inbound = skills.filter((s) => s.targets.includes(t.id)).length;
@@ -246,54 +246,54 @@ function TargetDetail({
           {remove.error ?? `✓ ${remove.success}`}
         </div>
       )}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 18, fontSize: 12 }}>
-      <div>
-        <div className="section-title">Bindings → this target</div>
-        {readOnly && (
-          <div className="empty">Registry offline. Start with <span className="mono">loom panel</span> to load live bindings.</div>
-        )}
-        {state.kind === "loading" && <div className="empty mono">loading…</div>}
-        {state.kind === "error" && <div className="empty" style={{ color: "var(--err)" }}>{state.message}</div>}
-        {!readOnly && state.kind === "ready" && bindings.length === 0 && <div className="empty">No bindings point here yet.</div>}
-        {!readOnly && state.kind === "ready" && bindings.length > 0 && (
-          <ul style={{ paddingLeft: 0, listStyle: "none" }}>
-            {bindings.map((b) => (
-              <li key={b.binding_id} style={{ padding: "6px 0", borderBottom: "1px solid var(--line-soft)" }}>
-                <span className="mono" style={{ color: "var(--ink-1)" }}>
-                  {b.binding_id}
-                </span>
-                <span style={{ color: "var(--ink-3)", marginLeft: 8 }}>
-                  {b.workspace_matcher.kind}:{b.workspace_matcher.value}
-                </span>
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
-      <div>
-        <div className="section-title">Projections realized</div>
-        {readOnly && (
-          <div className="empty">Registry offline. Start with <span className="mono">loom panel</span> to load live projections.</div>
-        )}
-        {state.kind === "loading" && <div className="empty mono">loading…</div>}
-        {!readOnly && state.kind === "ready" && projections.length === 0 && (
-          <div className="empty">No projections realized yet.</div>
-        )}
-        {!readOnly && state.kind === "ready" && projections.length > 0 && (
-          <ul style={{ paddingLeft: 0, listStyle: "none" }}>
-            {projections.map((p, i) => (
-              <li key={i} style={{ padding: "6px 0", borderBottom: "1px solid var(--line-soft)" }}>
-                <span className="mono" style={{ color: "var(--ink-1)" }}>
-                  {p.skill_id}
-                </span>
-                <span style={{ color: "var(--ink-3)", marginLeft: 8 }}>
-                  {p.method} · rev {p.last_applied_rev?.slice(0, 8) ?? "—"}
-                </span>
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
+      <div className="target-detail-grid">
+        <div>
+          <div className="section-title">Bindings → this target</div>
+          {readOnly && (
+            <div className="empty">Registry offline. Start with <span className="mono">loom panel</span> to load live bindings.</div>
+          )}
+          {state.kind === "loading" && <div className="empty mono">loading…</div>}
+          {state.kind === "error" && <div className="empty" style={{ color: "var(--err)" }}>{state.message}</div>}
+          {!readOnly && state.kind === "ready" && bindings.length === 0 && <div className="empty">No bindings point here yet.</div>}
+          {!readOnly && state.kind === "ready" && bindings.length > 0 && (
+            <ul style={{ paddingLeft: 0, listStyle: "none" }}>
+              {bindings.map((b) => (
+                <li key={b.binding_id} style={{ padding: "6px 0", borderBottom: "1px solid var(--line-soft)" }}>
+                  <span className="mono" style={{ color: "var(--ink-1)" }}>
+                    {b.binding_id}
+                  </span>
+                  <span style={{ color: "var(--ink-3)", marginLeft: 8 }}>
+                    {b.workspace_matcher.kind}:{b.workspace_matcher.value}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+        <div>
+          <div className="section-title">Projections realized</div>
+          {readOnly && (
+            <div className="empty">Registry offline. Start with <span className="mono">loom panel</span> to load live projections.</div>
+          )}
+          {state.kind === "loading" && <div className="empty mono">loading…</div>}
+          {!readOnly && state.kind === "ready" && projections.length === 0 && (
+            <div className="empty">No projections realized yet.</div>
+          )}
+          {!readOnly && state.kind === "ready" && projections.length > 0 && (
+            <ul style={{ paddingLeft: 0, listStyle: "none" }}>
+              {projections.map((p, i) => (
+                <li key={i} style={{ padding: "6px 0", borderBottom: "1px solid var(--line-soft)" }}>
+                  <span className="mono" style={{ color: "var(--ink-1)" }}>
+                    {p.skill_id}
+                  </span>
+                  <span style={{ color: "var(--ink-3)", marginLeft: 8 }}>
+                    {p.method} · rev {p.last_applied_rev?.slice(0, 8) ?? "—"}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
       </div>
     </div>
   );

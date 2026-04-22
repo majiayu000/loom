@@ -15,8 +15,8 @@ export interface V3OperationRecord {
   intent: string;
   status: string;
   ack: boolean;
-  payload: unknown;
-  effects: unknown;
+  payload?: unknown;
+  effects?: unknown;
   last_error?: { code: string; message: string };
   created_at: string;
   updated_at: string;
@@ -27,6 +27,10 @@ export interface OpsPayload {
   data?: {
     state_model?: string;
     count: number;
+    loaded_count: number;
+    offset: number;
+    limit: number;
+    has_more: boolean;
     operations: V3OperationRecord[];
     checkpoint?: { last_scanned_op_id?: string; last_acked_op_id?: string; updated_at?: string };
   };
@@ -258,7 +262,13 @@ export const api = {
   info: (signal?: AbortSignal) => getJson<InfoPayload>("/api/info", signal),
   skills: (signal?: AbortSignal) => getJson<SkillsPayload>("/api/skills", signal),
   v3Status: (signal?: AbortSignal) => getJson<V3Payload>("/api/v3/status", signal),
-  ops: (signal?: AbortSignal) => getJson<OpsPayload>("/api/v3/ops", signal),
+  ops: (options?: { limit?: number; offset?: number }, signal?: AbortSignal) => {
+    const params = new URLSearchParams();
+    if (typeof options?.limit === "number") params.set("limit", String(options.limit));
+    if (typeof options?.offset === "number") params.set("offset", String(options.offset));
+    const qs = params.size > 0 ? `?${params.toString()}` : "";
+    return getJson<OpsPayload>(`/api/v3/ops${qs}`, signal);
+  },
   bindingShow: (id: string, signal?: AbortSignal) =>
     getJson<BindingShowPayload>(`/api/v3/bindings/${encodeURIComponent(id)}`, signal),
   targetShow: (id: string, signal?: AbortSignal) =>

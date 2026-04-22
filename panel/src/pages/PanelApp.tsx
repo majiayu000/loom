@@ -194,7 +194,14 @@ export function PanelApp() {
       view = <OpsPage ops={ops} onMutation={onMutation} readOnly={readOnly} />;
       break;
     case "history":
-      view = <HistoryPage live={live.live} mode={live.mode} mutationVersion={mutationVersion} />;
+      view = (
+        <HistoryPage
+          live={live.live}
+          mode={live.mode}
+          mutationVersion={mutationVersion}
+          refreshKey={live.lastUpdated}
+        />
+      );
       break;
     case "sync":
       view = (

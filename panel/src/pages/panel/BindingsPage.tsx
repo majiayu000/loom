@@ -117,7 +117,7 @@ export function BindingsPage({ bindings, targets, onMutation, readOnly, mutation
                 readOnly={readOnly}
                 onMutation={onMutation}
                 mutationVersion={mutationVersion}
-                onRemoved={() => setSelectedId(null)}
+                onRemoved={(bindingId) => setSelectedId((cur) => (cur === bindingId ? null : cur))}
               />
             ) : (
               <div className="empty">Select a binding to inspect its rules, projections, and default target.</div>
@@ -148,7 +148,7 @@ function BindingDetail({
   readOnly: boolean;
   onMutation: () => void;
   mutationVersion: number;
-  onRemoved: () => void;
+  onRemoved: (bindingId: string) => void;
 }) {
   const [state, setState] = useState<DetailState>({ kind: "idle" });
   const project = useMutation();
@@ -205,7 +205,7 @@ function BindingDetail({
     if (readOnly) return;
     if (!window.confirm(`Delete binding ${binding.id}? This removes the binding metadata from the registry.`)) return;
     remove.run("delete binding", () => api.bindingRemove(binding.id), () => {
-      onRemoved();
+      onRemoved(binding.id);
       onMutation();
     });
   };

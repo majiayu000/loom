@@ -206,6 +206,10 @@ function opsPayload(operation: V3OperationRecord): OpsPayload {
     ok: true,
     data: {
       count: 1,
+      loaded_count: 1,
+      offset: 0,
+      limit: 100,
+      has_more: false,
       operations: [operation],
       checkpoint: { last_scanned_op_id: operation.op_id },
     },
@@ -344,6 +348,36 @@ test("HistoryPage refetches when a panel mutation completes", async () => {
   }
 });
 
+test("HistoryPage refetches when the shared live refresh key changes", async () => {
+  const originalOps = api.ops;
+  const seen: string[] = [];
+  let response = opsPayload(makeOperation("pending", false, "op-old", "sync.replay"));
+  api.ops = async () => {
+    seen.push(response.data?.operations[0]?.op_id ?? "none");
+    return response;
+  };
+
+  try {
+    let renderer: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(<HistoryPage live={true} mode="live" mutationVersion={0} refreshKey="tick-1" />);
+    });
+    await flush();
+
+    response = opsPayload(makeOperation("succeeded", true, "op-new", "sync.replay"));
+    await act(async () => {
+      renderer!.update(<HistoryPage live={true} mode="live" mutationVersion={0} refreshKey="tick-2" />);
+    });
+    await flush();
+
+    expect(seen.length).toBe(2);
+    expect(markup(renderer!).includes("op-new")).toBe(true);
+    expect(markup(renderer!).includes("op-old")).toBe(false);
+  } finally {
+    api.ops = originalOps;
+  }
+});
+
 test("TargetsPage refetches selected target details when a panel mutation completes", async () => {
   const originalTargetShow = api.targetShow;
   const targetShowCalls: string[] = [];
@@ -463,6 +497,74 @@ test("TargetsPage keeps a newer selection when a previous target delete complete
   } finally {
     api.targetShow = originalTargetShow;
     api.targetRemove = originalTargetRemove;
+  }
+});
+
+test("BindingsPage keeps a newer selection when a previous binding delete completes", async () => {
+  const originalBindingShow = api.bindingShow;
+  const originalBindingRemove = api.bindingRemove;
+  let resolveRemove: ((value: { ok: true; cmd: string; request_id: string }) => void) | null = null;
+
+  api.bindingShow = async () => bindingPayload(0);
+  api.bindingRemove = async () =>
+    new Promise((resolve) => {
+      resolveRemove = resolve;
+    });
+
+  try {
+    function Harness() {
+      return (
+        <BindingsPage
+          bindings={[
+            makeBinding(),
+            {
+              id: "binding-2",
+              skill: "skill.reader",
+              target: "target-1",
+              matcher: "path-prefix:/other",
+              method: "copy",
+              policy: "manual",
+            },
+          ]}
+          targets={[makeTarget()]}
+          readOnly={false}
+          mutationVersion={0}
+          onMutation={() => {}}
+        />
+      );
+    }
+
+    let renderer: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(<Harness />);
+    });
+    await act(async () => {
+      clickableRows(renderer!)[0]?.props.onClick();
+    });
+    await flush();
+
+    await act(async () => {
+      buttonByLabel(renderer!, "Delete binding").props.onClick();
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      clickableRows(renderer!)[1]?.props.onClick();
+    });
+    await flush();
+
+    await act(async () => {
+      resolveRemove?.({ ok: true, cmd: "binding remove", request_id: "req-1" });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(markup(renderer!).includes("skill.reader → target-1")).toBe(true);
+    expect(() => buttonByLabel(renderer!, "Delete binding")).not.toThrow();
+    expect(markup(renderer!).includes("Select a binding to inspect")).toBe(false);
+  } finally {
+    api.bindingShow = originalBindingShow;
+    api.bindingRemove = originalBindingRemove;
   }
 });
 

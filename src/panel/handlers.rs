@@ -2,9 +2,10 @@ use std::net::SocketAddr;
 
 use axum::{
     Json,
-    extract::{ConnectInfo, Path as AxumPath, State},
+    extract::{ConnectInfo, Path as AxumPath, Query, State},
     http::{HeaderMap, StatusCode},
 };
+use serde::Deserialize;
 use serde_json::json;
 
 use crate::cli::{
@@ -31,6 +32,17 @@ fn policy_profile_looks_sane(value: &str) -> bool {
         && value
             .chars()
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_')
+}
+
+const DEFAULT_OPS_PAGE_SIZE: usize = 100;
+const MAX_OPS_PAGE_SIZE: usize = 250;
+
+#[derive(Debug, Default, Deserialize)]
+pub(super) struct OpsQuery {
+    #[serde(default)]
+    pub(super) limit: Option<usize>,
+    #[serde(default)]
+    pub(super) offset: Option<usize>,
 }
 
 pub(super) async fn health() -> Json<serde_json::Value> {
@@ -81,19 +93,51 @@ pub(super) async fn v3_status(
     }
 }
 
-/// Return the full operations journal (`.loom/v3/operations.jsonl`). The panel
-/// History page reads this to show every state-changing op, not just the
-/// in-flight ones surfaced by `/api/pending`. Entries are returned in append
-/// order; callers paginate client-side (total volume is bounded by the
-/// checkpoint watermark and `loom sync replay`).
-pub(super) async fn v3_ops(State(state): State<PanelState>) -> Json<serde_json::Value> {
+/// Return a bounded, newest-first page of the operations journal
+/// (`.loom/v3/operations.jsonl`). History only needs row summaries, so omit
+/// per-op payload/effects blobs here and keep the response cost bounded even
+/// for long-lived registries.
+pub(super) async fn v3_ops(
+    Query(query): Query<OpsQuery>,
+    State(state): State<PanelState>,
+) -> Json<serde_json::Value> {
     match load_v3_snapshot(&state.ctx) {
-        Ok(snapshot) => v3_ok(json!({
-            "state_model": "v3",
-            "count": snapshot.operations.len(),
-            "operations": snapshot.operations,
-            "checkpoint": snapshot.checkpoint,
-        })),
+        Ok(snapshot) => {
+            let total = snapshot.operations.len();
+            let limit = query
+                .limit
+                .unwrap_or(DEFAULT_OPS_PAGE_SIZE)
+                .clamp(1, MAX_OPS_PAGE_SIZE);
+            let offset = query.offset.unwrap_or(0);
+            let end = total.saturating_sub(offset);
+            let start = end.saturating_sub(limit);
+            let operations = snapshot.operations[start..end]
+                .iter()
+                .rev()
+                .map(|op| {
+                    json!({
+                        "op_id": op.op_id,
+                        "intent": op.intent,
+                        "status": op.status,
+                        "ack": op.ack,
+                        "last_error": op.last_error,
+                        "created_at": op.created_at,
+                        "updated_at": op.updated_at,
+                    })
+                })
+                .collect::<Vec<_>>();
+
+            v3_ok(json!({
+                "state_model": "v3",
+                "count": total,
+                "loaded_count": operations.len(),
+                "offset": offset,
+                "limit": limit,
+                "has_more": start > 0,
+                "operations": operations,
+                "checkpoint": snapshot.checkpoint,
+            }))
+        }
         Err(err) => err,
     }
 }

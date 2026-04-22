@@ -141,7 +141,7 @@ mod tests {
             ensure_mutation_authorized, error_envelope, request_origin_matches, run_panel_command,
             status_for_error_code, status_for_v3_error_payload, status_for_v3_state_load_error,
         },
-        handlers::{remote_status, v3_status},
+        handlers::{OpsQuery, remote_status, v3_ops, v3_status},
         static_serve::{content_type_for, ensure_panel_dist, resolve_panel_asset_path},
     };
     use crate::cli::{
@@ -151,15 +151,15 @@ mod tests {
     };
     use crate::state::AppContext;
     use crate::state_model::{
-        V3_SCHEMA_VERSION, V3BindingsFile, V3OpsCheckpoint, V3ProjectionsFile, V3RulesFile,
-        V3SchemaFile, V3StatePaths, V3TargetsFile,
+        V3_SCHEMA_VERSION, V3BindingsFile, V3OperationRecord, V3OpsCheckpoint, V3ProjectionsFile,
+        V3RulesFile, V3SchemaFile, V3StatePaths, V3TargetsFile,
     };
     use axum::{
         Json,
-        extract::State,
+        extract::{Query, State},
         http::{HeaderMap, HeaderValue, StatusCode},
     };
-    use chrono::Utc;
+    use chrono::{Duration as ChrDuration, Utc};
     use serde_json::json;
     use std::{
         fs,
@@ -471,6 +471,58 @@ mod tests {
             assert_eq!(payload["cmd"], json!(cmd), "{cmd} cmd");
             assert!(payload["request_id"].as_str().is_some(), "{cmd} req id");
         }
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn v3_ops_returns_bounded_newest_first_rows() {
+        let (root, state) = make_test_state();
+        let paths = V3StatePaths::from_app_context(state.ctx.as_ref());
+        paths.ensure_layout().expect("ensure v3 layout");
+
+        let now = Utc::now();
+        for index in 0..3 {
+            paths
+                .append_operation(&V3OperationRecord {
+                    op_id: format!("op-{index}"),
+                    intent: "skill.project".to_string(),
+                    status: "succeeded".to_string(),
+                    ack: index % 2 == 0,
+                    payload: json!({ "blob": "ignored" }),
+                    effects: json!({ "index": index }),
+                    last_error: None,
+                    created_at: now + ChrDuration::seconds(index as i64),
+                    updated_at: now + ChrDuration::seconds(index as i64),
+                })
+                .expect("append op");
+        }
+
+        let payload = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("runtime")
+            .block_on(async {
+                let Json(payload) = v3_ops(
+                    Query(OpsQuery {
+                        limit: Some(2),
+                        offset: Some(0),
+                    }),
+                    State(state.clone()),
+                )
+                .await;
+                payload
+            });
+
+        assert_eq!(payload["ok"], json!(true));
+        assert_eq!(payload["data"]["count"], json!(3));
+        assert_eq!(payload["data"]["loaded_count"], json!(2));
+        assert_eq!(payload["data"]["has_more"], json!(true));
+        let operations = payload["data"]["operations"].as_array().expect("ops array");
+        assert_eq!(operations[0]["op_id"], json!("op-2"));
+        assert_eq!(operations[1]["op_id"], json!("op-1"));
+        assert!(operations[0].get("payload").is_none());
+        assert!(operations[0].get("effects").is_none());
 
         let _ = fs::remove_dir_all(root);
     }

@@ -3,6 +3,7 @@ import type { PanelDataMode } from "../../lib/api/usePanelData";
 import { api, ApiError, type OpsPayload, type V3OperationRecord } from "../../lib/api/client";
 
 type FilterKey = "all" | "pending" | "ok" | "err";
+const HISTORY_PAGE_SIZE = 100;
 
 type LoadState =
   | { kind: "idle" }
@@ -14,12 +15,14 @@ interface HistoryPageProps {
   live: boolean;
   mode: PanelDataMode;
   mutationVersion: number;
+  refreshKey?: string | null;
 }
 
-export function HistoryPage({ live, mode, mutationVersion }: HistoryPageProps) {
+export function HistoryPage({ live, mode, mutationVersion, refreshKey }: HistoryPageProps) {
   const [state, setState] = useState<LoadState>({ kind: "idle" });
   const [filter, setFilter] = useState<FilterKey>("all");
   const [query, setQuery] = useState("");
+  const [offset, setOffset] = useState(0);
 
   useEffect(() => {
     if (!live) {
@@ -30,7 +33,7 @@ export function HistoryPage({ live, mode, mutationVersion }: HistoryPageProps) {
     const controller = new AbortController();
     setState({ kind: "loading" });
     api
-      .ops(controller.signal)
+      .ops({ limit: HISTORY_PAGE_SIZE, offset }, controller.signal)
       .then((res) => {
         if (controller.signal.aborted) return;
         if (!res.ok || !res.data) {
@@ -45,25 +48,19 @@ export function HistoryPage({ live, mode, mutationVersion }: HistoryPageProps) {
         setState({ kind: "error", message });
       });
     return () => controller.abort();
-  }, [live, mutationVersion]);
+  }, [live, mutationVersion, refreshKey, offset]);
 
   const offlineHint =
     mode === "offline-stale"
       ? "Activity history is unavailable while the live API is offline. The panel is keeping the last known overview data in read-only mode."
       : "Activity history needs the live panel API. Start `loom panel` to load real registry activity.";
 
-  const operations = state.kind === "ready" ? state.payload.operations : [];
-  const ordered = useMemo(
-    () =>
-      [...operations].sort((a, b) =>
-        (b.created_at ?? "").localeCompare(a.created_at ?? ""),
-      ),
-    [operations],
-  );
+  const payload = state.kind === "ready" ? state.payload : null;
+  const operations = payload?.operations ?? [];
 
   const filtered = useMemo(() => {
     const needle = query.trim().toLowerCase();
-    return ordered.filter((op) => {
+    return operations.filter((op) => {
       if (filter !== "all" && bucket(op) !== filter) return false;
       if (!needle) return true;
       return (
@@ -72,20 +69,26 @@ export function HistoryPage({ live, mode, mutationVersion }: HistoryPageProps) {
         (op.last_error?.message ?? "").toLowerCase().includes(needle)
       );
     });
-  }, [ordered, filter, query]);
+  }, [operations, filter, query]);
 
   const counts = useMemo(() => {
-    const c = { all: ordered.length, pending: 0, ok: 0, err: 0 };
-    for (const op of ordered) {
+    const c = { all: operations.length, pending: 0, ok: 0, err: 0 };
+    for (const op of operations) {
       const b = bucket(op);
       if (b === "pending") c.pending += 1;
       else if (b === "ok") c.ok += 1;
       else if (b === "err") c.err += 1;
     }
     return c;
-  }, [ordered]);
+  }, [operations]);
 
-  const checkpoint = state.kind === "ready" ? state.payload.checkpoint : undefined;
+  const checkpoint = payload?.checkpoint;
+  const historySummary =
+    payload && payload.count > payload.loaded_count
+      ? `Showing ${payload.loaded_count} of ${payload.count} recorded changes.`
+      : payload
+      ? `${payload.loaded_count} recorded change${payload.loaded_count === 1 ? "" : "s"} loaded.`
+      : null;
 
   return (
     <>
@@ -124,31 +127,48 @@ export function HistoryPage({ live, mode, mutationVersion }: HistoryPageProps) {
         )}
         {!live && <div className="empty" style={{ marginBottom: 18 }}>{offlineHint}</div>}
         <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 18 }}>
-          <Kpi label="Tracked changes" value={counts.all} />
+          <Kpi label="Loaded changes" value={counts.all} />
           <Kpi label="Pending" value={counts.pending} tone={counts.pending > 0 ? "pending" : undefined} />
           <Kpi label="Succeeded" value={counts.ok} />
           <Kpi label="Failed" value={counts.err} tone={counts.err > 0 ? "err" : undefined} />
         </div>
 
-        <div style={{ display: "flex", gap: 4, marginBottom: 12 }}>
-          {(["all", "pending", "ok", "err"] as FilterKey[]).map((k) => (
-            <button
-              key={k}
-              className="btn sm"
-              onClick={() => setFilter(k)}
-              style={{
-                background: filter === k ? "var(--bg-2)" : "transparent",
-                borderColor: filter === k ? "var(--line-hi)" : "transparent",
-                border: "1px solid",
-                color: filter === k ? "var(--ink-0)" : "var(--ink-2)",
-              }}
-            >
-              {k === "err" ? "failed" : k === "ok" ? "done" : k}{" "}
-              <span className="mono" style={{ color: "var(--ink-3)", marginLeft: 4 }}>
-                {counts[k]}
-              </span>
-            </button>
-          ))}
+        <div style={{ display: "flex", gap: 12, marginBottom: 12, justifyContent: "space-between", flexWrap: "wrap" }}>
+          <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+            {(["all", "pending", "ok", "err"] as FilterKey[]).map((k) => (
+              <button
+                key={k}
+                className="btn sm"
+                onClick={() => setFilter(k)}
+                style={{
+                  background: filter === k ? "var(--bg-2)" : "transparent",
+                  borderColor: filter === k ? "var(--line-hi)" : "transparent",
+                  border: "1px solid",
+                  color: filter === k ? "var(--ink-0)" : "var(--ink-2)",
+                }}
+              >
+                {k === "err" ? "failed" : k === "ok" ? "done" : k}{" "}
+                <span className="mono" style={{ color: "var(--ink-3)", marginLeft: 4 }}>
+                  {counts[k]}
+                </span>
+              </button>
+            ))}
+          </div>
+          {payload && (
+            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+              {historySummary && (
+                <span className="mono" style={{ fontSize: 11, color: "var(--ink-3)" }}>
+                  {historySummary}
+                </span>
+              )}
+              <button className="btn sm" onClick={() => setOffset((cur) => Math.max(0, cur - payload.limit))} disabled={payload.offset === 0}>
+                newer
+              </button>
+              <button className="btn sm" onClick={() => setOffset((cur) => cur + payload.limit)} disabled={!payload.has_more}>
+                older
+              </button>
+            </div>
+          )}
         </div>
 
         <div
@@ -181,7 +201,7 @@ export function HistoryPage({ live, mode, mutationVersion }: HistoryPageProps) {
               {state.kind === "ready" && filtered.length === 0 && (
                 <tr>
                   <td colSpan={6} style={{ textAlign: "center", color: "var(--ink-3)", padding: 18 }}>
-                    {counts.all === 0
+                    {operations.length === 0
                       ? "No activity recorded yet — every CLI or Panel change will show up here."
                       : "No activity matches the current filter."}
                   </td>

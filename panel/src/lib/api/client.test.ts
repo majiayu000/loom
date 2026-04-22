@@ -23,4 +23,16 @@ describe("api.v3Status", () => {
       }),
     );
   });
+
+  it("preserves AbortError when response parsing is canceled", async () => {
+    const abortError = new DOMException("The operation was aborted.", "AbortError");
+    vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      json: vi.fn().mockRejectedValue(abortError),
+    } as unknown as Response);
+
+    await expect(api.v3Status()).rejects.toBe(abortError);
+  });
 });

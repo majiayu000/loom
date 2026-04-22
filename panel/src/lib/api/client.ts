@@ -38,6 +38,9 @@ async function getJson<T>(path: string, signal?: AbortSignal): Promise<T> {
   try {
     body = await res.json();
   } catch (err) {
+    if (err instanceof DOMException && err.name === "AbortError") {
+      throw err;
+    }
     parseError = err instanceof Error ? err.message : String(err);
   }
 

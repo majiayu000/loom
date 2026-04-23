@@ -136,7 +136,7 @@ mod tests {
             status_for_error_code, status_for_v3_error_payload, status_for_v3_state_load_error,
         },
         handlers::v3_status,
-        static_serve::{content_type_for, resolve_panel_asset_path},
+        static_serve::{content_type_for, ensure_panel_dist, resolve_panel_asset_path},
     };
     use crate::cli::{
         BindingAddArgs, CaptureArgs, Command, ProjectArgs, ProjectionMethod, SkillCommand,
@@ -160,6 +160,7 @@ mod tests {
         net::{IpAddr, Ipv4Addr, SocketAddr},
         path::Path,
         sync::Arc,
+        time::Duration,
     };
     use uuid::Uuid;
 
@@ -294,6 +295,38 @@ mod tests {
             content_type_for(Path::new("artifact.bin")),
             "application/octet-stream"
         );
+    }
+
+    #[test]
+    fn ensure_panel_dist_rejects_stale_assets_until_rebuilt() {
+        let root = std::env::temp_dir().join(format!("loom-panel-dist-test-{}", Uuid::new_v4()));
+        let panel_dir = root.join("panel");
+        let dist_dir = panel_dir.join("dist");
+        let src_dir = panel_dir.join("src");
+
+        fs::create_dir_all(&dist_dir).expect("create panel dist dir");
+        fs::create_dir_all(&src_dir).expect("create panel src dir");
+        fs::write(dist_dir.join("index.html"), "<html>old build</html>").expect("write dist");
+
+        // Sleep because some filesystems coarsen mtime granularity.
+        std::thread::sleep(Duration::from_secs(1));
+        fs::write(
+            src_dir.join("panel-entry.tsx"),
+            "export const build = 'newer';",
+        )
+        .expect("write newer source");
+
+        let err = ensure_panel_dist(&dist_dir).expect_err("stale dist should be rejected");
+        assert!(
+            err.to_string().contains("panel frontend assets are stale"),
+            "unexpected error: {err}"
+        );
+
+        std::thread::sleep(Duration::from_secs(1));
+        fs::write(dist_dir.join("index.html"), "<html>fresh build</html>").expect("rewrite dist");
+
+        ensure_panel_dist(&dist_dir).expect("fresh dist should pass");
+        cleanup_root(root);
     }
 
     #[test]

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import type { CommandItem, PanelPageKey, ProjectionLink, ProjectionMethod, TweakState, VizMode } from "../lib/types";
 import { usePanelData } from "../lib/api/usePanelData";
+import { api } from "../lib/api/client";
 import { BINDINGS, OPS, SKILLS, TARGETS } from "../lib/mock_data";
 import { Sidebar } from "../components/panel/Sidebar";
 import { Topbar } from "../components/panel/Topbar";
@@ -9,10 +10,10 @@ import { OverviewPage } from "./panel/OverviewPage";
 import { SkillsPage } from "./panel/SkillsPage";
 import { TargetsPage } from "./panel/TargetsPage";
 import { BindingsPage } from "./panel/BindingsPage";
+import { HistoryPage } from "./panel/HistoryPage";
 import { OpsPage } from "./panel/OpsPage";
 import { SettingsPage } from "./panel/SettingsPage";
 import { SyncPage } from "./panel/SyncPage";
-import { PlaceholderPage } from "./panel/PlaceholderPage";
 
 const DEFAULT_TWEAKS: TweakState = {
   vizMode: "loom",
@@ -124,6 +125,7 @@ export function PanelApp() {
   const readOnly = usingMock;
   const onMutation = live.refetch;
   const onNewBinding = () => setPage("bindings");
+  const onViewOps = () => setPage("ops");
 
   const commandItems: CommandItem[] = [
     ...VALID_PAGES.map((pageKey) => ({
@@ -158,7 +160,7 @@ export function PanelApp() {
     },
   ];
 
-  const runCommand = (item: CommandItem) => {
+  const runCommand = async (item: CommandItem) => {
     if (item.kind === "page") {
       setPage(item.label as PanelPageKey);
       return;
@@ -180,7 +182,8 @@ export function PanelApp() {
       return;
     }
     if (item.id === "action:replay") {
-      void live.refetch();
+      await api.syncReplay();
+      live.refetch();
     }
   };
 
@@ -206,6 +209,7 @@ export function PanelApp() {
           workspaceWarnings={live.workspaceWarnings}
           onMutation={onMutation}
           onNewBinding={onNewBinding}
+          onViewOps={onViewOps}
           readOnly={readOnly}
         />
       );
@@ -251,6 +255,9 @@ export function PanelApp() {
         />
       );
       break;
+    case "history":
+      view = <HistoryPage readOnly={readOnly} />;
+      break;
     case "settings":
       view = (
         <SettingsPage
@@ -261,7 +268,7 @@ export function PanelApp() {
       );
       break;
     default:
-      view = <PlaceholderPage page={page} />;
+      view = <SettingsPage info={live.info} workspaceStatus={live.workspaceStatus} workspaceWarnings={live.workspaceWarnings} />;
   }
 
   return (

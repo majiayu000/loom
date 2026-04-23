@@ -25,7 +25,7 @@ interface TopbarProps {
   pendingCount: number;
   onReplay: () => void;
   commandItems: CommandItem[];
-  onCommand: (item: CommandItem) => void;
+  onCommand: (item: CommandItem) => void | Promise<void>;
   readOnly: boolean;
 }
 
@@ -79,6 +79,7 @@ export function Topbar(props: TopbarProps) {
   const [replayError, setReplayError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
+  const [commandError, setCommandError] = useState<string | null>(null);
 
   const results = useMemo(() => {
     const trimmed = query.trim().toLowerCase();
@@ -116,6 +117,17 @@ export function Topbar(props: TopbarProps) {
     }
   };
 
+  const runCommand = async (item: CommandItem) => {
+    setCommandError(null);
+    try {
+      await props.onCommand(item);
+      setOpen(false);
+      setQuery("");
+    } catch (err) {
+      setCommandError(err instanceof Error ? err.message : String(err));
+    }
+  };
+
   return (
     <div className="topbar">
       <div className="brand">
@@ -142,9 +154,7 @@ export function Topbar(props: TopbarProps) {
           }}
           onKeyDown={(e) => {
             if (e.key === "Enter" && results[0]) {
-              props.onCommand(results[0]);
-              setOpen(false);
-              setQuery("");
+              void runCommand(results[0]);
             }
           }}
         />
@@ -168,11 +178,7 @@ export function Topbar(props: TopbarProps) {
               <button
                 key={item.id}
                 onMouseDown={(e) => e.preventDefault()}
-                onClick={() => {
-                  props.onCommand(item);
-                  setOpen(false);
-                  setQuery("");
-                }}
+                onClick={() => void runCommand(item)}
                 style={{
                   display: "grid",
                   gap: 2,
@@ -190,6 +196,26 @@ export function Topbar(props: TopbarProps) {
                 </span>
               </button>
             ))}
+          </div>
+        )}
+        {commandError && (
+          <div
+            style={{
+              position: "absolute",
+              top: "calc(100% + 8px)",
+              left: 0,
+              right: 0,
+              padding: "8px 10px",
+              borderRadius: 10,
+              border: "1px solid rgba(216,90,90,0.25)",
+              background: "rgba(216,90,90,0.08)",
+              color: "var(--err)",
+              fontFamily: "var(--font-mono)",
+              fontSize: 11,
+              zIndex: 120,
+            }}
+          >
+            {commandError}
           </div>
         )}
       </div>

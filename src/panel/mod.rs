@@ -112,6 +112,7 @@ pub async fn run_panel(ctx: AppContext, port: u16) -> Result<()> {
         .route("/api/v3/skills/{skill_name}/diff", get(v3_skill_diff))
         .route("/api/remote/status", get(remote_status))
         .route("/api/pending", get(pending))
+        .route("/api/ops/history/list", get(ops_history_list))
         .route("/api/ops/history/diagnose", get(ops_history_diagnose))
         .route("/api/ops/retry", post(ops_retry))
         .route("/api/ops/purge", post(ops_purge))

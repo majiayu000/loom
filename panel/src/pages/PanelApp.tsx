@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import type { PanelPageKey, ProjectionLink, ProjectionMethod, TweakState, VizMode } from "../lib/types";
+import type { CommandItem, PanelPageKey, ProjectionLink, ProjectionMethod, TweakState, VizMode } from "../lib/types";
 import { usePanelData } from "../lib/api/usePanelData";
 import { BINDINGS, OPS, SKILLS, TARGETS } from "../lib/mock_data";
 import { Sidebar } from "../components/panel/Sidebar";
@@ -10,6 +10,8 @@ import { SkillsPage } from "./panel/SkillsPage";
 import { TargetsPage } from "./panel/TargetsPage";
 import { BindingsPage } from "./panel/BindingsPage";
 import { OpsPage } from "./panel/OpsPage";
+import { SettingsPage } from "./panel/SettingsPage";
+import { SyncPage } from "./panel/SyncPage";
 import { PlaceholderPage } from "./panel/PlaceholderPage";
 
 const DEFAULT_TWEAKS: TweakState = {
@@ -123,6 +125,65 @@ export function PanelApp() {
   const onMutation = live.refetch;
   const onNewBinding = () => setPage("bindings");
 
+  const commandItems: CommandItem[] = [
+    ...VALID_PAGES.map((pageKey) => ({
+      id: `page:${pageKey}`,
+      label: pageKey,
+      hint: "page",
+      kind: "page" as const,
+    })),
+    ...skills.slice(0, 40).map((skill) => ({
+      id: `skill:${skill.id}`,
+      label: skill.name,
+      hint: `latest ${skill.latestRev}`,
+      kind: "skill" as const,
+    })),
+    ...targets.slice(0, 40).map((target) => ({
+      id: `target:${target.id}`,
+      label: `${target.agent}/${target.profile}`,
+      hint: target.path,
+      kind: "target" as const,
+    })),
+    ...bindings.slice(0, 40).map((binding) => ({
+      id: `binding:${binding.id}`,
+      label: binding.id,
+      hint: `${binding.skill} → ${binding.target}`,
+      kind: "binding" as const,
+    })),
+    {
+      id: "action:replay",
+      label: "Replay pending ops",
+      hint: "sync replay",
+      kind: "action" as const,
+    },
+  ];
+
+  const runCommand = (item: CommandItem) => {
+    if (item.kind === "page") {
+      setPage(item.label as PanelPageKey);
+      return;
+    }
+    if (item.kind === "skill") {
+      setPage("skills");
+      const skill = skills.find((candidate) => candidate.name === item.label);
+      if (skill) setSelectedSkill(skill.id);
+      return;
+    }
+    if (item.kind === "target") {
+      setPage("targets");
+      const target = targets.find((candidate) => `${candidate.agent}/${candidate.profile}` === item.label);
+      if (target) setSelectedTarget(target.id);
+      return;
+    }
+    if (item.kind === "binding") {
+      setPage("bindings");
+      return;
+    }
+    if (item.id === "action:replay") {
+      void live.refetch();
+    }
+  };
+
   let view: React.ReactNode;
   switch (page) {
     case "overview":
@@ -139,6 +200,10 @@ export function PanelApp() {
           onSelectSkill={toggleSkill}
           onSelectTarget={toggleTarget}
           registryRoot={live.registryRoot}
+          workspaceStatus={live.workspaceStatus}
+          git={live.git}
+          remote={live.remote}
+          workspaceWarnings={live.workspaceWarnings}
           onMutation={onMutation}
           onNewBinding={onNewBinding}
           readOnly={readOnly}
@@ -173,7 +238,27 @@ export function PanelApp() {
       view = <BindingsPage bindings={bindings} targets={targets} onMutation={onMutation} readOnly={readOnly} />;
       break;
     case "ops":
-      view = <OpsPage ops={ops} />;
+      view = <OpsPage ops={ops} onMutation={onMutation} readOnly={readOnly} />;
+      break;
+    case "sync":
+      view = (
+        <SyncPage
+          remote={live.remote}
+          workspaceStatus={live.workspaceStatus}
+          workspaceWarnings={live.workspaceWarnings}
+          onMutation={onMutation}
+          readOnly={readOnly}
+        />
+      );
+      break;
+    case "settings":
+      view = (
+        <SettingsPage
+          info={live.info}
+          workspaceStatus={live.workspaceStatus}
+          workspaceWarnings={live.workspaceWarnings}
+        />
+      );
       break;
     default:
       view = <PlaceholderPage page={page} />;
@@ -190,6 +275,8 @@ export function PanelApp() {
         remoteState={live.remote?.sync_state}
         pendingCount={live.pendingCount}
         onReplay={onMutation}
+        commandItems={commandItems}
+        onCommand={runCommand}
         readOnly={readOnly}
       />
       <Sidebar

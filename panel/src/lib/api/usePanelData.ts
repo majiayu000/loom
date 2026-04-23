@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { V3Projection } from "../../generated/V3Projection";
-import type { HealthPayload, RemotePayload, V3Payload } from "../../types";
+import type { HealthPayload, RemotePayload, V3Payload, WorkspaceStatusPayload } from "../../types";
 import type { Binding, Op, Skill, Target } from "../types";
 import {
   adaptBinding,
@@ -19,9 +19,17 @@ export interface PanelLiveData {
   loading: boolean;
   error: string | null;
   lastUpdated: string | null;
+  info: import("../../types").InfoPayload | null;
   registryRoot: string | null;
   remote: RemotePayload | null;
   health: HealthPayload | null;
+  workspaceStatus: WorkspaceStatusPayload["data"] | null;
+  git: WorkspaceStatusPayload["data"] extends infer T
+    ? T extends { git?: infer G }
+      ? G | null
+      : null
+    : null;
+  workspaceWarnings: string[];
   counts: V3Counts;
   skills: Skill[];
   targets: Target[];
@@ -45,9 +53,13 @@ const INITIAL_STATE: LiveState = {
   loading: true,
   error: null,
   lastUpdated: null,
+  info: null,
   registryRoot: null,
   remote: null,
   health: null,
+  workspaceStatus: null,
+  git: null,
+  workspaceWarnings: [],
   counts: EMPTY_COUNTS,
   skills: [],
   targets: [],
@@ -73,9 +85,10 @@ export function usePanelData(): PanelLiveData {
     const generation = ++generationRef.current;
 
     try {
-      const [health, info, skillsPayload, v3, remote, pending] = await Promise.all([
+      const [health, info, workspaceStatus, skillsPayload, v3, remote, pending] = await Promise.all([
         api.health(controller.signal),
         api.info(controller.signal),
+        api.workspaceStatus(controller.signal),
         api.skills(controller.signal),
         api.v3Status(controller.signal),
         api.remoteStatus(controller.signal),
@@ -104,9 +117,13 @@ export function usePanelData(): PanelLiveData {
         loading: false,
         error: null,
         lastUpdated: new Date().toISOString(),
+        info,
         registryRoot: info.root ?? null,
         remote: remote.remote ?? null,
         health,
+        workspaceStatus: workspaceStatus.data ?? null,
+        git: workspaceStatus.data?.git ?? null,
+        workspaceWarnings: workspaceStatus.meta?.warnings ?? [],
         counts: v3Data.counts ?? EMPTY_COUNTS,
         skills,
         targets,

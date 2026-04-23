@@ -4,6 +4,7 @@ import type {
   PendingPayload,
   RemotePayload,
   V3Payload,
+  WorkspaceStatusPayload,
 } from "../../types";
 
 export interface SkillsPayload {
@@ -142,6 +143,10 @@ export interface CaptureBody {
   message?: string;
 }
 
+export interface HistoryRepairBody {
+  strategy: "local" | "remote";
+}
+
 export interface SkillDiffFile {
   path: string;
   added: number;
@@ -163,10 +168,12 @@ export interface SkillDiffPayload {
 export const api = {
   health: (signal?: AbortSignal) => getJson<HealthPayload>("/api/health", signal),
   info: (signal?: AbortSignal) => getJson<InfoPayload>("/api/info", signal),
+  workspaceStatus: (signal?: AbortSignal) => getJson<WorkspaceStatusPayload>("/api/workspace/status", signal),
   skills: (signal?: AbortSignal) => getJson<SkillsPayload>("/api/skills", signal),
   v3Status: (signal?: AbortSignal) => getJson<V3Payload>("/api/v3/status", signal),
   remoteStatus: (signal?: AbortSignal) => getJson<RemoteStatusResponse>("/api/remote/status", signal),
   pending: (signal?: AbortSignal) => getJson<PendingPayload>("/api/pending", signal),
+  opsHistoryDiagnose: (signal?: AbortSignal) => getJson<CommandEnvelope>("/api/ops/history/diagnose", signal),
 
   targetAdd: (body: TargetAddBody) => postJson("/api/v3/targets", body),
   targetRemove: (targetId: string) => postJson(`/api/v3/targets/${encodeURIComponent(targetId)}/remove`, {}),
@@ -178,6 +185,9 @@ export const api = {
   syncPush: () => postJson("/api/sync/push", {}),
   syncPull: () => postJson("/api/sync/pull", {}),
   syncReplay: () => postJson("/api/sync/replay", {}),
+  opsRetry: () => postJson("/api/ops/retry", {}),
+  opsPurge: () => postJson("/api/ops/purge", {}),
+  opsHistoryRepair: (body: HistoryRepairBody) => postJson("/api/ops/history/repair", body),
 
   skillDiff: (name: string, revA?: string, revB?: string, signal?: AbortSignal) => {
     const params = new URLSearchParams();

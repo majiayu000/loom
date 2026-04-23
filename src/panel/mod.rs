@@ -77,6 +77,11 @@ pub(super) struct DiffParams {
     pub(super) rev_b: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+pub(super) struct HistoryRepairRequest {
+    pub(super) strategy: String,
+}
+
 pub async fn run_panel(ctx: AppContext, port: u16) -> Result<()> {
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
     ensure_panel_dist()?;
@@ -90,6 +95,7 @@ pub async fn run_panel(ctx: AppContext, port: u16) -> Result<()> {
         .route("/", get(frontend_index))
         .route("/api/health", get(health))
         .route("/api/info", get(info))
+        .route("/api/workspace/status", get(workspace_status))
         .route("/api/skills", get(skills))
         .route("/api/v3/status", get(v3_status))
         .route("/api/v3/bindings", get(v3_bindings))
@@ -109,6 +115,10 @@ pub async fn run_panel(ctx: AppContext, port: u16) -> Result<()> {
         .route("/api/v3/skills/{skill_name}/history", get(v3_skill_history))
         .route("/api/remote/status", get(remote_status))
         .route("/api/pending", get(pending))
+        .route("/api/ops/history/diagnose", get(ops_history_diagnose))
+        .route("/api/ops/retry", post(ops_retry))
+        .route("/api/ops/purge", post(ops_purge))
+        .route("/api/ops/history/repair", post(ops_history_repair))
         .route("/api/sync/push", post(sync_push))
         .route("/api/sync/pull", post(sync_pull))
         .route("/api/sync/replay", post(sync_replay))

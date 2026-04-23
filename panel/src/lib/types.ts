@@ -107,3 +107,10 @@ export interface TweakState {
   hero: "graph" | "grid" | "focus";
   displayFont: "Fraunces" | "Inter" | "JetBrains Mono";
 }
+
+export interface CommandItem {
+  id: string;
+  label: string;
+  hint: string;
+  kind: "page" | "skill" | "target" | "binding" | "action";
+}

@@ -33,6 +33,21 @@ describe("PanelApp status failure UI", () => {
           return Promise.resolve(jsonResponse({ ok: true }));
         case "/api/info":
           return Promise.resolve(jsonResponse({ root: "/tmp/loom-registry" }));
+        case "/api/workspace/status":
+          return Promise.resolve(
+            jsonResponse({
+              ok: true,
+              data: {
+                pending_ops: 0,
+                registered_targets: { count: 0, target_ids: [] },
+                skill_sources: { count: 0, dirs: [] },
+                git: { branch: "main", head: "abc1234", status_short: "" },
+                remote: { sync_state: "CLEAN", ahead: 0, behind: 0, configured: true },
+                v3: { available: false },
+              },
+              meta: { warnings: [] },
+            }),
+          );
         case "/api/skills":
           return Promise.resolve(jsonResponse({ skills: ["typed-api-client"] }));
         case "/api/v3/status":

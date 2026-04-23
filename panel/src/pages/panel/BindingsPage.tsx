@@ -3,6 +3,8 @@ import type { Binding, Target } from "../../lib/types";
 import { AgentAvatar } from "../../components/panel/AgentAvatar";
 import { PlusIcon } from "../../components/icons/nav_icons";
 import { BindingAddForm } from "../../components/panel/forms/BindingAddForm";
+import { api } from "../../lib/api/client";
+import { useMutation } from "../../lib/useMutation";
 
 interface BindingsPageProps {
   bindings: Binding[];
@@ -13,6 +15,8 @@ interface BindingsPageProps {
 
 export function BindingsPage({ bindings, targets, onMutation, readOnly }: BindingsPageProps) {
   const [addOpen, setAddOpen] = useState(false);
+  const [confirmingId, setConfirmingId] = useState<string | null>(null);
+  const remove = useMutation();
   return (
     <>
       <div className="page-header">
@@ -35,6 +39,23 @@ export function BindingsPage({ bindings, targets, onMutation, readOnly }: Bindin
         </div>
       </div>
       <div className="page-body">
+        {(remove.error || remove.success) && (
+          <div
+            style={{
+              marginBottom: 12,
+              padding: "8px 12px",
+              fontFamily: "var(--font-mono)",
+              fontSize: 11,
+              border: "1px solid",
+              borderColor: remove.error ? "rgba(216,90,90,0.28)" : "rgba(111,183,138,0.28)",
+              color: remove.error ? "var(--err)" : "var(--ok)",
+              background: remove.error ? "rgba(216,90,90,0.08)" : "rgba(111,183,138,0.08)",
+              borderRadius: 10,
+            }}
+          >
+            {remove.error ?? `✓ ${remove.success}`}
+          </div>
+        )}
         {addOpen && (
           <BindingAddForm
             targets={targets}
@@ -62,6 +83,7 @@ export function BindingsPage({ bindings, targets, onMutation, readOnly }: Bindin
               <th>Matcher</th>
               <th>Method</th>
               <th>Policy</th>
+              <th />
             </tr>
           </thead>
           <tbody>
@@ -92,6 +114,38 @@ export function BindingsPage({ bindings, targets, onMutation, readOnly }: Bindin
                     >
                       {b.policy}
                     </span>
+                  </td>
+                  <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
+                    {confirmingId === b.id ? (
+                      <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+                        <span style={{ fontSize: 11, color: "var(--ink-2)" }}>remove?</span>
+                        <button className="btn sm" onClick={() => setConfirmingId(null)} disabled={remove.busy}>
+                          Cancel
+                        </button>
+                        <button
+                          className="btn sm"
+                          style={{ color: "var(--err)", borderColor: "rgba(216,90,90,0.3)" }}
+                          disabled={remove.busy || readOnly}
+                          onClick={() =>
+                            remove.run(`remove ${b.id}`, () => api.bindingRemove(b.id), () => {
+                              setConfirmingId(null);
+                              onMutation();
+                            })
+                          }
+                        >
+                          {remove.busy ? "removing…" : "Remove"}
+                        </button>
+                      </span>
+                    ) : (
+                      <button
+                        className="btn sm"
+                        disabled={readOnly}
+                        onClick={() => setConfirmingId(b.id)}
+                        title={readOnly ? "registry offline" : undefined}
+                      >
+                        Remove
+                      </button>
+                    )}
                   </td>
                 </tr>
               );

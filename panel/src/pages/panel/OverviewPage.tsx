@@ -1,3 +1,4 @@
+import type { RemotePayload, WorkspaceStatusPayload } from "../../types";
 import type { Op, ProjectionLink, Skill, Target, VizMode } from "../../lib/types";
 import { OpRow } from "../../components/panel/OpRow";
 import { ProjectionGraph } from "../../components/panel/ProjectionGraph";
@@ -17,6 +18,10 @@ interface OverviewPageProps {
   onSelectSkill: (id: string) => void;
   onSelectTarget: (id: string) => void;
   registryRoot: string | null;
+  workspaceStatus: WorkspaceStatusPayload["data"] | null;
+  git: WorkspaceStatusPayload["data"] extends infer T ? (T extends { git?: infer G } ? G | null : null) : null;
+  remote: RemotePayload | null;
+  workspaceWarnings: string[];
   onMutation: () => void;
   onNewBinding: () => void;
   readOnly: boolean;
@@ -34,6 +39,10 @@ export function OverviewPage({
   onSelectSkill,
   onSelectTarget,
   registryRoot,
+  workspaceStatus,
+  git,
+  remote,
+  workspaceWarnings,
   onMutation,
   onNewBinding,
   readOnly,
@@ -46,6 +55,12 @@ export function OverviewPage({
   const rootDisplay = registryRoot
     ? registryRoot.replace(/^\/Users\/[^/]+/, "~")
     : "~/.loom-registry";
+  const branch = git?.branch ?? "—";
+  const headShort = git?.head ? git.head.slice(0, 7) : "—";
+  const worktreeDirty = Boolean(git?.status_short && git.status_short.trim().length > 0);
+  const registeredTargetCount = workspaceStatus?.registered_targets?.count ?? targets.length;
+  const sourceDirCount = workspaceStatus?.skill_sources?.count ?? 0;
+  const remoteState = remote?.sync_state ?? "unknown";
   const sync = useMutation();
 
   return (
@@ -107,9 +122,25 @@ export function OverviewPage({
       )}
       <div className="page-body">
         <div className="kpi-row">
-          <Kpi label="Skills" value={skills.length} meta={<><span className="trend">+2</span> · 52 captures · 38 releases</>} />
-          <Kpi label="Targets" value={targets.length} meta="6 agents · 4 profiles" />
-          <Kpi label="Projections" value={totalProjections} meta="symlink · copy · materialize" />
+          <Kpi
+            label="Skills"
+            value={skills.length}
+            meta={`${sourceDirCount} source ${sourceDirCount === 1 ? "dir" : "dirs"} · ${registeredTargetCount} registered target${registeredTargetCount === 1 ? "" : "s"}`}
+          />
+          <Kpi
+            label="Targets"
+            value={targets.length}
+            meta={
+              registeredTargetCount === targets.length
+                ? "all registered targets loaded"
+                : `${registeredTargetCount} registered · ${targets.length} rendered`
+            }
+          />
+          <Kpi
+            label="Projections"
+            value={totalProjections}
+            meta={`${workspaceStatus?.v3?.available ? "v3 state loaded" : "v3 not initialized"} · ${remoteState.toLowerCase().replace(/_/g, " ")}`}
+          />
           <Kpi
             label="Ops"
             value={pendingOps + errOps}
@@ -211,25 +242,44 @@ export function OverviewPage({
           </div>
           <div className="card">
             <div className="card-head">
-              <h3>Write Guard</h3>
-              <span className="badge ok">active</span>
+              <h3>Registry State</h3>
+              <span className={`badge ${worktreeDirty ? "" : "ok"}`}>{worktreeDirty ? "dirty" : "clean"}</span>
             </div>
             <div className="card-body" style={{ fontSize: 12, color: "var(--ink-1)" }}>
               <div className="row-flex" style={{ marginBottom: 10 }}>
-                <ShieldIcon style={{ color: "var(--ok)" }} />
-                <span>Registry root is independent of Loom tool repo. Mutable ops enabled.</span>
+                <ShieldIcon style={{ color: worktreeDirty ? "var(--warn)" : "var(--ok)" }} />
+                <span>
+                  {workspaceWarnings.length > 0
+                    ? workspaceWarnings[0]
+                    : readOnly
+                    ? "Panel is in read-only fallback mode."
+                    : "Mutable ops enabled for the current registry root."}
+                </span>
               </div>
               <pre className="code" style={{ marginBottom: 10 }}>
                 <span className="c"># Current registry</span>
                 {"\n"}
                 <span className="k">--root</span> <span className="s">{rootDisplay}</span>
                 {"\n"}
-                <span className="c"># Git HEAD</span>
+                <span className="c"># Git branch / HEAD</span>
                 {"\n"}
-                <span className="n">2a3f8c1</span> <span className="s">"release: commit-message-writer v1.2.0"</span>
+                <span className="n">{branch}</span> <span className="s">{headShort}</span>
+                {"\n"}
+                <span className="c"># Remote</span>
+                {"\n"}
+                <span className="n">{remote?.remote ?? "—"}</span> <span className="s">{remote?.url ?? "not configured"}</span>
               </pre>
-              <div style={{ color: "var(--ink-3)", fontSize: 11 }}>
-                Last pull from <span className="mono">origin/main</span> · 6h ago
+              <div style={{ color: "var(--ink-3)", fontSize: 11, display: "grid", gap: 4 }}>
+                <div>
+                  sync state <span className="mono">{remoteState.toLowerCase()}</span>
+                  {typeof remote?.ahead === "number" && typeof remote?.behind === "number" && (
+                    <> · ahead {remote.ahead} / behind {remote.behind}</>
+                  )}
+                </div>
+                <div>
+                  worktree {worktreeDirty ? "has local changes" : "clean"} · pending ops{" "}
+                  <span className="mono">{workspaceStatus?.pending_ops ?? 0}</span>
+                </div>
               </div>
             </div>
           </div>

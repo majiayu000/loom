@@ -16,8 +16,8 @@ use crate::state::resolve_agent_skill_dirs;
 use crate::state_model::V3StatePaths;
 
 use super::auth::{
-    ensure_mutation_authorized, error_envelope, load_v3_snapshot, run_panel_command, v3_error,
-    v3_ok,
+    ensure_mutation_authorized, error_envelope, load_v3_snapshot, run_panel_command,
+    status_for_v3_error_payload, v3_error, v3_ok,
 };
 use super::{BindingAddRequest, CaptureRequest, PanelState, ProjectRequest, TargetAddRequest};
 
@@ -69,10 +69,15 @@ pub(super) async fn skills(State(state): State<PanelState>) -> Json<serde_json::
     }))
 }
 
-pub(super) async fn v3_status(State(state): State<PanelState>) -> Json<serde_json::Value> {
+pub(super) async fn v3_status(
+    State(state): State<PanelState>,
+) -> (StatusCode, Json<serde_json::Value>) {
     match load_v3_snapshot(&state.ctx) {
-        Ok(snapshot) => v3_ok(snapshot.status_view()),
-        Err(err) => err,
+        Ok(snapshot) => (StatusCode::OK, v3_ok(snapshot.status_view())),
+        Err(err) => {
+            let status = status_for_v3_error_payload(&err.0);
+            (status, err)
+        }
     }
 }
 

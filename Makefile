@@ -1,6 +1,6 @@
 SHELL := /usr/bin/env bash
 
-.PHONY: fmt fmt-check test lint panel-build e2e check ci install-hooks
+.PHONY: fmt fmt-check test lint panel-build panel-test e2e check ci install-hooks
 
 fmt:
 	cargo fmt --all
@@ -19,7 +19,10 @@ lint:
 	cargo clippy --all-targets --all-features -- -D warnings
 
 panel-build:
-	cd panel && npm ci && npm run build
+	cd panel && bun install --frozen-lockfile && bun run build
+
+panel-test:
+	cd panel && bun install --frozen-lockfile && bun run test
 
 e2e:
 	./scripts/e2e-agent-flow.sh

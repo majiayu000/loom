@@ -83,7 +83,7 @@ export function usePanelData(): PanelLiveData {
       ]);
       if (controller.signal.aborted || generation !== generationRef.current) return;
 
-      const v3Data = v3.ok && v3.data ? v3.data : {};
+      const v3Data = v3.data ?? {};
       const projections = v3Data.projections ?? [];
       const rules = v3Data.rules ?? [];
       const v3Targets = v3Data.targets ?? [];

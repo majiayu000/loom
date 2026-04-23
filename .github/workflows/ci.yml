@@ -23,12 +23,10 @@ jobs:
         with:
           components: rustfmt, clippy
 
-      - name: Setup Node
-        uses: actions/setup-node@v4
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
         with:
-          node-version: "20"
-          cache: "npm"
-          cache-dependency-path: panel/package-lock.json
+          bun-version: latest
 
       - name: Ensure jq
         run: sudo apt-get update && sudo apt-get install -y jq
@@ -48,6 +46,9 @@ jobs:
             echo "::error::ts-rs generated bindings are out of date. Run 'cargo test' locally and commit panel/src/generated/ changes."
             exit 1
           fi
+
+      - name: Panel Tests
+        run: make panel-test
 
       - name: Panel Build
         run: make panel-build

@@ -113,6 +113,22 @@ pub(crate) fn status_for_error_code(code: Option<&str>) -> StatusCode {
     }
 }
 
+pub(crate) fn status_for_v3_state_load_error(code: Option<&str>) -> StatusCode {
+    match code {
+        Some("ARG_INVALID") => StatusCode::BAD_REQUEST,
+        Some("SCHEMA_MISMATCH" | "STATE_CORRUPT") => StatusCode::INTERNAL_SERVER_ERROR,
+        _ => status_for_error_code(code),
+    }
+}
+
+pub(crate) fn status_for_v3_error_payload(payload: &serde_json::Value) -> StatusCode {
+    let code = payload
+        .get("error")
+        .and_then(|error| error.get("code"))
+        .and_then(serde_json::Value::as_str);
+    status_for_v3_state_load_error(code)
+}
+
 pub(crate) fn error_envelope(
     cmd: &str,
     request_id: &str,

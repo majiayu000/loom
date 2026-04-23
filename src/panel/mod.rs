@@ -360,6 +360,85 @@ mod tests {
     }
 
     #[test]
+    fn ensure_panel_dist_ignores_untracked_dist_assets_when_checking_staleness() {
+        let root = std::env::temp_dir().join(format!("loom-panel-dist-test-{}", Uuid::new_v4()));
+        let panel_dir = root.join("panel");
+        let dist_dir = panel_dir.join("dist");
+        let src_dir = panel_dir.join("src");
+        let assets_dir = dist_dir.join("assets");
+
+        fs::create_dir_all(&assets_dir).expect("create panel assets dir");
+        fs::create_dir_all(&src_dir).expect("create panel src dir");
+        fs::write(
+            dist_dir.join("index.html"),
+            r#"<script type="module" src="/assets/panel.js"></script>"#,
+        )
+        .expect("write dist index");
+        fs::write(assets_dir.join("panel.js"), "console.log('old build');")
+            .expect("write tracked asset");
+
+        std::thread::sleep(Duration::from_secs(1));
+        fs::write(
+            src_dir.join("panel-entry.tsx"),
+            "export const build = 'newer';",
+        )
+        .expect("write newer source");
+
+        std::thread::sleep(Duration::from_secs(1));
+        fs::write(assets_dir.join("scratch.txt"), "new but unrelated")
+            .expect("write scratch asset");
+
+        let err = ensure_panel_dist(&dist_dir).expect_err("stale dist should still be rejected");
+        assert!(
+            err.to_string().contains("panel frontend assets are stale"),
+            "unexpected error: {err}"
+        );
+
+        cleanup_root(root);
+    }
+
+    #[test]
+    fn ensure_panel_dist_uses_oldest_tracked_artifact_for_staleness() {
+        let root = std::env::temp_dir().join(format!("loom-panel-dist-test-{}", Uuid::new_v4()));
+        let panel_dir = root.join("panel");
+        let dist_dir = panel_dir.join("dist");
+        let src_dir = panel_dir.join("src");
+        let assets_dir = dist_dir.join("assets");
+
+        fs::create_dir_all(&assets_dir).expect("create panel assets dir");
+        fs::create_dir_all(&src_dir).expect("create panel src dir");
+        fs::write(
+            dist_dir.join("index.html"),
+            r#"<script type="module" src="/assets/panel.js"></script>"#,
+        )
+        .expect("write dist index");
+        fs::write(assets_dir.join("panel.js"), "console.log('old build');")
+            .expect("write tracked asset");
+
+        std::thread::sleep(Duration::from_secs(1));
+        fs::write(
+            src_dir.join("panel-entry.tsx"),
+            "export const build = 'newer';",
+        )
+        .expect("write newer source");
+
+        std::thread::sleep(Duration::from_secs(1));
+        fs::write(
+            assets_dir.join("panel.js"),
+            "console.log('retouched asset');",
+        )
+        .expect("retouch tracked asset");
+
+        let err = ensure_panel_dist(&dist_dir).expect_err("stale dist should still be rejected");
+        assert!(
+            err.to_string().contains("panel frontend assets are stale"),
+            "unexpected error: {err}"
+        );
+
+        cleanup_root(root);
+    }
+
+    #[test]
     fn error_envelope_uses_expected_shape() {
         assert_eq!(
             error_envelope("skill.capture", "req-1", "INTERNAL_ERROR", "boom"),

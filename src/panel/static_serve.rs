@@ -49,12 +49,7 @@ pub(super) fn ensure_panel_dist(dist_dir: &Path) -> Result<()> {
             dist_dir.display()
         )
     })?;
-    let Some((built_asset, built_at)) = newest_file_in_tree(dist_dir)? else {
-        return Err(anyhow!(
-            "panel frontend not built; expected assets under {}",
-            dist_dir.display()
-        ));
-    };
+    let (built_asset, built_at) = newest_panel_dist_artifact(dist_dir)?;
 
     if let Some((source_path, source_mtime)) = newest_panel_build_input(panel_dir)?
         && source_mtime > built_at
@@ -132,10 +127,24 @@ fn newest_panel_build_input(panel_dir: &Path) -> Result<Option<(PathBuf, SystemT
     Ok(newest)
 }
 
-fn newest_file_in_tree(root: &Path) -> Result<Option<(PathBuf, SystemTime)>> {
+fn newest_panel_dist_artifact(dist_dir: &Path) -> Result<(PathBuf, SystemTime)> {
     let mut newest = None;
-    update_newest_from_tree(root, &mut newest)?;
-    Ok(newest)
+
+    update_newest_file(dist_dir.join("index.html"), &mut newest)?;
+    update_newest_file(dist_dir.join("landing.html"), &mut newest)?;
+    update_newest_file(dist_dir.join("favicon.svg"), &mut newest)?;
+
+    let assets_dir = dist_dir.join("assets");
+    if assets_dir.is_dir() {
+        update_newest_from_tree(&assets_dir, &mut newest)?;
+    }
+
+    newest.ok_or_else(|| {
+        anyhow!(
+            "panel frontend not built; expected assets under {}",
+            dist_dir.display()
+        )
+    })
 }
 
 fn update_newest_from_tree(root: &Path, newest: &mut Option<(PathBuf, SystemTime)>) -> Result<()> {

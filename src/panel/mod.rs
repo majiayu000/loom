@@ -330,6 +330,36 @@ mod tests {
     }
 
     #[test]
+    fn ensure_panel_dist_ignores_untracked_dist_files_when_checking_staleness() {
+        let root = std::env::temp_dir().join(format!("loom-panel-dist-test-{}", Uuid::new_v4()));
+        let panel_dir = root.join("panel");
+        let dist_dir = panel_dir.join("dist");
+        let src_dir = panel_dir.join("src");
+
+        fs::create_dir_all(&dist_dir).expect("create panel dist dir");
+        fs::create_dir_all(&src_dir).expect("create panel src dir");
+        fs::write(dist_dir.join("index.html"), "<html>old build</html>").expect("write dist");
+
+        std::thread::sleep(Duration::from_secs(1));
+        fs::write(
+            src_dir.join("panel-entry.tsx"),
+            "export const build = 'newer';",
+        )
+        .expect("write newer source");
+
+        std::thread::sleep(Duration::from_secs(1));
+        fs::write(dist_dir.join("scratch.txt"), "new but unrelated").expect("write scratch file");
+
+        let err = ensure_panel_dist(&dist_dir).expect_err("stale dist should still be rejected");
+        assert!(
+            err.to_string().contains("panel frontend assets are stale"),
+            "unexpected error: {err}"
+        );
+
+        cleanup_root(root);
+    }
+
+    #[test]
     fn error_envelope_uses_expected_shape() {
         assert_eq!(
             error_envelope("skill.capture", "req-1", "INTERNAL_ERROR", "boom"),

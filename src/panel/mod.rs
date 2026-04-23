@@ -4,7 +4,6 @@ mod skill_diff;
 mod static_serve;
 
 use std::net::SocketAddr;
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::Result;
@@ -24,7 +23,6 @@ use static_serve::{ensure_panel_dist, frontend_index, frontend_static_asset};
 #[derive(Clone)]
 pub(crate) struct PanelState {
     pub(crate) ctx: Arc<AppContext>,
-    pub(crate) dist_dir: PathBuf,
     pub(crate) panel_origin: String,
 }
 
@@ -79,12 +77,10 @@ pub(super) struct DiffParams {
 
 pub async fn run_panel(ctx: AppContext, port: u16) -> Result<()> {
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
-    let dist_dir = ctx.root.join("panel/dist");
-    ensure_panel_dist(&dist_dir)?;
+    ensure_panel_dist()?;
 
     let state = PanelState {
         ctx: Arc::new(ctx),
-        dist_dir,
         panel_origin: format!("http://{}", addr),
     };
 
@@ -169,7 +165,6 @@ mod tests {
         let ctx = AppContext::new(Some(root.clone())).expect("build app context");
         let state = PanelState {
             ctx: Arc::new(ctx),
-            dist_dir: root.join("panel/dist"),
             panel_origin: "http://127.0.0.1:43117".to_string(),
         };
         (root, state)
@@ -260,18 +255,16 @@ mod tests {
 
     #[test]
     fn resolve_panel_asset_path_rejects_invalid_components() {
-        let dist_dir = Path::new("/tmp/panel-dist");
-
         assert_eq!(
-            resolve_panel_asset_path(dist_dir, "assets/index.js"),
-            Some(dist_dir.join("assets/index.js"))
+            resolve_panel_asset_path("assets/index.js"),
+            Some(Path::new("assets/index.js").to_path_buf())
         );
         assert_eq!(
-            resolve_panel_asset_path(dist_dir, "./assets/index.css"),
-            Some(dist_dir.join("assets/index.css"))
+            resolve_panel_asset_path("./assets/index.css"),
+            Some(Path::new("assets/index.css").to_path_buf())
         );
-        assert_eq!(resolve_panel_asset_path(dist_dir, "../secret.txt"), None);
-        assert_eq!(resolve_panel_asset_path(dist_dir, "/etc/passwd"), None);
+        assert_eq!(resolve_panel_asset_path("../secret.txt"), None);
+        assert_eq!(resolve_panel_asset_path("/etc/passwd"), None);
     }
 
     #[test]

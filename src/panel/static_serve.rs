@@ -1,25 +1,28 @@
-use std::fs;
 use std::path::{Component, Path, PathBuf};
 
 use anyhow::{Result, anyhow};
 use axum::{
-    body::Body,
     extract::{Path as AxumPath, State},
     http::StatusCode,
     response::{IntoResponse, Response},
 };
+use include_dir::{Dir, include_dir};
 
 use super::PanelState;
 
+static PANEL_DIST: Dir<'_> = include_dir!("$OUT_DIR/panel-dist");
+
 pub(super) async fn frontend_index(State(state): State<PanelState>) -> Response {
-    serve_panel_asset(state.dist_dir.join("index.html"))
+    let _ = state;
+    serve_panel_asset("index.html")
 }
 
 pub(super) async fn frontend_static_asset(
     AxumPath(path): AxumPath<String>,
     State(state): State<PanelState>,
 ) -> Response {
-    let asset_path = match resolve_panel_asset_path(&state.dist_dir, &path) {
+    let _ = state;
+    let asset_path = match resolve_panel_asset_path(&path) {
         Some(path) => path,
         None => {
             return (
@@ -32,19 +35,17 @@ pub(super) async fn frontend_static_asset(
     serve_panel_asset(asset_path)
 }
 
-pub(super) fn ensure_panel_dist(dist_dir: &Path) -> Result<()> {
-    let index_path = dist_dir.join("index.html");
-    if index_path.is_file() {
+pub(super) fn ensure_panel_dist() -> Result<()> {
+    if PANEL_DIST.get_file("index.html").is_some() {
         Ok(())
     } else {
         Err(anyhow!(
-            "panel frontend not built; expected {}",
-            index_path.display()
+            "panel frontend assets are unavailable in this build; rebuild with Bun installed or run from a checkout that has panel/dist"
         ))
     }
 }
 
-pub(crate) fn resolve_panel_asset_path(dist_dir: &Path, requested: &str) -> Option<PathBuf> {
+pub(crate) fn resolve_panel_asset_path(requested: &str) -> Option<PathBuf> {
     let mut relative = PathBuf::new();
     for component in PathBuf::from(requested).components() {
         match component {
@@ -53,15 +54,16 @@ pub(crate) fn resolve_panel_asset_path(dist_dir: &Path, requested: &str) -> Opti
             _ => return None,
         }
     }
-    Some(dist_dir.join(relative))
+    Some(relative)
 }
 
-fn serve_panel_asset(path: PathBuf) -> Response {
-    match fs::read(&path) {
-        Ok(bytes) => Response::builder()
+fn serve_panel_asset(path: impl AsRef<Path>) -> Response {
+    let path = path.as_ref();
+    match PANEL_DIST.get_file(path) {
+        Some(file) => Response::builder()
             .status(StatusCode::OK)
-            .header("content-type", content_type_for(path.as_path()))
-            .body(Body::from(bytes))
+            .header("content-type", content_type_for(path))
+            .body(axum::body::Body::from(file.contents()))
             .unwrap_or_else(|err| {
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
@@ -69,14 +71,9 @@ fn serve_panel_asset(path: PathBuf) -> Response {
                 )
                     .into_response()
             }),
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => (
+        None => (
             StatusCode::NOT_FOUND,
             format!("panel asset not found: {}", path.display()),
-        )
-            .into_response(),
-        Err(err) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("failed to read panel asset {}: {}", path.display(), err),
         )
             .into_response(),
     }

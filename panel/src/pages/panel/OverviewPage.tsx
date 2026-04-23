@@ -24,6 +24,7 @@ interface OverviewPageProps {
   workspaceWarnings: string[];
   onMutation: () => void;
   onNewBinding: () => void;
+  onViewOps: () => void;
   readOnly: boolean;
 }
 
@@ -45,6 +46,7 @@ export function OverviewPage({
   workspaceWarnings,
   onMutation,
   onNewBinding,
+  onViewOps,
   readOnly,
 }: OverviewPageProps) {
   const selSkill = skills.find((s) => s.id === selectedSkill);
@@ -232,7 +234,7 @@ export function OverviewPage({
           <div className="card">
             <div className="card-head">
               <h3>Recent Ops</h3>
-              <button className="btn sm">View all →</button>
+              <button className="btn sm" onClick={onViewOps}>View all →</button>
             </div>
             <div style={{ padding: 8 }}>
               {ops.slice(0, 5).map((o) => (

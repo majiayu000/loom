@@ -4,6 +4,7 @@ import type {
   PendingPayload,
   RemotePayload,
   V3Payload,
+  HistoryListPayload,
   WorkspaceStatusPayload,
 } from "../../types";
 
@@ -216,6 +217,7 @@ export const api = {
   remoteStatus: async (signal?: AbortSignal) =>
     parseRemoteStatusResponse("/api/remote/status", await getJson<unknown>("/api/remote/status", signal)),
   pending: (signal?: AbortSignal) => getJson<PendingPayload>("/api/pending", signal),
+  opsHistoryList: (signal?: AbortSignal) => getJson<HistoryListPayload>("/api/ops/history/list", signal),
   opsHistoryDiagnose: (signal?: AbortSignal) => getJson<CommandEnvelope>("/api/ops/history/diagnose", signal),
 
   targetAdd: (body: TargetAddBody) => postJson("/api/v3/targets", body),

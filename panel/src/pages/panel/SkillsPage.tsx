@@ -155,6 +155,7 @@ function mapObsToLifecycle(ev: V3ObservationEvent): LifecycleEvent {
   };
 }
 
+
 function SkillDetail({ skill, targets }: { skill: Skill; targets: Target[] }) {
   const [tab, setTab] = useState<DetailTab>("history");
   const [historyLoading, setHistoryLoading] = useState(false);
@@ -202,7 +203,7 @@ function SkillDetail({ skill, targets }: { skill: Skill; targets: Target[] }) {
 
       <div className="tabs">
         <button className={tab === "history" ? "active" : ""} onClick={() => setTab("history")}>
-          Lifecycle
+          Summary
         </button>
         <button className={tab === "diff" ? "active" : ""} onClick={() => setTab("diff")}>
           Diff
@@ -242,34 +243,27 @@ function Lifecycle({ events }: { events: LifecycleEvent[] }) {
     );
   }
   return (
-    <div style={{ position: "relative", paddingLeft: 22 }}>
-      <div style={{ position: "absolute", left: 7, top: 4, bottom: 4, width: 1, background: "var(--line)" }} />
-      {events.map((e, i) => (
-        <div key={i} style={{ position: "relative", marginBottom: 14 }}>
-          <div
-            style={{
-              position: "absolute",
-              left: -22,
-              top: 4,
-              width: 15,
-              height: 15,
-              borderRadius: 8,
-              background: "var(--bg-0)",
-              border: `2px solid ${KIND_COLOR[e.kind]}`,
-            }}
-          />
-          <div style={{ fontSize: 12 }}>
-            <span style={{ color: "var(--ink-0)", fontWeight: 500 }}>{e.kind}</span>
-            <span className="mono" style={{ color: "var(--ink-2)", marginLeft: 6 }}>
-              {e.v}
-            </span>
-            <span style={{ color: "var(--ink-3)", marginLeft: 8 }}>
-              by {e.who} · {e.time}
-            </span>
-          </div>
-          <div style={{ fontSize: 11.5, color: "var(--ink-2)", marginTop: 2 }}>{e.desc}</div>
+    <div style={{ display: "grid", gap: 12 }}>
+      <div style={{ border: "1px solid var(--line)", borderRadius: 10, padding: "12px 14px", background: "var(--bg-1)" }}>
+        <div style={{ fontSize: 11, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--ink-3)", marginBottom: 6 }}>
+          Current state
         </div>
-      ))}
+        <div style={{ color: "var(--ink-1)", fontSize: 12.5 }}>
+          This view is backed by the current projection snapshot. It shows the latest applied revision, target coverage, and rule count without inventing lifecycle events the backend does not expose yet.
+        </div>
+      </div>
+      <div className="kv" style={{ gridTemplateColumns: "130px 1fr" }}>
+        <div className="k">latest revision</div>
+        <div className="v mono">{skill.latestRev}</div>
+        <div className="k">last changed</div>
+        <div className="v">{skill.changed}</div>
+        <div className="k">rule count</div>
+        <div className="v">{skill.ruleCount}</div>
+        <div className="k">projected targets</div>
+        <div className="v">{targetCount}</div>
+        <div className="k">classification</div>
+        <div className="v">{skill.tag}</div>
+      </div>
     </div>
   );
 }

@@ -429,6 +429,33 @@ pub(super) async fn pending(State(state): State<PanelState>) -> Json<serde_json:
     }
 }
 
+pub(super) async fn ops_history_list(
+    State(state): State<PanelState>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    match crate::gitops::history_entries(&state.ctx) {
+        Ok(entries) => (
+            StatusCode::OK,
+            Json(json!({
+                "ok": true,
+                "data": {
+                    "count": entries.len(),
+                    "entries": entries,
+                }
+            })),
+        ),
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({
+                "ok": false,
+                "error": {
+                    "code": "INTERNAL_ERROR",
+                    "message": err.to_string(),
+                }
+            })),
+        ),
+    }
+}
+
 pub(super) async fn ops_history_diagnose(
     State(state): State<PanelState>,
 ) -> (StatusCode, Json<serde_json::Value>) {

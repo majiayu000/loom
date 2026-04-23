@@ -72,6 +72,27 @@ export type WorkspaceStatusPayload = {
   };
 };
 
+export type HistoryEntryPayload = {
+  scope?: string;
+  path?: string;
+  blob?: string;
+  line_count?: number;
+  first_at?: string | null;
+  last_at?: string | null;
+};
+
+export type HistoryListPayload = {
+  ok: boolean;
+  data?: {
+    count?: number;
+    entries?: HistoryEntryPayload[];
+  };
+  error?: {
+    code?: string;
+    message?: string;
+  };
+};
+
 export type InfoPayload = {
   root?: string;
   state_dir?: string;

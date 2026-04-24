@@ -8,14 +8,14 @@ import { useMutation } from "../../lib/useMutation";
 interface SkillsPageProps {
   skills: Skill[];
   targets: Target[];
-  bindings: Binding[];
+  bindings?: Binding[];
   selectedSkill: string | null;
   onSelectSkill: (id: string) => void;
   onMutation: () => void;
   readOnly: boolean;
 }
 
-export function SkillsPage({ skills, targets, bindings, selectedSkill, onSelectSkill, onMutation, readOnly }: SkillsPageProps) {
+export function SkillsPage({ skills, targets, bindings = [], selectedSkill, onSelectSkill, onMutation, readOnly }: SkillsPageProps) {
   const [q, setQ] = useState("");
   const filtered = skills.filter((s) => s.name.includes(q) || s.tag.includes(q));
   const sel = skills.find((s) => s.id === selectedSkill) ?? skills[0];

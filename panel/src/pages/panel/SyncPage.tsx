@@ -15,6 +15,7 @@ export function SyncPage({ remote, pendingCount, registryRoot, readOnly, onMutat
   const push = useMutation();
   const pull = useMutation();
   const replay = useMutation();
+  const syncBusy = push.busy || pull.busy || replay.busy;
   const configured = remote?.configured === true;
   const state = remote?.sync_state ?? (configured ? "unknown" : "not configured");
   const rootDisplay = registryRoot ? registryRoot.replace(/^\/Users\/[^/]+/, "~") : "—";
@@ -104,7 +105,7 @@ export function SyncPage({ remote, pendingCount, registryRoot, readOnly, onMutat
           <div className="card-body" style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
             <button
               className="btn"
-              disabled={readOnly || pull.busy}
+              disabled={readOnly || syncBusy}
               onClick={() => pull.run("sync pull", api.syncPull, onMutation)}
               title={readOnly ? "registry offline" : "fetch + fast-forward from remote"}
             >
@@ -112,7 +113,7 @@ export function SyncPage({ remote, pendingCount, registryRoot, readOnly, onMutat
             </button>
             <button
               className="btn"
-              disabled={readOnly || push.busy}
+              disabled={readOnly || syncBusy}
               onClick={() => push.run("sync push", api.syncPush, onMutation)}
               title={readOnly ? "registry offline" : "push local registry to remote"}
             >
@@ -120,7 +121,7 @@ export function SyncPage({ remote, pendingCount, registryRoot, readOnly, onMutat
             </button>
             <button
               className="btn primary"
-              disabled={readOnly || replay.busy}
+              disabled={readOnly || syncBusy}
               onClick={() => replay.run("sync replay", api.syncReplay, onMutation)}
               title={readOnly ? "registry offline" : `replay ${pendingCount} pending op${pendingCount === 1 ? "" : "s"}`}
             >

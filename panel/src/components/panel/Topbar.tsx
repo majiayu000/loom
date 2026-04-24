@@ -30,6 +30,12 @@ interface TopbarProps {
 }
 
 function statusDisplay(props: TopbarProps): { label: string; dotStyle: React.CSSProperties } {
+  if (props.mode === "offline-stale") {
+    return {
+      label: "live API offline · stale snapshot",
+      dotStyle: { background: "var(--err)", boxShadow: "0 0 0 3px rgba(216,90,90,0.18)" },
+    };
+  }
   if (props.error) {
     return {
       label: "registry error",
@@ -40,12 +46,6 @@ function statusDisplay(props: TopbarProps): { label: string; dotStyle: React.CSS
     return {
       label: "connecting…",
       dotStyle: { background: "var(--pending)", boxShadow: "0 0 0 3px rgba(194,160,94,0.14)" },
-    };
-  }
-  if (props.mode === "offline-stale") {
-    return {
-      label: "live API offline · stale snapshot",
-      dotStyle: { background: "var(--err)", boxShadow: "0 0 0 3px rgba(216,90,90,0.18)" },
     };
   }
   if (!props.live) {

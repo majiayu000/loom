@@ -160,6 +160,27 @@ export interface SkillDiffPayload {
   error?: { code?: string; message?: string };
 }
 
+export interface V3ObservationEvent {
+  event_id: string;
+  instance_id: string;
+  kind: string;
+  path?: string;
+  from?: string;
+  to?: string;
+  observed_at: string;
+}
+
+export interface SkillHistoryPayload {
+  ok: boolean;
+  data?: {
+    skill: string;
+    count: number;
+    events: V3ObservationEvent[];
+  };
+  error?: { code?: string; message?: string };
+  meta?: { warnings?: string[] };
+}
+
 export const api = {
   health: (signal?: AbortSignal) => getJson<HealthPayload>("/api/health", signal),
   info: (signal?: AbortSignal) => getJson<InfoPayload>("/api/info", signal),
@@ -178,6 +199,12 @@ export const api = {
   syncPush: () => postJson("/api/sync/push", {}),
   syncPull: () => postJson("/api/sync/pull", {}),
   syncReplay: () => postJson("/api/sync/replay", {}),
+
+  skillHistory: (name: string, signal?: AbortSignal) =>
+    getJson<SkillHistoryPayload>(
+      `/api/v3/skills/${encodeURIComponent(name)}/history`,
+      signal,
+    ),
 
   skillDiff: (name: string, revA?: string, revB?: string, signal?: AbortSignal) => {
     const params = new URLSearchParams();

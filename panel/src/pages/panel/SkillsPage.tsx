@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import type { Skill, Target } from "../../lib/types";
 import { AgentAvatar } from "../../components/panel/AgentAvatar";
 import { PlusIcon, SearchIcon } from "../../components/icons/nav_icons";
-import { api, type SkillDiffFile } from "../../lib/api/client";
+import { api, type SkillDiffFile, type V3ObservationEvent } from "../../lib/api/client";
 import { useMutation } from "../../lib/useMutation";
 
 interface SkillsPageProps {
@@ -124,26 +124,66 @@ const KIND_COLOR: Record<LifecycleEvent["kind"], string> = {
   project: "var(--ok)",
 };
 
-// Lifecycle is illustrative filler — the registry does not yet surface
-// per-skill timelines via the panel API. The most recent entry anchors
-// to the skill's actual latest revision so users see a real hash rather
-// than a fabricated version tag.
-function lifecycleFor(skill: Skill): LifecycleEvent[] {
-  return [
-    { kind: "release", v: "v0.4", time: "4 days ago", who: "you", desc: "released after 3 captures" },
-    { kind: "capture", v: "#c7", time: "2 days ago", who: "you", desc: "precondition relaxed, added harness pairing" },
-    { kind: "save", v: "—", time: "2 days ago", who: "you", desc: "saved working tree" },
-    { kind: "snapshot", v: "sn-8f1", time: "2 days ago", who: "auto", desc: "pre-projection snapshot" },
-    { kind: "project", v: "—", time: "2 days ago", who: "auto", desc: "projected → claude/work, codex/home" },
-    { kind: "project", v: skill.latestRev, time: "6h ago", who: "auto", desc: "latest applied revision" },
-  ];
+const KIND_MAP: Record<string, LifecycleEvent["kind"]> = {
+  captured: "capture",
+  projected: "project",
+  snapshot: "snapshot",
+  released: "release",
+  saved: "save",
+  file_changed: "save",
+  health_changed: "snapshot",
+};
+
+function toRelative(iso: string): string {
+  const ms = Date.now() - new Date(iso).getTime();
+  const secs = Math.floor(ms / 1000);
+  if (secs < 60) return `${secs}s ago`;
+  const mins = Math.floor(secs / 60);
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  return `${Math.floor(hrs / 24)}d ago`;
+}
+
+function mapObsToLifecycle(ev: V3ObservationEvent): LifecycleEvent {
+  return {
+    kind: KIND_MAP[ev.kind] ?? "capture",
+    v: ev.event_id.slice(0, 8),
+    time: toRelative(ev.observed_at),
+    who: ev.instance_id.slice(0, 8),
+    desc: ev.path ?? (ev.from && ev.to ? `${ev.from} → ${ev.to}` : ev.kind),
+  };
 }
 
 function SkillDetail({ skill, targets }: { skill: Skill; targets: Target[] }) {
   const [tab, setTab] = useState<DetailTab>("history");
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState<string | null>(null);
+  const [historyEvents, setHistoryEvents] = useState<LifecycleEvent[]>([]);
+
   const targetObjs = skill.targets
     .map((tid) => targets.find((t) => t.id === tid))
     .filter((t): t is Target => t !== undefined);
+
+  useEffect(() => {
+    if (tab !== "history") return;
+    const ctrl = new AbortController();
+    setHistoryLoading(true);
+    setHistoryError(null);
+    api
+      .skillHistory(skill.name, ctrl.signal)
+      .then((payload) => {
+        setHistoryEvents(payload.data?.events.map(mapObsToLifecycle) ?? []);
+        setHistoryLoading(false);
+      })
+      .catch((err: Error) => {
+        if (err.name !== "AbortError") {
+          setHistoryError(err.message);
+          setHistoryLoading(false);
+        }
+      });
+    return () => ctrl.abort();
+  }, [skill.name, skill.latestRev, tab]);
 
   return (
     <div className="detail">
@@ -172,7 +212,21 @@ function SkillDetail({ skill, targets }: { skill: Skill; targets: Target[] }) {
         </button>
       </div>
 
-      {tab === "history" && <Lifecycle events={lifecycleFor(skill)} />}
+      {tab === "history" && (
+        <>
+          {historyLoading && (
+            <div style={{ color: "var(--ink-3)", fontSize: 12 }}>Loading…</div>
+          )}
+          {historyError && (
+            <div style={{ color: "var(--err)", fontSize: 11, fontFamily: "var(--font-mono)" }}>
+              {historyError}
+            </div>
+          )}
+          {!historyLoading && !historyError && (
+            <Lifecycle events={historyEvents} />
+          )}
+        </>
+      )}
       {tab === "diff" && <SkillDiff skillName={skill.name} />}
       {tab === "targets" && <TargetsTab targets={targetObjs} />}
     </div>
@@ -180,6 +234,13 @@ function SkillDetail({ skill, targets }: { skill: Skill; targets: Target[] }) {
 }
 
 function Lifecycle({ events }: { events: LifecycleEvent[] }) {
+  if (events.length === 0) {
+    return (
+      <div style={{ color: "var(--ink-3)", fontSize: 12 }}>
+        No lifecycle events yet · run <code>loom capture &lt;skill&gt;</code>
+      </div>
+    );
+  }
   return (
     <div style={{ position: "relative", paddingLeft: 22 }}>
       <div style={{ position: "absolute", left: 7, top: 4, bottom: 4, width: 1, background: "var(--line)" }} />

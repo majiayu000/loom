@@ -1,6 +1,7 @@
 mod auth;
 mod handlers;
 mod skill_diff;
+mod skill_history;
 mod static_serve;
 
 use std::net::SocketAddr;
@@ -19,6 +20,7 @@ use crate::state::AppContext;
 
 use handlers::*;
 use skill_diff::v3_skill_diff;
+use skill_history::v3_skill_history;
 use static_serve::{ensure_panel_dist, frontend_index, frontend_static_asset};
 
 #[derive(Clone)]
@@ -108,6 +110,7 @@ pub async fn run_panel(ctx: AppContext, port: u16) -> Result<()> {
         .route("/api/v3/project", post(v3_project))
         .route("/api/v3/capture", post(v3_capture))
         .route("/api/v3/skills/{skill_name}/diff", get(v3_skill_diff))
+        .route("/api/v3/skills/{skill_name}/history", get(v3_skill_history))
         .route("/api/remote/status", get(remote_status))
         .route("/api/pending", get(pending))
         .route("/api/sync/push", post(sync_push))

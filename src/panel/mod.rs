@@ -146,7 +146,7 @@ mod tests {
             status_for_error_code, status_for_v3_error_payload, status_for_v3_state_load_error,
         },
         handlers::{remote_status, v3_status},
-        static_serve::{content_type_for, ensure_panel_dist, resolve_panel_asset_path},
+        static_serve::{content_type_for, resolve_panel_asset_path},
     };
     use crate::cli::{
         BindingAddArgs, CaptureArgs, Command, ProjectArgs, ProjectionMethod, SkillCommand,

@@ -36,6 +36,7 @@ interface LayoutResult {
 
 const WIDTH = 860;
 const HEIGHT = 440;
+const MAX_LOOM_LABELS = 8;
 
 function useLayout(mode: VizMode, skills: Skill[], targets: Target[]): LayoutResult {
   return useMemo(() => {
@@ -136,10 +137,9 @@ interface ProjectionRecord {
 
 /**
  * Translate the caller-supplied `ProjectionLink[]` (backed by real
- * `V3Projection` data in live mode, or synthesised in mock mode) into
- * the renderer's internal shape, attaching `ownership` from the target
- * lookup. The graph never fabricates `method` on its own — Codex P1 on
- * PR #7 flagged the previous `id.length % 3` heuristic as incorrect.
+ * `V3Projection` data) into the renderer's internal shape, attaching
+ * `ownership` from the target lookup. The graph never fabricates `method`
+ * on its own — Codex P1 on PR #7 flagged the previous heuristic as incorrect.
  */
 function buildProjectionRecords(
   links: ProjectionLink[],
@@ -183,11 +183,68 @@ export function ProjectionGraph({
   targets,
   projections: projectionLinks,
 }: ProjectionGraphProps) {
-  const layout = useLayout(mode, skills, targets);
   const projections = useMemo(
     () => buildProjectionRecords(projectionLinks, targets),
     [projectionLinks, targets],
   );
+  const visible = useMemo(() => {
+    const projectedSkillIds = new Set(projectionLinks.map((p) => p.skillId));
+    const projectedTargetIds = new Set(projectionLinks.map((p) => p.targetId));
+
+    if (selectedSkill) {
+      const selected = skills.filter((s) => s.id === selectedSkill);
+      const targetIds = new Set(projectionLinks.filter((p) => p.skillId === selectedSkill).map((p) => p.targetId));
+      return {
+        skills: selected,
+        targets: targets.filter((t) => targetIds.has(t.id)),
+      };
+    }
+
+    if (selectedTarget) {
+      const selected = targets.filter((t) => t.id === selectedTarget);
+      const skillIds = new Set(projectionLinks.filter((p) => p.targetId === selectedTarget).map((p) => p.skillId));
+      return {
+        skills: skills.filter((s) => skillIds.has(s.id)),
+        targets: selected,
+      };
+    }
+
+    return {
+      skills: skills.filter((s) => projectedSkillIds.has(s.id)),
+      targets: targets.filter((t) => projectedTargetIds.has(t.id)),
+    };
+  }, [projectionLinks, selectedSkill, selectedTarget, skills, targets]);
+
+  const layout = useLayout(mode, visible.skills, visible.targets);
+  const visibleSkillIds = useMemo(() => new Set(visible.skills.map((s) => s.id)), [visible.skills]);
+  const visibleTargetIds = useMemo(() => new Set(visible.targets.map((t) => t.id)), [visible.targets]);
+  const visibleProjections = useMemo(
+    () => projections.filter((p) => visibleSkillIds.has(p.skill) && visibleTargetIds.has(p.target)),
+    [projections, visibleSkillIds, visibleTargetIds],
+  );
+
+  const emptyLabel = selectedSkill
+    ? skills.find((s) => s.id === selectedSkill)?.name ?? "Selected skill"
+    : selectedTarget
+    ? targets.find((t) => t.id === selectedTarget)?.path ?? "Selected target"
+    : null;
+
+  if (visibleProjections.length === 0) {
+    return (
+      <div className="proj-empty">
+        <div className="proj-empty-title">{emptyLabel ? "No projections for this selection" : "No projections yet"}</div>
+        <div className="proj-empty-copy">
+          {emptyLabel ? (
+            <>
+              <span className="mono">{emptyLabel}</span> is in the registry, but it is not currently projected to any target.
+            </>
+          ) : (
+            "Create a binding or project a skill to render the registry graph."
+          )}
+        </div>
+      </div>
+    );
+  }
 
   const isHi = (sid: string | null, tid: string | null): boolean => {
     if (!selectedSkill && !selectedTarget) return true;
@@ -219,7 +276,7 @@ export function ProjectionGraph({
       {layout.mode === "loom" && (
         <LoomMode
           layout={layout}
-          projections={projections}
+          projections={visibleProjections}
           selectedSkill={selectedSkill}
           selectedTarget={selectedTarget}
           isHi={isHi}
@@ -231,7 +288,7 @@ export function ProjectionGraph({
       {layout.mode === "force" && (
         <ForceMode
           layout={layout}
-          projections={projections}
+          projections={visibleProjections}
           selectedSkill={selectedSkill}
           selectedTarget={selectedTarget}
           isHi={isHi}
@@ -243,7 +300,7 @@ export function ProjectionGraph({
       {layout.mode === "tree" && (
         <TreeMode
           layout={layout}
-          projections={projections}
+          projections={visibleProjections}
           selectedSkill={selectedSkill}
           selectedTarget={selectedTarget}
           isHi={isHi}
@@ -265,11 +322,24 @@ interface ModeProps {
   onSelectTarget: (id: string) => void;
 }
 
+function shouldShowLoomSkillLabel(index: number, total: number, selected: boolean): boolean {
+  if (selected) return true;
+  if (total <= MAX_LOOM_LABELS) return true;
+  const step = Math.ceil(total / MAX_LOOM_LABELS);
+  return index % step === 0;
+}
+
+function shortLabel(label: string, max = 12): string {
+  return label.length > max ? `${label.slice(0, max - 1)}…` : label;
+}
+
 function LoomMode({ layout, projections, selectedSkill, selectedTarget, isHi, onSelectSkill, onSelectTarget }: ModeProps) {
   return (
     <>
-      {layout.skills.map((s) => {
+      {layout.skills.map((s, index) => {
         const hi = isHi(s.id, null);
+        const selected = selectedSkill === s.id;
+        const showLabel = shouldShowLoomSkillLabel(index, layout.skills.length, selected);
         return (
           <g key={s.id} opacity={hi ? 1 : 0.25} onClick={() => onSelectSkill(s.id)} style={{ cursor: "pointer" }}>
             <line
@@ -277,20 +347,23 @@ function LoomMode({ layout, projections, selectedSkill, selectedTarget, isHi, on
               y1={s.y}
               x2={s.x}
               y2={s.y2}
-              stroke={selectedSkill === s.id ? "#f4ede0" : "url(#warp-grad)"}
-              strokeWidth={selectedSkill === s.id ? 2 : 1.2}
+              stroke={selected ? "#f4ede0" : "url(#warp-grad)"}
+              strokeWidth={selected ? 2 : 0.9}
+              opacity={selected ? 1 : 0.55}
             />
-            <text
-              x={s.x}
-              y={s.y - 16}
-              textAnchor="middle"
-              fontSize="10"
-              fontFamily="JetBrains Mono, monospace"
-              fill={selectedSkill === s.id ? "#f4ede0" : "#c9c0ae"}
-              transform={`rotate(-32 ${s.x} ${s.y - 16})`}
-            >
-              {s.label}
-            </text>
+            <circle cx={s.x} cy={s.y} r={selected ? 4 : 2.4} fill={selected ? "#f4ede0" : "#d97736"} />
+            {showLabel && (
+              <text
+                x={s.x}
+                y={s.y - 16}
+                textAnchor="middle"
+                fontSize="10"
+                fontFamily="JetBrains Mono, monospace"
+                fill={selected ? "#f4ede0" : "#8a8271"}
+              >
+                {shortLabel(s.label)}
+              </text>
+            )}
           </g>
         );
       })}

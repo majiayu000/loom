@@ -1,5 +1,5 @@
-import { useState, useEffect } from "react";
-import type { Skill, Target } from "../../lib/types";
+import { useEffect, useState } from "react";
+import type { Binding, Skill, Target } from "../../lib/types";
 import { AgentAvatar } from "../../components/panel/AgentAvatar";
 import { PlusIcon, SearchIcon } from "../../components/icons/nav_icons";
 import { api, type SkillDiffFile, type V3ObservationEvent } from "../../lib/api/client";
@@ -8,23 +8,31 @@ import { useMutation } from "../../lib/useMutation";
 interface SkillsPageProps {
   skills: Skill[];
   targets: Target[];
+  bindings?: Binding[];
   selectedSkill: string | null;
   onSelectSkill: (id: string) => void;
   onMutation: () => void;
   readOnly: boolean;
 }
 
-export function SkillsPage({ skills, targets, selectedSkill, onSelectSkill, onMutation, readOnly }: SkillsPageProps) {
+export function SkillsPage({ skills, targets, bindings = [], selectedSkill, onSelectSkill, onMutation, readOnly }: SkillsPageProps) {
   const [q, setQ] = useState("");
   const filtered = skills.filter((s) => s.name.includes(q) || s.tag.includes(q));
   const sel = skills.find((s) => s.id === selectedSkill) ?? skills[0];
   const capture = useMutation();
+  const captureDisabled = capture.busy || readOnly || !sel;
+  const emptyMessage = readOnly
+    ? "Live registry API is offline. Start the panel backend to load real skills."
+    : q
+    ? "No skills match the current filter."
+    : "No skills in this registry yet.";
 
   const runCapture = () => {
+    if (!sel) return;
     const skillName = sel?.name;
     capture.run(
-      `capture ${skillName ?? "all pending"}`,
-      () => api.capture(skillName ? { skill: skillName } : {}),
+      `capture ${skillName}`,
+      () => api.capture({ skill: skillName }),
       onMutation,
     );
   };
@@ -44,7 +52,12 @@ export function SkillsPage({ skills, targets, selectedSkill, onSelectSkill, onMu
             <input placeholder="Filter skills…" value={q} onChange={(e) => setQ(e.target.value)} />
             <kbd>⌘K</kbd>
           </div>
-          <button className="btn primary" onClick={runCapture} disabled={capture.busy || readOnly} title={readOnly ? "registry offline" : undefined}>
+          <button
+            className="btn primary"
+            onClick={runCapture}
+            disabled={captureDisabled}
+            title={readOnly ? "registry offline" : !sel ? "select a skill first" : undefined}
+          >
             <PlusIcon /> {capture.busy ? "capturing…" : "Capture"}
           </button>
         </div>
@@ -94,16 +107,38 @@ export function SkillsPage({ skills, targets, selectedSkill, onSelectSkill, onMu
                     <td className="mono dim">{s.changed}</td>
                   </tr>
                 ))}
+                {filtered.length === 0 && (
+                  <tr>
+                    <td colSpan={6} style={{ color: "var(--ink-3)", padding: 22, textAlign: "center" }}>
+                      {emptyMessage}
+                    </td>
+                  </tr>
+                )}
               </tbody>
             </table>
           </div>
           <div style={{ padding: 20, overflow: "auto" }}>
-            {sel ? <SkillDetail skill={sel} targets={targets} /> : <div className="empty">Select a skill.</div>}
+            {sel ? (
+              <SkillDetail skill={sel} targets={targets} bindings={bindings} />
+            ) : (
+              <div className="empty">{emptyMessage}</div>
+            )}
           </div>
         </div>
       </div>
     </>
   );
+}
+
+function summarizePolicy(skillBindings: Binding[]): string {
+  if (skillBindings.length === 0) return "— (no bindings)";
+  const counts = skillBindings.reduce<Record<string, number>>((acc, b) => {
+    acc[b.policy] = (acc[b.policy] ?? 0) + 1;
+    return acc;
+  }, {});
+  const kinds = Object.keys(counts);
+  if (kinds.length === 1) return `${kinds[0]} · ${skillBindings.length} binding${skillBindings.length === 1 ? "" : "s"}`;
+  return kinds.map((k) => `${counts[k]} ${k}`).join(" · ");
 }
 
 type DetailTab = "history" | "diff" | "targets";
@@ -155,7 +190,8 @@ function mapObsToLifecycle(ev: V3ObservationEvent): LifecycleEvent {
   };
 }
 
-function SkillDetail({ skill, targets }: { skill: Skill; targets: Target[] }) {
+
+function SkillDetail({ skill, targets, bindings }: { skill: Skill; targets: Target[]; bindings: Binding[] }) {
   const [tab, setTab] = useState<DetailTab>("history");
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyError, setHistoryError] = useState<string | null>(null);
@@ -164,6 +200,9 @@ function SkillDetail({ skill, targets }: { skill: Skill; targets: Target[] }) {
   const targetObjs = skill.targets
     .map((tid) => targets.find((t) => t.id === tid))
     .filter((t): t is Target => t !== undefined);
+
+  const skillBindings = bindings.filter((b) => b.skill === skill.name);
+  const policyLabel = summarizePolicy(skillBindings);
 
   useEffect(() => {
     if (tab !== "history") return;
@@ -197,7 +236,7 @@ function SkillDetail({ skill, targets }: { skill: Skill; targets: Target[] }) {
         <div className="k">Rules</div>
         <div className="v">{skill.ruleCount} on chain</div>
         <div className="k">Policy</div>
-        <div className="v">auto-project on binding match</div>
+        <div className="v">{policyLabel}</div>
       </div>
 
       <div className="tabs">
@@ -223,7 +262,7 @@ function SkillDetail({ skill, targets }: { skill: Skill; targets: Target[] }) {
             </div>
           )}
           {!historyLoading && !historyError && (
-            <Lifecycle events={historyEvents} />
+            <Lifecycle events={historyEvents} skillName={skill.name} />
           )}
         </>
       )}
@@ -233,11 +272,14 @@ function SkillDetail({ skill, targets }: { skill: Skill; targets: Target[] }) {
   );
 }
 
-function Lifecycle({ events }: { events: LifecycleEvent[] }) {
+function Lifecycle({ events, skillName }: { events: LifecycleEvent[]; skillName: string }) {
   if (events.length === 0) {
     return (
-      <div style={{ color: "var(--ink-3)", fontSize: 12 }}>
-        No lifecycle events yet · run <code>loom capture &lt;skill&gt;</code>
+      <div style={{ padding: "18px 4px", fontSize: 12, color: "var(--ink-2)" }}>
+        <div style={{ marginBottom: 6 }}>No lifecycle events yet.</div>
+        <div className="mono" style={{ fontSize: 11, color: "var(--ink-3)" }}>
+          Run <span style={{ color: "var(--ink-1)" }}>loom capture {skillName}</span> to start the chain.
+        </div>
       </div>
     );
   }
@@ -393,6 +435,10 @@ function SkillDiff({ skillName }: { skillName: string }) {
 }
 
 function TargetsTab({ targets }: { targets: Target[] }) {
+  if (targets.length === 0) {
+    return <div className="empty" style={{ padding: "18px 4px" }}>This skill is not projected to any target.</div>;
+  }
+
   return (
     <div>
       {targets.map((t) => (

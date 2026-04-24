@@ -1,16 +1,17 @@
 import { useState } from "react";
+import type { PanelDataMode } from "../../lib/api/usePanelData";
 import type { PanelPageKey } from "../../lib/types";
 import { api } from "../../lib/api/client";
 import { LoomMark } from "../icons/LoomMark";
-import { GitIcon, PlayIcon, SearchIcon } from "../icons/nav_icons";
+import { GitIcon, PlayIcon } from "../icons/nav_icons";
 
 const CRUMBS: Record<PanelPageKey, string> = {
   overview: "Overview",
   skills: "Skills",
   targets: "Targets",
   bindings: "Bindings",
-  ops: "Ops",
-  history: "Ops history",
+  ops: "Activity",
+  history: "Audit log",
   sync: "Git sync",
   settings: "Settings",
 };
@@ -20,6 +21,7 @@ interface TopbarProps {
   live: boolean;
   loading: boolean;
   error: string | null;
+  mode: PanelDataMode;
   registryRoot: string | null;
   remoteState?: string;
   pendingCount: number;
@@ -28,6 +30,12 @@ interface TopbarProps {
 }
 
 function statusDisplay(props: TopbarProps): { label: string; dotStyle: React.CSSProperties } {
+  if (props.mode === "offline-stale") {
+    return {
+      label: "live API offline · stale snapshot",
+      dotStyle: { background: "var(--err)", boxShadow: "0 0 0 3px rgba(216,90,90,0.18)" },
+    };
+  }
   if (props.error) {
     return {
       label: "registry error",
@@ -66,7 +74,7 @@ function statusDisplay(props: TopbarProps): { label: string; dotStyle: React.CSS
 }
 
 function rootLabel(root: string | null): string {
-  if (!root) return "~/.loom-registry";
+  if (!root) return "not connected";
   const home = root.replace(/^\/Users\/[^/]+/, "~");
   return home;
 }
@@ -103,26 +111,23 @@ export function Topbar(props: TopbarProps) {
         <span className="cur">{CRUMBS[props.page]}</span>
       </div>
       <div className="spacer" />
-      <div className="searchbar" style={{ width: 240 }}>
-        <SearchIcon />
-        <input placeholder="Jump to skill or target…" />
-        <kbd>⌘K</kbd>
-      </div>
       <div className="top-actions">
-        <button className="top-btn" title={props.error ?? undefined}>
+        <span className="top-btn" title={props.error ?? undefined}>
           <span className="status-dot" style={status.dotStyle} /> {status.label}
-        </button>
-        <button className="top-btn">
-          <GitIcon /> {props.remoteState ? props.remoteState.toLowerCase() : "main"}
-        </button>
-        <button
-          className="top-btn primary"
-          onClick={replay}
-          disabled={replaying || props.readOnly}
-          title={replayError ?? (props.readOnly ? "registry offline" : undefined)}
-        >
-          <PlayIcon /> {replaying ? "replaying…" : "Replay"}
-        </button>
+        </span>
+        <span className="top-btn" title={props.live ? "remote sync state" : "registry offline"}>
+          <GitIcon /> {props.live ? (props.remoteState ? props.remoteState.toLowerCase() : "local only") : "offline"}
+        </span>
+        {(props.pendingCount > 0 || replaying || replayError) && (
+          <button
+            className="top-btn"
+            onClick={replay}
+            disabled={replaying || props.readOnly}
+            title={replayError ?? (props.readOnly ? "registry offline" : undefined)}
+          >
+            <PlayIcon /> {replaying ? "replaying…" : `Replay ${props.pendingCount}`}
+          </button>
+        )}
       </div>
     </div>
   );

@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import type { PanelPageKey, ProjectionLink, ProjectionMethod, TweakState, VizMode } from "../lib/types";
 import { usePanelData } from "../lib/api/usePanelData";
-import { BINDINGS, OPS, SKILLS, TARGETS } from "../lib/mock_data";
 import { Sidebar } from "../components/panel/Sidebar";
 import { Topbar } from "../components/panel/Topbar";
 import { TweakPanel } from "../components/panel/TweakPanel";
@@ -9,8 +8,10 @@ import { OverviewPage } from "./panel/OverviewPage";
 import { SkillsPage } from "./panel/SkillsPage";
 import { TargetsPage } from "./panel/TargetsPage";
 import { BindingsPage } from "./panel/BindingsPage";
+import { HistoryPage } from "./panel/HistoryPage";
 import { OpsPage } from "./panel/OpsPage";
-import { PlaceholderPage } from "./panel/PlaceholderPage";
+import { SettingsPage } from "./panel/SettingsPage";
+import { SyncPage } from "./panel/SyncPage";
 
 const DEFAULT_TWEAKS: TweakState = {
   vizMode: "loom",
@@ -22,6 +23,7 @@ const DEFAULT_TWEAKS: TweakState = {
 };
 
 const PAGE_STORAGE_KEY = "loom.page";
+const TWEAKS_STORAGE_KEY = "loom.tweaks";
 const VALID_PAGES: PanelPageKey[] = [
   "overview",
   "skills",
@@ -38,9 +40,20 @@ function loadInitialPage(): PanelPageKey {
   return VALID_PAGES.includes(stored as PanelPageKey) ? (stored as PanelPageKey) : "overview";
 }
 
+function loadInitialTweaks(): TweakState {
+  const raw = localStorage.getItem(TWEAKS_STORAGE_KEY);
+  if (!raw) return DEFAULT_TWEAKS;
+  try {
+    const parsed = JSON.parse(raw) as Partial<TweakState>;
+    return { ...DEFAULT_TWEAKS, ...parsed };
+  } catch {
+    return DEFAULT_TWEAKS;
+  }
+}
+
 export function PanelApp() {
   const [page, setPage] = useState<PanelPageKey>(loadInitialPage);
-  const [tweaks, setTweaks] = useState<TweakState>(DEFAULT_TWEAKS);
+  const [tweaks, setTweaks] = useState<TweakState>(loadInitialTweaks);
   const [tweakVisible, setTweakVisible] = useState(false);
   const [selectedSkill, setSelectedSkill] = useState<string | null>(null);
   const [selectedTarget, setSelectedTarget] = useState<string | null>(null);
@@ -50,6 +63,10 @@ export function PanelApp() {
   useEffect(() => {
     localStorage.setItem(PAGE_STORAGE_KEY, page);
   }, [page]);
+
+  useEffect(() => {
+    localStorage.setItem(TWEAKS_STORAGE_KEY, JSON.stringify(tweaks));
+  }, [tweaks]);
 
   useEffect(() => {
     document.documentElement.style.setProperty("--accent", tweaks.accent);
@@ -74,54 +91,41 @@ export function PanelApp() {
     setSelectedSkill(null);
   };
 
-  // Data source rule (cf. Codex P1 on PR #7):
-  //   - live.live=true  -> ALWAYS show live data verbatim, even when lists
-  //     are empty. An empty real registry is a legitimate state and must
-  //     render as "0 targets" rather than silently swapping in mock rows.
-  //   - live.live=false -> mock data as placeholder preview + explicit
-  //     offline banner in <MockBanner>.
-  // Writes are only enabled when live=true, so users can never act on
-  // nonexistent mock IDs and hit confusing mutation errors.
-  const usingMock = !live.live;
-  const skills = usingMock ? SKILLS : live.skills;
-  const targets = usingMock ? TARGETS : live.targets;
-  const bindings = usingMock ? BINDINGS : live.bindings;
-  const ops = usingMock ? OPS : live.ops;
+  // Never substitute local examples for registry data. If the API is offline,
+  // render empty live state with an explicit banner so the panel cannot
+  // masquerade any fabricated skills as a real registry.
+  const skills = live.skills;
+  const targets = live.targets;
+  const bindings = live.bindings;
+  const ops = live.ops;
 
   // Projection links for the graph:
-  //   - live mode: use V3Projection.method verbatim (authoritative).
-  //   - mock mode: derive from SKILLS.targets; the MockBanner already warns
-  //     the user the data is synthetic, so a deterministic hash-based
-  //     method distribution is acceptable purely for visual variety.
-  const mockMethods: ProjectionMethod[] = ["symlink", "copy", "materialize"];
+  //   - use V3Projection.method verbatim (authoritative).
   const projectionLinks: ProjectionLink[] = useMemo(() => {
-    if (!usingMock) {
-      return live.projections.map((p) => {
-        const method: ProjectionMethod =
-          p.method === "symlink" || p.method === "copy" || p.method === "materialize"
-            ? p.method
-            : "symlink";
-        return { skillId: p.skill_id, targetId: p.target_id, method };
-      });
-    }
-    const out: ProjectionLink[] = [];
-    for (const s of skills) {
-      for (const tid of s.targets) {
-        out.push({
-          skillId: s.id,
-          targetId: tid,
-          method: mockMethods[(s.id.length + tid.length) % 3],
-        });
-      }
-    }
-    return out;
-  }, [usingMock, live.projections, skills]);
+    return live.projections.map((p) => {
+      const method: ProjectionMethod =
+        p.method === "symlink" || p.method === "copy" || p.method === "materialize"
+          ? p.method
+          : "symlink";
+      return { skillId: `s-${p.skill_id}`, targetId: p.target_id, method };
+    });
+  }, [live.projections]);
 
   const densityClass = tweaks.density === "dense" ? " dense" : tweaks.density === "cozy" ? " cozy" : "";
 
-  const readOnly = usingMock;
-  const onMutation = live.refetch;
+  const [mutationVersion, setMutationVersion] = useState(0);
+  const readOnly = !live.live;
+  const onMutation = () => {
+    setMutationVersion((cur) => cur + 1);
+    live.refetch();
+  };
+  const onRemoveTarget = (id: string) => {
+    setSelectedTarget((cur) => (cur === id ? null : cur));
+  };
+  const onNewTarget = () => setPage("targets");
   const onNewBinding = () => setPage("bindings");
+  const onOpenSync = () => setPage("sync");
+  const onViewActivity = () => setPage("ops");
 
   let view: React.ReactNode;
   switch (page) {
@@ -140,7 +144,10 @@ export function PanelApp() {
           onSelectTarget={toggleTarget}
           registryRoot={live.registryRoot}
           onMutation={onMutation}
+          onNewTarget={onNewTarget}
           onNewBinding={onNewBinding}
+          onViewActivity={onViewActivity}
+          onOpenSync={onOpenSync}
           readOnly={readOnly}
         />
       );
@@ -150,6 +157,7 @@ export function PanelApp() {
         <SkillsPage
           skills={skills}
           targets={targets}
+          bindings={bindings}
           selectedSkill={selectedSkill}
           onSelectSkill={(id) => setSelectedSkill(id)}
           onMutation={onMutation}
@@ -164,19 +172,51 @@ export function PanelApp() {
           skills={skills}
           selectedTarget={selectedTarget}
           onSelectTarget={toggleTarget}
+          onRemoveTarget={onRemoveTarget}
           onMutation={onMutation}
           readOnly={readOnly}
+          mutationVersion={mutationVersion}
         />
       );
       break;
     case "bindings":
-      view = <BindingsPage bindings={bindings} targets={targets} onMutation={onMutation} readOnly={readOnly} />;
+      view = (
+        <BindingsPage
+          bindings={bindings}
+          targets={targets}
+          onMutation={onMutation}
+          readOnly={readOnly}
+          mutationVersion={mutationVersion}
+        />
+      );
       break;
     case "ops":
-      view = <OpsPage ops={ops} />;
+      view = <OpsPage ops={ops} onMutation={onMutation} readOnly={readOnly} />;
       break;
-    default:
-      view = <PlaceholderPage page={page} />;
+    case "history":
+      view = (
+        <HistoryPage
+          live={live.live}
+          mode={live.mode}
+          mutationVersion={mutationVersion}
+          refreshKey={live.lastUpdated}
+        />
+      );
+      break;
+    case "sync":
+      view = (
+        <SyncPage
+          remote={live.remote}
+          pendingCount={live.pendingCount}
+          registryRoot={live.registryRoot}
+          readOnly={readOnly}
+          onMutation={onMutation}
+        />
+      );
+      break;
+    case "settings":
+      view = <SettingsPage live={live.live} mode={live.mode} registryRoot={live.registryRoot} />;
+      break;
   }
 
   return (
@@ -186,6 +226,7 @@ export function PanelApp() {
         live={live.live}
         loading={live.loading}
         error={live.error}
+        mode={live.mode}
         registryRoot={live.registryRoot}
         remoteState={live.remote?.sync_state}
         pendingCount={live.pendingCount}
@@ -205,7 +246,7 @@ export function PanelApp() {
         registryRoot={live.registryRoot}
       />
       <div className="main">
-        {usingMock && <MockBanner error={live.error} loading={live.loading} />}
+        {live.mode !== "live" && <LiveDataBanner error={live.error} loading={live.loading} mode={live.mode} />}
         {view}
       </div>
       <button
@@ -232,8 +273,18 @@ export function PanelApp() {
   );
 }
 
-function MockBanner({ error, loading }: { error: string | null; loading: boolean }) {
-  if (loading) {
+export function LiveDataBanner({
+  error,
+  loading,
+  mode,
+}: {
+  error: string | null;
+  loading: boolean;
+  mode: "live" | "offline-empty" | "offline-stale";
+}) {
+  if (mode === "live") return null;
+
+  if (loading && mode === "offline-empty") {
     return (
       <div
         style={{
@@ -249,23 +300,32 @@ function MockBanner({ error, loading }: { error: string | null; loading: boolean
       </div>
     );
   }
+
+  const tone = mode === "offline-stale" ? "rgba(216,90,90,0.08)" : "rgba(230,180,80,0.08)";
+  const border = mode === "offline-stale" ? "rgba(216,90,90,0.25)" : "rgba(230,180,80,0.25)";
+  const label = mode === "offline-stale" ? "⚠ live API offline — showing last known data" : "⚠ live API offline";
+  const body =
+    mode === "offline-stale"
+      ? error
+        ? `/api unreachable — ${error}. The panel is keeping the last successful registry snapshot in read-only mode.`
+        : "The live API is unavailable. The panel is keeping the last successful registry snapshot in read-only mode."
+      : error
+      ? `/api unreachable — ${error}. Start \`loom panel\` or the panel backend to see real registry data.`
+      : "Registry API is unavailable. No real registry rows are being shown.";
+
   return (
     <div
       style={{
         padding: "8px 28px",
-        background: "rgba(230,180,80,0.08)",
-        borderBottom: "1px solid rgba(230,180,80,0.25)",
+        background: tone,
+        borderBottom: `1px solid ${border}`,
         fontFamily: "var(--font-mono)",
         fontSize: 11,
-        color: "var(--warn)",
+        color: mode === "offline-stale" ? "var(--err)" : "var(--warn)",
       }}
     >
-      <span style={{ color: "var(--warn)", marginRight: 6 }}>⚠ mock data</span>
-      <span style={{ color: "var(--ink-2)" }}>
-        {error
-          ? `Registry state unavailable — ${error}. Start with \`loom panel\` to see real registry.`
-          : "Registry is empty or unreachable — showing sample data."}
-      </span>
+      <span style={{ marginRight: 6 }}>{label}</span>
+      <span style={{ color: "var(--ink-2)" }}>{body}</span>
     </div>
   );
 }

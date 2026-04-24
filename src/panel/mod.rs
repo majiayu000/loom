@@ -96,6 +96,7 @@ pub async fn run_panel(ctx: AppContext, port: u16) -> Result<()> {
         .route("/api/info", get(info))
         .route("/api/skills", get(skills))
         .route("/api/v3/status", get(v3_status))
+        .route("/api/v3/ops", get(v3_ops))
         .route("/api/v3/bindings", get(v3_bindings))
         .route("/api/v3/bindings/{binding_id}", get(v3_binding_show))
         .route("/api/v3/targets", get(v3_targets))
@@ -113,6 +114,8 @@ pub async fn run_panel(ctx: AppContext, port: u16) -> Result<()> {
         .route("/api/v3/skills/{skill_name}/history", get(v3_skill_history))
         .route("/api/remote/status", get(remote_status))
         .route("/api/pending", get(pending))
+        .route("/api/ops/retry", post(ops_retry))
+        .route("/api/ops/purge", post(ops_purge))
         .route("/api/sync/push", post(sync_push))
         .route("/api/sync/pull", post(sync_pull))
         .route("/api/sync/replay", post(sync_replay))
@@ -138,25 +141,25 @@ mod tests {
             ensure_mutation_authorized, error_envelope, request_origin_matches, run_panel_command,
             status_for_error_code, status_for_v3_error_payload, status_for_v3_state_load_error,
         },
-        handlers::{remote_status, v3_status},
+        handlers::{OpsQuery, remote_status, v3_ops, v3_status},
         static_serve::{content_type_for, ensure_panel_dist, resolve_panel_asset_path},
     };
     use crate::cli::{
-        BindingAddArgs, CaptureArgs, Command, ProjectArgs, ProjectionMethod, SkillCommand,
-        SyncCommand, TargetAddArgs, TargetCommand, TargetOwnership, WorkspaceBindingCommand,
-        WorkspaceCommand, WorkspaceMatcherKind,
+        BindingAddArgs, CaptureArgs, Command, OpsCommand, ProjectArgs, ProjectionMethod,
+        SkillCommand, SyncCommand, TargetAddArgs, TargetCommand, TargetOwnership,
+        WorkspaceBindingCommand, WorkspaceCommand, WorkspaceMatcherKind,
     };
     use crate::state::AppContext;
     use crate::state_model::{
-        V3_SCHEMA_VERSION, V3BindingsFile, V3OpsCheckpoint, V3ProjectionsFile, V3RulesFile,
-        V3SchemaFile, V3StatePaths, V3TargetsFile,
+        V3_SCHEMA_VERSION, V3BindingsFile, V3OperationRecord, V3OpsCheckpoint, V3ProjectionsFile,
+        V3RulesFile, V3SchemaFile, V3StatePaths, V3TargetsFile,
     };
     use axum::{
         Json,
-        extract::State,
+        extract::{Query, State},
         http::{HeaderMap, HeaderValue, StatusCode},
     };
-    use chrono::Utc;
+    use chrono::{Duration as ChrDuration, Utc};
     use serde_json::json;
     use std::{
         fs,
@@ -410,8 +413,8 @@ mod tests {
         let peer = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 40000);
         let headers = HeaderMap::new();
 
-        // Covers every mutation surface the panel exposes, including the
-        // new sync routes. Without origin headers they must all return
+        // Covers every mutation surface the panel exposes, including queue
+        // maintenance and sync routes. Without origin headers they must all return
         // UNAUTHORIZED so writes cannot be driven from an untrusted origin.
         for cmd in [
             "target.add",
@@ -420,6 +423,8 @@ mod tests {
             "workspace.binding.remove",
             "skill.project",
             "skill.capture",
+            "ops.retry",
+            "ops.purge",
             "sync.push",
             "sync.pull",
             "sync.replay",
@@ -438,6 +443,86 @@ mod tests {
             assert!(payload["request_id"].as_str().is_some(), "{cmd} req id");
             assert!(payload.get("meta").is_some(), "{cmd} meta");
         }
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn run_panel_command_exposes_pending_queue_maintenance() {
+        let (root, state) = make_test_state();
+
+        for (cmd, command) in [
+            (
+                "ops.retry",
+                Command::Ops {
+                    command: OpsCommand::Retry,
+                },
+            ),
+            (
+                "ops.purge",
+                Command::Ops {
+                    command: OpsCommand::Purge,
+                },
+            ),
+        ] {
+            let (status, Json(payload)) = run_panel_command(&state, cmd, StatusCode::OK, command);
+            assert_eq!(status, StatusCode::OK, "{cmd} status: {payload}");
+            assert_eq!(payload["ok"], json!(true), "{cmd} ok");
+            assert_eq!(payload["cmd"], json!(cmd), "{cmd} cmd");
+            assert!(payload["request_id"].as_str().is_some(), "{cmd} req id");
+        }
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn v3_ops_returns_bounded_newest_first_rows() {
+        let (root, state) = make_test_state();
+        let paths = V3StatePaths::from_app_context(state.ctx.as_ref());
+        paths.ensure_layout().expect("ensure v3 layout");
+
+        let now = Utc::now();
+        for index in 0..3 {
+            paths
+                .append_operation(&V3OperationRecord {
+                    op_id: format!("op-{index}"),
+                    intent: "skill.project".to_string(),
+                    status: "succeeded".to_string(),
+                    ack: index % 2 == 0,
+                    payload: json!({ "blob": "ignored" }),
+                    effects: json!({ "index": index }),
+                    last_error: None,
+                    created_at: now + ChrDuration::seconds(index as i64),
+                    updated_at: now + ChrDuration::seconds(index as i64),
+                })
+                .expect("append op");
+        }
+
+        let payload = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("runtime")
+            .block_on(async {
+                let Json(payload) = v3_ops(
+                    Query(OpsQuery {
+                        limit: Some(2),
+                        offset: Some(0),
+                    }),
+                    State(state.clone()),
+                )
+                .await;
+                payload
+            });
+
+        assert_eq!(payload["ok"], json!(true));
+        assert_eq!(payload["data"]["count"], json!(3));
+        assert_eq!(payload["data"]["loaded_count"], json!(2));
+        assert_eq!(payload["data"]["has_more"], json!(true));
+        let operations = payload["data"]["operations"].as_array().expect("ops array");
+        assert_eq!(operations[0]["op_id"], json!("op-2"));
+        assert_eq!(operations[1]["op_id"], json!("op-1"));
+        assert!(operations[0].get("payload").is_none());
+        assert!(operations[0].get("effects").is_none());
 
         let _ = fs::remove_dir_all(root);
     }

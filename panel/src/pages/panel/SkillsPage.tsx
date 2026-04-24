@@ -224,7 +224,7 @@ function SkillDetail({ skill, targets }: { skill: Skill; targets: Target[] }) {
             </div>
           )}
           {!historyLoading && !historyError && (
-            <Lifecycle events={historyEvents} />
+            <Lifecycle events={historyEvents} skill={skill} targetCount={targetObjs.length} />
           )}
         </>
       )}
@@ -234,7 +234,7 @@ function SkillDetail({ skill, targets }: { skill: Skill; targets: Target[] }) {
   );
 }
 
-function Lifecycle({ events }: { events: LifecycleEvent[] }) {
+function Lifecycle({ events, skill, targetCount }: { events: LifecycleEvent[]; skill: Skill; targetCount: number }) {
   if (events.length === 0) {
     return (
       <div style={{ color: "var(--ink-3)", fontSize: 12 }}>
@@ -263,6 +263,35 @@ function Lifecycle({ events }: { events: LifecycleEvent[] }) {
         <div className="v">{targetCount}</div>
         <div className="k">classification</div>
         <div className="v">{skill.tag}</div>
+      </div>
+      <div style={{ position: "relative", paddingLeft: 22 }}>
+        <div style={{ position: "absolute", left: 7, top: 4, bottom: 4, width: 1, background: "var(--line)" }} />
+        {events.map((e, i) => (
+          <div key={i} style={{ position: "relative", marginBottom: 14 }}>
+            <div
+              style={{
+                position: "absolute",
+                left: -22,
+                top: 4,
+                width: 15,
+                height: 15,
+                borderRadius: 8,
+                background: "var(--bg-0)",
+                border: `2px solid ${KIND_COLOR[e.kind]}`,
+              }}
+            />
+            <div style={{ fontSize: 12 }}>
+              <span style={{ color: "var(--ink-0)", fontWeight: 500 }}>{e.kind}</span>
+              <span className="mono" style={{ color: "var(--ink-2)", marginLeft: 6 }}>
+                {e.v}
+              </span>
+              <span style={{ color: "var(--ink-3)", marginLeft: 8 }}>
+                by {e.who} · {e.time}
+              </span>
+            </div>
+            <div style={{ fontSize: 11.5, color: "var(--ink-2)", marginTop: 2 }}>{e.desc}</div>
+          </div>
+        ))}
       </div>
     </div>
   );

@@ -17,7 +17,7 @@ use crate::state_model::V3StatePaths;
 
 use super::auth::{
     ensure_mutation_authorized, error_envelope, load_v3_snapshot, run_panel_command,
-    status_for_v3_error_payload, v3_error, v3_ok,
+    status_for_error_code, status_for_v3_error_payload, v3_error, v3_ok,
 };
 use super::{BindingAddRequest, CaptureRequest, PanelState, ProjectRequest, TargetAddRequest};
 
@@ -378,10 +378,24 @@ pub(super) async fn sync_replay(
     )
 }
 
-pub(super) async fn remote_status(State(state): State<PanelState>) -> Json<serde_json::Value> {
+pub(super) async fn remote_status(
+    State(state): State<PanelState>,
+) -> (StatusCode, Json<serde_json::Value>) {
     match remote_status_payload(&state.ctx) {
-        Ok((remote, meta)) => Json(json!({"remote": remote, "warnings": meta.warnings})),
-        Err(err) => Json(json!({"error": err.message, "code": err.code.as_str()})),
+        Ok((remote, meta)) => (
+            StatusCode::OK,
+            Json(json!({"remote": remote, "warnings": meta.warnings})),
+        ),
+        Err(err) => (
+            status_for_error_code(Some(err.code.as_str())),
+            Json(json!({
+                "ok": false,
+                "error": {
+                    "code": err.code.as_str(),
+                    "message": err.message,
+                }
+            })),
+        ),
     }
 }
 

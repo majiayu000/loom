@@ -1,5 +1,5 @@
 import React from "react";
-import { afterAll, expect, test } from "bun:test";
+import { afterAll, expect, test } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { act, create, type ReactTestInstance, type ReactTestRenderer } from "react-test-renderer";
 import { LiveDataBanner } from "../PanelApp";
@@ -559,7 +559,11 @@ test("BindingsPage keeps a newer selection when a previous binding delete comple
       await Promise.resolve();
     });
 
-    expect(markup(renderer!).includes("skill.reader → target-1")).toBe(true);
+    const dpathDivs = renderer!.root.findAll(
+      (node: ReactTestInstance) => node.type === "div" && node.props.className === "dpath",
+    );
+    expect(dpathDivs.length).toBe(1);
+    expect(textOf(dpathDivs[0].props.children).includes("skill.reader → target-1")).toBe(true);
     expect(() => buttonByLabel(renderer!, "Delete binding")).not.toThrow();
     expect(markup(renderer!).includes("Select a binding to inspect")).toBe(false);
   } finally {

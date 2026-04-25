@@ -361,6 +361,9 @@ mod tests {
             "sync.push",
             "sync.pull",
             "sync.replay",
+            "ops.retry",
+            "ops.purge",
+            "ops.history.repair",
         ] {
             let response = ensure_mutation_authorized(&state, peer, &headers, cmd)
                 .unwrap_or_else(|| panic!("guard should reject {cmd} without origin headers"));

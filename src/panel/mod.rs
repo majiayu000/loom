@@ -72,6 +72,11 @@ pub(super) struct CaptureRequest {
 }
 
 #[derive(Debug, Deserialize)]
+pub(super) struct HistoryRepairRequest {
+    pub(super) strategy: String,
+}
+
+#[derive(Debug, Deserialize)]
 pub(super) struct DiffParams {
     #[serde(default)]
     pub(super) rev_a: Option<String>,
@@ -117,6 +122,7 @@ pub async fn run_panel(ctx: AppContext, port: u16) -> Result<()> {
         .route("/api/pending", get(pending))
         .route("/api/ops/retry", post(ops_retry))
         .route("/api/ops/purge", post(ops_purge))
+        .route("/api/ops/history/repair", post(ops_history_repair))
         .route("/api/sync/push", post(sync_push))
         .route("/api/sync/pull", post(sync_pull))
         .route("/api/sync/replay", post(sync_replay))
@@ -426,6 +432,7 @@ mod tests {
             "skill.capture",
             "ops.retry",
             "ops.purge",
+            "ops.history.repair",
             "sync.push",
             "sync.pull",
             "sync.replay",

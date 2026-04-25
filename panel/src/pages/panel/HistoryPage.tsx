@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import type { PanelDataMode } from "../../lib/api/usePanelData";
-import { api, ApiError, type OpsPayload, type V3OperationRecord } from "../../lib/api/client";
+import { api, ApiError, type OpsHistoryDiagnosePayload, type OpsPayload, type V3OperationRecord } from "../../lib/api/client";
 
 type FilterKey = "all" | "pending" | "ok" | "err";
+type DiagnoseData = NonNullable<OpsHistoryDiagnosePayload["data"]>;
 const HISTORY_PAGE_SIZE = 100;
 
 type LoadState =
@@ -20,6 +21,7 @@ interface HistoryPageProps {
 
 export function HistoryPage({ live, mode, mutationVersion, refreshKey }: HistoryPageProps) {
   const [state, setState] = useState<LoadState>({ kind: "idle" });
+  const [diagnose, setDiagnose] = useState<DiagnoseData | null>(null);
   const [filter, setFilter] = useState<FilterKey>("all");
   const [query, setQuery] = useState("");
   const [offset, setOffset] = useState(0);
@@ -32,21 +34,31 @@ export function HistoryPage({ live, mode, mutationVersion, refreshKey }: History
 
     const controller = new AbortController();
     setState({ kind: "loading" });
-    api
-      .ops({ limit: HISTORY_PAGE_SIZE, offset }, controller.signal)
-      .then((res) => {
-        if (controller.signal.aborted) return;
-        if (!res.ok || !res.data) {
-          setState({ kind: "error", message: res.error?.message ?? "activity fetch returned ok=false" });
-          return;
-        }
-        setState({ kind: "ready", payload: res.data });
-      })
-      .catch((err) => {
-        if (controller.signal.aborted) return;
+    setDiagnose(null);
+    Promise.allSettled([
+      api.ops({ limit: HISTORY_PAGE_SIZE, offset }, controller.signal),
+      api.opsHistoryDiagnose(controller.signal),
+    ]).then(([opsResult, diagnoseResult]) => {
+      if (controller.signal.aborted) return;
+
+      if (opsResult.status === "rejected") {
+        const err = opsResult.reason;
         const message = err instanceof ApiError ? err.message : err instanceof Error ? err.message : String(err);
         setState({ kind: "error", message });
-      });
+        return;
+      }
+
+      const res = opsResult.value;
+      if (!res.ok || !res.data) {
+        setState({ kind: "error", message: res.error?.message ?? "activity fetch returned ok=false" });
+        return;
+      }
+      setState({ kind: "ready", payload: res.data });
+
+      if (diagnoseResult.status === "fulfilled" && diagnoseResult.value.data) {
+        setDiagnose(diagnoseResult.value.data);
+      }
+    });
     return () => controller.abort();
   }, [live, mutationVersion, refreshKey, offset]);
 
@@ -126,6 +138,15 @@ export function HistoryPage({ live, mode, mutationVersion, refreshKey }: History
           </div>
         )}
         {!live && <div className="empty" style={{ marginBottom: 18 }}>{offlineHint}</div>}
+        {diagnose?.local_branch && (
+          <div style={{ display: "flex", gap: 12, padding: "4px 0", marginBottom: 12, fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--ink-3)" }}>
+            <span>{diagnose.local_segments} segment{diagnose.local_segments === 1 ? "" : "s"}</span>
+            {diagnose.remote_tracking && diagnose.ahead > 0 && <span style={{ color: "var(--ok)" }}>↑ {diagnose.ahead} ahead</span>}
+            {diagnose.remote_tracking && diagnose.behind > 0 && <span style={{ color: "var(--pending)" }}>↓ {diagnose.behind} behind</span>}
+            {diagnose.remote_tracking && diagnose.ahead === 0 && diagnose.behind === 0 && <span>in sync</span>}
+            {diagnose.conflicts.length > 0 && <span style={{ color: "var(--err)" }}>{diagnose.conflicts.length} conflict{diagnose.conflicts.length === 1 ? "" : "s"} — run loom ops history repair</span>}
+          </div>
+        )}
         <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 18 }}>
           <Kpi label="Loaded changes" value={counts.all} />
           <Kpi label="Pending" value={counts.pending} tone={counts.pending > 0 ? "pending" : undefined} />

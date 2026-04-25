@@ -501,6 +501,13 @@ pub(super) async fn remote_status(
     }
 }
 
+pub(super) async fn v3_ops_diagnose(State(state): State<PanelState>) -> Json<serde_json::Value> {
+    match crate::gitops::history_status(&state.ctx) {
+        Ok(report) => v3_ok(serde_json::json!(report)),
+        Err(err) => v3_error("GIT_ERROR", err.to_string()),
+    }
+}
+
 pub(super) async fn pending(State(state): State<PanelState>) -> Json<serde_json::Value> {
     match state.ctx.read_pending_report() {
         Ok(report) => Json(json!({

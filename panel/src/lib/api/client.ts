@@ -37,6 +37,34 @@ export interface OpsPayload {
   error?: { code?: string; message?: string };
 }
 
+export interface OpsHistoryDiagnosePayload {
+  ok: boolean;
+  data?: {
+    local_branch: boolean;
+    remote_tracking: boolean;
+    ahead: number;
+    behind: number;
+    local_segments: number;
+    local_archives: number;
+    remote_segments: number;
+    remote_archives: number;
+    local_snapshot: boolean;
+    remote_snapshot: boolean;
+    compact_after_segments: number;
+    retain_recent_segments: number;
+    retain_archives: number;
+    conflicts: Array<{
+      scope: string;
+      path: string;
+      local_blob: string;
+      remote_blob: string;
+      local_rename_path: string;
+      remote_rename_path: string;
+    }>;
+  };
+  error?: { code?: string; message?: string };
+}
+
 export interface BindingShowPayload {
   ok: boolean;
   data?: {
@@ -262,6 +290,8 @@ export const api = {
   info: (signal?: AbortSignal) => getJson<InfoPayload>("/api/info", signal),
   skills: (signal?: AbortSignal) => getJson<SkillsPayload>("/api/skills", signal),
   v3Status: (signal?: AbortSignal) => getJson<V3Payload>("/api/v3/status", signal),
+  opsHistoryDiagnose: (signal?: AbortSignal) =>
+    getJson<OpsHistoryDiagnosePayload>("/api/v3/ops/diagnose", signal),
   ops: (options?: { limit?: number; offset?: number }, signal?: AbortSignal) => {
     const params = new URLSearchParams();
     if (typeof options?.limit === "number") params.set("limit", String(options.limit));

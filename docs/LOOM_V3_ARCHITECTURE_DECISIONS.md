@@ -49,6 +49,22 @@ Writers must emit only these values:
 
 `agent` is owned by the CLI `AgentKind` enum. JSON readers should preserve unknown agent strings for forward compatibility, but CLI and panel write paths must only write known `AgentKind` values.
 
+### 2.1.1 Unknown-value handling strategy
+
+All five closed-vocabulary fields use the same strategy: **preserve on read, warn on display**.
+
+Rules:
+
+1. JSON readers must not reject a record that contains an unknown vocabulary value. Deserialization must succeed and the raw string must be stored as-is.
+2. Any code path that maps a vocabulary string to behaviour (routing, rendering, policy evaluation) must treat an unrecognised value as an explicit unknown case rather than falling back silently to a default.
+3. UI surfaces and log output should emit a warning when an unknown value is encountered. The warning must include the field name and the unrecognised value string.
+4. Write paths (CLI commands and panel mutation routes) must reject unknown values at validation time and return a structured error. Forward-compatibility tolerance applies only to read paths.
+5. Future additions to a vocabulary require a dedicated migration plan. They must not be introduced by silently emitting a new string from write paths before it is registered in this document.
+
+Rationale:
+
+Preserve-on-read keeps state files forward-compatible when a newer writer version creates records that an older reader does not know about. Warn-on-display surfaces the gap to operators without causing data loss. Reject-on-write keeps the active write surface clean and avoids accumulating unregistered values in persisted state.
+
 ### 2.2 Policy profiles
 
 `policy_profile` is not a closed enum in phase 1. It is a constrained slug:

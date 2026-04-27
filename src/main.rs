@@ -1,6 +1,7 @@
 mod cli;
 mod commands;
 mod envelope;
+mod fs_util;
 mod gitops;
 mod panel;
 mod state;

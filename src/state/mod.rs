@@ -473,7 +473,7 @@ fn write_atomic(path: &Path, contents: &str) -> Result<()> {
             .with_context(|| format!("failed to sync temp file {}", tmp_path.display()))?;
     }
 
-    fs::rename(&tmp_path, path).with_context(|| {
+    crate::fs_util::rename_atomic(&tmp_path, path).with_context(|| {
         format!(
             "failed to atomically replace {} with {}",
             path.display(),

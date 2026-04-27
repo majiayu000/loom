@@ -87,6 +87,7 @@ pub enum TargetCommand {
 #[derive(Debug, Clone, Subcommand)]
 pub enum SkillCommand {
     Add(AddArgs),
+    ImportObserved(ImportObservedArgs),
     Project(ProjectArgs),
     Capture(CaptureArgs),
     Save(SaveArgs),
@@ -131,6 +132,12 @@ pub struct AddArgs {
 
     #[arg(long)]
     pub name: String,
+}
+
+#[derive(Debug, Clone, Args)]
+pub struct ImportObservedArgs {
+    #[arg(long)]
+    pub target: Option<String>,
 }
 
 #[derive(Debug, Clone, Args)]

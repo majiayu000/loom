@@ -75,6 +75,11 @@ pub(super) struct HistoryRepairRequest {
 }
 
 #[derive(Debug, Deserialize)]
+pub(super) struct RemoteSetRequest {
+    pub(super) url: String,
+}
+
+#[derive(Debug, Deserialize)]
 pub(super) struct DiffParams {
     #[serde(default)]
     pub(super) rev_a: Option<String>,
@@ -115,6 +120,7 @@ pub async fn run_panel(ctx: AppContext, port: u16) -> Result<()> {
         .route("/api/v3/skills/{skill_name}/diff", get(v3_skill_diff))
         .route("/api/v3/skills/{skill_name}/history", get(v3_skill_history))
         .route("/api/remote/status", get(remote_status))
+        .route("/api/remote/set", post(remote_set))
         .route("/api/pending", get(pending))
         .route("/api/ops/retry", post(ops_retry))
         .route("/api/ops/purge", post(ops_purge))
@@ -144,12 +150,12 @@ mod tests {
             ensure_mutation_authorized, error_envelope, request_origin_matches, run_panel_command,
             status_for_error_code, status_for_v3_error_payload, status_for_v3_state_load_error,
         },
-        handlers::{OpsQuery, pending, remote_status, v3_ops, v3_status},
+        handlers::{OpsQuery, pending, remote_set, remote_status, v3_ops, v3_status},
         static_serve::{content_type_for, resolve_panel_asset_path},
     };
     use crate::cli::{
         BindingAddArgs, CaptureArgs, Command, OpsCommand, ProjectArgs, ProjectionMethod,
-        SkillCommand, SyncCommand, TargetAddArgs, TargetCommand, TargetOwnership,
+        RemoteCommand, SkillCommand, SyncCommand, TargetAddArgs, TargetCommand, TargetOwnership,
         WorkspaceBindingCommand, WorkspaceCommand, WorkspaceMatcherKind,
     };
     use crate::state::AppContext;
@@ -159,7 +165,7 @@ mod tests {
     };
     use axum::{
         Json,
-        extract::{Query, State},
+        extract::{ConnectInfo, Query, State},
         http::{HeaderMap, HeaderValue, StatusCode},
     };
     use chrono::{Duration as ChrDuration, Utc};
@@ -363,6 +369,7 @@ mod tests {
             "ops.retry",
             "ops.purge",
             "ops.history.repair",
+            "workspace.remote.set",
             "sync.push",
             "sync.pull",
             "sync.replay",
@@ -411,6 +418,33 @@ mod tests {
         }
 
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn run_panel_command_exposes_workspace_remote_set() {
+        let (root, state) = make_test_state();
+        let url = "https://example.com/loom-registry.git";
+
+        let (status, Json(payload)) = run_panel_command(
+            &state,
+            "workspace.remote.set",
+            StatusCode::OK,
+            Command::Workspace {
+                command: WorkspaceCommand::Remote {
+                    command: RemoteCommand::Set {
+                        url: url.to_string(),
+                    },
+                },
+            },
+        );
+
+        assert_eq!(status, StatusCode::OK, "{payload}");
+        assert_eq!(payload["ok"], json!(true));
+        assert_eq!(payload["cmd"], json!("workspace.remote"));
+        assert_eq!(payload["data"]["remote"], json!("origin"));
+        assert_eq!(payload["data"]["url"], json!(url));
+
+        cleanup_root(root);
     }
 
     #[test]
@@ -720,6 +754,63 @@ mod tests {
         assert!(payload["warnings"].is_array());
 
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn remote_set_rejects_empty_url() {
+        let (root, state) = make_test_state();
+        let peer = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 40000);
+        let mut headers = HeaderMap::new();
+        headers.insert("origin", HeaderValue::from_static("http://127.0.0.1:43117"));
+
+        let (status, Json(payload)) = remote_set(
+            ConnectInfo(peer),
+            headers,
+            State(state),
+            Json(super::RemoteSetRequest {
+                url: "   ".to_string(),
+            }),
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(payload["ok"], json!(false));
+        assert_eq!(payload["cmd"], json!("workspace.remote.set"));
+        assert_eq!(payload["error"]["code"], json!("ARG_INVALID"));
+
+        cleanup_root(root);
+    }
+
+    #[tokio::test]
+    async fn remote_set_configures_origin_from_authorized_panel_request() {
+        let (root, state) = make_test_state();
+        let peer = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 40000);
+        let mut headers = HeaderMap::new();
+        headers.insert("origin", HeaderValue::from_static("http://127.0.0.1:43117"));
+        let url = "https://example.com/loom-registry.git";
+
+        let (status, Json(payload)) = remote_set(
+            ConnectInfo(peer),
+            headers,
+            State(state.clone()),
+            Json(super::RemoteSetRequest {
+                url: format!("  {url}  "),
+            }),
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::OK, "{payload}");
+        assert_eq!(payload["ok"], json!(true));
+        assert_eq!(payload["cmd"], json!("workspace.remote"));
+        assert_eq!(payload["data"]["remote"], json!("origin"));
+        assert_eq!(payload["data"]["url"], json!(url));
+
+        let (remote_status_code, Json(remote_payload)) = remote_status(State(state)).await;
+        assert_eq!(remote_status_code, StatusCode::OK);
+        assert_eq!(remote_payload["remote"]["configured"], json!(true));
+        assert_eq!(remote_payload["remote"]["url"], json!(url));
+
+        cleanup_root(root);
     }
 
     #[tokio::test]

@@ -1,5 +1,7 @@
 import type { RemotePayload } from "../../types";
-import { PlayIcon, RefreshIcon, SyncIcon } from "../../components/icons/nav_icons";
+import type { FormEvent } from "react";
+import { useEffect, useState } from "react";
+import { GitIcon, PlayIcon, RefreshIcon, SyncIcon } from "../../components/icons/nav_icons";
 import { api } from "../../lib/api/client";
 import { useMutation } from "../../lib/useMutation";
 
@@ -15,15 +17,29 @@ export function SyncPage({ remote, pendingCount, registryRoot, readOnly, onMutat
   const push = useMutation();
   const pull = useMutation();
   const replay = useMutation();
-  const syncBusy = push.busy || pull.busy || replay.busy;
+  const setRemote = useMutation();
+  const [remoteUrl, setRemoteUrl] = useState(remote?.url ?? "");
+  const syncBusy = push.busy || pull.busy || replay.busy || setRemote.busy;
   const configured = remote?.configured === true;
   const state = remote?.sync_state ?? (configured ? "unknown" : "not configured");
   const rootDisplay = registryRoot ? registryRoot.replace(/^\/Users\/[^/]+/, "~") : "—";
 
+  useEffect(() => {
+    setRemoteUrl(remote?.url ?? "");
+  }, [remote?.url]);
+
+  const submitRemote = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const url = remoteUrl.trim();
+    if (!url || readOnly || syncBusy) return;
+    setRemote.run(configured ? "remote update" : "remote set", () => api.remoteSet({ url }), onMutation);
+  };
+
   const banner =
-    push.error ?? pull.error ?? replay.error ??
-    push.success ?? pull.success ?? replay.success ?? null;
-  const bannerType = push.error || pull.error || replay.error ? "err" : banner ? "ok" : null;
+    setRemote.error ?? push.error ?? pull.error ?? replay.error ??
+    setRemote.success ?? push.success ?? pull.success ?? replay.success ?? null;
+  const bannerType =
+    setRemote.error || push.error || pull.error || replay.error ? "err" : banner ? "ok" : null;
 
   return (
     <>
@@ -95,6 +111,31 @@ export function SyncPage({ remote, pendingCount, registryRoot, readOnly, onMutat
                 ⚠ Local-only — no upstream tracking branch configured.
               </div>
             )}
+            <form
+              onSubmit={submitRemote}
+              style={{
+                display: "grid",
+                gridTemplateColumns: "minmax(0, 1fr) auto",
+                gap: 8,
+                marginTop: 12,
+              }}
+            >
+              <input
+                value={remoteUrl}
+                onChange={(event) => setRemoteUrl(event.target.value)}
+                placeholder="https://github.com/org/registry.git"
+                disabled={readOnly || setRemote.busy}
+                aria-label="Remote URL"
+                style={inputStyle}
+              />
+              <button
+                className="btn"
+                disabled={readOnly || syncBusy || remoteUrl.trim().length === 0}
+                title={readOnly ? "registry offline" : "set origin remote URL"}
+              >
+                <GitIcon /> {setRemote.busy ? "saving…" : configured ? "Update" : "Set"}
+              </button>
+            </form>
           </div>
         </div>
 
@@ -141,6 +182,20 @@ export function SyncPage({ remote, pendingCount, registryRoot, readOnly, onMutat
     </>
   );
 }
+
+const inputStyle = {
+  width: "100%",
+  minWidth: 0,
+  height: 32,
+  border: "1px solid var(--line)",
+  borderRadius: 6,
+  background: "var(--bg)",
+  color: "var(--ink-0)",
+  padding: "0 10px",
+  fontFamily: "var(--font-mono)",
+  fontSize: 12,
+  outline: "none",
+};
 
 function Kpi({ label, value, tone }: { label: string; value: string | number; tone?: "pending" | "err" }) {
   const color = tone === "pending" ? "var(--pending)" : tone === "err" ? "var(--err)" : "var(--ink-0)";

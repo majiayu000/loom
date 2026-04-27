@@ -250,6 +250,10 @@ export interface HistoryRepairBody {
   strategy: "local" | "remote";
 }
 
+export interface RemoteSetBody {
+  url: string;
+}
+
 export interface SkillDiffFile {
   path: string;
   added: number;
@@ -313,6 +317,7 @@ export const api = {
 
   opsRetry: () => postJson("/api/ops/retry", {}),
   opsPurge: () => postJson("/api/ops/purge", {}),
+  remoteSet: (body: RemoteSetBody) => postJson("/api/remote/set", body),
 
   targetAdd: (body: TargetAddBody) => postJson("/api/v3/targets", body),
   targetRemove: (targetId: string) => postJson(`/api/v3/targets/${encodeURIComponent(targetId)}/remove`, {}),

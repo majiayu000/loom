@@ -5,7 +5,7 @@ use chrono::Utc;
 use serde_json::json;
 use uuid::Uuid;
 
-use crate::cli::{AddArgs, CaptureArgs, ProjectArgs, SaveArgs, SkillOnlyArgs};
+use crate::cli::{AddArgs, CaptureArgs, ImportObservedArgs, ProjectArgs, SaveArgs, SkillOnlyArgs};
 use crate::envelope::Meta;
 use crate::gitops;
 use crate::state::remove_path_if_exists;
@@ -397,6 +397,225 @@ impl App {
         ))
     }
 
+    pub fn cmd_import_observed(
+        &self,
+        args: &ImportObservedArgs,
+        request_id: &str,
+    ) -> std::result::Result<(serde_json::Value, Meta), CommandFailure> {
+        let _workspace = self.ctx.lock_workspace().map_err(map_lock)?;
+        self.ensure_write_repo_ready()?;
+        let paths = self.ensure_v3_layout()?;
+        let snapshot = paths.load_snapshot().map_err(map_v3_state)?;
+
+        // Validate --target-id if provided: must exist and be observed.
+        if let Some(ref tid) = args.target_id {
+            let found = snapshot
+                .targets
+                .targets
+                .iter()
+                .find(|t| &t.target_id == tid);
+            match found {
+                None => {
+                    return Err(CommandFailure::new(
+                        crate::types::ErrorCode::TargetNotFound,
+                        format!("target '{}' not found", tid),
+                    ));
+                }
+                Some(t) if t.ownership != "observed" => {
+                    return Err(CommandFailure::new(
+                        crate::types::ErrorCode::ArgInvalid,
+                        format!(
+                            "target '{}' has ownership '{}', not 'observed'",
+                            tid, t.ownership
+                        ),
+                    ));
+                }
+                _ => {}
+            }
+        }
+
+        let targets: Vec<_> = snapshot
+            .targets
+            .targets
+            .iter()
+            .filter(|t| t.ownership == "observed")
+            .filter(|t| {
+                args.target_id
+                    .as_deref()
+                    .is_none_or(|tid| t.target_id == tid)
+            })
+            .cloned()
+            .collect();
+
+        let mut imported = Vec::new();
+        let mut skipped = Vec::new();
+        let mut would_import = Vec::new();
+        let mut warnings = Vec::new();
+        let mut last_op_id: Option<String> = None;
+
+        for target in &targets {
+            let expanded = expand_tilde(&target.path);
+            let target_dir = PathBuf::from(&expanded);
+
+            if !target_dir.exists() {
+                warnings.push(format!(
+                    "target '{}' path '{}' does not exist on disk; skipping",
+                    target.target_id,
+                    target_dir.display()
+                ));
+                continue;
+            }
+
+            let entries = match fs::read_dir(&target_dir) {
+                Ok(e) => e,
+                Err(err) => {
+                    warnings.push(format!(
+                        "failed to read target '{}' path '{}': {}",
+                        target.target_id,
+                        target_dir.display(),
+                        err
+                    ));
+                    continue;
+                }
+            };
+
+            for entry in entries {
+                let entry = match entry {
+                    Ok(e) => e,
+                    Err(err) => {
+                        warnings.push(format!("failed to read directory entry: {}", err));
+                        continue;
+                    }
+                };
+
+                let entry_path = entry.path();
+                if !entry_path.is_dir() {
+                    continue;
+                }
+                if !entry_path.join("SKILL.md").exists() {
+                    continue;
+                }
+
+                let dir_name = match entry_path.file_name().and_then(|n| n.to_str()) {
+                    Some(n) => n.to_string(),
+                    None => {
+                        warnings.push(format!("could not read name of '{}'", entry_path.display()));
+                        continue;
+                    }
+                };
+
+                let skill_id = skill_id_from_dir_name(&dir_name);
+                if let Err(err) = validate_skill_name(&skill_id) {
+                    warnings.push(format!(
+                        "directory '{}' yields invalid skill id '{}': {}; skipping",
+                        dir_name, skill_id, err
+                    ));
+                    continue;
+                }
+
+                let dst = self.ctx.skill_path(&skill_id);
+                let source_path = entry_path.display().to_string();
+
+                if dst.exists() {
+                    skipped.push(serde_json::json!({
+                        "skill_id": skill_id,
+                        "source_path": source_path,
+                        "target_id": target.target_id,
+                        "reason": "already_exists"
+                    }));
+                    continue;
+                }
+
+                if args.dry_run {
+                    would_import.push(serde_json::json!({
+                        "skill_id": skill_id,
+                        "source_path": source_path,
+                        "target_id": target.target_id
+                    }));
+                    continue;
+                }
+
+                if let Err(err) = copy_dir_recursive_without_symlinks(&entry_path, &dst) {
+                    warnings.push(format!(
+                        "failed to copy '{}' to '{}': {}",
+                        entry_path.display(),
+                        dst.display(),
+                        err
+                    ));
+                    continue;
+                }
+
+                let skill_rel = format!("skills/{}", skill_id);
+                if let Err(err) = gitops::stage_path(&self.ctx, Path::new(&skill_rel)) {
+                    warnings.push(format!("failed to stage '{}': {}", skill_id, err));
+                    continue;
+                }
+
+                let staged =
+                    match gitops::has_staged_changes_for_path(&self.ctx, Path::new(&skill_rel)) {
+                        Ok(s) => s,
+                        Err(err) => {
+                            warnings.push(format!(
+                                "failed to check staged changes for '{}': {}",
+                                skill_id, err
+                            ));
+                            continue;
+                        }
+                    };
+
+                let commit = if staged {
+                    let message = format!(
+                        "add({}): import from observed target {}",
+                        skill_id, target.target_id
+                    );
+                    match gitops::commit(&self.ctx, &message) {
+                        Ok(sha) => Some(sha),
+                        Err(err) => {
+                            warnings.push(format!("failed to commit '{}': {}", skill_id, err));
+                            continue;
+                        }
+                    }
+                } else {
+                    None
+                };
+
+                let op_id = record_v3_operation(
+                    &paths,
+                    "skill.import-observed",
+                    serde_json::json!({
+                        "skill_id": skill_id,
+                        "source_path": source_path,
+                        "target_id": target.target_id,
+                        "request_id": request_id
+                    }),
+                    serde_json::json!({ "commit": commit }),
+                )
+                .map_err(map_v3_state)?;
+                last_op_id = Some(op_id);
+
+                imported.push(serde_json::json!({
+                    "skill_id": skill_id,
+                    "source_path": source_path,
+                    "target_id": target.target_id,
+                    "commit": commit
+                }));
+            }
+        }
+
+        Ok((
+            serde_json::json!({
+                "imported": imported,
+                "skipped": skipped,
+                "would_import": would_import,
+                "warnings": warnings
+            }),
+            Meta {
+                op_id: last_op_id,
+                ..Meta::default()
+            },
+        ))
+    }
+
     pub fn cmd_snapshot(
         &self,
         args: &SkillOnlyArgs,
@@ -424,5 +643,36 @@ impl App {
         )?;
 
         Ok((json!({"skill": args.skill, "tag": tag}), meta))
+    }
+}
+
+fn expand_tilde(path: &str) -> String {
+    if path == "~" {
+        std::env::var("HOME").unwrap_or_else(|_| path.to_string())
+    } else if let Some(rest) = path.strip_prefix("~/") {
+        let home = std::env::var("HOME").unwrap_or_else(|_| "~".to_string());
+        format!("{}/{}", home, rest)
+    } else {
+        path.to_string()
+    }
+}
+
+fn skill_id_from_dir_name(name: &str) -> String {
+    let mut out = String::new();
+    let mut last_was_sep = false;
+    for ch in name.chars() {
+        if ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.') {
+            out.push(ch.to_ascii_lowercase());
+            last_was_sep = false;
+        } else if !last_was_sep {
+            out.push('-');
+            last_was_sep = true;
+        }
+    }
+    let normalized = out.trim_matches('-');
+    if normalized.is_empty() {
+        "item".to_string()
+    } else {
+        normalized.to_string()
     }
 }

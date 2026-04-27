@@ -117,6 +117,7 @@ pub(crate) fn command_name(command: &Command) -> &'static str {
             SkillCommand::Release(_) => "skill.release",
             SkillCommand::Rollback(_) => "skill.rollback",
             SkillCommand::Diff(_) => "skill.diff",
+            SkillCommand::ImportObserved(_) => "skill.import-observed",
         },
         Command::Sync { command } => match command {
             SyncCommand::Status => "sync.status",

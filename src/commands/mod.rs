@@ -87,6 +87,7 @@ impl App {
                 SkillCommand::Release(args) => self.cmd_release(args, &request_id),
                 SkillCommand::Rollback(args) => self.cmd_rollback(args, &request_id),
                 SkillCommand::Diff(args) => self.cmd_diff(args),
+                SkillCommand::ImportObserved(args) => self.cmd_import_observed(args, &request_id),
             },
             Command::Sync { command } => self.cmd_sync(command),
             Command::Ops { command } => self.cmd_ops(command),

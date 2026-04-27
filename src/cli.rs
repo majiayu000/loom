@@ -21,38 +21,49 @@ pub struct Cli {
 
 #[derive(Debug, Clone, Subcommand)]
 pub enum Command {
+    #[command(about = "Inspect and configure registry workspace state")]
     Workspace {
         #[command(subcommand)]
         command: WorkspaceCommand,
     },
+    #[command(about = "Register and inspect agent skill directories")]
     Target {
         #[command(subcommand)]
         command: TargetCommand,
     },
+    #[command(about = "Manage skill sources, projections, and versions")]
     Skill {
         #[command(subcommand)]
         command: SkillCommand,
     },
+    #[command(about = "Synchronize the registry through its Git remote")]
     Sync {
         #[command(subcommand)]
         command: SyncCommand,
     },
+    #[command(about = "Inspect, replay, and repair operation history")]
     Ops {
         #[command(subcommand)]
         command: OpsCommand,
     },
+    #[command(about = "Serve the local registry control panel")]
     Panel(PanelArgs),
 }
 
 #[derive(Debug, Clone, Subcommand)]
 pub enum WorkspaceCommand {
+    #[command(about = "Show registry status, targets, Git state, and pending ops")]
     Status,
+    #[command(about = "Run registry integrity, history, and projection checks")]
     Doctor,
+    #[command(about = "Initialize v3 registry state")]
     Init(WorkspaceInitArgs),
+    #[command(about = "Manage workspace-to-target bindings")]
     Binding {
         #[command(subcommand)]
         command: WorkspaceBindingCommand,
     },
+    #[command(about = "Configure and inspect the registry Git remote")]
     Remote {
         #[command(subcommand)]
         command: RemoteCommand,
@@ -70,37 +81,57 @@ pub struct WorkspaceInitArgs {
 
 #[derive(Debug, Clone, Subcommand)]
 pub enum WorkspaceBindingCommand {
+    #[command(about = "Create a binding from a workspace matcher to a target")]
     Add(BindingAddArgs),
+    #[command(about = "List workspace bindings")]
     List,
+    #[command(about = "Show one binding with rules and projections")]
     Show(BindingShowArgs),
+    #[command(about = "Remove a workspace binding")]
     Remove(BindingShowArgs),
 }
 
 #[derive(Debug, Clone, Subcommand)]
 pub enum TargetCommand {
+    #[command(about = "Register an agent skill directory as a target")]
     Add(TargetAddArgs),
+    #[command(about = "List registered projection targets")]
     List,
+    #[command(about = "Show one target with related bindings and projections")]
     Show(TargetShowArgs),
+    #[command(about = "Remove a projection target")]
     Remove(TargetShowArgs),
 }
 
 #[derive(Debug, Clone, Subcommand)]
 pub enum SkillCommand {
+    #[command(about = "Import a skill source into the registry")]
     Add(AddArgs),
+    #[command(about = "Project a registry skill into a bound target")]
     Project(ProjectArgs),
+    #[command(about = "Capture live projection edits back to the source")]
     Capture(CaptureArgs),
+    #[command(about = "Commit source changes for one skill")]
     Save(SaveArgs),
+    #[command(about = "Create a version snapshot for one skill")]
     Snapshot(SkillOnlyArgs),
+    #[command(about = "Tag a skill release")]
     Release(ReleaseArgs),
+    #[command(about = "Roll back a skill source to an earlier revision")]
     Rollback(RollbackArgs),
+    #[command(about = "Diff two revisions of a skill source")]
     Diff(DiffArgs),
 }
 
 #[derive(Debug, Clone, Subcommand)]
 pub enum OpsCommand {
+    #[command(about = "List pending operations")]
     List,
+    #[command(about = "Retry pending operations")]
     Retry,
+    #[command(about = "Purge completed operation records")]
     Purge,
+    #[command(about = "Diagnose and repair the loom-history branch")]
     History {
         #[command(subcommand)]
         command: OpsHistoryCommand,
@@ -109,7 +140,9 @@ pub enum OpsCommand {
 
 #[derive(Debug, Clone, Subcommand)]
 pub enum OpsHistoryCommand {
+    #[command(about = "Report local and remote operation-history health")]
     Diagnose,
+    #[command(about = "Repair operation-history divergence")]
     Repair(HistoryRepairArgs),
 }
 
@@ -249,15 +282,21 @@ pub struct TargetAddArgs {
 
 #[derive(Debug, Clone, Subcommand)]
 pub enum RemoteCommand {
+    #[command(about = "Set the registry Git remote URL")]
     Set { url: String },
+    #[command(about = "Show remote URL, tracking, and sync state")]
     Status,
 }
 
 #[derive(Debug, Clone, Subcommand)]
 pub enum SyncCommand {
+    #[command(about = "Show Git sync state")]
     Status,
+    #[command(about = "Push registry state and operation history")]
     Push,
+    #[command(about = "Pull registry state and operation history")]
     Pull,
+    #[command(about = "Replay pending operations")]
     Replay,
 }
 

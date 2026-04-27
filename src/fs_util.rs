@@ -4,26 +4,55 @@
 //! destination path already exists. Every atomic-overwrite path (write-to-tmp
 //! then replace) must use [`rename_atomic`] instead of `std::fs::rename`.
 
+use std::io;
 use std::path::Path;
 
 /// Atomically replace `dst` with `src`.
 ///
 /// On Unix this is a single `rename(2)` syscall, which is atomic at the
-/// filesystem level. On Windows, where a plain rename fails when the
-/// destination exists, we remove the destination first and then rename.
-/// This is not a kernel-level atomic swap on Windows, but gives the same
-/// practical guarantee for single-writer scenarios (no partial reads of a
-/// half-written file are possible).
-pub fn rename_atomic(src: &Path, dst: &Path) -> std::io::Result<()> {
+/// filesystem level. On Windows this uses `MoveFileExW` with
+/// `MOVEFILE_REPLACE_EXISTING` so the destination is replaced by the OS rather
+/// than deleted first.
+pub fn rename_atomic(src: &Path, dst: &Path) -> io::Result<()> {
     #[cfg(windows)]
-    {
-        if dst.is_dir() {
-            std::fs::remove_dir_all(dst)?;
-        } else if dst.exists() {
-            std::fs::remove_file(dst)?;
-        }
-    }
+    return rename_atomic_windows(src, dst);
+
+    #[cfg(not(windows))]
     std::fs::rename(src, dst)
+}
+
+#[cfg(windows)]
+fn rename_atomic_windows(src: &Path, dst: &Path) -> io::Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+
+    const MOVEFILE_REPLACE_EXISTING: u32 = 0x1;
+    const MOVEFILE_WRITE_THROUGH: u32 = 0x8;
+
+    unsafe extern "system" {
+        fn MoveFileExW(
+            lpExistingFileName: *const u16,
+            lpNewFileName: *const u16,
+            dwFlags: u32,
+        ) -> i32;
+    }
+
+    fn wide_null(path: &Path) -> Vec<u16> {
+        path.as_os_str().encode_wide().chain(Some(0)).collect()
+    }
+
+    let src = wide_null(src);
+    let dst = wide_null(dst);
+    let ok = unsafe {
+        MoveFileExW(
+            src.as_ptr(),
+            dst.as_ptr(),
+            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+        )
+    };
+    if ok == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
 }
 
 #[cfg(test)]

@@ -81,7 +81,7 @@ pub(crate) fn project_skill_to_target(
                 let _ = remove_path_if_exists(&tmp_dir);
                 return Err(err);
             }
-            if let Err(err) = crate::fs_util::rename_atomic(&tmp_dir, dst) {
+            if let Err(err) = std::fs::rename(&tmp_dir, dst) {
                 let _ = remove_path_if_exists(&tmp_dir);
                 return Err(err).context("failed to atomically place projection");
             }

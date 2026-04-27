@@ -77,16 +77,17 @@ fn maybe_build_panel(panel_dir: &Path) -> bool {
 }
 
 fn panel_dist_is_fresh(panel_dir: &Path, dist_dir: &Path) -> bool {
-    if !dist_dir.join("index.html").is_file() {
+    let index_html = dist_dir.join("index.html");
+    if !index_html.is_file() {
         return false;
     }
     let Some(newest_input) = newest_panel_input(panel_dir) else {
         return true;
     };
-    let Some(newest_dist) = newest_path_mtime(dist_dir) else {
+    let Some(index_mtime) = path_mtime(&index_html) else {
         return false;
     };
-    newest_dist >= newest_input
+    index_mtime >= newest_input
 }
 
 fn newest_panel_input(panel_dir: &Path) -> Option<SystemTime> {
@@ -97,12 +98,6 @@ fn newest_panel_input(panel_dir: &Path) -> Option<SystemTime> {
     for dir in FRONTEND_INPUT_DIRS {
         update_newest_mtime(panel_dir.join(dir), &mut newest);
     }
-    newest
-}
-
-fn newest_path_mtime(path: &Path) -> Option<SystemTime> {
-    let mut newest = None;
-    update_newest_mtime(path, &mut newest);
     newest
 }
 
@@ -129,6 +124,10 @@ fn update_newest_mtime(path: impl AsRef<Path>, newest: &mut Option<SystemTime>) 
     if newest.is_none_or(|current| modified > current) {
         *newest = Some(modified);
     }
+}
+
+fn path_mtime(path: &Path) -> Option<SystemTime> {
+    fs::symlink_metadata(path).ok()?.modified().ok()
 }
 
 fn copy_dir_recursive(source: &Path, destination: &Path) {

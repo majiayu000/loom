@@ -425,7 +425,6 @@ mod tests {
         let ctx = AppContext::new(Some(root.to_path_buf())).expect("AppContext");
         PanelState {
             ctx: Arc::new(ctx),
-            dist_dir: root.join("panel/dist"),
             panel_origin: "http://127.0.0.1:43117".to_string(),
         }
     }

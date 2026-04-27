@@ -50,6 +50,8 @@ loom --root ~/.loom-registry target add \
 loom --root ~/.loom-registry panel        # → http://localhost:43117
 ```
 
+`loom panel` now serves a frontend bundled into the Rust binary at build time, so it works even when `--root` points at a separate registry directory. If panel assets are unavailable in your build, reinstall from a checkout with `bun` available so Loom can package the frontend during compile.
+
 Prefer a guided walkthrough? Run `./scripts/demo.sh` for a scripted end-to-end tour (init → target add → status → panel hint) against a throwaway registry. `./scripts/e2e-agent-flow.sh` runs the four real integration scenarios used in CI.
 
 ## Panel

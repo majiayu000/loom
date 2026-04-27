@@ -5,7 +5,6 @@ mod skill_history;
 mod static_serve;
 
 use std::net::SocketAddr;
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::Result;
@@ -26,7 +25,6 @@ use static_serve::{ensure_panel_dist, frontend_index, frontend_static_asset};
 #[derive(Clone)]
 pub(crate) struct PanelState {
     pub(crate) ctx: Arc<AppContext>,
-    pub(crate) dist_dir: PathBuf,
     pub(crate) panel_origin: String,
 }
 
@@ -86,12 +84,10 @@ pub(super) struct DiffParams {
 
 pub async fn run_panel(ctx: AppContext, port: u16) -> Result<()> {
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
-    let dist_dir = ctx.root.join("panel/dist");
-    ensure_panel_dist(&dist_dir)?;
+    ensure_panel_dist()?;
 
     let state = PanelState {
         ctx: Arc::new(ctx),
-        dist_dir,
         panel_origin: format!("http://{}", addr),
     };
 
@@ -149,7 +145,7 @@ mod tests {
             status_for_error_code, status_for_v3_error_payload, status_for_v3_state_load_error,
         },
         handlers::{OpsQuery, pending, remote_status, v3_ops, v3_status},
-        static_serve::{content_type_for, ensure_panel_dist, resolve_panel_asset_path},
+        static_serve::{content_type_for, resolve_panel_asset_path},
     };
     use crate::cli::{
         BindingAddArgs, CaptureArgs, Command, OpsCommand, ProjectArgs, ProjectionMethod,
@@ -173,7 +169,6 @@ mod tests {
         net::{IpAddr, Ipv4Addr, SocketAddr},
         path::Path,
         sync::Arc,
-        time::Duration,
     };
     use uuid::Uuid;
 
@@ -183,7 +178,6 @@ mod tests {
         let ctx = AppContext::new(Some(root.clone())).expect("build app context");
         let state = PanelState {
             ctx: Arc::new(ctx),
-            dist_dir: root.join("panel/dist"),
             panel_origin: "http://127.0.0.1:43117".to_string(),
         };
         (root, state)
@@ -274,18 +268,16 @@ mod tests {
 
     #[test]
     fn resolve_panel_asset_path_rejects_invalid_components() {
-        let dist_dir = Path::new("/tmp/panel-dist");
-
         assert_eq!(
-            resolve_panel_asset_path(dist_dir, "assets/index.js"),
-            Some(dist_dir.join("assets/index.js"))
+            resolve_panel_asset_path("assets/index.js"),
+            Some(Path::new("assets/index.js").to_path_buf())
         );
         assert_eq!(
-            resolve_panel_asset_path(dist_dir, "./assets/index.css"),
-            Some(dist_dir.join("assets/index.css"))
+            resolve_panel_asset_path("./assets/index.css"),
+            Some(Path::new("assets/index.css").to_path_buf())
         );
-        assert_eq!(resolve_panel_asset_path(dist_dir, "../secret.txt"), None);
-        assert_eq!(resolve_panel_asset_path(dist_dir, "/etc/passwd"), None);
+        assert_eq!(resolve_panel_asset_path("../secret.txt"), None);
+        assert_eq!(resolve_panel_asset_path("/etc/passwd"), None);
     }
 
     #[test]
@@ -308,68 +300,6 @@ mod tests {
             content_type_for(Path::new("artifact.bin")),
             "application/octet-stream"
         );
-    }
-
-    #[test]
-    fn ensure_panel_dist_rejects_stale_assets_until_rebuilt() {
-        let root = std::env::temp_dir().join(format!("loom-panel-dist-test-{}", Uuid::new_v4()));
-        let panel_dir = root.join("panel");
-        let dist_dir = panel_dir.join("dist");
-        let src_dir = panel_dir.join("src");
-
-        fs::create_dir_all(&dist_dir).expect("create panel dist dir");
-        fs::create_dir_all(&src_dir).expect("create panel src dir");
-        fs::write(dist_dir.join("index.html"), "<html>old build</html>").expect("write dist");
-
-        // Sleep because some filesystems coarsen mtime granularity.
-        std::thread::sleep(Duration::from_secs(1));
-        fs::write(
-            src_dir.join("panel-entry.tsx"),
-            "export const build = 'newer';",
-        )
-        .expect("write newer source");
-
-        let err = ensure_panel_dist(&dist_dir).expect_err("stale dist should be rejected");
-        assert!(
-            err.to_string().contains("panel frontend assets are stale"),
-            "unexpected error: {err}"
-        );
-
-        std::thread::sleep(Duration::from_secs(1));
-        fs::write(dist_dir.join("index.html"), "<html>fresh build</html>").expect("rewrite dist");
-
-        ensure_panel_dist(&dist_dir).expect("fresh dist should pass");
-        cleanup_root(root);
-    }
-
-    #[test]
-    fn ensure_panel_dist_ignores_untracked_dist_files_when_checking_staleness() {
-        let root = std::env::temp_dir().join(format!("loom-panel-dist-test-{}", Uuid::new_v4()));
-        let panel_dir = root.join("panel");
-        let dist_dir = panel_dir.join("dist");
-        let src_dir = panel_dir.join("src");
-
-        fs::create_dir_all(&dist_dir).expect("create panel dist dir");
-        fs::create_dir_all(&src_dir).expect("create panel src dir");
-        fs::write(dist_dir.join("index.html"), "<html>old build</html>").expect("write dist");
-
-        std::thread::sleep(Duration::from_secs(1));
-        fs::write(
-            src_dir.join("panel-entry.tsx"),
-            "export const build = 'newer';",
-        )
-        .expect("write newer source");
-
-        std::thread::sleep(Duration::from_secs(1));
-        fs::write(dist_dir.join("scratch.txt"), "new but unrelated").expect("write scratch file");
-
-        let err = ensure_panel_dist(&dist_dir).expect_err("stale dist should still be rejected");
-        assert!(
-            err.to_string().contains("panel frontend assets are stale"),
-            "unexpected error: {err}"
-        );
-
-        cleanup_root(root);
     }
 
     #[test]

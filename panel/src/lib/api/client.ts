@@ -246,6 +246,10 @@ export interface CaptureBody {
   message?: string;
 }
 
+export interface HistoryRepairBody {
+  strategy: "local" | "remote";
+}
+
 export interface SkillDiffFile {
   path: string;
   added: number;
@@ -320,6 +324,7 @@ export const api = {
   syncPush: () => postJson("/api/sync/push", {}),
   syncPull: () => postJson("/api/sync/pull", {}),
   syncReplay: () => postJson("/api/sync/replay", {}),
+  opsHistoryRepair: (body: HistoryRepairBody) => postJson("/api/ops/history/repair", body),
 
   skillHistory: (name: string, signal?: AbortSignal) =>
     getJson<SkillHistoryPayload>(

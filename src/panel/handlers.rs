@@ -10,8 +10,8 @@ use serde_json::json;
 
 use crate::cli::{
     CaptureArgs, Command, HistoryRepairStrategyArg, OpsCommand, OpsHistoryCommand, ProjectArgs,
-    ProjectionMethod, SyncCommand, TargetCommand, TargetOwnership, WorkspaceBindingCommand,
-    WorkspaceCommand,
+    ProjectionMethod, RemoteCommand, SyncCommand, TargetCommand, TargetOwnership,
+    WorkspaceBindingCommand, WorkspaceCommand,
 };
 use crate::commands::{collect_skill_inventory, remote_status_payload};
 use crate::state::resolve_agent_skill_dirs;
@@ -23,7 +23,7 @@ use super::auth::{
 };
 use super::{
     BindingAddRequest, CaptureRequest, HistoryRepairRequest, PanelState, ProjectRequest,
-    TargetAddRequest,
+    RemoteSetRequest, TargetAddRequest,
 };
 
 /// Accept `[a-z0-9_-]{1,64}` for `policy_profile`. The backend does not
@@ -518,6 +518,44 @@ pub(super) async fn sync_replay(
         StatusCode::OK,
         Command::Sync {
             command: SyncCommand::Replay,
+        },
+    )
+}
+
+pub(super) async fn remote_set(
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    State(state): State<PanelState>,
+    Json(req): Json<RemoteSetRequest>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    if let Some(response) =
+        ensure_mutation_authorized(&state, peer, &headers, "workspace.remote.set")
+    {
+        return response;
+    }
+
+    let url = req.url.trim().to_string();
+    if url.is_empty() {
+        let request_id = uuid::Uuid::new_v4().to_string();
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(error_envelope(
+                "workspace.remote.set",
+                &request_id,
+                "ARG_INVALID",
+                "remote url is required",
+            )),
+        );
+    }
+
+    run_panel_command(
+        &state,
+        "workspace.remote.set",
+        StatusCode::OK,
+        Command::Workspace {
+            command: WorkspaceCommand::Remote {
+                command: RemoteCommand::Set { url },
+            },
         },
     )
 }

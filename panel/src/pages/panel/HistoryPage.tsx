@@ -31,6 +31,10 @@ function relativeTime(iso?: string | null) {
   return `${Math.floor(hr / 24)}d ago`;
 }
 
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
 export function HistoryPage({ readOnly }: HistoryPageProps) {
   const [entries, setEntries] = useState<HistoryEntryPayload[]>([]);
   const [diagnose, setDiagnose] = useState<DiagnoseSummary | null>(null);
@@ -41,15 +45,28 @@ export function HistoryPage({ readOnly }: HistoryPageProps) {
     const ctrl = new AbortController();
     setLoading(true);
     setError(null);
-    Promise.all([api.opsHistoryList(ctrl.signal), api.opsHistoryDiagnose(ctrl.signal)])
+    Promise.allSettled([api.opsHistoryList(ctrl.signal), api.opsHistoryDiagnose(ctrl.signal)])
       .then(([historyList, diagnoseEnvelope]) => {
-        setEntries(historyList.data?.entries ?? []);
-        setDiagnose((diagnoseEnvelope.data ?? {}) as DiagnoseSummary);
+        if (ctrl.signal.aborted) return;
+        if (historyList.status === "rejected") {
+          setEntries([]);
+          setDiagnose(null);
+          setError(errorMessage(historyList.reason));
+          setLoading(false);
+          return;
+        }
+
+        setEntries(historyList.value.data?.entries ?? []);
+        if (diagnoseEnvelope.status === "fulfilled") {
+          setDiagnose((diagnoseEnvelope.value.data ?? {}) as DiagnoseSummary);
+        } else {
+          setDiagnose(null);
+        }
         setLoading(false);
       })
-      .catch((err: Error) => {
-        if (err.name !== "AbortError") {
-          setError(err.message);
+      .catch((err: unknown) => {
+        if (!(err instanceof Error && err.name === "AbortError")) {
+          setError(errorMessage(err));
           setLoading(false);
         }
       });

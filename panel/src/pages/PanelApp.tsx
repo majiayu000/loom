@@ -152,12 +152,16 @@ export function PanelApp() {
       hint: `${binding.skill} → ${binding.target}`,
       kind: "binding" as const,
     })),
-    {
-      id: "action:replay",
-      label: "Replay pending ops",
-      hint: "sync replay",
-      kind: "action" as const,
-    },
+    ...(readOnly
+      ? []
+      : [
+          {
+            id: "action:replay",
+            label: "Replay pending ops",
+            hint: "sync replay",
+            kind: "action" as const,
+          },
+        ]),
   ];
 
   const runCommand = async (item: CommandItem) => {
@@ -182,6 +186,7 @@ export function PanelApp() {
       return;
     }
     if (item.id === "action:replay") {
+      if (readOnly) return;
       await api.syncReplay();
       live.refetch();
     }

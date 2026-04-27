@@ -156,6 +156,8 @@ Response:
 }
 ```
 
+Field-level tier classification for all fields returned by this endpoint: see `docs/STATUS_FIELD_CLASSIFICATION.md`.
+
 ### 7.3 `GET /api/v3/bindings`
 
 Purpose:

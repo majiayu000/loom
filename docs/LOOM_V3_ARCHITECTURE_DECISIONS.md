@@ -119,23 +119,29 @@ This decision does not make the panel the primary control plane. The CLI remains
 
 Decision: environment-based discovery is advisory. Registered v3 state is authoritative.
 
-Authoritative status fields:
+Authoritative status fields (sourced from `state/v3/` JSON files or derived exclusively
+from registered v3 entities):
 
-- registered v3 targets
-- registered v3 bindings
-- binding rules
-- projection instances
-- Git head/branch/remote state
-- pending queue count
-- v3 operation summaries
+- `schema_version`
+- `counts.skills`, `counts.targets`, `counts.bindings`, `counts.active_bindings`
+- `counts.rules`, `counts.projections`, `counts.operations`
+- `targets[]`, `bindings[]`, `rules[]`
+- `projections[].health` and all other stored projection sub-fields
+- `checkpoint`
 
-Advisory status fields:
+Advisory status fields (computed from comparisons or heuristics; useful for UX but must
+not drive control-plane decisions):
 
+- `counts.drifted_projections`
+- `projections[].observed_drift`
+- `projections[].last_applied_rev`
 - default Claude/Codex skill directory guesses
-- `CLAUDE_SKILLS_DIR`
-- `CODEX_SKILLS_DIR`
+- `CLAUDE_SKILLS_DIR`, `CODEX_SKILLS_DIR`
 - scanned source or backup skill directories
 - local inventory hints not backed by registered v3 entities
+
+For the field-level tier table, source citations, and env-discovery variable reference,
+see `docs/STATUS_FIELD_CLASSIFICATION.md`.
 
 Rules:
 

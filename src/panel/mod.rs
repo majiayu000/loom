@@ -148,7 +148,7 @@ mod tests {
             ensure_mutation_authorized, error_envelope, request_origin_matches, run_panel_command,
             status_for_error_code, status_for_v3_error_payload, status_for_v3_state_load_error,
         },
-        handlers::{OpsQuery, remote_status, v3_ops, v3_status},
+        handlers::{OpsQuery, pending, remote_status, v3_ops, v3_status},
         static_serve::{content_type_for, ensure_panel_dist, resolve_panel_asset_path},
     };
     use crate::cli::{
@@ -788,6 +788,43 @@ mod tests {
         assert_eq!(payload["remote"]["configured"], json!(false));
         assert!(payload["remote"].is_object());
         assert!(payload["warnings"].is_array());
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn pending_returns_non_2xx_with_structured_error_body_on_failure() {
+        let (root, state) = make_test_state();
+        state
+            .ctx
+            .ensure_state_layout()
+            .expect("create pending ops layout");
+        fs::remove_file(&state.ctx.pending_ops_file).expect("remove pending ops file");
+        fs::create_dir_all(&state.ctx.pending_ops_file).expect("replace pending ops file with dir");
+
+        let (status, Json(payload)) = pending(State(state)).await;
+
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(payload["ok"], json!(false));
+        assert_eq!(payload["error"]["code"], json!("IO_ERROR"));
+        assert!(payload["error"]["message"].as_str().is_some());
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn pending_returns_ok_with_empty_report_on_success() {
+        let (root, state) = make_test_state();
+        state
+            .ctx
+            .ensure_state_layout()
+            .expect("create pending ops layout");
+
+        let (status, Json(payload)) = pending(State(state)).await;
+
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(payload["count"], json!(0));
+        assert!(payload["ops"].as_array().is_some());
 
         let _ = fs::remove_dir_all(root);
     }

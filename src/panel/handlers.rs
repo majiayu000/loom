@@ -550,15 +550,29 @@ pub(super) async fn v3_ops_diagnose(State(state): State<PanelState>) -> Json<ser
     }
 }
 
-pub(super) async fn pending(State(state): State<PanelState>) -> Json<serde_json::Value> {
+pub(super) async fn pending(
+    State(state): State<PanelState>,
+) -> (StatusCode, Json<serde_json::Value>) {
     match state.ctx.read_pending_report() {
-        Ok(report) => Json(json!({
-            "count": report.ops.len(),
-            "ops": report.ops,
-            "journal_events": report.journal_events,
-            "history_events": report.history_events,
-            "warnings": report.warnings
-        })),
-        Err(err) => Json(json!({"count": 0, "ops": [], "error": err.to_string()})),
+        Ok(report) => (
+            StatusCode::OK,
+            Json(json!({
+                "count": report.ops.len(),
+                "ops": report.ops,
+                "journal_events": report.journal_events,
+                "history_events": report.history_events,
+                "warnings": report.warnings
+            })),
+        ),
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({
+                "ok": false,
+                "error": {
+                    "code": "IO_ERROR",
+                    "message": err.to_string(),
+                }
+            })),
+        ),
     }
 }

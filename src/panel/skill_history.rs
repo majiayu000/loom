@@ -290,7 +290,7 @@ mod tests {
         existing.projections.push(V3ProjectionInstance {
             instance_id: instance_id.to_string(),
             skill_id: skill_id.to_string(),
-            binding_id: "binding_1".to_string(),
+            binding_id: Some("binding_1".to_string()),
             target_id: "target_1".to_string(),
             materialized_path: format!("/tmp/skills/{skill_id}"),
             method: "symlink".to_string(),

@@ -347,7 +347,7 @@ mod tests {
                     V3ProjectionInstance {
                         instance_id: "instance_1".to_string(),
                         skill_id: "model-onboarding".to_string(),
-                        binding_id: "binding_project_a".to_string(),
+                        binding_id: Some("binding_project_a".to_string()),
                         target_id: "target_claude".to_string(),
                         materialized_path: "/tmp/claude/skills/model-onboarding".to_string(),
                         method: "symlink".to_string(),
@@ -359,7 +359,7 @@ mod tests {
                     V3ProjectionInstance {
                         instance_id: "instance_2".to_string(),
                         skill_id: "model-onboarding".to_string(),
-                        binding_id: "binding_project_c".to_string(),
+                        binding_id: Some("binding_project_c".to_string()),
                         target_id: "target_claude".to_string(),
                         materialized_path: "/tmp/claude/skills/model-onboarding".to_string(),
                         method: "symlink".to_string(),

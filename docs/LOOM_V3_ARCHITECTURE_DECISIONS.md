@@ -79,24 +79,23 @@ Fan-out remains possible by creating multiple bindings. Multi-target fan-out ins
 
 ## 3. Projection Lifecycle On Binding Removal
 
-Decision: removing a binding removes control-plane metadata but does not delete live projected files automatically.
+Decision: removing a binding removes control-plane metadata but does not delete live projected files automatically. Projection records are preserved in an orphaned state so the control plane retains visibility.
 
 Rules:
 
-1. `workspace binding remove <binding_id>` removes the binding, its rules, and its projection metadata from v3 state.
+1. `workspace binding remove <binding_id>` removes the binding and its rules from v3 state; projection records for that binding are marked `health = "orphaned"` and `binding_id = null` rather than deleted.
 2. If live projection paths still exist, Loom reports them as orphaned paths in warnings/effects.
 3. Loom must not silently delete live bytes during binding removal.
-4. Orphaned paths are outside active control-plane ownership until a future explicit cleanup or adoption command handles them.
+4. Orphaned projections (health = "orphaned", binding_id = null) remain in the control plane until `loom skill orphan clean` is run.
+5. `loom skill orphan clean` removes orphaned projection metadata by default and preserves live paths.
+6. Live path deletion requires `loom skill orphan clean --delete-live-paths` and is limited to validated directories under the projection's registered target.
+7. `GET /api/v3/projections?health=orphaned` lists all orphaned projections for panel display.
 
 Rationale:
 
-Automatic deletion is too destructive for a command that primarily removes control-plane metadata. Preserving live bytes avoids data loss and keeps the operation reversible by the operator. The cost is that the system must clearly report orphaned paths and must not pretend they are still managed projections.
+Automatic deletion is too destructive for a command that primarily removes control-plane metadata. Preserving projection records (as orphaned) avoids data loss and keeps the operation visible in the control plane. The explicit `orphan clean` command gives operators a deliberate, audited path to final metadata removal; live byte deletion requires a separate flag and path validation.
 
-Follow-up implementation work, if desired:
-
-- add an explicit projection cleanup command
-- add an explicit projection adopt/orphan inspection command
-- add panel affordances for orphaned paths
+See section 6 for the full orphan lifecycle decision and alternative analysis.
 
 ## 4. Panel Mutation Contract
 
@@ -154,11 +153,57 @@ Rationale:
 
 Loom v3 is an explicit control plane. Ambient environment discovery is useful for onboarding and diagnostics, but it must not silently change what the control plane believes is managed.
 
+## 6. Orphan Lifecycle: Three Alternatives And Decision
+
+Decision: adopt **preserve-as-orphan** when a binding is removed. Projections are kept as orphaned records until an explicit cleanup command removes them.
+
+### Alternatives considered
+
+**Option A — Auto-delete on removal**
+
+On `workspace binding remove`, automatically delete both projection metadata and live filesystem paths.
+
+Rejected because: binding removal is a control-plane operation; silently destroying live bytes is irreversible and destructive for an operation whose primary purpose is removing a registration. A user removing a stale binding should not lose files without an explicit choice.
+
+**Option B — Preserve-as-orphan (chosen)**
+
+On `workspace binding remove`, remove the binding record and its rules. For each projection that belonged to the binding, set `health = "orphaned"` and `binding_id = null`. The projection record and its live filesystem path remain intact. A separate `loom skill orphan clean` command explicitly removes orphaned metadata. Operators may also pass `--delete-live-paths` to delete validated live projection directories under registered targets.
+
+Chosen because: projection records stay visible in the control plane (discoverable via `GET /api/v3/projections?health=orphaned`); operators retain full control over when files are actually deleted; the audit journal records both the orphaning event and the eventual cleanup event; the operation is recoverable (re-project the skill to a binding to restore managed status).
+
+**Option C — Require operator choice at removal time**
+
+Require the user to pass `--orphan` or `--delete` at removal time.
+
+Rejected because: adding a required decision to every binding removal creates friction without improving safety beyond option B; operators can always run `orphan clean --delete-live-paths` immediately if they want explicit delete semantics.
+
+### State model
+
+`V3ProjectionInstance.binding_id` becomes `Option<String>`:
+
+- `Some(id)`: projection is owned by the named binding.
+- `None`: projection is orphaned (its binding was removed).
+
+`#[serde(default)]` ensures existing `projections.json` files with non-null `binding_id` continue to deserialize without a schema migration.
+
+### Cleanup command
+
+`loom skill orphan clean`:
+
+1. Lists all projections where `binding_id = null` and `health = "orphaned"`.
+2. Removes the projection record from `projections.json`.
+3. Preserves live filesystem paths by default.
+4. With `--delete-live-paths`, removes only non-symlink directories whose canonical path is inside the projection's registered target and is not the target root.
+5. Records `skill.orphan.clean` in the audit journal with cleaned projection ids, deleted paths, skipped paths, and the delete flag.
+
+### Panel surface
+
+`GET /api/v3/projections?health=orphaned` returns orphaned projection records so the panel can surface an orphaned-count badge and a "Clean up" action on the Bindings page.
+
 ## Issue Mapping
 
 - #38 is closed by section 1.
 - #39 is closed by section 2.
-- #40 is closed by section 3.
+- #40 is closed by sections 3 and 6.
 - #41 is closed by section 4.
 - #42 is closed by section 5.
-

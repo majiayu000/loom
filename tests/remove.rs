@@ -66,7 +66,7 @@ fn binding_remove_cascades_metadata_and_leaves_live_projection_in_place() {
         Some(1)
     );
     assert_eq!(
-        env["data"]["removed_projections"].as_array().map(Vec::len),
+        env["data"]["orphaned_projections"].as_array().map(Vec::len),
         Some(1)
     );
     assert_eq!(
@@ -99,7 +99,8 @@ fn binding_remove_cascades_metadata_and_leaves_live_projection_in_place() {
         target_show_env["data"]["projections"]
             .as_array()
             .map(Vec::len),
-        Some(0)
+        Some(1),
+        "orphaned projection should still be visible under the target"
     );
 }
 

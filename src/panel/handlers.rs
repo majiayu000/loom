@@ -42,6 +42,12 @@ const DEFAULT_OPS_PAGE_SIZE: usize = 100;
 const MAX_OPS_PAGE_SIZE: usize = 250;
 
 #[derive(Debug, Default, Deserialize)]
+pub(super) struct ProjectionsQuery {
+    #[serde(default)]
+    pub(super) health: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize)]
 pub(super) struct OpsQuery {
     #[serde(default)]
     pub(super) limit: Option<usize>,
@@ -140,6 +146,28 @@ pub(super) async fn v3_ops(
                 "has_more": start > 0,
                 "operations": operations,
                 "checkpoint": snapshot.checkpoint,
+            }))
+        }
+        Err(err) => err,
+    }
+}
+
+pub(super) async fn v3_projections(
+    Query(query): Query<ProjectionsQuery>,
+    State(state): State<PanelState>,
+) -> Json<serde_json::Value> {
+    match load_v3_snapshot(&state.ctx) {
+        Ok(snapshot) => {
+            let projections: Vec<_> = snapshot
+                .projections
+                .projections
+                .iter()
+                .filter(|p| query.health.as_deref().is_none_or(|h| p.health == h))
+                .collect();
+            v3_ok(json!({
+                "state_model": "v3",
+                "count": projections.len(),
+                "projections": projections,
             }))
         }
         Err(err) => err,

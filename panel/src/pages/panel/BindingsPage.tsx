@@ -151,6 +151,7 @@ function BindingDetail({
   onRemoved: (bindingId: string) => void;
 }) {
   const [state, setState] = useState<DetailState>({ kind: "idle" });
+  const [orphanedIds, setOrphanedIds] = useState<string[]>([]);
   const project = useMutation();
   const remove = useMutation();
 
@@ -204,10 +205,20 @@ function BindingDetail({
   const runRemove = () => {
     if (readOnly) return;
     if (!window.confirm(`Delete binding ${binding.id}? This removes the binding metadata from the registry.`)) return;
-    remove.run("delete binding", () => api.bindingRemove(binding.id), () => {
-      onRemoved(binding.id);
-      onMutation();
-    });
+    let orphaned: string[] = [];
+    remove.run(
+      "delete binding",
+      async () => {
+        const res = await api.bindingRemove(binding.id);
+        const ids = res.data?.orphaned_projection_ids;
+        if (Array.isArray(ids)) orphaned = ids as string[];
+      },
+      () => {
+        if (orphaned.length > 0) setOrphanedIds(orphaned);
+        onRemoved(binding.id);
+        onMutation();
+      },
+    );
   };
 
   return (
@@ -242,6 +253,31 @@ function BindingDetail({
           {remove.busy ? "Deleting…" : "Delete binding"}
         </button>
       </div>
+      {orphanedIds.length > 0 && (
+        <div
+          style={{
+            marginBottom: 12,
+            padding: "6px 10px",
+            borderRadius: 6,
+            border: "1px solid rgba(216,167,50,0.35)",
+            background: "rgba(216,167,50,0.08)",
+            color: "var(--warn)",
+            fontFamily: "var(--font-mono)",
+            fontSize: 11,
+          }}
+        >
+          {orphanedIds.length} projection(s) orphaned: {orphanedIds.join(", ")}
+          {" — run "}
+          <span style={{ fontWeight: 600 }}>loom skill orphan clean</span>
+          {" to remove metadata."}
+          <button
+            style={{ marginLeft: 10, cursor: "pointer", background: "none", border: "none", color: "inherit", textDecoration: "underline", fontSize: "inherit", fontFamily: "inherit", padding: 0 }}
+            onClick={() => setOrphanedIds([])}
+          >
+            dismiss
+          </button>
+        </div>
+      )}
       {(project.error || project.success || remove.error || remove.success) && (
         <div
           style={{

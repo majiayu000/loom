@@ -337,7 +337,23 @@ Rules:
 1. adds canonical source under `skills/<skill-id>`
 2. must fail when target skill already exists
 
-### 11.2 `skill project`
+### 11.2 `skill import-observed`
+
+```bash
+loom --json --root <root> skill import-observed [--target <target-id>]
+```
+
+Write command.
+
+Rules:
+
+1. imports real skill directories from observed targets into canonical `skills/<skill-id>`
+2. only directories containing `SKILL.md` are treated as skills
+3. existing canonical skills are skipped, not overwritten
+4. `--target` must reference an observed target when supplied
+5. this is not the removed legacy `skill import` command; it is an explicit bridge from discovered observed targets into the source registry
+
+### 11.3 `skill project`
 
 ```bash
 loom --json --root <root> skill project <skill-id> --binding <binding-id> [--target <target-id>] [--method <symlink|copy|materialize>]
@@ -367,7 +383,7 @@ Rules:
 2. if `--target` is absent, Loom may use `default_target_id` from binding metadata
 3. if multiple targets are possible and no default exists, the command must fail explicitly
 
-### 11.3 `skill capture`
+### 11.4 `skill capture`
 
 ```bash
 loom --json --root <root> skill capture <skill-id> --binding <binding-id>
@@ -399,7 +415,7 @@ Rules:
 1. capture is always explicit
 2. capture must fail if drift cannot be reconciled safely
 
-### 11.4 `skill save`
+### 11.5 `skill save`
 
 ```bash
 loom --json --root <root> skill save <skill-id>
@@ -407,7 +423,7 @@ loom --json --root <root> skill save <skill-id>
 
 Acts on canonical source only.
 
-### 11.5 `skill snapshot`
+### 11.6 `skill snapshot`
 
 ```bash
 loom --json --root <root> skill snapshot <skill-id>
@@ -415,7 +431,7 @@ loom --json --root <root> skill snapshot <skill-id>
 
 Acts on canonical source only.
 
-### 11.6 `skill release`
+### 11.7 `skill release`
 
 ```bash
 loom --json --root <root> skill release <skill-id> <version>
@@ -423,7 +439,7 @@ loom --json --root <root> skill release <skill-id> <version>
 
 Acts on canonical source only.
 
-### 11.7 `skill rollback`
+### 11.8 `skill rollback`
 
 ```bash
 loom --json --root <root> skill rollback <skill-id> --to <ref>
@@ -532,10 +548,11 @@ Examples:
 
 1. `workspace binding add`
 2. `target add`
-3. `skill project`
-4. `skill capture`
-5. `skill save`
-6. `sync push`
+3. `skill import-observed`
+4. `skill project`
+5. `skill capture`
+6. `skill save`
+7. `sync push`
 
 Requirements:
 

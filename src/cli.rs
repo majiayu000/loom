@@ -201,13 +201,8 @@ pub struct DiffArgs {
 
 #[derive(Debug, Clone, Args)]
 pub struct ImportObservedArgs {
-    /// Restrict scan to one observed target instead of all observed targets.
     #[arg(long)]
-    pub target_id: Option<String>,
-
-    /// Print what would be imported without copying or committing.
-    #[arg(long)]
-    pub dry_run: bool,
+    pub target: Option<String>,
 }
 
 #[derive(Debug, Clone, Args)]

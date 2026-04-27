@@ -1,160 +1,163 @@
 mod common;
 
 use std::fs;
+use std::path::Path;
 use std::process::Command;
 
 use serde_json::Value;
 
 use common::actions::target_add;
-use common::{TestDir, run_loom};
+use common::{TestDir, run_loom, write_file};
 
-fn write_skill_dir(base: &std::path::Path, name: &str, body: &str) {
-    let dir = base.join(name);
-    fs::create_dir_all(&dir).expect("create skill dir");
-    fs::write(dir.join("SKILL.md"), body).expect("write SKILL.md");
-}
-
-fn git_log_subjects(root: &std::path::Path) -> Vec<String> {
-    let out = Command::new("git")
+fn git_path_exists(root: &Path, path: &str) -> bool {
+    Command::new("git")
         .arg("-C")
         .arg(root)
-        .args(["log", "--format=%s"])
-        .output()
-        .expect("git log");
-    String::from_utf8_lossy(&out.stdout)
-        .lines()
-        .map(|s| s.to_string())
-        .collect()
+        .arg("-c")
+        .arg("commit.gpgsign=false")
+        .arg("cat-file")
+        .arg("-e")
+        .arg(format!("HEAD:{path}"))
+        .status()
+        .expect("run git cat-file")
+        .success()
 }
 
-/// Scenario 1: two SKILL.md-bearing subdirs are imported; non-skill dirs ignored.
-#[test]
-fn import_observed_imports_skill_dirs() {
-    let root = TestDir::new("import-obs-import");
-    let target = TestDir::new("import-obs-import-target");
-
-    write_skill_dir(target.path(), "skill-alpha", "# Alpha\n");
-    write_skill_dir(target.path(), "skill-beta", "# Beta\n");
-    // A directory without SKILL.md — must be ignored.
-    fs::create_dir_all(target.path().join("not-a-skill")).unwrap();
-
-    let (t_out, _) = target_add(root.path(), "claude", target.path(), "observed");
-    assert!(
-        t_out.status.success(),
-        "target_add failed: {}",
-        String::from_utf8_lossy(&t_out.stderr)
-    );
-
-    let (out, env) = run_loom(root.path(), &["skill", "import-observed"]);
-    assert!(
-        out.status.success(),
-        "import-observed failed: stderr={} stdout={}",
-        String::from_utf8_lossy(&out.stderr),
-        String::from_utf8_lossy(&out.stdout)
-    );
-    assert_eq!(env["ok"], Value::Bool(true));
-
-    let imported = env["data"]["imported"].as_array().expect("imported array");
-    assert_eq!(imported.len(), 2, "expected 2 imported skills");
-
-    let skipped = env["data"]["skipped"].as_array().expect("skipped array");
-    assert_eq!(skipped.len(), 0);
-
-    assert!(
-        root.path().join("skills/skill-alpha/SKILL.md").exists(),
-        "skills/skill-alpha/SKILL.md missing"
-    );
-    assert!(
-        root.path().join("skills/skill-beta/SKILL.md").exists(),
-        "skills/skill-beta/SKILL.md missing"
-    );
-    assert!(
-        !root.path().join("skills/not-a-skill").exists(),
-        "non-skill dir must not be imported"
-    );
+fn imported_skill_names(env: &Value) -> Vec<String> {
+    let mut names = env["data"]["imported"]
+        .as_array()
+        .expect("imported array")
+        .iter()
+        .map(|item| item["skill"].as_str().expect("skill name").to_string())
+        .collect::<Vec<_>>();
+    names.sort();
+    names
 }
 
-/// Scenario 2: each imported skill produces a commit with the expected message.
+fn skipped_reasons(env: &Value) -> Vec<String> {
+    let mut reasons = env["data"]["skipped"]
+        .as_array()
+        .expect("skipped array")
+        .iter()
+        .filter_map(|item| item["reason"].as_str().map(str::to_string))
+        .collect::<Vec<_>>();
+    reasons.sort();
+    reasons
+}
+
 #[test]
-fn import_observed_commits_each_skill() {
-    let root = TestDir::new("import-obs-commit");
-    let target = TestDir::new("import-obs-commit-target");
+fn skill_import_observed_imports_real_skill_dirs_and_commits_them() {
+    let root = TestDir::new("import-observed");
+    let observed = root.path().join("observed-skills");
+    let managed = root.path().join("managed-skills");
 
-    write_skill_dir(target.path(), "skill-alpha", "# Alpha\n");
-    write_skill_dir(target.path(), "skill-beta", "# Beta\n");
+    write_file(&observed.join("alpha/SKILL.md"), "# alpha\n");
+    write_file(&observed.join("alpha/nested/config.txt"), "alpha config\n");
+    write_file(&observed.join("beta/SKILL.md"), "# beta\n");
+    write_file(&observed.join("not-a-skill/README.md"), "ignore me\n");
+    write_file(&observed.join("plain-file.txt"), "ignore me\n");
 
-    let (t_out, t_env) = target_add(root.path(), "claude", target.path(), "observed");
-    assert!(t_out.status.success(), "target_add failed");
-    let target_id = t_env["data"]["target"]["target_id"]
+    write_file(&managed.join("managed-only/SKILL.md"), "# managed only\n");
+
+    let (observed_output, observed_env) = target_add(root.path(), "claude", &observed, "observed");
+    assert!(
+        observed_output.status.success(),
+        "target add failed: {}",
+        String::from_utf8_lossy(&observed_output.stderr)
+    );
+    let observed_target_id = observed_env["data"]["target"]["target_id"]
         .as_str()
-        .expect("target_id")
+        .expect("observed target id")
         .to_string();
 
-    let (out, env) = run_loom(root.path(), &["skill", "import-observed"]);
-    assert!(out.status.success(), "import-observed failed");
+    let (managed_output, _) = target_add(root.path(), "codex", &managed, "managed");
+    assert!(managed_output.status.success(), "managed target add failed");
 
-    // Collect reported commit SHAs.
-    let imported = env["data"]["imported"].as_array().expect("imported array");
-    let reported_shas: Vec<String> = imported
-        .iter()
-        .filter_map(|e| e["commit"].as_str().map(|s| s[..7].to_string()))
-        .collect();
-    assert_eq!(reported_shas.len(), 2, "expected 2 commit SHAs");
+    let (import_output, import_env) = run_loom(root.path(), &["skill", "import-observed"]);
+    assert!(
+        import_output.status.success(),
+        "import failed: stderr={} stdout={}",
+        String::from_utf8_lossy(&import_output.stderr),
+        String::from_utf8_lossy(&import_output.stdout)
+    );
 
-    // Git log must contain the two expected subjects.
-    let subjects = git_log_subjects(root.path());
-    let import_commits: Vec<_> = subjects
-        .iter()
-        .filter(|s| s.contains("import from observed target"))
-        .collect();
-    assert_eq!(import_commits.len(), 2, "expected 2 import commits in git log");
+    assert_eq!(import_env["ok"], Value::Bool(true));
+    assert_eq!(
+        import_env["cmd"],
+        Value::String("skill.import_observed".into())
+    );
+    assert_eq!(import_env["data"]["count"], Value::from(2));
+    assert_eq!(imported_skill_names(&import_env), vec!["alpha", "beta"]);
+    assert_eq!(
+        import_env["meta"]["op_id"]
+            .as_str()
+            .map(|op_id| op_id.starts_with("op_")),
+        Some(true)
+    );
 
-    for subject in &import_commits {
-        assert!(
-            subject.contains(&target_id),
-            "commit message '{}' must contain target_id '{}'",
-            subject,
-            target_id
-        );
-    }
+    assert_eq!(
+        fs::read_to_string(root.path().join("skills/alpha/SKILL.md")).expect("read alpha"),
+        "# alpha\n"
+    );
+    assert_eq!(
+        fs::read_to_string(root.path().join("skills/alpha/nested/config.txt"))
+            .expect("read alpha nested"),
+        "alpha config\n"
+    );
+    assert!(root.path().join("skills/beta/SKILL.md").is_file());
+    assert!(!root.path().join("skills/not-a-skill").exists());
+    assert!(!root.path().join("skills/managed-only").exists());
+
+    assert!(git_path_exists(root.path(), "skills/alpha/SKILL.md"));
+    assert!(git_path_exists(
+        root.path(),
+        "skills/alpha/nested/config.txt"
+    ));
+    assert!(git_path_exists(root.path(), "skills/beta/SKILL.md"));
+
+    let (repeat_output, repeat_env) = run_loom(
+        root.path(),
+        &["skill", "import-observed", "--target", &observed_target_id],
+    );
+    assert!(
+        repeat_output.status.success(),
+        "repeat import failed: stderr={} stdout={}",
+        String::from_utf8_lossy(&repeat_output.stderr),
+        String::from_utf8_lossy(&repeat_output.stdout)
+    );
+    assert_eq!(repeat_env["data"]["count"], Value::from(0));
+    assert_eq!(
+        skipped_reasons(&repeat_env),
+        vec!["already-exists", "already-exists"]
+    );
+    assert_eq!(repeat_env["data"]["noop"], Value::Bool(true));
 }
 
-/// Scenario 3: running the command twice is idempotent — second run skips, adds no commits.
 #[test]
-fn import_observed_is_idempotent() {
-    let root = TestDir::new("import-obs-idempotent");
-    let target = TestDir::new("import-obs-idempotent-target");
+fn skill_import_observed_rejects_non_observed_target_filter() {
+    let root = TestDir::new("import-observed-managed-target");
+    let managed = root.path().join("managed-skills");
+    write_file(&managed.join("managed-only/SKILL.md"), "# managed only\n");
 
-    write_skill_dir(target.path(), "skill-alpha", "# Alpha\n");
-    write_skill_dir(target.path(), "skill-beta", "# Beta\n");
+    let (target_output, target_env) = target_add(root.path(), "codex", &managed, "managed");
+    assert!(target_output.status.success(), "managed target add failed");
+    let target_id = target_env["data"]["target"]["target_id"]
+        .as_str()
+        .expect("target id");
 
-    let (t_out, _) = target_add(root.path(), "claude", target.path(), "observed");
-    assert!(t_out.status.success(), "target_add failed");
-
-    // First run.
-    let (out1, env1) = run_loom(root.path(), &["skill", "import-observed"]);
-    assert!(out1.status.success(), "first import-observed failed");
-    assert_eq!(
-        env1["data"]["imported"].as_array().unwrap().len(),
-        2,
-        "first run must import 2 skills"
+    let (output, env) = run_loom(
+        root.path(),
+        &["skill", "import-observed", "--target", target_id],
     );
 
-    let commits_after_first = git_log_subjects(root.path()).len();
-
-    // Second run.
-    let (out2, env2) = run_loom(root.path(), &["skill", "import-observed"]);
-    assert!(out2.status.success(), "second import-observed failed");
-
-    let imported2 = env2["data"]["imported"].as_array().unwrap();
-    assert_eq!(imported2.len(), 0, "second run must import nothing");
-
-    let skipped2 = env2["data"]["skipped"].as_array().unwrap();
-    assert_eq!(skipped2.len(), 2, "second run must skip 2 skills");
-
-    let commits_after_second = git_log_subjects(root.path()).len();
-    assert_eq!(
-        commits_after_first, commits_after_second,
-        "second run must not add new commits"
+    assert!(
+        !output.status.success(),
+        "managed target unexpectedly imported"
     );
+    assert_eq!(env["ok"], Value::Bool(false));
+    assert_eq!(
+        env["error"]["code"],
+        Value::String("ARG_INVALID".to_string())
+    );
+    assert!(!root.path().join("skills/managed-only").exists());
 }

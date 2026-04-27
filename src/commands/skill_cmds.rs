@@ -9,7 +9,7 @@ use crate::cli::{AddArgs, CaptureArgs, ImportObservedArgs, ProjectArgs, SaveArgs
 use crate::envelope::Meta;
 use crate::gitops;
 use crate::state::remove_path_if_exists;
-use crate::state_model::{V3BindingRule, V3ProjectionInstance};
+use crate::state_model::{V3BindingRule, V3ProjectionInstance, V3ProjectionTarget};
 use crate::types::ErrorCode;
 
 use super::fs_probe::probe_symlink;
@@ -407,212 +407,233 @@ impl App {
         let paths = self.ensure_v3_layout()?;
         let snapshot = paths.load_snapshot().map_err(map_v3_state)?;
 
-        // Validate --target-id if provided: must exist and be observed.
-        if let Some(ref tid) = args.target_id {
-            let found = snapshot
-                .targets
-                .targets
-                .iter()
-                .find(|t| &t.target_id == tid);
-            match found {
-                None => {
-                    return Err(CommandFailure::new(
-                        crate::types::ErrorCode::TargetNotFound,
-                        format!("target '{}' not found", tid),
-                    ));
-                }
-                Some(t) if t.ownership != "observed" => {
-                    return Err(CommandFailure::new(
-                        crate::types::ErrorCode::ArgInvalid,
-                        format!(
-                            "target '{}' has ownership '{}', not 'observed'",
-                            tid, t.ownership
-                        ),
-                    ));
-                }
-                _ => {}
-            }
-        }
+        let targets = observed_import_targets(&snapshot.targets.targets, args)?;
+        let staging_root = self
+            .ctx
+            .state_dir
+            .join(format!("tmp-import-observed-{}", Uuid::new_v4()));
+        let cleanup_staging = || {
+            let _ = remove_path_if_exists(&staging_root);
+        };
 
-        let targets: Vec<_> = snapshot
-            .targets
-            .targets
-            .iter()
-            .filter(|t| t.ownership == "observed")
-            .filter(|t| {
-                args.target_id
-                    .as_deref()
-                    .is_none_or(|tid| t.target_id == tid)
-            })
-            .cloned()
-            .collect();
+        remove_path_if_exists(&staging_root).map_err(map_io)?;
+        fs::create_dir_all(&staging_root).map_err(map_io)?;
 
         let mut imported = Vec::new();
         let mut skipped = Vec::new();
-        let mut would_import = Vec::new();
-        let mut warnings = Vec::new();
-        let mut last_op_id: Option<String> = None;
+        let mut imported_rels = Vec::new();
 
-        for target in &targets {
-            let expanded = expand_tilde(&target.path);
-            let target_dir = PathBuf::from(&expanded);
-
-            if !target_dir.exists() {
-                warnings.push(format!(
-                    "target '{}' path '{}' does not exist on disk; skipping",
-                    target.target_id,
-                    target_dir.display()
-                ));
+        for target in targets {
+            let target_path = PathBuf::from(&target.path);
+            if !target_path.exists() {
+                skipped.push(json!({
+                    "target_id": target.target_id,
+                    "path": target.path,
+                    "reason": "target-missing",
+                }));
+                continue;
+            }
+            if !target_path.is_dir() {
+                skipped.push(json!({
+                    "target_id": target.target_id,
+                    "path": target.path,
+                    "reason": "target-not-directory",
+                }));
                 continue;
             }
 
-            let entries = match fs::read_dir(&target_dir) {
-                Ok(e) => e,
+            let mut entries = match fs::read_dir(&target_path) {
+                Ok(entries) => entries
+                    .filter_map(|entry| match entry {
+                        Ok(entry) => Some(entry),
+                        Err(err) => {
+                            skipped.push(json!({
+                                "target_id": target.target_id,
+                                "path": target.path,
+                                "reason": "entry-read-failed",
+                                "error": err.to_string(),
+                            }));
+                            None
+                        }
+                    })
+                    .collect::<Vec<_>>(),
                 Err(err) => {
-                    warnings.push(format!(
-                        "failed to read target '{}' path '{}': {}",
-                        target.target_id,
-                        target_dir.display(),
-                        err
-                    ));
+                    skipped.push(json!({
+                        "target_id": target.target_id,
+                        "path": target.path,
+                        "reason": "target-read-failed",
+                        "error": err.to_string(),
+                    }));
                     continue;
                 }
             };
+            entries.sort_by_key(|entry| entry.file_name());
 
             for entry in entries {
-                let entry = match entry {
-                    Ok(e) => e,
+                let source_path = entry.path();
+                let file_type = match entry.file_type() {
+                    Ok(file_type) => file_type,
                     Err(err) => {
-                        warnings.push(format!("failed to read directory entry: {}", err));
+                        skipped.push(json!({
+                            "target_id": target.target_id,
+                            "source": source_path.display().to_string(),
+                            "reason": "file-type-failed",
+                            "error": err.to_string(),
+                        }));
+                        continue;
+                    }
+                };
+                if !file_type.is_dir() || file_type.is_symlink() {
+                    continue;
+                }
+                if !source_path.join("SKILL.md").is_file() {
+                    continue;
+                }
+
+                let skill_id = match entry.file_name().into_string() {
+                    Ok(name) => name,
+                    Err(name) => {
+                        skipped.push(json!({
+                            "target_id": target.target_id,
+                            "source": source_path.display().to_string(),
+                            "name": name.to_string_lossy(),
+                            "reason": "non-utf8-name",
+                        }));
                         continue;
                     }
                 };
 
-                let entry_path = entry.path();
-                if !entry_path.is_dir() {
-                    continue;
-                }
-                if !entry_path.join("SKILL.md").exists() {
-                    continue;
-                }
-
-                let dir_name = match entry_path.file_name().and_then(|n| n.to_str()) {
-                    Some(n) => n.to_string(),
-                    None => {
-                        warnings.push(format!("could not read name of '{}'", entry_path.display()));
-                        continue;
-                    }
-                };
-
-                let skill_id = skill_id_from_dir_name(&dir_name);
                 if let Err(err) = validate_skill_name(&skill_id) {
-                    warnings.push(format!(
-                        "directory '{}' yields invalid skill id '{}': {}; skipping",
-                        dir_name, skill_id, err
-                    ));
+                    skipped.push(json!({
+                        "target_id": target.target_id,
+                        "skill": skill_id,
+                        "source": source_path.display().to_string(),
+                        "reason": "invalid-skill-name",
+                        "error": err.to_string(),
+                    }));
                     continue;
                 }
 
                 let dst = self.ctx.skill_path(&skill_id);
-                let source_path = entry_path.display().to_string();
-
                 if dst.exists() {
-                    skipped.push(serde_json::json!({
-                        "skill_id": skill_id,
-                        "source_path": source_path,
+                    skipped.push(json!({
                         "target_id": target.target_id,
-                        "reason": "already_exists"
+                        "skill": skill_id,
+                        "source": source_path.display().to_string(),
+                        "reason": "already-exists",
                     }));
                     continue;
                 }
 
-                if args.dry_run {
-                    would_import.push(serde_json::json!({
-                        "skill_id": skill_id,
-                        "source_path": source_path,
-                        "target_id": target.target_id
-                    }));
-                    continue;
+                let staging_skill = staging_root.join(&skill_id);
+                let _ = remove_path_if_exists(&staging_skill);
+                match copy_dir_recursive_without_symlinks(&source_path, &staging_skill) {
+                    Ok(()) => {}
+                    Err(err) => {
+                        let _ = remove_path_if_exists(&staging_skill);
+                        skipped.push(json!({
+                            "target_id": target.target_id,
+                            "skill": skill_id,
+                            "source": source_path.display().to_string(),
+                            "reason": "copy-failed",
+                            "error": err.to_string(),
+                        }));
+                        continue;
+                    }
                 }
 
-                if let Err(err) = copy_dir_recursive_without_symlinks(&entry_path, &dst) {
-                    warnings.push(format!(
-                        "failed to copy '{}' to '{}': {}",
-                        entry_path.display(),
-                        dst.display(),
-                        err
-                    ));
-                    continue;
+                if let Err(err) = fs::rename(&staging_skill, &dst) {
+                    cleanup_staging();
+                    rollback_imported_skills(&self.ctx, &imported_rels);
+                    return Err(map_io(err));
                 }
 
                 let skill_rel = format!("skills/{}", skill_id);
                 if let Err(err) = gitops::stage_path(&self.ctx, Path::new(&skill_rel)) {
-                    warnings.push(format!("failed to stage '{}': {}", skill_id, err));
-                    continue;
+                    cleanup_staging();
+                    rollback_imported_skills(&self.ctx, &imported_rels);
+                    rollback_added_skill(&self.ctx, &skill_rel, &dst);
+                    return Err(map_git(err));
                 }
-
-                let staged =
-                    match gitops::has_staged_changes_for_path(&self.ctx, Path::new(&skill_rel)) {
-                        Ok(s) => s,
-                        Err(err) => {
-                            warnings.push(format!(
-                                "failed to check staged changes for '{}': {}",
-                                skill_id, err
-                            ));
-                            continue;
-                        }
-                    };
-
-                let commit = if staged {
-                    let message = format!(
-                        "add({}): import from observed target {}",
-                        skill_id, target.target_id
-                    );
-                    match gitops::commit(&self.ctx, &message) {
-                        Ok(sha) => Some(sha),
-                        Err(err) => {
-                            warnings.push(format!("failed to commit '{}': {}", skill_id, err));
-                            continue;
-                        }
-                    }
-                } else {
-                    None
-                };
-
-                let op_id = record_v3_operation(
-                    &paths,
-                    "skill.import-observed",
-                    serde_json::json!({
-                        "skill_id": skill_id,
-                        "source_path": source_path,
-                        "target_id": target.target_id,
-                        "request_id": request_id
-                    }),
-                    serde_json::json!({ "commit": commit }),
-                )
-                .map_err(map_v3_state)?;
-                last_op_id = Some(op_id);
-
-                imported.push(serde_json::json!({
-                    "skill_id": skill_id,
-                    "source_path": source_path,
+                imported_rels.push(skill_rel);
+                imported.push(json!({
                     "target_id": target.target_id,
-                    "commit": commit
+                    "skill": skill_id,
+                    "source": source_path.display().to_string(),
+                    "path": dst.display().to_string(),
                 }));
             }
         }
 
+        cleanup_staging();
+
+        let mut meta = Meta::default();
+        let mut changed = false;
+        for skill_rel in &imported_rels {
+            match gitops::has_staged_changes_for_path(&self.ctx, Path::new(skill_rel)) {
+                Ok(true) => {
+                    changed = true;
+                    break;
+                }
+                Ok(false) => {}
+                Err(err) => {
+                    rollback_imported_skills(&self.ctx, &imported_rels);
+                    return Err(map_git(err));
+                }
+            }
+        }
+
+        let commit = if changed {
+            let message = match imported.len() {
+                1 => format!(
+                    "import-observed({}): from observed target",
+                    imported[0]["skill"].as_str().unwrap_or("skill")
+                ),
+                count => format!("import-observed: {} skills", count),
+            };
+            let commit = match gitops::commit(&self.ctx, &message) {
+                Ok(commit) => commit,
+                Err(err) => {
+                    rollback_imported_skills(&self.ctx, &imported_rels);
+                    return Err(map_git(err));
+                }
+            };
+            let op_id = record_v3_operation(
+                &paths,
+                "skill.import_observed",
+                json!({
+                    "target": args.target,
+                    "request_id": request_id
+                }),
+                json!({
+                    "commit": commit,
+                    "imported": imported,
+                    "skipped": skipped
+                }),
+            )
+            .map_err(map_v3_state)?;
+            meta.op_id = Some(op_id);
+            maybe_autosync_or_queue(
+                &self.ctx,
+                "import-observed",
+                request_id,
+                json!({"commit": commit, "count": imported.len()}),
+                &mut meta,
+            )?;
+            Some(commit)
+        } else {
+            None
+        };
+
         Ok((
-            serde_json::json!({
+            json!({
+                "count": imported.len(),
                 "imported": imported,
                 "skipped": skipped,
-                "would_import": would_import,
-                "warnings": warnings
+                "commit": commit,
+                "noop": !changed,
             }),
-            Meta {
-                op_id: last_op_id,
-                ..Meta::default()
-            },
+            meta,
         ))
     }
 
@@ -646,33 +667,43 @@ impl App {
     }
 }
 
-fn expand_tilde(path: &str) -> String {
-    if path == "~" {
-        std::env::var("HOME").unwrap_or_else(|_| path.to_string())
-    } else if let Some(rest) = path.strip_prefix("~/") {
-        let home = std::env::var("HOME").unwrap_or_else(|_| "~".to_string());
-        format!("{}/{}", home, rest)
-    } else {
-        path.to_string()
+fn observed_import_targets(
+    targets: &[V3ProjectionTarget],
+    args: &ImportObservedArgs,
+) -> std::result::Result<Vec<V3ProjectionTarget>, CommandFailure> {
+    if let Some(target_id) = args.target.as_deref() {
+        let target = targets
+            .iter()
+            .find(|target| target.target_id == target_id)
+            .cloned()
+            .ok_or_else(|| {
+                CommandFailure::new(
+                    ErrorCode::TargetNotFound,
+                    format!("target '{}' not found", target_id),
+                )
+            })?;
+        if target.ownership != "observed" {
+            return Err(CommandFailure::new(
+                ErrorCode::ArgInvalid,
+                format!(
+                    "target '{}' has ownership '{}' and cannot be imported as observed",
+                    target.target_id, target.ownership
+                ),
+            ));
+        }
+        return Ok(vec![target]);
     }
+
+    Ok(targets
+        .iter()
+        .filter(|target| target.ownership == "observed")
+        .cloned()
+        .collect())
 }
 
-fn skill_id_from_dir_name(name: &str) -> String {
-    let mut out = String::new();
-    let mut last_was_sep = false;
-    for ch in name.chars() {
-        if ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.') {
-            out.push(ch.to_ascii_lowercase());
-            last_was_sep = false;
-        } else if !last_was_sep {
-            out.push('-');
-            last_was_sep = true;
-        }
-    }
-    let normalized = out.trim_matches('-');
-    if normalized.is_empty() {
-        "item".to_string()
-    } else {
-        normalized.to_string()
+fn rollback_imported_skills(ctx: &crate::state::AppContext, skill_rels: &[String]) {
+    for skill_rel in skill_rels {
+        let dst = ctx.root.join(skill_rel);
+        rollback_added_skill(ctx, skill_rel, &dst);
     }
 }

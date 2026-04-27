@@ -1,7 +1,12 @@
 # Loom v3 Review
 
 Updated: 2026-04-09
-Status: Draft
+Status: Superseded by accepted phase-1 decisions
+
+The remaining open questions in this review have been resolved for phase 1 in
+[LOOM_V3_ARCHITECTURE_DECISIONS.md](LOOM_V3_ARCHITECTURE_DECISIONS.md). Keep
+this file as historical review context; use the architecture decisions document
+as the current contract.
 
 ## 1. Purpose
 

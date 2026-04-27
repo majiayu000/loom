@@ -1,188 +1,307 @@
-import { useEffect, useState } from "react";
-import type { HistoryEntryPayload } from "../../types";
-import { api } from "../../lib/api/client";
+import { useEffect, useMemo, useState } from "react";
+import type { PanelDataMode } from "../../lib/api/usePanelData";
+import { api, ApiError, type OpsHistoryDiagnosePayload, type OpsPayload, type V3OperationRecord } from "../../lib/api/client";
+
+type FilterKey = "all" | "pending" | "ok" | "err";
+type DiagnoseData = NonNullable<OpsHistoryDiagnosePayload["data"]>;
+const HISTORY_PAGE_SIZE = 100;
+
+type LoadState =
+  | { kind: "idle" }
+  | { kind: "loading" }
+  | { kind: "ready"; payload: NonNullable<OpsPayload["data"]> }
+  | { kind: "error"; message: string };
 
 interface HistoryPageProps {
-  readOnly: boolean;
+  live: boolean;
+  mode: PanelDataMode;
+  mutationVersion: number;
+  refreshKey?: string | null;
 }
 
-interface DiagnoseSummary {
-  ahead?: number;
-  behind?: number;
-  local_segments?: number;
-  local_archives?: number;
-  remote_segments?: number;
-  remote_archives?: number;
-  conflicts?: Array<{ path?: string; scope?: string }>;
-}
-
-function relativeTime(iso?: string | null) {
-  if (!iso) return "—";
-  const then = Date.parse(iso);
-  if (Number.isNaN(then)) return iso;
-  const ms = Date.now() - then;
-  if (ms < 0) return "now";
-  const sec = Math.floor(ms / 1000);
-  if (sec < 60) return `${sec}s ago`;
-  const min = Math.floor(sec / 60);
-  if (min < 60) return `${min}m ago`;
-  const hr = Math.floor(min / 60);
-  if (hr < 24) return `${hr}h ago`;
-  return `${Math.floor(hr / 24)}d ago`;
-}
-
-function errorMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
-}
-
-export function HistoryPage({ readOnly }: HistoryPageProps) {
-  const [entries, setEntries] = useState<HistoryEntryPayload[]>([]);
-  const [diagnose, setDiagnose] = useState<DiagnoseSummary | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+export function HistoryPage({ live, mode, mutationVersion, refreshKey }: HistoryPageProps) {
+  const [state, setState] = useState<LoadState>({ kind: "idle" });
+  const [diagnose, setDiagnose] = useState<DiagnoseData | null>(null);
+  const [filter, setFilter] = useState<FilterKey>("all");
+  const [query, setQuery] = useState("");
+  const [offset, setOffset] = useState(0);
 
   useEffect(() => {
-    const ctrl = new AbortController();
-    setLoading(true);
-    setError(null);
-    Promise.allSettled([api.opsHistoryList(ctrl.signal), api.opsHistoryDiagnose(ctrl.signal)])
-      .then(([historyList, diagnoseEnvelope]) => {
-        if (ctrl.signal.aborted) return;
-        if (historyList.status === "rejected") {
-          setEntries([]);
-          setDiagnose(null);
-          setError(errorMessage(historyList.reason));
-          setLoading(false);
-          return;
-        }
+    if (!live) {
+      setState({ kind: "idle" });
+      return;
+    }
 
-        setEntries(historyList.value.data?.entries ?? []);
-        if (diagnoseEnvelope.status === "fulfilled") {
-          setDiagnose((diagnoseEnvelope.value.data ?? {}) as DiagnoseSummary);
-        } else {
-          setDiagnose(null);
-        }
-        setLoading(false);
-      })
-      .catch((err: unknown) => {
-        if (!(err instanceof Error && err.name === "AbortError")) {
-          setError(errorMessage(err));
-          setLoading(false);
-        }
-      });
-    return () => ctrl.abort();
-  }, []);
+    const controller = new AbortController();
+    setState({ kind: "loading" });
+    setDiagnose(null);
+    Promise.allSettled([
+      api.ops({ limit: HISTORY_PAGE_SIZE, offset }, controller.signal),
+      api.opsHistoryDiagnose(controller.signal),
+    ]).then(([opsResult, diagnoseResult]) => {
+      if (controller.signal.aborted) return;
+
+      if (opsResult.status === "rejected") {
+        const err = opsResult.reason;
+        const message = err instanceof ApiError ? err.message : err instanceof Error ? err.message : String(err);
+        setState({ kind: "error", message });
+        return;
+      }
+
+      const res = opsResult.value;
+      if (!res.ok || !res.data) {
+        setState({ kind: "error", message: res.error?.message ?? "activity fetch returned ok=false" });
+        return;
+      }
+      setState({ kind: "ready", payload: res.data });
+
+      if (diagnoseResult.status === "fulfilled" && diagnoseResult.value.data) {
+        setDiagnose(diagnoseResult.value.data);
+      }
+    });
+    return () => controller.abort();
+  }, [live, mutationVersion, refreshKey, offset]);
+
+  const offlineHint =
+    mode === "offline-stale"
+      ? "Activity history is unavailable while the live API is offline. The panel is keeping the last known overview data in read-only mode."
+      : "Activity history needs the live panel API. Start `loom panel` to load real registry activity.";
+
+  const payload = state.kind === "ready" ? state.payload : null;
+  const operations = payload?.operations ?? [];
+
+  const filtered = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    return operations.filter((op) => {
+      if (filter !== "all" && bucket(op) !== filter) return false;
+      if (!needle) return true;
+      return (
+        op.op_id.toLowerCase().includes(needle) ||
+        op.intent.toLowerCase().includes(needle) ||
+        (op.last_error?.message ?? "").toLowerCase().includes(needle)
+      );
+    });
+  }, [operations, filter, query]);
+
+  const counts = useMemo(() => {
+    const c = { all: operations.length, pending: 0, ok: 0, err: 0 };
+    for (const op of operations) {
+      const b = bucket(op);
+      if (b === "pending") c.pending += 1;
+      else if (b === "ok") c.ok += 1;
+      else if (b === "err") c.err += 1;
+    }
+    return c;
+  }, [operations]);
+
+  const checkpoint = payload?.checkpoint;
+  const historySummary =
+    payload && payload.count > payload.loaded_count
+      ? `Showing ${payload.loaded_count} of ${payload.count} recorded changes.`
+      : payload
+      ? `${payload.loaded_count} recorded change${payload.loaded_count === 1 ? "" : "s"} loaded.`
+      : null;
 
   return (
     <>
       <div className="page-header">
         <div className="title-block">
-          <h1>Ops history</h1>
+          <h1>Activity history</h1>
           <div className="subtitle">
-            Read-only view of the local <span className="mono">loom-history</span> branch: retained segments, archives, and current divergence state.
+            Every registry change Loom has recorded. Pending work also appears in Activity; failed work points to a replay with{" "}
+            <span className="mono">loom sync replay</span>.
+          </div>
+        </div>
+        <div className="header-actions">
+          <div className="searchbar" style={{ width: 260 }}>
+            <input
+              placeholder="Filter by id / intent / error…"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+            />
           </div>
         </div>
       </div>
       <div className="page-body">
-        {loading && <div className="empty" style={{ padding: "40px 20px" }}>Loading history…</div>}
-        {error && (
+        {state.kind === "error" && (
           <div
             style={{
-              padding: "10px 12px",
-              borderRadius: 10,
-              border: "1px solid rgba(216,90,90,0.25)",
-              background: "rgba(216,90,90,0.08)",
-              color: "var(--err)",
+              padding: "6px 28px",
               fontFamily: "var(--font-mono)",
               fontSize: 11,
+              borderBottom: "1px solid var(--line)",
+              color: "var(--err)",
+              background: "rgba(216,90,90,0.08)",
             }}
           >
-            {error}
+            {state.message}
           </div>
         )}
-        {!loading && !error && (
-          <>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 16 }}>
-              <Metric label="entries" value={`${entries.length}`} meta="archives + active segments in local history branch" />
-              <Metric
-                label="ahead / behind"
-                value={`${diagnose?.ahead ?? 0} / ${diagnose?.behind ?? 0}`}
-                meta="relative to origin/loom-history"
-              />
-              <Metric
-                label="segments / archives"
-                value={`${diagnose?.local_segments ?? 0} / ${diagnose?.local_archives ?? 0}`}
-                meta="local retained history units"
-              />
-              <Metric
-                label="conflicts"
-                value={`${diagnose?.conflicts?.length ?? 0}`}
-                meta={readOnly ? "read-only UI mode" : "repair from Ops or Sync pages"}
-              />
-            </div>
+        {!live && <div className="empty" style={{ marginBottom: 18 }}>{offlineHint}</div>}
+        {diagnose?.local_branch && (
+          <div style={{ display: "flex", gap: 12, padding: "4px 0", marginBottom: 12, fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--ink-3)" }}>
+            <span>{diagnose.local_segments} segment{diagnose.local_segments === 1 ? "" : "s"}</span>
+            {diagnose.remote_tracking && diagnose.ahead > 0 && <span style={{ color: "var(--ok)" }}>↑ {diagnose.ahead} ahead</span>}
+            {diagnose.remote_tracking && diagnose.behind > 0 && <span style={{ color: "var(--pending)" }}>↓ {diagnose.behind} behind</span>}
+            {diagnose.remote_tracking && diagnose.ahead === 0 && diagnose.behind === 0 && <span>in sync</span>}
+            {diagnose.conflicts.length > 0 && <span style={{ color: "var(--err)" }}>{diagnose.conflicts.length} conflict{diagnose.conflicts.length === 1 ? "" : "s"} — run loom ops history repair</span>}
+          </div>
+        )}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 18 }}>
+          <Kpi label="Loaded changes" value={counts.all} />
+          <Kpi label="Pending" value={counts.pending} tone={counts.pending > 0 ? "pending" : undefined} />
+          <Kpi label="Succeeded" value={counts.ok} />
+          <Kpi label="Failed" value={counts.err} tone={counts.err > 0 ? "err" : undefined} />
+        </div>
 
-            <div className="card">
-              <div className="card-head">
-                <h3>History Entries</h3>
-                <span className={`badge ${(diagnose?.conflicts?.length ?? 0) === 0 ? "ok" : ""}`}>
-                  {(diagnose?.conflicts?.length ?? 0) === 0 ? "clean" : "attention"}
+        <div style={{ display: "flex", gap: 12, marginBottom: 12, justifyContent: "space-between", flexWrap: "wrap" }}>
+          <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+            {(["all", "pending", "ok", "err"] as FilterKey[]).map((k) => (
+              <button
+                key={k}
+                className="btn sm"
+                onClick={() => setFilter(k)}
+                style={{
+                  background: filter === k ? "var(--bg-2)" : "transparent",
+                  borderColor: filter === k ? "var(--line-hi)" : "transparent",
+                  border: "1px solid",
+                  color: filter === k ? "var(--ink-0)" : "var(--ink-2)",
+                }}
+              >
+                {k === "err" ? "failed" : k === "ok" ? "done" : k}{" "}
+                <span className="mono" style={{ color: "var(--ink-3)", marginLeft: 4 }}>
+                  {counts[k]}
                 </span>
-              </div>
-              <table className="tbl">
-                <thead>
-                  <tr>
-                    <th>Scope</th>
-                    <th>Path</th>
-                    <th>Blob</th>
-                    <th>Lines</th>
-                    <th>First seen</th>
-                    <th>Last seen</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {entries.map((entry) => (
-                    <tr key={`${entry.scope}:${entry.path}`}>
-                      <td><span className="chip">{entry.scope ?? "—"}</span></td>
-                      <td className="mono">{entry.path ?? "—"}</td>
-                      <td className="mono">{entry.blob ?? "—"}</td>
-                      <td>{entry.line_count ?? 0}</td>
-                      <td>{relativeTime(entry.first_at)}</td>
-                      <td>{relativeTime(entry.last_at)}</td>
-                    </tr>
-                  ))}
-                  {entries.length === 0 && (
-                    <tr>
-                      <td colSpan={6} className="empty" style={{ padding: "28px 16px" }}>
-                        No local loom-history entries yet.
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
+              </button>
+            ))}
+          </div>
+          {payload && (
+            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+              {historySummary && (
+                <span className="mono" style={{ fontSize: 11, color: "var(--ink-3)" }}>
+                  {historySummary}
+                </span>
+              )}
+              <button className="btn sm" onClick={() => setOffset((cur) => Math.max(0, cur - payload.limit))} disabled={payload.offset === 0}>
+                newer
+              </button>
+              <button className="btn sm" onClick={() => setOffset((cur) => cur + payload.limit)} disabled={!payload.has_more}>
+                older
+              </button>
             </div>
-          </>
+          )}
+        </div>
+
+        <div
+          style={{
+            background: "var(--bg-1)",
+            borderRadius: 10,
+            overflow: "hidden",
+            border: "1px solid var(--line)",
+          }}
+        >
+          <table className="tbl">
+            <thead>
+              <tr>
+                <th>Change id</th>
+                <th>Intent</th>
+                <th>Status</th>
+                <th>ack</th>
+                <th>Created</th>
+                <th>Updated</th>
+              </tr>
+            </thead>
+            <tbody>
+              {state.kind === "loading" && (
+                <tr>
+                  <td colSpan={6} className="mono" style={{ textAlign: "center", color: "var(--ink-3)", padding: 18 }}>
+                    loading…
+                  </td>
+                </tr>
+              )}
+              {state.kind === "ready" && filtered.length === 0 && (
+                <tr>
+                  <td colSpan={6} style={{ textAlign: "center", color: "var(--ink-3)", padding: 18 }}>
+                    {operations.length === 0
+                      ? "No activity recorded yet — every CLI or Panel change will show up here."
+                      : "No activity matches the current filter."}
+                  </td>
+                </tr>
+              )}
+              {filtered.map((op) => (
+                <OpHistoryRow key={op.op_id} op={op} />
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        {checkpoint && (
+          <div style={{ marginTop: 12, fontSize: 11, color: "var(--ink-3)" }}>
+            Checkpoint: last scanned{" "}
+            <span className="mono" style={{ color: "var(--ink-1)" }}>
+              {checkpoint.last_scanned_op_id ?? "—"}
+            </span>
+            {checkpoint.last_acked_op_id && (
+              <>
+                {" · "}last acked{" "}
+                <span className="mono" style={{ color: "var(--ink-1)" }}>
+                  {checkpoint.last_acked_op_id}
+                </span>
+              </>
+            )}
+            {checkpoint.updated_at && (
+              <>
+                {" · updated "}
+                <span className="mono">{checkpoint.updated_at}</span>
+              </>
+            )}
+          </div>
         )}
       </div>
     </>
   );
 }
 
-function Metric({ label, value, meta }: { label: string; value: string; meta: string }) {
+export function bucket(op: V3OperationRecord): "pending" | "ok" | "err" {
+  if (op.last_error) return "err";
+  const s = op.status.toLowerCase();
+  if (s === "pending" || s === "enqueued" || s === "in_flight" || s === "retrying") return "pending";
+  if (s === "ok" || s === "applied" || s === "completed" || s === "done" || s === "succeeded") return "ok";
+  if (s === "err" || s === "error" || s === "failed") return "err";
+  return op.ack ? "ok" : "pending";
+}
+
+function OpHistoryRow({ op }: { op: V3OperationRecord }) {
+  const kind = bucket(op);
+  const color = kind === "err" ? "var(--err)" : kind === "pending" ? "var(--pending)" : "var(--ok)";
   return (
-    <div className="card">
-      <div className="card-body">
-        <div style={labelStyle}>{label}</div>
-        <div style={{ fontFamily: "var(--font-display)", fontSize: 24 }}>{value}</div>
-        <div style={{ fontSize: 11, color: "var(--ink-2)", marginTop: 10 }}>{meta}</div>
+    <tr>
+      <td className="mono dim">{op.op_id}</td>
+      <td className="name">{op.intent}</td>
+      <td>
+        <span className="chip" style={{ color }}>
+          {op.last_error ? op.last_error.code : op.status}
+        </span>
+      </td>
+      <td className="mono dim">{op.ack ? "✓" : "—"}</td>
+      <td className="mono dim" style={{ fontSize: 10.5 }}>
+        {op.created_at}
+      </td>
+      <td className="mono dim" style={{ fontSize: 10.5 }}>
+        {op.updated_at}
+      </td>
+    </tr>
+  );
+}
+
+function Kpi({ label, value, tone }: { label: string; value: string | number; tone?: "pending" | "err" }) {
+  const color = tone === "pending" ? "var(--pending)" : tone === "err" ? "var(--err)" : "var(--ink-0)";
+  return (
+    <div className="kpi">
+      <div className="label">{label}</div>
+      <div className="value" style={{ color }}>
+        {value}
       </div>
     </div>
   );
 }
-
-const labelStyle = {
-  fontSize: 10.5,
-  color: "var(--ink-3)",
-  letterSpacing: "0.1em",
-  textTransform: "uppercase" as const,
-  fontWeight: 500,
-};

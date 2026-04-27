@@ -2,7 +2,6 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use anyhow::{Result, anyhow};
-use chrono::{DateTime, Utc};
 use serde::Serialize;
 
 use crate::state::AppContext;
@@ -10,8 +9,8 @@ use crate::state::AppContext;
 use super::{
     HISTORY_BRANCH, HISTORY_BRANCH_REF, HISTORY_COMPACT_AFTER_SEGMENTS, HISTORY_RETAIN_ARCHIVES,
     HISTORY_RETAIN_RECENT_SEGMENTS, ORIGIN_HISTORY_BRANCH_REF, ahead_behind_refs,
-    ensure_local_identity, hash_object_file, read_blob, remote_exists,
-    remote_tracking_history_exists, repo_is_initialized,
+    ensure_local_identity, hash_object_file, remote_exists, remote_tracking_history_exists,
+    repo_is_initialized,
 };
 
 use super::history_impl::{
@@ -78,16 +77,6 @@ pub struct HistoryRepairReport {
     pub conflicts: Vec<HistoryConflictReport>,
 }
 
-#[derive(Debug, Clone, Serialize)]
-pub struct HistoryEntrySummary {
-    pub scope: String,
-    pub path: String,
-    pub blob: String,
-    pub line_count: usize,
-    pub first_at: Option<DateTime<Utc>>,
-    pub last_at: Option<DateTime<Utc>>,
-}
-
 pub fn history_status(ctx: &AppContext) -> Result<HistoryStatusReport> {
     if !repo_is_initialized(ctx)? {
         return Ok(HistoryStatusReport {
@@ -132,52 +121,6 @@ pub fn history_status(ctx: &AppContext) -> Result<HistoryStatusReport> {
         retain_recent_segments: HISTORY_RETAIN_RECENT_SEGMENTS,
         retain_archives: HISTORY_RETAIN_ARCHIVES,
         conflicts,
-    })
-}
-
-pub fn history_entries(ctx: &AppContext) -> Result<Vec<HistoryEntrySummary>> {
-    if !repo_is_initialized(ctx)? {
-        return Ok(Vec::new());
-    }
-
-    let Some(local) = load_history_branch_state(ctx, HISTORY_BRANCH_REF)? else {
-        return Ok(Vec::new());
-    };
-
-    let mut entries = Vec::with_capacity(local.archives.len() + local.segments.len());
-
-    for (path, blob) in &local.archives {
-        entries.push(build_history_entry(ctx, "archive", path, blob)?);
-    }
-    for (path, blob) in &local.segments {
-        entries.push(build_history_entry(ctx, "segment", path, blob)?);
-    }
-
-    entries.sort_by(|left, right| {
-        right
-            .last_at
-            .cmp(&left.last_at)
-            .then_with(|| right.first_at.cmp(&left.first_at))
-            .then_with(|| left.path.cmp(&right.path))
-    });
-    Ok(entries)
-}
-
-fn build_history_entry(
-    ctx: &AppContext,
-    scope: &str,
-    path: &str,
-    blob: &str,
-) -> Result<HistoryEntrySummary> {
-    let body = read_blob(ctx, blob)?;
-    let summary = crate::state::summarize_history_body(&body)?;
-    Ok(HistoryEntrySummary {
-        scope: scope.to_string(),
-        path: path.to_string(),
-        blob: blob.chars().take(8).collect(),
-        line_count: body.lines().filter(|line| !line.trim().is_empty()).count(),
-        first_at: summary.first_at,
-        last_at: summary.last_at,
     })
 }
 

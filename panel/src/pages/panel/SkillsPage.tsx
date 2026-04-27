@@ -1,5 +1,5 @@
-import { useState, useEffect } from "react";
-import type { Skill, Target } from "../../lib/types";
+import { useEffect, useState } from "react";
+import type { Binding, Skill, Target } from "../../lib/types";
 import { AgentAvatar } from "../../components/panel/AgentAvatar";
 import { PlusIcon, SearchIcon } from "../../components/icons/nav_icons";
 import { api, type SkillDiffFile, type V3ObservationEvent } from "../../lib/api/client";
@@ -8,23 +8,31 @@ import { useMutation } from "../../lib/useMutation";
 interface SkillsPageProps {
   skills: Skill[];
   targets: Target[];
+  bindings?: Binding[];
   selectedSkill: string | null;
   onSelectSkill: (id: string) => void;
   onMutation: () => void;
   readOnly: boolean;
 }
 
-export function SkillsPage({ skills, targets, selectedSkill, onSelectSkill, onMutation, readOnly }: SkillsPageProps) {
+export function SkillsPage({ skills, targets, bindings = [], selectedSkill, onSelectSkill, onMutation, readOnly }: SkillsPageProps) {
   const [q, setQ] = useState("");
   const filtered = skills.filter((s) => s.name.includes(q) || s.tag.includes(q));
   const sel = skills.find((s) => s.id === selectedSkill) ?? skills[0];
   const capture = useMutation();
+  const captureDisabled = capture.busy || readOnly || !sel;
+  const emptyMessage = readOnly
+    ? "Live registry API is offline. Start the panel backend to load real skills."
+    : q
+    ? "No skills match the current filter."
+    : "No skills in this registry yet.";
 
   const runCapture = () => {
+    if (!sel) return;
     const skillName = sel?.name;
     capture.run(
-      `capture ${skillName ?? "all pending"}`,
-      () => api.capture(skillName ? { skill: skillName } : {}),
+      `capture ${skillName}`,
+      () => api.capture({ skill: skillName }),
       onMutation,
     );
   };
@@ -44,7 +52,12 @@ export function SkillsPage({ skills, targets, selectedSkill, onSelectSkill, onMu
             <input placeholder="Filter skills…" value={q} onChange={(e) => setQ(e.target.value)} />
             <kbd>⌘K</kbd>
           </div>
-          <button className="btn primary" onClick={runCapture} disabled={capture.busy || readOnly} title={readOnly ? "registry offline" : undefined}>
+          <button
+            className="btn primary"
+            onClick={runCapture}
+            disabled={captureDisabled}
+            title={readOnly ? "registry offline" : !sel ? "select a skill first" : undefined}
+          >
             <PlusIcon /> {capture.busy ? "capturing…" : "Capture"}
           </button>
         </div>
@@ -94,16 +107,38 @@ export function SkillsPage({ skills, targets, selectedSkill, onSelectSkill, onMu
                     <td className="mono dim">{s.changed}</td>
                   </tr>
                 ))}
+                {filtered.length === 0 && (
+                  <tr>
+                    <td colSpan={6} style={{ color: "var(--ink-3)", padding: 22, textAlign: "center" }}>
+                      {emptyMessage}
+                    </td>
+                  </tr>
+                )}
               </tbody>
             </table>
           </div>
           <div style={{ padding: 20, overflow: "auto" }}>
-            {sel ? <SkillDetail skill={sel} targets={targets} /> : <div className="empty">Select a skill.</div>}
+            {sel ? (
+              <SkillDetail skill={sel} targets={targets} bindings={bindings} />
+            ) : (
+              <div className="empty">{emptyMessage}</div>
+            )}
           </div>
         </div>
       </div>
     </>
   );
+}
+
+function summarizePolicy(skillBindings: Binding[]): string {
+  if (skillBindings.length === 0) return "— (no bindings)";
+  const counts = skillBindings.reduce<Record<string, number>>((acc, b) => {
+    acc[b.policy] = (acc[b.policy] ?? 0) + 1;
+    return acc;
+  }, {});
+  const kinds = Object.keys(counts);
+  if (kinds.length === 1) return `${kinds[0]} · ${skillBindings.length} binding${skillBindings.length === 1 ? "" : "s"}`;
+  return kinds.map((k) => `${counts[k]} ${k}`).join(" · ");
 }
 
 type DetailTab = "history" | "diff" | "targets";
@@ -156,7 +191,7 @@ function mapObsToLifecycle(ev: V3ObservationEvent): LifecycleEvent {
 }
 
 
-function SkillDetail({ skill, targets }: { skill: Skill; targets: Target[] }) {
+function SkillDetail({ skill, targets, bindings }: { skill: Skill; targets: Target[]; bindings: Binding[] }) {
   const [tab, setTab] = useState<DetailTab>("history");
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyError, setHistoryError] = useState<string | null>(null);
@@ -165,6 +200,9 @@ function SkillDetail({ skill, targets }: { skill: Skill; targets: Target[] }) {
   const targetObjs = skill.targets
     .map((tid) => targets.find((t) => t.id === tid))
     .filter((t): t is Target => t !== undefined);
+
+  const skillBindings = bindings.filter((b) => b.skill === skill.name);
+  const policyLabel = summarizePolicy(skillBindings);
 
   useEffect(() => {
     if (tab !== "history") return;
@@ -198,12 +236,12 @@ function SkillDetail({ skill, targets }: { skill: Skill; targets: Target[] }) {
         <div className="k">Rules</div>
         <div className="v">{skill.ruleCount} on chain</div>
         <div className="k">Policy</div>
-        <div className="v">auto-project on binding match</div>
+        <div className="v">{policyLabel}</div>
       </div>
 
       <div className="tabs">
         <button className={tab === "history" ? "active" : ""} onClick={() => setTab("history")}>
-          Summary
+          Lifecycle
         </button>
         <button className={tab === "diff" ? "active" : ""} onClick={() => setTab("diff")}>
           Diff
@@ -224,7 +262,7 @@ function SkillDetail({ skill, targets }: { skill: Skill; targets: Target[] }) {
             </div>
           )}
           {!historyLoading && !historyError && (
-            <Lifecycle events={historyEvents} skill={skill} targetCount={targetObjs.length} />
+            <Lifecycle events={historyEvents} skillName={skill.name} />
           )}
         </>
       )}
@@ -234,65 +272,46 @@ function SkillDetail({ skill, targets }: { skill: Skill; targets: Target[] }) {
   );
 }
 
-function Lifecycle({ events, skill, targetCount }: { events: LifecycleEvent[]; skill: Skill; targetCount: number }) {
+function Lifecycle({ events, skillName }: { events: LifecycleEvent[]; skillName: string }) {
   if (events.length === 0) {
     return (
-      <div style={{ color: "var(--ink-3)", fontSize: 12 }}>
-        No lifecycle events yet · run <code>loom capture &lt;skill&gt;</code>
+      <div style={{ padding: "18px 4px", fontSize: 12, color: "var(--ink-2)" }}>
+        <div style={{ marginBottom: 6 }}>No lifecycle events yet.</div>
+        <div className="mono" style={{ fontSize: 11, color: "var(--ink-3)" }}>
+          Run <span style={{ color: "var(--ink-1)" }}>loom capture {skillName}</span> to start the chain.
+        </div>
       </div>
     );
   }
   return (
-    <div style={{ display: "grid", gap: 12 }}>
-      <div style={{ border: "1px solid var(--line)", borderRadius: 10, padding: "12px 14px", background: "var(--bg-1)" }}>
-        <div style={{ fontSize: 11, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--ink-3)", marginBottom: 6 }}>
-          Current state
-        </div>
-        <div style={{ color: "var(--ink-1)", fontSize: 12.5 }}>
-          This view is backed by the current projection snapshot. It shows the latest applied revision, target coverage, and rule count without inventing lifecycle events the backend does not expose yet.
-        </div>
-      </div>
-      <div className="kv" style={{ gridTemplateColumns: "130px 1fr" }}>
-        <div className="k">latest revision</div>
-        <div className="v mono">{skill.latestRev}</div>
-        <div className="k">last changed</div>
-        <div className="v">{skill.changed}</div>
-        <div className="k">rule count</div>
-        <div className="v">{skill.ruleCount}</div>
-        <div className="k">projected targets</div>
-        <div className="v">{targetCount}</div>
-        <div className="k">classification</div>
-        <div className="v">{skill.tag}</div>
-      </div>
-      <div style={{ position: "relative", paddingLeft: 22 }}>
-        <div style={{ position: "absolute", left: 7, top: 4, bottom: 4, width: 1, background: "var(--line)" }} />
-        {events.map((e, i) => (
-          <div key={i} style={{ position: "relative", marginBottom: 14 }}>
-            <div
-              style={{
-                position: "absolute",
-                left: -22,
-                top: 4,
-                width: 15,
-                height: 15,
-                borderRadius: 8,
-                background: "var(--bg-0)",
-                border: `2px solid ${KIND_COLOR[e.kind]}`,
-              }}
-            />
-            <div style={{ fontSize: 12 }}>
-              <span style={{ color: "var(--ink-0)", fontWeight: 500 }}>{e.kind}</span>
-              <span className="mono" style={{ color: "var(--ink-2)", marginLeft: 6 }}>
-                {e.v}
-              </span>
-              <span style={{ color: "var(--ink-3)", marginLeft: 8 }}>
-                by {e.who} · {e.time}
-              </span>
-            </div>
-            <div style={{ fontSize: 11.5, color: "var(--ink-2)", marginTop: 2 }}>{e.desc}</div>
+    <div style={{ position: "relative", paddingLeft: 22 }}>
+      <div style={{ position: "absolute", left: 7, top: 4, bottom: 4, width: 1, background: "var(--line)" }} />
+      {events.map((e, i) => (
+        <div key={i} style={{ position: "relative", marginBottom: 14 }}>
+          <div
+            style={{
+              position: "absolute",
+              left: -22,
+              top: 4,
+              width: 15,
+              height: 15,
+              borderRadius: 8,
+              background: "var(--bg-0)",
+              border: `2px solid ${KIND_COLOR[e.kind]}`,
+            }}
+          />
+          <div style={{ fontSize: 12 }}>
+            <span style={{ color: "var(--ink-0)", fontWeight: 500 }}>{e.kind}</span>
+            <span className="mono" style={{ color: "var(--ink-2)", marginLeft: 6 }}>
+              {e.v}
+            </span>
+            <span style={{ color: "var(--ink-3)", marginLeft: 8 }}>
+              by {e.who} · {e.time}
+            </span>
           </div>
-        ))}
-      </div>
+          <div style={{ fontSize: 11.5, color: "var(--ink-2)", marginTop: 2 }}>{e.desc}</div>
+        </div>
+      ))}
     </div>
   );
 }
@@ -416,6 +435,10 @@ function SkillDiff({ skillName }: { skillName: string }) {
 }
 
 function TargetsTab({ targets }: { targets: Target[] }) {
+  if (targets.length === 0) {
+    return <div className="empty" style={{ padding: "18px 4px" }}>This skill is not projected to any target.</div>;
+  }
+
   return (
     <div>
       {targets.map((t) => (

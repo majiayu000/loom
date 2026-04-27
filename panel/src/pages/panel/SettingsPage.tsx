@@ -1,19 +1,70 @@
-import type { InfoPayload, WorkspaceStatusPayload } from "../../types";
+import { useEffect, useState } from "react";
+import type { PanelDataMode } from "../../lib/api/usePanelData";
+import type { InfoPayload } from "../../types";
+import { api, ApiError } from "../../lib/api/client";
 
 interface SettingsPageProps {
-  info: InfoPayload | null;
-  workspaceStatus: WorkspaceStatusPayload["data"] | null;
-  workspaceWarnings: string[];
+  live: boolean;
+  mode: PanelDataMode;
+  registryRoot: string | null;
 }
 
-function compactHome(path: string | undefined) {
-  if (!path) return "—";
-  return path.replace(/^\/Users\/[^/]+/, "~");
-}
+type InfoState =
+  | { kind: "idle" }
+  | { kind: "loading" }
+  | { kind: "ready"; info: InfoPayload }
+  | { kind: "error"; message: string };
 
-export function SettingsPage({ info, workspaceStatus, workspaceWarnings }: SettingsPageProps) {
-  const v3Available = workspaceStatus?.v3?.available ?? false;
-  const remote = workspaceStatus?.remote;
+export function SettingsPage({ live, mode, registryRoot }: SettingsPageProps) {
+  const [info, setInfo] = useState<InfoState>({ kind: "idle" });
+  const [cleared, setCleared] = useState(false);
+
+  useEffect(() => {
+    if (!live) {
+      setInfo({ kind: "idle" });
+      return;
+    }
+
+    const controller = new AbortController();
+    setInfo({ kind: "loading" });
+    api
+      .info(controller.signal)
+      .then((payload) => {
+        if (controller.signal.aborted) return;
+        setInfo({ kind: "ready", info: payload });
+      })
+      .catch((err) => {
+        if (controller.signal.aborted) return;
+        const message = err instanceof ApiError ? err.message : err instanceof Error ? err.message : String(err);
+        setInfo({ kind: "error", message });
+      });
+    return () => controller.abort();
+  }, [live]);
+
+  const offlineHint =
+    mode === "offline-stale"
+      ? "Settings are in read-only mode because the live API is offline. Registry paths below show the last known panel context."
+      : "Settings need the live panel API. Start `loom panel` to load the current registry paths.";
+
+  const resetTweaks = () => {
+    localStorage.removeItem("loom.tweaks");
+    setCleared(true);
+    window.setTimeout(() => window.location.reload(), 400);
+  };
+
+  const rows: Array<{ label: string; value: string | undefined; mono?: boolean }> = [
+    { label: "Registry root", value: registryRoot ?? undefined, mono: true },
+  ];
+  if (info.kind === "ready") {
+    const x = info.info;
+    rows.push(
+      { label: "State dir", value: x.state_dir, mono: true },
+      { label: "V3 targets file", value: x.v3_targets_file, mono: true },
+      { label: "Claude dir", value: x.claude_dir, mono: true },
+      { label: "Codex dir", value: x.codex_dir, mono: true },
+      { label: "Remote URL", value: x.remote_url, mono: true },
+    );
+  }
 
   return (
     <>
@@ -21,111 +72,53 @@ export function SettingsPage({ info, workspaceStatus, workspaceWarnings }: Setti
         <div className="title-block">
           <h1>Settings</h1>
           <div className="subtitle">
-            Current registry wiring, agent defaults, and backend status exposed from the live workspace.
+            Where Loom keeps its state. These paths come from <span className="mono">/api/info</span> and mirror the CLI
+            output of <span className="mono">loom info</span>.
           </div>
         </div>
       </div>
       <div className="page-body">
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-          <div className="card">
-            <div className="card-head">
-              <h3>Workspace</h3>
-              <span className={`badge ${v3Available ? "ok" : ""}`}>{v3Available ? "v3 ready" : "v3 missing"}</span>
-            </div>
-            <div className="card-body">
-              <div className="kv" style={{ gridTemplateColumns: "140px 1fr" }}>
-                <div className="k">registry root</div>
-                <div className="v mono">{compactHome(info?.root)}</div>
-                <div className="k">state dir</div>
-                <div className="v mono">{compactHome(info?.state_dir)}</div>
-                <div className="k">backup dir</div>
-                <div className="v mono">{compactHome(workspaceStatus?.backup_dir)}</div>
-                <div className="k">v3 targets file</div>
-                <div className="v mono">{compactHome(info?.v3_targets_file)}</div>
-                <div className="k">registered targets</div>
-                <div className="v">{workspaceStatus?.registered_targets?.count ?? 0}</div>
-                <div className="k">source dirs</div>
-                <div className="v">{workspaceStatus?.skill_sources?.count ?? 0}</div>
-              </div>
-            </div>
+        {!live && <div className="empty" style={{ marginBottom: 16 }}>{offlineHint}</div>}
+        <div className="card" style={{ marginBottom: 16 }}>
+          <div className="card-head">
+            <h3>Registry paths</h3>
+            {info.kind === "loading" && <span className="chip">loading…</span>}
+            {info.kind === "error" && <span className="chip" style={{ color: "var(--err)" }}>fetch failed</span>}
           </div>
-
-          <div className="card">
-            <div className="card-head">
-              <h3>Agent Defaults</h3>
-            </div>
-            <div className="card-body">
-              <div className="kv" style={{ gridTemplateColumns: "140px 1fr" }}>
-                <div className="k">Claude</div>
-                <div className="v mono">{compactHome(info?.claude_dir ?? workspaceStatus?.agent_dir_defaults?.claude_dir)}</div>
-                <div className="k">Codex</div>
-                <div className="v mono">{compactHome(info?.codex_dir ?? workspaceStatus?.agent_dir_defaults?.codex_dir)}</div>
-              </div>
-            </div>
-          </div>
-
-          <div className="card">
-            <div className="card-head">
-              <h3>Git</h3>
-            </div>
-            <div className="card-body">
-              <div className="kv" style={{ gridTemplateColumns: "140px 1fr" }}>
-                <div className="k">branch</div>
-                <div className="v">{workspaceStatus?.git?.branch ?? "—"}</div>
-                <div className="k">head</div>
-                <div className="v mono">{workspaceStatus?.git?.head ?? "—"}</div>
-                <div className="k">status</div>
-                <div className="v mono">{workspaceStatus?.git?.status_short?.trim() || "clean"}</div>
-              </div>
-            </div>
-          </div>
-
-          <div className="card">
-            <div className="card-head">
-              <h3>Remote</h3>
-            </div>
-            <div className="card-body">
-              <div className="kv" style={{ gridTemplateColumns: "140px 1fr" }}>
-                <div className="k">remote</div>
-                <div className="v">{remote?.remote ?? "—"}</div>
-                <div className="k">url</div>
-                <div className="v mono">{remote?.url ?? info?.remote_url ?? "not configured"}</div>
-                <div className="k">sync state</div>
-                <div className="v">{remote?.sync_state ?? "unknown"}</div>
-                <div className="k">ahead / behind</div>
-                <div className="v">{remote ? `${remote.ahead ?? 0} / ${remote.behind ?? 0}` : "0 / 0"}</div>
-                <div className="k">pending ops</div>
-                <div className="v">{workspaceStatus?.pending_ops ?? remote?.pending_ops ?? 0}</div>
-              </div>
-            </div>
+          <div className="card-body">
+            {info.kind === "error" && (
+              <div style={{ color: "var(--err)", fontSize: 12, marginBottom: 10 }}>{info.message}</div>
+            )}
+            <table className="tbl" style={{ fontSize: 12 }}>
+              <tbody>
+                {rows.map((r) => (
+                  <tr key={r.label}>
+                    <td style={{ color: "var(--ink-2)", width: 160 }}>{r.label}</td>
+                    <td className={r.mono ? "mono" : undefined} style={{ color: r.value ? "var(--ink-0)" : "var(--ink-3)" }}>
+                      {r.value ?? "—"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         </div>
 
-        {workspaceWarnings.length > 0 && (
-          <div className="card" style={{ marginTop: 16 }}>
-            <div className="card-head">
-              <h3>Warnings</h3>
-            </div>
-            <div className="card-body" style={{ display: "grid", gap: 8 }}>
-              {workspaceWarnings.map((warning, index) => (
-                <div
-                  key={`${warning}-${index}`}
-                  style={{
-                    padding: "8px 10px",
-                    borderRadius: 10,
-                    border: "1px solid rgba(216,90,90,0.25)",
-                    background: "rgba(216,90,90,0.08)",
-                    color: "var(--err)",
-                    fontFamily: "var(--font-mono)",
-                    fontSize: 11,
-                  }}
-                >
-                  {warning}
-                </div>
-              ))}
-            </div>
+        <div className="card">
+          <div className="card-head">
+            <h3>UI preferences</h3>
+            {cleared && <span className="chip ok">cleared · reloading…</span>}
           </div>
-        )}
+          <div className="card-body" style={{ fontSize: 12 }}>
+            <div style={{ marginBottom: 10, color: "var(--ink-2)" }}>
+              Viz mode, accent, density, font and compact toggle live in{" "}
+              <span className="mono">localStorage.loom.tweaks</span>. Click below to reset to defaults and reload.
+            </div>
+            <button className="btn" onClick={resetTweaks} disabled={cleared}>
+              Reset UI preferences
+            </button>
+          </div>
+        </div>
       </div>
     </>
   );

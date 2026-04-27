@@ -4,9 +4,90 @@ import type {
   PendingPayload,
   RemotePayload,
   V3Payload,
-  HistoryListPayload,
-  WorkspaceStatusPayload,
 } from "../../types";
+import type { V3Binding } from "../../generated/V3Binding";
+import type { V3Projection } from "../../generated/V3Projection";
+import type { V3Rule } from "../../generated/V3Rule";
+import type { V3Target } from "../../generated/V3Target";
+
+export interface V3OperationRecord {
+  op_id: string;
+  intent: string;
+  status: string;
+  ack: boolean;
+  payload?: unknown;
+  effects?: unknown;
+  last_error?: { code: string; message: string };
+  created_at: string;
+  updated_at: string;
+}
+
+export interface OpsPayload {
+  ok: boolean;
+  data?: {
+    state_model?: string;
+    count: number;
+    loaded_count: number;
+    offset: number;
+    limit: number;
+    has_more: boolean;
+    operations: V3OperationRecord[];
+    checkpoint?: { last_scanned_op_id?: string; last_acked_op_id?: string; updated_at?: string };
+  };
+  error?: { code?: string; message?: string };
+}
+
+export interface OpsHistoryDiagnosePayload {
+  ok: boolean;
+  data?: {
+    local_branch: boolean;
+    remote_tracking: boolean;
+    ahead: number;
+    behind: number;
+    local_segments: number;
+    local_archives: number;
+    remote_segments: number;
+    remote_archives: number;
+    local_snapshot: boolean;
+    remote_snapshot: boolean;
+    compact_after_segments: number;
+    retain_recent_segments: number;
+    retain_archives: number;
+    conflicts: Array<{
+      scope: string;
+      path: string;
+      local_blob: string;
+      remote_blob: string;
+      local_rename_path: string;
+      remote_rename_path: string;
+    }>;
+  };
+  error?: { code?: string; message?: string };
+}
+
+export interface BindingShowPayload {
+  ok: boolean;
+  data?: {
+    state_model?: string;
+    binding: V3Binding;
+    default_target?: V3Target | null;
+    rules?: V3Rule[];
+    projections?: V3Projection[];
+  };
+  error?: { code?: string; message?: string };
+}
+
+export interface TargetShowPayload {
+  ok: boolean;
+  data?: {
+    state_model?: string;
+    target: V3Target;
+    bindings?: V3Binding[];
+    rules?: V3Rule[];
+    projections?: V3Projection[];
+  };
+  error?: { code?: string; message?: string };
+}
 
 export interface SkillsPayload {
   skills?: string[];
@@ -211,14 +292,27 @@ export interface SkillHistoryPayload {
 export const api = {
   health: (signal?: AbortSignal) => getJson<HealthPayload>("/api/health", signal),
   info: (signal?: AbortSignal) => getJson<InfoPayload>("/api/info", signal),
-  workspaceStatus: (signal?: AbortSignal) => getJson<WorkspaceStatusPayload>("/api/workspace/status", signal),
   skills: (signal?: AbortSignal) => getJson<SkillsPayload>("/api/skills", signal),
   v3Status: (signal?: AbortSignal) => getJson<V3Payload>("/api/v3/status", signal),
+  opsHistoryDiagnose: (signal?: AbortSignal) =>
+    getJson<OpsHistoryDiagnosePayload>("/api/v3/ops/diagnose", signal),
+  ops: (options?: { limit?: number; offset?: number }, signal?: AbortSignal) => {
+    const params = new URLSearchParams();
+    if (typeof options?.limit === "number") params.set("limit", String(options.limit));
+    if (typeof options?.offset === "number") params.set("offset", String(options.offset));
+    const qs = params.size > 0 ? `?${params.toString()}` : "";
+    return getJson<OpsPayload>(`/api/v3/ops${qs}`, signal);
+  },
+  bindingShow: (id: string, signal?: AbortSignal) =>
+    getJson<BindingShowPayload>(`/api/v3/bindings/${encodeURIComponent(id)}`, signal),
+  targetShow: (id: string, signal?: AbortSignal) =>
+    getJson<TargetShowPayload>(`/api/v3/targets/${encodeURIComponent(id)}`, signal),
   remoteStatus: async (signal?: AbortSignal) =>
     parseRemoteStatusResponse("/api/remote/status", await getJson<unknown>("/api/remote/status", signal)),
   pending: (signal?: AbortSignal) => getJson<PendingPayload>("/api/pending", signal),
-  opsHistoryList: (signal?: AbortSignal) => getJson<HistoryListPayload>("/api/ops/history/list", signal),
-  opsHistoryDiagnose: (signal?: AbortSignal) => getJson<CommandEnvelope>("/api/ops/history/diagnose", signal),
+
+  opsRetry: () => postJson("/api/ops/retry", {}),
+  opsPurge: () => postJson("/api/ops/purge", {}),
 
   targetAdd: (body: TargetAddBody) => postJson("/api/v3/targets", body),
   targetRemove: (targetId: string) => postJson(`/api/v3/targets/${encodeURIComponent(targetId)}/remove`, {}),
@@ -230,8 +324,6 @@ export const api = {
   syncPush: () => postJson("/api/sync/push", {}),
   syncPull: () => postJson("/api/sync/pull", {}),
   syncReplay: () => postJson("/api/sync/replay", {}),
-  opsRetry: () => postJson("/api/ops/retry", {}),
-  opsPurge: () => postJson("/api/ops/purge", {}),
   opsHistoryRepair: (body: HistoryRepairBody) => postJson("/api/ops/history/repair", body),
 
   skillHistory: (name: string, signal?: AbortSignal) =>

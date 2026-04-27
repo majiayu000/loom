@@ -90,8 +90,7 @@ export type VizMode = "loom" | "force" | "tree";
 
 /**
  * One edge on the projection graph — a skill rendered into a specific
- * target via a specific method. Backed by `V3Projection` in live mode;
- * synthesised from mock skills in offline mode.
+ * target via a specific method. Backed by `V3Projection` from the live API.
  */
 export interface ProjectionLink {
   skillId: string;

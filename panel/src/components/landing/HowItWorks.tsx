@@ -10,33 +10,33 @@ const CONCEPTS: Concept[] = [
     num: "01 / CONCEPT",
     title: "Target",
     body: "An agent skills directory Loom knows about.",
-    code: "~/.claude/skills",
+    code: "$AGENT_SKILLS_DIR",
   },
   {
     num: "02 / CONCEPT",
     title: "Skill",
     body: "A versioned unit in the registry.",
-    code: "refactor-patterns@v0.4",
+    code: "SKILL_NAME@VERSION",
   },
   {
     num: "03 / CONCEPT",
     title: "Binding",
     body: "Rule mapping a skill to a target.",
-    code: "agent=claude, profile=work",
+    code: "agent=AGENT, profile=PROFILE",
   },
   {
     num: "04 / CONCEPT",
     title: "Projection",
     body: "Realize a skill into a target.",
-    code: "--method symlink",
+    code: "--method METHOD",
   },
 ];
 
 const TARGET_ROWS: { label: string; path: string; dotColor: string }[] = [
-  { label: "claude / home", path: "~/.claude/skills", dotColor: "#d97736" },
-  { label: "codex / home", path: "~/.codex/skills", dotColor: "#6fb78a" },
-  { label: "cursor / repo", path: "/repo/.cursor/skills", dotColor: "#7c8ad9" },
-  { label: "windsurf / home", path: "~/.windsurf/skills", dotColor: "#b078c7" },
+  { label: "agent / profile A", path: "$AGENT_SKILLS_DIR_A", dotColor: "#d97736" },
+  { label: "agent / profile B", path: "$AGENT_SKILLS_DIR_B", dotColor: "#6fb78a" },
+  { label: "agent / profile C", path: "$AGENT_SKILLS_DIR_C", dotColor: "#7c8ad9" },
+  { label: "agent / profile D", path: "$AGENT_SKILLS_DIR_D", dotColor: "#b078c7" },
 ];
 
 export function HowItWorks() {

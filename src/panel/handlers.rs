@@ -2,9 +2,10 @@ use std::net::SocketAddr;
 
 use axum::{
     Json,
-    extract::{ConnectInfo, Path as AxumPath, State},
+    extract::{ConnectInfo, Path as AxumPath, Query, State},
     http::{HeaderMap, StatusCode},
 };
+use serde::Deserialize;
 use serde_json::json;
 
 use crate::cli::{
@@ -37,6 +38,17 @@ fn policy_profile_looks_sane(value: &str) -> bool {
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_')
 }
 
+const DEFAULT_OPS_PAGE_SIZE: usize = 100;
+const MAX_OPS_PAGE_SIZE: usize = 250;
+
+#[derive(Debug, Default, Deserialize)]
+pub(super) struct OpsQuery {
+    #[serde(default)]
+    pub(super) limit: Option<usize>,
+    #[serde(default)]
+    pub(super) offset: Option<usize>,
+}
+
 pub(super) async fn health() -> Json<serde_json::Value> {
     Json(json!({"ok": true, "service": "loom-panel"}))
 }
@@ -57,19 +69,6 @@ pub(super) async fn info(State(state): State<PanelState>) -> Json<serde_json::Va
         "codex_dir": target_dirs.codex.display().to_string(),
         "remote_url": remote_url,
     }))
-}
-
-pub(super) async fn workspace_status(
-    State(state): State<PanelState>,
-) -> (StatusCode, Json<serde_json::Value>) {
-    run_panel_command(
-        &state,
-        "workspace.status",
-        StatusCode::OK,
-        Command::Workspace {
-            command: WorkspaceCommand::Status,
-        },
-    )
 }
 
 pub(super) async fn skills(State(state): State<PanelState>) -> Json<serde_json::Value> {
@@ -95,6 +94,55 @@ pub(super) async fn v3_status(
             let status = status_for_v3_error_payload(&err.0);
             (status, err)
         }
+    }
+}
+
+/// Return a bounded, newest-first page of the operations journal
+/// (`.loom/v3/operations.jsonl`). History only needs row summaries, so omit
+/// per-op payload/effects blobs here and keep the response cost bounded even
+/// for long-lived registries.
+pub(super) async fn v3_ops(
+    Query(query): Query<OpsQuery>,
+    State(state): State<PanelState>,
+) -> Json<serde_json::Value> {
+    match load_v3_snapshot(&state.ctx) {
+        Ok(snapshot) => {
+            let total = snapshot.operations.len();
+            let limit = query
+                .limit
+                .unwrap_or(DEFAULT_OPS_PAGE_SIZE)
+                .clamp(1, MAX_OPS_PAGE_SIZE);
+            let offset = query.offset.unwrap_or(0);
+            let end = total.saturating_sub(offset);
+            let start = end.saturating_sub(limit);
+            let operations = snapshot.operations[start..end]
+                .iter()
+                .rev()
+                .map(|op| {
+                    json!({
+                        "op_id": op.op_id,
+                        "intent": op.intent,
+                        "status": op.status,
+                        "ack": op.ack,
+                        "last_error": op.last_error,
+                        "created_at": op.created_at,
+                        "updated_at": op.updated_at,
+                    })
+                })
+                .collect::<Vec<_>>();
+
+            v3_ok(json!({
+                "state_model": "v3",
+                "count": total,
+                "loaded_count": operations.len(),
+                "offset": offset,
+                "limit": limit,
+                "has_more": start > 0,
+                "operations": operations,
+                "checkpoint": snapshot.checkpoint,
+            }))
+        }
+        Err(err) => err,
     }
 }
 
@@ -335,6 +383,85 @@ pub(super) async fn v3_capture(
     )
 }
 
+// Ops handlers expose the same pending-queue maintenance as
+// `loom ops {retry,purge}`. Keep them separate from sync routes because
+// retry returns queue before/after counts, while purge intentionally clears
+// the pending queue without touching the durable operations history.
+
+pub(super) async fn ops_retry(
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    State(state): State<PanelState>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    if let Some(response) = ensure_mutation_authorized(&state, peer, &headers, "ops.retry") {
+        return response;
+    }
+    run_panel_command(
+        &state,
+        "ops.retry",
+        StatusCode::OK,
+        Command::Ops {
+            command: OpsCommand::Retry,
+        },
+    )
+}
+
+pub(super) async fn ops_purge(
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    State(state): State<PanelState>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    if let Some(response) = ensure_mutation_authorized(&state, peer, &headers, "ops.purge") {
+        return response;
+    }
+    run_panel_command(
+        &state,
+        "ops.purge",
+        StatusCode::OK,
+        Command::Ops {
+            command: OpsCommand::Purge,
+        },
+    )
+}
+
+pub(super) async fn ops_history_repair(
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    State(state): State<PanelState>,
+    Json(req): Json<HistoryRepairRequest>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    if let Some(response) = ensure_mutation_authorized(&state, peer, &headers, "ops.history.repair")
+    {
+        return response;
+    }
+    let strategy = match req.strategy.as_str() {
+        "local" => HistoryRepairStrategyArg::Local,
+        "remote" => HistoryRepairStrategyArg::Remote,
+        _ => {
+            let request_id = uuid::Uuid::new_v4().to_string();
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(error_envelope(
+                    "ops.history.repair",
+                    &request_id,
+                    "ARG_INVALID",
+                    "strategy must be 'local' or 'remote'",
+                )),
+            );
+        }
+    };
+    run_panel_command(
+        &state,
+        "ops.history.repair",
+        StatusCode::OK,
+        Command::Ops {
+            command: OpsCommand::History {
+                command: OpsHistoryCommand::Repair(crate::cli::HistoryRepairArgs { strategy }),
+            },
+        },
+    )
+}
+
 // Sync handlers wrap `App::cmd_sync` one-to-one with the corresponding
 // `SyncCommand` variant so the panel exposes the same git-backed flow as
 // the `loom sync {push,pull,replay}` CLI. Each route goes through
@@ -416,6 +543,13 @@ pub(super) async fn remote_status(
     }
 }
 
+pub(super) async fn v3_ops_diagnose(State(state): State<PanelState>) -> Json<serde_json::Value> {
+    match crate::gitops::history_status(&state.ctx) {
+        Ok(report) => v3_ok(serde_json::json!(report)),
+        Err(err) => v3_error("GIT_ERROR", err.to_string()),
+    }
+}
+
 pub(super) async fn pending(State(state): State<PanelState>) -> Json<serde_json::Value> {
     match state.ctx.read_pending_report() {
         Ok(report) => Json(json!({
@@ -427,120 +561,4 @@ pub(super) async fn pending(State(state): State<PanelState>) -> Json<serde_json:
         })),
         Err(err) => Json(json!({"count": 0, "ops": [], "error": err.to_string()})),
     }
-}
-
-pub(super) async fn ops_history_list(
-    State(state): State<PanelState>,
-) -> (StatusCode, Json<serde_json::Value>) {
-    match crate::gitops::history_entries(&state.ctx) {
-        Ok(entries) => (
-            StatusCode::OK,
-            Json(json!({
-                "ok": true,
-                "data": {
-                    "count": entries.len(),
-                    "entries": entries,
-                }
-            })),
-        ),
-        Err(err) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({
-                "ok": false,
-                "error": {
-                    "code": "INTERNAL_ERROR",
-                    "message": err.to_string(),
-                }
-            })),
-        ),
-    }
-}
-
-pub(super) async fn ops_history_diagnose(
-    State(state): State<PanelState>,
-) -> (StatusCode, Json<serde_json::Value>) {
-    run_panel_command(
-        &state,
-        "ops.history.diagnose",
-        StatusCode::OK,
-        Command::Ops {
-            command: OpsCommand::History {
-                command: OpsHistoryCommand::Diagnose,
-            },
-        },
-    )
-}
-
-pub(super) async fn ops_retry(
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
-    headers: HeaderMap,
-    State(state): State<PanelState>,
-) -> (StatusCode, Json<serde_json::Value>) {
-    if let Some(response) = ensure_mutation_authorized(&state, peer, &headers, "ops.retry") {
-        return response;
-    }
-    run_panel_command(
-        &state,
-        "ops.retry",
-        StatusCode::OK,
-        Command::Ops {
-            command: OpsCommand::Retry,
-        },
-    )
-}
-
-pub(super) async fn ops_purge(
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
-    headers: HeaderMap,
-    State(state): State<PanelState>,
-) -> (StatusCode, Json<serde_json::Value>) {
-    if let Some(response) = ensure_mutation_authorized(&state, peer, &headers, "ops.purge") {
-        return response;
-    }
-    run_panel_command(
-        &state,
-        "ops.purge",
-        StatusCode::OK,
-        Command::Ops {
-            command: OpsCommand::Purge,
-        },
-    )
-}
-
-pub(super) async fn ops_history_repair(
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
-    headers: HeaderMap,
-    State(state): State<PanelState>,
-    Json(req): Json<HistoryRepairRequest>,
-) -> (StatusCode, Json<serde_json::Value>) {
-    if let Some(response) = ensure_mutation_authorized(&state, peer, &headers, "ops.history.repair")
-    {
-        return response;
-    }
-    let strategy = match req.strategy.as_str() {
-        "local" => HistoryRepairStrategyArg::Local,
-        "remote" => HistoryRepairStrategyArg::Remote,
-        _ => {
-            let request_id = uuid::Uuid::new_v4().to_string();
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(error_envelope(
-                    "ops.history.repair",
-                    &request_id,
-                    "ARG_INVALID",
-                    "strategy must be 'local' or 'remote'",
-                )),
-            );
-        }
-    };
-    run_panel_command(
-        &state,
-        "ops.history.repair",
-        StatusCode::OK,
-        Command::Ops {
-            command: OpsCommand::History {
-                command: OpsHistoryCommand::Repair(crate::cli::HistoryRepairArgs { strategy }),
-            },
-        },
-    )
 }

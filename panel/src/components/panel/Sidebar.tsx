@@ -34,7 +34,7 @@ interface SidebarProps {
 }
 
 function rootLabel(root: string | null): string {
-  if (!root) return "~/.loom-registry";
+  if (!root) return "not connected";
   return root.replace(/^\/Users\/[^/]+/, "~");
 }
 
@@ -44,10 +44,10 @@ export function Sidebar({ page, setPage, compact, counts, registryRoot }: Sideba
     { key: "skills", label: "Skills", icon: SkillIcon, count: counts.skills },
     { key: "targets", label: "Targets", icon: TargetIcon, count: counts.targets },
     { key: "bindings", label: "Bindings", icon: BindingIcon, count: counts.bindings },
-    { key: "ops", label: "Ops", icon: OpsIcon, count: counts.opsAttention || null },
+    { key: "ops", label: "Activity", icon: OpsIcon, count: counts.opsAttention || null },
   ];
   const admin: NavEntry[] = [
-    { key: "history", label: "Ops history", icon: HistoryIcon },
+    { key: "history", label: "Audit log", icon: HistoryIcon },
     { key: "sync", label: "Git sync", icon: GitIcon },
     { key: "settings", label: "Settings", icon: SettingsIcon },
   ];
@@ -70,11 +70,11 @@ export function Sidebar({ page, setPage, compact, counts, registryRoot }: Sideba
   return (
     <div className="sidebar">
       <div className="group">
-        <div className="group-label">Registry</div>
+        <div className="group-label">Build registry</div>
         {primary.map(renderItem)}
       </div>
       <div className="group">
-        <div className="group-label">Workspace</div>
+        <div className="group-label">Operate</div>
         {admin.map(renderItem)}
       </div>
       {!compact && (

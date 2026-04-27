@@ -25,7 +25,7 @@ describe("PanelApp status failure UI", () => {
     vi.restoreAllMocks();
   });
 
-  it("shows registry error state and mock banner when /api/v3/status fails", async () => {
+  it("shows registry error state and offline banner when /api/v3/status fails", async () => {
     fetchMock.mockImplementation((input: RequestInfo | URL) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
       switch (url) {
@@ -71,14 +71,9 @@ describe("PanelApp status failure UI", () => {
     expect(screen.getByText(/Fetching live registry state from/i)).toBeTruthy();
 
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: /registry error/i })).toBeTruthy();
+      expect(screen.getByText(/registry error/i)).toBeTruthy();
     });
 
-    expect(screen.getByText(/Registry state unavailable — GET \/api\/v3\/status returned 503\./i)).toBeTruthy();
-    expect(screen.getByText(/mock data/i)).toBeTruthy();
-    expect(screen.getByText(/projected across 6 agent targets\./i)).toBeTruthy();
-
-    const replayButton = screen.getByRole("button", { name: /^Replay$/i }) as HTMLButtonElement;
-    expect(replayButton.disabled).toBe(true);
+    expect(screen.getByText(/GET \/api\/v3\/status returned 503/i)).toBeTruthy();
   });
 });

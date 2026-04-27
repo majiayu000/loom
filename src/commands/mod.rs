@@ -80,6 +80,7 @@ impl App {
             Command::Target { command } => self.cmd_target(command, &request_id),
             Command::Skill { command } => match command {
                 SkillCommand::Add(args) => self.cmd_add(args, &request_id),
+                SkillCommand::ImportObserved(args) => self.cmd_import_observed(args, &request_id),
                 SkillCommand::Project(args) => self.cmd_project(args, &request_id),
                 SkillCommand::Capture(args) => self.cmd_capture(args, &request_id),
                 SkillCommand::Save(args) => self.cmd_save(args, &request_id),

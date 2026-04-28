@@ -1,10 +1,10 @@
+mod common;
+
 use std::fs;
 use std::path::Path;
 use std::process::Command;
 
 use serde_json::Value;
-
-mod common;
 
 use common::actions::target_add;
 use common::{TestDir, run_loom, write_file};

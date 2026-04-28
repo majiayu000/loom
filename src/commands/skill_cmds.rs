@@ -483,10 +483,16 @@ impl App {
                         continue;
                     }
                 };
-                if !file_type.is_dir() || file_type.is_symlink() {
-                    continue;
-                }
-                if !source_path.join("SKILL.md").is_file() {
+                let (copy_source, source_kind, resolved_source) = match observed_skill_copy_source(
+                    &source_path,
+                    &file_type,
+                    &mut skipped,
+                    &target,
+                ) {
+                    Some(source) => source,
+                    None => continue,
+                };
+                if !has_skill_entrypoint(&copy_source) {
                     continue;
                 }
 
@@ -527,7 +533,7 @@ impl App {
 
                 let staging_skill = staging_root.join(&skill_id);
                 let _ = remove_path_if_exists(&staging_skill);
-                match copy_dir_recursive_without_symlinks(&source_path, &staging_skill) {
+                match copy_dir_recursive_without_symlinks(&copy_source, &staging_skill) {
                     Ok(()) => {}
                     Err(err) => {
                         let _ = remove_path_if_exists(&staging_skill);
@@ -556,12 +562,17 @@ impl App {
                     return Err(map_git(err));
                 }
                 imported_rels.push(skill_rel);
-                imported.push(json!({
+                let mut imported_item = json!({
                     "target_id": target.target_id,
                     "skill": skill_id,
                     "source": source_path.display().to_string(),
+                    "source_kind": source_kind,
                     "path": dst.display().to_string(),
-                }));
+                });
+                if let Some(resolved_source) = resolved_source {
+                    imported_item["resolved_source"] = json!(resolved_source);
+                }
+                imported.push(imported_item);
             }
         }
 
@@ -699,6 +710,56 @@ fn observed_import_targets(
         .filter(|target| target.ownership == "observed")
         .cloned()
         .collect())
+}
+
+fn observed_skill_copy_source(
+    source_path: &Path,
+    file_type: &fs::FileType,
+    skipped: &mut Vec<serde_json::Value>,
+    target: &V3ProjectionTarget,
+) -> Option<(PathBuf, &'static str, Option<String>)> {
+    if file_type.is_dir() {
+        return Some((source_path.to_path_buf(), "directory", None));
+    }
+    if !file_type.is_symlink() {
+        return None;
+    }
+
+    let metadata = match fs::metadata(source_path) {
+        Ok(metadata) => metadata,
+        Err(err) => {
+            skipped.push(json!({
+                "target_id": target.target_id.clone(),
+                "source": source_path.display().to_string(),
+                "reason": "symlink-target-failed",
+                "error": err.to_string(),
+            }));
+            return None;
+        }
+    };
+    if !metadata.is_dir() {
+        return None;
+    }
+
+    match fs::canonicalize(source_path) {
+        Ok(resolved) => {
+            let display = resolved.display().to_string();
+            Some((resolved, "symlink", Some(display)))
+        }
+        Err(err) => {
+            skipped.push(json!({
+                "target_id": target.target_id.clone(),
+                "source": source_path.display().to_string(),
+                "reason": "symlink-resolve-failed",
+                "error": err.to_string(),
+            }));
+            None
+        }
+    }
+}
+
+fn has_skill_entrypoint(path: &Path) -> bool {
+    path.join("SKILL.md").is_file() || path.join("skill.md").is_file()
 }
 
 fn rollback_imported_skills(ctx: &crate::state::AppContext, skill_rels: &[String]) {

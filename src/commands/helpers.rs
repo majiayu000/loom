@@ -5,8 +5,8 @@ use uuid::Uuid;
 
 use crate::cli::{
     AgentKind, BindingAddArgs, Command, OpsCommand, OpsHistoryCommand, ProjectionMethod,
-    SkillCommand, SyncCommand, TargetAddArgs, TargetCommand, WorkspaceBindingCommand,
-    WorkspaceCommand, WorkspaceMatcherKind,
+    SkillCommand, SkillOrphanCommand, SyncCommand, TargetAddArgs, TargetCommand,
+    WorkspaceBindingCommand, WorkspaceCommand, WorkspaceMatcherKind,
 };
 use crate::state::AppContext;
 use crate::state_model::{V3ProjectionTarget, V3TargetCapabilities, V3TargetsFile};
@@ -118,6 +118,9 @@ pub(crate) fn command_name(command: &Command) -> &'static str {
             SkillCommand::Release(_) => "skill.release",
             SkillCommand::Rollback(_) => "skill.rollback",
             SkillCommand::Diff(_) => "skill.diff",
+            SkillCommand::Orphan {
+                command: SkillOrphanCommand::Clean(_),
+            } => "skill.orphan.clean",
         },
         Command::Sync { command } => match command {
             SyncCommand::Status => "sync.status",

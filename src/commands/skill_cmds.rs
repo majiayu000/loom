@@ -225,7 +225,7 @@ impl App {
         let projection = V3ProjectionInstance {
             instance_id: instance_id.clone(),
             skill_id: args.skill.clone(),
-            binding_id: binding.binding_id.clone(),
+            binding_id: Some(binding.binding_id.clone()),
             target_id: target.target_id.clone(),
             materialized_path: materialized_path.display().to_string(),
             method: projection_method_as_str(args.method).to_string(),

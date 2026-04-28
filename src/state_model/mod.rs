@@ -141,11 +141,15 @@ pub struct V3BindingRule {
 pub struct V3ProjectionInstance {
     pub instance_id: String,
     pub skill_id: String,
-    pub binding_id: String,
+    /// `Some(id)` — owned by that binding. `None` — orphaned (binding was removed).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional, type = "string")]
+    pub binding_id: Option<String>,
     pub target_id: String,
     pub materialized_path: String,
     pub method: String,
     pub last_applied_rev: String,
+    /// Valid values: "healthy", "drifted", "missing", "conflict", "orphaned"
     pub health: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
@@ -310,7 +314,7 @@ impl V3Snapshot {
         self.projections
             .projections
             .iter()
-            .filter(|projection| projection.binding_id == binding_id)
+            .filter(|projection| projection.binding_id.as_deref() == Some(binding_id))
             .cloned()
             .collect()
     }
@@ -359,7 +363,7 @@ impl V3Snapshot {
         linked_binding_ids.extend(
             projections
                 .iter()
-                .map(|projection| projection.binding_id.as_str()),
+                .filter_map(|projection| projection.binding_id.as_deref()),
         );
 
         let mut bindings = Vec::with_capacity(self.bindings.bindings.len());

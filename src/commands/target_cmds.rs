@@ -171,9 +171,14 @@ impl App {
         })?;
 
         let relations = snapshot.target_relations(&args.target_id);
+        let active_projections: Vec<_> = relations
+            .projections
+            .iter()
+            .filter(|p| p.health != "orphaned")
+            .collect();
         if !relations.bindings.is_empty()
             || !relations.rules.is_empty()
-            || !relations.projections.is_empty()
+            || !active_projections.is_empty()
         {
             let mut failure = CommandFailure::new(
                 ErrorCode::DependencyConflict,
@@ -185,7 +190,7 @@ impl App {
             failure.details = json!({
                 "binding_ids": relations.bindings.iter().map(|binding| binding.binding_id.clone()).collect::<Vec<_>>(),
                 "rule_skills": relations.rules.iter().map(|rule| rule.skill_id.clone()).collect::<Vec<_>>(),
-                "projection_ids": relations.projections.iter().map(|projection| projection.instance_id.clone()).collect::<Vec<_>>(),
+                "projection_ids": active_projections.iter().map(|p| p.instance_id.clone()).collect::<Vec<_>>(),
             });
             return Err(failure);
         }

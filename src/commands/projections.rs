@@ -118,14 +118,16 @@ pub(crate) fn resolve_capture_projection(
                 ),
             ));
         }
-        if let Some(binding_id) = args.binding.as_deref()
-            && projection.binding_id != binding_id
+        if let Some(expected_binding) = args.binding.as_deref()
+            && projection.binding_id.as_deref() != Some(expected_binding)
         {
             return Err(CommandFailure::new(
                 ErrorCode::ArgInvalid,
                 format!(
                     "instance '{}' belongs to binding '{}' not '{}'",
-                    instance_id, projection.binding_id, binding_id
+                    instance_id,
+                    projection.binding_id.as_deref().unwrap_or("(orphaned)"),
+                    expected_binding
                 ),
             ));
         }
@@ -149,7 +151,9 @@ pub(crate) fn resolve_capture_projection(
         .projections
         .projections
         .iter()
-        .filter(|projection| projection.skill_id == skill && projection.binding_id == binding_id)
+        .filter(|projection| {
+            projection.skill_id == skill && projection.binding_id.as_deref() == Some(binding_id)
+        })
         .cloned()
         .collect::<Vec<_>>();
 

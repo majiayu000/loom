@@ -95,6 +95,22 @@ pub enum SkillCommand {
     Rollback(RollbackArgs),
     Diff(DiffArgs),
     ImportObserved(ImportObservedArgs),
+    Orphan {
+        #[command(subcommand)]
+        command: SkillOrphanCommand,
+    },
+}
+
+#[derive(Debug, Clone, Subcommand)]
+pub enum SkillOrphanCommand {
+    Clean(OrphanCleanArgs),
+}
+
+#[derive(Debug, Clone, Args)]
+pub struct OrphanCleanArgs {
+    /// Also delete validated live projection directories.
+    #[arg(long)]
+    pub delete_live_paths: bool,
 }
 
 #[derive(Debug, Clone, Subcommand)]

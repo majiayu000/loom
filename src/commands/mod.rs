@@ -12,7 +12,7 @@ use anyhow::Result;
 use serde_json::json;
 use uuid::Uuid;
 
-use crate::cli::{Cli, Command, SkillCommand, WorkspaceCommand};
+use crate::cli::{Cli, Command, SkillCommand, SkillOrphanCommand, WorkspaceCommand};
 use crate::envelope::{Envelope, Meta};
 use crate::state::AppContext;
 use crate::types::ErrorCode;
@@ -88,6 +88,9 @@ impl App {
                 SkillCommand::Release(args) => self.cmd_release(args, &request_id),
                 SkillCommand::Rollback(args) => self.cmd_rollback(args, &request_id),
                 SkillCommand::Diff(args) => self.cmd_diff(args),
+                SkillCommand::Orphan {
+                    command: SkillOrphanCommand::Clean(args),
+                } => self.cmd_skill_orphan_clean(args, &request_id),
             },
             Command::Sync { command } => self.cmd_sync(command),
             Command::Ops { command } => self.cmd_ops(command),

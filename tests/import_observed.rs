@@ -9,6 +9,11 @@ use serde_json::Value;
 use common::actions::target_add;
 use common::{TestDir, run_loom, write_file};
 
+#[cfg(unix)]
+fn symlink_dir(src: &Path, dst: &Path) {
+    std::os::unix::fs::symlink(src, dst).expect("create symlink dir");
+}
+
 fn git_path_exists(root: &Path, path: &str) -> bool {
     Command::new("git")
         .arg("-C")
@@ -131,6 +136,72 @@ fn skill_import_observed_imports_real_skill_dirs_and_commits_them() {
         vec!["already-exists", "already-exists"]
     );
     assert_eq!(repeat_env["data"]["noop"], Value::Bool(true));
+}
+
+#[test]
+#[cfg(unix)]
+fn skill_import_observed_materializes_top_level_symlinked_skill_dirs() {
+    let root = TestDir::new("import-observed-symlink");
+    let observed = root.path().join("observed-skills");
+    let linked_source = root.path().join("linked-source");
+
+    fs::create_dir_all(&observed).expect("create observed dir");
+    write_file(&linked_source.join("skill.md"), "# linked\n");
+    write_file(&linked_source.join("nested/config.txt"), "linked config\n");
+    symlink_dir(&linked_source, &observed.join("linked-skill"));
+
+    let (target_output, _) = target_add(root.path(), "claude", &observed, "observed");
+    assert!(
+        target_output.status.success(),
+        "target add failed: {}",
+        String::from_utf8_lossy(&target_output.stderr)
+    );
+
+    let (import_output, import_env) = run_loom(root.path(), &["skill", "import-observed"]);
+    assert!(
+        import_output.status.success(),
+        "import failed: stderr={} stdout={}",
+        String::from_utf8_lossy(&import_output.stderr),
+        String::from_utf8_lossy(&import_output.stdout)
+    );
+
+    assert_eq!(import_env["data"]["count"], Value::from(1));
+    assert_eq!(imported_skill_names(&import_env), vec!["linked-skill"]);
+    assert_eq!(
+        import_env["data"]["imported"][0]["source_kind"],
+        Value::String("symlink".to_string())
+    );
+    assert_eq!(
+        import_env["data"]["imported"][0]["resolved_source"],
+        Value::String(
+            fs::canonicalize(&linked_source)
+                .expect("canonical linked source")
+                .display()
+                .to_string()
+        )
+    );
+
+    let imported_path = root.path().join("skills/linked-skill");
+    assert!(
+        !fs::symlink_metadata(&imported_path)
+            .expect("imported path metadata")
+            .file_type()
+            .is_symlink(),
+        "registry skill should be materialized as a real directory"
+    );
+    assert_eq!(
+        fs::read_to_string(imported_path.join("skill.md")).expect("read linked skill"),
+        "# linked\n"
+    );
+    assert_eq!(
+        fs::read_to_string(imported_path.join("nested/config.txt")).expect("read nested config"),
+        "linked config\n"
+    );
+    assert!(git_path_exists(root.path(), "skills/linked-skill/skill.md"));
+    assert!(git_path_exists(
+        root.path(),
+        "skills/linked-skill/nested/config.txt"
+    ));
 }
 
 #[test]

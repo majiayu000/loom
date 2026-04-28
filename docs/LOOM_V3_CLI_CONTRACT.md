@@ -348,10 +348,11 @@ Write command.
 Rules:
 
 1. imports real skill directories from observed targets into canonical `skills/<skill-id>`
-2. only directories containing `SKILL.md` are treated as skills
-3. existing canonical skills are skipped, not overwritten
-4. `--target` must reference an observed target when supplied
-5. this is not the removed legacy `skill import` command; it is an explicit bridge from discovered observed targets into the source registry
+2. top-level symlinks to skill directories are materialized into canonical `skills/<skill-id>` as real files
+3. only directories containing `SKILL.md` or `skill.md` are treated as skills
+4. existing canonical skills are skipped, not overwritten
+5. `--target` must reference an observed target when supplied
+6. this is not the removed legacy `skill import` command; it is an explicit bridge from discovered observed targets into the source registry
 
 ### 11.3 `skill project`
 

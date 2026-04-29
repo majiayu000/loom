@@ -12,6 +12,30 @@ use axum::http::{HeaderMap, HeaderValue};
 use serde_json::json;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
+// Exhaustive list of every panel mutation command. Must stay in sync with the
+// 13-row table in docs/LOOM_V3_ARCHITECTURE_DECISIONS.md section 4.1 and the
+// route registrations in `run_panel`.
+const MUTATION_COMMANDS: &[&str] = &[
+    "target.add",
+    "target.remove",
+    "workspace.binding.add",
+    "workspace.binding.remove",
+    "skill.project",
+    "skill.capture",
+    "workspace.remote.set",
+    "ops.retry",
+    "ops.purge",
+    "ops.history.repair",
+    "sync.push",
+    "sync.pull",
+    "sync.replay",
+];
+
+#[test]
+fn mutation_commands_count_is_thirteen() {
+    assert_eq!(MUTATION_COMMANDS.len(), 13);
+}
+
 #[test]
 fn error_envelope_uses_expected_shape() {
     assert_eq!(
@@ -60,21 +84,7 @@ fn ensure_mutation_authorized_rejects_invalid_context_with_envelope() {
     let peer = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 40000);
     let headers = HeaderMap::new();
 
-    for cmd in [
-        "target.add",
-        "target.remove",
-        "workspace.binding.add",
-        "workspace.binding.remove",
-        "skill.project",
-        "skill.capture",
-        "ops.retry",
-        "ops.purge",
-        "ops.history.repair",
-        "workspace.remote.set",
-        "sync.push",
-        "sync.pull",
-        "sync.replay",
-    ] {
+    for cmd in MUTATION_COMMANDS {
         let response = ensure_mutation_authorized(&state, peer, &headers, cmd)
             .unwrap_or_else(|| panic!("guard should reject {cmd} without origin headers"));
         assert_eq!(response.0, StatusCode::FORBIDDEN, "{cmd} status");

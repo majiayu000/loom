@@ -1,8 +1,9 @@
 use std::path::PathBuf;
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
+use serde::Serialize;
 
-#[derive(Debug, Clone, Parser)]
+#[derive(Debug, Clone, Parser, Serialize)]
 #[command(name = "loom")]
 #[command(about = "Loom - Skill manager with Git-native backend")]
 pub struct Cli {
@@ -19,7 +20,7 @@ pub struct Cli {
     pub command: Command,
 }
 
-#[derive(Debug, Clone, Subcommand)]
+#[derive(Debug, Clone, Subcommand, Serialize)]
 pub enum Command {
     #[command(about = "Inspect and configure registry workspace state")]
     Workspace {
@@ -50,7 +51,7 @@ pub enum Command {
     Panel(PanelArgs),
 }
 
-#[derive(Debug, Clone, Subcommand)]
+#[derive(Debug, Clone, Subcommand, Serialize)]
 pub enum WorkspaceCommand {
     #[command(about = "Show registry status, targets, Git state, and pending ops")]
     Status,
@@ -70,7 +71,7 @@ pub enum WorkspaceCommand {
     },
 }
 
-#[derive(Debug, Clone, Args)]
+#[derive(Debug, Clone, Args, Serialize)]
 pub struct WorkspaceInitArgs {
     /// Also scan default agent skill directories (~/.claude/skills,
     /// ~/.codex/skills) and auto-register any that exist as observed
@@ -79,7 +80,7 @@ pub struct WorkspaceInitArgs {
     pub scan_existing: bool,
 }
 
-#[derive(Debug, Clone, Subcommand)]
+#[derive(Debug, Clone, Subcommand, Serialize)]
 pub enum WorkspaceBindingCommand {
     #[command(about = "Create a binding from a workspace matcher to a target")]
     Add(BindingAddArgs),
@@ -91,7 +92,7 @@ pub enum WorkspaceBindingCommand {
     Remove(BindingShowArgs),
 }
 
-#[derive(Debug, Clone, Subcommand)]
+#[derive(Debug, Clone, Subcommand, Serialize)]
 pub enum TargetCommand {
     #[command(about = "Register an agent skill directory as a target")]
     Add(TargetAddArgs),
@@ -103,7 +104,7 @@ pub enum TargetCommand {
     Remove(TargetShowArgs),
 }
 
-#[derive(Debug, Clone, Subcommand)]
+#[derive(Debug, Clone, Subcommand, Serialize)]
 pub enum SkillCommand {
     #[command(about = "Import a skill source into the registry")]
     Add(AddArgs),
@@ -128,19 +129,19 @@ pub enum SkillCommand {
     },
 }
 
-#[derive(Debug, Clone, Subcommand)]
+#[derive(Debug, Clone, Subcommand, Serialize)]
 pub enum SkillOrphanCommand {
     Clean(OrphanCleanArgs),
 }
 
-#[derive(Debug, Clone, Args)]
+#[derive(Debug, Clone, Args, Serialize)]
 pub struct OrphanCleanArgs {
     /// Also delete validated live projection directories.
     #[arg(long)]
     pub delete_live_paths: bool,
 }
 
-#[derive(Debug, Clone, Subcommand)]
+#[derive(Debug, Clone, Subcommand, Serialize)]
 pub enum OpsCommand {
     #[command(about = "List pending operations")]
     List,
@@ -155,7 +156,7 @@ pub enum OpsCommand {
     },
 }
 
-#[derive(Debug, Clone, Subcommand)]
+#[derive(Debug, Clone, Subcommand, Serialize)]
 pub enum OpsHistoryCommand {
     #[command(about = "Report local and remote operation-history health")]
     Diagnose,
@@ -163,19 +164,19 @@ pub enum OpsHistoryCommand {
     Repair(HistoryRepairArgs),
 }
 
-#[derive(Debug, Clone, Args)]
+#[derive(Debug, Clone, Args, Serialize)]
 pub struct HistoryRepairArgs {
     #[arg(long, value_enum)]
     pub strategy: HistoryRepairStrategyArg,
 }
 
-#[derive(Debug, Clone, Copy, ValueEnum)]
+#[derive(Debug, Clone, Copy, ValueEnum, Serialize)]
 pub enum HistoryRepairStrategyArg {
     Local,
     Remote,
 }
 
-#[derive(Debug, Clone, Args)]
+#[derive(Debug, Clone, Args, Serialize)]
 pub struct AddArgs {
     pub source: String,
 
@@ -183,7 +184,7 @@ pub struct AddArgs {
     pub name: String,
 }
 
-#[derive(Debug, Clone, Args)]
+#[derive(Debug, Clone, Args, Serialize)]
 pub struct ProjectArgs {
     pub skill: String,
 
@@ -197,7 +198,7 @@ pub struct ProjectArgs {
     pub method: ProjectionMethod,
 }
 
-#[derive(Debug, Clone, Args)]
+#[derive(Debug, Clone, Args, Serialize)]
 pub struct CaptureArgs {
     pub skill: Option<String>,
 
@@ -211,7 +212,7 @@ pub struct CaptureArgs {
     pub message: Option<String>,
 }
 
-#[derive(Debug, Clone, Args)]
+#[derive(Debug, Clone, Args, Serialize)]
 pub struct SaveArgs {
     pub skill: String,
 
@@ -219,18 +220,18 @@ pub struct SaveArgs {
     pub message: Option<String>,
 }
 
-#[derive(Debug, Clone, Args)]
+#[derive(Debug, Clone, Args, Serialize)]
 pub struct SkillOnlyArgs {
     pub skill: String,
 }
 
-#[derive(Debug, Clone, Args)]
+#[derive(Debug, Clone, Args, Serialize)]
 pub struct ReleaseArgs {
     pub skill: String,
     pub version: String,
 }
 
-#[derive(Debug, Clone, Args)]
+#[derive(Debug, Clone, Args, Serialize)]
 pub struct RollbackArgs {
     pub skill: String,
 
@@ -241,31 +242,31 @@ pub struct RollbackArgs {
     pub steps: Option<u32>,
 }
 
-#[derive(Debug, Clone, Args)]
+#[derive(Debug, Clone, Args, Serialize)]
 pub struct DiffArgs {
     pub skill: String,
     pub from: String,
     pub to: String,
 }
 
-#[derive(Debug, Clone, Args)]
+#[derive(Debug, Clone, Args, Serialize)]
 pub struct ImportObservedArgs {
     #[arg(long)]
     pub target: Option<String>,
 }
 
-#[derive(Debug, Clone, Args)]
+#[derive(Debug, Clone, Args, Serialize)]
 pub struct PanelArgs {
     #[arg(long, default_value_t = 43117)]
     pub port: u16,
 }
 
-#[derive(Debug, Clone, Args)]
+#[derive(Debug, Clone, Args, Serialize)]
 pub struct BindingShowArgs {
     pub binding_id: String,
 }
 
-#[derive(Debug, Clone, Args)]
+#[derive(Debug, Clone, Args, Serialize)]
 pub struct BindingAddArgs {
     #[arg(long, value_enum)]
     pub agent: AgentKind,
@@ -286,12 +287,12 @@ pub struct BindingAddArgs {
     pub policy_profile: String,
 }
 
-#[derive(Debug, Clone, Args)]
+#[derive(Debug, Clone, Args, Serialize)]
 pub struct TargetShowArgs {
     pub target_id: String,
 }
 
-#[derive(Debug, Clone, Args)]
+#[derive(Debug, Clone, Args, Serialize)]
 pub struct TargetAddArgs {
     #[arg(long, value_enum)]
     pub agent: AgentKind,
@@ -303,7 +304,7 @@ pub struct TargetAddArgs {
     pub ownership: TargetOwnership,
 }
 
-#[derive(Debug, Clone, Subcommand)]
+#[derive(Debug, Clone, Subcommand, Serialize)]
 pub enum RemoteCommand {
     #[command(about = "Set the registry Git remote URL")]
     Set { url: String },
@@ -311,7 +312,7 @@ pub enum RemoteCommand {
     Status,
 }
 
-#[derive(Debug, Clone, Subcommand)]
+#[derive(Debug, Clone, Subcommand, Serialize)]
 pub enum SyncCommand {
     #[command(about = "Show Git sync state")]
     Status,

@@ -1,3 +1,4 @@
+mod event_store;
 mod file_ops;
 mod fs_probe;
 mod helpers;
@@ -19,6 +20,7 @@ use crate::types::ErrorCode;
 
 pub use helpers::{collect_skill_inventory, remote_status_payload};
 
+use event_store::{append_command_event, command_event_input};
 use helpers::{command_name, ensure_initial_commit, map_git, map_io};
 
 use crate::gitops;
@@ -65,6 +67,8 @@ impl App {
     }
 
     pub fn execute(&self, cli: Cli) -> Result<(Envelope, i32)> {
+        let cmd = command_name(&cli.command);
+        let input = command_event_input(&cli);
         let request_id = cli.request_id.unwrap_or_else(|| Uuid::new_v4().to_string());
 
         let result = match &cli.command {
@@ -99,18 +103,15 @@ impl App {
 
         match result {
             Ok((data, meta)) => {
-                let env = Envelope::ok(command_name(&cli.command), request_id, data, meta);
+                let env = Envelope::ok(cmd, request_id, data, meta);
+                append_command_event(&self.ctx, cmd, input, &env, 0)?;
                 Ok((env, 0))
             }
             Err(f) => {
-                let env = Envelope::err(
-                    command_name(&cli.command),
-                    request_id,
-                    f.code,
-                    f.message,
-                    f.details,
-                );
-                Ok((env, f.code.exit_code()))
+                let exit_code = f.code.exit_code();
+                let env = Envelope::err(cmd, request_id, f.code, f.message, f.details);
+                append_command_event(&self.ctx, cmd, input, &env, exit_code)?;
+                Ok((env, exit_code))
             }
         }
     }

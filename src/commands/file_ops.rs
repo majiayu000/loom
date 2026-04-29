@@ -40,6 +40,40 @@ pub(crate) fn rollback_added_skill(ctx: &AppContext, skill_rel: &str, dst: &Path
     let _ = gitops::run_git_allow_failure(ctx, &["reset", "HEAD", "--", skill_rel]);
 }
 
+pub(crate) fn restore_path_from_backup(path: &Path, backup: &serde_json::Value) -> Result<()> {
+    let backup_path = backup
+        .get("backup_path")
+        .and_then(serde_json::Value::as_str)
+        .map(Path::new)
+        .ok_or_else(|| anyhow!("backup record missing backup_path"))?;
+    let kind = backup
+        .get("kind")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| anyhow!("backup record missing kind"))?;
+
+    remove_path_if_exists(path)?;
+    match kind {
+        "dir" => copy_dir_recursive(backup_path, path),
+        "file" => {
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent).with_context(|| {
+                    format!("failed to create restore parent {}", parent.display())
+                })?;
+            }
+            fs::copy(backup_path, path).with_context(|| {
+                format!(
+                    "failed to restore file backup {} to {}",
+                    backup_path.display(),
+                    path.display()
+                )
+            })?;
+            Ok(())
+        }
+        "symlink" => restore_symlink_backup(backup_path, path),
+        other => Err(anyhow!("unsupported backup kind '{}'", other)),
+    }
+}
+
 pub(crate) fn backup_path_if_exists(
     ctx: &AppContext,
     path: &Path,
@@ -118,6 +152,26 @@ fn backup_symlink_metadata(src: &Path, dst: &Path) -> Result<()> {
         )
     })?;
     Ok(())
+}
+
+fn restore_symlink_backup(backup_path: &Path, dst: &Path) -> Result<()> {
+    let raw = fs::read_to_string(backup_path.join("symlink.json")).with_context(|| {
+        format!(
+            "failed to read symlink backup metadata under {}",
+            backup_path.display()
+        )
+    })?;
+    let payload: serde_json::Value =
+        serde_json::from_str(&raw).context("failed to parse symlink backup metadata")?;
+    let target = payload
+        .get("target")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| anyhow!("symlink backup missing target"))?;
+    if let Some(parent) = dst.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create restore parent {}", parent.display()))?;
+    }
+    create_symlink_dir(Path::new(target), dst)
 }
 
 pub(crate) fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<()> {

@@ -9,7 +9,10 @@ use crate::cli::{AddArgs, CaptureArgs, ImportObservedArgs, ProjectArgs, SaveArgs
 use crate::envelope::Meta;
 use crate::gitops;
 use crate::state::remove_path_if_exists;
-use crate::state_model::{V3BindingRule, V3ProjectionInstance, V3ProjectionTarget};
+use crate::state_model::{
+    V3BindingRule, V3BindingsFile, V3ProjectionInstance, V3ProjectionTarget, V3ProjectionsFile,
+    V3RulesFile, V3StatePaths,
+};
 use crate::types::ErrorCode;
 
 use super::fs_probe::probe_symlink;
@@ -18,8 +21,8 @@ use super::helpers::{
     ensure_skill_exists, map_arg, map_git, map_io, map_lock, map_project_io, map_v3_state,
     maybe_autosync_or_queue, project_skill_to_target, projection_instance_id,
     projection_method_as_str, record_v3_operation, resolve_capture_projection,
-    rollback_added_skill, update_projection_after_capture, upsert_projection, upsert_rule,
-    validate_projection_method, validate_skill_name,
+    restore_path_from_backup, rollback_added_skill, update_projection_after_capture,
+    upsert_projection, upsert_rule, validate_projection_method, validate_skill_name,
 };
 use super::{App, CommandFailure};
 
@@ -201,11 +204,33 @@ impl App {
         let replaced_projection_backup =
             backup_path_if_exists(&self.ctx, &materialized_path, "project.replace_projection")
                 .map_err(map_io)?;
-        remove_path_if_exists(&materialized_path).map_err(map_io)?;
-        project_skill_to_target(&skill_src, &materialized_path, args.method)
-            .map_err(map_project_io(args.method))?;
+        if let Err(err) = remove_path_if_exists(&materialized_path) {
+            rollback_project_mutation(
+                &paths,
+                &materialized_path,
+                replaced_projection_backup.as_ref(),
+                &snapshot.bindings,
+                &snapshot.rules,
+                &snapshot.projections,
+            );
+            return Err(map_io(err));
+        }
+        if let Err(err) = project_skill_to_target(&skill_src, &materialized_path, args.method) {
+            rollback_project_mutation(
+                &paths,
+                &materialized_path,
+                replaced_projection_backup.as_ref(),
+                &snapshot.bindings,
+                &snapshot.rules,
+                &snapshot.projections,
+            );
+            return Err(map_project_io(args.method)(err));
+        }
 
-        let mut rules = snapshot.rules;
+        let original_bindings = snapshot.bindings.clone();
+        let original_rules = snapshot.rules.clone();
+        let original_projections = snapshot.projections.clone();
+        let mut rules = original_rules.clone();
         upsert_rule(
             &mut rules,
             V3BindingRule {
@@ -217,9 +242,8 @@ impl App {
                 created_at: Some(Utc::now()),
             },
         );
-        paths.save_rules(&rules).map_err(map_v3_state)?;
 
-        let mut projections = snapshot.projections;
+        let mut projections = original_projections.clone();
         let instance_id =
             projection_instance_id(&args.skill, &binding.binding_id, &target.target_id);
         let projection = V3ProjectionInstance {
@@ -235,23 +259,44 @@ impl App {
             updated_at: Some(Utc::now()),
         };
         upsert_projection(&mut projections, projection.clone());
-        paths.save_projections(&projections).map_err(map_v3_state)?;
 
-        let op_id = record_v3_operation(
-            &paths,
-            "skill.project",
-            json!({
-                "skill_id": args.skill,
-                "binding_id": binding.binding_id,
-                "target_id": target.target_id,
-                "method": projection_method_as_str(args.method),
-                "request_id": request_id
-            }),
-            json!({
-                "instance_id": instance_id
-            }),
-        )
-        .map_err(map_v3_state)?;
+        let post_materialize = (|| {
+            maybe_skill_fault("skill_project_after_materialize")?;
+            paths
+                .save_bindings_rules_projections(&original_bindings, &rules, &projections)
+                .map_err(map_v3_state)?;
+            maybe_skill_fault("skill_project_after_state_save")?;
+            record_v3_operation(
+                &paths,
+                "skill.project",
+                json!({
+                    "skill_id": args.skill,
+                    "binding_id": binding.binding_id,
+                    "target_id": target.target_id,
+                    "method": projection_method_as_str(args.method),
+                    "request_id": request_id
+                }),
+                json!({
+                    "instance_id": instance_id
+                }),
+            )
+            .map_err(map_v3_state)
+        })();
+
+        let op_id = match post_materialize {
+            Ok(op_id) => op_id,
+            Err(err) => {
+                rollback_project_mutation(
+                    &paths,
+                    &materialized_path,
+                    replaced_projection_backup.as_ref(),
+                    &original_bindings,
+                    &original_rules,
+                    &original_projections,
+                );
+                return Err(err);
+            }
+        };
 
         Ok((
             json!({"projection": projection, "backup": replaced_projection_backup, "noop": false}),
@@ -284,55 +329,143 @@ impl App {
             ));
         }
 
+        let original_bindings = snapshot.bindings.clone();
+        let original_rules = snapshot.rules.clone();
+        let original_projections = snapshot.projections.clone();
+        let previous_head = gitops::head(&self.ctx).map_err(map_git)?;
         let mut source_backup = None;
+        let mut source_replaced = false;
         if projection.method != "symlink" {
             let tmp_path = self
                 .ctx
                 .state_dir
                 .join(format!("tmp-capture-{}", Uuid::new_v4()));
             let _ = remove_path_if_exists(&tmp_path);
-            copy_dir_recursive(&live_path, &tmp_path).map_err(map_io)?;
-            source_backup = backup_path_if_exists(&self.ctx, &skill_path, "capture.replace_source")
-                .map_err(map_io)?;
-            remove_path_if_exists(&skill_path).map_err(map_io)?;
-            fs::rename(&tmp_path, &skill_path).map_err(map_io)?;
+            if let Err(err) = copy_dir_recursive(&live_path, &tmp_path) {
+                let _ = remove_path_if_exists(&tmp_path);
+                return Err(map_io(err));
+            }
+            source_backup =
+                match backup_path_if_exists(&self.ctx, &skill_path, "capture.replace_source") {
+                    Ok(backup) => backup,
+                    Err(err) => {
+                        let _ = remove_path_if_exists(&tmp_path);
+                        return Err(map_io(err));
+                    }
+                };
+            if let Err(err) = remove_path_if_exists(&skill_path) {
+                rollback_capture_mutation(
+                    &self.ctx,
+                    &skill_rel,
+                    &skill_path,
+                    source_backup.as_ref(),
+                    true,
+                    &previous_head,
+                    false,
+                );
+                rollback_v3_state(
+                    &paths,
+                    &original_bindings,
+                    &original_rules,
+                    &original_projections,
+                );
+                let _ = remove_path_if_exists(&tmp_path);
+                return Err(map_io(err));
+            }
+            if let Err(err) = fs::rename(&tmp_path, &skill_path) {
+                rollback_capture_mutation(
+                    &self.ctx,
+                    &skill_rel,
+                    &skill_path,
+                    source_backup.as_ref(),
+                    true,
+                    &previous_head,
+                    false,
+                );
+                rollback_v3_state(
+                    &paths,
+                    &original_bindings,
+                    &original_rules,
+                    &original_projections,
+                );
+                let _ = remove_path_if_exists(&tmp_path);
+                return Err(map_io(err));
+            }
+            source_replaced = true;
         }
 
-        gitops::stage_path(&self.ctx, Path::new(&skill_rel)).map_err(map_git)?;
-        let changed = gitops::has_staged_changes_for_path(&self.ctx, Path::new(&skill_rel))
-            .map_err(map_git)?;
-        let commit = if changed {
-            let message = args.message.clone().unwrap_or_else(|| {
-                format!(
-                    "capture({}): from {}",
-                    projection.skill_id, projection.instance_id
-                )
-            });
-            Some(gitops::commit(&self.ctx, &message).map_err(map_git)?)
-        } else {
-            None
+        let mut commit_created = false;
+        let post_replace = (|| {
+            maybe_skill_fault("skill_capture_after_source_replace")?;
+            gitops::stage_path(&self.ctx, Path::new(&skill_rel)).map_err(map_git)?;
+            let changed = gitops::has_staged_changes_for_path(&self.ctx, Path::new(&skill_rel))
+                .map_err(map_git)?;
+            let commit = if changed {
+                let message = args.message.clone().unwrap_or_else(|| {
+                    format!(
+                        "capture({}): from {}",
+                        projection.skill_id, projection.instance_id
+                    )
+                });
+                let commit = gitops::commit(&self.ctx, &message).map_err(map_git)?;
+                commit_created = true;
+                Some(commit)
+            } else {
+                None
+            };
+            maybe_skill_fault("skill_capture_after_commit")?;
+            let current_rev = gitops::head(&self.ctx).map_err(map_git)?;
+
+            let mut projections = original_projections.clone();
+            update_projection_after_capture(
+                &mut projections,
+                &projection.instance_id,
+                &current_rev,
+            )?;
+            paths
+                .save_bindings_rules_projections(&original_bindings, &original_rules, &projections)
+                .map_err(map_v3_state)?;
+            maybe_skill_fault("skill_capture_after_state_save")?;
+
+            let op_id = record_v3_operation(
+                &paths,
+                "skill.capture",
+                json!({
+                    "skill_id": projection.skill_id,
+                    "binding_id": projection.binding_id,
+                    "instance_id": projection.instance_id,
+                    "request_id": request_id
+                }),
+                json!({
+                    "instance_id": projection.instance_id,
+                    "commit": commit
+                }),
+            )
+            .map_err(map_v3_state)?;
+            Ok((commit, op_id, changed))
+        })();
+
+        let (commit, op_id, changed) = match post_replace {
+            Ok(result) => result,
+            Err(err) => {
+                rollback_capture_mutation(
+                    &self.ctx,
+                    &skill_rel,
+                    &skill_path,
+                    source_backup.as_ref(),
+                    source_replaced,
+                    &previous_head,
+                    commit_created,
+                );
+                rollback_v3_state(
+                    &paths,
+                    &original_bindings,
+                    &original_rules,
+                    &original_projections,
+                );
+                return Err(err);
+            }
         };
-        let current_rev = gitops::head(&self.ctx).map_err(map_git)?;
-
-        let mut projections = snapshot.projections;
-        update_projection_after_capture(&mut projections, &projection.instance_id, &current_rev)?;
-        paths.save_projections(&projections).map_err(map_v3_state)?;
-
-        let op_id = record_v3_operation(
-            &paths,
-            "skill.capture",
-            json!({
-                "skill_id": projection.skill_id,
-                "binding_id": projection.binding_id,
-                "instance_id": projection.instance_id,
-                "request_id": request_id
-            }),
-            json!({
-                "instance_id": projection.instance_id,
-                "commit": commit
-            }),
-        )
-        .map_err(map_v3_state)?;
 
         Ok((
             json!({
@@ -676,6 +809,75 @@ impl App {
 
         Ok((json!({"skill": args.skill, "tag": tag}), meta))
     }
+}
+
+fn maybe_skill_fault(tag: &str) -> std::result::Result<(), CommandFailure> {
+    if std::env::var("LOOM_FAULT_INJECT").ok().as_deref() == Some(tag) {
+        return Err(CommandFailure::new(
+            ErrorCode::InternalError,
+            format!("fault injected at {}", tag),
+        ));
+    }
+    Ok(())
+}
+
+fn rollback_project_mutation(
+    paths: &V3StatePaths,
+    materialized_path: &Path,
+    backup: Option<&serde_json::Value>,
+    original_bindings: &V3BindingsFile,
+    original_rules: &V3RulesFile,
+    original_projections: &V3ProjectionsFile,
+) {
+    if let Some(backup) = backup {
+        let _ = restore_path_from_backup(materialized_path, backup);
+    } else {
+        let _ = remove_path_if_exists(materialized_path);
+    }
+    rollback_v3_state(
+        paths,
+        original_bindings,
+        original_rules,
+        original_projections,
+    );
+}
+
+fn rollback_capture_mutation(
+    ctx: &crate::state::AppContext,
+    skill_rel: &str,
+    skill_path: &Path,
+    source_backup: Option<&serde_json::Value>,
+    source_replaced: bool,
+    previous_head: &str,
+    commit_created: bool,
+) {
+    if commit_created {
+        // Preserve worktree content while removing only the command-created commit.
+        let _ = gitops::run_git_allow_failure(ctx, &["reset", "--soft", previous_head]);
+    }
+
+    if source_replaced {
+        if let Some(backup) = source_backup {
+            let _ = restore_path_from_backup(skill_path, backup);
+        } else {
+            let _ = remove_path_if_exists(skill_path);
+        }
+    }
+
+    let _ = gitops::run_git_allow_failure(ctx, &["reset", "HEAD", "--", skill_rel]);
+}
+
+fn rollback_v3_state(
+    paths: &V3StatePaths,
+    original_bindings: &V3BindingsFile,
+    original_rules: &V3RulesFile,
+    original_projections: &V3ProjectionsFile,
+) {
+    let _ = paths.save_bindings_rules_projections(
+        original_bindings,
+        original_rules,
+        original_projections,
+    );
 }
 
 fn observed_import_targets(

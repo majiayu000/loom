@@ -5,6 +5,36 @@ mod common;
 use common::TestDir;
 
 #[test]
+fn top_level_help_describes_command_groups() {
+    let output = Command::new(env!("CARGO_BIN_EXE_loom"))
+        .arg("--help")
+        .output()
+        .expect("run loom help");
+
+    assert!(
+        output.status.success(),
+        "help unexpectedly failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    for expected in [
+        "Inspect and configure registry workspace state",
+        "Register and inspect agent skill directories",
+        "Manage skill sources, projections, and versions",
+        "Synchronize the registry through its Git remote",
+        "Inspect, replay, and repair operation history",
+        "Serve the local registry control panel",
+    ] {
+        assert!(
+            stdout.contains(expected),
+            "help missing command description {expected:?}: {stdout}"
+        );
+    }
+}
+
+#[test]
 fn migrate_subcommand_is_removed() {
     let root = TestDir::new("cli-no-migrate");
 

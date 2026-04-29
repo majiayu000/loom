@@ -236,6 +236,33 @@ fn workspace_status_is_read_only_in_empty_dir() {
 }
 
 #[test]
+fn workspace_status_warns_when_command_audit_preflight_is_unavailable() {
+    let root = TestDir::new("status-audit-warning");
+    let events_dir = root.path().join("state/events");
+    if let Some(parent) = events_dir.parent() {
+        fs::create_dir_all(parent).expect("create state dir");
+    }
+    fs::write(&events_dir, "not a directory\n").expect("block command event dir");
+
+    let (output, env) = run_loom_with_env(root.path(), &[], &["workspace", "status"]);
+
+    assert!(
+        output.status.success(),
+        "status should stay usable when audit preflight cannot write"
+    );
+    assert_eq!(env["ok"], Value::Bool(true));
+    assert!(
+        env["meta"]["warnings"]
+            .as_array()
+            .expect("warnings array")
+            .iter()
+            .filter_map(serde_json::Value::as_str)
+            .any(|warning| warning.contains("failed to prepare command event log"))
+    );
+    assert!(!root.path().join("state/v3").exists());
+}
+
+#[test]
 fn failed_command_emits_durable_command_event() {
     let root = TestDir::new("failed-command-event");
 

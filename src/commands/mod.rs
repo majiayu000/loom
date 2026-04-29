@@ -13,7 +13,10 @@ use anyhow::Result;
 use serde_json::json;
 use uuid::Uuid;
 
-use crate::cli::{Cli, Command, SkillCommand, SkillOrphanCommand, WorkspaceCommand};
+use crate::cli::{
+    Cli, Command, OpsCommand, OpsHistoryCommand, RemoteCommand, SkillCommand, SkillOrphanCommand,
+    SyncCommand, TargetCommand, WorkspaceBindingCommand, WorkspaceCommand,
+};
 use crate::envelope::{Envelope, Meta};
 use crate::state::AppContext;
 use crate::types::ErrorCode;
@@ -76,25 +79,39 @@ impl App {
             .clone()
             .unwrap_or_else(|| Uuid::new_v4().to_string());
         let input = command_event_input(&cli, &request_id);
-        if let Err(err) = prepare_command_event_store(&self.ctx) {
-            let env = Envelope::err(
-                cmd,
-                request_id,
-                ErrorCode::InternalError,
-                format!("failed to prepare command event log: {}", err),
-                json!({}),
-            );
-            return Ok((env, ErrorCode::InternalError.exit_code()));
-        }
-        if let Err(err) = append_command_started(&self.ctx, cmd, input, &request_id) {
-            let env = Envelope::err(
-                cmd,
-                request_id,
-                ErrorCode::InternalError,
-                format!("failed to append command event: {}", err),
-                json!({}),
-            );
-            return Ok((env, ErrorCode::InternalError.exit_code()));
+        let audit_required = command_requires_durable_audit(&cli.command);
+        let mut audit_started = false;
+        let mut audit_warning = None;
+        match prepare_command_event_store(&self.ctx) {
+            Ok(()) => match append_command_started(&self.ctx, cmd, input, &request_id) {
+                Ok(()) => audit_started = true,
+                Err(err) if audit_required => {
+                    let env = Envelope::err(
+                        cmd,
+                        request_id,
+                        ErrorCode::InternalError,
+                        format!("failed to append command event: {}", err),
+                        json!({}),
+                    );
+                    return Ok((env, ErrorCode::InternalError.exit_code()));
+                }
+                Err(err) => {
+                    audit_warning = Some(format!("failed to append command event: {}", err));
+                }
+            },
+            Err(err) if audit_required => {
+                let env = Envelope::err(
+                    cmd,
+                    request_id,
+                    ErrorCode::InternalError,
+                    format!("failed to prepare command event log: {}", err),
+                    json!({}),
+                );
+                return Ok((env, ErrorCode::InternalError.exit_code()));
+            }
+            Err(err) => {
+                audit_warning = Some(format!("failed to prepare command event log: {}", err));
+            }
         }
 
         let result = match &cli.command {
@@ -130,20 +147,30 @@ impl App {
         match result {
             Ok((data, meta)) => {
                 let mut env = Envelope::ok(cmd, request_id, data, meta);
-                if let Err(err) = append_command_finished(&self.ctx, cmd, &env, 0) {
-                    env.meta
-                        .warnings
-                        .push(format!("failed to append command event: {}", err));
+                if let Some(warning) = audit_warning.take() {
+                    env.meta.warnings.push(warning);
+                }
+                if audit_started {
+                    if let Err(err) = append_command_finished(&self.ctx, cmd, &env, 0) {
+                        env.meta
+                            .warnings
+                            .push(format!("failed to append command event: {}", err));
+                    }
                 }
                 Ok((env, 0))
             }
             Err(f) => {
                 let exit_code = f.code.exit_code();
                 let mut env = Envelope::err(cmd, request_id, f.code, f.message, f.details);
-                if let Err(err) = append_command_finished(&self.ctx, cmd, &env, exit_code) {
-                    env.meta
-                        .warnings
-                        .push(format!("failed to append command event: {}", err));
+                if let Some(warning) = audit_warning.take() {
+                    env.meta.warnings.push(warning);
+                }
+                if audit_started {
+                    if let Err(err) = append_command_finished(&self.ctx, cmd, &env, exit_code) {
+                        env.meta
+                            .warnings
+                            .push(format!("failed to append command event: {}", err));
+                    }
                 }
                 Ok((env, exit_code))
             }
@@ -167,5 +194,43 @@ impl App {
         let paths = V3StatePaths::from_app_context(&self.ctx);
         paths.ensure_layout().map_err(helpers::map_v3_state)?;
         Ok(paths)
+    }
+}
+
+fn command_requires_durable_audit(command: &Command) -> bool {
+    match command {
+        Command::Workspace { command } => match command {
+            WorkspaceCommand::Status | WorkspaceCommand::Doctor => false,
+            WorkspaceCommand::Init(_) => true,
+            WorkspaceCommand::Binding { command } => !matches!(
+                command,
+                WorkspaceBindingCommand::List | WorkspaceBindingCommand::Show(_)
+            ),
+            WorkspaceCommand::Remote { command } => !matches!(command, RemoteCommand::Status),
+        },
+        Command::Target { command } => {
+            !matches!(command, TargetCommand::List | TargetCommand::Show(_))
+        }
+        Command::Skill { command } => matches!(
+            command,
+            SkillCommand::Add(_)
+                | SkillCommand::ImportObserved(_)
+                | SkillCommand::Project(_)
+                | SkillCommand::Capture(_)
+                | SkillCommand::Save(_)
+                | SkillCommand::Snapshot(_)
+                | SkillCommand::Release(_)
+                | SkillCommand::Rollback(_)
+                | SkillCommand::Orphan {
+                    command: SkillOrphanCommand::Clean(_)
+                }
+        ),
+        Command::Sync { command } => !matches!(command, SyncCommand::Status),
+        Command::Ops { command } => match command {
+            OpsCommand::List => false,
+            OpsCommand::Retry | OpsCommand::Purge => true,
+            OpsCommand::History { command } => !matches!(command, OpsHistoryCommand::Diagnose),
+        },
+        Command::Panel(_) => false,
     }
 }

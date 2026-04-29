@@ -20,7 +20,10 @@ use crate::types::ErrorCode;
 
 pub use helpers::{collect_skill_inventory, remote_status_payload};
 
-use event_store::{append_command_event, command_event_input, prepare_command_event_store};
+use event_store::{
+    append_command_finished, append_command_started, command_event_input,
+    prepare_command_event_store,
+};
 use helpers::{command_name, ensure_initial_commit, map_git, map_io};
 
 use crate::gitops;
@@ -68,14 +71,27 @@ impl App {
 
     pub fn execute(&self, cli: Cli) -> Result<(Envelope, i32)> {
         let cmd = command_name(&cli.command);
-        let input = command_event_input(&cli);
-        let request_id = cli.request_id.unwrap_or_else(|| Uuid::new_v4().to_string());
+        let request_id = cli
+            .request_id
+            .clone()
+            .unwrap_or_else(|| Uuid::new_v4().to_string());
+        let input = command_event_input(&cli, &request_id);
         if let Err(err) = prepare_command_event_store(&self.ctx) {
             let env = Envelope::err(
                 cmd,
                 request_id,
                 ErrorCode::InternalError,
                 format!("failed to prepare command event log: {}", err),
+                json!({}),
+            );
+            return Ok((env, ErrorCode::InternalError.exit_code()));
+        }
+        if let Err(err) = append_command_started(&self.ctx, cmd, input, &request_id) {
+            let env = Envelope::err(
+                cmd,
+                request_id,
+                ErrorCode::InternalError,
+                format!("failed to append command event: {}", err),
                 json!({}),
             );
             return Ok((env, ErrorCode::InternalError.exit_code()));
@@ -114,7 +130,7 @@ impl App {
         match result {
             Ok((data, meta)) => {
                 let mut env = Envelope::ok(cmd, request_id, data, meta);
-                if let Err(err) = append_command_event(&self.ctx, cmd, input, &env, 0) {
+                if let Err(err) = append_command_finished(&self.ctx, cmd, &env, 0) {
                     env.meta
                         .warnings
                         .push(format!("failed to append command event: {}", err));
@@ -124,7 +140,7 @@ impl App {
             Err(f) => {
                 let exit_code = f.code.exit_code();
                 let mut env = Envelope::err(cmd, request_id, f.code, f.message, f.details);
-                if let Err(err) = append_command_event(&self.ctx, cmd, input, &env, exit_code) {
+                if let Err(err) = append_command_finished(&self.ctx, cmd, &env, exit_code) {
                     env.meta
                         .warnings
                         .push(format!("failed to append command event: {}", err));

@@ -220,15 +220,17 @@ fn workspace_status_is_read_only_in_empty_dir() {
     assert!(!root.path().join("skills").exists());
 
     let events = read_command_events(root.path());
-    assert_eq!(events.len(), 1);
+    assert_eq!(events.len(), 2);
+    assert_eq!(events[0]["status"], Value::String("started".to_string()));
     assert_eq!(
         events[0]["cmd"],
         Value::String("workspace.status".to_string())
     );
-    assert_eq!(events[0]["status"], Value::String("succeeded".to_string()));
-    assert_eq!(events[0]["exit_code"], Value::from(0));
+    assert!(events[0]["input"]["request_id"].as_str().is_some());
+    assert_eq!(events[1]["status"], Value::String("succeeded".to_string()));
+    assert_eq!(events[1]["exit_code"], Value::from(0));
     assert_eq!(
-        events[0]["output"]["state_model"],
+        events[1]["output"]["state_model"],
         Value::String("v3".to_string())
     );
 }
@@ -243,18 +245,51 @@ fn failed_command_emits_durable_command_event() {
     assert_eq!(env["ok"], Value::Bool(false));
 
     let events = read_command_events(root.path());
-    assert_eq!(events.len(), 1);
+    assert_eq!(events.len(), 2);
     assert_eq!(events[0]["cmd"], Value::String("skill.capture".to_string()));
-    assert_eq!(events[0]["status"], Value::String("failed".to_string()));
-    assert_eq!(events[0]["exit_code"], Value::from(2));
+    assert_eq!(events[0]["status"], Value::String("started".to_string()));
+    assert!(events[0]["input"]["request_id"].as_str().is_some());
+    assert_eq!(events[1]["status"], Value::String("failed".to_string()));
+    assert_eq!(events[1]["exit_code"], Value::from(2));
     assert_eq!(
-        events[0]["error"]["code"],
+        events[1]["error"]["code"],
         Value::String("ARG_INVALID".to_string())
     );
     assert!(
         events[0]["input"]["command"]["Skill"]["command"]["Capture"].is_object(),
         "command input should preserve structured capture args"
     );
+}
+
+#[test]
+fn finish_append_failure_still_leaves_started_audit_record() {
+    let root = TestDir::new("finish-append-failure");
+
+    let (output, env) = run_loom_with_env(
+        root.path(),
+        &[("LOOM_FAULT_INJECT", "command_event_append_finished")],
+        &["workspace", "status"],
+    );
+
+    assert!(output.status.success(), "status should still succeed");
+    assert_eq!(env["ok"], Value::Bool(true));
+    assert!(
+        env["meta"]["warnings"]
+            .as_array()
+            .expect("warnings array")
+            .iter()
+            .filter_map(serde_json::Value::as_str)
+            .any(|warning| warning.contains("failed to append command event"))
+    );
+
+    let events = read_command_events(root.path());
+    assert_eq!(events.len(), 1);
+    assert_eq!(
+        events[0]["cmd"],
+        Value::String("workspace.status".to_string())
+    );
+    assert_eq!(events[0]["status"], Value::String("started".to_string()));
+    assert!(events[0]["input"]["request_id"].as_str().is_some());
 }
 
 #[test]

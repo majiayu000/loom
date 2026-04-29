@@ -114,6 +114,26 @@ Non-goal:
 
 This decision does not make the panel the primary control plane. The CLI remains the authoritative write contract.
 
+### 4.1 Mutation Route Table (v1 phase 1 frozen surface)
+
+The following 13 routes are the complete mutation surface for phase 1. Every row passes through `ensure_mutation_authorized` then `run_panel_command`. Adding a new POST route without a corresponding row in this table is an explicit contract break requiring a section-4 update.
+
+| cmd name                 | HTTP | path                                    | CLI command                  |
+|--------------------------|------|-----------------------------------------|------------------------------|
+| target.add               | POST | /api/v3/targets                         | Target::Add                  |
+| target.remove            | POST | /api/v3/targets/{target_id}/remove      | Target::Remove               |
+| workspace.binding.add    | POST | /api/v3/bindings                        | Workspace::Binding::Add      |
+| workspace.binding.remove | POST | /api/v3/bindings/{binding_id}/remove    | Workspace::Binding::Remove   |
+| skill.project            | POST | /api/v3/project                         | Skill::Project               |
+| skill.capture            | POST | /api/v3/capture                         | Skill::Capture               |
+| workspace.remote.set     | POST | /api/remote/set                         | Workspace::Remote::Set       |
+| ops.retry                | POST | /api/ops/retry                          | Ops::Retry                   |
+| ops.purge                | POST | /api/ops/purge                          | Ops::Purge                   |
+| ops.history.repair       | POST | /api/ops/history/repair                 | Ops::History::Repair         |
+| sync.push                | POST | /api/sync/push                          | Sync::Push                   |
+| sync.pull                | POST | /api/sync/pull                          | Sync::Pull                   |
+| sync.replay              | POST | /api/sync/replay                        | Sync::Replay                 |
+
 ## 5. Environment-Based Discovery
 
 Decision: environment-based discovery is advisory. Registered v3 state is authoritative.

@@ -269,3 +269,139 @@ fn skill_project_rolls_back_projection_after_post_materialize_failure() {
         "projection state should roll back"
     );
 }
+
+#[test]
+fn skill_project_eventstore_preflight_failure_blocks_mutation() {
+    let root = TestDir::new("v3-skill-project-eventstore-preflight");
+    write_example_skill(root.path(), "model-onboarding");
+
+    assert!(
+        save_skill(root.path(), "model-onboarding")
+            .0
+            .status
+            .success()
+    );
+
+    let target_path = root.path().join("live/claude-project-a");
+    assert!(
+        target_add(root.path(), "claude", &target_path, "managed")
+            .0
+            .status
+            .success()
+    );
+    assert!(
+        binding_add(
+            root.path(),
+            "claude",
+            "default",
+            "path-prefix",
+            "/tmp/project-a",
+            "target_claude_claude_project_a",
+        )
+        .0
+        .status
+        .success()
+    );
+
+    let events_dir = root.path().join("state/events");
+    fs::remove_dir_all(&events_dir).expect("remove command events dir");
+    fs::write(&events_dir, "not a directory\n").expect("block command event dir");
+
+    let (project_output, project_env) = run_loom_with_env(
+        root.path(),
+        &[],
+        &[
+            "skill",
+            "project",
+            "model-onboarding",
+            "--binding",
+            "bind_claude_project_a",
+            "--method",
+            "copy",
+        ],
+    );
+
+    assert!(
+        !project_output.status.success(),
+        "project unexpectedly succeeded"
+    );
+    assert_eq!(project_env["ok"], Value::Bool(false));
+    assert_eq!(
+        project_env["error"]["code"],
+        Value::String("INTERNAL_ERROR".to_string())
+    );
+    assert!(
+        !target_path.join("model-onboarding/SKILL.md").exists(),
+        "projection should not be materialized when audit preflight fails"
+    );
+
+    let rules = fs::read_to_string(root.path().join("state/v3/rules.json")).expect("read rules");
+    let projections = fs::read_to_string(root.path().join("state/v3/projections.json"))
+        .expect("read projections");
+    assert!(!rules.contains("model-onboarding"));
+    assert!(!projections.contains("model-onboarding"));
+}
+
+#[test]
+fn skill_project_append_failure_does_not_report_failed_mutation() {
+    let root = TestDir::new("v3-skill-project-eventstore-append");
+    write_example_skill(root.path(), "model-onboarding");
+
+    assert!(
+        save_skill(root.path(), "model-onboarding")
+            .0
+            .status
+            .success()
+    );
+
+    let target_path = root.path().join("live/claude-project-a");
+    assert!(
+        target_add(root.path(), "claude", &target_path, "managed")
+            .0
+            .status
+            .success()
+    );
+    assert!(
+        binding_add(
+            root.path(),
+            "claude",
+            "default",
+            "path-prefix",
+            "/tmp/project-a",
+            "target_claude_claude_project_a",
+        )
+        .0
+        .status
+        .success()
+    );
+
+    let (project_output, project_env) = run_loom_with_env(
+        root.path(),
+        &[("LOOM_FAULT_INJECT", "command_event_append")],
+        &[
+            "skill",
+            "project",
+            "model-onboarding",
+            "--binding",
+            "bind_claude_project_a",
+            "--method",
+            "copy",
+        ],
+    );
+
+    assert!(
+        project_output.status.success(),
+        "append failure should not turn completed mutation into command failure"
+    );
+    assert_eq!(project_env["ok"], Value::Bool(true));
+    assert!(
+        project_env["meta"]["warnings"][0]
+            .as_str()
+            .unwrap_or_default()
+            .contains("failed to append command event")
+    );
+    assert!(
+        target_path.join("model-onboarding/SKILL.md").exists(),
+        "successful mutation should remain materialized"
+    );
+}

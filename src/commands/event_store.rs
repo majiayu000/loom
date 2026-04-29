@@ -45,6 +45,7 @@ pub(crate) fn append_command_event(
     envelope: &Envelope,
     exit_code: i32,
 ) -> Result<()> {
+    maybe_fault_inject("command_event_append")?;
     let event = CommandEvent {
         event_id: format!("evt_{}", Uuid::new_v4().simple()),
         request_id: envelope.request_id.clone(),
@@ -83,6 +84,31 @@ pub(crate) fn append_command_event(
         .with_context(|| format!("failed to append command event {}", path.display()))?;
     file.sync_all()
         .with_context(|| format!("failed to sync command event {}", path.display()))?;
+    Ok(())
+}
+
+pub(crate) fn prepare_command_event_store(ctx: &AppContext) -> Result<()> {
+    maybe_fault_inject("command_event_prepare")?;
+    let path = ctx.state_dir.join("events/commands.jsonl");
+    let parent = path
+        .parent()
+        .context("command event path must have a parent directory")?;
+    fs::create_dir_all(parent)
+        .with_context(|| format!("failed to create command event dir {}", parent.display()))?;
+    let file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+        .with_context(|| format!("failed to open command event log {}", path.display()))?;
+    file.sync_all()
+        .with_context(|| format!("failed to sync command event {}", path.display()))?;
+    Ok(())
+}
+
+fn maybe_fault_inject(tag: &str) -> Result<()> {
+    if std::env::var("LOOM_FAULT_INJECT").ok().as_deref() == Some(tag) {
+        return Err(anyhow::anyhow!("fault injected at {}", tag));
+    }
     Ok(())
 }
 

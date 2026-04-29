@@ -220,13 +220,72 @@ pub(crate) fn record_v3_operation(
         created_at: now,
         updated_at: now,
     };
-    paths.append_operation(&record)?;
+    let operations_backup = fs::read(&paths.operations_file).with_context(|| {
+        format!(
+            "failed to snapshot operations log {} before append",
+            paths.operations_file.display()
+        )
+    })?;
+    let checkpoint_backup = fs::read(&paths.checkpoint_file).with_context(|| {
+        format!(
+            "failed to snapshot checkpoint {} before update",
+            paths.checkpoint_file.display()
+        )
+    })?;
 
-    let mut checkpoint = paths.load_checkpoint()?;
-    checkpoint.last_scanned_op_id = Some(op_id.clone());
-    checkpoint.updated_at = now;
-    paths.save_checkpoint(&checkpoint)?;
+    let persist_result: Result<()> = (|| -> Result<()> {
+        paths.append_operation(&record)?;
+        maybe_projection_fault("record_v3_operation_after_append")?;
+
+        let mut checkpoint = paths.load_checkpoint()?;
+        checkpoint.last_scanned_op_id = Some(op_id.clone());
+        checkpoint.updated_at = now;
+        paths.save_checkpoint(&checkpoint)?;
+        maybe_projection_fault("record_v3_operation_after_checkpoint")?;
+        Ok(())
+    })();
+
+    if let Err(err) = persist_result {
+        if let Err(rollback_err) =
+            rollback_record_v3_operation(paths, &operations_backup, &checkpoint_backup)
+        {
+            return Err(err.context(format!(
+                "failed to rollback v3 operation record after partial write: {}",
+                rollback_err
+            )));
+        }
+        return Err(err);
+    }
+
     Ok(op_id)
+}
+
+fn maybe_projection_fault(tag: &str) -> Result<()> {
+    if std::env::var("LOOM_FAULT_INJECT").ok().as_deref() == Some(tag) {
+        return Err(anyhow::anyhow!("fault injected at {}", tag));
+    }
+    Ok(())
+}
+
+fn rollback_record_v3_operation(
+    paths: &V3StatePaths,
+    operations_backup: &[u8],
+    checkpoint_backup: &[u8],
+) -> Result<()> {
+    restore_raw_file(&paths.operations_file, operations_backup)?;
+    restore_raw_file(&paths.checkpoint_file, checkpoint_backup)?;
+    Ok(())
+}
+
+fn restore_raw_file(path: &Path, contents: &[u8]) -> Result<()> {
+    let parent = path
+        .parent()
+        .context("cannot restore file without parent directory")?;
+    fs::create_dir_all(parent)
+        .with_context(|| format!("failed to create restore dir {}", parent.display()))?;
+    fs::write(path, contents)
+        .with_context(|| format!("failed to restore file {}", path.display()))?;
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------

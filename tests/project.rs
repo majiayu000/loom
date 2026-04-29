@@ -12,6 +12,14 @@ fn write_example_skill(root: &std::path::Path, skill: &str) {
     write_skill(root, skill, &format!("# {}\n\nexample skill\n", skill));
 }
 
+fn read_operations_log(root: &std::path::Path) -> String {
+    fs::read_to_string(root.join("state/v3/ops/operations.jsonl")).expect("read operations log")
+}
+
+fn read_checkpoint(root: &std::path::Path) -> String {
+    fs::read_to_string(root.join("state/v3/ops/checkpoint.json")).expect("read checkpoint")
+}
+
 #[test]
 fn skill_project_creates_projection_rule_and_instance() {
     let root = TestDir::new("v3-skill-project");
@@ -404,4 +412,85 @@ fn skill_project_append_failure_does_not_report_failed_mutation() {
         target_path.join("model-onboarding/SKILL.md").exists(),
         "successful mutation should remain materialized"
     );
+}
+
+#[test]
+fn skill_project_rolls_back_operation_log_after_append_failure() {
+    let root = TestDir::new("v3-skill-project-oplog-rollback");
+    write_example_skill(root.path(), "model-onboarding");
+
+    assert!(
+        save_skill(root.path(), "model-onboarding")
+            .0
+            .status
+            .success()
+    );
+
+    let target_path = root.path().join("live/claude-project-a");
+    assert!(
+        target_add(root.path(), "claude", &target_path, "managed")
+            .0
+            .status
+            .success()
+    );
+    assert!(
+        binding_add(
+            root.path(),
+            "claude",
+            "default",
+            "path-prefix",
+            "/tmp/project-a",
+            "target_claude_claude_project_a",
+        )
+        .0
+        .status
+        .success()
+    );
+
+    let existing_projection = target_path.join("model-onboarding");
+    fs::create_dir_all(&existing_projection).expect("create existing projection path");
+    fs::write(
+        existing_projection.join("legacy.txt"),
+        "legacy projection content",
+    )
+    .expect("write legacy projection marker");
+
+    let operations_before = read_operations_log(root.path());
+    let checkpoint_before = read_checkpoint(root.path());
+
+    let (project_output, project_env) = run_loom_with_env(
+        root.path(),
+        &[("LOOM_FAULT_INJECT", "record_v3_operation_after_append")],
+        &[
+            "skill",
+            "project",
+            "model-onboarding",
+            "--binding",
+            "bind_claude_project_a",
+            "--method",
+            "copy",
+        ],
+    );
+
+    assert!(
+        !project_output.status.success(),
+        "project unexpectedly succeeded"
+    );
+    assert_eq!(project_env["ok"], Value::Bool(false));
+    assert!(
+        existing_projection.join("legacy.txt").exists(),
+        "legacy projection should be restored after operation-log failure"
+    );
+    assert!(
+        !existing_projection.join("SKILL.md").exists(),
+        "failed projection should not leave copied skill files"
+    );
+
+    let rules = fs::read_to_string(root.path().join("state/v3/rules.json")).expect("read rules");
+    let projections = fs::read_to_string(root.path().join("state/v3/projections.json"))
+        .expect("read projections");
+    assert!(!rules.contains("model-onboarding"));
+    assert!(!projections.contains("model-onboarding"));
+    assert_eq!(read_operations_log(root.path()), operations_before);
+    assert_eq!(read_checkpoint(root.path()), checkpoint_before);
 }

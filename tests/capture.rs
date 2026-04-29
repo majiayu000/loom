@@ -8,6 +8,14 @@ mod common;
 use common::actions::{binding_add, save_skill, skill_project, target_add};
 use common::{TestDir, run_loom, run_loom_with_env, write_skill};
 
+fn read_operations_log(root: &std::path::Path) -> String {
+    fs::read_to_string(root.join("state/v3/ops/operations.jsonl")).expect("read operations log")
+}
+
+fn read_checkpoint(root: &std::path::Path) -> String {
+    fs::read_to_string(root.join("state/v3/ops/checkpoint.json")).expect("read checkpoint")
+}
+
 #[test]
 fn skill_capture_copies_live_projection_back_into_source_and_commits() {
     let root = TestDir::new("v3-capture");
@@ -203,4 +211,95 @@ fn skill_capture_requires_explicit_selector() {
         env["error"]["code"],
         Value::String("ARG_INVALID".to_string())
     );
+}
+
+#[test]
+fn skill_capture_rolls_back_operation_log_after_append_failure() {
+    let root = TestDir::new("v3-capture-oplog-rollback");
+    write_skill(
+        root.path(),
+        "model-onboarding",
+        "# model-onboarding\n\nsource v1\n",
+    );
+
+    assert!(
+        save_skill(root.path(), "model-onboarding")
+            .0
+            .status
+            .success()
+    );
+
+    let target_path = root.path().join("live/claude-project-a");
+    assert!(
+        target_add(root.path(), "claude", &target_path, "managed")
+            .0
+            .status
+            .success()
+    );
+    assert!(
+        binding_add(
+            root.path(),
+            "claude",
+            "default",
+            "path-prefix",
+            "/tmp/project-a",
+            "target_claude_claude_project_a",
+        )
+        .0
+        .status
+        .success()
+    );
+    assert!(
+        skill_project(
+            root.path(),
+            "model-onboarding",
+            "bind_claude_project_a",
+            Some("copy"),
+        )
+        .0
+        .status
+        .success()
+    );
+
+    let live_file = target_path.join("model-onboarding").join("SKILL.md");
+    fs::write(
+        &live_file,
+        "# model-onboarding\n\ncaptured from live copy\n",
+    )
+    .expect("edit live projection");
+
+    let operations_before = read_operations_log(root.path());
+    let checkpoint_before = read_checkpoint(root.path());
+
+    let (capture_output, capture_env) = run_loom_with_env(
+        root.path(),
+        &[("LOOM_FAULT_INJECT", "record_v3_operation_after_append")],
+        &[
+            "skill",
+            "capture",
+            "model-onboarding",
+            "--binding",
+            "bind_claude_project_a",
+        ],
+    );
+
+    assert!(
+        !capture_output.status.success(),
+        "capture unexpectedly succeeded"
+    );
+    assert_eq!(capture_env["ok"], Value::Bool(false));
+
+    let source_file = root.path().join("skills/model-onboarding/SKILL.md");
+    let source_body = fs::read_to_string(source_file).expect("read source skill");
+    assert!(
+        source_body.contains("source v1"),
+        "source skill should be restored after operation-log failure"
+    );
+    let live_body = fs::read_to_string(live_file).expect("read live projection");
+    assert!(
+        live_body.contains("captured from live copy"),
+        "live projection edit should be preserved for retry"
+    );
+    assert_eq!(read_operations_log(root.path()), operations_before);
+    assert_eq!(read_checkpoint(root.path()), checkpoint_before);
 }

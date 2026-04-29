@@ -22,6 +22,14 @@ fn run_loom_ok(root: &Path, args: &[&str]) -> Value {
     env
 }
 
+fn read_command_events(root: &Path) -> Vec<Value> {
+    let raw = fs::read_to_string(root.join("state/events/commands.jsonl"))
+        .expect("read command event log");
+    raw.lines()
+        .map(|line| serde_json::from_str(line).expect("parse command event"))
+        .collect()
+}
+
 fn run_git<I, S>(args: I) -> Output
 where
     I: IntoIterator<Item = S>,
@@ -208,8 +216,45 @@ fn workspace_status_is_read_only_in_empty_dir() {
 
     assert_eq!(env["ok"], true);
     assert!(!root.path().join(".git").exists());
-    assert!(!root.path().join("state").exists());
+    assert!(!root.path().join("state/v3").exists());
     assert!(!root.path().join("skills").exists());
+
+    let events = read_command_events(root.path());
+    assert_eq!(events.len(), 1);
+    assert_eq!(
+        events[0]["cmd"],
+        Value::String("workspace.status".to_string())
+    );
+    assert_eq!(events[0]["status"], Value::String("succeeded".to_string()));
+    assert_eq!(events[0]["exit_code"], Value::from(0));
+    assert_eq!(
+        events[0]["output"]["state_model"],
+        Value::String("v3".to_string())
+    );
+}
+
+#[test]
+fn failed_command_emits_durable_command_event() {
+    let root = TestDir::new("failed-command-event");
+
+    let (output, env) = run_loom_with_env(root.path(), &[], &["skill", "capture"]);
+
+    assert!(!output.status.success(), "capture unexpectedly succeeded");
+    assert_eq!(env["ok"], Value::Bool(false));
+
+    let events = read_command_events(root.path());
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0]["cmd"], Value::String("skill.capture".to_string()));
+    assert_eq!(events[0]["status"], Value::String("failed".to_string()));
+    assert_eq!(events[0]["exit_code"], Value::from(2));
+    assert_eq!(
+        events[0]["error"]["code"],
+        Value::String("ARG_INVALID".to_string())
+    );
+    assert!(
+        events[0]["input"]["command"]["Skill"]["command"]["Capture"].is_object(),
+        "command input should preserve structured capture args"
+    );
 }
 
 #[test]

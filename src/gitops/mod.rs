@@ -145,6 +145,37 @@ pub fn commit(ctx: &AppContext, message: &str) -> Result<String> {
     head(ctx)
 }
 
+pub fn commit_existing_paths_if_changed(
+    ctx: &AppContext,
+    paths: &[&str],
+    message: &str,
+) -> Result<Option<String>> {
+    let existing = paths
+        .iter()
+        .filter(|path| ctx.root.join(path).exists())
+        .map(|path| (*path).to_string())
+        .collect::<Vec<_>>();
+    if existing.is_empty() {
+        return Ok(None);
+    }
+
+    for path in &existing {
+        run_git(ctx, &["add", "--", path])?;
+    }
+
+    let mut diff_args = vec!["diff", "--cached", "--quiet", "--"];
+    diff_args.extend(existing.iter().map(String::as_str));
+    let diff = run_git_allow_failure(ctx, &diff_args)?;
+    if diff.status.success() {
+        return Ok(None);
+    }
+
+    let mut commit_args = vec!["commit", "-m", message, "--"];
+    commit_args.extend(existing.iter().map(String::as_str));
+    run_git(ctx, &commit_args)?;
+    head(ctx).map(Some)
+}
+
 pub fn head(ctx: &AppContext) -> Result<String> {
     run_git(ctx, &["rev-parse", "HEAD"])
 }

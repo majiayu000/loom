@@ -42,7 +42,7 @@ fn migrate_subcommand_is_removed() {
         .arg("--json")
         .arg("--root")
         .arg(root.path())
-        .args(["migrate", "v2-to-v3", "--plan"])
+        .args(["migrate", "legacy-to-registry", "--plan"])
         .output()
         .expect("run loom");
 

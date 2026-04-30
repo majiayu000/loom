@@ -18,7 +18,7 @@ fn read_checkpoint(root: &std::path::Path) -> String {
 
 #[test]
 fn skill_capture_copies_live_projection_back_into_source_and_commits() {
-    let root = TestDir::new("v3-capture");
+    let root = TestDir::new("registry-capture");
     write_skill(
         root.path(),
         "model-onboarding",
@@ -203,7 +203,7 @@ fn skill_capture_rolls_back_source_after_post_replace_failure() {
 
 #[test]
 fn skill_capture_requires_explicit_selector() {
-    let root = TestDir::new("v3-capture-selector");
+    let root = TestDir::new("registry-capture-selector");
     let (output, env) = run_loom(root.path(), &["skill", "capture"]);
     assert!(!output.status.success(), "capture unexpectedly succeeded");
     assert_eq!(env["ok"], Value::Bool(false));

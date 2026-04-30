@@ -22,7 +22,7 @@ fn read_checkpoint(root: &std::path::Path) -> String {
 
 #[test]
 fn skill_project_creates_projection_rule_and_instance() {
-    let root = TestDir::new("v3-skill-project");
+    let root = TestDir::new("registry-skill-project");
     write_example_skill(root.path(), "model-onboarding");
 
     let (save_output, _) = save_skill(root.path(), "model-onboarding");
@@ -102,7 +102,7 @@ fn skill_project_creates_projection_rule_and_instance() {
 
 #[test]
 fn skill_project_rejects_unmanaged_target_ownership() {
-    let root = TestDir::new("v3-skill-project-observed");
+    let root = TestDir::new("registry-skill-project-observed");
     write_example_skill(root.path(), "model-onboarding");
 
     let (save_output, _) = save_skill(root.path(), "model-onboarding");
@@ -145,7 +145,7 @@ fn skill_project_rejects_unmanaged_target_ownership() {
 
 #[test]
 fn skill_project_backs_up_existing_projection_path_before_replace() {
-    let root = TestDir::new("v3-skill-project-backup");
+    let root = TestDir::new("registry-skill-project-backup");
     write_example_skill(root.path(), "model-onboarding");
 
     let (save_output, _) = save_skill(root.path(), "model-onboarding");

@@ -7,12 +7,15 @@ use serde::Serialize;
 #[command(name = "loom")]
 #[command(about = "Loom - Skill manager with Git-native backend")]
 pub struct Cli {
+    /// Print a stable machine-readable JSON envelope.
     #[arg(long, global = true)]
     pub json: bool,
 
+    /// Correlate this command with an external automation request.
     #[arg(long, global = true)]
     pub request_id: Option<String>,
 
+    /// Registry root. Use a separate Git repo, not the Loom tool checkout.
     #[arg(long, global = true)]
     pub root: Option<PathBuf>,
 
@@ -57,7 +60,7 @@ pub enum WorkspaceCommand {
     Status,
     #[command(about = "Run registry integrity, history, and projection checks")]
     Doctor,
-    #[command(about = "Initialize v3 registry state")]
+    #[command(about = "Initialize registry state")]
     Init(WorkspaceInitArgs),
     #[command(about = "Manage workspace-to-target bindings")]
     Binding {
@@ -178,22 +181,28 @@ pub enum HistoryRepairStrategyArg {
 
 #[derive(Debug, Clone, Args, Serialize)]
 pub struct AddArgs {
+    /// Local skill directory or Git URL to import.
     pub source: String,
 
+    /// Registry skill name, e.g. rust-review.
     #[arg(long)]
     pub name: String,
 }
 
 #[derive(Debug, Clone, Args, Serialize)]
 pub struct ProjectArgs {
+    /// Registry skill name.
     pub skill: String,
 
+    /// Workspace binding id that selects the default target.
     #[arg(long)]
     pub binding: String,
 
+    /// Optional target id override.
     #[arg(long)]
     pub target: Option<String>,
 
+    /// Projection strategy used for the live agent directory.
     #[arg(long, value_enum, default_value_t = ProjectionMethod::Symlink)]
     pub method: ProjectionMethod,
 }
@@ -268,21 +277,27 @@ pub struct BindingShowArgs {
 
 #[derive(Debug, Clone, Args, Serialize)]
 pub struct BindingAddArgs {
+    /// Agent kind for this workspace binding.
     #[arg(long, value_enum)]
     pub agent: AgentKind,
 
+    /// Profile label such as home, work, or repo.
     #[arg(long)]
     pub profile: String,
 
+    /// Matcher type used to decide when this binding applies.
     #[arg(long, value_enum)]
     pub matcher_kind: WorkspaceMatcherKind,
 
+    /// Matcher value, usually an absolute project path.
     #[arg(long)]
     pub matcher_value: String,
 
+    /// Default target id for this binding.
     #[arg(long)]
     pub target: String,
 
+    /// Policy profile controlling capture/projection behavior.
     #[arg(long, default_value = "safe-capture")]
     pub policy_profile: String,
 }
@@ -294,12 +309,15 @@ pub struct TargetShowArgs {
 
 #[derive(Debug, Clone, Args, Serialize)]
 pub struct TargetAddArgs {
+    /// Agent kind that reads this skills directory.
     #[arg(long, value_enum)]
     pub agent: AgentKind,
 
+    /// Absolute path to an agent skills directory.
     #[arg(long)]
     pub path: String,
 
+    /// Whether Loom can write to this target.
     #[arg(long, value_enum, default_value_t = TargetOwnership::Managed)]
     pub ownership: TargetOwnership,
 }

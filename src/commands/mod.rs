@@ -30,7 +30,7 @@ use event_store::{
 use helpers::{command_name, ensure_initial_commit, map_git, map_io};
 
 use crate::gitops;
-use crate::state_model::V3StatePaths;
+use crate::state_model::RegistryStatePaths;
 
 #[derive(Debug)]
 pub struct CommandFailure {
@@ -215,22 +215,30 @@ impl App {
         (env, exit_code)
     }
 
-    pub(crate) fn require_v3_snapshot(
+    pub(crate) fn require_registry_snapshot(
         &self,
-    ) -> std::result::Result<crate::state_model::V3Snapshot, CommandFailure> {
-        let paths = V3StatePaths::from_app_context(&self.ctx);
-        match paths.maybe_load_snapshot().map_err(helpers::map_v3_state)? {
+    ) -> std::result::Result<crate::state_model::RegistrySnapshot, CommandFailure> {
+        let paths = RegistryStatePaths::from_app_context(&self.ctx);
+        match paths
+            .maybe_load_snapshot()
+            .map_err(helpers::map_registry_state)?
+        {
             Some(snapshot) => Ok(snapshot),
             None => Err(CommandFailure::new(
                 ErrorCode::ArgInvalid,
-                format!("v3 state not initialized under {}", paths.v3_dir.display()),
+                format!(
+                    "registry state not initialized under {}",
+                    paths.registry_dir.display()
+                ),
             )),
         }
     }
 
-    pub(crate) fn ensure_v3_layout(&self) -> std::result::Result<V3StatePaths, CommandFailure> {
-        let paths = V3StatePaths::from_app_context(&self.ctx);
-        paths.ensure_layout().map_err(helpers::map_v3_state)?;
+    pub(crate) fn ensure_registry_layout(
+        &self,
+    ) -> std::result::Result<RegistryStatePaths, CommandFailure> {
+        let paths = RegistryStatePaths::from_app_context(&self.ctx);
+        paths.ensure_layout().map_err(helpers::map_registry_state)?;
         Ok(paths)
     }
 }

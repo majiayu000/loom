@@ -1,5 +1,6 @@
 use super::{
-    is_valid_git_rev, is_valid_skill_name, parse_diff_git_path, parse_unified_diff, v3_skill_diff,
+    is_valid_git_rev, is_valid_skill_name, parse_diff_git_path, parse_unified_diff,
+    registry_skill_diff,
 };
 use crate::panel::PanelState;
 use crate::state::AppContext;
@@ -139,7 +140,7 @@ fn parse_diff_git_path_decodes_octal_in_quoted_path() {
 }
 
 #[tokio::test]
-async fn v3_skill_diff_returns_error_for_nonexistent_skill() {
+async fn registry_skill_diff_returns_error_for_nonexistent_skill() {
     let root = std::env::temp_dir().join(format!("loom-diff-nopath-{}", Uuid::new_v4()));
     fs::create_dir_all(root.join("skills/other")).unwrap();
 
@@ -171,7 +172,7 @@ async fn v3_skill_diff_returns_error_for_nonexistent_skill() {
         .to_string();
 
     let state = make_state(&root);
-    let (status, Json(payload)) = v3_skill_diff(
+    let (status, Json(payload)) = registry_skill_diff(
         AxumPath("nonexistent".to_string()),
         Query(super::super::DiffParams {
             rev_a: Some(rev_a),
@@ -189,12 +190,12 @@ async fn v3_skill_diff_returns_error_for_nonexistent_skill() {
 }
 
 #[tokio::test]
-async fn v3_skill_diff_rejects_malformed_rev_a() {
+async fn registry_skill_diff_rejects_malformed_rev_a() {
     let root = std::env::temp_dir().join(format!("loom-diff-bad-rev-{}", Uuid::new_v4()));
     fs::create_dir_all(&root).unwrap();
     let state = make_state(&root);
 
-    let (status, Json(payload)) = v3_skill_diff(
+    let (status, Json(payload)) = registry_skill_diff(
         AxumPath("foo".to_string()),
         Query(super::super::DiffParams {
             rev_a: Some("invalid!rev".to_string()),
@@ -212,7 +213,7 @@ async fn v3_skill_diff_rejects_malformed_rev_a() {
 }
 
 #[tokio::test]
-async fn v3_skill_diff_returns_diff_for_two_commits() {
+async fn registry_skill_diff_returns_diff_for_two_commits() {
     let root = std::env::temp_dir().join(format!("loom-diff-integ-{}", Uuid::new_v4()));
     fs::create_dir_all(root.join("skills/foo")).unwrap();
 
@@ -246,7 +247,7 @@ async fn v3_skill_diff_returns_diff_for_two_commits() {
         .to_string();
 
     let state = make_state(&root);
-    let (status, Json(payload)) = v3_skill_diff(
+    let (status, Json(payload)) = registry_skill_diff(
         AxumPath("foo".to_string()),
         Query(super::super::DiffParams {
             rev_a: Some(rev_a),

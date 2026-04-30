@@ -6,8 +6,8 @@ use serde_json::Value;
 use common::{TestDir, run_loom};
 
 #[test]
-fn target_add_bootstraps_v3_state_and_records_op() {
-    let root = TestDir::new("v3-target-add");
+fn target_add_bootstraps_registry_state_and_records_op() {
+    let root = TestDir::new("registry-target-add");
     let target_path = root.path().join("live/claude-project-a");
     let (output, env) = target_add(root.path(), "claude", &target_path, "managed");
 
@@ -31,12 +31,12 @@ fn target_add_bootstraps_v3_state_and_records_op() {
         target_path.exists(),
         "managed target path should be created"
     );
-    assert!(root.path().join("state/v3/schema.json").exists());
+    assert!(root.path().join("state/registry/schema.json").exists());
 }
 
 #[test]
 fn target_add_is_idempotent_for_same_agent_and_path() {
-    let root = TestDir::new("v3-target-add-idempotent");
+    let root = TestDir::new("registry-target-add-idempotent");
     let target_path = root.path().join("live/codex-workbench");
     let (first_output, _) = target_add(root.path(), "codex", &target_path, "managed");
     assert!(first_output.status.success(), "first add should succeed");
@@ -52,7 +52,7 @@ fn target_add_is_idempotent_for_same_agent_and_path() {
 
 #[test]
 fn workspace_binding_add_uses_existing_target_and_records_op() {
-    let root = TestDir::new("v3-binding-add");
+    let root = TestDir::new("registry-binding-add");
     let target_path = root.path().join("live/claude-project-a");
     let (target_output, _) = target_add(root.path(), "claude", &target_path, "managed");
     assert!(target_output.status.success(), "target add should succeed");
@@ -97,7 +97,7 @@ fn workspace_binding_add_uses_existing_target_and_records_op() {
 
 #[test]
 fn workspace_binding_add_fails_for_unknown_target() {
-    let root = TestDir::new("v3-binding-add-missing-target");
+    let root = TestDir::new("registry-binding-add-missing-target");
 
     let (output, env) = run_loom(
         root.path(),
@@ -131,7 +131,7 @@ fn workspace_binding_add_fails_for_unknown_target() {
 
 #[test]
 fn target_add_uses_parent_context_for_generic_skills_leaf() {
-    let root = TestDir::new("v3-target-add-generic-skills-leaf");
+    let root = TestDir::new("registry-target-add-generic-skills-leaf");
     let claude_path = root.path().join("agent/.claude/skills");
     let claude_work_path = root.path().join("agent/.claude-work/skills");
 

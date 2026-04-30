@@ -1,25 +1,25 @@
-# Loom v3 Review
+# Loom registry model Review
 
 Updated: 2026-04-09
 Status: Superseded by accepted phase-1 decisions
 
 The remaining open questions in this review have been resolved for phase 1 in
-[LOOM_V3_ARCHITECTURE_DECISIONS.md](LOOM_V3_ARCHITECTURE_DECISIONS.md). Keep
+[LOOM_ARCHITECTURE_DECISIONS.md](LOOM_ARCHITECTURE_DECISIONS.md). Keep
 this file as historical review context; use the architecture decisions document
 as the current contract.
 
 ## 1. Purpose
 
-This document reviews the current v3 document set as a whole.
+This document reviews the current registry state document set as a whole.
 
 Reviewed documents:
 
-1. [LOOM_V3_SPEC.md](/Users/lifcc/Desktop/code/work/infra/loom/docs/LOOM_V3_SPEC.md)
-2. [LOOM_V3_MIGRATION.md](/Users/lifcc/Desktop/code/work/infra/loom/docs/LOOM_V3_MIGRATION.md)
-3. [LOOM_V3_TEST_PLAN.md](/Users/lifcc/Desktop/code/work/infra/loom/docs/LOOM_V3_TEST_PLAN.md)
-4. [LOOM_V3_CLI_CONTRACT.md](/Users/lifcc/Desktop/code/work/infra/loom/docs/LOOM_V3_CLI_CONTRACT.md)
-5. [LOOM_V3_STATE_FIXTURES.md](/Users/lifcc/Desktop/code/work/infra/loom/docs/LOOM_V3_STATE_FIXTURES.md)
-6. [LOOM_V3_API_CONTRACT.md](/Users/lifcc/Desktop/code/work/infra/loom/docs/LOOM_V3_API_CONTRACT.md)
+1. [LOOM_STATE_MODEL.md](/Users/lifcc/Desktop/code/work/infra/loom/docs/LOOM_STATE_MODEL.md)
+2. [LOOM_STATE_MIGRATION_NOTES.md](/Users/lifcc/Desktop/code/work/infra/loom/docs/LOOM_STATE_MIGRATION_NOTES.md)
+3. [LOOM_TEST_PLAN.md](/Users/lifcc/Desktop/code/work/infra/loom/docs/LOOM_TEST_PLAN.md)
+4. [LOOM_CLI_CONTRACT.md](/Users/lifcc/Desktop/code/work/infra/loom/docs/LOOM_CLI_CONTRACT.md)
+5. [LOOM_STATE_FIXTURES.md](/Users/lifcc/Desktop/code/work/infra/loom/docs/LOOM_STATE_FIXTURES.md)
+6. [LOOM_API_CONTRACT.md](/Users/lifcc/Desktop/code/work/infra/loom/docs/LOOM_API_CONTRACT.md)
 
 The goal is to identify:
 
@@ -29,7 +29,7 @@ The goal is to identify:
 
 ## 2. Review Summary
 
-The v3 design is now coherent enough to start implementation planning.
+The registry state design is now coherent enough to start implementation planning.
 
 The document set is aligned on the main architectural correction:
 
@@ -40,13 +40,13 @@ The document set is aligned on the main architectural correction:
 5. capture is explicit
 6. panel and API are secondary read models
 
-This is a major improvement over v2.
+This is a major improvement over legacy.
 
 However, there are still a few design questions that should be frozen before business logic is implemented.
 
 ## 3. Aligned Decisions
 
-These points are consistent across all v3 documents.
+These points are consistent across all registry state documents.
 
 ### 3.1 Canonical Truth
 
@@ -101,7 +101,7 @@ Impact:
 Aligned:
 
 1. CLI is the authoritative machine control plane.
-2. API is a read model over v3 state.
+2. API is a read model over registry state.
 3. Panel must not invent state that CLI cannot express.
 
 Impact:
@@ -125,7 +125,7 @@ Open question:
 
 Recommendation:
 
-1. freeze v3 phase 1 to `one skill + one binding -> one active target`
+1. freeze registry state phase 1 to `one skill + one binding -> one active target`
 2. treat multi-target fan-out inside one binding as future extension
 
 Reason:
@@ -159,7 +159,7 @@ Current state:
 
 Recommendation:
 
-1. freeze these three values and reject unknown values in v3 schema parsing
+1. freeze these three values and reject unknown values in registry state schema parsing
 
 ### 4.4 Projection Repair Surface
 
@@ -193,24 +193,24 @@ Reason:
 
 Current state:
 
-1. v3 says Git owns source revisions
+1. registry state says Git owns source revisions
 2. sync acts on source and operation history
 3. projection replay semantics are not yet fully defined
 
 Recommendation:
 
-1. phase 1 implementation should avoid v3 sync logic
+1. phase 1 implementation should avoid registry state sync logic
 2. freeze sync after local source/binding/projection semantics are implemented
 
 ## 5. Ready For Implementation
 
 These areas are ready to be implemented now:
 
-1. v3 state path layout
-2. v3 read-only schema parsing
-3. v3 Rust types for schema objects
+1. registry state path layout
+2. registry state read-only schema parsing
+3. registry state Rust types for schema objects
 4. selector validation helpers for `binding_id`, `target_id`, `instance_id`
-5. read-only workspace summary assembly from v3 files
+5. read-only workspace summary assembly from registry state files
 
 ## 6. Not Ready For Implementation
 
@@ -219,14 +219,14 @@ These areas should not be implemented yet:
 1. destructive projection writes
 2. capture conflict resolution
 3. migration apply logic
-4. sync replay logic for v3
+4. sync replay logic for registry state
 5. panel write actions
 
 ## 7. Recommended Implementation Order
 
-1. add `src/v3.rs` types and parsers
-2. add v3 fixture-based parser tests
-3. add read-only `workspace status` view assembly for v3
+1. add `src/registry state.rs` types and parsers
+2. add registry state fixture-based parser tests
+3. add read-only `workspace status` view assembly for registry state
 4. add command surface skeleton for `workspace binding`, `target`, and `skill project/capture`
 5. only then begin write-path logic
 
@@ -241,6 +241,6 @@ Before full logic implementation, freeze these decisions:
 
 ## 9. Conclusion
 
-The v3 document set is strong enough to start code skeleton work now.
+The registry state document set is strong enough to start code skeleton work now.
 
 It is not yet strong enough to safely implement full projection, capture, and migration logic without first freezing a few enum and cardinality details.

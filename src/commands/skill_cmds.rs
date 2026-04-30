@@ -10,19 +10,20 @@ use crate::envelope::Meta;
 use crate::gitops;
 use crate::state::remove_path_if_exists;
 use crate::state_model::{
-    V3BindingRule, V3BindingsFile, V3ProjectionInstance, V3ProjectionTarget, V3ProjectionsFile,
-    V3RulesFile, V3StatePaths,
+    RegistryBindingRule, RegistryBindingsFile, RegistryProjectionInstance,
+    RegistryProjectionTarget, RegistryProjectionsFile, RegistryRulesFile, RegistryStatePaths,
 };
 use crate::types::ErrorCode;
 
 use super::fs_probe::probe_symlink;
 use super::helpers::{
-    backup_path_if_exists, copy_dir_recursive, copy_dir_recursive_without_symlinks,
-    ensure_skill_exists, map_arg, map_git, map_io, map_lock, map_project_io, map_v3_state,
-    maybe_autosync_or_queue, project_skill_to_target, projection_instance_id,
-    projection_method_as_str, record_v3_operation, resolve_capture_projection,
-    restore_path_from_backup, rollback_added_skill, update_projection_after_capture,
-    upsert_projection, upsert_rule, validate_projection_method, validate_skill_name,
+    backup_path_if_exists, commit_registry_state, copy_dir_recursive,
+    copy_dir_recursive_without_symlinks, ensure_skill_exists, map_arg, map_git, map_io, map_lock,
+    map_project_io, map_registry_state, maybe_autosync_or_queue, project_skill_to_target,
+    projection_instance_id, projection_method_as_str, record_registry_operation,
+    resolve_capture_projection, restore_path_from_backup, rollback_added_skill,
+    update_projection_after_capture, upsert_projection, upsert_rule, validate_projection_method,
+    validate_skill_name,
 };
 use super::{App, CommandFailure};
 
@@ -144,8 +145,8 @@ impl App {
         self.ensure_write_repo_ready()?;
         ensure_skill_exists(&self.ctx, &args.skill)?;
 
-        let paths = self.ensure_v3_layout()?;
-        let snapshot = paths.load_snapshot().map_err(map_v3_state)?;
+        let paths = self.ensure_registry_layout()?;
+        let snapshot = paths.load_snapshot().map_err(map_registry_state)?;
         let binding = snapshot.binding(&args.binding).cloned().ok_or_else(|| {
             CommandFailure::new(
                 ErrorCode::BindingNotFound,
@@ -185,7 +186,7 @@ impl App {
         // destructive operation (backup, remove) so a filesystem that cannot
         // host symlinks (Windows without Developer Mode, FAT32, etc.) does
         // not corrupt an existing projection. Policy allowed it via
-        // V3TargetCapabilities; here we verify the filesystem actually can.
+        // RegistryTargetCapabilities; here we verify the filesystem actually can.
         if matches!(args.method, crate::cli::ProjectionMethod::Symlink) {
             let probe = probe_symlink(&target_base);
             if !probe.supported {
@@ -233,7 +234,7 @@ impl App {
         let mut rules = original_rules.clone();
         upsert_rule(
             &mut rules,
-            V3BindingRule {
+            RegistryBindingRule {
                 binding_id: binding.binding_id.clone(),
                 skill_id: args.skill.clone(),
                 target_id: target.target_id.clone(),
@@ -246,7 +247,7 @@ impl App {
         let mut projections = original_projections.clone();
         let instance_id =
             projection_instance_id(&args.skill, &binding.binding_id, &target.target_id);
-        let projection = V3ProjectionInstance {
+        let projection = RegistryProjectionInstance {
             instance_id: instance_id.clone(),
             skill_id: args.skill.clone(),
             binding_id: Some(binding.binding_id.clone()),
@@ -260,31 +261,55 @@ impl App {
         };
         upsert_projection(&mut projections, projection.clone());
 
-        let post_materialize = (|| {
-            maybe_skill_fault("skill_project_after_materialize")?;
-            paths
-                .save_bindings_rules_projections(&original_bindings, &rules, &projections)
-                .map_err(map_v3_state)?;
-            maybe_skill_fault("skill_project_after_state_save")?;
-            record_v3_operation(
-                &paths,
-                "skill.project",
-                json!({
-                    "skill_id": args.skill,
-                    "binding_id": binding.binding_id,
-                    "target_id": target.target_id,
-                    "method": projection_method_as_str(args.method),
-                    "request_id": request_id
-                }),
-                json!({
-                    "instance_id": instance_id
-                }),
-            )
-            .map_err(map_v3_state)
-        })();
+        let post_materialize: std::result::Result<(Option<String>, Meta), CommandFailure> =
+            (|| {
+                maybe_skill_fault("skill_project_after_materialize")?;
+                paths
+                    .save_bindings_rules_projections(&original_bindings, &rules, &projections)
+                    .map_err(map_registry_state)?;
+                maybe_skill_fault("skill_project_after_state_save")?;
+                let op_id = record_registry_operation(
+                    &paths,
+                    "skill.project",
+                    json!({
+                        "skill_id": args.skill,
+                        "binding_id": binding.binding_id,
+                        "target_id": target.target_id,
+                        "method": projection_method_as_str(args.method),
+                        "request_id": request_id
+                    }),
+                    json!({
+                        "instance_id": instance_id
+                    }),
+                )
+                .map_err(map_registry_state)?;
+                let commit = commit_registry_state(
+                    &self.ctx,
+                    &format!("project({}): record projection", args.skill),
+                )?;
+                let mut meta = Meta {
+                    op_id: Some(op_id),
+                    ..Meta::default()
+                };
+                if let Some(commit) = &commit {
+                    maybe_autosync_or_queue(
+                        &self.ctx,
+                        "skill.project",
+                        request_id,
+                        json!({
+                            "skill": args.skill,
+                            "binding_id": binding.binding_id,
+                            "target_id": target.target_id,
+                            "commit": commit
+                        }),
+                        &mut meta,
+                    )?;
+                }
+                Ok((commit, meta))
+            })();
 
-        let op_id = match post_materialize {
-            Ok(op_id) => op_id,
+        let (commit, meta) = match post_materialize {
+            Ok(result) => result,
             Err(err) => {
                 rollback_project_mutation(
                     &paths,
@@ -299,11 +324,8 @@ impl App {
         };
 
         Ok((
-            json!({"projection": projection, "backup": replaced_projection_backup, "noop": false}),
-            Meta {
-                op_id: Some(op_id),
-                ..Meta::default()
-            },
+            json!({"projection": projection, "backup": replaced_projection_backup, "commit": commit, "noop": false}),
+            meta,
         ))
     }
 
@@ -314,8 +336,8 @@ impl App {
     ) -> std::result::Result<(serde_json::Value, Meta), CommandFailure> {
         let _workspace = self.ctx.lock_workspace().map_err(map_lock)?;
         self.ensure_write_repo_ready()?;
-        let paths = self.ensure_v3_layout()?;
-        let snapshot = paths.load_snapshot().map_err(map_v3_state)?;
+        let paths = self.ensure_registry_layout()?;
+        let snapshot = paths.load_snapshot().map_err(map_registry_state)?;
         let projection = resolve_capture_projection(&snapshot, args)?;
         ensure_skill_exists(&self.ctx, &projection.skill_id)?;
 
@@ -363,7 +385,7 @@ impl App {
                     &previous_head,
                     false,
                 );
-                rollback_v3_state(
+                rollback_registry_state(
                     &paths,
                     &original_bindings,
                     &original_rules,
@@ -382,7 +404,7 @@ impl App {
                     &previous_head,
                     false,
                 );
-                rollback_v3_state(
+                rollback_registry_state(
                     &paths,
                     &original_bindings,
                     &original_rules,
@@ -424,10 +446,10 @@ impl App {
             )?;
             paths
                 .save_bindings_rules_projections(&original_bindings, &original_rules, &projections)
-                .map_err(map_v3_state)?;
+                .map_err(map_registry_state)?;
             maybe_skill_fault("skill_capture_after_state_save")?;
 
-            let op_id = record_v3_operation(
+            let op_id = record_registry_operation(
                 &paths,
                 "skill.capture",
                 json!({
@@ -441,7 +463,7 @@ impl App {
                     "commit": commit
                 }),
             )
-            .map_err(map_v3_state)?;
+            .map_err(map_registry_state)?;
             Ok((commit, op_id, changed))
         })();
 
@@ -457,7 +479,60 @@ impl App {
                     &previous_head,
                     commit_created,
                 );
-                rollback_v3_state(
+                rollback_registry_state(
+                    &paths,
+                    &original_bindings,
+                    &original_rules,
+                    &original_projections,
+                );
+                return Err(err);
+            }
+        };
+
+        let mut state_commit_created = false;
+        let post_state_commit: std::result::Result<(Option<String>, Meta), CommandFailure> =
+            (|| {
+                let state_commit = commit_registry_state(
+                    &self.ctx,
+                    &format!("capture({}): record registry state", projection.skill_id),
+                )?;
+                if state_commit.is_some() {
+                    state_commit_created = true;
+                }
+                let mut meta = Meta {
+                    op_id: Some(op_id),
+                    ..Meta::default()
+                };
+                if commit.is_some() || state_commit.is_some() {
+                    maybe_autosync_or_queue(
+                        &self.ctx,
+                        "skill.capture",
+                        request_id,
+                        json!({
+                            "skill": projection.skill_id,
+                            "instance_id": projection.instance_id,
+                            "commit": commit,
+                            "state_commit": state_commit
+                        }),
+                        &mut meta,
+                    )?;
+                }
+                Ok((state_commit, meta))
+            })();
+
+        let (state_commit, meta) = match post_state_commit {
+            Ok(result) => result,
+            Err(err) => {
+                rollback_capture_mutation(
+                    &self.ctx,
+                    &skill_rel,
+                    &skill_path,
+                    source_backup.as_ref(),
+                    source_replaced,
+                    &previous_head,
+                    commit_created || state_commit_created,
+                );
+                rollback_registry_state(
                     &paths,
                     &original_bindings,
                     &original_rules,
@@ -474,14 +549,12 @@ impl App {
                     "binding_id": projection.binding_id,
                     "instance_id": projection.instance_id,
                     "commit": commit,
+                    "state_commit": state_commit,
                     "backup": source_backup,
                     "noop": !changed
                 }
             }),
-            Meta {
-                op_id: Some(op_id),
-                ..Meta::default()
-            },
+            meta,
         ))
     }
 
@@ -537,8 +610,8 @@ impl App {
     ) -> std::result::Result<(serde_json::Value, Meta), CommandFailure> {
         let _workspace = self.ctx.lock_workspace().map_err(map_lock)?;
         self.ensure_write_repo_ready()?;
-        let paths = self.ensure_v3_layout()?;
-        let snapshot = paths.load_snapshot().map_err(map_v3_state)?;
+        let paths = self.ensure_registry_layout()?;
+        let snapshot = paths.load_snapshot().map_err(map_registry_state)?;
 
         let targets = observed_import_targets(&snapshot.targets.targets, args)?;
         let staging_root = self
@@ -742,7 +815,7 @@ impl App {
                     return Err(map_git(err));
                 }
             };
-            let op_id = record_v3_operation(
+            let op_id = record_registry_operation(
                 &paths,
                 "skill.import_observed",
                 json!({
@@ -755,7 +828,7 @@ impl App {
                     "skipped": skipped
                 }),
             )
-            .map_err(map_v3_state)?;
+            .map_err(map_registry_state)?;
             meta.op_id = Some(op_id);
             maybe_autosync_or_queue(
                 &self.ctx,
@@ -822,19 +895,19 @@ fn maybe_skill_fault(tag: &str) -> std::result::Result<(), CommandFailure> {
 }
 
 fn rollback_project_mutation(
-    paths: &V3StatePaths,
+    paths: &RegistryStatePaths,
     materialized_path: &Path,
     backup: Option<&serde_json::Value>,
-    original_bindings: &V3BindingsFile,
-    original_rules: &V3RulesFile,
-    original_projections: &V3ProjectionsFile,
+    original_bindings: &RegistryBindingsFile,
+    original_rules: &RegistryRulesFile,
+    original_projections: &RegistryProjectionsFile,
 ) {
     if let Some(backup) = backup {
         let _ = restore_path_from_backup(materialized_path, backup);
     } else {
         let _ = remove_path_if_exists(materialized_path);
     }
-    rollback_v3_state(
+    rollback_registry_state(
         paths,
         original_bindings,
         original_rules,
@@ -867,11 +940,11 @@ fn rollback_capture_mutation(
     let _ = gitops::run_git_allow_failure(ctx, &["reset", "HEAD", "--", skill_rel]);
 }
 
-fn rollback_v3_state(
-    paths: &V3StatePaths,
-    original_bindings: &V3BindingsFile,
-    original_rules: &V3RulesFile,
-    original_projections: &V3ProjectionsFile,
+fn rollback_registry_state(
+    paths: &RegistryStatePaths,
+    original_bindings: &RegistryBindingsFile,
+    original_rules: &RegistryRulesFile,
+    original_projections: &RegistryProjectionsFile,
 ) {
     let _ = paths.save_bindings_rules_projections(
         original_bindings,
@@ -881,9 +954,9 @@ fn rollback_v3_state(
 }
 
 fn observed_import_targets(
-    targets: &[V3ProjectionTarget],
+    targets: &[RegistryProjectionTarget],
     args: &ImportObservedArgs,
-) -> std::result::Result<Vec<V3ProjectionTarget>, CommandFailure> {
+) -> std::result::Result<Vec<RegistryProjectionTarget>, CommandFailure> {
     if let Some(target_id) = args.target.as_deref() {
         let target = targets
             .iter()
@@ -918,7 +991,7 @@ fn observed_skill_copy_source(
     source_path: &Path,
     file_type: &fs::FileType,
     skipped: &mut Vec<serde_json::Value>,
-    target: &V3ProjectionTarget,
+    target: &RegistryProjectionTarget,
 ) -> Option<(PathBuf, &'static str, Option<String>)> {
     if file_type.is_dir() {
         return Some((source_path.to_path_buf(), "directory", None));

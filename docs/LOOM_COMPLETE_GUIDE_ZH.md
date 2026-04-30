@@ -1,4 +1,4 @@
-# Loom 完整文档（中文，v3-only）
+# Loom 完整文档（中文，Registry 模型）
 
 更新时间：2026-04-10
 
@@ -7,23 +7,22 @@
 Loom 是 **Skill Registry 管理工具**，不是 skill 内容仓库本身。
 
 - Loom 仓库：工具源码（你现在看的这个仓库）
-- Registry 仓库：真实的 `skills/` + `state/v3/*`（独立 Git 仓库）
+- Registry 仓库：真实的 `skills/` + `state/registry/*`（独立 Git 仓库）
 
 核心原则：
 
 1. `skills/<skill>` 是事实源（canonical source）
 2. `target` 和 `binding` 显式建模，拒绝隐式目录推断
-3. 不提供 v1/v2 兼容命令面
+3. 不提供旧版隐式目录命令面
 
 ## 2. 已移除命令
 
 以下命令已移除，不再支持：
 
-- `workspace init`
 - `skill import`
 - `skill link`
 - `skill use`
-- `migrate v2-to-v3`
+- `migrate legacy-to-registry`
 
 ## 3. 关键对象
 
@@ -144,7 +143,7 @@ loom --json --root ~/loom-registry skill capture my-skill --instance <instance-i
 - `agent_dir_defaults`：环境默认目录（诊断用途）
 - `registered_targets`：registry 内已注册 target（真实执行对象）
 
-请以 `registered_targets` 和 `v3.targets` 为准。
+请以 `registered_targets` 和 `registry.targets` 为准。
 
 ## 9. 一键 Agent E2E
 
@@ -194,4 +193,3 @@ make ci
 ```bash
 loom --json --root ~/code/registry/loom-skills ...
 ```
-

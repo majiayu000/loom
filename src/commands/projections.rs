@@ -12,8 +12,8 @@ use crate::envelope::Meta;
 use crate::gitops;
 use crate::state::{AppContext, PendingOpsReport, resolve_agent_skill_source_dirs};
 use crate::state_model::{
-    V3BindingRule, V3OperationRecord, V3ProjectionInstance, V3ProjectionsFile, V3RulesFile,
-    V3Snapshot, V3StatePaths,
+    RegistryBindingRule, RegistryOperationRecord, RegistryProjectionInstance,
+    RegistryProjectionsFile, RegistryRulesFile, RegistrySnapshot, RegistryStatePaths,
 };
 use crate::types::{ErrorCode, SyncState};
 
@@ -23,10 +23,10 @@ use super::helpers::{map_git, map_io, map_push_rejected, map_queue, map_remote_u
 use crate::state::remove_path_if_exists;
 
 // ---------------------------------------------------------------------------
-// V3 state mutators
+// Registry state mutators
 // ---------------------------------------------------------------------------
 
-pub(crate) fn upsert_rule(rules: &mut V3RulesFile, rule: V3BindingRule) {
+pub(crate) fn upsert_rule(rules: &mut RegistryRulesFile, rule: RegistryBindingRule) {
     if let Some(existing) = rules.rules.iter_mut().find(|existing| {
         existing.binding_id == rule.binding_id
             && existing.skill_id == rule.skill_id
@@ -47,8 +47,8 @@ pub(crate) fn upsert_rule(rules: &mut V3RulesFile, rule: V3BindingRule) {
 }
 
 pub(crate) fn upsert_projection(
-    projections: &mut V3ProjectionsFile,
-    projection: V3ProjectionInstance,
+    projections: &mut RegistryProjectionsFile,
+    projection: RegistryProjectionInstance,
 ) {
     if let Some(existing) = projections
         .projections
@@ -91,9 +91,9 @@ pub(crate) fn project_skill_to_target(
 }
 
 pub(crate) fn resolve_capture_projection(
-    snapshot: &V3Snapshot,
+    snapshot: &RegistrySnapshot,
     args: &CaptureArgs,
-) -> std::result::Result<V3ProjectionInstance, CommandFailure> {
+) -> std::result::Result<RegistryProjectionInstance, CommandFailure> {
     if let Some(instance_id) = args.instance.as_deref() {
         let projection = snapshot
             .projections
@@ -177,7 +177,7 @@ pub(crate) fn resolve_capture_projection(
 }
 
 pub(crate) fn update_projection_after_capture(
-    projections: &mut V3ProjectionsFile,
+    projections: &mut RegistryProjectionsFile,
     instance_id: &str,
     rev: &str,
 ) -> std::result::Result<(), CommandFailure> {
@@ -201,15 +201,15 @@ pub(crate) fn update_projection_after_capture(
     Ok(())
 }
 
-pub(crate) fn record_v3_operation(
-    paths: &V3StatePaths,
+pub(crate) fn record_registry_operation(
+    paths: &RegistryStatePaths,
     intent: &str,
     payload: serde_json::Value,
     effects: serde_json::Value,
 ) -> Result<String> {
     let op_id = format!("op_{}", Uuid::new_v4().simple());
     let now = Utc::now();
-    let record = V3OperationRecord {
+    let record = RegistryOperationRecord {
         op_id: op_id.clone(),
         intent: intent.to_string(),
         status: "succeeded".to_string(),
@@ -247,10 +247,10 @@ pub(crate) fn record_v3_operation(
 
     if let Err(err) = persist_result {
         if let Err(rollback_err) =
-            rollback_record_v3_operation(paths, &operations_backup, &checkpoint_backup)
+            rollback_record_registry_operation(paths, &operations_backup, &checkpoint_backup)
         {
             return Err(err.context(format!(
-                "failed to rollback v3 operation record after partial write: {}",
+                "failed to rollback registry operation record after partial write: {}",
                 rollback_err
             )));
         }
@@ -267,8 +267,8 @@ fn maybe_projection_fault(tag: &str) -> Result<()> {
     Ok(())
 }
 
-fn rollback_record_v3_operation(
-    paths: &V3StatePaths,
+fn rollback_record_registry_operation(
+    paths: &RegistryStatePaths,
     operations_backup: &[u8],
     checkpoint_backup: &[u8],
 ) -> Result<()> {
@@ -527,6 +527,12 @@ pub(crate) fn sync_push_internal(
         ));
     }
 
+    let _state_commit = gitops::commit_existing_paths_if_changed(
+        ctx,
+        &[".gitignore", "state/registry"],
+        "sync: commit registry state",
+    )
+    .map_err(map_git)?;
     let pending_report = ctx.read_pending_report().map_err(map_io)?;
     let queued_ids = pending_report
         .ops

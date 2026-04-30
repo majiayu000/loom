@@ -8,7 +8,7 @@ import { HistoryPage, bucket } from "./HistoryPage";
 import { TargetsPage } from "./TargetsPage";
 import { SettingsPage } from "./SettingsPage";
 import { OverviewPage } from "./OverviewPage";
-import { api, type BindingShowPayload, type OpsPayload, type TargetShowPayload, type V3OperationRecord } from "../../lib/api/client";
+import { api, type BindingShowPayload, type OpsPayload, type TargetShowPayload, type RegistryOperationRecord } from "../../lib/api/client";
 import type { Binding, Skill, Target } from "../../lib/types";
 
 const originalWindow = (globalThis as { window?: unknown }).window;
@@ -64,7 +64,7 @@ async function flush(): Promise<void> {
   });
 }
 
-function makeOperation(status: string, ack = false, opId = "op_123", intent = "skill.project"): V3OperationRecord {
+function makeOperation(status: string, ack = false, opId = "op_123", intent = "skill.project"): RegistryOperationRecord {
   return {
     op_id: opId,
     intent,
@@ -117,7 +117,7 @@ function bindingPayload(projectionCount: number): BindingShowPayload {
   return {
     ok: true,
     data: {
-      state_model: "v3",
+      state_model: "registry",
       binding: {
         binding_id: "binding-1",
         agent: "claude",
@@ -170,7 +170,7 @@ function targetPayload(projectionCount = 0): TargetShowPayload {
   return {
     ok: true,
     data: {
-      state_model: "v3",
+      state_model: "registry",
       target: {
         target_id: "target-1",
         agent: "claude",
@@ -201,7 +201,7 @@ function targetPayload(projectionCount = 0): TargetShowPayload {
   };
 }
 
-function opsPayload(operation: V3OperationRecord): OpsPayload {
+function opsPayload(operation: RegistryOperationRecord): OpsPayload {
   return {
     ok: true,
     data: {
@@ -668,7 +668,7 @@ test("SettingsPage skips live info fetches when offline", async () => {
     return {
       root: "/tmp/loom",
       state_dir: "/tmp/loom/.loom",
-      v3_targets_file: "/tmp/loom/.loom/v3/targets.json",
+      registry_targets_file: "/tmp/loom/.loom/registry/targets.json",
       claude_dir: "/tmp/loom/.claude",
       codex_dir: "/tmp/loom/.codex",
       remote_url: "git@example.com:loom.git",

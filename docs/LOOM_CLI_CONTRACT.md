@@ -1,11 +1,11 @@
-# Loom v3 CLI Contract
+# Loom registry model CLI Contract
 
 Updated: 2026-04-08
 Status: Draft
 
 ## 1. Purpose
 
-This document defines the command contract for Loom v3.
+This document defines the command contract for Loom registry model.
 
 It exists to make three things explicit:
 
@@ -13,7 +13,7 @@ It exists to make three things explicit:
 2. what selectors must be explicit
 3. what JSON shape agents can rely on
 
-This document turns [LOOM_V3_SPEC.md](/Users/lifcc/Desktop/code/work/infra/loom/docs/LOOM_V3_SPEC.md) into a concrete machine-facing interface.
+This document turns [LOOM_STATE_MODEL.md](/Users/lifcc/Desktop/code/work/infra/loom/docs/LOOM_STATE_MODEL.md) into a concrete machine-facing interface.
 
 ## 2. Contract Principles
 
@@ -39,9 +39,9 @@ Top-level command groups:
 Removed from runtime surface:
 
 1. `skill import`
-2. `migrate v2-to-v3`
+2. `migrate legacy-to-registry`
 
-The legacy v2 mental model is rejected:
+The legacy mental model is rejected:
 
 1. no `Target::Claude|Codex|Both` execution shortcut
 2. no hidden path resolution as execution identity
@@ -114,7 +114,7 @@ All `--json` commands return the same top-level shape:
   "ok": true,
   "cmd": "skill.project",
   "request_id": "req_01",
-  "version": "3.0.0",
+  "version": "<loom-version>",
   "data": {},
   "error": null,
   "meta": {
@@ -142,7 +142,7 @@ Failure envelope shape:
   "ok": false,
   "cmd": "skill.project",
   "request_id": "req_01",
-  "version": "3.0.0",
+  "version": "<loom-version>",
   "data": {},
   "error": {
     "code": "BINDING_NOT_FOUND",
@@ -521,7 +521,7 @@ Migration commands are intentionally removed from the runtime CLI surface.
 
 Rules:
 
-1. no in-tool `v2-to-v3` migration entrypoint
+1. no in-tool `legacy-to-registry` migration entrypoint
 2. operators must register targets explicitly with `target add`
 3. binding resolution must be explicit with `workspace binding add`
 
@@ -577,11 +577,11 @@ Why this is safe:
 1. binding is explicit
 2. projection is explicit
 3. capture is explicit
-4. versioning stays on source
+4. revision history stays on source
 
 ## 17. Rejected CLI Shapes
 
-These command shapes are explicitly rejected for v3:
+These command shapes are explicitly rejected for registry state:
 
 1. `loom skill link <skill> --target claude`
 2. `loom init --from-agent both --target both`

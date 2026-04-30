@@ -54,7 +54,7 @@ const FEATURES: FeatureDef[] = [
   {
     icon: <LifecycleIcon />,
     tag: "lifecycle",
-    title: "Versioned lifecycle",
+    title: "Git-backed lifecycle",
     body: (
       <>
         add → capture → save → snapshot → release → rollback → diff. Every state change is an op; every op is on the
@@ -97,7 +97,7 @@ export function Features() {
           </h2>
           <p className="section-sub">
             Most "skill sync" tools treat skill directories as dumb state to mirror. Loom treats them like
-            infrastructure: versioned, bound, audited, replay-able.
+            infrastructure: tracked, bound, audited, replay-able.
           </p>
         </div>
 

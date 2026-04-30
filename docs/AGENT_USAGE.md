@@ -4,7 +4,7 @@
 
 推荐先触发 `loom` 技能（`SKILL.md`），再执行本文档中的非交互命令。
 
-> v2 为 breaking 版本：旧顶层命令（`loom init/save/status/...`）已移除，Agent 必须使用 `workspace/skill/sync/ops` 命令组。
+> 当前命令面是 breaking change：旧顶层命令（`loom init/save/status/...`）已移除，Agent 必须使用 `workspace/skill/sync/ops` 命令组。
 
 ## 1. 双模式约定
 

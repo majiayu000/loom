@@ -1,7 +1,7 @@
 # Status Field Classification
 
 Updated: 2026-04-27
-Tracks: `src/state_model/mod.rs` — `V3Snapshot::status_view()` (lines 237–277)
+Tracks: `src/state_model/mod.rs` — `RegistrySnapshot::status_view()` (lines 237–277)
 Closes: #42
 
 This document is the single source of truth for the tier classification of every field
@@ -13,7 +13,7 @@ returned by `status_view()`.  Update it whenever `status_view()` changes.
 
 | Tier | Definition |
 |------|------------|
-| **Authoritative** | Sourced directly from v3 state files or computed exclusively from registered v3 entities.  Safe for decision logic. |
+| **Authoritative** | Sourced directly from registry state files or computed exclusively from registered registry entities.  Safe for decision logic. |
 | **Advisory** | Computed or aggregated from a mix of registered state and heuristic comparisons.  Useful as UX hints; must not drive control-plane decisions. |
 | **Compatibility-only** | Retained only for legacy callers; scheduled for removal in a future MAJOR version.  Must not be referenced in new code. |
 
@@ -25,13 +25,13 @@ returned by `status_view()`.  Update it whenever `status_view()` changes.
 
 | Field | Tier | Storage location | Source citation |
 |-------|------|-----------------|-----------------|
-| `schema_version` | Authoritative | `state/v3/schema.json` | [source: src/state_model/mod.rs:260] |
+| `schema_version` | Authoritative | `state/registry/schema.json` | [source: src/state_model/mod.rs:260] |
 | `counts` | — | (object; see sub-fields below) | [source: src/state_model/mod.rs:261–269] |
-| `targets[]` | Authoritative | `state/v3/targets.json` | [source: src/state_model/mod.rs:271] |
-| `bindings[]` | Authoritative | `state/v3/bindings.json` | [source: src/state_model/mod.rs:272] |
-| `rules[]` | Authoritative | `state/v3/rules.json` | [source: src/state_model/mod.rs:273] |
-| `projections[]` | Authoritative (see sub-field exceptions below) | `state/v3/projections.json` | [source: src/state_model/mod.rs:274] |
-| `checkpoint` | Authoritative | `state/v3/ops/checkpoint.json` | [source: src/state_model/mod.rs:275] |
+| `targets[]` | Authoritative | `state/registry/targets.json` | [source: src/state_model/mod.rs:271] |
+| `bindings[]` | Authoritative | `state/registry/bindings.json` | [source: src/state_model/mod.rs:272] |
+| `rules[]` | Authoritative | `state/registry/rules.json` | [source: src/state_model/mod.rs:273] |
+| `projections[]` | Authoritative (see sub-field exceptions below) | `state/registry/projections.json` | [source: src/state_model/mod.rs:274] |
+| `checkpoint` | Authoritative | `state/registry/ops/checkpoint.json` | [source: src/state_model/mod.rs:275] |
 
 ### `counts` sub-fields
 
@@ -44,11 +44,11 @@ returned by `status_view()`.  Update it whenever `status_view()` changes.
 | `counts.rules` | Authoritative | `len()` of registered rules array | [source: src/state_model/mod.rs:265] |
 | `counts.projections` | Authoritative | `len()` of registered projections array | [source: src/state_model/mod.rs:266] |
 | `counts.drifted_projections` | **Advisory** | Computed: `observed_drift == true OR health != "healthy"` — depends on the optional `observed_drift` field | [source: src/state_model/mod.rs:244–250, 267] |
-| `counts.operations` | Authoritative | `len()` of operation records from the v3 ops journal | [source: src/state_model/mod.rs:268] |
+| `counts.operations` | Authoritative | `len()` of operation records from the registry ops journal | [source: src/state_model/mod.rs:268] |
 
 ### `projections[]` sub-fields with classification nuance
 
-All fields on `V3ProjectionInstance` are authoritative unless noted below.
+All fields on `RegistryProjectionInstance` are authoritative unless noted below.
 
 | Sub-field | Tier | Notes | Source citation |
 |-----------|------|-------|-----------------|
@@ -60,7 +60,7 @@ All fields on `V3ProjectionInstance` are authoritative unless noted below.
 | `method` | Authoritative | Stored | [source: src/state_model/mod.rs:147] |
 | `health` | Authoritative | Stored enum: `healthy`, `drifted`, `missing`, `conflict` | [source: src/state_model/mod.rs:149] |
 | `updated_at` | Authoritative | Stored timestamp; optional | [source: src/state_model/mod.rs:155] |
-| `last_applied_rev` | **Advisory** (as of v3.x; promotion to authoritative requires a future issue) | Git rev recorded when projection was last applied; represents a historical comparison point, not a live git state | [source: src/state_model/mod.rs:148] |
+| `last_applied_rev` | **Advisory** (as of registry model; promotion to authoritative requires a future issue) | Git rev recorded when projection was last applied; represents a historical comparison point, not a live git state | [source: src/state_model/mod.rs:148] |
 | `observed_drift` | **Advisory** | Optional boolean; computed by comparing the stored `last_applied_rev` to the current source head at observation time — not set until a check is performed | [source: src/state_model/mod.rs:150–152] |
 
 ### Compatibility-only tier
@@ -85,7 +85,7 @@ It does not affect:
 - projection records
 - operation journal entries
 
-All of those are always read from the `state/v3/` JSON files.
+All of those are always read from the `state/registry/` JSON files.
 
 ### Discovery priority
 
@@ -117,7 +117,7 @@ list of source scan paths ([source: src/state/mod.rs:66–84]).
 influence which skills are *available for registration*, but once a rule or projection
 is registered its `skill_id` is authoritative registered state.
 
-No `/api/v3/status` (or `/api/v3/workspace`) field is computed by scanning the
+No `/api/registry/status` (or `/api/registry/workspace`) field is computed by scanning the
 filesystem paths that `CLAUDE_SKILLS_DIR` or `CODEX_SKILLS_DIR` point to.  Advisory
 skill directory hints appear only in diagnostic or migration endpoints, never in the
 counts returned by `status_view()`.

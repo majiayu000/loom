@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { V3Projection } from "../../generated/V3Projection";
-import type { HealthPayload, RemotePayload, V3Payload } from "../../types";
+import type { RegistryProjection } from "../../generated/RegistryProjection";
+import type { HealthPayload, RemotePayload, RegistryPayload } from "../../types";
 import type { Binding, Op, Skill, Target } from "../types";
 import {
   adaptBinding,
@@ -12,7 +12,7 @@ import {
 } from "./adapters";
 import { ApiError, api } from "./client";
 
-type V3Counts = NonNullable<NonNullable<V3Payload["data"]>["counts"]>;
+type RegistryCounts = NonNullable<NonNullable<RegistryPayload["data"]>["counts"]>;
 
 export type PanelDataMode = "live" | "offline-empty" | "offline-stale";
 
@@ -25,19 +25,19 @@ export interface PanelLiveData {
   registryRoot: string | null;
   remote: RemotePayload | null;
   health: HealthPayload | null;
-  counts: V3Counts;
+  counts: RegistryCounts;
   skills: Skill[];
   targets: Target[];
   bindings: Binding[];
   ops: Op[];
-  /** Raw V3 projections — exposed so consumers like `ProjectionGraph` can
+  /** Raw Registry projections — exposed so consumers like `ProjectionGraph` can
    *  use the backend-reported `method`/`health` instead of fabricating it. */
-  projections: V3Projection[];
+  projections: RegistryProjection[];
   pendingCount: number;
   refetch: () => void;
 }
 
-const EMPTY_COUNTS: V3Counts = {};
+const EMPTY_COUNTS: RegistryCounts = {};
 
 const POLL_MS = 10_000;
 
@@ -116,27 +116,27 @@ export function usePanelData(): PanelLiveData {
     const generation = ++generationRef.current;
 
     try {
-      const [health, info, skillsPayload, v3, remote, pending] = await Promise.all([
+      const [health, info, skillsPayload, registry, remote, pending] = await Promise.all([
         api.health(controller.signal),
         api.info(controller.signal),
         api.skills(controller.signal),
-        api.v3Status(controller.signal),
+        api.registryStatus(controller.signal),
         api.remoteStatus(controller.signal),
         api.pending(controller.signal),
       ]);
       if (controller.signal.aborted || generation !== generationRef.current) return;
 
-      const v3Data = v3.data ?? {};
-      const projections = v3Data.projections ?? [];
-      const rules = v3Data.rules ?? [];
-      const v3Targets = v3Data.targets ?? [];
-      const v3Bindings = v3Data.bindings ?? [];
+      const registryData = registry.data ?? {};
+      const projections = registryData.projections ?? [];
+      const rules = registryData.rules ?? [];
+      const registryTargets = registryData.targets ?? [];
+      const registryBindings = registryData.bindings ?? [];
 
-      const index = buildAdapterIndex(v3Targets, projections);
-      const targets = v3Targets.map((t) => adaptTarget(t, index));
+      const index = buildAdapterIndex(registryTargets, projections);
+      const targets = registryTargets.map((t) => adaptTarget(t, index));
       const skillNames = skillsPayload.skills ?? [];
       const skills = skillNames.map((name) => adaptSkill(name, index, rules));
-      const bindings = v3Bindings.map((b) => adaptBinding(b, rules));
+      const bindings = registryBindings.map((b) => adaptBinding(b, rules));
 
       const pendingOps: Op[] = (pending.ops ?? []).map(adaptPendingOp);
       const projectionOps: Op[] = projections.map((p) => adaptProjectionOp(p, index));
@@ -151,7 +151,7 @@ export function usePanelData(): PanelLiveData {
           registryRoot: info.root ?? null,
           remote: remote.remote ?? null,
           health,
-          counts: v3Data.counts ?? EMPTY_COUNTS,
+          counts: registryData.counts ?? EMPTY_COUNTS,
           skills,
           targets,
           bindings,

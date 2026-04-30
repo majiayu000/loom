@@ -9,13 +9,13 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use ts_rs::TS;
 
-pub const V3_SCHEMA_VERSION: u32 = 3;
+pub const REGISTRY_SCHEMA_VERSION: u32 = 1;
 
 #[derive(Debug, Clone)]
-pub struct V3StatePaths {
+pub struct RegistryStatePaths {
     pub root: PathBuf,
     pub state_dir: PathBuf,
-    pub v3_dir: PathBuf,
+    pub registry_dir: PathBuf,
     pub schema_file: PathBuf,
     pub targets_file: PathBuf,
     pub bindings_file: PathBuf,
@@ -28,66 +28,70 @@ pub struct V3StatePaths {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct V3Snapshot {
-    pub schema: V3SchemaFile,
-    pub targets: V3TargetsFile,
-    pub bindings: V3BindingsFile,
-    pub rules: V3RulesFile,
-    pub projections: V3ProjectionsFile,
-    pub operations: Vec<V3OperationRecord>,
-    pub checkpoint: V3OpsCheckpoint,
+pub struct RegistrySnapshot {
+    pub schema: RegistrySchemaFile,
+    pub targets: RegistryTargetsFile,
+    pub bindings: RegistryBindingsFile,
+    pub rules: RegistryRulesFile,
+    pub projections: RegistryProjectionsFile,
+    pub operations: Vec<RegistryOperationRecord>,
+    pub checkpoint: RegistryOpsCheckpoint,
 }
 
 #[derive(Debug, Clone)]
-pub struct V3TargetRelations<'a> {
-    pub bindings: Vec<&'a V3WorkspaceBinding>,
-    pub rules: Vec<&'a V3BindingRule>,
-    pub projections: Vec<&'a V3ProjectionInstance>,
+pub struct RegistryTargetRelations<'a> {
+    pub bindings: Vec<&'a RegistryWorkspaceBinding>,
+    pub rules: Vec<&'a RegistryBindingRule>,
+    pub projections: Vec<&'a RegistryProjectionInstance>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct V3SchemaFile {
+pub struct RegistrySchemaFile {
     pub schema_version: u32,
     pub created_at: DateTime<Utc>,
     pub writer: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct V3TargetsFile {
+pub struct RegistryTargetsFile {
     pub schema_version: u32,
     #[serde(default)]
-    pub targets: Vec<V3ProjectionTarget>,
+    pub targets: Vec<RegistryProjectionTarget>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct V3BindingsFile {
+pub struct RegistryBindingsFile {
     pub schema_version: u32,
     #[serde(default)]
-    pub bindings: Vec<V3WorkspaceBinding>,
+    pub bindings: Vec<RegistryWorkspaceBinding>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct V3RulesFile {
+pub struct RegistryRulesFile {
     pub schema_version: u32,
     #[serde(default)]
-    pub rules: Vec<V3BindingRule>,
+    pub rules: Vec<RegistryBindingRule>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct V3ProjectionsFile {
+pub struct RegistryProjectionsFile {
     pub schema_version: u32,
     #[serde(default)]
-    pub projections: Vec<V3ProjectionInstance>,
+    pub projections: Vec<RegistryProjectionInstance>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export, export_to = "../panel/src/generated/", rename = "V3Target")]
-pub struct V3ProjectionTarget {
+#[ts(
+    export,
+    export_to = "../panel/src/generated/",
+    rename = "RegistryTarget"
+)]
+pub struct RegistryProjectionTarget {
     pub target_id: String,
     pub agent: String,
     pub path: String,
     pub ownership: String,
-    pub capabilities: V3TargetCapabilities,
+    pub capabilities: RegistryTargetCapabilities,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional, type = "string")]
     pub created_at: Option<DateTime<Utc>>,
@@ -95,19 +99,23 @@ pub struct V3ProjectionTarget {
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "../panel/src/generated/")]
-pub struct V3TargetCapabilities {
+pub struct RegistryTargetCapabilities {
     pub symlink: bool,
     pub copy: bool,
     pub watch: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export, export_to = "../panel/src/generated/", rename = "V3Binding")]
-pub struct V3WorkspaceBinding {
+#[ts(
+    export,
+    export_to = "../panel/src/generated/",
+    rename = "RegistryBinding"
+)]
+pub struct RegistryWorkspaceBinding {
     pub binding_id: String,
     pub agent: String,
     pub profile_id: String,
-    pub workspace_matcher: V3WorkspaceMatcher,
+    pub workspace_matcher: RegistryWorkspaceMatcher,
     pub default_target_id: String,
     pub policy_profile: String,
     pub active: bool,
@@ -118,14 +126,14 @@ pub struct V3WorkspaceBinding {
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "../panel/src/generated/")]
-pub struct V3WorkspaceMatcher {
+pub struct RegistryWorkspaceMatcher {
     pub kind: String,
     pub value: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export, export_to = "../panel/src/generated/", rename = "V3Rule")]
-pub struct V3BindingRule {
+#[ts(export, export_to = "../panel/src/generated/", rename = "RegistryRule")]
+pub struct RegistryBindingRule {
     pub binding_id: String,
     pub skill_id: String,
     pub target_id: String,
@@ -137,11 +145,16 @@ pub struct V3BindingRule {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export, export_to = "../panel/src/generated/", rename = "V3Projection")]
-pub struct V3ProjectionInstance {
+#[ts(
+    export,
+    export_to = "../panel/src/generated/",
+    rename = "RegistryProjection"
+)]
+pub struct RegistryProjectionInstance {
     pub instance_id: String,
     pub skill_id: String,
-    /// `Some(id)` — owned by that binding. `None` — orphaned (binding was removed).
+    // `Some(id)` means the projection is owned by that binding; `None` means
+    // the projection is orphaned after its binding was removed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional, type = "string")]
     pub binding_id: Option<String>,
@@ -149,7 +162,7 @@ pub struct V3ProjectionInstance {
     pub materialized_path: String,
     pub method: String,
     pub last_applied_rev: String,
-    /// Valid values: "healthy", "drifted", "missing", "conflict", "orphaned"
+    // Valid values: "healthy", "drifted", "missing", "conflict", "orphaned".
     pub health: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
@@ -160,7 +173,7 @@ pub struct V3ProjectionInstance {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct V3OperationRecord {
+pub struct RegistryOperationRecord {
     pub op_id: String,
     pub intent: String,
     pub status: String,
@@ -168,20 +181,24 @@ pub struct V3OperationRecord {
     pub payload: serde_json::Value,
     pub effects: serde_json::Value,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub last_error: Option<V3OperationError>,
+    pub last_error: Option<RegistryOperationError>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct V3OperationError {
+pub struct RegistryOperationError {
     pub code: String,
     pub message: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export, export_to = "../panel/src/generated/", rename = "V3Checkpoint")]
-pub struct V3OpsCheckpoint {
+#[ts(
+    export,
+    export_to = "../panel/src/generated/",
+    rename = "RegistryCheckpoint"
+)]
+pub struct RegistryOpsCheckpoint {
     pub schema_version: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
@@ -194,7 +211,7 @@ pub struct V3OpsCheckpoint {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct V3ObservationEvent {
+pub struct RegistryObservationEvent {
     pub event_id: String,
     pub instance_id: String,
     pub kind: String,
@@ -207,37 +224,37 @@ pub struct V3ObservationEvent {
     pub observed_at: DateTime<Utc>,
 }
 
-pub(crate) fn empty_targets_file() -> V3TargetsFile {
-    V3TargetsFile {
-        schema_version: V3_SCHEMA_VERSION,
+pub(crate) fn empty_targets_file() -> RegistryTargetsFile {
+    RegistryTargetsFile {
+        schema_version: REGISTRY_SCHEMA_VERSION,
         targets: Vec::new(),
     }
 }
 
-pub(crate) fn empty_bindings_file() -> V3BindingsFile {
-    V3BindingsFile {
-        schema_version: V3_SCHEMA_VERSION,
+pub(crate) fn empty_bindings_file() -> RegistryBindingsFile {
+    RegistryBindingsFile {
+        schema_version: REGISTRY_SCHEMA_VERSION,
         bindings: Vec::new(),
     }
 }
 
-pub(crate) fn empty_rules_file() -> V3RulesFile {
-    V3RulesFile {
-        schema_version: V3_SCHEMA_VERSION,
+pub(crate) fn empty_rules_file() -> RegistryRulesFile {
+    RegistryRulesFile {
+        schema_version: REGISTRY_SCHEMA_VERSION,
         rules: Vec::new(),
     }
 }
 
-pub(crate) fn empty_projections_file() -> V3ProjectionsFile {
-    V3ProjectionsFile {
-        schema_version: V3_SCHEMA_VERSION,
+pub(crate) fn empty_projections_file() -> RegistryProjectionsFile {
+    RegistryProjectionsFile {
+        schema_version: REGISTRY_SCHEMA_VERSION,
         projections: Vec::new(),
     }
 }
 
 use std::path::PathBuf;
 
-impl V3Snapshot {
+impl RegistrySnapshot {
     pub fn status_view(&self) -> serde_json::Value {
         let mut unique_skills =
             HashSet::with_capacity(self.rules.rules.len() + self.projections.projections.len());
@@ -280,14 +297,14 @@ impl V3Snapshot {
         })
     }
 
-    pub fn binding(&self, binding_id: &str) -> Option<&V3WorkspaceBinding> {
+    pub fn binding(&self, binding_id: &str) -> Option<&RegistryWorkspaceBinding> {
         self.bindings
             .bindings
             .iter()
             .find(|binding| binding.binding_id == binding_id)
     }
 
-    pub fn target(&self, target_id: &str) -> Option<&V3ProjectionTarget> {
+    pub fn target(&self, target_id: &str) -> Option<&RegistryProjectionTarget> {
         self.targets
             .targets
             .iter()
@@ -296,12 +313,12 @@ impl V3Snapshot {
 
     pub fn binding_default_target(
         &self,
-        binding: &V3WorkspaceBinding,
-    ) -> Option<V3ProjectionTarget> {
+        binding: &RegistryWorkspaceBinding,
+    ) -> Option<RegistryProjectionTarget> {
         self.target(&binding.default_target_id).cloned()
     }
 
-    pub fn binding_rules(&self, binding_id: &str) -> Vec<V3BindingRule> {
+    pub fn binding_rules(&self, binding_id: &str) -> Vec<RegistryBindingRule> {
         self.rules
             .rules
             .iter()
@@ -310,7 +327,7 @@ impl V3Snapshot {
             .collect()
     }
 
-    pub fn binding_projections(&self, binding_id: &str) -> Vec<V3ProjectionInstance> {
+    pub fn binding_projections(&self, binding_id: &str) -> Vec<RegistryProjectionInstance> {
         self.projections
             .projections
             .iter()
@@ -319,7 +336,7 @@ impl V3Snapshot {
             .collect()
     }
 
-    pub fn target_rules(&self, target_id: &str) -> Vec<V3BindingRule> {
+    pub fn target_rules(&self, target_id: &str) -> Vec<RegistryBindingRule> {
         self.target_relations(target_id)
             .rules
             .into_iter()
@@ -327,7 +344,7 @@ impl V3Snapshot {
             .collect()
     }
 
-    pub fn target_projections(&self, target_id: &str) -> Vec<V3ProjectionInstance> {
+    pub fn target_projections(&self, target_id: &str) -> Vec<RegistryProjectionInstance> {
         self.target_relations(target_id)
             .projections
             .into_iter()
@@ -335,7 +352,7 @@ impl V3Snapshot {
             .collect()
     }
 
-    pub fn target_bindings(&self, target_id: &str) -> Vec<V3WorkspaceBinding> {
+    pub fn target_bindings(&self, target_id: &str) -> Vec<RegistryWorkspaceBinding> {
         self.target_relations(target_id)
             .bindings
             .into_iter()
@@ -343,7 +360,7 @@ impl V3Snapshot {
             .collect()
     }
 
-    pub fn target_relations(&self, target_id: &str) -> V3TargetRelations<'_> {
+    pub fn target_relations(&self, target_id: &str) -> RegistryTargetRelations<'_> {
         let mut rules = Vec::with_capacity(self.rules.rules.len());
         for rule in &self.rules.rules {
             if rule.target_id == target_id {
@@ -375,7 +392,7 @@ impl V3Snapshot {
             }
         }
 
-        V3TargetRelations {
+        RegistryTargetRelations {
             bindings,
             rules,
             projections,

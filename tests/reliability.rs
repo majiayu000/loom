@@ -412,6 +412,43 @@ fn command_audit_redacts_sensitive_input_values() {
 }
 
 #[test]
+fn target_add_pushes_registry_state_to_remote() {
+    let root = TestDir::new("target-add-state-push");
+    let remote_root = TestDir::new("target-add-state-push-remote");
+    let remote = remote_root.path().join("origin.git");
+    let target = root.path().join("live/claude");
+
+    git_ok(["init", "--bare", remote.to_str().unwrap()]);
+    run_loom_ok(
+        root.path(),
+        &["workspace", "remote", "set", remote.to_str().unwrap()],
+    );
+    let env = run_loom_ok(
+        root.path(),
+        &[
+            "target",
+            "add",
+            "--agent",
+            "claude",
+            "--path",
+            target.to_str().unwrap(),
+            "--ownership",
+            "managed",
+        ],
+    );
+
+    assert_eq!(env["meta"]["sync_state"].as_str().unwrap(), "SYNCED");
+    let targets = git_ok([
+        "--git-dir",
+        remote.to_str().unwrap(),
+        "show",
+        "main:state/registry/targets.json",
+    ]);
+    assert!(targets.contains("target_claude_claude"));
+    assert!(targets.contains(target.to_str().unwrap()));
+}
+
+#[test]
 fn ops_list_skips_malformed_pending_lines() {
     let root = TestDir::new("ops-list");
     let state_dir = root.path().join("state");

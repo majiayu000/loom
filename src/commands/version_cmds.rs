@@ -5,7 +5,7 @@ use serde_json::json;
 use crate::cli::{DiffArgs, ReleaseArgs, RollbackArgs};
 use crate::envelope::Meta;
 use crate::gitops;
-use crate::state_model::V3StatePaths;
+use crate::state_model::RegistryStatePaths;
 use crate::types::ErrorCode;
 
 use super::helpers::{
@@ -99,7 +99,7 @@ impl App {
             &mut meta,
         )?;
 
-        let paths = V3StatePaths::from_app_context(&self.ctx);
+        let paths = RegistryStatePaths::from_app_context(&self.ctx);
         if let Ok(Some(snapshot)) = paths.maybe_load_snapshot() {
             let stale: Vec<_> = snapshot
                 .projections

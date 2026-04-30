@@ -9,7 +9,9 @@ use crate::cli::{
     WorkspaceBindingCommand, WorkspaceCommand, WorkspaceMatcherKind,
 };
 use crate::state::AppContext;
-use crate::state_model::{V3ProjectionTarget, V3TargetCapabilities, V3TargetsFile};
+use crate::state_model::{
+    RegistryProjectionTarget, RegistryTargetCapabilities, RegistryTargetsFile,
+};
 use crate::types::ErrorCode;
 
 use super::CommandFailure;
@@ -21,7 +23,7 @@ pub(crate) use super::file_ops::{
 };
 pub use super::projections::{collect_skill_inventory, remote_status_payload};
 pub(crate) use super::projections::{
-    maybe_autosync_or_queue, project_skill_to_target, record_v3_operation,
+    maybe_autosync_or_queue, project_skill_to_target, record_registry_operation,
     remote_status_payload_with_pending, resolve_capture_projection, sync_push_internal,
     sync_replay_internal, update_projection_after_capture, upsert_projection, upsert_rule,
 };
@@ -176,19 +178,21 @@ pub(crate) fn target_ownership_as_str(ownership: crate::cli::TargetOwnership) ->
     }
 }
 
-pub(crate) fn target_capabilities(ownership: crate::cli::TargetOwnership) -> V3TargetCapabilities {
+pub(crate) fn target_capabilities(
+    ownership: crate::cli::TargetOwnership,
+) -> RegistryTargetCapabilities {
     match ownership {
-        crate::cli::TargetOwnership::Managed => V3TargetCapabilities {
+        crate::cli::TargetOwnership::Managed => RegistryTargetCapabilities {
             symlink: true,
             copy: true,
             watch: true,
         },
-        crate::cli::TargetOwnership::Observed => V3TargetCapabilities {
+        crate::cli::TargetOwnership::Observed => RegistryTargetCapabilities {
             symlink: false,
             copy: false,
             watch: true,
         },
-        crate::cli::TargetOwnership::External => V3TargetCapabilities {
+        crate::cli::TargetOwnership::External => RegistryTargetCapabilities {
             symlink: false,
             copy: false,
             watch: false,
@@ -222,7 +226,7 @@ pub(crate) fn validate_non_empty(
 }
 
 pub(crate) fn validate_projection_method(
-    target: &V3ProjectionTarget,
+    target: &RegistryProjectionTarget,
     method: ProjectionMethod,
 ) -> std::result::Result<(), CommandFailure> {
     match method {
@@ -246,15 +250,23 @@ pub(crate) fn validate_projection_method(
     }
 }
 
+pub(crate) fn commit_registry_state(
+    ctx: &AppContext,
+    message: &str,
+) -> std::result::Result<Option<String>, CommandFailure> {
+    crate::gitops::commit_existing_paths_if_changed(ctx, &[".gitignore", "state/registry"], message)
+        .map_err(map_git)
+}
+
 // ---------------------------------------------------------------------------
 // ID generation
 // ---------------------------------------------------------------------------
 
-pub(crate) fn unique_target_id(targets: &V3TargetsFile, args: &TargetAddArgs) -> String {
+pub(crate) fn unique_target_id(targets: &RegistryTargetsFile, args: &TargetAddArgs) -> String {
     unique_target_id_for(args.agent, &args.path, targets)
 }
 
-fn unique_target_id_for(agent: AgentKind, path: &str, targets: &V3TargetsFile) -> String {
+fn unique_target_id_for(agent: AgentKind, path: &str, targets: &RegistryTargetsFile) -> String {
     let token = target_path_token(path, agent);
     let base = format!("target_{}_{}", agent_kind_as_str(agent), slugify(&token));
     unique_id(
@@ -291,7 +303,7 @@ pub(crate) fn target_path_token(path: &str, agent: AgentKind) -> String {
 }
 
 pub(crate) fn unique_binding_id(
-    bindings: &crate::state_model::V3BindingsFile,
+    bindings: &crate::state_model::RegistryBindingsFile,
     args: &BindingAddArgs,
 ) -> String {
     let matcher_token = binding_matcher_token(args);
@@ -427,7 +439,7 @@ pub(crate) fn map_replay_conflict(err: anyhow::Error) -> CommandFailure {
     CommandFailure::new(ErrorCode::ReplayConflict, err.to_string())
 }
 
-pub(crate) fn map_v3_state(err: anyhow::Error) -> CommandFailure {
+pub(crate) fn map_registry_state(err: anyhow::Error) -> CommandFailure {
     let message = err.to_string();
     if message.contains("schema version mismatch") {
         CommandFailure::new(ErrorCode::SchemaMismatch, message)

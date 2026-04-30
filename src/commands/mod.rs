@@ -15,7 +15,7 @@ use uuid::Uuid;
 
 use crate::cli::{
     Cli, Command, OpsCommand, OpsHistoryCommand, RemoteCommand, SkillCommand, SkillOrphanCommand,
-    SyncCommand, TargetCommand, WorkspaceBindingCommand, WorkspaceCommand,
+    SyncCommand, TargetCommand, WorkspaceBindingCommand, WorkspaceCommand, WorkspaceInitArgs,
 };
 use crate::envelope::{Envelope, Meta};
 use crate::state::AppContext;
@@ -115,6 +115,13 @@ impl App {
         }
 
         let result = match &cli.command {
+            Command::Init => {
+                let args = WorkspaceInitArgs {
+                    scan_existing: true,
+                };
+                self.cmd_workspace_init(&args, &request_id)
+            }
+            Command::Monitor(args) => self.cmd_monitor_observed(args, &request_id),
             Command::Workspace { command } => match command {
                 WorkspaceCommand::Status => self.cmd_status(),
                 WorkspaceCommand::Doctor => self.cmd_doctor(),
@@ -246,6 +253,7 @@ impl App {
 
 fn command_requires_durable_audit(command: &Command) -> bool {
     match command {
+        Command::Init | Command::Monitor(_) => true,
         Command::Workspace { command } => match command {
             WorkspaceCommand::Status | WorkspaceCommand::Doctor => false,
             WorkspaceCommand::Init(_) => true,

@@ -15,7 +15,7 @@ pub struct Cli {
     #[arg(long, global = true)]
     pub request_id: Option<String>,
 
-    /// Registry root. Use a separate Git repo, not the Loom tool checkout.
+    /// Registry root. Defaults to ~/.loom-registry.
     #[arg(long, global = true)]
     pub root: Option<PathBuf>,
 
@@ -25,6 +25,10 @@ pub struct Cli {
 
 #[derive(Debug, Clone, Subcommand, Serialize)]
 pub enum Command {
+    #[command(about = "Initialize the default registry and scan existing agent skill directories")]
+    Init,
+    #[command(about = "Import and update skills from observed targets")]
+    Monitor(MonitorObservedArgs),
     #[command(about = "Inspect and configure registry workspace state")]
     Workspace {
         #[command(subcommand)]

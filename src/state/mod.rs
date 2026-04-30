@@ -19,6 +19,7 @@ use anyhow::{Context, Result};
 use crate::types::PendingOp;
 
 const OPS_COMPACTION_THRESHOLD: usize = 16;
+pub const DEFAULT_REGISTRY_DIR: &str = ".loom-registry";
 
 type InProcMap = Arc<Mutex<HashMap<String, (PathBuf, std::thread::ThreadId, usize)>>>;
 
@@ -162,8 +163,10 @@ fn dedupe_paths_keep_order(paths: Vec<PathBuf>) -> Vec<PathBuf> {
 
 impl AppContext {
     pub fn new(root: Option<PathBuf>) -> Result<Self> {
-        let root =
-            root.unwrap_or(std::env::current_dir().context("failed to resolve current directory")?);
+        let root = match root {
+            Some(root) => root,
+            None => default_registry_root()?,
+        };
         let skills_dir = root.join("skills");
         let state_dir = root.join("state");
         let locks_dir = state_dir.join("locks");
@@ -308,6 +311,26 @@ impl AppContext {
         write_atomic(&path, &content).context("failed to update .gitignore")?;
         Ok(())
     }
+}
+
+pub fn default_registry_root() -> Result<PathBuf> {
+    home_dir()
+        .map(|home| home.join(DEFAULT_REGISTRY_DIR))
+        .context("HOME is not set; pass --root <registry>")
+}
+
+fn home_dir() -> Option<PathBuf> {
+    non_empty_env_path("HOME").or_else(|| non_empty_env_path("USERPROFILE"))
+}
+
+fn non_empty_env_path(key: &str) -> Option<PathBuf> {
+    env::var_os(key).and_then(|value| {
+        if value.as_os_str().is_empty() {
+            None
+        } else {
+            Some(PathBuf::from(value))
+        }
+    })
 }
 
 #[derive(Debug)]

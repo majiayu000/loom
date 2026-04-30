@@ -6,9 +6,9 @@ Loom is distributed as the `skillloom` crate with a `loom` binary.
 
 - GitHub Release: built from tags matching `v*.*.*`.
 - crates.io: published when `CARGO_REGISTRY_TOKEN` is configured.
-- Homebrew: opens a formula PR against `majiayu000/homebrew-tap` when `HOMEBREW_TAP_TOKEN` is configured.
+- Homebrew: opens a `loom` formula PR against `majiayu000/homebrew-tap` when `HOMEBREW_TAP_TOKEN` is configured.
 
-The Homebrew formula installs the `loom` binary from GitHub Release archives. The crate name is `skillloom` because `loom` is already used by an unrelated crates.io package.
+The Homebrew formula installs the `loom` binary from GitHub Release archives. The crate name remains `skillloom` because `loom` is already used by an unrelated crates.io package.
 
 ## One-Time Setup
 
@@ -53,7 +53,6 @@ loom --help
 After the Homebrew PR is merged:
 
 ```bash
-brew tap majiayu000/tap
-brew install skillloom
+brew install majiayu000/tap/loom
 loom --help
 ```

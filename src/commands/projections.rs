@@ -220,15 +220,17 @@ pub(crate) fn record_v3_operation(
         created_at: now,
         updated_at: now,
     };
-    let operations_backup = fs::read(&paths.operations_file).with_context(|| {
-        format!(
-            "failed to snapshot operations log {} before append",
-            paths.operations_file.display()
-        )
-    })?;
+    let operations_len = fs::metadata(&paths.operations_file)
+        .with_context(|| {
+            format!(
+                "failed to stat operations log {} before append",
+                paths.operations_file.display()
+            )
+        })?
+        .len();
     let checkpoint_backup = fs::read(&paths.checkpoint_file).with_context(|| {
         format!(
-            "failed to snapshot checkpoint {} before update",
+            "failed to snapshot checkpoint {} before operation append",
             paths.checkpoint_file.display()
         )
     })?;
@@ -247,7 +249,7 @@ pub(crate) fn record_v3_operation(
 
     if let Err(err) = persist_result {
         if let Err(rollback_err) =
-            rollback_record_v3_operation(paths, &operations_backup, &checkpoint_backup)
+            rollback_record_v3_operation(paths, operations_len, &checkpoint_backup)
         {
             return Err(err.context(format!(
                 "failed to rollback v3 operation record after partial write: {}",
@@ -269,11 +271,23 @@ fn maybe_projection_fault(tag: &str) -> Result<()> {
 
 fn rollback_record_v3_operation(
     paths: &V3StatePaths,
-    operations_backup: &[u8],
+    operations_len: u64,
     checkpoint_backup: &[u8],
 ) -> Result<()> {
-    restore_raw_file(&paths.operations_file, operations_backup)?;
+    truncate_file(&paths.operations_file, operations_len)?;
     restore_raw_file(&paths.checkpoint_file, checkpoint_backup)?;
+    Ok(())
+}
+
+fn truncate_file(path: &Path, len: u64) -> Result<()> {
+    let file = fs::OpenOptions::new()
+        .write(true)
+        .open(path)
+        .with_context(|| format!("failed to open file for rollback {}", path.display()))?;
+    file.set_len(len)
+        .with_context(|| format!("failed to truncate file {}", path.display()))?;
+    file.sync_all()
+        .with_context(|| format!("failed to sync truncated file {}", path.display()))?;
     Ok(())
 }
 

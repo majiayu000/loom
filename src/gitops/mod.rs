@@ -134,6 +134,15 @@ pub fn has_staged_changes_for_path(ctx: &AppContext, path: &Path) -> Result<bool
     Ok(!output.status.success())
 }
 
+pub fn write_index_tree(ctx: &AppContext) -> Result<String> {
+    run_git(ctx, &["write-tree"])
+}
+
+pub fn restore_index_tree(ctx: &AppContext, tree: &str) -> Result<()> {
+    run_git(ctx, &["read-tree", tree])?;
+    Ok(())
+}
+
 pub fn stage_path(ctx: &AppContext, path: &Path) -> Result<()> {
     let path_str = path.to_string_lossy();
     run_git(ctx, &["add", "--", &path_str])?;

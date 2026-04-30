@@ -1,9 +1,44 @@
 mod common;
 
+use std::fs;
+use std::path::Path;
+use std::process::Command;
+
 use common::actions::{binding_add, target_add};
 use serde_json::Value;
 
-use common::{TestDir, run_loom};
+use common::{TestDir, run_loom, write_minimal_registry_state};
+
+fn git_ok(root: &Path, args: &[&str]) -> String {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .arg("-c")
+        .arg("commit.gpgsign=false")
+        .args(args)
+        .output()
+        .expect("run git");
+    assert!(
+        output.status.success(),
+        "git {:?} failed: stdout={} stderr={}",
+        args,
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8_lossy(&output.stdout).trim().to_string()
+}
+
+fn git_status(root: &Path, args: &[&str]) -> bool {
+    Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .arg("-c")
+        .arg("commit.gpgsign=false")
+        .args(args)
+        .status()
+        .expect("run git")
+        .success()
+}
 
 #[test]
 fn target_add_bootstraps_registry_state_and_records_op() {
@@ -126,6 +161,60 @@ fn workspace_binding_add_fails_for_unknown_target() {
     assert_eq!(
         env["error"]["code"],
         Value::String("TARGET_NOT_FOUND".to_string())
+    );
+}
+
+#[test]
+fn registry_state_commit_stages_legacy_v3_deletions() {
+    let root = TestDir::new("registry-state-stage-v3-delete");
+    let target_path = root.path().join("live/claude");
+    write_minimal_registry_state(root.path(), 1);
+    fs::rename(
+        root.path().join("state/registry"),
+        root.path().join("state/v3"),
+    )
+    .expect("move registry state to old pre-release path");
+
+    git_ok(root.path(), &["init", "-b", "main"]);
+    git_ok(
+        root.path(),
+        &["config", "--local", "user.name", "loom-test"],
+    );
+    git_ok(
+        root.path(),
+        &["config", "--local", "user.email", "loom-test@example.com"],
+    );
+    git_ok(root.path(), &["add", "state/v3"]);
+    git_ok(root.path(), &["commit", "-m", "legacy registry state"]);
+    assert!(git_status(
+        root.path(),
+        &["cat-file", "-e", "HEAD:state/v3/schema.json"]
+    ));
+
+    let (output, env) = target_add(root.path(), "claude", &target_path, "managed");
+    assert!(
+        output.status.success(),
+        "target add failed: stderr={} stdout={}",
+        String::from_utf8_lossy(&output.stderr),
+        String::from_utf8_lossy(&output.stdout)
+    );
+    assert_eq!(env["ok"], Value::Bool(true));
+
+    assert!(git_status(
+        root.path(),
+        &["cat-file", "-e", "HEAD:state/registry/schema.json"]
+    ));
+    assert!(
+        !git_status(
+            root.path(),
+            &["cat-file", "-e", "HEAD:state/v3/schema.json"]
+        ),
+        "legacy state/v3 should be deleted from HEAD"
+    );
+    let status = git_ok(root.path(), &["status", "--short"]);
+    assert!(
+        !status.contains("state/v3"),
+        "legacy state/v3 should not remain dirty: {status}"
     );
 }
 

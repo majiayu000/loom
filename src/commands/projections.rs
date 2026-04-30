@@ -527,9 +527,9 @@ pub(crate) fn sync_push_internal(
         ));
     }
 
-    let _state_commit = gitops::commit_existing_paths_if_changed(
+    let _state_commit = gitops::commit_paths_if_changed(
         ctx,
-        &[".gitignore", "state/registry"],
+        &[".gitignore", "state/registry", "state/v3"],
         "sync: commit registry state",
     )
     .map_err(map_git)?;

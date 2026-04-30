@@ -255,8 +255,12 @@ pub(crate) fn commit_registry_state(
     ctx: &AppContext,
     message: &str,
 ) -> std::result::Result<Option<String>, CommandFailure> {
-    crate::gitops::commit_existing_paths_if_changed(ctx, &[".gitignore", "state/registry"], message)
-        .map_err(map_git)
+    crate::gitops::commit_paths_if_changed(
+        ctx,
+        &[".gitignore", "state/registry", "state/v3"],
+        message,
+    )
+    .map_err(map_git)
 }
 
 // ---------------------------------------------------------------------------

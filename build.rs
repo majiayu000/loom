@@ -7,6 +7,7 @@ use std::time::SystemTime;
 const FRONTEND_INPUT_FILES: &[&str] = &[
     "package.json",
     "bun.lock",
+    "package-lock.json",
     "index.html",
     "landing.html",
     "vite.config.ts",
@@ -24,6 +25,7 @@ fn main() {
 
     println!("cargo:rerun-if-changed=panel/package.json");
     println!("cargo:rerun-if-changed=panel/bun.lock");
+    println!("cargo:rerun-if-changed=panel/package-lock.json");
     println!("cargo:rerun-if-changed=panel/index.html");
     println!("cargo:rerun-if-changed=panel/landing.html");
     println!("cargo:rerun-if-changed=panel/public");
@@ -36,13 +38,11 @@ fn main() {
     }
     fs::create_dir_all(&embedded_dist).expect("create embedded panel dir");
 
-    let dist_was_fresh = panel_dist_is_fresh(&panel_dir, &source_dist);
-    if !dist_was_fresh {
-        let _ = maybe_build_panel(&panel_dir);
-    }
-
     if panel_dist_is_fresh(&panel_dir, &source_dist) {
         copy_dir_recursive(&source_dist, &embedded_dist);
+        println!("cargo:rustc-env=LOOM_PANEL_EMBED_STATUS=ready");
+    } else if let Some(built_dist) = maybe_build_panel_in_out_dir(&panel_dir, &out_dir) {
+        copy_dir_recursive(&built_dist, &embedded_dist);
         println!("cargo:rustc-env=LOOM_PANEL_EMBED_STATUS=ready");
     } else {
         println!(
@@ -52,28 +52,63 @@ fn main() {
     }
 }
 
-fn maybe_build_panel(panel_dir: &Path) -> bool {
+fn maybe_build_panel_in_out_dir(panel_dir: &Path, out_dir: &Path) -> Option<PathBuf> {
     let bun = if cfg!(windows) { "bun.exe" } else { "bun" };
+    let build_dir = out_dir.join("panel-build");
+    if build_dir.exists() {
+        fs::remove_dir_all(&build_dir).ok()?;
+    }
+    fs::create_dir_all(&build_dir).ok()?;
+
+    copy_panel_inputs(panel_dir, &build_dir).ok()?;
 
     let install_status = Command::new(bun)
         .arg("install")
         .arg("--frozen-lockfile")
-        .current_dir(panel_dir)
+        .current_dir(&build_dir)
         .status();
 
     let Ok(install_status) = install_status else {
-        return false;
+        return None;
     };
     if !install_status.success() {
-        return false;
+        return None;
     }
 
-    Command::new(bun)
+    let build_ok = Command::new(bun)
         .arg("run")
         .arg("build")
-        .current_dir(panel_dir)
+        .current_dir(&build_dir)
         .status()
-        .is_ok_and(|status| status.success())
+        .is_ok_and(|status| status.success());
+    if !build_ok {
+        return None;
+    }
+
+    let built_dist = build_dir.join("dist");
+    if panel_dist_is_fresh(&build_dir, &built_dist) {
+        Some(built_dist)
+    } else {
+        None
+    }
+}
+
+fn copy_panel_inputs(source: &Path, destination: &Path) -> std::io::Result<()> {
+    for file in FRONTEND_INPUT_FILES {
+        let source_file = source.join(file);
+        if source_file.is_file() {
+            fs::copy(&source_file, destination.join(file))?;
+        }
+    }
+    for dir in FRONTEND_INPUT_DIRS {
+        let source_dir = source.join(dir);
+        if source_dir.is_dir() {
+            let destination_dir = destination.join(dir);
+            fs::create_dir_all(&destination_dir)?;
+            copy_dir_recursive_result(&source_dir, &destination_dir)?;
+        }
+    }
+    Ok(())
 }
 
 fn panel_dist_is_fresh(panel_dir: &Path, dist_dir: &Path) -> bool {
@@ -131,34 +166,42 @@ fn path_mtime(path: &Path) -> Option<SystemTime> {
 }
 
 fn copy_dir_recursive(source: &Path, destination: &Path) {
-    let entries = fs::read_dir(source).expect("read source dist dir");
+    copy_dir_recursive_result(source, destination).unwrap_or_else(|err| {
+        panic!(
+            "copy '{}' -> '{}' failed: {}",
+            display_path(source),
+            display_path(destination),
+            err
+        )
+    });
+}
+
+fn copy_dir_recursive_result(source: &Path, destination: &Path) -> std::io::Result<()> {
+    let entries = fs::read_dir(source)?;
     for entry in entries {
-        let entry = entry.expect("read dist entry");
+        let entry = entry?;
         let source_path = entry.path();
         let destination_path = destination.join(entry.file_name());
-        let file_type = entry.file_type().expect("read dist file type");
+        let file_type = entry.file_type()?;
         if file_type.is_symlink() {
-            panic!(
-                "refusing to embed symlinked panel asset '{}'",
-                display_path(&source_path)
-            );
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!(
+                    "refusing to embed symlinked panel asset '{}'",
+                    display_path(&source_path)
+                ),
+            ));
         }
         if file_type.is_dir() {
-            fs::create_dir_all(&destination_path).expect("create embedded subdir");
-            copy_dir_recursive(&source_path, &destination_path);
+            fs::create_dir_all(&destination_path)?;
+            copy_dir_recursive_result(&source_path, &destination_path)?;
             continue;
         }
         if file_type.is_file() {
-            fs::copy(&source_path, &destination_path).unwrap_or_else(|err| {
-                panic!(
-                    "copy panel asset '{}' -> '{}' failed: {}",
-                    display_path(&source_path),
-                    display_path(&destination_path),
-                    err
-                )
-            });
+            fs::copy(&source_path, &destination_path)?;
         }
     }
+    Ok(())
 }
 
 fn display_path(path: &Path) -> String {

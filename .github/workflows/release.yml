@@ -1,0 +1,259 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Check tag matches Cargo version
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo_version="$(cargo metadata --no-deps --format-version 1 | python3 -c 'import json,sys; print(json.load(sys.stdin)["packages"][0]["version"])')"
+          test "v${cargo_version}" = "$GITHUB_REF_NAME"
+
+      - name: Format
+        run: make fmt-check
+
+      - name: Lint
+        run: make lint
+
+      - name: Test
+        run: make test
+
+      - name: Panel build
+        run: make panel-build
+
+      - name: Panel tests
+        run: make panel-test
+
+      - name: Agent E2E
+        run: make e2e
+
+      - name: Crate package dry-run
+        run: cargo publish --dry-run --locked
+
+  build-assets:
+    needs: verify
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - os: macos-15-intel
+            target: x86_64-apple-darwin
+          - os: macos-15
+            target: aarch64-apple-darwin
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Build release binary
+        run: cargo build --release --locked --target "${{ matrix.target }}"
+
+      - name: Package archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          archive="skillloom-${version}-${{ matrix.target }}.tar.gz"
+          staging="dist/skillloom-${version}-${{ matrix.target }}"
+          mkdir -p "$staging"
+          cp "target/${{ matrix.target }}/release/loom" "$staging/loom"
+          cp README.md LICENSE "$staging/"
+          tar -C dist -czf "dist/$archive" "skillloom-${version}-${{ matrix.target }}"
+          (cd dist && shasum -a 256 "$archive" > "$archive.sha256")
+
+      - name: Upload release asset
+        uses: actions/upload-artifact@v4
+        with:
+          name: skillloom-${{ matrix.target }}
+          path: |
+            dist/*.tar.gz
+            dist/*.sha256
+
+  github-release:
+    needs: build-assets
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Download release assets
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: Create checksums file
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat release-assets/*.sha256 > release-assets/SHA256SUMS
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release create "$GITHUB_REF_NAME" \
+            release-assets/*.tar.gz \
+            release-assets/SHA256SUMS \
+            --repo "$GITHUB_REPOSITORY" \
+            --verify-tag \
+            --title "skillloom ${GITHUB_REF_NAME#v}" \
+            --notes "Release ${GITHUB_REF_NAME}."
+
+  crates-io:
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+    steps:
+      - name: Skip when crates.io token is not configured
+        if: env.CARGO_REGISTRY_TOKEN == ''
+        run: echo "CARGO_REGISTRY_TOKEN is not configured; skipping crates.io publish."
+
+      - name: Checkout
+        if: env.CARGO_REGISTRY_TOKEN != ''
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        if: env.CARGO_REGISTRY_TOKEN != ''
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup Bun
+        if: env.CARGO_REGISTRY_TOKEN != ''
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Publish crate
+        if: env.CARGO_REGISTRY_TOKEN != ''
+        run: cargo publish --locked
+
+  homebrew-tap:
+    needs: github-release
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+      TAP_REPO: majiayu000/homebrew-tap
+    steps:
+      - name: Skip when Homebrew tap token is not configured
+        if: env.HOMEBREW_TAP_TOKEN == ''
+        run: echo "HOMEBREW_TAP_TOKEN is not configured; skipping Homebrew tap PR."
+
+      - name: Download release assets
+        if: env.HOMEBREW_TAP_TOKEN != ''
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: Checkout Homebrew tap
+        if: env.HOMEBREW_TAP_TOKEN != ''
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.TAP_REPO }}
+          token: ${{ env.HOMEBREW_TAP_TOKEN }}
+          path: homebrew-tap
+
+      - name: Update formula
+        if: env.HOMEBREW_TAP_TOKEN != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="$GITHUB_REF_NAME"
+          version="${tag#v}"
+          base_url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${tag}"
+          arm_archive="skillloom-${version}-aarch64-apple-darwin.tar.gz"
+          intel_archive="skillloom-${version}-x86_64-apple-darwin.tar.gz"
+          arm_sha="$(shasum -a 256 "release-assets/${arm_archive}" | awk '{print $1}')"
+          intel_sha="$(shasum -a 256 "release-assets/${intel_archive}" | awk '{print $1}')"
+          mkdir -p homebrew-tap/Formula
+          cat > homebrew-tap/Formula/skillloom.rb <<FORMULA
+          class Skillloom < Formula
+            desc "Git-backed skill manager and registry for AI coding agents"
+            homepage "https://github.com/majiayu000/loom"
+            version "${version}"
+            license "MIT"
+
+            on_macos do
+              if Hardware::CPU.arm?
+                url "${base_url}/${arm_archive}"
+                sha256 "${arm_sha}"
+              else
+                url "${base_url}/${intel_archive}"
+                sha256 "${intel_sha}"
+              end
+            end
+
+            def install
+              bin.install "loom"
+            end
+
+            test do
+              assert_match "Skill manager", shell_output("#{bin}/loom --help")
+            end
+          end
+          FORMULA
+
+      - name: Open Homebrew tap PR
+        if: env.HOMEBREW_TAP_TOKEN != ''
+        working-directory: homebrew-tap
+        env:
+          GH_TOKEN: ${{ env.HOMEBREW_TAP_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          branch="skillloom-${GITHUB_REF_NAME}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -B "$branch"
+          git add Formula/skillloom.rb
+          git commit -m "Update skillloom to ${GITHUB_REF_NAME}" || exit 0
+          git push --force-with-lease origin "$branch"
+          gh pr create \
+            --repo "$TAP_REPO" \
+            --head "$branch" \
+            --base main \
+            --title "Update skillloom to ${GITHUB_REF_NAME}" \
+            --body "Updates the skillloom formula for ${GITHUB_REF_NAME}."

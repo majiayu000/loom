@@ -3,6 +3,23 @@ name = "skillloom"
 version = "0.1.0"
 edition = "2024"
 build = "build.rs"
+description = "Git-backed skill manager and registry for AI coding agents"
+license = "MIT"
+repository = "https://github.com/majiayu000/loom"
+homepage = "https://github.com/majiayu000/loom"
+readme = "README.md"
+keywords = ["agents", "skills", "registry", "git", "cli"]
+categories = ["command-line-utilities", "development-tools"]
+exclude = [
+    "/.claude/",
+    "/.omx/",
+    "/docs/artifacts/",
+    "/panel/dist/",
+    "/panel/node_modules/",
+    "/skills/",
+    "/state/",
+    "/target/",
+]
 
 [[bin]]
 name = "loom"

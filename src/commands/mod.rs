@@ -128,6 +128,7 @@ impl App {
             Command::Skill { command } => match command {
                 SkillCommand::Add(args) => self.cmd_add(args, &request_id),
                 SkillCommand::ImportObserved(args) => self.cmd_import_observed(args, &request_id),
+                SkillCommand::MonitorObserved(args) => self.cmd_monitor_observed(args, &request_id),
                 SkillCommand::Project(args) => self.cmd_project(args, &request_id),
                 SkillCommand::Capture(args) => self.cmd_capture(args, &request_id),
                 SkillCommand::Save(args) => self.cmd_save(args, &request_id),
@@ -261,6 +262,7 @@ fn command_requires_durable_audit(command: &Command) -> bool {
             command,
             SkillCommand::Add(_)
                 | SkillCommand::ImportObserved(_)
+                | SkillCommand::MonitorObserved(_)
                 | SkillCommand::Project(_)
                 | SkillCommand::Capture(_)
                 | SkillCommand::Save(_)

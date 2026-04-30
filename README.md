@@ -179,6 +179,8 @@ loom skill snapshot <skill>
 loom skill release <skill> <version>
 loom skill rollback <skill> [--to <ref> | --steps <n>]
 loom skill diff <skill> <from> <to>
+loom skill import-observed [--target <target-id>]
+loom skill monitor-observed [--target <target-id>] [--once] [--interval-seconds <seconds>]
 
 loom sync status
 loom sync push
@@ -205,6 +207,17 @@ loom target add --agent claude --path "$HOME/.claude/skills" --ownership observe
 loom target add --agent claude --path "$HOME/.claude-work/skills" --ownership observed
 loom target list
 ```
+
+### Observed Skill Monitoring
+
+Use this when the real source of truth is still an agent skill directory such as `~/.claude/skills` or `~/.codex/skills`.
+
+```bash
+loom skill monitor-observed --once
+loom skill monitor-observed --interval-seconds 30
+```
+
+`monitor-observed` imports new observed skills and updates existing registry copies when file content changes. It does not delete registry skills when an observed directory disappears; deletion stays an explicit cleanup action.
 
 ## Agent E2E (Recommended)
 

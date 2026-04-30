@@ -113,6 +113,7 @@ pub(crate) fn command_name(command: &Command) -> &'static str {
         Command::Skill { command } => match command {
             SkillCommand::Add(_) => "skill.add",
             SkillCommand::ImportObserved(_) => "skill.import_observed",
+            SkillCommand::MonitorObserved(_) => "skill.monitor_observed",
             SkillCommand::Project(_) => "skill.project",
             SkillCommand::Capture(_) => "skill.capture",
             SkillCommand::Save(_) => "skill.save",

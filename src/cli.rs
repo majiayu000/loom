@@ -125,6 +125,8 @@ pub enum SkillCommand {
     Rollback(RollbackArgs),
     #[command(about = "Diff two revisions of a skill source")]
     Diff(DiffArgs),
+    #[command(about = "Continuously import and update skills from observed targets")]
+    MonitorObserved(MonitorObservedArgs),
     ImportObserved(ImportObservedArgs),
     Orphan {
         #[command(subcommand)]
@@ -219,6 +221,25 @@ pub struct CaptureArgs {
 
     #[arg(long)]
     pub message: Option<String>,
+}
+
+#[derive(Debug, Clone, Args, Serialize)]
+pub struct MonitorObservedArgs {
+    /// Restrict monitoring to one observed target id.
+    #[arg(long)]
+    pub target: Option<String>,
+
+    /// Run one scan and exit.
+    #[arg(long)]
+    pub once: bool,
+
+    /// Seconds between scans in long-running mode.
+    #[arg(long, default_value_t = 30)]
+    pub interval_seconds: u64,
+
+    /// Stop after N scans. Mainly useful for supervised smoke tests.
+    #[arg(long, hide = true)]
+    pub max_cycles: Option<u64>,
 }
 
 #[derive(Debug, Clone, Args, Serialize)]

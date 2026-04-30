@@ -354,6 +354,25 @@ Rules:
 5. `--target` must reference an observed target when supplied
 6. this is not the removed legacy `skill import` command; it is an explicit bridge from discovered observed targets into the source registry
 
+### 11.2.1 `skill monitor-observed`
+
+```bash
+loom --json --root <root> skill monitor-observed [--target <target-id>] [--once] [--interval-seconds <seconds>]
+```
+
+Write command.
+
+Rules:
+
+1. scans observed targets for directories containing `SKILL.md` or `skill.md`
+2. imports new observed skills into canonical `skills/<skill-id>`
+3. updates existing canonical skills when materialized file content differs from the observed source
+4. top-level symlinks to skill directories are materialized as real files
+5. duplicate skill names found in later observed targets are skipped for that cycle
+6. observed deletions are not propagated automatically
+7. `--once` runs one scan and exits; without it, the command polls every `--interval-seconds`
+8. `--target` must reference an observed target when supplied
+
 ### 11.3 `skill project`
 
 ```bash
@@ -550,10 +569,11 @@ Examples:
 1. `workspace binding add`
 2. `target add`
 3. `skill import-observed`
-4. `skill project`
-5. `skill capture`
-6. `skill save`
-7. `sync push`
+4. `skill monitor-observed`
+5. `skill project`
+6. `skill capture`
+7. `skill save`
+8. `sync push`
 
 Requirements:
 

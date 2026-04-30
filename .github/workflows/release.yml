@@ -137,7 +137,7 @@ jobs:
             release-assets/SHA256SUMS \
             --repo "$GITHUB_REPOSITORY" \
             --verify-tag \
-            --title "skillloom ${GITHUB_REF_NAME#v}" \
+            --title "Loom ${GITHUB_REF_NAME}" \
             --notes "Release ${GITHUB_REF_NAME}."
 
   crates-io:
@@ -209,8 +209,8 @@ jobs:
           arm_sha="$(shasum -a 256 "release-assets/${arm_archive}" | awk '{print $1}')"
           intel_sha="$(shasum -a 256 "release-assets/${intel_archive}" | awk '{print $1}')"
           mkdir -p homebrew-tap/Formula
-          cat > homebrew-tap/Formula/skillloom.rb <<FORMULA
-          class Skillloom < Formula
+          cat > homebrew-tap/Formula/loom.rb <<FORMULA
+          class Loom < Formula
             desc "Git-backed skill manager and registry for AI coding agents"
             homepage "https://github.com/majiayu000/loom"
             version "${version}"
@@ -244,16 +244,16 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          branch="skillloom-${GITHUB_REF_NAME}"
+          branch="loom-${GITHUB_REF_NAME}"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git checkout -B "$branch"
-          git add Formula/skillloom.rb
-          git commit -m "Update skillloom to ${GITHUB_REF_NAME}" || exit 0
+          git add Formula/loom.rb
+          git commit -m "Update loom to ${GITHUB_REF_NAME}" || exit 0
           git push --force-with-lease origin "$branch"
           gh pr create \
             --repo "$TAP_REPO" \
             --head "$branch" \
             --base main \
-            --title "Update skillloom to ${GITHUB_REF_NAME}" \
-            --body "Updates the skillloom formula for ${GITHUB_REF_NAME}."
+            --title "Update loom to ${GITHUB_REF_NAME}" \
+            --body "Updates the loom formula for ${GITHUB_REF_NAME}."

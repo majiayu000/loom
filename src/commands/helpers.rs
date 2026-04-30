@@ -92,6 +92,8 @@ pub(crate) fn validate_skill_name(skill: &str) -> Result<()> {
 
 pub(crate) fn command_name(command: &Command) -> &'static str {
     match command {
+        Command::Init => "init",
+        Command::Monitor(_) => "monitor",
         Command::Workspace { command } => match command {
             WorkspaceCommand::Status => "workspace.status",
             WorkspaceCommand::Doctor => "workspace.doctor",

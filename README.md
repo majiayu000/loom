@@ -35,40 +35,50 @@ AI coding agents (Claude Code, Codex, Cursor, Windsurf, …) all read skills fro
 ## Quick Start
 
 ```bash
-# 1. Install (available after the first tagged release)
+# 1. Install
 cargo install skillloom
 
-# or install from the Homebrew tap
-brew tap majiayu000/tap
-brew install skillloom
+# or install from the Homebrew tap after its formula PR is merged
+brew install majiayu000/tap/loom
 
 # or install from source
 git clone https://github.com/majiayu000/loom.git
 cd loom && cargo install --path .
 
-# 2. Set up a registry directory (must be separate from the Loom tool repo)
-mkdir -p ~/.loom-registry
-loom --root ~/.loom-registry workspace init
+# 2. Initialize the default registry and auto-register existing agent skill dirs
+loom init
 
-# 3. Import a skill into the registry
-loom --root ~/.loom-registry skill add "$HOME/.claude/skills/my-skill" --name my-skill
+# 3. Import/update observed skills once, or keep watching in the foreground
+loom monitor --once
+loom monitor --interval-seconds 30
+```
 
-# 4. Register a managed Claude Code target
+Loom defaults to `~/.loom-registry`. Pass `--root <dir>` only when you want a different registry.
+
+For managed projection flows:
+
+```bash
+# Import a skill into the registry
+loom skill add "$HOME/.claude/skills/my-skill" --name my-skill
+
+# Register a managed Claude Code target
 mkdir -p "$HOME/.loom-targets/claude/skills"
-loom --root ~/.loom-registry target add \
-  --agent claude --path "$HOME/.loom-targets/claude/skills" --ownership managed
+TARGET_ID="$(
+  loom --json target add \
+    --agent claude --path "$HOME/.loom-targets/claude/skills" --ownership managed \
+    | jq -r '.data.target.target_id'
+)"
 
-# 5. Bind this project/workspace to that target
-TARGET_ID="$(loom --json --root ~/.loom-registry target list | jq -r '.data.targets[0].target_id')"
-loom --root ~/.loom-registry workspace binding add \
+# Bind this project/workspace to that target
+loom workspace binding add \
   --agent claude --profile home \
   --matcher-kind path-prefix --matcher-value "$PWD" \
   --target "$TARGET_ID"
 
-# 6. Project the skill, then open the control panel
-BINDING_ID="$(loom --json --root ~/.loom-registry workspace binding list | jq -r '.data.bindings[0].binding_id')"
-loom --root ~/.loom-registry skill project my-skill --binding "$BINDING_ID" --method symlink
-loom --root ~/.loom-registry panel        # → http://localhost:43117
+# Project the skill, then open the control panel
+BINDING_ID="$(loom --json workspace binding list | jq -r '.data.bindings[0].binding_id')"
+loom skill project my-skill --binding "$BINDING_ID" --method symlink
+loom panel        # -> http://localhost:43117
 ```
 
 `loom panel` now serves a frontend bundled into the Rust binary at build time, so it works even when `--root` points at a separate registry directory. If panel assets are unavailable in your build, reinstall from a checkout with `bun` available so Loom can package the frontend during compile.
@@ -164,8 +174,12 @@ Four core concepts:
 <summary><strong>Full CLI reference</strong> (click to expand)</summary>
 
 ```bash
+loom init
+loom monitor [--target <target-id>] [--once] [--interval-seconds <seconds>]
+
 loom workspace status
 loom workspace doctor
+loom workspace init [--scan-existing]
 loom workspace binding add --agent <claude|codex> --profile <id> --matcher-kind <path-prefix|exact-path|name> --matcher-value <value> --target <target-id> [--policy-profile <id>]
 loom workspace binding list
 loom workspace binding show <binding-id>
@@ -203,7 +217,7 @@ loom ops history repair --strategy <local|remote>
 loom panel [--port 43117]
 ```
 
-Most commands support `--json` for machine-readable output.
+Most commands support `--json` for machine-readable output. Commands default to `~/.loom-registry`; use `--root <dir>` to override that registry.
 
 </details>
 
@@ -220,11 +234,11 @@ loom target list
 Use this when the real source of truth is still an agent skill directory such as `~/.claude/skills` or `~/.codex/skills`.
 
 ```bash
-loom skill monitor-observed --once
-loom skill monitor-observed --interval-seconds 30
+loom monitor --once
+loom monitor --interval-seconds 30
 ```
 
-`monitor-observed` imports new observed skills and updates existing registry copies when file content changes. It does not delete registry skills when an observed directory disappears; deletion stays an explicit cleanup action.
+`loom monitor` is a short alias for `loom skill monitor-observed`. It imports new observed skills and updates existing registry copies when file content changes. It does not delete registry skills when an observed directory disappears; deletion stays an explicit cleanup action.
 
 ## Agent E2E (Recommended)
 

@@ -216,7 +216,7 @@ fn workspace_status_is_read_only_in_empty_dir() {
 
     assert_eq!(env["ok"], true);
     assert!(!root.path().join(".git").exists());
-    assert!(!root.path().join("state/v3").exists());
+    assert!(!root.path().join("state/registry").exists());
     assert!(!root.path().join("skills").exists());
 
     let events = read_command_events(root.path());
@@ -231,7 +231,7 @@ fn workspace_status_is_read_only_in_empty_dir() {
     assert_eq!(events[1]["exit_code"], Value::from(0));
     assert_eq!(
         events[1]["output"]["state_model"],
-        Value::String("v3".to_string())
+        Value::String("registry".to_string())
     );
 }
 
@@ -259,7 +259,7 @@ fn workspace_status_warns_when_command_audit_preflight_is_unavailable() {
             .filter_map(serde_json::Value::as_str)
             .any(|warning| warning.contains("failed to prepare command event log"))
     );
-    assert!(!root.path().join("state/v3").exists());
+    assert!(!root.path().join("state/registry").exists());
 }
 
 #[test]

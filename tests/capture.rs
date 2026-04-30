@@ -9,11 +9,12 @@ use common::actions::{binding_add, save_skill, skill_project, target_add};
 use common::{TestDir, run_loom, run_loom_with_env, write_skill};
 
 fn read_operations_log(root: &std::path::Path) -> String {
-    fs::read_to_string(root.join("state/v3/ops/operations.jsonl")).expect("read operations log")
+    fs::read_to_string(root.join("state/registry/ops/operations.jsonl"))
+        .expect("read operations log")
 }
 
 fn read_checkpoint(root: &std::path::Path) -> String {
-    fs::read_to_string(root.join("state/v3/ops/checkpoint.json")).expect("read checkpoint")
+    fs::read_to_string(root.join("state/registry/ops/checkpoint.json")).expect("read checkpoint")
 }
 
 #[test]

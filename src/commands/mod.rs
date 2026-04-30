@@ -24,8 +24,8 @@ use crate::types::ErrorCode;
 pub use helpers::{collect_skill_inventory, remote_status_payload};
 
 use event_store::{
-    append_command_finished, append_command_started, command_event_input,
-    prepare_command_event_store,
+    append_command_audit_failure, append_command_finished, append_command_started,
+    command_event_input, prepare_command_event_store,
 };
 use helpers::{command_name, ensure_initial_commit, map_git, map_io};
 
@@ -150,14 +150,7 @@ impl App {
                 if let Some(warning) = audit_warning.take() {
                     env.meta.warnings.push(warning);
                 }
-                if audit_started {
-                    if let Err(err) = append_command_finished(&self.ctx, cmd, &env, 0) {
-                        env.meta
-                            .warnings
-                            .push(format!("failed to append command event: {}", err));
-                    }
-                }
-                Ok((env, 0))
+                Ok(self.finish_command_audit(cmd, env, 0, audit_started, audit_required))
             }
             Err(f) => {
                 let exit_code = f.code.exit_code();
@@ -165,16 +158,61 @@ impl App {
                 if let Some(warning) = audit_warning.take() {
                     env.meta.warnings.push(warning);
                 }
-                if audit_started {
-                    if let Err(err) = append_command_finished(&self.ctx, cmd, &env, exit_code) {
-                        env.meta
-                            .warnings
-                            .push(format!("failed to append command event: {}", err));
-                    }
-                }
-                Ok((env, exit_code))
+                Ok(self.finish_command_audit(cmd, env, exit_code, audit_started, audit_required))
             }
         }
+    }
+
+    fn finish_command_audit(
+        &self,
+        cmd: &str,
+        mut env: Envelope,
+        exit_code: i32,
+        audit_started: bool,
+        audit_required: bool,
+    ) -> (Envelope, i32) {
+        if !audit_started {
+            return (env, exit_code);
+        }
+
+        if let Err(err) = append_command_finished(&self.ctx, cmd, &env, exit_code) {
+            let warning = format!("failed to append command event: {}", err);
+            if !audit_required {
+                env.meta.warnings.push(warning);
+                return (env, exit_code);
+            }
+
+            let failure_exit = ErrorCode::InternalError.exit_code();
+            let mut failure_env = Envelope::err(
+                cmd,
+                env.request_id.clone(),
+                ErrorCode::InternalError,
+                warning,
+                json!({
+                    "audit_stage": "finish",
+                    "original_ok": env.ok,
+                    "original_exit_code": exit_code,
+                    "original_error": env.error.as_ref().map(|error| {
+                        json!({
+                            "code": error.code,
+                            "message": error.message,
+                        })
+                    }),
+                }),
+            );
+            failure_env.meta.warnings = env.meta.warnings;
+            if let Err(recovery_err) =
+                append_command_audit_failure(&self.ctx, cmd, &failure_env, failure_exit)
+            {
+                failure_env.meta.warnings.push(format!(
+                    "failed to append audit failure event after terminal append failure: {}",
+                    recovery_err
+                ));
+            }
+            return (failure_env, failure_exit);
+        }
+
+        (env, exit_code)
     }
 
     pub(crate) fn require_v3_snapshot(

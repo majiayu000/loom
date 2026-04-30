@@ -351,7 +351,7 @@ fn skill_project_eventstore_preflight_failure_blocks_mutation() {
 }
 
 #[test]
-fn skill_project_append_failure_does_not_report_failed_mutation() {
+fn skill_project_terminal_audit_failure_reports_error_after_mutation() {
     let root = TestDir::new("v3-skill-project-eventstore-append");
     write_example_skill(root.path(), "model-onboarding");
 
@@ -385,7 +385,7 @@ fn skill_project_append_failure_does_not_report_failed_mutation() {
 
     let (project_output, project_env) = run_loom_with_env(
         root.path(),
-        &[("LOOM_FAULT_INJECT", "command_event_append")],
+        &[("LOOM_FAULT_INJECT", "command_event_append_finished")],
         &[
             "skill",
             "project",
@@ -398,19 +398,17 @@ fn skill_project_append_failure_does_not_report_failed_mutation() {
     );
 
     assert!(
-        project_output.status.success(),
-        "append failure should not turn completed mutation into command failure"
+        !project_output.status.success(),
+        "terminal audit failure should fail an audit-required command"
     );
-    assert_eq!(project_env["ok"], Value::Bool(true));
-    assert!(
-        project_env["meta"]["warnings"][0]
-            .as_str()
-            .unwrap_or_default()
-            .contains("failed to append command event")
+    assert_eq!(project_env["ok"], Value::Bool(false));
+    assert_eq!(
+        project_env["error"]["code"],
+        Value::String("INTERNAL_ERROR".to_string())
     );
     assert!(
         target_path.join("model-onboarding/SKILL.md").exists(),
-        "successful mutation should remain materialized"
+        "mutation completed before terminal audit failure and should remain materialized"
     );
 }
 

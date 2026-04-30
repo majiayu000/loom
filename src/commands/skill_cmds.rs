@@ -793,6 +793,9 @@ impl App {
         cleanup_staging();
 
         let mut meta = Meta::default();
+        let previous_head = gitops::head(&self.ctx).map_err(map_git)?;
+        let registry_backup =
+            snapshot_registry_operation_state(&paths).map_err(map_registry_state)?;
         let mut changed = false;
         for skill_rel in &imported_rels {
             match gitops::has_staged_changes_for_path(&self.ctx, Path::new(skill_rel)) {
@@ -823,28 +826,50 @@ impl App {
                     return Err(map_git(err));
                 }
             };
-            let op_id = record_registry_operation(
-                &paths,
-                "skill.import_observed",
-                json!({
-                    "target": args.target,
-                    "request_id": request_id
-                }),
-                json!({
-                    "commit": commit,
-                    "imported": imported,
-                    "skipped": skipped
-                }),
-            )
-            .map_err(map_registry_state)?;
-            meta.op_id = Some(op_id);
-            maybe_autosync_or_queue(
-                &self.ctx,
-                "import-observed",
-                request_id,
-                json!({"commit": commit, "count": imported.len()}),
-                &mut meta,
-            )?;
+            let post_commit = (|| -> std::result::Result<Meta, CommandFailure> {
+                let op_id = record_registry_operation(
+                    &paths,
+                    "skill.import_observed",
+                    json!({
+                        "target": args.target,
+                        "request_id": request_id
+                    }),
+                    json!({
+                        "commit": commit,
+                        "imported": imported,
+                        "skipped": skipped
+                    }),
+                )
+                .map_err(map_registry_state)?;
+                let state_commit =
+                    commit_registry_state(&self.ctx, "import-observed: record registry state")?;
+                let mut meta = Meta {
+                    op_id: Some(op_id),
+                    ..Meta::default()
+                };
+                maybe_autosync_or_queue(
+                    &self.ctx,
+                    "import-observed",
+                    request_id,
+                    json!({"commit": commit, "state_commit": state_commit, "count": imported.len()}),
+                    &mut meta,
+                )?;
+                Ok(meta)
+            })();
+            let post_meta = match post_commit {
+                Ok(result) => result,
+                Err(err) => {
+                    rollback_import_after_commit(
+                        &self.ctx,
+                        &paths,
+                        &registry_backup,
+                        &previous_head,
+                        &imported_rels,
+                    );
+                    return Err(err);
+                }
+            };
+            meta = post_meta;
             Some(commit)
         } else {
             None
@@ -1100,21 +1125,21 @@ impl App {
                         fs::create_dir_all(parent).map_err(map_io)?;
                     }
                     if let Err(err) = fs::rename(&dst, &previous) {
-                        cleanup_staging();
                         rollback_monitor_changes(&self.ctx, &imported_rels, &update_rollbacks);
+                        cleanup_staging();
                         return Err(map_io(err));
                     }
                     if let Err(err) = fs::rename(&staging_skill, &dst) {
                         let _ = fs::rename(&previous, &dst);
-                        cleanup_staging();
                         rollback_monitor_changes(&self.ctx, &imported_rels, &update_rollbacks);
+                        cleanup_staging();
                         return Err(map_io(err));
                     }
                     if let Err(err) = gitops::stage_path(&self.ctx, Path::new(&skill_rel)) {
                         let _ = remove_path_if_exists(&dst);
                         let _ = fs::rename(&previous, &dst);
-                        cleanup_staging();
                         rollback_monitor_changes(&self.ctx, &imported_rels, &update_rollbacks);
+                        cleanup_staging();
                         return Err(map_git(err));
                     }
                     update_rollbacks.push(MonitorUpdateRollback {
@@ -1126,14 +1151,14 @@ impl App {
                     updated.push(item);
                 } else {
                     if let Err(err) = fs::rename(&staging_skill, &dst) {
-                        cleanup_staging();
                         rollback_monitor_changes(&self.ctx, &imported_rels, &update_rollbacks);
+                        cleanup_staging();
                         return Err(map_io(err));
                     }
                     if let Err(err) = gitops::stage_path(&self.ctx, Path::new(&skill_rel)) {
                         rollback_added_skill(&self.ctx, &skill_rel, &dst);
-                        cleanup_staging();
                         rollback_monitor_changes(&self.ctx, &imported_rels, &update_rollbacks);
+                        cleanup_staging();
                         return Err(map_git(err));
                     }
                     imported_rels.push(skill_rel.clone());
@@ -1152,14 +1177,17 @@ impl App {
                 }
                 Ok(false) => {}
                 Err(err) => {
-                    cleanup_staging();
                     rollback_monitor_changes(&self.ctx, &imported_rels, &update_rollbacks);
+                    cleanup_staging();
                     return Err(map_git(err));
                 }
             }
         }
 
         let mut meta = Meta::default();
+        let previous_head = gitops::head(&self.ctx).map_err(map_git)?;
+        let registry_backup =
+            snapshot_registry_operation_state(&paths).map_err(map_registry_state)?;
         let commit = if has_changes {
             let change_count = imported.len() + updated.len();
             let message = if change_count == 1 {
@@ -1175,39 +1203,64 @@ impl App {
             let commit = match gitops::commit(&self.ctx, &message) {
                 Ok(commit) => commit,
                 Err(err) => {
-                    cleanup_staging();
                     rollback_monitor_changes(&self.ctx, &imported_rels, &update_rollbacks);
+                    cleanup_staging();
                     return Err(map_git(err));
                 }
             };
-            let op_id = record_registry_operation(
-                &paths,
-                "skill.monitor_observed",
-                json!({
-                    "target": args.target,
-                    "request_id": request_id
-                }),
-                json!({
-                    "commit": commit,
-                    "imported": imported,
-                    "updated": updated,
-                    "skipped": skipped,
-                    "unchanged_count": unchanged_count,
-                }),
-            )
-            .map_err(map_registry_state)?;
-            meta.op_id = Some(op_id);
-            maybe_autosync_or_queue(
-                &self.ctx,
-                "monitor-observed",
-                request_id,
-                json!({
-                    "commit": commit,
-                    "imported": imported.len(),
-                    "updated": updated.len(),
-                }),
-                &mut meta,
-            )?;
+            let post_commit = (|| -> std::result::Result<Meta, CommandFailure> {
+                let op_id = record_registry_operation(
+                    &paths,
+                    "skill.monitor_observed",
+                    json!({
+                        "target": args.target,
+                        "request_id": request_id
+                    }),
+                    json!({
+                        "commit": commit,
+                        "imported": imported,
+                        "updated": updated,
+                        "skipped": skipped,
+                        "unchanged_count": unchanged_count,
+                    }),
+                )
+                .map_err(map_registry_state)?;
+                let state_commit =
+                    commit_registry_state(&self.ctx, "monitor-observed: record registry state")?;
+                let mut meta = Meta {
+                    op_id: Some(op_id),
+                    ..Meta::default()
+                };
+                maybe_autosync_or_queue(
+                    &self.ctx,
+                    "monitor-observed",
+                    request_id,
+                    json!({
+                        "commit": commit,
+                        "state_commit": state_commit,
+                        "imported": imported.len(),
+                        "updated": updated.len(),
+                    }),
+                    &mut meta,
+                )?;
+                Ok(meta)
+            })();
+            let post_meta = match post_commit {
+                Ok(result) => result,
+                Err(err) => {
+                    rollback_monitor_after_commit(
+                        &self.ctx,
+                        &paths,
+                        &registry_backup,
+                        &previous_head,
+                        &imported_rels,
+                        &update_rollbacks,
+                    );
+                    cleanup_staging();
+                    return Err(err);
+                }
+            };
+            meta = post_meta;
             Some(commit)
         } else {
             None
@@ -1505,6 +1558,69 @@ fn collect_materialized_files(root: &Path) -> anyhow::Result<BTreeMap<PathBuf, V
     }
 
     Ok(files)
+}
+
+struct RegistryOperationStateBackup {
+    operations: Vec<u8>,
+    checkpoint: Vec<u8>,
+}
+
+fn snapshot_registry_operation_state(
+    paths: &RegistryStatePaths,
+) -> anyhow::Result<RegistryOperationStateBackup> {
+    Ok(RegistryOperationStateBackup {
+        operations: fs::read(&paths.operations_file)
+            .with_context(|| format!("failed to snapshot {}", paths.operations_file.display()))?,
+        checkpoint: fs::read(&paths.checkpoint_file)
+            .with_context(|| format!("failed to snapshot {}", paths.checkpoint_file.display()))?,
+    })
+}
+
+fn restore_registry_operation_state(
+    paths: &RegistryStatePaths,
+    backup: &RegistryOperationStateBackup,
+) -> anyhow::Result<()> {
+    fs::write(&paths.operations_file, &backup.operations)
+        .with_context(|| format!("failed to restore {}", paths.operations_file.display()))?;
+    fs::write(&paths.checkpoint_file, &backup.checkpoint)
+        .with_context(|| format!("failed to restore {}", paths.checkpoint_file.display()))?;
+    Ok(())
+}
+
+fn reset_command_created_commits(ctx: &crate::state::AppContext, previous_head: &str) {
+    let _ = gitops::run_git_allow_failure(ctx, &["reset", "--soft", previous_head]);
+}
+
+fn unstage_registry_state(ctx: &crate::state::AppContext) {
+    let _ = gitops::run_git_allow_failure(ctx, &["reset", "HEAD", "--", "state/registry"]);
+    let _ = gitops::run_git_allow_failure(ctx, &["reset", "HEAD", "--", "state/v3"]);
+}
+
+fn rollback_import_after_commit(
+    ctx: &crate::state::AppContext,
+    paths: &RegistryStatePaths,
+    registry_backup: &RegistryOperationStateBackup,
+    previous_head: &str,
+    imported_rels: &[String],
+) {
+    reset_command_created_commits(ctx, previous_head);
+    rollback_imported_skills(ctx, imported_rels);
+    let _ = restore_registry_operation_state(paths, registry_backup);
+    unstage_registry_state(ctx);
+}
+
+fn rollback_monitor_after_commit(
+    ctx: &crate::state::AppContext,
+    paths: &RegistryStatePaths,
+    registry_backup: &RegistryOperationStateBackup,
+    previous_head: &str,
+    imported_rels: &[String],
+    update_rollbacks: &[MonitorUpdateRollback],
+) {
+    reset_command_created_commits(ctx, previous_head);
+    rollback_monitor_changes(ctx, imported_rels, update_rollbacks);
+    let _ = restore_registry_operation_state(paths, registry_backup);
+    unstage_registry_state(ctx);
 }
 
 fn rollback_monitor_changes(

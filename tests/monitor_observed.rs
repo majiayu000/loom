@@ -7,7 +7,7 @@ use std::process::Command;
 use serde_json::Value;
 
 use common::actions::target_add;
-use common::{TestDir, run_loom, write_file};
+use common::{TestDir, run_loom, run_loom_with_env, write_file};
 
 fn git_head(root: &Path) -> String {
     let output = Command::new("git")
@@ -142,4 +142,72 @@ fn monitor_observed_imports_updates_then_noops() {
         Value::from(1)
     );
     assert_eq!(git_head(root.path()), second_head);
+}
+
+#[test]
+fn monitor_observed_rolls_back_update_after_operation_failure() {
+    let root = TestDir::new("monitor-observed-op-failure");
+    let observed = root.path().join("observed-skills");
+
+    write_file(&observed.join("alpha/SKILL.md"), "# alpha\n");
+    write_file(&observed.join("alpha/config.txt"), "one\n");
+
+    let (target_output, target_env) = target_add(root.path(), "claude", &observed, "observed");
+    assert!(
+        target_output.status.success(),
+        "target add failed: {}",
+        String::from_utf8_lossy(&target_output.stderr)
+    );
+    let target_id = target_env["data"]["target"]["target_id"]
+        .as_str()
+        .expect("target id")
+        .to_string();
+
+    let (first_output, _) = run_loom(
+        root.path(),
+        &[
+            "skill",
+            "monitor-observed",
+            "--once",
+            "--target",
+            &target_id,
+        ],
+    );
+    assert!(
+        first_output.status.success(),
+        "initial monitor failed: stderr={} stdout={}",
+        String::from_utf8_lossy(&first_output.stderr),
+        String::from_utf8_lossy(&first_output.stdout)
+    );
+    let head_before = git_head(root.path());
+
+    write_file(&observed.join("alpha/SKILL.md"), "# alpha\n\nupdated\n");
+    write_file(&observed.join("alpha/config.txt"), "two\n");
+
+    let (output, env) = run_loom_with_env(
+        root.path(),
+        &[("LOOM_FAULT_INJECT", "record_v3_operation_after_append")],
+        &[
+            "skill",
+            "monitor-observed",
+            "--once",
+            "--target",
+            &target_id,
+        ],
+    );
+
+    assert!(
+        !output.status.success(),
+        "faulted monitor unexpectedly succeeded"
+    );
+    assert_eq!(env["ok"], Value::Bool(false));
+    assert_eq!(git_head(root.path()), head_before);
+    assert_eq!(
+        fs::read_to_string(root.path().join("skills/alpha/SKILL.md")).expect("read alpha"),
+        "# alpha\n"
+    );
+    assert_eq!(
+        fs::read_to_string(root.path().join("skills/alpha/config.txt")).expect("read config"),
+        "one\n"
+    );
 }

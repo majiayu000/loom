@@ -35,7 +35,14 @@ AI coding agents (Claude Code, Codex, Cursor, Windsurf, …) all read skills fro
 ## Quick Start
 
 ```bash
-# 1. Install from source
+# 1. Install (available after the first tagged release)
+cargo install skillloom
+
+# or install from the Homebrew tap
+brew tap majiayu000/tap
+brew install skillloom
+
+# or install from source
 git clone https://github.com/majiayu000/loom.git
 cd loom && cargo install --path .
 

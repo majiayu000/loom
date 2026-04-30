@@ -17,7 +17,7 @@ Review the existing `feat/panel-state-workflow-honesty` branch against issue #19
 1. `HistoryPage` only refreshes on `live` and local `mutationVersion`.
    Root cause: the page is disconnected from the panel-wide polling signal, so CLI-created or external-session operations do not appear until navigation or a local mutation triggers a fetch.
 
-2. `/api/v3/ops` returns the entire `operations.jsonl` journal with full row payloads.
+2. `/api/registry/ops` returns the entire `operations.jsonl` journal with full row payloads.
    Root cause: the handler serializes `snapshot.operations` directly, which makes response cost grow with registry age and with each row's `payload` / `effects` size.
 
 3. `BindingsPage` clears selection with an unconditional stale callback after delete.
@@ -33,7 +33,7 @@ Review the existing `feat/panel-state-workflow-honesty` branch against issue #19
 ## Planned Fixes
 
 1. Bind `HistoryPage` to the existing panel-wide refresh stamp and keep mutation-triggered refreshes.
-2. Paginate and bound `/api/v3/ops`, returning compact row summaries instead of full operation payload blobs.
+2. Paginate and bound `/api/registry/ops`, returning compact row summaries instead of full operation payload blobs.
 3. Add minimal pager UI in History so the full journal remains reachable.
 4. Guard binding delete completion the same way targets already guard delete completion.
 5. Extend tests around history refresh, ops pagination, and stale-selection races.

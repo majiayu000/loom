@@ -11,9 +11,9 @@ use axum::{
 use serde_json::json;
 
 use super::PanelState;
-use super::auth::{load_v3_snapshot, status_for_error_code, v3_error};
+use super::auth::{load_registry_snapshot, registry_error, status_for_error_code};
 use crate::commands::collect_skill_inventory;
-use crate::state_model::{V3ObservationEvent, V3StatePaths};
+use crate::state_model::{RegistryObservationEvent, RegistryStatePaths};
 
 const MAX_HISTORY_WARNINGS: usize = 20;
 const MAX_HISTORY_WARNING_DETAILS: usize = MAX_HISTORY_WARNINGS - 1;
@@ -26,10 +26,10 @@ fn skill_name_looks_sane(name: &str) -> bool {
             .all(|component| matches!(component, Component::Normal(_)))
 }
 
-/// Wrapper that orders `V3ObservationEvent` by `observed_at` (ascending) so
+/// Wrapper that orders `RegistryObservationEvent` by `observed_at` (ascending) so
 /// that a `BinaryHeap<Reverse<OrdEvent>>` acts as a min-heap keyed by time.
 /// `pop()` on such a heap removes the OLDEST event, letting us keep the newest.
-struct OrdEvent(V3ObservationEvent);
+struct OrdEvent(RegistryObservationEvent);
 
 impl PartialEq for OrdEvent {
     fn eq(&self, other: &Self) -> bool {
@@ -55,7 +55,7 @@ impl Ord for OrdEvent {
 fn load_obs_bounded(
     path: &Path,
     limit: usize,
-) -> Result<(Vec<V3ObservationEvent>, Vec<String>), anyhow::Error> {
+) -> Result<(Vec<RegistryObservationEvent>, Vec<String>), anyhow::Error> {
     let file = match std::fs::File::open(path) {
         Ok(f) => f,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok((Vec::new(), Vec::new())),
@@ -88,7 +88,7 @@ fn load_obs_bounded(
         if trimmed.is_empty() {
             continue;
         }
-        let event: V3ObservationEvent = match serde_json::from_str(trimmed) {
+        let event: RegistryObservationEvent = match serde_json::from_str(trimmed) {
             Ok(event) => event,
             Err(e) => {
                 if warnings.len() < MAX_HISTORY_WARNING_DETAILS {
@@ -124,21 +124,21 @@ fn load_obs_bounded(
     ))
 }
 
-pub(super) async fn v3_skill_history(
+pub(super) async fn registry_skill_history(
     AxumPath(skill_name): AxumPath<String>,
     State(state): State<PanelState>,
 ) -> (StatusCode, Json<serde_json::Value>) {
     if !skill_name_looks_sane(&skill_name) {
         return (
             StatusCode::BAD_REQUEST,
-            v3_error(
+            registry_error(
                 "ARG_INVALID",
                 "skill name must be a single path segment".to_string(),
             ),
         );
     }
 
-    let snapshot = match load_v3_snapshot(&state.ctx) {
+    let snapshot = match load_registry_snapshot(&state.ctx) {
         Ok(s) => s,
         Err(err_json) => {
             let code = err_json.0["error"]["code"].as_str();
@@ -167,11 +167,11 @@ pub(super) async fn v3_skill_history(
     if instance_ids.is_empty() && !skill_in_rules && !skill_in_inventory {
         return (
             StatusCode::NOT_FOUND,
-            v3_error("SKILL_NOT_FOUND", format!("skill '{skill_name}' not found")),
+            registry_error("SKILL_NOT_FOUND", format!("skill '{skill_name}' not found")),
         );
     }
 
-    let paths = V3StatePaths::from_app_context(&state.ctx);
+    let paths = RegistryStatePaths::from_app_context(&state.ctx);
     let mut events = Vec::new();
     let mut warnings = Vec::new();
     let mut skipped_warning_count = 0usize;
@@ -191,7 +191,7 @@ pub(super) async fn v3_skill_history(
             Err(e) => {
                 return (
                     StatusCode::INTERNAL_SERVER_ERROR,
-                    v3_error(
+                    registry_error(
                         "OBS_READ_ERROR",
                         format!("failed to read observations for {instance_id}: {e:#}"),
                     ),
@@ -218,7 +218,7 @@ pub(super) async fn v3_skill_history(
 
 fn history_ok_payload(
     skill_name: String,
-    events: Vec<V3ObservationEvent>,
+    events: Vec<RegistryObservationEvent>,
     warnings: Vec<String>,
 ) -> Json<serde_json::Value> {
     let count = events.len();
@@ -240,7 +240,8 @@ mod tests {
     use super::*;
     use crate::state::AppContext;
     use crate::state_model::{
-        V3BindingRule, V3ObservationEvent, V3ProjectionInstance, V3RulesFile, V3StatePaths,
+        REGISTRY_SCHEMA_VERSION, RegistryBindingRule, RegistryObservationEvent,
+        RegistryProjectionInstance, RegistryRulesFile, RegistryStatePaths,
     };
     use axum::http::StatusCode;
     use axum::{
@@ -260,17 +261,17 @@ mod tests {
         }
     }
 
-    fn setup_v3(root: &std::path::Path) -> V3StatePaths {
-        let paths = V3StatePaths::from_root(root);
+    fn setup_registry(root: &std::path::Path) -> RegistryStatePaths {
+        let paths = RegistryStatePaths::from_root(root);
         paths.ensure_layout().expect("ensure_layout");
         paths
     }
 
-    fn add_skill_rule(paths: &V3StatePaths, skill_id: &str) {
+    fn add_skill_rule(paths: &RegistryStatePaths, skill_id: &str) {
         let now = Utc::now();
-        let rules = V3RulesFile {
-            schema_version: 3,
-            rules: vec![V3BindingRule {
+        let rules = RegistryRulesFile {
+            schema_version: REGISTRY_SCHEMA_VERSION,
+            rules: vec![RegistryBindingRule {
                 binding_id: "binding_1".to_string(),
                 skill_id: skill_id.to_string(),
                 target_id: "target_1".to_string(),
@@ -282,12 +283,12 @@ mod tests {
         paths.save_rules(&rules).expect("save_rules");
     }
 
-    fn add_projection(paths: &V3StatePaths, skill_id: &str, instance_id: &str) {
+    fn add_projection(paths: &RegistryStatePaths, skill_id: &str, instance_id: &str) {
         let now = Utc::now();
         let mut existing = paths
             .load_projections()
             .unwrap_or_else(|_| crate::state_model::empty_projections_file());
-        existing.projections.push(V3ProjectionInstance {
+        existing.projections.push(RegistryProjectionInstance {
             instance_id: instance_id.to_string(),
             skill_id: skill_id.to_string(),
             binding_id: Some("binding_1".to_string()),
@@ -313,7 +314,7 @@ mod tests {
         fs::create_dir_all(&skill_dir).expect("create skill dir");
     }
 
-    fn append_obs(paths: &V3StatePaths, instance_id: &str, event: &V3ObservationEvent) {
+    fn append_obs(paths: &RegistryStatePaths, instance_id: &str, event: &RegistryObservationEvent) {
         let file_path = paths.observations_dir.join(format!("{instance_id}.jsonl"));
         let line = serde_json::to_string(event).unwrap() + "\n";
         let mut file = fs::OpenOptions::new()
@@ -324,8 +325,8 @@ mod tests {
         file.write_all(line.as_bytes()).expect("write obs");
     }
 
-    fn obs(event_id: &str, instance_id: &str, kind: &str, ts: &str) -> V3ObservationEvent {
-        V3ObservationEvent {
+    fn obs(event_id: &str, instance_id: &str, kind: &str, ts: &str) -> RegistryObservationEvent {
+        RegistryObservationEvent {
             event_id: event_id.to_string(),
             instance_id: instance_id.to_string(),
             kind: kind.to_string(),
@@ -343,7 +344,7 @@ mod tests {
         let state = make_state(&root);
 
         let (status, Json(payload)) =
-            v3_skill_history(AxumPath("../etc".to_string()), State(state)).await;
+            registry_skill_history(AxumPath("../etc".to_string()), State(state)).await;
 
         assert_eq!(status, StatusCode::BAD_REQUEST);
         assert_eq!(payload["ok"], json!(false));
@@ -356,11 +357,11 @@ mod tests {
     async fn returns_not_found_for_unknown_skill() {
         let root = std::env::temp_dir().join(format!("loom-hist-nf-{}", Uuid::new_v4()));
         fs::create_dir_all(&root).unwrap();
-        let _paths = setup_v3(&root);
+        let _paths = setup_registry(&root);
         let state = make_state(&root);
 
         let (status, Json(payload)) =
-            v3_skill_history(AxumPath("no-such-skill".to_string()), State(state)).await;
+            registry_skill_history(AxumPath("no-such-skill".to_string()), State(state)).await;
 
         assert_eq!(status, StatusCode::NOT_FOUND);
         assert_eq!(payload["ok"], json!(false));
@@ -373,13 +374,13 @@ mod tests {
     async fn returns_empty_events_when_no_obs_files() {
         let root = std::env::temp_dir().join(format!("loom-hist-em-{}", Uuid::new_v4()));
         fs::create_dir_all(&root).unwrap();
-        let paths = setup_v3(&root);
+        let paths = setup_registry(&root);
         add_skill_rule(&paths, "my-skill");
         add_projection(&paths, "my-skill", "inst-1");
         let state = make_state(&root);
 
         let (status, Json(payload)) =
-            v3_skill_history(AxumPath("my-skill".to_string()), State(state)).await;
+            registry_skill_history(AxumPath("my-skill".to_string()), State(state)).await;
 
         assert_eq!(status, StatusCode::OK);
         assert_eq!(payload["ok"], json!(true));
@@ -391,15 +392,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn returns_empty_events_for_inventory_skill_without_v3_bindings() {
+    async fn returns_empty_events_for_inventory_skill_without_registry_bindings() {
         let root = std::env::temp_dir().join(format!("loom-hist-inventory-{}", Uuid::new_v4()));
         fs::create_dir_all(&root).unwrap();
-        let _paths = setup_v3(&root);
+        let _paths = setup_registry(&root);
         add_inventory_skill(&root, "inventory-skill");
         let state = make_state(&root);
 
         let (status, Json(payload)) =
-            v3_skill_history(AxumPath("inventory-skill".to_string()), State(state)).await;
+            registry_skill_history(AxumPath("inventory-skill".to_string()), State(state)).await;
 
         assert_eq!(status, StatusCode::OK);
         assert_eq!(payload["ok"], json!(true));
@@ -415,13 +416,13 @@ mod tests {
     async fn accepts_inventory_skill_with_spaces_and_unicode() {
         let root = std::env::temp_dir().join(format!("loom-hist-unicode-{}", Uuid::new_v4()));
         fs::create_dir_all(&root).unwrap();
-        let _paths = setup_v3(&root);
+        let _paths = setup_registry(&root);
         let skill_name = "多词 skill";
         add_inventory_skill(&root, skill_name);
         let state = make_state(&root);
 
         let (status, Json(payload)) =
-            v3_skill_history(AxumPath(skill_name.to_string()), State(state)).await;
+            registry_skill_history(AxumPath(skill_name.to_string()), State(state)).await;
 
         assert_eq!(status, StatusCode::OK);
         assert_eq!(payload["ok"], json!(true));
@@ -436,7 +437,7 @@ mod tests {
     async fn skips_malformed_observation_lines_and_returns_valid_events() {
         let root = std::env::temp_dir().join(format!("loom-hist-bad-{}", Uuid::new_v4()));
         fs::create_dir_all(&root).unwrap();
-        let paths = setup_v3(&root);
+        let paths = setup_registry(&root);
         add_skill_rule(&paths, "bad-skill");
         add_projection(&paths, "bad-skill", "inst-1");
         let file_path = paths.observations_dir.join("inst-1.jsonl");
@@ -449,7 +450,7 @@ mod tests {
         let state = make_state(&root);
 
         let (status, Json(payload)) =
-            v3_skill_history(AxumPath("bad-skill".to_string()), State(state)).await;
+            registry_skill_history(AxumPath("bad-skill".to_string()), State(state)).await;
 
         assert_eq!(status, StatusCode::OK);
         assert_eq!(payload["ok"], json!(true));
@@ -473,7 +474,7 @@ mod tests {
     async fn caps_malformed_observation_warnings() {
         let root = std::env::temp_dir().join(format!("loom-hist-warn-cap-{}", Uuid::new_v4()));
         fs::create_dir_all(&root).unwrap();
-        let paths = setup_v3(&root);
+        let paths = setup_registry(&root);
         add_skill_rule(&paths, "warn-cap-skill");
         add_projection(&paths, "warn-cap-skill", "inst-1");
         let file_path = paths.observations_dir.join("inst-1.jsonl");
@@ -485,7 +486,7 @@ mod tests {
         let state = make_state(&root);
 
         let (status, Json(payload)) =
-            v3_skill_history(AxumPath("warn-cap-skill".to_string()), State(state)).await;
+            registry_skill_history(AxumPath("warn-cap-skill".to_string()), State(state)).await;
 
         assert_eq!(status, StatusCode::OK);
         let warnings = payload["meta"]["warnings"].as_array().unwrap();
@@ -505,14 +506,14 @@ mod tests {
     async fn still_returns_error_for_unreadable_observation_file() {
         let root = std::env::temp_dir().join(format!("loom-hist-ioerr-{}", Uuid::new_v4()));
         fs::create_dir_all(&root).unwrap();
-        let paths = setup_v3(&root);
+        let paths = setup_registry(&root);
         add_skill_rule(&paths, "bad-skill");
         add_projection(&paths, "bad-skill", "inst-1");
         fs::create_dir_all(paths.observations_dir.join("inst-1.jsonl")).unwrap();
         let state = make_state(&root);
 
         let (status, Json(payload)) =
-            v3_skill_history(AxumPath("bad-skill".to_string()), State(state)).await;
+            registry_skill_history(AxumPath("bad-skill".to_string()), State(state)).await;
 
         assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
         assert_eq!(payload["ok"], json!(false));
@@ -525,7 +526,7 @@ mod tests {
     async fn returns_events_sorted_descending() {
         let root = std::env::temp_dir().join(format!("loom-hist-sort-{}", Uuid::new_v4()));
         fs::create_dir_all(&root).unwrap();
-        let paths = setup_v3(&root);
+        let paths = setup_registry(&root);
         add_skill_rule(&paths, "my-skill");
         add_projection(&paths, "my-skill", "inst-1");
 
@@ -542,7 +543,7 @@ mod tests {
 
         let state = make_state(&root);
         let (status, Json(payload)) =
-            v3_skill_history(AxumPath("my-skill".to_string()), State(state)).await;
+            registry_skill_history(AxumPath("my-skill".to_string()), State(state)).await;
 
         assert_eq!(status, StatusCode::OK);
         let events = payload["data"]["events"].as_array().unwrap();
@@ -557,7 +558,7 @@ mod tests {
     async fn aggregates_events_from_multiple_instances() {
         let root = std::env::temp_dir().join(format!("loom-hist-agg-{}", Uuid::new_v4()));
         fs::create_dir_all(&root).unwrap();
-        let paths = setup_v3(&root);
+        let paths = setup_registry(&root);
         add_skill_rule(&paths, "multi-skill");
         add_projection(&paths, "multi-skill", "inst-a");
         add_projection(&paths, "multi-skill", "inst-b");
@@ -575,7 +576,7 @@ mod tests {
 
         let state = make_state(&root);
         let (status, Json(payload)) =
-            v3_skill_history(AxumPath("multi-skill".to_string()), State(state)).await;
+            registry_skill_history(AxumPath("multi-skill".to_string()), State(state)).await;
 
         assert_eq!(status, StatusCode::OK);
         let events = payload["data"]["events"].as_array().unwrap();

@@ -42,7 +42,7 @@ fn migrate_subcommand_is_removed() {
         .arg("--json")
         .arg("--root")
         .arg(root.path())
-        .args(["migrate", "v2-to-v3", "--plan"])
+        .args(["migrate", "legacy-to-registry", "--plan"])
         .output()
         .expect("run loom");
 
@@ -83,4 +83,27 @@ fn skill_orphan_clean_nested_command_is_available() {
         "orphan clean help must expose explicit live-path deletion flag: {}",
         stdout
     );
+}
+
+#[test]
+fn skill_monitor_observed_command_is_available() {
+    let output = Command::new(env!("CARGO_BIN_EXE_loom"))
+        .args(["skill", "monitor-observed", "--help"])
+        .output()
+        .expect("run loom");
+
+    assert!(
+        output.status.success(),
+        "monitor-observed help failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    for expected in ["--once", "--interval-seconds", "--target"] {
+        assert!(
+            stdout.contains(expected),
+            "monitor-observed help missing {expected:?}: {stdout}"
+        );
+    }
 }

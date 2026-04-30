@@ -9,13 +9,13 @@ export function LandingHero() {
       <div className="container hero-grid">
         <div>
           <div className="eyebrow">
-            <span className="pip" />v0.9 · projection control plane
+            <span className="pip" />Projection control plane
           </div>
           <h1 className="headline">
             Weave one <em>skill registry</em> across every coding agent you use.
           </h1>
           <p className="lede">
-            Loom is a versioned skill registry and projection control plane for AI coding agents — Claude Code, Codex,
+            Loom is a Git-backed skill registry and projection control plane for AI coding agents — Claude Code, Codex,
             Cursor, Windsurf, Cline, Copilot, Aider, OpenCode, Gemini CLI, Goose. Bind skills to targets with explicit
             rules; project as symlink, copy, or materialize; git-backed sync and replay.
           </p>

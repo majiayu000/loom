@@ -6,11 +6,12 @@ use serde_json::json;
 
 use crate::cli::{TargetAddArgs, TargetCommand, TargetOwnership, TargetShowArgs};
 use crate::envelope::Meta;
-use crate::state_model::V3ProjectionTarget;
+use crate::state_model::RegistryProjectionTarget;
 use crate::types::ErrorCode;
 
 use super::helpers::{
-    agent_kind_as_str, map_io, map_lock, map_v3_state, record_v3_operation, target_capabilities,
+    agent_kind_as_str, commit_registry_state, map_io, map_lock, map_registry_state,
+    maybe_autosync_or_queue, record_registry_operation, target_capabilities,
     target_ownership_as_str, unique_target_id,
 };
 use super::{App, CommandFailure};
@@ -25,9 +26,9 @@ impl App {
             TargetCommand::Add(args) => self.cmd_target_add(args, request_id),
             TargetCommand::List => Ok((
                 {
-                    let snapshot = self.require_v3_snapshot()?;
+                    let snapshot = self.require_registry_snapshot()?;
                     json!({
-                        "state_model": "v3",
+                        "state_model": "registry",
                         "count": snapshot.targets.targets.len(),
                         "targets": snapshot.targets.targets
                     })
@@ -35,7 +36,7 @@ impl App {
                 Meta::default(),
             )),
             TargetCommand::Show(args) => {
-                let snapshot = self.require_v3_snapshot()?;
+                let snapshot = self.require_registry_snapshot()?;
                 let target = snapshot.target(&args.target_id).ok_or_else(|| {
                     CommandFailure::new(
                         ErrorCode::TargetNotFound,
@@ -46,7 +47,7 @@ impl App {
 
                 Ok((
                     json!({
-                        "state_model": "v3",
+                        "state_model": "registry",
                         "target": target,
                         "bindings": relations.bindings,
                         "rules": relations.rules,
@@ -65,7 +66,7 @@ impl App {
         request_id: &str,
     ) -> std::result::Result<(serde_json::Value, Meta), CommandFailure> {
         let _workspace = self.ctx.lock_workspace().map_err(map_lock)?;
-        self.ensure_write_layout()?;
+        self.ensure_write_repo_ready()?;
         let target_path = PathBuf::from(&args.path);
         if !target_path.is_absolute() {
             return Err(CommandFailure::new(
@@ -90,8 +91,8 @@ impl App {
             }
         }
 
-        let paths = self.ensure_v3_layout()?;
-        let mut targets = paths.load_targets().map_err(map_v3_state)?;
+        let paths = self.ensure_registry_layout()?;
+        let mut targets = paths.load_targets().map_err(map_registry_state)?;
 
         if let Some(existing) = targets
             .targets
@@ -114,7 +115,7 @@ impl App {
         }
 
         let target_id = unique_target_id(&targets, args);
-        let target = V3ProjectionTarget {
+        let target = RegistryProjectionTarget {
             target_id: target_id.clone(),
             agent: agent_kind_as_str(args.agent).to_string(),
             path: args.path.clone(),
@@ -127,9 +128,9 @@ impl App {
         targets
             .targets
             .sort_by(|left, right| left.target_id.cmp(&right.target_id));
-        paths.save_targets(&targets).map_err(map_v3_state)?;
+        paths.save_targets(&targets).map_err(map_registry_state)?;
 
-        let op_id = record_v3_operation(
+        let op_id = record_registry_operation(
             &paths,
             "target.add",
             json!({
@@ -143,14 +144,25 @@ impl App {
                 "target_id": target.target_id
             }),
         )
-        .map_err(map_v3_state)?;
+        .map_err(map_registry_state)?;
+        let commit = commit_registry_state(&self.ctx, &format!("target({}): add", target_id))?;
+        let mut meta = Meta {
+            op_id: Some(op_id),
+            ..Meta::default()
+        };
+        if let Some(commit) = &commit {
+            maybe_autosync_or_queue(
+                &self.ctx,
+                "target.add",
+                request_id,
+                json!({"target_id": target.target_id, "commit": commit}),
+                &mut meta,
+            )?;
+        }
 
         Ok((
-            json!({"target": target, "noop": false}),
-            Meta {
-                op_id: Some(op_id),
-                ..Meta::default()
-            },
+            json!({"target": target, "commit": commit, "noop": false}),
+            meta,
         ))
     }
 
@@ -160,9 +172,9 @@ impl App {
         request_id: &str,
     ) -> std::result::Result<(serde_json::Value, Meta), CommandFailure> {
         let _workspace = self.ctx.lock_workspace().map_err(map_lock)?;
-        self.ensure_write_layout()?;
-        let paths = self.ensure_v3_layout()?;
-        let mut snapshot = paths.load_snapshot().map_err(map_v3_state)?;
+        self.ensure_write_repo_ready()?;
+        let paths = self.ensure_registry_layout()?;
+        let mut snapshot = paths.load_snapshot().map_err(map_registry_state)?;
         let target = snapshot.target(&args.target_id).cloned().ok_or_else(|| {
             CommandFailure::new(
                 ErrorCode::TargetNotFound,
@@ -201,9 +213,9 @@ impl App {
             .retain(|item| item.target_id != args.target_id);
         paths
             .save_targets(&snapshot.targets)
-            .map_err(map_v3_state)?;
+            .map_err(map_registry_state)?;
 
-        let op_id = record_v3_operation(
+        let op_id = record_registry_operation(
             &paths,
             "target.remove",
             json!({
@@ -214,17 +226,30 @@ impl App {
                 "target_id": target.target_id
             }),
         )
-        .map_err(map_v3_state)?;
+        .map_err(map_registry_state)?;
+        let commit =
+            commit_registry_state(&self.ctx, &format!("target({}): remove", args.target_id))?;
+        let mut meta = Meta {
+            op_id: Some(op_id),
+            ..Meta::default()
+        };
+        if let Some(commit) = &commit {
+            maybe_autosync_or_queue(
+                &self.ctx,
+                "target.remove",
+                request_id,
+                json!({"target_id": target.target_id, "commit": commit}),
+                &mut meta,
+            )?;
+        }
 
         Ok((
             json!({
                 "target": target,
+                "commit": commit,
                 "noop": false
             }),
-            Meta {
-                op_id: Some(op_id),
-                ..Meta::default()
-            },
+            meta,
         ))
     }
 }

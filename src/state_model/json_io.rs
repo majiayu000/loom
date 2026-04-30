@@ -1,7 +1,7 @@
-//! Filesystem helpers for V3 state JSON/JSONL persistence.
+//! Filesystem helpers for Registry state JSON/JSONL persistence.
 //!
 //! These are generic over any serde-serializable type; they don't know
-//! anything about the V3 schema itself. Schema-aware orchestration (load
+//! anything about the Registry schema itself. Schema-aware orchestration (load
 //! order, version validation, snapshot assembly) lives in
 //! [`super::persistence`].
 
@@ -40,7 +40,7 @@ where
 }
 
 pub(super) fn serialize_json_file<T: Serialize>(value: &T) -> Result<String> {
-    let raw = serde_json::to_string_pretty(value).context("failed to encode v3 json")?;
+    let raw = serde_json::to_string_pretty(value).context("failed to encode registry json")?;
     Ok(raw + "\n")
 }
 
@@ -91,20 +91,20 @@ where
 {
     let parent = path
         .parent()
-        .context("cannot append v3 jsonl file without parent directory")?;
+        .context("cannot append registry jsonl file without parent directory")?;
     fs::create_dir_all(parent)
         .with_context(|| format!("failed to create parent directory {}", parent.display()))?;
     let raw = serde_json::to_string(value)
-        .with_context(|| format!("failed to encode v3 jsonl line {}", path.display()))?;
+        .with_context(|| format!("failed to encode registry jsonl line {}", path.display()))?;
     let mut file = OpenOptions::new()
         .create(true)
         .append(true)
         .open(path)
-        .with_context(|| format!("failed to open v3 jsonl file {}", path.display()))?;
+        .with_context(|| format!("failed to open registry jsonl file {}", path.display()))?;
     writeln!(file, "{}", raw)
-        .with_context(|| format!("failed to append v3 jsonl file {}", path.display()))?;
+        .with_context(|| format!("failed to append registry jsonl file {}", path.display()))?;
     file.sync_all()
-        .with_context(|| format!("failed to sync v3 jsonl file {}", path.display()))?;
+        .with_context(|| format!("failed to sync registry jsonl file {}", path.display()))?;
     Ok(())
 }
 
@@ -113,9 +113,9 @@ where
     T: DeserializeOwned,
 {
     let raw = fs::read_to_string(path)
-        .with_context(|| format!("failed to read v3 json file {}", path.display()))?;
+        .with_context(|| format!("failed to read registry json file {}", path.display()))?;
     serde_json::from_str(&raw)
-        .with_context(|| format!("failed to parse v3 json file {}", path.display()))
+        .with_context(|| format!("failed to parse registry json file {}", path.display()))
 }
 
 pub(super) fn read_json_lines<T>(path: &Path) -> Result<Vec<T>>
@@ -123,10 +123,10 @@ where
     T: DeserializeOwned,
 {
     let file = fs::File::open(path)
-        .with_context(|| format!("failed to open v3 jsonl file {}", path.display()))?;
+        .with_context(|| format!("failed to open registry jsonl file {}", path.display()))?;
     if file
         .metadata()
-        .with_context(|| format!("failed to stat v3 jsonl file {}", path.display()))?
+        .with_context(|| format!("failed to stat registry jsonl file {}", path.display()))?
         .len()
         == 0
     {
@@ -144,7 +144,7 @@ where
         }
         let item = serde_json::from_str(trimmed).with_context(|| {
             format!(
-                "failed to parse line {} from v3 jsonl file {}",
+                "failed to parse line {} from registry jsonl file {}",
                 index + 1,
                 path.display()
             )
@@ -157,7 +157,7 @@ where
 fn write_atomic(path: &Path, contents: &str) -> Result<()> {
     let parent = path
         .parent()
-        .context("cannot write atomic v3 file without parent directory")?;
+        .context("cannot write atomic registry file without parent directory")?;
     fs::create_dir_all(parent)
         .with_context(|| format!("failed to create parent directory {}", parent.display()))?;
 

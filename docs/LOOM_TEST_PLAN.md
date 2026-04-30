@@ -1,11 +1,11 @@
-# Loom v3 Test Plan
+# Loom registry model Test Plan
 
 Updated: 2026-04-08
 Status: Draft
 
 ## 1. Purpose
 
-This document defines how to validate that the Loom v3 design is correct before implementation.
+This document defines how to validate that the Loom registry model design is correct before implementation.
 
 The goal is not to prove that code runs.
 The goal is to prove that the design:
@@ -15,11 +15,11 @@ The goal is to prove that the design:
 3. survives failure and ambiguity
 4. is usable by agents without guessing
 
-This test plan validates [LOOM_V3_SPEC.md](/Users/lifcc/Desktop/code/work/infra/loom/docs/LOOM_V3_SPEC.md) and [LOOM_V3_MIGRATION.md](/Users/lifcc/Desktop/code/work/infra/loom/docs/LOOM_V3_MIGRATION.md).
+This test plan validates [LOOM_STATE_MODEL.md](/Users/lifcc/Desktop/code/work/infra/loom/docs/LOOM_STATE_MODEL.md) and [LOOM_STATE_MIGRATION_NOTES.md](/Users/lifcc/Desktop/code/work/infra/loom/docs/LOOM_STATE_MIGRATION_NOTES.md).
 
 ## 2. Validation Strategy
 
-Loom v3 is valid only if it passes five test classes:
+Loom registry model is valid only if it passes five test classes:
 
 1. `scenario tests`
 2. `invariant tests`
@@ -33,11 +33,11 @@ Each class answers a different question:
 2. Does the model preserve the core rules?
 3. Does the system fail safely?
 4. Can agents call it without ambiguity?
-5. Can v2 move to v3 without unsafe assumptions?
+5. Can legacy move to registry state without unsafe assumptions?
 
 ## 3. Exit Criteria
 
-The v3 design is acceptable only if all of the following are true:
+The registry state design is acceptable only if all of the following are true:
 
 1. No core workflow requires Loom to guess a single Claude directory.
 2. One skill can be projected into multiple bindings at once.
@@ -125,17 +125,17 @@ Pass condition:
 
 ### 4.5 Migration Tests
 
-Migration tests validate the v2 to v3 transition.
+Migration tests validate the legacy to registry state transition.
 
 Required checks:
 
-1. `v2` state can be inspected without mutation.
+1. `legacy` state can be inspected without mutation.
 2. Candidate targets can be enumerated without claiming canonical truth.
 3. Ambiguous `claude_path/codex_path` mappings can be reported as unresolved.
 4. Migration can generate a plan without applying it.
 5. `--apply` can be blocked if unresolved ambiguities remain.
 6. Migration does not rewrite live directories.
-7. Migration preserves v2 state as historical input.
+7. Migration preserves legacy state as historical input.
 
 Pass condition:
 
@@ -150,7 +150,7 @@ Pass condition:
 | Truth | Is canonical source always clear? | `SkillSource` and `capture` semantics |
 | Safety | Can Loom refuse unsafe overwrite? | ownership rules and failure states |
 | Agent UX | Can an agent call commands without guessing? | explicit selectors and JSON envelope |
-| Migration | Can v2 migrate without path assumptions? | dry-run migration report shape |
+| Migration | Can legacy migrate without path assumptions? | dry-run migration report shape |
 
 ## 6. Reference Scenarios
 
@@ -207,7 +207,7 @@ Expected:
 
 Setup:
 
-1. v2 state contains one `claude_path`.
+1. legacy state contains one `claude_path`.
 2. The operator actually has multiple Claude workdirs.
 
 Expected:
@@ -226,7 +226,7 @@ Method:
 
 Output:
 
-1. redline comments against `LOOM_V3_SPEC.md`
+1. redline comments against `LOOM_STATE_MODEL.md`
 
 ### Stage 1: Schema Review
 
@@ -255,7 +255,7 @@ Output:
 
 Method:
 
-1. run paper migration cases from v2 records to v3 entities
+1. run paper migration cases from legacy records to registry state entities
 2. classify each case as `safe`, `needs review`, or `blocked`
 
 Output:
@@ -264,7 +264,7 @@ Output:
 
 ## 8. Design Smells That Fail Review
 
-The v3 design fails review if any of these reappear:
+The registry state design fails review if any of these reappear:
 
 1. a single default Claude directory becomes execution-critical
 2. `binding_id` becomes optional in write flows that affect projections
@@ -277,7 +277,7 @@ The v3 design fails review if any of these reappear:
 
 Validation is complete only when these artifacts exist:
 
-1. reviewed v3 spec
+1. reviewed registry state spec
 2. reviewed migration plan
 3. scenario matrix
 4. CLI examples
@@ -288,6 +288,6 @@ Validation is complete only when these artifacts exist:
 
 After this test plan is accepted, the next document to write is:
 
-1. `docs/LOOM_V3_CLI_CONTRACT.md`
+1. `docs/LOOM_CLI_CONTRACT.md`
 
 That document should turn the spec into concrete command and response examples before any new implementation work starts.

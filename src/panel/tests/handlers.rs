@@ -1,6 +1,6 @@
 use super::*;
-use crate::panel::handlers::{OpsQuery, pending, remote_set, remote_status, v3_ops};
-use crate::state_model::{V3_SCHEMA_VERSION, V3OperationRecord};
+use crate::panel::handlers::{OpsQuery, pending, registry_ops, remote_set, remote_status};
+use crate::state_model::{REGISTRY_SCHEMA_VERSION, RegistryOperationRecord};
 use axum::{
     Json,
     extract::{ConnectInfo, Query},
@@ -11,15 +11,15 @@ use serde_json::json;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
 #[test]
-fn v3_ops_returns_bounded_newest_first_rows() {
+fn registry_ops_returns_bounded_newest_first_rows() {
     let (root, state) = make_test_state();
-    let paths = V3StatePaths::from_app_context(state.ctx.as_ref());
-    paths.ensure_layout().expect("ensure v3 layout");
+    let paths = RegistryStatePaths::from_app_context(state.ctx.as_ref());
+    paths.ensure_layout().expect("ensure registry layout");
 
     let now = Utc::now();
     for index in 0..3 {
         paths
-            .append_operation(&V3OperationRecord {
+            .append_operation(&RegistryOperationRecord {
                 op_id: format!("op-{index}"),
                 intent: "skill.project".to_string(),
                 status: "succeeded".to_string(),
@@ -38,7 +38,7 @@ fn v3_ops_returns_bounded_newest_first_rows() {
         .build()
         .expect("runtime")
         .block_on(async {
-            let Json(payload) = v3_ops(
+            let Json(payload) = registry_ops(
                 Query(OpsQuery {
                     limit: Some(2),
                     offset: Some(0),
@@ -63,10 +63,10 @@ fn v3_ops_returns_bounded_newest_first_rows() {
 }
 
 #[tokio::test]
-async fn v3_status_returns_bad_request_when_state_is_missing() {
+async fn registry_status_returns_bad_request_when_state_is_missing() {
     let (root, state) = make_test_state();
 
-    let (status, payload) = run_v3_status(state).await;
+    let (status, payload) = run_registry_status(state).await;
 
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert_eq!(payload["ok"], json!(false));
@@ -74,20 +74,20 @@ async fn v3_status_returns_bad_request_when_state_is_missing() {
     assert!(
         payload["error"]["message"]
             .as_str()
-            .is_some_and(|message| message.contains("v3 state not initialized"))
+            .is_some_and(|message| message.contains("registry state not initialized"))
     );
 
     cleanup_root(root);
 }
 
 #[tokio::test]
-async fn v3_status_returns_internal_error_when_state_is_corrupt() {
+async fn registry_status_returns_internal_error_when_state_is_corrupt() {
     let (root, state) = make_test_state();
-    let paths = V3StatePaths::from_root(&root);
-    fs::create_dir_all(&paths.v3_dir).expect("create v3 dir");
+    let paths = RegistryStatePaths::from_root(&root);
+    fs::create_dir_all(&paths.registry_dir).expect("create registry dir");
     fs::write(&paths.schema_file, b"{not-json").expect("write corrupt schema");
 
-    let (status, payload) = run_v3_status(state).await;
+    let (status, payload) = run_registry_status(state).await;
 
     assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
     assert_eq!(payload["ok"], json!(false));
@@ -98,11 +98,11 @@ async fn v3_status_returns_internal_error_when_state_is_corrupt() {
 }
 
 #[tokio::test]
-async fn v3_status_returns_internal_error_when_schema_mismatches() {
+async fn registry_status_returns_internal_error_when_schema_mismatches() {
     let (root, state) = make_test_state();
-    write_v3_snapshot(&root, V3_SCHEMA_VERSION + 1);
+    write_registry_snapshot(&root, REGISTRY_SCHEMA_VERSION + 1);
 
-    let (status, payload) = run_v3_status(state).await;
+    let (status, payload) = run_registry_status(state).await;
 
     assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
     assert_eq!(payload["ok"], json!(false));
@@ -117,15 +117,18 @@ async fn v3_status_returns_internal_error_when_schema_mismatches() {
 }
 
 #[tokio::test]
-async fn v3_status_returns_ok_when_snapshot_loads() {
+async fn registry_status_returns_ok_when_snapshot_loads() {
     let (root, state) = make_test_state();
-    write_v3_snapshot(&root, V3_SCHEMA_VERSION);
+    write_registry_snapshot(&root, REGISTRY_SCHEMA_VERSION);
 
-    let (status, payload) = run_v3_status(state).await;
+    let (status, payload) = run_registry_status(state).await;
 
     assert_eq!(status, StatusCode::OK);
     assert_eq!(payload["ok"], json!(true));
-    assert_eq!(payload["data"]["schema_version"], json!(V3_SCHEMA_VERSION));
+    assert_eq!(
+        payload["data"]["schema_version"],
+        json!(REGISTRY_SCHEMA_VERSION)
+    );
     assert_eq!(payload["data"]["counts"]["targets"], json!(0));
     assert_eq!(payload["data"]["counts"]["bindings"], json!(0));
 

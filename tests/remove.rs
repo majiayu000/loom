@@ -41,7 +41,7 @@ fn bootstrap_projected_skill(root: &Path) -> (String, String, String) {
 
 #[test]
 fn binding_remove_cascades_metadata_and_leaves_live_projection_in_place() {
-    let root = TestDir::new("v3-binding-remove");
+    let root = TestDir::new("registry-binding-remove");
     let (target_id, binding_id, _instance_id) = bootstrap_projected_skill(root.path());
 
     let live_projection = root.path().join("live/claude-a/demo/SKILL.md");
@@ -106,7 +106,7 @@ fn binding_remove_cascades_metadata_and_leaves_live_projection_in_place() {
 
 #[test]
 fn target_remove_rejects_referenced_target() {
-    let root = TestDir::new("v3-target-remove-blocked");
+    let root = TestDir::new("registry-target-remove-blocked");
     let (target_id, _binding_id, _instance_id) = bootstrap_projected_skill(root.path());
 
     let (output, env) = run_loom(root.path(), &["target", "remove", &target_id]);
@@ -128,7 +128,7 @@ fn target_remove_rejects_referenced_target() {
 
 #[test]
 fn target_remove_succeeds_after_binding_metadata_is_cleared() {
-    let root = TestDir::new("v3-target-remove-ok");
+    let root = TestDir::new("registry-target-remove-ok");
     let (target_id, binding_id, _instance_id) = bootstrap_projected_skill(root.path());
 
     let (binding_remove_output, _) = run_loom(

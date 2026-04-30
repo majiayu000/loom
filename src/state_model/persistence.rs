@@ -3,21 +3,23 @@ use std::path::Path;
 
 use anyhow::{Context, Result, anyhow};
 use chrono::Utc;
+use serde_json::Value;
 
 use super::json_io::{
     append_json_line, ensure_json_file, ensure_text_file, read_json_file, read_json_lines,
     serialize_json_file, write_atomic_batch, write_json_file,
 };
 use super::{
-    V3_SCHEMA_VERSION, V3BindingsFile, V3ObservationEvent, V3OperationRecord, V3OpsCheckpoint,
-    V3ProjectionsFile, V3RulesFile, V3SchemaFile, V3Snapshot, V3StatePaths, V3TargetsFile,
+    REGISTRY_SCHEMA_VERSION, RegistryBindingsFile, RegistryObservationEvent,
+    RegistryOperationRecord, RegistryOpsCheckpoint, RegistryProjectionsFile, RegistryRulesFile,
+    RegistrySchemaFile, RegistrySnapshot, RegistryStatePaths, RegistryTargetsFile,
     empty_bindings_file, empty_projections_file, empty_rules_file, empty_targets_file,
 };
 
-impl V3StatePaths {
-    /// Derive V3 paths from a bare root path.
+impl RegistryStatePaths {
+    /// Derive Registry paths from a bare root path.
     ///
-    /// Prefer [`V3StatePaths::from_app_context`] in production code — it
+    /// Prefer [`RegistryStatePaths::from_app_context`] in production code — it
     /// inherits the state directory decision from [`crate::state::AppContext`]
     /// so any future change to how `state_dir` is computed lands in exactly
     /// one place. This entry point remains for tests and ad-hoc path
@@ -27,7 +29,7 @@ impl V3StatePaths {
         Self::from_parts(root.to_path_buf(), state_dir)
     }
 
-    /// Derive V3 paths from an existing [`crate::state::AppContext`].
+    /// Derive Registry paths from an existing [`crate::state::AppContext`].
     ///
     /// This avoids re-deriving `state_dir` from `root`, keeping the AppContext
     /// as the single source of truth for where state lives on disk.
@@ -36,18 +38,18 @@ impl V3StatePaths {
     }
 
     fn from_parts(root: std::path::PathBuf, state_dir: std::path::PathBuf) -> Self {
-        let v3_dir = state_dir.join("v3");
-        let ops_dir = v3_dir.join("ops");
-        let observations_dir = v3_dir.join("observations");
+        let registry_dir = state_dir.join("registry");
+        let ops_dir = registry_dir.join("ops");
+        let observations_dir = registry_dir.join("observations");
         Self {
             root,
             state_dir,
-            v3_dir: v3_dir.clone(),
-            schema_file: v3_dir.join("schema.json"),
-            targets_file: v3_dir.join("targets.json"),
-            bindings_file: v3_dir.join("bindings.json"),
-            rules_file: v3_dir.join("rules.json"),
-            projections_file: v3_dir.join("projections.json"),
+            registry_dir: registry_dir.clone(),
+            schema_file: registry_dir.join("schema.json"),
+            targets_file: registry_dir.join("targets.json"),
+            bindings_file: registry_dir.join("bindings.json"),
+            rules_file: registry_dir.join("rules.json"),
+            projections_file: registry_dir.join("projections.json"),
             ops_dir: ops_dir.clone(),
             operations_file: ops_dir.join("operations.jsonl"),
             checkpoint_file: ops_dir.join("checkpoint.json"),
@@ -60,8 +62,9 @@ impl V3StatePaths {
     }
 
     pub fn ensure_layout(&self) -> Result<()> {
-        fs::create_dir_all(&self.v3_dir)
-            .with_context(|| format!("failed to create {}", self.v3_dir.display()))?;
+        self.migrate_legacy_state_dir()?;
+        fs::create_dir_all(&self.registry_dir)
+            .with_context(|| format!("failed to create {}", self.registry_dir.display()))?;
         fs::create_dir_all(&self.ops_dir)
             .with_context(|| format!("failed to create {}", self.ops_dir.display()))?;
         fs::create_dir_all(&self.observations_dir)
@@ -69,8 +72,8 @@ impl V3StatePaths {
 
         ensure_json_file(
             &self.schema_file,
-            &V3SchemaFile {
-                schema_version: V3_SCHEMA_VERSION,
+            &RegistrySchemaFile {
+                schema_version: REGISTRY_SCHEMA_VERSION,
                 created_at: Utc::now(),
                 writer: format!("loom/{}", env!("CARGO_PKG_VERSION")),
             },
@@ -81,8 +84,8 @@ impl V3StatePaths {
         ensure_json_file(&self.projections_file, &empty_projections_file())?;
         ensure_json_file(
             &self.checkpoint_file,
-            &V3OpsCheckpoint {
-                schema_version: V3_SCHEMA_VERSION,
+            &RegistryOpsCheckpoint {
+                schema_version: REGISTRY_SCHEMA_VERSION,
                 last_scanned_op_id: None,
                 last_acked_op_id: None,
                 updated_at: Utc::now(),
@@ -92,12 +95,12 @@ impl V3StatePaths {
         Ok(())
     }
 
-    pub fn load_or_init_snapshot(&self) -> Result<V3Snapshot> {
+    pub fn load_or_init_snapshot(&self) -> Result<RegistrySnapshot> {
         self.ensure_layout()?;
         self.load_snapshot()
     }
 
-    pub fn load_snapshot(&self) -> Result<V3Snapshot> {
+    pub fn load_snapshot(&self) -> Result<RegistrySnapshot> {
         let schema = self.load_schema()?;
         validate_schema_version(schema.schema_version)?;
         let targets = self.load_targets()?;
@@ -110,7 +113,7 @@ impl V3StatePaths {
         validate_schema_version(projections.schema_version)?;
         let checkpoint = self.load_checkpoint()?;
         validate_schema_version(checkpoint.schema_version)?;
-        Ok(V3Snapshot {
+        Ok(RegistrySnapshot {
             schema,
             targets,
             bindings,
@@ -121,58 +124,99 @@ impl V3StatePaths {
         })
     }
 
-    pub fn maybe_load_snapshot(&self) -> Result<Option<V3Snapshot>> {
+    pub fn maybe_load_snapshot(&self) -> Result<Option<RegistrySnapshot>> {
+        self.migrate_legacy_state_dir()?;
         if !self.exists() {
             return Ok(None);
         }
         self.load_snapshot().map(Some)
     }
 
-    pub fn load_schema(&self) -> Result<V3SchemaFile> {
+    fn migrate_legacy_state_dir(&self) -> Result<()> {
+        let legacy_dir = self.state_dir.join("v3");
+        if self.registry_dir.exists() || !legacy_dir.exists() {
+            return Ok(());
+        }
+
+        fs::rename(&legacy_dir, &self.registry_dir).with_context(|| {
+            format!(
+                "failed to rename legacy state directory {} to {}",
+                legacy_dir.display(),
+                self.registry_dir.display()
+            )
+        })?;
+        self.normalize_schema_versions()
+    }
+
+    fn normalize_schema_versions(&self) -> Result<()> {
+        for path in [
+            &self.schema_file,
+            &self.targets_file,
+            &self.bindings_file,
+            &self.rules_file,
+            &self.projections_file,
+            &self.checkpoint_file,
+        ] {
+            if !path.exists() {
+                continue;
+            }
+            let mut value: Value = read_json_file(path)?;
+            if let Some(object) = value.as_object_mut() {
+                object.insert(
+                    "schema_version".to_string(),
+                    Value::from(REGISTRY_SCHEMA_VERSION),
+                );
+                write_json_file(path, &value)?;
+            }
+        }
+        Ok(())
+    }
+
+    pub fn load_schema(&self) -> Result<RegistrySchemaFile> {
         read_json_file(&self.schema_file)
     }
 
-    pub fn load_targets(&self) -> Result<V3TargetsFile> {
+    pub fn load_targets(&self) -> Result<RegistryTargetsFile> {
         read_json_file(&self.targets_file)
     }
 
-    pub fn load_bindings(&self) -> Result<V3BindingsFile> {
+    pub fn load_bindings(&self) -> Result<RegistryBindingsFile> {
         read_json_file(&self.bindings_file)
     }
 
-    pub fn load_rules(&self) -> Result<V3RulesFile> {
+    pub fn load_rules(&self) -> Result<RegistryRulesFile> {
         read_json_file(&self.rules_file)
     }
 
-    pub fn load_projections(&self) -> Result<V3ProjectionsFile> {
+    pub fn load_projections(&self) -> Result<RegistryProjectionsFile> {
         read_json_file(&self.projections_file)
     }
 
-    pub fn load_operations(&self) -> Result<Vec<V3OperationRecord>> {
+    pub fn load_operations(&self) -> Result<Vec<RegistryOperationRecord>> {
         read_json_lines(&self.operations_file)
     }
 
-    pub fn load_checkpoint(&self) -> Result<V3OpsCheckpoint> {
+    pub fn load_checkpoint(&self) -> Result<RegistryOpsCheckpoint> {
         read_json_file(&self.checkpoint_file)
     }
 
-    pub fn load_observations_file(&self, name: &str) -> Result<Vec<V3ObservationEvent>> {
+    pub fn load_observations_file(&self, name: &str) -> Result<Vec<RegistryObservationEvent>> {
         read_json_lines(&self.observations_dir.join(name))
     }
 
-    pub fn save_targets(&self, value: &V3TargetsFile) -> Result<()> {
+    pub fn save_targets(&self, value: &RegistryTargetsFile) -> Result<()> {
         write_json_file(&self.targets_file, value)
     }
 
-    pub fn save_bindings(&self, value: &V3BindingsFile) -> Result<()> {
+    pub fn save_bindings(&self, value: &RegistryBindingsFile) -> Result<()> {
         write_json_file(&self.bindings_file, value)
     }
 
-    pub fn save_rules(&self, value: &V3RulesFile) -> Result<()> {
+    pub fn save_rules(&self, value: &RegistryRulesFile) -> Result<()> {
         write_json_file(&self.rules_file, value)
     }
 
-    pub fn save_projections(&self, value: &V3ProjectionsFile) -> Result<()> {
+    pub fn save_projections(&self, value: &RegistryProjectionsFile) -> Result<()> {
         write_json_file(&self.projections_file, value)
     }
 
@@ -180,9 +224,9 @@ impl V3StatePaths {
     /// Minimizes the crash window for multi-file state updates.
     pub fn save_bindings_rules_projections(
         &self,
-        bindings: &V3BindingsFile,
-        rules: &V3RulesFile,
-        projections: &V3ProjectionsFile,
+        bindings: &RegistryBindingsFile,
+        rules: &RegistryRulesFile,
+        projections: &RegistryProjectionsFile,
     ) -> Result<()> {
         let bindings_json = serialize_json_file(bindings)?;
         let rules_json = serialize_json_file(rules)?;
@@ -194,20 +238,20 @@ impl V3StatePaths {
         ])
     }
 
-    pub fn save_checkpoint(&self, value: &V3OpsCheckpoint) -> Result<()> {
+    pub fn save_checkpoint(&self, value: &RegistryOpsCheckpoint) -> Result<()> {
         write_json_file(&self.checkpoint_file, value)
     }
 
-    pub fn append_operation(&self, value: &V3OperationRecord) -> Result<()> {
+    pub fn append_operation(&self, value: &RegistryOperationRecord) -> Result<()> {
         append_json_line(&self.operations_file, value)
     }
 }
 
 fn validate_schema_version(version: u32) -> Result<()> {
-    if version != V3_SCHEMA_VERSION {
+    if version != REGISTRY_SCHEMA_VERSION {
         return Err(anyhow!(
-            "v3 schema version mismatch: expected {}, got {}",
-            V3_SCHEMA_VERSION,
+            "registry schema version mismatch: expected {}, got {}",
+            REGISTRY_SCHEMA_VERSION,
             version
         ));
     }
@@ -217,45 +261,47 @@ fn validate_schema_version(version: u32) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::super::{
-        V3BindingRule, V3BindingsFile, V3OperationRecord, V3OpsCheckpoint, V3ProjectionInstance,
-        V3ProjectionTarget, V3ProjectionsFile, V3RulesFile, V3SchemaFile, V3Snapshot, V3StatePaths,
-        V3TargetCapabilities, V3TargetsFile, V3WorkspaceBinding, V3WorkspaceMatcher,
+        RegistryBindingRule, RegistryBindingsFile, RegistryOperationRecord, RegistryOpsCheckpoint,
+        RegistryProjectionInstance, RegistryProjectionTarget, RegistryProjectionsFile,
+        RegistryRulesFile, RegistrySchemaFile, RegistrySnapshot, RegistryStatePaths,
+        RegistryTargetCapabilities, RegistryTargetsFile, RegistryWorkspaceBinding,
+        RegistryWorkspaceMatcher,
     };
     use chrono::Utc;
     use serde_json::json;
     use std::path::Path;
 
     #[test]
-    fn builds_expected_v3_paths() {
-        let paths = V3StatePaths::from_root(Path::new("/tmp/loom"));
-        assert_eq!(paths.v3_dir, Path::new("/tmp/loom/state/v3"));
+    fn builds_expected_registry_paths() {
+        let paths = RegistryStatePaths::from_root(Path::new("/tmp/loom"));
+        assert_eq!(paths.registry_dir, Path::new("/tmp/loom/state/registry"));
         assert_eq!(
             paths.operations_file,
-            Path::new("/tmp/loom/state/v3/ops/operations.jsonl")
+            Path::new("/tmp/loom/state/registry/ops/operations.jsonl")
         );
         assert_eq!(
             paths.observations_dir,
-            Path::new("/tmp/loom/state/v3/observations")
+            Path::new("/tmp/loom/state/registry/observations")
         );
     }
 
     #[test]
     fn query_helpers_link_bindings_targets_and_projections() {
         let now = Utc::now();
-        let snapshot = V3Snapshot {
-            schema: V3SchemaFile {
-                schema_version: 3,
+        let snapshot = RegistrySnapshot {
+            schema: RegistrySchemaFile {
+                schema_version: 1,
                 created_at: now,
                 writer: "loom-test".to_string(),
             },
-            targets: V3TargetsFile {
-                schema_version: 3,
-                targets: vec![V3ProjectionTarget {
+            targets: RegistryTargetsFile {
+                schema_version: 1,
+                targets: vec![RegistryProjectionTarget {
                     target_id: "target_claude".to_string(),
                     agent: "claude".to_string(),
                     path: "/tmp/claude/skills".to_string(),
                     ownership: "managed".to_string(),
-                    capabilities: V3TargetCapabilities {
+                    capabilities: RegistryTargetCapabilities {
                         symlink: true,
                         copy: true,
                         watch: true,
@@ -263,14 +309,14 @@ mod tests {
                     created_at: Some(now),
                 }],
             },
-            bindings: V3BindingsFile {
-                schema_version: 3,
+            bindings: RegistryBindingsFile {
+                schema_version: 1,
                 bindings: vec![
-                    V3WorkspaceBinding {
+                    RegistryWorkspaceBinding {
                         binding_id: "binding_project_a".to_string(),
                         agent: "claude".to_string(),
                         profile_id: "default".to_string(),
-                        workspace_matcher: V3WorkspaceMatcher {
+                        workspace_matcher: RegistryWorkspaceMatcher {
                             kind: "path_prefix".to_string(),
                             value: "/tmp/project-a".to_string(),
                         },
@@ -279,11 +325,11 @@ mod tests {
                         active: true,
                         created_at: Some(now),
                     },
-                    V3WorkspaceBinding {
+                    RegistryWorkspaceBinding {
                         binding_id: "binding_project_b".to_string(),
                         agent: "claude".to_string(),
                         profile_id: "default".to_string(),
-                        workspace_matcher: V3WorkspaceMatcher {
+                        workspace_matcher: RegistryWorkspaceMatcher {
                             kind: "path_prefix".to_string(),
                             value: "/tmp/project-b".to_string(),
                         },
@@ -292,11 +338,11 @@ mod tests {
                         active: true,
                         created_at: Some(now),
                     },
-                    V3WorkspaceBinding {
+                    RegistryWorkspaceBinding {
                         binding_id: "binding_project_c".to_string(),
                         agent: "claude".to_string(),
                         profile_id: "default".to_string(),
-                        workspace_matcher: V3WorkspaceMatcher {
+                        workspace_matcher: RegistryWorkspaceMatcher {
                             kind: "path_prefix".to_string(),
                             value: "/tmp/project-c".to_string(),
                         },
@@ -305,11 +351,11 @@ mod tests {
                         active: true,
                         created_at: Some(now),
                     },
-                    V3WorkspaceBinding {
+                    RegistryWorkspaceBinding {
                         binding_id: "binding_project_d".to_string(),
                         agent: "claude".to_string(),
                         profile_id: "default".to_string(),
-                        workspace_matcher: V3WorkspaceMatcher {
+                        workspace_matcher: RegistryWorkspaceMatcher {
                             kind: "path_prefix".to_string(),
                             value: "/tmp/project-d".to_string(),
                         },
@@ -320,10 +366,10 @@ mod tests {
                     },
                 ],
             },
-            rules: V3RulesFile {
-                schema_version: 3,
+            rules: RegistryRulesFile {
+                schema_version: 1,
                 rules: vec![
-                    V3BindingRule {
+                    RegistryBindingRule {
                         binding_id: "binding_project_a".to_string(),
                         skill_id: "model-onboarding".to_string(),
                         target_id: "target_claude".to_string(),
@@ -331,7 +377,7 @@ mod tests {
                         watch_policy: "observe_only".to_string(),
                         created_at: Some(now),
                     },
-                    V3BindingRule {
+                    RegistryBindingRule {
                         binding_id: "binding_project_b".to_string(),
                         skill_id: "model-onboarding".to_string(),
                         target_id: "target_claude".to_string(),
@@ -341,10 +387,10 @@ mod tests {
                     },
                 ],
             },
-            projections: V3ProjectionsFile {
-                schema_version: 3,
+            projections: RegistryProjectionsFile {
+                schema_version: 1,
                 projections: vec![
-                    V3ProjectionInstance {
+                    RegistryProjectionInstance {
                         instance_id: "instance_1".to_string(),
                         skill_id: "model-onboarding".to_string(),
                         binding_id: Some("binding_project_a".to_string()),
@@ -356,7 +402,7 @@ mod tests {
                         observed_drift: Some(false),
                         updated_at: Some(now),
                     },
-                    V3ProjectionInstance {
+                    RegistryProjectionInstance {
                         instance_id: "instance_2".to_string(),
                         skill_id: "model-onboarding".to_string(),
                         binding_id: Some("binding_project_c".to_string()),
@@ -370,7 +416,7 @@ mod tests {
                     },
                 ],
             },
-            operations: vec![V3OperationRecord {
+            operations: vec![RegistryOperationRecord {
                 op_id: "op_001".to_string(),
                 intent: "skill.project".to_string(),
                 status: "succeeded".to_string(),
@@ -381,8 +427,8 @@ mod tests {
                 created_at: now,
                 updated_at: now,
             }],
-            checkpoint: V3OpsCheckpoint {
-                schema_version: 3,
+            checkpoint: RegistryOpsCheckpoint {
+                schema_version: 1,
                 last_scanned_op_id: Some("op_001".to_string()),
                 last_acked_op_id: None,
                 updated_at: now,

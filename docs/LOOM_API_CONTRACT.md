@@ -1,11 +1,11 @@
-# Loom v3 API Contract
+# Loom Registry API Contract
 
 Updated: 2026-04-09
 Status: Draft
 
 ## 1. Purpose
 
-This document defines the read-oriented API contract for Loom v3.
+This document defines the read-oriented API contract for Loom Registry.
 
 The API contract exists to support:
 
@@ -14,7 +14,7 @@ The API contract exists to support:
 3. consistent read models shared with CLI output
 
 This API is not a second source of truth.
-It is a projection of v3 state and source metadata.
+It is a projection of registry state and source metadata.
 
 ## 2. API Principles
 
@@ -35,7 +35,7 @@ Initial assumptions:
 Base path:
 
 ```text
-/api/v3
+/api/registry
 ```
 
 ## 4. Common Response Shape
@@ -91,7 +91,7 @@ The API exposes six primary resources:
 
 ## 7. Endpoints
 
-### 7.1 `GET /api/v3/health`
+### 7.1 `GET /api/registry/health`
 
 Purpose:
 
@@ -114,7 +114,7 @@ Response:
 }
 ```
 
-### 7.2 `GET /api/v3/workspace`
+### 7.2 `GET /api/registry/workspace`
 
 Purpose:
 
@@ -158,7 +158,7 @@ Response:
 
 Field-level tier classification for all fields returned by this endpoint: see `docs/STATUS_FIELD_CLASSIFICATION.md`.
 
-### 7.3 `GET /api/v3/bindings`
+### 7.3 `GET /api/registry/bindings`
 
 Purpose:
 
@@ -182,7 +182,7 @@ Response item shape:
 }
 ```
 
-### 7.4 `GET /api/v3/bindings/{binding_id}`
+### 7.4 `GET /api/registry/bindings/{binding_id}`
 
 Purpose:
 
@@ -211,7 +211,7 @@ Response:
 }
 ```
 
-### 7.5 `GET /api/v3/targets`
+### 7.5 `GET /api/registry/targets`
 
 Purpose:
 
@@ -234,14 +234,14 @@ Response item shape:
 }
 ```
 
-### 7.6 `GET /api/v3/targets/{target_id}`
+### 7.6 `GET /api/registry/targets/{target_id}`
 
 Purpose:
 
 1. show one target
 2. include dependent bindings and projections
 
-### 7.7 `GET /api/v3/projections`
+### 7.7 `GET /api/registry/projections`
 
 Purpose:
 
@@ -272,7 +272,7 @@ Response item shape:
 }
 ```
 
-### 7.8 `GET /api/v3/projections/{instance_id}`
+### 7.8 `GET /api/registry/projections/{instance_id}`
 
 Purpose:
 
@@ -306,7 +306,7 @@ Response:
 }
 ```
 
-### 7.9 `GET /api/v3/history`
+### 7.9 `GET /api/registry/history`
 
 Purpose:
 
@@ -343,7 +343,7 @@ Response item shape:
 }
 ```
 
-### 7.10 `GET /api/v3/skills`
+### 7.10 `GET /api/registry/skills`
 
 Purpose:
 
@@ -361,19 +361,19 @@ Response item shape:
 }
 ```
 
-### 7.11 `GET /api/v3/skills/{skill_id}`
+### 7.11 `GET /api/registry/skills/{skill_id}`
 
 Purpose:
 
 1. show one source skill
 2. include revision summary and projection summary
 
-### 7.12 `GET /api/v3/migration/plan`
+### 7.12 `GET /api/registry/migration/plan`
 
 Purpose:
 
 1. support migration review UI
-2. show unresolved v2-to-v3 ambiguities without writing
+2. show unresolved legacy-to-registry ambiguities without writing
 
 Response:
 
@@ -388,7 +388,7 @@ Response:
       {
         "kind": "binding_ambiguity",
         "source": "state/targets.json",
-        "message": "one claude_path cannot be mapped to a single v3 binding safely"
+        "message": "one claude_path cannot be mapped to a single registry binding safely"
       }
     ]
   },
@@ -430,22 +430,22 @@ Not allowed:
 Recommended panel pages:
 
 1. `Overview`
-   backed by `/api/v3/workspace`
+   backed by `/api/registry/workspace`
 2. `Bindings`
-   backed by `/api/v3/bindings`
+   backed by `/api/registry/bindings`
 3. `Targets`
-   backed by `/api/v3/targets`
+   backed by `/api/registry/targets`
 4. `Projections`
-   backed by `/api/v3/projections`
+   backed by `/api/registry/projections`
 5. `History`
-   backed by `/api/v3/history`
+   backed by `/api/registry/history`
 6. `Migration`
-   backed by `/api/v3/migration/plan`
+   backed by `/api/registry/migration/plan`
 
 ## 11. Compatibility Rules
 
-1. The API must reflect v3 state only.
-2. If v2 state still exists, API should expose migration review instead of pretending v3 resolution already exists.
+1. The API must reflect registry state only.
+2. If legacy state still exists, API should expose migration review instead of pretending registry resolution already exists.
 3. Panel should never call write endpoints that have no CLI equivalent.
 
 ## 12. API Acceptance Criteria

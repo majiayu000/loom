@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import type { Binding, Skill, Target } from "../../lib/types";
 import { AgentAvatar } from "../../components/panel/AgentAvatar";
 import { PlusIcon, SearchIcon } from "../../components/icons/nav_icons";
-import { api, type SkillDiffFile, type V3ObservationEvent } from "../../lib/api/client";
+import { api, type SkillDiffFile, type RegistryObservationEvent } from "../../lib/api/client";
 import { useMutation } from "../../lib/useMutation";
 
 interface SkillsPageProps {
@@ -17,6 +17,7 @@ interface SkillsPageProps {
 
 export function SkillsPage({ skills, targets, bindings = [], selectedSkill, onSelectSkill, onMutation, readOnly }: SkillsPageProps) {
   const [q, setQ] = useState("");
+  const [addOpen, setAddOpen] = useState(false);
   const filtered = skills.filter((s) => s.name.includes(q) || s.tag.includes(q));
   const sel = skills.find((s) => s.id === selectedSkill) ?? skills[0];
   const capture = useMutation();
@@ -43,7 +44,7 @@ export function SkillsPage({ skills, targets, bindings = [], selectedSkill, onSe
         <div className="title-block">
           <h1>Skills</h1>
           <div className="subtitle">
-            Versioned units in the registry. Each skill owns a chain of captures, releases, snapshots.
+            Tracked units in the registry. Each skill owns a chain of captures, releases, snapshots.
           </div>
         </div>
         <div className="header-actions">
@@ -59,6 +60,14 @@ export function SkillsPage({ skills, targets, bindings = [], selectedSkill, onSe
             title={readOnly ? "registry offline" : !sel ? "select a skill first" : undefined}
           >
             <PlusIcon /> {capture.busy ? "capturing…" : "Capture"}
+          </button>
+          <button
+            className="btn primary"
+            onClick={() => setAddOpen((value) => !value)}
+            disabled={readOnly}
+            title={readOnly ? "registry offline" : undefined}
+          >
+            <PlusIcon /> {addOpen ? "close" : "skill add"}
           </button>
         </div>
       </div>
@@ -77,6 +86,17 @@ export function SkillsPage({ skills, targets, bindings = [], selectedSkill, onSe
         </div>
       )}
       <div className="page-body" style={{ padding: 0 }}>
+        {addOpen && (
+          <div style={{ padding: "0 28px 12px" }}>
+            <SkillAddForm
+              onCancel={() => setAddOpen(false)}
+              onSuccess={() => {
+                setAddOpen(false);
+                onMutation();
+              }}
+            />
+          </div>
+        )}
         <div className="two-col" style={{ height: "100%", gap: 0 }}>
           <div style={{ overflow: "auto", borderRight: "1px solid var(--line)" }}>
             <table className="tbl">
@@ -119,7 +139,7 @@ export function SkillsPage({ skills, targets, bindings = [], selectedSkill, onSe
           </div>
           <div style={{ padding: 20, overflow: "auto" }}>
             {sel ? (
-              <SkillDetail skill={sel} targets={targets} bindings={bindings} />
+              <SkillDetail skill={sel} targets={targets} bindings={bindings} onMutation={onMutation} readOnly={readOnly} />
             ) : (
               <div className="empty">{emptyMessage}</div>
             )}
@@ -127,6 +147,46 @@ export function SkillsPage({ skills, targets, bindings = [], selectedSkill, onSe
         </div>
       </div>
     </>
+  );
+}
+
+function SkillAddForm({ onCancel, onSuccess }: { onCancel: () => void; onSuccess: () => void }) {
+  const [source, setSource] = useState("");
+  const [name, setName] = useState("");
+  const add = useMutation();
+
+  const submit = (event: React.FormEvent) => {
+    event.preventDefault();
+    const trimmedSource = source.trim();
+    const trimmedName = name.trim();
+    if (!trimmedSource || !trimmedName) return;
+    add.run("skill add", () => api.skillAdd({ source: trimmedSource, name: trimmedName }), onSuccess);
+  };
+
+  return (
+    <form onSubmit={submit} className="card" style={{ padding: 16, marginBottom: 12 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "120px 1fr", gap: 8, alignItems: "center" }}>
+        <label className="hint">source</label>
+        <input
+          value={source}
+          onChange={(event) => setSource(event.target.value)}
+          placeholder="/Users/me/.claude/skills/my-skill"
+          style={formInputStyle}
+          autoFocus
+        />
+        <label className="hint">name</label>
+        <input value={name} onChange={(event) => setName(event.target.value)} placeholder="my-skill" style={formInputStyle} />
+      </div>
+      {(add.error || add.success) && <div style={add.error ? errorStyle : okStyle}>{add.error ?? `✓ ${add.success}`}</div>}
+      <div style={{ display: "flex", gap: 8, marginTop: 12, justifyContent: "flex-end" }}>
+        <button type="button" className="btn ghost" onClick={onCancel} disabled={add.busy}>
+          Cancel
+        </button>
+        <button type="submit" className="btn primary" disabled={add.busy || !source.trim() || !name.trim()}>
+          {add.busy ? "adding…" : "skill add"}
+        </button>
+      </div>
+    </form>
   );
 }
 
@@ -180,7 +240,7 @@ function toRelative(iso: string): string {
   return `${Math.floor(hrs / 24)}d ago`;
 }
 
-function mapObsToLifecycle(ev: V3ObservationEvent): LifecycleEvent {
+function mapObsToLifecycle(ev: RegistryObservationEvent): LifecycleEvent {
   return {
     kind: KIND_MAP[ev.kind] ?? "capture",
     v: ev.event_id.slice(0, 8),
@@ -191,7 +251,19 @@ function mapObsToLifecycle(ev: V3ObservationEvent): LifecycleEvent {
 }
 
 
-function SkillDetail({ skill, targets, bindings }: { skill: Skill; targets: Target[]; bindings: Binding[] }) {
+function SkillDetail({
+  skill,
+  targets,
+  bindings,
+  onMutation,
+  readOnly,
+}: {
+  skill: Skill;
+  targets: Target[];
+  bindings: Binding[];
+  onMutation: () => void;
+  readOnly: boolean;
+}) {
   const [tab, setTab] = useState<DetailTab>("history");
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyError, setHistoryError] = useState<string | null>(null);
@@ -267,7 +339,18 @@ function SkillDetail({ skill, targets, bindings }: { skill: Skill; targets: Targ
         </>
       )}
       {tab === "diff" && <SkillDiff skillName={skill.name} />}
-      {tab === "targets" && <TargetsTab targets={targetObjs} />}
+      {tab === "targets" && (
+        <>
+          <ProjectSkillForm
+            skillName={skill.name}
+            bindings={bindings}
+            targets={targets}
+            onMutation={onMutation}
+            readOnly={readOnly}
+          />
+          <TargetsTab targets={targetObjs} />
+        </>
+      )}
     </div>
   );
 }
@@ -434,6 +517,61 @@ function SkillDiff({ skillName }: { skillName: string }) {
   );
 }
 
+function ProjectSkillForm({
+  skillName,
+  bindings,
+  targets,
+  onMutation,
+  readOnly,
+}: {
+  skillName: string;
+  bindings: Binding[];
+  targets: Target[];
+  onMutation: () => void;
+  readOnly: boolean;
+}) {
+  const [bindingId, setBindingId] = useState(bindings[0]?.id ?? "");
+  const [method, setMethod] = useState<"symlink" | "copy" | "materialize">("symlink");
+  const project = useMutation();
+
+  const runProject = () => {
+    if (!bindingId) return;
+    project.run("skill project", () => api.project({ skill: skillName, binding: bindingId, method }), onMutation);
+  };
+
+  return (
+    <div className="card" style={{ padding: 12, marginBottom: 12 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) 130px auto", gap: 8 }}>
+        <select value={bindingId} onChange={(event) => setBindingId(event.target.value)} style={formInputStyle} disabled={readOnly}>
+          {bindings.length === 0 && <option value="">(no bindings)</option>}
+          {bindings.map((binding) => {
+            const target = targets.find((item) => item.id === binding.target);
+            return (
+              <option key={binding.id} value={binding.id}>
+                {binding.id} · {target ? `${target.agent}/${target.profile}` : binding.target}
+              </option>
+            );
+          })}
+        </select>
+        <select
+          value={method}
+          onChange={(event) => setMethod(event.target.value as "symlink" | "copy" | "materialize")}
+          style={formInputStyle}
+          disabled={readOnly}
+        >
+          <option value="symlink">symlink</option>
+          <option value="copy">copy</option>
+          <option value="materialize">materialize</option>
+        </select>
+        <button className="btn primary" onClick={runProject} disabled={readOnly || project.busy || !bindingId}>
+          {project.busy ? "projecting…" : "Project"}
+        </button>
+      </div>
+      {(project.error || project.success) && <div style={project.error ? errorStyle : okStyle}>{project.error ?? `✓ ${project.success}`}</div>}
+    </div>
+  );
+}
+
 function TargetsTab({ targets }: { targets: Target[] }) {
   if (targets.length === 0) {
     return <div className="empty" style={{ padding: "18px 4px" }}>This skill is not projected to any target.</div>;
@@ -470,3 +608,32 @@ function TargetsTab({ targets }: { targets: Target[] }) {
     </div>
   );
 }
+
+const formInputStyle: React.CSSProperties = {
+  padding: "6px 10px",
+  borderRadius: 6,
+  border: "1px solid var(--line-hi)",
+  background: "var(--bg-2)",
+  color: "var(--ink-0)",
+  fontSize: 12,
+  fontFamily: "var(--font-mono)",
+  minWidth: 0,
+};
+
+const errorStyle: React.CSSProperties = {
+  marginTop: 10,
+  padding: "6px 10px",
+  color: "var(--err)",
+  background: "rgba(216,90,90,0.08)",
+  border: "1px solid rgba(216,90,90,0.3)",
+  borderRadius: 6,
+  fontFamily: "var(--font-mono)",
+  fontSize: 11,
+};
+
+const okStyle: React.CSSProperties = {
+  ...errorStyle,
+  color: "var(--ok)",
+  background: "rgba(111,183,138,0.08)",
+  border: "1px solid rgba(111,183,138,0.3)",
+};

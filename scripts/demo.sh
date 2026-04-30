@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Loom end-to-end demo — spins up a throwaway registry, registers a
-# target directory, surfaces workspace status, and points at the Panel.
+# Loom end-to-end demo — spins up a throwaway registry, imports a skill,
+# creates a target + binding, projects the skill, and points at the Panel.
 # Intended for README walkthroughs and asciinema recordings.
 #
 # Usage:
@@ -22,13 +22,20 @@ if [[ ! -x "$LOOM_BIN" ]]; then
   exit 1
 fi
 
+if ! command -v jq >/dev/null 2>&1; then
+  echo "jq is required for the demo" >&2
+  exit 1
+fi
+
 if [[ $# -ge 1 ]]; then
   ROOT="$1"
 else
   ROOT="$(mktemp -d -t loom-demo-XXXXXX)"
 fi
 
-TARGET_DIR="$ROOT/skills-target"
+TARGET_DIR="$ROOT/agent/.claude/skills"
+WORKSPACE_DIR="$ROOT/workspace-demo"
+SEED_DIR="$ROOT/seed/demo-skill"
 
 cleanup() {
   echo
@@ -47,22 +54,45 @@ step() {
 LOOM=("$LOOM_BIN" --root "$ROOT")
 
 step "1. Initialize a fresh Loom registry at $ROOT"
-mkdir -p "$TARGET_DIR"
+mkdir -p "$TARGET_DIR" "$WORKSPACE_DIR" "$SEED_DIR"
+cat >"$SEED_DIR/SKILL.md" <<'EOF'
+# demo-skill
+
+Use this demo skill to verify Loom import, binding, projection, and capture.
+EOF
 "${LOOM[@]}" workspace init
 
-step "2. Register $TARGET_DIR as a managed Claude target"
-"${LOOM[@]}" target add \
+step "2. Import demo-skill into the registry"
+"${LOOM[@]}" skill add "$SEED_DIR" --name demo-skill
+
+step "3. Register $TARGET_DIR as a managed Claude target"
+target_json="$("${LOOM[@]}" --json target add \
   --agent claude \
   --path "$TARGET_DIR" \
-  --ownership managed
+  --ownership managed)"
+printf '%s\n' "$target_json" | jq .
+target_id="$(printf '%s' "$target_json" | jq -r '.data.target.target_id')"
 
-step "3. Inspect registered targets"
+step "4. Bind $WORKSPACE_DIR to $target_id"
+binding_json="$("${LOOM[@]}" --json workspace binding add \
+  --agent claude \
+  --profile demo \
+  --matcher-kind path-prefix \
+  --matcher-value "$WORKSPACE_DIR" \
+  --target "$target_id")"
+printf '%s\n' "$binding_json" | jq .
+binding_id="$(printf '%s' "$binding_json" | jq -r '.data.binding.binding_id')"
+
+step "5. Project demo-skill through $binding_id"
+"${LOOM[@]}" skill project demo-skill --binding "$binding_id" --method symlink
+
+step "6. Inspect registered targets"
 "${LOOM[@]}" target list
 
-step "4. Workspace status snapshot"
+step "7. Workspace status snapshot"
 "${LOOM[@]}" workspace status
 
-step "✅ Demo complete"
+step "Demo complete"
 cat <<EOF
 
 Launch the visual panel against this registry:

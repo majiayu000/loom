@@ -48,10 +48,7 @@ export function LandingFooter() {
               <LoomFooterMark />
               loom
             </div>
-            <p>
-              A versioned skill registry and projection control plane for AI coding agents. CLI-first. Git-native. MIT
-              licensed.
-            </p>
+            <p>A Git-backed skill registry and projection control plane for AI coding agents. CLI-first. MIT licensed.</p>
           </div>
           <div className="foot-col">
             <h5>Product</h5>
@@ -76,7 +73,7 @@ export function LandingFooter() {
           </div>
         </div>
         <div className="foot-bottom">
-          <span>loom v0.9.0 · built in Rust 🦀</span>
+          <span>loom · built in Rust</span>
           <span>MIT · © 2026</span>
         </div>
       </div>

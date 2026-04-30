@@ -9,12 +9,12 @@ export interface MutationState {
 export function useMutation() {
   const [state, setState] = useState<MutationState>({ busy: false, error: null, success: null });
 
-  async function run(label: string, fn: () => Promise<unknown>, onDone?: () => void) {
+  async function run(label: string, fn: () => Promise<unknown>, onDone?: (result: unknown) => void) {
     setState({ busy: true, error: null, success: null });
     try {
-      await fn();
+      const result = await fn();
       setState({ busy: false, error: null, success: label });
-      onDone?.();
+      onDone?.(result);
       window.setTimeout(() => setState((s) => (s.success === label ? { ...s, success: null } : s)), 3000);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

@@ -1,7 +1,7 @@
-# Loom v2 PRD
+# Loom legacy design PRD
 
 更新日期: 2026-04-07  
-状态: Draft v2 (Breaking)
+状态: Draft legacy (Breaking)
 
 ## 1. 背景
 
@@ -19,8 +19,8 @@ Loom 当前已经覆盖基础能力: `init/import/link/save/snapshot/release/rol
 ### 2.1 目标
 
 1. 将 Loom 升级为“可恢复、可验证、可演进”的技能注册中心。
-2. 采用破坏性 CLI 升级，不提供任何 v1 兼容入口。
-3. 建立 `state/v2` schema 与强约束状态机。
+2. 采用破坏性 CLI 升级，不提供任何 legacy 兼容入口。
+3. 建立 `state/legacy` schema 与强约束状态机。
 4. 建立可审计操作日志与幂等重放能力。
 5. 让 agent 调用契约更稳定，减少“成功但状态不一致”。
 
@@ -103,7 +103,7 @@ Loom 当前已经覆盖基础能力: `init/import/link/save/snapshot/release/rol
 4. 可恢复: 中断后可根据 journal 与 checkpoint 继续。
 5. 可测试: 集成测试覆盖 diverged/replay/conflict。
 
-## 8. CLI v2 命令面
+## 8. CLI legacy 命令面
 
 ```bash
 loom workspace init|status|doctor|remote
@@ -123,7 +123,7 @@ loom ops list|retry|purge
 
 ## 9. 破坏性命令切换表(无兼容层)
 
-| 旧命令(v1) | 新命令(v2) | v2 行为 |
+| 旧命令(legacy) | 新命令(legacy) | legacy 行为 |
 |---|---|---|
 | `loom init ...` | `loom workspace init ...` | 新入口；旧命令直接报错并提示新命令 |
 | `loom status` | `loom workspace status` | 新入口；读路径零副作用 |
@@ -145,9 +145,9 @@ loom ops list|retry|purge
 
 发布规则:
 
-1. v2.0 起立即移除全部 v1 命令实现。
-2. 收到 v1 命令时，返回 `UNSUPPORTED_V1_COMMAND`。
-3. CLI `--help` 仅展示 v2 命令面。
+1. legacy.0 起立即移除全部 legacy 命令实现。
+2. 收到 legacy 命令时，返回 `UNSUPPORTED_V1_COMMAND`。
+3. CLI `--help` 仅展示 legacy 命令面。
 
 ## 10. 实施里程碑
 
@@ -164,7 +164,7 @@ loom ops list|retry|purge
 
 ### M1 Journal 化
 
-1. 新增 `state/v2/ops/operations.jsonl` 与 checkpoint。
+1. 新增 `state/legacy/ops/operations.jsonl` 与 checkpoint。
 2. `sync replay` 改为逐 op ack。
 3. `queue append` 失败必须抛错，不再吞掉错误。
 
@@ -176,13 +176,13 @@ loom ops list|retry|purge
 ### M2 命令面切换
 
 1. 切换到 `workspace/skill/sync/ops` 命令组。
-2. 删除 v1 命令分支与解析路径。
-3. runbook 全量改写到 v2。
+2. 删除 legacy 命令分支与解析路径。
+3. runbook 全量改写到 legacy。
 
 验收:
 
-1. 输入任意 v1 命令均返回 `UNSUPPORTED_V1_COMMAND`。
-2. 所有自动化脚本通过 v2 回归用例。
+1. 输入任意 legacy 命令均返回 `UNSUPPORTED_V1_COMMAND`。
+2. 所有自动化脚本通过 legacy 回归用例。
 
 ### M3 面板收敛
 
@@ -197,17 +197,17 @@ loom ops list|retry|purge
 
 1. 破坏性切换会导致旧脚本失效。对策: 发布前统一改写官方 runbook 与 CI 脚本。
 2. 文件后端在极端崩溃下可能损坏。对策: 原子写 + checksum + schema 校验。
-3. 强切换窗口内故障放大。对策: 提供回滚到 v1 二进制的运维手册(不是协议兼容)。
+3. 强切换窗口内故障放大。对策: 提供回滚到 legacy 二进制的运维手册(不是协议兼容)。
 
 ## 12. 验证与发布标准
 
 1. 单测: domain 状态机与错误映射。
 2. 集成测试: git remote/diverged/replay/conflict。
 3. 并发测试: 锁冲突与重复 replay 幂等。
-4. 回归: v2 runbook 命令全部通过。
+4. 回归: legacy runbook 命令全部通过。
 
 ## 13. 交付物
 
 1. 本 PRD 文档。
-2. `state/v2` schema 文档: `docs/LOOM_V2_STATE_SCHEMA.md`。
-3. v2-only runbook 与脚本清单。
+2. `state/legacy` schema 文档: `docs/LOOM_LEGACY_STATE_SCHEMA.md`。
+3. legacy-only runbook 与脚本清单。

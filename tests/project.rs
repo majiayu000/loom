@@ -13,16 +13,17 @@ fn write_example_skill(root: &std::path::Path, skill: &str) {
 }
 
 fn read_operations_log(root: &std::path::Path) -> String {
-    fs::read_to_string(root.join("state/v3/ops/operations.jsonl")).expect("read operations log")
+    fs::read_to_string(root.join("state/registry/ops/operations.jsonl"))
+        .expect("read operations log")
 }
 
 fn read_checkpoint(root: &std::path::Path) -> String {
-    fs::read_to_string(root.join("state/v3/ops/checkpoint.json")).expect("read checkpoint")
+    fs::read_to_string(root.join("state/registry/ops/checkpoint.json")).expect("read checkpoint")
 }
 
 #[test]
 fn skill_project_creates_projection_rule_and_instance() {
-    let root = TestDir::new("v3-skill-project");
+    let root = TestDir::new("registry-skill-project");
     write_example_skill(root.path(), "model-onboarding");
 
     let (save_output, _) = save_skill(root.path(), "model-onboarding");
@@ -102,7 +103,7 @@ fn skill_project_creates_projection_rule_and_instance() {
 
 #[test]
 fn skill_project_rejects_unmanaged_target_ownership() {
-    let root = TestDir::new("v3-skill-project-observed");
+    let root = TestDir::new("registry-skill-project-observed");
     write_example_skill(root.path(), "model-onboarding");
 
     let (save_output, _) = save_skill(root.path(), "model-onboarding");
@@ -145,7 +146,7 @@ fn skill_project_rejects_unmanaged_target_ownership() {
 
 #[test]
 fn skill_project_backs_up_existing_projection_path_before_replace() {
-    let root = TestDir::new("v3-skill-project-backup");
+    let root = TestDir::new("registry-skill-project-backup");
     write_example_skill(root.path(), "model-onboarding");
 
     let (save_output, _) = save_skill(root.path(), "model-onboarding");
@@ -265,8 +266,9 @@ fn skill_project_rolls_back_projection_after_post_materialize_failure() {
         "failed projection should not leave copied skill files"
     );
 
-    let rules = fs::read_to_string(root.path().join("state/v3/rules.json")).expect("read rules");
-    let projections = fs::read_to_string(root.path().join("state/v3/projections.json"))
+    let rules =
+        fs::read_to_string(root.path().join("state/registry/rules.json")).expect("read rules");
+    let projections = fs::read_to_string(root.path().join("state/registry/projections.json"))
         .expect("read projections");
     assert!(
         !rules.contains("model-onboarding"),
@@ -343,8 +345,9 @@ fn skill_project_eventstore_preflight_failure_blocks_mutation() {
         "projection should not be materialized when audit preflight fails"
     );
 
-    let rules = fs::read_to_string(root.path().join("state/v3/rules.json")).expect("read rules");
-    let projections = fs::read_to_string(root.path().join("state/v3/projections.json"))
+    let rules =
+        fs::read_to_string(root.path().join("state/registry/rules.json")).expect("read rules");
+    let projections = fs::read_to_string(root.path().join("state/registry/projections.json"))
         .expect("read projections");
     assert!(!rules.contains("model-onboarding"));
     assert!(!projections.contains("model-onboarding"));
@@ -484,8 +487,9 @@ fn skill_project_rolls_back_operation_log_after_append_failure() {
         "failed projection should not leave copied skill files"
     );
 
-    let rules = fs::read_to_string(root.path().join("state/v3/rules.json")).expect("read rules");
-    let projections = fs::read_to_string(root.path().join("state/v3/projections.json"))
+    let rules =
+        fs::read_to_string(root.path().join("state/registry/rules.json")).expect("read rules");
+    let projections = fs::read_to_string(root.path().join("state/registry/projections.json"))
         .expect("read projections");
     assert!(!rules.contains("model-onboarding"));
     assert!(!projections.contains("model-onboarding"));

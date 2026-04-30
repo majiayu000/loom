@@ -5,21 +5,21 @@ use std::path::Path;
 
 use serde_json::Value;
 
-use common::{TestDir, run_loom, write_minimal_v3_state};
+use common::{TestDir, run_loom, write_minimal_registry_state};
 
 fn overwrite_schema_version(path: &Path, version: u32) {
-    let raw = fs::read_to_string(path).expect("read v3 file");
+    let raw = fs::read_to_string(path).expect("read registry file");
     let updated = raw.replacen(
-        "\"schema_version\":3",
+        "\"schema_version\":1",
         &format!("\"schema_version\":{}", version),
         1,
     );
-    fs::write(path, updated).expect("write v3 file");
+    fs::write(path, updated).expect("write registry file");
 }
 
 fn assert_workspace_status_schema_mismatch_for(path_suffix: &str) {
-    let root = TestDir::new("v3-status-per-file-mismatch");
-    write_minimal_v3_state(root.path(), 3);
+    let root = TestDir::new("registry-status-per-file-mismatch");
+    write_minimal_registry_state(root.path(), 1);
     overwrite_schema_version(&root.path().join(path_suffix), 99);
 
     let (output, env) = run_loom(root.path(), &["workspace", "status"]);
@@ -32,9 +32,9 @@ fn assert_workspace_status_schema_mismatch_for(path_suffix: &str) {
 }
 
 #[test]
-fn workspace_status_reports_v3_snapshot_when_present() {
-    let root = TestDir::new("v3-status-ok");
-    write_minimal_v3_state(root.path(), 3);
+fn workspace_status_reports_registry_snapshot_when_present() {
+    let root = TestDir::new("registry-status-ok");
+    write_minimal_registry_state(root.path(), 1);
 
     let (output, env) = run_loom(root.path(), &["workspace", "status"]);
     assert!(
@@ -45,18 +45,30 @@ fn workspace_status_reports_v3_snapshot_when_present() {
     );
 
     assert_eq!(env["ok"], Value::Bool(true));
-    assert_eq!(env["data"]["state_model"], Value::String("v3".to_string()));
-    assert_eq!(env["data"]["v3"]["counts"]["bindings"], Value::from(1));
-    assert_eq!(env["data"]["v3"]["counts"]["targets"], Value::from(1));
     assert_eq!(
-        env["data"]["v3"]["bindings"][0]["binding_id"],
+        env["data"]["state_model"],
+        Value::String("registry".to_string())
+    );
+    assert_eq!(
+        env["data"]["registry"]["counts"]["bindings"],
+        Value::from(1)
+    );
+    assert_eq!(env["data"]["registry"]["counts"]["targets"], Value::from(1));
+    assert_eq!(
+        env["data"]["registry"]["bindings"][0]["binding_id"],
         Value::String("bind_claude_project_a".to_string())
     );
 }
 
 #[test]
-fn workspace_status_succeeds_when_v3_state_is_missing() {
-    let root = TestDir::new("v3-status-missing");
+fn workspace_status_migrates_pre_release_state_dir_to_registry_dir() {
+    let root = TestDir::new("registry-status-migrate-old-state-dir");
+    write_minimal_registry_state(root.path(), 1);
+    fs::rename(
+        root.path().join("state/registry"),
+        root.path().join("state/v3"),
+    )
+    .expect("move registry state to old pre-release path");
 
     let (output, env) = run_loom(root.path(), &["workspace", "status"]);
     assert!(
@@ -67,14 +79,34 @@ fn workspace_status_succeeds_when_v3_state_is_missing() {
     );
 
     assert_eq!(env["ok"], Value::Bool(true));
-    assert_eq!(env["data"]["state_model"], Value::String("v3".to_string()));
-    assert_eq!(env["data"]["v3"]["available"], Value::Bool(false));
+    assert!(root.path().join("state/registry/schema.json").exists());
+    assert!(!root.path().join("state/v3").exists());
 }
 
 #[test]
-fn workspace_status_fails_with_schema_mismatch_for_invalid_v3_state() {
-    let root = TestDir::new("v3-status-bad-schema");
-    write_minimal_v3_state(root.path(), 99);
+fn workspace_status_succeeds_when_registry_state_is_missing() {
+    let root = TestDir::new("registry-status-missing");
+
+    let (output, env) = run_loom(root.path(), &["workspace", "status"]);
+    assert!(
+        output.status.success(),
+        "loom failed: stderr={} stdout={}",
+        String::from_utf8_lossy(&output.stderr),
+        String::from_utf8_lossy(&output.stdout)
+    );
+
+    assert_eq!(env["ok"], Value::Bool(true));
+    assert_eq!(
+        env["data"]["state_model"],
+        Value::String("registry".to_string())
+    );
+    assert_eq!(env["data"]["registry"]["available"], Value::Bool(false));
+}
+
+#[test]
+fn workspace_status_fails_with_schema_mismatch_for_invalid_registry_state() {
+    let root = TestDir::new("registry-status-bad-schema");
+    write_minimal_registry_state(root.path(), 99);
 
     let (output, env) = run_loom(root.path(), &["workspace", "status"]);
     assert!(!output.status.success(), "loom unexpectedly succeeded");
@@ -87,38 +119,38 @@ fn workspace_status_fails_with_schema_mismatch_for_invalid_v3_state() {
 
 #[test]
 fn workspace_status_schema_mismatch_schema_file() {
-    assert_workspace_status_schema_mismatch_for("state/v3/schema.json");
+    assert_workspace_status_schema_mismatch_for("state/registry/schema.json");
 }
 
 #[test]
 fn workspace_status_schema_mismatch_targets_file() {
-    assert_workspace_status_schema_mismatch_for("state/v3/targets.json");
+    assert_workspace_status_schema_mismatch_for("state/registry/targets.json");
 }
 
 #[test]
 fn workspace_status_schema_mismatch_bindings_file() {
-    assert_workspace_status_schema_mismatch_for("state/v3/bindings.json");
+    assert_workspace_status_schema_mismatch_for("state/registry/bindings.json");
 }
 
 #[test]
 fn workspace_status_schema_mismatch_rules_file() {
-    assert_workspace_status_schema_mismatch_for("state/v3/rules.json");
+    assert_workspace_status_schema_mismatch_for("state/registry/rules.json");
 }
 
 #[test]
 fn workspace_status_schema_mismatch_projections_file() {
-    assert_workspace_status_schema_mismatch_for("state/v3/projections.json");
+    assert_workspace_status_schema_mismatch_for("state/registry/projections.json");
 }
 
 #[test]
 fn workspace_status_schema_mismatch_checkpoint_file() {
-    assert_workspace_status_schema_mismatch_for("state/v3/ops/checkpoint.json");
+    assert_workspace_status_schema_mismatch_for("state/registry/ops/checkpoint.json");
 }
 
 #[test]
-fn workspace_binding_list_returns_bindings_from_v3_state() {
-    let root = TestDir::new("v3-binding-list");
-    write_minimal_v3_state(root.path(), 3);
+fn workspace_binding_list_returns_bindings_from_registry_state() {
+    let root = TestDir::new("registry-binding-list");
+    write_minimal_registry_state(root.path(), 1);
 
     let (output, env) = run_loom(root.path(), &["workspace", "binding", "list"]);
     assert!(
@@ -129,7 +161,10 @@ fn workspace_binding_list_returns_bindings_from_v3_state() {
     );
 
     assert_eq!(env["ok"], Value::Bool(true));
-    assert_eq!(env["data"]["state_model"], Value::String("v3".to_string()));
+    assert_eq!(
+        env["data"]["state_model"],
+        Value::String("registry".to_string())
+    );
     assert_eq!(env["data"]["count"], Value::from(1));
     assert_eq!(
         env["data"]["bindings"][0]["binding_id"],
@@ -139,8 +174,8 @@ fn workspace_binding_list_returns_bindings_from_v3_state() {
 
 #[test]
 fn workspace_binding_show_returns_related_target_rules_and_projections() {
-    let root = TestDir::new("v3-binding-show");
-    write_minimal_v3_state(root.path(), 3);
+    let root = TestDir::new("registry-binding-show");
+    write_minimal_registry_state(root.path(), 1);
 
     let (output, env) = run_loom(
         root.path(),
@@ -168,8 +203,8 @@ fn workspace_binding_show_returns_related_target_rules_and_projections() {
 
 #[test]
 fn workspace_binding_show_fails_for_unknown_binding() {
-    let root = TestDir::new("v3-binding-missing");
-    write_minimal_v3_state(root.path(), 3);
+    let root = TestDir::new("registry-binding-missing");
+    write_minimal_registry_state(root.path(), 1);
 
     let (output, env) = run_loom(root.path(), &["workspace", "binding", "show", "missing"]);
     assert!(!output.status.success(), "loom unexpectedly succeeded");
@@ -181,9 +216,9 @@ fn workspace_binding_show_fails_for_unknown_binding() {
 }
 
 #[test]
-fn target_list_returns_targets_from_v3_state() {
-    let root = TestDir::new("v3-target-list");
-    write_minimal_v3_state(root.path(), 3);
+fn target_list_returns_targets_from_registry_state() {
+    let root = TestDir::new("registry-target-list");
+    write_minimal_registry_state(root.path(), 1);
 
     let (output, env) = run_loom(root.path(), &["target", "list"]);
     assert!(
@@ -194,7 +229,10 @@ fn target_list_returns_targets_from_v3_state() {
     );
 
     assert_eq!(env["ok"], Value::Bool(true));
-    assert_eq!(env["data"]["state_model"], Value::String("v3".to_string()));
+    assert_eq!(
+        env["data"]["state_model"],
+        Value::String("registry".to_string())
+    );
     assert_eq!(env["data"]["count"], Value::from(1));
     assert_eq!(
         env["data"]["targets"][0]["target_id"],
@@ -204,8 +242,8 @@ fn target_list_returns_targets_from_v3_state() {
 
 #[test]
 fn target_show_returns_related_bindings_rules_and_projections() {
-    let root = TestDir::new("v3-target-show");
-    write_minimal_v3_state(root.path(), 3);
+    let root = TestDir::new("registry-target-show");
+    write_minimal_registry_state(root.path(), 1);
 
     let (output, env) = run_loom(root.path(), &["target", "show", "target_claude_project_a"]);
     assert!(
@@ -227,8 +265,8 @@ fn target_show_returns_related_bindings_rules_and_projections() {
 
 #[test]
 fn target_show_fails_for_unknown_target() {
-    let root = TestDir::new("v3-target-missing");
-    write_minimal_v3_state(root.path(), 3);
+    let root = TestDir::new("registry-target-missing");
+    write_minimal_registry_state(root.path(), 1);
 
     let (output, env) = run_loom(root.path(), &["target", "show", "missing"]);
     assert!(!output.status.success(), "loom unexpectedly succeeded");
@@ -240,8 +278,8 @@ fn target_show_fails_for_unknown_target() {
 }
 
 #[test]
-fn workspace_binding_commands_fail_cleanly_without_v3_state() {
-    let root = TestDir::new("v3-binding-no-state");
+fn workspace_binding_commands_fail_cleanly_without_registry_state() {
+    let root = TestDir::new("registry-binding-no-state");
 
     let (output, env) = run_loom(root.path(), &["workspace", "binding", "list"]);
     assert!(!output.status.success(), "loom unexpectedly succeeded");

@@ -57,42 +57,42 @@ pub fn write_skill(root: &Path, skill: &str, body: &str) {
     write_file(&root.join("skills").join(skill).join("SKILL.md"), body);
 }
 
-pub fn write_minimal_v3_state(root: &Path, schema_version: u32) {
-    let v3 = root.join("state/v3");
+pub fn write_minimal_registry_state(root: &Path, schema_version: u32) {
+    let registry = root.join("state/registry");
     write_file(
-        &v3.join("schema.json"),
+        &registry.join("schema.json"),
         &format!(
-            "{{\"schema_version\":{},\"created_at\":\"2026-04-09T10:00:00Z\",\"writer\":\"loom/3.0.0-draft\"}}\n",
+            "{{\"schema_version\":{},\"created_at\":\"2026-04-09T10:00:00Z\",\"writer\":\"loom/registry-draft\"}}\n",
             schema_version
         ),
     );
     write_file(
-        &v3.join("targets.json"),
-        r#"{"schema_version":3,"targets":[{"target_id":"target_claude_project_a","agent":"claude","path":"/tmp/claude-a/skills","ownership":"managed","capabilities":{"symlink":true,"copy":true,"watch":true},"created_at":"2026-04-09T10:00:00Z"}]}
+        &registry.join("targets.json"),
+        r#"{"schema_version":1,"targets":[{"target_id":"target_claude_project_a","agent":"claude","path":"/tmp/claude-a/skills","ownership":"managed","capabilities":{"symlink":true,"copy":true,"watch":true},"created_at":"2026-04-09T10:00:00Z"}]}
 "#,
     );
     write_file(
-        &v3.join("bindings.json"),
-        r#"{"schema_version":3,"bindings":[{"binding_id":"bind_claude_project_a","agent":"claude","profile_id":"default","workspace_matcher":{"kind":"path_prefix","value":"/tmp/project-a"},"default_target_id":"target_claude_project_a","policy_profile":"safe-capture","active":true,"created_at":"2026-04-09T10:00:00Z"}]}
+        &registry.join("bindings.json"),
+        r#"{"schema_version":1,"bindings":[{"binding_id":"bind_claude_project_a","agent":"claude","profile_id":"default","workspace_matcher":{"kind":"path_prefix","value":"/tmp/project-a"},"default_target_id":"target_claude_project_a","policy_profile":"safe-capture","active":true,"created_at":"2026-04-09T10:00:00Z"}]}
 "#,
     );
     write_file(
-        &v3.join("rules.json"),
-        r#"{"schema_version":3,"rules":[{"binding_id":"bind_claude_project_a","skill_id":"model-onboarding","target_id":"target_claude_project_a","method":"symlink","watch_policy":"observe_only","created_at":"2026-04-09T10:00:00Z"}]}
+        &registry.join("rules.json"),
+        r#"{"schema_version":1,"rules":[{"binding_id":"bind_claude_project_a","skill_id":"model-onboarding","target_id":"target_claude_project_a","method":"symlink","watch_policy":"observe_only","created_at":"2026-04-09T10:00:00Z"}]}
 "#,
     );
     write_file(
-        &v3.join("projections.json"),
-        r#"{"schema_version":3,"projections":[{"instance_id":"inst_model-onboarding_claude_a","skill_id":"model-onboarding","binding_id":"bind_claude_project_a","target_id":"target_claude_project_a","materialized_path":"/tmp/claude-a/skills/model-onboarding","method":"symlink","last_applied_rev":"abc123","health":"healthy","observed_drift":false,"updated_at":"2026-04-09T10:05:00Z"}]}
+        &registry.join("projections.json"),
+        r#"{"schema_version":1,"projections":[{"instance_id":"inst_model-onboarding_claude_a","skill_id":"model-onboarding","binding_id":"bind_claude_project_a","target_id":"target_claude_project_a","materialized_path":"/tmp/claude-a/skills/model-onboarding","method":"symlink","last_applied_rev":"abc123","health":"healthy","observed_drift":false,"updated_at":"2026-04-09T10:05:00Z"}]}
 "#,
     );
     write_file(
-        &v3.join("ops/checkpoint.json"),
-        r#"{"schema_version":3,"last_scanned_op_id":"op_001","last_acked_op_id":null,"updated_at":"2026-04-09T10:07:00Z"}
+        &registry.join("ops/checkpoint.json"),
+        r#"{"schema_version":1,"last_scanned_op_id":"op_001","last_acked_op_id":null,"updated_at":"2026-04-09T10:07:00Z"}
 "#,
     );
     write_file(
-        &v3.join("ops/operations.jsonl"),
+        &registry.join("ops/operations.jsonl"),
         r#"{"op_id":"op_001","intent":"skill.project","status":"succeeded","ack":false,"payload":{"skill_id":"model-onboarding","binding_id":"bind_claude_project_a"},"effects":{"instance_id":"inst_model-onboarding_claude_a"},"created_at":"2026-04-09T10:05:00Z","updated_at":"2026-04-09T10:05:00Z"}
 "#,
     );

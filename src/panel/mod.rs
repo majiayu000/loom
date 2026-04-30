@@ -18,8 +18,8 @@ use crate::cli::{AgentKind, ProjectionMethod, TargetOwnership, WorkspaceMatcherK
 use crate::state::AppContext;
 
 use handlers::*;
-use skill_diff::v3_skill_diff;
-use skill_history::v3_skill_history;
+use skill_diff::registry_skill_diff;
+use skill_history::registry_skill_history;
 use static_serve::{ensure_panel_dist, frontend_index, frontend_static_asset};
 
 #[derive(Clone)]
@@ -55,6 +55,12 @@ pub(super) struct ProjectRequest {
     pub(super) target: Option<String>,
     #[serde(default)]
     pub(super) method: Option<ProjectionMethod>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct SkillAddRequest {
+    pub(super) source: String,
+    pub(super) name: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -101,25 +107,41 @@ pub async fn run_panel(ctx: AppContext, port: u16) -> Result<()> {
         .route("/api/health", get(health))
         .route("/api/info", get(info))
         .route("/api/skills", get(skills))
-        .route("/api/v3/status", get(v3_status))
-        .route("/api/v3/ops", get(v3_ops))
-        .route("/api/v3/ops/diagnose", get(v3_ops_diagnose))
-        .route("/api/v3/projections", get(v3_projections))
-        .route("/api/v3/bindings", get(v3_bindings))
-        .route("/api/v3/bindings/{binding_id}", get(v3_binding_show))
-        .route("/api/v3/targets", get(v3_targets))
-        .route("/api/v3/targets/{target_id}", get(v3_target_show))
-        .route("/api/v3/targets", post(v3_target_add))
-        .route("/api/v3/targets/{target_id}/remove", post(v3_target_remove))
-        .route("/api/v3/bindings", post(v3_binding_add))
+        .route("/api/registry/status", get(registry_status))
+        .route("/api/registry/ops", get(registry_ops))
+        .route("/api/registry/ops/diagnose", get(registry_ops_diagnose))
+        .route("/api/registry/projections", get(registry_projections))
+        .route("/api/registry/bindings", get(registry_bindings))
         .route(
-            "/api/v3/bindings/{binding_id}/remove",
-            post(v3_binding_remove),
+            "/api/registry/bindings/{binding_id}",
+            get(registry_binding_show),
         )
-        .route("/api/v3/project", post(v3_project))
-        .route("/api/v3/capture", post(v3_capture))
-        .route("/api/v3/skills/{skill_name}/diff", get(v3_skill_diff))
-        .route("/api/v3/skills/{skill_name}/history", get(v3_skill_history))
+        .route("/api/registry/targets", get(registry_targets))
+        .route(
+            "/api/registry/targets/{target_id}",
+            get(registry_target_show),
+        )
+        .route("/api/registry/targets", post(registry_target_add))
+        .route(
+            "/api/registry/targets/{target_id}/remove",
+            post(registry_target_remove),
+        )
+        .route("/api/registry/bindings", post(registry_binding_add))
+        .route(
+            "/api/registry/bindings/{binding_id}/remove",
+            post(registry_binding_remove),
+        )
+        .route("/api/registry/skills", post(registry_skill_add))
+        .route("/api/registry/project", post(registry_project))
+        .route("/api/registry/capture", post(registry_capture))
+        .route(
+            "/api/registry/skills/{skill_name}/diff",
+            get(registry_skill_diff),
+        )
+        .route(
+            "/api/registry/skills/{skill_name}/history",
+            get(registry_skill_history),
+        )
         .route("/api/remote/status", get(remote_status))
         .route("/api/remote/set", post(remote_set))
         .route("/api/pending", get(pending))

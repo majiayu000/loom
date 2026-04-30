@@ -1,14 +1,14 @@
-# Loom v3 State Fixtures
+# Loom registry model State Fixtures
 
 Updated: 2026-04-09
 Status: Draft
 
 ## 1. Purpose
 
-This document provides example v3 state files.
+This document provides example registry state files.
 
 The goal is not to freeze implementation details yet.
-The goal is to prove that the v3 model can represent:
+The goal is to prove that the registry model can represent:
 
 1. multiple targets per agent
 2. multiple bindings per workspace family
@@ -17,15 +17,15 @@ The goal is to prove that the v3 model can represent:
 
 This document is a schema exercise companion to:
 
-1. [LOOM_V3_SPEC.md](/Users/lifcc/Desktop/code/work/infra/loom/docs/LOOM_V3_SPEC.md)
-2. [LOOM_V3_TEST_PLAN.md](/Users/lifcc/Desktop/code/work/infra/loom/docs/LOOM_V3_TEST_PLAN.md)
-3. [LOOM_V3_CLI_CONTRACT.md](/Users/lifcc/Desktop/code/work/infra/loom/docs/LOOM_V3_CLI_CONTRACT.md)
+1. [LOOM_STATE_MODEL.md](/Users/lifcc/Desktop/code/work/infra/loom/docs/LOOM_STATE_MODEL.md)
+2. [LOOM_TEST_PLAN.md](/Users/lifcc/Desktop/code/work/infra/loom/docs/LOOM_TEST_PLAN.md)
+3. [LOOM_CLI_CONTRACT.md](/Users/lifcc/Desktop/code/work/infra/loom/docs/LOOM_CLI_CONTRACT.md)
 
 ## 2. Fixture Layout
 
 ```text
 state/
-  v3/
+  registry/
     schema.json
     targets.json
     bindings.json
@@ -53,9 +53,9 @@ This fixture models:
 
 ```json
 {
-  "schema_version": 3,
+  "schema_version": 1,
   "created_at": "2026-04-09T10:00:00Z",
-  "writer": "loom/3.0.0-draft"
+  "writer": "loom/registry-draft"
 }
 ```
 
@@ -63,7 +63,7 @@ This fixture models:
 
 ```json
 {
-  "schema_version": 3,
+  "schema_version": 1,
   "targets": [
     {
       "target_id": "target_claude_proj_a",
@@ -121,7 +121,7 @@ This fixture models:
 
 ```json
 {
-  "schema_version": 3,
+  "schema_version": 1,
   "bindings": [
     {
       "binding_id": "bind_claude_project_a",
@@ -170,7 +170,7 @@ This fixture models:
 
 ```json
 {
-  "schema_version": 3,
+  "schema_version": 1,
   "rules": [
     {
       "binding_id": "bind_claude_project_a",
@@ -204,7 +204,7 @@ This fixture models:
 
 ```json
 {
-  "schema_version": 3,
+  "schema_version": 1,
   "projections": [
     {
       "instance_id": "inst_model-onboarding_claude_a",
@@ -261,7 +261,7 @@ Example lines:
 
 ```json
 {
-  "schema_version": 3,
+  "schema_version": 1,
   "last_scanned_op_id": "op_004",
   "last_acked_op_id": null,
   "updated_at": "2026-04-09T10:07:00Z"

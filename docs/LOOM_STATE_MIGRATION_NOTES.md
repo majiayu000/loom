@@ -1,11 +1,11 @@
-# Loom v3 Migration Plan
+# Loom registry model Migration Plan
 
 Updated: 2026-04-08
 Status: Draft
 
 ## 1. Summary
 
-This plan migrates Loom from the v2 single-target mental model to a v3 binding-based model.
+This plan migrates Loom from the legacy single-target mental model to a registry binding-based model.
 
 The migration priority is:
 
@@ -16,7 +16,7 @@ The migration priority is:
 ## 2. Migration Goals
 
 1. Replace single-directory assumptions with explicit bindings and targets.
-2. Preserve Git-native source versioning.
+2. Preserve Git-native Git-backed source history.
 3. Stop treating live directories as implicit truth.
 4. Keep migration additive at the design level before any destructive runtime behavior is introduced.
 
@@ -27,9 +27,9 @@ The migration priority is:
 3. Do not combine state migration with panel or remote redesign in one step.
 4. Do not silently map old `claude_path/codex_path` records into a fake single-binding world.
 
-## 4. Current v2 Gaps
+## 4. Current Legacy Gaps
 
-v2 currently has these structural limits:
+Legacy currently has these structural limits:
 
 1. target selection is modeled as `claude/codex/both`
 2. one skill stores at most one Claude path and one Codex path
@@ -43,7 +43,7 @@ v2 currently has these structural limits:
 
 Deliverables:
 
-1. `LOOM_V3_SPEC.md`
+1. `LOOM_STATE_MODEL.md`
 2. this migration document
 
 Acceptance:
@@ -51,20 +51,20 @@ Acceptance:
 1. source registry, binding, target, projection, and history are defined as separate concepts
 2. "live directory is not canonical" is documented as a hard rule
 
-### Phase 1: Introduce v3 State Schema
+### Phase 1: Introduce Registry State Schema
 
 Deliverables:
 
-1. `state/v3/schema.json`
-2. `state/v3/bindings.json`
-3. `state/v3/targets.json`
-4. `state/v3/rules.json`
-5. `state/v3/projections.json`
-6. `state/v3/ops/*`
+1. `state/registry/schema.json`
+2. `state/registry/bindings.json`
+3. `state/registry/targets.json`
+4. `state/registry/rules.json`
+5. `state/registry/projections.json`
+6. `state/registry/ops/*`
 
 Acceptance:
 
-1. v3 readers can load an empty state layout without touching agent directories
+1. registry state readers can load an empty state layout without touching agent directories
 2. read commands stay side-effect free
 
 ### Phase 2: Target Registration
@@ -135,7 +135,7 @@ Acceptance:
 
 Deliverables:
 
-1. sync built on v3 operation journal
+1. sync built on registry state operation journal
 2. replay aware of source revisions and projection events
 
 Acceptance:
@@ -148,14 +148,14 @@ Acceptance:
 Deliverables:
 
 1. one panel implementation
-2. panel views based on v3 state
+2. panel views based on registry state
 
 Acceptance:
 
 1. panel does not invent state that CLI cannot express
 2. panel is optional for core workflows
 
-## 6. v2 to v3 Mapping
+## 6. legacy to registry state Mapping
 
 ### 6.1 Keep
 
@@ -165,7 +165,7 @@ Acceptance:
 
 ### 6.2 Replace
 
-1. `state/targets.json` -> `state/v3/targets.json` + `bindings.json` + `rules.json` + `projections.json`
+1. `state/targets.json` -> `state/registry/targets.json` + `bindings.json` + `rules.json` + `projections.json`
 2. `Target::Claude|Codex|Both` execution model -> explicit `target_id` and `binding_id`
 3. coarse `init/import/link` chaining -> explicit state, registration, projection, and capture steps
 
@@ -176,9 +176,9 @@ Acceptance:
 
 ## 7. Proposed Compatibility Policy
 
-1. v3 may read v2 state only through an explicit migration command.
-2. v3 must not silently mutate v2 files in place.
-3. If migration support is implemented, it should output a migration report before writing any v3 state.
+1. registry state may read legacy state only through an explicit migration command.
+2. registry state must not silently mutate legacy files in place.
+3. If migration support is implemented, it should output a migration report before writing any registry state.
 
 ## 8. Proposed Migration Command
 
@@ -186,7 +186,7 @@ Historical note:
 
 ```bash
 # removed from runtime CLI
-# use explicit v3 bootstrap:
+# use explicit registry state bootstrap:
 loom target add --agent claude --path /Users/foo/.claude/skills --ownership observed
 loom target add --agent claude --path /Users/foo/.claude-work/skills --ownership observed
 loom target add --agent codex --path /Users/foo/.codex/skills --ownership observed
@@ -226,15 +226,15 @@ Countermeasure: require explicit bindings and show clear status output.
 2. Risk: migration conflates observed directories with managed directories.
 Countermeasure: force ownership declaration on registered targets.
 
-3. Risk: v2 state and v3 schema drift further apart.
-Countermeasure: stop editing v2 schema docs once v3 spec is adopted.
+3. Risk: legacy state and registry state schema drift further apart.
+Countermeasure: stop editing legacy schema docs once registry state spec is adopted.
 
 4. Risk: panel work outruns core model work.
-Countermeasure: make panel consume v3 state only after CLI semantics stabilize.
+Countermeasure: make panel consume registry state only after CLI semantics stabilize.
 
 ## 12. Release Gate
 
-v3 should not be considered ready until:
+registry state should not be considered ready until:
 
 1. bindings and targets are first-class state objects
 2. projection is binding-scoped

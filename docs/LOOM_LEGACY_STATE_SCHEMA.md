@@ -1,13 +1,13 @@
-# Loom v2 State Schema
+# Loom legacy design State Schema
 
 更新日期: 2026-04-07  
-适用版本: Loom v2.x (Breaking)
+适用版本: Loom legacy design.x (Breaking)
 
 ## 1. 目录布局
 
 ```text
 state/
-  v2/
+  legacy/
     schema.json
     targets.json
     ops/
@@ -23,9 +23,9 @@ state/
       events-YYYYMMDD.jsonl
 ```
 
-## 2. `state/v2/schema.json`
+## 2. `state/legacy/schema.json`
 
-用途: 声明 v2 状态目录版本。v2 不兼容 v1 状态文件布局。
+用途: 声明 legacy 状态目录版本。legacy 不兼容 legacy 状态文件布局。
 
 示例:
 
@@ -41,9 +41,9 @@ state/
 
 1. `schema_version` 必须等于 `2`。
 2. 读到未知主版本必须返回 `SCHEMA_MISMATCH`。
-3. 检测到 v1 状态文件时不做自动迁移，直接失败并提示手工重建。
+3. 检测到 legacy 状态文件时不做自动迁移，直接失败并提示手工重建。
 
-## 3. `state/v2/targets.json`
+## 3. `state/legacy/targets.json`
 
 用途: 记录 skill 到目标目录的激活投影关系。
 
@@ -69,7 +69,7 @@ state/
 2. `skills` key 为唯一 skill 名。
 3. 写入采用临时文件 + rename 原子替换。
 
-## 4. `state/v2/ops/operations.jsonl`
+## 4. `state/legacy/ops/operations.jsonl`
 
 用途: 记录所有变更操作的 durable journal。  
 格式: 每行一个 JSON 对象，append-only。
@@ -112,7 +112,7 @@ state/
 2. `succeeded` 且 `ack=false` 才是 replay 候选。
 3. 任何追加失败必须让命令失败，不允许吞错。
 
-## 5. `state/v2/ops/checkpoint.json`
+## 5. `state/legacy/ops/checkpoint.json`
 
 用途: 记录 replay 游标与确认进度。
 
@@ -132,12 +132,12 @@ state/
 1. checkpoint 仅表示进度，不替代 journal 真相。
 2. checkpoint 损坏时可通过重扫 journal 重建。
 
-## 6. `state/v2/locks/*`
+## 6. `state/legacy/locks/*`
 
 用途: 并发互斥。
 
-1. `state/v2/locks/skill/<name>.lock`: skill 粒度写锁。
-2. `state/v2/locks/global/sync.lock`: sync/replay 全局锁。
+1. `state/legacy/locks/skill/<name>.lock`: skill 粒度写锁。
+2. `state/legacy/locks/global/sync.lock`: sync/replay 全局锁。
 
 建议内容:
 
@@ -155,7 +155,7 @@ state/
 1. 锁文件通过 `create_new` 创建。
 2. 进程异常退出后允许 stale lock 检测与清理策略。
 
-## 7. `state/v2/backups/<backup_id>/manifest.json`
+## 7. `state/legacy/backups/<backup_id>/manifest.json`
 
 用途: 初始化与高风险操作前的恢复点元数据。
 
@@ -182,7 +182,7 @@ state/
 }
 ```
 
-## 8. `state/v2/audit/events-YYYYMMDD.jsonl`
+## 8. `state/legacy/audit/events-YYYYMMDD.jsonl`
 
 用途: 审计日志，不参与状态判定。  
 每行事件示例:
@@ -200,12 +200,12 @@ state/
 }
 ```
 
-## 9. 初始化与重置规则(v2-only)
+## 9. 初始化与重置规则(legacy-only)
 
-1. 首次启动 v2 时仅创建 `state/v2/*`。
+1. 首次启动 legacy 时仅创建 `state/legacy/*`。
 2. 若发现 `state/targets.json` 或 `state/pending_ops.jsonl`，默认报错并退出。
 3. 用户需显式执行 `loom workspace init --reset-state` 进行状态重建。
-4. `--reset-state` 仅重建 v2 状态目录，不读取 v1 内容。
+4. `--reset-state` 仅重建 legacy 状态目录，不读取 legacy 内容。
 
 ## 10. 失败策略
 

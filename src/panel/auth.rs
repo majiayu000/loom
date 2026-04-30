@@ -9,7 +9,7 @@ use uuid::Uuid;
 
 use crate::cli::{Cli, Command};
 use crate::state::AppContext;
-use crate::state_model::V3StatePaths;
+use crate::state_model::RegistryStatePaths;
 
 use super::PanelState;
 
@@ -113,7 +113,7 @@ pub(crate) fn status_for_error_code(code: Option<&str>) -> StatusCode {
     }
 }
 
-pub(crate) fn status_for_v3_state_load_error(code: Option<&str>) -> StatusCode {
+pub(crate) fn status_for_registry_state_load_error(code: Option<&str>) -> StatusCode {
     match code {
         Some("ARG_INVALID") => StatusCode::BAD_REQUEST,
         Some("SCHEMA_MISMATCH" | "STATE_CORRUPT") => StatusCode::INTERNAL_SERVER_ERROR,
@@ -121,12 +121,12 @@ pub(crate) fn status_for_v3_state_load_error(code: Option<&str>) -> StatusCode {
     }
 }
 
-pub(crate) fn status_for_v3_error_payload(payload: &serde_json::Value) -> StatusCode {
+pub(crate) fn status_for_registry_error_payload(payload: &serde_json::Value) -> StatusCode {
     let code = payload
         .get("error")
         .and_then(|error| error.get("code"))
         .and_then(serde_json::Value::as_str);
-    status_for_v3_state_load_error(code)
+    status_for_registry_state_load_error(code)
 }
 
 pub(crate) fn error_envelope(
@@ -152,15 +152,18 @@ pub(crate) fn error_envelope(
     })
 }
 
-pub(super) fn load_v3_snapshot(
+pub(super) fn load_registry_snapshot(
     ctx: &AppContext,
-) -> std::result::Result<crate::state_model::V3Snapshot, Json<serde_json::Value>> {
-    let paths = V3StatePaths::from_app_context(ctx);
+) -> std::result::Result<crate::state_model::RegistrySnapshot, Json<serde_json::Value>> {
+    let paths = RegistryStatePaths::from_app_context(ctx);
     match paths.maybe_load_snapshot() {
         Ok(Some(snapshot)) => Ok(snapshot),
-        Ok(None) => Err(v3_error(
+        Ok(None) => Err(registry_error(
             "ARG_INVALID",
-            format!("v3 state not initialized under {}", paths.v3_dir.display()),
+            format!(
+                "registry state not initialized under {}",
+                paths.registry_dir.display()
+            ),
         )),
         Err(err) => {
             let message = err.to_string();
@@ -169,15 +172,15 @@ pub(super) fn load_v3_snapshot(
             } else {
                 "STATE_CORRUPT"
             };
-            Err(v3_error(code, message))
+            Err(registry_error(code, message))
         }
     }
 }
 
-pub(super) fn v3_ok(data: serde_json::Value) -> Json<serde_json::Value> {
+pub(super) fn registry_ok(data: serde_json::Value) -> Json<serde_json::Value> {
     Json(json!({"ok": true, "data": data}))
 }
 
-pub(super) fn v3_error(code: &str, message: String) -> Json<serde_json::Value> {
+pub(super) fn registry_error(code: &str, message: String) -> Json<serde_json::Value> {
     Json(json!({"ok": false, "error": {"code": code, "message": message}}))
 }

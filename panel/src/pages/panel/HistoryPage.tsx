@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import type { PanelDataMode } from "../../lib/api/usePanelData";
-import { api, ApiError, type OpsHistoryDiagnosePayload, type OpsPayload, type V3OperationRecord } from "../../lib/api/client";
+import { api, ApiError, type OpsHistoryDiagnosePayload, type OpsPayload, type RegistryOperationRecord } from "../../lib/api/client";
 
 type FilterKey = "all" | "pending" | "ok" | "err";
 type DiagnoseData = NonNullable<OpsHistoryDiagnosePayload["data"]>;
@@ -262,7 +262,7 @@ export function HistoryPage({ live, mode, mutationVersion, refreshKey }: History
   );
 }
 
-export function bucket(op: V3OperationRecord): "pending" | "ok" | "err" {
+export function bucket(op: RegistryOperationRecord): "pending" | "ok" | "err" {
   if (op.last_error) return "err";
   const s = op.status.toLowerCase();
   if (s === "pending" || s === "enqueued" || s === "in_flight" || s === "retrying") return "pending";
@@ -271,7 +271,7 @@ export function bucket(op: V3OperationRecord): "pending" | "ok" | "err" {
   return op.ack ? "ok" : "pending";
 }
 
-function OpHistoryRow({ op }: { op: V3OperationRecord }) {
+function OpHistoryRow({ op }: { op: RegistryOperationRecord }) {
   const kind = bucket(op);
   const color = kind === "err" ? "var(--err)" : kind === "pending" ? "var(--pending)" : "var(--ok)";
   return (

@@ -22,6 +22,14 @@ fn run_loom_ok(root: &Path, args: &[&str]) -> Value {
     env
 }
 
+fn read_command_events(root: &Path) -> Vec<Value> {
+    let raw = fs::read_to_string(root.join("state/events/commands.jsonl"))
+        .expect("read command event log");
+    raw.lines()
+        .map(|line| serde_json::from_str(line).expect("parse command event"))
+        .collect()
+}
+
 fn run_git<I, S>(args: I) -> Output
 where
     I: IntoIterator<Item = S>,
@@ -208,8 +216,146 @@ fn workspace_status_is_read_only_in_empty_dir() {
 
     assert_eq!(env["ok"], true);
     assert!(!root.path().join(".git").exists());
-    assert!(!root.path().join("state").exists());
+    assert!(!root.path().join("state/v3").exists());
     assert!(!root.path().join("skills").exists());
+
+    let events = read_command_events(root.path());
+    assert_eq!(events.len(), 2);
+    assert_eq!(events[0]["status"], Value::String("started".to_string()));
+    assert_eq!(
+        events[0]["cmd"],
+        Value::String("workspace.status".to_string())
+    );
+    assert!(events[0]["input"]["request_id"].as_str().is_some());
+    assert_eq!(events[1]["status"], Value::String("succeeded".to_string()));
+    assert_eq!(events[1]["exit_code"], Value::from(0));
+    assert_eq!(
+        events[1]["output"]["state_model"],
+        Value::String("v3".to_string())
+    );
+}
+
+#[test]
+fn workspace_status_warns_when_command_audit_preflight_is_unavailable() {
+    let root = TestDir::new("status-audit-warning");
+    let events_dir = root.path().join("state/events");
+    if let Some(parent) = events_dir.parent() {
+        fs::create_dir_all(parent).expect("create state dir");
+    }
+    fs::write(&events_dir, "not a directory\n").expect("block command event dir");
+
+    let (output, env) = run_loom_with_env(root.path(), &[], &["workspace", "status"]);
+
+    assert!(
+        output.status.success(),
+        "status should stay usable when audit preflight cannot write"
+    );
+    assert_eq!(env["ok"], Value::Bool(true));
+    assert!(
+        env["meta"]["warnings"]
+            .as_array()
+            .expect("warnings array")
+            .iter()
+            .filter_map(serde_json::Value::as_str)
+            .any(|warning| warning.contains("failed to prepare command event log"))
+    );
+    assert!(!root.path().join("state/v3").exists());
+}
+
+#[test]
+fn failed_command_emits_durable_command_event() {
+    let root = TestDir::new("failed-command-event");
+
+    let (output, env) = run_loom_with_env(root.path(), &[], &["skill", "capture"]);
+
+    assert!(!output.status.success(), "capture unexpectedly succeeded");
+    assert_eq!(env["ok"], Value::Bool(false));
+
+    let events = read_command_events(root.path());
+    assert_eq!(events.len(), 2);
+    assert_eq!(events[0]["cmd"], Value::String("skill.capture".to_string()));
+    assert_eq!(events[0]["status"], Value::String("started".to_string()));
+    assert!(events[0]["input"]["request_id"].as_str().is_some());
+    assert_eq!(events[1]["status"], Value::String("failed".to_string()));
+    assert_eq!(events[1]["exit_code"], Value::from(2));
+    assert_eq!(
+        events[1]["error"]["code"],
+        Value::String("ARG_INVALID".to_string())
+    );
+    assert!(
+        events[0]["input"]["command"]["Skill"]["command"]["Capture"].is_object(),
+        "command input should preserve structured capture args"
+    );
+}
+
+#[test]
+fn finish_append_failure_still_leaves_started_audit_record() {
+    let root = TestDir::new("finish-append-failure");
+
+    let (output, env) = run_loom_with_env(
+        root.path(),
+        &[("LOOM_FAULT_INJECT", "command_event_append_finished")],
+        &["workspace", "status"],
+    );
+
+    assert!(output.status.success(), "status should still succeed");
+    assert_eq!(env["ok"], Value::Bool(true));
+    assert!(
+        env["meta"]["warnings"]
+            .as_array()
+            .expect("warnings array")
+            .iter()
+            .filter_map(serde_json::Value::as_str)
+            .any(|warning| warning.contains("failed to append command event"))
+    );
+
+    let events = read_command_events(root.path());
+    assert_eq!(events.len(), 1);
+    assert_eq!(
+        events[0]["cmd"],
+        Value::String("workspace.status".to_string())
+    );
+    assert_eq!(events[0]["status"], Value::String("started".to_string()));
+    assert!(events[0]["input"]["request_id"].as_str().is_some());
+}
+
+#[test]
+fn audit_required_finish_append_failure_records_failure_and_returns_error() {
+    let root = TestDir::new("finish-append-required-failure");
+    let remote = root.path().join("remote.git");
+
+    let (output, env) = run_loom_with_env(
+        root.path(),
+        &[("LOOM_FAULT_INJECT", "command_event_append_finished")],
+        &["workspace", "remote", "set", remote.to_str().unwrap()],
+    );
+
+    assert!(
+        !output.status.success(),
+        "audit-required command should fail when terminal audit append fails"
+    );
+    assert_eq!(env["ok"], Value::Bool(false));
+    assert_eq!(
+        env["error"]["code"],
+        Value::String("INTERNAL_ERROR".to_string())
+    );
+    assert_eq!(
+        env["error"]["details"]["audit_stage"],
+        Value::String("finish".to_string())
+    );
+
+    let events = read_command_events(root.path());
+    assert_eq!(events.len(), 2);
+    assert_eq!(
+        events[0]["cmd"],
+        Value::String("workspace.remote".to_string())
+    );
+    assert_eq!(events[0]["status"], Value::String("started".to_string()));
+    assert_eq!(events[1]["status"], Value::String("failed".to_string()));
+    assert_eq!(
+        events[1]["error"]["code"],
+        Value::String("INTERNAL_ERROR".to_string())
+    );
 }
 
 #[test]
@@ -246,6 +392,23 @@ fn remote_set_initializes_repo_and_local_identity() {
         .trim(),
         "loom@local"
     );
+}
+
+#[test]
+fn command_audit_redacts_sensitive_input_values() {
+    let root = TestDir::new("audit-redaction");
+    let remote = "https://user:pass@example.com/org/repo.git?access_token=ghp_secretvalue&ref=main#ghp_fragment";
+
+    let env = run_loom_ok(root.path(), &["workspace", "remote", "set", remote]);
+
+    assert_eq!(env["ok"], true);
+    let raw = fs::read_to_string(root.path().join("state/events/commands.jsonl"))
+        .expect("read command event log");
+    assert!(!raw.contains("user:pass"));
+    assert!(!raw.contains("ghp_secretvalue"));
+    assert!(!raw.contains("ghp_fragment"));
+    assert!(raw.contains("<redacted>"));
+    assert!(raw.contains("ref=main"));
 }
 
 #[test]

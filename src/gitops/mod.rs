@@ -67,7 +67,11 @@ fn run_git_raw_in_with_env_mode_and_input(
         .arg("-c")
         .arg("protocol.https.allow=always")
         .arg("-c")
-        .arg("protocol.ssh.allow=always")
+        .arg("protocol.ssh.allow=always");
+    if matches!(env_mode, GitEnvMode::Normal) {
+        command.arg("-c").arg("protocol.file.allow=always");
+    }
+    command
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .args(args);
@@ -421,7 +425,33 @@ pub fn validate_git_url(raw: &str) -> Result<()> {
             )),
         };
     }
+    let path = Path::new(url);
+    if path.is_absolute() {
+        return validate_local_git_remote_path(path);
+    }
     validate_scp_like_git_url(url)
+}
+
+fn validate_local_git_remote_path(path: &Path) -> Result<()> {
+    if !path.exists() {
+        if path.extension().is_some_and(|extension| extension == "git") {
+            return Ok(());
+        }
+        return Err(anyhow!(
+            "local git remote path does not exist: {}",
+            path.display()
+        ));
+    }
+    if path.join(".git").is_dir() {
+        return Ok(());
+    }
+    if path.join("HEAD").is_file() && path.join("objects").is_dir() {
+        return Ok(());
+    }
+    Err(anyhow!(
+        "local git remote path must point to a git repository: {}",
+        path.display()
+    ))
 }
 
 fn validate_scp_like_git_url(url: &str) -> Result<()> {
@@ -519,12 +549,54 @@ impl Drop for TempFile {
 #[cfg(test)]
 mod tests {
     use super::validate_git_url;
+    use std::fs;
+    use std::process::Command;
 
     #[test]
     fn git_url_validation_accepts_https_and_ssh_forms() {
         validate_git_url("https://github.com/org/repo.git").expect("https accepted");
         validate_git_url("ssh://git@github.com/org/repo.git").expect("ssh accepted");
         validate_git_url("git@github.com:org/repo.git").expect("scp-like ssh accepted");
+    }
+
+    #[test]
+    fn git_url_validation_accepts_existing_local_git_repo_path() {
+        let base = std::env::temp_dir().join(format!(
+            "loom-local-remote-url-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let repo = base.join("origin.git");
+        fs::create_dir_all(&base).expect("base dir");
+        let output = Command::new("git")
+            .arg("init")
+            .arg("--bare")
+            .arg(&repo)
+            .output()
+            .expect("git init --bare");
+        assert!(
+            output.status.success(),
+            "git init failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        validate_git_url(repo.to_string_lossy().as_ref()).expect("local bare repo accepted");
+
+        let _ = fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn git_url_validation_accepts_missing_local_git_path_for_later_creation() {
+        let base = std::env::temp_dir().join(format!(
+            "loom-missing-local-remote-url-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let repo = base.join("future.git");
+        fs::create_dir_all(&base).expect("base dir");
+
+        validate_git_url(repo.to_string_lossy().as_ref())
+            .expect("missing .git path accepted for later creation");
+
+        let _ = fs::remove_dir_all(base);
     }
 
     #[test]

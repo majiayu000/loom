@@ -221,6 +221,8 @@ fn workspace_status_is_read_only_in_empty_dir() {
 
     let events = read_command_events(root.path());
     assert_eq!(events.len(), 2);
+    assert_eq!(events[0]["schema_version"], Value::from(1));
+    assert_eq!(events[1]["schema_version"], Value::from(1));
     assert_eq!(events[0]["status"], Value::String("started".to_string()));
     assert_eq!(
         events[0]["cmd"],

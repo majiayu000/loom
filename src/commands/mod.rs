@@ -21,6 +21,7 @@ use crate::envelope::{Envelope, Meta};
 use crate::state::AppContext;
 use crate::types::ErrorCode;
 
+pub(crate) use event_store::redact_sensitive_string;
 pub use helpers::{collect_skill_inventory, remote_status_payload};
 
 use event_store::{
@@ -60,6 +61,7 @@ impl App {
     }
 
     pub(crate) fn ensure_write_layout(&self) -> std::result::Result<(), CommandFailure> {
+        self.ctx.ensure_not_loom_tool_repo_root().map_err(map_io)?;
         self.ctx.ensure_state_layout().map_err(map_io)?;
         Ok(())
     }

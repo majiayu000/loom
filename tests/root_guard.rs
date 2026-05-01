@@ -4,7 +4,7 @@ use serde_json::Value;
 
 mod common;
 
-use common::run_loom;
+use common::{TestDir, run_loom, write_file};
 
 #[test]
 fn write_commands_are_rejected_for_loom_tool_repo_root() {
@@ -45,5 +45,50 @@ fn write_commands_are_rejected_for_loom_tool_repo_root() {
             && message.contains("separate skill registry repo"),
         "unexpected guard error message: {}",
         message
+    );
+}
+
+#[test]
+fn write_guard_runs_before_initializing_fake_tool_repo_root() {
+    let root = TestDir::new("fake-tool-root-guard");
+    write_file(
+        &root.path().join("Cargo.toml"),
+        r#"[package]
+name = "skillloom"
+version = "0.1.0"
+"#,
+    );
+    write_file(&root.path().join("src/main.rs"), "fn main() {}\n");
+    write_file(&root.path().join("src/commands/mod.rs"), "");
+
+    let target_path = root.path().join("live/claude");
+    let target_path = target_path.display().to_string();
+
+    let (output, env) = run_loom(
+        root.path(),
+        &[
+            "target",
+            "add",
+            "--agent",
+            "claude",
+            "--path",
+            &target_path,
+            "--ownership",
+            "managed",
+        ],
+    );
+
+    assert!(!output.status.success());
+    assert_eq!(
+        env["error"]["code"],
+        Value::String("ARG_INVALID".to_string())
+    );
+    assert!(
+        !root.path().join(".git").exists(),
+        "guard must reject before git initialization"
+    );
+    assert!(
+        !root.path().join("state/locks").exists(),
+        "guard must reject before lock/layout initialization"
     );
 }

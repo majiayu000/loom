@@ -13,7 +13,7 @@ use crate::cli::{
     ProjectArgs, ProjectionMethod, RemoteCommand, SyncCommand, TargetCommand, TargetOwnership,
     WorkspaceBindingCommand, WorkspaceCommand,
 };
-use crate::commands::{collect_skill_inventory, remote_status_payload};
+use crate::commands::{collect_skill_inventory, redact_sensitive_string, remote_status_payload};
 use crate::state::resolve_agent_skill_dirs;
 use crate::state_model::RegistryStatePaths;
 
@@ -63,6 +63,7 @@ pub(super) async fn info(State(state): State<PanelState>) -> Json<serde_json::Va
         .ok()
         .flatten()
         .unwrap_or_default();
+    let remote_url = redact_sensitive_string(&remote_url);
     let registry_paths = RegistryStatePaths::from_app_context(&state.ctx);
 
     registry_ok(

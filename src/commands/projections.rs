@@ -18,6 +18,7 @@ use crate::state_model::{
 use crate::types::{ErrorCode, SyncState};
 
 use super::CommandFailure;
+use super::event_store::redact_sensitive_string;
 use super::file_ops::{
     copy_dir_recursive, copy_dir_recursive_preserving_symlinks, create_symlink_dir,
 };
@@ -441,6 +442,7 @@ pub(crate) fn remote_status_payload_with_pending(
     let url = gitops::remote_url(ctx)
         .map_err(map_git)?
         .unwrap_or_default();
+    let redacted_url = redact_sensitive_string(&url);
     let mut meta = Meta {
         warnings: pending_report.warnings,
         sync_state: None,
@@ -461,7 +463,7 @@ pub(crate) fn remote_status_payload_with_pending(
             json!({
                 "configured": true,
                 "remote": "origin",
-                "url": url,
+                "url": redacted_url,
                 "pending_ops": pending,
                 "tracking_ref": false,
                 "sync_state": sync_state,
@@ -486,7 +488,7 @@ pub(crate) fn remote_status_payload_with_pending(
         json!({
             "configured": true,
             "remote": "origin",
-            "url": url,
+            "url": redacted_url,
             "ahead": ahead,
             "behind": behind,
             "pending_ops": pending,

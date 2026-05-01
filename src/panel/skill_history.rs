@@ -128,17 +128,19 @@ pub(super) async fn registry_skill_history(
     AxumPath(skill_name): AxumPath<String>,
     State(state): State<PanelState>,
 ) -> (StatusCode, Json<serde_json::Value>) {
+    const CMD: &str = "registry.skill.history";
     if !skill_name_looks_sane(&skill_name) {
         return (
             StatusCode::BAD_REQUEST,
             registry_error(
+                CMD,
                 "ARG_INVALID",
                 "skill name must be a single path segment".to_string(),
             ),
         );
     }
 
-    let snapshot = match load_registry_snapshot(&state.ctx) {
+    let snapshot = match load_registry_snapshot(&state.ctx, CMD) {
         Ok(s) => s,
         Err(err_json) => {
             let code = err_json.0["error"]["code"].as_str();
@@ -167,7 +169,11 @@ pub(super) async fn registry_skill_history(
     if instance_ids.is_empty() && !skill_in_rules && !skill_in_inventory {
         return (
             StatusCode::NOT_FOUND,
-            registry_error("SKILL_NOT_FOUND", format!("skill '{skill_name}' not found")),
+            registry_error(
+                CMD,
+                "SKILL_NOT_FOUND",
+                format!("skill '{skill_name}' not found"),
+            ),
         );
     }
 
@@ -192,6 +198,7 @@ pub(super) async fn registry_skill_history(
                 return (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     registry_error(
+                        CMD,
                         "OBS_READ_ERROR",
                         format!("failed to read observations for {instance_id}: {e:#}"),
                     ),
@@ -212,11 +219,12 @@ pub(super) async fn registry_skill_history(
 
     (
         StatusCode::OK,
-        history_ok_payload(skill_name, events, warnings),
+        history_ok_payload(CMD, skill_name, events, warnings),
     )
 }
 
 fn history_ok_payload(
+    cmd: &str,
     skill_name: String,
     events: Vec<RegistryObservationEvent>,
     warnings: Vec<String>,
@@ -224,6 +232,9 @@ fn history_ok_payload(
     let count = events.len();
     Json(json!({
         "ok": true,
+        "cmd": cmd,
+        "request_id": uuid::Uuid::new_v4().to_string(),
+        "version": env!("CARGO_PKG_VERSION"),
         "data": {
             "skill": skill_name,
             "count": count,

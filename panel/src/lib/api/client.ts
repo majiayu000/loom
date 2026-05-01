@@ -118,6 +118,21 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function unwrapReadData<T>(path: string, body: unknown): T {
+  if (
+    isRecord(body) &&
+    body.ok === true &&
+    typeof body.cmd === "string" &&
+    typeof body.request_id === "string"
+  ) {
+    if (!("data" in body)) {
+      throw new ApiError(path, 200, `GET ${path} envelope is missing data`);
+    }
+    return body.data as T;
+  }
+  return body as T;
+}
+
 function parseRemoteStatusResponse(path: string, body: unknown): RemoteStatusResponse {
   if (!isRecord(body)) {
     throw new ApiError(path, 200, `GET ${path} returned malformed remote status payload`);
@@ -176,6 +191,10 @@ async function getJson<T>(path: string, signal?: AbortSignal): Promise<T> {
   }
 
   return body as T;
+}
+
+async function getJsonData<T>(path: string, signal?: AbortSignal): Promise<T> {
+  return unwrapReadData<T>(path, await getJson<unknown>(path, signal));
 }
 
 async function postJson(path: string, body: unknown): Promise<CommandEnvelope> {
@@ -300,8 +319,8 @@ export interface SkillHistoryPayload {
 
 export const api = {
   health: (signal?: AbortSignal) => getJson<HealthPayload>("/api/health", signal),
-  info: (signal?: AbortSignal) => getJson<InfoPayload>("/api/info", signal),
-  skills: (signal?: AbortSignal) => getJson<SkillsPayload>("/api/skills", signal),
+  info: (signal?: AbortSignal) => getJsonData<InfoPayload>("/api/info", signal),
+  skills: (signal?: AbortSignal) => getJsonData<SkillsPayload>("/api/skills", signal),
   registryStatus: (signal?: AbortSignal) => getJson<RegistryPayload>("/api/registry/status", signal),
   opsHistoryDiagnose: (signal?: AbortSignal) =>
     getJson<OpsHistoryDiagnosePayload>("/api/registry/ops/diagnose", signal),
@@ -317,8 +336,14 @@ export const api = {
   targetShow: (id: string, signal?: AbortSignal) =>
     getJson<TargetShowPayload>(`/api/registry/targets/${encodeURIComponent(id)}`, signal),
   remoteStatus: async (signal?: AbortSignal) =>
-    parseRemoteStatusResponse("/api/remote/status", await getJson<unknown>("/api/remote/status", signal)),
-  pending: (signal?: AbortSignal) => getJson<PendingPayload>("/api/pending", signal),
+    parseRemoteStatusResponse(
+      "/api/remote/status",
+      unwrapReadData<RemoteStatusResponse>(
+        "/api/remote/status",
+        await getJson<unknown>("/api/remote/status", signal),
+      ),
+    ),
+  pending: (signal?: AbortSignal) => getJsonData<PendingPayload>("/api/pending", signal),
 
   opsRetry: () => postJson("/api/ops/retry", {}),
   opsPurge: () => postJson("/api/ops/purge", {}),

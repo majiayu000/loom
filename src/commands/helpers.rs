@@ -18,7 +18,7 @@ use super::CommandFailure;
 
 // Re-export items from sibling modules so existing `use super::helpers::*` paths keep working.
 pub(crate) use super::file_ops::{
-    backup_path_if_exists, copy_dir_recursive, copy_dir_recursive_without_symlinks, read_git_field,
+    backup_path_if_exists, copy_dir_recursive_without_symlinks, read_git_field,
     restore_path_from_backup, rollback_added_skill,
 };
 pub use super::projections::{collect_skill_inventory, remote_status_payload};

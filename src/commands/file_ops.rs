@@ -239,3 +239,36 @@ pub(super) fn create_symlink_dir(src: &Path, dst: &Path) -> Result<()> {
     std::os::windows::fs::symlink_dir(src, dst).context("failed to create symlink")?;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::copy_dir_recursive_without_symlinks;
+    use std::fs;
+
+    #[cfg(unix)]
+    #[test]
+    fn copy_without_symlinks_rejects_nested_symlink() {
+        let base = std::env::temp_dir().join(format!(
+            "loom-copy-no-symlink-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let src = base.join("src");
+        let dst = base.join("dst");
+        fs::create_dir_all(&src).expect("src dir");
+        fs::write(src.join("SKILL.md"), "# skill\n").expect("skill file");
+        std::os::unix::fs::symlink("/tmp/secret", src.join("secret-link")).expect("symlink");
+
+        let err =
+            copy_dir_recursive_without_symlinks(&src, &dst).expect_err("symlink must be rejected");
+        assert!(
+            err.to_string().contains("unsupported symlink"),
+            "unexpected error: {err}"
+        );
+        assert!(
+            !dst.join("secret-link").exists(),
+            "symlink path must not be copied"
+        );
+
+        let _ = fs::remove_dir_all(base);
+    }
+}

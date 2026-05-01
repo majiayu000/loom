@@ -25,13 +25,12 @@ use crate::types::ErrorCode;
 
 use super::fs_probe::probe_symlink;
 use super::helpers::{
-    backup_path_if_exists, commit_registry_state, copy_dir_recursive,
-    copy_dir_recursive_without_symlinks, ensure_skill_exists, map_arg, map_git, map_io, map_lock,
-    map_project_io, map_registry_state, maybe_autosync_or_queue, project_skill_to_target,
-    projection_instance_id, projection_method_as_str, record_registry_operation,
-    resolve_capture_projection, restore_path_from_backup, rollback_added_skill,
-    update_projection_after_capture, upsert_projection, upsert_rule, validate_projection_method,
-    validate_skill_name,
+    backup_path_if_exists, commit_registry_state, copy_dir_recursive_without_symlinks,
+    ensure_skill_exists, map_arg, map_git, map_io, map_lock, map_project_io, map_registry_state,
+    maybe_autosync_or_queue, project_skill_to_target, projection_instance_id,
+    projection_method_as_str, record_registry_operation, resolve_capture_projection,
+    restore_path_from_backup, rollback_added_skill, update_projection_after_capture,
+    upsert_projection, upsert_rule, validate_projection_method, validate_skill_name,
 };
 use super::{App, CommandFailure};
 
@@ -75,7 +74,13 @@ impl App {
             }
         } else {
             let source = args.source.as_str();
-            let clone = gitops::run_git_allow_failure(
+            gitops::validate_git_url(source).map_err(|err| {
+                CommandFailure::new(
+                    ErrorCode::ArgInvalid,
+                    format!("invalid git source '{}': {}", source, err),
+                )
+            })?;
+            let clone = gitops::run_git_allow_failure_restricted(
                 &self.ctx,
                 &[
                     "clone",
@@ -371,7 +376,7 @@ impl App {
                 .state_dir
                 .join(format!("tmp-capture-{}", Uuid::new_v4()));
             let _ = remove_path_if_exists(&tmp_path);
-            if let Err(err) = copy_dir_recursive(&live_path, &tmp_path) {
+            if let Err(err) = copy_dir_recursive_without_symlinks(&live_path, &tmp_path) {
                 let _ = remove_path_if_exists(&tmp_path);
                 return Err(map_io(err));
             }

@@ -644,6 +644,12 @@ impl App {
             RemoteCommand::Set { url } => {
                 let _workspace = self.ctx.lock_workspace().map_err(map_lock)?;
                 self.ensure_write_repo_ready()?;
+                gitops::validate_git_url(url).map_err(|err| {
+                    CommandFailure::new(
+                        ErrorCode::ArgInvalid,
+                        format!("invalid remote url '{}': {}", url, err),
+                    )
+                })?;
                 gitops::set_remote_origin(&self.ctx, url).map_err(map_git)?;
                 Ok((json!({"remote": "origin", "url": url}), Meta::default()))
             }

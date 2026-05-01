@@ -23,19 +23,51 @@ const HISTORY_COMPACT_AFTER_SEGMENTS: usize = 8;
 const HISTORY_RETAIN_RECENT_SEGMENTS: usize = 4;
 const HISTORY_RETAIN_ARCHIVES: usize = 4;
 
+#[derive(Debug, Clone, Copy)]
+enum GitEnvMode {
+    Normal,
+    Restricted,
+}
+
 fn run_git_raw_in_with_env_and_input(
     repo_dir: &Path,
     envs: &[(&str, &str)],
     input: Option<&[u8]>,
     args: &[&str],
 ) -> Result<Output> {
+    run_git_raw_in_with_env_mode_and_input(repo_dir, envs, input, args, GitEnvMode::Normal)
+}
+
+fn run_git_raw_in_with_env_mode_and_input(
+    repo_dir: &Path,
+    envs: &[(&str, &str)],
+    input: Option<&[u8]>,
+    args: &[&str],
+    env_mode: GitEnvMode,
+) -> Result<Output> {
     let mut command = Command::new("git");
+    if matches!(env_mode, GitEnvMode::Restricted) {
+        command.env_clear();
+        if let Some(path) = std::env::var_os("PATH") {
+            command.env("PATH", path);
+        }
+        command
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_TERMINAL_PROMPT", "0");
+    }
     command
         .current_dir(repo_dir)
         .arg("-c")
         .arg("commit.gpgsign=false")
         .arg("-c")
         .arg("tag.gpgSign=false")
+        .arg("-c")
+        .arg("protocol.allow=never")
+        .arg("-c")
+        .arg("protocol.https.allow=always")
+        .arg("-c")
+        .arg("protocol.ssh.allow=always")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .args(args);
@@ -89,6 +121,10 @@ fn run_git_in_with_input(repo_dir: &Path, args: &[&str], input: &[u8]) -> Result
 
 pub fn run_git_allow_failure(ctx: &AppContext, args: &[&str]) -> Result<Output> {
     run_git_allow_failure_in(&ctx.root, args)
+}
+
+pub fn run_git_allow_failure_restricted(ctx: &AppContext, args: &[&str]) -> Result<Output> {
+    run_git_raw_in_with_env_mode_and_input(&ctx.root, &[], None, args, GitEnvMode::Restricted)
 }
 
 fn run_git_allow_failure_in(repo_dir: &Path, args: &[&str]) -> Result<Output> {
@@ -213,6 +249,7 @@ pub fn resolve_ref(ctx: &AppContext, reference: &str) -> Result<String> {
 }
 
 pub fn set_remote_origin(ctx: &AppContext, url: &str) -> Result<()> {
+    validate_git_url(url)?;
     let has_origin = run_git_allow_failure(ctx, &["remote", "get-url", "origin"])?;
     if has_origin.status.success() {
         run_git(ctx, &["remote", "set-url", "origin", url])?;
@@ -240,6 +277,7 @@ pub fn remote_url(ctx: &AppContext) -> Result<Option<String>> {
 }
 
 pub fn fetch_origin_main_if_present(ctx: &AppContext) -> Result<bool> {
+    ensure_origin_remote_url_allowed(ctx)?;
     let output = run_git_allow_failure(ctx, &["fetch", "origin", "main"])?;
     if output.status.success() {
         return Ok(true);
@@ -254,6 +292,7 @@ pub fn fetch_origin_main_if_present(ctx: &AppContext) -> Result<bool> {
 }
 
 pub fn fetch_origin_history_branch_if_present(ctx: &AppContext) -> Result<bool> {
+    ensure_origin_remote_url_allowed(ctx)?;
     let output = run_git_allow_failure(ctx, &["fetch", "origin", HISTORY_BRANCH])?;
     if output.status.success() {
         return Ok(true);
@@ -322,6 +361,7 @@ pub fn ahead_behind_refs(ctx: &AppContext, left: &str, right: &str) -> Result<(u
 }
 
 pub fn push_main_with_tags(ctx: &AppContext) -> Result<()> {
+    ensure_origin_remote_url_allowed(ctx)?;
     let mut args = vec!["push", "--atomic", "origin", "HEAD:main"];
     if history_branch_exists(ctx)? {
         args.push("loom-history:loom-history");
@@ -332,6 +372,7 @@ pub fn push_main_with_tags(ctx: &AppContext) -> Result<()> {
 }
 
 pub fn pull_rebase_main(ctx: &AppContext) -> Result<()> {
+    ensure_origin_remote_url_allowed(ctx)?;
     let output = run_git_allow_failure(ctx, &["pull", "--rebase", "origin", "main"])?;
     if output.status.success() {
         return Ok(());
@@ -341,6 +382,75 @@ pub fn pull_rebase_main(ctx: &AppContext) -> Result<()> {
     let _ = run_git_allow_failure(ctx, &["rebase", "--abort"]);
 
     Err(anyhow!("git pull --rebase origin main failed: {}", stderr))
+}
+
+fn ensure_origin_remote_url_allowed(ctx: &AppContext) -> Result<()> {
+    if let Some(url) = remote_url(ctx)? {
+        validate_git_url(&url)?;
+    }
+    Ok(())
+}
+
+pub fn validate_git_url(raw: &str) -> Result<()> {
+    let url = raw.trim();
+    if url.is_empty() {
+        return Err(anyhow!("git url must not be empty"));
+    }
+    if url != raw {
+        return Err(anyhow!(
+            "git url must not include leading or trailing whitespace"
+        ));
+    }
+    if url.starts_with('-') {
+        return Err(anyhow!("git url must not start with '-'"));
+    }
+    if url
+        .chars()
+        .any(|ch| ch.is_ascii_control() || ch.is_whitespace())
+    {
+        return Err(anyhow!(
+            "git url must not contain whitespace or control characters"
+        ));
+    }
+    if let Some((scheme, _rest)) = url.split_once("://") {
+        return match scheme {
+            "https" | "ssh" => Ok(()),
+            _ => Err(anyhow!(
+                "unsupported git url scheme '{}'; use https:// or ssh://",
+                scheme
+            )),
+        };
+    }
+    validate_scp_like_git_url(url)
+}
+
+fn validate_scp_like_git_url(url: &str) -> Result<()> {
+    let Some((user_host, path)) = url.split_once(':') else {
+        return Err(anyhow!(
+            "git url must use https://, ssh://, or git@host:owner/repo.git"
+        ));
+    };
+    if user_host.is_empty() || path.is_empty() || path.starts_with(':') {
+        return Err(anyhow!(
+            "git url must use https://, ssh://, or git@host:owner/repo.git"
+        ));
+    }
+    if user_host.contains('/') || user_host == "ext" {
+        return Err(anyhow!("unsupported git url"));
+    }
+    let host = user_host
+        .rsplit_once('@')
+        .map_or(user_host, |(_, host)| host);
+    if host.is_empty() || !host.contains('.') {
+        return Err(anyhow!("scp-like git url must include a hostname"));
+    }
+    if !host
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '.' | '-'))
+    {
+        return Err(anyhow!("scp-like git url contains an invalid hostname"));
+    }
+    Ok(())
 }
 
 pub fn diff_path(ctx: &AppContext, from: &str, to: &str, path: &Path) -> Result<String> {
@@ -403,5 +513,30 @@ impl TempFile {
 impl Drop for TempFile {
     fn drop(&mut self) {
         let _ = fs::remove_file(&self.path);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_git_url;
+
+    #[test]
+    fn git_url_validation_accepts_https_and_ssh_forms() {
+        validate_git_url("https://github.com/org/repo.git").expect("https accepted");
+        validate_git_url("ssh://git@github.com/org/repo.git").expect("ssh accepted");
+        validate_git_url("git@github.com:org/repo.git").expect("scp-like ssh accepted");
+    }
+
+    #[test]
+    fn git_url_validation_rejects_dangerous_protocols_and_options() {
+        for url in [
+            "ext::sh -c 'touch /tmp/pwned'",
+            "file:///etc/passwd",
+            "--upload-pack=sh",
+            "git://github.com/org/repo.git",
+            " https://github.com/org/repo.git",
+        ] {
+            assert!(validate_git_url(url).is_err(), "{url} should be rejected");
+        }
     }
 }

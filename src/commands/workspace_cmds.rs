@@ -23,13 +23,41 @@ use super::helpers::{
     agent_kind_as_str, collect_skill_inventory, commit_registry_state, map_git, map_io, map_lock,
     map_registry_state, maybe_autosync_or_queue, read_git_field, record_registry_operation,
     remote_status_payload, remote_status_payload_with_pending, unique_binding_id,
-    validate_non_empty, workspace_matcher_kind_as_str,
+    validate_non_empty, validate_policy_profile, workspace_matcher_kind_as_str,
 };
 use super::{App, CommandFailure};
 
 enum LivePathCleanup {
     Deleted(String),
     Skipped { path: String, reason: &'static str },
+}
+
+const DEFAULT_SCAN_AGENTS: [AgentKind; 10] = [
+    AgentKind::Claude,
+    AgentKind::Codex,
+    AgentKind::Cursor,
+    AgentKind::Windsurf,
+    AgentKind::Cline,
+    AgentKind::Copilot,
+    AgentKind::Aider,
+    AgentKind::Opencode,
+    AgentKind::GeminiCli,
+    AgentKind::Goose,
+];
+
+fn default_skill_dir(agent: AgentKind, home: &str) -> PathBuf {
+    match agent {
+        AgentKind::Claude => PathBuf::from(format!("{home}/.claude/skills")),
+        AgentKind::Codex => PathBuf::from(format!("{home}/.codex/skills")),
+        AgentKind::Cursor => PathBuf::from(format!("{home}/.cursor/skills")),
+        AgentKind::Windsurf => PathBuf::from(format!("{home}/.windsurf/skills")),
+        AgentKind::Cline => PathBuf::from(format!("{home}/.cline/skills")),
+        AgentKind::Copilot => PathBuf::from(format!("{home}/.github/copilot/skills")),
+        AgentKind::Aider => PathBuf::from(format!("{home}/.aider/skills")),
+        AgentKind::Opencode => PathBuf::from(format!("{home}/.opencode/skills")),
+        AgentKind::GeminiCli => PathBuf::from(format!("{home}/.gemini/skills")),
+        AgentKind::Goose => PathBuf::from(format!("{home}/.config/goose/skills")),
+    }
 }
 
 fn cleanup_orphan_live_path(
@@ -251,12 +279,10 @@ impl App {
                     "--scan-existing requires HOME to be set",
                 )
             })?;
-            let candidates = [
-                (AgentKind::Claude, format!("{}/.claude/skills", home)),
-                (AgentKind::Codex, format!("{}/.codex/skills", home)),
-            ];
-            for (agent, path_str) in candidates {
-                let p = Path::new(&path_str);
+            for agent in DEFAULT_SCAN_AGENTS {
+                let path = default_skill_dir(agent, &home);
+                let path_str = path.display().to_string();
+                let p = path.as_path();
                 if !p.exists() {
                     skipped.push(json!({
                         "agent": agent_kind_as_str(agent),
@@ -364,7 +390,7 @@ impl App {
         validate_non_empty("profile", &args.profile)?;
         validate_non_empty("matcher_value", &args.matcher_value)?;
         validate_non_empty("target", &args.target)?;
-        validate_non_empty("policy_profile", &args.policy_profile)?;
+        validate_policy_profile(&args.policy_profile)?;
 
         let paths = self.ensure_registry_layout()?;
         let snapshot = paths.load_snapshot().map_err(map_registry_state)?;

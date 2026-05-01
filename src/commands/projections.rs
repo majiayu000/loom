@@ -18,7 +18,9 @@ use crate::state_model::{
 use crate::types::{ErrorCode, SyncState};
 
 use super::CommandFailure;
-use super::file_ops::{copy_dir_recursive, create_symlink_dir};
+use super::file_ops::{
+    copy_dir_recursive, copy_dir_recursive_preserving_symlinks, create_symlink_dir,
+};
 use super::helpers::{map_git, map_io, map_push_rejected, map_queue, map_remote_unreachable};
 use crate::state::remove_path_if_exists;
 
@@ -72,7 +74,22 @@ pub(crate) fn project_skill_to_target(
 ) -> Result<()> {
     match method {
         ProjectionMethod::Symlink => create_symlink_dir(src, dst),
-        ProjectionMethod::Copy | ProjectionMethod::Materialize => {
+        ProjectionMethod::Copy => {
+            let parent = dst
+                .parent()
+                .context("projection target has no parent directory")?;
+            let tmp_dir = parent.join(format!(".loom-tmp-{}", Uuid::new_v4()));
+            if let Err(err) = copy_dir_recursive_preserving_symlinks(src, &tmp_dir) {
+                let _ = remove_path_if_exists(&tmp_dir);
+                return Err(err);
+            }
+            if let Err(err) = std::fs::rename(&tmp_dir, dst) {
+                let _ = remove_path_if_exists(&tmp_dir);
+                return Err(err).context("failed to atomically place projection");
+            }
+            Ok(())
+        }
+        ProjectionMethod::Materialize => {
             let parent = dst
                 .parent()
                 .context("projection target has no parent directory")?;
@@ -611,6 +628,42 @@ mod project_skill_tests {
         let dst = base.join("dst-mat");
         project_skill_to_target(&src, &dst, ProjectionMethod::Materialize).expect("materialize ok");
         assert!(dst.join("SKILL.md").is_file());
+        let _ = stdfs::remove_dir_all(&base);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn copy_preserves_symlink_but_materialize_resolves_it() {
+        let base = scratch_dir("copy-vs-materialize-symlink");
+        let src = make_skill_src(&base);
+        let secret = base.join("secret.txt");
+        stdfs::write(&secret, "secret contents\n").expect("secret file");
+        std::os::unix::fs::symlink(&secret, src.join("secret-link")).expect("source symlink");
+
+        let copy_dst = base.join("dst-copy");
+        project_skill_to_target(&src, &copy_dst, ProjectionMethod::Copy).expect("copy ok");
+        assert!(
+            stdfs::symlink_metadata(copy_dst.join("secret-link"))
+                .expect("copy link metadata")
+                .file_type()
+                .is_symlink(),
+            "copy must preserve the symlink instead of dereferencing it"
+        );
+
+        let mat_dst = base.join("dst-mat");
+        project_skill_to_target(&src, &mat_dst, ProjectionMethod::Materialize)
+            .expect("materialize ok");
+        assert!(
+            stdfs::symlink_metadata(mat_dst.join("secret-link"))
+                .expect("materialized link metadata")
+                .is_file(),
+            "materialize must produce a real file"
+        );
+        assert_eq!(
+            stdfs::read_to_string(mat_dst.join("secret-link")).expect("materialized content"),
+            "secret contents\n"
+        );
+
         let _ = stdfs::remove_dir_all(&base);
     }
 

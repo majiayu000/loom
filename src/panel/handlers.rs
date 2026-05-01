@@ -26,11 +26,9 @@ use super::{
     RemoteSetRequest, SkillAddRequest, TargetAddRequest,
 };
 
-/// Accept `[a-z0-9_-]{1,64}` for `policy_profile`. The backend does not
-/// maintain a closed whitelist (users may extend profiles over time),
-/// but the panel surface should refuse obviously malformed input so the
-/// Registry bindings file stays auditable. CLI users may still submit other
-/// formats directly via `loom workspace binding add`.
+/// Accept `[a-z0-9_-]{1,64}` for `policy_profile`. The core CLI path enforces
+/// the same shape; keeping the panel check here avoids doing a full command
+/// dispatch for obviously malformed requests.
 fn policy_profile_looks_sane(value: &str) -> bool {
     (1..=64).contains(&value.len())
         && value

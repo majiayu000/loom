@@ -471,12 +471,15 @@ fn validate_scp_like_git_url(url: &str) -> Result<()> {
     let host = user_host
         .rsplit_once('@')
         .map_or(user_host, |(_, host)| host);
-    if host.is_empty() || !host.contains('.') {
+    if host.is_empty() || host == "ext" {
         return Err(anyhow!("scp-like git url must include a hostname"));
+    }
+    if host.starts_with('-') || host.starts_with('.') {
+        return Err(anyhow!("scp-like git url contains an invalid hostname"));
     }
     if !host
         .chars()
-        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '.' | '-'))
+        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '.' | '-' | '_'))
     {
         return Err(anyhow!("scp-like git url contains an invalid hostname"));
     }
@@ -557,6 +560,9 @@ mod tests {
         validate_git_url("https://github.com/org/repo.git").expect("https accepted");
         validate_git_url("ssh://git@github.com/org/repo.git").expect("ssh accepted");
         validate_git_url("git@github.com:org/repo.git").expect("scp-like ssh accepted");
+        validate_git_url("git@localhost:repo.git").expect("localhost scp-like ssh accepted");
+        validate_git_url("git@github:org/repo.git").expect("ssh config alias accepted");
+        validate_git_url("git@github_work:org/repo.git").expect("ssh config alias accepted");
     }
 
     #[test]
@@ -607,6 +613,11 @@ mod tests {
             "--upload-pack=sh",
             "git://github.com/org/repo.git",
             " https://github.com/org/repo.git",
+            "git@ext:repo.git",
+            "git@-github:org/repo.git",
+            "git@.github:org/repo.git",
+            "git@bad/host:org/repo.git",
+            "git@bad=host:org/repo.git",
         ] {
             assert!(validate_git_url(url).is_err(), "{url} should be rejected");
         }

@@ -165,6 +165,45 @@ fn workspace_binding_add_fails_for_unknown_target() {
 }
 
 #[test]
+fn workspace_binding_add_rejects_malformed_policy_profile() {
+    let root = TestDir::new("registry-binding-bad-policy");
+    let target_path = root.path().join("live/claude-project-a");
+    let (target_output, _) = target_add(root.path(), "claude", &target_path, "managed");
+    assert!(target_output.status.success(), "target add should succeed");
+
+    let (output, env) = run_loom(
+        root.path(),
+        &[
+            "workspace",
+            "binding",
+            "add",
+            "--agent",
+            "claude",
+            "--profile",
+            "default",
+            "--matcher-kind",
+            "path-prefix",
+            "--matcher-value",
+            "/tmp/project-a",
+            "--target",
+            "target_claude_claude_project_a",
+            "--policy-profile",
+            "Total Nonsense",
+        ],
+    );
+
+    assert!(
+        !output.status.success(),
+        "binding add unexpectedly accepted malformed policy profile"
+    );
+    assert_eq!(env["ok"], Value::Bool(false));
+    assert_eq!(
+        env["error"]["code"],
+        Value::String("ARG_INVALID".to_string())
+    );
+}
+
+#[test]
 fn registry_state_commit_stages_legacy_v3_deletions() {
     let root = TestDir::new("registry-state-stage-v3-delete");
     let target_path = root.path().join("live/claude");

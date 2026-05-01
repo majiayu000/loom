@@ -21,6 +21,7 @@ use crate::envelope::{Envelope, Meta};
 use crate::state::AppContext;
 use crate::types::ErrorCode;
 
+pub(crate) use event_store::redact_sensitive_string;
 pub use helpers::{collect_skill_inventory, remote_status_payload};
 
 use event_store::{
@@ -60,6 +61,7 @@ impl App {
     }
 
     pub(crate) fn ensure_write_layout(&self) -> std::result::Result<(), CommandFailure> {
+        self.ctx.ensure_not_loom_tool_repo_root().map_err(map_io)?;
         self.ctx.ensure_state_layout().map_err(map_io)?;
         Ok(())
     }
@@ -80,6 +82,15 @@ impl App {
             .unwrap_or_else(|| Uuid::new_v4().to_string());
         let input = command_event_input(&cli, &request_id);
         let audit_required = command_requires_durable_audit(&cli.command);
+        if audit_required && let Err(err) = self.ctx.ensure_not_loom_tool_repo_root() {
+            let message = err.to_string();
+            let message = message
+                .strip_prefix("ARG_INVALID:")
+                .map(str::trim)
+                .unwrap_or(&message);
+            let env = Envelope::err(cmd, request_id, ErrorCode::ArgInvalid, message, json!({}));
+            return Ok((env, ErrorCode::ArgInvalid.exit_code()));
+        }
         let mut audit_started = false;
         let mut audit_warning = None;
         match prepare_command_event_store(&self.ctx) {

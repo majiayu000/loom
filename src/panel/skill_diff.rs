@@ -243,10 +243,12 @@ pub(super) async fn registry_skill_diff(
     Query(params): Query<DiffParams>,
     State(state): State<PanelState>,
 ) -> (StatusCode, Json<serde_json::Value>) {
+    const CMD: &str = "registry.skill.diff";
     if !is_valid_skill_name(&skill_name) {
         return (
             StatusCode::BAD_REQUEST,
             registry_error(
+                CMD,
                 "GIT_DIFF_FAILED",
                 "skill name must contain only [a-zA-Z0-9._-]".to_string(),
             ),
@@ -259,6 +261,7 @@ pub(super) async fn registry_skill_diff(
         return (
             StatusCode::BAD_REQUEST,
             registry_error(
+                CMD,
                 "GIT_DIFF_FAILED",
                 "rev_a must match [a-f0-9]{7,40}".to_string(),
             ),
@@ -270,6 +273,7 @@ pub(super) async fn registry_skill_diff(
         return (
             StatusCode::BAD_REQUEST,
             registry_error(
+                CMD,
                 "GIT_DIFF_FAILED",
                 "rev_b must match [a-f0-9]{7,40}".to_string(),
             ),
@@ -287,6 +291,7 @@ pub(super) async fn registry_skill_diff(
                 return (
                     StatusCode::BAD_REQUEST,
                     registry_error(
+                        CMD,
                         "GIT_DIFF_FAILED",
                         "fewer than 2 commits touch this skill; provide rev_a explicitly"
                             .to_string(),
@@ -303,6 +308,7 @@ pub(super) async fn registry_skill_diff(
         return (
             StatusCode::BAD_REQUEST,
             registry_error(
+                CMD,
                 "GIT_DIFF_FAILED",
                 format!("skill '{skill_name}' not found in revision range"),
             ),
@@ -329,7 +335,7 @@ pub(super) async fn registry_skill_diff(
         Err(e) => {
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                registry_error("GIT_DIFF_FAILED", format!("git process error: {e}")),
+                registry_error(CMD, "GIT_DIFF_FAILED", format!("git process error: {e}")),
             );
         }
     };
@@ -353,7 +359,7 @@ pub(super) async fn registry_skill_diff(
         let _ = child.kill().await;
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
-            registry_error("GIT_DIFF_FAILED", format!("reading git output: {e}")),
+            registry_error(CMD, "GIT_DIFF_FAILED", format!("reading git output: {e}")),
         );
     }
 
@@ -362,6 +368,7 @@ pub(super) async fn registry_skill_diff(
         return (
             StatusCode::BAD_REQUEST,
             registry_error(
+                CMD,
                 "GIT_DIFF_FAILED",
                 format!("diff exceeds {MAX_DIFF_BYTES} bytes; narrow the revision range"),
             ),
@@ -377,7 +384,7 @@ pub(super) async fn registry_skill_diff(
         Err(e) => {
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                registry_error("GIT_DIFF_FAILED", format!("waiting for git: {e}")),
+                registry_error(CMD, "GIT_DIFF_FAILED", format!("waiting for git: {e}")),
             );
         }
     };
@@ -386,7 +393,7 @@ pub(super) async fn registry_skill_diff(
         let stderr = String::from_utf8_lossy(&stderr_bytes);
         return (
             StatusCode::BAD_REQUEST,
-            registry_error("GIT_DIFF_FAILED", stderr.trim().to_string()),
+            registry_error(CMD, "GIT_DIFF_FAILED", stderr.trim().to_string()),
         );
     }
 
@@ -398,12 +405,15 @@ pub(super) async fn registry_skill_diff(
 
     (
         StatusCode::OK,
-        registry_ok(json!({
-            "skill": skill_name,
-            "rev_a": resolved_a,
-            "rev_b": resolved_b,
-            "files": files,
-        })),
+        registry_ok(
+            CMD,
+            json!({
+                "skill": skill_name,
+                "rev_a": resolved_a,
+                "rev_b": resolved_b,
+                "files": files,
+            }),
+        ),
     )
 }
 

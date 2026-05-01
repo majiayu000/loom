@@ -1,5 +1,5 @@
 use super::*;
-use crate::panel::handlers::{OpsQuery, pending, registry_ops, remote_set, remote_status};
+use crate::panel::handlers::{OpsQuery, info, pending, registry_ops, remote_set, remote_status};
 use crate::state_model::{REGISTRY_SCHEMA_VERSION, RegistryOperationRecord};
 use axum::{
     Json,
@@ -162,9 +162,12 @@ async fn remote_status_returns_success_payload_when_remote_is_not_configured() {
     let (status, Json(payload)) = remote_status(State(state)).await;
 
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(payload["remote"]["configured"], json!(false));
-    assert!(payload["remote"].is_object());
-    assert!(payload["warnings"].is_array());
+    assert_eq!(payload["ok"], json!(true));
+    assert_eq!(payload["cmd"], json!("remote.status"));
+    assert!(payload["request_id"].as_str().is_some());
+    assert_eq!(payload["data"]["remote"]["configured"], json!(false));
+    assert!(payload["data"]["remote"].is_object());
+    assert!(payload["data"]["warnings"].is_array());
 
     let _ = fs::remove_dir_all(root);
 }
@@ -220,8 +223,36 @@ async fn remote_set_configures_origin_from_authorized_panel_request() {
 
     let (remote_status_code, Json(remote_payload)) = remote_status(State(state)).await;
     assert_eq!(remote_status_code, StatusCode::OK);
-    assert_eq!(remote_payload["remote"]["configured"], json!(true));
-    assert_eq!(remote_payload["remote"]["url"], json!(url));
+    assert_eq!(remote_payload["data"]["remote"]["configured"], json!(true));
+    assert_eq!(remote_payload["data"]["remote"]["url"], json!(url));
+
+    cleanup_root(root);
+}
+
+#[tokio::test]
+async fn info_and_remote_status_redact_remote_credentials() {
+    let (root, state) = make_test_state();
+    let url =
+        "https://user:pass@example.com/loom-registry.git?token=ghp_secret&ref=main#ghp_fragment";
+    crate::gitops::ensure_repo_initialized(&state.ctx).expect("init repo");
+    crate::gitops::set_remote_origin(&state.ctx, url).expect("set remote");
+
+    let Json(info_payload) = info(State(state.clone())).await;
+    let info_url = info_payload["data"]["remote_url"]
+        .as_str()
+        .expect("info remote url");
+    assert!(!info_url.contains("user:pass"));
+    assert!(!info_url.contains("ghp_secret"));
+    assert!(info_url.contains("<redacted>"));
+
+    let (status, Json(remote_payload)) = remote_status(State(state)).await;
+    assert_eq!(status, StatusCode::OK);
+    let status_url = remote_payload["data"]["remote"]["url"]
+        .as_str()
+        .expect("status remote url");
+    assert!(!status_url.contains("user:pass"));
+    assert!(!status_url.contains("ghp_secret"));
+    assert!(status_url.contains("<redacted>"));
 
     cleanup_root(root);
 }
@@ -257,8 +288,11 @@ async fn pending_returns_ok_with_empty_report_on_success() {
     let (status, Json(payload)) = pending(State(state)).await;
 
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(payload["count"], json!(0));
-    assert!(payload["ops"].as_array().is_some());
+    assert_eq!(payload["ok"], json!(true));
+    assert_eq!(payload["cmd"], json!("pending.list"));
+    assert!(payload["request_id"].as_str().is_some());
+    assert_eq!(payload["data"]["count"], json!(0));
+    assert!(payload["data"]["ops"].as_array().is_some());
 
     let _ = fs::remove_dir_all(root);
 }

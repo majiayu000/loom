@@ -207,13 +207,18 @@ impl AppContext {
         self.lock_named(&format!("skill-{}", skill))
     }
 
-    fn lock_named(&self, name: &str) -> Result<LockGuard> {
+    pub fn ensure_not_loom_tool_repo_root(&self) -> Result<()> {
         if is_loom_tool_repo_root(&self.root) {
             anyhow::bail!(
                 "ARG_INVALID:refusing write operations in Loom tool repository root '{}'; use --root <separate skill registry repo>",
                 self.root.display()
             );
         }
+        Ok(())
+    }
+
+    fn lock_named(&self, name: &str) -> Result<LockGuard> {
+        self.ensure_not_loom_tool_repo_root()?;
         self.ensure_state_layout()?;
         let lock_path = self.locks_dir.join(format!("{}.lock", name));
         let current_thread = std::thread::current().id();
@@ -461,14 +466,44 @@ fn is_loom_tool_repo_root(root: &Path) -> bool {
         return false;
     }
 
-    match fs::read_to_string(&cargo_toml) {
-        Ok(content) => content.contains("name = \"skillloom\""),
-        Err(_) => false,
-    }
+    package_name_from_cargo_toml(&cargo_toml).is_some_and(|name| name == "skillloom")
 }
 
 fn canonicalize_or_self(path: &Path) -> PathBuf {
     fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+}
+
+fn package_name_from_cargo_toml(path: &Path) -> Option<String> {
+    let content = fs::read_to_string(path).ok()?;
+    let mut in_package = false;
+    for raw_line in content.lines() {
+        let line = raw_line
+            .split_once('#')
+            .map_or(raw_line, |(line, _)| line)
+            .trim();
+        if line.is_empty() {
+            continue;
+        }
+        if line.starts_with('[') && line.ends_with(']') {
+            in_package = line == "[package]";
+            continue;
+        }
+        if !in_package {
+            continue;
+        }
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
+        if key.trim() != "name" {
+            continue;
+        }
+        let value = value.trim();
+        return value
+            .strip_prefix('"')
+            .and_then(|value| value.strip_suffix('"'))
+            .map(str::to_string);
+    }
+    None
 }
 
 fn write_atomic(path: &Path, contents: &str) -> Result<()> {

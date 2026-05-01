@@ -18,7 +18,7 @@ use super::CommandFailure;
 
 // Re-export items from sibling modules so existing `use super::helpers::*` paths keep working.
 pub(crate) use super::file_ops::{
-    backup_path_if_exists, copy_dir_recursive, copy_dir_recursive_without_symlinks, read_git_field,
+    backup_path_if_exists, copy_dir_recursive_without_symlinks, read_git_field,
     restore_path_from_backup, rollback_added_skill,
 };
 pub use super::projections::{collect_skill_inventory, remote_status_payload};
@@ -223,6 +223,25 @@ pub(crate) fn validate_non_empty(
         return Err(CommandFailure::new(
             ErrorCode::ArgInvalid,
             format!("--{} must not be empty", name),
+        ));
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_policy_profile(value: &str) -> std::result::Result<(), CommandFailure> {
+    if !(1..=64).contains(&value.len()) {
+        return Err(CommandFailure::new(
+            ErrorCode::ArgInvalid,
+            "--policy-profile must be 1-64 characters",
+        ));
+    }
+    if !value
+        .chars()
+        .all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || matches!(ch, '-' | '_'))
+    {
+        return Err(CommandFailure::new(
+            ErrorCode::ArgInvalid,
+            "--policy-profile must match [a-z0-9_-]{1,64}",
         ));
     }
     Ok(())

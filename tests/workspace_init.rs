@@ -16,6 +16,7 @@ fn workspace_init_scan_existing_imports_present_dirs() {
 
     fs::create_dir_all(fake_home.path().join(".claude/skills")).expect("create .claude/skills");
     fs::create_dir_all(fake_home.path().join(".codex/skills")).expect("create .codex/skills");
+    fs::create_dir_all(fake_home.path().join(".cursor/skills")).expect("create .cursor/skills");
 
     let home_str = fake_home.path().to_string_lossy().into_owned();
     let (output, env) = run_loom_with_env(
@@ -35,16 +36,16 @@ fn workspace_init_scan_existing_imports_present_dirs() {
     assert_eq!(env["data"]["scanned"], Value::Bool(true));
     assert_eq!(
         env["data"]["imported"].as_array().map(|a| a.len()),
-        Some(2),
-        "expected both dirs imported: {:?}",
+        Some(3),
+        "expected present default dirs imported: {:?}",
         env["data"]
     );
-    assert_eq!(env["data"]["skipped"].as_array().map(|a| a.len()), Some(0));
+    assert_eq!(env["data"]["skipped"].as_array().map(|a| a.len()), Some(7));
 
     // Confirm the targets are actually persisted.
     let (list_output, list_env) = run_loom(root.path(), &["target", "list"]);
     assert!(list_output.status.success());
-    assert_eq!(list_env["data"]["count"], Value::from(2));
+    assert_eq!(list_env["data"]["count"], Value::from(3));
 }
 
 #[test]
@@ -52,7 +53,7 @@ fn workspace_init_scan_existing_skips_absent_dirs() {
     let root = TestDir::new("ws-init-scan-skip");
     let fake_home = TestDir::new("ws-init-scan-skip-home");
 
-    // Only create the Claude dir; Codex dir intentionally absent.
+    // Only create the Claude dir; all other default agent dirs intentionally absent.
     fs::create_dir_all(fake_home.path().join(".claude/skills")).expect("create .claude/skills");
 
     let home_str = fake_home.path().to_string_lossy().into_owned();
@@ -69,7 +70,7 @@ fn workspace_init_scan_existing_skips_absent_dirs() {
         String::from_utf8_lossy(&output.stdout)
     );
     assert_eq!(env["data"]["imported"].as_array().map(|a| a.len()), Some(1));
-    assert_eq!(env["data"]["skipped"].as_array().map(|a| a.len()), Some(1));
+    assert_eq!(env["data"]["skipped"].as_array().map(|a| a.len()), Some(9));
     assert_eq!(
         env["data"]["skipped"][0]["reason"],
         Value::String("does-not-exist".to_string())

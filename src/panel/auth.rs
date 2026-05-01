@@ -154,11 +154,13 @@ pub(crate) fn error_envelope(
 
 pub(super) fn load_registry_snapshot(
     ctx: &AppContext,
+    cmd: &str,
 ) -> std::result::Result<crate::state_model::RegistrySnapshot, Json<serde_json::Value>> {
     let paths = RegistryStatePaths::from_app_context(ctx);
     match paths.maybe_load_snapshot() {
         Ok(Some(snapshot)) => Ok(snapshot),
         Ok(None) => Err(registry_error(
+            cmd,
             "ARG_INVALID",
             format!(
                 "registry state not initialized under {}",
@@ -172,15 +174,25 @@ pub(super) fn load_registry_snapshot(
             } else {
                 "STATE_CORRUPT"
             };
-            Err(registry_error(code, message))
+            Err(registry_error(cmd, code, message))
         }
     }
 }
 
-pub(super) fn registry_ok(data: serde_json::Value) -> Json<serde_json::Value> {
-    Json(json!({"ok": true, "data": data}))
+pub(super) fn registry_ok(cmd: &str, data: serde_json::Value) -> Json<serde_json::Value> {
+    Json(json!({
+        "ok": true,
+        "cmd": cmd,
+        "request_id": Uuid::new_v4().to_string(),
+        "version": env!("CARGO_PKG_VERSION"),
+        "data": data,
+        "meta": {
+            "warnings": []
+        }
+    }))
 }
 
-pub(super) fn registry_error(code: &str, message: String) -> Json<serde_json::Value> {
-    Json(json!({"ok": false, "error": {"code": code, "message": message}}))
+pub(super) fn registry_error(cmd: &str, code: &str, message: String) -> Json<serde_json::Value> {
+    let request_id = Uuid::new_v4().to_string();
+    Json(error_envelope(cmd, &request_id, code, &message))
 }

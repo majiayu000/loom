@@ -10,6 +10,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use axum::{
     Router,
+    extract::DefaultBodyLimit,
     routing::{get, post},
 };
 use serde::Deserialize;
@@ -21,6 +22,8 @@ use handlers::*;
 use skill_diff::registry_skill_diff;
 use skill_history::registry_skill_history;
 use static_serve::{ensure_panel_dist, frontend_index, frontend_static_asset};
+
+const MAX_PANEL_BODY_BYTES: usize = 1024 * 1024;
 
 #[derive(Clone)]
 pub(crate) struct PanelState {
@@ -152,9 +155,10 @@ pub async fn run_panel(ctx: AppContext, port: u16) -> Result<()> {
         .route("/api/sync/pull", post(sync_pull))
         .route("/api/sync/replay", post(sync_replay))
         .route("/{*path}", get(frontend_static_asset))
+        .layer(DefaultBodyLimit::max(MAX_PANEL_BODY_BYTES))
         .with_state(state);
 
-    println!("panel listening on http://{}", addr);
+    eprintln!("panel listening on http://{}", addr);
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
     axum::serve(

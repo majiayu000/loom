@@ -227,14 +227,11 @@ impl AppContext {
                 history_events: snapshot.history_events,
                 warnings: Vec::new(),
             }),
-            Ok(snapshot) => Ok(LoadedSnapshot {
-                active_ops: Vec::new(),
-                history_events: 0,
-                warnings: vec![format!(
-                    "ignored pending ops snapshot version {}; expected {}",
-                    snapshot.version, OPS_SNAPSHOT_VERSION
-                )],
-            }),
+            Ok(snapshot) => anyhow::bail!(
+                "pending ops snapshot version mismatch: found {}; expected {}",
+                snapshot.version,
+                OPS_SNAPSHOT_VERSION
+            ),
             Err(err) => Ok(LoadedSnapshot {
                 active_ops: Vec::new(),
                 history_events: 0,
@@ -452,7 +449,7 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn pending_snapshot_version_mismatch_is_ignored_with_warning() {
+    fn pending_snapshot_version_mismatch_fails_closed() {
         let root = std::env::temp_dir().join(format!(
             "loom-ops-snapshot-version-{}",
             uuid::Uuid::new_v4().simple()
@@ -469,17 +466,13 @@ mod tests {
         let raw = serde_json::to_string_pretty(&snapshot).expect("snapshot json");
         fs::write(&ctx.pending_ops_snapshot_file, raw).expect("write snapshot");
 
-        let report = ctx.read_pending_report().expect("pending report");
-
-        assert!(report.ops.is_empty(), "stale snapshot ops must be ignored");
-        assert_eq!(report.history_events, 0);
+        let err = ctx
+            .read_pending_report()
+            .expect_err("version mismatch must fail closed");
         assert!(
-            report
-                .warnings
-                .iter()
-                .any(|warning| warning.contains("ignored pending ops snapshot version")),
-            "expected version warning, got {:?}",
-            report.warnings
+            err.to_string()
+                .contains("pending ops snapshot version mismatch"),
+            "unexpected error: {err}"
         );
 
         let _ = fs::remove_dir_all(root);

@@ -82,6 +82,15 @@ impl App {
             .unwrap_or_else(|| Uuid::new_v4().to_string());
         let input = command_event_input(&cli, &request_id);
         let audit_required = command_requires_durable_audit(&cli.command);
+        if audit_required && let Err(err) = self.ctx.ensure_not_loom_tool_repo_root() {
+            let message = err.to_string();
+            let message = message
+                .strip_prefix("ARG_INVALID:")
+                .map(str::trim)
+                .unwrap_or(&message);
+            let env = Envelope::err(cmd, request_id, ErrorCode::ArgInvalid, message, json!({}));
+            return Ok((env, ErrorCode::ArgInvalid.exit_code()));
+        }
         let mut audit_started = false;
         let mut audit_warning = None;
         match prepare_command_event_store(&self.ctx) {

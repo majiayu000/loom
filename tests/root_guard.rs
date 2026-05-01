@@ -91,4 +91,8 @@ version = "0.1.0"
         !root.path().join("state/locks").exists(),
         "guard must reject before lock/layout initialization"
     );
+    assert!(
+        !root.path().join("state/events").exists(),
+        "guard must reject before command audit initialization"
+    );
 }

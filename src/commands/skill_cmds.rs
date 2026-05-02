@@ -333,7 +333,7 @@ impl App {
         let original_rules = snapshot.rules.clone();
         let original_projections = snapshot.projections.clone();
         let previous_head = gitops::head(&self.ctx).map_err(map_git)?;
-        let previous_index = gitops::write_index_tree(&self.ctx).map_err(map_git)?;
+        let previous_index = gitops::snapshot_index(&self.ctx).map_err(map_git)?;
         let mut source_backup = None;
         let mut source_replaced = false;
         if projection.method != "symlink" {
@@ -849,7 +849,7 @@ fn rollback_capture_mutation(
     source_backup: Option<&serde_json::Value>,
     source_replaced: bool,
     previous_head: &str,
-    previous_index: &str,
+    previous_index: &gitops::IndexSnapshot,
     commit_created: bool,
 ) {
     if commit_created {
@@ -865,7 +865,7 @@ fn rollback_capture_mutation(
         }
     }
 
-    let _ = gitops::restore_index_tree(ctx, previous_index);
+    let _ = gitops::restore_index(ctx, previous_index);
 }
 
 fn rollback_v3_state(

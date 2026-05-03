@@ -134,82 +134,86 @@ pub fn has_staged_changes_for_path(ctx: &AppContext, path: &Path) -> Result<bool
     Ok(!output.status.success())
 }
 
-/// Captured index state used to restore staging after a failed mutation.
+/// Captured registry index used to restore staging after a failed mutation.
 ///
-/// `tree` is the git tree object produced by `git write-tree`; replaying it
-/// with `git read-tree` rebuilds every fully-staged blob. `intent_to_add`
-/// holds paths whose index entry has the all-zero blob (`git add -N`), since
-/// those entries cannot be encoded as a tree and would otherwise become
-/// untracked after `read-tree`.
-#[derive(Debug, Clone)]
+/// Backs up the underlying `.git/index` file as a whole, so every per-entry
+/// flag (`skip-worktree`, `assume-unchanged`, intent-to-add, fsmonitor cache)
+/// survives the rollback. The previous `git write-tree`/`read-tree` design
+/// dropped these flags because tree objects only encode `path → blob`.
+///
+/// The backup file lives under `state_dir/index-snapshots/`. `Drop` removes
+/// the file best-effort once the snapshot goes out of scope.
 pub struct IndexSnapshot {
-    pub tree: String,
-    pub intent_to_add: Vec<String>,
+    backup_path: PathBuf,
+}
+
+impl IndexSnapshot {
+    /// Path of the on-disk backup. Exposed for diagnostics; callers should
+    /// prefer [`restore_index`] for the actual rollback.
+    pub fn backup_path(&self) -> &Path {
+        &self.backup_path
+    }
+}
+
+impl Drop for IndexSnapshot {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.backup_path);
+    }
 }
 
 pub fn snapshot_index(ctx: &AppContext) -> Result<IndexSnapshot> {
-    // Capture intent-to-add paths *before* `write-tree` so a future change to
-    // either step cannot silently drop entries between snapshot and replay.
-    let intent_to_add = intent_to_add_paths(ctx)?;
-    let tree = run_git(ctx, &["write-tree"])?;
-    Ok(IndexSnapshot {
-        tree,
-        intent_to_add,
-    })
+    let git_dir = resolve_git_dir(ctx)?;
+    let index_path = git_dir.join("index");
+    if !index_path.exists() {
+        return Err(anyhow!(
+            "git index missing at {}; cannot snapshot",
+            index_path.display()
+        ));
+    }
+    let snapshot_dir = ctx.state_dir.join("index-snapshots");
+    fs::create_dir_all(&snapshot_dir)
+        .with_context(|| format!("create {}", snapshot_dir.display()))?;
+    let backup_path = snapshot_dir.join(format!("snapshot-{}", uuid::Uuid::new_v4()));
+    fs::copy(&index_path, &backup_path).with_context(|| {
+        format!(
+            "back up git index from {} to {}",
+            index_path.display(),
+            backup_path.display()
+        )
+    })?;
+    Ok(IndexSnapshot { backup_path })
 }
 
 pub fn restore_index(ctx: &AppContext, snapshot: &IndexSnapshot) -> Result<()> {
-    run_git(ctx, &["read-tree", &snapshot.tree])?;
-    for path in &snapshot.intent_to_add {
-        // `git add --intent-to-add` is the only stable CLI form; plumbing
-        // `update-index` has no equivalent flag. The path must exist in the
-        // working tree, which is true on the rollback path because read-tree
-        // does not touch the worktree.
-        run_git(ctx, &["add", "--intent-to-add", "--", path])?;
-    }
+    let git_dir = resolve_git_dir(ctx)?;
+    let index_path = git_dir.join("index");
+    let parent = index_path
+        .parent()
+        .ok_or_else(|| anyhow!("git index path has no parent: {}", index_path.display()))?;
+    // Stage the restore inside `.git/` so the final rename is intra-directory
+    // (atomic on POSIX). The `.loom-` prefix keeps the temp file out of any
+    // tooling that scans `.git/` for tracked artifacts.
+    let staging = parent.join(format!(".loom-index-restore-{}", uuid::Uuid::new_v4()));
+    fs::copy(&snapshot.backup_path, &staging).with_context(|| {
+        format!(
+            "stage index restore at {} from {}",
+            staging.display(),
+            snapshot.backup_path.display()
+        )
+    })?;
+    crate::fs_util::rename_atomic(&staging, &index_path)
+        .with_context(|| format!("install restored index at {}", index_path.display()))?;
     Ok(())
 }
 
-fn intent_to_add_paths(ctx: &AppContext) -> Result<Vec<String>> {
-    // `git status --porcelain=v1 -z -uno` emits one NUL-terminated record per
-    // tracked-or-staged path. IT-A entries have X=' ' Y='A' (the index has
-    // the entry as an empty blob with the CE_INTENT_TO_ADD flag set), while
-    // real `git add` entries report X='A'. Encoding stays stable across git
-    // versions, unlike `ls-files -s` whose blob sha collides with empty
-    // files. `-uno` skips untracked paths since they cannot carry IT-A.
-    //
-    // We bypass `run_git`'s trim() because the IT-A record's leading SPACE is
-    // the load-bearing signal — trimming it shifts X to 'A' and misclassifies
-    // the entry as a real staged add.
-    let output = run_git_allow_failure(ctx, &["status", "--porcelain=v1", "-z", "-uno"])?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        return Err(anyhow!("git status (intent-to-add probe) failed: {}", stderr));
+fn resolve_git_dir(ctx: &AppContext) -> Result<PathBuf> {
+    let raw = run_git(ctx, &["rev-parse", "--git-dir"])?;
+    let candidate = PathBuf::from(&raw);
+    if candidate.is_absolute() {
+        Ok(candidate)
+    } else {
+        Ok(ctx.root.join(&candidate))
     }
-    let mut paths = Vec::new();
-    let mut iter = output.stdout.split(|&b| b == 0);
-    while let Some(record) = iter.next() {
-        if record.is_empty() {
-            continue;
-        }
-        if record.len() < 4 || record[2] != b' ' {
-            continue;
-        }
-        let x = record[0];
-        let y = record[1];
-        // Rename/copy records (X in {'R','C'}) carry the `from` path in the
-        // next NUL-terminated field; consume it so iteration stays aligned.
-        if matches!(x, b'R' | b'C') {
-            if iter.next().is_none() {
-                break;
-            }
-            continue;
-        }
-        if x == b' ' && y == b'A' {
-            paths.push(String::from_utf8_lossy(&record[3..]).into_owned());
-        }
-    }
-    Ok(paths)
 }
 
 pub fn stage_path(ctx: &AppContext, path: &Path) -> Result<()> {
@@ -454,7 +458,6 @@ mod tests {
             ["init", "-q", "-b", "main"].as_slice(),
             ["config", "user.email", "test@example.com"].as_slice(),
             ["config", "user.name", "test"].as_slice(),
-            ["commit", "--allow-empty", "-q", "-m", "init"].as_slice(),
         ] {
             let out = Command::new("git")
                 .arg("-C")
@@ -469,6 +472,28 @@ mod tests {
                 String::from_utf8_lossy(&out.stderr)
             );
         }
+        // Stage + commit a tracked file so `.git/index` exists and HEAD is real.
+        // snapshot_index requires an existing index; flag-bearing tests need a
+        // tracked path to attach skip-worktree / assume-unchanged to.
+        fs::write(dir.join("base.txt"), "base\n").expect("write base");
+        for args in [
+            ["add", "base.txt"].as_slice(),
+            ["commit", "-q", "-m", "init"].as_slice(),
+        ] {
+            let out = Command::new("git")
+                .arg("-C")
+                .arg(&dir)
+                .args(args)
+                .output()
+                .expect("run git");
+            assert!(
+                out.status.success(),
+                "git {:?} failed: {}",
+                args,
+                String::from_utf8_lossy(&out.stderr)
+            );
+        }
+
         let ctx = AppContext::new(Some(dir.clone())).expect("build AppContext");
         (ctx, dir)
     }
@@ -489,64 +514,124 @@ mod tests {
         String::from_utf8(out.stdout).expect("git stdout utf8")
     }
 
-    #[test]
-    fn intent_to_add_paths_returns_only_intent_to_add_entries() {
-        let (ctx, dir) = fresh_repo("ita-detect");
-
-        fs::write(dir.join("ita.txt"), "stand-in").expect("write ita");
-        git_ok(&dir, &["add", "-N", "--", "ita.txt"]);
-
-        fs::write(dir.join("real.txt"), "real").expect("write real");
-        git_ok(&dir, &["add", "--", "real.txt"]);
-
-        let paths = intent_to_add_paths(&ctx).expect("query ita");
-        assert_eq!(paths, vec!["ita.txt".to_string()]);
-
-        let _ = fs::remove_dir_all(&dir);
+    /// `ls-files -v` tag legend: H=cached, h=assume-unchanged, S=skip-worktree,
+    /// s=skip-worktree+assume-unchanged.
+    fn ls_files_v(dir: &Path) -> String {
+        git_ok(dir, &["ls-files", "-v"])
     }
 
     #[test]
-    fn restore_index_recovers_intent_to_add_after_clobber() {
-        let (ctx, dir) = fresh_repo("ita-restore");
+    fn snapshot_round_trip_preserves_intent_to_add() {
+        let (ctx, dir) = fresh_repo("ita");
 
         fs::write(dir.join("ita.txt"), "stand-in").expect("write ita");
         git_ok(&dir, &["add", "-N", "--", "ita.txt"]);
-
-        let snapshot = snapshot_index(&ctx).expect("snapshot");
-        assert_eq!(
-            snapshot.intent_to_add,
-            vec!["ita.txt".to_string()],
-            "snapshot must capture IT-A before clobber"
+        let before = git_ok(&dir, &["status", "--porcelain"]);
+        assert!(
+            before.lines().any(|l| l == " A ita.txt"),
+            "expected IT-A marker pre-snapshot, got:\n{before}"
         );
 
-        // Wipe the index entry: this is what `git read-tree` of a tree without
-        // the IT-A path would do during a real rollback.
+        let snapshot = snapshot_index(&ctx).expect("snapshot");
+
+        // Clobber the entry the way a stale rollback would.
         git_ok(&dir, &["update-index", "--force-remove", "ita.txt"]);
-        let after_clobber = git_ok(&dir, &["status", "--porcelain"]);
+        let cleared = git_ok(&dir, &["status", "--porcelain"]);
         assert!(
-            after_clobber
-                .lines()
-                .any(|line| line == "?? ita.txt"),
-            "post-clobber file must be untracked, got:\n{after_clobber}"
+            cleared.lines().any(|l| l == "?? ita.txt"),
+            "force-remove must turn IT-A into untracked, got:\n{cleared}"
         );
 
         restore_index(&ctx, &snapshot).expect("restore");
 
-        let after_restore = git_ok(&dir, &["status", "--porcelain"]);
+        let restored = git_ok(&dir, &["status", "--porcelain"]);
         assert!(
-            after_restore.lines().any(|line| line == " A ita.txt"),
-            "restore must reinstate IT-A marker (' A path'), got:\n{after_restore}"
+            restored.lines().any(|l| l == " A ita.txt"),
+            "intent-to-add must survive snapshot/restore round trip, got:\n{restored}"
         );
 
         let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
-    fn snapshot_index_returns_empty_intent_to_add_for_clean_repo() {
-        let (ctx, dir) = fresh_repo("ita-empty");
+    fn snapshot_round_trip_preserves_skip_worktree_flag() {
+        let (ctx, dir) = fresh_repo("skip-worktree");
+
+        git_ok(&dir, &["update-index", "--skip-worktree", "base.txt"]);
+        let before = ls_files_v(&dir);
+        assert!(
+            before.lines().any(|l| l == "S base.txt"),
+            "expected skip-worktree marker pre-snapshot, got:\n{before}"
+        );
+
         let snapshot = snapshot_index(&ctx).expect("snapshot");
-        assert!(snapshot.intent_to_add.is_empty());
-        assert!(!snapshot.tree.is_empty());
+
+        git_ok(&dir, &["update-index", "--no-skip-worktree", "base.txt"]);
+        let cleared = ls_files_v(&dir);
+        assert!(
+            cleared.lines().any(|l| l == "H base.txt"),
+            "skip-worktree should clear, got:\n{cleared}"
+        );
+
+        restore_index(&ctx, &snapshot).expect("restore");
+
+        let restored = ls_files_v(&dir);
+        assert!(
+            restored.lines().any(|l| l == "S base.txt"),
+            "skip-worktree flag must survive snapshot/restore round trip, got:\n{restored}"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn snapshot_round_trip_preserves_assume_unchanged_flag() {
+        let (ctx, dir) = fresh_repo("assume-unchanged");
+
+        git_ok(&dir, &["update-index", "--assume-unchanged", "base.txt"]);
+        let before = ls_files_v(&dir);
+        assert!(
+            before.lines().any(|l| l == "h base.txt"),
+            "expected assume-unchanged marker pre-snapshot, got:\n{before}"
+        );
+
+        let snapshot = snapshot_index(&ctx).expect("snapshot");
+
+        git_ok(&dir, &["update-index", "--no-assume-unchanged", "base.txt"]);
+        let cleared = ls_files_v(&dir);
+        assert!(
+            cleared.lines().any(|l| l == "H base.txt"),
+            "assume-unchanged should clear, got:\n{cleared}"
+        );
+
+        restore_index(&ctx, &snapshot).expect("restore");
+
+        let restored = ls_files_v(&dir);
+        assert!(
+            restored.lines().any(|l| l == "h base.txt"),
+            "assume-unchanged flag must survive snapshot/restore round trip, got:\n{restored}"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn index_snapshot_drop_removes_backup_file() {
+        let (ctx, dir) = fresh_repo("drop-cleanup");
+
+        let backup_path = {
+            let snapshot = snapshot_index(&ctx).expect("snapshot");
+            let path = snapshot.backup_path().to_path_buf();
+            assert!(path.exists(), "backup must exist before drop: {}", path.display());
+            path
+            // snapshot drops here
+        };
+        assert!(
+            !backup_path.exists(),
+            "backup must be removed by Drop: {}",
+            backup_path.display()
+        );
+
         let _ = fs::remove_dir_all(&dir);
     }
 }

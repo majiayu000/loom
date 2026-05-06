@@ -4,17 +4,18 @@
 
 推荐先触发 `loom` 技能（`SKILL.md`），再执行本文档中的非交互命令。
 
-> 当前命令面是 breaking change：旧顶层命令（`loom init/save/status/...`）已移除，Agent 必须使用 `workspace/skill/sync/ops` 命令组。
+`loom init` 和 `loom monitor` 是保留给快速启动的顶层别名。Agent 自动化应优先使用显式的 `workspace/target/skill/sync/ops` 命令组，避免隐藏默认路径。
 
 ## 1. 双模式约定
 
-- 人类操作者：优先 `loom workspace init --wizard`（交互式选择）。
+- 人类操作者：可以使用 `loom init` 和 `loom monitor --once` 快速启动。
 - Agent：优先非交互模式，固定使用 `--json` + 明确参数。
 
 ## 2. Agent 基本调用契约
 
 - 固定带 `--json`，只解析 JSON envelope。
 - 固定带 `--root <absolute_path>`，避免 cwd 漂移。
+- 默认 `--json` 是紧凑单行输出；人类排查时可加 `--pretty`。
 - 只把 `ok=true` 视为成功。
 - `ok=false` 时根据 `error.code` 分支处理。
 - 记录 `request_id` 到日志，保证可追踪。
@@ -36,21 +37,22 @@ JSON envelope 关键字段：
 Agent 首次接管本机 skills 时，执行：
 
 ```bash
-loom --json --root <repo_root> workspace init --from-agent both --target both
+loom --json --root <repo_root> workspace init --scan-existing
+loom --json --root <repo_root> skill monitor-observed --once
 ```
 
 该命令默认顺序为：
 
-1. 备份 agent 原 skills 目录到 `<repo_root>/state/backups/<timestamp>/`
-2. 导入到 `<repo_root>/skills/`
-3. 建立 symlink（或 `--copy`）
+1. 初始化 `<repo_root>` 为 Git-backed Loom registry。
+2. 将默认 `~/.claude/skills` 和 `~/.codex/skills` 注册为 observed targets。
+3. 扫描 observed targets，将包含 `SKILL.md` 的 skill 导入到 `<repo_root>/skills/`。
 
 产出中必须校验：
 
-- `data.backup.destination` 存在
-- `data.backup.manifest` 存在
-- `data.summary.imported >= 0`
-- `data.summary.linked >= 0`
+- `workspace init` 返回 `data.initialized=true`
+- `workspace init` 返回 `data.scanned=true`
+- `skill monitor-observed --once` 返回 `ok=true`
+- `meta.warnings` 为空，或被明确记录为“成功但有风险”
 
 ## 4. 日常操作建议（Agent）
 
@@ -63,11 +65,11 @@ loom --json --root <repo_root> workspace init --from-agent both --target both
 
 ## 5. 安全护栏
 
-- 未经明确授权，不要默认使用 `--skip-backup`。
 - 未经明确授权，不要默认使用 `--force` 覆盖同名 skill。
 - 优先 symlink 模式；只有环境不支持时再使用 `--copy`。
 - `meta.warnings` 不为空时，视为“成功但有风险”，需写入运行日志。
 - `sync_state=LOCAL_ONLY` 或 `PENDING_PUSH` 时，不应宣称“远端已同步”。
+- 读命令（如 `workspace status`、`workspace doctor`、`target list`）不写 command event；不要把读命令当作审计记录来源。
 
 ## 6. 常见失败码处理
 
@@ -83,7 +85,8 @@ loom --json --root <repo_root> workspace init --from-agent both --target both
 
 ```bash
 # 1) 初始化（首次）
-loom --json --root "$ROOT" workspace init --from-agent both --target both
+loom --json --root "$ROOT" workspace init --scan-existing
+loom --json --root "$ROOT" skill monitor-observed --once
 
 # 2) 日常保存
 loom --json --root "$ROOT" skill save "$SKILL"
@@ -95,7 +98,8 @@ loom --json --root "$ROOT" sync push
 ## 8. 人类快速入口
 
 ```bash
-loom workspace init --wizard
+loom init
+loom monitor --once
 ```
 
 该入口用于“安装后首跑”或“不想记参数”的场景；Agent 不应依赖交互式输入。

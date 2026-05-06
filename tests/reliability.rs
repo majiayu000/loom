@@ -217,28 +217,12 @@ fn workspace_status_is_read_only_in_empty_dir() {
     assert_eq!(env["ok"], true);
     assert!(!root.path().join(".git").exists());
     assert!(!root.path().join("state/registry").exists());
+    assert!(!root.path().join("state/events").exists());
     assert!(!root.path().join("skills").exists());
-
-    let events = read_command_events(root.path());
-    assert_eq!(events.len(), 2);
-    assert_eq!(events[0]["schema_version"], Value::from(1));
-    assert_eq!(events[1]["schema_version"], Value::from(1));
-    assert_eq!(events[0]["status"], Value::String("started".to_string()));
-    assert_eq!(
-        events[0]["cmd"],
-        Value::String("workspace.status".to_string())
-    );
-    assert!(events[0]["input"]["request_id"].as_str().is_some());
-    assert_eq!(events[1]["status"], Value::String("succeeded".to_string()));
-    assert_eq!(events[1]["exit_code"], Value::from(0));
-    assert_eq!(
-        events[1]["output"]["state_model"],
-        Value::String("registry".to_string())
-    );
 }
 
 #[test]
-fn workspace_status_warns_when_command_audit_preflight_is_unavailable() {
+fn workspace_status_ignores_unavailable_command_audit_path() {
     let root = TestDir::new("status-audit-warning");
     let events_dir = root.path().join("state/events");
     if let Some(parent) = events_dir.parent() {
@@ -254,12 +238,12 @@ fn workspace_status_warns_when_command_audit_preflight_is_unavailable() {
     );
     assert_eq!(env["ok"], Value::Bool(true));
     assert!(
-        env["meta"]["warnings"]
+        !env["meta"]["warnings"]
             .as_array()
             .expect("warnings array")
             .iter()
             .filter_map(serde_json::Value::as_str)
-            .any(|warning| warning.contains("failed to prepare command event log"))
+            .any(|warning| warning.contains("command event"))
     );
     assert!(!root.path().join("state/registry").exists());
 }
@@ -291,7 +275,7 @@ fn failed_command_emits_durable_command_event() {
 }
 
 #[test]
-fn finish_append_failure_still_leaves_started_audit_record() {
+fn workspace_status_does_not_enter_command_audit_finish_path() {
     let root = TestDir::new("finish-append-failure");
 
     let (output, env) = run_loom_with_env(
@@ -303,22 +287,14 @@ fn finish_append_failure_still_leaves_started_audit_record() {
     assert!(output.status.success(), "status should still succeed");
     assert_eq!(env["ok"], Value::Bool(true));
     assert!(
-        env["meta"]["warnings"]
+        !env["meta"]["warnings"]
             .as_array()
             .expect("warnings array")
             .iter()
             .filter_map(serde_json::Value::as_str)
-            .any(|warning| warning.contains("failed to append command event"))
+            .any(|warning| warning.contains("command event"))
     );
-
-    let events = read_command_events(root.path());
-    assert_eq!(events.len(), 1);
-    assert_eq!(
-        events[0]["cmd"],
-        Value::String("workspace.status".to_string())
-    );
-    assert_eq!(events[0]["status"], Value::String("started".to_string()));
-    assert!(events[0]["input"]["request_id"].as_str().is_some());
+    assert!(!root.path().join("state/events/commands.jsonl").exists());
 }
 
 #[test]

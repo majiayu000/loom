@@ -25,7 +25,6 @@ pub struct Envelope {
     pub request_id: String,
     pub version: String,
     pub data: serde_json::Value,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<ErrorBody>,
     pub meta: Meta,
 }

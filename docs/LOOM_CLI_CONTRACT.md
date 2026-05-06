@@ -59,16 +59,16 @@ Optional global flags:
 
 ```bash
 --json
+--pretty
 --request-id <id>
---strict
---dry-run
 ```
 
 Rules:
 
 1. Agents should always use `--json`.
 2. `--root` is mandatory for automation and examples in this spec.
-3. `--dry-run` must not mutate source, targets, bindings, or ops journal.
+3. `--json` defaults to compact single-line output for token efficiency.
+4. `--json --pretty` is reserved for human debugging and documentation capture.
 
 ## 5. Selector Rules
 
@@ -132,6 +132,7 @@ Rules:
 3. `cmd` is the canonical command name, not raw argv text.
 4. `request_id` is echoed back if supplied, otherwise generated.
 5. `meta.op_id` is required for successful writes and omitted for pure reads.
+6. Successful envelopes keep `error: null` so agents can rely on a stable field shape.
 
 ## 7. Error Object
 
@@ -561,6 +562,7 @@ Requirements:
 
 1. no `op_id`
 2. no write side effects
+3. no command-event audit write
 
 ### 15.2 Writes
 

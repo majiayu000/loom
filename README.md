@@ -108,7 +108,7 @@ Prefer a guided walkthrough? Run `./scripts/demo.sh` for a scripted end-to-end t
 - **🛠️ Ops with audit** — `ops list / retry / purge` and `ops history diagnose / repair`
 - **🛡️ Hard write guard** — refuses to write when `--root` points at the Loom tool repo itself
 - **🖥️ CLI + Panel** — script anything from the CLI; diff and inspect from the React Panel
-- **📤 JSON envelope** — every command speaks `--json` for machine consumption
+- **📤 JSON envelope** — every command speaks compact `--json` for machine consumption (`--pretty` is available for human debugging)
 
 ## How It Works
 
@@ -163,6 +163,8 @@ Four core concepts:
 ## Notes
 
 - Multi-directory behavior is explicit via `target add`; no implicit directory inference.
+- Agent automation should use explicit `--root`, `--json`, selectors such as `binding_id` / `target_id`, and branch on `ok` + `error.code`.
+- Read commands such as `workspace status`, `workspace doctor`, `target list`, and `sync status` do not write command audit events; write commands do.
 - Registry metadata lives under `state/registry`; Loom does not use release-style labels for internal state names.
 - State-changing registry commands commit `state/registry` to Git, and `sync push` has a safety commit before pushing.
 - Hard write guard: if `--root` points to the Loom tool repo itself, write operations are rejected. Use an independent skill registry repo for mutable operations.
@@ -217,7 +219,7 @@ loom ops history repair --strategy <local|remote>
 loom panel [--port 43117]
 ```
 
-Most commands support `--json` for machine-readable output. Commands default to `~/.loom-registry`; use `--root <dir>` to override that registry.
+Most commands support compact `--json` for machine-readable output; add `--pretty` when you want formatted JSON for inspection. Commands default to `~/.loom-registry`; use `--root <dir>` to override that registry.
 
 </details>
 

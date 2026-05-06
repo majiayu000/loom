@@ -136,7 +136,7 @@ pub fn has_staged_changes_for_path(ctx: &AppContext, path: &Path) -> Result<bool
 
 /// Captured registry index used to restore staging after a failed mutation.
 ///
-/// Backs up the underlying `.git/index` file as a whole, so every per-entry
+/// Backs up the underlying active Git index file as a whole, so every per-entry
 /// flag (`skip-worktree`, `assume-unchanged`, intent-to-add, fsmonitor cache)
 /// survives the rollback. The previous `git write-tree`/`read-tree` design
 /// dropped these flags because tree objects only encode `path → blob`.
@@ -150,6 +150,7 @@ pub struct IndexSnapshot {
 impl IndexSnapshot {
     /// Path of the on-disk backup. Exposed for diagnostics; callers should
     /// prefer [`restore_index`] for the actual rollback.
+    #[allow(dead_code)]
     pub fn backup_path(&self) -> &Path {
         &self.backup_path
     }
@@ -162,8 +163,11 @@ impl Drop for IndexSnapshot {
 }
 
 pub fn snapshot_index(ctx: &AppContext) -> Result<IndexSnapshot> {
-    let git_dir = resolve_git_dir(ctx)?;
-    let index_path = git_dir.join("index");
+    snapshot_index_with_env(ctx, &[])
+}
+
+fn snapshot_index_with_env(ctx: &AppContext, envs: &[(&str, &str)]) -> Result<IndexSnapshot> {
+    let index_path = resolve_git_index_path(ctx, envs)?;
     if !index_path.exists() {
         return Err(anyhow!(
             "git index missing at {}; cannot snapshot",
@@ -185,14 +189,20 @@ pub fn snapshot_index(ctx: &AppContext) -> Result<IndexSnapshot> {
 }
 
 pub fn restore_index(ctx: &AppContext, snapshot: &IndexSnapshot) -> Result<()> {
-    let git_dir = resolve_git_dir(ctx)?;
-    let index_path = git_dir.join("index");
+    restore_index_with_env(ctx, snapshot, &[])
+}
+
+fn restore_index_with_env(
+    ctx: &AppContext,
+    snapshot: &IndexSnapshot,
+    envs: &[(&str, &str)],
+) -> Result<()> {
+    let index_path = resolve_git_index_path(ctx, envs)?;
     let parent = index_path
         .parent()
         .ok_or_else(|| anyhow!("git index path has no parent: {}", index_path.display()))?;
-    // Stage the restore inside `.git/` so the final rename is intra-directory
-    // (atomic on POSIX). The `.loom-` prefix keeps the temp file out of any
-    // tooling that scans `.git/` for tracked artifacts.
+    // Stage the restore next to the active index so the final rename is
+    // intra-directory (atomic on POSIX).
     let staging = parent.join(format!(".loom-index-restore-{}", uuid::Uuid::new_v4()));
     fs::copy(&snapshot.backup_path, &staging).with_context(|| {
         format!(
@@ -206,8 +216,8 @@ pub fn restore_index(ctx: &AppContext, snapshot: &IndexSnapshot) -> Result<()> {
     Ok(())
 }
 
-fn resolve_git_dir(ctx: &AppContext) -> Result<PathBuf> {
-    let raw = run_git(ctx, &["rev-parse", "--git-dir"])?;
+fn resolve_git_index_path(ctx: &AppContext, envs: &[(&str, &str)]) -> Result<PathBuf> {
+    let raw = run_git_in_with_env(&ctx.root, envs, &["rev-parse", "--git-path", "index"])?;
     let candidate = PathBuf::from(&raw);
     if candidate.is_absolute() {
         Ok(candidate)
@@ -458,6 +468,8 @@ mod tests {
             ["init", "-q", "-b", "main"].as_slice(),
             ["config", "user.email", "test@example.com"].as_slice(),
             ["config", "user.name", "test"].as_slice(),
+            ["config", "commit.gpgsign", "false"].as_slice(),
+            ["config", "tag.gpgSign", "false"].as_slice(),
         ] {
             let out = Command::new("git")
                 .arg("-C")
@@ -499,9 +511,14 @@ mod tests {
     }
 
     fn git_ok(dir: &Path, args: &[&str]) -> String {
+        git_ok_with_env(dir, args, &[])
+    }
+
+    fn git_ok_with_env(dir: &Path, args: &[&str], envs: &[(&str, &str)]) -> String {
         let out = Command::new("git")
             .arg("-C")
             .arg(dir)
+            .envs(envs.iter().copied())
             .args(args)
             .output()
             .expect("run git");
@@ -548,6 +565,49 @@ mod tests {
         assert!(
             restored.lines().any(|l| l == " A ita.txt"),
             "intent-to-add must survive snapshot/restore round trip, got:\n{restored}"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn snapshot_round_trip_respects_alternate_git_index() {
+        let (ctx, dir) = fresh_repo("alternate-index");
+        let default_index = dir.join(".git").join("index");
+        let alternate_index = dir.join("alternate-index");
+        fs::copy(&default_index, &alternate_index).expect("seed alternate index");
+        let alternate_index = alternate_index.to_string_lossy().to_string();
+        let envs = [("GIT_INDEX_FILE", alternate_index.as_str())];
+
+        let default_before = fs::read(&default_index).expect("read default index");
+        fs::write(dir.join("alt.txt"), "stand-in").expect("write alternate ita");
+        git_ok_with_env(&dir, &["add", "-N", "--", "alt.txt"], &envs);
+        let before = git_ok_with_env(&dir, &["status", "--porcelain"], &envs);
+        assert!(
+            before.lines().any(|l| l == " A alt.txt"),
+            "expected IT-A marker in alternate index pre-snapshot, got:\n{before}"
+        );
+
+        let snapshot = snapshot_index_with_env(&ctx, &envs).expect("snapshot alternate index");
+
+        git_ok_with_env(&dir, &["update-index", "--force-remove", "alt.txt"], &envs);
+        let cleared = git_ok_with_env(&dir, &["status", "--porcelain"], &envs);
+        assert!(
+            cleared.lines().any(|l| l == "?? alt.txt"),
+            "force-remove must clear alternate index entry, got:\n{cleared}"
+        );
+
+        restore_index_with_env(&ctx, &snapshot, &envs).expect("restore alternate index");
+
+        let restored = git_ok_with_env(&dir, &["status", "--porcelain"], &envs);
+        assert!(
+            restored.lines().any(|l| l == " A alt.txt"),
+            "alternate index IT-A marker must survive snapshot/restore, got:\n{restored}"
+        );
+        let default_after = fs::read(&default_index).expect("read default index after restore");
+        assert_eq!(
+            default_after, default_before,
+            "snapshot/restore with GIT_INDEX_FILE must not overwrite the default index"
         );
 
         let _ = fs::remove_dir_all(&dir);
@@ -622,7 +682,11 @@ mod tests {
         let backup_path = {
             let snapshot = snapshot_index(&ctx).expect("snapshot");
             let path = snapshot.backup_path().to_path_buf();
-            assert!(path.exists(), "backup must exist before drop: {}", path.display());
+            assert!(
+                path.exists(),
+                "backup must exist before drop: {}",
+                path.display()
+            );
             path
             // snapshot drops here
         };

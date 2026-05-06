@@ -368,6 +368,7 @@ impl App {
         let original_rules = snapshot.rules.clone();
         let original_projections = snapshot.projections.clone();
         let previous_head = gitops::head(&self.ctx).map_err(map_git)?;
+        let previous_index = gitops::snapshot_index(&self.ctx).map_err(map_git)?;
         let mut source_backup = None;
         let mut source_replaced = false;
         if projection.method != "symlink" {
@@ -391,11 +392,11 @@ impl App {
             if let Err(err) = remove_path_if_exists(&skill_path) {
                 rollback_capture_mutation(
                     &self.ctx,
-                    &skill_rel,
                     &skill_path,
                     source_backup.as_ref(),
                     true,
                     &previous_head,
+                    &previous_index,
                     false,
                 );
                 rollback_registry_state(
@@ -410,11 +411,11 @@ impl App {
             if let Err(err) = fs::rename(&tmp_path, &skill_path) {
                 rollback_capture_mutation(
                     &self.ctx,
-                    &skill_rel,
                     &skill_path,
                     source_backup.as_ref(),
                     true,
                     &previous_head,
+                    &previous_index,
                     false,
                 );
                 rollback_registry_state(
@@ -485,11 +486,11 @@ impl App {
             Err(err) => {
                 rollback_capture_mutation(
                     &self.ctx,
-                    &skill_rel,
                     &skill_path,
                     source_backup.as_ref(),
                     source_replaced,
                     &previous_head,
+                    &previous_index,
                     commit_created,
                 );
                 rollback_registry_state(
@@ -538,11 +539,11 @@ impl App {
             Err(err) => {
                 rollback_capture_mutation(
                     &self.ctx,
-                    &skill_rel,
                     &skill_path,
                     source_backup.as_ref(),
                     source_replaced,
                     &previous_head,
+                    &previous_index,
                     commit_created || state_commit_created,
                 );
                 rollback_registry_state(
@@ -1353,11 +1354,11 @@ fn rollback_project_mutation(
 
 fn rollback_capture_mutation(
     ctx: &crate::state::AppContext,
-    skill_rel: &str,
     skill_path: &Path,
     source_backup: Option<&serde_json::Value>,
     source_replaced: bool,
     previous_head: &str,
+    previous_index: &gitops::IndexSnapshot,
     commit_created: bool,
 ) {
     if commit_created {
@@ -1373,7 +1374,7 @@ fn rollback_capture_mutation(
         }
     }
 
-    let _ = gitops::run_git_allow_failure(ctx, &["reset", "HEAD", "--", skill_rel]);
+    let _ = gitops::restore_index(ctx, previous_index);
 }
 
 fn rollback_registry_state(

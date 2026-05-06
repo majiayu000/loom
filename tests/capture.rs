@@ -1,5 +1,6 @@
 use std::fs;
 use std::path::Path;
+use std::process::Command;
 
 use serde_json::Value;
 
@@ -15,6 +16,23 @@ fn read_operations_log(root: &std::path::Path) -> String {
 
 fn read_checkpoint(root: &std::path::Path) -> String {
     fs::read_to_string(root.join("state/registry/ops/checkpoint.json")).expect("read checkpoint")
+}
+
+fn git_ok(root: &Path, args: &[&str]) -> String {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(args)
+        .output()
+        .expect("run git");
+    assert!(
+        output.status.success(),
+        "git failed: status={:?} stderr={} stdout={}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stderr),
+        String::from_utf8_lossy(&output.stdout)
+    );
+    String::from_utf8(output.stdout).expect("git stdout utf8")
 }
 
 #[test]
@@ -199,6 +217,108 @@ fn skill_capture_rolls_back_source_after_post_replace_failure() {
     assert!(
         live_body.contains("captured from live copy"),
         "live projection edit should be preserved for retry"
+    );
+}
+
+#[test]
+fn skill_capture_rollback_preserves_preexisting_staged_source_changes() {
+    let root = TestDir::new("v3-capture-rollback-staged");
+    write_skill(
+        root.path(),
+        "model-onboarding",
+        "# model-onboarding\n\nsource v1\n",
+    );
+
+    let (save_output, _) = save_skill(root.path(), "model-onboarding");
+    assert!(save_output.status.success(), "save should succeed");
+
+    let target_path = root.path().join("live/claude-project-a");
+    assert!(
+        target_add(root.path(), "claude", &target_path, "managed")
+            .0
+            .status
+            .success()
+    );
+    assert!(
+        binding_add(
+            root.path(),
+            "claude",
+            "default",
+            "path-prefix",
+            "/tmp/project-a",
+            "target_claude_claude_project_a",
+        )
+        .0
+        .status
+        .success()
+    );
+    assert!(
+        skill_project(
+            root.path(),
+            "model-onboarding",
+            "bind_claude_project_a",
+            Some("copy"),
+        )
+        .0
+        .status
+        .success()
+    );
+
+    let source_file = root.path().join("skills/model-onboarding/SKILL.md");
+    fs::write(
+        &source_file,
+        "# model-onboarding\n\npre-staged local edit\n",
+    )
+    .expect("edit source skill");
+    git_ok(
+        root.path(),
+        &["add", "--", "skills/model-onboarding/SKILL.md"],
+    );
+    let staged_before = git_ok(
+        root.path(),
+        &["diff", "--cached", "--", "skills/model-onboarding/SKILL.md"],
+    );
+    assert!(staged_before.contains("pre-staged local edit"));
+
+    let live_file = target_path.join("model-onboarding").join("SKILL.md");
+    fs::write(
+        &live_file,
+        "# model-onboarding\n\ncaptured from live copy\n",
+    )
+    .expect("edit live projection");
+
+    let (capture_output, capture_env) = run_loom_with_env(
+        root.path(),
+        &[("LOOM_FAULT_INJECT", "skill_capture_after_source_replace")],
+        &[
+            "skill",
+            "capture",
+            "model-onboarding",
+            "--binding",
+            "bind_claude_project_a",
+        ],
+    );
+
+    assert!(
+        !capture_output.status.success(),
+        "capture unexpectedly succeeded"
+    );
+    assert_eq!(capture_env["ok"], Value::Bool(false));
+
+    let source_body = fs::read_to_string(&source_file).expect("read source skill");
+    assert!(source_body.contains("pre-staged local edit"));
+    let staged_after = git_ok(
+        root.path(),
+        &["diff", "--cached", "--", "skills/model-onboarding/SKILL.md"],
+    );
+    assert_eq!(staged_after, staged_before);
+    let unstaged_after = git_ok(
+        root.path(),
+        &["diff", "--", "skills/model-onboarding/SKILL.md"],
+    );
+    assert!(
+        unstaged_after.is_empty(),
+        "rollback should not add extra unstaged source changes: {unstaged_after}"
     );
 }
 

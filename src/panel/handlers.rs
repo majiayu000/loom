@@ -19,7 +19,8 @@ use crate::state_model::RegistryStatePaths;
 
 use super::auth::{
     ensure_mutation_authorized, error_envelope, load_registry_snapshot, registry_error,
-    registry_ok, run_panel_command, status_for_error_code, status_for_registry_error_payload,
+    registry_ok, registry_ok_with_warnings, run_panel_command, status_for_error_code,
+    status_for_registry_error_payload,
 };
 use super::{
     BindingAddRequest, CaptureRequest, HistoryRepairRequest, PanelState, ProjectRequest,
@@ -59,14 +60,19 @@ pub(super) async fn health() -> Json<serde_json::Value> {
 
 pub(super) async fn info(State(state): State<PanelState>) -> Json<serde_json::Value> {
     let target_dirs = resolve_agent_skill_dirs(&state.ctx.root);
-    let remote_url = crate::gitops::remote_url(&state.ctx)
-        .ok()
-        .flatten()
-        .unwrap_or_default();
-    let remote_url = redact_sensitive_string(&remote_url);
     let registry_paths = RegistryStatePaths::from_app_context(&state.ctx);
 
-    registry_ok(
+    let mut warnings: Vec<String> = Vec::new();
+    let remote_url = match crate::gitops::remote_url(&state.ctx) {
+        Ok(Some(url)) => redact_sensitive_string(&url),
+        Ok(None) => String::new(),
+        Err(err) => {
+            warnings.push(format!("failed to read git remote url: {err}"));
+            String::new()
+        }
+    };
+
+    registry_ok_with_warnings(
         "panel.info",
         json!({
             "root": state.ctx.root.display().to_string(),
@@ -76,6 +82,7 @@ pub(super) async fn info(State(state): State<PanelState>) -> Json<serde_json::Va
             "codex_dir": target_dirs.codex.display().to_string(),
             "remote_url": remote_url,
         }),
+        warnings,
     )
 }
 

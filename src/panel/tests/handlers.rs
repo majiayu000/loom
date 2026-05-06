@@ -244,6 +244,12 @@ async fn info_and_remote_status_redact_remote_credentials() {
     assert!(!info_url.contains("user:pass"));
     assert!(!info_url.contains("ghp_secret"));
     assert!(info_url.contains("<redacted>"));
+    assert_eq!(
+        info_payload["meta"]["warnings"]
+            .as_array()
+            .expect("warnings array"),
+        &Vec::<serde_json::Value>::new()
+    );
 
     let (status, Json(remote_payload)) = remote_status(State(state)).await;
     assert_eq!(status, StatusCode::OK);
@@ -255,6 +261,28 @@ async fn info_and_remote_status_redact_remote_credentials() {
     assert!(status_url.contains("<redacted>"));
 
     cleanup_root(root);
+}
+
+#[tokio::test]
+async fn info_surfaces_warning_when_git_remote_lookup_fails() {
+    let (root, state) = make_test_state();
+    // Remove the worktree out from under the panel to make `git remote get-url`
+    // fail at spawn time (current_dir does not exist).
+    fs::remove_dir_all(&root).expect("remove root");
+
+    let Json(payload) = info(State(state)).await;
+
+    assert_eq!(payload["ok"], json!(true));
+    assert_eq!(payload["data"]["remote_url"], json!(""));
+    let warnings = payload["meta"]["warnings"]
+        .as_array()
+        .expect("warnings array");
+    assert_eq!(warnings.len(), 1);
+    let message = warnings[0].as_str().expect("warning string");
+    assert!(
+        message.starts_with("failed to read git remote url"),
+        "unexpected warning: {message}"
+    );
 }
 
 #[tokio::test]

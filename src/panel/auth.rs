@@ -181,6 +181,14 @@ pub(super) fn load_registry_snapshot(
 }
 
 pub(super) fn registry_ok(cmd: &str, data: serde_json::Value) -> Json<serde_json::Value> {
+    registry_ok_with_warnings(cmd, data, Vec::new())
+}
+
+pub(super) fn registry_ok_with_warnings(
+    cmd: &str,
+    data: serde_json::Value,
+    warnings: Vec<String>,
+) -> Json<serde_json::Value> {
     Json(json!({
         "ok": true,
         "cmd": cmd,
@@ -188,7 +196,7 @@ pub(super) fn registry_ok(cmd: &str, data: serde_json::Value) -> Json<serde_json
         "version": env!("CARGO_PKG_VERSION"),
         "data": data,
         "meta": {
-            "warnings": []
+            "warnings": warnings,
         }
     }))
 }

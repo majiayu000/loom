@@ -21,6 +21,27 @@ fn make_state(root: &std::path::Path) -> PanelState {
     }
 }
 
+fn git_ok(root: &std::path::Path, args: &[&str]) -> std::process::Output {
+    let output = std::process::Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .arg("-c")
+        .arg("commit.gpgsign=false")
+        .arg("-c")
+        .arg("tag.gpgSign=false")
+        .args(args)
+        .output()
+        .expect("git");
+    assert!(
+        output.status.success(),
+        "git {:?} failed: stdout={} stderr={}",
+        args,
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    output
+}
+
 #[test]
 fn is_valid_skill_name_accepts_dotted_names() {
     assert!(
@@ -144,14 +165,7 @@ async fn registry_skill_diff_returns_error_for_nonexistent_skill() {
     let root = std::env::temp_dir().join(format!("loom-diff-nopath-{}", Uuid::new_v4()));
     fs::create_dir_all(root.join("skills/other")).unwrap();
 
-    let git = |args: &[&str]| {
-        std::process::Command::new("git")
-            .arg("-C")
-            .arg(&root)
-            .args(args)
-            .output()
-            .expect("git")
-    };
+    let git = |args: &[&str]| git_ok(&root, args);
 
     git(&["init"]);
     git(&["config", "user.email", "test@example.com"]);
@@ -217,14 +231,7 @@ async fn registry_skill_diff_returns_diff_for_two_commits() {
     let root = std::env::temp_dir().join(format!("loom-diff-integ-{}", Uuid::new_v4()));
     fs::create_dir_all(root.join("skills/foo")).unwrap();
 
-    let git = |args: &[&str]| {
-        std::process::Command::new("git")
-            .arg("-C")
-            .arg(&root)
-            .args(args)
-            .output()
-            .expect("git")
-    };
+    let git = |args: &[&str]| git_ok(&root, args);
 
     git(&["init"]);
     git(&["config", "user.email", "test@example.com"]);

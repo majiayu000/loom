@@ -116,7 +116,7 @@ Required checks:
 4. Any target-scoped command requires `target_id` or an equivalent explicit selector.
 5. Every write response can return `op_id`.
 6. Every projection or capture response can return `binding_id`, `target_id`, and `instance_id`.
-7. Read commands are side-effect free by design.
+7. Read commands are side-effect free by design and do not append command audit events.
 
 Pass condition:
 

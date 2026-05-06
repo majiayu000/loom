@@ -76,6 +76,66 @@ fn top_level_init_uses_default_registry_root_and_scans_existing_dirs() {
 }
 
 #[test]
+fn json_output_defaults_to_compact_envelope() {
+    let root = TestDir::new("cli-compact-json");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_loom"))
+        .arg("--json")
+        .arg("--root")
+        .arg(root.path())
+        .args(["workspace", "status"])
+        .output()
+        .expect("run loom status");
+
+    assert!(
+        output.status.success(),
+        "status unexpectedly failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(
+        stdout.lines().count(),
+        1,
+        "--json should be compact by default: {stdout}"
+    );
+    assert!(
+        stdout.contains("\"error\":null"),
+        "successful envelopes must keep a stable error:null field: {stdout}"
+    );
+    serde_json::from_slice::<serde_json::Value>(&output.stdout).expect("parse compact json");
+}
+
+#[test]
+fn pretty_json_output_is_opt_in() {
+    let root = TestDir::new("cli-pretty-json");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_loom"))
+        .arg("--json")
+        .arg("--pretty")
+        .arg("--root")
+        .arg(root.path())
+        .args(["workspace", "status"])
+        .output()
+        .expect("run loom status");
+
+    assert!(
+        output.status.success(),
+        "status unexpectedly failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.lines().count() > 1,
+        "--json --pretty should keep human-readable formatting: {stdout}"
+    );
+    serde_json::from_slice::<serde_json::Value>(&output.stdout).expect("parse pretty json");
+}
+
+#[test]
 fn migrate_subcommand_is_removed() {
     let root = TestDir::new("cli-no-migrate");
 

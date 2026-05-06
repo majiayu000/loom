@@ -71,6 +71,7 @@ pub(crate) fn run_panel_command(
     let request_id = Uuid::new_v4().to_string();
     let cli = Cli {
         json: true,
+        pretty: false,
         request_id: Some(request_id.clone()),
         root: Some(state.ctx.root.clone()),
         command,

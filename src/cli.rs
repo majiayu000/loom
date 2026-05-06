@@ -11,6 +11,10 @@ pub struct Cli {
     #[arg(long, global = true)]
     pub json: bool,
 
+    /// Pretty-print the JSON envelope. Ignored unless --json is set.
+    #[arg(long, global = true)]
+    pub pretty: bool,
+
     /// Correlate this command with an external automation request.
     #[arg(long, global = true)]
     pub request_id: Option<String>,

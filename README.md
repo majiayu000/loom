@@ -30,24 +30,55 @@ AI coding agents (Claude Code, Codex, Cursor, Windsurf, …) all read skills fro
 - **Manual**: `cp -R` or `ln -s` between `~/.claude/skills`, `~/.codex/skills`, repo-local `.claude/skills`, … — easy to drift, hard to roll back, impossible to audit.
 - **One-way sync apps**: install skills from a central store, but no binding logic, no per-project matching, no version history, no replay when things go wrong.
 
-**Loom treats skills like infrastructure**: a versioned registry (add → capture → save → snapshot → release → rollback → diff), projected onto one or many agent directories through explicit bindings (agent + profile + matcher + policy), with git-backed sync, replay, and audit trail. CLI-first for automation, Panel-assisted for visibility.
+**Loom treats skills like infrastructure**: a Git-backed registry (add → capture → save → snapshot → release → rollback → diff), projected onto one or many agent directories through explicit bindings (agent + profile + matcher + policy), with sync, replay, and audit trail. CLI-first for automation, Panel-assisted for visibility.
 
 ## Quick Start
 
 ```bash
-# 1. Install from source
+# 1. Install
+cargo install skillloom
+
+# or install from the Homebrew tap after its formula PR is merged
+brew install majiayu000/tap/loom
+
+# or install from source
 git clone https://github.com/majiayu000/loom.git
 cd loom && cargo install --path .
 
-# 2. Set up a registry directory (must be separate from the Loom tool repo)
-mkdir -p ~/.loom-registry && cd ~/.loom-registry && git init
+# 2. Initialize the default registry and auto-register existing agent skill dirs
+loom init
 
-# 3. Register your Claude Code skills directory as a target
-loom --root ~/.loom-registry target add \
-  --agent claude --path "$HOME/.claude/skills" --ownership observed
+# 3. Import/update observed skills once, or keep watching in the foreground
+loom monitor --once
+loom monitor --interval-seconds 30
+```
 
-# 4. Open the visual control panel
-loom --root ~/.loom-registry panel        # → http://localhost:43117
+Loom defaults to `~/.loom-registry`. Pass `--root <dir>` only when you want a different registry.
+
+For managed projection flows:
+
+```bash
+# Import a skill into the registry
+loom skill add "$HOME/.claude/skills/my-skill" --name my-skill
+
+# Register a managed Claude Code target
+mkdir -p "$HOME/.loom-targets/claude/skills"
+TARGET_ID="$(
+  loom --json target add \
+    --agent claude --path "$HOME/.loom-targets/claude/skills" --ownership managed \
+    | jq -r '.data.target.target_id'
+)"
+
+# Bind this project/workspace to that target
+loom workspace binding add \
+  --agent claude --profile home \
+  --matcher-kind path-prefix --matcher-value "$PWD" \
+  --target "$TARGET_ID"
+
+# Project the skill, then open the control panel
+BINDING_ID="$(loom --json workspace binding list | jq -r '.data.bindings[0].binding_id')"
+loom skill project my-skill --binding "$BINDING_ID" --method symlink
+loom panel        # -> http://localhost:43117
 ```
 
 `loom panel` now serves a frontend bundled into the Rust binary at build time, so it works even when `--root` points at a separate registry directory. If panel assets are unavailable in your build, reinstall from a checkout with `bun` available so Loom can package the frontend during compile.
@@ -72,12 +103,12 @@ Prefer a guided walkthrough? Run `./scripts/demo.sh` for a scripted end-to-end t
 - **🎚️ Ownership tiers** — `managed` (Loom writes) / `observed` (read-only) / `external` (hands-off)
 - **🔗 Binding matchers** — route a skill to a target by `path-prefix`, `exact-path`, or `name`
 - **📦 Profiles** — multiple config sets per agent (e.g. work/home Claude profiles)
-- **🧬 Versioned lifecycle** — `add → capture → save → snapshot → release → rollback → diff`
+- **🧬 Git-backed lifecycle** — `add → capture → save → snapshot → release → rollback → diff`
 - **🔁 Git-backed sync** — `sync push / pull / replay` between a team's registries
 - **🛠️ Ops with audit** — `ops list / retry / purge` and `ops history diagnose / repair`
 - **🛡️ Hard write guard** — refuses to write when `--root` points at the Loom tool repo itself
 - **🖥️ CLI + Panel** — script anything from the CLI; diff and inspect from the React Panel
-- **📤 JSON envelope** — every command speaks `--json` for machine consumption
+- **📤 JSON envelope** — every command speaks compact `--json` for machine consumption (`--pretty` is available for human debugging)
 
 ## How It Works
 
@@ -87,12 +118,12 @@ Prefer a guided walkthrough? Run `./scripts/demo.sh` for a scripted end-to-end t
 │  (your Git repo)  │         │                    │
 │                   │         │  ~/.claude/skills  │
 │   skills/*        │         │  ~/.codex/skills   │
-│   versions/*      │ ──────▶ │  /repo/.claude/... │
-│   bindings.json   │         │  …                 │
+│   state/registry  │ ──────▶ │  /repo/.claude/... │
+│   Git history     │         │  …                 │
 └─────────▲─────────┘         └──────────▲─────────┘
           │                              │
           │   capture / save / snapshot  │ projection
-          │   (versioned lifecycle)      │ (symlink / copy / materialize)
+          │   (Git-backed lifecycle)     │ (symlink / copy / materialize)
           │                              │
 ┌─────────┴────────┐         ┌──────────┴──────────┐
 │   `loom` CLI     │◀───────▶│   Loom Panel (Web)  │
@@ -105,7 +136,7 @@ Four core concepts:
 | Concept | What it is | Example |
 |---------|-----------|---------|
 | **Target** | An agent skills directory Loom knows about | `~/.claude/skills` (agent = `claude`, ownership = `observed`) |
-| **Skill** | A versioned unit in the registry | `my-team-skill` with a chain of captures/releases |
+| **Skill** | A tracked unit in the registry | `my-team-skill` with a chain of captures/releases |
 | **Binding** | The rule mapping a skill to a target | agent=`claude`, profile=`work`, matcher `path-prefix:/Users/me/work` |
 | **Projection** | The act of realizing a skill into a target | `loom skill project my-skill --binding <id> --method symlink` |
 
@@ -127,11 +158,15 @@ Four core concepts:
 | Breadth of agents supported | 44 | 5 | 18 | 10 (Claude, Codex, Cursor, Windsurf, Cline, Copilot, Aider, OpenCode, Gemini CLI, Goose) |
 | Desktop app (dmg/msi) | ✅ | ✅ | ❌ | — |
 
-**Pick Loom when** you want fine-grained control (multi-project routing, versioned lifecycle, git-tracked audit trail) and are comfortable on the CLI. **Pick skills-hub or cc-switch** when you want a one-click GUI with broad agent coverage and don't need projection/binding semantics.
+**Pick Loom when** you want fine-grained control (multi-project routing, Git-backed lifecycle, git-tracked audit trail) and are comfortable on the CLI. **Pick skills-hub or cc-switch** when you want a one-click GUI with broad agent coverage and don't need projection/binding semantics.
 
 ## Notes
 
 - Multi-directory behavior is explicit via `target add`; no implicit directory inference.
+- Agent automation should use explicit `--root`, `--json`, selectors such as `binding_id` / `target_id`, and branch on `ok` + `error.code`.
+- Read commands such as `workspace status`, `workspace doctor`, `target list`, and `sync status` do not write command audit events; write commands do.
+- Registry metadata lives under `state/registry`; Loom does not use release-style labels for internal state names.
+- State-changing registry commands commit `state/registry` to Git, and `sync push` has a safety commit before pushing.
 - Hard write guard: if `--root` points to the Loom tool repo itself, write operations are rejected. Use an independent skill registry repo for mutable operations.
 - English is the primary documentation language. [中文完整指南](docs/LOOM_COMPLETE_GUIDE_ZH.md).
 
@@ -141,8 +176,12 @@ Four core concepts:
 <summary><strong>Full CLI reference</strong> (click to expand)</summary>
 
 ```bash
+loom init
+loom monitor [--target <target-id>] [--once] [--interval-seconds <seconds>]
+
 loom workspace status
 loom workspace doctor
+loom workspace init [--scan-existing]
 loom workspace binding add --agent <claude|codex> --profile <id> --matcher-kind <path-prefix|exact-path|name> --matcher-value <value> --target <target-id> [--policy-profile <id>]
 loom workspace binding list
 loom workspace binding show <binding-id>
@@ -163,6 +202,8 @@ loom skill snapshot <skill>
 loom skill release <skill> <version>
 loom skill rollback <skill> [--to <ref> | --steps <n>]
 loom skill diff <skill> <from> <to>
+loom skill import-observed [--target <target-id>]
+loom skill monitor-observed [--target <target-id>] [--once] [--interval-seconds <seconds>]
 
 loom sync status
 loom sync push
@@ -178,7 +219,7 @@ loom ops history repair --strategy <local|remote>
 loom panel [--port 43117]
 ```
 
-Most commands support `--json` for machine-readable output.
+Most commands support compact `--json` for machine-readable output; add `--pretty` when you want formatted JSON for inspection. Commands default to `~/.loom-registry`; use `--root <dir>` to override that registry.
 
 </details>
 
@@ -189,6 +230,17 @@ loom target add --agent claude --path "$HOME/.claude/skills" --ownership observe
 loom target add --agent claude --path "$HOME/.claude-work/skills" --ownership observed
 loom target list
 ```
+
+### Observed Skill Monitoring
+
+Use this when the real source of truth is still an agent skill directory such as `~/.claude/skills` or `~/.codex/skills`.
+
+```bash
+loom monitor --once
+loom monitor --interval-seconds 30
+```
+
+`loom monitor` is a short alias for `loom skill monitor-observed`. It imports new observed skills and updates existing registry copies when file content changes. It does not delete registry skills when an observed directory disappears; deletion stays an explicit cleanup action.
 
 ## Agent E2E (Recommended)
 

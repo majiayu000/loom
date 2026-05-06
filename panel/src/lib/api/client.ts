@@ -3,14 +3,14 @@ import type {
   InfoPayload,
   PendingPayload,
   RemotePayload,
-  V3Payload,
+  RegistryPayload,
 } from "../../types";
-import type { V3Binding } from "../../generated/V3Binding";
-import type { V3Projection } from "../../generated/V3Projection";
-import type { V3Rule } from "../../generated/V3Rule";
-import type { V3Target } from "../../generated/V3Target";
+import type { RegistryBinding } from "../../generated/RegistryBinding";
+import type { RegistryProjection } from "../../generated/RegistryProjection";
+import type { RegistryRule } from "../../generated/RegistryRule";
+import type { RegistryTarget } from "../../generated/RegistryTarget";
 
-export interface V3OperationRecord {
+export interface RegistryOperationRecord {
   op_id: string;
   intent: string;
   status: string;
@@ -31,7 +31,7 @@ export interface OpsPayload {
     offset: number;
     limit: number;
     has_more: boolean;
-    operations: V3OperationRecord[];
+    operations: RegistryOperationRecord[];
     checkpoint?: { last_scanned_op_id?: string; last_acked_op_id?: string; updated_at?: string };
   };
   error?: { code?: string; message?: string };
@@ -69,10 +69,10 @@ export interface BindingShowPayload {
   ok: boolean;
   data?: {
     state_model?: string;
-    binding: V3Binding;
-    default_target?: V3Target | null;
-    rules?: V3Rule[];
-    projections?: V3Projection[];
+    binding: RegistryBinding;
+    default_target?: RegistryTarget | null;
+    rules?: RegistryRule[];
+    projections?: RegistryProjection[];
   };
   error?: { code?: string; message?: string };
 }
@@ -81,10 +81,10 @@ export interface TargetShowPayload {
   ok: boolean;
   data?: {
     state_model?: string;
-    target: V3Target;
-    bindings?: V3Binding[];
-    rules?: V3Rule[];
-    projections?: V3Projection[];
+    target: RegistryTarget;
+    bindings?: RegistryBinding[];
+    rules?: RegistryRule[];
+    projections?: RegistryProjection[];
   };
   error?: { code?: string; message?: string };
 }
@@ -116,6 +116,21 @@ export class ApiError extends Error {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function unwrapReadData<T>(path: string, body: unknown): T {
+  if (
+    isRecord(body) &&
+    body.ok === true &&
+    typeof body.cmd === "string" &&
+    typeof body.request_id === "string"
+  ) {
+    if (!("data" in body)) {
+      throw new ApiError(path, 200, `GET ${path} envelope is missing data`);
+    }
+    return body.data as T;
+  }
+  return body as T;
 }
 
 function parseRemoteStatusResponse(path: string, body: unknown): RemoteStatusResponse {
@@ -176,6 +191,10 @@ async function getJson<T>(path: string, signal?: AbortSignal): Promise<T> {
   }
 
   return body as T;
+}
+
+async function getJsonData<T>(path: string, signal?: AbortSignal): Promise<T> {
+  return unwrapReadData<T>(path, await getJson<unknown>(path, signal));
 }
 
 async function postJson(path: string, body: unknown): Promise<CommandEnvelope> {
@@ -239,6 +258,11 @@ export interface ProjectBody {
   method?: "symlink" | "copy" | "materialize";
 }
 
+export interface SkillAddBody {
+  source: string;
+  name: string;
+}
+
 export interface CaptureBody {
   skill?: string;
   binding?: string;
@@ -272,7 +296,7 @@ export interface SkillDiffPayload {
   error?: { code?: string; message?: string };
 }
 
-export interface V3ObservationEvent {
+export interface RegistryObservationEvent {
   event_id: string;
   instance_id: string;
   kind: string;
@@ -287,7 +311,7 @@ export interface SkillHistoryPayload {
   data?: {
     skill: string;
     count: number;
-    events: V3ObservationEvent[];
+    events: RegistryObservationEvent[];
   };
   error?: { code?: string; message?: string };
   meta?: { warnings?: string[] };
@@ -295,36 +319,43 @@ export interface SkillHistoryPayload {
 
 export const api = {
   health: (signal?: AbortSignal) => getJson<HealthPayload>("/api/health", signal),
-  info: (signal?: AbortSignal) => getJson<InfoPayload>("/api/info", signal),
-  skills: (signal?: AbortSignal) => getJson<SkillsPayload>("/api/skills", signal),
-  v3Status: (signal?: AbortSignal) => getJson<V3Payload>("/api/v3/status", signal),
+  info: (signal?: AbortSignal) => getJsonData<InfoPayload>("/api/info", signal),
+  skills: (signal?: AbortSignal) => getJsonData<SkillsPayload>("/api/skills", signal),
+  registryStatus: (signal?: AbortSignal) => getJson<RegistryPayload>("/api/registry/status", signal),
   opsHistoryDiagnose: (signal?: AbortSignal) =>
-    getJson<OpsHistoryDiagnosePayload>("/api/v3/ops/diagnose", signal),
+    getJson<OpsHistoryDiagnosePayload>("/api/registry/ops/diagnose", signal),
   ops: (options?: { limit?: number; offset?: number }, signal?: AbortSignal) => {
     const params = new URLSearchParams();
     if (typeof options?.limit === "number") params.set("limit", String(options.limit));
     if (typeof options?.offset === "number") params.set("offset", String(options.offset));
     const qs = params.size > 0 ? `?${params.toString()}` : "";
-    return getJson<OpsPayload>(`/api/v3/ops${qs}`, signal);
+    return getJson<OpsPayload>(`/api/registry/ops${qs}`, signal);
   },
   bindingShow: (id: string, signal?: AbortSignal) =>
-    getJson<BindingShowPayload>(`/api/v3/bindings/${encodeURIComponent(id)}`, signal),
+    getJson<BindingShowPayload>(`/api/registry/bindings/${encodeURIComponent(id)}`, signal),
   targetShow: (id: string, signal?: AbortSignal) =>
-    getJson<TargetShowPayload>(`/api/v3/targets/${encodeURIComponent(id)}`, signal),
+    getJson<TargetShowPayload>(`/api/registry/targets/${encodeURIComponent(id)}`, signal),
   remoteStatus: async (signal?: AbortSignal) =>
-    parseRemoteStatusResponse("/api/remote/status", await getJson<unknown>("/api/remote/status", signal)),
-  pending: (signal?: AbortSignal) => getJson<PendingPayload>("/api/pending", signal),
+    parseRemoteStatusResponse(
+      "/api/remote/status",
+      unwrapReadData<RemoteStatusResponse>(
+        "/api/remote/status",
+        await getJson<unknown>("/api/remote/status", signal),
+      ),
+    ),
+  pending: (signal?: AbortSignal) => getJsonData<PendingPayload>("/api/pending", signal),
 
   opsRetry: () => postJson("/api/ops/retry", {}),
   opsPurge: () => postJson("/api/ops/purge", {}),
   remoteSet: (body: RemoteSetBody) => postJson("/api/remote/set", body),
 
-  targetAdd: (body: TargetAddBody) => postJson("/api/v3/targets", body),
-  targetRemove: (targetId: string) => postJson(`/api/v3/targets/${encodeURIComponent(targetId)}/remove`, {}),
-  bindingAdd: (body: BindingAddBody) => postJson("/api/v3/bindings", body),
-  bindingRemove: (bindingId: string) => postJson(`/api/v3/bindings/${encodeURIComponent(bindingId)}/remove`, {}),
-  project: (body: ProjectBody) => postJson("/api/v3/project", body),
-  capture: (body: CaptureBody) => postJson("/api/v3/capture", body),
+  targetAdd: (body: TargetAddBody) => postJson("/api/registry/targets", body),
+  targetRemove: (targetId: string) => postJson(`/api/registry/targets/${encodeURIComponent(targetId)}/remove`, {}),
+  bindingAdd: (body: BindingAddBody) => postJson("/api/registry/bindings", body),
+  bindingRemove: (bindingId: string) => postJson(`/api/registry/bindings/${encodeURIComponent(bindingId)}/remove`, {}),
+  skillAdd: (body: SkillAddBody) => postJson("/api/registry/skills", body),
+  project: (body: ProjectBody) => postJson("/api/registry/project", body),
+  capture: (body: CaptureBody) => postJson("/api/registry/capture", body),
 
   syncPush: () => postJson("/api/sync/push", {}),
   syncPull: () => postJson("/api/sync/pull", {}),
@@ -333,7 +364,7 @@ export const api = {
 
   skillHistory: (name: string, signal?: AbortSignal) =>
     getJson<SkillHistoryPayload>(
-      `/api/v3/skills/${encodeURIComponent(name)}/history`,
+      `/api/registry/skills/${encodeURIComponent(name)}/history`,
       signal,
     ),
 
@@ -343,7 +374,7 @@ export const api = {
     if (revB) params.set("rev_b", revB);
     const qs = params.size > 0 ? `?${params.toString()}` : "";
     return getJson<SkillDiffPayload>(
-      `/api/v3/skills/${encodeURIComponent(name)}/diff${qs}`,
+      `/api/registry/skills/${encodeURIComponent(name)}/diff${qs}`,
       signal,
     );
   },

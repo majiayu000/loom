@@ -195,6 +195,40 @@ pub(crate) fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<()> {
     Ok(())
 }
 
+pub(crate) fn copy_dir_recursive_preserving_symlinks(src: &Path, dst: &Path) -> Result<()> {
+    if !src.exists() {
+        return Err(anyhow!("source does not exist: {}", src.display()));
+    }
+    fs::create_dir_all(dst).with_context(|| format!("failed to create {}", dst.display()))?;
+
+    for entry in WalkDir::new(src).follow_links(false).into_iter() {
+        let entry = entry.with_context(|| format!("failed to walk {}", src.display()))?;
+        let rel = entry.path().strip_prefix(src)?;
+        if rel.as_os_str().is_empty() {
+            continue;
+        }
+
+        let target = dst.join(rel);
+        if entry.file_type().is_dir() {
+            fs::create_dir_all(&target)?;
+        } else if entry.file_type().is_symlink() {
+            if let Some(parent) = target.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            let link_target = fs::read_link(entry.path())
+                .with_context(|| format!("failed to read symlink {}", entry.path().display()))?;
+            create_symlink_like(entry.path(), &link_target, &target)?;
+        } else if entry.file_type().is_file() {
+            if let Some(parent) = target.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            fs::copy(entry.path(), &target)?;
+        }
+    }
+
+    Ok(())
+}
+
 pub(crate) fn copy_dir_recursive_without_symlinks(src: &Path, dst: &Path) -> Result<()> {
     if !src.exists() {
         return Err(anyhow!("source does not exist: {}", src.display()));
@@ -238,4 +272,58 @@ pub(super) fn create_symlink_dir(src: &Path, dst: &Path) -> Result<()> {
 pub(super) fn create_symlink_dir(src: &Path, dst: &Path) -> Result<()> {
     std::os::windows::fs::symlink_dir(src, dst).context("failed to create symlink")?;
     Ok(())
+}
+
+#[cfg(unix)]
+fn create_symlink_like(_source_link: &Path, link_target: &Path, dst: &Path) -> Result<()> {
+    std::os::unix::fs::symlink(link_target, dst).context("failed to copy symlink")?;
+    Ok(())
+}
+
+#[cfg(windows)]
+fn create_symlink_like(source_link: &Path, link_target: &Path, dst: &Path) -> Result<()> {
+    if fs::metadata(source_link)
+        .map(|metadata| metadata.is_dir())
+        .unwrap_or(false)
+    {
+        std::os::windows::fs::symlink_dir(link_target, dst)
+            .context("failed to copy dir symlink")?;
+    } else {
+        std::os::windows::fs::symlink_file(link_target, dst)
+            .context("failed to copy file symlink")?;
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::copy_dir_recursive_without_symlinks;
+    use std::fs;
+
+    #[cfg(unix)]
+    #[test]
+    fn copy_without_symlinks_rejects_nested_symlink() {
+        let base = std::env::temp_dir().join(format!(
+            "loom-copy-no-symlink-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let src = base.join("src");
+        let dst = base.join("dst");
+        fs::create_dir_all(&src).expect("src dir");
+        fs::write(src.join("SKILL.md"), "# skill\n").expect("skill file");
+        std::os::unix::fs::symlink("/tmp/secret", src.join("secret-link")).expect("symlink");
+
+        let err =
+            copy_dir_recursive_without_symlinks(&src, &dst).expect_err("symlink must be rejected");
+        assert!(
+            err.to_string().contains("unsupported symlink"),
+            "unexpected error: {err}"
+        );
+        assert!(
+            !dst.join("secret-link").exists(),
+            "symlink path must not be copied"
+        );
+
+        let _ = fs::remove_dir_all(base);
+    }
 }

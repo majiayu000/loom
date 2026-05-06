@@ -137,7 +137,7 @@ interface ProjectionRecord {
 
 /**
  * Translate the caller-supplied `ProjectionLink[]` (backed by real
- * `V3Projection` data) into the renderer's internal shape, attaching
+ * `RegistryProjection` data) into the renderer's internal shape, attaching
  * `ownership` from the target lookup. The graph never fabricates `method`
  * on its own — Codex P1 on PR #7 flagged the previous heuristic as incorrect.
  */

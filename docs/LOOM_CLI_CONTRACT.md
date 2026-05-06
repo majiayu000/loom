@@ -1,11 +1,11 @@
-# Loom v3 CLI Contract
+# Loom registry model CLI Contract
 
 Updated: 2026-04-08
 Status: Draft
 
 ## 1. Purpose
 
-This document defines the command contract for Loom v3.
+This document defines the command contract for Loom registry model.
 
 It exists to make three things explicit:
 
@@ -13,7 +13,7 @@ It exists to make three things explicit:
 2. what selectors must be explicit
 3. what JSON shape agents can rely on
 
-This document turns [LOOM_V3_SPEC.md](/Users/lifcc/Desktop/code/work/infra/loom/docs/LOOM_V3_SPEC.md) into a concrete machine-facing interface.
+This document turns [LOOM_STATE_MODEL.md](/Users/lifcc/Desktop/code/work/infra/loom/docs/LOOM_STATE_MODEL.md) into a concrete machine-facing interface.
 
 ## 2. Contract Principles
 
@@ -39,9 +39,9 @@ Top-level command groups:
 Removed from runtime surface:
 
 1. `skill import`
-2. `migrate v2-to-v3`
+2. `migrate legacy-to-registry`
 
-The legacy v2 mental model is rejected:
+The legacy mental model is rejected:
 
 1. no `Target::Claude|Codex|Both` execution shortcut
 2. no hidden path resolution as execution identity
@@ -59,16 +59,16 @@ Optional global flags:
 
 ```bash
 --json
+--pretty
 --request-id <id>
---strict
---dry-run
 ```
 
 Rules:
 
 1. Agents should always use `--json`.
 2. `--root` is mandatory for automation and examples in this spec.
-3. `--dry-run` must not mutate source, targets, bindings, or ops journal.
+3. `--json` defaults to compact single-line output for token efficiency.
+4. `--json --pretty` is reserved for human debugging and documentation capture.
 
 ## 5. Selector Rules
 
@@ -114,7 +114,7 @@ All `--json` commands return the same top-level shape:
   "ok": true,
   "cmd": "skill.project",
   "request_id": "req_01",
-  "version": "3.0.0",
+  "version": "<loom-version>",
   "data": {},
   "error": null,
   "meta": {
@@ -132,6 +132,7 @@ Rules:
 3. `cmd` is the canonical command name, not raw argv text.
 4. `request_id` is echoed back if supplied, otherwise generated.
 5. `meta.op_id` is required for successful writes and omitted for pure reads.
+6. Successful envelopes keep `error: null` so agents can rely on a stable field shape.
 
 ## 7. Error Object
 
@@ -142,7 +143,7 @@ Failure envelope shape:
   "ok": false,
   "cmd": "skill.project",
   "request_id": "req_01",
-  "version": "3.0.0",
+  "version": "<loom-version>",
   "data": {},
   "error": {
     "code": "BINDING_NOT_FOUND",
@@ -354,6 +355,25 @@ Rules:
 5. `--target` must reference an observed target when supplied
 6. this is not the removed legacy `skill import` command; it is an explicit bridge from discovered observed targets into the source registry
 
+### 11.2.1 `skill monitor-observed`
+
+```bash
+loom --json --root <root> skill monitor-observed [--target <target-id>] [--once] [--interval-seconds <seconds>]
+```
+
+Write command.
+
+Rules:
+
+1. scans observed targets for directories containing `SKILL.md` or `skill.md`
+2. imports new observed skills into canonical `skills/<skill-id>`
+3. updates existing canonical skills when materialized file content differs from the observed source
+4. top-level symlinks to skill directories are materialized as real files
+5. duplicate skill names found in later observed targets are skipped for that cycle
+6. observed deletions are not propagated automatically
+7. `--once` runs one scan and exits; without it, the command polls every `--interval-seconds`
+8. `--target` must reference an observed target when supplied
+
 ### 11.3 `skill project`
 
 ```bash
@@ -521,7 +541,7 @@ Migration commands are intentionally removed from the runtime CLI surface.
 
 Rules:
 
-1. no in-tool `v2-to-v3` migration entrypoint
+1. no in-tool `legacy-to-registry` migration entrypoint
 2. operators must register targets explicitly with `target add`
 3. binding resolution must be explicit with `workspace binding add`
 
@@ -542,6 +562,7 @@ Requirements:
 
 1. no `op_id`
 2. no write side effects
+3. no command-event audit write
 
 ### 15.2 Writes
 
@@ -550,10 +571,11 @@ Examples:
 1. `workspace binding add`
 2. `target add`
 3. `skill import-observed`
-4. `skill project`
-5. `skill capture`
-6. `skill save`
-7. `sync push`
+4. `skill monitor-observed`
+5. `skill project`
+6. `skill capture`
+7. `skill save`
+8. `sync push`
 
 Requirements:
 
@@ -577,11 +599,11 @@ Why this is safe:
 1. binding is explicit
 2. projection is explicit
 3. capture is explicit
-4. versioning stays on source
+4. revision history stays on source
 
 ## 17. Rejected CLI Shapes
 
-These command shapes are explicitly rejected for v3:
+These command shapes are explicitly rejected for registry state:
 
 1. `loom skill link <skill> --target claude`
 2. `loom init --from-agent both --target both`

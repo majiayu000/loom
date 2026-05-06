@@ -1,18 +1,18 @@
-// V3 schema types are generated from Rust via ts-rs.
+// Registry schema types are generated from Rust via ts-rs.
 // Do not hand-edit under ./generated/ — run `cargo test` to regenerate.
-export type { V3Target } from "./generated/V3Target";
-export type { V3TargetCapabilities } from "./generated/V3TargetCapabilities";
-export type { V3Binding } from "./generated/V3Binding";
-export type { V3WorkspaceMatcher } from "./generated/V3WorkspaceMatcher";
-export type { V3Rule } from "./generated/V3Rule";
-export type { V3Projection } from "./generated/V3Projection";
-export type { V3Checkpoint } from "./generated/V3Checkpoint";
+export type { RegistryTarget } from "./generated/RegistryTarget";
+export type { RegistryTargetCapabilities } from "./generated/RegistryTargetCapabilities";
+export type { RegistryBinding } from "./generated/RegistryBinding";
+export type { RegistryWorkspaceMatcher } from "./generated/RegistryWorkspaceMatcher";
+export type { RegistryRule } from "./generated/RegistryRule";
+export type { RegistryProjection } from "./generated/RegistryProjection";
+export type { RegistryCheckpoint } from "./generated/RegistryCheckpoint";
 
-import type { V3Binding } from "./generated/V3Binding";
-import type { V3Target } from "./generated/V3Target";
-import type { V3Rule } from "./generated/V3Rule";
-import type { V3Projection } from "./generated/V3Projection";
-import type { V3Checkpoint } from "./generated/V3Checkpoint";
+import type { RegistryBinding } from "./generated/RegistryBinding";
+import type { RegistryTarget } from "./generated/RegistryTarget";
+import type { RegistryRule } from "./generated/RegistryRule";
+import type { RegistryProjection } from "./generated/RegistryProjection";
+import type { RegistryCheckpoint } from "./generated/RegistryCheckpoint";
 
 export type PageId =
   | "overview"
@@ -31,7 +31,7 @@ export type HealthPayload = {
 export type InfoPayload = {
   root?: string;
   state_dir?: string;
-  v3_targets_file?: string;
+  registry_targets_file?: string;
   claude_dir?: string;
   codex_dir?: string;
   remote_url?: string;
@@ -64,7 +64,7 @@ export type PendingPayload = {
   warnings?: string[];
 };
 
-export type V3Payload = {
+export type RegistryPayload = {
   ok: boolean;
   data?: {
     counts?: {
@@ -77,11 +77,11 @@ export type V3Payload = {
       drifted_projections?: number;
       operations?: number;
     };
-    bindings?: V3Binding[];
-    targets?: V3Target[];
-    rules?: V3Rule[];
-    projections?: V3Projection[];
-    checkpoint?: V3Checkpoint;
+    bindings?: RegistryBinding[];
+    targets?: RegistryTarget[];
+    rules?: RegistryRule[];
+    projections?: RegistryProjection[];
+    checkpoint?: RegistryCheckpoint;
   };
   error?: {
     code?: string;
@@ -89,14 +89,14 @@ export type V3Payload = {
   };
 };
 
-export type V3Model = {
+export type RegistryModel = {
   available: boolean;
-  counts: NonNullable<NonNullable<V3Payload["data"]>["counts"]>;
-  bindings: V3Binding[];
-  targets: V3Target[];
-  rules: V3Rule[];
-  projections: V3Projection[];
-  checkpoint?: V3Checkpoint;
+  counts: NonNullable<NonNullable<RegistryPayload["data"]>["counts"]>;
+  bindings: RegistryBinding[];
+  targets: RegistryTarget[];
+  rules: RegistryRule[];
+  projections: RegistryProjection[];
+  checkpoint?: RegistryCheckpoint;
   error?: string;
 };
 
@@ -106,7 +106,7 @@ export type PanelData = {
   skills: string[];
   remote: RemotePayload;
   pending: PendingPayload;
-  v3: V3Model;
+  registry: RegistryModel;
   remoteWarnings: string[];
   live: boolean;
   lastUpdated: string;
@@ -114,10 +114,10 @@ export type PanelData = {
 
 export type SkillView = {
   name: string;
-  projections: V3Projection[];
-  rules: V3Rule[];
-  bindings: V3Binding[];
-  targets: V3Target[];
+  projections: RegistryProjection[];
+  rules: RegistryRule[];
+  bindings: RegistryBinding[];
+  targets: RegistryTarget[];
   methods: string[];
   driftedCount: number;
 };

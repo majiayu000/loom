@@ -1,7 +1,7 @@
-import type { V3Binding } from "../../generated/V3Binding";
-import type { V3Projection } from "../../generated/V3Projection";
-import type { V3Rule } from "../../generated/V3Rule";
-import type { V3Target } from "../../generated/V3Target";
+import type { RegistryBinding } from "../../generated/RegistryBinding";
+import type { RegistryProjection } from "../../generated/RegistryProjection";
+import type { RegistryRule } from "../../generated/RegistryRule";
+import type { RegistryTarget } from "../../generated/RegistryTarget";
 import type { PendingOp } from "../../types";
 import { normalizeAgentSlug } from "../agent_options";
 import type { AgentSlug, Binding, Op, Ownership, ProjectionMethod, Skill, Target } from "../types";
@@ -40,20 +40,20 @@ function shortPath(path: string): string {
  * `Array.find` sweeps every poll cycle (cf. PR #7 review L1).
  */
 export interface AdapterIndex {
-  targetsById: Map<string, V3Target>;
-  projectionsBySkill: Map<string, V3Projection[]>;
-  projectionsByTarget: Map<string, V3Projection[]>;
+  targetsById: Map<string, RegistryTarget>;
+  projectionsBySkill: Map<string, RegistryProjection[]>;
+  projectionsByTarget: Map<string, RegistryProjection[]>;
 }
 
 export function buildAdapterIndex(
-  targets: V3Target[],
-  projections: V3Projection[],
+  targets: RegistryTarget[],
+  projections: RegistryProjection[],
 ): AdapterIndex {
-  const targetsById = new Map<string, V3Target>();
+  const targetsById = new Map<string, RegistryTarget>();
   for (const t of targets) targetsById.set(t.target_id, t);
 
-  const projectionsBySkill = new Map<string, V3Projection[]>();
-  const projectionsByTarget = new Map<string, V3Projection[]>();
+  const projectionsBySkill = new Map<string, RegistryProjection[]>();
+  const projectionsByTarget = new Map<string, RegistryProjection[]>();
   for (const p of projections) {
     const sArr = projectionsBySkill.get(p.skill_id);
     if (sArr) sArr.push(p);
@@ -65,7 +65,7 @@ export function buildAdapterIndex(
   return { targetsById, projectionsBySkill, projectionsByTarget };
 }
 
-export function adaptTarget(t: V3Target, index: AdapterIndex): Target {
+export function adaptTarget(t: RegistryTarget, index: AdapterIndex): Target {
   const projections = index.projectionsByTarget.get(t.target_id) ?? [];
   const skillsOnTarget = new Set(projections.map((p) => p.skill_id));
   return {
@@ -87,13 +87,13 @@ export function adaptTarget(t: V3Target, index: AdapterIndex): Target {
 export function adaptSkill(
   name: string,
   index: AdapterIndex,
-  rules: V3Rule[],
+  rules: RegistryRule[],
 ): Skill {
   const projForSkill = index.projectionsBySkill.get(name) ?? [];
   const targetIds = Array.from(new Set(projForSkill.map((p) => p.target_id)));
   const ruleCount = rules.filter((r) => r.skill_id === name).length;
 
-  const newest = projForSkill.reduce<V3Projection | undefined>((acc, p) => {
+  const newest = projForSkill.reduce<RegistryProjection | undefined>((acc, p) => {
     if (!p.updated_at) return acc;
     if (!acc || !acc.updated_at) return p;
     return p.updated_at > acc.updated_at ? p : acc;
@@ -122,7 +122,7 @@ function inferTag(name: string): string {
   return "skill";
 }
 
-export function adaptBinding(b: V3Binding, rules: V3Rule[]): Binding {
+export function adaptBinding(b: RegistryBinding, rules: RegistryRule[]): Binding {
   const rule = rules.find((r) => r.binding_id === b.binding_id);
   return {
     id: b.binding_id,
@@ -157,7 +157,7 @@ export function adaptPendingOp(op: PendingOp, index: number): Op {
   };
 }
 
-export function adaptProjectionOp(p: V3Projection, index: AdapterIndex): Op {
+export function adaptProjectionOp(p: RegistryProjection, index: AdapterIndex): Op {
   const t = index.targetsById.get(p.target_id);
   const drifted = Boolean(p.observed_drift) || p.health !== "healthy";
   const status: Op["status"] = drifted ? "err" : "ok";

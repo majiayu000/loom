@@ -19,6 +19,7 @@ use anyhow::{Context, Result};
 use crate::types::PendingOp;
 
 const OPS_COMPACTION_THRESHOLD: usize = 16;
+pub const DEFAULT_REGISTRY_DIR: &str = ".loom-registry";
 
 type InProcMap = Arc<Mutex<HashMap<String, (PathBuf, std::thread::ThreadId, usize)>>>;
 
@@ -162,8 +163,10 @@ fn dedupe_paths_keep_order(paths: Vec<PathBuf>) -> Vec<PathBuf> {
 
 impl AppContext {
     pub fn new(root: Option<PathBuf>) -> Result<Self> {
-        let root =
-            root.unwrap_or(std::env::current_dir().context("failed to resolve current directory")?);
+        let root = match root {
+            Some(root) => root,
+            None => default_registry_root()?,
+        };
         let skills_dir = root.join("skills");
         let state_dir = root.join("state");
         let locks_dir = state_dir.join("locks");
@@ -204,13 +207,18 @@ impl AppContext {
         self.lock_named(&format!("skill-{}", skill))
     }
 
-    fn lock_named(&self, name: &str) -> Result<LockGuard> {
+    pub fn ensure_not_loom_tool_repo_root(&self) -> Result<()> {
         if is_loom_tool_repo_root(&self.root) {
             anyhow::bail!(
                 "ARG_INVALID:refusing write operations in Loom tool repository root '{}'; use --root <separate skill registry repo>",
                 self.root.display()
             );
         }
+        Ok(())
+    }
+
+    fn lock_named(&self, name: &str) -> Result<LockGuard> {
+        self.ensure_not_loom_tool_repo_root()?;
         self.ensure_state_layout()?;
         let lock_path = self.locks_dir.join(format!("{}.lock", name));
         let current_thread = std::thread::current().id();
@@ -308,6 +316,26 @@ impl AppContext {
         write_atomic(&path, &content).context("failed to update .gitignore")?;
         Ok(())
     }
+}
+
+pub fn default_registry_root() -> Result<PathBuf> {
+    home_dir()
+        .map(|home| home.join(DEFAULT_REGISTRY_DIR))
+        .context("HOME is not set; pass --root <registry>")
+}
+
+fn home_dir() -> Option<PathBuf> {
+    non_empty_env_path("HOME").or_else(|| non_empty_env_path("USERPROFILE"))
+}
+
+fn non_empty_env_path(key: &str) -> Option<PathBuf> {
+    env::var_os(key).and_then(|value| {
+        if value.as_os_str().is_empty() {
+            None
+        } else {
+            Some(PathBuf::from(value))
+        }
+    })
 }
 
 #[derive(Debug)]
@@ -438,14 +466,44 @@ fn is_loom_tool_repo_root(root: &Path) -> bool {
         return false;
     }
 
-    match fs::read_to_string(&cargo_toml) {
-        Ok(content) => content.contains("name = \"skillloom\""),
-        Err(_) => false,
-    }
+    package_name_from_cargo_toml(&cargo_toml).is_some_and(|name| name == "skillloom")
 }
 
 fn canonicalize_or_self(path: &Path) -> PathBuf {
     fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+}
+
+fn package_name_from_cargo_toml(path: &Path) -> Option<String> {
+    let content = fs::read_to_string(path).ok()?;
+    let mut in_package = false;
+    for raw_line in content.lines() {
+        let line = raw_line
+            .split_once('#')
+            .map_or(raw_line, |(line, _)| line)
+            .trim();
+        if line.is_empty() {
+            continue;
+        }
+        if line.starts_with('[') && line.ends_with(']') {
+            in_package = line == "[package]";
+            continue;
+        }
+        if !in_package {
+            continue;
+        }
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
+        if key.trim() != "name" {
+            continue;
+        }
+        let value = value.trim();
+        return value
+            .strip_prefix('"')
+            .and_then(|value| value.strip_suffix('"'))
+            .map(str::to_string);
+    }
+    None
 }
 
 fn write_atomic(path: &Path, contents: &str) -> Result<()> {

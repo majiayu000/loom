@@ -6,14 +6,14 @@ use crate::cli::{
 };
 use crate::panel::auth::{
     ensure_mutation_authorized, error_envelope, request_origin_matches, run_panel_command,
-    status_for_error_code, status_for_v3_error_payload, status_for_v3_state_load_error,
+    status_for_error_code, status_for_registry_error_payload, status_for_registry_state_load_error,
 };
 use axum::http::{HeaderMap, HeaderValue};
 use serde_json::json;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
 // Exhaustive list of every panel mutation command. Must stay in sync with the
-// 13-row table in docs/LOOM_V3_ARCHITECTURE_DECISIONS.md section 4.1 and the
+// 13-row table in docs/LOOM_ARCHITECTURE_DECISIONS.md section 4.1 and the
 // route registrations in `run_panel`.
 const MUTATION_COMMANDS: &[&str] = &[
     "target.add",
@@ -175,21 +175,21 @@ fn status_for_error_code_maps_lock_busy_to_conflict() {
 }
 
 #[test]
-fn v3_state_load_errors_map_to_observable_statuses() {
+fn registry_state_load_errors_map_to_observable_statuses() {
     assert_eq!(
-        status_for_v3_state_load_error(Some("ARG_INVALID")),
+        status_for_registry_state_load_error(Some("ARG_INVALID")),
         StatusCode::BAD_REQUEST
     );
     assert_eq!(
-        status_for_v3_state_load_error(Some("SCHEMA_MISMATCH")),
+        status_for_registry_state_load_error(Some("SCHEMA_MISMATCH")),
         StatusCode::INTERNAL_SERVER_ERROR
     );
     assert_eq!(
-        status_for_v3_state_load_error(Some("STATE_CORRUPT")),
+        status_for_registry_state_load_error(Some("STATE_CORRUPT")),
         StatusCode::INTERNAL_SERVER_ERROR
     );
     assert_eq!(
-        status_for_v3_error_payload(&json!({
+        status_for_registry_error_payload(&json!({
             "ok": false,
             "error": {"code": "ARG_INVALID", "message": "missing state"}
         })),

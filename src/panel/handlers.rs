@@ -9,28 +9,26 @@ use serde::Deserialize;
 use serde_json::json;
 
 use crate::cli::{
-    CaptureArgs, Command, HistoryRepairStrategyArg, OpsCommand, OpsHistoryCommand, ProjectArgs,
-    ProjectionMethod, RemoteCommand, SyncCommand, TargetCommand, TargetOwnership,
+    AddArgs, CaptureArgs, Command, HistoryRepairStrategyArg, OpsCommand, OpsHistoryCommand,
+    ProjectArgs, ProjectionMethod, RemoteCommand, SyncCommand, TargetCommand, TargetOwnership,
     WorkspaceBindingCommand, WorkspaceCommand,
 };
-use crate::commands::{collect_skill_inventory, remote_status_payload};
+use crate::commands::{collect_skill_inventory, redact_sensitive_string, remote_status_payload};
 use crate::state::resolve_agent_skill_dirs;
-use crate::state_model::V3StatePaths;
+use crate::state_model::RegistryStatePaths;
 
 use super::auth::{
-    ensure_mutation_authorized, error_envelope, load_v3_snapshot, run_panel_command,
-    status_for_error_code, status_for_v3_error_payload, v3_error, v3_ok,
+    ensure_mutation_authorized, error_envelope, load_registry_snapshot, registry_error,
+    registry_ok, run_panel_command, status_for_error_code, status_for_registry_error_payload,
 };
 use super::{
     BindingAddRequest, CaptureRequest, HistoryRepairRequest, PanelState, ProjectRequest,
-    RemoteSetRequest, TargetAddRequest,
+    RemoteSetRequest, SkillAddRequest, TargetAddRequest,
 };
 
-/// Accept `[a-z0-9_-]{1,64}` for `policy_profile`. The backend does not
-/// maintain a closed whitelist (users may extend profiles over time),
-/// but the panel surface should refuse obviously malformed input so the
-/// V3 bindings file stays auditable. CLI users may still submit other
-/// formats directly via `loom workspace binding add`.
+/// Accept `[a-z0-9_-]{1,64}` for `policy_profile`. The core CLI path enforces
+/// the same shape; keeping the panel check here avoids doing a full command
+/// dispatch for obviously malformed requests.
 fn policy_profile_looks_sane(value: &str) -> bool {
     (1..=64).contains(&value.len())
         && value
@@ -65,53 +63,63 @@ pub(super) async fn info(State(state): State<PanelState>) -> Json<serde_json::Va
         .ok()
         .flatten()
         .unwrap_or_default();
-    let v3_paths = V3StatePaths::from_app_context(&state.ctx);
+    let remote_url = redact_sensitive_string(&remote_url);
+    let registry_paths = RegistryStatePaths::from_app_context(&state.ctx);
 
-    Json(json!({
-        "root": state.ctx.root.display().to_string(),
-        "state_dir": state.ctx.state_dir.display().to_string(),
-        "v3_targets_file": v3_paths.targets_file.display().to_string(),
-        "claude_dir": target_dirs.claude.display().to_string(),
-        "codex_dir": target_dirs.codex.display().to_string(),
-        "remote_url": remote_url,
-    }))
+    registry_ok(
+        "panel.info",
+        json!({
+            "root": state.ctx.root.display().to_string(),
+            "state_dir": state.ctx.state_dir.display().to_string(),
+            "registry_targets_file": registry_paths.targets_file.display().to_string(),
+            "claude_dir": target_dirs.claude.display().to_string(),
+            "codex_dir": target_dirs.codex.display().to_string(),
+            "remote_url": remote_url,
+        }),
+    )
 }
 
 pub(super) async fn skills(State(state): State<PanelState>) -> Json<serde_json::Value> {
     let inventory = collect_skill_inventory(&state.ctx);
-    Json(json!({
-        "skills": inventory.source_skills,
-        "backup_skills": inventory.backup_skills,
-        "source_dirs": inventory
-            .source_dirs
-            .iter()
-            .map(|path: &std::path::PathBuf| path.display().to_string())
-            .collect::<Vec<_>>(),
-        "warnings": inventory.warnings
-    }))
+    registry_ok(
+        "panel.skills",
+        json!({
+            "skills": inventory.source_skills,
+            "backup_skills": inventory.backup_skills,
+            "source_dirs": inventory
+                .source_dirs
+                .iter()
+                .map(|path: &std::path::PathBuf| path.display().to_string())
+                .collect::<Vec<_>>(),
+            "warnings": inventory.warnings
+        }),
+    )
 }
 
-pub(super) async fn v3_status(
+pub(super) async fn registry_status(
     State(state): State<PanelState>,
 ) -> (StatusCode, Json<serde_json::Value>) {
-    match load_v3_snapshot(&state.ctx) {
-        Ok(snapshot) => (StatusCode::OK, v3_ok(snapshot.status_view())),
+    match load_registry_snapshot(&state.ctx, "registry.status") {
+        Ok(snapshot) => (
+            StatusCode::OK,
+            registry_ok("registry.status", snapshot.status_view()),
+        ),
         Err(err) => {
-            let status = status_for_v3_error_payload(&err.0);
+            let status = status_for_registry_error_payload(&err.0);
             (status, err)
         }
     }
 }
 
 /// Return a bounded, newest-first page of the operations journal
-/// (`.loom/v3/operations.jsonl`). History only needs row summaries, so omit
+/// (`.loom/registry/operations.jsonl`). History only needs row summaries, so omit
 /// per-op payload/effects blobs here and keep the response cost bounded even
 /// for long-lived registries.
-pub(super) async fn v3_ops(
+pub(super) async fn registry_ops(
     Query(query): Query<OpsQuery>,
     State(state): State<PanelState>,
 ) -> Json<serde_json::Value> {
-    match load_v3_snapshot(&state.ctx) {
+    match load_registry_snapshot(&state.ctx, "registry.ops") {
         Ok(snapshot) => {
             let total = snapshot.operations.len();
             let limit = query
@@ -137,26 +145,29 @@ pub(super) async fn v3_ops(
                 })
                 .collect::<Vec<_>>();
 
-            v3_ok(json!({
-                "state_model": "v3",
-                "count": total,
-                "loaded_count": operations.len(),
-                "offset": offset,
-                "limit": limit,
-                "has_more": start > 0,
-                "operations": operations,
-                "checkpoint": snapshot.checkpoint,
-            }))
+            registry_ok(
+                "registry.ops",
+                json!({
+                    "state_model": "registry",
+                    "count": total,
+                    "loaded_count": operations.len(),
+                    "offset": offset,
+                    "limit": limit,
+                    "has_more": start > 0,
+                    "operations": operations,
+                    "checkpoint": snapshot.checkpoint,
+                }),
+            )
         }
         Err(err) => err,
     }
 }
 
-pub(super) async fn v3_projections(
+pub(super) async fn registry_projections(
     Query(query): Query<ProjectionsQuery>,
     State(state): State<PanelState>,
 ) -> Json<serde_json::Value> {
-    match load_v3_snapshot(&state.ctx) {
+    match load_registry_snapshot(&state.ctx, "registry.projections") {
         Ok(snapshot) => {
             let projections: Vec<_> = snapshot
                 .projections
@@ -164,77 +175,91 @@ pub(super) async fn v3_projections(
                 .iter()
                 .filter(|p| query.health.as_deref().is_none_or(|h| p.health == h))
                 .collect();
-            v3_ok(json!({
-                "state_model": "v3",
-                "count": projections.len(),
-                "projections": projections,
-            }))
+            registry_ok(
+                "registry.projections",
+                json!({
+                    "state_model": "registry",
+                    "count": projections.len(),
+                    "projections": projections,
+                }),
+            )
         }
         Err(err) => err,
     }
 }
 
-pub(super) async fn v3_bindings(State(state): State<PanelState>) -> Json<serde_json::Value> {
-    match load_v3_snapshot(&state.ctx) {
-        Ok(snapshot) => v3_ok(json!({
-            "state_model": "v3",
-            "count": snapshot.bindings.bindings.len(),
-            "bindings": snapshot.bindings.bindings
-        })),
+pub(super) async fn registry_bindings(State(state): State<PanelState>) -> Json<serde_json::Value> {
+    match load_registry_snapshot(&state.ctx, "registry.bindings") {
+        Ok(snapshot) => registry_ok(
+            "registry.bindings",
+            json!({
+                "state_model": "registry",
+                "count": snapshot.bindings.bindings.len(),
+                "bindings": snapshot.bindings.bindings
+            }),
+        ),
         Err(err) => err,
     }
 }
 
-pub(super) async fn v3_binding_show(
+pub(super) async fn registry_binding_show(
     AxumPath(binding_id): AxumPath<String>,
     State(state): State<PanelState>,
 ) -> Json<serde_json::Value> {
-    let snapshot = match load_v3_snapshot(&state.ctx) {
+    let snapshot = match load_registry_snapshot(&state.ctx, "registry.binding.show") {
         Ok(snapshot) => snapshot,
         Err(err) => return err,
     };
     let binding = match snapshot.binding(&binding_id).cloned() {
         Some(binding) => binding,
         None => {
-            return v3_error(
+            return registry_error(
+                "registry.binding.show",
                 "BINDING_NOT_FOUND",
                 format!("binding '{}' not found", binding_id),
             );
         }
     };
 
-    v3_ok(json!({
-        "state_model": "v3",
-        "binding": binding,
-        "default_target": snapshot.binding_default_target(&binding),
-        "rules": snapshot.binding_rules(&binding.binding_id),
-        "projections": snapshot.binding_projections(&binding.binding_id)
-    }))
+    registry_ok(
+        "registry.binding.show",
+        json!({
+            "state_model": "registry",
+            "binding": binding,
+            "default_target": snapshot.binding_default_target(&binding),
+            "rules": snapshot.binding_rules(&binding.binding_id),
+            "projections": snapshot.binding_projections(&binding.binding_id)
+        }),
+    )
 }
 
-pub(super) async fn v3_targets(State(state): State<PanelState>) -> Json<serde_json::Value> {
-    match load_v3_snapshot(&state.ctx) {
-        Ok(snapshot) => v3_ok(json!({
-            "state_model": "v3",
-            "count": snapshot.targets.targets.len(),
-            "targets": snapshot.targets.targets
-        })),
+pub(super) async fn registry_targets(State(state): State<PanelState>) -> Json<serde_json::Value> {
+    match load_registry_snapshot(&state.ctx, "registry.targets") {
+        Ok(snapshot) => registry_ok(
+            "registry.targets",
+            json!({
+                "state_model": "registry",
+                "count": snapshot.targets.targets.len(),
+                "targets": snapshot.targets.targets
+            }),
+        ),
         Err(err) => err,
     }
 }
 
-pub(super) async fn v3_target_show(
+pub(super) async fn registry_target_show(
     AxumPath(target_id): AxumPath<String>,
     State(state): State<PanelState>,
 ) -> Json<serde_json::Value> {
-    let snapshot = match load_v3_snapshot(&state.ctx) {
+    let snapshot = match load_registry_snapshot(&state.ctx, "registry.target.show") {
         Ok(snapshot) => snapshot,
         Err(err) => return err,
     };
     let target = match snapshot.target(&target_id) {
         Some(target) => target,
         None => {
-            return v3_error(
+            return registry_error(
+                "registry.target.show",
                 "TARGET_NOT_FOUND",
                 format!("target '{}' not found", target_id),
             );
@@ -242,16 +267,19 @@ pub(super) async fn v3_target_show(
     };
     let relations = snapshot.target_relations(&target_id);
 
-    v3_ok(json!({
-        "state_model": "v3",
-        "target": target,
-        "bindings": relations.bindings,
-        "rules": relations.rules,
-        "projections": relations.projections
-    }))
+    registry_ok(
+        "registry.target.show",
+        json!({
+            "state_model": "registry",
+            "target": target,
+            "bindings": relations.bindings,
+            "rules": relations.rules,
+            "projections": relations.projections
+        }),
+    )
 }
 
-pub(super) async fn v3_target_add(
+pub(super) async fn registry_target_add(
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
     State(state): State<PanelState>,
@@ -274,7 +302,7 @@ pub(super) async fn v3_target_add(
     )
 }
 
-pub(super) async fn v3_target_remove(
+pub(super) async fn registry_target_remove(
     AxumPath(target_id): AxumPath<String>,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
@@ -293,7 +321,7 @@ pub(super) async fn v3_target_remove(
     )
 }
 
-pub(super) async fn v3_binding_add(
+pub(super) async fn registry_binding_add(
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
     State(state): State<PanelState>,
@@ -338,7 +366,7 @@ pub(super) async fn v3_binding_add(
     )
 }
 
-pub(super) async fn v3_binding_remove(
+pub(super) async fn registry_binding_remove(
     AxumPath(binding_id): AxumPath<String>,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
@@ -363,7 +391,7 @@ pub(super) async fn v3_binding_remove(
     )
 }
 
-pub(super) async fn v3_project(
+pub(super) async fn registry_project(
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
     State(state): State<PanelState>,
@@ -387,7 +415,29 @@ pub(super) async fn v3_project(
     )
 }
 
-pub(super) async fn v3_capture(
+pub(super) async fn registry_skill_add(
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    State(state): State<PanelState>,
+    Json(req): Json<SkillAddRequest>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    if let Some(response) = ensure_mutation_authorized(&state, peer, &headers, "skill.add") {
+        return response;
+    }
+    run_panel_command(
+        &state,
+        "skill.add",
+        StatusCode::CREATED,
+        Command::Skill {
+            command: crate::cli::SkillCommand::Add(AddArgs {
+                source: req.source,
+                name: req.name,
+            }),
+        },
+    )
+}
+
+pub(super) async fn registry_capture(
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
     State(state): State<PanelState>,
@@ -594,25 +644,24 @@ pub(super) async fn remote_status(
     match remote_status_payload(&state.ctx) {
         Ok((remote, meta)) => (
             StatusCode::OK,
-            Json(json!({"remote": remote, "warnings": meta.warnings})),
+            registry_ok(
+                "remote.status",
+                json!({"remote": remote, "warnings": meta.warnings}),
+            ),
         ),
         Err(err) => (
             status_for_error_code(Some(err.code.as_str())),
-            Json(json!({
-                "ok": false,
-                "error": {
-                    "code": err.code.as_str(),
-                    "message": err.message,
-                }
-            })),
+            registry_error("remote.status", err.code.as_str(), err.message),
         ),
     }
 }
 
-pub(super) async fn v3_ops_diagnose(State(state): State<PanelState>) -> Json<serde_json::Value> {
+pub(super) async fn registry_ops_diagnose(
+    State(state): State<PanelState>,
+) -> Json<serde_json::Value> {
     match crate::gitops::history_status(&state.ctx) {
-        Ok(report) => v3_ok(serde_json::json!(report)),
-        Err(err) => v3_error("GIT_ERROR", err.to_string()),
+        Ok(report) => registry_ok("registry.ops.diagnose", serde_json::json!(report)),
+        Err(err) => registry_error("registry.ops.diagnose", "GIT_ERROR", err.to_string()),
     }
 }
 
@@ -622,23 +671,20 @@ pub(super) async fn pending(
     match state.ctx.read_pending_report() {
         Ok(report) => (
             StatusCode::OK,
-            Json(json!({
-                "count": report.ops.len(),
-                "ops": report.ops,
-                "journal_events": report.journal_events,
-                "history_events": report.history_events,
-                "warnings": report.warnings
-            })),
+            registry_ok(
+                "pending.list",
+                json!({
+                    "count": report.ops.len(),
+                    "ops": report.ops,
+                    "journal_events": report.journal_events,
+                    "history_events": report.history_events,
+                    "warnings": report.warnings
+                }),
+            ),
         ),
         Err(err) => (
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({
-                "ok": false,
-                "error": {
-                    "code": "IO_ERROR",
-                    "message": err.to_string(),
-                }
-            })),
+            registry_error("pending.list", "IO_ERROR", err.to_string()),
         ),
     }
 }

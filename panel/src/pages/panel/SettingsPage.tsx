@@ -59,7 +59,7 @@ export function SettingsPage({ live, mode, registryRoot }: SettingsPageProps) {
     const x = info.info;
     rows.push(
       { label: "State dir", value: x.state_dir, mono: true },
-      { label: "V3 targets file", value: x.v3_targets_file, mono: true },
+      { label: "Registry targets file", value: x.registry_targets_file, mono: true },
       { label: "Claude dir", value: x.claude_dir, mono: true },
       { label: "Codex dir", value: x.codex_dir, mono: true },
       { label: "Remote URL", value: x.remote_url, mono: true },

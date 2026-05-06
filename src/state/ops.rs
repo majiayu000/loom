@@ -13,6 +13,8 @@ use crate::types::PendingOp;
 use super::{AppContext, OPS_COMPACTION_THRESHOLD};
 use super::{append_lines, maybe_fault_inject, write_atomic, write_history_segment_if_missing};
 
+const OPS_SNAPSHOT_VERSION: u32 = 1;
+
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "event", rename_all = "snake_case")]
 enum OpJournalEvent {
@@ -220,11 +222,16 @@ impl AppContext {
         };
 
         match serde_json::from_str::<OpsSnapshot>(&raw) {
-            Ok(snapshot) => Ok(LoadedSnapshot {
+            Ok(snapshot) if snapshot.version == OPS_SNAPSHOT_VERSION => Ok(LoadedSnapshot {
                 active_ops: snapshot.active_ops,
                 history_events: snapshot.history_events,
                 warnings: Vec::new(),
             }),
+            Ok(snapshot) => anyhow::bail!(
+                "pending ops snapshot version mismatch: found {}; expected {}",
+                snapshot.version,
+                OPS_SNAPSHOT_VERSION
+            ),
             Err(err) => Ok(LoadedSnapshot {
                 active_ops: Vec::new(),
                 history_events: 0,
@@ -272,7 +279,7 @@ impl AppContext {
         maybe_fault_inject("ops_compact_after_history")?;
 
         let snapshot = OpsSnapshot {
-            version: 1,
+            version: OPS_SNAPSHOT_VERSION,
             created_at: Utc::now(),
             history_events: model.history_events + model.journal_events,
             active_ops: model.active_ops.into_values().collect(),
@@ -318,7 +325,7 @@ pub fn synthesize_snapshot_raw_from_segment_bodies(segment_bodies: &[String]) ->
     }
 
     let snapshot = OpsSnapshot {
-        version: 1,
+        version: OPS_SNAPSHOT_VERSION,
         created_at: Utc::now(),
         history_events: seen_event_ids.len(),
         active_ops: active_ops.into_values().collect(),
@@ -433,4 +440,41 @@ fn sanitize_segment_token(token: &str) -> String {
 
 fn shorten_segment_token(token: &str) -> String {
     token.chars().take(12).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::PendingOp;
+    use serde_json::json;
+
+    #[test]
+    fn pending_snapshot_version_mismatch_fails_closed() {
+        let root = std::env::temp_dir().join(format!(
+            "loom-ops-snapshot-version-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let ctx = AppContext::new(Some(root.clone())).expect("ctx");
+        ctx.ensure_state_layout().expect("layout");
+        let op = PendingOp::new("sync.push", json!({"commit": "abc"}), "req-1".to_string());
+        let snapshot = OpsSnapshot {
+            version: OPS_SNAPSHOT_VERSION + 1,
+            created_at: Utc::now(),
+            history_events: 10,
+            active_ops: vec![op],
+        };
+        let raw = serde_json::to_string_pretty(&snapshot).expect("snapshot json");
+        fs::write(&ctx.pending_ops_snapshot_file, raw).expect("write snapshot");
+
+        let err = ctx
+            .read_pending_report()
+            .expect_err("version mismatch must fail closed");
+        assert!(
+            err.to_string()
+                .contains("pending ops snapshot version mismatch"),
+            "unexpected error: {err}"
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
 }

@@ -7,7 +7,7 @@ use std::process::Command;
 use serde_json::Value;
 
 use common::actions::target_add;
-use common::{TestDir, run_loom, write_file};
+use common::{TestDir, run_loom, run_loom_with_env, write_file};
 
 #[cfg(unix)]
 fn symlink_dir(src: &Path, dst: &Path) {
@@ -23,9 +23,27 @@ fn git_path_exists(root: &Path, path: &str) -> bool {
         .arg("cat-file")
         .arg("-e")
         .arg(format!("HEAD:{path}"))
-        .status()
+        .output()
         .expect("run git cat-file")
+        .status
         .success()
+}
+
+fn git_head(root: &Path) -> String {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .arg("-c")
+        .arg("commit.gpgsign=false")
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .expect("read git head");
+    assert!(
+        output.status.success(),
+        "rev-parse failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8_lossy(&output.stdout).trim().to_string()
 }
 
 fn imported_skill_names(env: &Value) -> Vec<String> {
@@ -231,4 +249,38 @@ fn skill_import_observed_rejects_non_observed_target_filter() {
         Value::String("ARG_INVALID".to_string())
     );
     assert!(!root.path().join("skills/managed-only").exists());
+}
+
+#[test]
+fn skill_import_observed_rolls_back_commit_after_operation_failure() {
+    let root = TestDir::new("import-observed-op-failure");
+    let observed = root.path().join("observed-skills");
+    write_file(&observed.join("alpha/SKILL.md"), "# alpha\n");
+
+    let (target_output, target_env) = target_add(root.path(), "claude", &observed, "observed");
+    assert!(
+        target_output.status.success(),
+        "target add failed: {}",
+        String::from_utf8_lossy(&target_output.stderr)
+    );
+    let target_id = target_env["data"]["target"]["target_id"]
+        .as_str()
+        .expect("target id")
+        .to_string();
+    let head_before = git_head(root.path());
+
+    let (output, env) = run_loom_with_env(
+        root.path(),
+        &[("LOOM_FAULT_INJECT", "record_v3_operation_after_append")],
+        &["skill", "import-observed", "--target", &target_id],
+    );
+
+    assert!(
+        !output.status.success(),
+        "faulted import unexpectedly succeeded"
+    );
+    assert_eq!(env["ok"], Value::Bool(false));
+    assert_eq!(git_head(root.path()), head_before);
+    assert!(!root.path().join("skills/alpha").exists());
+    assert!(!git_path_exists(root.path(), "skills/alpha/SKILL.md"));
 }

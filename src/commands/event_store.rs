@@ -11,8 +11,11 @@ use crate::cli::Cli;
 use crate::envelope::Envelope;
 use crate::state::AppContext;
 
+const COMMAND_EVENT_SCHEMA_VERSION: u32 = 1;
+
 #[derive(Debug, Serialize)]
 struct CommandEvent {
+    schema_version: u32,
     event_id: String,
     request_id: String,
     cmd: String,
@@ -53,6 +56,7 @@ pub(crate) fn append_command_started(
     request_id: &str,
 ) -> Result<()> {
     let event = CommandEvent {
+        schema_version: COMMAND_EVENT_SCHEMA_VERSION,
         event_id: format!("evt_{}", Uuid::new_v4().simple()),
         request_id: request_id.to_string(),
         cmd: cmd.to_string(),
@@ -99,6 +103,7 @@ fn append_command_finished_with_fault_tags(
     fault_tags: &[&str],
 ) -> Result<()> {
     let event = CommandEvent {
+        schema_version: COMMAND_EVENT_SCHEMA_VERSION,
         event_id: format!("evt_{}", Uuid::new_v4().simple()),
         request_id: envelope.request_id.clone(),
         cmd: cmd.to_string(),
@@ -192,7 +197,7 @@ fn redact_sensitive_strings(value: &mut serde_json::Value) {
     }
 }
 
-fn redact_sensitive_string(raw: &str) -> String {
+pub(crate) fn redact_sensitive_string(raw: &str) -> String {
     if looks_like_secret(raw) {
         return "<redacted>".to_string();
     }

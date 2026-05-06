@@ -100,7 +100,7 @@ export function PanelApp() {
   const ops = live.ops;
 
   // Projection links for the graph:
-  //   - use V3Projection.method verbatim (authoritative).
+  //   - use RegistryProjection.method verbatim (authoritative).
   const projectionLinks: ProjectionLink[] = useMemo(() => {
     return live.projections.map((p) => {
       const method: ProjectionMethod =
@@ -116,7 +116,7 @@ export function PanelApp() {
   const [mutationVersion, setMutationVersion] = useState(0);
   // Gate: all mutation affordances in child pages receive this prop.
   // Future shortcuts, command palette, and hotkey handlers must check readOnly
-  // before calling any /api/v3/*, /api/ops/*, or /api/sync/* POST route.
+  // before calling any /api/registry/*, /api/ops/*, or /api/sync/* POST route.
   const readOnly = !live.live;
   const onMutation = () => {
     setMutationVersion((cur) => cur + 1);

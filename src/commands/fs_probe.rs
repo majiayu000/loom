@@ -1,6 +1,6 @@
 //! Runtime probe of what a projection target's filesystem can physically do.
 //!
-//! This is distinct from [`crate::state_model::V3TargetCapabilities`], which is
+//! This is distinct from [`crate::state_model::RegistryTargetCapabilities`], which is
 //! a *policy* capability declared at `target add` time (based on ownership).
 //! A managed target always declares `capabilities.symlink = true`, but that
 //! says nothing about whether the actual filesystem accepts the syscall:

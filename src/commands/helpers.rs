@@ -9,19 +9,21 @@ use crate::cli::{
     WorkspaceBindingCommand, WorkspaceCommand, WorkspaceMatcherKind,
 };
 use crate::state::AppContext;
-use crate::state_model::{V3ProjectionTarget, V3TargetCapabilities, V3TargetsFile};
+use crate::state_model::{
+    RegistryProjectionTarget, RegistryTargetCapabilities, RegistryTargetsFile,
+};
 use crate::types::ErrorCode;
 
 use super::CommandFailure;
 
 // Re-export items from sibling modules so existing `use super::helpers::*` paths keep working.
 pub(crate) use super::file_ops::{
-    backup_path_if_exists, copy_dir_recursive, copy_dir_recursive_without_symlinks, read_git_field,
+    backup_path_if_exists, copy_dir_recursive_without_symlinks, read_git_field,
     restore_path_from_backup, rollback_added_skill,
 };
 pub use super::projections::{collect_skill_inventory, remote_status_payload};
 pub(crate) use super::projections::{
-    maybe_autosync_or_queue, project_skill_to_target, record_v3_operation,
+    maybe_autosync_or_queue, project_skill_to_target, record_registry_operation,
     remote_status_payload_with_pending, resolve_capture_projection, sync_push_internal,
     sync_replay_internal, update_projection_after_capture, upsert_projection, upsert_rule,
 };
@@ -90,6 +92,8 @@ pub(crate) fn validate_skill_name(skill: &str) -> Result<()> {
 
 pub(crate) fn command_name(command: &Command) -> &'static str {
     match command {
+        Command::Init => "init",
+        Command::Monitor(_) => "monitor",
         Command::Workspace { command } => match command {
             WorkspaceCommand::Status => "workspace.status",
             WorkspaceCommand::Doctor => "workspace.doctor",
@@ -111,6 +115,7 @@ pub(crate) fn command_name(command: &Command) -> &'static str {
         Command::Skill { command } => match command {
             SkillCommand::Add(_) => "skill.add",
             SkillCommand::ImportObserved(_) => "skill.import_observed",
+            SkillCommand::MonitorObserved(_) => "skill.monitor_observed",
             SkillCommand::Project(_) => "skill.project",
             SkillCommand::Capture(_) => "skill.capture",
             SkillCommand::Save(_) => "skill.save",
@@ -176,19 +181,21 @@ pub(crate) fn target_ownership_as_str(ownership: crate::cli::TargetOwnership) ->
     }
 }
 
-pub(crate) fn target_capabilities(ownership: crate::cli::TargetOwnership) -> V3TargetCapabilities {
+pub(crate) fn target_capabilities(
+    ownership: crate::cli::TargetOwnership,
+) -> RegistryTargetCapabilities {
     match ownership {
-        crate::cli::TargetOwnership::Managed => V3TargetCapabilities {
+        crate::cli::TargetOwnership::Managed => RegistryTargetCapabilities {
             symlink: true,
             copy: true,
             watch: true,
         },
-        crate::cli::TargetOwnership::Observed => V3TargetCapabilities {
+        crate::cli::TargetOwnership::Observed => RegistryTargetCapabilities {
             symlink: false,
             copy: false,
             watch: true,
         },
-        crate::cli::TargetOwnership::External => V3TargetCapabilities {
+        crate::cli::TargetOwnership::External => RegistryTargetCapabilities {
             symlink: false,
             copy: false,
             watch: false,
@@ -221,8 +228,27 @@ pub(crate) fn validate_non_empty(
     Ok(())
 }
 
+pub(crate) fn validate_policy_profile(value: &str) -> std::result::Result<(), CommandFailure> {
+    if !(1..=64).contains(&value.len()) {
+        return Err(CommandFailure::new(
+            ErrorCode::ArgInvalid,
+            "--policy-profile must be 1-64 characters",
+        ));
+    }
+    if !value
+        .chars()
+        .all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || matches!(ch, '-' | '_'))
+    {
+        return Err(CommandFailure::new(
+            ErrorCode::ArgInvalid,
+            "--policy-profile must match [a-z0-9_-]{1,64}",
+        ));
+    }
+    Ok(())
+}
+
 pub(crate) fn validate_projection_method(
-    target: &V3ProjectionTarget,
+    target: &RegistryProjectionTarget,
     method: ProjectionMethod,
 ) -> std::result::Result<(), CommandFailure> {
     match method {
@@ -246,15 +272,27 @@ pub(crate) fn validate_projection_method(
     }
 }
 
+pub(crate) fn commit_registry_state(
+    ctx: &AppContext,
+    message: &str,
+) -> std::result::Result<Option<String>, CommandFailure> {
+    crate::gitops::commit_paths_if_changed(
+        ctx,
+        &[".gitignore", "state/registry", "state/v3"],
+        message,
+    )
+    .map_err(map_git)
+}
+
 // ---------------------------------------------------------------------------
 // ID generation
 // ---------------------------------------------------------------------------
 
-pub(crate) fn unique_target_id(targets: &V3TargetsFile, args: &TargetAddArgs) -> String {
+pub(crate) fn unique_target_id(targets: &RegistryTargetsFile, args: &TargetAddArgs) -> String {
     unique_target_id_for(args.agent, &args.path, targets)
 }
 
-fn unique_target_id_for(agent: AgentKind, path: &str, targets: &V3TargetsFile) -> String {
+fn unique_target_id_for(agent: AgentKind, path: &str, targets: &RegistryTargetsFile) -> String {
     let token = target_path_token(path, agent);
     let base = format!("target_{}_{}", agent_kind_as_str(agent), slugify(&token));
     unique_id(
@@ -291,7 +329,7 @@ pub(crate) fn target_path_token(path: &str, agent: AgentKind) -> String {
 }
 
 pub(crate) fn unique_binding_id(
-    bindings: &crate::state_model::V3BindingsFile,
+    bindings: &crate::state_model::RegistryBindingsFile,
     args: &BindingAddArgs,
 ) -> String {
     let matcher_token = binding_matcher_token(args);
@@ -427,7 +465,7 @@ pub(crate) fn map_replay_conflict(err: anyhow::Error) -> CommandFailure {
     CommandFailure::new(ErrorCode::ReplayConflict, err.to_string())
 }
 
-pub(crate) fn map_v3_state(err: anyhow::Error) -> CommandFailure {
+pub(crate) fn map_registry_state(err: anyhow::Error) -> CommandFailure {
     let message = err.to_string();
     if message.contains("schema version mismatch") {
         CommandFailure::new(ErrorCode::SchemaMismatch, message)

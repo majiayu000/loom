@@ -1,13 +1,13 @@
-# Loom v3 Spec
+# Loom registry model Spec
 
 Updated: 2026-04-08
 Status: Draft
 
 ## 1. Summary
 
-Loom v3 stops modeling the world as "one Loom repo plus one Claude path plus one Codex path".
+Loom registry model stops modeling the world as "one Loom repo plus one Claude path plus one Codex path".
 
-Loom v3 is a local Skill Control Plane with four layers:
+Loom registry model is a local Skill Control Plane with four layers:
 
 1. `Source Registry`
 2. `Workspace Binding`
@@ -23,7 +23,7 @@ The main design correction is simple:
 
 ## 2. Problem Statement
 
-Loom v2 still assumes that:
+Loom legacy design still assumes that:
 
 1. one agent kind maps to one target directory
 2. a skill can be represented by one `claude_path` and one `codex_path`
@@ -48,10 +48,10 @@ These assumptions fail when:
 
 ## 4. Non-Goals
 
-1. v3 does not make panel the primary control surface.
-2. v3 does not auto-rewrite arbitrary agent directories by default.
-3. v3 does not implement implicit bidirectional sync between live directories and source.
-4. v3 does not require a hosted registry or database.
+1. registry state does not make panel the primary control surface.
+2. registry state does not auto-rewrite arbitrary agent directories by default.
+3. registry state does not implement implicit bidirectional sync between live directories and source.
+4. registry state does not require a hosted registry or database.
 
 ## 5. Design Principles
 
@@ -93,7 +93,7 @@ A workspace binding answers:
 3. which targets should it use by default
 4. which policy profile applies
 
-This is the missing layer in v2.
+This is the missing layer in legacy.
 
 ### 6.4 Projection
 
@@ -145,7 +145,7 @@ Git-native object summary stored as Loom metadata:
 {
   "skill_id": "loom",
   "kind": "commit|snapshot|release",
-  "ref": "release/loom/v1.2.0",
+  "ref": "release/loom/legacy.2.0",
   "commit": "abc123",
   "created_at": "2026-04-08T12:00:00Z"
 }
@@ -251,7 +251,7 @@ Git-native object summary stored as Loom metadata:
 
 ```text
 state/
-  v3/
+  registry/
     schema.json
     bindings.json
     targets.json
@@ -396,7 +396,7 @@ Observation policy values:
 2. `observe_only`
 3. `observe_and_warn`
 
-v3 intentionally does not define `auto_capture`.
+registry state intentionally does not define `auto_capture`.
 
 Reason:
 
@@ -426,7 +426,7 @@ Required envelope:
   "ok": true,
   "cmd": "skill.project",
   "request_id": "req_01",
-  "version": "3.0.0",
+  "version": "<loom-version>",
   "data": {},
   "error": null,
   "meta": {
@@ -459,7 +459,7 @@ The panel must not own any operation that cannot also be expressed via CLI.
 
 ## 17. Explicit Rejections
 
-v3 rejects these designs:
+registry state rejects these designs:
 
 1. one global `claude` directory assumption
 2. one `targets.json` record per skill with only `claude_path/codex_path`

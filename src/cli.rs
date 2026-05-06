@@ -7,12 +7,19 @@ use serde::Serialize;
 #[command(name = "loom")]
 #[command(about = "Loom - Skill manager with Git-native backend")]
 pub struct Cli {
+    /// Print a stable machine-readable JSON envelope.
     #[arg(long, global = true)]
     pub json: bool,
 
+    /// Pretty-print the JSON envelope. Ignored unless --json is set.
+    #[arg(long, global = true)]
+    pub pretty: bool,
+
+    /// Correlate this command with an external automation request.
     #[arg(long, global = true)]
     pub request_id: Option<String>,
 
+    /// Registry root. Defaults to ~/.loom-registry.
     #[arg(long, global = true)]
     pub root: Option<PathBuf>,
 
@@ -22,6 +29,10 @@ pub struct Cli {
 
 #[derive(Debug, Clone, Subcommand, Serialize)]
 pub enum Command {
+    #[command(about = "Initialize the default registry and scan existing agent skill directories")]
+    Init,
+    #[command(about = "Import and update skills from observed targets")]
+    Monitor(MonitorObservedArgs),
     #[command(about = "Inspect and configure registry workspace state")]
     Workspace {
         #[command(subcommand)]
@@ -57,7 +68,7 @@ pub enum WorkspaceCommand {
     Status,
     #[command(about = "Run registry integrity, history, and projection checks")]
     Doctor,
-    #[command(about = "Initialize v3 registry state")]
+    #[command(about = "Initialize registry state")]
     Init(WorkspaceInitArgs),
     #[command(about = "Manage workspace-to-target bindings")]
     Binding {
@@ -122,6 +133,8 @@ pub enum SkillCommand {
     Rollback(RollbackArgs),
     #[command(about = "Diff two revisions of a skill source")]
     Diff(DiffArgs),
+    #[command(about = "Continuously import and update skills from observed targets")]
+    MonitorObserved(MonitorObservedArgs),
     ImportObserved(ImportObservedArgs),
     Orphan {
         #[command(subcommand)]
@@ -178,22 +191,28 @@ pub enum HistoryRepairStrategyArg {
 
 #[derive(Debug, Clone, Args, Serialize)]
 pub struct AddArgs {
+    /// Local skill directory or Git URL to import.
     pub source: String,
 
+    /// Registry skill name, e.g. rust-review.
     #[arg(long)]
     pub name: String,
 }
 
 #[derive(Debug, Clone, Args, Serialize)]
 pub struct ProjectArgs {
+    /// Registry skill name.
     pub skill: String,
 
+    /// Workspace binding id that selects the default target.
     #[arg(long)]
     pub binding: String,
 
+    /// Optional target id override.
     #[arg(long)]
     pub target: Option<String>,
 
+    /// Projection strategy used for the live agent directory.
     #[arg(long, value_enum, default_value_t = ProjectionMethod::Symlink)]
     pub method: ProjectionMethod,
 }
@@ -210,6 +229,25 @@ pub struct CaptureArgs {
 
     #[arg(long)]
     pub message: Option<String>,
+}
+
+#[derive(Debug, Clone, Args, Serialize)]
+pub struct MonitorObservedArgs {
+    /// Restrict monitoring to one observed target id.
+    #[arg(long)]
+    pub target: Option<String>,
+
+    /// Run one scan and exit.
+    #[arg(long)]
+    pub once: bool,
+
+    /// Seconds between scans in long-running mode.
+    #[arg(long, default_value_t = 30)]
+    pub interval_seconds: u64,
+
+    /// Stop after N scans. Mainly useful for supervised smoke tests.
+    #[arg(long, hide = true)]
+    pub max_cycles: Option<u64>,
 }
 
 #[derive(Debug, Clone, Args, Serialize)]
@@ -268,21 +306,27 @@ pub struct BindingShowArgs {
 
 #[derive(Debug, Clone, Args, Serialize)]
 pub struct BindingAddArgs {
+    /// Agent kind for this workspace binding.
     #[arg(long, value_enum)]
     pub agent: AgentKind,
 
+    /// Profile label such as home, work, or repo.
     #[arg(long)]
     pub profile: String,
 
+    /// Matcher type used to decide when this binding applies.
     #[arg(long, value_enum)]
     pub matcher_kind: WorkspaceMatcherKind,
 
+    /// Matcher value, usually an absolute project path.
     #[arg(long)]
     pub matcher_value: String,
 
+    /// Default target id for this binding.
     #[arg(long)]
     pub target: String,
 
+    /// Policy profile controlling capture/projection behavior.
     #[arg(long, default_value = "safe-capture")]
     pub policy_profile: String,
 }
@@ -294,12 +338,15 @@ pub struct TargetShowArgs {
 
 #[derive(Debug, Clone, Args, Serialize)]
 pub struct TargetAddArgs {
+    /// Agent kind that reads this skills directory.
     #[arg(long, value_enum)]
     pub agent: AgentKind,
 
+    /// Absolute path to an agent skills directory.
     #[arg(long)]
     pub path: String,
 
+    /// Whether Loom can write to this target.
     #[arg(long, value_enum, default_value_t = TargetOwnership::Managed)]
     pub ownership: TargetOwnership,
 }

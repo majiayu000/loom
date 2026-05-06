@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { api, ApiError } from "./client";
 
-describe("api.v3Status", () => {
+describe("api.registryStatus", () => {
   afterEach(() => {
     vi.restoreAllMocks();
   });
@@ -14,12 +14,12 @@ describe("api.v3Status", () => {
       json: vi.fn().mockRejectedValue(new SyntaxError("Unexpected token < in JSON at position 0")),
     } as unknown as Response);
 
-    await expect(api.v3Status()).rejects.toEqual(
+    await expect(api.registryStatus()).rejects.toEqual(
       expect.objectContaining<ApiError>({
         name: "ApiError",
-        path: "/api/v3/status",
+        path: "/api/registry/status",
         status: 502,
-        message: "GET /api/v3/status returned 502",
+        message: "GET /api/registry/status returned 502",
       }),
     );
   });
@@ -33,6 +33,6 @@ describe("api.v3Status", () => {
       json: vi.fn().mockRejectedValue(abortError),
     } as unknown as Response);
 
-    await expect(api.v3Status()).rejects.toBe(abortError);
+    await expect(api.registryStatus()).rejects.toBe(abortError);
   });
 });

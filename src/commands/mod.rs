@@ -15,12 +15,13 @@ use uuid::Uuid;
 
 use crate::cli::{
     Cli, Command, OpsCommand, OpsHistoryCommand, RemoteCommand, SkillCommand, SkillOrphanCommand,
-    SyncCommand, TargetCommand, WorkspaceBindingCommand, WorkspaceCommand,
+    SyncCommand, TargetCommand, WorkspaceBindingCommand, WorkspaceCommand, WorkspaceInitArgs,
 };
 use crate::envelope::{Envelope, Meta};
 use crate::state::AppContext;
 use crate::types::ErrorCode;
 
+pub(crate) use event_store::redact_sensitive_string;
 pub use helpers::{collect_skill_inventory, remote_status_payload};
 
 use event_store::{
@@ -30,7 +31,7 @@ use event_store::{
 use helpers::{command_name, ensure_initial_commit, map_git, map_io};
 
 use crate::gitops;
-use crate::state_model::V3StatePaths;
+use crate::state_model::RegistryStatePaths;
 
 #[derive(Debug)]
 pub struct CommandFailure {
@@ -60,6 +61,7 @@ impl App {
     }
 
     pub(crate) fn ensure_write_layout(&self) -> std::result::Result<(), CommandFailure> {
+        self.ctx.ensure_not_loom_tool_repo_root().map_err(map_io)?;
         self.ctx.ensure_state_layout().map_err(map_io)?;
         Ok(())
     }
@@ -78,43 +80,54 @@ impl App {
             .request_id
             .clone()
             .unwrap_or_else(|| Uuid::new_v4().to_string());
-        let input = command_event_input(&cli, &request_id);
         let audit_required = command_requires_durable_audit(&cli.command);
+        if audit_required && let Err(err) = self.ctx.ensure_not_loom_tool_repo_root() {
+            let message = err.to_string();
+            let message = message
+                .strip_prefix("ARG_INVALID:")
+                .map(str::trim)
+                .unwrap_or(&message);
+            let env = Envelope::err(cmd, request_id, ErrorCode::ArgInvalid, message, json!({}));
+            return Ok((env, ErrorCode::ArgInvalid.exit_code()));
+        }
         let mut audit_started = false;
-        let mut audit_warning = None;
-        match prepare_command_event_store(&self.ctx) {
-            Ok(()) => match append_command_started(&self.ctx, cmd, input, &request_id) {
-                Ok(()) => audit_started = true,
-                Err(err) if audit_required => {
+        if audit_required {
+            let input = command_event_input(&cli, &request_id);
+            match prepare_command_event_store(&self.ctx) {
+                Ok(()) => match append_command_started(&self.ctx, cmd, input, &request_id) {
+                    Ok(()) => audit_started = true,
+                    Err(err) => {
+                        let env = Envelope::err(
+                            cmd,
+                            request_id,
+                            ErrorCode::InternalError,
+                            format!("failed to append command event: {}", err),
+                            json!({}),
+                        );
+                        return Ok((env, ErrorCode::InternalError.exit_code()));
+                    }
+                },
+                Err(err) => {
                     let env = Envelope::err(
                         cmd,
                         request_id,
                         ErrorCode::InternalError,
-                        format!("failed to append command event: {}", err),
+                        format!("failed to prepare command event log: {}", err),
                         json!({}),
                     );
                     return Ok((env, ErrorCode::InternalError.exit_code()));
                 }
-                Err(err) => {
-                    audit_warning = Some(format!("failed to append command event: {}", err));
-                }
-            },
-            Err(err) if audit_required => {
-                let env = Envelope::err(
-                    cmd,
-                    request_id,
-                    ErrorCode::InternalError,
-                    format!("failed to prepare command event log: {}", err),
-                    json!({}),
-                );
-                return Ok((env, ErrorCode::InternalError.exit_code()));
-            }
-            Err(err) => {
-                audit_warning = Some(format!("failed to prepare command event log: {}", err));
             }
         }
 
         let result = match &cli.command {
+            Command::Init => {
+                let args = WorkspaceInitArgs {
+                    scan_existing: true,
+                };
+                self.cmd_workspace_init(&args, &request_id)
+            }
+            Command::Monitor(args) => self.cmd_monitor_observed(args, &request_id),
             Command::Workspace { command } => match command {
                 WorkspaceCommand::Status => self.cmd_status(),
                 WorkspaceCommand::Doctor => self.cmd_doctor(),
@@ -128,6 +141,7 @@ impl App {
             Command::Skill { command } => match command {
                 SkillCommand::Add(args) => self.cmd_add(args, &request_id),
                 SkillCommand::ImportObserved(args) => self.cmd_import_observed(args, &request_id),
+                SkillCommand::MonitorObserved(args) => self.cmd_monitor_observed(args, &request_id),
                 SkillCommand::Project(args) => self.cmd_project(args, &request_id),
                 SkillCommand::Capture(args) => self.cmd_capture(args, &request_id),
                 SkillCommand::Save(args) => self.cmd_save(args, &request_id),
@@ -146,18 +160,12 @@ impl App {
 
         match result {
             Ok((data, meta)) => {
-                let mut env = Envelope::ok(cmd, request_id, data, meta);
-                if let Some(warning) = audit_warning.take() {
-                    env.meta.warnings.push(warning);
-                }
+                let env = Envelope::ok(cmd, request_id, data, meta);
                 Ok(self.finish_command_audit(cmd, env, 0, audit_started, audit_required))
             }
             Err(f) => {
                 let exit_code = f.code.exit_code();
-                let mut env = Envelope::err(cmd, request_id, f.code, f.message, f.details);
-                if let Some(warning) = audit_warning.take() {
-                    env.meta.warnings.push(warning);
-                }
+                let env = Envelope::err(cmd, request_id, f.code, f.message, f.details);
                 Ok(self.finish_command_audit(cmd, env, exit_code, audit_started, audit_required))
             }
         }
@@ -215,28 +223,37 @@ impl App {
         (env, exit_code)
     }
 
-    pub(crate) fn require_v3_snapshot(
+    pub(crate) fn require_registry_snapshot(
         &self,
-    ) -> std::result::Result<crate::state_model::V3Snapshot, CommandFailure> {
-        let paths = V3StatePaths::from_app_context(&self.ctx);
-        match paths.maybe_load_snapshot().map_err(helpers::map_v3_state)? {
+    ) -> std::result::Result<crate::state_model::RegistrySnapshot, CommandFailure> {
+        let paths = RegistryStatePaths::from_app_context(&self.ctx);
+        match paths
+            .maybe_load_snapshot()
+            .map_err(helpers::map_registry_state)?
+        {
             Some(snapshot) => Ok(snapshot),
             None => Err(CommandFailure::new(
                 ErrorCode::ArgInvalid,
-                format!("v3 state not initialized under {}", paths.v3_dir.display()),
+                format!(
+                    "registry state not initialized under {}",
+                    paths.registry_dir.display()
+                ),
             )),
         }
     }
 
-    pub(crate) fn ensure_v3_layout(&self) -> std::result::Result<V3StatePaths, CommandFailure> {
-        let paths = V3StatePaths::from_app_context(&self.ctx);
-        paths.ensure_layout().map_err(helpers::map_v3_state)?;
+    pub(crate) fn ensure_registry_layout(
+        &self,
+    ) -> std::result::Result<RegistryStatePaths, CommandFailure> {
+        let paths = RegistryStatePaths::from_app_context(&self.ctx);
+        paths.ensure_layout().map_err(helpers::map_registry_state)?;
         Ok(paths)
     }
 }
 
 fn command_requires_durable_audit(command: &Command) -> bool {
     match command {
+        Command::Init | Command::Monitor(_) => true,
         Command::Workspace { command } => match command {
             WorkspaceCommand::Status | WorkspaceCommand::Doctor => false,
             WorkspaceCommand::Init(_) => true,
@@ -253,6 +270,7 @@ fn command_requires_durable_audit(command: &Command) -> bool {
             command,
             SkillCommand::Add(_)
                 | SkillCommand::ImportObserved(_)
+                | SkillCommand::MonitorObserved(_)
                 | SkillCommand::Project(_)
                 | SkillCommand::Capture(_)
                 | SkillCommand::Save(_)

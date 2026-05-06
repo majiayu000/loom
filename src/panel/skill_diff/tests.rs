@@ -1,5 +1,6 @@
 use super::{
-    is_valid_git_rev, is_valid_skill_name, parse_diff_git_path, parse_unified_diff, v3_skill_diff,
+    is_valid_git_rev, is_valid_skill_name, parse_diff_git_path, parse_unified_diff,
+    registry_skill_diff,
 };
 use crate::panel::PanelState;
 use crate::state::AppContext;
@@ -18,6 +19,27 @@ fn make_state(root: &std::path::Path) -> PanelState {
         ctx: Arc::new(ctx),
         panel_origin: "http://127.0.0.1:43117".to_string(),
     }
+}
+
+fn git_ok(root: &std::path::Path, args: &[&str]) -> std::process::Output {
+    let output = std::process::Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .arg("-c")
+        .arg("commit.gpgsign=false")
+        .arg("-c")
+        .arg("tag.gpgSign=false")
+        .args(args)
+        .output()
+        .expect("git");
+    assert!(
+        output.status.success(),
+        "git {:?} failed: stdout={} stderr={}",
+        args,
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    output
 }
 
 #[test]
@@ -139,18 +161,11 @@ fn parse_diff_git_path_decodes_octal_in_quoted_path() {
 }
 
 #[tokio::test]
-async fn v3_skill_diff_returns_error_for_nonexistent_skill() {
+async fn registry_skill_diff_returns_error_for_nonexistent_skill() {
     let root = std::env::temp_dir().join(format!("loom-diff-nopath-{}", Uuid::new_v4()));
     fs::create_dir_all(root.join("skills/other")).unwrap();
 
-    let git = |args: &[&str]| {
-        std::process::Command::new("git")
-            .arg("-C")
-            .arg(&root)
-            .args(args)
-            .output()
-            .expect("git")
-    };
+    let git = |args: &[&str]| git_ok(&root, args);
 
     git(&["init"]);
     git(&["config", "user.email", "test@example.com"]);
@@ -171,7 +186,7 @@ async fn v3_skill_diff_returns_error_for_nonexistent_skill() {
         .to_string();
 
     let state = make_state(&root);
-    let (status, Json(payload)) = v3_skill_diff(
+    let (status, Json(payload)) = registry_skill_diff(
         AxumPath("nonexistent".to_string()),
         Query(super::super::DiffParams {
             rev_a: Some(rev_a),
@@ -189,12 +204,12 @@ async fn v3_skill_diff_returns_error_for_nonexistent_skill() {
 }
 
 #[tokio::test]
-async fn v3_skill_diff_rejects_malformed_rev_a() {
+async fn registry_skill_diff_rejects_malformed_rev_a() {
     let root = std::env::temp_dir().join(format!("loom-diff-bad-rev-{}", Uuid::new_v4()));
     fs::create_dir_all(&root).unwrap();
     let state = make_state(&root);
 
-    let (status, Json(payload)) = v3_skill_diff(
+    let (status, Json(payload)) = registry_skill_diff(
         AxumPath("foo".to_string()),
         Query(super::super::DiffParams {
             rev_a: Some("invalid!rev".to_string()),
@@ -212,18 +227,11 @@ async fn v3_skill_diff_rejects_malformed_rev_a() {
 }
 
 #[tokio::test]
-async fn v3_skill_diff_returns_diff_for_two_commits() {
+async fn registry_skill_diff_returns_diff_for_two_commits() {
     let root = std::env::temp_dir().join(format!("loom-diff-integ-{}", Uuid::new_v4()));
     fs::create_dir_all(root.join("skills/foo")).unwrap();
 
-    let git = |args: &[&str]| {
-        std::process::Command::new("git")
-            .arg("-C")
-            .arg(&root)
-            .args(args)
-            .output()
-            .expect("git")
-    };
+    let git = |args: &[&str]| git_ok(&root, args);
 
     git(&["init"]);
     git(&["config", "user.email", "test@example.com"]);
@@ -246,7 +254,7 @@ async fn v3_skill_diff_returns_diff_for_two_commits() {
         .to_string();
 
     let state = make_state(&root);
-    let (status, Json(payload)) = v3_skill_diff(
+    let (status, Json(payload)) = registry_skill_diff(
         AxumPath("foo".to_string()),
         Query(super::super::DiffParams {
             rev_a: Some(rev_a),

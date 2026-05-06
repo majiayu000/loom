@@ -12,21 +12,24 @@ use crate::envelope::Meta;
 use crate::gitops;
 use crate::state::{AppContext, PendingOpsReport, resolve_agent_skill_source_dirs};
 use crate::state_model::{
-    V3BindingRule, V3OperationRecord, V3ProjectionInstance, V3ProjectionsFile, V3RulesFile,
-    V3Snapshot, V3StatePaths,
+    RegistryBindingRule, RegistryOperationRecord, RegistryProjectionInstance,
+    RegistryProjectionsFile, RegistryRulesFile, RegistrySnapshot, RegistryStatePaths,
 };
 use crate::types::{ErrorCode, SyncState};
 
 use super::CommandFailure;
-use super::file_ops::{copy_dir_recursive, create_symlink_dir};
+use super::event_store::redact_sensitive_string;
+use super::file_ops::{
+    copy_dir_recursive, copy_dir_recursive_preserving_symlinks, create_symlink_dir,
+};
 use super::helpers::{map_git, map_io, map_push_rejected, map_queue, map_remote_unreachable};
 use crate::state::remove_path_if_exists;
 
 // ---------------------------------------------------------------------------
-// V3 state mutators
+// Registry state mutators
 // ---------------------------------------------------------------------------
 
-pub(crate) fn upsert_rule(rules: &mut V3RulesFile, rule: V3BindingRule) {
+pub(crate) fn upsert_rule(rules: &mut RegistryRulesFile, rule: RegistryBindingRule) {
     if let Some(existing) = rules.rules.iter_mut().find(|existing| {
         existing.binding_id == rule.binding_id
             && existing.skill_id == rule.skill_id
@@ -47,8 +50,8 @@ pub(crate) fn upsert_rule(rules: &mut V3RulesFile, rule: V3BindingRule) {
 }
 
 pub(crate) fn upsert_projection(
-    projections: &mut V3ProjectionsFile,
-    projection: V3ProjectionInstance,
+    projections: &mut RegistryProjectionsFile,
+    projection: RegistryProjectionInstance,
 ) {
     if let Some(existing) = projections
         .projections
@@ -72,7 +75,22 @@ pub(crate) fn project_skill_to_target(
 ) -> Result<()> {
     match method {
         ProjectionMethod::Symlink => create_symlink_dir(src, dst),
-        ProjectionMethod::Copy | ProjectionMethod::Materialize => {
+        ProjectionMethod::Copy => {
+            let parent = dst
+                .parent()
+                .context("projection target has no parent directory")?;
+            let tmp_dir = parent.join(format!(".loom-tmp-{}", Uuid::new_v4()));
+            if let Err(err) = copy_dir_recursive_preserving_symlinks(src, &tmp_dir) {
+                let _ = remove_path_if_exists(&tmp_dir);
+                return Err(err);
+            }
+            if let Err(err) = std::fs::rename(&tmp_dir, dst) {
+                let _ = remove_path_if_exists(&tmp_dir);
+                return Err(err).context("failed to atomically place projection");
+            }
+            Ok(())
+        }
+        ProjectionMethod::Materialize => {
             let parent = dst
                 .parent()
                 .context("projection target has no parent directory")?;
@@ -91,9 +109,9 @@ pub(crate) fn project_skill_to_target(
 }
 
 pub(crate) fn resolve_capture_projection(
-    snapshot: &V3Snapshot,
+    snapshot: &RegistrySnapshot,
     args: &CaptureArgs,
-) -> std::result::Result<V3ProjectionInstance, CommandFailure> {
+) -> std::result::Result<RegistryProjectionInstance, CommandFailure> {
     if let Some(instance_id) = args.instance.as_deref() {
         let projection = snapshot
             .projections
@@ -177,7 +195,7 @@ pub(crate) fn resolve_capture_projection(
 }
 
 pub(crate) fn update_projection_after_capture(
-    projections: &mut V3ProjectionsFile,
+    projections: &mut RegistryProjectionsFile,
     instance_id: &str,
     rev: &str,
 ) -> std::result::Result<(), CommandFailure> {
@@ -201,15 +219,15 @@ pub(crate) fn update_projection_after_capture(
     Ok(())
 }
 
-pub(crate) fn record_v3_operation(
-    paths: &V3StatePaths,
+pub(crate) fn record_registry_operation(
+    paths: &RegistryStatePaths,
     intent: &str,
     payload: serde_json::Value,
     effects: serde_json::Value,
 ) -> Result<String> {
     let op_id = format!("op_{}", Uuid::new_v4().simple());
     let now = Utc::now();
-    let record = V3OperationRecord {
+    let record = RegistryOperationRecord {
         op_id: op_id.clone(),
         intent: intent.to_string(),
         status: "succeeded".to_string(),
@@ -249,10 +267,10 @@ pub(crate) fn record_v3_operation(
 
     if let Err(err) = persist_result {
         if let Err(rollback_err) =
-            rollback_record_v3_operation(paths, operations_len, &checkpoint_backup)
+            rollback_record_registry_operation(paths, operations_len, &checkpoint_backup)
         {
             return Err(err.context(format!(
-                "failed to rollback v3 operation record after partial write: {}",
+                "failed to rollback registry operation record after partial write: {}",
                 rollback_err
             )));
         }
@@ -269,8 +287,8 @@ fn maybe_projection_fault(tag: &str) -> Result<()> {
     Ok(())
 }
 
-fn rollback_record_v3_operation(
-    paths: &V3StatePaths,
+fn rollback_record_registry_operation(
+    paths: &RegistryStatePaths,
     operations_len: u64,
     checkpoint_backup: &[u8],
 ) -> Result<()> {
@@ -438,6 +456,7 @@ pub(crate) fn remote_status_payload_with_pending(
     let url = gitops::remote_url(ctx)
         .map_err(map_git)?
         .unwrap_or_default();
+    let redacted_url = redact_sensitive_string(&url);
     let mut meta = Meta {
         warnings: pending_report.warnings,
         sync_state: None,
@@ -458,7 +477,7 @@ pub(crate) fn remote_status_payload_with_pending(
             json!({
                 "configured": true,
                 "remote": "origin",
-                "url": url,
+                "url": redacted_url,
                 "pending_ops": pending,
                 "tracking_ref": false,
                 "sync_state": sync_state,
@@ -483,7 +502,7 @@ pub(crate) fn remote_status_payload_with_pending(
         json!({
             "configured": true,
             "remote": "origin",
-            "url": url,
+            "url": redacted_url,
             "ahead": ahead,
             "behind": behind,
             "pending_ops": pending,
@@ -541,6 +560,12 @@ pub(crate) fn sync_push_internal(
         ));
     }
 
+    let _state_commit = gitops::commit_paths_if_changed(
+        ctx,
+        &[".gitignore", "state/registry", "state/v3"],
+        "sync: commit registry state",
+    )
+    .map_err(map_git)?;
     let pending_report = ctx.read_pending_report().map_err(map_io)?;
     let queued_ids = pending_report
         .ops
@@ -619,6 +644,42 @@ mod project_skill_tests {
         let dst = base.join("dst-mat");
         project_skill_to_target(&src, &dst, ProjectionMethod::Materialize).expect("materialize ok");
         assert!(dst.join("SKILL.md").is_file());
+        let _ = stdfs::remove_dir_all(&base);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn copy_preserves_symlink_but_materialize_resolves_it() {
+        let base = scratch_dir("copy-vs-materialize-symlink");
+        let src = make_skill_src(&base);
+        let secret = base.join("secret.txt");
+        stdfs::write(&secret, "secret contents\n").expect("secret file");
+        std::os::unix::fs::symlink(&secret, src.join("secret-link")).expect("source symlink");
+
+        let copy_dst = base.join("dst-copy");
+        project_skill_to_target(&src, &copy_dst, ProjectionMethod::Copy).expect("copy ok");
+        assert!(
+            stdfs::symlink_metadata(copy_dst.join("secret-link"))
+                .expect("copy link metadata")
+                .file_type()
+                .is_symlink(),
+            "copy must preserve the symlink instead of dereferencing it"
+        );
+
+        let mat_dst = base.join("dst-mat");
+        project_skill_to_target(&src, &mat_dst, ProjectionMethod::Materialize)
+            .expect("materialize ok");
+        assert!(
+            stdfs::symlink_metadata(mat_dst.join("secret-link"))
+                .expect("materialized link metadata")
+                .is_file(),
+            "materialize must produce a real file"
+        );
+        assert_eq!(
+            stdfs::read_to_string(mat_dst.join("secret-link")).expect("materialized content"),
+            "secret contents\n"
+        );
+
         let _ = stdfs::remove_dir_all(&base);
     }
 

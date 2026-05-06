@@ -36,7 +36,7 @@ async fn main() {
 
     match app.execute(cli.clone()) {
         Ok((env, code)) => {
-            print_envelope(&env, cli.json);
+            print_envelope(&env, cli.json, cli.pretty);
             if code != 0 {
                 std::process::exit(code);
             }
@@ -48,9 +48,14 @@ async fn main() {
     }
 }
 
-fn print_envelope(env: &Envelope, force_json: bool) {
+fn print_envelope(env: &Envelope, force_json: bool, pretty: bool) {
     if force_json {
-        match serde_json::to_string_pretty(env) {
+        let rendered = if pretty {
+            serde_json::to_string_pretty(env)
+        } else {
+            serde_json::to_string(env)
+        };
+        match rendered {
             Ok(s) => println!("{}", s),
             Err(e) => {
                 eprintln!("failed to serialize output: {}", e);

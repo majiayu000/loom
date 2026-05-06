@@ -13,16 +13,17 @@ use crate::envelope::Meta;
 use crate::gitops;
 use crate::state::AppContext;
 use crate::state::resolve_agent_skill_dirs;
-use crate::state_model::V3Snapshot;
 use crate::state_model::{
-    V3ProjectionInstance, V3StatePaths, V3WorkspaceBinding, V3WorkspaceMatcher,
+    RegistryProjectionInstance, RegistrySnapshot, RegistryStatePaths, RegistryWorkspaceBinding,
+    RegistryWorkspaceMatcher,
 };
 use crate::types::ErrorCode;
 
 use super::helpers::{
-    agent_kind_as_str, collect_skill_inventory, map_git, map_io, map_lock, map_v3_state,
-    read_git_field, record_v3_operation, remote_status_payload, remote_status_payload_with_pending,
-    unique_binding_id, validate_non_empty, workspace_matcher_kind_as_str,
+    agent_kind_as_str, collect_skill_inventory, commit_registry_state, map_git, map_io, map_lock,
+    map_registry_state, maybe_autosync_or_queue, read_git_field, record_registry_operation,
+    remote_status_payload, remote_status_payload_with_pending, unique_binding_id,
+    validate_non_empty, validate_policy_profile, workspace_matcher_kind_as_str,
 };
 use super::{App, CommandFailure};
 
@@ -31,8 +32,36 @@ enum LivePathCleanup {
     Skipped { path: String, reason: &'static str },
 }
 
+const DEFAULT_SCAN_AGENTS: [AgentKind; 10] = [
+    AgentKind::Claude,
+    AgentKind::Codex,
+    AgentKind::Cursor,
+    AgentKind::Windsurf,
+    AgentKind::Cline,
+    AgentKind::Copilot,
+    AgentKind::Aider,
+    AgentKind::Opencode,
+    AgentKind::GeminiCli,
+    AgentKind::Goose,
+];
+
+fn default_skill_dir(agent: AgentKind, home: &str) -> PathBuf {
+    match agent {
+        AgentKind::Claude => PathBuf::from(format!("{home}/.claude/skills")),
+        AgentKind::Codex => PathBuf::from(format!("{home}/.codex/skills")),
+        AgentKind::Cursor => PathBuf::from(format!("{home}/.cursor/skills")),
+        AgentKind::Windsurf => PathBuf::from(format!("{home}/.windsurf/skills")),
+        AgentKind::Cline => PathBuf::from(format!("{home}/.cline/skills")),
+        AgentKind::Copilot => PathBuf::from(format!("{home}/.github/copilot/skills")),
+        AgentKind::Aider => PathBuf::from(format!("{home}/.aider/skills")),
+        AgentKind::Opencode => PathBuf::from(format!("{home}/.opencode/skills")),
+        AgentKind::GeminiCli => PathBuf::from(format!("{home}/.gemini/skills")),
+        AgentKind::Goose => PathBuf::from(format!("{home}/.config/goose/skills")),
+    }
+}
+
 fn cleanup_orphan_live_path(
-    projection: &V3ProjectionInstance,
+    projection: &RegistryProjectionInstance,
     target_paths: &HashMap<String, String>,
 ) -> std::result::Result<LivePathCleanup, CommandFailure> {
     let path = Path::new(&projection.materialized_path);
@@ -100,22 +129,22 @@ impl App {
         let pending_report = self.ctx.read_pending_report().map_err(map_io)?;
         let pending_ops = pending_report.ops.len();
         let target_dirs = resolve_agent_skill_dirs(&self.ctx.root);
-        let v3_paths = V3StatePaths::from_app_context(&self.ctx);
-        let v3_status = v3_paths
+        let registry_paths = RegistryStatePaths::from_app_context(&self.ctx);
+        let registry_status = registry_paths
             .maybe_load_snapshot()
-            .map_err(map_v3_state)?
+            .map_err(map_registry_state)?
             .map(|snapshot| snapshot.status_view())
             .unwrap_or_else(|| {
                 json!({
-                    "state_model": "v3",
+                    "state_model": "registry",
                     "available": false,
                     "error": {
                         "code": "STATE_CORRUPT",
-                        "message": format!("v3 state not initialized under {}", v3_paths.v3_dir.display())
+                        "message": format!("registry state not initialized under {}", registry_paths.registry_dir.display())
                     }
                 })
             });
-        let (registered_target_count, registered_target_ids) = v3_status
+        let (registered_target_count, registered_target_ids) = registry_status
             .get("targets")
             .and_then(|value| value.as_array())
             .map(|targets| {
@@ -139,18 +168,25 @@ impl App {
         let (remote, mut meta) = remote_status_payload_with_pending(&self.ctx, pending_report)?;
         meta.warnings.splice(0..0, git_warnings);
         meta.warnings.extend(skill_inventory.warnings);
+        let source_skill_sample = skill_inventory
+            .source_skills
+            .iter()
+            .take(20)
+            .cloned()
+            .collect::<Vec<_>>();
 
         let data = json!({
-            "state_model": "v3",
-            "skills": skill_inventory.source_skills,
-            "backup_skills": skill_inventory.backup_skills,
-            "skill_sources": {
-                "dirs": skill_inventory
-                    .source_dirs
-                    .iter()
-                    .map(|path| path.display().to_string())
-                    .collect::<Vec<_>>(),
-                "count": skill_inventory.source_dirs.len(),
+            "state_model": "registry",
+            "inventory": {
+                "source_skill_count": skill_inventory.source_skills.len(),
+                "source_skill_sample": source_skill_sample,
+                "source_skill_sample_truncated": skill_inventory.source_skills.len() > 20,
+                "backup_skill_count": skill_inventory.backup_skills.len(),
+                "source_dirs": skill_inventory
+                        .source_dirs
+                        .iter()
+                        .map(|path| path.display().to_string())
+                        .collect::<Vec<_>>(),
             },
             "backup_dir": self.ctx.skills_dir.display().to_string(),
             "git": {"head": head, "branch": branch, "status_short": status_short},
@@ -164,7 +200,7 @@ impl App {
             },
             "remote": remote,
             "pending_ops": pending_ops,
-            "v3": v3_status
+            "registry": registry_status
         });
 
         Ok((data, meta))
@@ -175,13 +211,15 @@ impl App {
         let fsck_ok = fsck.is_ok();
         let fsck_output = fsck.unwrap_or_else(|e| e.to_string());
         let pending_report = self.ctx.read_pending_report().map_err(map_io)?;
-        let v3_paths = V3StatePaths::from_app_context(&self.ctx);
-        let v3_schema_ok = v3_paths.schema_file.exists();
-        let v3_snapshot = v3_paths.maybe_load_snapshot().map_err(map_v3_state)?;
-        let v3_snapshot_ok = v3_snapshot.is_some();
+        let registry_paths = RegistryStatePaths::from_app_context(&self.ctx);
+        let registry_schema_ok = registry_paths.schema_file.exists();
+        let registry_snapshot = registry_paths
+            .maybe_load_snapshot()
+            .map_err(map_registry_state)?;
+        let registry_snapshot_ok = registry_snapshot.is_some();
         let history = gitops::history_status(&self.ctx).map_err(map_git)?;
 
-        let projection_checks = v3_snapshot
+        let projection_checks = registry_snapshot
             .as_ref()
             .map(|snapshot| check_projection_drift(&self.ctx, snapshot))
             .unwrap_or_default();
@@ -190,8 +228,8 @@ impl App {
             .all(|check| check.get("ok").and_then(|v| v.as_bool()).unwrap_or(false));
 
         let healthy = fsck_ok
-            && v3_schema_ok
-            && v3_snapshot_ok
+            && registry_schema_ok
+            && registry_snapshot_ok
             && history.conflicts.is_empty()
             && projections_ok;
 
@@ -200,8 +238,8 @@ impl App {
                 "healthy": healthy,
                 "checks": {
                     "git_fsck": {"ok": fsck_ok, "output": fsck_output},
-                    "v3_schema_file": {"ok": v3_schema_ok},
-                    "v3_snapshot": {"ok": v3_snapshot_ok},
+                    "registry_schema_file": {"ok": registry_schema_ok},
+                    "registry_snapshot": {"ok": registry_snapshot_ok},
                     "pending_queue": {
                         "count": pending_report.ops.len(),
                         "journal_events": pending_report.journal_events,
@@ -229,7 +267,7 @@ impl App {
         // calls below can acquire it again without deadlock.
         let _workspace = self.ctx.lock_workspace().map_err(map_lock)?;
         self.ensure_write_repo_ready()?;
-        self.ensure_v3_layout()?;
+        self.ensure_registry_layout()?;
 
         let mut imported: Vec<serde_json::Value> = Vec::new();
         let mut skipped: Vec<serde_json::Value> = Vec::new();
@@ -241,12 +279,10 @@ impl App {
                     "--scan-existing requires HOME to be set",
                 )
             })?;
-            let candidates = [
-                (AgentKind::Claude, format!("{}/.claude/skills", home)),
-                (AgentKind::Codex, format!("{}/.codex/skills", home)),
-            ];
-            for (agent, path_str) in candidates {
-                let p = Path::new(&path_str);
+            for agent in DEFAULT_SCAN_AGENTS {
+                let path = default_skill_dir(agent, &home);
+                let path_str = path.display().to_string();
+                let p = path.as_path();
                 if !p.exists() {
                     skipped.push(json!({
                         "agent": agent_kind_as_str(agent),
@@ -273,14 +309,27 @@ impl App {
             }
         }
 
+        let commit = commit_registry_state(&self.ctx, "workspace: initialize registry state")?;
+        let mut meta = Meta::default();
+        if let Some(commit) = &commit {
+            maybe_autosync_or_queue(
+                &self.ctx,
+                "workspace.init",
+                request_id,
+                json!({"commit": commit, "scanned": args.scan_existing}),
+                &mut meta,
+            )?;
+        }
+
         Ok((
             json!({
                 "initialized": true,
                 "scanned": args.scan_existing,
                 "imported": imported,
                 "skipped": skipped,
+                "commit": commit,
             }),
-            Meta::default(),
+            meta,
         ))
     }
 
@@ -293,9 +342,9 @@ impl App {
             WorkspaceBindingCommand::Add(args) => self.cmd_workspace_binding_add(args, request_id),
             WorkspaceBindingCommand::List => Ok((
                 {
-                    let snapshot = self.require_v3_snapshot()?;
+                    let snapshot = self.require_registry_snapshot()?;
                     json!({
-                        "state_model": "v3",
+                        "state_model": "registry",
                         "count": snapshot.bindings.bindings.len(),
                         "bindings": snapshot.bindings.bindings
                     })
@@ -303,7 +352,7 @@ impl App {
                 Meta::default(),
             )),
             WorkspaceBindingCommand::Show(args) => {
-                let snapshot = self.require_v3_snapshot()?;
+                let snapshot = self.require_registry_snapshot()?;
                 let binding = snapshot.binding(&args.binding_id).cloned().ok_or_else(|| {
                     CommandFailure::new(
                         ErrorCode::BindingNotFound,
@@ -316,7 +365,7 @@ impl App {
 
                 Ok((
                     json!({
-                        "state_model": "v3",
+                        "state_model": "registry",
                         "binding": binding,
                         "default_target": default_target,
                         "rules": rules,
@@ -337,14 +386,14 @@ impl App {
         request_id: &str,
     ) -> std::result::Result<(serde_json::Value, Meta), CommandFailure> {
         let _workspace = self.ctx.lock_workspace().map_err(map_lock)?;
-        self.ensure_write_layout()?;
+        self.ensure_write_repo_ready()?;
         validate_non_empty("profile", &args.profile)?;
         validate_non_empty("matcher_value", &args.matcher_value)?;
         validate_non_empty("target", &args.target)?;
-        validate_non_empty("policy_profile", &args.policy_profile)?;
+        validate_policy_profile(&args.policy_profile)?;
 
-        let paths = self.ensure_v3_layout()?;
-        let snapshot = paths.load_snapshot().map_err(map_v3_state)?;
+        let paths = self.ensure_registry_layout()?;
+        let snapshot = paths.load_snapshot().map_err(map_registry_state)?;
         if snapshot.target(&args.target).is_none() {
             return Err(CommandFailure::new(
                 ErrorCode::TargetNotFound,
@@ -372,11 +421,11 @@ impl App {
 
         let mut bindings = snapshot.bindings;
         let binding_id = unique_binding_id(&bindings, args);
-        let binding = V3WorkspaceBinding {
+        let binding = RegistryWorkspaceBinding {
             binding_id: binding_id.clone(),
             agent: agent_kind_as_str(args.agent).to_string(),
             profile_id: args.profile.clone(),
-            workspace_matcher: V3WorkspaceMatcher {
+            workspace_matcher: RegistryWorkspaceMatcher {
                 kind: workspace_matcher_kind_as_str(args.matcher_kind).to_string(),
                 value: args.matcher_value.clone(),
             },
@@ -390,9 +439,9 @@ impl App {
         bindings
             .bindings
             .sort_by(|left, right| left.binding_id.cmp(&right.binding_id));
-        paths.save_bindings(&bindings).map_err(map_v3_state)?;
+        paths.save_bindings(&bindings).map_err(map_registry_state)?;
 
-        let op_id = record_v3_operation(
+        let op_id = record_registry_operation(
             &paths,
             "workspace.binding.add",
             json!({
@@ -408,14 +457,25 @@ impl App {
                 "binding_id": binding.binding_id
             }),
         )
-        .map_err(map_v3_state)?;
+        .map_err(map_registry_state)?;
+        let commit = commit_registry_state(&self.ctx, &format!("binding({}): add", binding_id))?;
+        let mut meta = Meta {
+            op_id: Some(op_id),
+            ..Meta::default()
+        };
+        if let Some(commit) = &commit {
+            maybe_autosync_or_queue(
+                &self.ctx,
+                "workspace.binding.add",
+                request_id,
+                json!({"binding_id": binding.binding_id, "commit": commit}),
+                &mut meta,
+            )?;
+        }
 
         Ok((
-            json!({"binding": binding, "noop": false}),
-            Meta {
-                op_id: Some(op_id),
-                ..Meta::default()
-            },
+            json!({"binding": binding, "commit": commit, "noop": false}),
+            meta,
         ))
     }
 
@@ -425,9 +485,9 @@ impl App {
         request_id: &str,
     ) -> std::result::Result<(serde_json::Value, Meta), CommandFailure> {
         let _workspace = self.ctx.lock_workspace().map_err(map_lock)?;
-        self.ensure_write_layout()?;
-        let paths = self.ensure_v3_layout()?;
-        let mut snapshot = paths.load_snapshot().map_err(map_v3_state)?;
+        self.ensure_write_repo_ready()?;
+        let paths = self.ensure_registry_layout()?;
+        let mut snapshot = paths.load_snapshot().map_err(map_registry_state)?;
         let binding = snapshot.binding(&args.binding_id).cloned().ok_or_else(|| {
             CommandFailure::new(
                 ErrorCode::BindingNotFound,
@@ -466,9 +526,9 @@ impl App {
                 &snapshot.rules,
                 &snapshot.projections,
             )
-            .map_err(map_v3_state)?;
+            .map_err(map_registry_state)?;
 
-        let op_id = record_v3_operation(
+        let op_id = record_registry_operation(
             &paths,
             "workspace.binding.remove",
             json!({
@@ -481,12 +541,23 @@ impl App {
                 "orphaned_projection_ids": orphaned_projection_ids,
             }),
         )
-        .map_err(map_v3_state)?;
+        .map_err(map_registry_state)?;
 
         let mut meta = Meta {
             op_id: Some(op_id),
             ..Meta::default()
         };
+        let commit =
+            commit_registry_state(&self.ctx, &format!("binding({}): remove", args.binding_id))?;
+        if let Some(commit) = &commit {
+            maybe_autosync_or_queue(
+                &self.ctx,
+                "workspace.binding.remove",
+                request_id,
+                json!({"binding_id": binding.binding_id, "commit": commit}),
+                &mut meta,
+            )?;
+        }
         if !orphaned_projection_ids.is_empty() {
             meta.warnings.push(format!(
                 "binding removed; {} projection(s) marked orphaned — run `loom skill orphan clean` to remove metadata",
@@ -502,6 +573,7 @@ impl App {
                 "orphaned_projection_ids": orphaned_projection_ids,
                 "orphaned_paths": orphaned_paths,
                 "orphaned_count": orphaned_projection_ids.len(),
+                "commit": commit,
                 "noop": false
             }),
             meta,
@@ -515,8 +587,8 @@ impl App {
     ) -> std::result::Result<(serde_json::Value, Meta), CommandFailure> {
         let _workspace = self.ctx.lock_workspace().map_err(map_lock)?;
         self.ensure_write_layout()?;
-        let paths = self.ensure_v3_layout()?;
-        let mut snapshot = paths.load_snapshot().map_err(map_v3_state)?;
+        let paths = self.ensure_registry_layout()?;
+        let mut snapshot = paths.load_snapshot().map_err(map_registry_state)?;
         let target_paths = snapshot
             .targets
             .targets
@@ -558,9 +630,9 @@ impl App {
 
         paths
             .save_projections(&snapshot.projections)
-            .map_err(map_v3_state)?;
+            .map_err(map_registry_state)?;
 
-        let op_id = record_v3_operation(
+        let op_id = record_registry_operation(
             &paths,
             "skill.orphan.clean",
             json!({ "request_id": request_id }),
@@ -572,7 +644,7 @@ impl App {
                 "delete_live_paths": args.delete_live_paths,
             }),
         )
-        .map_err(map_v3_state)?;
+        .map_err(map_registry_state)?;
 
         Ok((
             json!({
@@ -598,6 +670,12 @@ impl App {
             RemoteCommand::Set { url } => {
                 let _workspace = self.ctx.lock_workspace().map_err(map_lock)?;
                 self.ensure_write_repo_ready()?;
+                gitops::validate_git_url(url).map_err(|err| {
+                    CommandFailure::new(
+                        ErrorCode::ArgInvalid,
+                        format!("invalid remote url '{}': {}", url, err),
+                    )
+                })?;
                 gitops::set_remote_origin(&self.ctx, url).map_err(map_git)?;
                 Ok((json!({"remote": "origin", "url": url}), Meta::default()))
             }
@@ -609,7 +687,7 @@ impl App {
     }
 }
 
-fn check_projection_drift(ctx: &AppContext, snapshot: &V3Snapshot) -> Vec<serde_json::Value> {
+fn check_projection_drift(ctx: &AppContext, snapshot: &RegistrySnapshot) -> Vec<serde_json::Value> {
     let mut results = Vec::new();
     for projection in &snapshot.projections.projections {
         let materialized = Path::new(&projection.materialized_path);
@@ -678,9 +756,10 @@ mod orphan_tests {
 
     use crate::state::AppContext;
     use crate::state_model::{
-        V3_SCHEMA_VERSION, V3BindingsFile, V3OpsCheckpoint, V3ProjectionInstance,
-        V3ProjectionTarget, V3ProjectionsFile, V3RulesFile, V3SchemaFile, V3StatePaths,
-        V3TargetCapabilities, V3TargetsFile, V3WorkspaceBinding, V3WorkspaceMatcher,
+        REGISTRY_SCHEMA_VERSION, RegistryBindingsFile, RegistryOpsCheckpoint,
+        RegistryProjectionInstance, RegistryProjectionTarget, RegistryProjectionsFile,
+        RegistryRulesFile, RegistrySchemaFile, RegistryStatePaths, RegistryTargetCapabilities,
+        RegistryTargetsFile, RegistryWorkspaceBinding, RegistryWorkspaceMatcher,
     };
 
     fn temp_root() -> PathBuf {
@@ -689,14 +768,14 @@ mod orphan_tests {
         dir
     }
 
-    fn write_minimal_v3(root: &Path) -> V3StatePaths {
-        let paths = V3StatePaths::from_root(root);
+    fn write_minimal_registry(root: &Path) -> RegistryStatePaths {
+        let paths = RegistryStatePaths::from_root(root);
         paths.ensure_layout().unwrap();
         let now = Utc::now();
         fs::write(
             &paths.schema_file,
-            serde_json::to_vec_pretty(&V3SchemaFile {
-                schema_version: V3_SCHEMA_VERSION,
+            serde_json::to_vec_pretty(&RegistrySchemaFile {
+                schema_version: REGISTRY_SCHEMA_VERSION,
                 created_at: now,
                 writer: "test".into(),
             })
@@ -705,14 +784,14 @@ mod orphan_tests {
         .unwrap();
         fs::write(
             &paths.targets_file,
-            serde_json::to_vec_pretty(&V3TargetsFile {
-                schema_version: V3_SCHEMA_VERSION,
-                targets: vec![V3ProjectionTarget {
+            serde_json::to_vec_pretty(&RegistryTargetsFile {
+                schema_version: REGISTRY_SCHEMA_VERSION,
+                targets: vec![RegistryProjectionTarget {
                     target_id: "target1".into(),
                     agent: "claude".into(),
                     path: root.display().to_string(),
                     ownership: "registered".into(),
-                    capabilities: V3TargetCapabilities {
+                    capabilities: RegistryTargetCapabilities {
                         symlink: false,
                         copy: true,
                         watch: true,
@@ -725,8 +804,8 @@ mod orphan_tests {
         .unwrap();
         fs::write(
             &paths.rules_file,
-            serde_json::to_vec_pretty(&V3RulesFile {
-                schema_version: V3_SCHEMA_VERSION,
+            serde_json::to_vec_pretty(&RegistryRulesFile {
+                schema_version: REGISTRY_SCHEMA_VERSION,
                 rules: vec![],
             })
             .unwrap(),
@@ -734,8 +813,8 @@ mod orphan_tests {
         .unwrap();
         fs::write(
             &paths.checkpoint_file,
-            serde_json::to_vec_pretty(&V3OpsCheckpoint {
-                schema_version: V3_SCHEMA_VERSION,
+            serde_json::to_vec_pretty(&RegistryOpsCheckpoint {
+                schema_version: REGISTRY_SCHEMA_VERSION,
                 last_scanned_op_id: None,
                 last_acked_op_id: None,
                 updated_at: now,
@@ -746,12 +825,12 @@ mod orphan_tests {
         paths
     }
 
-    fn make_binding(id: &str) -> V3WorkspaceBinding {
-        V3WorkspaceBinding {
+    fn make_binding(id: &str) -> RegistryWorkspaceBinding {
+        RegistryWorkspaceBinding {
             binding_id: id.into(),
             agent: "claude".into(),
             profile_id: "default".into(),
-            workspace_matcher: V3WorkspaceMatcher {
+            workspace_matcher: RegistryWorkspaceMatcher {
                 kind: "name".into(),
                 value: "test".into(),
             },
@@ -767,8 +846,8 @@ mod orphan_tests {
         binding_id: &str,
         health: &str,
         mat_path: &str,
-    ) -> V3ProjectionInstance {
-        V3ProjectionInstance {
+    ) -> RegistryProjectionInstance {
+        RegistryProjectionInstance {
             instance_id: instance_id.into(),
             skill_id: "skill1".into(),
             binding_id: Some(binding_id.into()),
@@ -790,13 +869,13 @@ mod orphan_tests {
         root: &Path,
         mat_path: &str,
         health: &str,
-    ) -> V3StatePaths {
-        let paths = write_minimal_v3(root);
+    ) -> RegistryStatePaths {
+        let paths = write_minimal_registry(root);
 
         fs::write(
             &paths.bindings_file,
-            serde_json::to_vec_pretty(&V3BindingsFile {
-                schema_version: V3_SCHEMA_VERSION,
+            serde_json::to_vec_pretty(&RegistryBindingsFile {
+                schema_version: REGISTRY_SCHEMA_VERSION,
                 bindings: vec![make_binding("bind1")],
             })
             .unwrap(),
@@ -804,8 +883,8 @@ mod orphan_tests {
         .unwrap();
         fs::write(
             &paths.projections_file,
-            serde_json::to_vec_pretty(&V3ProjectionsFile {
-                schema_version: V3_SCHEMA_VERSION,
+            serde_json::to_vec_pretty(&RegistryProjectionsFile {
+                schema_version: REGISTRY_SCHEMA_VERSION,
                 projections: vec![make_projection("inst1", "bind1", health, mat_path)],
             })
             .unwrap(),
@@ -832,7 +911,7 @@ mod orphan_tests {
         )
         .unwrap();
 
-        let paths = V3StatePaths::from_root(&root);
+        let paths = RegistryStatePaths::from_root(&root);
         let snapshot = paths.load_snapshot().unwrap();
         assert_eq!(
             snapshot.projections.projections.len(),
@@ -892,7 +971,7 @@ mod orphan_tests {
         )
         .unwrap();
 
-        let paths = V3StatePaths::from_root(&root);
+        let paths = RegistryStatePaths::from_root(&root);
         let snapshot = paths.load_snapshot().unwrap();
         let proj = &snapshot.projections.projections[0];
         assert_eq!(proj.health, "orphaned");
@@ -917,7 +996,7 @@ mod orphan_tests {
         )
         .unwrap();
 
-        let paths = V3StatePaths::from_root(&root);
+        let paths = RegistryStatePaths::from_root(&root);
         let snapshot = paths.load_snapshot().unwrap();
         let proj = &snapshot.projections.projections[0];
         assert_eq!(proj.health, "orphaned");
@@ -955,7 +1034,7 @@ mod orphan_tests {
 
         assert_eq!(data["cleaned_count"], 1);
         assert_eq!(data["deleted_paths"].as_array().unwrap().len(), 0);
-        let paths = V3StatePaths::from_root(&root);
+        let paths = RegistryStatePaths::from_root(&root);
         let snapshot = paths.load_snapshot().unwrap();
         assert!(
             snapshot.projections.projections.is_empty(),
@@ -1061,7 +1140,7 @@ mod orphan_tests {
             .unwrap();
         assert!(meta.op_id.is_some(), "op_id must be recorded");
 
-        let paths = V3StatePaths::from_root(&root);
+        let paths = RegistryStatePaths::from_root(&root);
         let snapshot = paths.load_snapshot().unwrap();
         let clean_op = snapshot
             .operations
@@ -1080,13 +1159,13 @@ mod orphan_tests {
     #[test]
     fn removing_one_binding_does_not_orphan_other_binding_projections() {
         let root = temp_root();
-        let paths = write_minimal_v3(&root);
+        let paths = write_minimal_registry(&root);
         let now = Utc::now();
 
         fs::write(
             &paths.bindings_file,
-            serde_json::to_vec_pretty(&V3BindingsFile {
-                schema_version: V3_SCHEMA_VERSION,
+            serde_json::to_vec_pretty(&RegistryBindingsFile {
+                schema_version: REGISTRY_SCHEMA_VERSION,
                 bindings: vec![make_binding("bind1"), make_binding("bind2")],
             })
             .unwrap(),
@@ -1094,8 +1173,8 @@ mod orphan_tests {
         .unwrap();
         fs::write(
             &paths.projections_file,
-            serde_json::to_vec_pretty(&V3ProjectionsFile {
-                schema_version: V3_SCHEMA_VERSION,
+            serde_json::to_vec_pretty(&RegistryProjectionsFile {
+                schema_version: REGISTRY_SCHEMA_VERSION,
                 projections: vec![
                     make_projection("inst1", "bind1", "healthy", "/tmp/p1"),
                     make_projection("inst2", "bind2", "healthy", "/tmp/p2"),
@@ -1117,7 +1196,9 @@ mod orphan_tests {
         )
         .unwrap();
 
-        let snap = V3StatePaths::from_root(&root).load_snapshot().unwrap();
+        let snap = RegistryStatePaths::from_root(&root)
+            .load_snapshot()
+            .unwrap();
         assert_eq!(snap.projections.projections.len(), 2);
         let inst2 = snap
             .projections

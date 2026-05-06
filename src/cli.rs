@@ -6,6 +6,7 @@ use serde::Serialize;
 #[derive(Debug, Clone, Parser, Serialize)]
 #[command(name = "loom")]
 #[command(about = "Loom - Skill manager with Git-native backend")]
+#[command(version)]
 pub struct Cli {
     /// Print a stable machine-readable JSON envelope.
     #[arg(long, global = true)]
@@ -135,7 +136,9 @@ pub enum SkillCommand {
     Diff(DiffArgs),
     #[command(about = "Continuously import and update skills from observed targets")]
     MonitorObserved(MonitorObservedArgs),
+    #[command(about = "Import discovered skills from observed targets in one pass")]
     ImportObserved(ImportObservedArgs),
+    #[command(about = "Inspect and clean projections orphaned by binding removal")]
     Orphan {
         #[command(subcommand)]
         command: SkillOrphanCommand,
@@ -144,6 +147,7 @@ pub enum SkillCommand {
 
 #[derive(Debug, Clone, Subcommand, Serialize)]
 pub enum SkillOrphanCommand {
+    #[command(about = "Remove orphaned projection records (and optionally their files)")]
     Clean(OrphanCleanArgs),
 }
 

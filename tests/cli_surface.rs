@@ -231,3 +231,51 @@ fn top_level_monitor_command_is_available() {
         );
     }
 }
+
+#[test]
+fn version_flag_prints_package_version() {
+    let output = Command::new(env!("CARGO_BIN_EXE_loom"))
+        .arg("--version")
+        .output()
+        .expect("run loom --version");
+
+    assert!(
+        output.status.success(),
+        "--version unexpectedly failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains(env!("CARGO_PKG_VERSION")),
+        "--version output missing package version {}: {stdout}",
+        env!("CARGO_PKG_VERSION")
+    );
+}
+
+#[test]
+fn skill_help_describes_every_subcommand() {
+    let output = Command::new(env!("CARGO_BIN_EXE_loom"))
+        .args(["skill", "--help"])
+        .output()
+        .expect("run loom skill --help");
+
+    assert!(
+        output.status.success(),
+        "skill --help unexpectedly failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    for expected in [
+        "Import discovered skills from observed targets in one pass",
+        "Inspect and clean projections orphaned by binding removal",
+    ] {
+        assert!(
+            stdout.contains(expected),
+            "skill --help missing description {expected:?}: {stdout}"
+        );
+    }
+}

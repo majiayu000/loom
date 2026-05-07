@@ -257,7 +257,7 @@ fn skill_help_describes_every_subcommand() {
         "Diff two revisions of a skill source",
         "Continuously import and update skills from observed targets",
         "Run one import pass over observed targets and exit",
-        "Inspect and prune orphaned skill sources",
+        "Inspect and clean projections orphaned by binding removal",
     ] {
         assert!(
             stdout.contains(expected),
@@ -282,7 +282,7 @@ fn skill_orphan_help_describes_clean_subcommand() {
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
-        stdout.contains("Remove orphaned skill sources that no longer have a backing target"),
+        stdout.contains("Remove orphaned projection records (and optionally their live files)"),
         "skill orphan help missing clean description: {stdout}"
     );
 }

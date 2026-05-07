@@ -138,7 +138,7 @@ pub enum SkillCommand {
     MonitorObserved(MonitorObservedArgs),
     #[command(about = "Run one import pass over observed targets and exit")]
     ImportObserved(ImportObservedArgs),
-    #[command(about = "Inspect and prune orphaned skill sources")]
+    #[command(about = "Inspect and clean projections orphaned by binding removal")]
     Orphan {
         #[command(subcommand)]
         command: SkillOrphanCommand,
@@ -147,7 +147,7 @@ pub enum SkillCommand {
 
 #[derive(Debug, Clone, Subcommand, Serialize)]
 pub enum SkillOrphanCommand {
-    #[command(about = "Remove orphaned skill sources that no longer have a backing target")]
+    #[command(about = "Remove orphaned projection records (and optionally their live files)")]
     Clean(OrphanCleanArgs),
 }
 

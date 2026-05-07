@@ -14,15 +14,6 @@ import type { RegistryRule } from "./generated/RegistryRule";
 import type { RegistryProjection } from "./generated/RegistryProjection";
 import type { RegistryCheckpoint } from "./generated/RegistryCheckpoint";
 
-export type PageId =
-  | "overview"
-  | "skills"
-  | "bindings"
-  | "targets"
-  | "projections"
-  | "ops"
-  | "settings";
-
 export type HealthPayload = {
   ok?: boolean;
   service?: string;

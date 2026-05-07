@@ -1,5 +1,5 @@
 use super::{
-    is_valid_git_rev, is_valid_skill_name, parse_diff_git_path, parse_unified_diff,
+    MAX_HUNK_LINES, is_valid_git_rev, is_valid_skill_name, parse_diff_git_path, parse_unified_diff,
     registry_skill_diff,
 };
 use crate::panel::PanelState;
@@ -81,10 +81,117 @@ index abc1234..def5678 100644
     assert_eq!(files[0]["path"], json!("skills/foo/foo.md"));
     assert_eq!(files[0]["added"], json!(1));
     assert_eq!(files[0]["removed"], json!(0));
+    assert_eq!(files[0]["truncated"], json!(false));
+    assert_eq!(files[0]["truncated_lines"], json!(0));
     let hunks = files[0]["hunks"].as_array().unwrap();
     assert_eq!(hunks.len(), 1);
     let lines = hunks[0]["lines"].as_array().unwrap();
     assert!(lines.iter().any(|l| l.as_str() == Some("+line two")));
+}
+
+#[test]
+fn parse_unified_diff_marks_truncated_when_exceeding_per_file_cap() {
+    // Build a single-file diff with MAX_HUNK_LINES + 50 added lines so we
+    // are sure the per-file budget is exhausted and the trailing 50 lines
+    // are dropped from the JSON payload but still reflected in `added`.
+    let extra: usize = 50;
+    let total: usize = MAX_HUNK_LINES + extra;
+
+    let mut diff = String::with_capacity(total * 24);
+    diff.push_str("diff --git a/skills/big/big.md b/skills/big/big.md\n");
+    diff.push_str("index abc1234..def5678 100644\n");
+    diff.push_str("--- a/skills/big/big.md\n");
+    diff.push_str("+++ b/skills/big/big.md\n");
+    diff.push_str(&format!("@@ -0,0 +1,{} @@\n", total));
+    for i in 0..total {
+        diff.push_str(&format!("+line {}\n", i));
+    }
+
+    let files = parse_unified_diff(&diff);
+    assert_eq!(files.len(), 1, "single file expected");
+    assert_eq!(
+        files[0]["added"],
+        json!(total),
+        "every `+` line must be counted, even past the retention cap"
+    );
+    assert_eq!(files[0]["removed"], json!(0));
+    assert_eq!(
+        files[0]["truncated"],
+        json!(true),
+        "files exceeding the per-file cap must be flagged"
+    );
+    assert_eq!(
+        files[0]["truncated_lines"],
+        json!(extra),
+        "truncated_lines must equal the number of dropped + / - lines"
+    );
+
+    let kept: usize = files[0]["hunks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|h| h["lines"].as_array().unwrap().len())
+        .sum();
+    assert!(
+        kept <= MAX_HUNK_LINES,
+        "kept lines ({}) must not exceed per-file cap ({})",
+        kept,
+        MAX_HUNK_LINES
+    );
+}
+
+#[test]
+fn parse_unified_diff_truncation_spans_multiple_hunks_in_one_file() {
+    // Two hunks in one file: first hunk retains lines until the budget is
+    // half spent, second hunk should still respect the per-file cap and
+    // surface dropped lines as `truncated_lines`.
+    let per_hunk: usize = MAX_HUNK_LINES; // each hunk individually fills the budget
+    let mut diff = String::new();
+    diff.push_str("diff --git a/skills/multi/m.md b/skills/multi/m.md\n");
+    diff.push_str("--- a/skills/multi/m.md\n");
+    diff.push_str("+++ b/skills/multi/m.md\n");
+    diff.push_str(&format!("@@ -0,0 +1,{} @@\n", per_hunk));
+    for i in 0..per_hunk {
+        diff.push_str(&format!("+a{}\n", i));
+    }
+    diff.push_str(&format!("@@ -100,0 +200,{} @@\n", per_hunk));
+    for i in 0..per_hunk {
+        diff.push_str(&format!("+b{}\n", i));
+    }
+
+    let files = parse_unified_diff(&diff);
+    assert_eq!(files.len(), 1);
+    assert_eq!(files[0]["added"], json!(per_hunk * 2));
+    assert_eq!(files[0]["truncated"], json!(true));
+    assert_eq!(files[0]["truncated_lines"], json!(per_hunk));
+}
+
+#[test]
+fn parse_unified_diff_separate_files_have_independent_budgets() {
+    // Two files; each fits in its own per-file budget so neither is
+    // marked truncated even though combined they exceed the cap.
+    let per_file: usize = 100;
+    let mut diff = String::new();
+    for tag in ["a", "b"] {
+        diff.push_str(&format!(
+            "diff --git a/skills/{0}/{0}.md b/skills/{0}/{0}.md\n",
+            tag
+        ));
+        diff.push_str(&format!("--- a/skills/{0}/{0}.md\n", tag));
+        diff.push_str(&format!("+++ b/skills/{0}/{0}.md\n", tag));
+        diff.push_str(&format!("@@ -0,0 +1,{} @@\n", per_file));
+        for i in 0..per_file {
+            diff.push_str(&format!("+{}{}\n", tag, i));
+        }
+    }
+
+    let files = parse_unified_diff(&diff);
+    assert_eq!(files.len(), 2);
+    for f in &files {
+        assert_eq!(f["truncated"], json!(false));
+        assert_eq!(f["truncated_lines"], json!(0));
+        assert_eq!(f["added"], json!(per_file));
+    }
 }
 
 #[test]

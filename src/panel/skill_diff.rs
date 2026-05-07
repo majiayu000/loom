@@ -150,89 +150,152 @@ fn parse_diff_git_path(line: &str) -> Option<String> {
     }
 }
 
-pub(super) fn parse_unified_diff(diff_text: &str) -> Vec<serde_json::Value> {
-    const MAX_HUNK_LINES: usize = 500;
+/// Per-file budget for hunk lines retained in the JSON response.
+///
+/// The cap is intentionally per file (not per hunk): a single multi-hunk file
+/// cannot exceed `MAX_HUNK_LINES` retained lines combined. Once the budget
+/// is exhausted, additional `+` / `-` lines still update the per-file
+/// `added` / `removed` counts so totals remain accurate, but their text is
+/// dropped and surfaced via `truncated: true` + `truncated_lines: N` so the
+/// client never confuses "we have all the lines" with "we counted all of
+/// them but only kept some" (see U-29 silent-degradation rule).
+pub(crate) const MAX_HUNK_LINES: usize = 500;
 
-    let mut files: Vec<serde_json::Value> = Vec::new();
-    let mut f_path = String::new();
-    let mut f_added: usize = 0;
-    let mut f_removed: usize = 0;
-    let mut f_hunks: Vec<serde_json::Value> = Vec::new();
-    let mut h_hdr = String::new();
-    let mut h_lines: Vec<String> = Vec::new();
-    let mut h_count: usize = 0;
-    let mut in_file = false;
+/// Mutable accumulator for one file block while parsing a unified diff.
+///
+/// Kept private to this module — the only public surface is the JSON value
+/// pushed by [`finish_file`].
+#[derive(Default)]
+struct FileBuf {
+    path: String,
+    added: usize,
+    removed: usize,
+    hunks: Vec<serde_json::Value>,
+    /// Header for the hunk currently being filled; empty when we're between
+    /// hunks (e.g. just after `diff --git` and before the first `@@`).
+    h_hdr: String,
+    /// Lines retained for the current hunk.
+    h_lines: Vec<String>,
+    /// Combined retained-line count across every hunk in this file. Used to
+    /// enforce the per-file `MAX_HUNK_LINES` budget.
+    retained: usize,
+    /// Total `+` / `-` lines we observed but dropped because the per-file
+    /// cap was exhausted. Surfaced as `truncated_lines` in the response.
+    dropped: usize,
+}
 
-    for line in diff_text.lines() {
-        if line.starts_with("diff --git ") {
-            if !h_hdr.is_empty() {
-                f_hunks.push(json!({
-                    "header": std::mem::take(&mut h_hdr),
-                    "lines": std::mem::take(&mut h_lines),
-                }));
-                h_count = 0;
-            }
-            if in_file {
-                files.push(json!({
-                    "path": std::mem::take(&mut f_path),
-                    "added": f_added,
-                    "removed": f_removed,
-                    "hunks": std::mem::take(&mut f_hunks),
-                }));
-                f_added = 0;
-                f_removed = 0;
-            }
-            f_path = parse_diff_git_path(line).unwrap_or_default();
-            in_file = true;
-        } else if line.starts_with("@@ ") {
-            if !h_hdr.is_empty() {
-                f_hunks.push(json!({
-                    "header": std::mem::take(&mut h_hdr),
-                    "lines": std::mem::take(&mut h_lines),
-                }));
-                // h_count is intentionally NOT reset here — cap is per file, not per hunk
-            }
-            h_hdr = line.to_string();
-        } else if !h_hdr.is_empty() && line.starts_with('+') {
-            // Inside a hunk (we've seen `@@`), any `+`-prefixed line is an
-            // addition. Headers like `+++ b/file` only appear BEFORE the first
-            // `@@`, where h_hdr is still empty and this branch is skipped —
-            // so we don't need the fragile `!starts_with("+++ ")` string match,
-            // which incorrectly dropped content lines such as `++ i;` (which
-            // appears as `+++ i;` in unified diff).
-            f_added += 1;
-            if h_count < MAX_HUNK_LINES {
-                h_lines.push(line.to_string());
-                h_count += 1;
-            }
-        } else if !h_hdr.is_empty() && line.starts_with('-') {
-            f_removed += 1;
-            if h_count < MAX_HUNK_LINES {
-                h_lines.push(line.to_string());
-                h_count += 1;
-            }
-        } else if !h_hdr.is_empty()
-            && (line.starts_with(' ') || line.is_empty())
-            && h_count < MAX_HUNK_LINES
-        {
-            h_lines.push(line.to_string());
-            h_count += 1;
+impl FileBuf {
+    fn new(path: String) -> Self {
+        Self {
+            path,
+            ..Default::default()
         }
     }
 
-    if !h_hdr.is_empty() {
-        f_hunks.push(json!({
-            "header": h_hdr,
-            "lines": h_lines,
-        }));
+    /// Push the in-flight hunk (if any) into `self.hunks` and reset the
+    /// per-hunk scratch buffers. The retained-line counter is intentionally
+    /// preserved across hunks: the cap is per file, not per hunk.
+    fn flush_hunk(&mut self) {
+        if !self.h_hdr.is_empty() {
+            // Pre-size the next hunk's line buffer to whatever space remains
+            // in the per-file budget so we avoid the small reallocations the
+            // previous implementation paid on every push.
+            let drained_lines = std::mem::take(&mut self.h_lines);
+            self.hunks.push(json!({
+                "header": std::mem::take(&mut self.h_hdr),
+                "lines": drained_lines,
+            }));
+        }
     }
-    if in_file {
-        files.push(json!({
-            "path": f_path,
-            "added": f_added,
-            "removed": f_removed,
-            "hunks": f_hunks,
-        }));
+
+    /// Consume `self` and produce the JSON object for this file. Surfaces
+    /// `truncated` + `truncated_lines` so the panel can render a "diff
+    /// truncated" banner instead of silently showing fewer lines than the
+    /// `added` / `removed` counts imply.
+    fn finish(mut self) -> serde_json::Value {
+        self.flush_hunk();
+        json!({
+            "path": self.path,
+            "added": self.added,
+            "removed": self.removed,
+            "hunks": self.hunks,
+            "truncated": self.dropped > 0,
+            "truncated_lines": self.dropped,
+        })
+    }
+}
+
+pub(super) fn parse_unified_diff(diff_text: &str) -> Vec<serde_json::Value> {
+    // Estimate file count from `diff --git ` occurrences so the outer Vec
+    // doesn't double on large registries with hundreds of changed files.
+    // Cheap byte scan; well under 1% of total parse cost for any realistic
+    // diff size.
+    let est_files = diff_text
+        .as_bytes()
+        .windows(11)
+        .filter(|w| *w == b"diff --git ")
+        .count();
+    let mut files: Vec<serde_json::Value> = Vec::with_capacity(est_files);
+    let mut current: Option<FileBuf> = None;
+
+    for line in diff_text.lines() {
+        if line.starts_with("diff --git ") {
+            if let Some(file) = current.take() {
+                files.push(file.finish());
+            }
+            // `parse_diff_git_path` already enforces the prefix; reuse it
+            // verbatim so the existing quoted-path / octal-decoding tests
+            // keep covering this entry point.
+            let path = parse_diff_git_path(line).unwrap_or_default();
+            current = Some(FileBuf::new(path));
+            continue;
+        }
+
+        let Some(file) = current.as_mut() else {
+            // Lines before the first `diff --git` (e.g. extended headers
+            // emitted by some git versions) are ignored, matching prior
+            // behavior.
+            continue;
+        };
+
+        if line.starts_with("@@ ") {
+            file.flush_hunk();
+            file.h_hdr = line.to_string();
+        } else if !file.h_hdr.is_empty() && line.starts_with('+') {
+            // Inside a hunk (we've seen `@@`), any `+`-prefixed line is an
+            // addition. Headers like `+++ b/file` only appear BEFORE the
+            // first `@@`, where `h_hdr` is empty and this branch is
+            // skipped — so we don't need the fragile `!starts_with("+++ ")`
+            // string match, which historically dropped content lines such
+            // as `++ i;` (encoded as `+++ i;` in unified diff).
+            file.added += 1;
+            if file.retained < MAX_HUNK_LINES {
+                file.h_lines.push(line.to_string());
+                file.retained += 1;
+            } else {
+                file.dropped += 1;
+            }
+        } else if !file.h_hdr.is_empty() && line.starts_with('-') {
+            file.removed += 1;
+            if file.retained < MAX_HUNK_LINES {
+                file.h_lines.push(line.to_string());
+                file.retained += 1;
+            } else {
+                file.dropped += 1;
+            }
+        } else if !file.h_hdr.is_empty()
+            && (line.starts_with(' ') || line.is_empty())
+            && file.retained < MAX_HUNK_LINES
+        {
+            // Context lines never bump `added` / `removed`, so we only need
+            // to keep them while the retention budget allows.
+            file.h_lines.push(line.to_string());
+            file.retained += 1;
+        }
+    }
+
+    if let Some(file) = current.take() {
+        files.push(file.finish());
     }
 
     files

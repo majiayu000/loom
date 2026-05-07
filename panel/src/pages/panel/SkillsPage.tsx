@@ -491,6 +491,24 @@ function SkillDiff({ skillName }: { skillName: string }) {
                   {file.path}{" "}
                   <span style={{ color: "var(--ok)" }}>+{file.added}</span>{" "}
                   <span style={{ color: "var(--err)" }}>-{file.removed}</span>
+                  {file.truncated && (
+                    <span
+                      title={
+                        `${file.truncated_lines ?? 0} more +/- line(s) counted but not displayed; ` +
+                        "narrow the revision range or fetch the file directly to see the full diff."
+                      }
+                      style={{
+                        marginLeft: 8,
+                        padding: "0 6px",
+                        borderRadius: 3,
+                        background: "var(--bg-2)",
+                        color: "var(--warn, var(--ink-3))",
+                        fontSize: 10,
+                      }}
+                    >
+                      truncated +{file.truncated_lines ?? 0}
+                    </span>
+                  )}
                 </div>
                 <div style={{ border: "1px solid var(--line)", borderRadius: 6, overflow: "hidden" }}>
                   {file.hunks.map((hunk, hi) => (

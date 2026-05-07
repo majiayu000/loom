@@ -168,3 +168,25 @@ describe("SkillsPage — history tab", () => {
     });
   });
 });
+
+describe("SkillsPage — empty registry", () => {
+  it("guides first-run users to the add button and the loom skill add CLI", () => {
+    render(
+      <SkillsPage
+        skills={[]}
+        targets={[]}
+        selectedSkill={null}
+        onSelectSkill={() => {}}
+        onMutation={() => {}}
+        readOnly={false}
+      />,
+    );
+
+    // The CTA references the in-panel button by its label so users notice it.
+    expect(screen.getAllByText(/\+ skill add/).length).toBeGreaterThan(0);
+    // And it surfaces the equivalent CLI invocation for terminal-first users.
+    expect(
+      screen.getAllByText(/loom skill add <source> --name <name>/).length,
+    ).toBeGreaterThan(0);
+  });
+});

@@ -22,11 +22,16 @@ export function SkillsPage({ skills, targets, bindings = [], selectedSkill, onSe
   const sel = skills.find((s) => s.id === selectedSkill) ?? skills[0];
   const capture = useMutation();
   const captureDisabled = capture.busy || readOnly || !sel;
-  const emptyMessage = readOnly
+  const emptyMessage: React.ReactNode = readOnly
     ? "Live registry API is offline. Start the panel backend to load real skills."
     : q
     ? "No skills match the current filter."
-    : "No skills in this registry yet.";
+    : (
+        <>
+          No skills in this registry yet — use the <strong>+ skill add</strong> button above, or run{" "}
+          <code className="mono">loom skill add &lt;source&gt; --name &lt;name&gt;</code>.
+        </>
+      );
 
   const runCapture = () => {
     if (!sel) return;

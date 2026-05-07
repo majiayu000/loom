@@ -197,14 +197,18 @@ impl FileBuf {
     /// preserved across hunks: the cap is per file, not per hunk.
     fn flush_hunk(&mut self) {
         if !self.h_hdr.is_empty() {
-            // Pre-size the next hunk's line buffer to whatever space remains
-            // in the per-file budget so we avoid the small reallocations the
-            // previous implementation paid on every push.
-            let drained_lines = std::mem::take(&mut self.h_lines);
             self.hunks.push(json!({
                 "header": std::mem::take(&mut self.h_hdr),
-                "lines": drained_lines,
+                "lines": std::mem::take(&mut self.h_lines),
             }));
+            // Re-size the new line buffer to fit the remaining per-file
+            // budget so subsequent `push` calls don't trigger the small
+            // doubling growth path the previous implementation paid on
+            // every retained line.
+            let remaining = MAX_HUNK_LINES.saturating_sub(self.retained);
+            if remaining > 0 {
+                self.h_lines = Vec::with_capacity(remaining);
+            }
         }
     }
 

@@ -210,6 +210,84 @@ fn skill_monitor_observed_command_is_available() {
 }
 
 #[test]
+fn top_level_version_flag_prints_cargo_pkg_version() {
+    let output = Command::new(env!("CARGO_BIN_EXE_loom"))
+        .arg("--version")
+        .output()
+        .expect("run loom --version");
+
+    assert!(
+        output.status.success(),
+        "--version unexpectedly failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains(env!("CARGO_PKG_VERSION")),
+        "--version output must contain CARGO_PKG_VERSION ({}): {stdout}",
+        env!("CARGO_PKG_VERSION")
+    );
+}
+
+#[test]
+fn skill_help_describes_every_subcommand() {
+    let output = Command::new(env!("CARGO_BIN_EXE_loom"))
+        .args(["skill", "--help"])
+        .output()
+        .expect("run loom skill --help");
+
+    assert!(
+        output.status.success(),
+        "skill help unexpectedly failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    for expected in [
+        "Import a skill source into the registry",
+        "Project a registry skill into a bound target",
+        "Capture live projection edits back to the source",
+        "Commit source changes for one skill",
+        "Create a version snapshot for one skill",
+        "Tag a skill release",
+        "Roll back a skill source to an earlier revision",
+        "Diff two revisions of a skill source",
+        "Continuously import and update skills from observed targets",
+        "Run one import pass over observed targets and exit",
+        "Inspect and prune orphaned skill sources",
+    ] {
+        assert!(
+            stdout.contains(expected),
+            "skill help missing description {expected:?}: {stdout}"
+        );
+    }
+}
+
+#[test]
+fn skill_orphan_help_describes_clean_subcommand() {
+    let output = Command::new(env!("CARGO_BIN_EXE_loom"))
+        .args(["skill", "orphan", "--help"])
+        .output()
+        .expect("run loom skill orphan --help");
+
+    assert!(
+        output.status.success(),
+        "skill orphan help unexpectedly failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("Remove orphaned skill sources that no longer have a backing target"),
+        "skill orphan help missing clean description: {stdout}"
+    );
+}
+
+#[test]
 fn top_level_monitor_command_is_available() {
     let output = Command::new(env!("CARGO_BIN_EXE_loom"))
         .args(["monitor", "--help"])

@@ -264,6 +264,50 @@ async fn info_and_remote_status_redact_remote_credentials() {
 }
 
 #[tokio::test]
+async fn info_surfaces_warning_when_root_is_not_a_git_repository() {
+    let (root, state) = make_test_state();
+    // make_test_state creates the directory but never runs `git init`, so
+    // `git remote get-url origin` exits 128 with "fatal: not a git
+    // repository" — currently mapped to Ok(None) inside gitops::remote_url.
+    // The handler should probe the repo and surface the misconfiguration.
+
+    let Json(payload) = info(State(state)).await;
+
+    assert_eq!(payload["ok"], json!(true));
+    assert_eq!(payload["data"]["remote_url"], json!(""));
+    let warnings = payload["meta"]["warnings"]
+        .as_array()
+        .expect("warnings array");
+    assert_eq!(warnings.len(), 1);
+    let message = warnings[0].as_str().expect("warning string");
+    assert!(
+        message.starts_with("git repository not initialized"),
+        "unexpected warning: {message}"
+    );
+
+    cleanup_root(root);
+}
+
+#[tokio::test]
+async fn info_omits_warning_when_repo_initialized_but_no_remote_configured() {
+    let (root, state) = make_test_state();
+    crate::gitops::ensure_repo_initialized(&state.ctx).expect("init repo");
+
+    let Json(payload) = info(State(state)).await;
+
+    assert_eq!(payload["ok"], json!(true));
+    assert_eq!(payload["data"]["remote_url"], json!(""));
+    assert_eq!(
+        payload["meta"]["warnings"]
+            .as_array()
+            .expect("warnings array"),
+        &Vec::<serde_json::Value>::new()
+    );
+
+    cleanup_root(root);
+}
+
+#[tokio::test]
 async fn info_surfaces_warning_when_git_remote_lookup_fails() {
     let (root, state) = make_test_state();
     // Remove the worktree out from under the panel to make `git remote get-url`

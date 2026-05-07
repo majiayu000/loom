@@ -103,7 +103,7 @@ Prefer a guided walkthrough? Run `./scripts/demo.sh` for a scripted end-to-end t
 - **🎚️ Ownership tiers** — `managed` (Loom writes) / `observed` (read-only) / `external` (hands-off)
 - **🔗 Binding matchers** — route a skill to a target by `path-prefix`, `exact-path`, or `name`
 - **📦 Profiles** — multiple config sets per agent (e.g. work/home Claude profiles)
-- **🧬 Git-backed lifecycle** — `add → capture → save → snapshot → release → rollback → diff`
+- **🧬 Git-backed lifecycle** — `add → capture → save → snapshot → release → rollback → diff` ([when to use which](#skill-lifecycle-verbs))
 - **🔁 Git-backed sync** — `sync push / pull / replay` between a team's registries
 - **🛠️ Ops with audit** — `ops list / retry / purge` and `ops history diagnose / repair`
 - **🛡️ Hard write guard** — refuses to write when `--root` points at the Loom tool repo itself
@@ -139,6 +139,23 @@ Four core concepts:
 | **Skill** | A tracked unit in the registry | `my-team-skill` with a chain of captures/releases |
 | **Binding** | The rule mapping a skill to a target | agent=`claude`, profile=`work`, matcher `path-prefix:/Users/me/work` |
 | **Projection** | The act of realizing a skill into a target | `loom skill project my-skill --binding <id> --method symlink` |
+
+### Skill lifecycle verbs
+
+The chain `add → capture → save → snapshot → release → rollback` is the most common point of confusion because several verbs all touch source history. Each one answers a different question:
+
+| Verb | What it does | When to reach for it | Acts on |
+|------|--------------|----------------------|---------|
+| `loom skill add` | Import a skill source into the registry | First-time onboarding of a skill from a local path or Git URL | Source (initial import) |
+| `loom skill project` | Realize a registry skill into an agent directory | Make the skill visible to the agent (Claude/Codex/…) | Target (live directory) |
+| `loom skill capture` | Pull live edits from a projection back into the source | The user edited the skill **inside the agent directory** and you want those edits tracked | Projection → source |
+| `loom skill save` | Commit edits made directly to the registry source | You edited `skills/<name>/…` **inside the registry repo** itself | Source (in place) |
+| `loom skill snapshot` | Mark an unnamed checkpoint on source history | You want a labelable anchor before risky work, but no semver yet | Source (anchor) |
+| `loom skill release` | Tag the skill at a semantic version | You're publishing a stable revision teammates can pull (`v1.2.0`) | Source (semver tag) |
+| `loom skill rollback` | Reset the source to an earlier revision (with `recovery_ref`) | A capture or save introduced bad state — undo it without losing the recovery point | Source (history) |
+| `loom skill diff` | Compare two revisions of a skill source | Inspect what changed between any two refs (commit, snapshot, release tag) | Source (read-only) |
+
+Quick decision: **edits from the agent side → `capture`; edits inside the registry repo → `save`; anchor → `snapshot`; public version → `release`; undo → `rollback`.**
 
 ## Comparison
 

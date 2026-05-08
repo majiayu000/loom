@@ -268,8 +268,9 @@ async fn info_surfaces_warning_when_root_is_not_a_git_repository() {
     let (root, state) = make_test_state();
     // make_test_state creates the directory but never runs `git init`, so
     // `git remote get-url origin` exits 128 with "fatal: not a git
-    // repository" — currently mapped to Ok(None) inside gitops::remote_url.
-    // The handler should probe the repo and surface the misconfiguration.
+    // repository". `gitops::remote_url` distinguishes that case from a
+    // legitimate "no remote configured" (exit 2) and returns Err, which
+    // the handler turns into a warning.
 
     let Json(payload) = info(State(state)).await;
 
@@ -281,8 +282,12 @@ async fn info_surfaces_warning_when_root_is_not_a_git_repository() {
     assert_eq!(warnings.len(), 1);
     let message = warnings[0].as_str().expect("warning string");
     assert!(
-        message.starts_with("git repository not initialized"),
+        message.starts_with("failed to read git remote url"),
         "unexpected warning: {message}"
+    );
+    assert!(
+        message.contains("not a git repository"),
+        "warning should carry the underlying git error: {message}"
     );
 
     cleanup_root(root);

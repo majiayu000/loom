@@ -65,27 +65,7 @@ pub(super) async fn info(State(state): State<PanelState>) -> Json<serde_json::Va
     let mut warnings: Vec<String> = Vec::new();
     let remote_url = match crate::gitops::remote_url(&state.ctx) {
         Ok(Some(url)) => redact_sensitive_string(&url),
-        Ok(None) => {
-            // `gitops::remote_url` returns `Ok(None)` for both "no remote
-            // configured" (exit 2 "No such remote 'origin'") and "not a git
-            // repository" (exit 128). Probe with `rev-parse --git-dir` to
-            // distinguish the two so a missing or corrupt repository is
-            // surfaced as a warning instead of being indistinguishable from
-            // an unconfigured remote.
-            match crate::gitops::run_git_allow_failure(&state.ctx, &["rev-parse", "--git-dir"]) {
-                Ok(probe) if !probe.status.success() => {
-                    warnings.push(format!(
-                        "git repository not initialized at {}",
-                        state.ctx.root.display()
-                    ));
-                }
-                Err(err) => {
-                    warnings.push(format!("failed to probe git repository: {err}"));
-                }
-                Ok(_) => {}
-            }
-            String::new()
-        }
+        Ok(None) => String::new(),
         Err(err) => {
             warnings.push(format!("failed to read git remote url: {err}"));
             String::new()

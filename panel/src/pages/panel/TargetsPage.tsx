@@ -1,10 +1,16 @@
 import { useEffect, useState } from "react";
-import type { Skill, Target } from "../../lib/types";
+import type { Ownership, Skill, Target } from "../../lib/types";
 import { AgentAvatar } from "../../components/panel/AgentAvatar";
 import { PlusIcon } from "../../components/icons/nav_icons";
 import { TargetAddForm } from "../../components/panel/forms/TargetAddForm";
 import { api, ApiError, type TargetShowPayload } from "../../lib/api/client";
 import { useMutation } from "../../lib/useMutation";
+
+const OWNERSHIP_TOOLTIP: Record<Ownership, string> = {
+  managed: "managed: Loom owns this directory and may write/overwrite files (projection writes go here).",
+  observed: "observed: Loom only reads from this directory; it never writes back. Use for agent dirs you edit yourself.",
+  external: "external: Loom stays hands-off. Listed for visibility only; no reads or writes.",
+};
 
 interface TargetsPageProps {
   targets: Target[];
@@ -88,7 +94,7 @@ export function TargetsPage({
                       {t.path}
                     </div>
                   </div>
-                  <span className={`chip ${t.ownership}`}>
+                  <span className={`chip ${t.ownership}`} title={OWNERSHIP_TOOLTIP[t.ownership]}>
                     <span className="dot" />
                     {t.ownership}
                   </span>
@@ -124,7 +130,7 @@ export function TargetsPage({
                   {sel.id}
                 </span>
               </h3>
-              <span className={`chip ${sel.ownership}`}>
+              <span className={`chip ${sel.ownership}`} title={OWNERSHIP_TOOLTIP[sel.ownership]}>
                 <span className="dot" />
                 {sel.ownership}
               </span>

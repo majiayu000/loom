@@ -55,6 +55,19 @@ loom monitor --interval-seconds 30
 
 Loom defaults to `~/.loom-registry`. Pass `--root <dir>` only when you want a different registry.
 
+For agent automation, keep the mutable registry separate from the Loom source checkout and always use an explicit root:
+
+```bash
+REGISTRY_ROOT="$HOME/.loom-registry"
+
+loom --json --root "$REGISTRY_ROOT" workspace init --scan-existing
+loom --json --root "$REGISTRY_ROOT" skill monitor-observed --once
+loom --json --root "$REGISTRY_ROOT" workspace status
+loom --json --root "$REGISTRY_ROOT" sync status
+```
+
+`--root` is the Git-backed skill registry directory, not the Loom tool repository.
+
 For managed projection flows:
 
 ```bash
@@ -108,7 +121,7 @@ Prefer a guided walkthrough? Run `./scripts/demo.sh` for a scripted end-to-end t
 - **🛠️ Ops with audit** — `ops list / retry / purge` and `ops history diagnose / repair`
 - **🛡️ Hard write guard** — refuses to write when `--root` points at the Loom tool repo itself
 - **🖥️ CLI + Panel** — script anything from the CLI; diff and inspect from the React Panel
-- **📤 JSON envelope** — every command speaks compact `--json` for machine consumption (`--pretty` is available for human debugging)
+- **📤 JSON envelope** — machine-facing commands speak compact `--json` for machine consumption (`--pretty` is available for human debugging)
 
 ## How It Works
 
@@ -181,6 +194,7 @@ Quick decision: **edits from the agent side → `capture`; edits inside the regi
 
 - Multi-directory behavior is explicit via `target add`; no implicit directory inference.
 - Agent automation should use explicit `--root`, `--json`, selectors such as `binding_id` / `target_id`, and branch on `ok` + `error.code`.
+- `--json` wraps both command execution errors and argument parsing failures in the same envelope. `loom panel` is the local HTTP UI server and does not return a command envelope.
 - Read commands such as `workspace status`, `workspace doctor`, `target list`, and `sync status` do not write command audit events; write commands do.
 - Registry metadata lives under `state/registry`; Loom does not use release-style labels for internal state names.
 - State-changing registry commands commit `state/registry` to Git, and `sync push` has a safety commit before pushing.
@@ -192,6 +206,8 @@ Quick decision: **edits from the agent side → `capture`; edits inside the regi
 <details>
 <summary><strong>Full CLI reference</strong> (click to expand)</summary>
 
+Supported `--agent` values are `claude`, `codex`, `cursor`, `windsurf`, `cline`, `copilot`, `aider`, `opencode`, `gemini-cli`, and `goose`.
+
 ```bash
 loom init
 loom monitor [--target <target-id>] [--once] [--interval-seconds <seconds>]
@@ -199,14 +215,14 @@ loom monitor [--target <target-id>] [--once] [--interval-seconds <seconds>]
 loom workspace status
 loom workspace doctor
 loom workspace init [--scan-existing]
-loom workspace binding add --agent <claude|codex> --profile <id> --matcher-kind <path-prefix|exact-path|name> --matcher-value <value> --target <target-id> [--policy-profile <id>]
+loom workspace binding add --agent <agent> --profile <id> --matcher-kind <path-prefix|exact-path|name> --matcher-value <value> --target <target-id> [--policy-profile <id>]
 loom workspace binding list
 loom workspace binding show <binding-id>
 loom workspace binding remove <binding-id>
 loom workspace remote set <git-url>
 loom workspace remote status
 
-loom target add --agent <claude|codex> --path <abs-path> [--ownership <managed|observed|external>]
+loom target add --agent <agent> --path <abs-path> [--ownership <managed|observed|external>]
 loom target list
 loom target show <target-id>
 loom target remove <target-id>

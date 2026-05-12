@@ -33,10 +33,44 @@ json_field() {
   printf '%s' "$body" | jq -r "$expr"
 }
 
+assert_envelope() {
+  local body="$1"
+  local label="$2"
+  local expected_ok="$3"
+  local ok request_id version
+  ok="$(json_field "$body" '.ok')"
+  request_id="$(json_field "$body" '.request_id')"
+  version="$(json_field "$body" '.version')"
+  if [[ "$ok" != "$expected_ok" ]]; then
+    echo "FAILED [$label]: expected ok=$expected_ok got ok=$ok: $body" >&2
+    exit 1
+  fi
+  if [[ "$request_id" == "null" || -z "$request_id" ]]; then
+    echo "FAILED [$label]: missing request_id: $body" >&2
+    exit 1
+  fi
+  if [[ "$version" == "null" || -z "$version" ]]; then
+    echo "FAILED [$label]: missing version: $body" >&2
+    exit 1
+  fi
+  if [[ "$expected_ok" == "true" ]]; then
+    if [[ "$(json_field "$body" '.error')" != "null" ]]; then
+      echo "FAILED [$label]: successful envelope must keep error:null: $body" >&2
+      exit 1
+    fi
+  else
+    if [[ "$(json_field "$body" '.data | type')" != "object" || "$(json_field "$body" '.data | length')" != "0" ]]; then
+      echo "FAILED [$label]: failed envelope must keep empty data object: $body" >&2
+      exit 1
+    fi
+  fi
+}
+
 assert_ok() {
   local body="$1"
   local label="$2"
   local ok
+  assert_envelope "$body" "$label" "true"
   ok="$(json_field "$body" '.ok')"
   if [[ "$ok" != "true" ]]; then
     echo "FAILED [$label]: $(printf '%s' "$body" | jq -c '.error')" >&2
@@ -63,6 +97,7 @@ run_json_expect_fail() {
     echo "FAILED [expected failure]: command unexpectedly succeeded: $*" >&2
     exit 1
   fi
+  assert_envelope "$out" "expected failure $*" "false"
   code="$(json_field "$out" '.error.code')"
   if [[ "$code" != "$expected_code" ]]; then
     echo "FAILED [expected code $expected_code got $code]: $*" >&2
@@ -241,8 +276,10 @@ EOF
 
   fail_bind_json="$(run_json_expect_fail "$repo" TARGET_NOT_FOUND workspace binding add --agent codex --profile bad --matcher-kind path-prefix --matcher-value "$workspace/bad" --target missing-target-id)"
   fail_remove_json="$(run_json_expect_fail "$repo" DEPENDENCY_CONFLICT target remove "$target_id")"
+  fail_parse_json="$(run_json_expect_fail "$repo" ARG_INVALID target add --agent bad-agent --path "$target_dir")"
   [[ "$(json_field "$fail_bind_json" '.error.code')" == "TARGET_NOT_FOUND" ]]
   [[ "$(json_field "$fail_remove_json" '.error.code')" == "DEPENDENCY_CONFLICT" ]]
+  [[ "$(json_field "$fail_parse_json" '.cmd')" == "cli.parse" ]]
 
   printf 'D PASS target=%s binding=%s instance=%s\n' "$target_id" "$bind_id" "$instance_id"
 }

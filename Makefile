@@ -1,6 +1,6 @@
 SHELL := /usr/bin/env bash
 
-.PHONY: fmt fmt-check test lint panel-build panel-test e2e check ci install-hooks
+.PHONY: fmt fmt-check test lint panel-build panel-test panel-typecheck e2e check ci install-hooks
 
 fmt:
 	cargo fmt --all
@@ -24,9 +24,12 @@ panel-build:
 panel-test:
 	cd panel && bun install --frozen-lockfile && bun run test
 
+panel-typecheck:
+	cd panel && bun install --frozen-lockfile && bun run typecheck
+
 e2e:
 	./scripts/e2e-agent-flow.sh
 
-check: fmt-check lint test panel-build e2e
+check: fmt-check lint test panel-typecheck panel-test panel-build e2e
 
 ci: check

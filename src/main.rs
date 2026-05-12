@@ -8,15 +8,48 @@ mod state;
 mod state_model;
 mod types;
 
-use clap::Parser;
+use std::ffi::OsString;
+
+use clap::{Parser, error::ErrorKind};
+use serde_json::json;
 
 use crate::cli::{Cli, Command};
 use crate::commands::App;
 use crate::envelope::Envelope;
+use crate::types::ErrorCode;
 
 #[tokio::main]
 async fn main() {
-    let cli = Cli::parse();
+    let raw_args: Vec<OsString> = std::env::args_os().collect();
+    let json_requested = has_flag(&raw_args, "--json");
+    let pretty_requested = has_flag(&raw_args, "--pretty");
+    let parse_request_id =
+        extract_request_id(&raw_args).unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+    let cli = match Cli::try_parse_from(&raw_args) {
+        Ok(cli) => cli,
+        Err(err) => {
+            if matches!(
+                err.kind(),
+                ErrorKind::DisplayHelp | ErrorKind::DisplayVersion
+            ) {
+                let _ = err.print();
+                std::process::exit(0);
+            }
+            if json_requested {
+                let code = ErrorCode::ArgInvalid;
+                let env = Envelope::err(
+                    "cli.parse",
+                    parse_request_id,
+                    code,
+                    err.to_string(),
+                    json!({ "kind": format!("{:?}", err.kind()) }),
+                );
+                print_envelope(&env, true, pretty_requested);
+                std::process::exit(code.exit_code());
+            }
+            err.exit();
+        }
+    };
 
     let app = match App::new(cli.root.clone()) {
         Ok(app) => app,
@@ -83,6 +116,25 @@ fn print_envelope(env: &Envelope, force_json: bool, pretty: bool) {
     } else {
         eprintln!("{} failed", env.cmd);
     }
+}
+
+fn has_flag(args: &[OsString], flag: &str) -> bool {
+    args.iter().any(|arg| arg == flag)
+}
+
+fn extract_request_id(args: &[OsString]) -> Option<String> {
+    let mut iter = args.iter();
+    while let Some(arg) = iter.next() {
+        if arg == "--request-id" {
+            return iter
+                .next()
+                .map(|value| value.to_string_lossy().into_owned());
+        }
+        if let Some(raw) = arg.to_string_lossy().strip_prefix("--request-id=") {
+            return Some(raw.to_string());
+        }
+    }
+    None
 }
 
 fn pretty_json_or_empty_object(value: &serde_json::Value) -> String {

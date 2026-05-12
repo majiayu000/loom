@@ -1,6 +1,6 @@
 # Loom registry model CLI Contract
 
-Updated: 2026-04-08
+Updated: 2026-05-13
 Status: Draft
 
 ## 1. Purpose
@@ -13,7 +13,7 @@ It exists to make three things explicit:
 2. what selectors must be explicit
 3. what JSON shape agents can rely on
 
-This document turns [LOOM_STATE_MODEL.md](/Users/lifcc/Desktop/code/work/infra/loom/docs/LOOM_STATE_MODEL.md) into a concrete machine-facing interface.
+This document turns [LOOM_STATE_MODEL.md](LOOM_STATE_MODEL.md) into a concrete machine-facing interface.
 
 ## 2. Contract Principles
 
@@ -69,8 +69,11 @@ Rules:
 2. `--root` is mandatory for automation and examples in this spec.
 3. `--json` defaults to compact single-line output for token efficiency.
 4. `--json --pretty` is reserved for human debugging and documentation capture.
+5. If argument parsing fails while `--json` is present, Loom returns the same envelope shape with `cmd: "cli.parse"` and `error.code: "ARG_INVALID"`.
 
 ## 5. Selector Rules
+
+Supported `agent` values are `claude`, `codex`, `cursor`, `windsurf`, `cline`, `copilot`, `aider`, `opencode`, `gemini-cli`, and `goose`.
 
 ### 5.1 `skill_id`
 
@@ -133,6 +136,7 @@ Rules:
 4. `request_id` is echoed back if supplied, otherwise generated.
 5. `meta.op_id` is required for successful writes and omitted for pure reads.
 6. Successful envelopes keep `error: null` so agents can rely on a stable field shape.
+7. `meta.sync_state`, when present, is the authoritative top-level sync status for agent decisions. Command-specific fields such as `data.remote.sync_state` are detail views for diagnostics.
 
 ## 7. Error Object
 
@@ -162,21 +166,20 @@ Base error codes:
 
 1. `ARG_INVALID`
 2. `DEPENDENCY_CONFLICT`
-3. `BINDING_NOT_FOUND`
-4. `TARGET_NOT_FOUND`
+3. `SCHEMA_MISMATCH`
+4. `STATE_CORRUPT`
 5. `SKILL_NOT_FOUND`
-6. `INSTANCE_NOT_FOUND`
-7. `OWNERSHIP_CONFLICT`
-8. `PROJECTION_CONFLICT`
-9. `CAPTURE_CONFLICT`
-10. `LOCK_BUSY`
-11. `STATE_CORRUPT`
-12. `SCHEMA_MISMATCH`
-13. `REMOTE_UNREACHABLE`
-14. `REMOTE_DIVERGED`
-15. `PUSH_REJECTED`
-16. `REPLAY_CONFLICT`
-17. `INTERNAL_ERROR`
+6. `BINDING_NOT_FOUND`
+7. `TARGET_NOT_FOUND`
+8. `LOCK_BUSY`
+9. `REMOTE_UNREACHABLE`
+10. `REMOTE_DIVERGED`
+11. `PUSH_REJECTED`
+12. `REPLAY_CONFLICT`
+13. `QUEUE_BLOCKED`
+14. `GIT_ERROR`
+15. `IO_ERROR`
+16. `INTERNAL_ERROR`
 
 Semantics:
 
@@ -230,9 +233,9 @@ Read-only unless a future explicit repair subcommand is introduced.
 
 ```bash
 loom --json --root <root> workspace binding add \
-  --agent <claude|codex> \
+  --agent <agent> \
   --profile <profile-id> \
-  --matcher-kind <path_prefix|exact_path|name> \
+  --matcher-kind <path-prefix|exact-path|name> \
   --matcher-value <value> \
   --target <target-id>
 ```
@@ -282,7 +285,7 @@ Rules:
 
 ```bash
 loom --json --root <root> target add \
-  --agent <claude|codex> \
+  --agent <agent> \
   --path <dir> \
   --ownership <managed|observed|external>
 ```
@@ -522,18 +525,42 @@ Write command.
 ### 13.1 `ops list`
 
 ```bash
-loom --json --root <root> ops list [--status <queued|running|succeeded|failed>]
+loom --json --root <root> ops list
 ```
 
 Read-only.
 
-### 13.2 `ops show`
+### 13.2 `ops retry`
 
 ```bash
-loom --json --root <root> ops show <op-id>
+loom --json --root <root> ops retry
+```
+
+Write command.
+
+### 13.3 `ops purge`
+
+```bash
+loom --json --root <root> ops purge
+```
+
+Write command.
+
+### 13.4 `ops history diagnose`
+
+```bash
+loom --json --root <root> ops history diagnose
 ```
 
 Read-only.
+
+### 13.5 `ops history repair`
+
+```bash
+loom --json --root <root> ops history repair --strategy <local|remote>
+```
+
+Write command.
 
 ## 14. Migration Policy
 

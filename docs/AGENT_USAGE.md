@@ -14,7 +14,7 @@
 ## 2. Agent 基本调用契约
 
 - 固定带 `--json`，只解析 JSON envelope。
-- 固定带 `--root <absolute_path>`，避免 cwd 漂移。
+- 固定带 `--root <registry_root>`，避免 cwd 漂移；这里的 root 是可变 Git-backed skill registry，不是 Loom 源码仓库。
 - 默认 `--json` 是紧凑单行输出；人类排查时可加 `--pretty`。
 - 只把 `ok=true` 视为成功。
 - `ok=false` 时根据 `error.code` 分支处理。
@@ -32,20 +32,24 @@ JSON envelope 关键字段：
 - `meta.warnings`
 - `meta.sync_state`
 
+`meta.sync_state` 是 agent 做同步决策时应优先读取的顶层状态。部分命令也会在 `data.remote.sync_state` 中返回远端细节视图；两者同时存在时，先按 `meta.sync_state` 分支，再把 `data.remote.sync_state` 作为诊断信息记录。
+
 ## 3. 首次接管（推荐流程）
 
 Agent 首次接管本机 skills 时，执行：
 
 ```bash
-loom --json --root <repo_root> workspace init --scan-existing
-loom --json --root <repo_root> skill monitor-observed --once
+REGISTRY_ROOT="$HOME/.loom-registry"
+
+loom --json --root "$REGISTRY_ROOT" workspace init --scan-existing
+loom --json --root "$REGISTRY_ROOT" skill monitor-observed --once
 ```
 
 该命令默认顺序为：
 
-1. 初始化 `<repo_root>` 为 Git-backed Loom registry。
-2. 将默认 `~/.claude/skills` 和 `~/.codex/skills` 注册为 observed targets。
-3. 扫描 observed targets，将包含 `SKILL.md` 的 skill 导入到 `<repo_root>/skills/`。
+1. 初始化 `$REGISTRY_ROOT` 为 Git-backed Loom registry。
+2. 将已存在的默认 agent skill 目录注册为 observed targets。
+3. 扫描 observed targets，将包含 `SKILL.md` 的 skill 导入到 `$REGISTRY_ROOT/skills/`。
 
 产出中必须校验：
 
@@ -56,17 +60,17 @@ loom --json --root <repo_root> skill monitor-observed --once
 
 ## 4. 日常操作建议（Agent）
 
-1. 读取状态：`loom --json --root <repo_root> workspace status`
-2. 保存变更：`loom --json --root <repo_root> skill save <skill>`
-3. 关键节点快照：`loom --json --root <repo_root> skill snapshot <skill>`
-4. 发布版本：`loom --json --root <repo_root> skill release <skill> vX.Y.Z`
-5. 差异检查：`loom --json --root <repo_root> skill diff <skill> <from> <to>`
-6. 远端同步：`loom --json --root <repo_root> sync push` / `sync pull`
+1. 读取状态：`loom --json --root <registry_root> workspace status`
+2. 保存变更：`loom --json --root <registry_root> skill save <skill>`
+3. 关键节点快照：`loom --json --root <registry_root> skill snapshot <skill>`
+4. 发布版本：`loom --json --root <registry_root> skill release <skill> vX.Y.Z`
+5. 差异检查：`loom --json --root <registry_root> skill diff <skill> <from> <to>`
+6. 远端同步：`loom --json --root <registry_root> sync push` / `sync pull`
 
 ## 5. 安全护栏
 
 - 未经明确授权，不要默认使用 `--force` 覆盖同名 skill。
-- 优先 symlink 模式；只有环境不支持时再使用 `--copy`。
+- 优先 symlink 模式；只有环境不支持时再使用 `--method copy`。
 - `meta.warnings` 不为空时，视为“成功但有风险”，需写入运行日志。
 - `sync_state=LOCAL_ONLY` 或 `PENDING_PUSH` 时，不应宣称“远端已同步”。
 - 读命令（如 `workspace status`、`workspace doctor`、`target list`）不写 command event；不要把读命令当作审计记录来源。
@@ -80,6 +84,8 @@ loom --json --root <repo_root> skill monitor-observed --once
 - `REMOTE_DIVERGED`：先 `sync pull` 再处理冲突，再 `sync push`。
 - `PUSH_REJECTED`：按分歧流程处理，不要强推覆盖。
 - `REPLAY_CONFLICT`：进入人工或高阶冲突处理流程。
+- `QUEUE_BLOCKED`：远端不可写或依赖状态未解决，记录 pending op 并等待恢复。
+- `GIT_ERROR` / `IO_ERROR`：底层 Git 或文件系统失败，保留原始 message 供排查。
 
 ## 7. 最小自动化脚本模式
 

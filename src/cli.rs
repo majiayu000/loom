@@ -183,6 +183,7 @@ pub enum OpsHistoryCommand {
 
 #[derive(Debug, Clone, Args, Serialize)]
 pub struct HistoryRepairArgs {
+    /// Which side should win when repairing operation-history divergence.
     #[arg(long, value_enum)]
     pub strategy: HistoryRepairStrategyArg,
 }
@@ -223,14 +224,18 @@ pub struct ProjectArgs {
 
 #[derive(Debug, Clone, Args, Serialize)]
 pub struct CaptureArgs {
+    /// Registry skill name. Optional only when --instance uniquely identifies the projection.
     pub skill: Option<String>,
 
+    /// Binding id for selecting a projection when --instance is not provided.
     #[arg(long)]
     pub binding: Option<String>,
 
+    /// Projection instance id to capture from directly.
     #[arg(long)]
     pub instance: Option<String>,
 
+    /// Git commit message for the captured source revision.
     #[arg(long)]
     pub message: Option<String>,
 }
@@ -256,49 +261,62 @@ pub struct MonitorObservedArgs {
 
 #[derive(Debug, Clone, Args, Serialize)]
 pub struct SaveArgs {
+    /// Registry skill name.
     pub skill: String,
 
+    /// Git commit message for the saved source revision.
     #[arg(long)]
     pub message: Option<String>,
 }
 
 #[derive(Debug, Clone, Args, Serialize)]
 pub struct SkillOnlyArgs {
+    /// Registry skill name.
     pub skill: String,
 }
 
 #[derive(Debug, Clone, Args, Serialize)]
 pub struct ReleaseArgs {
+    /// Registry skill name.
     pub skill: String,
+    /// Release tag or version label to create.
     pub version: String,
 }
 
 #[derive(Debug, Clone, Args, Serialize)]
 pub struct RollbackArgs {
+    /// Registry skill name.
     pub skill: String,
 
+    /// Git revision or snapshot reference to restore from.
     #[arg(long)]
     pub to: Option<String>,
 
+    /// Number of source commits to roll back when --to is not provided.
     #[arg(long)]
     pub steps: Option<u32>,
 }
 
 #[derive(Debug, Clone, Args, Serialize)]
 pub struct DiffArgs {
+    /// Registry skill name.
     pub skill: String,
+    /// Older revision, snapshot, or release reference.
     pub from: String,
+    /// Newer revision, snapshot, or release reference.
     pub to: String,
 }
 
 #[derive(Debug, Clone, Args, Serialize)]
 pub struct ImportObservedArgs {
+    /// Restrict import to one observed target id.
     #[arg(long)]
     pub target: Option<String>,
 }
 
 #[derive(Debug, Clone, Args, Serialize)]
 pub struct PanelArgs {
+    /// Local HTTP port for the registry control panel.
     #[arg(long, default_value_t = 43117)]
     pub port: u16,
 }

@@ -154,14 +154,59 @@ fn migrate_subcommand_is_removed() {
         String::from_utf8_lossy(&output.stderr)
     );
 
-    let stderr = String::from_utf8_lossy(&output.stderr).to_lowercase();
     assert!(
-        stderr.contains("unrecognized subcommand")
-            || stderr.contains("unexpected argument")
-            || stderr.contains("found argument"),
-        "stderr did not indicate migrate removal: {}",
-        stderr
+        output.stderr.is_empty(),
+        "--json parse failures should not write text stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
     );
+    let env: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("parse migrate removal json");
+    assert_eq!(env["ok"], serde_json::json!(false));
+    assert_eq!(env["cmd"], serde_json::json!("cli.parse"));
+    assert_eq!(env["error"]["code"], serde_json::json!("ARG_INVALID"));
+    assert_eq!(env["data"], serde_json::json!({}));
+}
+
+#[test]
+fn json_mode_wraps_clap_value_errors() {
+    let root = TestDir::new("cli-json-bad-agent");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_loom"))
+        .arg("--json")
+        .arg("--request-id")
+        .arg("req-bad-agent")
+        .arg("--root")
+        .arg(root.path())
+        .args([
+            "target",
+            "add",
+            "--agent",
+            "bad-agent",
+            "--path",
+            "/tmp/skills",
+        ])
+        .output()
+        .expect("run loom");
+
+    assert!(
+        !output.status.success(),
+        "invalid agent unexpectedly succeeded: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        output.stderr.is_empty(),
+        "--json value errors should not write text stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let env: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("parse invalid agent json");
+    assert_eq!(env["ok"], serde_json::json!(false));
+    assert_eq!(env["cmd"], serde_json::json!("cli.parse"));
+    assert_eq!(env["request_id"], serde_json::json!("req-bad-agent"));
+    assert_eq!(env["error"]["code"], serde_json::json!("ARG_INVALID"));
+    assert_eq!(env["data"], serde_json::json!({}));
 }
 
 #[test]
@@ -307,5 +352,47 @@ fn top_level_monitor_command_is_available() {
             stdout.contains(expected),
             "monitor help missing {expected:?}: {stdout}"
         );
+    }
+}
+
+#[test]
+fn risky_command_help_describes_selectors_and_repair_strategy() {
+    for (args, expected) in [
+        (
+            vec!["skill", "capture", "--help"],
+            vec![
+                "Registry skill name",
+                "Binding id",
+                "Projection instance id",
+                "Git commit message",
+            ],
+        ),
+        (
+            vec!["skill", "rollback", "--help"],
+            vec![
+                "Git revision or snapshot reference",
+                "Number of source commits",
+            ],
+        ),
+        (
+            vec!["ops", "history", "repair", "--help"],
+            vec!["Which side should win"],
+        ),
+        (vec!["panel", "--help"], vec!["Local HTTP port"]),
+    ] {
+        let output = Command::new(env!("CARGO_BIN_EXE_loom"))
+            .args(args)
+            .output()
+            .expect("run loom help");
+        assert!(
+            output.status.success(),
+            "help failed: stdout={} stderr={}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        for phrase in expected {
+            assert!(stdout.contains(phrase), "help missing {phrase:?}: {stdout}");
+        }
     }
 }

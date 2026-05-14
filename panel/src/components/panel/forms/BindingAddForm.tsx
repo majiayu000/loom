@@ -3,8 +3,8 @@ import { AGENT_OPTIONS } from "../../../lib/agent_options";
 import type { Target } from "../../../lib/types";
 import { api } from "../../../lib/api/client";
 
-type MatcherKind = "path-prefix" | "exact-path" | "name";
-const MATCHERS: MatcherKind[] = ["path-prefix", "exact-path", "name"];
+type MatcherKind = "path_prefix" | "exact_path" | "name";
+const MATCHERS: MatcherKind[] = ["path_prefix", "exact_path", "name"];
 
 interface BindingAddFormProps {
   targets: Target[];
@@ -20,7 +20,7 @@ interface BindingAddFormProps {
 export function BindingAddForm({ targets, onCancel, onSuccess }: BindingAddFormProps) {
   const [agent, setAgent] = useState<string>(AGENT_OPTIONS[0].slug);
   const [profile, setProfile] = useState("home");
-  const [matcherKind, setMatcherKind] = useState<MatcherKind>("path-prefix");
+  const [matcherKind, setMatcherKind] = useState<MatcherKind>("path_prefix");
   const [matcherValue, setMatcherValue] = useState("");
   const [targetId, setTargetId] = useState(targets[0]?.id ?? "");
   const [busy, setBusy] = useState(false);

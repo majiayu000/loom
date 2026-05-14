@@ -245,7 +245,7 @@ export interface TargetAddBody {
 export interface BindingAddBody {
   agent: string;
   profile: string;
-  matcher_kind: "path-prefix" | "exact-path" | "name";
+  matcher_kind: "path_prefix" | "exact_path" | "name";
   matcher_value: string;
   target: string;
   policy_profile?: string;

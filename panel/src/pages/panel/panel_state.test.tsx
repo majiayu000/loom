@@ -8,6 +8,7 @@ import { HistoryPage, bucket } from "./HistoryPage";
 import { TargetsPage } from "./TargetsPage";
 import { SettingsPage } from "./SettingsPage";
 import { OverviewPage } from "./OverviewPage";
+import { BindingAddForm } from "../../components/panel/forms/BindingAddForm";
 import { api, type BindingShowPayload, type OpsPayload, type TargetShowPayload, type RegistryOperationRecord } from "../../lib/api/client";
 import type { Binding, Skill, Target } from "../../lib/types";
 
@@ -95,7 +96,7 @@ function makeBinding(): Binding {
     id: "binding-1",
     skill: "skill.writer",
     target: "target-1",
-    matcher: "path-prefix:/repo",
+    matcher: "path_prefix:/repo",
     method: "symlink",
     policy: "auto",
   };
@@ -122,7 +123,7 @@ function bindingPayload(projectionCount: number): BindingShowPayload {
         binding_id: "binding-1",
         agent: "claude",
         profile_id: "home",
-        workspace_matcher: { kind: "path-prefix", value: "/repo" },
+        workspace_matcher: { kind: "path_prefix", value: "/repo" },
         default_target_id: "target-1",
         policy_profile: "auto",
         active: true,
@@ -254,6 +255,53 @@ test("OverviewPage disables add binding until a target exists", async () => {
   const addBinding = buttonByLabel(renderer!, "Add binding");
   expect(addBinding.props.disabled).toBe(true);
   expect(addBinding.props.title).toBe("add a target first");
+});
+
+test("BindingAddForm submits the canonical matcher kind", async () => {
+  const originalBindingAdd = api.bindingAdd;
+  const submissions: Array<Parameters<typeof api.bindingAdd>[0]> = [];
+  let successCount = 0;
+
+  api.bindingAdd = async (body) => {
+    submissions.push(body);
+    return { ok: true, cmd: "binding.add", request_id: "req-1" };
+  };
+
+  try {
+    let renderer: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(
+        <BindingAddForm
+          targets={[makeTarget()]}
+          onCancel={() => {}}
+          onSuccess={() => {
+            successCount += 1;
+          }}
+        />,
+      );
+    });
+
+    const matcherValue = renderer!.root
+      .findAll((node: ReactTestInstance) => node.type === "input")
+      .find((node) => node.props.placeholder === "/Users/me/work");
+    if (!matcherValue) throw new Error("matcher value input not found");
+
+    await act(async () => {
+      matcherValue.props.onChange({ target: { value: "/repo" } });
+    });
+
+    await act(async () => {
+      renderer!.root.findByType("form").props.onSubmit({ preventDefault: () => {} });
+      await Promise.resolve();
+    });
+
+    expect(submissions[0]?.matcher_kind).toBe("path_prefix");
+    expect(submissions[0]?.matcher_value).toBe("/repo");
+    expect(submissions[0]?.target).toBe("target-1");
+    expect(successCount).toBe(1);
+  } finally {
+    api.bindingAdd = originalBindingAdd;
+  }
 });
 
 test("BindingsPage refetches selected binding details after a successful project", async () => {
@@ -521,7 +569,7 @@ test("BindingsPage keeps a newer selection when a previous binding delete comple
               id: "binding-2",
               skill: "skill.reader",
               target: "target-1",
-              matcher: "path-prefix:/other",
+              matcher: "path_prefix:/other",
               method: "copy",
               policy: "manual",
             },

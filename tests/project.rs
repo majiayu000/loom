@@ -271,6 +271,10 @@ fn skill_rollback_noop_does_not_initialize_registry() {
         !root.path().join("state/registry").exists(),
         "noop rollback should not create registry state"
     );
+    assert!(
+        !root.path().join("state/backups").exists(),
+        "noop rollback should not leave skill backups"
+    );
 }
 
 #[test]
@@ -485,6 +489,53 @@ fn skill_release_removes_new_registry_layout_after_late_failure() {
         "failed release should remove newly-created registry layout"
     );
     assert_eq!(git_status_short_for(root.path(), &["state/registry"]), "");
+}
+
+#[test]
+fn skill_release_removes_new_registry_layout_when_tag_creation_fails() {
+    let root = TestDir::new("registry-skill-release-tag-failure");
+    write_example_skill(root.path(), "model-onboarding");
+    assert!(
+        save_skill(root.path(), "model-onboarding")
+            .0
+            .status
+            .success()
+    );
+    git_output(
+        root.path(),
+        &[
+            "tag",
+            "-a",
+            "release/model-onboarding/v1.0.0",
+            "-m",
+            "existing release",
+        ],
+    );
+    assert!(
+        !root.path().join("state/registry").exists(),
+        "precondition: registry should not exist before release"
+    );
+    let head_before = git_head(root.path());
+
+    let (release_output, release_env) = run_loom(
+        root.path(),
+        &["skill", "release", "model-onboarding", "v1.0.0"],
+    );
+
+    assert!(
+        !release_output.status.success(),
+        "release unexpectedly succeeded"
+    );
+    assert_eq!(release_env["ok"], Value::Bool(false));
+    assert_eq!(git_head(root.path()), head_before);
+    assert!(
+        !root.path().join("state/registry").exists(),
+        "failed release should remove newly-created registry layout"
+    );
+    assert!(
+        !root.path().join("state/backups").exists(),
+        "failed release should remove registry layout backups"
+    );
 }
 
 #[test]

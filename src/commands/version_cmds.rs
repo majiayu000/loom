@@ -35,14 +35,23 @@ impl App {
         let registry_layout_backup =
             backup_path_if_exists(&self.ctx, &paths.registry_dir, "registry-layout")
                 .map_err(map_registry_state)?;
-        paths.ensure_layout().map_err(map_registry_state)?;
+        if let Err(err) = paths.ensure_layout() {
+            restore_path_best_effort(&paths.registry_dir, registry_layout_backup.as_ref());
+            remove_backup_path_best_effort(registry_layout_backup.as_ref());
+            let _ = gitops::restore_index(&self.ctx, &previous_index);
+            return Err(map_registry_state(err));
+        }
 
-        gitops::create_annotated_tag(
+        if let Err(err) = gitops::create_annotated_tag(
             &self.ctx,
             &tag,
             &format!("release {} {}", args.skill, args.version),
-        )
-        .map_err(map_git)?;
+        ) {
+            restore_path_best_effort(&paths.registry_dir, registry_layout_backup.as_ref());
+            remove_backup_path_best_effort(registry_layout_backup.as_ref());
+            let _ = gitops::restore_index(&self.ctx, &previous_index);
+            return Err(map_git(err));
+        }
 
         let post_audit: std::result::Result<(Option<String>, Meta), CommandFailure> = (|| {
             let op_id = record_registry_operation(
@@ -138,13 +147,33 @@ impl App {
         let skill_path = self.ctx.root.join(&skill_rel);
         let skill_backup = backup_path_if_exists(&self.ctx, &skill_path, "skill-rollback")
             .map_err(map_registry_state)?;
-        gitops::checkout_path_from_ref(&self.ctx, &reference, Path::new(&skill_rel))
-            .map_err(map_git)?;
-        gitops::stage_path(&self.ctx, Path::new(&skill_rel)).map_err(map_git)?;
+        if let Err(err) =
+            gitops::checkout_path_from_ref(&self.ctx, &reference, Path::new(&skill_rel))
+        {
+            restore_path_best_effort(&skill_path, skill_backup.as_ref());
+            remove_backup_path_best_effort(skill_backup.as_ref());
+            let _ = gitops::restore_index(&self.ctx, &previous_index);
+            return Err(map_git(err));
+        }
+        if let Err(err) = gitops::stage_path(&self.ctx, Path::new(&skill_rel)) {
+            restore_path_best_effort(&skill_path, skill_backup.as_ref());
+            remove_backup_path_best_effort(skill_backup.as_ref());
+            let _ = gitops::restore_index(&self.ctx, &previous_index);
+            return Err(map_git(err));
+        }
 
-        let changed = gitops::has_staged_changes_for_path(&self.ctx, Path::new(&skill_rel))
-            .map_err(map_git)?;
+        let changed = match gitops::has_staged_changes_for_path(&self.ctx, Path::new(&skill_rel)) {
+            Ok(changed) => changed,
+            Err(err) => {
+                restore_path_best_effort(&skill_path, skill_backup.as_ref());
+                remove_backup_path_best_effort(skill_backup.as_ref());
+                let _ = gitops::restore_index(&self.ctx, &previous_index);
+                return Err(map_git(err));
+            }
+        };
         if !changed {
+            remove_backup_path_best_effort(skill_backup.as_ref());
+            let _ = gitops::restore_index(&self.ctx, &previous_index);
             return Ok((
                 json!({"skill": args.skill, "reference": reference, "noop": true}),
                 Meta::default(),
@@ -155,10 +184,27 @@ impl App {
         let registry_layout_backup =
             backup_path_if_exists(&self.ctx, &paths.registry_dir, "registry-layout")
                 .map_err(map_registry_state)?;
-        paths.ensure_layout().map_err(map_registry_state)?;
+        if let Err(err) = paths.ensure_layout() {
+            restore_path_best_effort(&skill_path, skill_backup.as_ref());
+            remove_backup_path_best_effort(skill_backup.as_ref());
+            restore_path_best_effort(&paths.registry_dir, registry_layout_backup.as_ref());
+            remove_backup_path_best_effort(registry_layout_backup.as_ref());
+            let _ = gitops::restore_index(&self.ctx, &previous_index);
+            return Err(map_registry_state(err));
+        }
 
         let message = format!("rollback({}): restore from {}", args.skill, reference);
-        let commit = gitops::commit(&self.ctx, &message).map_err(map_git)?;
+        let commit = match gitops::commit(&self.ctx, &message) {
+            Ok(commit) => commit,
+            Err(err) => {
+                restore_path_best_effort(&skill_path, skill_backup.as_ref());
+                remove_backup_path_best_effort(skill_backup.as_ref());
+                restore_path_best_effort(&paths.registry_dir, registry_layout_backup.as_ref());
+                remove_backup_path_best_effort(registry_layout_backup.as_ref());
+                let _ = gitops::restore_index(&self.ctx, &previous_index);
+                return Err(map_git(err));
+            }
+        };
 
         let post_audit: std::result::Result<(Option<String>, Meta), CommandFailure> = (|| {
             let op_id = record_registry_operation(

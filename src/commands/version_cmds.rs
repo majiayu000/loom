@@ -12,8 +12,7 @@ use crate::types::ErrorCode;
 use super::helpers::{
     backup_path_if_exists, commit_registry_state, ensure_skill_exists, map_arg, map_git, map_lock,
     map_registry_state, maybe_autosync_or_queue, record_registry_observation,
-    record_registry_operation, restore_path_from_backup, restore_registry_audit_state,
-    snapshot_registry_audit_state, validate_skill_name,
+    record_registry_operation, restore_path_from_backup, validate_skill_name,
 };
 use super::{App, CommandFailure};
 
@@ -32,9 +31,11 @@ impl App {
         let previous_head = gitops::head(&self.ctx).map_err(map_git)?;
         let previous_index = gitops::snapshot_index(&self.ctx).map_err(map_git)?;
         let tag = format!("release/{}/{}", args.skill, args.version);
-        let paths = self.ensure_registry_layout()?;
-        let registry_audit_backup =
-            snapshot_registry_audit_state(&paths).map_err(map_registry_state)?;
+        let paths = RegistryStatePaths::from_app_context(&self.ctx);
+        let registry_layout_backup =
+            backup_path_if_exists(&self.ctx, &paths.registry_dir, "registry-layout")
+                .map_err(map_registry_state)?;
+        paths.ensure_layout().map_err(map_registry_state)?;
 
         gitops::create_annotated_tag(
             &self.ctx,
@@ -86,10 +87,14 @@ impl App {
             Ok((state_commit, meta))
         })();
         let (state_commit, meta) = match post_audit {
-            Ok(result) => result,
+            Ok(result) => {
+                remove_backup_path_best_effort(registry_layout_backup.as_ref());
+                result
+            }
             Err(err) => {
                 reset_command_created_commit_best_effort(self, &previous_head);
-                let _ = restore_registry_audit_state(&paths, &registry_audit_backup);
+                restore_path_best_effort(&paths.registry_dir, registry_layout_backup.as_ref());
+                remove_backup_path_best_effort(registry_layout_backup.as_ref());
                 let _ = gitops::restore_index(&self.ctx, &previous_index);
                 delete_tag_best_effort(self, &tag);
                 return Err(err);
@@ -146,9 +151,11 @@ impl App {
             ));
         }
 
-        let paths = self.ensure_registry_layout()?;
-        let registry_audit_backup =
-            snapshot_registry_audit_state(&paths).map_err(map_registry_state)?;
+        let paths = RegistryStatePaths::from_app_context(&self.ctx);
+        let registry_layout_backup =
+            backup_path_if_exists(&self.ctx, &paths.registry_dir, "registry-layout")
+                .map_err(map_registry_state)?;
+        paths.ensure_layout().map_err(map_registry_state)?;
 
         let message = format!("rollback({}): restore from {}", args.skill, reference);
         let commit = gitops::commit(&self.ctx, &message).map_err(map_git)?;
@@ -203,13 +210,15 @@ impl App {
         let (state_commit, mut meta) = match post_audit {
             Ok(result) => {
                 remove_backup_path_best_effort(skill_backup.as_ref());
+                remove_backup_path_best_effort(registry_layout_backup.as_ref());
                 result
             }
             Err(err) => {
                 reset_command_created_commit_best_effort(self, &previous_head);
-                restore_skill_path_best_effort(&skill_path, skill_backup.as_ref());
+                restore_path_best_effort(&skill_path, skill_backup.as_ref());
                 remove_backup_path_best_effort(skill_backup.as_ref());
-                let _ = restore_registry_audit_state(&paths, &registry_audit_backup);
+                restore_path_best_effort(&paths.registry_dir, registry_layout_backup.as_ref());
+                remove_backup_path_best_effort(registry_layout_backup.as_ref());
                 let _ = gitops::restore_index(&self.ctx, &previous_index);
                 return Err(err);
             }
@@ -267,7 +276,7 @@ fn reset_command_created_commit_best_effort(app: &App, previous_head: &str) {
     let _ = gitops::run_git_allow_failure(&app.ctx, &["reset", "--soft", previous_head]);
 }
 
-fn restore_skill_path_best_effort(path: &Path, backup: Option<&serde_json::Value>) {
+fn restore_path_best_effort(path: &Path, backup: Option<&serde_json::Value>) {
     if let Some(backup) = backup {
         let _ = restore_path_from_backup(path, backup);
     } else {

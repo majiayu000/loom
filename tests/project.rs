@@ -362,6 +362,59 @@ fn skill_rollback_rolls_back_commits_and_worktree_after_late_audit_failure() {
 }
 
 #[test]
+fn skill_rollback_removes_new_registry_layout_after_late_audit_failure() {
+    let root = TestDir::new("registry-skill-rollback-new-layout-rollback");
+    write_example_skill(root.path(), "model-onboarding");
+    assert!(
+        save_skill(root.path(), "model-onboarding")
+            .0
+            .status
+            .success()
+    );
+
+    write_skill(
+        root.path(),
+        "model-onboarding",
+        "# model-onboarding\n\nsource v2\n",
+    );
+    assert!(
+        save_skill(root.path(), "model-onboarding")
+            .0
+            .status
+            .success()
+    );
+    assert!(
+        !root.path().join("state/registry").exists(),
+        "precondition: registry should not exist before rollback"
+    );
+    let head_before = git_head(root.path());
+
+    let (rollback_output, rollback_env) = run_loom_with_env(
+        root.path(),
+        &[("LOOM_FAULT_INJECT", "skill_rollback_after_state_commit")],
+        &["skill", "rollback", "model-onboarding", "--to", "HEAD~1"],
+    );
+
+    assert!(
+        !rollback_output.status.success(),
+        "rollback unexpectedly succeeded"
+    );
+    assert_eq!(rollback_env["ok"], Value::Bool(false));
+    assert_eq!(git_head(root.path()), head_before);
+    assert!(
+        !root.path().join("state/registry").exists(),
+        "failed rollback should remove newly-created registry layout"
+    );
+    let source = fs::read_to_string(root.path().join("skills/model-onboarding/SKILL.md"))
+        .expect("read source skill");
+    assert!(source.contains("source v2"));
+    assert_eq!(
+        git_status_short_for(root.path(), &["skills/model-onboarding", "state/registry"]),
+        ""
+    );
+}
+
+#[test]
 fn skill_release_records_operation() {
     let root = TestDir::new("registry-skill-release-audit");
     write_example_skill(root.path(), "model-onboarding");
@@ -393,6 +446,45 @@ fn skill_release_records_operation() {
     let operations = read_operations_log(root.path());
     assert!(operations.contains("\"intent\":\"skill.release\""));
     assert!(operations.contains("\"version\":\"v1.0.0\""));
+}
+
+#[test]
+fn skill_release_removes_new_registry_layout_after_late_failure() {
+    let root = TestDir::new("registry-skill-release-new-layout-rollback");
+    write_example_skill(root.path(), "model-onboarding");
+    assert!(
+        save_skill(root.path(), "model-onboarding")
+            .0
+            .status
+            .success()
+    );
+    assert!(
+        !root.path().join("state/registry").exists(),
+        "precondition: registry should not exist before release"
+    );
+    let head_before = git_head(root.path());
+
+    let (release_output, release_env) = run_loom_with_env(
+        root.path(),
+        &[("LOOM_FAULT_INJECT", "skill_release_after_state_commit")],
+        &["skill", "release", "model-onboarding", "v1.0.0"],
+    );
+
+    assert!(
+        !release_output.status.success(),
+        "release unexpectedly succeeded"
+    );
+    assert_eq!(release_env["ok"], Value::Bool(false));
+    assert_eq!(git_head(root.path()), head_before);
+    assert!(
+        !git_tag_exists(root.path(), "release/model-onboarding/v1.0.0"),
+        "failed release should delete the release tag"
+    );
+    assert!(
+        !root.path().join("state/registry").exists(),
+        "failed release should remove newly-created registry layout"
+    );
+    assert_eq!(git_status_short_for(root.path(), &["state/registry"]), "");
 }
 
 #[test]

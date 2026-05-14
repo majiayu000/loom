@@ -91,7 +91,6 @@ impl App {
         let _workspace = self.ctx.lock_workspace().map_err(map_lock)?;
         self.ensure_write_repo_ready()?;
         ensure_skill_exists(&self.ctx, &args.skill)?;
-        let paths = self.ensure_registry_layout()?;
         if args.to.is_some() && args.steps.is_some() {
             return Err(CommandFailure::new(
                 ErrorCode::ArgInvalid,
@@ -126,6 +125,7 @@ impl App {
         let message = format!("rollback({}): restore from {}", args.skill, reference);
         let commit = gitops::commit(&self.ctx, &message).map_err(map_git)?;
 
+        let paths = self.ensure_registry_layout()?;
         let op_id = record_registry_operation(
             &paths,
             "skill.rollback",

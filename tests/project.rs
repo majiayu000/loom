@@ -203,6 +203,35 @@ fn skill_rollback_records_operation_and_observation() {
 }
 
 #[test]
+fn skill_rollback_noop_does_not_initialize_registry() {
+    let root = TestDir::new("registry-skill-rollback-noop");
+    write_example_skill(root.path(), "model-onboarding");
+    assert!(
+        save_skill(root.path(), "model-onboarding")
+            .0
+            .status
+            .success()
+    );
+
+    let (rollback_output, rollback_env) = run_loom(
+        root.path(),
+        &["skill", "rollback", "model-onboarding", "--to", "HEAD"],
+    );
+    assert!(
+        rollback_output.status.success(),
+        "rollback noop failed: stderr={} stdout={}",
+        String::from_utf8_lossy(&rollback_output.stderr),
+        String::from_utf8_lossy(&rollback_output.stdout)
+    );
+    assert_eq!(rollback_env["ok"], Value::Bool(true));
+    assert_eq!(rollback_env["data"]["noop"], Value::Bool(true));
+    assert!(
+        !root.path().join("state/registry").exists(),
+        "noop rollback should not create registry state"
+    );
+}
+
+#[test]
 fn skill_release_records_operation() {
     let root = TestDir::new("registry-skill-release-audit");
     write_example_skill(root.path(), "model-onboarding");

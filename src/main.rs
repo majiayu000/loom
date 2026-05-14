@@ -25,7 +25,7 @@ async fn main() {
     let pretty_requested = has_flag(&raw_args, "--pretty");
     let parse_request_id =
         extract_request_id(&raw_args).unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-    let cli = match Cli::try_parse_from(&raw_args) {
+    let mut cli = match Cli::try_parse_from(&raw_args) {
         Ok(cli) => cli,
         Err(err) => {
             if matches!(
@@ -50,6 +50,7 @@ async fn main() {
             err.exit();
         }
     };
+    cli.request_id = cli.request_id.and_then(valid_request_id);
 
     let app = match App::new(cli.root.clone()) {
         Ok(app) => app,
@@ -126,15 +127,25 @@ fn extract_request_id(args: &[OsString]) -> Option<String> {
     let mut iter = args.iter();
     while let Some(arg) = iter.next() {
         if arg == "--request-id" {
-            return iter
-                .next()
-                .map(|value| value.to_string_lossy().into_owned());
+            return iter.next().and_then(|value| {
+                let value = value.to_string_lossy().into_owned();
+                valid_request_id(value)
+            });
         }
         if let Some(raw) = arg.to_string_lossy().strip_prefix("--request-id=") {
-            return Some(raw.to_string());
+            return valid_request_id(raw.to_string());
         }
     }
     None
+}
+
+fn valid_request_id(value: String) -> Option<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() || trimmed.starts_with('-') {
+        None
+    } else {
+        Some(value)
+    }
 }
 
 fn pretty_json_or_empty_object(value: &serde_json::Value) -> String {

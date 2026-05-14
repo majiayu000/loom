@@ -210,6 +210,76 @@ fn json_mode_wraps_clap_value_errors() {
 }
 
 #[test]
+fn json_parse_error_ignores_missing_request_id_value() {
+    let root = TestDir::new("cli-json-missing-request-id");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_loom"))
+        .arg("--json")
+        .arg("--request-id")
+        .arg("--root")
+        .arg(root.path())
+        .args(["workspace", "status"])
+        .output()
+        .expect("run loom");
+
+    assert!(
+        !output.status.success(),
+        "missing request id unexpectedly succeeded: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        output.stderr.is_empty(),
+        "--json parse failures should not write text stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let env: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("parse missing request id json");
+    assert_eq!(env["ok"], serde_json::json!(false));
+    assert_eq!(env["cmd"], serde_json::json!("cli.parse"));
+    assert_ne!(env["request_id"], serde_json::json!("--root"));
+    assert!(
+        env["request_id"]
+            .as_str()
+            .is_some_and(|value| !value.is_empty()),
+        "parse failure must fall back to a generated request_id: {env}"
+    );
+    assert_eq!(env["error"]["code"], serde_json::json!("ARG_INVALID"));
+}
+
+#[test]
+fn json_mode_ignores_empty_request_id_value() {
+    let root = TestDir::new("cli-json-empty-request-id");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_loom"))
+        .arg("--json")
+        .arg("--request-id=")
+        .arg("--root")
+        .arg(root.path())
+        .args(["workspace", "status"])
+        .output()
+        .expect("run loom status");
+
+    assert!(
+        output.status.success(),
+        "status unexpectedly failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let env: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("parse empty request id json");
+    assert_eq!(env["ok"], serde_json::json!(true));
+    assert!(
+        env["request_id"]
+            .as_str()
+            .is_some_and(|value| !value.is_empty()),
+        "empty request id must fall back to a generated request_id: {env}"
+    );
+}
+
+#[test]
 fn skill_orphan_clean_nested_command_is_available() {
     let output = Command::new(env!("CARGO_BIN_EXE_loom"))
         .args(["skill", "orphan", "clean", "--help"])

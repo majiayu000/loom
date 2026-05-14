@@ -38,7 +38,7 @@ impl App {
         let paths = self.ensure_registry_layout()?;
         let registry_audit_backup =
             snapshot_registry_audit_state(&paths).map_err(map_registry_state)?;
-        let post_audit: std::result::Result<(String, Option<String>), CommandFailure> = (|| {
+        let post_audit: std::result::Result<(Option<String>, Meta), CommandFailure> = (|| {
             let op_id = record_registry_operation(
                 &paths,
                 "skill.release",
@@ -66,28 +66,26 @@ impl App {
                 &self.ctx,
                 &format!("release({}): record registry operation", args.skill),
             )?;
-            Ok((op_id, state_commit))
-        })(
-        );
-        let (op_id, state_commit) = match post_audit {
+            let mut meta = Meta {
+                op_id: Some(op_id),
+                ..Meta::default()
+            };
+            maybe_autosync_or_queue(
+                &self.ctx,
+                "release",
+                request_id,
+                json!({"skill": args.skill, "tag": tag, "state_commit": state_commit}),
+                &mut meta,
+            )?;
+            Ok((state_commit, meta))
+        })();
+        let (state_commit, meta) = match post_audit {
             Ok(result) => result,
             Err(err) => {
                 let _ = restore_registry_audit_state(&paths, &registry_audit_backup);
                 return Err(err);
             }
         };
-
-        let mut meta = Meta {
-            op_id: Some(op_id),
-            ..Meta::default()
-        };
-        maybe_autosync_or_queue(
-            &self.ctx,
-            "release",
-            request_id,
-            json!({"skill": args.skill, "tag": tag, "state_commit": state_commit}),
-            &mut meta,
-        )?;
 
         Ok((
             json!({"skill": args.skill, "version": args.version, "tag": tag, "state_commit": state_commit}),
@@ -141,7 +139,7 @@ impl App {
         let paths = self.ensure_registry_layout()?;
         let registry_audit_backup =
             snapshot_registry_audit_state(&paths).map_err(map_registry_state)?;
-        let post_audit: std::result::Result<(String, Option<String>), CommandFailure> = (|| {
+        let post_audit: std::result::Result<(Option<String>, Meta), CommandFailure> = (|| {
             let op_id = record_registry_operation(
                 &paths,
                 "skill.rollback",
@@ -169,33 +167,31 @@ impl App {
                 &self.ctx,
                 &format!("rollback({}): record registry operation", args.skill),
             )?;
-            Ok((op_id, state_commit))
-        })(
-        );
-        let (op_id, state_commit) = match post_audit {
+            let mut meta = Meta {
+                op_id: Some(op_id),
+                ..Meta::default()
+            };
+            maybe_autosync_or_queue(
+                &self.ctx,
+                "rollback",
+                request_id,
+                json!({
+                    "skill": args.skill,
+                    "commit": commit,
+                    "reference": reference,
+                    "state_commit": state_commit
+                }),
+                &mut meta,
+            )?;
+            Ok((state_commit, meta))
+        })();
+        let (state_commit, mut meta) = match post_audit {
             Ok(result) => result,
             Err(err) => {
                 let _ = restore_registry_audit_state(&paths, &registry_audit_backup);
                 return Err(err);
             }
         };
-
-        let mut meta = Meta {
-            op_id: Some(op_id),
-            ..Meta::default()
-        };
-        maybe_autosync_or_queue(
-            &self.ctx,
-            "rollback",
-            request_id,
-            json!({
-                "skill": args.skill,
-                "commit": commit,
-                "reference": reference,
-                "state_commit": state_commit
-            }),
-            &mut meta,
-        )?;
 
         if let Ok(Some(snapshot)) = paths.maybe_load_snapshot() {
             let stale: Vec<_> = snapshot

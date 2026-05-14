@@ -33,11 +33,10 @@ impl App {
         let tag = format!("release/{}/{}", args.skill, args.version);
         let paths = RegistryStatePaths::from_app_context(&self.ctx);
         let registry_layout_backup =
-            backup_path_if_exists(&self.ctx, &paths.registry_dir, "registry-layout")
-                .map_err(map_registry_state)?;
+            backup_registry_layout(&self.ctx, &paths).map_err(map_registry_state)?;
         if let Err(err) = paths.ensure_layout() {
-            restore_path_best_effort(&paths.registry_dir, registry_layout_backup.as_ref());
-            remove_backup_path_best_effort(registry_layout_backup.as_ref());
+            restore_registry_layout_best_effort(&paths, &registry_layout_backup);
+            remove_registry_layout_backups_best_effort(&registry_layout_backup);
             let _ = gitops::restore_index(&self.ctx, &previous_index);
             return Err(map_registry_state(err));
         }
@@ -47,8 +46,8 @@ impl App {
             &tag,
             &format!("release {} {}", args.skill, args.version),
         ) {
-            restore_path_best_effort(&paths.registry_dir, registry_layout_backup.as_ref());
-            remove_backup_path_best_effort(registry_layout_backup.as_ref());
+            restore_registry_layout_best_effort(&paths, &registry_layout_backup);
+            remove_registry_layout_backups_best_effort(&registry_layout_backup);
             let _ = gitops::restore_index(&self.ctx, &previous_index);
             return Err(map_git(err));
         }
@@ -97,13 +96,13 @@ impl App {
         })();
         let (state_commit, meta) = match post_audit {
             Ok(result) => {
-                remove_backup_path_best_effort(registry_layout_backup.as_ref());
+                remove_registry_layout_backups_best_effort(&registry_layout_backup);
                 result
             }
             Err(err) => {
                 reset_command_created_commit_best_effort(self, &previous_head);
-                restore_path_best_effort(&paths.registry_dir, registry_layout_backup.as_ref());
-                remove_backup_path_best_effort(registry_layout_backup.as_ref());
+                restore_registry_layout_best_effort(&paths, &registry_layout_backup);
+                remove_registry_layout_backups_best_effort(&registry_layout_backup);
                 let _ = gitops::restore_index(&self.ctx, &previous_index);
                 delete_tag_best_effort(self, &tag);
                 return Err(err);
@@ -182,13 +181,12 @@ impl App {
 
         let paths = RegistryStatePaths::from_app_context(&self.ctx);
         let registry_layout_backup =
-            backup_path_if_exists(&self.ctx, &paths.registry_dir, "registry-layout")
-                .map_err(map_registry_state)?;
+            backup_registry_layout(&self.ctx, &paths).map_err(map_registry_state)?;
         if let Err(err) = paths.ensure_layout() {
             restore_path_best_effort(&skill_path, skill_backup.as_ref());
             remove_backup_path_best_effort(skill_backup.as_ref());
-            restore_path_best_effort(&paths.registry_dir, registry_layout_backup.as_ref());
-            remove_backup_path_best_effort(registry_layout_backup.as_ref());
+            restore_registry_layout_best_effort(&paths, &registry_layout_backup);
+            remove_registry_layout_backups_best_effort(&registry_layout_backup);
             let _ = gitops::restore_index(&self.ctx, &previous_index);
             return Err(map_registry_state(err));
         }
@@ -199,8 +197,8 @@ impl App {
             Err(err) => {
                 restore_path_best_effort(&skill_path, skill_backup.as_ref());
                 remove_backup_path_best_effort(skill_backup.as_ref());
-                restore_path_best_effort(&paths.registry_dir, registry_layout_backup.as_ref());
-                remove_backup_path_best_effort(registry_layout_backup.as_ref());
+                restore_registry_layout_best_effort(&paths, &registry_layout_backup);
+                remove_registry_layout_backups_best_effort(&registry_layout_backup);
                 let _ = gitops::restore_index(&self.ctx, &previous_index);
                 return Err(map_git(err));
             }
@@ -256,15 +254,15 @@ impl App {
         let (state_commit, mut meta) = match post_audit {
             Ok(result) => {
                 remove_backup_path_best_effort(skill_backup.as_ref());
-                remove_backup_path_best_effort(registry_layout_backup.as_ref());
+                remove_registry_layout_backups_best_effort(&registry_layout_backup);
                 result
             }
             Err(err) => {
                 reset_command_created_commit_best_effort(self, &previous_head);
                 restore_path_best_effort(&skill_path, skill_backup.as_ref());
                 remove_backup_path_best_effort(skill_backup.as_ref());
-                restore_path_best_effort(&paths.registry_dir, registry_layout_backup.as_ref());
-                remove_backup_path_best_effort(registry_layout_backup.as_ref());
+                restore_registry_layout_best_effort(&paths, &registry_layout_backup);
+                remove_registry_layout_backups_best_effort(&registry_layout_backup);
                 let _ = gitops::restore_index(&self.ctx, &previous_index);
                 return Err(err);
             }
@@ -328,6 +326,42 @@ fn restore_path_best_effort(path: &Path, backup: Option<&serde_json::Value>) {
     } else {
         let _ = crate::state::remove_path_if_exists(path);
     }
+}
+
+struct RegistryLayoutBackup {
+    registry: Option<serde_json::Value>,
+    legacy_v3: Option<serde_json::Value>,
+}
+
+fn backup_registry_layout(
+    ctx: &crate::state::AppContext,
+    paths: &RegistryStatePaths,
+) -> anyhow::Result<RegistryLayoutBackup> {
+    Ok(RegistryLayoutBackup {
+        registry: backup_path_if_exists(ctx, &paths.registry_dir, "registry-layout")?,
+        legacy_v3: backup_path_if_exists(
+            ctx,
+            &paths.state_dir.join("v3"),
+            "legacy-registry-layout",
+        )?,
+    })
+}
+
+fn restore_registry_layout_best_effort(paths: &RegistryStatePaths, backup: &RegistryLayoutBackup) {
+    if backup.registry.is_some() {
+        restore_path_best_effort(&paths.registry_dir, backup.registry.as_ref());
+    } else {
+        let _ = crate::state::remove_path_if_exists(&paths.registry_dir);
+    }
+
+    if backup.legacy_v3.is_some() {
+        restore_path_best_effort(&paths.state_dir.join("v3"), backup.legacy_v3.as_ref());
+    }
+}
+
+fn remove_registry_layout_backups_best_effort(backup: &RegistryLayoutBackup) {
+    remove_backup_path_best_effort(backup.registry.as_ref());
+    remove_backup_path_best_effort(backup.legacy_v3.as_ref());
 }
 
 fn remove_backup_path_best_effort(backup: Option<&serde_json::Value>) {

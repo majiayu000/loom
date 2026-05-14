@@ -7,7 +7,7 @@ use serde_json::Value;
 mod common;
 
 use common::actions::{binding_add, save_skill, skill_project, target_add};
-use common::{TestDir, run_loom, run_loom_with_env, write_skill};
+use common::{TestDir, run_loom, run_loom_with_env, write_minimal_registry_state, write_skill};
 
 fn write_example_skill(root: &std::path::Path, skill: &str) {
     write_skill(root, skill, &format!("# {}\n\nexample skill\n", skill));
@@ -419,6 +419,67 @@ fn skill_rollback_removes_new_registry_layout_after_late_audit_failure() {
 }
 
 #[test]
+fn skill_rollback_restores_legacy_v3_layout_after_late_audit_failure() {
+    let root = TestDir::new("registry-skill-rollback-legacy-v3-rollback");
+    write_example_skill(root.path(), "model-onboarding");
+    assert!(
+        save_skill(root.path(), "model-onboarding")
+            .0
+            .status
+            .success()
+    );
+
+    write_skill(
+        root.path(),
+        "model-onboarding",
+        "# model-onboarding\n\nsource v2\n",
+    );
+    assert!(
+        save_skill(root.path(), "model-onboarding")
+            .0
+            .status
+            .success()
+    );
+    write_minimal_registry_state(root.path(), 1);
+    fs::rename(
+        root.path().join("state/registry"),
+        root.path().join("state/v3"),
+    )
+    .expect("move registry to legacy v3");
+    assert!(root.path().join("state/v3").exists());
+    assert!(!root.path().join("state/registry").exists());
+    let legacy_ops_before = fs::read_to_string(root.path().join("state/v3/ops/operations.jsonl"))
+        .expect("read legacy ops");
+    let head_before = git_head(root.path());
+
+    let (rollback_output, rollback_env) = run_loom_with_env(
+        root.path(),
+        &[("LOOM_FAULT_INJECT", "skill_rollback_after_state_commit")],
+        &["skill", "rollback", "model-onboarding", "--to", "HEAD~1"],
+    );
+
+    assert!(
+        !rollback_output.status.success(),
+        "rollback unexpectedly succeeded"
+    );
+    assert_eq!(rollback_env["ok"], Value::Bool(false));
+    assert_eq!(git_head(root.path()), head_before);
+    assert!(root.path().join("state/v3").exists());
+    assert!(
+        !root.path().join("state/registry").exists(),
+        "failed rollback should restore legacy v3 instead of keeping migrated registry"
+    );
+    assert_eq!(
+        fs::read_to_string(root.path().join("state/v3/ops/operations.jsonl"))
+            .expect("read legacy ops"),
+        legacy_ops_before
+    );
+    let source = fs::read_to_string(root.path().join("skills/model-onboarding/SKILL.md"))
+        .expect("read source skill");
+    assert!(source.contains("source v2"));
+}
+
+#[test]
 fn skill_release_records_operation() {
     let root = TestDir::new("registry-skill-release-audit");
     write_example_skill(root.path(), "model-onboarding");
@@ -489,6 +550,56 @@ fn skill_release_removes_new_registry_layout_after_late_failure() {
         "failed release should remove newly-created registry layout"
     );
     assert_eq!(git_status_short_for(root.path(), &["state/registry"]), "");
+}
+
+#[test]
+fn skill_release_restores_legacy_v3_layout_after_late_failure() {
+    let root = TestDir::new("registry-skill-release-legacy-v3-rollback");
+    write_example_skill(root.path(), "model-onboarding");
+    assert!(
+        save_skill(root.path(), "model-onboarding")
+            .0
+            .status
+            .success()
+    );
+    write_minimal_registry_state(root.path(), 1);
+    fs::rename(
+        root.path().join("state/registry"),
+        root.path().join("state/v3"),
+    )
+    .expect("move registry to legacy v3");
+    assert!(root.path().join("state/v3").exists());
+    assert!(!root.path().join("state/registry").exists());
+    let legacy_ops_before = fs::read_to_string(root.path().join("state/v3/ops/operations.jsonl"))
+        .expect("read legacy ops");
+    let head_before = git_head(root.path());
+
+    let (release_output, release_env) = run_loom_with_env(
+        root.path(),
+        &[("LOOM_FAULT_INJECT", "skill_release_after_state_commit")],
+        &["skill", "release", "model-onboarding", "v1.0.0"],
+    );
+
+    assert!(
+        !release_output.status.success(),
+        "release unexpectedly succeeded"
+    );
+    assert_eq!(release_env["ok"], Value::Bool(false));
+    assert_eq!(git_head(root.path()), head_before);
+    assert!(
+        !git_tag_exists(root.path(), "release/model-onboarding/v1.0.0"),
+        "failed release should delete the release tag"
+    );
+    assert!(root.path().join("state/v3").exists());
+    assert!(
+        !root.path().join("state/registry").exists(),
+        "failed release should restore legacy v3 instead of keeping migrated registry"
+    );
+    assert_eq!(
+        fs::read_to_string(root.path().join("state/v3/ops/operations.jsonl"))
+            .expect("read legacy ops"),
+        legacy_ops_before
+    );
 }
 
 #[test]

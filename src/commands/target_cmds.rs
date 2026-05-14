@@ -1,6 +1,7 @@
 use std::fs;
 use std::path::PathBuf;
 
+use anyhow::Context;
 use chrono::Utc;
 use serde_json::json;
 
@@ -93,6 +94,7 @@ impl App {
 
         let paths = self.ensure_registry_layout()?;
         let mut targets = paths.load_targets().map_err(map_registry_state)?;
+        let original_targets = targets.clone();
 
         if let Some(existing) = targets
             .targets
@@ -130,7 +132,7 @@ impl App {
             .sort_by(|left, right| left.target_id.cmp(&right.target_id));
         paths.save_targets(&targets).map_err(map_registry_state)?;
 
-        let op_id = record_registry_operation(
+        let op_id = match record_registry_operation(
             &paths,
             "target.add",
             json!({
@@ -143,8 +145,21 @@ impl App {
             json!({
                 "target_id": target.target_id
             }),
-        )
-        .map_err(map_registry_state)?;
+        ) {
+            Ok(op_id) => op_id,
+            Err(err) => {
+                paths
+                    .save_targets(&original_targets)
+                    .with_context(|| {
+                        format!(
+                            "failed to rollback targets after operation-log failure: {}",
+                            err
+                        )
+                    })
+                    .map_err(map_registry_state)?;
+                return Err(map_registry_state(err));
+            }
+        };
         let commit = commit_registry_state(&self.ctx, &format!("target({}): add", target_id))?;
         let mut meta = Meta {
             op_id: Some(op_id),
@@ -175,6 +190,7 @@ impl App {
         self.ensure_write_repo_ready()?;
         let paths = self.ensure_registry_layout()?;
         let mut snapshot = paths.load_snapshot().map_err(map_registry_state)?;
+        let original_targets = snapshot.targets.clone();
         let target = snapshot.target(&args.target_id).cloned().ok_or_else(|| {
             CommandFailure::new(
                 ErrorCode::TargetNotFound,
@@ -215,7 +231,7 @@ impl App {
             .save_targets(&snapshot.targets)
             .map_err(map_registry_state)?;
 
-        let op_id = record_registry_operation(
+        let op_id = match record_registry_operation(
             &paths,
             "target.remove",
             json!({
@@ -225,8 +241,21 @@ impl App {
             json!({
                 "target_id": target.target_id
             }),
-        )
-        .map_err(map_registry_state)?;
+        ) {
+            Ok(op_id) => op_id,
+            Err(err) => {
+                paths
+                    .save_targets(&original_targets)
+                    .with_context(|| {
+                        format!(
+                            "failed to rollback targets after operation-log failure: {}",
+                            err
+                        )
+                    })
+                    .map_err(map_registry_state)?;
+                return Err(map_registry_state(err));
+            }
+        };
         let commit =
             commit_registry_state(&self.ctx, &format!("target({}): remove", args.target_id))?;
         let mut meta = Meta {

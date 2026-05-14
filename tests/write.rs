@@ -7,7 +7,7 @@ use std::process::Command;
 use common::actions::{binding_add, target_add};
 use serde_json::Value;
 
-use common::{TestDir, run_loom, write_minimal_registry_state};
+use common::{TestDir, run_loom, run_loom_with_env, write_minimal_registry_state};
 
 fn git_ok(root: &Path, args: &[&str]) -> String {
     let output = Command::new("git")
@@ -40,6 +40,20 @@ fn git_status(root: &Path, args: &[&str]) -> bool {
         .success()
 }
 
+fn registry_array_len(root: &Path, file_name: &str, key: &str) -> usize {
+    let path = root.join("state/registry").join(file_name);
+    if !path.exists() {
+        return 0;
+    }
+    let raw = fs::read_to_string(&path).expect("read registry json");
+    let value: Value = serde_json::from_str(&raw).expect("parse registry json");
+    value[key].as_array().map(Vec::len).unwrap_or(0)
+}
+
+fn operations_log(root: &Path) -> String {
+    fs::read_to_string(root.join("state/registry/ops/operations.jsonl")).unwrap_or_default()
+}
+
 #[test]
 fn target_add_bootstraps_registry_state_and_records_op() {
     let root = TestDir::new("registry-target-add");
@@ -70,6 +84,68 @@ fn target_add_bootstraps_registry_state_and_records_op() {
 }
 
 #[test]
+fn target_add_rejects_directory_operations_log_before_mutating_targets() {
+    let root = TestDir::new("registry-target-add-directory-oplog");
+    fs::create_dir_all(root.path().join("state/registry/ops/operations.jsonl"))
+        .expect("create directory at operations log path");
+    let target_path = root.path().join("live/claude-project-a");
+
+    let (output, env) = target_add(root.path(), "claude", &target_path, "managed");
+
+    assert!(
+        !output.status.success(),
+        "target add unexpectedly succeeded with directory operations log"
+    );
+    assert_eq!(env["ok"], Value::Bool(false));
+    assert_eq!(
+        env["error"]["code"],
+        Value::String("STATE_CORRUPT".to_string())
+    );
+    assert_eq!(
+        registry_array_len(root.path(), "targets.json", "targets"),
+        0,
+        "failed command must not leave the target in registry state"
+    );
+}
+
+#[test]
+fn target_add_rolls_back_targets_after_operation_log_failure() {
+    let root = TestDir::new("registry-target-add-oplog-rollback");
+    let target_path = root.path().join("live/claude-project-a");
+    let target_path_arg = target_path.to_string_lossy().into_owned();
+
+    let (output, env) = run_loom_with_env(
+        root.path(),
+        &[("LOOM_FAULT_INJECT", "record_v3_operation_after_append")],
+        &[
+            "target",
+            "add",
+            "--agent",
+            "claude",
+            "--path",
+            &target_path_arg,
+            "--ownership",
+            "managed",
+        ],
+    );
+
+    assert!(
+        !output.status.success(),
+        "target add unexpectedly succeeded with injected operation-log failure"
+    );
+    assert_eq!(env["ok"], Value::Bool(false));
+    assert_eq!(
+        registry_array_len(root.path(), "targets.json", "targets"),
+        0,
+        "target state must roll back when the operation record cannot be persisted"
+    );
+    assert!(
+        operations_log(root.path()).is_empty(),
+        "operation log append must also be rolled back"
+    );
+}
+
+#[test]
 fn target_add_is_idempotent_for_same_agent_and_path() {
     let root = TestDir::new("registry-target-add-idempotent");
     let target_path = root.path().join("live/codex-workbench");
@@ -83,6 +159,51 @@ fn target_add_is_idempotent_for_same_agent_and_path() {
     let (list_output, list_env) = run_loom(root.path(), &["target", "list"]);
     assert!(list_output.status.success(), "target list should succeed");
     assert_eq!(list_env["data"]["count"], Value::from(1));
+}
+
+#[test]
+fn workspace_binding_add_rolls_back_bindings_after_operation_log_failure() {
+    let root = TestDir::new("registry-binding-add-oplog-rollback");
+    let target_path = root.path().join("live/claude-project-a");
+    let (target_output, _) = target_add(root.path(), "claude", &target_path, "managed");
+    assert!(target_output.status.success(), "target add should succeed");
+    let operations_before = operations_log(root.path());
+
+    let (output, env) = run_loom_with_env(
+        root.path(),
+        &[("LOOM_FAULT_INJECT", "record_v3_operation_after_append")],
+        &[
+            "workspace",
+            "binding",
+            "add",
+            "--agent",
+            "claude",
+            "--profile",
+            "default",
+            "--matcher-kind",
+            "path-prefix",
+            "--matcher-value",
+            "/tmp/project-a",
+            "--target",
+            "target_claude_claude_project_a",
+        ],
+    );
+
+    assert!(
+        !output.status.success(),
+        "binding add unexpectedly succeeded with injected operation-log failure"
+    );
+    assert_eq!(env["ok"], Value::Bool(false));
+    assert_eq!(
+        registry_array_len(root.path(), "bindings.json", "bindings"),
+        0,
+        "binding state must roll back when the operation record cannot be persisted"
+    );
+    assert_eq!(
+        operations_log(root.path()),
+        operations_before,
+        "operation log should be restored to the pre-command contents"
+    );
 }
 
 #[test]

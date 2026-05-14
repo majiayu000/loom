@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use anyhow::Context;
 use chrono::Utc;
 use serde_json::json;
 
@@ -394,6 +395,7 @@ impl App {
 
         let paths = self.ensure_registry_layout()?;
         let snapshot = paths.load_snapshot().map_err(map_registry_state)?;
+        let original_bindings = snapshot.bindings.clone();
         if snapshot.target(&args.target).is_none() {
             return Err(CommandFailure::new(
                 ErrorCode::TargetNotFound,
@@ -441,7 +443,7 @@ impl App {
             .sort_by(|left, right| left.binding_id.cmp(&right.binding_id));
         paths.save_bindings(&bindings).map_err(map_registry_state)?;
 
-        let op_id = record_registry_operation(
+        let op_id = match record_registry_operation(
             &paths,
             "workspace.binding.add",
             json!({
@@ -456,8 +458,21 @@ impl App {
             json!({
                 "binding_id": binding.binding_id
             }),
-        )
-        .map_err(map_registry_state)?;
+        ) {
+            Ok(op_id) => op_id,
+            Err(err) => {
+                paths
+                    .save_bindings(&original_bindings)
+                    .with_context(|| {
+                        format!(
+                            "failed to rollback bindings after operation-log failure: {}",
+                            err
+                        )
+                    })
+                    .map_err(map_registry_state)?;
+                return Err(map_registry_state(err));
+            }
+        };
         let commit = commit_registry_state(&self.ctx, &format!("binding({}): add", binding_id))?;
         let mut meta = Meta {
             op_id: Some(op_id),
@@ -488,6 +503,9 @@ impl App {
         self.ensure_write_repo_ready()?;
         let paths = self.ensure_registry_layout()?;
         let mut snapshot = paths.load_snapshot().map_err(map_registry_state)?;
+        let original_bindings = snapshot.bindings.clone();
+        let original_rules = snapshot.rules.clone();
+        let original_projections = snapshot.projections.clone();
         let binding = snapshot.binding(&args.binding_id).cloned().ok_or_else(|| {
             CommandFailure::new(
                 ErrorCode::BindingNotFound,
@@ -528,7 +546,7 @@ impl App {
             )
             .map_err(map_registry_state)?;
 
-        let op_id = record_registry_operation(
+        let op_id = match record_registry_operation(
             &paths,
             "workspace.binding.remove",
             json!({
@@ -540,8 +558,25 @@ impl App {
                 "removed_rules": removed_rules.iter().map(|rule| rule.skill_id.clone()).collect::<Vec<_>>(),
                 "orphaned_projection_ids": orphaned_projection_ids,
             }),
-        )
-        .map_err(map_registry_state)?;
+        ) {
+            Ok(op_id) => op_id,
+            Err(err) => {
+                paths
+                    .save_bindings_rules_projections(
+                        &original_bindings,
+                        &original_rules,
+                        &original_projections,
+                    )
+                    .with_context(|| {
+                        format!(
+                            "failed to rollback bindings after operation-log failure: {}",
+                            err
+                        )
+                    })
+                    .map_err(map_registry_state)?;
+                return Err(map_registry_state(err));
+            }
+        };
 
         let mut meta = Meta {
             op_id: Some(op_id),
@@ -589,6 +624,7 @@ impl App {
         self.ensure_write_layout()?;
         let paths = self.ensure_registry_layout()?;
         let mut snapshot = paths.load_snapshot().map_err(map_registry_state)?;
+        let original_projections = snapshot.projections.clone();
         let target_paths = snapshot
             .targets
             .targets
@@ -632,7 +668,7 @@ impl App {
             .save_projections(&snapshot.projections)
             .map_err(map_registry_state)?;
 
-        let op_id = record_registry_operation(
+        let op_id = match record_registry_operation(
             &paths,
             "skill.orphan.clean",
             json!({ "request_id": request_id }),
@@ -643,8 +679,21 @@ impl App {
                 "skipped_paths": skipped_paths,
                 "delete_live_paths": args.delete_live_paths,
             }),
-        )
-        .map_err(map_registry_state)?;
+        ) {
+            Ok(op_id) => op_id,
+            Err(err) => {
+                paths
+                    .save_projections(&original_projections)
+                    .with_context(|| {
+                        format!(
+                            "failed to rollback projections after operation-log failure: {}",
+                            err
+                        )
+                    })
+                    .map_err(map_registry_state)?;
+                return Err(map_registry_state(err));
+            }
+        };
 
         Ok((
             json!({

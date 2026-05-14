@@ -10,7 +10,7 @@ use std::fs::OpenOptions;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, anyhow};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
@@ -19,6 +19,7 @@ where
     T: Serialize,
 {
     if path.exists() {
+        ensure_existing_file(path)?;
         return Ok(());
     }
     write_json_file(path, value)
@@ -26,9 +27,20 @@ where
 
 pub(super) fn ensure_text_file(path: &Path, contents: &str) -> Result<()> {
     if path.exists() {
+        ensure_existing_file(path)?;
         return Ok(());
     }
     write_atomic(path, contents)
+}
+
+fn ensure_existing_file(path: &Path) -> Result<()> {
+    if path.is_file() {
+        return Ok(());
+    }
+    Err(anyhow!(
+        "registry path exists but is not a file: {}",
+        path.display()
+    ))
 }
 
 pub(super) fn write_json_file<T>(path: &Path, value: &T) -> Result<()>

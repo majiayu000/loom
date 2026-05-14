@@ -209,7 +209,7 @@ function summarizePolicy(skillBindings: Binding[]): string {
 type DetailTab = "history" | "diff" | "targets";
 
 interface LifecycleEvent {
-  kind: "release" | "capture" | "save" | "snapshot" | "project";
+  kind: "release" | "capture" | "save" | "snapshot" | "project" | "rollback";
   v: string;
   time: string;
   who: string;
@@ -222,11 +222,14 @@ const KIND_COLOR: Record<LifecycleEvent["kind"], string> = {
   save: "var(--ink-2)",
   snapshot: "var(--warn)",
   project: "var(--ok)",
+  rollback: "var(--err)",
 };
 
 const KIND_MAP: Record<string, LifecycleEvent["kind"]> = {
   captured: "capture",
   projected: "project",
+  rollback: "rollback",
+  monitor: "save",
   snapshot: "snapshot",
   released: "release",
   saved: "save",

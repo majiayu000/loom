@@ -23,9 +23,10 @@ pub(crate) use super::file_ops::{
 };
 pub use super::projections::{collect_skill_inventory, remote_status_payload};
 pub(crate) use super::projections::{
-    maybe_autosync_or_queue, project_skill_to_target, record_registry_operation,
-    remote_status_payload_with_pending, resolve_capture_projection, sync_push_internal,
-    sync_replay_internal, update_projection_after_capture, upsert_projection, upsert_rule,
+    maybe_autosync_or_queue, project_skill_to_target, record_registry_observation,
+    record_registry_operation, remote_status_payload_with_pending, resolve_capture_projection,
+    sync_push_internal, sync_replay_internal, update_projection_after_capture, upsert_projection,
+    upsert_rule,
 };
 
 // ---------------------------------------------------------------------------

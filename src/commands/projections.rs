@@ -12,8 +12,9 @@ use crate::envelope::Meta;
 use crate::gitops;
 use crate::state::{AppContext, PendingOpsReport, resolve_agent_skill_source_dirs};
 use crate::state_model::{
-    RegistryBindingRule, RegistryOperationRecord, RegistryProjectionInstance,
-    RegistryProjectionsFile, RegistryRulesFile, RegistrySnapshot, RegistryStatePaths,
+    RegistryBindingRule, RegistryObservationEvent, RegistryOperationRecord,
+    RegistryProjectionInstance, RegistryProjectionsFile, RegistryRulesFile, RegistrySnapshot,
+    RegistryStatePaths,
 };
 use crate::types::{ErrorCode, SyncState};
 
@@ -278,6 +279,28 @@ pub(crate) fn record_registry_operation(
     }
 
     Ok(op_id)
+}
+
+pub(crate) fn record_registry_observation(
+    paths: &RegistryStatePaths,
+    instance_id: &str,
+    kind: &str,
+    path: Option<String>,
+    from: Option<String>,
+    to: Option<String>,
+) -> Result<String> {
+    let event_id = Uuid::new_v4().to_string();
+    let event = RegistryObservationEvent {
+        event_id: event_id.clone(),
+        instance_id: instance_id.to_string(),
+        kind: kind.to_string(),
+        path,
+        from,
+        to,
+        observed_at: Utc::now(),
+    };
+    paths.append_observation(&event)?;
+    Ok(event_id)
 }
 
 fn maybe_projection_fault(tag: &str) -> Result<()> {

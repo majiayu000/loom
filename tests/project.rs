@@ -21,6 +21,14 @@ fn read_checkpoint(root: &std::path::Path) -> String {
     fs::read_to_string(root.join("state/registry/ops/checkpoint.json")).expect("read checkpoint")
 }
 
+fn read_observation_log(root: &std::path::Path, instance_id: &str) -> String {
+    fs::read_to_string(
+        root.join("state/registry/observations")
+            .join(format!("{instance_id}.jsonl")),
+    )
+    .expect("read observation log")
+}
+
 #[test]
 fn skill_project_creates_projection_rule_and_instance() {
     let root = TestDir::new("registry-skill-project");
@@ -77,6 +85,12 @@ fn skill_project_creates_projection_rule_and_instance() {
             .map(|value| !value.is_empty()),
         Some(true)
     );
+    let instance_id = project_env["data"]["projection"]["instance_id"]
+        .as_str()
+        .expect("projection instance id");
+    let observations = read_observation_log(root.path(), instance_id);
+    assert!(observations.contains("\"kind\":\"projected\""));
+    assert!(observations.contains(&format!("\"instance_id\":\"{instance_id}\"")));
 
     let projected_path = target_path.join("model-onboarding");
     assert!(projected_path.exists(), "projected path should exist");
@@ -99,6 +113,127 @@ fn skill_project_creates_projection_rule_and_instance() {
             .map(Vec::len),
         Some(1)
     );
+}
+
+#[test]
+fn skill_rollback_records_operation_and_observation() {
+    let root = TestDir::new("registry-skill-rollback-audit");
+    write_example_skill(root.path(), "model-onboarding");
+
+    assert!(
+        save_skill(root.path(), "model-onboarding")
+            .0
+            .status
+            .success()
+    );
+
+    let target_path = root.path().join("live/claude-project-a");
+    assert!(
+        target_add(root.path(), "claude", &target_path, "managed")
+            .0
+            .status
+            .success()
+    );
+    assert!(
+        binding_add(
+            root.path(),
+            "claude",
+            "default",
+            "path-prefix",
+            "/tmp/project-a",
+            "target_claude_claude_project_a",
+        )
+        .0
+        .status
+        .success()
+    );
+    let (project_output, project_env) = skill_project(
+        root.path(),
+        "model-onboarding",
+        "bind_claude_project_a",
+        Some("copy"),
+    );
+    assert!(project_output.status.success(), "project should succeed");
+    let instance_id = project_env["data"]["projection"]["instance_id"]
+        .as_str()
+        .expect("projection instance id")
+        .to_string();
+
+    write_skill(
+        root.path(),
+        "model-onboarding",
+        "# model-onboarding\n\nsource v2\n",
+    );
+    assert!(
+        save_skill(root.path(), "model-onboarding")
+            .0
+            .status
+            .success()
+    );
+
+    let (rollback_output, rollback_env) = run_loom(
+        root.path(),
+        &["skill", "rollback", "model-onboarding", "--to", "HEAD~1"],
+    );
+    assert!(
+        rollback_output.status.success(),
+        "rollback failed: stderr={} stdout={}",
+        String::from_utf8_lossy(&rollback_output.stderr),
+        String::from_utf8_lossy(&rollback_output.stdout)
+    );
+    assert_eq!(rollback_env["ok"], Value::Bool(true));
+    assert_eq!(
+        rollback_env["meta"]["op_id"]
+            .as_str()
+            .map(|value| !value.is_empty()),
+        Some(true)
+    );
+
+    let operations = read_operations_log(root.path());
+    assert!(operations.contains("\"intent\":\"skill.rollback\""));
+    assert!(operations.contains("\"reference\":\"HEAD~1\""));
+
+    let observations = read_observation_log(root.path(), &instance_id);
+    assert!(observations.contains("\"kind\":\"rollback\""));
+
+    let source = fs::read_to_string(root.path().join("skills/model-onboarding/SKILL.md"))
+        .expect("read source skill");
+    assert!(source.contains("example skill"));
+    assert!(!source.contains("source v2"));
+}
+
+#[test]
+fn skill_release_records_operation() {
+    let root = TestDir::new("registry-skill-release-audit");
+    write_example_skill(root.path(), "model-onboarding");
+    assert!(
+        save_skill(root.path(), "model-onboarding")
+            .0
+            .status
+            .success()
+    );
+
+    let (release_output, release_env) = run_loom(
+        root.path(),
+        &["skill", "release", "model-onboarding", "v1.0.0"],
+    );
+    assert!(
+        release_output.status.success(),
+        "release failed: stderr={} stdout={}",
+        String::from_utf8_lossy(&release_output.stderr),
+        String::from_utf8_lossy(&release_output.stdout)
+    );
+    assert_eq!(release_env["ok"], Value::Bool(true));
+    assert_eq!(
+        release_env["meta"]["op_id"]
+            .as_str()
+            .map(|value| !value.is_empty()),
+        Some(true)
+    );
+
+    let operations = read_operations_log(root.path());
+    assert!(operations.contains("\"intent\":\"skill.release\""));
+    assert!(operations.contains("\"version\":\"v1.0.0\""));
 }
 
 #[test]

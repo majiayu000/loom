@@ -18,6 +18,14 @@ fn read_checkpoint(root: &std::path::Path) -> String {
     fs::read_to_string(root.join("state/registry/ops/checkpoint.json")).expect("read checkpoint")
 }
 
+fn read_observation_log(root: &std::path::Path, instance_id: &str) -> String {
+    fs::read_to_string(
+        root.join("state/registry/observations")
+            .join(format!("{instance_id}.jsonl")),
+    )
+    .expect("read observation log")
+}
+
 fn git_ok(root: &Path, args: &[&str]) -> String {
     let output = Command::new("git")
         .arg("-C")
@@ -123,6 +131,11 @@ fn skill_capture_copies_live_projection_back_into_source_and_commits() {
             .map(|value| !value.is_empty()),
         Some(true)
     );
+    let instance_id = capture_env["data"]["capture"]["instance_id"]
+        .as_str()
+        .expect("capture instance id");
+    let observations = read_observation_log(root.path(), instance_id);
+    assert!(observations.contains("\"kind\":\"captured\""));
 
     let backup_path = capture_env["data"]["capture"]["backup"]["backup_path"]
         .as_str()

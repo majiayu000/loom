@@ -28,9 +28,10 @@ use super::helpers::{
     backup_path_if_exists, commit_registry_state, copy_dir_recursive_without_symlinks,
     ensure_skill_exists, map_arg, map_git, map_io, map_lock, map_project_io, map_registry_state,
     maybe_autosync_or_queue, project_skill_to_target, projection_instance_id,
-    projection_method_as_str, record_registry_operation, resolve_capture_projection,
-    restore_path_from_backup, rollback_added_skill, update_projection_after_capture,
-    upsert_projection, upsert_rule, validate_projection_method, validate_skill_name,
+    projection_method_as_str, record_registry_observation, record_registry_operation,
+    resolve_capture_projection, restore_path_from_backup, rollback_added_skill,
+    update_projection_after_capture, upsert_projection, upsert_rule, validate_projection_method,
+    validate_skill_name,
 };
 use super::{App, CommandFailure};
 
@@ -296,6 +297,15 @@ impl App {
                     }),
                 )
                 .map_err(map_registry_state)?;
+                record_registry_observation(
+                    &paths,
+                    &instance_id,
+                    "projected",
+                    Some(projection.materialized_path.clone()),
+                    None,
+                    Some(projection.last_applied_rev.clone()),
+                )
+                .map_err(map_registry_state)?;
                 let commit = commit_registry_state(
                     &self.ctx,
                     &format!("project({}): record projection", args.skill),
@@ -476,6 +486,15 @@ impl App {
                     "instance_id": projection.instance_id,
                     "commit": commit
                 }),
+            )
+            .map_err(map_registry_state)?;
+            record_registry_observation(
+                &paths,
+                &projection.instance_id,
+                "captured",
+                Some(live_path.display().to_string()),
+                Some(projection.last_applied_rev.clone()),
+                Some(current_rev),
             )
             .map_err(map_registry_state)?;
             Ok((commit, op_id, changed))
@@ -1231,6 +1250,13 @@ impl App {
                     }),
                 )
                 .map_err(map_registry_state)?;
+                record_observed_skill_events(
+                    &paths,
+                    &snapshot.projections.projections,
+                    imported.iter().chain(updated.iter()),
+                    &commit,
+                )
+                .map_err(map_registry_state)?;
                 let state_commit =
                     commit_registry_state(&self.ctx, "monitor-observed: record registry state")?;
                 let mut meta = Meta {
@@ -1432,6 +1458,34 @@ fn merge_monitor_meta(meta: &mut Meta, cycle_meta: Meta) {
         meta.sync_state = cycle_meta.sync_state;
     }
     meta.warnings.extend(cycle_meta.warnings);
+}
+
+fn record_observed_skill_events<'a>(
+    paths: &RegistryStatePaths,
+    projections: &[RegistryProjectionInstance],
+    changes: impl Iterator<Item = &'a serde_json::Value>,
+    commit: &str,
+) -> anyhow::Result<()> {
+    for item in changes {
+        let Some(skill_id) = item["skill"].as_str() else {
+            continue;
+        };
+        let path = item["source"]
+            .as_str()
+            .or_else(|| item["path"].as_str())
+            .map(str::to_string);
+        for projection in projections.iter().filter(|p| p.skill_id == skill_id) {
+            record_registry_observation(
+                paths,
+                &projection.instance_id,
+                "monitor",
+                path.clone(),
+                None,
+                Some(commit.to_string()),
+            )?;
+        }
+    }
+    Ok(())
 }
 
 fn observed_import_targets(

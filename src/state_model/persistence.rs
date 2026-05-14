@@ -204,6 +204,15 @@ impl RegistryStatePaths {
         read_json_lines(&self.observations_dir.join(name))
     }
 
+    pub fn append_observation(&self, value: &RegistryObservationEvent) -> Result<()> {
+        append_json_line(
+            &self
+                .observations_dir
+                .join(format!("{}.jsonl", value.instance_id)),
+            value,
+        )
+    }
+
     pub fn save_targets(&self, value: &RegistryTargetsFile) -> Result<()> {
         write_json_file(&self.targets_file, value)
     }

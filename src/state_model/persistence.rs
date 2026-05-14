@@ -1,5 +1,5 @@
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, anyhow};
 use chrono::Utc;
@@ -201,14 +201,18 @@ impl RegistryStatePaths {
     }
 
     pub fn load_observations_file(&self, name: &str) -> Result<Vec<RegistryObservationEvent>> {
-        read_json_lines(&self.observations_dir.join(name))
+        let instance_id = name.strip_suffix(".jsonl").unwrap_or(name);
+        read_json_lines(&self.observation_file_for_instance(instance_id)?)
+    }
+
+    pub fn observation_file_for_instance(&self, instance_id: &str) -> Result<PathBuf> {
+        validate_observation_instance_id(instance_id)?;
+        Ok(self.observations_dir.join(format!("{instance_id}.jsonl")))
     }
 
     pub fn append_observation(&self, value: &RegistryObservationEvent) -> Result<()> {
         append_json_line(
-            &self
-                .observations_dir
-                .join(format!("{}.jsonl", value.instance_id)),
+            &self.observation_file_for_instance(&value.instance_id)?,
             value,
         )
     }
@@ -267,18 +271,35 @@ fn validate_schema_version(version: u32) -> Result<()> {
     Ok(())
 }
 
+fn validate_observation_instance_id(instance_id: &str) -> Result<()> {
+    if instance_id.is_empty() {
+        return Err(anyhow!("observation instance_id must not be empty"));
+    }
+    if !instance_id
+        .bytes()
+        .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+    {
+        return Err(anyhow!(
+            "observation instance_id '{}' contains unsafe filename characters",
+            instance_id
+        ));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::{
-        RegistryBindingRule, RegistryBindingsFile, RegistryOperationRecord, RegistryOpsCheckpoint,
-        RegistryProjectionInstance, RegistryProjectionTarget, RegistryProjectionsFile,
-        RegistryRulesFile, RegistrySchemaFile, RegistrySnapshot, RegistryStatePaths,
-        RegistryTargetCapabilities, RegistryTargetsFile, RegistryWorkspaceBinding,
-        RegistryWorkspaceMatcher,
+        RegistryBindingRule, RegistryBindingsFile, RegistryObservationEvent,
+        RegistryOperationRecord, RegistryOpsCheckpoint, RegistryProjectionInstance,
+        RegistryProjectionTarget, RegistryProjectionsFile, RegistryRulesFile, RegistrySchemaFile,
+        RegistrySnapshot, RegistryStatePaths, RegistryTargetCapabilities, RegistryTargetsFile,
+        RegistryWorkspaceBinding, RegistryWorkspaceMatcher,
     };
     use chrono::Utc;
     use serde_json::json;
-    use std::path::Path;
+    use std::{fs, path::Path};
+    use uuid::Uuid;
 
     #[test]
     fn builds_expected_registry_paths() {
@@ -292,6 +313,36 @@ mod tests {
             paths.observations_dir,
             Path::new("/tmp/loom/state/registry/observations")
         );
+    }
+
+    #[test]
+    fn observation_file_rejects_path_like_instance_ids() {
+        let root = std::env::temp_dir().join(format!("loom-observation-safe-{}", Uuid::new_v4()));
+        fs::create_dir_all(&root).expect("create temp root");
+        let paths = RegistryStatePaths::from_root(&root);
+        paths.ensure_layout().expect("ensure layout");
+
+        let now = Utc::now();
+        let event = RegistryObservationEvent {
+            event_id: "event_1".to_string(),
+            instance_id: "../escaped".to_string(),
+            kind: "projected".to_string(),
+            path: None,
+            from: None,
+            to: None,
+            observed_at: now,
+        };
+
+        let err = paths
+            .append_observation(&event)
+            .expect_err("path-like instance id must be rejected");
+        assert!(err.to_string().contains("unsafe filename characters"));
+        assert!(
+            !root.join("state/registry/escaped.jsonl").exists(),
+            "unsafe instance id must not write outside observations dir"
+        );
+
+        let _ = fs::remove_dir_all(&root);
     }
 
     #[test]

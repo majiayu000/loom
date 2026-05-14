@@ -182,7 +182,19 @@ pub(super) async fn registry_skill_history(
     let mut warnings = Vec::new();
     let mut skipped_warning_count = 0usize;
     for instance_id in &instance_ids {
-        let obs_path = paths.observations_dir.join(format!("{instance_id}.jsonl"));
+        let obs_path = match paths.observation_file_for_instance(instance_id) {
+            Ok(path) => path,
+            Err(e) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    registry_error(
+                        CMD,
+                        "OBS_READ_ERROR",
+                        format!("failed to read observations for {instance_id}: {e:#}"),
+                    ),
+                );
+            }
+        };
         match load_obs_bounded(&obs_path, 200) {
             Ok((obs, obs_warnings)) => {
                 events.extend(obs);
@@ -398,6 +410,31 @@ mod tests {
         assert_eq!(payload["data"]["skill"], json!("my-skill"));
         assert_eq!(payload["data"]["count"], json!(0));
         assert!(payload["data"]["events"].as_array().unwrap().is_empty());
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[tokio::test]
+    async fn rejects_unsafe_projection_instance_id() {
+        let root = std::env::temp_dir().join(format!("loom-hist-unsafe-id-{}", Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let paths = setup_registry(&root);
+        add_skill_rule(&paths, "my-skill");
+        add_projection(&paths, "my-skill", "../escaped");
+        let state = make_state(&root);
+
+        let (status, Json(payload)) =
+            registry_skill_history(AxumPath("my-skill".to_string()), State(state)).await;
+
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(payload["ok"], json!(false));
+        assert_eq!(payload["error"]["code"], json!("OBS_READ_ERROR"));
+        assert!(
+            payload["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("unsafe filename characters")
+        );
 
         let _ = fs::remove_dir_all(&root);
     }

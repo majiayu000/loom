@@ -28,6 +28,10 @@ impl App {
         let _lock = self.ctx.lock_skill(&args.skill).map_err(map_lock)?;
 
         let tag = format!("release/{}/{}", args.skill, args.version);
+        let paths = self.ensure_registry_layout()?;
+        let registry_audit_backup =
+            snapshot_registry_audit_state(&paths).map_err(map_registry_state)?;
+
         gitops::create_annotated_tag(
             &self.ctx,
             &tag,
@@ -35,9 +39,6 @@ impl App {
         )
         .map_err(map_git)?;
 
-        let paths = self.ensure_registry_layout()?;
-        let registry_audit_backup =
-            snapshot_registry_audit_state(&paths).map_err(map_registry_state)?;
         let post_audit: std::result::Result<(Option<String>, Meta), CommandFailure> = (|| {
             let op_id = record_registry_operation(
                 &paths,
@@ -83,6 +84,7 @@ impl App {
             Ok(result) => result,
             Err(err) => {
                 let _ = restore_registry_audit_state(&paths, &registry_audit_backup);
+                delete_tag_best_effort(self, &tag);
                 return Err(err);
             }
         };
@@ -133,12 +135,13 @@ impl App {
             ));
         }
 
-        let message = format!("rollback({}): restore from {}", args.skill, reference);
-        let commit = gitops::commit(&self.ctx, &message).map_err(map_git)?;
-
         let paths = self.ensure_registry_layout()?;
         let registry_audit_backup =
             snapshot_registry_audit_state(&paths).map_err(map_registry_state)?;
+
+        let message = format!("rollback({}): restore from {}", args.skill, reference);
+        let commit = gitops::commit(&self.ctx, &message).map_err(map_git)?;
+
         let post_audit: std::result::Result<(Option<String>, Meta), CommandFailure> = (|| {
             let op_id = record_registry_operation(
                 &paths,
@@ -189,6 +192,7 @@ impl App {
             Ok(result) => result,
             Err(err) => {
                 let _ = restore_registry_audit_state(&paths, &registry_audit_backup);
+                reset_rollback_commit_best_effort(self, &previous_head);
                 return Err(err);
             }
         };
@@ -235,6 +239,14 @@ impl App {
             Meta::default(),
         ))
     }
+}
+
+fn delete_tag_best_effort(app: &App, tag: &str) {
+    let _ = gitops::run_git_allow_failure(&app.ctx, &["tag", "-d", tag]);
+}
+
+fn reset_rollback_commit_best_effort(app: &App, previous_head: &str) {
+    let _ = gitops::run_git_allow_failure(&app.ctx, &["reset", "--soft", previous_head]);
 }
 
 fn record_skill_projection_observations(

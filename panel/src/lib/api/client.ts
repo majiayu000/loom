@@ -283,6 +283,10 @@ export interface SkillDiffFile {
   added: number;
   removed: number;
   hunks: Array<{ header: string; lines: string[] }>;
+  /** Server-side flag: this file's diff was clipped to keep the response bounded. */
+  truncated?: boolean;
+  /** Number of `+`/`-` lines counted but not retained when `truncated` is true. */
+  truncated_lines?: number;
 }
 
 export interface SkillDiffPayload {

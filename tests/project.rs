@@ -660,3 +660,71 @@ fn skill_project_rolls_back_operation_log_after_append_failure() {
     assert_eq!(read_operations_log(root.path()), operations_before);
     assert_eq!(read_checkpoint(root.path()), checkpoint_before);
 }
+
+#[test]
+fn skill_project_rolls_back_observation_after_late_audit_failure() {
+    let root = TestDir::new("v3-skill-project-observation-rollback");
+    write_example_skill(root.path(), "model-onboarding");
+
+    assert!(
+        save_skill(root.path(), "model-onboarding")
+            .0
+            .status
+            .success()
+    );
+
+    let target_path = root.path().join("live/claude-project-a");
+    assert!(
+        target_add(root.path(), "claude", &target_path, "managed")
+            .0
+            .status
+            .success()
+    );
+    assert!(
+        binding_add(
+            root.path(),
+            "claude",
+            "default",
+            "path-prefix",
+            "/tmp/project-a",
+            "target_claude_claude_project_a",
+        )
+        .0
+        .status
+        .success()
+    );
+
+    let operations_before = read_operations_log(root.path());
+    let checkpoint_before = read_checkpoint(root.path());
+
+    let (project_output, project_env) = run_loom_with_env(
+        root.path(),
+        &[("LOOM_FAULT_INJECT", "skill_project_after_observation")],
+        &[
+            "skill",
+            "project",
+            "model-onboarding",
+            "--binding",
+            "bind_claude_project_a",
+            "--method",
+            "copy",
+        ],
+    );
+
+    assert!(
+        !project_output.status.success(),
+        "project unexpectedly succeeded"
+    );
+    assert_eq!(project_env["ok"], Value::Bool(false));
+    assert_eq!(read_operations_log(root.path()), operations_before);
+    assert_eq!(read_checkpoint(root.path()), checkpoint_before);
+
+    let observation_path = root
+        .path()
+        .join("state/registry/observations")
+        .join("inst_model_onboarding_bind_claude_project_a_target_claude_claude_project_a.jsonl");
+    assert!(
+        !observation_path.exists(),
+        "failed project should not leave observation history"
+    );
+}

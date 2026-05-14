@@ -11,7 +11,7 @@ use crate::types::ErrorCode;
 use super::helpers::{
     commit_registry_state, ensure_skill_exists, map_arg, map_git, map_lock, map_registry_state,
     maybe_autosync_or_queue, record_registry_observation, record_registry_operation,
-    validate_skill_name,
+    restore_registry_audit_state, snapshot_registry_audit_state, validate_skill_name,
 };
 use super::{App, CommandFailure};
 
@@ -36,33 +36,46 @@ impl App {
         .map_err(map_git)?;
 
         let paths = self.ensure_registry_layout()?;
-        let op_id = record_registry_operation(
-            &paths,
-            "skill.release",
-            json!({
-                "skill": args.skill,
-                "version": args.version,
-                "tag": tag,
-                "request_id": request_id
-            }),
-            json!({
-                "tag": tag
-            }),
-        )
-        .map_err(map_registry_state)?;
-        record_skill_projection_observations(
-            &paths,
-            &args.skill,
-            "released",
-            None,
-            None,
-            Some(tag.clone()),
-        )
-        .map_err(map_registry_state)?;
-        let state_commit = commit_registry_state(
-            &self.ctx,
-            &format!("release({}): record registry operation", args.skill),
-        )?;
+        let registry_audit_backup =
+            snapshot_registry_audit_state(&paths).map_err(map_registry_state)?;
+        let post_audit: std::result::Result<(String, Option<String>), CommandFailure> = (|| {
+            let op_id = record_registry_operation(
+                &paths,
+                "skill.release",
+                json!({
+                    "skill": args.skill,
+                    "version": args.version,
+                    "tag": tag,
+                    "request_id": request_id
+                }),
+                json!({
+                    "tag": tag
+                }),
+            )
+            .map_err(map_registry_state)?;
+            record_skill_projection_observations(
+                &paths,
+                &args.skill,
+                "released",
+                None,
+                None,
+                Some(tag.clone()),
+            )
+            .map_err(map_registry_state)?;
+            let state_commit = commit_registry_state(
+                &self.ctx,
+                &format!("release({}): record registry operation", args.skill),
+            )?;
+            Ok((op_id, state_commit))
+        })(
+        );
+        let (op_id, state_commit) = match post_audit {
+            Ok(result) => result,
+            Err(err) => {
+                let _ = restore_registry_audit_state(&paths, &registry_audit_backup);
+                return Err(err);
+            }
+        };
 
         let mut meta = Meta {
             op_id: Some(op_id),
@@ -126,33 +139,46 @@ impl App {
         let commit = gitops::commit(&self.ctx, &message).map_err(map_git)?;
 
         let paths = self.ensure_registry_layout()?;
-        let op_id = record_registry_operation(
-            &paths,
-            "skill.rollback",
-            json!({
-                "skill": args.skill,
-                "reference": reference,
-                "request_id": request_id
-            }),
-            json!({
-                "commit": commit,
-                "noop": false
-            }),
-        )
-        .map_err(map_registry_state)?;
-        record_skill_projection_observations(
-            &paths,
-            &args.skill,
-            "rollback",
-            Some(skill_rel.clone()),
-            Some(previous_head),
-            Some(reference.clone()),
-        )
-        .map_err(map_registry_state)?;
-        let state_commit = commit_registry_state(
-            &self.ctx,
-            &format!("rollback({}): record registry operation", args.skill),
-        )?;
+        let registry_audit_backup =
+            snapshot_registry_audit_state(&paths).map_err(map_registry_state)?;
+        let post_audit: std::result::Result<(String, Option<String>), CommandFailure> = (|| {
+            let op_id = record_registry_operation(
+                &paths,
+                "skill.rollback",
+                json!({
+                    "skill": args.skill,
+                    "reference": reference,
+                    "request_id": request_id
+                }),
+                json!({
+                    "commit": commit,
+                    "noop": false
+                }),
+            )
+            .map_err(map_registry_state)?;
+            record_skill_projection_observations(
+                &paths,
+                &args.skill,
+                "rollback",
+                Some(skill_rel.clone()),
+                Some(previous_head.clone()),
+                Some(reference.clone()),
+            )
+            .map_err(map_registry_state)?;
+            let state_commit = commit_registry_state(
+                &self.ctx,
+                &format!("rollback({}): record registry operation", args.skill),
+            )?;
+            Ok((op_id, state_commit))
+        })(
+        );
+        let (op_id, state_commit) = match post_audit {
+            Ok(result) => result,
+            Err(err) => {
+                let _ = restore_registry_audit_state(&paths, &registry_audit_backup);
+                return Err(err);
+            }
+        };
 
         let mut meta = Meta {
             op_id: Some(op_id),

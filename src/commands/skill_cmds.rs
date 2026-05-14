@@ -25,11 +25,12 @@ use crate::types::ErrorCode;
 
 use super::fs_probe::probe_symlink;
 use super::helpers::{
-    backup_path_if_exists, commit_registry_state, copy_dir_recursive_without_symlinks,
-    ensure_skill_exists, map_arg, map_git, map_io, map_lock, map_project_io, map_registry_state,
-    maybe_autosync_or_queue, project_skill_to_target, projection_instance_id,
-    projection_method_as_str, record_registry_observation, record_registry_operation,
-    resolve_capture_projection, restore_path_from_backup, rollback_added_skill,
+    RegistryAuditStateBackup, backup_path_if_exists, commit_registry_state,
+    copy_dir_recursive_without_symlinks, ensure_skill_exists, map_arg, map_git, map_io, map_lock,
+    map_project_io, map_registry_state, maybe_autosync_or_queue, project_skill_to_target,
+    projection_instance_id, projection_method_as_str, record_registry_observation,
+    record_registry_operation, resolve_capture_projection, restore_path_from_backup,
+    restore_registry_audit_state, rollback_added_skill, snapshot_registry_audit_state,
     update_projection_after_capture, upsert_projection, upsert_rule, validate_projection_method,
     validate_skill_name,
 };
@@ -275,6 +276,8 @@ impl App {
         };
         upsert_projection(&mut projections, projection.clone());
 
+        let registry_audit_backup =
+            snapshot_registry_audit_state(&paths).map_err(map_registry_state)?;
         let post_materialize: std::result::Result<(Option<String>, Meta), CommandFailure> =
             (|| {
                 maybe_skill_fault("skill_project_after_materialize")?;
@@ -306,6 +309,7 @@ impl App {
                     Some(projection.last_applied_rev.clone()),
                 )
                 .map_err(map_registry_state)?;
+                maybe_skill_fault("skill_project_after_observation")?;
                 let commit = commit_registry_state(
                     &self.ctx,
                     &format!("project({}): record projection", args.skill),
@@ -334,6 +338,7 @@ impl App {
         let (commit, meta) = match post_materialize {
             Ok(result) => result,
             Err(err) => {
+                let _ = restore_registry_audit_state(&paths, &registry_audit_backup);
                 rollback_project_mutation(
                     &paths,
                     &materialized_path,
@@ -441,6 +446,8 @@ impl App {
         }
 
         let mut commit_created = false;
+        let registry_audit_backup =
+            snapshot_registry_audit_state(&paths).map_err(map_registry_state)?;
         let post_replace = (|| {
             maybe_skill_fault("skill_capture_after_source_replace")?;
             gitops::stage_path(&self.ctx, Path::new(&skill_rel)).map_err(map_git)?;
@@ -497,12 +504,14 @@ impl App {
                 Some(current_rev),
             )
             .map_err(map_registry_state)?;
+            maybe_skill_fault("skill_capture_after_observation")?;
             Ok((commit, op_id, changed))
         })();
 
         let (commit, op_id, changed) = match post_replace {
             Ok(result) => result,
             Err(err) => {
+                let _ = restore_registry_audit_state(&paths, &registry_audit_backup);
                 rollback_capture_mutation(
                     &self.ctx,
                     &skill_path,
@@ -556,6 +565,7 @@ impl App {
         let (state_commit, meta) = match post_state_commit {
             Ok(result) => result,
             Err(err) => {
+                let _ = restore_registry_audit_state(&paths, &registry_audit_backup);
                 rollback_capture_mutation(
                     &self.ctx,
                     &skill_path,
@@ -819,8 +829,7 @@ impl App {
 
         let mut meta = Meta::default();
         let previous_head = gitops::head(&self.ctx).map_err(map_git)?;
-        let registry_backup =
-            snapshot_registry_operation_state(&paths).map_err(map_registry_state)?;
+        let registry_backup = snapshot_registry_audit_state(&paths).map_err(map_registry_state)?;
         let mut changed = false;
         for skill_rel in &imported_rels {
             match gitops::has_staged_changes_for_path(&self.ctx, Path::new(skill_rel)) {
@@ -1211,8 +1220,7 @@ impl App {
 
         let mut meta = Meta::default();
         let previous_head = gitops::head(&self.ctx).map_err(map_git)?;
-        let registry_backup =
-            snapshot_registry_operation_state(&paths).map_err(map_registry_state)?;
+        let registry_backup = snapshot_registry_audit_state(&paths).map_err(map_registry_state)?;
         let commit = if has_changes {
             let change_count = imported.len() + updated.len();
             let message = if change_count == 1 {
@@ -1257,6 +1265,7 @@ impl App {
                     &commit,
                 )
                 .map_err(map_registry_state)?;
+                maybe_skill_fault("skill_monitor_after_observation")?;
                 let state_commit =
                     commit_registry_state(&self.ctx, "monitor-observed: record registry state")?;
                 let mut meta = Meta {
@@ -1620,33 +1629,6 @@ fn collect_materialized_files(root: &Path) -> anyhow::Result<BTreeMap<PathBuf, V
     Ok(files)
 }
 
-struct RegistryOperationStateBackup {
-    operations: Vec<u8>,
-    checkpoint: Vec<u8>,
-}
-
-fn snapshot_registry_operation_state(
-    paths: &RegistryStatePaths,
-) -> anyhow::Result<RegistryOperationStateBackup> {
-    Ok(RegistryOperationStateBackup {
-        operations: fs::read(&paths.operations_file)
-            .with_context(|| format!("failed to snapshot {}", paths.operations_file.display()))?,
-        checkpoint: fs::read(&paths.checkpoint_file)
-            .with_context(|| format!("failed to snapshot {}", paths.checkpoint_file.display()))?,
-    })
-}
-
-fn restore_registry_operation_state(
-    paths: &RegistryStatePaths,
-    backup: &RegistryOperationStateBackup,
-) -> anyhow::Result<()> {
-    fs::write(&paths.operations_file, &backup.operations)
-        .with_context(|| format!("failed to restore {}", paths.operations_file.display()))?;
-    fs::write(&paths.checkpoint_file, &backup.checkpoint)
-        .with_context(|| format!("failed to restore {}", paths.checkpoint_file.display()))?;
-    Ok(())
-}
-
 fn reset_command_created_commits(ctx: &crate::state::AppContext, previous_head: &str) {
     let _ = gitops::run_git_allow_failure(ctx, &["reset", "--soft", previous_head]);
 }
@@ -1659,27 +1641,27 @@ fn unstage_registry_state(ctx: &crate::state::AppContext) {
 fn rollback_import_after_commit(
     ctx: &crate::state::AppContext,
     paths: &RegistryStatePaths,
-    registry_backup: &RegistryOperationStateBackup,
+    registry_backup: &RegistryAuditStateBackup,
     previous_head: &str,
     imported_rels: &[String],
 ) {
     reset_command_created_commits(ctx, previous_head);
     rollback_imported_skills(ctx, imported_rels);
-    let _ = restore_registry_operation_state(paths, registry_backup);
+    let _ = restore_registry_audit_state(paths, registry_backup);
     unstage_registry_state(ctx);
 }
 
 fn rollback_monitor_after_commit(
     ctx: &crate::state::AppContext,
     paths: &RegistryStatePaths,
-    registry_backup: &RegistryOperationStateBackup,
+    registry_backup: &RegistryAuditStateBackup,
     previous_head: &str,
     imported_rels: &[String],
     update_rollbacks: &[MonitorUpdateRollback],
 ) {
     reset_command_created_commits(ctx, previous_head);
     rollback_monitor_changes(ctx, imported_rels, update_rollbacks);
-    let _ = restore_registry_operation_state(paths, registry_backup);
+    let _ = restore_registry_audit_state(paths, registry_backup);
     unstage_registry_state(ctx);
 }
 

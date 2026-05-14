@@ -1,3 +1,4 @@
+use std::fs;
 use std::path::Path;
 
 use serde_json::json;
@@ -9,9 +10,10 @@ use crate::state_model::RegistryStatePaths;
 use crate::types::ErrorCode;
 
 use super::helpers::{
-    commit_registry_state, ensure_skill_exists, map_arg, map_git, map_lock, map_registry_state,
-    maybe_autosync_or_queue, record_registry_observation, record_registry_operation,
-    restore_registry_audit_state, snapshot_registry_audit_state, validate_skill_name,
+    backup_path_if_exists, commit_registry_state, ensure_skill_exists, map_arg, map_git, map_lock,
+    map_registry_state, maybe_autosync_or_queue, record_registry_observation,
+    record_registry_operation, restore_path_from_backup, restore_registry_audit_state,
+    snapshot_registry_audit_state, validate_skill_name,
 };
 use super::{App, CommandFailure};
 
@@ -27,6 +29,8 @@ impl App {
         ensure_skill_exists(&self.ctx, &args.skill)?;
         let _lock = self.ctx.lock_skill(&args.skill).map_err(map_lock)?;
 
+        let previous_head = gitops::head(&self.ctx).map_err(map_git)?;
+        let previous_index = gitops::snapshot_index(&self.ctx).map_err(map_git)?;
         let tag = format!("release/{}/{}", args.skill, args.version);
         let paths = self.ensure_registry_layout()?;
         let registry_audit_backup =
@@ -67,6 +71,7 @@ impl App {
                 &self.ctx,
                 &format!("release({}): record registry operation", args.skill),
             )?;
+            maybe_version_fault("skill_release_after_state_commit")?;
             let mut meta = Meta {
                 op_id: Some(op_id),
                 ..Meta::default()
@@ -83,7 +88,9 @@ impl App {
         let (state_commit, meta) = match post_audit {
             Ok(result) => result,
             Err(err) => {
+                reset_command_created_commit_best_effort(self, &previous_head);
                 let _ = restore_registry_audit_state(&paths, &registry_audit_backup);
+                let _ = gitops::restore_index(&self.ctx, &previous_index);
                 delete_tag_best_effort(self, &tag);
                 return Err(err);
             }
@@ -119,9 +126,13 @@ impl App {
 
         let _lock = self.ctx.lock_skill(&args.skill).map_err(map_lock)?;
         let previous_head = gitops::head(&self.ctx).map_err(map_git)?;
+        let previous_index = gitops::snapshot_index(&self.ctx).map_err(map_git)?;
         gitops::resolve_ref(&self.ctx, &reference).map_err(map_git)?;
 
         let skill_rel = format!("skills/{}", args.skill);
+        let skill_path = self.ctx.root.join(&skill_rel);
+        let skill_backup = backup_path_if_exists(&self.ctx, &skill_path, "skill-rollback")
+            .map_err(map_registry_state)?;
         gitops::checkout_path_from_ref(&self.ctx, &reference, Path::new(&skill_rel))
             .map_err(map_git)?;
         gitops::stage_path(&self.ctx, Path::new(&skill_rel)).map_err(map_git)?;
@@ -170,6 +181,7 @@ impl App {
                 &self.ctx,
                 &format!("rollback({}): record registry operation", args.skill),
             )?;
+            maybe_version_fault("skill_rollback_after_state_commit")?;
             let mut meta = Meta {
                 op_id: Some(op_id),
                 ..Meta::default()
@@ -189,10 +201,16 @@ impl App {
             Ok((state_commit, meta))
         })();
         let (state_commit, mut meta) = match post_audit {
-            Ok(result) => result,
+            Ok(result) => {
+                remove_backup_path_best_effort(skill_backup.as_ref());
+                result
+            }
             Err(err) => {
+                reset_command_created_commit_best_effort(self, &previous_head);
+                restore_skill_path_best_effort(&skill_path, skill_backup.as_ref());
+                remove_backup_path_best_effort(skill_backup.as_ref());
                 let _ = restore_registry_audit_state(&paths, &registry_audit_backup);
-                reset_rollback_commit_best_effort(self, &previous_head);
+                let _ = gitops::restore_index(&self.ctx, &previous_index);
                 return Err(err);
             }
         };
@@ -245,8 +263,43 @@ fn delete_tag_best_effort(app: &App, tag: &str) {
     let _ = gitops::run_git_allow_failure(&app.ctx, &["tag", "-d", tag]);
 }
 
-fn reset_rollback_commit_best_effort(app: &App, previous_head: &str) {
+fn reset_command_created_commit_best_effort(app: &App, previous_head: &str) {
     let _ = gitops::run_git_allow_failure(&app.ctx, &["reset", "--soft", previous_head]);
+}
+
+fn restore_skill_path_best_effort(path: &Path, backup: Option<&serde_json::Value>) {
+    if let Some(backup) = backup {
+        let _ = restore_path_from_backup(path, backup);
+    } else {
+        let _ = crate::state::remove_path_if_exists(path);
+    }
+}
+
+fn remove_backup_path_best_effort(backup: Option<&serde_json::Value>) {
+    let Some(path) = backup
+        .and_then(|backup| backup.get("backup_path"))
+        .and_then(serde_json::Value::as_str)
+        .map(Path::new)
+    else {
+        return;
+    };
+    let _ = crate::state::remove_path_if_exists(path);
+    if let Some(parent) = path.parent() {
+        let _ = fs::remove_dir(parent);
+        if let Some(grandparent) = parent.parent() {
+            let _ = fs::remove_dir(grandparent);
+        }
+    }
+}
+
+fn maybe_version_fault(tag: &str) -> std::result::Result<(), CommandFailure> {
+    if std::env::var("LOOM_FAULT_INJECT").ok().as_deref() == Some(tag) {
+        return Err(CommandFailure::new(
+            ErrorCode::InternalError,
+            format!("fault injected at {}", tag),
+        ));
+    }
+    Ok(())
 }
 
 fn record_skill_projection_observations(

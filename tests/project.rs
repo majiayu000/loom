@@ -1,5 +1,6 @@
 use std::fs;
 use std::path::Path;
+use std::process::Command;
 
 use serde_json::Value;
 
@@ -27,6 +28,47 @@ fn read_observation_log(root: &std::path::Path, instance_id: &str) -> String {
             .join(format!("{instance_id}.jsonl")),
     )
     .expect("read observation log")
+}
+
+fn git_output(root: &Path, args: &[&str]) -> String {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .arg("-c")
+        .arg("commit.gpgsign=false")
+        .args(args)
+        .output()
+        .expect("run git");
+    assert!(
+        output.status.success(),
+        "git {:?} failed: stderr={} stdout={}",
+        args,
+        String::from_utf8_lossy(&output.stderr),
+        String::from_utf8_lossy(&output.stdout)
+    );
+    String::from_utf8_lossy(&output.stdout).trim().to_string()
+}
+
+fn git_head(root: &Path) -> String {
+    git_output(root, &["rev-parse", "HEAD"])
+}
+
+fn git_status_short_for(root: &Path, pathspecs: &[&str]) -> String {
+    let mut args = vec!["status", "--short", "--"];
+    args.extend(pathspecs);
+    git_output(root, &args)
+}
+
+fn git_tag_exists(root: &Path, tag: &str) -> bool {
+    Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .arg("-c")
+        .arg("commit.gpgsign=false")
+        .args(["rev-parse", "--verify", "--quiet", tag])
+        .status()
+        .expect("run git")
+        .success()
 }
 
 #[test]
@@ -232,6 +274,94 @@ fn skill_rollback_noop_does_not_initialize_registry() {
 }
 
 #[test]
+fn skill_rollback_rolls_back_commits_and_worktree_after_late_audit_failure() {
+    let root = TestDir::new("registry-skill-rollback-late-audit-rollback");
+    write_example_skill(root.path(), "model-onboarding");
+
+    assert!(
+        save_skill(root.path(), "model-onboarding")
+            .0
+            .status
+            .success()
+    );
+
+    let target_path = root.path().join("live/claude-project-a");
+    assert!(
+        target_add(root.path(), "claude", &target_path, "managed")
+            .0
+            .status
+            .success()
+    );
+    assert!(
+        binding_add(
+            root.path(),
+            "claude",
+            "default",
+            "path-prefix",
+            "/tmp/project-a",
+            "target_claude_claude_project_a",
+        )
+        .0
+        .status
+        .success()
+    );
+    let (project_output, project_env) = skill_project(
+        root.path(),
+        "model-onboarding",
+        "bind_claude_project_a",
+        Some("copy"),
+    );
+    assert!(project_output.status.success(), "project should succeed");
+    let instance_id = project_env["data"]["projection"]["instance_id"]
+        .as_str()
+        .expect("projection instance id")
+        .to_string();
+
+    write_skill(
+        root.path(),
+        "model-onboarding",
+        "# model-onboarding\n\nsource v2\n",
+    );
+    assert!(
+        save_skill(root.path(), "model-onboarding")
+            .0
+            .status
+            .success()
+    );
+
+    let operations_before = read_operations_log(root.path());
+    let checkpoint_before = read_checkpoint(root.path());
+    let observations_before = read_observation_log(root.path(), &instance_id);
+    let head_before = git_head(root.path());
+
+    let (rollback_output, rollback_env) = run_loom_with_env(
+        root.path(),
+        &[("LOOM_FAULT_INJECT", "skill_rollback_after_state_commit")],
+        &["skill", "rollback", "model-onboarding", "--to", "HEAD~1"],
+    );
+
+    assert!(
+        !rollback_output.status.success(),
+        "rollback unexpectedly succeeded"
+    );
+    assert_eq!(rollback_env["ok"], Value::Bool(false));
+    assert_eq!(git_head(root.path()), head_before);
+    assert_eq!(read_operations_log(root.path()), operations_before);
+    assert_eq!(read_checkpoint(root.path()), checkpoint_before);
+    assert_eq!(
+        read_observation_log(root.path(), &instance_id),
+        observations_before
+    );
+    let source = fs::read_to_string(root.path().join("skills/model-onboarding/SKILL.md"))
+        .expect("read source skill");
+    assert!(source.contains("source v2"));
+    assert_eq!(
+        git_status_short_for(root.path(), &["skills/model-onboarding", "state/registry"]),
+        ""
+    );
+}
+
+#[test]
 fn skill_release_records_operation() {
     let root = TestDir::new("registry-skill-release-audit");
     write_example_skill(root.path(), "model-onboarding");
@@ -263,6 +393,50 @@ fn skill_release_records_operation() {
     let operations = read_operations_log(root.path());
     assert!(operations.contains("\"intent\":\"skill.release\""));
     assert!(operations.contains("\"version\":\"v1.0.0\""));
+}
+
+#[test]
+fn skill_release_rolls_back_audit_commit_and_tag_after_late_failure() {
+    let root = TestDir::new("registry-skill-release-audit-rollback");
+    write_example_skill(root.path(), "model-onboarding");
+    assert!(
+        save_skill(root.path(), "model-onboarding")
+            .0
+            .status
+            .success()
+    );
+
+    let target_path = root.path().join("live/claude-project-a");
+    assert!(
+        target_add(root.path(), "claude", &target_path, "managed")
+            .0
+            .status
+            .success()
+    );
+
+    let operations_before = read_operations_log(root.path());
+    let checkpoint_before = read_checkpoint(root.path());
+    let head_before = git_head(root.path());
+
+    let (release_output, release_env) = run_loom_with_env(
+        root.path(),
+        &[("LOOM_FAULT_INJECT", "skill_release_after_state_commit")],
+        &["skill", "release", "model-onboarding", "v1.0.0"],
+    );
+
+    assert!(
+        !release_output.status.success(),
+        "release unexpectedly succeeded"
+    );
+    assert_eq!(release_env["ok"], Value::Bool(false));
+    assert_eq!(git_head(root.path()), head_before);
+    assert!(
+        !git_tag_exists(root.path(), "release/model-onboarding/v1.0.0"),
+        "failed release should delete the release tag"
+    );
+    assert_eq!(read_operations_log(root.path()), operations_before);
+    assert_eq!(read_checkpoint(root.path()), checkpoint_before);
+    assert_eq!(git_status_short_for(root.path(), &["state/registry"]), "");
 }
 
 #[test]

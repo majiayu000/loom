@@ -120,7 +120,7 @@ pub async fn run_panel(ctx: AppContext, port: u16) -> Result<()> {
     let app = Router::new()
         .route("/", get(frontend_index))
         .route("/api/health", get(health))
-        .route("/api/v1/health", get(health))
+        .route("/api/v1/health", get(v1_health))
         .route("/api/v1/overview", get(v1_overview))
         .route("/api/v1/workspace/status", get(v1_workspace_status))
         .route("/api/v1/workspace/init", post(v1_workspace_init))

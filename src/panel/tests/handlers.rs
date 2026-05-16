@@ -1,7 +1,7 @@
 use super::*;
 use crate::panel::handlers::{
     OpsQuery, info, pending, registry_ops, registry_orphan_clean, remote_set, remote_status,
-    v1_overview, v1_registry_ops, v1_registry_targets, v1_workspace_status,
+    v1_health, v1_overview, v1_registry_ops, v1_registry_targets, v1_workspace_status,
 };
 use crate::state_model::{
     REGISTRY_SCHEMA_VERSION, RegistryOperationRecord, RegistryProjectionInstance,
@@ -66,6 +66,18 @@ fn registry_ops_returns_bounded_newest_first_rows() {
     assert!(operations[0].get("effects").is_none());
 
     let _ = fs::remove_dir_all(root);
+}
+
+#[tokio::test]
+async fn v1_health_returns_cli_envelope_shape() {
+    let (status, Json(payload)) = v1_health().await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(payload["ok"], json!(true));
+    assert_eq!(payload["cmd"], json!("panel.health"));
+    assert_eq!(payload["error"], Value::Null);
+    assert_eq!(payload["data"]["service"], json!("loom-panel"));
+    assert_eq!(payload["meta"]["warnings"], json!([]));
 }
 
 #[tokio::test]

@@ -61,6 +61,10 @@ pub(super) async fn health() -> Json<serde_json::Value> {
     Json(json!({"ok": true, "service": "loom-panel"}))
 }
 
+pub(super) async fn v1_health() -> (StatusCode, Json<serde_json::Value>) {
+    panel_v1_ok("panel.health", json!({"service": "loom-panel"}))
+}
+
 pub(super) async fn v1_overview(
     State(state): State<PanelState>,
 ) -> (StatusCode, Json<serde_json::Value>) {

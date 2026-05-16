@@ -84,8 +84,8 @@ fn target_add_bootstraps_registry_state_and_records_op() {
 }
 
 #[test]
-fn skill_save_returns_audit_event_op_id_when_no_registry_op_exists() {
-    let root = TestDir::new("registry-skill-save-audit-op-id");
+fn skill_save_without_registry_operation_does_not_return_op_id() {
+    let root = TestDir::new("registry-skill-save-no-fake-op-id");
     write_skill(root.path(), "demo", "# demo\n\nv1\n");
 
     let (output, env) = run_loom(root.path(), &["skill", "save", "demo"]);
@@ -97,17 +97,13 @@ fn skill_save_returns_audit_event_op_id_when_no_registry_op_exists() {
         String::from_utf8_lossy(&output.stdout)
     );
     assert_eq!(env["ok"], Value::Bool(true));
-    assert_eq!(
-        env["meta"]["op_id"]
-            .as_str()
-            .map(|value| value.starts_with("evt_")),
-        Some(true)
-    );
+    assert_eq!(env["meta"].get("op_id"), None);
+    assert_eq!(operations_log(root.path()), "");
 }
 
 #[test]
-fn skill_snapshot_returns_audit_event_op_id_when_no_registry_op_exists() {
-    let root = TestDir::new("registry-skill-snapshot-audit-op-id");
+fn skill_snapshot_without_registry_operation_does_not_return_op_id() {
+    let root = TestDir::new("registry-skill-snapshot-no-fake-op-id");
     write_skill(root.path(), "demo", "# demo\n\nv1\n");
     assert!(
         run_loom(root.path(), &["skill", "save", "demo"])
@@ -125,12 +121,8 @@ fn skill_snapshot_returns_audit_event_op_id_when_no_registry_op_exists() {
         String::from_utf8_lossy(&output.stdout)
     );
     assert_eq!(env["ok"], Value::Bool(true));
-    assert_eq!(
-        env["meta"]["op_id"]
-            .as_str()
-            .map(|value| value.starts_with("evt_")),
-        Some(true)
-    );
+    assert_eq!(env["meta"].get("op_id"), None);
+    assert!(!operations_log(root.path()).contains("\"intent\":\"skill.snapshot\""));
 }
 
 #[test]

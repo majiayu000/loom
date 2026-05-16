@@ -159,10 +159,7 @@ impl App {
         };
 
         match result {
-            Ok((data, mut meta)) => {
-                if audit_required && meta.op_id.is_none() {
-                    meta.op_id = audit_event_id.clone();
-                }
+            Ok((data, meta)) => {
                 let env = Envelope::ok(cmd, request_id, data, meta);
                 Ok(
                     self.finish_command_audit(

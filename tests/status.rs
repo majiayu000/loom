@@ -5,7 +5,7 @@ use std::path::Path;
 
 use serde_json::Value;
 
-use common::{TestDir, run_loom, write_minimal_registry_state};
+use common::{TestDir, run_loom, run_loom_with_env, write_file, write_minimal_registry_state};
 
 fn overwrite_schema_version(path: &Path, version: u32) {
     let raw = fs::read_to_string(path).expect("read registry file");
@@ -106,6 +106,82 @@ fn workspace_status_succeeds_when_registry_state_is_missing() {
         Value::String("registry".to_string())
     );
     assert_eq!(env["data"]["registry"]["available"], Value::Bool(false));
+}
+
+#[test]
+fn workspace_status_reports_all_supported_agent_dir_defaults() {
+    let root = TestDir::new("registry-status-agent-dirs");
+    let fake_home = TestDir::new("registry-status-agent-dirs-home");
+    write_file(
+        &root.path().join(".env"),
+        "OPENCODE_SKILLS_DIR=/tmp/opencode-primary,/tmp/opencode-secondary\n",
+    );
+
+    let home_str = fake_home.path().to_string_lossy().into_owned();
+    let (output, env) = run_loom_with_env(
+        root.path(),
+        &[("HOME", &home_str)],
+        &["workspace", "status"],
+    );
+    assert!(
+        output.status.success(),
+        "loom failed: stderr={} stdout={}",
+        String::from_utf8_lossy(&output.stderr),
+        String::from_utf8_lossy(&output.stdout)
+    );
+
+    let agent_dirs = env["data"]["agent_dir_defaults"]["agent_dirs"]
+        .as_array()
+        .expect("agent_dirs must be an array");
+    assert_eq!(agent_dirs.len(), 10);
+
+    let path_for = |agent: &str| {
+        agent_dirs
+            .iter()
+            .find(|dir| dir["agent"] == Value::String(agent.to_string()))
+            .and_then(|dir| dir["path"].as_str())
+            .unwrap_or_else(|| panic!("missing agent dir for {agent}"))
+            .to_string()
+    };
+    assert_eq!(
+        path_for("claude"),
+        fake_home
+            .path()
+            .join(".claude/skills")
+            .display()
+            .to_string()
+    );
+    assert_eq!(
+        path_for("copilot"),
+        fake_home
+            .path()
+            .join(".github/copilot/skills")
+            .display()
+            .to_string()
+    );
+    assert_eq!(
+        path_for("gemini-cli"),
+        fake_home
+            .path()
+            .join(".gemini/skills")
+            .display()
+            .to_string()
+    );
+    assert_eq!(path_for("opencode"), "/tmp/opencode-primary");
+
+    let source_dirs = env["data"]["inventory"]["source_dirs"]
+        .as_array()
+        .expect("source_dirs must be an array")
+        .iter()
+        .filter_map(|path| path.as_str())
+        .collect::<Vec<_>>();
+    assert!(source_dirs.contains(&"/tmp/opencode-primary"));
+    assert!(source_dirs.contains(&"/tmp/opencode-secondary"));
+    assert!(
+        source_dirs
+            .iter()
+            .any(|path| path.ends_with(".config/goose/skills"))
+    );
 }
 
 #[test]

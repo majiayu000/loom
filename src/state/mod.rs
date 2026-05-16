@@ -44,24 +44,57 @@ pub struct PendingOpsReport {
 }
 
 #[derive(Debug, Clone)]
+pub struct AgentSkillDir {
+    pub agent: &'static str,
+    pub env_var: &'static str,
+    pub path: PathBuf,
+}
+
+#[derive(Debug, Clone)]
 pub struct AgentSkillDirs {
     pub claude: PathBuf,
     pub codex: PathBuf,
+    pub all: Vec<AgentSkillDir>,
 }
+
+const DEFAULT_AGENT_SKILL_DIRS: [(&str, &str, &str); 10] = [
+    ("claude", "CLAUDE_SKILLS_DIR", ".claude/skills"),
+    ("codex", "CODEX_SKILLS_DIR", ".codex/skills"),
+    ("cursor", "CURSOR_SKILLS_DIR", ".cursor/skills"),
+    ("windsurf", "WINDSURF_SKILLS_DIR", ".windsurf/skills"),
+    ("cline", "CLINE_SKILLS_DIR", ".cline/skills"),
+    ("copilot", "COPILOT_SKILLS_DIR", ".github/copilot/skills"),
+    ("aider", "AIDER_SKILLS_DIR", ".aider/skills"),
+    ("opencode", "OPENCODE_SKILLS_DIR", ".opencode/skills"),
+    ("gemini-cli", "GEMINI_CLI_SKILLS_DIR", ".gemini/skills"),
+    ("goose", "GOOSE_SKILLS_DIR", ".config/goose/skills"),
+];
 
 pub fn resolve_agent_skill_dirs(root: &Path) -> AgentSkillDirs {
     let home = env::var("HOME").unwrap_or_else(|_| "~".to_string());
     let dotenv = load_dotenv_map(root);
 
-    let claude = env_or_dotenv("CLAUDE_SKILLS_DIR", &dotenv)
-        .and_then(|raw| parse_dir_list_env(&raw).into_iter().next())
-        .unwrap_or_else(|| PathBuf::from(format!("{}/.claude/skills", home)));
+    let all = DEFAULT_AGENT_SKILL_DIRS
+        .iter()
+        .map(|(agent, env_var, default_suffix)| AgentSkillDir {
+            agent,
+            env_var,
+            path: first_agent_skill_dir(env_var, default_suffix, &home, &dotenv),
+        })
+        .collect::<Vec<_>>();
 
-    let codex = env_or_dotenv("CODEX_SKILLS_DIR", &dotenv)
-        .and_then(|raw| parse_dir_list_env(&raw).into_iter().next())
+    let claude = all
+        .iter()
+        .find(|dir| dir.agent == "claude")
+        .map(|dir| dir.path.clone())
+        .unwrap_or_else(|| PathBuf::from(format!("{}/.claude/skills", home)));
+    let codex = all
+        .iter()
+        .find(|dir| dir.agent == "codex")
+        .map(|dir| dir.path.clone())
         .unwrap_or_else(|| PathBuf::from(format!("{}/.codex/skills", home)));
 
-    AgentSkillDirs { claude, codex }
+    AgentSkillDirs { claude, codex, all }
 }
 
 pub fn resolve_agent_skill_source_dirs(root: &Path) -> Vec<PathBuf> {
@@ -69,19 +102,30 @@ pub fn resolve_agent_skill_source_dirs(root: &Path) -> Vec<PathBuf> {
     let dotenv = load_dotenv_map(root);
     let mut dirs = Vec::new();
 
-    if let Some(raw) = env_or_dotenv("CODEX_SKILLS_DIR", &dotenv) {
-        dirs.extend(parse_dir_list_env(&raw));
-    } else {
-        dirs.push(PathBuf::from(format!("{}/.codex/skills", home)));
-    }
-
-    if let Some(raw) = env_or_dotenv("CLAUDE_SKILLS_DIR", &dotenv) {
-        dirs.extend(parse_dir_list_env(&raw));
-    } else {
-        dirs.push(PathBuf::from(format!("{}/.claude/skills", home)));
+    for (_, env_var, default_suffix) in DEFAULT_AGENT_SKILL_DIRS {
+        if let Some(raw) = env_or_dotenv(env_var, &dotenv) {
+            dirs.extend(parse_dir_list_env(&raw));
+        } else {
+            dirs.push(default_agent_skill_dir(&home, default_suffix));
+        }
     }
 
     dedupe_paths_keep_order(dirs)
+}
+
+fn first_agent_skill_dir(
+    env_var: &str,
+    default_suffix: &str,
+    home: &str,
+    dotenv: &BTreeMap<String, String>,
+) -> PathBuf {
+    env_or_dotenv(env_var, dotenv)
+        .and_then(|raw| parse_dir_list_env(&raw).into_iter().next())
+        .unwrap_or_else(|| default_agent_skill_dir(home, default_suffix))
+}
+
+fn default_agent_skill_dir(home: &str, suffix: &str) -> PathBuf {
+    PathBuf::from(home).join(suffix)
 }
 
 fn env_or_dotenv(key: &str, dotenv: &BTreeMap<String, String>) -> Option<String> {

@@ -877,3 +877,41 @@ test("SettingsPage skips live info fetches when offline", async () => {
     api.info = originalInfo;
   }
 });
+
+test("SettingsPage renders all live agent directories", async () => {
+  const originalInfo = api.info;
+  api.info = async () => ({
+    root: "/tmp/loom",
+    state_dir: "/tmp/loom/.loom",
+    registry_targets_file: "/tmp/loom/.loom/registry/targets.json",
+    agent_dirs: [
+      { agent: "claude", env_var: "CLAUDE_SKILLS_DIR", path: "/tmp/home/.claude/skills" },
+      { agent: "codex", env_var: "CODEX_SKILLS_DIR", path: "/tmp/home/.codex/skills" },
+      { agent: "cursor", env_var: "CURSOR_SKILLS_DIR", path: "/tmp/home/.cursor/skills" },
+      { agent: "windsurf", env_var: "WINDSURF_SKILLS_DIR", path: "/tmp/home/.windsurf/skills" },
+      { agent: "cline", env_var: "CLINE_SKILLS_DIR", path: "/tmp/home/.cline/skills" },
+      { agent: "copilot", env_var: "COPILOT_SKILLS_DIR", path: "/tmp/home/.github/copilot/skills" },
+      { agent: "aider", env_var: "AIDER_SKILLS_DIR", path: "/tmp/home/.aider/skills" },
+      { agent: "opencode", env_var: "OPENCODE_SKILLS_DIR", path: "/tmp/home/.opencode/skills" },
+      { agent: "gemini-cli", env_var: "GEMINI_CLI_SKILLS_DIR", path: "/tmp/home/.gemini/skills" },
+      { agent: "goose", env_var: "GOOSE_SKILLS_DIR", path: "/tmp/home/.config/goose/skills" },
+    ],
+    remote_url: "git@example.com:loom.git",
+  });
+
+  try {
+    let renderer: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(<SettingsPage live={true} mode="live" registryRoot="/tmp/loom" />);
+    });
+    await flush();
+
+    const html = markup(renderer!);
+    expect(html.includes("Gemini CLI dir")).toBe(true);
+    expect(html.includes("/tmp/home/.gemini/skills")).toBe(true);
+    expect(html.includes("Goose dir")).toBe(true);
+    expect(html.includes("/tmp/home/.config/goose/skills")).toBe(true);
+  } finally {
+    api.info = originalInfo;
+  }
+});

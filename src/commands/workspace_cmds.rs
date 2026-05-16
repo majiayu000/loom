@@ -205,7 +205,16 @@ impl App {
             "git": {"head": head, "branch": branch, "status_short": status_short},
             "agent_dir_defaults": {
                 "claude_dir": target_dirs.claude.display().to_string(),
-                "codex_dir": target_dirs.codex.display().to_string()
+                "codex_dir": target_dirs.codex.display().to_string(),
+                "agent_dirs": target_dirs
+                    .all
+                    .iter()
+                    .map(|dir| json!({
+                        "agent": dir.agent,
+                        "env_var": dir.env_var,
+                        "path": dir.path.display().to_string()
+                    }))
+                    .collect::<Vec<_>>()
             },
             "registered_targets": {
                 "count": registered_target_count,

@@ -25,6 +25,11 @@ export type InfoPayload = {
   registry_targets_file?: string;
   claude_dir?: string;
   codex_dir?: string;
+  agent_dirs?: Array<{
+    agent: string;
+    env_var?: string;
+    path: string;
+  }>;
   remote_url?: string;
 };
 

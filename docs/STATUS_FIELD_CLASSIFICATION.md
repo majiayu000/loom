@@ -101,14 +101,22 @@ Resolution order for skill directories is:
 
 | Variable | Hard default when unset | Source citation |
 |----------|------------------------|-----------------|
-| `CLAUDE_SKILLS_DIR` | `$HOME/.claude/skills` | [source: src/state/mod.rs:55–57] |
-| `CODEX_SKILLS_DIR` | `$HOME/.codex/skills` | [source: src/state/mod.rs:59–61] |
+| `CLAUDE_SKILLS_DIR` | `$HOME/.claude/skills` | `src/state/mod.rs` default agent map |
+| `CODEX_SKILLS_DIR` | `$HOME/.codex/skills` | `src/state/mod.rs` default agent map |
+| `CURSOR_SKILLS_DIR` | `$HOME/.cursor/skills` | `src/state/mod.rs` default agent map |
+| `WINDSURF_SKILLS_DIR` | `$HOME/.windsurf/skills` | `src/state/mod.rs` default agent map |
+| `CLINE_SKILLS_DIR` | `$HOME/.cline/skills` | `src/state/mod.rs` default agent map |
+| `COPILOT_SKILLS_DIR` | `$HOME/.github/copilot/skills` | `src/state/mod.rs` default agent map |
+| `AIDER_SKILLS_DIR` | `$HOME/.aider/skills` | `src/state/mod.rs` default agent map |
+| `OPENCODE_SKILLS_DIR` | `$HOME/.opencode/skills` | `src/state/mod.rs` default agent map |
+| `GEMINI_CLI_SKILLS_DIR` | `$HOME/.gemini/skills` | `src/state/mod.rs` default agent map |
+| `GOOSE_SKILLS_DIR` | `$HOME/.config/goose/skills` | `src/state/mod.rs` default agent map |
 
 `resolve_agent_skill_dirs()` returns the first directory from each variable
-([source: src/state/mod.rs:51–64]).
+and exposes the full `agent_dirs` list for status and panel diagnostics.
 
-`resolve_agent_skill_source_dirs()` expands both variables into a merged, deduplicated
-list of source scan paths ([source: src/state/mod.rs:66–84]).
+`resolve_agent_skill_source_dirs()` expands all supported variables into a merged,
+deduplicated list of source scan paths.
 
 ### Why this matters for status classification
 
@@ -118,6 +126,6 @@ influence which skills are *available for registration*, but once a rule or proj
 is registered its `skill_id` is authoritative registered state.
 
 No `/api/registry/status` (or `/api/registry/workspace`) field is computed by scanning the
-filesystem paths that `CLAUDE_SKILLS_DIR` or `CODEX_SKILLS_DIR` point to.  Advisory
+filesystem paths that these agent directory variables point to.  Advisory
 skill directory hints appear only in diagnostic or migration endpoints, never in the
 counts returned by `status_view()`.

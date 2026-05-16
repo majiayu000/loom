@@ -211,6 +211,12 @@ Response shape:
   "remote": {
     "configured": false,
     "sync_state": "LOCAL_ONLY"
+  },
+  "agent_dir_defaults": {
+    "agent_dirs": [
+      { "agent": "claude", "env_var": "CLAUDE_SKILLS_DIR", "path": "/home/me/.claude/skills" },
+      { "agent": "codex", "env_var": "CODEX_SKILLS_DIR", "path": "/home/me/.codex/skills" }
+    ]
   }
 }
 ```

@@ -244,6 +244,15 @@ pub(super) async fn info(State(state): State<PanelState>) -> Json<serde_json::Va
             "registry_targets_file": registry_paths.targets_file.display().to_string(),
             "claude_dir": target_dirs.claude.display().to_string(),
             "codex_dir": target_dirs.codex.display().to_string(),
+            "agent_dirs": target_dirs
+                .all
+                .iter()
+                .map(|dir| json!({
+                    "agent": dir.agent,
+                    "env_var": dir.env_var,
+                    "path": dir.path.display().to_string()
+                }))
+                .collect::<Vec<_>>(),
             "remote_url": remote_url,
         }),
         warnings,

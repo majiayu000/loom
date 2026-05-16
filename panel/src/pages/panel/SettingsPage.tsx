@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import type { PanelDataMode } from "../../lib/api/usePanelData";
 import type { InfoPayload } from "../../types";
 import { api, ApiError } from "../../lib/api/client";
+import { AGENT_OPTIONS } from "../../lib/agent_options";
 
 interface SettingsPageProps {
   live: boolean;
@@ -14,6 +15,23 @@ type InfoState =
   | { kind: "loading" }
   | { kind: "ready"; info: InfoPayload }
   | { kind: "error"; message: string };
+
+const AGENT_LABELS = new Map(AGENT_OPTIONS.map((agent) => [agent.slug, agent.label]));
+
+function labelForAgent(agent: string): string {
+  return AGENT_LABELS.get(agent) ?? agent;
+}
+
+function agentRows(info: InfoPayload): Array<{ agent: string; path: string | undefined }> {
+  if (info.agent_dirs?.length) {
+    return info.agent_dirs.map((dir) => ({ agent: dir.agent, path: dir.path }));
+  }
+
+  return [
+    { agent: "claude", path: info.claude_dir },
+    { agent: "codex", path: info.codex_dir },
+  ].filter((row) => row.path);
+}
 
 export function SettingsPage({ live, mode, registryRoot }: SettingsPageProps) {
   const [info, setInfo] = useState<InfoState>({ kind: "idle" });
@@ -60,8 +78,11 @@ export function SettingsPage({ live, mode, registryRoot }: SettingsPageProps) {
     rows.push(
       { label: "State dir", value: x.state_dir, mono: true },
       { label: "Registry targets file", value: x.registry_targets_file, mono: true },
-      { label: "Claude dir", value: x.claude_dir, mono: true },
-      { label: "Codex dir", value: x.codex_dir, mono: true },
+      ...agentRows(x).map((row) => ({
+        label: `${labelForAgent(row.agent)} dir`,
+        value: row.path,
+        mono: true,
+      })),
       { label: "Remote URL", value: x.remote_url, mono: true },
     );
   }
@@ -73,7 +94,7 @@ export function SettingsPage({ live, mode, registryRoot }: SettingsPageProps) {
           <h1>Settings</h1>
           <div className="subtitle">
             Where Loom keeps its state. These paths come from <span className="mono">/api/info</span> and mirror the CLI
-            output of <span className="mono">loom info</span>.
+            output of <span className="mono">loom workspace status</span>.
           </div>
         </div>
       </div>

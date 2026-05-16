@@ -146,6 +146,7 @@ loom --json --root ~/loom-registry skill capture my-skill --instance <instance-i
 - `agent_dir_defaults`：环境默认目录（诊断用途）
 - `registered_targets`：registry 内已注册 target（真实执行对象）
 
+`agent_dir_defaults.agent_dirs` 会列出 V1 支持的 10 个 agent 默认目录；
 请以 `registered_targets` 和 `registry.targets` 为准。
 
 ## 9. 一键 Agent E2E

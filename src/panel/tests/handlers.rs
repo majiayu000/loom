@@ -1,7 +1,7 @@
 use super::*;
 use crate::panel::handlers::{
-    OpsQuery, info, pending, registry_ops, remote_set, remote_status, v1_overview,
-    v1_workspace_status,
+    OpsQuery, info, pending, registry_ops, remote_set, remote_status, v1_overview, v1_registry_ops,
+    v1_registry_targets, v1_workspace_status,
 };
 use crate::state_model::{REGISTRY_SCHEMA_VERSION, RegistryOperationRecord};
 use axum::{
@@ -10,7 +10,7 @@ use axum::{
     http::{HeaderMap, HeaderValue},
 };
 use chrono::Duration as ChrDuration;
-use serde_json::json;
+use serde_json::{Value, json};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
 #[test]
@@ -95,6 +95,55 @@ async fn v1_overview_returns_workspace_status_payload() {
     assert_eq!(payload["cmd"], json!("panel.overview"));
     assert_eq!(payload["data"]["registered_targets"]["count"], json!(0));
     assert!(payload["data"]["remote"].is_object());
+
+    cleanup_root(root);
+}
+
+#[tokio::test]
+async fn v1_registry_targets_returns_non_2xx_when_registry_is_missing() {
+    let (root, state) = make_test_state();
+
+    let (status, Json(payload)) = v1_registry_targets(State(state)).await;
+
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(payload["ok"], json!(false));
+    assert_eq!(status_code(&payload), Some("ARG_INVALID"));
+
+    cleanup_root(root);
+}
+
+#[tokio::test]
+async fn v1_registry_targets_success_uses_cli_envelope_shape() {
+    let (root, state) = make_test_state();
+    write_registry_snapshot(&root, REGISTRY_SCHEMA_VERSION);
+
+    let (status, Json(payload)) = v1_registry_targets(State(state)).await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(payload["ok"], json!(true));
+    assert_eq!(payload["cmd"], json!("registry.targets"));
+    assert_eq!(payload["error"], Value::Null);
+    assert_eq!(payload["data"]["count"], json!(0));
+
+    cleanup_root(root);
+}
+
+#[tokio::test]
+async fn v1_registry_ops_returns_non_2xx_when_registry_is_missing() {
+    let (root, state) = make_test_state();
+
+    let (status, Json(payload)) = v1_registry_ops(
+        Query(OpsQuery {
+            limit: None,
+            offset: None,
+        }),
+        State(state),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(payload["ok"], json!(false));
+    assert_eq!(status_code(&payload), Some("ARG_INVALID"));
 
     cleanup_root(root);
 }

@@ -13,7 +13,10 @@ use crate::cli::{
     ProjectArgs, ProjectionMethod, RemoteCommand, SyncCommand, TargetCommand, TargetOwnership,
     WorkspaceBindingCommand, WorkspaceCommand,
 };
-use crate::commands::{collect_skill_inventory, redact_sensitive_string, remote_status_payload};
+use crate::commands::{
+    App, CommandFailure, collect_skill_inventory, redact_sensitive_string, remote_status_payload,
+};
+use crate::envelope::Envelope;
 use crate::state::resolve_agent_skill_dirs;
 use crate::state_model::RegistryStatePaths;
 
@@ -56,6 +59,147 @@ pub(super) struct OpsQuery {
 
 pub(super) async fn health() -> Json<serde_json::Value> {
     Json(json!({"ok": true, "service": "loom-panel"}))
+}
+
+pub(super) async fn v1_overview(
+    State(state): State<PanelState>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let app = App {
+        ctx: state.ctx.as_ref().clone(),
+    };
+    panel_command_envelope("panel.overview", app.cmd_status())
+}
+
+pub(super) async fn v1_workspace_status(
+    State(state): State<PanelState>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let app = App {
+        ctx: state.ctx.as_ref().clone(),
+    };
+    panel_command_envelope("workspace.status", app.cmd_status())
+}
+
+pub(super) async fn v1_workspace_doctor(
+    State(state): State<PanelState>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let app = App {
+        ctx: state.ctx.as_ref().clone(),
+    };
+    panel_command_envelope("workspace.doctor", app.cmd_doctor())
+}
+
+pub(super) async fn v1_sync_status(
+    State(state): State<PanelState>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let app = App {
+        ctx: state.ctx.as_ref().clone(),
+    };
+    panel_command_envelope("sync.status", app.cmd_sync(&SyncCommand::Status))
+}
+
+pub(super) async fn v1_registry_ops(
+    Query(query): Query<OpsQuery>,
+    State(state): State<PanelState>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    match load_registry_snapshot(&state.ctx, "registry.ops") {
+        Ok(snapshot) => {
+            let total = snapshot.operations.len();
+            let limit = query
+                .limit
+                .unwrap_or(DEFAULT_OPS_PAGE_SIZE)
+                .clamp(1, MAX_OPS_PAGE_SIZE);
+            let offset = query.offset.unwrap_or(0);
+            let end = total.saturating_sub(offset);
+            let start = end.saturating_sub(limit);
+            let operations = snapshot.operations[start..end]
+                .iter()
+                .rev()
+                .map(|op| {
+                    json!({
+                        "op_id": op.op_id,
+                        "intent": op.intent,
+                        "status": op.status,
+                        "ack": op.ack,
+                        "last_error": op.last_error,
+                        "created_at": op.created_at,
+                        "updated_at": op.updated_at,
+                    })
+                })
+                .collect::<Vec<_>>();
+
+            panel_v1_ok(
+                "registry.ops",
+                json!({
+                    "state_model": "registry",
+                    "count": total,
+                    "loaded_count": operations.len(),
+                    "offset": offset,
+                    "limit": limit,
+                    "has_more": start > 0,
+                    "operations": operations,
+                    "checkpoint": snapshot.checkpoint,
+                }),
+            )
+        }
+        Err(err) => panel_v1_registry_error(err),
+    }
+}
+
+pub(super) async fn v1_registry_projections(
+    Query(query): Query<ProjectionsQuery>,
+    State(state): State<PanelState>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    match load_registry_snapshot(&state.ctx, "registry.projections") {
+        Ok(snapshot) => {
+            let projections: Vec<_> = snapshot
+                .projections
+                .projections
+                .iter()
+                .filter(|p| query.health.as_deref().is_none_or(|h| p.health == h))
+                .collect();
+            panel_v1_ok(
+                "registry.projections",
+                json!({
+                    "state_model": "registry",
+                    "count": projections.len(),
+                    "projections": projections,
+                }),
+            )
+        }
+        Err(err) => panel_v1_registry_error(err),
+    }
+}
+
+pub(super) async fn v1_registry_bindings(
+    State(state): State<PanelState>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    match load_registry_snapshot(&state.ctx, "registry.bindings") {
+        Ok(snapshot) => panel_v1_ok(
+            "registry.bindings",
+            json!({
+                "state_model": "registry",
+                "count": snapshot.bindings.bindings.len(),
+                "bindings": snapshot.bindings.bindings
+            }),
+        ),
+        Err(err) => panel_v1_registry_error(err),
+    }
+}
+
+pub(super) async fn v1_registry_targets(
+    State(state): State<PanelState>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    match load_registry_snapshot(&state.ctx, "registry.targets") {
+        Ok(snapshot) => panel_v1_ok(
+            "registry.targets",
+            json!({
+                "state_model": "registry",
+                "count": snapshot.targets.targets.len(),
+                "targets": snapshot.targets.targets
+            }),
+        ),
+        Err(err) => panel_v1_registry_error(err),
+    }
 }
 
 pub(super) async fn info(State(state): State<PanelState>) -> Json<serde_json::Value> {
@@ -104,6 +248,46 @@ pub(super) async fn info(State(state): State<PanelState>) -> Json<serde_json::Va
         }),
         warnings,
     )
+}
+
+fn panel_command_envelope(
+    cmd: &str,
+    result: std::result::Result<(serde_json::Value, crate::envelope::Meta), CommandFailure>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let request_id = uuid::Uuid::new_v4().to_string();
+    match result {
+        Ok((data, meta)) => (
+            StatusCode::OK,
+            Json(json!(Envelope::ok(cmd, request_id, data, meta))),
+        ),
+        Err(err) => (
+            status_for_error_code(Some(err.code.as_str())),
+            Json(json!(Envelope::err(
+                cmd,
+                request_id,
+                err.code,
+                err.message,
+                err.details
+            ))),
+        ),
+    }
+}
+
+fn panel_v1_ok(cmd: &str, data: serde_json::Value) -> (StatusCode, Json<serde_json::Value>) {
+    (
+        StatusCode::OK,
+        Json(json!(Envelope::ok(
+            cmd,
+            uuid::Uuid::new_v4().to_string(),
+            data,
+            crate::envelope::Meta::default()
+        ))),
+    )
+}
+
+fn panel_v1_registry_error(err: Json<serde_json::Value>) -> (StatusCode, Json<serde_json::Value>) {
+    let status = status_for_registry_error_payload(&err.0);
+    (status, err)
 }
 
 pub(super) async fn skills(State(state): State<PanelState>) -> Json<serde_json::Value> {

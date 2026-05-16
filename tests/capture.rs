@@ -152,6 +152,102 @@ fn skill_capture_copies_live_projection_back_into_source_and_commits() {
 }
 
 #[test]
+fn skill_capture_rejects_when_source_changed_since_projection() {
+    let root = TestDir::new("registry-capture-source-drift");
+    write_skill(
+        root.path(),
+        "model-onboarding",
+        "# model-onboarding\n\nsource v1\n",
+    );
+
+    let (save_output, _) = save_skill(root.path(), "model-onboarding");
+    assert!(save_output.status.success(), "save should succeed");
+
+    let target_path = root.path().join("live/claude-project-a");
+    assert!(
+        target_add(root.path(), "claude", &target_path, "managed")
+            .0
+            .status
+            .success()
+    );
+    assert!(
+        binding_add(
+            root.path(),
+            "claude",
+            "default",
+            "path-prefix",
+            "/tmp/project-a",
+            "target_claude_claude_project_a",
+        )
+        .0
+        .status
+        .success()
+    );
+    assert!(
+        skill_project(
+            root.path(),
+            "model-onboarding",
+            "bind_claude_project_a",
+            Some("copy"),
+        )
+        .0
+        .status
+        .success()
+    );
+
+    write_skill(
+        root.path(),
+        "model-onboarding",
+        "# model-onboarding\n\nsource v2\n",
+    );
+    assert!(
+        save_skill(root.path(), "model-onboarding")
+            .0
+            .status
+            .success()
+    );
+    let operations_before = read_operations_log(root.path());
+
+    let live_file = target_path.join("model-onboarding").join("SKILL.md");
+    fs::write(
+        &live_file,
+        "# model-onboarding\n\ncaptured from live copy\n",
+    )
+    .expect("edit live projection");
+
+    let (capture_output, capture_env) = run_loom(
+        root.path(),
+        &[
+            "skill",
+            "capture",
+            "model-onboarding",
+            "--binding",
+            "bind_claude_project_a",
+        ],
+    );
+
+    assert!(
+        !capture_output.status.success(),
+        "capture unexpectedly succeeded"
+    );
+    assert_eq!(capture_env["ok"], Value::Bool(false));
+    assert_eq!(
+        capture_env["error"]["code"],
+        Value::String("CAPTURE_CONFLICT".to_string())
+    );
+    assert_eq!(
+        capture_env["error"]["details"]["committed"],
+        Value::Bool(true)
+    );
+    let source_body = fs::read_to_string(root.path().join("skills/model-onboarding/SKILL.md"))
+        .expect("read source skill");
+    assert!(source_body.contains("source v2"));
+    let live_body = fs::read_to_string(live_file).expect("read live projection");
+    assert!(live_body.contains("captured from live copy"));
+    assert_eq!(read_operations_log(root.path()), operations_before);
+}
+
+#[test]
 fn skill_capture_rolls_back_source_after_post_replace_failure() {
     let root = TestDir::new("v3-capture-rollback");
     write_skill(

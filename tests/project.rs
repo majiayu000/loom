@@ -212,6 +212,7 @@ fn skill_rollback_records_operation_and_observation() {
             .status
             .success()
     );
+    let recovery_head = git_head(root.path());
 
     let (rollback_output, rollback_env) = run_loom(
         root.path(),
@@ -230,10 +231,23 @@ fn skill_rollback_records_operation_and_observation() {
             .map(|value| !value.is_empty()),
         Some(true)
     );
+    let recovery_ref = rollback_env["data"]["recovery_ref"]
+        .as_str()
+        .expect("rollback recovery ref");
+    assert!(recovery_ref.starts_with("recovery/model-onboarding/"));
+    assert!(git_tag_exists(root.path(), recovery_ref));
+    assert_eq!(
+        git_output(
+            root.path(),
+            &["rev-parse", &format!("{recovery_ref}^{{commit}}")]
+        ),
+        recovery_head
+    );
 
     let operations = read_operations_log(root.path());
     assert!(operations.contains("\"intent\":\"skill.rollback\""));
     assert!(operations.contains("\"reference\":\"HEAD~1\""));
+    assert!(operations.contains(&format!("\"recovery_ref\":\"{}\"", recovery_ref)));
 
     let observations = read_observation_log(root.path(), &instance_id);
     assert!(observations.contains("\"kind\":\"rollback\""));
@@ -732,7 +746,52 @@ fn skill_project_rejects_unmanaged_target_ownership() {
     assert_eq!(project_env["ok"], Value::Bool(false));
     assert_eq!(
         project_env["error"]["code"],
-        Value::String("ARG_INVALID".to_string())
+        Value::String("TARGET_NOT_MANAGED".to_string())
+    );
+}
+
+#[test]
+fn skill_project_rejects_binding_target_agent_mismatch() {
+    let root = TestDir::new("registry-skill-project-agent-mismatch");
+    write_example_skill(root.path(), "model-onboarding");
+
+    let (save_output, _) = save_skill(root.path(), "model-onboarding");
+    assert!(save_output.status.success(), "save should succeed");
+
+    let target_path = root.path().join("live/codex-project-a");
+    let (target_output, target_env) = target_add(root.path(), "codex", &target_path, "managed");
+    assert!(target_output.status.success(), "target add should succeed");
+    let target_id = target_env["data"]["target"]["target_id"]
+        .as_str()
+        .expect("target id");
+
+    let (binding_output, _) = binding_add(
+        root.path(),
+        "claude",
+        "default",
+        "path-prefix",
+        "/tmp/project-a",
+        target_id,
+    );
+    assert!(
+        binding_output.status.success(),
+        "binding add should currently allow mismatched target agent"
+    );
+
+    let (project_output, project_env) = skill_project(
+        root.path(),
+        "model-onboarding",
+        "bind_claude_project_a",
+        Some("copy"),
+    );
+    assert!(
+        !project_output.status.success(),
+        "project unexpectedly succeeded"
+    );
+    assert_eq!(project_env["ok"], Value::Bool(false));
+    assert_eq!(
+        project_env["error"]["code"],
+        Value::String("TARGET_AGENT_MISMATCH".to_string())
     );
 }
 
@@ -930,7 +989,7 @@ fn skill_project_eventstore_preflight_failure_blocks_mutation() {
     assert_eq!(project_env["ok"], Value::Bool(false));
     assert_eq!(
         project_env["error"]["code"],
-        Value::String("INTERNAL_ERROR".to_string())
+        Value::String("AUDIT_ERROR".to_string())
     );
     assert!(
         !target_path.join("model-onboarding/SKILL.md").exists(),
@@ -999,7 +1058,7 @@ fn skill_project_terminal_audit_failure_reports_error_after_mutation() {
     assert_eq!(project_env["ok"], Value::Bool(false));
     assert_eq!(
         project_env["error"]["code"],
-        Value::String("INTERNAL_ERROR".to_string())
+        Value::String("AUDIT_ERROR".to_string())
     );
     assert!(
         target_path.join("model-onboarding/SKILL.md").exists(),

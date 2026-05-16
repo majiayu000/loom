@@ -54,10 +54,11 @@ pub(crate) fn append_command_started(
     cmd: &str,
     input: serde_json::Value,
     request_id: &str,
-) -> Result<()> {
+) -> Result<String> {
+    let event_id = format!("evt_{}", Uuid::new_v4().simple());
     let event = CommandEvent {
         schema_version: COMMAND_EVENT_SCHEMA_VERSION,
-        event_id: format!("evt_{}", Uuid::new_v4().simple()),
+        event_id: event_id.clone(),
         request_id: request_id.to_string(),
         cmd: cmd.to_string(),
         status: "started".to_string(),
@@ -68,7 +69,8 @@ pub(crate) fn append_command_started(
         side_effects: None,
         created_at: Utc::now(),
     };
-    append_command_event(ctx, &event, &["command_event_append_started"])
+    append_command_event(ctx, &event, &["command_event_append_started"])?;
+    Ok(event_id)
 }
 
 pub(crate) fn append_command_finished(

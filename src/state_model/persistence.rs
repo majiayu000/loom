@@ -61,6 +61,10 @@ impl RegistryStatePaths {
         self.schema_file.exists()
     }
 
+    pub fn legacy_state_dir_exists(&self) -> bool {
+        self.state_dir.join("v3").exists()
+    }
+
     pub fn ensure_layout(&self) -> Result<()> {
         self.migrate_legacy_state_dir()?;
         fs::create_dir_all(&self.registry_dir)
@@ -125,7 +129,6 @@ impl RegistryStatePaths {
     }
 
     pub fn maybe_load_snapshot(&self) -> Result<Option<RegistrySnapshot>> {
-        self.migrate_legacy_state_dir()?;
         if !self.exists() {
             return Ok(None);
         }

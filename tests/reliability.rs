@@ -315,7 +315,7 @@ fn audit_required_finish_append_failure_records_failure_and_returns_error() {
     assert_eq!(env["ok"], Value::Bool(false));
     assert_eq!(
         env["error"]["code"],
-        Value::String("INTERNAL_ERROR".to_string())
+        Value::String("AUDIT_ERROR".to_string())
     );
     assert_eq!(
         env["error"]["details"]["audit_stage"],
@@ -332,7 +332,7 @@ fn audit_required_finish_append_failure_records_failure_and_returns_error() {
     assert_eq!(events[1]["status"], Value::String("failed".to_string()));
     assert_eq!(
         events[1]["error"]["code"],
-        Value::String("INTERNAL_ERROR".to_string())
+        Value::String("AUDIT_ERROR".to_string())
     );
 }
 

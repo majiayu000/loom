@@ -7,7 +7,7 @@ use std::process::Command;
 use common::actions::{binding_add, target_add, target_add_with_default_ownership};
 use serde_json::Value;
 
-use common::{TestDir, run_loom, run_loom_with_env, write_minimal_registry_state};
+use common::{TestDir, run_loom, run_loom_with_env, write_minimal_registry_state, write_skill};
 
 fn git_ok(root: &Path, args: &[&str]) -> String {
     let output = Command::new("git")
@@ -81,6 +81,48 @@ fn target_add_bootstraps_registry_state_and_records_op() {
         "managed target path should be created"
     );
     assert!(root.path().join("state/registry/schema.json").exists());
+}
+
+#[test]
+fn skill_save_without_registry_operation_does_not_return_op_id() {
+    let root = TestDir::new("registry-skill-save-no-fake-op-id");
+    write_skill(root.path(), "demo", "# demo\n\nv1\n");
+
+    let (output, env) = run_loom(root.path(), &["skill", "save", "demo"]);
+
+    assert!(
+        output.status.success(),
+        "save failed: stderr={} stdout={}",
+        String::from_utf8_lossy(&output.stderr),
+        String::from_utf8_lossy(&output.stdout)
+    );
+    assert_eq!(env["ok"], Value::Bool(true));
+    assert_eq!(env["meta"].get("op_id"), None);
+    assert_eq!(operations_log(root.path()), "");
+}
+
+#[test]
+fn skill_snapshot_without_registry_operation_does_not_return_op_id() {
+    let root = TestDir::new("registry-skill-snapshot-no-fake-op-id");
+    write_skill(root.path(), "demo", "# demo\n\nv1\n");
+    assert!(
+        run_loom(root.path(), &["skill", "save", "demo"])
+            .0
+            .status
+            .success()
+    );
+
+    let (output, env) = run_loom(root.path(), &["skill", "snapshot", "demo"]);
+
+    assert!(
+        output.status.success(),
+        "snapshot failed: stderr={} stdout={}",
+        String::from_utf8_lossy(&output.stderr),
+        String::from_utf8_lossy(&output.stdout)
+    );
+    assert_eq!(env["ok"], Value::Bool(true));
+    assert_eq!(env["meta"].get("op_id"), None);
+    assert!(!operations_log(root.path()).contains("\"intent\":\"skill.snapshot\""));
 }
 
 #[test]

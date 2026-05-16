@@ -103,6 +103,11 @@ pub(crate) fn status_for_error_code(code: Option<&str>) -> StatusCode {
     match code.unwrap_or("INTERNAL_ERROR") {
         "ARG_INVALID" => StatusCode::BAD_REQUEST,
         "SKILL_NOT_FOUND" | "BINDING_NOT_FOUND" | "TARGET_NOT_FOUND" => StatusCode::NOT_FOUND,
+        "TARGET_NOT_MANAGED"
+        | "TARGET_AGENT_MISMATCH"
+        | "PROJECTION_CONFLICT"
+        | "PROJECTION_METHOD_UNSUPPORTED"
+        | "CAPTURE_CONFLICT" => StatusCode::CONFLICT,
         "LOCK_BUSY"
         | "DEPENDENCY_CONFLICT"
         | "REMOTE_DIVERGED"

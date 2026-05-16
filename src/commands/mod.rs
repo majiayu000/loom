@@ -90,32 +90,32 @@ impl App {
             let env = Envelope::err(cmd, request_id, ErrorCode::ArgInvalid, message, json!({}));
             return Ok((env, ErrorCode::ArgInvalid.exit_code()));
         }
-        let mut audit_started = false;
+        let mut audit_event_id = None;
         if audit_required {
             let input = command_event_input(&cli, &request_id);
             match prepare_command_event_store(&self.ctx) {
                 Ok(()) => match append_command_started(&self.ctx, cmd, input, &request_id) {
-                    Ok(()) => audit_started = true,
+                    Ok(event_id) => audit_event_id = Some(event_id),
                     Err(err) => {
                         let env = Envelope::err(
                             cmd,
                             request_id,
-                            ErrorCode::InternalError,
+                            ErrorCode::AuditError,
                             format!("failed to append command event: {}", err),
                             json!({}),
                         );
-                        return Ok((env, ErrorCode::InternalError.exit_code()));
+                        return Ok((env, ErrorCode::AuditError.exit_code()));
                     }
                 },
                 Err(err) => {
                     let env = Envelope::err(
                         cmd,
                         request_id,
-                        ErrorCode::InternalError,
+                        ErrorCode::AuditError,
                         format!("failed to prepare command event log: {}", err),
                         json!({}),
                     );
-                    return Ok((env, ErrorCode::InternalError.exit_code()));
+                    return Ok((env, ErrorCode::AuditError.exit_code()));
                 }
             }
         }
@@ -161,12 +161,26 @@ impl App {
         match result {
             Ok((data, meta)) => {
                 let env = Envelope::ok(cmd, request_id, data, meta);
-                Ok(self.finish_command_audit(cmd, env, 0, audit_started, audit_required))
+                Ok(
+                    self.finish_command_audit(
+                        cmd,
+                        env,
+                        0,
+                        audit_event_id.is_some(),
+                        audit_required,
+                    ),
+                )
             }
             Err(f) => {
                 let exit_code = f.code.exit_code();
                 let env = Envelope::err(cmd, request_id, f.code, f.message, f.details);
-                Ok(self.finish_command_audit(cmd, env, exit_code, audit_started, audit_required))
+                Ok(self.finish_command_audit(
+                    cmd,
+                    env,
+                    exit_code,
+                    audit_event_id.is_some(),
+                    audit_required,
+                ))
             }
         }
     }
@@ -190,11 +204,11 @@ impl App {
                 return (env, exit_code);
             }
 
-            let failure_exit = ErrorCode::InternalError.exit_code();
+            let failure_exit = ErrorCode::AuditError.exit_code();
             let mut failure_env = Envelope::err(
                 cmd,
                 env.request_id.clone(),
-                ErrorCode::InternalError,
+                ErrorCode::AuditError,
                 warning,
                 json!({
                     "audit_stage": "finish",

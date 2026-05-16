@@ -1,6 +1,7 @@
 use std::fs;
 use std::path::Path;
 
+use chrono::Utc;
 use serde_json::json;
 
 use crate::cli::{DiffArgs, ReleaseArgs, RollbackArgs};
@@ -191,10 +192,27 @@ impl App {
             return Err(map_registry_state(err));
         }
 
+        let previous_short = previous_head.chars().take(12).collect::<String>();
+        let ts = Utc::now().format("%Y%m%dT%H%M%S%fZ");
+        let recovery_ref = format!("recovery/{}/{}-{}", args.skill, ts, previous_short);
+        if let Err(err) = gitops::create_annotated_tag(
+            &self.ctx,
+            &recovery_ref,
+            &format!("recovery before rollback {}", args.skill),
+        ) {
+            restore_path_best_effort(&skill_path, skill_backup.as_ref());
+            remove_backup_path_best_effort(skill_backup.as_ref());
+            restore_registry_layout_best_effort(&paths, &registry_layout_backup);
+            remove_registry_layout_backups_best_effort(&registry_layout_backup);
+            let _ = gitops::restore_index(&self.ctx, &previous_index);
+            return Err(map_git(err));
+        }
+
         let message = format!("rollback({}): restore from {}", args.skill, reference);
         let commit = match gitops::commit(&self.ctx, &message) {
             Ok(commit) => commit,
             Err(err) => {
+                delete_tag_best_effort(self, &recovery_ref);
                 restore_path_best_effort(&skill_path, skill_backup.as_ref());
                 remove_backup_path_best_effort(skill_backup.as_ref());
                 restore_registry_layout_best_effort(&paths, &registry_layout_backup);
@@ -211,10 +229,12 @@ impl App {
                 json!({
                     "skill": args.skill,
                     "reference": reference,
+                    "recovery_ref": recovery_ref,
                     "request_id": request_id
                 }),
                 json!({
                     "commit": commit,
+                    "recovery_ref": recovery_ref,
                     "noop": false
                 }),
             )
@@ -245,6 +265,7 @@ impl App {
                     "skill": args.skill,
                     "commit": commit,
                     "reference": reference,
+                    "recovery_ref": recovery_ref,
                     "state_commit": state_commit
                 }),
                 &mut meta,
@@ -258,6 +279,7 @@ impl App {
                 result
             }
             Err(err) => {
+                delete_tag_best_effort(self, &recovery_ref);
                 reset_command_created_commit_best_effort(self, &previous_head);
                 restore_path_best_effort(&skill_path, skill_backup.as_ref());
                 remove_backup_path_best_effort(skill_backup.as_ref());
@@ -288,6 +310,7 @@ impl App {
             json!({
                 "skill": args.skill,
                 "reference": reference,
+                "recovery_ref": recovery_ref,
                 "commit": commit,
                 "state_commit": state_commit,
                 "noop": false

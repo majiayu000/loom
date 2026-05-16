@@ -61,8 +61,8 @@ fn workspace_status_reports_registry_snapshot_when_present() {
 }
 
 #[test]
-fn workspace_status_migrates_pre_release_state_dir_to_registry_dir() {
-    let root = TestDir::new("registry-status-migrate-old-state-dir");
+fn workspace_status_does_not_migrate_pre_release_state_dir() {
+    let root = TestDir::new("registry-status-read-does-not-migrate-old-state-dir");
     write_minimal_registry_state(root.path(), 1);
     fs::rename(
         root.path().join("state/registry"),
@@ -79,8 +79,13 @@ fn workspace_status_migrates_pre_release_state_dir_to_registry_dir() {
     );
 
     assert_eq!(env["ok"], Value::Bool(true));
-    assert!(root.path().join("state/registry/schema.json").exists());
-    assert!(!root.path().join("state/v3").exists());
+    assert_eq!(env["data"]["registry"]["available"], Value::Bool(false));
+    assert_eq!(
+        env["data"]["registry"]["error"]["code"],
+        Value::String("SCHEMA_MISMATCH".to_string())
+    );
+    assert!(!root.path().join("state/registry/schema.json").exists());
+    assert!(root.path().join("state/v3/schema.json").exists());
 }
 
 #[test]

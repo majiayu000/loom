@@ -32,6 +32,7 @@ fn workspace_init_scan_existing_imports_present_dirs() {
         String::from_utf8_lossy(&output.stdout)
     );
     assert_eq!(env["ok"], Value::Bool(true));
+    assert_eq!(env["meta"].get("op_id"), None);
     assert_eq!(env["data"]["initialized"], Value::Bool(true));
     assert_eq!(env["data"]["scanned"], Value::Bool(true));
     assert_eq!(

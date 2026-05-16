@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Context;
 use chrono::Utc;
-use serde_json::json;
+use serde_json::{Value, json};
 
 use crate::cli::{
     AgentKind, BindingAddArgs, OrphanCleanArgs, RemoteCommand, TargetAddArgs, TargetCommand,
@@ -131,6 +131,7 @@ impl App {
         let pending_ops = pending_report.ops.len();
         let target_dirs = resolve_agent_skill_dirs(&self.ctx.root);
         let registry_paths = RegistryStatePaths::from_app_context(&self.ctx);
+        let legacy_state_dir_present = registry_paths.legacy_state_dir_exists();
         let registry_status = registry_paths
             .maybe_load_snapshot()
             .map_err(map_registry_state)?
@@ -140,8 +141,15 @@ impl App {
                     "state_model": "registry",
                     "available": false,
                     "error": {
-                        "code": "STATE_CORRUPT",
-                        "message": format!("registry state not initialized under {}", registry_paths.registry_dir.display())
+                        "code": if legacy_state_dir_present { "SCHEMA_MISMATCH" } else { "STATE_CORRUPT" },
+                        "message": if legacy_state_dir_present {
+                            format!(
+                                "legacy registry state found under {}; run a write command to migrate it",
+                                registry_paths.state_dir.join("v3").display()
+                            )
+                        } else {
+                            format!("registry state not initialized under {}", registry_paths.registry_dir.display())
+                        }
                     }
                 })
             });
@@ -227,12 +235,24 @@ impl App {
         let projections_ok = projection_checks
             .iter()
             .all(|check| check.get("ok").and_then(|v| v.as_bool()).unwrap_or(false));
+        let checks_v1 = build_doctor_checks(
+            &self.ctx,
+            fsck_ok,
+            registry_schema_ok,
+            registry_snapshot.as_ref(),
+            history.conflicts.is_empty(),
+            pending_report.warnings.as_slice(),
+        );
+        let checks_v1_ok = checks_v1
+            .iter()
+            .all(|check| check.get("ok").and_then(|v| v.as_bool()).unwrap_or(false));
 
         let healthy = fsck_ok
             && registry_schema_ok
             && registry_snapshot_ok
             && history.conflicts.is_empty()
-            && projections_ok;
+            && projections_ok
+            && checks_v1_ok;
 
         Ok((
             json!({
@@ -252,7 +272,8 @@ impl App {
                         "ok": projections_ok,
                         "projections": projection_checks
                     }
-                }
+                },
+                "checks_v1": checks_v1
             }),
             Meta::default(),
         ))
@@ -793,6 +814,222 @@ fn check_projection_drift(ctx: &AppContext, snapshot: &RegistrySnapshot) -> Vec<
         }));
     }
     results
+}
+
+fn build_doctor_checks(
+    ctx: &AppContext,
+    fsck_ok: bool,
+    registry_schema_ok: bool,
+    snapshot: Option<&RegistrySnapshot>,
+    history_ok: bool,
+    pending_warnings: &[String],
+) -> Vec<Value> {
+    let mut checks = vec![
+        doctor_check(
+            "git",
+            "git_fsck",
+            fsck_ok,
+            "error",
+            if fsck_ok {
+                "git object database is healthy"
+            } else {
+                "git fsck reported repository issues"
+            },
+            "inspect git fsck output and repair the repository before writing",
+            json!({}),
+        ),
+        doctor_check(
+            "registry",
+            "schema_file",
+            registry_schema_ok,
+            "error",
+            if registry_schema_ok {
+                "registry schema file exists"
+            } else {
+                "registry schema file is missing"
+            },
+            "run loom workspace init or restore state/registry/schema.json",
+            json!({}),
+        ),
+        doctor_check(
+            "registry",
+            "snapshot_load",
+            snapshot.is_some(),
+            "error",
+            if snapshot.is_some() {
+                "registry snapshot loaded"
+            } else {
+                "registry snapshot is unavailable"
+            },
+            "run loom workspace init or inspect workspace status for schema errors",
+            json!({}),
+        ),
+        doctor_check(
+            "history",
+            "history_branch",
+            history_ok,
+            "error",
+            if history_ok {
+                "history branch has no conflicts"
+            } else {
+                "history branch has conflicts"
+            },
+            "run loom ops history diagnose and repair before syncing",
+            json!({}),
+        ),
+        doctor_check(
+            "pending_queue",
+            "pending_queue_warnings",
+            pending_warnings.is_empty(),
+            "warning",
+            if pending_warnings.is_empty() {
+                "pending queue parsed without warnings"
+            } else {
+                "pending queue has malformed or ignored entries"
+            },
+            "inspect state/pending_ops.jsonl and repair or purge malformed queue entries",
+            json!({
+                "warning_count": pending_warnings.len(),
+                "warnings": pending_warnings
+            }),
+        ),
+    ];
+
+    if let Some(snapshot) = snapshot {
+        checks.extend(build_registry_integrity_checks(ctx, snapshot));
+    }
+
+    checks
+}
+
+fn build_registry_integrity_checks(ctx: &AppContext, snapshot: &RegistrySnapshot) -> Vec<Value> {
+    let mut checks = Vec::new();
+
+    for target in &snapshot.targets.targets {
+        let path_exists = Path::new(&target.path).exists();
+        checks.push(doctor_check(
+            "targets",
+            &format!("target_path_exists:{}", target.target_id),
+            path_exists,
+            "error",
+            if path_exists {
+                "target path exists"
+            } else {
+                "target path is missing"
+            },
+            "recreate the target path or remove/update the target",
+            json!({
+                "target_id": target.target_id,
+                "agent": target.agent,
+                "path": target.path,
+                "ownership": target.ownership
+            }),
+        ));
+    }
+
+    for binding in &snapshot.bindings.bindings {
+        let target = snapshot.target(&binding.default_target_id);
+        checks.push(doctor_check(
+            "bindings",
+            &format!("binding_target_exists:{}", binding.binding_id),
+            target.is_some(),
+            "error",
+            if target.is_some() {
+                "binding default target exists"
+            } else {
+                "binding default target is missing"
+            },
+            "update the binding target or recreate the missing target",
+            json!({
+                "binding_id": binding.binding_id,
+                "target_id": binding.default_target_id
+            }),
+        ));
+
+        if let Some(target) = target {
+            let agent_matches = target.agent == binding.agent;
+            checks.push(doctor_check(
+                "bindings",
+                &format!("binding_target_agent_match:{}", binding.binding_id),
+                agent_matches,
+                "error",
+                if agent_matches {
+                    "binding and target agents match"
+                } else {
+                    "binding and target agents do not match"
+                },
+                "point the binding at a target registered for the same agent",
+                json!({
+                    "binding_id": binding.binding_id,
+                    "binding_agent": binding.agent,
+                    "target_id": target.target_id,
+                    "target_agent": target.agent
+                }),
+            ));
+        }
+    }
+
+    for projection in &snapshot.projections.projections {
+        let materialized_exists = Path::new(&projection.materialized_path).exists();
+        checks.push(doctor_check(
+            "projections",
+            &format!("projection_path_exists:{}", projection.instance_id),
+            materialized_exists,
+            "error",
+            if materialized_exists {
+                "projection path exists"
+            } else {
+                "projection path is missing"
+            },
+            "rerun loom skill project or clean the orphaned projection",
+            json!({
+                "instance_id": projection.instance_id,
+                "skill_id": projection.skill_id,
+                "target_id": projection.target_id,
+                "path": projection.materialized_path
+            }),
+        ));
+
+        let source_exists = ctx.skill_path(&projection.skill_id).exists();
+        checks.push(doctor_check(
+            "projections",
+            &format!("projection_source_exists:{}", projection.instance_id),
+            source_exists,
+            "error",
+            if source_exists {
+                "projection source skill exists"
+            } else {
+                "projection source skill is missing"
+            },
+            "restore the source skill or clean the orphaned projection",
+            json!({
+                "instance_id": projection.instance_id,
+                "skill_id": projection.skill_id
+            }),
+        ));
+    }
+
+    checks
+}
+
+fn doctor_check(
+    section: &str,
+    id: &str,
+    ok: bool,
+    failure_severity: &str,
+    message: &str,
+    next_action: &str,
+    details: Value,
+) -> Value {
+    json!({
+        "section": section,
+        "id": id,
+        "ok": ok,
+        "severity": if ok { "ok" } else { failure_severity },
+        "message": message,
+        "next_action": if ok { Value::Null } else { Value::String(next_action.to_string()) },
+        "details": details
+    })
 }
 
 #[cfg(test)]

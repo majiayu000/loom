@@ -255,7 +255,7 @@ pub(crate) fn validate_projection_method(
 ) -> std::result::Result<(), CommandFailure> {
     match method {
         ProjectionMethod::Symlink if !target.capabilities.symlink => Err(CommandFailure::new(
-            ErrorCode::ArgInvalid,
+            ErrorCode::ProjectionMethodUnsupported,
             format!(
                 "target '{}' does not support symlink projections",
                 target.target_id
@@ -263,7 +263,7 @@ pub(crate) fn validate_projection_method(
         )),
         ProjectionMethod::Copy | ProjectionMethod::Materialize if !target.capabilities.copy => {
             Err(CommandFailure::new(
-                ErrorCode::ArgInvalid,
+                ErrorCode::ProjectionMethodUnsupported,
                 format!(
                     "target '{}' does not support copy/materialize projections",
                     target.target_id

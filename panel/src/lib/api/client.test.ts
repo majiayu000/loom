@@ -36,3 +36,60 @@ describe("api.registryStatus", () => {
     await expect(api.registryStatus()).rejects.toBe(abortError);
   });
 });
+
+describe("api v1 routes", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("uses v1 endpoints for panel mutations", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      json: vi.fn().mockResolvedValue({ ok: true, cmd: "ok", request_id: "req-1", data: {} }),
+    } as unknown as Response);
+
+    await api.targetAdd({ agent: "claude", path: "/tmp/skills", ownership: "managed" });
+    await api.targetRemove("target-1");
+    await api.bindingAdd({
+      agent: "claude",
+      profile: "home",
+      matcher_kind: "path_prefix",
+      matcher_value: "/repo",
+      target: "target-1",
+      policy_profile: "safe-capture",
+    });
+    await api.bindingRemove("binding-1");
+    await api.skillAdd({ source: "/tmp/source", name: "demo" });
+    await api.project({ skill: "demo", binding: "binding-1", target: "target-1", method: "symlink" });
+    await api.capture({ instance: "inst-1" });
+    await api.orphanClean({ delete_live_paths: false });
+    await api.opsRetry();
+    await api.opsPurge();
+    await api.remoteSet({ url: "https://example.com/repo.git" });
+    await api.syncPush();
+    await api.syncPull();
+    await api.syncReplay();
+    await api.opsHistoryRepair({ strategy: "local" });
+
+    const paths = fetchSpy.mock.calls.map((call) => call[0]);
+    expect(paths).toEqual([
+      "/api/v1/targets",
+      "/api/v1/targets/target-1/remove",
+      "/api/v1/bindings",
+      "/api/v1/bindings/binding-1/remove",
+      "/api/v1/skills",
+      "/api/v1/projections/project",
+      "/api/v1/projections/capture",
+      "/api/v1/orphans/clean",
+      "/api/v1/ops/retry",
+      "/api/v1/ops/purge",
+      "/api/v1/workspace/remote",
+      "/api/v1/sync/push",
+      "/api/v1/sync/pull",
+      "/api/v1/sync/replay",
+      "/api/v1/ops/history/repair",
+    ]);
+  });
+});

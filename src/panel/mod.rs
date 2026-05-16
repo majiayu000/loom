@@ -125,11 +125,36 @@ pub async fn run_panel(ctx: AppContext, port: u16) -> Result<()> {
         .route("/api/v1/workspace/status", get(v1_workspace_status))
         .route("/api/v1/workspace/init", post(v1_workspace_init))
         .route("/api/v1/workspace/doctor", get(v1_workspace_doctor))
-        .route("/api/v1/targets", get(v1_registry_targets))
-        .route("/api/v1/bindings", get(v1_registry_bindings))
+        .route("/api/v1/workspace/remote", post(remote_set))
+        .route(
+            "/api/v1/targets",
+            get(v1_registry_targets).post(registry_target_add),
+        )
+        .route(
+            "/api/v1/targets/{target_id}/remove",
+            post(registry_target_remove),
+        )
+        .route(
+            "/api/v1/bindings",
+            get(v1_registry_bindings).post(registry_binding_add),
+        )
+        .route(
+            "/api/v1/bindings/{binding_id}/remove",
+            post(registry_binding_remove),
+        )
+        .route("/api/v1/skills", post(registry_skill_add))
         .route("/api/v1/projections", get(v1_registry_projections))
+        .route("/api/v1/projections/project", post(registry_project))
+        .route("/api/v1/projections/capture", post(registry_capture))
+        .route("/api/v1/orphans/clean", post(registry_orphan_clean))
         .route("/api/v1/ops", get(v1_registry_ops))
+        .route("/api/v1/ops/retry", post(ops_retry))
+        .route("/api/v1/ops/purge", post(ops_purge))
+        .route("/api/v1/ops/history/repair", post(ops_history_repair))
         .route("/api/v1/sync/status", get(v1_sync_status))
+        .route("/api/v1/sync/push", post(sync_push))
+        .route("/api/v1/sync/pull", post(sync_pull))
+        .route("/api/v1/sync/replay", post(sync_replay))
         .route("/api/info", get(info))
         .route("/api/skills", get(skills))
         .route("/api/registry/status", get(registry_status))

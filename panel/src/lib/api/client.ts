@@ -370,7 +370,7 @@ export const api = {
     if (typeof options?.limit === "number") params.set("limit", String(options.limit));
     if (typeof options?.offset === "number") params.set("offset", String(options.offset));
     const qs = params.size > 0 ? `?${params.toString()}` : "";
-    return getJson<OpsPayload>(`/api/registry/ops${qs}`, signal);
+    return getJson<OpsPayload>(`/api/v1/ops${qs}`, signal);
   },
   bindingShow: (id: string, signal?: AbortSignal) =>
     getJson<BindingShowPayload>(`/api/registry/bindings/${encodeURIComponent(id)}`, signal),
@@ -378,32 +378,32 @@ export const api = {
     getJson<TargetShowPayload>(`/api/registry/targets/${encodeURIComponent(id)}`, signal),
   remoteStatus: async (signal?: AbortSignal) =>
     parseRemoteStatusResponse(
-      "/api/remote/status",
+      "/api/v1/sync/status",
       unwrapReadData<RemoteStatusResponse>(
-        "/api/remote/status",
-        await getJson<unknown>("/api/remote/status", signal),
+        "/api/v1/sync/status",
+        await getJson<unknown>("/api/v1/sync/status", signal),
       ),
     ),
   pending: (signal?: AbortSignal) => getJsonData<PendingPayload>("/api/pending", signal),
 
-  opsRetry: () => postJson("/api/ops/retry", {}),
-  opsPurge: () => postJson("/api/ops/purge", {}),
-  remoteSet: (body: RemoteSetBody) => postJson("/api/remote/set", body),
+  opsRetry: () => postJson("/api/v1/ops/retry", {}),
+  opsPurge: () => postJson("/api/v1/ops/purge", {}),
+  remoteSet: (body: RemoteSetBody) => postJson("/api/v1/workspace/remote", body),
   workspaceInit: (body: WorkspaceInitBody) => postJson("/api/v1/workspace/init", body),
 
-  targetAdd: (body: TargetAddBody) => postJson("/api/registry/targets", body),
-  targetRemove: (targetId: string) => postJson(`/api/registry/targets/${encodeURIComponent(targetId)}/remove`, {}),
-  bindingAdd: (body: BindingAddBody) => postJson("/api/registry/bindings", body),
-  bindingRemove: (bindingId: string) => postJson(`/api/registry/bindings/${encodeURIComponent(bindingId)}/remove`, {}),
-  skillAdd: (body: SkillAddBody) => postJson("/api/registry/skills", body),
-  project: (body: ProjectBody) => postJson("/api/registry/project", body),
-  capture: (body: CaptureBody) => postJson("/api/registry/capture", body),
-  orphanClean: (body: OrphanCleanBody) => postJson("/api/registry/orphans/clean", body),
+  targetAdd: (body: TargetAddBody) => postJson("/api/v1/targets", body),
+  targetRemove: (targetId: string) => postJson(`/api/v1/targets/${encodeURIComponent(targetId)}/remove`, {}),
+  bindingAdd: (body: BindingAddBody) => postJson("/api/v1/bindings", body),
+  bindingRemove: (bindingId: string) => postJson(`/api/v1/bindings/${encodeURIComponent(bindingId)}/remove`, {}),
+  skillAdd: (body: SkillAddBody) => postJson("/api/v1/skills", body),
+  project: (body: ProjectBody) => postJson("/api/v1/projections/project", body),
+  capture: (body: CaptureBody) => postJson("/api/v1/projections/capture", body),
+  orphanClean: (body: OrphanCleanBody) => postJson("/api/v1/orphans/clean", body),
 
-  syncPush: () => postJson("/api/sync/push", {}),
-  syncPull: () => postJson("/api/sync/pull", {}),
-  syncReplay: () => postJson("/api/sync/replay", {}),
-  opsHistoryRepair: (body: HistoryRepairBody) => postJson("/api/ops/history/repair", body),
+  syncPush: () => postJson("/api/v1/sync/push", {}),
+  syncPull: () => postJson("/api/v1/sync/pull", {}),
+  syncReplay: () => postJson("/api/v1/sync/replay", {}),
+  opsHistoryRepair: (body: HistoryRepairBody) => postJson("/api/v1/ops/history/repair", body),
 
   skillHistory: (name: string, signal?: AbortSignal) =>
     getJson<SkillHistoryPayload>(

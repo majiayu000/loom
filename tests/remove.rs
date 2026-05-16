@@ -42,7 +42,7 @@ fn bootstrap_projected_skill(root: &Path) -> (String, String, String) {
 #[test]
 fn binding_remove_cascades_metadata_and_leaves_live_projection_in_place() {
     let root = TestDir::new("registry-binding-remove");
-    let (target_id, binding_id, _instance_id) = bootstrap_projected_skill(root.path());
+    let (target_id, binding_id, instance_id) = bootstrap_projected_skill(root.path());
 
     let live_projection = root.path().join("live/claude-a/demo/SKILL.md");
     assert!(
@@ -81,6 +81,38 @@ fn binding_remove_cascades_metadata_and_leaves_live_projection_in_place() {
     assert!(
         live_projection.exists(),
         "live projection must be left in place"
+    );
+
+    let (orphan_list_output, orphan_list_env) = run_loom(root.path(), &["skill", "orphan", "list"]);
+    assert!(
+        orphan_list_output.status.success(),
+        "orphan list failed: stderr={} stdout={}",
+        String::from_utf8_lossy(&orphan_list_output.stderr),
+        String::from_utf8_lossy(&orphan_list_output.stdout)
+    );
+    assert_eq!(orphan_list_env["ok"], Value::Bool(true));
+    assert_eq!(
+        orphan_list_env["cmd"],
+        Value::String("skill.orphan.list".to_string())
+    );
+    assert_eq!(orphan_list_env["data"]["count"], Value::from(1));
+    assert_eq!(
+        orphan_list_env["data"]["orphaned_projection_ids"][0],
+        Value::String(instance_id)
+    );
+    assert_eq!(
+        orphan_list_env["data"]["orphaned_paths"][0],
+        Value::String(root.path().join("live/claude-a/demo").display().to_string())
+    );
+    assert_eq!(
+        orphan_list_env["data"]["projections"][0]["live_path_exists"],
+        Value::Bool(true)
+    );
+    assert!(
+        !orphan_list_env["meta"]
+            .as_object()
+            .is_some_and(|meta| meta.contains_key("op_id")),
+        "read-only orphan list must not report an operation id"
     );
 
     let (_, binding_list_env) = run_loom(root.path(), &["workspace", "binding", "list"]);

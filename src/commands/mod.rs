@@ -150,6 +150,9 @@ impl App {
                 SkillCommand::Rollback(args) => self.cmd_rollback(args, &request_id),
                 SkillCommand::Diff(args) => self.cmd_diff(args),
                 SkillCommand::Orphan {
+                    command: SkillOrphanCommand::List,
+                } => self.cmd_skill_orphan_list(),
+                SkillCommand::Orphan {
                     command: SkillOrphanCommand::Clean(args),
                 } => self.cmd_skill_orphan_clean(args, &request_id),
             },

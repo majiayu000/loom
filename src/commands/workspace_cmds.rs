@@ -124,6 +124,10 @@ fn cleanup_orphan_live_path(
     ))
 }
 
+fn is_orphan_projection(projection: &RegistryProjectionInstance) -> bool {
+    projection.binding_id.is_none() && projection.health == "orphaned"
+}
+
 impl App {
     pub fn cmd_status(&self) -> std::result::Result<(serde_json::Value, Meta), CommandFailure> {
         let skill_inventory = collect_skill_inventory(&self.ctx);
@@ -659,7 +663,7 @@ impl App {
         let mut retained = Vec::new();
 
         for proj in snapshot.projections.projections.drain(..) {
-            if proj.binding_id.is_none() && proj.health == "orphaned" {
+            if is_orphan_projection(&proj) {
                 if args.delete_live_paths {
                     match cleanup_orphan_live_path(&proj, &target_paths)? {
                         LivePathCleanup::Deleted(path) => deleted_paths.push(path),
@@ -729,6 +733,51 @@ impl App {
                 op_id: Some(op_id),
                 ..Meta::default()
             },
+        ))
+    }
+
+    pub fn cmd_skill_orphan_list(
+        &self,
+    ) -> std::result::Result<(serde_json::Value, Meta), CommandFailure> {
+        let snapshot = self.require_registry_snapshot()?;
+        let projections = snapshot
+            .projections
+            .projections
+            .iter()
+            .filter(|projection| is_orphan_projection(projection))
+            .map(|projection| {
+                json!({
+                    "instance_id": projection.instance_id,
+                    "skill_id": projection.skill_id,
+                    "binding_id": projection.binding_id,
+                    "target_id": projection.target_id,
+                    "materialized_path": projection.materialized_path,
+                    "method": projection.method,
+                    "last_applied_rev": projection.last_applied_rev,
+                    "health": projection.health,
+                    "observed_drift": projection.observed_drift,
+                    "live_path_exists": Path::new(&projection.materialized_path).exists(),
+                    "updated_at": projection.updated_at,
+                })
+            })
+            .collect::<Vec<_>>();
+        let orphaned_projection_ids = projections
+            .iter()
+            .filter_map(|projection| projection["instance_id"].as_str().map(str::to_string))
+            .collect::<Vec<_>>();
+        let orphaned_paths = projections
+            .iter()
+            .filter_map(|projection| projection["materialized_path"].as_str().map(str::to_string))
+            .collect::<Vec<_>>();
+
+        Ok((
+            json!({
+                "count": projections.len(),
+                "orphaned_projection_ids": orphaned_projection_ids,
+                "orphaned_paths": orphaned_paths,
+                "projections": projections,
+            }),
+            Meta::default(),
         ))
     }
 

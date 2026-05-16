@@ -302,6 +302,21 @@ fn skill_orphan_clean_nested_command_is_available() {
 }
 
 #[test]
+fn skill_orphan_list_nested_command_is_available() {
+    let output = Command::new(env!("CARGO_BIN_EXE_loom"))
+        .args(["skill", "orphan", "list", "--help"])
+        .output()
+        .expect("run loom");
+
+    assert!(
+        output.status.success(),
+        "orphan list help failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
 fn skill_monitor_observed_command_is_available() {
     let output = Command::new(env!("CARGO_BIN_EXE_loom"))
         .args(["skill", "monitor-observed", "--help"])
@@ -382,7 +397,7 @@ fn skill_help_describes_every_subcommand() {
 }
 
 #[test]
-fn skill_orphan_help_describes_clean_subcommand() {
+fn skill_orphan_help_describes_subcommands() {
     let output = Command::new(env!("CARGO_BIN_EXE_loom"))
         .args(["skill", "orphan", "--help"])
         .output()
@@ -396,6 +411,10 @@ fn skill_orphan_help_describes_clean_subcommand() {
     );
 
     let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("List orphaned projection records"),
+        "skill orphan help missing list description: {stdout}"
+    );
     assert!(
         stdout.contains("Remove orphaned projection records (and optionally their live files)"),
         "skill orphan help missing clean description: {stdout}"

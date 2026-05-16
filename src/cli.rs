@@ -147,6 +147,8 @@ pub enum SkillCommand {
 
 #[derive(Debug, Clone, Subcommand, Serialize)]
 pub enum SkillOrphanCommand {
+    #[command(about = "List orphaned projection records")]
+    List,
     #[command(about = "Remove orphaned projection records (and optionally their live files)")]
     Clean(OrphanCleanArgs),
 }

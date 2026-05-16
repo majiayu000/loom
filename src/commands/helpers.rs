@@ -126,6 +126,9 @@ pub(crate) fn command_name(command: &Command) -> &'static str {
             SkillCommand::Rollback(_) => "skill.rollback",
             SkillCommand::Diff(_) => "skill.diff",
             SkillCommand::Orphan {
+                command: SkillOrphanCommand::List,
+            } => "skill.orphan.list",
+            SkillCommand::Orphan {
                 command: SkillOrphanCommand::Clean(_),
             } => "skill.orphan.clean",
         },

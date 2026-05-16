@@ -637,12 +637,81 @@ impl App {
             return Ok((json!({"skill": args.skill, "noop": true}), Meta::default()));
         }
 
+        let paths = RegistryStatePaths::from_app_context(&self.ctx);
+        let had_registry_layout = paths.registry_dir.exists();
+        let had_legacy_layout = paths.legacy_state_dir_exists();
+        paths.ensure_layout().map_err(map_registry_state)?;
+        let registry_backup = snapshot_registry_audit_state(&paths).map_err(map_registry_state)?;
         let message = args
             .message
             .clone()
             .unwrap_or_else(|| format!("save({}): event", args.skill));
-        let commit = gitops::commit(&self.ctx, &message).map_err(map_git)?;
-        let mut meta = Meta::default();
+        let op_id = match record_registry_operation(
+            &paths,
+            "skill.save",
+            json!({
+                "skill": args.skill,
+                "request_id": request_id
+            }),
+            json!({
+                "noop": false
+            }),
+        ) {
+            Ok(op_id) => op_id,
+            Err(err) => {
+                let _ =
+                    gitops::run_git_allow_failure(&self.ctx, &["reset", "HEAD", "--", &skill_rel]);
+                rollback_registry_audit_after_failure(
+                    &self.ctx,
+                    &paths,
+                    &registry_backup,
+                    had_registry_layout,
+                    had_legacy_layout,
+                );
+                return Err(map_registry_state(err));
+            }
+        };
+        if let Err(err) = maybe_skill_fault("skill_save_after_operation") {
+            let _ = gitops::run_git_allow_failure(&self.ctx, &["reset", "HEAD", "--", &skill_rel]);
+            rollback_registry_audit_after_failure(
+                &self.ctx,
+                &paths,
+                &registry_backup,
+                had_registry_layout,
+                had_legacy_layout,
+            );
+            return Err(err);
+        }
+        if let Err(err) = stage_registry_state(&self.ctx, &paths) {
+            let _ = gitops::run_git_allow_failure(&self.ctx, &["reset", "HEAD", "--", &skill_rel]);
+            rollback_registry_audit_after_failure(
+                &self.ctx,
+                &paths,
+                &registry_backup,
+                had_registry_layout,
+                had_legacy_layout,
+            );
+            return Err(err);
+        }
+        let commit = match gitops::commit(&self.ctx, &message) {
+            Ok(commit) => commit,
+            Err(err) => {
+                let _ =
+                    gitops::run_git_allow_failure(&self.ctx, &["reset", "HEAD", "--", &skill_rel]);
+                rollback_registry_audit_after_failure(
+                    &self.ctx,
+                    &paths,
+                    &registry_backup,
+                    had_registry_layout,
+                    had_legacy_layout,
+                );
+                return Err(map_git(err));
+            }
+        };
+        let mut meta = Meta {
+            op_id: Some(op_id),
+            ..Meta::default()
+        };
         maybe_autosync_or_queue(
             &self.ctx,
             "save",
@@ -1703,6 +1772,36 @@ fn reset_command_created_commits(ctx: &crate::state::AppContext, previous_head: 
 fn unstage_registry_state(ctx: &crate::state::AppContext) {
     let _ = gitops::run_git_allow_failure(ctx, &["reset", "HEAD", "--", "state/registry"]);
     let _ = gitops::run_git_allow_failure(ctx, &["reset", "HEAD", "--", "state/v3"]);
+}
+
+fn stage_registry_state(
+    ctx: &crate::state::AppContext,
+    paths: &RegistryStatePaths,
+) -> std::result::Result<(), CommandFailure> {
+    gitops::run_git(ctx, &["add", "-A", "--", "state/registry"]).map_err(map_git)?;
+    let legacy_v3_tracked =
+        gitops::run_git_allow_failure(ctx, &["ls-files", "--error-unmatch", "--", "state/v3"])
+            .map_err(map_git)?
+            .status
+            .success();
+    if paths.state_dir.join("v3").exists() || legacy_v3_tracked {
+        gitops::run_git(ctx, &["add", "-A", "--", "state/v3"]).map_err(map_git)?;
+    }
+    Ok(())
+}
+
+fn rollback_registry_audit_after_failure(
+    ctx: &crate::state::AppContext,
+    paths: &RegistryStatePaths,
+    registry_backup: &RegistryAuditStateBackup,
+    had_registry_layout: bool,
+    had_legacy_layout: bool,
+) {
+    let _ = restore_registry_audit_state(paths, registry_backup);
+    if !had_registry_layout && !had_legacy_layout {
+        let _ = remove_path_if_exists(&paths.registry_dir);
+    }
+    unstage_registry_state(ctx);
 }
 
 fn rollback_import_after_commit(

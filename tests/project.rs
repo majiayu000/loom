@@ -36,6 +36,10 @@ fn git_output(root: &Path, args: &[&str]) -> String {
         .arg(root)
         .arg("-c")
         .arg("commit.gpgsign=false")
+        .arg("-c")
+        .arg("user.name=Loom Test")
+        .arg("-c")
+        .arg("user.email=loom@example.invalid")
         .args(args)
         .output()
         .expect("run git");
@@ -51,6 +55,19 @@ fn git_output(root: &Path, args: &[&str]) -> String {
 
 fn git_head(root: &Path) -> String {
     git_output(root, &["rev-parse", "HEAD"])
+}
+
+fn commit_skill_without_registry(root: &Path, skill: &str, message: &str) {
+    if !root.join(".git").exists() {
+        git_output(root, &["init"]);
+    }
+    let skill_rel = format!("skills/{skill}");
+    git_output(root, &["add", "--", &skill_rel]);
+    git_output(root, &["commit", "-m", message, "--", &skill_rel]);
+    assert!(
+        !root.join("state/registry").exists(),
+        "test helper should not initialize registry state"
+    );
 }
 
 fn git_status_short_for(root: &Path, pathspecs: &[&str]) -> String {
@@ -262,12 +279,7 @@ fn skill_rollback_records_operation_and_observation() {
 fn skill_rollback_noop_does_not_initialize_registry() {
     let root = TestDir::new("registry-skill-rollback-noop");
     write_example_skill(root.path(), "model-onboarding");
-    assert!(
-        save_skill(root.path(), "model-onboarding")
-            .0
-            .status
-            .success()
-    );
+    commit_skill_without_registry(root.path(), "model-onboarding", "seed skill");
 
     let (rollback_output, rollback_env) = run_loom(
         root.path(),
@@ -383,24 +395,14 @@ fn skill_rollback_rolls_back_commits_and_worktree_after_late_audit_failure() {
 fn skill_rollback_removes_new_registry_layout_after_late_audit_failure() {
     let root = TestDir::new("registry-skill-rollback-new-layout-rollback");
     write_example_skill(root.path(), "model-onboarding");
-    assert!(
-        save_skill(root.path(), "model-onboarding")
-            .0
-            .status
-            .success()
-    );
+    commit_skill_without_registry(root.path(), "model-onboarding", "seed skill");
 
     write_skill(
         root.path(),
         "model-onboarding",
         "# model-onboarding\n\nsource v2\n",
     );
-    assert!(
-        save_skill(root.path(), "model-onboarding")
-            .0
-            .status
-            .success()
-    );
+    commit_skill_without_registry(root.path(), "model-onboarding", "update skill");
     assert!(
         !root.path().join("state/registry").exists(),
         "precondition: registry should not exist before rollback"
@@ -531,12 +533,7 @@ fn skill_release_records_operation() {
 fn skill_release_removes_new_registry_layout_after_late_failure() {
     let root = TestDir::new("registry-skill-release-new-layout-rollback");
     write_example_skill(root.path(), "model-onboarding");
-    assert!(
-        save_skill(root.path(), "model-onboarding")
-            .0
-            .status
-            .success()
-    );
+    commit_skill_without_registry(root.path(), "model-onboarding", "seed skill");
     assert!(
         !root.path().join("state/registry").exists(),
         "precondition: registry should not exist before release"
@@ -620,12 +617,7 @@ fn skill_release_restores_legacy_v3_layout_after_late_failure() {
 fn skill_release_removes_new_registry_layout_when_tag_creation_fails() {
     let root = TestDir::new("registry-skill-release-tag-failure");
     write_example_skill(root.path(), "model-onboarding");
-    assert!(
-        save_skill(root.path(), "model-onboarding")
-            .0
-            .status
-            .success()
-    );
+    commit_skill_without_registry(root.path(), "model-onboarding", "seed skill");
     git_output(
         root.path(),
         &[

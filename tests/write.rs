@@ -84,8 +84,8 @@ fn target_add_bootstraps_registry_state_and_records_op() {
 }
 
 #[test]
-fn skill_save_without_registry_operation_does_not_return_op_id() {
-    let root = TestDir::new("registry-skill-save-no-fake-op-id");
+fn skill_save_records_registry_operation_and_op_id() {
+    let root = TestDir::new("registry-skill-save-op-id");
     write_skill(root.path(), "demo", "# demo\n\nv1\n");
 
     let (output, env) = run_loom(root.path(), &["skill", "save", "demo"]);
@@ -97,8 +97,35 @@ fn skill_save_without_registry_operation_does_not_return_op_id() {
         String::from_utf8_lossy(&output.stdout)
     );
     assert_eq!(env["ok"], Value::Bool(true));
-    assert_eq!(env["meta"].get("op_id"), None);
-    assert_eq!(operations_log(root.path()), "");
+    let op_id = env["meta"]["op_id"].as_str().expect("save op_id");
+    assert!(op_id.starts_with("op_"), "unexpected op_id: {op_id}");
+    let operations = operations_log(root.path());
+    assert!(operations.contains(&format!(r#""op_id":"{op_id}""#)));
+    assert!(operations.contains(r#""intent":"skill.save""#));
+    assert!(operations.contains(r#""skill":"demo""#));
+}
+
+#[test]
+fn skill_save_rolls_back_registry_operation_after_audit_failure() {
+    let root = TestDir::new("registry-skill-save-audit-rollback");
+    write_skill(root.path(), "demo", "# demo\n\nv1\n");
+
+    let (output, env) = run_loom_with_env(
+        root.path(),
+        &[("LOOM_FAULT_INJECT", "skill_save_after_operation")],
+        &["skill", "save", "demo"],
+    );
+
+    assert!(!output.status.success(), "save unexpectedly succeeded");
+    assert_eq!(env["ok"], Value::Bool(false));
+    assert!(
+        !root.path().join("state/registry").exists(),
+        "fresh registry layout should be removed after failed save audit"
+    );
+    assert!(
+        git_ok(root.path(), &["log", "--oneline", "--", "skills/demo"]).is_empty(),
+        "skill commit should be rolled back"
+    );
 }
 
 #[test]

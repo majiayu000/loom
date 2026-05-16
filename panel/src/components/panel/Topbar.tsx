@@ -55,6 +55,12 @@ function statusDisplay(props: TopbarProps): { label: string; dotStyle: React.CSS
       dotStyle: { background: "var(--err)", boxShadow: "0 0 0 3px rgba(216,90,90,0.18)" },
     };
   }
+  if (props.mode === "first-run") {
+    return {
+      label: "registry setup required",
+      dotStyle: { background: "var(--warn)", boxShadow: "0 0 0 3px rgba(230,180,80,0.18)" },
+    };
+  }
   const state = (props.remoteState ?? "").toUpperCase();
   if (state === "DIVERGED" || state === "CONFLICTED") {
     return {

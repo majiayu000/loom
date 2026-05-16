@@ -89,6 +89,12 @@ pub(super) struct RemoteSetRequest {
 }
 
 #[derive(Debug, Deserialize)]
+pub(super) struct WorkspaceInitRequest {
+    #[serde(default)]
+    pub(super) scan_existing: bool,
+}
+
+#[derive(Debug, Deserialize)]
 pub(super) struct OrphanCleanRequest {
     #[serde(default)]
     pub(super) delete_live_paths: bool,
@@ -117,6 +123,7 @@ pub async fn run_panel(ctx: AppContext, port: u16) -> Result<()> {
         .route("/api/v1/health", get(health))
         .route("/api/v1/overview", get(v1_overview))
         .route("/api/v1/workspace/status", get(v1_workspace_status))
+        .route("/api/v1/workspace/init", post(v1_workspace_init))
         .route("/api/v1/workspace/doctor", get(v1_workspace_doctor))
         .route("/api/v1/targets", get(v1_registry_targets))
         .route("/api/v1/bindings", get(v1_registry_bindings))

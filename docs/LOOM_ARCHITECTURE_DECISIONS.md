@@ -116,10 +116,11 @@ This decision does not make the panel the primary control plane. The CLI remains
 
 ### 4.1 Mutation Route Table (v1 phase 1 frozen surface)
 
-The following 14 routes are the complete mutation surface for phase 1. Every row passes through `ensure_mutation_authorized` then `run_panel_command`. Adding a new POST route without a corresponding row in this table is an explicit contract break requiring a section-4 update.
+The following 15 routes are the complete mutation surface for phase 1. Every row passes through `ensure_mutation_authorized` then `run_panel_command`. Adding a new POST route without a corresponding row in this table is an explicit contract break requiring a section-4 update.
 
 | cmd name                 | HTTP | path                                    | CLI command                  |
 |--------------------------|------|-----------------------------------------|------------------------------|
+| workspace.init           | POST | /api/v1/workspace/init                        | Workspace::Init              |
 | target.add               | POST | /api/registry/targets                         | Target::Add                  |
 | target.remove            | POST | /api/registry/targets/{target_id}/remove      | Target::Remove               |
 | workspace.binding.add    | POST | /api/registry/bindings                        | Workspace::Binding::Add      |

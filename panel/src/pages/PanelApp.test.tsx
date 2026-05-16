@@ -29,6 +29,17 @@ function installFetchMock(failingPath: string, failingResponse: Response) {
         return Promise.resolve(jsonResponse({ ok: true }));
       case "/api/info":
         return Promise.resolve(jsonResponse({ root: "/tmp/loom-registry" }));
+      case "/api/v1/workspace/status":
+        return Promise.resolve(
+          jsonResponse({
+            ok: true,
+            cmd: "workspace.status",
+            request_id: "req-status",
+            data: { registry: { counts: {} } },
+            error: null,
+            meta: { warnings: [] },
+          }),
+        );
       case "/api/skills":
         return Promise.resolve(jsonResponse({ skills: ["typed-api-client"] }));
       case "/api/registry/status":
@@ -118,5 +129,42 @@ describe("PanelApp status failure UI", () => {
     });
 
     expect(screen.getByText(/failed to read pending queue/i)).toBeTruthy();
+  });
+
+  it("shows first-run mode when workspace status reports missing registry state", async () => {
+    fetchMock.mockImplementation((input: RequestInfo | URL) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      switch (url) {
+        case "/api/health":
+          return Promise.resolve(jsonResponse({ ok: true }));
+        case "/api/info":
+          return Promise.resolve(jsonResponse({ root: "/tmp/loom-registry" }));
+        case "/api/v1/workspace/status":
+          return Promise.resolve(
+            jsonResponse({
+              ok: true,
+              cmd: "workspace.status",
+              request_id: "req-status",
+              data: {
+                registry: {
+                  available: false,
+                  error: { code: "ARG_INVALID", message: "registry state not initialized" },
+                },
+              },
+              error: null,
+              meta: { warnings: [] },
+            }),
+          );
+        default:
+          return Promise.reject(new Error(`unexpected fetch ${url}`));
+      }
+    });
+
+    render(<PanelApp />);
+
+    await waitFor(() => {
+      expect(screen.getByText(/Initialize Registry/i)).toBeTruthy();
+    });
+    expect(screen.getByText(/Scan existing agent skill directories/i)).toBeTruthy();
   });
 });

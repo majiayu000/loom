@@ -9,8 +9,9 @@ import { TargetsPage } from "./TargetsPage";
 import { SettingsPage } from "./SettingsPage";
 import { OverviewPage } from "./OverviewPage";
 import { DoctorPage } from "./DoctorPage";
+import { FirstRunPage } from "./FirstRunPage";
 import { BindingAddForm } from "../../components/panel/forms/BindingAddForm";
-import { api, type BindingShowPayload, type DoctorPayload, type OpsPayload, type TargetShowPayload, type RegistryOperationRecord } from "../../lib/api/client";
+import { api, type BindingShowPayload, type CommandEnvelope, type DoctorPayload, type OpsPayload, type TargetShowPayload, type RegistryOperationRecord } from "../../lib/api/client";
 import type { Binding, Skill, Target } from "../../lib/types";
 import type { RegistryProjection } from "../../generated/RegistryProjection";
 
@@ -264,6 +265,52 @@ test("HistoryPage treats succeeded operations as successful", () => {
 test("LiveDataBanner renders nothing during live refetch loading", () => {
   const html = renderToStaticMarkup(<LiveDataBanner error={null} loading={true} mode="live" />);
   expect(html).toBe("");
+});
+
+test("LiveDataBanner renders nothing in first-run mode", () => {
+  const html = renderToStaticMarkup(<LiveDataBanner error={null} loading={false} mode="first-run" />);
+  expect(html).toBe("");
+});
+
+test("FirstRunPage initializes the registry with scan enabled", async () => {
+  const originalInit = api.workspaceInit;
+  const calls: Array<{ scan_existing?: boolean }> = [];
+  const envelope: CommandEnvelope = {
+    ok: true,
+    cmd: "workspace.init",
+    request_id: "req-1",
+    data: {
+      initialized: true,
+      scanned: true,
+      imported: [{ target_id: "target-1" }],
+      skipped: [{ agent: "codex" }, { agent: "cursor" }],
+    },
+    error: undefined,
+    meta: { warnings: [] },
+  };
+  api.workspaceInit = async (body) => {
+    calls.push(body);
+    return envelope;
+  };
+
+  try {
+    let ready = 0;
+    let renderer: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(<FirstRunPage registryRoot="/tmp/loom" onReady={() => ready += 1} />);
+    });
+
+    await act(async () => {
+      buttonByLabel(renderer!, "Initialize").props.onClick();
+    });
+    await flush();
+
+    expect(calls).toEqual([{ scan_existing: true }]);
+    expect(ready).toBe(1);
+    expect(markup(renderer!).includes("1 observed targets imported")).toBe(true);
+  } finally {
+    api.workspaceInit = originalInit;
+  }
 });
 
 test("OverviewPage disables add binding until a target exists", async () => {

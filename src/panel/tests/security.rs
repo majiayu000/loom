@@ -2,7 +2,7 @@ use super::*;
 use crate::cli::{
     BindingAddArgs, CaptureArgs, Command, OpsCommand, ProjectArgs, ProjectionMethod, RemoteCommand,
     SkillCommand, SyncCommand, TargetAddArgs, TargetCommand, TargetOwnership,
-    WorkspaceBindingCommand, WorkspaceCommand, WorkspaceMatcherKind,
+    WorkspaceBindingCommand, WorkspaceCommand, WorkspaceInitArgs, WorkspaceMatcherKind,
 };
 use crate::panel::auth::{
     ensure_mutation_authorized, error_envelope, request_origin_matches, run_panel_command,
@@ -13,9 +13,10 @@ use serde_json::json;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
 // Exhaustive list of every panel mutation command. Must stay in sync with the
-// 14-row table in docs/LOOM_ARCHITECTURE_DECISIONS.md section 4.1 and the
+// 15-row table in docs/LOOM_ARCHITECTURE_DECISIONS.md section 4.1 and the
 // route registrations in `run_panel`.
 const MUTATION_COMMANDS: &[&str] = &[
+    "workspace.init",
     "target.add",
     "target.remove",
     "workspace.binding.add",
@@ -33,8 +34,8 @@ const MUTATION_COMMANDS: &[&str] = &[
 ];
 
 #[test]
-fn mutation_commands_count_is_fourteen() {
-    assert_eq!(MUTATION_COMMANDS.len(), 14);
+fn mutation_commands_count_is_fifteen() {
+    assert_eq!(MUTATION_COMMANDS.len(), 15);
 }
 
 #[test]
@@ -155,6 +156,32 @@ fn run_panel_command_exposes_workspace_remote_set() {
     assert_eq!(payload["cmd"], json!("workspace.remote"));
     assert_eq!(payload["data"]["remote"], json!("origin"));
     assert_eq!(payload["data"]["url"], json!(url));
+
+    cleanup_root(root);
+}
+
+#[test]
+fn run_panel_command_exposes_workspace_init() {
+    let (root, state) = make_test_state();
+
+    let (status, Json(payload)) = run_panel_command(
+        &state,
+        "workspace.init",
+        StatusCode::CREATED,
+        Command::Workspace {
+            command: WorkspaceCommand::Init(WorkspaceInitArgs {
+                scan_existing: false,
+            }),
+        },
+    );
+
+    assert_eq!(status, StatusCode::CREATED, "{payload}");
+    assert_eq!(payload["ok"], json!(true));
+    assert_eq!(payload["cmd"], json!("workspace.init"));
+    assert_eq!(payload["data"]["initialized"], json!(true));
+    assert_eq!(payload["data"]["scanned"], json!(false));
+    assert_eq!(payload["meta"].get("op_id"), None);
+    assert!(root.join("state/registry/schema.json").exists());
 
     cleanup_root(root);
 }

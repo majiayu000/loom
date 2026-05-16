@@ -13,6 +13,7 @@ import { OpsPage } from "./panel/OpsPage";
 import { SettingsPage } from "./panel/SettingsPage";
 import { SyncPage } from "./panel/SyncPage";
 import { DoctorPage } from "./panel/DoctorPage";
+import { FirstRunPage } from "./panel/FirstRunPage";
 
 const DEFAULT_TWEAKS: TweakState = {
   vizMode: "loom",
@@ -119,7 +120,7 @@ export function PanelApp() {
   // Gate: all mutation affordances in child pages receive this prop.
   // Future shortcuts, command palette, and hotkey handlers must check readOnly
   // before calling any /api/registry/*, /api/ops/*, or /api/sync/* POST route.
-  const readOnly = !live.live;
+  const readOnly = live.mode !== "live";
   const onMutation = () => {
     setMutationVersion((cur) => cur + 1);
     live.refetch();
@@ -133,99 +134,103 @@ export function PanelApp() {
   const onViewActivity = () => setPage("ops");
 
   let view: React.ReactNode;
-  switch (page) {
-    case "overview":
-      view = (
-        <OverviewPage
-          skills={skills}
-          targets={targets}
-          ops={ops}
-          projections={projectionLinks}
-          vizMode={tweaks.vizMode}
-          setVizMode={setVizMode}
-          selectedSkill={selectedSkill}
-          selectedTarget={selectedTarget}
-          onSelectSkill={toggleSkill}
-          onSelectTarget={toggleTarget}
-          registryRoot={live.registryRoot}
-          onMutation={onMutation}
-          onNewTarget={onNewTarget}
-          onNewBinding={onNewBinding}
-          onViewActivity={onViewActivity}
-          onOpenSync={onOpenSync}
-          readOnly={readOnly}
-        />
-      );
-      break;
-    case "skills":
-      view = (
-        <SkillsPage
-          skills={skills}
-          targets={targets}
-          bindings={bindings}
-          selectedSkill={selectedSkill}
-          onSelectSkill={(id) => setSelectedSkill(id)}
-          onMutation={onMutation}
-          readOnly={readOnly}
-        />
-      );
-      break;
-    case "targets":
-      view = (
-        <TargetsPage
-          targets={targets}
-          skills={skills}
-          selectedTarget={selectedTarget}
-          onSelectTarget={toggleTarget}
-          onRemoveTarget={onRemoveTarget}
-          onMutation={onMutation}
-          readOnly={readOnly}
-          mutationVersion={mutationVersion}
-        />
-      );
-      break;
-    case "bindings":
-      view = (
-        <BindingsPage
-          bindings={bindings}
-          targets={targets}
-          projections={live.projections}
-          onMutation={onMutation}
-          readOnly={readOnly}
-          mutationVersion={mutationVersion}
-        />
-      );
-      break;
-    case "ops":
-      view = <OpsPage ops={ops} onMutation={onMutation} readOnly={readOnly} />;
-      break;
-    case "history":
-      view = (
-        <HistoryPage
-          live={live.live}
-          mode={live.mode}
-          mutationVersion={mutationVersion}
-          refreshKey={live.lastUpdated}
-        />
-      );
-      break;
-    case "sync":
-      view = (
-        <SyncPage
-          remote={live.remote}
-          pendingCount={live.pendingCount}
-          registryRoot={live.registryRoot}
-          readOnly={readOnly}
-          onMutation={onMutation}
-        />
-      );
-      break;
-    case "doctor":
-      view = <DoctorPage live={live.live} mode={live.mode} refreshKey={live.lastUpdated} />;
-      break;
-    case "settings":
-      view = <SettingsPage live={live.live} mode={live.mode} registryRoot={live.registryRoot} />;
-      break;
+  if (live.mode === "first-run") {
+    view = <FirstRunPage registryRoot={live.registryRoot} onReady={live.refetch} />;
+  } else {
+    switch (page) {
+      case "overview":
+        view = (
+          <OverviewPage
+            skills={skills}
+            targets={targets}
+            ops={ops}
+            projections={projectionLinks}
+            vizMode={tweaks.vizMode}
+            setVizMode={setVizMode}
+            selectedSkill={selectedSkill}
+            selectedTarget={selectedTarget}
+            onSelectSkill={toggleSkill}
+            onSelectTarget={toggleTarget}
+            registryRoot={live.registryRoot}
+            onMutation={onMutation}
+            onNewTarget={onNewTarget}
+            onNewBinding={onNewBinding}
+            onViewActivity={onViewActivity}
+            onOpenSync={onOpenSync}
+            readOnly={readOnly}
+          />
+        );
+        break;
+      case "skills":
+        view = (
+          <SkillsPage
+            skills={skills}
+            targets={targets}
+            bindings={bindings}
+            selectedSkill={selectedSkill}
+            onSelectSkill={(id) => setSelectedSkill(id)}
+            onMutation={onMutation}
+            readOnly={readOnly}
+          />
+        );
+        break;
+      case "targets":
+        view = (
+          <TargetsPage
+            targets={targets}
+            skills={skills}
+            selectedTarget={selectedTarget}
+            onSelectTarget={toggleTarget}
+            onRemoveTarget={onRemoveTarget}
+            onMutation={onMutation}
+            readOnly={readOnly}
+            mutationVersion={mutationVersion}
+          />
+        );
+        break;
+      case "bindings":
+        view = (
+          <BindingsPage
+            bindings={bindings}
+            targets={targets}
+            projections={live.projections}
+            onMutation={onMutation}
+            readOnly={readOnly}
+            mutationVersion={mutationVersion}
+          />
+        );
+        break;
+      case "ops":
+        view = <OpsPage ops={ops} onMutation={onMutation} readOnly={readOnly} />;
+        break;
+      case "history":
+        view = (
+          <HistoryPage
+            live={live.live}
+            mode={live.mode}
+            mutationVersion={mutationVersion}
+            refreshKey={live.lastUpdated}
+          />
+        );
+        break;
+      case "sync":
+        view = (
+          <SyncPage
+            remote={live.remote}
+            pendingCount={live.pendingCount}
+            registryRoot={live.registryRoot}
+            readOnly={readOnly}
+            onMutation={onMutation}
+          />
+        );
+        break;
+      case "doctor":
+        view = <DoctorPage live={live.live} mode={live.mode} refreshKey={live.lastUpdated} />;
+        break;
+      case "settings":
+        view = <SettingsPage live={live.live} mode={live.mode} registryRoot={live.registryRoot} />;
+        break;
+    }
   }
 
   return (
@@ -289,9 +294,9 @@ export function LiveDataBanner({
 }: {
   error: string | null;
   loading: boolean;
-  mode: "live" | "offline-empty" | "offline-stale";
+  mode: "live" | "first-run" | "offline-empty" | "offline-stale";
 }) {
-  if (mode === "live") return null;
+  if (mode === "live" || mode === "first-run") return null;
 
   if (loading && mode === "offline-empty") {
     return (

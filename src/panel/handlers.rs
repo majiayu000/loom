@@ -11,7 +11,7 @@ use serde_json::json;
 use crate::cli::{
     AddArgs, CaptureArgs, Command, HistoryRepairStrategyArg, OpsCommand, OpsHistoryCommand,
     OrphanCleanArgs, ProjectArgs, ProjectionMethod, RemoteCommand, SkillOrphanCommand, SyncCommand,
-    TargetCommand, TargetOwnership, WorkspaceBindingCommand, WorkspaceCommand,
+    TargetCommand, TargetOwnership, WorkspaceBindingCommand, WorkspaceCommand, WorkspaceInitArgs,
 };
 use crate::commands::{
     App, CommandFailure, collect_skill_inventory, redact_sensitive_string, remote_status_payload,
@@ -27,7 +27,7 @@ use super::auth::{
 };
 use super::{
     BindingAddRequest, CaptureRequest, HistoryRepairRequest, OrphanCleanRequest, PanelState,
-    ProjectRequest, RemoteSetRequest, SkillAddRequest, TargetAddRequest,
+    ProjectRequest, RemoteSetRequest, SkillAddRequest, TargetAddRequest, WorkspaceInitRequest,
 };
 
 /// Accept `[a-z0-9_-]{1,64}` for `policy_profile`. The core CLI path enforces
@@ -77,6 +77,27 @@ pub(super) async fn v1_workspace_status(
         ctx: state.ctx.as_ref().clone(),
     };
     panel_command_envelope("workspace.status", app.cmd_status())
+}
+
+pub(super) async fn v1_workspace_init(
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    State(state): State<PanelState>,
+    Json(req): Json<WorkspaceInitRequest>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    if let Some(response) = ensure_mutation_authorized(&state, peer, &headers, "workspace.init") {
+        return response;
+    }
+    run_panel_command(
+        &state,
+        "workspace.init",
+        StatusCode::CREATED,
+        Command::Workspace {
+            command: WorkspaceCommand::Init(WorkspaceInitArgs {
+                scan_existing: req.scan_existing,
+            }),
+        },
+    )
 }
 
 pub(super) async fn v1_workspace_doctor(

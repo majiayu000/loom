@@ -14,13 +14,14 @@ import { ApiError, api } from "./client";
 
 type RegistryCounts = NonNullable<NonNullable<RegistryPayload["data"]>["counts"]>;
 
-export type PanelDataMode = "live" | "offline-empty" | "offline-stale";
+export type PanelDataMode = "live" | "first-run" | "offline-empty" | "offline-stale";
 
 export interface PanelLiveData {
   live: boolean;
   loading: boolean;
   error: string | null;
   mode: PanelDataMode;
+  setupRequired: boolean;
   lastUpdated: string | null;
   registryRoot: string | null;
   remote: RemotePayload | null;
@@ -48,6 +49,7 @@ const INITIAL_STATE: LiveState = {
   loading: true,
   error: null,
   mode: "offline-empty",
+  setupRequired: false,
   lastUpdated: null,
   registryRoot: null,
   remote: null,
@@ -76,6 +78,7 @@ function hasLastKnownData(state: LiveState): boolean {
 }
 
 function modeForState(state: Omit<LiveState, "mode">): PanelDataMode {
+  if (state.setupRequired) return "first-run";
   if (state.live) return "live";
   return hasLastKnownData(state as LiveState) ? "offline-stale" : "offline-empty";
 }
@@ -94,7 +97,8 @@ export function usePanelData(): PanelLiveData {
   );
 
   const markFailure = useCallback(
-    (cur: LiveState, message: string): LiveState => withMode({ ...cur, live: false, loading: false, error: message }),
+    (cur: LiveState, message: string): LiveState =>
+      withMode({ ...cur, live: false, setupRequired: false, loading: false, error: message }),
     [withMode],
   );
 
@@ -116,9 +120,37 @@ export function usePanelData(): PanelLiveData {
     const generation = ++generationRef.current;
 
     try {
-      const [health, info, skillsPayload, registry, remote, pending] = await Promise.all([
+      const [health, info, workspaceStatus] = await Promise.all([
         api.health(controller.signal),
         api.info(controller.signal),
+        api.workspaceStatus(controller.signal),
+      ]);
+      if (controller.signal.aborted || generation !== generationRef.current) return;
+
+      if (workspaceStatus.registry?.available === false) {
+        setState(
+          markSuccess({
+            live: true,
+            setupRequired: true,
+            loading: false,
+            error: null,
+            lastUpdated: new Date().toISOString(),
+            registryRoot: info.root ?? null,
+            remote: null,
+            health,
+            counts: EMPTY_COUNTS,
+            skills: [],
+            targets: [],
+            bindings: [],
+            ops: [],
+            projections: [],
+            pendingCount: 0,
+          }),
+        );
+        return;
+      }
+
+      const [skillsPayload, registry, remote, pending] = await Promise.all([
         api.skills(controller.signal),
         api.registryStatus(controller.signal),
         api.remoteStatus(controller.signal),
@@ -145,6 +177,7 @@ export function usePanelData(): PanelLiveData {
       setState(
         markSuccess({
           live: true,
+          setupRequired: false,
           loading: false,
           error: null,
           lastUpdated: new Date().toISOString(),

@@ -98,6 +98,15 @@ export interface RemoteStatusResponse {
   warnings?: string[];
 }
 
+export interface WorkspaceStatusPayload {
+  state_model?: string;
+  registry?: {
+    available?: boolean;
+    error?: { code?: string; message?: string };
+    counts?: Record<string, number>;
+  };
+}
+
 export interface CommandEnvelope {
   ok: boolean;
   cmd: string;
@@ -282,6 +291,10 @@ export interface RemoteSetBody {
   url: string;
 }
 
+export interface WorkspaceInitBody {
+  scan_existing?: boolean;
+}
+
 export interface SkillDiffFile {
   path: string;
   added: number;
@@ -344,6 +357,8 @@ export interface DoctorPayload {
 export const api = {
   health: (signal?: AbortSignal) => getJson<HealthPayload>("/api/health", signal),
   info: (signal?: AbortSignal) => getJsonData<InfoPayload>("/api/info", signal),
+  workspaceStatus: (signal?: AbortSignal) =>
+    getJsonData<WorkspaceStatusPayload>("/api/v1/workspace/status", signal),
   skills: (signal?: AbortSignal) => getJsonData<SkillsPayload>("/api/skills", signal),
   registryStatus: (signal?: AbortSignal) => getJson<RegistryPayload>("/api/registry/status", signal),
   workspaceDoctor: (signal?: AbortSignal) =>
@@ -374,6 +389,7 @@ export const api = {
   opsRetry: () => postJson("/api/ops/retry", {}),
   opsPurge: () => postJson("/api/ops/purge", {}),
   remoteSet: (body: RemoteSetBody) => postJson("/api/remote/set", body),
+  workspaceInit: (body: WorkspaceInitBody) => postJson("/api/v1/workspace/init", body),
 
   targetAdd: (body: TargetAddBody) => postJson("/api/registry/targets", body),
   targetRemove: (targetId: string) => postJson(`/api/registry/targets/${encodeURIComponent(targetId)}/remove`, {}),

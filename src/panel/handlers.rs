@@ -13,7 +13,10 @@ use crate::cli::{
     ProjectArgs, ProjectionMethod, RemoteCommand, SyncCommand, TargetCommand, TargetOwnership,
     WorkspaceBindingCommand, WorkspaceCommand,
 };
-use crate::commands::{collect_skill_inventory, redact_sensitive_string, remote_status_payload};
+use crate::commands::{
+    App, CommandFailure, collect_skill_inventory, redact_sensitive_string, remote_status_payload,
+};
+use crate::envelope::Envelope;
 use crate::state::resolve_agent_skill_dirs;
 use crate::state_model::RegistryStatePaths;
 
@@ -56,6 +59,42 @@ pub(super) struct OpsQuery {
 
 pub(super) async fn health() -> Json<serde_json::Value> {
     Json(json!({"ok": true, "service": "loom-panel"}))
+}
+
+pub(super) async fn v1_overview(
+    State(state): State<PanelState>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let app = App {
+        ctx: state.ctx.as_ref().clone(),
+    };
+    panel_command_envelope("panel.overview", app.cmd_status())
+}
+
+pub(super) async fn v1_workspace_status(
+    State(state): State<PanelState>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let app = App {
+        ctx: state.ctx.as_ref().clone(),
+    };
+    panel_command_envelope("workspace.status", app.cmd_status())
+}
+
+pub(super) async fn v1_workspace_doctor(
+    State(state): State<PanelState>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let app = App {
+        ctx: state.ctx.as_ref().clone(),
+    };
+    panel_command_envelope("workspace.doctor", app.cmd_doctor())
+}
+
+pub(super) async fn v1_sync_status(
+    State(state): State<PanelState>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let app = App {
+        ctx: state.ctx.as_ref().clone(),
+    };
+    panel_command_envelope("sync.status", app.cmd_sync(&SyncCommand::Status))
 }
 
 pub(super) async fn info(State(state): State<PanelState>) -> Json<serde_json::Value> {
@@ -104,6 +143,29 @@ pub(super) async fn info(State(state): State<PanelState>) -> Json<serde_json::Va
         }),
         warnings,
     )
+}
+
+fn panel_command_envelope(
+    cmd: &str,
+    result: std::result::Result<(serde_json::Value, crate::envelope::Meta), CommandFailure>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let request_id = uuid::Uuid::new_v4().to_string();
+    match result {
+        Ok((data, meta)) => (
+            StatusCode::OK,
+            Json(json!(Envelope::ok(cmd, request_id, data, meta))),
+        ),
+        Err(err) => (
+            status_for_error_code(Some(err.code.as_str())),
+            Json(json!(Envelope::err(
+                cmd,
+                request_id,
+                err.code,
+                err.message,
+                err.details
+            ))),
+        ),
+    }
 }
 
 pub(super) async fn skills(State(state): State<PanelState>) -> Json<serde_json::Value> {

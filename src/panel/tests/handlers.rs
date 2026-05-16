@@ -1,5 +1,8 @@
 use super::*;
-use crate::panel::handlers::{OpsQuery, info, pending, registry_ops, remote_set, remote_status};
+use crate::panel::handlers::{
+    OpsQuery, info, pending, registry_ops, remote_set, remote_status, v1_overview,
+    v1_workspace_status,
+};
 use crate::state_model::{REGISTRY_SCHEMA_VERSION, RegistryOperationRecord};
 use axum::{
     Json,
@@ -60,6 +63,40 @@ fn registry_ops_returns_bounded_newest_first_rows() {
     assert!(operations[0].get("effects").is_none());
 
     let _ = fs::remove_dir_all(root);
+}
+
+#[tokio::test]
+async fn v1_workspace_status_returns_cli_envelope_without_command_audit() {
+    let (root, state) = make_test_state();
+
+    let (status, Json(payload)) = v1_workspace_status(State(state)).await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(payload["ok"], json!(true));
+    assert_eq!(payload["cmd"], json!("workspace.status"));
+    assert_eq!(payload["data"]["state_model"], json!("registry"));
+    assert_eq!(payload["data"]["registry"]["available"], json!(false));
+    assert!(
+        !root.join("state/events/commands.jsonl").exists(),
+        "read-only v1 status should not start command audit"
+    );
+
+    cleanup_root(root);
+}
+
+#[tokio::test]
+async fn v1_overview_returns_workspace_status_payload() {
+    let (root, state) = make_test_state();
+
+    let (status, Json(payload)) = v1_overview(State(state)).await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(payload["ok"], json!(true));
+    assert_eq!(payload["cmd"], json!("panel.overview"));
+    assert_eq!(payload["data"]["registered_targets"]["count"], json!(0));
+    assert!(payload["data"]["remote"].is_object());
+
+    cleanup_root(root);
 }
 
 #[tokio::test]

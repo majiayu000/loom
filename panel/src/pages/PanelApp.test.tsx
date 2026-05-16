@@ -48,9 +48,18 @@ function installFetchMock(failingPath: string, failingResponse: Response) {
             ? failingResponse
             : jsonResponse({ ok: true, data: { counts: {}, projections: [], rules: [], targets: [], bindings: [] } }),
         );
-      case "/api/remote/status":
+      case "/api/v1/sync/status":
         return Promise.resolve(
-          url === failingPath ? failingResponse : jsonResponse({ remote: { sync_state: "CLEAN" }, warnings: [] }),
+          url === failingPath
+            ? failingResponse
+            : jsonResponse({
+                ok: true,
+                cmd: "sync.status",
+                request_id: "req-sync",
+                data: { remote: { sync_state: "CLEAN" }, warnings: [] },
+                error: null,
+                meta: { warnings: [] },
+              }),
         );
       case "/api/pending":
         return Promise.resolve(url === failingPath ? failingResponse : jsonResponse({ count: 0, ops: [] }));
@@ -95,9 +104,9 @@ describe("PanelApp status failure UI", () => {
     expect(screen.getByText(/GET \/api\/registry\/status returned 503/i)).toBeTruthy();
   });
 
-  it("shows registry error state when /api/remote/status returns a structured backend failure", async () => {
+  it("shows registry error state when /api/v1/sync/status returns a structured backend failure", async () => {
     installFetchMock(
-      "/api/remote/status",
+      "/api/v1/sync/status",
       errorResponse(500, {
         ok: false,
         error: { code: "IO_ERROR", message: "failed to read pending_ops.jsonl" },

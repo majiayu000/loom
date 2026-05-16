@@ -121,7 +121,7 @@ export function PanelApp() {
   const [mutationVersion, setMutationVersion] = useState(0);
   // Gate: all mutation affordances in child pages receive this prop.
   // Future shortcuts, command palette, and hotkey handlers must check readOnly
-  // before calling any /api/registry/*, /api/ops/*, or /api/sync/* POST route.
+  // before calling any /api/v1/* mutation route.
   const readOnly = live.mode !== "live";
   const onMutation = () => {
     setMutationVersion((cur) => cur + 1);

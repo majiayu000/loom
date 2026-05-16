@@ -325,11 +325,29 @@ export interface SkillHistoryPayload {
   meta?: { warnings?: string[] };
 }
 
+export interface DoctorCheck {
+  section: string;
+  id: string;
+  ok: boolean;
+  severity: "ok" | "warning" | "error" | string;
+  message: string;
+  next_action?: string | null;
+  details?: Record<string, unknown>;
+}
+
+export interface DoctorPayload {
+  healthy: boolean;
+  checks_v1: DoctorCheck[];
+  checks?: Record<string, unknown>;
+}
+
 export const api = {
   health: (signal?: AbortSignal) => getJson<HealthPayload>("/api/health", signal),
   info: (signal?: AbortSignal) => getJsonData<InfoPayload>("/api/info", signal),
   skills: (signal?: AbortSignal) => getJsonData<SkillsPayload>("/api/skills", signal),
   registryStatus: (signal?: AbortSignal) => getJson<RegistryPayload>("/api/registry/status", signal),
+  workspaceDoctor: (signal?: AbortSignal) =>
+    getJsonData<DoctorPayload>("/api/v1/workspace/doctor", signal),
   opsHistoryDiagnose: (signal?: AbortSignal) =>
     getJson<OpsHistoryDiagnosePayload>("/api/registry/ops/diagnose", signal),
   ops: (options?: { limit?: number; offset?: number }, signal?: AbortSignal) => {

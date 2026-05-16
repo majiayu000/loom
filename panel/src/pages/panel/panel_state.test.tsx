@@ -8,8 +8,9 @@ import { HistoryPage, bucket } from "./HistoryPage";
 import { TargetsPage } from "./TargetsPage";
 import { SettingsPage } from "./SettingsPage";
 import { OverviewPage } from "./OverviewPage";
+import { DoctorPage } from "./DoctorPage";
 import { BindingAddForm } from "../../components/panel/forms/BindingAddForm";
-import { api, type BindingShowPayload, type OpsPayload, type TargetShowPayload, type RegistryOperationRecord } from "../../lib/api/client";
+import { api, type BindingShowPayload, type DoctorPayload, type OpsPayload, type TargetShowPayload, type RegistryOperationRecord } from "../../lib/api/client";
 import type { Binding, Skill, Target } from "../../lib/types";
 import type { RegistryProjection } from "../../generated/RegistryProjection";
 
@@ -227,6 +228,32 @@ function opsPayload(operation: RegistryOperationRecord): OpsPayload {
       operations: [operation],
       checkpoint: { last_scanned_op_id: operation.op_id },
     },
+  };
+}
+
+function doctorPayload(): DoctorPayload {
+  return {
+    healthy: false,
+    checks_v1: [
+      {
+        section: "git",
+        id: "git_fsck",
+        ok: true,
+        severity: "ok",
+        message: "git object database is healthy",
+        next_action: null,
+        details: {},
+      },
+      {
+        section: "pending_queue",
+        id: "pending_queue_warnings",
+        ok: false,
+        severity: "warning",
+        message: "pending queue has malformed or ignored entries",
+        next_action: "inspect state/pending_ops.jsonl and repair or purge malformed queue entries",
+        details: { warning_count: 1 },
+      },
+    ],
   };
 }
 
@@ -484,6 +511,59 @@ test("HistoryPage refetches when the shared live refresh key changes", async () 
     expect(markup(renderer!).includes("op-old")).toBe(false);
   } finally {
     api.ops = originalOps;
+  }
+});
+
+test("DoctorPage renders structured workspace doctor checks", async () => {
+  const originalDoctor = api.workspaceDoctor;
+  let calls = 0;
+  api.workspaceDoctor = async () => {
+    calls += 1;
+    return doctorPayload();
+  };
+
+  try {
+    let renderer: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(<DoctorPage live={true} mode="live" refreshKey="tick-1" />);
+    });
+    await flush();
+
+    expect(calls).toBe(1);
+    expect(markup(renderer!).includes("pending_queue_warnings")).toBe(true);
+    expect(markup(renderer!).includes("pending queue has malformed or ignored entries")).toBe(true);
+    expect(markup(renderer!).includes("inspect state/pending_ops.jsonl")).toBe(true);
+
+    await act(async () => {
+      renderer!.update(<DoctorPage live={true} mode="live" refreshKey="tick-2" />);
+    });
+    await flush();
+
+    expect(calls).toBe(2);
+  } finally {
+    api.workspaceDoctor = originalDoctor;
+  }
+});
+
+test("DoctorPage skips live fetches while offline", async () => {
+  const originalDoctor = api.workspaceDoctor;
+  let calls = 0;
+  api.workspaceDoctor = async () => {
+    calls += 1;
+    return doctorPayload();
+  };
+
+  try {
+    let renderer: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(<DoctorPage live={false} mode="offline-empty" refreshKey={null} />);
+    });
+    await flush();
+
+    expect(calls).toBe(0);
+    expect(markup(renderer!).includes("Doctor needs the live panel API.")).toBe(true);
+  } finally {
+    api.workspaceDoctor = originalDoctor;
   }
 });
 

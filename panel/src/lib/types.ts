@@ -84,6 +84,7 @@ export type PanelPageKey =
   | "ops"
   | "history"
   | "sync"
+  | "doctor"
   | "settings";
 
 export type VizMode = "loom" | "force" | "tree";

@@ -7,6 +7,7 @@ import {
   HomeIcon,
   OpsIcon,
   SettingsIcon,
+  ShieldIcon,
   SkillIcon,
   TargetIcon,
 } from "../icons/nav_icons";
@@ -49,6 +50,7 @@ export function Sidebar({ page, setPage, compact, counts, registryRoot }: Sideba
   const admin: NavEntry[] = [
     { key: "history", label: "Audit log", icon: HistoryIcon },
     { key: "sync", label: "Git sync", icon: GitIcon },
+    { key: "doctor", label: "Doctor", icon: ShieldIcon },
     { key: "settings", label: "Settings", icon: SettingsIcon },
   ];
 

@@ -12,6 +12,7 @@ import { HistoryPage } from "./panel/HistoryPage";
 import { OpsPage } from "./panel/OpsPage";
 import { SettingsPage } from "./panel/SettingsPage";
 import { SyncPage } from "./panel/SyncPage";
+import { DoctorPage } from "./panel/DoctorPage";
 
 const DEFAULT_TWEAKS: TweakState = {
   vizMode: "loom",
@@ -32,6 +33,7 @@ const VALID_PAGES: PanelPageKey[] = [
   "ops",
   "history",
   "sync",
+  "doctor",
   "settings",
 ];
 
@@ -217,6 +219,9 @@ export function PanelApp() {
           onMutation={onMutation}
         />
       );
+      break;
+    case "doctor":
+      view = <DoctorPage live={live.live} mode={live.mode} refreshKey={live.lastUpdated} />;
       break;
     case "settings":
       view = <SettingsPage live={live.live} mode={live.mode} registryRoot={live.registryRoot} />;

@@ -13,6 +13,7 @@ const CRUMBS: Record<PanelPageKey, string> = {
   ops: "Activity",
   history: "Audit log",
   sync: "Git sync",
+  doctor: "Doctor",
   settings: "Settings",
 };
 

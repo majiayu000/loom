@@ -29,6 +29,7 @@ interface SidebarProps {
     skills: number;
     targets: number;
     bindings: number;
+    projections: number;
     opsAttention: number;
   };
   registryRoot: string | null;
@@ -45,6 +46,7 @@ export function Sidebar({ page, setPage, compact, counts, registryRoot }: Sideba
     { key: "skills", label: "Skills", icon: SkillIcon, count: counts.skills },
     { key: "targets", label: "Targets", icon: TargetIcon, count: counts.targets },
     { key: "bindings", label: "Bindings", icon: BindingIcon, count: counts.bindings },
+    { key: "projections", label: "Projections", icon: GitIcon, count: counts.projections },
     { key: "ops", label: "Activity", icon: OpsIcon, count: counts.opsAttention || null },
   ];
   const admin: NavEntry[] = [

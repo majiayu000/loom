@@ -14,6 +14,7 @@ import { SettingsPage } from "./panel/SettingsPage";
 import { SyncPage } from "./panel/SyncPage";
 import { DoctorPage } from "./panel/DoctorPage";
 import { FirstRunPage } from "./panel/FirstRunPage";
+import { ProjectionsPage } from "./panel/ProjectionsPage";
 
 const DEFAULT_TWEAKS: TweakState = {
   vizMode: "loom",
@@ -31,6 +32,7 @@ const VALID_PAGES: PanelPageKey[] = [
   "skills",
   "targets",
   "bindings",
+  "projections",
   "ops",
   "history",
   "sync",
@@ -200,6 +202,17 @@ export function PanelApp() {
           />
         );
         break;
+      case "projections":
+        view = (
+          <ProjectionsPage
+            projections={live.projections}
+            targets={targets}
+            bindings={bindings}
+            readOnly={readOnly}
+            onMutation={onMutation}
+          />
+        );
+        break;
       case "ops":
         view = <OpsPage ops={ops} onMutation={onMutation} readOnly={readOnly} />;
         break;
@@ -255,6 +268,7 @@ export function PanelApp() {
           skills: skills.length,
           targets: targets.length,
           bindings: bindings.length,
+          projections: live.projections.length,
           opsAttention: ops.filter((o) => o.status !== "ok").length,
         }}
         registryRoot={live.registryRoot}

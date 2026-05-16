@@ -10,6 +10,7 @@ const CRUMBS: Record<PanelPageKey, string> = {
   skills: "Skills",
   targets: "Targets",
   bindings: "Bindings",
+  projections: "Projections",
   ops: "Activity",
   history: "Audit log",
   sync: "Git sync",

@@ -10,6 +10,7 @@ import { SettingsPage } from "./SettingsPage";
 import { OverviewPage } from "./OverviewPage";
 import { DoctorPage } from "./DoctorPage";
 import { FirstRunPage } from "./FirstRunPage";
+import { ProjectionsPage } from "./ProjectionsPage";
 import { BindingAddForm } from "../../components/panel/forms/BindingAddForm";
 import { api, type BindingShowPayload, type CommandEnvelope, type DoctorPayload, type OpsPayload, type TargetShowPayload, type RegistryOperationRecord } from "../../lib/api/client";
 import type { Binding, Skill, Target } from "../../lib/types";
@@ -487,6 +488,108 @@ test("BindingsPage exposes orphan cleanup from live projection data", async () =
 
     await act(async () => {
       buttonByLabel(renderer!, "Clean metadata").props.onClick();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(calls).toEqual([{ delete_live_paths: false }]);
+    expect(mutations).toBe(1);
+  } finally {
+    api.orphanClean = originalOrphanClean;
+  }
+});
+
+test("ProjectionsPage can capture and re-project a selected projection", async () => {
+  const originalCapture = api.capture;
+  const originalProject = api.project;
+  const captureCalls: Array<{ instance?: string }> = [];
+  const projectCalls: Array<{ skill: string; binding: string; target?: string; method?: string }> = [];
+  let mutations = 0;
+
+  api.capture = async (body) => {
+    captureCalls.push(body);
+    return { ok: true, cmd: "skill.capture", request_id: "req-capture", data: {} };
+  };
+  api.project = async (body) => {
+    projectCalls.push(body);
+    return { ok: true, cmd: "skill.project", request_id: "req-project", data: {} };
+  };
+
+  try {
+    const projection: RegistryProjection = {
+      instance_id: "inst-demo",
+      skill_id: "skill.writer",
+      binding_id: "binding-1",
+      target_id: "target-1",
+      materialized_path: "/tmp/target-1/skill.writer",
+      method: "copy",
+      last_applied_rev: "deadbeefcafebabe",
+      health: "healthy",
+    };
+    let renderer: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(
+        <ProjectionsPage
+          projections={[projection]}
+          targets={[makeTarget()]}
+          bindings={[makeBinding()]}
+          readOnly={false}
+          onMutation={() => {
+            mutations += 1;
+          }}
+        />,
+      );
+    });
+
+    await act(async () => {
+      buttonByLabel(renderer!, "Capture").props.onClick();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      buttonByLabel(renderer!, "Re-project").props.onClick();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(captureCalls).toEqual([{ instance: "inst-demo" }]);
+    expect(projectCalls).toEqual([
+      { skill: "skill.writer", binding: "binding-1", target: "target-1", method: "copy" },
+    ]);
+    expect(mutations).toBe(2);
+  } finally {
+    api.capture = originalCapture;
+    api.project = originalProject;
+  }
+});
+
+test("ProjectionsPage cleans orphaned projection metadata", async () => {
+  const originalOrphanClean = api.orphanClean;
+  const calls: Array<{ delete_live_paths?: boolean }> = [];
+  api.orphanClean = async (body) => {
+    calls.push(body);
+    return { ok: true, cmd: "skill.orphan.clean", request_id: "req-clean", data: {} };
+  };
+
+  try {
+    let mutations = 0;
+    let renderer: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(
+        <ProjectionsPage
+          projections={[makeOrphanProjection()]}
+          targets={[makeTarget()]}
+          bindings={[makeBinding()]}
+          readOnly={false}
+          onMutation={() => {
+            mutations += 1;
+          }}
+        />,
+      );
+    });
+
+    await act(async () => {
+      buttonByLabel(renderer!, "Clean orphan").props.onClick();
       await Promise.resolve();
       await Promise.resolve();
     });

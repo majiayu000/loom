@@ -81,6 +81,7 @@ export type PanelPageKey =
   | "skills"
   | "targets"
   | "bindings"
+  | "projections"
   | "ops"
   | "history"
   | "sync"

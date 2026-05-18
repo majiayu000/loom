@@ -40,8 +40,29 @@ function installFetchMock(failingPath: string, failingResponse: Response) {
             meta: { warnings: [] },
           }),
         );
-      case "/api/skills":
-        return Promise.resolve(jsonResponse({ skills: ["typed-api-client"] }));
+      case "/api/v1/skills":
+        return Promise.resolve(
+          jsonResponse({
+            ok: true,
+            cmd: "registry.skills",
+            request_id: "req-skills",
+            data: {
+              skills: [
+                {
+                  skill_id: "typed-api-client",
+                  source_status: "present",
+                  bindings_count: 0,
+                  projections_count: 0,
+                  target_ids: [],
+                  release_tags: [],
+                  snapshot_tags: [],
+                },
+              ],
+            },
+            error: null,
+            meta: { warnings: [] },
+          }),
+        );
       case "/api/registry/status":
         return Promise.resolve(
           url === failingPath

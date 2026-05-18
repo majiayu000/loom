@@ -7,6 +7,7 @@ import {
   adaptPendingOp,
   adaptProjectionOp,
   adaptSkill,
+  adaptSkillSummary,
   adaptTarget,
   buildAdapterIndex,
 } from "./adapters";
@@ -166,8 +167,10 @@ export function usePanelData(): PanelLiveData {
 
       const index = buildAdapterIndex(registryTargets, projections);
       const targets = registryTargets.map((t) => adaptTarget(t, index));
-      const skillNames = skillsPayload.skills ?? [];
-      const skills = skillNames.map((name) => adaptSkill(name, index, rules));
+      const skillItems = skillsPayload.skills ?? [];
+      const skills = skillItems.map((item) =>
+        typeof item === "string" ? adaptSkill(item, index, rules) : adaptSkillSummary(item),
+      );
       const bindings = registryBindings.map((b) => adaptBinding(b, rules));
 
       const pendingOps: Op[] = (pending.ops ?? []).map(adaptPendingOp);

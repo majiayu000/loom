@@ -89,8 +89,24 @@ export interface TargetShowPayload {
   error?: { code?: string; message?: string };
 }
 
+export interface SkillSummaryPayload {
+  skill_id: string;
+  source_status?: "present" | "missing" | "non-compliant";
+  source_path?: string | null;
+  latest_rev?: string | null;
+  latest_updated_at?: string | null;
+  bindings_count?: number;
+  projections_count?: number;
+  target_ids?: string[];
+  release_tags?: string[];
+  snapshot_tags?: string[];
+  observed_imported?: boolean;
+  sources?: string[];
+}
+
 export interface SkillsPayload {
-  skills?: string[];
+  skills?: Array<string | SkillSummaryPayload>;
+  skill_names?: string[];
 }
 
 export interface RemoteStatusResponse {
@@ -372,7 +388,7 @@ export const api = {
   info: (signal?: AbortSignal) => getJsonData<InfoPayload>("/api/info", signal),
   workspaceStatus: (signal?: AbortSignal) =>
     getJsonData<WorkspaceStatusPayload>("/api/v1/workspace/status", signal),
-  skills: (signal?: AbortSignal) => getJsonData<SkillsPayload>("/api/skills", signal),
+  skills: (signal?: AbortSignal) => getJsonData<SkillsPayload>("/api/v1/skills", signal),
   registryStatus: (signal?: AbortSignal) => getJson<RegistryPayload>("/api/registry/status", signal),
   workspaceDoctor: (signal?: AbortSignal) =>
     getJsonData<DoctorPayload>("/api/v1/workspace/doctor", signal),

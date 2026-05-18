@@ -1,11 +1,11 @@
 use super::*;
 use crate::panel::handlers::{
     OpsQuery, info, pending, registry_ops, registry_orphan_clean, remote_set, remote_status,
-    v1_health, v1_overview, v1_registry_ops, v1_registry_targets, v1_workspace_status,
+    v1_health, v1_overview, v1_registry_ops, v1_registry_targets, v1_skills, v1_workspace_status,
 };
 use crate::state_model::{
-    REGISTRY_SCHEMA_VERSION, RegistryOperationRecord, RegistryProjectionInstance,
-    RegistryProjectionsFile,
+    REGISTRY_SCHEMA_VERSION, RegistryBindingRule, RegistryOperationRecord,
+    RegistryProjectionInstance, RegistryProjectionsFile, RegistryRulesFile,
 };
 use axum::{
     Json,
@@ -139,6 +139,103 @@ async fn v1_registry_targets_success_uses_cli_envelope_shape() {
     assert_eq!(payload["cmd"], json!("registry.targets"));
     assert_eq!(payload["error"], Value::Null);
     assert_eq!(payload["data"]["count"], json!(0));
+
+    cleanup_root(root);
+}
+
+#[tokio::test]
+async fn v1_skills_returns_union_read_model() {
+    let (root, state) = make_test_state();
+    write_registry_snapshot(&root, REGISTRY_SCHEMA_VERSION);
+    let paths = RegistryStatePaths::from_root(&root);
+    let source_dir = root.join("skills/present-skill");
+    fs::create_dir_all(&source_dir).expect("create present skill");
+    fs::write(source_dir.join("SKILL.md"), "# present\n").expect("write skill");
+    fs::create_dir_all(root.join("skills/broken-skill")).expect("create broken skill");
+
+    paths
+        .save_rules(&RegistryRulesFile {
+            schema_version: REGISTRY_SCHEMA_VERSION,
+            rules: vec![
+                RegistryBindingRule {
+                    binding_id: "binding-1".to_string(),
+                    skill_id: "present-skill".to_string(),
+                    target_id: "target-1".to_string(),
+                    method: "symlink".to_string(),
+                    watch_policy: "observe_only".to_string(),
+                    created_at: Some(Utc::now()),
+                },
+                RegistryBindingRule {
+                    binding_id: "binding-2".to_string(),
+                    skill_id: "rule-only".to_string(),
+                    target_id: "target-2".to_string(),
+                    method: "copy".to_string(),
+                    watch_policy: "observe_only".to_string(),
+                    created_at: Some(Utc::now()),
+                },
+            ],
+        })
+        .expect("save rules");
+    paths
+        .save_projections(&RegistryProjectionsFile {
+            schema_version: REGISTRY_SCHEMA_VERSION,
+            projections: vec![RegistryProjectionInstance {
+                instance_id: "inst-projected".to_string(),
+                skill_id: "projected-only".to_string(),
+                binding_id: None,
+                target_id: "target-3".to_string(),
+                materialized_path: "/tmp/projected".to_string(),
+                method: "copy".to_string(),
+                last_applied_rev: "abcdef1234567890".to_string(),
+                health: "healthy".to_string(),
+                observed_drift: Some(false),
+                updated_at: Some(Utc::now()),
+            }],
+        })
+        .expect("save projections");
+    paths
+        .append_operation(&RegistryOperationRecord {
+            op_id: "op-observed".to_string(),
+            intent: "skill.import_observed".to_string(),
+            status: "succeeded".to_string(),
+            ack: false,
+            payload: json!({}),
+            effects: json!({"imported": [{"skill": "observed-only"}]}),
+            last_error: None,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        })
+        .expect("append op");
+
+    let (status, Json(payload)) = v1_skills(State(state)).await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(payload["ok"], json!(true));
+    assert_eq!(payload["cmd"], json!("registry.skills"));
+    assert_eq!(payload["error"], Value::Null);
+    assert_eq!(payload["data"]["count"], json!(5));
+
+    let skills = payload["data"]["skills"].as_array().expect("skills array");
+    let by_id = |skill_id: &str| {
+        skills
+            .iter()
+            .find(|item| item["skill_id"] == json!(skill_id))
+            .unwrap_or_else(|| panic!("missing skill {skill_id}: {skills:?}"))
+    };
+
+    assert_eq!(by_id("present-skill")["source_status"], json!("present"));
+    assert_eq!(by_id("present-skill")["bindings_count"], json!(1));
+    assert_eq!(
+        by_id("broken-skill")["source_status"],
+        json!("non-compliant")
+    );
+    assert_eq!(by_id("rule-only")["source_status"], json!("missing"));
+    assert_eq!(by_id("projected-only")["projections_count"], json!(1));
+    assert_eq!(
+        by_id("projected-only")["latest_rev"],
+        json!("abcdef1234567890")
+    );
+    assert_eq!(by_id("observed-only")["observed_imported"], json!(true));
 
     cleanup_root(root);
 }

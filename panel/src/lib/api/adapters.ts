@@ -5,6 +5,7 @@ import type { RegistryTarget } from "../../generated/RegistryTarget";
 import type { PendingOp } from "../../types";
 import { normalizeAgentSlug } from "../agent_options";
 import type { AgentSlug, Binding, Op, Ownership, ProjectionMethod, Skill, Target } from "../types";
+import type { SkillSummaryPayload } from "./client";
 
 /**
  * Return the backend slug verbatim (lowercased + trimmed). Unknown slugs
@@ -106,8 +107,40 @@ export function adaptSkill(
     id: `s-${name}`,
     name,
     tag: inferTag(name),
+    sourceStatus: "present",
+    releaseTags: [],
+    snapshotTags: [],
     latestRev,
     ruleCount,
+    bindingCount: ruleCount,
+    projectionCount: projForSkill.length,
+    changed,
+    targets: targetIds,
+  };
+}
+
+export function adaptSkillSummary(summary: SkillSummaryPayload): Skill {
+  const name = summary.skill_id;
+  const releaseTags = summary.release_tags ?? [];
+  const snapshotTags = summary.snapshot_tags ?? [];
+  const tag = releaseTags[0] ?? (snapshotTags.length > 0 ? "snapshot" : inferTag(name));
+  const targetIds = summary.target_ids ?? [];
+  const latestRev = summary.latest_rev ? summary.latest_rev.slice(0, 8) : "—";
+  const changed = summary.latest_updated_at ? relativeTime(summary.latest_updated_at) : "—";
+  const bindingCount = summary.bindings_count ?? 0;
+  const projectionCount = summary.projections_count ?? targetIds.length;
+
+  return {
+    id: `s-${name}`,
+    name,
+    tag,
+    sourceStatus: summary.source_status ?? "missing",
+    releaseTags,
+    snapshotTags,
+    latestRev,
+    ruleCount: bindingCount,
+    bindingCount,
+    projectionCount,
     changed,
     targets: targetIds,
   };

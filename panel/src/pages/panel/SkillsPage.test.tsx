@@ -23,8 +23,13 @@ const mockSkill: Skill = {
   id: "skill-1",
   name: "my-skill",
   tag: "latest",
+  sourceStatus: "present",
+  releaseTags: [],
+  snapshotTags: [],
   latestRev: "abc12345",
   ruleCount: 2,
+  bindingCount: 2,
+  projectionCount: 0,
   changed: "1h ago",
   targets: [],
 };

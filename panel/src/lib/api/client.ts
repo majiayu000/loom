@@ -15,6 +15,11 @@ export interface RegistryOperationRecord {
   intent: string;
   status: string;
   ack: boolean;
+  request_id?: string | null;
+  skill?: string | null;
+  target?: string | null;
+  binding?: string | null;
+  method?: string | null;
   payload?: unknown;
   effects?: unknown;
   last_error?: { code: string; message: string };

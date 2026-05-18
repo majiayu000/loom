@@ -22,7 +22,7 @@ use crate::commands::{
 use crate::envelope::Envelope;
 use crate::gitops;
 use crate::state::resolve_agent_skill_dirs;
-use crate::state_model::{RegistrySnapshot, RegistryStatePaths};
+use crate::state_model::{RegistryOperationRecord, RegistrySnapshot, RegistryStatePaths};
 use crate::types::ErrorCode;
 
 use super::auth::{
@@ -171,11 +171,17 @@ pub(super) async fn v1_registry_ops(
                 .iter()
                 .rev()
                 .map(|op| {
+                    let summary = operation_summary(op);
                     json!({
                         "op_id": op.op_id,
                         "intent": op.intent,
                         "status": op.status,
                         "ack": op.ack,
+                        "request_id": summary.request_id,
+                        "skill": summary.skill,
+                        "target": summary.target,
+                        "binding": summary.binding,
+                        "method": summary.method,
                         "last_error": op.last_error,
                         "created_at": op.created_at,
                         "updated_at": op.updated_at,
@@ -199,6 +205,51 @@ pub(super) async fn v1_registry_ops(
         }
         Err(err) => panel_v1_registry_error(err),
     }
+}
+
+#[derive(Default)]
+struct OperationSummary {
+    request_id: Option<String>,
+    skill: Option<String>,
+    target: Option<String>,
+    binding: Option<String>,
+    method: Option<String>,
+}
+
+fn operation_summary(op: &RegistryOperationRecord) -> OperationSummary {
+    OperationSummary {
+        request_id: json_string_field(&op.payload, &["request_id"]),
+        skill: operation_skill_summary(op),
+        target: json_string_field(&op.payload, &["target_id", "target"]),
+        binding: json_string_field(&op.payload, &["binding_id", "binding"]),
+        method: json_string_field(&op.payload, &["method"]),
+    }
+}
+
+fn operation_skill_summary(op: &RegistryOperationRecord) -> Option<String> {
+    if let Some(skill) = json_string_field(&op.payload, &["skill_id", "skill"]) {
+        return Some(skill);
+    }
+    for field in ["imported", "updated"] {
+        let skills = op
+            .effects
+            .get(field)
+            .and_then(serde_json::Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|item| item.get("skill").and_then(serde_json::Value::as_str))
+            .collect::<Vec<_>>();
+        if !skills.is_empty() {
+            return Some(skills.join(", "));
+        }
+    }
+    None
+}
+
+fn json_string_field(value: &serde_json::Value, keys: &[&str]) -> Option<String> {
+    keys.iter()
+        .find_map(|key| value.get(*key).and_then(serde_json::Value::as_str))
+        .map(ToString::to_string)
 }
 
 pub(super) async fn v1_registry_projections(

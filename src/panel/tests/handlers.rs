@@ -69,6 +69,55 @@ fn registry_ops_returns_bounded_newest_first_rows() {
 }
 
 #[tokio::test]
+async fn v1_registry_ops_returns_activity_summary_fields() {
+    let (root, state) = make_test_state();
+    let paths = RegistryStatePaths::from_app_context(state.ctx.as_ref());
+    paths.ensure_layout().expect("ensure registry layout");
+    let now = Utc::now();
+    paths
+        .append_operation(&RegistryOperationRecord {
+            op_id: "op-activity".to_string(),
+            intent: "skill.project".to_string(),
+            status: "succeeded".to_string(),
+            ack: false,
+            payload: json!({
+                "skill_id": "demo-skill",
+                "binding_id": "binding-1",
+                "target_id": "target-1",
+                "method": "copy",
+                "request_id": "req-1"
+            }),
+            effects: json!({}),
+            last_error: None,
+            created_at: now,
+            updated_at: now,
+        })
+        .expect("append op");
+
+    let (status, Json(payload)) = v1_registry_ops(
+        Query(OpsQuery {
+            limit: Some(10),
+            offset: Some(0),
+        }),
+        State(state),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK);
+    let op = &payload["data"]["operations"][0];
+    assert_eq!(op["op_id"], json!("op-activity"));
+    assert_eq!(op["skill"], json!("demo-skill"));
+    assert_eq!(op["binding"], json!("binding-1"));
+    assert_eq!(op["target"], json!("target-1"));
+    assert_eq!(op["method"], json!("copy"));
+    assert_eq!(op["request_id"], json!("req-1"));
+    assert!(op.get("payload").is_none());
+    assert!(op.get("effects").is_none());
+
+    cleanup_root(root);
+}
+
+#[tokio::test]
 async fn v1_health_returns_cli_envelope_shape() {
     let (status, Json(payload)) = v1_health().await;
 

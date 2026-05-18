@@ -390,6 +390,30 @@ fn command_audit_redacts_sensitive_input_values() {
 }
 
 #[test]
+fn command_audit_redacts_embedded_sensitive_message_values() {
+    let root = TestDir::new("audit-redaction-embedded-message");
+
+    let (output, env) = run_loom_with_env(
+        root.path(),
+        &[],
+        &[
+            "skill",
+            "capture",
+            "--message",
+            "prefix sk-reviewtoken and ghp_reviewtoken",
+        ],
+    );
+
+    assert!(!output.status.success(), "capture unexpectedly succeeded");
+    assert_eq!(env["ok"], false);
+    let raw = fs::read_to_string(root.path().join("state/events/commands.jsonl"))
+        .expect("read command event log");
+    assert!(!raw.contains("sk-reviewtoken"));
+    assert!(!raw.contains("ghp_reviewtoken"));
+    assert!(raw.contains("prefix <redacted> and <redacted>"));
+}
+
+#[test]
 fn target_add_pushes_registry_state_to_remote() {
     let root = TestDir::new("target-add-state-push");
     let remote_root = TestDir::new("target-add-state-push-remote");

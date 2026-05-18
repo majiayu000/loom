@@ -272,6 +272,19 @@ export interface SkillAddBody {
   name: string;
 }
 
+export interface SkillSaveBody {
+  message?: string;
+}
+
+export interface SkillReleaseBody {
+  version: string;
+}
+
+export interface SkillRollbackBody {
+  to?: string;
+  steps?: number;
+}
+
 export interface CaptureBody {
   skill?: string;
   binding?: string;
@@ -396,6 +409,14 @@ export const api = {
   bindingAdd: (body: BindingAddBody) => postJson("/api/v1/bindings", body),
   bindingRemove: (bindingId: string) => postJson(`/api/v1/bindings/${encodeURIComponent(bindingId)}/remove`, {}),
   skillAdd: (body: SkillAddBody) => postJson("/api/v1/skills", body),
+  skillSave: (name: string, body: SkillSaveBody = {}) =>
+    postJson(`/api/v1/skills/${encodeURIComponent(name)}/save`, body),
+  skillSnapshot: (name: string) =>
+    postJson(`/api/v1/skills/${encodeURIComponent(name)}/snapshot`, {}),
+  skillRelease: (name: string, body: SkillReleaseBody) =>
+    postJson(`/api/v1/skills/${encodeURIComponent(name)}/release`, body),
+  skillRollback: (name: string, body: SkillRollbackBody) =>
+    postJson(`/api/v1/skills/${encodeURIComponent(name)}/rollback`, body),
   project: (body: ProjectBody) => postJson("/api/v1/projections/project", body),
   capture: (body: CaptureBody) => postJson("/api/v1/projections/capture", body),
   orphanClean: (body: OrphanCleanBody) => postJson("/api/v1/orphans/clean", body),

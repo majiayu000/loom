@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { SkillsPage } from "./SkillsPage";
 import type { Skill } from "../../lib/types";
@@ -8,6 +8,10 @@ vi.mock("../../lib/api/client", () => ({
     skillHistory: vi.fn(),
     skillDiff: vi.fn(),
     capture: vi.fn(),
+    skillSave: vi.fn(),
+    skillSnapshot: vi.fn(),
+    skillRelease: vi.fn(),
+    skillRollback: vi.fn(),
   },
 }));
 
@@ -25,14 +29,14 @@ const mockSkill: Skill = {
   targets: [],
 };
 
-function renderPage() {
+function renderPage(overrides: { onMutation?: () => void } = {}) {
   return render(
     <SkillsPage
       skills={[mockSkill]}
       targets={[]}
       selectedSkill="skill-1"
       onSelectSkill={() => {}}
-      onMutation={() => {}}
+      onMutation={overrides.onMutation ?? (() => {})}
       readOnly={false}
     />,
   );
@@ -188,5 +192,50 @@ describe("SkillsPage — empty registry", () => {
     expect(
       screen.getAllByText(/loom skill add <source> --name <name>/).length,
     ).toBeGreaterThan(0);
+  });
+});
+
+describe("SkillsPage — lifecycle actions", () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    (api.skillHistory as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: true,
+      data: { skill: "my-skill", count: 0, events: [] },
+    });
+    (api.skillSave as ReturnType<typeof vi.fn>).mockResolvedValue({ ok: true, cmd: "skill.save", request_id: "req-save" });
+    (api.skillSnapshot as ReturnType<typeof vi.fn>).mockResolvedValue({ ok: true, cmd: "skill.snapshot", request_id: "req-snapshot" });
+    (api.skillRelease as ReturnType<typeof vi.fn>).mockResolvedValue({ ok: true, cmd: "skill.release", request_id: "req-release" });
+    (api.skillRollback as ReturnType<typeof vi.fn>).mockResolvedValue({ ok: true, cmd: "skill.rollback", request_id: "req-rollback" });
+  });
+
+  it("runs save, snapshot, release, and rollback for the selected skill", async () => {
+    const onMutation = vi.fn();
+    renderPage({ onMutation });
+
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => {
+      expect(api.skillSave).toHaveBeenCalledWith("my-skill");
+      expect(screen.getByRole("button", { name: "Snapshot" })).not.toBeDisabled();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Snapshot" }));
+    await waitFor(() => {
+      expect(api.skillSnapshot).toHaveBeenCalledWith("my-skill");
+    });
+
+    fireEvent.change(screen.getByPlaceholderText("version"), { target: { value: "v1.0.0" } });
+    fireEvent.click(screen.getByRole("button", { name: "Release" }));
+    await waitFor(() => {
+      expect(api.skillRelease).toHaveBeenCalledWith("my-skill", { version: "v1.0.0" });
+      expect(screen.getByRole("button", { name: "Rollback" })).not.toBeDisabled();
+    });
+
+    fireEvent.change(screen.getByPlaceholderText("HEAD~1"), { target: { value: "snapshot/my-skill/abc" } });
+    fireEvent.click(screen.getByRole("button", { name: "Rollback" }));
+
+    await waitFor(() => {
+      expect(api.skillRollback).toHaveBeenCalledWith("my-skill", { to: "snapshot/my-skill/abc" });
+      expect(onMutation).toHaveBeenCalledTimes(4);
+    });
   });
 });

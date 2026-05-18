@@ -319,6 +319,8 @@ function SkillDetail({
         <div className="v">{policyLabel}</div>
       </div>
 
+      <LifecycleActions skillName={skill.name} onMutation={onMutation} readOnly={readOnly} />
+
       <div className="tabs">
         <button className={tab === "history" ? "active" : ""} onClick={() => setTab("history")}>
           Lifecycle
@@ -359,6 +361,117 @@ function SkillDetail({
           <TargetsTab targets={targetObjs} />
         </>
       )}
+    </div>
+  );
+}
+
+function LifecycleActions({
+  skillName,
+  onMutation,
+  readOnly,
+}: {
+  skillName: string;
+  onMutation: () => void;
+  readOnly: boolean;
+}) {
+  const [version, setVersion] = useState("");
+  const [rollbackRef, setRollbackRef] = useState("");
+  const save = useMutation();
+  const snapshot = useMutation();
+  const release = useMutation();
+  const rollback = useMutation();
+
+  const runSave = () => {
+    save.run("skill save", () => api.skillSave(skillName), onMutation);
+  };
+
+  const runSnapshot = () => {
+    snapshot.run("skill snapshot", () => api.skillSnapshot(skillName), onMutation);
+  };
+
+  const submitRelease = (event: React.FormEvent) => {
+    event.preventDefault();
+    const trimmed = version.trim();
+    if (!trimmed) return;
+    release.run("skill release", () => api.skillRelease(skillName, { version: trimmed }), () => {
+      setVersion("");
+      onMutation();
+    });
+  };
+
+  const submitRollback = (event: React.FormEvent) => {
+    event.preventDefault();
+    const trimmed = rollbackRef.trim();
+    rollback.run(
+      "skill rollback",
+      () => api.skillRollback(skillName, trimmed ? { to: trimmed } : {}),
+      () => {
+        setRollbackRef("");
+        onMutation();
+      },
+    );
+  };
+
+  const busy = save.busy || snapshot.busy || release.busy || rollback.busy;
+  const disabled = readOnly || busy;
+  const status =
+    save.error ??
+    snapshot.error ??
+    release.error ??
+    rollback.error ??
+    save.success ??
+    snapshot.success ??
+    release.success ??
+    rollback.success;
+  const hasError = Boolean(save.error ?? snapshot.error ?? release.error ?? rollback.error);
+
+  return (
+    <div className="card" style={{ padding: 12, margin: "14px 0" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))", gap: 10 }}>
+        <button
+          className="btn ghost"
+          onClick={runSave}
+          disabled={disabled}
+          title={readOnly ? "registry offline" : undefined}
+          style={fullWidthButtonStyle}
+        >
+          {save.busy ? "saving..." : "Save"}
+        </button>
+        <button
+          className="btn ghost"
+          onClick={runSnapshot}
+          disabled={disabled}
+          title={readOnly ? "registry offline" : undefined}
+          style={fullWidthButtonStyle}
+        >
+          {snapshot.busy ? "snapshotting..." : "Snapshot"}
+        </button>
+        <form onSubmit={submitRelease} style={{ display: "flex", gap: 8, minWidth: 0 }}>
+          <input
+            value={version}
+            onChange={(event) => setVersion(event.target.value)}
+            placeholder="version"
+            style={formInputStyle}
+            disabled={disabled}
+          />
+          <button className="btn primary" type="submit" disabled={disabled || !version.trim()}>
+            {release.busy ? "releasing..." : "Release"}
+          </button>
+        </form>
+        <form onSubmit={submitRollback} style={{ display: "flex", gap: 8, minWidth: 0 }}>
+          <input
+            value={rollbackRef}
+            onChange={(event) => setRollbackRef(event.target.value)}
+            placeholder="HEAD~1"
+            style={formInputStyle}
+            disabled={disabled}
+          />
+          <button className="btn ghost danger" type="submit" disabled={disabled}>
+            {rollback.busy ? "rolling back..." : "Rollback"}
+          </button>
+        </form>
+      </div>
+      {status && <div style={hasError ? errorStyle : okStyle}>{hasError ? status : `✓ ${status}`}</div>}
     </div>
   );
 }
@@ -644,6 +757,11 @@ const formInputStyle: React.CSSProperties = {
   fontSize: 12,
   fontFamily: "var(--font-mono)",
   minWidth: 0,
+};
+
+const fullWidthButtonStyle: React.CSSProperties = {
+  width: "100%",
+  justifyContent: "center",
 };
 
 const errorStyle: React.CSSProperties = {

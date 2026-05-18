@@ -73,7 +73,7 @@ loom --json --root "$REGISTRY_ROOT" skill monitor-observed --once
 - 优先 symlink 模式；只有环境不支持时再使用 `--method copy`。
 - `meta.warnings` 不为空时，视为“成功但有风险”，需写入运行日志。
 - `sync_state=LOCAL_ONLY` 或 `PENDING_PUSH` 时，不应宣称“远端已同步”。
-- 读命令（如 `workspace status`、`workspace doctor`、`target list`）不写 command event；不要把读命令当作审计记录来源。
+- 读命令（如 `workspace status`、`workspace doctor`、`target list`）不会修改 registry state、Git refs/index、live target 目录或 pending queue；它们会写入 durable command event。registry 写操作审计以 `meta.op_id` / `/api/v1/ops` 为准。
 
 ## 6. 常见失败码处理
 

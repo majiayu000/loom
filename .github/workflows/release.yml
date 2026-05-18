@@ -57,6 +57,9 @@ jobs:
       - name: Agent E2E
         run: make e2e
 
+      - name: Performance Smoke
+        run: make perf-smoke
+
       - name: Crate package dry-run
         run: cargo publish --dry-run --locked
 

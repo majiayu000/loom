@@ -21,7 +21,16 @@ export function SkillsPage({ skills, targets, bindings = [], selectedSkill, onSe
   const filtered = skills.filter((s) => s.name.includes(q) || s.tag.includes(q));
   const sel = skills.find((s) => s.id === selectedSkill) ?? skills[0];
   const capture = useMutation();
-  const captureDisabled = capture.busy || readOnly || !sel;
+  const selectedSkillBindings = sel ? bindings.filter((b) => b.skill === sel.name) : [];
+  const captureBinding = selectedSkillBindings.length === 1 ? selectedSkillBindings[0] : null;
+  const captureDisabled = capture.busy || readOnly || !sel || !captureBinding;
+  const captureTitle = readOnly
+    ? "registry offline"
+    : !sel
+      ? "select a skill first"
+      : !captureBinding
+        ? "capture requires one projected binding"
+        : undefined;
   const emptyMessage: React.ReactNode = readOnly
     ? "Live registry API is offline. Start the panel backend to load real skills."
     : q
@@ -34,11 +43,11 @@ export function SkillsPage({ skills, targets, bindings = [], selectedSkill, onSe
       );
 
   const runCapture = () => {
-    if (!sel) return;
+    if (!sel || !captureBinding) return;
     const skillName = sel?.name;
     capture.run(
       `capture ${skillName}`,
-      () => api.capture({ skill: skillName }),
+      () => api.capture({ skill: skillName, binding: captureBinding.id }),
       onMutation,
     );
   };
@@ -62,7 +71,7 @@ export function SkillsPage({ skills, targets, bindings = [], selectedSkill, onSe
             className="btn primary"
             onClick={runCapture}
             disabled={captureDisabled}
-            title={readOnly ? "registry offline" : !sel ? "select a skill first" : undefined}
+            title={captureTitle}
           >
             <PlusIcon /> {capture.busy ? "capturing…" : "Capture"}
           </button>

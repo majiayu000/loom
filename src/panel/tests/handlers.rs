@@ -14,7 +14,27 @@ use axum::{
 };
 use chrono::Duration as ChrDuration;
 use serde_json::{Value, json};
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::{
+    net::{IpAddr, Ipv4Addr, SocketAddr},
+    path::Path,
+    process::Command,
+};
+
+fn git_ok(root: &Path, args: &[&str]) {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(args)
+        .output()
+        .expect("run git");
+    assert!(
+        output.status.success(),
+        "git {:?} failed: stdout={} stderr={}",
+        args,
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
 
 #[test]
 fn registry_ops_returns_bounded_newest_first_rows() {
@@ -113,6 +133,54 @@ async fn v1_registry_ops_returns_activity_summary_fields() {
     assert_eq!(op["request_id"], json!("req-1"));
     assert!(op.get("payload").is_none());
     assert!(op.get("effects").is_none());
+
+    cleanup_root(root);
+}
+
+#[tokio::test]
+async fn v1_registry_ops_includes_snapshot_history_audit_without_registry_op_id() {
+    let (root, state) = make_test_state();
+    git_ok(&root, &["init"]);
+    let paths = RegistryStatePaths::from_app_context(state.ctx.as_ref());
+    paths.ensure_layout().expect("ensure registry layout");
+    crate::gitops::append_history_audit_event(
+        state.ctx.as_ref(),
+        "skill.snapshot",
+        json!({
+            "skill": "demo-skill",
+            "tag": "snapshot/demo-skill/20260518T000000Z-deadbee"
+        }),
+        "req-snapshot",
+    )
+    .expect("append history audit");
+
+    let (status, Json(payload)) = v1_registry_ops(
+        Query(OpsQuery {
+            limit: Some(10),
+            offset: Some(0),
+        }),
+        State(state),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(payload["data"]["registry_count"], json!(0));
+    assert_eq!(payload["data"]["audit_count"], json!(1));
+    let op = &payload["data"]["operations"][0];
+    assert_eq!(op["op_id"], Value::Null);
+    assert!(op["audit_id"].as_str().is_some());
+    assert_eq!(op["source"], json!("loom_history"));
+    assert_eq!(op["intent"], json!("skill.snapshot"));
+    assert_eq!(op["status"], json!("succeeded"));
+    assert_eq!(op["request_id"], json!("req-snapshot"));
+    assert_eq!(op["skill"], json!("demo-skill"));
+    assert!(
+        std::fs::read_to_string(paths.operations_file)
+            .expect("read registry ops")
+            .trim()
+            .is_empty(),
+        "snapshot audit must not be written as a registry operation"
+    );
 
     cleanup_root(root);
 }

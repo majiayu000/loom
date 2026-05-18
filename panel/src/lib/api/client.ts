@@ -11,7 +11,9 @@ import type { RegistryRule } from "../../generated/RegistryRule";
 import type { RegistryTarget } from "../../generated/RegistryTarget";
 
 export interface RegistryOperationRecord {
-  op_id: string;
+  op_id: string | null;
+  audit_id?: string | null;
+  source?: string;
   intent: string;
   status: string;
   ack: boolean;

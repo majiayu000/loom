@@ -192,7 +192,7 @@ export function adaptPendingOp(op: PendingOp, index: number): Op {
 
 export function adaptRegistryOperation(op: RegistryOperationRecord): Op {
   return {
-    id: op.op_id,
+    id: op.op_id ?? op.audit_id ?? op.request_id ?? `${op.intent}-${op.updated_at}`,
     status: operationStatus(op),
     kind: op.intent,
     skill: op.skill ?? op.intent,

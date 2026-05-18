@@ -2,7 +2,8 @@ mod lock;
 mod ops;
 
 pub use ops::{
-    remove_path_if_exists, summarize_history_body, synthesize_snapshot_raw_from_segment_bodies,
+    OpsAuditOperation, remove_path_if_exists, summarize_history_body,
+    synthesize_snapshot_raw_from_segment_bodies,
 };
 
 use lock::{LockMetadata, try_reap_stale_lock};

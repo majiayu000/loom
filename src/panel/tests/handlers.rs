@@ -130,7 +130,7 @@ async fn v1_health_returns_cli_envelope_shape() {
 }
 
 #[tokio::test]
-async fn v1_workspace_status_returns_cli_envelope_without_command_audit() {
+async fn v1_workspace_status_returns_cli_envelope_with_command_audit() {
     let (root, state) = make_test_state();
 
     let (status, Json(payload)) = v1_workspace_status(State(state)).await;
@@ -140,10 +140,16 @@ async fn v1_workspace_status_returns_cli_envelope_without_command_audit() {
     assert_eq!(payload["cmd"], json!("workspace.status"));
     assert_eq!(payload["data"]["state_model"], json!("registry"));
     assert_eq!(payload["data"]["registry"]["available"], json!(false));
-    assert!(
-        !root.join("state/events/commands.jsonl").exists(),
-        "read-only v1 status should not start command audit"
-    );
+    let raw = fs::read_to_string(root.join("state/events/commands.jsonl"))
+        .expect("read command event log");
+    let events = raw
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).expect("parse command event"))
+        .collect::<Vec<_>>();
+    assert_eq!(events.len(), 2);
+    assert_eq!(events[0]["cmd"], json!("workspace.status"));
+    assert_eq!(events[0]["status"], json!("started"));
+    assert_eq!(events[1]["status"], json!("succeeded"));
 
     cleanup_root(root);
 }

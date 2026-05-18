@@ -108,10 +108,14 @@ pub(super) async fn v1_overview(
 pub(super) async fn v1_workspace_status(
     State(state): State<PanelState>,
 ) -> (StatusCode, Json<serde_json::Value>) {
-    let app = App {
-        ctx: state.ctx.as_ref().clone(),
-    };
-    panel_command_envelope("workspace.status", app.cmd_status())
+    run_panel_command(
+        &state,
+        "workspace.status",
+        StatusCode::OK,
+        Command::Workspace {
+            command: WorkspaceCommand::Status,
+        },
+    )
 }
 
 pub(super) async fn v1_workspace_init(
@@ -138,19 +142,27 @@ pub(super) async fn v1_workspace_init(
 pub(super) async fn v1_workspace_doctor(
     State(state): State<PanelState>,
 ) -> (StatusCode, Json<serde_json::Value>) {
-    let app = App {
-        ctx: state.ctx.as_ref().clone(),
-    };
-    panel_command_envelope("workspace.doctor", app.cmd_doctor())
+    run_panel_command(
+        &state,
+        "workspace.doctor",
+        StatusCode::OK,
+        Command::Workspace {
+            command: WorkspaceCommand::Doctor,
+        },
+    )
 }
 
 pub(super) async fn v1_sync_status(
     State(state): State<PanelState>,
 ) -> (StatusCode, Json<serde_json::Value>) {
-    let app = App {
-        ctx: state.ctx.as_ref().clone(),
-    };
-    panel_command_envelope("sync.status", app.cmd_sync(&SyncCommand::Status))
+    run_panel_command(
+        &state,
+        "sync.status",
+        StatusCode::OK,
+        Command::Sync {
+            command: SyncCommand::Status,
+        },
+    )
 }
 
 pub(super) async fn v1_registry_ops(

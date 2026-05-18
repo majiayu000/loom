@@ -8,8 +8,9 @@ use crate::gitops;
 use crate::state::AppContext;
 use crate::state_model::{RegistrySnapshot, RegistryStatePaths};
 
-use super::super::helpers::{map_git, map_io, map_registry_state};
+use super::super::helpers::{agent_kind_as_str, map_git, map_io, map_registry_state};
 use super::super::{App, CommandFailure};
+use super::shared::{DEFAULT_SCAN_AGENTS, default_skill_dir};
 
 impl App {
     pub fn cmd_doctor(&self) -> std::result::Result<(serde_json::Value, Meta), CommandFailure> {
@@ -32,7 +33,16 @@ impl App {
         let projections_ok = projection_checks
             .iter()
             .all(|check| check.get("ok").and_then(|v| v.as_bool()).unwrap_or(false));
-        let checks_v1 = build_doctor_checks(
+
+        let home_opt = std::env::var("HOME").ok().filter(|h| !h.is_empty());
+        let agent_inventory =
+            build_agent_skill_inventory(home_opt.as_deref(), registry_snapshot.as_ref());
+        let agent_inventory_message = agent_inventory["message"]
+            .as_str()
+            .unwrap_or("agent skill directory inventory")
+            .to_string();
+
+        let mut checks_v1 = build_doctor_checks(
             &self.ctx,
             fsck_ok,
             registry_schema_ok,
@@ -40,6 +50,15 @@ impl App {
             history.conflicts.is_empty(),
             pending_report.warnings.as_slice(),
         );
+        checks_v1.push(json!({
+            "section": "agents",
+            "id": "agent_skill_inventory",
+            "ok": true,
+            "severity": "info",
+            "message": agent_inventory_message,
+            "next_action": Value::Null,
+            "details": agent_inventory.clone(),
+        }));
         let checks_v1_ok = checks_v1
             .iter()
             .all(|check| check.get("ok").and_then(|v| v.as_bool()).unwrap_or(false));
@@ -68,13 +87,51 @@ impl App {
                     "projection_drift": {
                         "ok": projections_ok,
                         "projections": projection_checks
-                    }
+                    },
+                    "agent_skill_dirs": agent_inventory
                 },
                 "checks_v1": checks_v1
             }),
             Meta::default(),
         ))
     }
+}
+
+fn build_agent_skill_inventory(home: Option<&str>, snapshot: Option<&RegistrySnapshot>) -> Value {
+    let mut agents: Vec<Value> = Vec::new();
+    if let Some(h) = home {
+        for agent in DEFAULT_SCAN_AGENTS {
+            let path = default_skill_dir(agent, h);
+            let path_str = path.display().to_string();
+            let present = path.is_dir();
+            let registered_target_count = snapshot
+                .map(|s| s.targets.targets.iter().filter(|t| t.path == path_str).count())
+                .unwrap_or(0);
+            agents.push(json!({
+                "agent": agent_kind_as_str(agent),
+                "default_path": path_str,
+                "present": present,
+                "registered_target_count": registered_target_count,
+            }));
+        }
+    }
+    let present_count = agents
+        .iter()
+        .filter(|a| a["present"].as_bool().unwrap_or(false))
+        .count();
+    let total = agents.len();
+    let message = if home.is_some() {
+        format!("detected {present_count} of {total} known agent skill directories")
+    } else {
+        "HOME not set; agent skill directory inventory unavailable".to_string()
+    };
+    json!({
+        "agents": agents,
+        "home_set": home.is_some(),
+        "present_count": present_count,
+        "total": total,
+        "message": message,
+    })
 }
 
 pub(super) fn check_projection_drift(

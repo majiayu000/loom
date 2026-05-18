@@ -23,6 +23,11 @@ jobs:
         with:
           components: rustfmt, clippy
 
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
+
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:

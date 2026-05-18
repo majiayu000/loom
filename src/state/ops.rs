@@ -6,6 +6,7 @@ use std::path::Path;
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use crate::gitops;
 use crate::types::PendingOp;
@@ -23,6 +24,11 @@ enum OpJournalEvent {
         at: DateTime<Utc>,
         op: PendingOp,
     },
+    Audited {
+        event_id: String,
+        at: DateTime<Utc>,
+        op: PendingOp,
+    },
     Removed {
         event_id: String,
         at: DateTime<Utc>,
@@ -34,13 +40,15 @@ enum OpJournalEvent {
 impl OpJournalEvent {
     fn event_id(&self) -> &str {
         match self {
-            Self::Queued { event_id, .. } | Self::Removed { event_id, .. } => event_id,
+            Self::Queued { event_id, .. }
+            | Self::Audited { event_id, .. }
+            | Self::Removed { event_id, .. } => event_id,
         }
     }
 
     fn at(&self) -> DateTime<Utc> {
         match self {
-            Self::Queued { at, .. } | Self::Removed { at, .. } => *at,
+            Self::Queued { at, .. } | Self::Audited { at, .. } | Self::Removed { at, .. } => *at,
         }
     }
 }
@@ -66,6 +74,24 @@ struct OpsReadModel {
     warnings: Vec<String>,
     journal_events: usize,
     history_events: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct OpsAuditOperation {
+    pub op_id: String,
+    pub request_id: String,
+    pub command: String,
+    pub status: String,
+    pub source: String,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    pub details: Value,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct OpsAuditReport {
+    pub operations: Vec<OpsAuditOperation>,
+    pub warnings: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -102,6 +128,103 @@ impl AppContext {
             warnings: model.warnings,
             journal_events: model.journal_events,
             history_events: model.history_events,
+        })
+    }
+
+    pub fn read_ops_audit_report(&self) -> Result<OpsAuditReport> {
+        let mut events = Vec::new();
+        let mut seen_event_ids = BTreeSet::new();
+        let mut warnings = Vec::new();
+
+        collect_audit_events_from_file(
+            &self.pending_ops_file,
+            "pending_ops",
+            &mut seen_event_ids,
+            &mut events,
+            &mut warnings,
+        )?;
+        collect_audit_events_from_dir(
+            &self.pending_ops_history_dir,
+            "pending_ops_history",
+            &mut seen_event_ids,
+            &mut events,
+            &mut warnings,
+        )?;
+        match gitops::history_journal_bodies(self) {
+            Ok(bodies) => {
+                for (path, body) in bodies {
+                    collect_audit_events_from_body(
+                        &path,
+                        "loom_history",
+                        &body,
+                        &mut seen_event_ids,
+                        &mut events,
+                        &mut warnings,
+                    );
+                }
+            }
+            Err(err) => warnings.push(format!("failed to read loom-history branch: {}", err)),
+        }
+
+        events.sort_by(|left, right| {
+            left.at
+                .cmp(&right.at)
+                .then_with(|| left.event_id.cmp(&right.event_id))
+        });
+
+        let mut operations = BTreeMap::new();
+        for event in events {
+            match event.event {
+                OpJournalEvent::Queued { mut op, .. } => {
+                    if op.op_id.is_none() {
+                        op.op_id = Some(op.stable_id());
+                    }
+                    let op_id = op.stable_id();
+                    operations.insert(
+                        op_id.clone(),
+                        OpsAuditOperation {
+                            op_id,
+                            request_id: op.request_id,
+                            command: op.command,
+                            status: "pending".to_string(),
+                            source: event.source,
+                            created_at: op.created_at,
+                            updated_at: event.at,
+                            details: op.details,
+                        },
+                    );
+                }
+                OpJournalEvent::Audited { mut op, .. } => {
+                    if op.op_id.is_none() {
+                        op.op_id = Some(op.stable_id());
+                    }
+                    let op_id = op.stable_id();
+                    operations.insert(
+                        op_id.clone(),
+                        OpsAuditOperation {
+                            op_id,
+                            request_id: op.request_id,
+                            command: op.command,
+                            status: "succeeded".to_string(),
+                            source: event.source,
+                            created_at: op.created_at,
+                            updated_at: event.at,
+                            details: op.details,
+                        },
+                    );
+                }
+                OpJournalEvent::Removed { op_id, reason, .. } => {
+                    if let Some(op) = operations.get_mut(&op_id) {
+                        op.status = reason;
+                        op.updated_at = event.at;
+                    }
+                }
+            }
+        }
+
+        Ok(OpsAuditReport {
+            operations: operations.into_values().collect(),
+            warnings,
         })
     }
 
@@ -298,6 +421,101 @@ impl AppContext {
     }
 }
 
+struct ParsedAuditEvent {
+    event_id: String,
+    at: DateTime<Utc>,
+    source: String,
+    event: OpJournalEvent,
+}
+
+fn collect_audit_events_from_dir(
+    dir: &Path,
+    source: &str,
+    seen_event_ids: &mut BTreeSet<String>,
+    events: &mut Vec<ParsedAuditEvent>,
+    warnings: &mut Vec<String>,
+) -> Result<()> {
+    let entries = match fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(err) => {
+            return Err(err).with_context(|| format!("failed to read {}", dir.display()));
+        }
+    };
+
+    let mut files = entries
+        .filter_map(|entry| entry.ok())
+        .filter(|entry| entry.file_type().map(|ty| ty.is_file()).unwrap_or(false))
+        .map(|entry| entry.path())
+        .collect::<Vec<_>>();
+    files.sort();
+
+    for file in files {
+        collect_audit_events_from_file(&file, source, seen_event_ids, events, warnings)?;
+    }
+    Ok(())
+}
+
+fn collect_audit_events_from_file(
+    path: &Path,
+    source: &str,
+    seen_event_ids: &mut BTreeSet<String>,
+    events: &mut Vec<ParsedAuditEvent>,
+    warnings: &mut Vec<String>,
+) -> Result<()> {
+    let body = match fs::read_to_string(path) {
+        Ok(body) => body,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(err) => {
+            return Err(err).with_context(|| format!("failed to read {}", path.display()));
+        }
+    };
+    collect_audit_events_from_body(
+        &path.display().to_string(),
+        source,
+        &body,
+        seen_event_ids,
+        events,
+        warnings,
+    );
+    Ok(())
+}
+
+fn collect_audit_events_from_body(
+    label: &str,
+    source: &str,
+    body: &str,
+    seen_event_ids: &mut BTreeSet<String>,
+    events: &mut Vec<ParsedAuditEvent>,
+    warnings: &mut Vec<String>,
+) {
+    for (line_no, line) in body.lines().enumerate() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        match parse_journal_line(trimmed) {
+            Ok(event) => {
+                let event_id = event.event_id().to_string();
+                if seen_event_ids.insert(event_id.clone()) {
+                    events.push(ParsedAuditEvent {
+                        event_id,
+                        at: event.at(),
+                        source: source.to_string(),
+                        event,
+                    });
+                }
+            }
+            Err(err) => warnings.push(format!(
+                "skipped malformed operation audit event at {}:{}: {}",
+                label,
+                line_no + 1,
+                err
+            )),
+        }
+    }
+}
+
 pub fn synthesize_snapshot_raw_from_segment_bodies(segment_bodies: &[String]) -> Result<String> {
     let mut seen_event_ids = BTreeSet::new();
     let mut ordered_events = Vec::new();
@@ -425,6 +643,7 @@ fn apply_journal_event(active_ops: &mut BTreeMap<String, PendingOp>, event: OpJo
             }
             active_ops.insert(op.stable_id(), op);
         }
+        OpJournalEvent::Audited { .. } => {}
         OpJournalEvent::Removed { op_id, .. } => {
             active_ops.remove(&op_id);
         }

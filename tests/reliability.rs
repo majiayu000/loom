@@ -585,6 +585,39 @@ fn snapshot_pushes_annotated_tag_to_remote() {
         "--format=%(objecttype) %(refname:strip=2)",
     ]);
     assert!(refs.lines().any(|line| line == format!("tag {}", tag)));
+    assert!(
+        run_git([
+            "--git-dir",
+            remote.to_str().unwrap(),
+            "show-ref",
+            "--verify",
+            "--quiet",
+            "refs/heads/loom-history",
+        ])
+        .status
+        .success(),
+        "snapshot should push lifecycle audit to loom-history"
+    );
+    let history_files = git_ok([
+        "--git-dir",
+        remote.to_str().unwrap(),
+        "ls-tree",
+        "-r",
+        "--name-only",
+        "loom-history",
+    ]);
+    let segment_path = history_files
+        .lines()
+        .find(|line| line.starts_with("pending_ops_history/"))
+        .expect("snapshot audit segment");
+    let segment_raw = git_ok([
+        "--git-dir",
+        remote.to_str().unwrap(),
+        "show",
+        &format!("loom-history:{segment_path}"),
+    ]);
+    assert!(segment_raw.contains("\"event\":\"audited\""));
+    assert!(segment_raw.contains("\"command\":\"skill.snapshot\""));
 
     let pending = run_loom_ok(root.path(), &["ops", "list"]);
     assert_eq!(pending["data"]["count"], 0);
@@ -778,21 +811,32 @@ fn ops_compaction_mirrors_history_into_local_git_branch() {
             .lines()
             .any(|line| line == "pending_ops_snapshot.json")
     );
-    let segment_path = files
+    let segment_paths = files
         .lines()
-        .find(|line| line.starts_with("pending_ops_history/"))
-        .expect("history segment in loom-history branch");
+        .filter(|line| line.starts_with("pending_ops_history/"))
+        .collect::<Vec<_>>();
+    assert!(
+        !segment_paths.is_empty(),
+        "history segment in loom-history branch"
+    );
     let snapshot_raw = git_ok_in(
         root.path(),
         &["show", "loom-history:pending_ops_snapshot.json"],
     );
     let snapshot: Value = serde_json::from_str(&snapshot_raw).expect("parse history snapshot");
     assert!(snapshot["history_events"].as_u64().unwrap() >= 16);
-    let segment_raw = git_ok_in(
-        root.path(),
-        &["show", &format!("loom-history:{segment_path}")],
-    );
-    assert!(segment_raw.lines().count() >= 16);
+    let segment_event_count = segment_paths
+        .iter()
+        .map(|segment_path| {
+            git_ok_in(
+                root.path(),
+                &["show", &format!("loom-history:{segment_path}")],
+            )
+            .lines()
+            .count()
+        })
+        .sum::<usize>();
+    assert!(segment_event_count >= 16);
 }
 
 #[test]

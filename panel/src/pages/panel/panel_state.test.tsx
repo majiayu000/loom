@@ -233,7 +233,7 @@ function opsPayload(operation: RegistryOperationRecord): OpsPayload {
       limit: 100,
       has_more: false,
       operations: [operation],
-      checkpoint: { last_scanned_op_id: operation.op_id },
+      checkpoint: { last_scanned_op_id: operation.op_id ?? undefined },
     },
   };
 }

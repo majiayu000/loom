@@ -4,6 +4,7 @@ mod fs_probe;
 mod helpers;
 mod projections;
 mod skill_cmds;
+mod skill_verify;
 mod sync_cmds;
 mod target_cmds;
 mod version_cmds;
@@ -175,6 +176,7 @@ impl App {
                 SkillCommand::Release(args) => self.cmd_release(args, &request_id),
                 SkillCommand::Rollback(args) => self.cmd_rollback(args, &request_id),
                 SkillCommand::Diff(args) => self.cmd_diff(args),
+                SkillCommand::Verify(args) => self.cmd_verify(args),
                 SkillCommand::Orphan {
                     command: SkillOrphanCommand::List,
                 } => self.cmd_skill_orphan_list(),

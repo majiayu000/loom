@@ -134,6 +134,8 @@ pub enum SkillCommand {
     Rollback(RollbackArgs),
     #[command(about = "Diff two revisions of a skill source")]
     Diff(DiffArgs),
+    #[command(about = "Verify a skill source has no uncommitted drift")]
+    Verify(SkillOnlyArgs),
     #[command(about = "Continuously import and update skills from observed targets")]
     MonitorObserved(MonitorObservedArgs),
     #[command(about = "Run one import pass over observed targets and exit")]

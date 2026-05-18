@@ -167,8 +167,9 @@ The chain `add → capture → save → snapshot → release → rollback` is th
 | `loom skill release` | Tag the skill at a semantic version | You're publishing a stable revision teammates can pull (`v1.2.0`) | Source (semver tag) |
 | `loom skill rollback` | Reset the source to an earlier revision (with `recovery_ref`) | A capture or save introduced bad state — undo it without losing the recovery point | Source (history) |
 | `loom skill diff` | Compare two revisions of a skill source | Inspect what changed between any two refs (commit, snapshot, release tag) | Source (read-only) |
+| `loom skill verify` | Detect uncommitted drift in a skill source | Confirm the working tree under `skills/<name>` matches the last commit; flag external edits that bypassed `save` | Source (read-only) |
 
-Quick decision: **edits from the agent side → `capture`; edits inside the registry repo → `save`; anchor → `snapshot`; public version → `release`; undo → `rollback`.**
+Quick decision: **edits from the agent side → `capture`; edits inside the registry repo → `save`; anchor → `snapshot`; public version → `release`; undo → `rollback`; integrity audit → `verify`.**
 
 ## Comparison
 

@@ -699,8 +699,8 @@ Status/API load gates remain benchmark targets for larger fixture runs.
 
 ### 11.4 Release
 
-1. `[profile.release]` enables strip, LTO, single codegen unit, and panic abort
-   unless measured regressions justify otherwise.
+1. `[profile.release]` enables size-optimized codegen, strip, LTO, single
+   codegen unit, and panic abort unless measured regressions justify otherwise.
 2. Every release artifact is smoke-tested after packaging:
    - `loom --version`
    - `loom --help`

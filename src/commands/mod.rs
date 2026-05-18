@@ -48,6 +48,22 @@ impl CommandFailure {
             details: json!({}),
         }
     }
+
+    pub(crate) fn with_rollback_errors(mut self, rollback_errors: Vec<serde_json::Value>) -> Self {
+        if rollback_errors.is_empty() {
+            return self;
+        }
+        let original_details = std::mem::replace(&mut self.details, json!({}));
+        self.details = json!({
+            "original_error": {
+                "code": self.code.as_str(),
+                "message": self.message.clone(),
+            },
+            "original_details": original_details,
+            "rollback_errors": rollback_errors,
+        });
+        self
+    }
 }
 
 pub struct App {

@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use anyhow::Context;
 use chrono::Utc;
-use serde_json::json;
+use serde_json::{Value, json};
 use uuid::Uuid;
 use walkdir::WalkDir;
 
@@ -231,7 +231,7 @@ impl App {
             backup_path_if_exists(&self.ctx, &materialized_path, "project.replace_projection")
                 .map_err(map_io)?;
         if let Err(err) = remove_path_if_exists(&materialized_path) {
-            rollback_project_mutation(
+            let rollback_errors = rollback_project_mutation(
                 &paths,
                 &materialized_path,
                 replaced_projection_backup.as_ref(),
@@ -239,10 +239,10 @@ impl App {
                 &snapshot.rules,
                 &snapshot.projections,
             );
-            return Err(map_io(err));
+            return Err(map_io(err).with_rollback_errors(rollback_errors));
         }
         if let Err(err) = project_skill_to_target(&skill_src, &materialized_path, args.method) {
-            rollback_project_mutation(
+            let rollback_errors = rollback_project_mutation(
                 &paths,
                 &materialized_path,
                 replaced_projection_backup.as_ref(),
@@ -250,7 +250,7 @@ impl App {
                 &snapshot.rules,
                 &snapshot.projections,
             );
-            return Err(map_project_io(args.method)(err));
+            return Err(map_project_io(args.method)(err).with_rollback_errors(rollback_errors));
         }
 
         let original_bindings = snapshot.bindings.clone();
@@ -348,16 +348,25 @@ impl App {
         let (commit, meta) = match post_materialize {
             Ok(result) => result,
             Err(err) => {
-                let _ = restore_registry_audit_state(&paths, &registry_audit_backup);
-                rollback_project_mutation(
+                let mut rollback_errors = Vec::new();
+                if let Err(restore_err) =
+                    restore_registry_audit_state(&paths, &registry_audit_backup)
+                {
+                    push_rollback_error(
+                        &mut rollback_errors,
+                        "restore_registry_audit_state",
+                        restore_err,
+                    );
+                }
+                rollback_errors.extend(rollback_project_mutation(
                     &paths,
                     &materialized_path,
                     replaced_projection_backup.as_ref(),
                     &original_bindings,
                     &original_rules,
                     &original_projections,
-                );
-                return Err(err);
+                ));
+                return Err(err.with_rollback_errors(rollback_errors));
             }
         };
 
@@ -416,7 +425,7 @@ impl App {
                     }
                 };
             if let Err(err) = remove_path_if_exists(&skill_path) {
-                rollback_capture_mutation(
+                let mut rollback_errors = rollback_capture_mutation(
                     &self.ctx,
                     &skill_path,
                     source_backup.as_ref(),
@@ -425,17 +434,23 @@ impl App {
                     &previous_index,
                     false,
                 );
-                rollback_registry_state(
+                if let Err(restore_err) = rollback_registry_state(
                     &paths,
                     &original_bindings,
                     &original_rules,
                     &original_projections,
-                );
+                ) {
+                    push_rollback_error(
+                        &mut rollback_errors,
+                        "restore_registry_state",
+                        restore_err,
+                    );
+                }
                 let _ = remove_path_if_exists(&tmp_path);
-                return Err(map_io(err));
+                return Err(map_io(err).with_rollback_errors(rollback_errors));
             }
             if let Err(err) = fs::rename(&tmp_path, &skill_path) {
-                rollback_capture_mutation(
+                let mut rollback_errors = rollback_capture_mutation(
                     &self.ctx,
                     &skill_path,
                     source_backup.as_ref(),
@@ -444,14 +459,20 @@ impl App {
                     &previous_index,
                     false,
                 );
-                rollback_registry_state(
+                if let Err(restore_err) = rollback_registry_state(
                     &paths,
                     &original_bindings,
                     &original_rules,
                     &original_projections,
-                );
+                ) {
+                    push_rollback_error(
+                        &mut rollback_errors,
+                        "restore_registry_state",
+                        restore_err,
+                    );
+                }
                 let _ = remove_path_if_exists(&tmp_path);
-                return Err(map_io(err));
+                return Err(map_io(err).with_rollback_errors(rollback_errors));
             }
             source_replaced = true;
         }
@@ -459,71 +480,85 @@ impl App {
         let mut commit_created = false;
         let registry_audit_backup =
             snapshot_registry_audit_state(&paths).map_err(map_registry_state)?;
-        let post_replace = (|| {
-            maybe_skill_fault("skill_capture_after_source_replace")?;
-            gitops::stage_path(&self.ctx, Path::new(&skill_rel)).map_err(map_git)?;
-            let changed = gitops::has_staged_changes_for_path(&self.ctx, Path::new(&skill_rel))
-                .map_err(map_git)?;
-            let commit = if changed {
-                let message = args.message.clone().unwrap_or_else(|| {
-                    format!(
-                        "capture({}): from {}",
-                        projection.skill_id, projection.instance_id
+        let post_replace: std::result::Result<(Option<String>, String, bool), CommandFailure> =
+            (|| {
+                maybe_skill_fault("skill_capture_after_source_replace")?;
+                gitops::stage_path(&self.ctx, Path::new(&skill_rel)).map_err(map_git)?;
+                let changed = gitops::has_staged_changes_for_path(&self.ctx, Path::new(&skill_rel))
+                    .map_err(map_git)?;
+                let commit = if changed {
+                    let message = args.message.clone().unwrap_or_else(|| {
+                        format!(
+                            "capture({}): from {}",
+                            projection.skill_id, projection.instance_id
+                        )
+                    });
+                    let commit = gitops::commit(&self.ctx, &message).map_err(map_git)?;
+                    commit_created = true;
+                    Some(commit)
+                } else {
+                    None
+                };
+                maybe_skill_fault("skill_capture_after_commit")?;
+                let current_rev = gitops::head(&self.ctx).map_err(map_git)?;
+
+                let mut projections = original_projections.clone();
+                update_projection_after_capture(
+                    &mut projections,
+                    &projection.instance_id,
+                    &current_rev,
+                )?;
+                paths
+                    .save_bindings_rules_projections(
+                        &original_bindings,
+                        &original_rules,
+                        &projections,
                     )
-                });
-                let commit = gitops::commit(&self.ctx, &message).map_err(map_git)?;
-                commit_created = true;
-                Some(commit)
-            } else {
-                None
-            };
-            maybe_skill_fault("skill_capture_after_commit")?;
-            let current_rev = gitops::head(&self.ctx).map_err(map_git)?;
+                    .map_err(map_registry_state)?;
+                maybe_skill_fault("skill_capture_after_state_save")?;
 
-            let mut projections = original_projections.clone();
-            update_projection_after_capture(
-                &mut projections,
-                &projection.instance_id,
-                &current_rev,
-            )?;
-            paths
-                .save_bindings_rules_projections(&original_bindings, &original_rules, &projections)
+                let op_id = record_registry_operation(
+                    &paths,
+                    "skill.capture",
+                    json!({
+                        "skill_id": projection.skill_id,
+                        "binding_id": projection.binding_id,
+                        "instance_id": projection.instance_id,
+                        "request_id": request_id
+                    }),
+                    json!({
+                        "instance_id": projection.instance_id,
+                        "commit": commit
+                    }),
+                )
                 .map_err(map_registry_state)?;
-            maybe_skill_fault("skill_capture_after_state_save")?;
-
-            let op_id = record_registry_operation(
-                &paths,
-                "skill.capture",
-                json!({
-                    "skill_id": projection.skill_id,
-                    "binding_id": projection.binding_id,
-                    "instance_id": projection.instance_id,
-                    "request_id": request_id
-                }),
-                json!({
-                    "instance_id": projection.instance_id,
-                    "commit": commit
-                }),
-            )
-            .map_err(map_registry_state)?;
-            record_registry_observation(
-                &paths,
-                &projection.instance_id,
-                "captured",
-                Some(live_path.display().to_string()),
-                Some(projection.last_applied_rev.clone()),
-                Some(current_rev),
-            )
-            .map_err(map_registry_state)?;
-            maybe_skill_fault("skill_capture_after_observation")?;
-            Ok((commit, op_id, changed))
-        })();
+                record_registry_observation(
+                    &paths,
+                    &projection.instance_id,
+                    "captured",
+                    Some(live_path.display().to_string()),
+                    Some(projection.last_applied_rev.clone()),
+                    Some(current_rev),
+                )
+                .map_err(map_registry_state)?;
+                maybe_skill_fault("skill_capture_after_observation")?;
+                Ok((commit, op_id, changed))
+            })();
 
         let (commit, op_id, changed) = match post_replace {
             Ok(result) => result,
             Err(err) => {
-                let _ = restore_registry_audit_state(&paths, &registry_audit_backup);
-                rollback_capture_mutation(
+                let mut rollback_errors = Vec::new();
+                if let Err(restore_err) =
+                    restore_registry_audit_state(&paths, &registry_audit_backup)
+                {
+                    push_rollback_error(
+                        &mut rollback_errors,
+                        "restore_registry_audit_state",
+                        restore_err,
+                    );
+                }
+                rollback_errors.extend(rollback_capture_mutation(
                     &self.ctx,
                     &skill_path,
                     source_backup.as_ref(),
@@ -531,14 +566,20 @@ impl App {
                     &previous_head,
                     &previous_index,
                     commit_created,
-                );
-                rollback_registry_state(
+                ));
+                if let Err(restore_err) = rollback_registry_state(
                     &paths,
                     &original_bindings,
                     &original_rules,
                     &original_projections,
-                );
-                return Err(err);
+                ) {
+                    push_rollback_error(
+                        &mut rollback_errors,
+                        "restore_registry_state",
+                        restore_err,
+                    );
+                }
+                return Err(err.with_rollback_errors(rollback_errors));
             }
         };
 
@@ -576,8 +617,17 @@ impl App {
         let (state_commit, meta) = match post_state_commit {
             Ok(result) => result,
             Err(err) => {
-                let _ = restore_registry_audit_state(&paths, &registry_audit_backup);
-                rollback_capture_mutation(
+                let mut rollback_errors = Vec::new();
+                if let Err(restore_err) =
+                    restore_registry_audit_state(&paths, &registry_audit_backup)
+                {
+                    push_rollback_error(
+                        &mut rollback_errors,
+                        "restore_registry_audit_state",
+                        restore_err,
+                    );
+                }
+                rollback_errors.extend(rollback_capture_mutation(
                     &self.ctx,
                     &skill_path,
                     source_backup.as_ref(),
@@ -585,14 +635,20 @@ impl App {
                     &previous_head,
                     &previous_index,
                     commit_created || state_commit_created,
-                );
-                rollback_registry_state(
+                ));
+                if let Err(restore_err) = rollback_registry_state(
                     &paths,
                     &original_bindings,
                     &original_rules,
                     &original_projections,
-                );
-                return Err(err);
+                ) {
+                    push_rollback_error(
+                        &mut rollback_errors,
+                        "restore_registry_state",
+                        restore_err,
+                    );
+                }
+                return Err(err.with_rollback_errors(rollback_errors));
             }
         };
 
@@ -1446,6 +1502,25 @@ fn maybe_skill_fault(tag: &str) -> std::result::Result<(), CommandFailure> {
     Ok(())
 }
 
+fn rollback_fault_active(tag: &str) -> bool {
+    std::env::var("LOOM_ROLLBACK_FAULT_INJECT").ok().as_deref() == Some(tag)
+}
+
+fn push_rollback_error(errors: &mut Vec<Value>, step: &str, message: impl ToString) {
+    errors.push(json!({
+        "step": step,
+        "message": message.to_string(),
+    }));
+}
+
+fn maybe_push_rollback_fault(errors: &mut Vec<Value>, step: &str) -> bool {
+    if rollback_fault_active(step) {
+        push_rollback_error(errors, step, format!("fault injected at {}", step));
+        return true;
+    }
+    false
+}
+
 fn rollback_project_mutation(
     paths: &RegistryStatePaths,
     materialized_path: &Path,
@@ -1453,18 +1528,30 @@ fn rollback_project_mutation(
     original_bindings: &RegistryBindingsFile,
     original_rules: &RegistryRulesFile,
     original_projections: &RegistryProjectionsFile,
-) {
+) -> Vec<Value> {
+    let mut errors = Vec::new();
     if let Some(backup) = backup {
-        let _ = restore_path_from_backup(materialized_path, backup);
+        if !maybe_push_rollback_fault(&mut errors, "restore_projection_path")
+            && let Err(err) = restore_path_from_backup(materialized_path, backup)
+        {
+            push_rollback_error(&mut errors, "restore_projection_path", err);
+        }
     } else {
-        let _ = remove_path_if_exists(materialized_path);
+        if !maybe_push_rollback_fault(&mut errors, "remove_projection_path")
+            && let Err(err) = remove_path_if_exists(materialized_path)
+        {
+            push_rollback_error(&mut errors, "remove_projection_path", err);
+        }
     }
-    rollback_registry_state(
+    if let Err(err) = rollback_registry_state(
         paths,
         original_bindings,
         original_rules,
         original_projections,
-    );
+    ) {
+        push_rollback_error(&mut errors, "restore_registry_state", err);
+    }
+    errors
 }
 
 fn rollback_capture_mutation(
@@ -1475,21 +1562,45 @@ fn rollback_capture_mutation(
     previous_head: &str,
     previous_index: &gitops::IndexSnapshot,
     commit_created: bool,
-) {
+) -> Vec<Value> {
+    let mut errors = Vec::new();
     if commit_created {
         // Preserve worktree content while removing only the command-created commit.
-        let _ = gitops::run_git_allow_failure(ctx, &["reset", "--soft", previous_head]);
+        if !maybe_push_rollback_fault(&mut errors, "reset_command_created_commit") {
+            match gitops::run_git_allow_failure(ctx, &["reset", "--soft", previous_head]) {
+                Ok(output) if output.status.success() => {}
+                Ok(output) => push_rollback_error(
+                    &mut errors,
+                    "reset_command_created_commit",
+                    String::from_utf8_lossy(&output.stderr).trim(),
+                ),
+                Err(err) => push_rollback_error(&mut errors, "reset_command_created_commit", err),
+            }
+        }
     }
 
     if source_replaced {
         if let Some(backup) = source_backup {
-            let _ = restore_path_from_backup(skill_path, backup);
+            if !maybe_push_rollback_fault(&mut errors, "restore_source_path")
+                && let Err(err) = restore_path_from_backup(skill_path, backup)
+            {
+                push_rollback_error(&mut errors, "restore_source_path", err);
+            }
         } else {
-            let _ = remove_path_if_exists(skill_path);
+            if !maybe_push_rollback_fault(&mut errors, "remove_source_path")
+                && let Err(err) = remove_path_if_exists(skill_path)
+            {
+                push_rollback_error(&mut errors, "remove_source_path", err);
+            }
         }
     }
 
-    let _ = gitops::restore_index(ctx, previous_index);
+    if !maybe_push_rollback_fault(&mut errors, "restore_git_index")
+        && let Err(err) = gitops::restore_index(ctx, previous_index)
+    {
+        push_rollback_error(&mut errors, "restore_git_index", err);
+    }
+    errors
 }
 
 fn ensure_capture_source_not_drifted(
@@ -1553,12 +1664,16 @@ fn rollback_registry_state(
     original_bindings: &RegistryBindingsFile,
     original_rules: &RegistryRulesFile,
     original_projections: &RegistryProjectionsFile,
-) {
-    let _ = paths.save_bindings_rules_projections(
+) -> anyhow::Result<()> {
+    if rollback_fault_active("restore_registry_state") {
+        anyhow::bail!("fault injected at restore_registry_state");
+    }
+    paths.save_bindings_rules_projections(
         original_bindings,
         original_rules,
         original_projections,
-    );
+    )?;
+    Ok(())
 }
 
 #[derive(Debug, Default)]

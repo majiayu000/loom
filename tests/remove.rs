@@ -49,6 +49,11 @@ fn binding_remove_cascades_metadata_and_leaves_live_projection_in_place() {
         live_projection.exists(),
         "projection should exist before remove"
     );
+    let live_projection_dir = live_projection
+        .parent()
+        .expect("live projection parent")
+        .canonicalize()
+        .expect("canonicalize live projection parent");
 
     let (output, env) = run_loom(
         root.path(),
@@ -71,7 +76,7 @@ fn binding_remove_cascades_metadata_and_leaves_live_projection_in_place() {
     );
     assert_eq!(
         env["data"]["orphaned_paths"][0],
-        Value::String(root.path().join("live/claude-a/demo").display().to_string())
+        Value::String(live_projection_dir.display().to_string())
     );
     assert!(
         env["meta"]["warnings"]
@@ -102,7 +107,7 @@ fn binding_remove_cascades_metadata_and_leaves_live_projection_in_place() {
     );
     assert_eq!(
         orphan_list_env["data"]["orphaned_paths"][0],
-        Value::String(root.path().join("live/claude-a/demo").display().to_string())
+        Value::String(live_projection_dir.display().to_string())
     );
     assert_eq!(
         orphan_list_env["data"]["projections"][0]["live_path_exists"],

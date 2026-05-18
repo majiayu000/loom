@@ -5,7 +5,7 @@ import type { RegistryTarget } from "../../generated/RegistryTarget";
 import type { PendingOp } from "../../types";
 import { normalizeAgentSlug } from "../agent_options";
 import type { AgentSlug, Binding, Op, Ownership, ProjectionMethod, Skill, Target } from "../types";
-import type { SkillSummaryPayload } from "./client";
+import type { RegistryOperationRecord, SkillSummaryPayload } from "./client";
 
 /**
  * Return the backend slug verbatim (lowercased + trimmed). Unknown slugs
@@ -188,6 +188,26 @@ export function adaptPendingOp(op: PendingOp, index: number): Op {
     method: methodField,
     time: op.created_at ? relativeTime(op.created_at) : "queued",
   };
+}
+
+export function adaptRegistryOperation(op: RegistryOperationRecord): Op {
+  return {
+    id: op.op_id,
+    status: operationStatus(op),
+    kind: op.intent,
+    skill: op.skill ?? op.intent,
+    target: op.target ?? op.binding ?? "—",
+    method: op.method ? toMethod(op.method) : "—",
+    time: op.updated_at ? relativeTime(op.updated_at) : "—",
+    reason: op.last_error?.message,
+  };
+}
+
+function operationStatus(op: RegistryOperationRecord): Op["status"] {
+  const status = op.status.toLowerCase();
+  if (op.last_error || status === "failed" || status === "error") return "err";
+  if (!op.ack || status === "pending" || status === "queued") return "pending";
+  return "ok";
 }
 
 export function adaptProjectionOp(p: RegistryProjection, index: AdapterIndex): Op {

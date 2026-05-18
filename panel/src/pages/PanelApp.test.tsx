@@ -84,6 +84,17 @@ function installFetchMock(failingPath: string, failingResponse: Response) {
         );
       case "/api/pending":
         return Promise.resolve(url === failingPath ? failingResponse : jsonResponse({ count: 0, ops: [] }));
+      case "/api/v1/ops?limit=30":
+        return Promise.resolve(
+          jsonResponse({
+            ok: true,
+            cmd: "registry.ops",
+            request_id: "req-ops",
+            data: { count: 0, loaded_count: 0, offset: 0, limit: 30, has_more: false, operations: [] },
+            error: null,
+            meta: { warnings: [] },
+          }),
+        );
       default:
         return Promise.reject(new Error(`unexpected fetch ${url}`));
     }

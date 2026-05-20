@@ -23,10 +23,21 @@ jobs:
         with:
           components: rustfmt, clippy
 
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@v2
+        with:
+          tool: nextest
+
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
+
+      - name: Tool Versions
+        run: |
+          rustc --version
+          cargo nextest --version
+          bun --version
 
       - name: Ensure jq
         run: sudo apt-get update && sudo apt-get install -y jq
@@ -43,7 +54,7 @@ jobs:
       - name: TS Bindings Drift Check
         run: |
           if ! git diff --exit-code panel/src/generated/; then
-            echo "::error::ts-rs generated bindings are out of date. Run 'cargo test' locally and commit panel/src/generated/ changes."
+            echo "::error::ts-rs generated bindings are out of date. Run 'make test' locally and commit panel/src/generated/ changes."
             exit 1
           fi
 

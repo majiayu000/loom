@@ -1,7 +1,7 @@
 mod common;
 
 use std::fs;
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 use common::{TestDir, run_loom, run_loom_with_env};
 use serde_json::Value;
@@ -93,31 +93,37 @@ fn workspace_init_scan_existing_concurrent_inits_leave_consistent_state() {
     let home_str = fake_home.path().to_string_lossy().into_owned();
     let root_str = root.path().to_string_lossy().into_owned();
 
-    let mut child1 = Command::new(env!("CARGO_BIN_EXE_loom"))
+    let child1 = Command::new(env!("CARGO_BIN_EXE_loom"))
         .arg("--json")
         .arg("--root")
         .arg(&root_str)
         .args(["workspace", "init", "--scan-existing"])
         .env("HOME", &home_str)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
         .spawn()
         .expect("spawn first loom process");
 
-    let mut child2 = Command::new(env!("CARGO_BIN_EXE_loom"))
+    let child2 = Command::new(env!("CARGO_BIN_EXE_loom"))
         .arg("--json")
         .arg("--root")
         .arg(&root_str)
         .args(["workspace", "init", "--scan-existing"])
         .env("HOME", &home_str)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
         .spawn()
         .expect("spawn second loom process");
 
-    let s1 = child1.wait().expect("wait for first process");
-    let s2 = child2.wait().expect("wait for second process");
+    let out1 = child1.wait_with_output().expect("wait for first process");
+    let out2 = child2.wait_with_output().expect("wait for second process");
 
     // At least one must succeed; the other may get LOCK_BUSY.
     assert!(
-        s1.success() || s2.success(),
-        "neither concurrent init succeeded"
+        out1.status.success() || out2.status.success(),
+        "neither concurrent init succeeded: stderr1={} stderr2={}",
+        String::from_utf8_lossy(&out1.stderr),
+        String::from_utf8_lossy(&out2.stderr)
     );
 
     // State must be consistent regardless of which process won the race.

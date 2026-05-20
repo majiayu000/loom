@@ -2,7 +2,7 @@ mod common;
 
 use std::fs;
 use std::path::Path;
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 use common::actions::{binding_add, target_add, target_add_with_default_ownership};
 use serde_json::Value;
@@ -29,12 +29,16 @@ fn git_ok(root: &Path, args: &[&str]) -> String {
 }
 
 fn git_status(root: &Path, args: &[&str]) -> bool {
+    // Suppress stderr; callers intentionally probe for missing paths
+    // (e.g. `cat-file -e HEAD:...`) where git logs "fatal: ..." on a clean miss.
     Command::new("git")
         .arg("-C")
         .arg(root)
         .arg("-c")
         .arg("commit.gpgsign=false")
         .args(args)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
         .status()
         .expect("run git")
         .success()

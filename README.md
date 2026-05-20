@@ -36,6 +36,8 @@ AI coding agents (Claude Code, Codex, Cursor, Windsurf, …) all read skills fro
 
 ```bash
 # 1. Install a prebuilt binary with bundled Panel assets
+# Install cargo-binstall once if the subcommand is not available yet
+cargo binstall --version >/dev/null 2>&1 || cargo install cargo-binstall
 cargo binstall skillloom
 
 # or install from the Homebrew tap after its formula PR is merged

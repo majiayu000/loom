@@ -13,6 +13,9 @@ export default defineConfig({
     },
   },
   build: {
+    cssCodeSplit: false,
+    modulePreload: false,
+    target: "esnext",
     rollupOptions: {
       input: {
         panel: resolve(__dirname, "index.html"),

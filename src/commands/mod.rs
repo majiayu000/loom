@@ -1,3 +1,4 @@
+mod agent_cmds;
 mod event_store;
 mod file_ops;
 mod fs_probe;
@@ -14,8 +15,9 @@ use serde_json::json;
 use uuid::Uuid;
 
 use crate::cli::{
-    Cli, Command, OpsCommand, OpsHistoryCommand, RemoteCommand, SkillCommand, SkillOrphanCommand,
-    SyncCommand, TargetCommand, WorkspaceBindingCommand, WorkspaceCommand, WorkspaceInitArgs,
+    AgentCommand, Cli, Command, OpsCommand, OpsHistoryCommand, RemoteCommand, SkillCommand,
+    SkillOrphanCommand, SyncCommand, TargetCommand, WorkspaceBindingCommand, WorkspaceCommand,
+    WorkspaceInitArgs,
 };
 use crate::envelope::{Envelope, Meta};
 use crate::state::AppContext;
@@ -168,11 +170,14 @@ impl App {
                 SkillCommand::Add(args) => self.cmd_add(args, &request_id),
                 SkillCommand::ImportObserved(args) => self.cmd_import_observed(args, &request_id),
                 SkillCommand::MonitorObserved(args) => self.cmd_monitor_observed(args, &request_id),
+                SkillCommand::Project(args) if args.dry_run => self.cmd_project_plan(args),
                 SkillCommand::Project(args) => self.cmd_project(args, &request_id),
+                SkillCommand::Capture(args) if args.dry_run => self.cmd_capture_plan(args),
                 SkillCommand::Capture(args) => self.cmd_capture(args, &request_id),
                 SkillCommand::Save(args) => self.cmd_save(args, &request_id),
                 SkillCommand::Snapshot(args) => self.cmd_snapshot(args, &request_id),
                 SkillCommand::Release(args) => self.cmd_release(args, &request_id),
+                SkillCommand::Rollback(args) if args.dry_run => self.cmd_rollback_plan(args),
                 SkillCommand::Rollback(args) => self.cmd_rollback(args, &request_id),
                 SkillCommand::Diff(args) => self.cmd_diff(args),
                 SkillCommand::Orphan {
@@ -180,10 +185,16 @@ impl App {
                 } => self.cmd_skill_orphan_list(),
                 SkillCommand::Orphan {
                     command: SkillOrphanCommand::Clean(args),
+                } if args.dry_run => self.cmd_skill_orphan_clean_plan(args),
+                SkillCommand::Orphan {
+                    command: SkillOrphanCommand::Clean(args),
                 } => self.cmd_skill_orphan_clean(args, &request_id),
             },
             Command::Sync { command } => self.cmd_sync(command),
             Command::Ops { command } => self.cmd_ops(command),
+            Command::Agent { command } => match command {
+                AgentCommand::Preflight(args) => self.cmd_agent_preflight(args),
+            },
             Command::Panel(_) => Ok((json!({"message": "panel handled in main"}), Meta::default())),
         };
 
@@ -336,6 +347,7 @@ fn command_requires_durable_audit(command: &Command) -> bool {
             OpsCommand::Retry | OpsCommand::Purge => true,
             OpsCommand::History { command } => !matches!(command, OpsHistoryCommand::Diagnose),
         },
+        Command::Agent { .. } => false,
         Command::Panel(_) => false,
     }
 }

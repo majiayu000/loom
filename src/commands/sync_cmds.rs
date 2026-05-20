@@ -21,7 +21,8 @@ impl App {
                 let (remote, meta) = remote_status_payload(&self.ctx)?;
                 Ok((json!({"remote": remote}), meta))
             }
-            SyncCommand::Push => {
+            SyncCommand::Push(args) if args.dry_run => self.cmd_sync_push_plan(),
+            SyncCommand::Push(_) => {
                 let _workspace = self.ctx.lock_workspace().map_err(map_lock)?;
                 self.ensure_write_repo_ready()?;
                 let res = sync_push_internal(&self.ctx)?;

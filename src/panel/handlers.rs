@@ -1062,6 +1062,7 @@ pub(super) async fn registry_project(
                 binding: req.binding,
                 target: req.target,
                 method: req.method.unwrap_or(ProjectionMethod::Symlink),
+                dry_run: false,
             }),
         },
     )
@@ -1175,6 +1176,7 @@ pub(super) async fn registry_skill_rollback(
                 skill: skill_name,
                 to: req.to,
                 steps: req.steps,
+                dry_run: false,
             }),
         },
     )
@@ -1199,6 +1201,7 @@ pub(super) async fn registry_capture(
                 binding: req.binding,
                 instance: req.instance,
                 message: req.message,
+                dry_run: false,
             }),
         },
     )
@@ -1222,6 +1225,7 @@ pub(super) async fn registry_orphan_clean(
             command: crate::cli::SkillCommand::Orphan {
                 command: SkillOrphanCommand::Clean(OrphanCleanArgs {
                     delete_live_paths: req.delete_live_paths,
+                    dry_run: false,
                 }),
             },
         },
@@ -1326,7 +1330,7 @@ pub(super) async fn sync_push(
         "sync.push",
         StatusCode::OK,
         Command::Sync {
-            command: SyncCommand::Push,
+            command: SyncCommand::Push(crate::cli::SyncPushArgs { dry_run: false }),
         },
     )
 }

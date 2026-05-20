@@ -204,6 +204,7 @@ Quick decision: **edits from the agent side → `capture`; edits inside the regi
 
 - Multi-directory behavior is explicit via `target add`; no implicit directory inference.
 - Agent automation should use explicit `--root`, `--json`, selectors such as `binding_id` / `target_id`, and branch on `ok` + `error.code`.
+- Agents can call `loom agent preflight --agent <agent> --workspace <path> --skill <skill>` before writing, and can add `--dry-run` to high-risk writes to get a no-mutation plan.
 - `--json` wraps both command execution errors and argument parsing failures in the same envelope. `loom panel` is the local HTTP UI server and does not return a command envelope.
 - Read commands such as `workspace status`, `workspace doctor`, `target list`, and `sync status` do not mutate registry state, Git refs, the Git index, live target directories, or the pending queue. They do write durable command audit events under `state/events/commands.jsonl`.
 - Registry metadata lives under `state/registry`; Loom does not use release-style labels for internal state names.
@@ -234,24 +235,28 @@ loom workspace binding remove <binding-id>
 loom workspace remote set <git-url>
 loom workspace remote status
 
+loom agent preflight --agent <agent> --workspace <path> [--skill <skill>] [--method <symlink|copy|materialize>]
+
 loom target add --agent <agent> --path <abs-path> [--ownership <managed|observed|external>]
 loom target list
 loom target show <target-id>
 loom target remove <target-id>
 
 loom skill add <path|git-url> --name <skill>
-loom skill project <skill> --binding <binding-id> [--target <target-id>] [--method <symlink|copy|materialize>]
-loom skill capture [<skill>] [--binding <binding-id>] [--instance <instance-id>] [--message <msg>]
+loom skill project <skill> --binding <binding-id> [--target <target-id>] [--method <symlink|copy|materialize>] [--dry-run]
+loom skill capture [<skill>] [--binding <binding-id>] [--instance <instance-id>] [--message <msg>] [--dry-run]
 loom skill save <skill> [--message <msg>]
 loom skill snapshot <skill>
 loom skill release <skill> <version>
-loom skill rollback <skill> [--to <ref> | --steps <n>]
+loom skill rollback <skill> [--to <ref> | --steps <n>] [--dry-run]
 loom skill diff <skill> <from> <to>
 loom skill import-observed [--target <target-id>]
 loom skill monitor-observed [--target <target-id>] [--once] [--interval-seconds <seconds>]
+loom skill orphan list
+loom skill orphan clean [--delete-live-paths] [--dry-run]
 
 loom sync status
-loom sync push
+loom sync push [--dry-run]
 loom sync pull
 loom sync replay
 

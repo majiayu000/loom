@@ -59,6 +59,11 @@ pub enum Command {
         #[command(subcommand)]
         command: OpsCommand,
     },
+    #[command(about = "Plan safe agent automation before mutating state")]
+    Agent {
+        #[command(subcommand)]
+        command: AgentCommand,
+    },
     #[command(about = "Serve the local registry control panel")]
     Panel(PanelArgs),
 }
@@ -158,6 +163,10 @@ pub struct OrphanCleanArgs {
     /// Also delete validated live projection directories.
     #[arg(long)]
     pub delete_live_paths: bool,
+
+    /// Show the cleanup plan without modifying registry state or live files.
+    #[arg(long)]
+    pub dry_run: bool,
 }
 
 #[derive(Debug, Clone, Subcommand, Serialize)]
@@ -181,6 +190,31 @@ pub enum OpsHistoryCommand {
     Diagnose,
     #[command(about = "Repair operation-history divergence")]
     Repair(HistoryRepairArgs),
+}
+
+#[derive(Debug, Clone, Subcommand, Serialize)]
+pub enum AgentCommand {
+    #[command(about = "Resolve selectors and risks for an agent workspace")]
+    Preflight(AgentPreflightArgs),
+}
+
+#[derive(Debug, Clone, Args, Serialize)]
+pub struct AgentPreflightArgs {
+    /// Agent kind asking for the plan.
+    #[arg(long, value_enum)]
+    pub agent: AgentKind,
+
+    /// Workspace path the agent is operating in.
+    #[arg(long)]
+    pub workspace: PathBuf,
+
+    /// Optional skill to resolve project/capture selectors for.
+    #[arg(long)]
+    pub skill: Option<String>,
+
+    /// Desired projection method for a new project operation.
+    #[arg(long, value_enum, default_value_t = ProjectionMethod::Symlink)]
+    pub method: ProjectionMethod,
 }
 
 #[derive(Debug, Clone, Args, Serialize)]
@@ -222,6 +256,10 @@ pub struct ProjectArgs {
     /// Projection strategy used for the live agent directory.
     #[arg(long, value_enum, default_value_t = ProjectionMethod::Symlink)]
     pub method: ProjectionMethod,
+
+    /// Show the projection plan without writing registry state or target files.
+    #[arg(long)]
+    pub dry_run: bool,
 }
 
 #[derive(Debug, Clone, Args, Serialize)]
@@ -240,6 +278,10 @@ pub struct CaptureArgs {
     /// Git commit message for the captured source revision.
     #[arg(long)]
     pub message: Option<String>,
+
+    /// Show the capture plan without writing registry state or source files.
+    #[arg(long)]
+    pub dry_run: bool,
 }
 
 #[derive(Debug, Clone, Args, Serialize)]
@@ -297,6 +339,10 @@ pub struct RollbackArgs {
     /// Number of source commits to roll back when --to is not provided.
     #[arg(long)]
     pub steps: Option<u32>,
+
+    /// Show the rollback plan without changing Git refs, source files, or registry state.
+    #[arg(long)]
+    pub dry_run: bool,
 }
 
 #[derive(Debug, Clone, Args, Serialize)]
@@ -388,11 +434,18 @@ pub enum SyncCommand {
     #[command(about = "Show Git sync state")]
     Status,
     #[command(about = "Push registry state and operation history")]
-    Push,
+    Push(SyncPushArgs),
     #[command(about = "Pull registry state and operation history")]
     Pull,
     #[command(about = "Replay pending operations")]
     Replay,
+}
+
+#[derive(Debug, Clone, Args, Serialize)]
+pub struct SyncPushArgs {
+    /// Show the push plan without committing, pushing, or clearing pending ops.
+    #[arg(long)]
+    pub dry_run: bool,
 }
 
 #[derive(

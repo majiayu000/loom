@@ -290,6 +290,7 @@ fn run_panel_command_returns_non_2xx_for_logical_failures_across_mutations() {
                     binding: "missing-binding".to_string(),
                     target: None,
                     method: ProjectionMethod::Symlink,
+                    dry_run: false,
                 }),
             },
         ),
@@ -302,6 +303,7 @@ fn run_panel_command_returns_non_2xx_for_logical_failures_across_mutations() {
                     binding: None,
                     instance: None,
                     message: None,
+                    dry_run: false,
                 }),
             },
         ),
@@ -342,6 +344,7 @@ fn run_panel_command_returns_non_2xx_for_logical_failures_across_mutations() {
                     skill: "missing-skill".to_string(),
                     to: Some("HEAD~1".to_string()),
                     steps: None,
+                    dry_run: false,
                 }),
             },
         ),
@@ -349,7 +352,7 @@ fn run_panel_command_returns_non_2xx_for_logical_failures_across_mutations() {
             "sync.push",
             StatusCode::OK,
             Command::Sync {
-                command: SyncCommand::Push,
+                command: SyncCommand::Push(crate::cli::SyncPushArgs { dry_run: false }),
             },
         ),
         (

@@ -25,6 +25,12 @@ exclude = [
 name = "loom"
 path = "src/main.rs"
 
+[package.metadata.binstall]
+pkg-url = "{ repo }/releases/download/v{ version }/{ name }-{ version }-{ target }.tar.gz"
+bin-dir = "{ name }-{ version }-{ target }/{ bin }{ binary-ext }"
+pkg-fmt = "tgz"
+disabled-strategies = ["quick-install"]
+
 [dependencies]
 anyhow = "1.0.98"
 axum = { version = "0.8.4", features = ["json"] }

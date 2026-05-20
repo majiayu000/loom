@@ -35,13 +35,13 @@ AI coding agents (Claude Code, Codex, Cursor, Windsurf, …) all read skills fro
 ## Quick Start
 
 ```bash
-# 1. Install
-cargo install skillloom
+# 1. Install a prebuilt binary with bundled Panel assets
+cargo binstall skillloom
 
 # or install from the Homebrew tap after its formula PR is merged
 brew install majiayu000/tap/loom
 
-# or install from source
+# or install from source when you have Rust and Bun available
 git clone https://github.com/majiayu000/loom.git
 cd loom && cargo install --path .
 
@@ -51,6 +51,26 @@ loom init
 # 3. Import/update observed skills once, or keep watching in the foreground
 loom monitor --once
 loom monitor --interval-seconds 30
+```
+
+Prebuilt GitHub Release archives are the recommended install path. They are built
+with Bun in CI, smoke-tested with `loom panel --port 0`, and include the Panel
+frontend inside the `loom` binary. Source installs are useful for development,
+but they need Bun when `panel/dist` is missing or stale.
+
+To verify a downloaded release archive:
+
+```bash
+VERSION=X.Y.Z
+TARGET=aarch64-apple-darwin
+ARCHIVE="skillloom-${VERSION}-${TARGET}.tar.gz"
+
+curl -LO "https://github.com/majiayu000/loom/releases/download/v${VERSION}/${ARCHIVE}"
+curl -LO "https://github.com/majiayu000/loom/releases/download/v${VERSION}/SHA256SUMS"
+shasum -a 256 -c SHA256SUMS --ignore-missing
+gh attestation verify "${ARCHIVE}" --repo majiayu000/loom
+tar -xzf "${ARCHIVE}"
+install -m 755 "skillloom-${VERSION}-${TARGET}/loom" "$HOME/.local/bin/loom"
 ```
 
 Loom defaults to `~/.loom-registry`. Pass `--root <dir>` only when you want a different registry.

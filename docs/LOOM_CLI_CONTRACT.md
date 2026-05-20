@@ -1,7 +1,7 @@
 # Loom registry model CLI Contract
 
-Updated: 2026-05-13
-Status: Draft
+Updated: 2026-05-18
+Status: Implemented
 
 ## 1. Purpose
 
@@ -22,8 +22,11 @@ This document turns [LOOM_STATE_MODEL.md](LOOM_STATE_MODEL.md) into a concrete m
 3. Projection-related writes must never rely on a guessed default Claude directory.
 4. Workspace-scoped writes must identify a `binding_id`.
 5. Target-scoped writes must identify a `target_id`.
-6. Every successful write returns an `op_id`.
-7. Read commands must have zero side effects.
+6. Every successful registry write returns an `op_id`; noop writes and
+   non-registry lifecycle actions may omit it by explicit command contract.
+7. Read commands must have zero control-plane side effects. They do not mutate
+   registry state, Git refs, Git index, live targets, or pending queue; they do
+   append command-audit events.
 
 ## 3. Naming Rules
 
@@ -593,9 +596,9 @@ Examples:
 
 Requirements:
 
-1. no `op_id`
-2. no write side effects
-3. no command-event audit write
+1. no registry `op_id`
+2. no registry, Git, live-target, or pending-queue write side effects
+3. command-event audit write is expected
 
 ### 15.2 Writes
 

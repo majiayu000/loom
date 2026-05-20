@@ -161,7 +161,7 @@ pub async fn run_panel(ctx: AppContext, port: u16) -> Result<()> {
             "/api/v1/bindings/{binding_id}/remove",
             post(registry_binding_remove),
         )
-        .route("/api/v1/skills", post(registry_skill_add))
+        .route("/api/v1/skills", get(v1_skills).post(registry_skill_add))
         .route(
             "/api/v1/skills/{skill_name}/save",
             post(registry_skill_save),

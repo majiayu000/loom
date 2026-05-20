@@ -76,7 +76,7 @@ export function HistoryPage({ live, mode, mutationVersion, refreshKey }: History
       if (filter !== "all" && bucket(op) !== filter) return false;
       if (!needle) return true;
       return (
-        op.op_id.toLowerCase().includes(needle) ||
+        operationDisplayId(op).toLowerCase().includes(needle) ||
         op.intent.toLowerCase().includes(needle) ||
         (op.last_error?.message ?? "").toLowerCase().includes(needle)
       );
@@ -229,7 +229,7 @@ export function HistoryPage({ live, mode, mutationVersion, refreshKey }: History
                 </tr>
               )}
               {filtered.map((op) => (
-                <OpHistoryRow key={op.op_id} op={op} />
+                <OpHistoryRow key={operationDisplayId(op)} op={op} />
               ))}
             </tbody>
           </table>
@@ -271,12 +271,16 @@ export function bucket(op: RegistryOperationRecord): "pending" | "ok" | "err" {
   return op.ack ? "ok" : "pending";
 }
 
+function operationDisplayId(op: RegistryOperationRecord): string {
+  return op.op_id ?? op.audit_id ?? op.request_id ?? `${op.intent}-${op.updated_at}`;
+}
+
 function OpHistoryRow({ op }: { op: RegistryOperationRecord }) {
   const kind = bucket(op);
   const color = kind === "err" ? "var(--err)" : kind === "pending" ? "var(--pending)" : "var(--ok)";
   return (
     <tr>
-      <td className="mono dim">{op.op_id}</td>
+      <td className="mono dim">{operationDisplayId(op)}</td>
       <td className="name">{op.intent}</td>
       <td>
         <span className="chip" style={{ color }}>

@@ -21,7 +21,16 @@ export function SkillsPage({ skills, targets, bindings = [], selectedSkill, onSe
   const filtered = skills.filter((s) => s.name.includes(q) || s.tag.includes(q));
   const sel = skills.find((s) => s.id === selectedSkill) ?? skills[0];
   const capture = useMutation();
-  const captureDisabled = capture.busy || readOnly || !sel;
+  const selectedSkillBindings = sel ? bindings.filter((b) => b.skill === sel.name) : [];
+  const captureBinding = selectedSkillBindings.length === 1 ? selectedSkillBindings[0] : null;
+  const captureDisabled = capture.busy || readOnly || !sel || !captureBinding;
+  const captureTitle = readOnly
+    ? "registry offline"
+    : !sel
+      ? "select a skill first"
+      : !captureBinding
+        ? "capture requires one projected binding"
+        : undefined;
   const emptyMessage: React.ReactNode = readOnly
     ? "Live registry API is offline. Start the panel backend to load real skills."
     : q
@@ -34,11 +43,11 @@ export function SkillsPage({ skills, targets, bindings = [], selectedSkill, onSe
       );
 
   const runCapture = () => {
-    if (!sel) return;
+    if (!sel || !captureBinding) return;
     const skillName = sel?.name;
     capture.run(
       `capture ${skillName}`,
-      () => api.capture({ skill: skillName }),
+      () => api.capture({ skill: skillName, binding: captureBinding.id }),
       onMutation,
     );
   };
@@ -62,7 +71,7 @@ export function SkillsPage({ skills, targets, bindings = [], selectedSkill, onSe
             className="btn primary"
             onClick={runCapture}
             disabled={captureDisabled}
-            title={readOnly ? "registry offline" : !sel ? "select a skill first" : undefined}
+            title={captureTitle}
           >
             <PlusIcon /> {capture.busy ? "capturing…" : "Capture"}
           </button>
@@ -108,10 +117,11 @@ export function SkillsPage({ skills, targets, bindings = [], selectedSkill, onSe
               <thead>
                 <tr>
                   <th>Name</th>
-                  <th>Tag</th>
+                  <th>Source</th>
                   <th>Latest rev</th>
-                  <th>Rules</th>
-                  <th>Targets</th>
+                  <th>Tags</th>
+                  <th>Bindings</th>
+                  <th>Projections</th>
                   <th>Changed</th>
                 </tr>
               </thead>
@@ -124,17 +134,18 @@ export function SkillsPage({ skills, targets, bindings = [], selectedSkill, onSe
                   >
                     <td className="name">{s.name}</td>
                     <td>
-                      <span className="chip">{s.tag}</span>
+                      <span className={`chip ${s.sourceStatus}`}>{s.sourceStatus}</span>
                     </td>
                     <td className="mono">{s.latestRev}</td>
-                    <td className="mono dim">{s.ruleCount}</td>
-                    <td className="mono">{s.targets.length}</td>
+                    <td className="mono dim">{formatSkillTags(s)}</td>
+                    <td className="mono dim">{s.bindingCount}</td>
+                    <td className="mono">{s.projectionCount}</td>
                     <td className="mono dim">{s.changed}</td>
                   </tr>
                 ))}
                 {filtered.length === 0 && (
                   <tr>
-                    <td colSpan={6} style={{ color: "var(--ink-3)", padding: 22, textAlign: "center" }}>
+                    <td colSpan={7} style={{ color: "var(--ink-3)", padding: 22, textAlign: "center" }}>
                       {emptyMessage}
                     </td>
                   </tr>
@@ -204,6 +215,16 @@ function summarizePolicy(skillBindings: Binding[]): string {
   const kinds = Object.keys(counts);
   if (kinds.length === 1) return `${kinds[0]} · ${skillBindings.length} binding${skillBindings.length === 1 ? "" : "s"}`;
   return kinds.map((k) => `${counts[k]} ${k}`).join(" · ");
+}
+
+function formatSkillTags(skill: Skill): string {
+  const tags = [
+    ...skill.releaseTags.map((tag) => `release:${tag}`),
+    ...skill.snapshotTags.map((tag) => `snapshot:${tag}`),
+  ];
+  if (tags.length === 0) return "—";
+  if (tags.length <= 2) return tags.join(" ");
+  return `${tags[0]} +${tags.length - 1}`;
 }
 
 type DetailTab = "history" | "diff" | "targets";
@@ -309,12 +330,16 @@ function SkillDetail({
       <h4>{skill.name}</h4>
       <div className="dpath">skills/{skill.name}@{skill.latestRev}</div>
       <div className="kv">
-        <div className="k">Tag</div>
-        <div className="v">{skill.tag}</div>
+        <div className="k">Source</div>
+        <div className="v">{skill.sourceStatus}</div>
         <div className="k">Latest rev</div>
         <div className="v">{skill.latestRev}</div>
-        <div className="k">Rules</div>
-        <div className="v">{skill.ruleCount} on chain</div>
+        <div className="k">Tags</div>
+        <div className="v">{formatSkillTags(skill)}</div>
+        <div className="k">Bindings</div>
+        <div className="v">{skill.bindingCount}</div>
+        <div className="k">Projections</div>
+        <div className="v">{skill.projectionCount}</div>
         <div className="k">Policy</div>
         <div className="v">{policyLabel}</div>
       </div>

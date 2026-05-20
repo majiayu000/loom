@@ -1,11 +1,11 @@
 use super::*;
 use crate::panel::handlers::{
     OpsQuery, info, pending, registry_ops, registry_orphan_clean, remote_set, remote_status,
-    v1_health, v1_overview, v1_registry_ops, v1_registry_targets, v1_workspace_status,
+    v1_health, v1_overview, v1_registry_ops, v1_registry_targets, v1_skills, v1_workspace_status,
 };
 use crate::state_model::{
-    REGISTRY_SCHEMA_VERSION, RegistryOperationRecord, RegistryProjectionInstance,
-    RegistryProjectionsFile,
+    REGISTRY_SCHEMA_VERSION, RegistryBindingRule, RegistryOperationRecord,
+    RegistryProjectionInstance, RegistryProjectionsFile, RegistryRulesFile,
 };
 use axum::{
     Json,
@@ -14,7 +14,27 @@ use axum::{
 };
 use chrono::Duration as ChrDuration;
 use serde_json::{Value, json};
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::{
+    net::{IpAddr, Ipv4Addr, SocketAddr},
+    path::Path,
+    process::Command,
+};
+
+fn git_ok(root: &Path, args: &[&str]) {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(args)
+        .output()
+        .expect("run git");
+    assert!(
+        output.status.success(),
+        "git {:?} failed: stdout={} stderr={}",
+        args,
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
 
 #[test]
 fn registry_ops_returns_bounded_newest_first_rows() {
@@ -69,6 +89,103 @@ fn registry_ops_returns_bounded_newest_first_rows() {
 }
 
 #[tokio::test]
+async fn v1_registry_ops_returns_activity_summary_fields() {
+    let (root, state) = make_test_state();
+    let paths = RegistryStatePaths::from_app_context(state.ctx.as_ref());
+    paths.ensure_layout().expect("ensure registry layout");
+    let now = Utc::now();
+    paths
+        .append_operation(&RegistryOperationRecord {
+            op_id: "op-activity".to_string(),
+            intent: "skill.project".to_string(),
+            status: "succeeded".to_string(),
+            ack: false,
+            payload: json!({
+                "skill_id": "demo-skill",
+                "binding_id": "binding-1",
+                "target_id": "target-1",
+                "method": "copy",
+                "request_id": "req-1"
+            }),
+            effects: json!({}),
+            last_error: None,
+            created_at: now,
+            updated_at: now,
+        })
+        .expect("append op");
+
+    let (status, Json(payload)) = v1_registry_ops(
+        Query(OpsQuery {
+            limit: Some(10),
+            offset: Some(0),
+        }),
+        State(state),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK);
+    let op = &payload["data"]["operations"][0];
+    assert_eq!(op["op_id"], json!("op-activity"));
+    assert_eq!(op["skill"], json!("demo-skill"));
+    assert_eq!(op["binding"], json!("binding-1"));
+    assert_eq!(op["target"], json!("target-1"));
+    assert_eq!(op["method"], json!("copy"));
+    assert_eq!(op["request_id"], json!("req-1"));
+    assert!(op.get("payload").is_none());
+    assert!(op.get("effects").is_none());
+
+    cleanup_root(root);
+}
+
+#[tokio::test]
+async fn v1_registry_ops_includes_snapshot_history_audit_without_registry_op_id() {
+    let (root, state) = make_test_state();
+    git_ok(&root, &["init"]);
+    let paths = RegistryStatePaths::from_app_context(state.ctx.as_ref());
+    paths.ensure_layout().expect("ensure registry layout");
+    crate::gitops::append_history_audit_event(
+        state.ctx.as_ref(),
+        "skill.snapshot",
+        json!({
+            "skill": "demo-skill",
+            "tag": "snapshot/demo-skill/20260518T000000Z-deadbee"
+        }),
+        "req-snapshot",
+    )
+    .expect("append history audit");
+
+    let (status, Json(payload)) = v1_registry_ops(
+        Query(OpsQuery {
+            limit: Some(10),
+            offset: Some(0),
+        }),
+        State(state),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(payload["data"]["registry_count"], json!(0));
+    assert_eq!(payload["data"]["audit_count"], json!(1));
+    let op = &payload["data"]["operations"][0];
+    assert_eq!(op["op_id"], Value::Null);
+    assert!(op["audit_id"].as_str().is_some());
+    assert_eq!(op["source"], json!("loom_history"));
+    assert_eq!(op["intent"], json!("skill.snapshot"));
+    assert_eq!(op["status"], json!("succeeded"));
+    assert_eq!(op["request_id"], json!("req-snapshot"));
+    assert_eq!(op["skill"], json!("demo-skill"));
+    assert!(
+        std::fs::read_to_string(paths.operations_file)
+            .expect("read registry ops")
+            .trim()
+            .is_empty(),
+        "snapshot audit must not be written as a registry operation"
+    );
+
+    cleanup_root(root);
+}
+
+#[tokio::test]
 async fn v1_health_returns_cli_envelope_shape() {
     let (status, Json(payload)) = v1_health().await;
 
@@ -81,7 +198,7 @@ async fn v1_health_returns_cli_envelope_shape() {
 }
 
 #[tokio::test]
-async fn v1_workspace_status_returns_cli_envelope_without_command_audit() {
+async fn v1_workspace_status_returns_cli_envelope_with_command_audit() {
     let (root, state) = make_test_state();
 
     let (status, Json(payload)) = v1_workspace_status(State(state)).await;
@@ -91,10 +208,16 @@ async fn v1_workspace_status_returns_cli_envelope_without_command_audit() {
     assert_eq!(payload["cmd"], json!("workspace.status"));
     assert_eq!(payload["data"]["state_model"], json!("registry"));
     assert_eq!(payload["data"]["registry"]["available"], json!(false));
-    assert!(
-        !root.join("state/events/commands.jsonl").exists(),
-        "read-only v1 status should not start command audit"
-    );
+    let raw = fs::read_to_string(root.join("state/events/commands.jsonl"))
+        .expect("read command event log");
+    let events = raw
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).expect("parse command event"))
+        .collect::<Vec<_>>();
+    assert_eq!(events.len(), 2);
+    assert_eq!(events[0]["cmd"], json!("workspace.status"));
+    assert_eq!(events[0]["status"], json!("started"));
+    assert_eq!(events[1]["status"], json!("succeeded"));
 
     cleanup_root(root);
 }
@@ -139,6 +262,103 @@ async fn v1_registry_targets_success_uses_cli_envelope_shape() {
     assert_eq!(payload["cmd"], json!("registry.targets"));
     assert_eq!(payload["error"], Value::Null);
     assert_eq!(payload["data"]["count"], json!(0));
+
+    cleanup_root(root);
+}
+
+#[tokio::test]
+async fn v1_skills_returns_union_read_model() {
+    let (root, state) = make_test_state();
+    write_registry_snapshot(&root, REGISTRY_SCHEMA_VERSION);
+    let paths = RegistryStatePaths::from_root(&root);
+    let source_dir = root.join("skills/present-skill");
+    fs::create_dir_all(&source_dir).expect("create present skill");
+    fs::write(source_dir.join("SKILL.md"), "# present\n").expect("write skill");
+    fs::create_dir_all(root.join("skills/broken-skill")).expect("create broken skill");
+
+    paths
+        .save_rules(&RegistryRulesFile {
+            schema_version: REGISTRY_SCHEMA_VERSION,
+            rules: vec![
+                RegistryBindingRule {
+                    binding_id: "binding-1".to_string(),
+                    skill_id: "present-skill".to_string(),
+                    target_id: "target-1".to_string(),
+                    method: "symlink".to_string(),
+                    watch_policy: "observe_only".to_string(),
+                    created_at: Some(Utc::now()),
+                },
+                RegistryBindingRule {
+                    binding_id: "binding-2".to_string(),
+                    skill_id: "rule-only".to_string(),
+                    target_id: "target-2".to_string(),
+                    method: "copy".to_string(),
+                    watch_policy: "observe_only".to_string(),
+                    created_at: Some(Utc::now()),
+                },
+            ],
+        })
+        .expect("save rules");
+    paths
+        .save_projections(&RegistryProjectionsFile {
+            schema_version: REGISTRY_SCHEMA_VERSION,
+            projections: vec![RegistryProjectionInstance {
+                instance_id: "inst-projected".to_string(),
+                skill_id: "projected-only".to_string(),
+                binding_id: None,
+                target_id: "target-3".to_string(),
+                materialized_path: "/tmp/projected".to_string(),
+                method: "copy".to_string(),
+                last_applied_rev: "abcdef1234567890".to_string(),
+                health: "healthy".to_string(),
+                observed_drift: Some(false),
+                updated_at: Some(Utc::now()),
+            }],
+        })
+        .expect("save projections");
+    paths
+        .append_operation(&RegistryOperationRecord {
+            op_id: "op-observed".to_string(),
+            intent: "skill.import_observed".to_string(),
+            status: "succeeded".to_string(),
+            ack: false,
+            payload: json!({}),
+            effects: json!({"imported": [{"skill": "observed-only"}]}),
+            last_error: None,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        })
+        .expect("append op");
+
+    let (status, Json(payload)) = v1_skills(State(state)).await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(payload["ok"], json!(true));
+    assert_eq!(payload["cmd"], json!("registry.skills"));
+    assert_eq!(payload["error"], Value::Null);
+    assert_eq!(payload["data"]["count"], json!(5));
+
+    let skills = payload["data"]["skills"].as_array().expect("skills array");
+    let by_id = |skill_id: &str| {
+        skills
+            .iter()
+            .find(|item| item["skill_id"] == json!(skill_id))
+            .unwrap_or_else(|| panic!("missing skill {skill_id}: {skills:?}"))
+    };
+
+    assert_eq!(by_id("present-skill")["source_status"], json!("present"));
+    assert_eq!(by_id("present-skill")["bindings_count"], json!(1));
+    assert_eq!(
+        by_id("broken-skill")["source_status"],
+        json!("non-compliant")
+    );
+    assert_eq!(by_id("rule-only")["source_status"], json!("missing"));
+    assert_eq!(by_id("projected-only")["projections_count"], json!(1));
+    assert_eq!(
+        by_id("projected-only")["latest_rev"],
+        json!("abcdef1234567890")
+    );
+    assert_eq!(by_id("observed-only")["observed_imported"], json!(true));
 
     cleanup_root(root);
 }

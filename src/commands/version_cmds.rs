@@ -2,7 +2,7 @@ use std::fs;
 use std::path::Path;
 
 use chrono::Utc;
-use serde_json::json;
+use serde_json::{Value, json};
 
 use crate::cli::{DiffArgs, ReleaseArgs, RollbackArgs};
 use crate::envelope::Meta;
@@ -101,12 +101,16 @@ impl App {
                 result
             }
             Err(err) => {
-                reset_command_created_commit_best_effort(self, &previous_head);
-                restore_registry_layout_best_effort(&paths, &registry_layout_backup);
+                let mut rollback_errors =
+                    reset_command_created_commit_best_effort(self, &previous_head);
+                rollback_errors.extend(restore_registry_layout_best_effort(
+                    &paths,
+                    &registry_layout_backup,
+                ));
                 remove_registry_layout_backups_best_effort(&registry_layout_backup);
-                let _ = gitops::restore_index(&self.ctx, &previous_index);
+                rollback_errors.extend(restore_index_best_effort(&self.ctx, &previous_index));
                 delete_tag_best_effort(self, &tag);
-                return Err(err);
+                return Err(err.with_rollback_errors(rollback_errors));
             }
         };
 
@@ -150,13 +154,23 @@ impl App {
         if let Err(err) =
             gitops::checkout_path_from_ref(&self.ctx, &reference, Path::new(&skill_rel))
         {
-            restore_path_best_effort(&skill_path, skill_backup.as_ref());
+            restore_path_best_effort(
+                &skill_path,
+                skill_backup.as_ref(),
+                "restore_skill_path",
+                "remove_skill_path",
+            );
             remove_backup_path_best_effort(skill_backup.as_ref());
             let _ = gitops::restore_index(&self.ctx, &previous_index);
             return Err(map_git(err));
         }
         if let Err(err) = gitops::stage_path(&self.ctx, Path::new(&skill_rel)) {
-            restore_path_best_effort(&skill_path, skill_backup.as_ref());
+            restore_path_best_effort(
+                &skill_path,
+                skill_backup.as_ref(),
+                "restore_skill_path",
+                "remove_skill_path",
+            );
             remove_backup_path_best_effort(skill_backup.as_ref());
             let _ = gitops::restore_index(&self.ctx, &previous_index);
             return Err(map_git(err));
@@ -165,7 +179,12 @@ impl App {
         let changed = match gitops::has_staged_changes_for_path(&self.ctx, Path::new(&skill_rel)) {
             Ok(changed) => changed,
             Err(err) => {
-                restore_path_best_effort(&skill_path, skill_backup.as_ref());
+                restore_path_best_effort(
+                    &skill_path,
+                    skill_backup.as_ref(),
+                    "restore_skill_path",
+                    "remove_skill_path",
+                );
                 remove_backup_path_best_effort(skill_backup.as_ref());
                 let _ = gitops::restore_index(&self.ctx, &previous_index);
                 return Err(map_git(err));
@@ -184,7 +203,12 @@ impl App {
         let registry_layout_backup =
             backup_registry_layout(&self.ctx, &paths).map_err(map_registry_state)?;
         if let Err(err) = paths.ensure_layout() {
-            restore_path_best_effort(&skill_path, skill_backup.as_ref());
+            restore_path_best_effort(
+                &skill_path,
+                skill_backup.as_ref(),
+                "restore_skill_path",
+                "remove_skill_path",
+            );
             remove_backup_path_best_effort(skill_backup.as_ref());
             restore_registry_layout_best_effort(&paths, &registry_layout_backup);
             remove_registry_layout_backups_best_effort(&registry_layout_backup);
@@ -200,7 +224,12 @@ impl App {
             &recovery_ref,
             &format!("recovery before rollback {}", args.skill),
         ) {
-            restore_path_best_effort(&skill_path, skill_backup.as_ref());
+            restore_path_best_effort(
+                &skill_path,
+                skill_backup.as_ref(),
+                "restore_skill_path",
+                "remove_skill_path",
+            );
             remove_backup_path_best_effort(skill_backup.as_ref());
             restore_registry_layout_best_effort(&paths, &registry_layout_backup);
             remove_registry_layout_backups_best_effort(&registry_layout_backup);
@@ -213,7 +242,12 @@ impl App {
             Ok(commit) => commit,
             Err(err) => {
                 delete_tag_best_effort(self, &recovery_ref);
-                restore_path_best_effort(&skill_path, skill_backup.as_ref());
+                restore_path_best_effort(
+                    &skill_path,
+                    skill_backup.as_ref(),
+                    "restore_skill_path",
+                    "remove_skill_path",
+                );
                 remove_backup_path_best_effort(skill_backup.as_ref());
                 restore_registry_layout_best_effort(&paths, &registry_layout_backup);
                 remove_registry_layout_backups_best_effort(&registry_layout_backup);
@@ -279,14 +313,26 @@ impl App {
                 result
             }
             Err(err) => {
+                let mut rollback_errors = Vec::new();
                 delete_tag_best_effort(self, &recovery_ref);
-                reset_command_created_commit_best_effort(self, &previous_head);
-                restore_path_best_effort(&skill_path, skill_backup.as_ref());
+                rollback_errors.extend(reset_command_created_commit_best_effort(
+                    self,
+                    &previous_head,
+                ));
+                rollback_errors.extend(restore_path_best_effort(
+                    &skill_path,
+                    skill_backup.as_ref(),
+                    "restore_skill_path",
+                    "remove_skill_path",
+                ));
                 remove_backup_path_best_effort(skill_backup.as_ref());
-                restore_registry_layout_best_effort(&paths, &registry_layout_backup);
+                rollback_errors.extend(restore_registry_layout_best_effort(
+                    &paths,
+                    &registry_layout_backup,
+                ));
                 remove_registry_layout_backups_best_effort(&registry_layout_backup);
-                let _ = gitops::restore_index(&self.ctx, &previous_index);
-                return Err(err);
+                rollback_errors.extend(restore_index_best_effort(&self.ctx, &previous_index));
+                return Err(err.with_rollback_errors(rollback_errors));
             }
         };
 
@@ -339,16 +385,44 @@ fn delete_tag_best_effort(app: &App, tag: &str) {
     let _ = gitops::run_git_allow_failure(&app.ctx, &["tag", "-d", tag]);
 }
 
-fn reset_command_created_commit_best_effort(app: &App, previous_head: &str) {
-    let _ = gitops::run_git_allow_failure(&app.ctx, &["reset", "--soft", previous_head]);
+fn reset_command_created_commit_best_effort(app: &App, previous_head: &str) -> Vec<Value> {
+    let mut errors = Vec::new();
+    if maybe_push_rollback_fault(&mut errors, "reset_command_created_commit") {
+        return errors;
+    }
+    match gitops::run_git_allow_failure(&app.ctx, &["reset", "--soft", previous_head]) {
+        Ok(output) if output.status.success() => {}
+        Ok(output) => push_rollback_error(
+            &mut errors,
+            "reset_command_created_commit",
+            String::from_utf8_lossy(&output.stderr).trim(),
+        ),
+        Err(err) => push_rollback_error(&mut errors, "reset_command_created_commit", err),
+    }
+    errors
 }
 
-fn restore_path_best_effort(path: &Path, backup: Option<&serde_json::Value>) {
+fn restore_path_best_effort(
+    path: &Path,
+    backup: Option<&serde_json::Value>,
+    restore_step: &str,
+    remove_step: &str,
+) -> Vec<Value> {
+    let mut errors = Vec::new();
     if let Some(backup) = backup {
-        let _ = restore_path_from_backup(path, backup);
+        if !maybe_push_rollback_fault(&mut errors, restore_step)
+            && let Err(err) = restore_path_from_backup(path, backup)
+        {
+            push_rollback_error(&mut errors, restore_step, err);
+        }
     } else {
-        let _ = crate::state::remove_path_if_exists(path);
+        if !maybe_push_rollback_fault(&mut errors, remove_step)
+            && let Err(err) = crate::state::remove_path_if_exists(path)
+        {
+            push_rollback_error(&mut errors, remove_step, err);
+        }
     }
+    errors
 }
 
 struct RegistryLayoutBackup {
@@ -370,16 +444,75 @@ fn backup_registry_layout(
     })
 }
 
-fn restore_registry_layout_best_effort(paths: &RegistryStatePaths, backup: &RegistryLayoutBackup) {
+fn restore_registry_layout_best_effort(
+    paths: &RegistryStatePaths,
+    backup: &RegistryLayoutBackup,
+) -> Vec<Value> {
+    let mut errors = Vec::new();
     if backup.registry.is_some() {
-        restore_path_best_effort(&paths.registry_dir, backup.registry.as_ref());
+        if maybe_push_rollback_fault(&mut errors, "restore_registry_layout") {
+            // Fault injection intentionally skips the actual restore.
+        } else {
+            errors.extend(restore_path_best_effort(
+                &paths.registry_dir,
+                backup.registry.as_ref(),
+                "restore_registry_layout",
+                "remove_registry_layout",
+            ));
+        }
     } else {
-        let _ = crate::state::remove_path_if_exists(&paths.registry_dir);
+        if !maybe_push_rollback_fault(&mut errors, "remove_registry_layout")
+            && let Err(err) = crate::state::remove_path_if_exists(&paths.registry_dir)
+        {
+            push_rollback_error(&mut errors, "remove_registry_layout", err);
+        }
     }
 
     if backup.legacy_v3.is_some() {
-        restore_path_best_effort(&paths.state_dir.join("v3"), backup.legacy_v3.as_ref());
+        if maybe_push_rollback_fault(&mut errors, "restore_legacy_registry_layout") {
+            // Fault injection intentionally skips the actual restore.
+        } else {
+            errors.extend(restore_path_best_effort(
+                &paths.state_dir.join("v3"),
+                backup.legacy_v3.as_ref(),
+                "restore_legacy_registry_layout",
+                "remove_legacy_registry_layout",
+            ));
+        }
     }
+    errors
+}
+
+fn restore_index_best_effort(
+    ctx: &crate::state::AppContext,
+    previous_index: &gitops::IndexSnapshot,
+) -> Vec<Value> {
+    let mut errors = Vec::new();
+    if !maybe_push_rollback_fault(&mut errors, "restore_git_index")
+        && let Err(err) = gitops::restore_index(ctx, previous_index)
+    {
+        push_rollback_error(&mut errors, "restore_git_index", err);
+    }
+    errors
+}
+
+fn rollback_fault_active(tag: &str) -> bool {
+    std::env::var("LOOM_ROLLBACK_FAULT_INJECT").ok().as_deref() == Some(tag)
+}
+
+fn push_rollback_error(errors: &mut Vec<Value>, step: &str, message: impl ToString) {
+    errors.push(json!({
+        "step": step,
+        "message": message.to_string(),
+    }));
+}
+
+fn maybe_push_rollback_fault(errors: &mut Vec<Value>, step: &str) -> bool {
+    if rollback_fault_active(step) {
+        push_rollback_error(errors, step, format!("fault injected at {}", step));
+        return true;
+    }
+    false
 }
 
 fn remove_registry_layout_backups_best_effort(backup: &RegistryLayoutBackup) {

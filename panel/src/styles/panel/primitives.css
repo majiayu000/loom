@@ -156,6 +156,24 @@
   color: var(--ink-1);
 }
 
+.chip.present {
+  color: var(--ok);
+  border-color: rgba(111, 183, 138, 0.32);
+  background: rgba(111, 183, 138, 0.08);
+}
+
+.chip.missing {
+  color: var(--warn);
+  border-color: rgba(213, 172, 85, 0.34);
+  background: rgba(213, 172, 85, 0.08);
+}
+
+.chip.non-compliant {
+  color: var(--err);
+  border-color: rgba(216, 90, 90, 0.34);
+  background: rgba(216, 90, 90, 0.08);
+}
+
 .chip.method {
   background: transparent;
   border-color: var(--line-hi);

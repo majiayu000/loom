@@ -195,7 +195,7 @@ Quick decision: **edits from the agent side → `capture`; edits inside the regi
 - Multi-directory behavior is explicit via `target add`; no implicit directory inference.
 - Agent automation should use explicit `--root`, `--json`, selectors such as `binding_id` / `target_id`, and branch on `ok` + `error.code`.
 - `--json` wraps both command execution errors and argument parsing failures in the same envelope. `loom panel` is the local HTTP UI server and does not return a command envelope.
-- Read commands such as `workspace status`, `workspace doctor`, `target list`, and `sync status` do not write command audit events; write commands do.
+- Read commands such as `workspace status`, `workspace doctor`, `target list`, and `sync status` do not mutate registry state, Git refs, the Git index, live target directories, or the pending queue. They do write durable command audit events under `state/events/commands.jsonl`.
 - Registry metadata lives under `state/registry`; Loom does not use release-style labels for internal state names.
 - State-changing registry commands commit `state/registry` to Git, and `sync push` has a safety commit before pushing.
 - Hard write guard: if `--root` points to the Loom tool repo itself, write operations are rejected. Use an independent skill registry repo for mutable operations.

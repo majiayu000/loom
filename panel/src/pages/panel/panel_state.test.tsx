@@ -111,8 +111,13 @@ function makeSkill(): Skill {
     id: "s-skill.writer",
     name: "skill.writer",
     tag: "v1",
+    sourceStatus: "present",
+    releaseTags: ["v1"],
+    snapshotTags: [],
     latestRev: "abc12345",
     ruleCount: 1,
+    bindingCount: 1,
+    projectionCount: 1,
     changed: "now",
     targets: ["target-1"],
   };
@@ -228,7 +233,7 @@ function opsPayload(operation: RegistryOperationRecord): OpsPayload {
       limit: 100,
       has_more: false,
       operations: [operation],
-      checkpoint: { last_scanned_op_id: operation.op_id },
+      checkpoint: { last_scanned_op_id: operation.op_id ?? undefined },
     },
   };
 }

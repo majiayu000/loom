@@ -55,7 +55,9 @@ These assumptions fail when:
 
 ## 5. Design Principles
 
-1. Read paths must have zero side effects.
+1. Read paths must have zero control-plane side effects: no registry, Git,
+   pending queue, or live target mutation. Durable command audit events are
+   expected.
 2. Live directories are derived state.
 3. Destructive projection changes require explicit intent and recovery points.
 4. Default discovery is advisory only. Execution requires explicit target or binding identity.

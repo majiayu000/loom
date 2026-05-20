@@ -203,7 +203,8 @@ pub(crate) fn redact_sensitive_string(raw: &str) -> String {
     if looks_like_secret(raw) {
         return "<redacted>".to_string();
     }
-    redact_url_sensitive_parts(&redact_url_userinfo(raw))
+    let redacted = redact_url_sensitive_parts(&redact_url_userinfo(raw));
+    redact_embedded_secrets(&redacted)
 }
 
 fn redacted_value(mut value: serde_json::Value) -> serde_json::Value {
@@ -282,6 +283,89 @@ fn redact_query(query: &str) -> String {
         .join("&")
 }
 
+fn redact_embedded_secrets(raw: &str) -> String {
+    let mut redacted = String::with_capacity(raw.len());
+    let mut cursor = 0;
+
+    while let Some((start, end)) = find_secret_span(raw, cursor) {
+        redacted.push_str(&raw[cursor..start]);
+        redacted.push_str("<redacted>");
+        cursor = end;
+    }
+
+    redacted.push_str(&raw[cursor..]);
+    redacted
+}
+
+fn find_secret_span(raw: &str, from: usize) -> Option<(usize, usize)> {
+    for (offset, _) in raw[from..].char_indices() {
+        let start = from + offset;
+        if let Some(end) = secret_span_at(raw, start) {
+            return Some((start, end));
+        }
+    }
+    None
+}
+
+fn secret_span_at(raw: &str, start: usize) -> Option<usize> {
+    if !is_secret_boundary_before(raw, start) {
+        return None;
+    }
+
+    if raw[start..].starts_with("Bearer ") {
+        let token_start = start + "Bearer ".len();
+        let token_end = secret_token_end(raw, token_start);
+        return (token_end > token_start).then_some(token_end);
+    }
+
+    for prefix in [
+        "github_pat_",
+        "ghp_",
+        "glpat-",
+        "sk-",
+        "xoxb-",
+        "xoxp-",
+        "xoxa-",
+        "ya29.",
+    ] {
+        if raw[start..].starts_with(prefix) {
+            let token_end = secret_token_end(raw, start + prefix.len());
+            return (token_end > start + prefix.len()).then_some(token_end);
+        }
+    }
+
+    if raw[start..].starts_with("AKIA") {
+        let token_end = secret_token_end(raw, start);
+        if token_end - start >= 20 {
+            return Some(token_end);
+        }
+    }
+
+    None
+}
+
+fn secret_token_end(raw: &str, token_start: usize) -> usize {
+    let mut end = token_start;
+    for (offset, ch) in raw[token_start..].char_indices() {
+        if !is_secret_token_char(ch) {
+            break;
+        }
+        end = token_start + offset + ch.len_utf8();
+    }
+    end
+}
+
+fn is_secret_boundary_before(raw: &str, start: usize) -> bool {
+    raw[..start]
+        .chars()
+        .next_back()
+        .is_none_or(|ch| !ch.is_ascii_alphanumeric() && !matches!(ch, '_' | '-' | '.'))
+}
+
+fn is_secret_token_char(ch: char) -> bool {
+    ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-' | '.' | '/' | '+' | '=')
+}
+
 fn key_is_sensitive(key: &str) -> bool {
     let normalized = key
         .chars()
@@ -347,6 +431,22 @@ mod tests {
         assert_eq!(
             redact_sensitive_string("github_pat_abcdefghijklmnopqrstuvwxyz1234567890"),
             "<redacted>"
+        );
+    }
+
+    #[test]
+    fn redacts_embedded_token_like_values() {
+        assert_eq!(
+            redact_sensitive_string("prefix sk-reviewtoken and ghp_reviewtoken suffix"),
+            "prefix <redacted> and <redacted> suffix"
+        );
+        assert_eq!(
+            redact_sensitive_string("Authorization: Bearer reviewtoken"),
+            "Authorization: <redacted>"
+        );
+        assert_eq!(
+            redact_sensitive_string("mask-sk-not-a-token"),
+            "mask-sk-not-a-token"
         );
     }
 

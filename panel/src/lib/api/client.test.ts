@@ -100,4 +100,24 @@ describe("api v1 routes", () => {
       "/api/v1/ops/history/repair",
     ]);
   });
+
+  it("uses the v1 endpoint for the skills read model", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      json: vi.fn().mockResolvedValue({
+        ok: true,
+        cmd: "registry.skills",
+        request_id: "req-1",
+        data: { skills: [] },
+        error: null,
+        meta: { warnings: [] },
+      }),
+    } as unknown as Response);
+
+    await api.skills();
+
+    expect(fetchSpy).toHaveBeenCalledWith("/api/v1/skills", { signal: undefined });
+  });
 });

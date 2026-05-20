@@ -5,8 +5,9 @@ import type { Binding, Op, Skill, Target } from "../types";
 import {
   adaptBinding,
   adaptPendingOp,
-  adaptProjectionOp,
+  adaptRegistryOperation,
   adaptSkill,
+  adaptSkillSummary,
   adaptTarget,
   buildAdapterIndex,
 } from "./adapters";
@@ -150,11 +151,12 @@ export function usePanelData(): PanelLiveData {
         return;
       }
 
-      const [skillsPayload, registry, remote, pending] = await Promise.all([
+      const [skillsPayload, registry, remote, pending, activity] = await Promise.all([
         api.skills(controller.signal),
         api.registryStatus(controller.signal),
         api.remoteStatus(controller.signal),
         api.pending(controller.signal),
+        api.ops({ limit: 30 }, controller.signal),
       ]);
       if (controller.signal.aborted || generation !== generationRef.current) return;
 
@@ -166,13 +168,15 @@ export function usePanelData(): PanelLiveData {
 
       const index = buildAdapterIndex(registryTargets, projections);
       const targets = registryTargets.map((t) => adaptTarget(t, index));
-      const skillNames = skillsPayload.skills ?? [];
-      const skills = skillNames.map((name) => adaptSkill(name, index, rules));
+      const skillItems = skillsPayload.skills ?? [];
+      const skills = skillItems.map((item) =>
+        typeof item === "string" ? adaptSkill(item, index, rules) : adaptSkillSummary(item),
+      );
       const bindings = registryBindings.map((b) => adaptBinding(b, rules));
 
       const pendingOps: Op[] = (pending.ops ?? []).map(adaptPendingOp);
-      const projectionOps: Op[] = projections.map((p) => adaptProjectionOp(p, index));
-      const ops = [...pendingOps, ...projectionOps].slice(0, 30);
+      const activityOps: Op[] = (activity.data?.operations ?? []).map(adaptRegistryOperation);
+      const ops = [...pendingOps, ...activityOps].slice(0, 30);
 
       setState(
         markSuccess({

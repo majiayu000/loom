@@ -2,15 +2,18 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use anyhow::{Result, anyhow};
+use chrono::Utc;
 use serde::Serialize;
+use serde_json::json;
 
 use crate::state::AppContext;
+use crate::types::PendingOp;
 
 use super::{
     HISTORY_BRANCH, HISTORY_BRANCH_REF, HISTORY_COMPACT_AFTER_SEGMENTS, HISTORY_RETAIN_ARCHIVES,
     HISTORY_RETAIN_RECENT_SEGMENTS, ORIGIN_HISTORY_BRANCH_REF, ahead_behind_refs,
-    ensure_local_identity, hash_object_file, remote_exists, remote_tracking_history_exists,
-    repo_is_initialized,
+    ensure_local_identity, hash_object_bytes, hash_object_file, read_blob, remote_exists,
+    remote_tracking_history_exists, repo_is_initialized,
 };
 
 use super::history_impl::{
@@ -122,6 +125,79 @@ pub fn history_status(ctx: &AppContext) -> Result<HistoryStatusReport> {
         retain_archives: HISTORY_RETAIN_ARCHIVES,
         conflicts,
     })
+}
+
+pub fn history_journal_bodies(ctx: &AppContext) -> Result<Vec<(String, String)>> {
+    if !repo_is_initialized(ctx)? {
+        return Ok(Vec::new());
+    }
+    let Some(local) = load_history_branch_state(ctx, HISTORY_BRANCH_REF)? else {
+        return Ok(Vec::new());
+    };
+
+    let mut bodies = Vec::with_capacity(local.archives.len() + local.segments.len());
+    for (path, blob) in local.archives.iter().chain(local.segments.iter()) {
+        bodies.push((path.clone(), read_blob(ctx, blob)?));
+    }
+    Ok(bodies)
+}
+
+pub fn append_history_audit_event(
+    ctx: &AppContext,
+    command: &str,
+    details: serde_json::Value,
+    request_id: &str,
+) -> Result<String> {
+    ensure_local_identity(ctx)?;
+
+    let op = PendingOp::new(command, details, request_id.to_string());
+    let op_id = op.stable_id();
+    let event_id = uuid::Uuid::new_v4().to_string();
+    let at = Utc::now();
+    let raw = serde_json::to_string(&json!({
+        "event": "audited",
+        "event_id": event_id,
+        "at": at,
+        "op": op,
+    }))? + "\n";
+    let segment_blob = hash_object_bytes(ctx, raw.as_bytes())?;
+    let segment_ref_path = format!(
+        "pending_ops_history/00001-{}.jsonl",
+        event_id.replace('-', "")
+    );
+
+    let base = load_history_branch_state(ctx, HISTORY_BRANCH_REF)?;
+    let mut archives = base
+        .as_ref()
+        .map_or_else(BTreeMap::new, |state| state.archives.clone());
+    let mut segments = base
+        .as_ref()
+        .map_or_else(BTreeMap::new, |state| state.segments.clone());
+    segments.insert(segment_ref_path, segment_blob);
+
+    let retention = apply_history_retention(ctx, &mut archives, &mut segments)?;
+    let snapshot_blob = synthesize_history_snapshot_blob(ctx, &archives, &segments)?;
+    let composed = ComposedHistoryState {
+        archives,
+        segments,
+        snapshot_blob,
+        retention,
+    };
+    let new_tree = build_tree_from_entries(ctx, &history_tree_entries(&composed))?;
+    let parents = base
+        .as_ref()
+        .map(|state| vec![state.commit.as_str()])
+        .unwrap_or_default();
+    let commit = create_commit_tree(
+        ctx,
+        &new_tree,
+        &parents,
+        &format!("Audit operation {}", command),
+    )?;
+    let expected_old = base.as_ref().map(|state| state.commit.as_str());
+    update_ref(ctx, HISTORY_BRANCH_REF, &commit, expected_old)?;
+
+    Ok(op_id)
 }
 
 pub fn repair_history_branch(

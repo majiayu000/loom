@@ -28,6 +28,7 @@ export type AgentKind = AgentSlug;
 export type Ownership = "managed" | "observed" | "external";
 export type ProjectionMethod = "symlink" | "copy" | "materialize";
 export type OpStatus = "ok" | "pending" | "err";
+export type SkillSourceStatus = "present" | "missing" | "non-compliant";
 
 export interface Target {
   id: string;
@@ -43,6 +44,9 @@ export interface Skill {
   id: string;
   name: string;
   tag: string;
+  sourceStatus: SkillSourceStatus;
+  releaseTags: string[];
+  snapshotTags: string[];
   /**
    * Short form of the latest applied projection revision (first 8 chars
    * of the git hash). Displayed as "latest rev" in UI. Distinct from any
@@ -51,6 +55,8 @@ export interface Skill {
   latestRev: string;
   /** Number of rules (binding → target routing entries) that mention this skill. */
   ruleCount: number;
+  bindingCount: number;
+  projectionCount: number;
   /** Relative time since the skill's newest projection was last updated. */
   changed: string;
   targets: string[];

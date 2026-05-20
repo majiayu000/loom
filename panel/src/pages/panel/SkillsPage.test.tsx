@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { SkillsPage } from "./SkillsPage";
-import type { Skill } from "../../lib/types";
+import type { Binding, Skill } from "../../lib/types";
 
 vi.mock("../../lib/api/client", () => ({
   api: {
@@ -23,17 +23,32 @@ const mockSkill: Skill = {
   id: "skill-1",
   name: "my-skill",
   tag: "latest",
+  sourceStatus: "present",
+  releaseTags: [],
+  snapshotTags: [],
   latestRev: "abc12345",
   ruleCount: 2,
+  bindingCount: 2,
+  projectionCount: 0,
   changed: "1h ago",
   targets: [],
 };
 
-function renderPage(overrides: { onMutation?: () => void } = {}) {
+const mockBinding: Binding = {
+  id: "binding-1",
+  skill: "my-skill",
+  target: "target-1",
+  matcher: "path_prefix:/repo",
+  method: "copy",
+  policy: "auto",
+};
+
+function renderPage(overrides: { onMutation?: () => void; bindings?: Binding[] } = {}) {
   return render(
     <SkillsPage
       skills={[mockSkill]}
       targets={[]}
+      bindings={overrides.bindings ?? []}
       selectedSkill="skill-1"
       onSelectSkill={() => {}}
       onMutation={overrides.onMutation ?? (() => {})}
@@ -48,6 +63,39 @@ function makeSkill(overrides: Partial<Skill> = {}): Skill {
     ...overrides,
   };
 }
+
+describe("SkillsPage — capture action", () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    (api.skillHistory as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: true,
+      data: { skill: "my-skill", count: 0, events: [] },
+    });
+    (api.capture as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: true,
+      cmd: "skill.capture",
+      request_id: "req-capture",
+    });
+  });
+
+  it("sends a binding selector for a skill with one projected binding", async () => {
+    const onMutation = vi.fn();
+    renderPage({ bindings: [mockBinding], onMutation });
+
+    fireEvent.click(screen.getByRole("button", { name: "Capture" }));
+
+    await waitFor(() => {
+      expect(api.capture).toHaveBeenCalledWith({ skill: "my-skill", binding: "binding-1" });
+      expect(onMutation).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it("disables capture when the skill has no unique binding selector", () => {
+    renderPage();
+
+    expect(screen.getByRole("button", { name: "Capture" })).toBeDisabled();
+  });
+});
 
 describe("SkillsPage — history tab", () => {
   beforeEach(() => {

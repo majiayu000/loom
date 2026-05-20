@@ -48,6 +48,22 @@ impl CommandFailure {
             details: json!({}),
         }
     }
+
+    pub(crate) fn with_rollback_errors(mut self, rollback_errors: Vec<serde_json::Value>) -> Self {
+        if rollback_errors.is_empty() {
+            return self;
+        }
+        let original_details = std::mem::replace(&mut self.details, json!({}));
+        self.details = json!({
+            "original_error": {
+                "code": self.code.as_str(),
+                "message": self.message.clone(),
+            },
+            "original_details": original_details,
+            "rollback_errors": rollback_errors,
+        });
+        self
+    }
 }
 
 pub struct App {
@@ -81,6 +97,7 @@ impl App {
             .clone()
             .unwrap_or_else(|| Uuid::new_v4().to_string());
         let audit_required = command_requires_durable_audit(&cli.command);
+        let audit_enabled = command_records_audit(&cli.command);
         if audit_required && let Err(err) = self.ctx.ensure_not_loom_tool_repo_root() {
             let message = err.to_string();
             let message = message
@@ -91,31 +108,40 @@ impl App {
             return Ok((env, ErrorCode::ArgInvalid.exit_code()));
         }
         let mut audit_event_id = None;
-        if audit_required {
+        let mut audit_warnings = Vec::new();
+        if audit_enabled {
             let input = command_event_input(&cli, &request_id);
             match prepare_command_event_store(&self.ctx) {
                 Ok(()) => match append_command_started(&self.ctx, cmd, input, &request_id) {
                     Ok(event_id) => audit_event_id = Some(event_id),
                     Err(err) => {
+                        let warning = format!("failed to append command event: {}", err);
+                        if audit_required {
+                            let env = Envelope::err(
+                                cmd,
+                                request_id,
+                                ErrorCode::AuditError,
+                                warning,
+                                json!({}),
+                            );
+                            return Ok((env, ErrorCode::AuditError.exit_code()));
+                        }
+                        audit_warnings.push(warning);
+                    }
+                },
+                Err(err) => {
+                    let warning = format!("failed to prepare command event log: {}", err);
+                    if audit_required {
                         let env = Envelope::err(
                             cmd,
                             request_id,
                             ErrorCode::AuditError,
-                            format!("failed to append command event: {}", err),
+                            warning,
                             json!({}),
                         );
                         return Ok((env, ErrorCode::AuditError.exit_code()));
                     }
-                },
-                Err(err) => {
-                    let env = Envelope::err(
-                        cmd,
-                        request_id,
-                        ErrorCode::AuditError,
-                        format!("failed to prepare command event log: {}", err),
-                        json!({}),
-                    );
-                    return Ok((env, ErrorCode::AuditError.exit_code()));
+                    audit_warnings.push(warning);
                 }
             }
         }
@@ -163,7 +189,8 @@ impl App {
 
         match result {
             Ok((data, meta)) => {
-                let env = Envelope::ok(cmd, request_id, data, meta);
+                let mut env = Envelope::ok(cmd, request_id, data, meta);
+                env.meta.warnings.extend(audit_warnings);
                 Ok(
                     self.finish_command_audit(
                         cmd,
@@ -176,7 +203,8 @@ impl App {
             }
             Err(f) => {
                 let exit_code = f.code.exit_code();
-                let env = Envelope::err(cmd, request_id, f.code, f.message, f.details);
+                let mut env = Envelope::err(cmd, request_id, f.code, f.message, f.details);
+                env.meta.warnings.extend(audit_warnings);
                 Ok(self.finish_command_audit(
                     cmd,
                     env,
@@ -266,6 +294,10 @@ impl App {
         paths.ensure_layout().map_err(helpers::map_registry_state)?;
         Ok(paths)
     }
+}
+
+fn command_records_audit(command: &Command) -> bool {
+    !matches!(command, Command::Panel(_))
 }
 
 fn command_requires_durable_audit(command: &Command) -> bool {

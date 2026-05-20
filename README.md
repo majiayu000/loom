@@ -185,7 +185,7 @@ Quick decision: **edits from the agent side → `capture`; edits inside the regi
 | Git-native sync + replay | ❌ | cloud sync | ❌ | **✅** |
 | Hard write guard | ❌ | ❌ | ❌ | **✅** |
 | CLI-first + Web panel | GUI only | GUI only | CLI only | **✅** |
-| Breadth of agents supported | 44 | 5 | 18 | 10 (Claude, Codex, Cursor, Windsurf, Cline, Copilot, Aider, OpenCode, Gemini CLI, Goose) |
+| Breadth of agents supported | 44 | 5 | 18 | 10 ([list](docs/SUPPORTED_AGENTS.md)) |
 | Desktop app (dmg/msi) | ✅ | ✅ | ❌ | — |
 
 **Pick Loom when** you want fine-grained control (multi-project routing, Git-backed lifecycle, git-tracked audit trail) and are comfortable on the CLI. **Pick skills-hub or cc-switch** when you want a one-click GUI with broad agent coverage and don't need projection/binding semantics.
@@ -312,8 +312,8 @@ and fails the commit if rustfmt would make changes. Disable with
 
 ## Roadmap
 
-- Per-agent default path conventions & env overrides (beyond `CLAUDE_SKILLS_DIR` / `CODEX_SKILLS_DIR`) for the 8 newly added agents — paths are currently supplied explicitly via `target add --path`
-- Extend `loom workspace init --scan-existing` auto-import to the 8 newly added agents once their skill-directory conventions stabilize (currently scans Claude and Codex only)
+- Per-agent environment overrides beyond the default paths listed in [Supported Agents](docs/SUPPORTED_AGENTS.md).
+- Convert observed agent directories to managed projection targets from the Panel once users opt in.
 - Desktop packaging (Tauri) for users who prefer a GUI
 - Skill marketplace integration (upstream catalogs such as `agent-skills`)
 

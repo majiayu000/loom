@@ -3,7 +3,7 @@ mod common;
 use std::fs;
 
 use common::actions::{binding_add, save_skill, skill_project, target_add};
-use common::{TestDir, run_loom, write_skill};
+use common::{TestDir, run_loom, run_loom_with_env, write_skill};
 use serde_json::Value;
 
 fn find_check<'a>(env: &'a Value, id_prefix: &str) -> &'a Value {
@@ -176,4 +176,130 @@ fn workspace_doctor_marks_pending_queue_warnings_unhealthy() {
     assert_eq!(check["ok"], Value::Bool(false));
     assert_eq!(check["severity"], Value::String("warning".to_string()));
     assert_eq!(check["details"]["warning_count"], Value::from(1));
+}
+
+#[test]
+fn workspace_doctor_reports_agent_skill_inventory() {
+    let root = TestDir::new("doctor-agent-inventory");
+    let fake_home = root.path().join("fake-home");
+    fs::create_dir_all(fake_home.join(".claude/skills")).expect("fake claude skill dir");
+    fs::create_dir_all(fake_home.join(".codex/skills")).expect("fake codex skill dir");
+
+    let target_path = root.path().join("live/claude-project-a");
+    assert!(
+        target_add(root.path(), "claude", &target_path, "managed")
+            .0
+            .status
+            .success()
+    );
+
+    let (output, env) = run_loom_with_env(
+        root.path(),
+        &[("HOME", fake_home.to_str().expect("HOME utf-8"))],
+        &["workspace", "doctor"],
+    );
+    assert!(output.status.success(), "doctor should succeed");
+    assert_eq!(env["ok"], Value::Bool(true));
+
+    let inventory = find_check(&env, "agent_skill_inventory");
+    assert_eq!(inventory["section"], Value::String("agents".to_string()));
+    assert_eq!(inventory["ok"], Value::Bool(true));
+    assert_eq!(inventory["severity"], Value::String("info".to_string()));
+    assert_eq!(inventory["details"]["home_set"], Value::Bool(true));
+    assert_eq!(inventory["details"]["total"], Value::from(10));
+
+    let agents = inventory["details"]["agents"]
+        .as_array()
+        .expect("agents array");
+    assert_eq!(agents.len(), 10, "all known agents must be reported");
+
+    let claude = agents
+        .iter()
+        .find(|a| a["agent"] == "claude")
+        .expect("claude entry");
+    assert_eq!(claude["present"], Value::Bool(true));
+    assert_eq!(claude["registered_target_count"], Value::from(0));
+
+    let codex = agents
+        .iter()
+        .find(|a| a["agent"] == "codex")
+        .expect("codex entry");
+    assert_eq!(codex["present"], Value::Bool(true));
+
+    let cursor = agents
+        .iter()
+        .find(|a| a["agent"] == "cursor")
+        .expect("cursor entry");
+    assert_eq!(cursor["present"], Value::Bool(false));
+
+    let legacy = &env["data"]["checks"]["agent_skill_dirs"]["agents"];
+    assert_eq!(
+        legacy.as_array().map(Vec::len),
+        Some(10),
+        "checks.agent_skill_dirs must mirror inventory"
+    );
+}
+
+#[test]
+fn workspace_doctor_agent_skill_inventory_reports_registered_targets() {
+    let root = TestDir::new("doctor-agent-inventory-registered-target");
+    let fake_home = root.path().join("fake-home");
+    let claude_skills = fake_home.join(".claude/skills");
+    fs::create_dir_all(&claude_skills).expect("fake claude skill dir");
+
+    assert!(
+        target_add(root.path(), "claude", &claude_skills, "observed")
+            .0
+            .status
+            .success()
+    );
+
+    let (output, env) = run_loom_with_env(
+        root.path(),
+        &[("HOME", fake_home.to_str().expect("HOME utf-8"))],
+        &["workspace", "doctor"],
+    );
+    assert!(output.status.success(), "doctor should succeed");
+
+    let inventory = find_check(&env, "agent_skill_inventory");
+    let agents = inventory["details"]["agents"]
+        .as_array()
+        .expect("agents array");
+    let claude = agents
+        .iter()
+        .find(|a| a["agent"] == "claude")
+        .expect("claude entry");
+    assert_eq!(claude["present"], Value::Bool(true));
+    assert_eq!(claude["registered_target_count"], Value::from(1));
+    assert_eq!(
+        claude["registered_targets"][0]["ownership"],
+        Value::String("observed".to_string())
+    );
+    assert_eq!(
+        claude["registered_targets"][0]["target_id"],
+        Value::String("target_claude_claude_skills".to_string())
+    );
+}
+
+#[test]
+fn workspace_doctor_agent_skill_inventory_when_home_unset() {
+    let root = TestDir::new("doctor-agent-inventory-no-home");
+    let target_path = root.path().join("live/claude-project-a");
+    assert!(
+        target_add(root.path(), "claude", &target_path, "managed")
+            .0
+            .status
+            .success()
+    );
+
+    let (output, env) = run_loom_with_env(root.path(), &[("HOME", "")], &["workspace", "doctor"]);
+    assert!(
+        output.status.success(),
+        "doctor should still succeed without HOME"
+    );
+
+    let inventory = find_check(&env, "agent_skill_inventory");
+    assert_eq!(inventory["ok"], Value::Bool(true));
+    assert_eq!(inventory["details"]["home_set"], Value::Bool(false));
+    assert_eq!(inventory["details"]["total"], Value::from(0));
 }

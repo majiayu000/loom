@@ -5,6 +5,7 @@ mod fs_probe;
 mod helpers;
 mod projections;
 mod skill_cmds;
+mod skill_verify;
 mod sync_cmds;
 mod target_cmds;
 mod version_cmds;
@@ -180,6 +181,7 @@ impl App {
                 SkillCommand::Rollback(args) if args.dry_run => self.cmd_rollback_plan(args),
                 SkillCommand::Rollback(args) => self.cmd_rollback(args, &request_id),
                 SkillCommand::Diff(args) => self.cmd_diff(args),
+                SkillCommand::Verify(args) => self.cmd_verify(args),
                 SkillCommand::Orphan {
                     command: SkillOrphanCommand::List,
                 } => self.cmd_skill_orphan_list(),

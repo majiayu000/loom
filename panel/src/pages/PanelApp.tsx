@@ -224,6 +224,7 @@ export function PanelApp() {
             live={live.live}
             mode={live.mode}
             mutationVersion={mutationVersion}
+            pendingCount={live.pendingCount}
             refreshKey={live.lastUpdated}
             onMutation={onMutation}
             readOnly={readOnly}

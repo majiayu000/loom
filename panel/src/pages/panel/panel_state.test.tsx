@@ -759,6 +759,61 @@ test("HistoryPage can replay pending operations", async () => {
   }
 });
 
+test("HistoryPage can replay pending operations outside the visible page", async () => {
+  const originalOps = api.ops;
+  const originalDiagnose = api.opsHistoryDiagnose;
+  const originalReplay = api.syncReplay;
+  let replayCalls = 0;
+  api.ops = async () => ({
+    ok: true,
+    data: {
+      count: 101,
+      loaded_count: 1,
+      offset: 100,
+      limit: 100,
+      has_more: false,
+      operations: [makeOperation("succeeded", true, "op-older", "sync.push")],
+      checkpoint: { last_scanned_op_id: "op-older" },
+    },
+  });
+  api.opsHistoryDiagnose = async () => ({ ok: true, data: undefined });
+  api.syncReplay = async () => {
+    replayCalls += 1;
+    return { ok: true, cmd: "sync.replay", request_id: "req-replay" };
+  };
+
+  try {
+    let renderer: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(
+        <HistoryPage
+          live={true}
+          mode="live"
+          mutationVersion={0}
+          pendingCount={2}
+        />,
+      );
+    });
+    await flush();
+
+    const replayButton = buttonByLabel(renderer!, "Replay pending");
+    expect(replayButton.props.disabled).toBe(false);
+    expect(textOf(replayButton.props.children)).toContain("Replay pending (2)");
+
+    await act(async () => {
+      replayButton.props.onClick();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(replayCalls).toBe(1);
+  } finally {
+    api.ops = originalOps;
+    api.opsHistoryDiagnose = originalDiagnose;
+    api.syncReplay = originalReplay;
+  }
+});
+
 test("HistoryPage exposes repair actions for diagnosed conflicts", async () => {
   const originalOps = api.ops;
   const originalDiagnose = api.opsHistoryDiagnose;

@@ -17,6 +17,7 @@ interface HistoryPageProps {
   live: boolean;
   mode: PanelDataMode;
   mutationVersion: number;
+  pendingCount?: number;
   refreshKey?: string | null;
   onMutation?: () => void;
   readOnly?: boolean;
@@ -26,6 +27,7 @@ export function HistoryPage({
   live,
   mode,
   mutationVersion,
+  pendingCount,
   refreshKey,
   onMutation = () => {},
   readOnly = !live,
@@ -116,8 +118,9 @@ export function HistoryPage({
       : null;
   const actionBusy = replay.busy || repairLocal.busy || repairRemote.busy;
   const conflictCount = diagnose?.conflicts.length ?? 0;
+  const replayPendingCount = pendingCount ?? counts.pending;
   const canRepair = live && !readOnly && conflictCount > 0 && !actionBusy;
-  const canReplay = live && !readOnly && counts.pending > 0 && !actionBusy;
+  const canReplay = live && !readOnly && replayPendingCount > 0 && !actionBusy;
   const banner =
     replay.error ??
     repairLocal.error ??
@@ -162,12 +165,12 @@ export function HistoryPage({
             title={
               readOnly
                 ? "registry offline"
-                : counts.pending === 0
+                : replayPendingCount === 0
                 ? "no pending operations to replay"
                 : "replay pending registry operations"
             }
           >
-            {replay.busy ? "Replaying..." : `Replay pending (${counts.pending})`}
+            {replay.busy ? "Replaying..." : `Replay pending (${replayPendingCount})`}
           </button>
           <button
             className="btn ghost"

@@ -1,4 +1,5 @@
 SHELL := /usr/bin/env bash
+CARGO_NEXTEST ?= cargo nextest
 
 .PHONY: fmt fmt-check test lint panel-build panel-test panel-typecheck e2e perf-smoke check ci install-hooks
 
@@ -13,7 +14,12 @@ install-hooks:
 	@echo "pre-commit hook installed (core.hooksPath=.githooks). Disable with 'git config --unset core.hooksPath'."
 
 test:
-	cargo nextest run --no-fail-fast
+	@if $(CARGO_NEXTEST) --version >/dev/null 2>&1; then \
+		$(CARGO_NEXTEST) run --no-fail-fast; \
+	else \
+		echo "cargo-nextest not found; falling back to cargo test -q"; \
+		cargo test -q; \
+	fi
 
 lint:
 	cargo clippy --all-targets --all-features -- -D warnings

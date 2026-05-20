@@ -104,14 +104,29 @@ fn build_agent_skill_inventory(home: Option<&str>, snapshot: Option<&RegistrySna
             let path = default_skill_dir(agent, h);
             let path_str = path.display().to_string();
             let present = path.is_dir();
-            let registered_target_count = snapshot
-                .map(|s| s.targets.targets.iter().filter(|t| t.path == path_str).count())
-                .unwrap_or(0);
+            let registered_targets: Vec<Value> = snapshot
+                .map(|s| {
+                    s.targets
+                        .targets
+                        .iter()
+                        .filter(|target| paths_equivalent(&target.path, &path))
+                        .map(|target| {
+                            json!({
+                                "target_id": target.target_id,
+                                "agent": target.agent,
+                                "ownership": target.ownership,
+                            })
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            let registered_target_count = registered_targets.len();
             agents.push(json!({
                 "agent": agent_kind_as_str(agent),
                 "default_path": path_str,
                 "present": present,
                 "registered_target_count": registered_target_count,
+                "registered_targets": registered_targets,
             }));
         }
     }
@@ -132,6 +147,18 @@ fn build_agent_skill_inventory(home: Option<&str>, snapshot: Option<&RegistrySna
         "total": total,
         "message": message,
     })
+}
+
+fn paths_equivalent(left: &str, right: &Path) -> bool {
+    let left_path = Path::new(left);
+    if left_path == right {
+        return true;
+    }
+
+    match (fs::canonicalize(left_path), fs::canonicalize(right)) {
+        (Ok(left_canon), Ok(right_canon)) => left_canon == right_canon,
+        _ => false,
+    }
 }
 
 pub(super) fn check_projection_drift(

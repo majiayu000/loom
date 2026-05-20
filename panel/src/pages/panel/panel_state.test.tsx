@@ -260,6 +260,37 @@ function doctorPayload(): DoctorPayload {
         next_action: "inspect state/pending_ops.jsonl and repair or purge malformed queue entries",
         details: { warning_count: 1 },
       },
+      {
+        section: "agents",
+        id: "agent_skill_inventory",
+        ok: true,
+        severity: "info",
+        message: "detected 1 of 2 known agent skill directories",
+        next_action: null,
+        details: {
+          agents: [
+            {
+              agent: "claude",
+              default_path: "/tmp/home/.claude/skills",
+              present: true,
+              registered_target_count: 1,
+              registered_targets: [
+                {
+                  target_id: "target_claude_claude_skills",
+                  ownership: "observed",
+                },
+              ],
+            },
+            {
+              agent: "codex",
+              default_path: "/tmp/home/.codex/skills",
+              present: false,
+              registered_target_count: 0,
+              registered_targets: [],
+            },
+          ],
+        },
+      },
     ],
   };
 }
@@ -688,6 +719,12 @@ test("DoctorPage renders structured workspace doctor checks", async () => {
     expect(markup(renderer!).includes("pending_queue_warnings")).toBe(true);
     expect(markup(renderer!).includes("pending queue has malformed or ignored entries")).toBe(true);
     expect(markup(renderer!).includes("inspect state/pending_ops.jsonl")).toBe(true);
+    expect(markup(renderer!).includes("agent_skill_inventory")).toBe(true);
+    expect(markup(renderer!).includes("/tmp/home/.claude/skills")).toBe(true);
+    expect(markup(renderer!).includes("present")).toBe(true);
+    expect(markup(renderer!).includes("missing")).toBe(true);
+    expect(markup(renderer!).includes("observed")).toBe(true);
+    expect(markup(renderer!).includes("target_claude_claude_skills")).toBe(true);
 
     await act(async () => {
       renderer!.update(<DoctorPage live={true} mode="live" refreshKey="tick-2" />);

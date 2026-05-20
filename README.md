@@ -312,8 +312,8 @@ and fails the commit if rustfmt would make changes. Disable with
 
 ## Roadmap
 
-- Per-agent default path conventions & env overrides (beyond `CLAUDE_SKILLS_DIR` / `CODEX_SKILLS_DIR`) for the 8 newly added agents — paths are currently supplied explicitly via `target add --path`
-- Extend `loom workspace init --scan-existing` auto-import to the 8 newly added agents once their skill-directory conventions stabilize (currently scans Claude and Codex only)
+- Per-agent environment overrides beyond the default paths listed in [Supported Agents](docs/SUPPORTED_AGENTS.md).
+- Convert observed agent directories to managed projection targets from the Panel once users opt in.
 - Desktop packaging (Tauri) for users who prefer a GUI
 - Skill marketplace integration (upstream catalogs such as `agent-skills`)
 

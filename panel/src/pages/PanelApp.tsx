@@ -132,6 +132,7 @@ export function PanelApp() {
   };
   const onNewTarget = () => setPage("targets");
   const onNewBinding = () => setPage("bindings");
+  const onOpenSkills = () => setPage("skills");
   const onOpenSync = () => setPage("sync");
   const onViewActivity = () => setPage("ops");
 
@@ -157,6 +158,7 @@ export function PanelApp() {
             onMutation={onMutation}
             onNewTarget={onNewTarget}
             onNewBinding={onNewBinding}
+            onOpenSkills={onOpenSkills}
             onViewActivity={onViewActivity}
             onOpenSync={onOpenSync}
             readOnly={readOnly}
@@ -223,6 +225,8 @@ export function PanelApp() {
             mode={live.mode}
             mutationVersion={mutationVersion}
             refreshKey={live.lastUpdated}
+            onMutation={onMutation}
+            readOnly={readOnly}
           />
         );
         break;

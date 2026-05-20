@@ -338,6 +338,7 @@ test("OverviewPage disables add binding until a target exists", async () => {
         onMutation={() => {}}
         onNewTarget={() => {}}
         onNewBinding={() => {}}
+        onOpenSkills={() => {}}
         onViewActivity={() => {}}
         onOpenSync={() => {}}
         readOnly={false}
@@ -348,6 +349,8 @@ test("OverviewPage disables add binding until a target exists", async () => {
   const addBinding = buttonByLabel(renderer!, "Add binding");
   expect(addBinding.props.disabled).toBe(true);
   expect(addBinding.props.title).toBe("add a target first");
+  expect(markup(renderer!).includes("Add first target")).toBe(true);
+  expect(markup(renderer!).includes("Add or import skills")).toBe(true);
 });
 
 test("BindingAddForm submits the canonical matcher kind", async () => {
@@ -666,6 +669,166 @@ test("HistoryPage refetches when the shared live refresh key changes", async () 
     expect(markup(renderer!).includes("op-old")).toBe(false);
   } finally {
     api.ops = originalOps;
+  }
+});
+
+test("HistoryPage shows failed operation details", async () => {
+  const originalOps = api.ops;
+  const originalDiagnose = api.opsHistoryDiagnose;
+  const failed = {
+    ...makeOperation("failed", false, "op-failed", "skill.project"),
+    last_error: { code: "PROJECT_FAILED", message: "target path missing" },
+  };
+  api.ops = async () => opsPayload(failed);
+  api.opsHistoryDiagnose = async () => ({
+    ok: true,
+    data: {
+      local_branch: true,
+      remote_tracking: false,
+      ahead: 0,
+      behind: 0,
+      local_segments: 1,
+      local_archives: 0,
+      remote_segments: 0,
+      remote_archives: 0,
+      local_snapshot: true,
+      remote_snapshot: false,
+      compact_after_segments: 50,
+      retain_recent_segments: 10,
+      retain_archives: 3,
+      conflicts: [],
+    },
+  });
+
+  try {
+    let renderer: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(<HistoryPage live={true} mode="live" mutationVersion={0} />);
+    });
+    await flush();
+
+    expect(markup(renderer!).includes("PROJECT_FAILED")).toBe(true);
+    expect(markup(renderer!).includes("target path missing")).toBe(true);
+  } finally {
+    api.ops = originalOps;
+    api.opsHistoryDiagnose = originalDiagnose;
+  }
+});
+
+test("HistoryPage can replay pending operations", async () => {
+  const originalOps = api.ops;
+  const originalDiagnose = api.opsHistoryDiagnose;
+  const originalReplay = api.syncReplay;
+  let mutations = 0;
+  let replayCalls = 0;
+  api.ops = async () => opsPayload(makeOperation("pending", false, "op-pending", "sync.replay"));
+  api.opsHistoryDiagnose = async () => ({ ok: true, data: undefined });
+  api.syncReplay = async () => {
+    replayCalls += 1;
+    return { ok: true, cmd: "sync.replay", request_id: "req-replay" };
+  };
+
+  try {
+    let renderer: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(
+        <HistoryPage
+          live={true}
+          mode="live"
+          mutationVersion={0}
+          onMutation={() => {
+            mutations += 1;
+          }}
+        />,
+      );
+    });
+    await flush();
+
+    await act(async () => {
+      buttonByLabel(renderer!, "Replay pending").props.onClick();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(replayCalls).toBe(1);
+    expect(mutations).toBe(1);
+  } finally {
+    api.ops = originalOps;
+    api.opsHistoryDiagnose = originalDiagnose;
+    api.syncReplay = originalReplay;
+  }
+});
+
+test("HistoryPage exposes repair actions for diagnosed conflicts", async () => {
+  const originalOps = api.ops;
+  const originalDiagnose = api.opsHistoryDiagnose;
+  const originalRepair = api.opsHistoryRepair;
+  const repairs: Array<{ strategy: "local" | "remote" }> = [];
+  let mutations = 0;
+  api.ops = async () => opsPayload(makeOperation("succeeded", true, "op-ok", "sync.push"));
+  api.opsHistoryDiagnose = async () => ({
+    ok: true,
+    data: {
+      local_branch: true,
+      remote_tracking: true,
+      ahead: 1,
+      behind: 1,
+      local_segments: 3,
+      local_archives: 0,
+      remote_segments: 3,
+      remote_archives: 0,
+      local_snapshot: true,
+      remote_snapshot: true,
+      compact_after_segments: 50,
+      retain_recent_segments: 10,
+      retain_archives: 3,
+      conflicts: [
+        {
+          scope: "segment",
+          path: "state/v3/ops/001.jsonl",
+          local_blob: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          remote_blob: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          local_rename_path: "state/v3/ops/001.local.jsonl",
+          remote_rename_path: "state/v3/ops/001.remote.jsonl",
+        },
+      ],
+    },
+  });
+  api.opsHistoryRepair = async (body) => {
+    repairs.push(body);
+    return { ok: true, cmd: "ops.history.repair", request_id: "req-repair" };
+  };
+
+  try {
+    let renderer: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(
+        <HistoryPage
+          live={true}
+          mode="live"
+          mutationVersion={0}
+          onMutation={() => {
+            mutations += 1;
+          }}
+        />,
+      );
+    });
+    await flush();
+
+    expect(markup(renderer!).includes("state/v3/ops/001.jsonl")).toBe(true);
+
+    await act(async () => {
+      buttonByLabel(renderer!, "Repair local").props.onClick();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(repairs).toEqual([{ strategy: "local" }]);
+    expect(mutations).toBe(1);
+  } finally {
+    api.ops = originalOps;
+    api.opsHistoryDiagnose = originalDiagnose;
+    api.opsHistoryRepair = originalRepair;
   }
 });
 

@@ -43,6 +43,15 @@ const mockBinding: Binding = {
   policy: "auto",
 };
 
+const secondMockBinding: Binding = {
+  id: "binding-2",
+  skill: "my-skill",
+  target: "target-2",
+  matcher: "path_prefix:/repo/team",
+  method: "materialize",
+  policy: "manual",
+};
+
 function renderPage(overrides: { onMutation?: () => void; bindings?: Binding[] } = {}) {
   return render(
     <SkillsPage
@@ -90,7 +99,20 @@ describe("SkillsPage — capture action", () => {
     });
   });
 
-  it("disables capture when the skill has no unique binding selector", () => {
+  it("lets users choose which binding to capture from", async () => {
+    renderPage({ bindings: [mockBinding, secondMockBinding] });
+
+    fireEvent.change(screen.getByLabelText("Capture binding"), {
+      target: { value: "binding-2" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Capture" }));
+
+    await waitFor(() => {
+      expect(api.capture).toHaveBeenCalledWith({ skill: "my-skill", binding: "binding-2" });
+    });
+  });
+
+  it("disables capture when the skill has no projected binding selector", () => {
     renderPage();
 
     expect(screen.getByRole("button", { name: "Capture" })).toBeDisabled();

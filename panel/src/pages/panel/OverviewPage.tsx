@@ -18,6 +18,7 @@ interface OverviewPageProps {
   onMutation: () => void;
   onNewTarget: () => void;
   onNewBinding: () => void;
+  onOpenSkills: () => void;
   onViewActivity: () => void;
   onOpenSync: () => void;
   readOnly: boolean;
@@ -37,6 +38,7 @@ export function OverviewPage({
   registryRoot,
   onNewTarget,
   onNewBinding,
+  onOpenSkills,
   onViewActivity,
   onOpenSync,
   readOnly,
@@ -57,6 +59,20 @@ export function OverviewPage({
   const writeGuardTone = readOnly ? "warn" : "ok";
   const canAddBinding = !readOnly && targets.length > 0;
   const addBindingTitle = readOnly ? "registry offline" : !canAddBinding ? "add a target first" : undefined;
+  const nextSteps = buildNextSteps({
+    readOnly,
+    skillsCount: skills.length,
+    targetsCount: targets.length,
+    bindingsCount: totalRules,
+    projectionsCount: totalProjections,
+    pendingOps,
+    errOps,
+    onNewTarget,
+    onNewBinding,
+    onOpenSkills,
+    onOpenSync,
+    onViewActivity,
+  });
 
   return (
     <>
@@ -82,22 +98,33 @@ export function OverviewPage({
       <div className="page-body">
         <div className="card" style={{ marginBottom: 16 }}>
           <div className="card-head">
-            <h3>Recommended flow</h3>
+            <h3>Next steps</h3>
             {readOnly && <span className="badge warn">read-only</span>}
           </div>
-          <div className="card-body" style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12, fontSize: 12 }}>
-            <div>
-              <div className="section-title" style={{ marginTop: 0 }}>1. Add target</div>
-              <div style={{ color: "var(--ink-2)" }}>Connect an agent directory Loom can manage, observe, or keep external.</div>
-            </div>
-            <div>
-              <div className="section-title" style={{ marginTop: 0 }}>2. Add binding</div>
-              <div style={{ color: "var(--ink-2)" }}>Map a skill to the target with an explicit matcher and projection policy.</div>
-            </div>
-            <div>
-              <div className="section-title" style={{ marginTop: 0 }}>3. Replay / sync</div>
-              <div style={{ color: "var(--ink-2)" }}>Apply pending writes locally, then pull or push registry changes when the remote is in use.</div>
-            </div>
+          <div className="card-body" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12, fontSize: 12 }}>
+            {nextSteps.map((step, index) => (
+              <div
+                key={step.title}
+                style={{
+                  border: "1px solid var(--line-soft)",
+                  borderRadius: 6,
+                  padding: 12,
+                  background: step.done ? "transparent" : "var(--bg-2)",
+                  minWidth: 0,
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                  <span className={`badge ${step.done ? "ok" : step.tone ?? "pending"}`}>{step.done ? "done" : index + 1}</span>
+                  <div style={{ color: "var(--ink-0)", fontWeight: 600 }}>{step.title}</div>
+                </div>
+                <div style={{ color: "var(--ink-2)", lineHeight: 1.45 }}>{step.body}</div>
+                {step.action && (
+                  <button className="btn sm" onClick={step.action.onClick} disabled={step.action.disabled} style={{ marginTop: 10 }}>
+                    {step.action.label}
+                  </button>
+                )}
+              </div>
+            ))}
           </div>
         </div>
 
@@ -268,6 +295,122 @@ export function OverviewPage({
       </div>
     </>
   );
+}
+
+interface NextStepInput {
+  readOnly: boolean;
+  skillsCount: number;
+  targetsCount: number;
+  bindingsCount: number;
+  projectionsCount: number;
+  pendingOps: number;
+  errOps: number;
+  onNewTarget: () => void;
+  onNewBinding: () => void;
+  onOpenSkills: () => void;
+  onOpenSync: () => void;
+  onViewActivity: () => void;
+}
+
+interface NextStep {
+  title: string;
+  body: string;
+  done?: boolean;
+  tone?: "pending" | "err" | "warn";
+  action?: { label: string; onClick: () => void; disabled?: boolean };
+}
+
+function buildNextSteps(input: NextStepInput): NextStep[] {
+  if (input.readOnly) {
+    return [
+      {
+        title: "Reconnect panel API",
+        body: "Live registry data is unavailable, so write actions are disabled.",
+        tone: "warn",
+      },
+    ];
+  }
+
+  const steps: NextStep[] = [];
+  if (input.targetsCount === 0) {
+    steps.push({
+      title: "Add first target",
+      body: "Connect an agent skills directory before binding or projecting skills.",
+      action: { label: "Add target", onClick: input.onNewTarget },
+    });
+  } else {
+    steps.push({
+      title: "Target connected",
+      body: `${input.targetsCount} target${input.targetsCount === 1 ? "" : "s"} registered.`,
+      done: true,
+    });
+  }
+
+  if (input.skillsCount === 0) {
+    steps.push({
+      title: "Add or import skills",
+      body: "Register source skills so Loom can project them into targets.",
+      action: { label: "Open Skills", onClick: input.onOpenSkills },
+    });
+  } else {
+    steps.push({
+      title: "Skills available",
+      body: `${input.skillsCount} skill${input.skillsCount === 1 ? "" : "s"} available for projection.`,
+      done: true,
+    });
+  }
+
+  if (input.bindingsCount === 0) {
+    steps.push({
+      title: "Create binding rules",
+      body: "Bind skills to targets with an explicit matcher and projection method.",
+      action: {
+        label: "Add binding",
+        onClick: input.onNewBinding,
+        disabled: input.targetsCount === 0,
+      },
+    });
+  } else {
+    steps.push({
+      title: "Bindings configured",
+      body: `${input.bindingsCount} binding rule${input.bindingsCount === 1 ? "" : "s"} configured.`,
+      done: true,
+    });
+  }
+
+  if (input.pendingOps > 0) {
+    steps.push({
+      title: "Replay pending writes",
+      body: `${input.pendingOps} operation${input.pendingOps === 1 ? "" : "s"} waiting for replay.`,
+      action: { label: "Open Sync", onClick: input.onOpenSync },
+      tone: "pending",
+    });
+  }
+  if (input.errOps > 0) {
+    steps.push({
+      title: "Inspect failed operations",
+      body: `${input.errOps} operation${input.errOps === 1 ? "" : "s"} need attention.`,
+      action: { label: "View Activity", onClick: input.onViewActivity },
+      tone: "err",
+    });
+  }
+  if (input.projectionsCount === 0 && input.skillsCount > 0 && input.bindingsCount > 0) {
+    steps.push({
+      title: "Project skills",
+      body: "Bindings exist but no projections have been realized yet.",
+      action: { label: "Open Skills", onClick: input.onOpenSkills },
+    });
+  }
+
+  if (steps.every((step) => step.done) && input.projectionsCount > 0) {
+    steps.push({
+      title: "Operation loop complete",
+      body: `${input.projectionsCount} projection${input.projectionsCount === 1 ? "" : "s"} active and no pending recovery work.`,
+      done: true,
+    });
+  }
+
+  return steps;
 }
 
 interface KpiProps {

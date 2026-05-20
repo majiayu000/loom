@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import type { PanelDataMode } from "../../lib/api/usePanelData";
 import { api, ApiError, type OpsHistoryDiagnosePayload, type OpsPayload, type RegistryOperationRecord } from "../../lib/api/client";
+import { useMutation } from "../../lib/useMutation";
 
 type FilterKey = "all" | "pending" | "ok" | "err";
 type DiagnoseData = NonNullable<OpsHistoryDiagnosePayload["data"]>;
@@ -17,14 +18,26 @@ interface HistoryPageProps {
   mode: PanelDataMode;
   mutationVersion: number;
   refreshKey?: string | null;
+  onMutation?: () => void;
+  readOnly?: boolean;
 }
 
-export function HistoryPage({ live, mode, mutationVersion, refreshKey }: HistoryPageProps) {
+export function HistoryPage({
+  live,
+  mode,
+  mutationVersion,
+  refreshKey,
+  onMutation = () => {},
+  readOnly = !live,
+}: HistoryPageProps) {
   const [state, setState] = useState<LoadState>({ kind: "idle" });
   const [diagnose, setDiagnose] = useState<DiagnoseData | null>(null);
   const [filter, setFilter] = useState<FilterKey>("all");
   const [query, setQuery] = useState("");
   const [offset, setOffset] = useState(0);
+  const replay = useMutation();
+  const repairLocal = useMutation();
+  const repairRemote = useMutation();
 
   useEffect(() => {
     if (!live) {
@@ -101,6 +114,28 @@ export function HistoryPage({ live, mode, mutationVersion, refreshKey }: History
       : payload
       ? `${payload.loaded_count} recorded change${payload.loaded_count === 1 ? "" : "s"} loaded.`
       : null;
+  const actionBusy = replay.busy || repairLocal.busy || repairRemote.busy;
+  const conflictCount = diagnose?.conflicts.length ?? 0;
+  const canRepair = live && !readOnly && conflictCount > 0 && !actionBusy;
+  const canReplay = live && !readOnly && counts.pending > 0 && !actionBusy;
+  const banner =
+    replay.error ??
+    repairLocal.error ??
+    repairRemote.error ??
+    replay.success ??
+    repairLocal.success ??
+    repairRemote.success ??
+    null;
+  const bannerType = replay.error || repairLocal.error || repairRemote.error ? "err" : banner ? "ok" : null;
+
+  const runRepair = (strategy: "local" | "remote") => {
+    const mutation = strategy === "local" ? repairLocal : repairRemote;
+    mutation.run(
+      `history repair ${strategy}`,
+      () => api.opsHistoryRepair({ strategy }),
+      onMutation,
+    );
+  };
 
   return (
     <>
@@ -120,9 +155,65 @@ export function HistoryPage({ live, mode, mutationVersion, refreshKey }: History
               onChange={(e) => setQuery(e.target.value)}
             />
           </div>
+          <button
+            className="btn ghost"
+            disabled={!canReplay}
+            onClick={() => replay.run("sync replay", api.syncReplay, onMutation)}
+            title={
+              readOnly
+                ? "registry offline"
+                : counts.pending === 0
+                ? "no pending operations to replay"
+                : "replay pending registry operations"
+            }
+          >
+            {replay.busy ? "Replaying..." : `Replay pending (${counts.pending})`}
+          </button>
+          <button
+            className="btn ghost"
+            disabled={!canRepair}
+            onClick={() => runRepair("local")}
+            title={
+              readOnly
+                ? "registry offline"
+                : conflictCount === 0
+                ? "no history conflicts detected"
+                : "repair conflicts by keeping local history"
+            }
+          >
+            {repairLocal.busy ? "Repairing..." : "Repair local"}
+          </button>
+          <button
+            className="btn ghost"
+            disabled={!canRepair}
+            onClick={() => runRepair("remote")}
+            title={
+              readOnly
+                ? "registry offline"
+                : conflictCount === 0
+                ? "no history conflicts detected"
+                : "repair conflicts by keeping remote history"
+            }
+          >
+            {repairRemote.busy ? "Repairing..." : "Repair remote"}
+          </button>
         </div>
       </div>
       <div className="page-body">
+        {banner && (
+          <div
+            style={{
+              padding: "6px 28px",
+              fontFamily: "var(--font-mono)",
+              fontSize: 11,
+              borderBottom: "1px solid var(--line)",
+              color: bannerType === "err" ? "var(--err)" : "var(--ok)",
+              background: bannerType === "err" ? "rgba(216,90,90,0.08)" : "rgba(111,183,138,0.08)",
+            }}
+          >
+            {bannerType === "err" ? banner : `✓ ${banner}`}
+          </div>
+        )}
         {state.kind === "error" && (
           <div
             style={{
@@ -144,7 +235,42 @@ export function HistoryPage({ live, mode, mutationVersion, refreshKey }: History
             {diagnose.remote_tracking && diagnose.ahead > 0 && <span style={{ color: "var(--ok)" }}>↑ {diagnose.ahead} ahead</span>}
             {diagnose.remote_tracking && diagnose.behind > 0 && <span style={{ color: "var(--pending)" }}>↓ {diagnose.behind} behind</span>}
             {diagnose.remote_tracking && diagnose.ahead === 0 && diagnose.behind === 0 && <span>in sync</span>}
-            {diagnose.conflicts.length > 0 && <span style={{ color: "var(--err)" }}>{diagnose.conflicts.length} conflict{diagnose.conflicts.length === 1 ? "" : "s"} — run loom ops history repair</span>}
+            {diagnose.conflicts.length > 0 && <span style={{ color: "var(--err)" }}>{diagnose.conflicts.length} conflict{diagnose.conflicts.length === 1 ? "" : "s"}</span>}
+          </div>
+        )}
+        {diagnose && diagnose.conflicts.length > 0 && (
+          <div
+            className="card"
+            style={{
+              marginBottom: 16,
+              borderColor: "rgba(216,90,90,0.35)",
+              background: "rgba(216,90,90,0.06)",
+            }}
+          >
+            <div className="card-head">
+              <h3>History conflicts</h3>
+              <span className="badge err">{diagnose.conflicts.length}</span>
+            </div>
+            <div className="card-body" style={{ display: "grid", gap: 8 }}>
+              {diagnose.conflicts.slice(0, 4).map((conflict) => (
+                <div key={`${conflict.scope}:${conflict.path}`} style={{ fontSize: 12 }}>
+                  <div className="mono" style={{ color: "var(--ink-0)" }}>
+                    {conflict.scope} · {conflict.path}
+                  </div>
+                  <div className="mono" style={{ color: "var(--ink-3)", fontSize: 11, marginTop: 2 }}>
+                    local {shortBlob(conflict.local_blob)} · remote {shortBlob(conflict.remote_blob)}
+                  </div>
+                </div>
+              ))}
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 4 }}>
+                <button className="btn ghost danger" disabled={!canRepair} onClick={() => runRepair("local")}>
+                  Keep local history
+                </button>
+                <button className="btn ghost danger" disabled={!canRepair} onClick={() => runRepair("remote")}>
+                  Keep remote history
+                </button>
+              </div>
+            </div>
           </div>
         )}
         <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 18 }}>
@@ -207,6 +333,7 @@ export function HistoryPage({ live, mode, mutationVersion, refreshKey }: History
                 <th>Intent</th>
                 <th>Status</th>
                 <th>ack</th>
+                <th>Details</th>
                 <th>Created</th>
                 <th>Updated</th>
               </tr>
@@ -214,14 +341,14 @@ export function HistoryPage({ live, mode, mutationVersion, refreshKey }: History
             <tbody>
               {state.kind === "loading" && (
                 <tr>
-                  <td colSpan={6} className="mono" style={{ textAlign: "center", color: "var(--ink-3)", padding: 18 }}>
+                  <td colSpan={7} className="mono" style={{ textAlign: "center", color: "var(--ink-3)", padding: 18 }}>
                     loading…
                   </td>
                 </tr>
               )}
               {state.kind === "ready" && filtered.length === 0 && (
                 <tr>
-                  <td colSpan={6} style={{ textAlign: "center", color: "var(--ink-3)", padding: 18 }}>
+                  <td colSpan={7} style={{ textAlign: "center", color: "var(--ink-3)", padding: 18 }}>
                     {operations.length === 0
                       ? "No activity recorded yet — every CLI or Panel change will show up here."
                       : "No activity matches the current filter."}
@@ -288,6 +415,9 @@ function OpHistoryRow({ op }: { op: RegistryOperationRecord }) {
         </span>
       </td>
       <td className="mono dim">{op.ack ? "✓" : "—"}</td>
+      <td className="mono dim" style={{ maxWidth: 280, whiteSpace: "normal", lineHeight: 1.35 }}>
+        {operationDetail(op)}
+      </td>
       <td className="mono dim" style={{ fontSize: 10.5 }}>
         {op.created_at}
       </td>
@@ -296,6 +426,19 @@ function OpHistoryRow({ op }: { op: RegistryOperationRecord }) {
       </td>
     </tr>
   );
+}
+
+function operationDetail(op: RegistryOperationRecord): string {
+  if (op.last_error) return op.last_error.message;
+  if (bucket(op) === "pending") return "Waiting for replay or retry.";
+  if (op.method || op.skill || op.target || op.binding) {
+    return [op.skill, op.binding ?? op.target, op.method].filter(Boolean).join(" · ");
+  }
+  return "Recorded.";
+}
+
+function shortBlob(blob: string): string {
+  return blob.length > 12 ? blob.slice(0, 12) : blob;
 }
 
 function Kpi({ label, value, tone }: { label: string; value: string | number; tone?: "pending" | "err" }) {

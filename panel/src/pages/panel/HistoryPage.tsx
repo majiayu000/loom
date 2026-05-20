@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import type { PanelDataMode } from "../../lib/api/usePanelData";
 import { api, ApiError, type OpsHistoryDiagnosePayload, type OpsPayload, type RegistryOperationRecord } from "../../lib/api/client";
+import { useMutation } from "../../lib/useMutation";
 
 type FilterKey = "all" | "pending" | "ok" | "err";
 type DiagnoseData = NonNullable<OpsHistoryDiagnosePayload["data"]>;
@@ -17,14 +18,18 @@ interface HistoryPageProps {
   mode: PanelDataMode;
   mutationVersion: number;
   refreshKey?: string | null;
+  onMutation?: () => void;
 }
 
-export function HistoryPage({ live, mode, mutationVersion, refreshKey }: HistoryPageProps) {
+export function HistoryPage({ live, mode, mutationVersion, refreshKey, onMutation }: HistoryPageProps) {
   const [state, setState] = useState<LoadState>({ kind: "idle" });
   const [diagnose, setDiagnose] = useState<DiagnoseData | null>(null);
+  const [diagnoseError, setDiagnoseError] = useState<string | null>(null);
   const [filter, setFilter] = useState<FilterKey>("all");
   const [query, setQuery] = useState("");
   const [offset, setOffset] = useState(0);
+  const [repairVersion, setRepairVersion] = useState(0);
+  const repair = useMutation();
 
   useEffect(() => {
     if (!live) {
@@ -35,6 +40,7 @@ export function HistoryPage({ live, mode, mutationVersion, refreshKey }: History
     const controller = new AbortController();
     setState({ kind: "loading" });
     setDiagnose(null);
+    setDiagnoseError(null);
     Promise.allSettled([
       api.ops({ limit: HISTORY_PAGE_SIZE, offset }, controller.signal),
       api.opsHistoryDiagnose(controller.signal),
@@ -55,12 +61,26 @@ export function HistoryPage({ live, mode, mutationVersion, refreshKey }: History
       }
       setState({ kind: "ready", payload: res.data });
 
-      if (diagnoseResult.status === "fulfilled" && diagnoseResult.value.data) {
-        setDiagnose(diagnoseResult.value.data);
+      if (diagnoseResult.status === "fulfilled") {
+        if (diagnoseResult.value.data) {
+          setDiagnose(diagnoseResult.value.data);
+        } else if (!diagnoseResult.value.ok) {
+          setDiagnoseError(diagnoseResult.value.error?.message ?? "history diagnose returned ok=false");
+        }
+      } else {
+        const err = diagnoseResult.reason;
+        setDiagnoseError(err instanceof Error ? err.message : String(err));
       }
     });
     return () => controller.abort();
-  }, [live, mutationVersion, refreshKey, offset]);
+  }, [live, mutationVersion, refreshKey, offset, repairVersion]);
+
+  const runRepair = (strategy: "local" | "remote") => {
+    repair.run(`history repair ${strategy}`, () => api.opsHistoryRepair({ strategy }), () => {
+      setRepairVersion((value) => value + 1);
+      onMutation?.();
+    });
+  };
 
   const offlineHint =
     mode === "offline-stale"
@@ -122,6 +142,20 @@ export function HistoryPage({ live, mode, mutationVersion, refreshKey }: History
           </div>
         </div>
       </div>
+      {(repair.error || repair.success) && (
+        <div
+          style={{
+            padding: "6px 28px",
+            fontFamily: "var(--font-mono)",
+            fontSize: 11,
+            borderBottom: "1px solid var(--line)",
+            color: repair.error ? "var(--err)" : "var(--ok)",
+            background: repair.error ? "rgba(216,90,90,0.08)" : "rgba(111,183,138,0.08)",
+          }}
+        >
+          {repair.error ?? `✓ ${repair.success}`}
+        </div>
+      )}
       <div className="page-body">
         {state.kind === "error" && (
           <div
@@ -138,13 +172,31 @@ export function HistoryPage({ live, mode, mutationVersion, refreshKey }: History
           </div>
         )}
         {!live && <div className="empty" style={{ marginBottom: 18 }}>{offlineHint}</div>}
+        {diagnoseError && (
+          <div className="mono" style={{ color: "var(--warn)", fontSize: 11, marginBottom: 12 }}>
+            History diagnose: {diagnoseError}
+          </div>
+        )}
         {diagnose?.local_branch && (
-          <div style={{ display: "flex", gap: 12, padding: "4px 0", marginBottom: 12, fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--ink-3)" }}>
+          <div style={{ display: "flex", gap: 12, padding: "4px 0", marginBottom: 12, fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--ink-3)", alignItems: "center", flexWrap: "wrap" }}>
             <span>{diagnose.local_segments} segment{diagnose.local_segments === 1 ? "" : "s"}</span>
             {diagnose.remote_tracking && diagnose.ahead > 0 && <span style={{ color: "var(--ok)" }}>↑ {diagnose.ahead} ahead</span>}
             {diagnose.remote_tracking && diagnose.behind > 0 && <span style={{ color: "var(--pending)" }}>↓ {diagnose.behind} behind</span>}
             {diagnose.remote_tracking && diagnose.ahead === 0 && diagnose.behind === 0 && <span>in sync</span>}
-            {diagnose.conflicts.length > 0 && <span style={{ color: "var(--err)" }}>{diagnose.conflicts.length} conflict{diagnose.conflicts.length === 1 ? "" : "s"} — run loom ops history repair</span>}
+            {diagnose.conflicts.length > 0 && (
+              <>
+                <span style={{ color: "var(--err)" }}>
+                  {diagnose.conflicts.length} conflict{diagnose.conflicts.length === 1 ? "" : "s"}
+                </span>
+                <span style={{ color: "var(--ink-2)" }}>{diagnose.conflicts[0]?.path}</span>
+                <button className="btn sm" onClick={() => runRepair("local")} disabled={repair.busy}>
+                  Repair from local
+                </button>
+                <button className="btn sm" onClick={() => runRepair("remote")} disabled={repair.busy}>
+                  Repair from remote
+                </button>
+              </>
+            )}
           </div>
         )}
         <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 18 }}>
@@ -281,7 +333,14 @@ function OpHistoryRow({ op }: { op: RegistryOperationRecord }) {
   return (
     <tr>
       <td className="mono dim">{operationDisplayId(op)}</td>
-      <td className="name">{op.intent}</td>
+      <td className="name">
+        {op.intent}
+        {op.last_error && (
+          <div className="mono" style={{ color: "var(--err)", fontSize: 10.5, marginTop: 3 }}>
+            {op.last_error.message}
+          </div>
+        )}
+      </td>
       <td>
         <span className="chip" style={{ color }}>
           {op.last_error ? op.last_error.code : op.status}

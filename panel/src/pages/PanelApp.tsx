@@ -157,6 +157,7 @@ export function PanelApp() {
             onMutation={onMutation}
             onNewTarget={onNewTarget}
             onNewBinding={onNewBinding}
+            onOpenSkills={() => setPage("skills")}
             onViewActivity={onViewActivity}
             onOpenSync={onOpenSync}
             readOnly={readOnly}
@@ -223,6 +224,7 @@ export function PanelApp() {
             mode={live.mode}
             mutationVersion={mutationVersion}
             refreshKey={live.lastUpdated}
+            onMutation={onMutation}
           />
         );
         break;

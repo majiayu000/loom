@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { SkillsPage } from "./SkillsPage";
-import type { Binding, Skill } from "../../lib/types";
+import type { Binding, Skill, Target } from "../../lib/types";
 
 vi.mock("../../lib/api/client", () => ({
   api: {
@@ -43,11 +43,11 @@ const mockBinding: Binding = {
   policy: "auto",
 };
 
-function renderPage(overrides: { onMutation?: () => void; bindings?: Binding[] } = {}) {
+function renderPage(overrides: { onMutation?: () => void; bindings?: Binding[]; targets?: Target[] } = {}) {
   return render(
     <SkillsPage
       skills={[mockSkill]}
-      targets={[]}
+      targets={overrides.targets ?? []}
       bindings={overrides.bindings ?? []}
       selectedSkill="skill-1"
       onSelectSkill={() => {}}
@@ -55,6 +55,19 @@ function renderPage(overrides: { onMutation?: () => void; bindings?: Binding[] }
       readOnly={false}
     />,
   );
+}
+
+function makeTarget(overrides: Partial<Target> = {}): Target {
+  return {
+    id: "target-1",
+    agent: "claude",
+    profile: "home",
+    path: "~/.claude/skills",
+    ownership: "managed",
+    skills: 0,
+    lastSync: "now",
+    ...overrides,
+  };
 }
 
 function makeSkill(overrides: Partial<Skill> = {}): Skill {
@@ -90,7 +103,30 @@ describe("SkillsPage — capture action", () => {
     });
   });
 
-  it("disables capture when the skill has no unique binding selector", () => {
+  it("lets users choose which binding to capture when a skill has multiple bindings", async () => {
+    const onMutation = vi.fn();
+    renderPage({
+      targets: [
+        makeTarget(),
+        makeTarget({ id: "target-2", agent: "codex", profile: "work", path: "~/.codex/skills" }),
+      ],
+      bindings: [
+        mockBinding,
+        { ...mockBinding, id: "binding-2", target: "target-2", method: "symlink", policy: "manual" },
+      ],
+      onMutation,
+    });
+
+    fireEvent.change(screen.getByLabelText("Capture binding"), { target: { value: "binding-2" } });
+    fireEvent.click(screen.getByRole("button", { name: "Capture" }));
+
+    await waitFor(() => {
+      expect(api.capture).toHaveBeenCalledWith({ skill: "my-skill", binding: "binding-2" });
+      expect(onMutation).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it("disables capture when the skill has no projected binding", () => {
     renderPage();
 
     expect(screen.getByRole("button", { name: "Capture" })).toBeDisabled();

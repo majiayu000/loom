@@ -369,6 +369,7 @@ test("OverviewPage disables add binding until a target exists", async () => {
         onMutation={() => {}}
         onNewTarget={() => {}}
         onNewBinding={() => {}}
+        onOpenSkills={() => {}}
         onViewActivity={() => {}}
         onOpenSync={() => {}}
         readOnly={false}

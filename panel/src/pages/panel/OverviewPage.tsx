@@ -18,6 +18,7 @@ interface OverviewPageProps {
   onMutation: () => void;
   onNewTarget: () => void;
   onNewBinding: () => void;
+  onOpenSkills: () => void;
   onViewActivity: () => void;
   onOpenSync: () => void;
   readOnly: boolean;
@@ -37,6 +38,7 @@ export function OverviewPage({
   registryRoot,
   onNewTarget,
   onNewBinding,
+  onOpenSkills,
   onViewActivity,
   onOpenSync,
   readOnly,
@@ -57,6 +59,53 @@ export function OverviewPage({
   const writeGuardTone = readOnly ? "warn" : "ok";
   const canAddBinding = !readOnly && targets.length > 0;
   const addBindingTitle = readOnly ? "registry offline" : !canAddBinding ? "add a target first" : undefined;
+  const nextSteps: NextStep[] = [
+    {
+      label: "Add a skill",
+      detail: skills.length === 0 ? "No tracked skills yet." : `${skills.length} tracked skill${skills.length === 1 ? "" : "s"}.`,
+      done: skills.length > 0,
+      action: "Open Skills",
+      onAction: onOpenSkills,
+      disabled: readOnly,
+    },
+    {
+      label: "Add a target",
+      detail: targets.length === 0 ? "No agent directory connected." : `${targets.length} target${targets.length === 1 ? "" : "s"} connected.`,
+      done: targets.length > 0,
+      action: "Add target",
+      onAction: onNewTarget,
+      disabled: readOnly,
+    },
+    {
+      label: "Add a binding",
+      detail: totalRules === 0 ? "No routing rule maps a skill to a target." : `${totalRules} binding rule${totalRules === 1 ? "" : "s"}.`,
+      done: totalRules > 0,
+      action: "Add binding",
+      onAction: onNewBinding,
+      disabled: readOnly || targets.length === 0,
+      title: targets.length === 0 ? "add a target first" : undefined,
+    },
+    {
+      label: "Apply projections",
+      detail: totalProjections === 0 ? "No live projection has been applied." : `${totalProjections} live projection${totalProjections === 1 ? "" : "s"}.`,
+      done: totalProjections > 0,
+      action: "Replay / sync",
+      onAction: onOpenSync,
+      disabled: readOnly || totalRules === 0,
+      title: totalRules === 0 ? "add a binding first" : undefined,
+    },
+    {
+      label: "Clear activity",
+      detail:
+        pendingOps + errOps === 0
+          ? "No pending or failed registry work."
+          : `${pendingOps} pending · ${errOps} failed`,
+      done: pendingOps + errOps === 0,
+      action: errOps > 0 ? "View activity" : "Replay pending",
+      onAction: errOps > 0 ? onViewActivity : onOpenSync,
+      disabled: readOnly,
+    },
+  ];
 
   return (
     <>
@@ -82,22 +131,13 @@ export function OverviewPage({
       <div className="page-body">
         <div className="card" style={{ marginBottom: 16 }}>
           <div className="card-head">
-            <h3>Recommended flow</h3>
+            <h3>Next steps</h3>
             {readOnly && <span className="badge warn">read-only</span>}
           </div>
-          <div className="card-body" style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12, fontSize: 12 }}>
-            <div>
-              <div className="section-title" style={{ marginTop: 0 }}>1. Add target</div>
-              <div style={{ color: "var(--ink-2)" }}>Connect an agent directory Loom can manage, observe, or keep external.</div>
-            </div>
-            <div>
-              <div className="section-title" style={{ marginTop: 0 }}>2. Add binding</div>
-              <div style={{ color: "var(--ink-2)" }}>Map a skill to the target with an explicit matcher and projection policy.</div>
-            </div>
-            <div>
-              <div className="section-title" style={{ marginTop: 0 }}>3. Replay / sync</div>
-              <div style={{ color: "var(--ink-2)" }}>Apply pending writes locally, then pull or push registry changes when the remote is in use.</div>
-            </div>
+          <div className="card-body" style={{ display: "grid", gap: 8 }}>
+            {nextSteps.map((step, index) => (
+              <NextStepRow key={step.label} step={step} active={!step.done && nextSteps.findIndex((candidate) => !candidate.done) === index} />
+            ))}
           </div>
         </div>
 
@@ -267,6 +307,46 @@ export function OverviewPage({
         </div>
       </div>
     </>
+  );
+}
+
+interface NextStep {
+  label: string;
+  detail: string;
+  done: boolean;
+  action: string;
+  onAction: () => void;
+  disabled?: boolean;
+  title?: string;
+}
+
+function NextStepRow({ step, active }: { step: NextStep; active: boolean }) {
+  return (
+    <div
+      style={{
+        display: "grid",
+        gridTemplateColumns: "72px minmax(0, 1fr) auto",
+        gap: 12,
+        alignItems: "center",
+        padding: "8px 0",
+        borderBottom: "1px solid var(--line)",
+      }}
+    >
+      <span className={`badge ${step.done ? "ok" : active ? "warn" : ""}`}>
+        {step.done ? "done" : active ? "next" : "waiting"}
+      </span>
+      <div style={{ minWidth: 0 }}>
+        <div className="section-title" style={{ margin: 0 }}>
+          {step.label}
+        </div>
+        <div style={{ color: "var(--ink-2)", fontSize: 12 }}>{step.detail}</div>
+      </div>
+      {!step.done && (
+        <button className="btn sm" onClick={step.onAction} disabled={step.disabled} title={step.title}>
+          {step.action}
+        </button>
+      )}
+    </div>
   );
 }
 

@@ -18,19 +18,32 @@ interface SkillsPageProps {
 export function SkillsPage({ skills, targets, bindings = [], selectedSkill, onSelectSkill, onMutation, readOnly }: SkillsPageProps) {
   const [q, setQ] = useState("");
   const [addOpen, setAddOpen] = useState(false);
+  const [captureBindingId, setCaptureBindingId] = useState("");
   const filtered = skills.filter((s) => s.name.includes(q) || s.tag.includes(q));
   const sel = skills.find((s) => s.id === selectedSkill) ?? skills[0];
   const capture = useMutation();
   const selectedSkillBindings = sel ? bindings.filter((b) => b.skill === sel.name) : [];
-  const captureBinding = selectedSkillBindings.length === 1 ? selectedSkillBindings[0] : null;
+  const bindingOptionKey = selectedSkillBindings.map((b) => b.id).join("\u001f");
+  const captureBinding = selectedSkillBindings.find((b) => b.id === captureBindingId) ?? null;
   const captureDisabled = capture.busy || readOnly || !sel || !captureBinding;
   const captureTitle = readOnly
     ? "registry offline"
     : !sel
       ? "select a skill first"
       : !captureBinding
-        ? "capture requires one projected binding"
+        ? "capture requires a projected binding"
         : undefined;
+
+  useEffect(() => {
+    if (selectedSkillBindings.length === 0) {
+      setCaptureBindingId("");
+      return;
+    }
+    setCaptureBindingId((current) =>
+      selectedSkillBindings.some((b) => b.id === current) ? current : selectedSkillBindings[0].id,
+    );
+  }, [bindingOptionKey]);
+
   const emptyMessage: React.ReactNode = readOnly
     ? "Live registry API is offline. Start the panel backend to load real skills."
     : q
@@ -67,6 +80,22 @@ export function SkillsPage({ skills, targets, bindings = [], selectedSkill, onSe
             <input placeholder="Filter skills…" value={q} onChange={(e) => setQ(e.target.value)} />
             <kbd>⌘K</kbd>
           </div>
+          {selectedSkillBindings.length > 1 && (
+            <select
+              aria-label="Capture binding"
+              value={captureBindingId}
+              onChange={(event) => setCaptureBindingId(event.target.value)}
+              disabled={readOnly || capture.busy}
+              title="Choose which projected binding to capture from"
+              style={captureSelectStyle}
+            >
+              {selectedSkillBindings.map((binding) => (
+                <option key={binding.id} value={binding.id}>
+                  {formatCaptureBinding(binding, targets)}
+                </option>
+              ))}
+            </select>
+          )}
           <button
             className="btn primary"
             onClick={runCapture}
@@ -226,6 +255,26 @@ function formatSkillTags(skill: Skill): string {
   if (tags.length <= 2) return tags.join(" ");
   return `${tags[0]} +${tags.length - 1}`;
 }
+
+function formatCaptureBinding(binding: Binding, targets: Target[]): string {
+  const target = targets.find((t) => t.id === binding.target);
+  const targetLabel = target ? `${target.agent}/${target.profile}` : binding.target;
+  return `${targetLabel} · ${binding.method} · ${binding.policy}`;
+}
+
+const captureSelectStyle = {
+  height: 32,
+  minWidth: 190,
+  maxWidth: 260,
+  border: "1px solid var(--line)",
+  borderRadius: 6,
+  background: "var(--bg)",
+  color: "var(--ink-0)",
+  padding: "0 8px",
+  fontFamily: "var(--font-mono)",
+  fontSize: 11,
+  outline: "none",
+};
 
 type DetailTab = "history" | "diff" | "targets";
 

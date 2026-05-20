@@ -35,13 +35,21 @@ AI coding agents (Claude Code, Codex, Cursor, Windsurf, …) all read skills fro
 ## Quick Start
 
 ```bash
-# 1. Install
-cargo install skillloom
+# 1. Install a prebuilt release archive (recommended)
+# Pick one target: aarch64-apple-darwin, x86_64-apple-darwin, x86_64-unknown-linux-gnu
+VERSION="0.1.0" # replace with the latest release version
+TARGET="aarch64-apple-darwin"
+BASE_URL="https://github.com/majiayu000/loom/releases/download/v${VERSION}"
+curl -LO "${BASE_URL}/skillloom-${VERSION}-${TARGET}.tar.gz"
+curl -LO "${BASE_URL}/SHA256SUMS"
+shasum -a 256 -c SHA256SUMS --ignore-missing
+tar -xzf "skillloom-${VERSION}-${TARGET}.tar.gz"
+sudo install "skillloom-${VERSION}-${TARGET}/loom" /usr/local/bin/loom
 
 # or install from the Homebrew tap after its formula PR is merged
 brew install majiayu000/tap/loom
 
-# or install from source
+# or build from source
 git clone https://github.com/majiayu000/loom.git
 cd loom && cargo install --path .
 
@@ -95,6 +103,8 @@ loom panel        # -> http://localhost:43117
 ```
 
 `loom panel` now serves a frontend bundled into the Rust binary at build time, so it works even when `--root` points at a separate registry directory. If panel assets are unavailable in your build, reinstall from a checkout with `bun` available so Loom can package the frontend during compile.
+
+Release archives are the preferred install path because their binaries are built with the Panel frontend already bundled and smoke-tested. To verify a downloaded archive, use the release `SHA256SUMS` file as shown above; if you use GitHub CLI, you can also verify provenance with `gh attestation verify skillloom-${VERSION}-${TARGET}.tar.gz --repo majiayu000/loom`.
 
 Prefer a guided walkthrough? Run `./scripts/demo.sh` for a scripted end-to-end tour (init → target add → status → panel hint) against a throwaway registry. `./scripts/e2e-agent-flow.sh` runs the four real integration scenarios used in CI.
 
@@ -200,6 +210,7 @@ Quick decision: **edits from the agent side → `capture`; edits inside the regi
 - State-changing registry commands commit `state/registry` to Git, and `sync push` has a safety commit before pushing.
 - Hard write guard: if `--root` points to the Loom tool repo itself, write operations are rejected. Use an independent skill registry repo for mutable operations.
 - English is the primary documentation language. [中文完整指南](docs/LOOM_COMPLETE_GUIDE_ZH.md).
+- Release and install trust notes live in [Releasing Loom](docs/RELEASING.md) and [Security Policy](SECURITY.md).
 - V1 planning lives in [Loom V1 Core Spec](docs/LOOM_V1_CORE_SPEC.md).
 
 ## Command Surface

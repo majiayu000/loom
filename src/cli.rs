@@ -59,13 +59,15 @@ pub enum Command {
         #[command(subcommand)]
         command: OpsCommand,
     },
-    #[command(about = "Plan safe agent automation before mutating state")]
+    #[command(about = "Plan safe agent automation before mutating state. Requires an existing workspace binding (`loom workspace binding add`) so preflight knows which target to project into.")]
     Agent {
         #[command(subcommand)]
         command: AgentCommand,
     },
     #[command(about = "Serve the local registry control panel")]
     Panel(PanelArgs),
+    #[command(about = "Run registry integrity, history, and projection checks (alias for `workspace doctor`)")]
+    Doctor,
 }
 
 #[derive(Debug, Clone, Subcommand, Serialize)]

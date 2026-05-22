@@ -76,9 +76,19 @@ export function DoctorPage({ live, mode, refreshKey }: DoctorPageProps) {
             label="Health"
             value={state.kind === "ready" ? (state.payload.healthy ? "healthy" : "attention") : state.kind}
             tone={state.kind === "ready" && !state.payload.healthy ? "err" : undefined}
+            title="Aggregate doctor verdict across git, registry, history, queue, and target checks"
           />
-          <Kpi label="Checks" value={checks.length} />
-          <Kpi label="Needs action" value={failed.length} tone={failed.length > 0 ? "pending" : undefined} />
+          <Kpi
+            label="Checks"
+            value={checks.length}
+            title="Total registry integrity probes executed by `loom workspace doctor`"
+          />
+          <Kpi
+            label="Needs action"
+            value={failed.length}
+            tone={failed.length > 0 ? "pending" : undefined}
+            title="Doctor checks reporting a failure. Independent from sync pending counts shown in the top bar."
+          />
         </div>
 
         {state.kind === "loading" && <div className="empty mono">loading...</div>}
@@ -207,10 +217,20 @@ function sectionLabel(section: string): string {
   return section.replace(/_/g, " ");
 }
 
-function Kpi({ label, value, tone }: { label: string; value: string | number; tone?: "pending" | "err" }) {
+function Kpi({
+  label,
+  value,
+  tone,
+  title,
+}: {
+  label: string;
+  value: string | number;
+  tone?: "pending" | "err";
+  title?: string;
+}) {
   const color = tone === "pending" ? "var(--pending)" : tone === "err" ? "var(--err)" : "var(--ink-0)";
   return (
-    <div className="kpi">
+    <div className="kpi" title={title}>
       <div className="label">{label}</div>
       <div className="value" style={{ color }}>
         {value}

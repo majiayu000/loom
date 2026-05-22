@@ -31,35 +31,46 @@ interface TopbarProps {
   readOnly: boolean;
 }
 
-function statusDisplay(props: TopbarProps): { label: string; dotStyle: React.CSSProperties } {
+interface StatusDisplay {
+  label: string;
+  dotStyle: React.CSSProperties;
+  title: string;
+}
+
+function statusDisplay(props: TopbarProps): StatusDisplay {
   if (props.mode === "offline-stale") {
     return {
       label: "live API offline · stale snapshot",
       dotStyle: { background: "var(--err)", boxShadow: "0 0 0 3px rgba(216,90,90,0.18)" },
+      title: "Last-known registry snapshot — live API is unreachable",
     };
   }
   if (props.error) {
     return {
       label: "registry error",
       dotStyle: { background: "var(--err)", boxShadow: "0 0 0 3px rgba(216,90,90,0.18)" },
+      title: props.error,
     };
   }
   if (props.loading) {
     return {
       label: "connecting…",
       dotStyle: { background: "var(--pending)", boxShadow: "0 0 0 3px rgba(194,160,94,0.14)" },
+      title: "Connecting to the registry API",
     };
   }
   if (!props.live) {
     return {
       label: "registry offline",
       dotStyle: { background: "var(--err)", boxShadow: "0 0 0 3px rgba(216,90,90,0.18)" },
+      title: "Registry API is offline",
     };
   }
   if (props.mode === "first-run") {
     return {
       label: "registry setup required",
       dotStyle: { background: "var(--warn)", boxShadow: "0 0 0 3px rgba(230,180,80,0.18)" },
+      title: "Registry has not been initialized yet — run `loom init`",
     };
   }
   const state = (props.remoteState ?? "").toUpperCase();
@@ -67,17 +78,25 @@ function statusDisplay(props: TopbarProps): { label: string; dotStyle: React.CSS
     return {
       label: `remote ${state.toLowerCase()}`,
       dotStyle: { background: "var(--err)", boxShadow: "0 0 0 3px rgba(216,90,90,0.18)" },
+      title: "Remote and local history differ — run `loom sync pull` to reconcile",
     };
   }
   if (state === "PENDING_PUSH" || state === "LOCAL_ONLY" || props.pendingCount > 0) {
+    const opNoun = props.pendingCount === 1 ? "operation" : "operations";
+    const title =
+      state === "LOCAL_ONLY"
+        ? `${props.pendingCount} ${opNoun} queued — no Git remote configured. Run \`loom workspace remote set\` to enable push.`
+        : `${props.pendingCount} ${opNoun} queued for push to the Git remote`;
     return {
       label: props.pendingCount > 0 ? `${props.pendingCount} pending` : state.toLowerCase().replace("_", " "),
       dotStyle: { background: "var(--warn)", boxShadow: "0 0 0 3px rgba(230,180,80,0.18)" },
+      title,
     };
   }
   return {
     label: "registry clean",
     dotStyle: { background: "var(--ok)", boxShadow: "0 0 0 3px rgba(111,183,138,0.14)" },
+    title: "Registry is in sync with the Git remote",
   };
 }
 
@@ -120,7 +139,7 @@ export function Topbar(props: TopbarProps) {
       </div>
       <div className="spacer" />
       <div className="top-actions">
-        <span className="top-btn" title={props.error ?? undefined}>
+        <span className="top-btn" title={status.title}>
           <span className="status-dot" style={status.dotStyle} /> {status.label}
         </span>
         <span className="top-btn" title={props.live ? "remote sync state" : "registry offline"}>
@@ -131,7 +150,12 @@ export function Topbar(props: TopbarProps) {
             className="top-btn"
             onClick={replay}
             disabled={replaying || props.readOnly}
-            title={replayError ?? (props.readOnly ? "registry offline" : undefined)}
+            title={
+              replayError ??
+              (props.readOnly
+                ? "registry offline"
+                : `Push ${props.pendingCount} queued operation${props.pendingCount === 1 ? "" : "s"} to the Git remote`)
+            }
           >
             <PlayIcon /> {replaying ? "replaying…" : `Replay ${props.pendingCount}`}
           </button>

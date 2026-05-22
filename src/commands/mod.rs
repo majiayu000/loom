@@ -157,6 +157,7 @@ impl App {
                 self.cmd_workspace_init(&args, &request_id)
             }
             Command::Monitor(args) => self.cmd_monitor_observed(args, &request_id),
+            Command::Doctor => self.cmd_doctor(),
             Command::Workspace { command } => match command {
                 WorkspaceCommand::Status => self.cmd_status(),
                 WorkspaceCommand::Doctor => self.cmd_doctor(),
@@ -316,6 +317,7 @@ fn command_records_audit(command: &Command) -> bool {
 fn command_requires_durable_audit(command: &Command) -> bool {
     match command {
         Command::Init | Command::Monitor(_) => true,
+        Command::Doctor => false,
         Command::Workspace { command } => match command {
             WorkspaceCommand::Status | WorkspaceCommand::Doctor => false,
             WorkspaceCommand::Init(_) => true,

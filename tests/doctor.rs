@@ -309,8 +309,7 @@ fn loom_doctor_alias_dispatches_to_workspace_doctor() {
     let root = TestDir::new("doctor-alias-dispatch");
 
     let (aliased_output, aliased_env) = run_loom(root.path(), &["doctor"]);
-    let (canonical_output, canonical_env) =
-        run_loom(root.path(), &["workspace", "doctor"]);
+    let (canonical_output, canonical_env) = run_loom(root.path(), &["workspace", "doctor"]);
 
     assert!(
         aliased_output.status.success(),

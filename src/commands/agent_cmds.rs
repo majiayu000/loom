@@ -35,21 +35,19 @@ impl App {
                     &workspace,
                 )
         }) {
-            let method = args
-                .skill
-                .as_deref()
-                .and_then(|skill| {
-                    snapshot
-                        .rules
-                        .rules
-                        .iter()
-                        .find(|rule| {
-                            rule.binding_id == binding.binding_id && rule.skill_id == skill
-                        })
-                        .map(|rule| rule.method.clone())
-                })
+            let rule =
+                args.skill.as_deref().and_then(|skill| {
+                    snapshot.rules.rules.iter().find(|rule| {
+                        rule.binding_id == binding.binding_id && rule.skill_id == skill
+                    })
+                });
+            let method = rule
+                .map(|rule| rule.method.clone())
                 .unwrap_or_else(|| projection_method_as_str(args.method).to_string());
-            let target = snapshot.target(&binding.default_target_id);
+            let target_id = rule
+                .map(|rule| rule.target_id.as_str())
+                .unwrap_or(binding.default_target_id.as_str());
+            let target = snapshot.target(target_id);
             if let Some(target) = target {
                 push_target_risks(
                     &mut risks,
@@ -64,7 +62,7 @@ impl App {
                     "TARGET_NOT_FOUND",
                     format!(
                         "binding '{}' points at missing target '{}'",
-                        binding.binding_id, binding.default_target_id
+                        binding.binding_id, target_id
                     ),
                 ));
             }
@@ -73,7 +71,7 @@ impl App {
                 "agent": binding.agent,
                 "profile": binding.profile_id,
                 "matcher": binding.workspace_matcher,
-                "target_id": binding.default_target_id,
+                "target_id": target_id,
                 "target": target,
                 "method": method,
                 "existing_projection": args.skill.as_deref().and_then(|skill| {
@@ -230,6 +228,17 @@ impl App {
             ));
         }
 
+        let mut next_command = format!(
+            "loom --json --root {} skill project {} --binding {} --method {}",
+            shell_arg(&self.ctx.root),
+            shell_arg(&args.skill),
+            shell_arg(&args.binding),
+            projection_method_as_str(args.method)
+        );
+        if let Some(target_id) = target_id.as_deref() {
+            next_command.push_str(&format!(" --target {}", shell_arg(target_id)));
+        }
+
         Ok((
             json!({
                 "dry_run": true,
@@ -245,13 +254,7 @@ impl App {
                 "target_paths": materialized_path.iter().map(|p| p.display().to_string()).collect::<Vec<_>>(),
                 "will_mutate": ["live_target", "registry_state", "registry_ops", "git_history"],
                 "risks": risks,
-                "next_commands": [format!(
-                    "loom --json --root {} skill project {} --binding {} --method {}",
-                    shell_arg(&self.ctx.root),
-                    shell_arg(&args.skill),
-                    shell_arg(&args.binding),
-                    projection_method_as_str(args.method)
-                )],
+                "next_commands": [next_command],
             }),
             Meta::default(),
         ))
@@ -587,13 +590,17 @@ fn build_preflight_next_commands(
     let method = selectors["method"]
         .as_str()
         .unwrap_or_else(|| projection_method_as_str(args.method));
-    vec![format!(
+    let mut command = format!(
         "loom --json --root {} skill project {} --binding {} --method {}",
         shell_arg(root),
         shell_arg(skill),
         shell_arg(binding_id),
         method
-    )]
+    );
+    if let Some(target_id) = selectors["target_id"].as_str() {
+        command.push_str(&format!(" --target {}", shell_arg(target_id)));
+    }
+    vec![command]
 }
 
 fn target_paths(matches: &[Value]) -> Vec<String> {

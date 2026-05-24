@@ -98,6 +98,75 @@ fn agent_preflight_resolves_selectors_without_registry_operation() {
 }
 
 #[test]
+fn agent_preflight_uses_rule_target_for_skill_selector() {
+    let root = TestDir::new("agent-preflight-rule-target");
+    let workspace = root.path().join("work/project-a");
+    fs::create_dir_all(&workspace).expect("workspace");
+    let binding_id = setup_binding(root.path(), "managed", &workspace);
+
+    let alternate_target_path = root.path().join("live/claude-project-b");
+    let (target_output, target_env) =
+        target_add(root.path(), "claude", &alternate_target_path, "managed");
+    assert!(target_output.status.success(), "target add should succeed");
+    let alternate_target_id = target_env["data"]["target"]["target_id"]
+        .as_str()
+        .expect("target id");
+
+    let (project_output, _) = run_loom(
+        root.path(),
+        &[
+            "skill",
+            "project",
+            "model-onboarding",
+            "--binding",
+            &binding_id,
+            "--target",
+            alternate_target_id,
+            "--method",
+            "copy",
+        ],
+    );
+    assert!(project_output.status.success(), "project should succeed");
+
+    let workspace_arg = workspace.to_string_lossy().into_owned();
+    let (output, env) = run_loom(
+        root.path(),
+        &[
+            "agent",
+            "preflight",
+            "--agent",
+            "claude",
+            "--workspace",
+            &workspace_arg,
+            "--skill",
+            "model-onboarding",
+        ],
+    );
+
+    assert!(output.status.success(), "preflight should succeed");
+    assert_eq!(
+        env["data"]["required_selectors"]["target_id"],
+        Value::String(alternate_target_id.to_string())
+    );
+    assert_eq!(
+        env["data"]["target_paths"][0],
+        Value::String(
+            fs::canonicalize(&alternate_target_path)
+                .expect("canonical target path")
+                .display()
+                .to_string()
+        )
+    );
+    let next_command = env["data"]["next_commands"][0]
+        .as_str()
+        .expect("next command");
+    assert!(
+        next_command.contains(&format!("--target {alternate_target_id}")),
+        "next command must preserve rule target: {next_command}"
+    );
+}
+
+#[test]
 fn agent_preflight_reports_ambiguous_workspace_binding() {
     let root = TestDir::new("agent-preflight-ambiguous");
     let workspace = root.path().join("work/project-a");
@@ -146,6 +215,44 @@ fn agent_preflight_reports_ambiguous_workspace_binding() {
     assert_eq!(
         env["data"]["risks"][0]["code"],
         Value::String("AMBIGUOUS_BINDING".to_string())
+    );
+}
+
+#[test]
+fn project_dry_run_preserves_explicit_target_in_next_command() {
+    let root = TestDir::new("project-dry-run-explicit-target");
+    let workspace = root.path().join("work/project-a");
+    fs::create_dir_all(&workspace).expect("workspace");
+    let binding_id = setup_binding(root.path(), "managed", &workspace);
+    let alternate_target_path = root.path().join("live/claude-project-b");
+    let (target_output, target_env) =
+        target_add(root.path(), "claude", &alternate_target_path, "managed");
+    assert!(target_output.status.success(), "target add should succeed");
+    let alternate_target_id = target_env["data"]["target"]["target_id"]
+        .as_str()
+        .expect("target id");
+
+    let (output, env) = run_loom(
+        root.path(),
+        &[
+            "skill",
+            "project",
+            "model-onboarding",
+            "--binding",
+            &binding_id,
+            "--target",
+            alternate_target_id,
+            "--dry-run",
+        ],
+    );
+
+    assert!(output.status.success(), "dry-run should succeed");
+    let next_command = env["data"]["next_commands"][0]
+        .as_str()
+        .expect("next command");
+    assert!(
+        next_command.contains(&format!("--target {alternate_target_id}")),
+        "next command must preserve explicit target: {next_command}"
     );
 }
 

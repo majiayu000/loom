@@ -303,3 +303,29 @@ fn workspace_doctor_agent_skill_inventory_when_home_unset() {
     assert_eq!(inventory["details"]["home_set"], Value::Bool(false));
     assert_eq!(inventory["details"]["total"], Value::from(0));
 }
+
+#[test]
+fn loom_doctor_alias_dispatches_to_workspace_doctor() {
+    let root = TestDir::new("doctor-alias-dispatch");
+
+    let (aliased_output, aliased_env) = run_loom(root.path(), &["doctor"]);
+    let (canonical_output, canonical_env) = run_loom(root.path(), &["workspace", "doctor"]);
+
+    assert!(
+        aliased_output.status.success(),
+        "loom doctor failed: stderr={}",
+        String::from_utf8_lossy(&aliased_output.stderr)
+    );
+    assert!(canonical_output.status.success());
+
+    assert_eq!(
+        aliased_env["cmd"],
+        Value::String("workspace.doctor".to_string()),
+        "alias must report the same audit cmd name as the canonical invocation"
+    );
+    assert_eq!(aliased_env["cmd"], canonical_env["cmd"]);
+    assert_eq!(
+        aliased_env["data"]["healthy"], canonical_env["data"]["healthy"],
+        "alias and canonical must produce the same doctor verdict on the same registry"
+    );
+}

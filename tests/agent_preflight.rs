@@ -25,6 +25,10 @@ fn pending_log(root: &Path) -> String {
 }
 
 fn setup_binding(root: &Path, ownership: &str, workspace: &Path) -> String {
+    setup_binding_with_target(root, ownership, workspace).0
+}
+
+fn setup_binding_with_target(root: &Path, ownership: &str, workspace: &Path) -> (String, String) {
     write_example_skill(root, "model-onboarding");
     let (save_output, _) = save_skill(root, "model-onboarding");
     assert!(save_output.status.success(), "save should succeed");
@@ -52,10 +56,11 @@ fn setup_binding(root: &Path, ownership: &str, workspace: &Path) -> String {
         String::from_utf8_lossy(&binding_output.stderr),
         String::from_utf8_lossy(&binding_output.stdout)
     );
-    binding_env["data"]["binding"]["binding_id"]
+    let binding_id = binding_env["data"]["binding"]["binding_id"]
         .as_str()
         .expect("binding id")
-        .to_string()
+        .to_string();
+    (binding_id, target_id.to_string())
 }
 
 #[test]
@@ -164,6 +169,66 @@ fn agent_preflight_uses_rule_target_for_skill_selector() {
         next_command.contains(&format!("--target {alternate_target_id}")),
         "next command must preserve rule target: {next_command}"
     );
+}
+
+#[test]
+fn agent_preflight_blocks_ambiguous_skill_rules_before_selecting_target() {
+    let root = TestDir::new("agent-preflight-ambiguous-rule-target");
+    let workspace = root.path().join("work/project-a");
+    fs::create_dir_all(&workspace).expect("workspace");
+    let (binding_id, default_target_id) =
+        setup_binding_with_target(root.path(), "managed", &workspace);
+
+    let alternate_target_path = root.path().join("live/claude-project-b");
+    let (target_output, target_env) =
+        target_add(root.path(), "claude", &alternate_target_path, "managed");
+    assert!(target_output.status.success(), "target add should succeed");
+    let alternate_target_id = target_env["data"]["target"]["target_id"]
+        .as_str()
+        .expect("target id");
+
+    for target_id in [default_target_id.as_str(), alternate_target_id] {
+        let (project_output, _) = run_loom(
+            root.path(),
+            &[
+                "skill",
+                "project",
+                "model-onboarding",
+                "--binding",
+                &binding_id,
+                "--target",
+                target_id,
+                "--method",
+                "copy",
+            ],
+        );
+        assert!(project_output.status.success(), "project should succeed");
+    }
+
+    let workspace_arg = workspace.to_string_lossy().into_owned();
+    let (output, env) = run_loom(
+        root.path(),
+        &[
+            "agent",
+            "preflight",
+            "--agent",
+            "claude",
+            "--workspace",
+            &workspace_arg,
+            "--skill",
+            "model-onboarding",
+        ],
+    );
+
+    assert!(output.status.success(), "preflight should return a plan");
+    assert_eq!(env["data"]["safe_to_run"], Value::Bool(false));
+    assert_eq!(
+        env["data"]["risks"][0]["code"],
+        Value::String("AMBIGUOUS_SKILL_RULE".to_string())
+    );
+    assert_eq!(env["data"]["required_selectors"]["target_id"], Value::Null);
+    assert_eq!(env["data"]["target_paths"], Value::Array(Vec::new()));
+    assert_eq!(env["data"]["next_commands"], Value::Array(Vec::new()));
 }
 
 #[test]

@@ -145,6 +145,8 @@ pub enum SkillCommand {
     Rollback(RollbackArgs),
     #[command(about = "Diff two revisions of a skill source")]
     Diff(DiffArgs),
+    #[command(about = "Show Git history for one skill source")]
+    History(HistoryArgs),
     #[command(about = "Verify a skill source has no uncommitted drift")]
     Verify(SkillOnlyArgs),
     #[command(about = "Continuously import and update skills from observed targets")]
@@ -361,6 +363,32 @@ pub struct DiffArgs {
     pub from: String,
     /// Newer revision, snapshot, or release reference.
     pub to: String,
+}
+
+#[derive(Debug, Clone, Args, Serialize)]
+pub struct HistoryArgs {
+    /// Registry skill name.
+    pub skill: String,
+
+    /// Maximum number of history entries to return.
+    #[arg(long, default_value_t = 30)]
+    pub limit: usize,
+
+    /// Older revision boundary. When set, history uses <from>..<to>.
+    #[arg(long)]
+    pub from: Option<String>,
+
+    /// Newer revision boundary.
+    #[arg(long, default_value = "HEAD")]
+    pub to: String,
+
+    /// Include per-commit short diff statistics.
+    #[arg(long)]
+    pub include_diff_stat: bool,
+
+    /// Include registry operations added by each history commit.
+    #[arg(long, default_value_t = true)]
+    pub include_ops: bool,
 }
 
 #[derive(Debug, Clone, Args, Serialize)]

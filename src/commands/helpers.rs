@@ -126,6 +126,7 @@ pub(crate) fn command_name(command: &Command) -> &'static str {
             SkillCommand::Release(_) => "skill.release",
             SkillCommand::Rollback(_) => "skill.rollback",
             SkillCommand::Diff(_) => "skill.diff",
+            SkillCommand::History(_) => "skill.history",
             SkillCommand::Verify(_) => "skill.verify",
             SkillCommand::Orphan {
                 command: SkillOrphanCommand::List,

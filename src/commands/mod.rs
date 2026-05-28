@@ -3,6 +3,7 @@ mod event_store;
 mod file_ops;
 mod fs_probe;
 mod helpers;
+mod history_cmds;
 mod projections;
 mod skill_cmds;
 mod skill_verify;
@@ -182,6 +183,7 @@ impl App {
                 SkillCommand::Rollback(args) if args.dry_run => self.cmd_rollback_plan(args),
                 SkillCommand::Rollback(args) => self.cmd_rollback(args, &request_id),
                 SkillCommand::Diff(args) => self.cmd_diff(args),
+                SkillCommand::History(args) => self.cmd_history(args),
                 SkillCommand::Verify(args) => self.cmd_verify(args),
                 SkillCommand::Orphan {
                     command: SkillOrphanCommand::List,
@@ -311,7 +313,13 @@ impl App {
 }
 
 fn command_records_audit(command: &Command) -> bool {
-    !matches!(command, Command::Panel(_))
+    !matches!(
+        command,
+        Command::Panel(_)
+            | Command::Skill {
+                command: SkillCommand::History(_)
+            }
+    )
 }
 
 fn command_requires_durable_audit(command: &Command) -> bool {

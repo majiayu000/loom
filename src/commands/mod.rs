@@ -6,6 +6,7 @@ mod projections;
 mod skill_cmds;
 mod sync_cmds;
 mod target_cmds;
+mod trash_cmds;
 mod version_cmds;
 mod workspace_cmds;
 
@@ -15,7 +16,8 @@ use uuid::Uuid;
 
 use crate::cli::{
     Cli, Command, OpsCommand, OpsHistoryCommand, RemoteCommand, SkillCommand, SkillOrphanCommand,
-    SyncCommand, TargetCommand, WorkspaceBindingCommand, WorkspaceCommand, WorkspaceInitArgs,
+    SkillTrashCommand, SyncCommand, TargetCommand, WorkspaceBindingCommand, WorkspaceCommand,
+    WorkspaceInitArgs,
 };
 use crate::envelope::{Envelope, Meta};
 use crate::state::AppContext;
@@ -149,6 +151,18 @@ impl App {
                 SkillCommand::Release(args) => self.cmd_release(args, &request_id),
                 SkillCommand::Rollback(args) => self.cmd_rollback(args, &request_id),
                 SkillCommand::Diff(args) => self.cmd_diff(args),
+                SkillCommand::Trash {
+                    command: SkillTrashCommand::Add(args),
+                } => self.cmd_skill_trash_add(args, &request_id),
+                SkillCommand::Trash {
+                    command: SkillTrashCommand::List,
+                } => self.cmd_skill_trash_list(),
+                SkillCommand::Trash {
+                    command: SkillTrashCommand::Restore(args),
+                } => self.cmd_skill_trash_restore(args, &request_id),
+                SkillCommand::Trash {
+                    command: SkillTrashCommand::Purge(args),
+                } => self.cmd_skill_trash_purge(args, &request_id),
                 SkillCommand::Orphan {
                     command: SkillOrphanCommand::List,
                 } => self.cmd_skill_orphan_list(),
@@ -294,6 +308,11 @@ fn command_requires_durable_audit(command: &Command) -> bool {
                 | SkillCommand::Snapshot(_)
                 | SkillCommand::Release(_)
                 | SkillCommand::Rollback(_)
+                | SkillCommand::Trash {
+                    command: SkillTrashCommand::Add(_)
+                        | SkillTrashCommand::Restore(_)
+                        | SkillTrashCommand::Purge(_)
+                }
                 | SkillCommand::Orphan {
                     command: SkillOrphanCommand::Clean(_)
                 }

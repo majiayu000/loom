@@ -5,7 +5,7 @@ use uuid::Uuid;
 
 use crate::cli::{
     AgentKind, BindingAddArgs, Command, OpsCommand, OpsHistoryCommand, ProjectionMethod,
-    SkillCommand, SkillOrphanCommand, SyncCommand, TargetAddArgs, TargetCommand,
+    SkillCommand, SkillOrphanCommand, SkillTrashCommand, SyncCommand, TargetAddArgs, TargetCommand,
     WorkspaceBindingCommand, WorkspaceCommand, WorkspaceMatcherKind,
 };
 use crate::state::AppContext;
@@ -125,6 +125,18 @@ pub(crate) fn command_name(command: &Command) -> &'static str {
             SkillCommand::Release(_) => "skill.release",
             SkillCommand::Rollback(_) => "skill.rollback",
             SkillCommand::Diff(_) => "skill.diff",
+            SkillCommand::Trash {
+                command: SkillTrashCommand::Add(_),
+            } => "skill.trash.add",
+            SkillCommand::Trash {
+                command: SkillTrashCommand::List,
+            } => "skill.trash.list",
+            SkillCommand::Trash {
+                command: SkillTrashCommand::Restore(_),
+            } => "skill.trash.restore",
+            SkillCommand::Trash {
+                command: SkillTrashCommand::Purge(_),
+            } => "skill.trash.purge",
             SkillCommand::Orphan {
                 command: SkillOrphanCommand::List,
             } => "skill.orphan.list",

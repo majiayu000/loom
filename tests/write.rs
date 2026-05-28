@@ -7,7 +7,9 @@ use std::process::Command;
 use common::actions::{binding_add, target_add, target_add_with_default_ownership};
 use serde_json::Value;
 
-use common::{TestDir, run_loom, run_loom_with_env, write_minimal_registry_state, write_skill};
+use common::{
+    TestDir, operations_log, run_loom, run_loom_with_env, write_minimal_registry_state, write_skill,
+};
 
 fn git_ok(root: &Path, args: &[&str]) -> String {
     let output = Command::new("git")
@@ -48,10 +50,6 @@ fn registry_array_len(root: &Path, file_name: &str, key: &str) -> usize {
     let raw = fs::read_to_string(&path).expect("read registry json");
     let value: Value = serde_json::from_str(&raw).expect("parse registry json");
     value[key].as_array().map(Vec::len).unwrap_or(0)
-}
-
-fn operations_log(root: &Path) -> String {
-    fs::read_to_string(root.join("state/registry/ops/operations.jsonl")).unwrap_or_default()
 }
 
 #[test]

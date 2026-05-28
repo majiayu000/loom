@@ -134,6 +134,11 @@ pub enum SkillCommand {
     Rollback(RollbackArgs),
     #[command(about = "Diff two revisions of a skill source")]
     Diff(DiffArgs),
+    #[command(about = "Move skills to trash, list trash entries, restore, or purge")]
+    Trash {
+        #[command(subcommand)]
+        command: SkillTrashCommand,
+    },
     #[command(about = "Continuously import and update skills from observed targets")]
     MonitorObserved(MonitorObservedArgs),
     #[command(about = "Run one import pass over observed targets and exit")]
@@ -143,6 +148,34 @@ pub enum SkillCommand {
         #[command(subcommand)]
         command: SkillOrphanCommand,
     },
+}
+
+#[derive(Debug, Clone, Subcommand, Serialize)]
+pub enum SkillTrashCommand {
+    #[command(about = "Move a registry skill into Git-tracked trash")]
+    Add(SkillOnlyArgs),
+    #[command(about = "List Git-tracked trash entries")]
+    List,
+    #[command(about = "Restore a skill from trash")]
+    Restore(TrashRestoreArgs),
+    #[command(about = "Permanently remove one trash entry")]
+    Purge(TrashPurgeArgs),
+}
+
+#[derive(Debug, Clone, Args, Serialize)]
+pub struct TrashRestoreArgs {
+    /// Registry skill name.
+    pub skill: String,
+
+    /// Restore a specific trash entry instead of the newest entry for the skill.
+    #[arg(long)]
+    pub trash_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Args, Serialize)]
+pub struct TrashPurgeArgs {
+    /// Trash entry id returned by `loom skill trash list`.
+    pub trash_id: String,
 }
 
 #[derive(Debug, Clone, Subcommand, Serialize)]

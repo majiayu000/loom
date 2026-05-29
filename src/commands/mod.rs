@@ -1,4 +1,5 @@
 mod agent_cmds;
+mod backup_cmds;
 mod event_store;
 mod file_ops;
 mod fs_probe;
@@ -156,6 +157,7 @@ impl App {
                 };
                 self.cmd_workspace_init(&args, &request_id)
             }
+            Command::Backup { command } => self.cmd_backup(command),
             Command::Monitor(args) => self.cmd_monitor_observed(args, &request_id),
             Command::Doctor => self.cmd_doctor(),
             Command::Workspace { command } => match command {
@@ -311,12 +313,13 @@ impl App {
 }
 
 fn command_records_audit(command: &Command) -> bool {
-    !matches!(command, Command::Panel(_))
+    !matches!(command, Command::Panel(_) | Command::Backup { .. })
 }
 
 fn command_requires_durable_audit(command: &Command) -> bool {
     match command {
         Command::Init | Command::Monitor(_) => true,
+        Command::Backup { .. } => false,
         Command::Doctor => false,
         Command::Workspace { command } => match command {
             WorkspaceCommand::Status | WorkspaceCommand::Doctor => false,

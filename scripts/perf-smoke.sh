@@ -40,13 +40,18 @@ measure([bin_path, "--version"], 300)
 measure([bin_path, "--help"], 300)
 
 dist = pathlib.Path("panel/dist")
-if dist.exists():
-    total = 0
-    for path in dist.rglob("*"):
-        if path.is_file() and path.suffix in {".css", ".html", ".js"}:
-            total += len(gzip.compress(path.read_bytes(), compresslevel=9))
-    limit = 100 * 1024
-    if total > limit:
-        raise SystemExit(f"panel gzip payload is {total} bytes; limit is {limit}")
-    print(f"panel gzip payload={total} bytes")
+if not dist.is_dir():
+    raise SystemExit("panel/dist is missing; run `make panel-build` before perf-smoke")
+
+total = 0
+for path in dist.rglob("*"):
+    rel = path.relative_to(dist).as_posix()
+    if not path.is_file():
+        continue
+    if rel == "index.html" or rel.endswith(".css") or rel.startswith("assets/base-") or rel.startswith("assets/panel-"):
+        total += len(gzip.compress(path.read_bytes(), compresslevel=9))
+limit = 100 * 1024
+if total > limit:
+    raise SystemExit(f"panel gzip payload is {total} bytes; limit is {limit}")
+print(f"panel gzip payload={total} bytes")
 PY

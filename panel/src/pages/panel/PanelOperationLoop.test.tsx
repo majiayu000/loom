@@ -255,3 +255,48 @@ test("SyncPage surfaces history repair actions", async () => {
     api.opsHistoryRepair = originalRepair;
   }
 });
+
+test("SyncPage re-runs history diagnose when refreshed data arrives", async () => {
+  const originalDiagnose = api.opsHistoryDiagnose;
+  let diagnoseCalls = 0;
+  api.opsHistoryDiagnose = async () => {
+    diagnoseCalls += 1;
+    return historyDiagnosePayload(diagnoseCalls === 1 ? 1 : 0);
+  };
+
+  try {
+    let renderer: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(
+        <SyncPage
+          remote={{ configured: true, url: "git@example.com:loom.git", ahead: 0, behind: 0, sync_state: "clean" }}
+          pendingCount={0}
+          registryRoot="/tmp/loom"
+          refreshKey="first"
+          readOnly={false}
+          onMutation={() => {}}
+        />,
+      );
+    });
+    await flush();
+    expect(diagnoseCalls).toBe(1);
+
+    await act(async () => {
+      renderer!.update(
+        <SyncPage
+          remote={{ configured: true, url: "git@example.com:loom.git", ahead: 0, behind: 0, sync_state: "clean" }}
+          pendingCount={0}
+          registryRoot="/tmp/loom"
+          refreshKey="second"
+          readOnly={false}
+          onMutation={() => {}}
+        />,
+      );
+    });
+    await flush();
+
+    expect(diagnoseCalls).toBe(2);
+  } finally {
+    api.opsHistoryDiagnose = originalDiagnose;
+  }
+});

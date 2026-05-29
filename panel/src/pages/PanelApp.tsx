@@ -170,6 +170,7 @@ export function PanelApp() {
             skills={skills}
             targets={targets}
             bindings={bindings}
+            projections={live.projections}
             selectedSkill={selectedSkill}
             onSelectSkill={(id) => setSelectedSkill(id)}
             onMutation={onMutation}
@@ -234,6 +235,7 @@ export function PanelApp() {
             remote={live.remote}
             pendingCount={live.pendingCount}
             registryRoot={live.registryRoot}
+            refreshKey={live.lastUpdated}
             readOnly={readOnly}
             onMutation={onMutation}
           />

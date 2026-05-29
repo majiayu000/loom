@@ -100,7 +100,8 @@ impl App {
             .clone()
             .unwrap_or_else(|| Uuid::new_v4().to_string());
         let audit_required = command_requires_durable_audit(&cli.command);
-        let audit_enabled = command_records_audit(&cli.command);
+        let audit_enabled = command_records_audit(&cli.command)
+            && (audit_required || self.ctx.ensure_not_loom_tool_repo_root().is_ok());
         if audit_required && let Err(err) = self.ctx.ensure_not_loom_tool_repo_root() {
             let message = err.to_string();
             let message = message

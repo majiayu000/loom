@@ -147,6 +147,8 @@ pub enum SkillCommand {
     Diff(DiffArgs),
     #[command(about = "Verify a skill source has no uncommitted drift")]
     Verify(SkillOnlyArgs),
+    #[command(about = "Watch registry skill sources and autosave stable local edits")]
+    Watch(WatchArgs),
     #[command(about = "Continuously import and update skills from observed targets")]
     MonitorObserved(MonitorObservedArgs),
     #[command(about = "Run one import pass over observed targets and exit")]
@@ -319,6 +321,32 @@ pub struct SaveArgs {
     /// Git commit message for the saved source revision.
     #[arg(long)]
     pub message: Option<String>,
+}
+
+#[derive(Debug, Clone, Args, Serialize)]
+pub struct WatchArgs {
+    /// Registry skill name. Watches all registry skills when omitted.
+    pub skill: Option<String>,
+
+    /// Milliseconds changes must remain quiet before autosave.
+    #[arg(long, default_value_t = 3000)]
+    pub debounce_ms: u64,
+
+    /// Maximum changed paths allowed in one autosave batch.
+    #[arg(long, default_value_t = 20)]
+    pub max_batch: usize,
+
+    /// Print the autosave plan without committing.
+    #[arg(long)]
+    pub dry_run: bool,
+
+    /// Run one scan and exit.
+    #[arg(long)]
+    pub once: bool,
+
+    /// Stop after N scans. Mainly useful for supervised smoke tests.
+    #[arg(long, hide = true)]
+    pub max_cycles: Option<u64>,
 }
 
 #[derive(Debug, Clone, Args, Serialize)]

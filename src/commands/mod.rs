@@ -9,6 +9,7 @@ mod skill_verify;
 mod sync_cmds;
 mod target_cmds;
 mod version_cmds;
+mod watch_cmds;
 mod workspace_cmds;
 
 use anyhow::Result;
@@ -177,6 +178,7 @@ impl App {
                 SkillCommand::Capture(args) if args.dry_run => self.cmd_capture_plan(args),
                 SkillCommand::Capture(args) => self.cmd_capture(args, &request_id),
                 SkillCommand::Save(args) => self.cmd_save(args, &request_id),
+                SkillCommand::Watch(args) => self.cmd_watch(args, &request_id),
                 SkillCommand::Snapshot(args) => self.cmd_snapshot(args, &request_id),
                 SkillCommand::Release(args) => self.cmd_release(args, &request_id),
                 SkillCommand::Rollback(args) if args.dry_run => self.cmd_rollback_plan(args),
@@ -338,6 +340,7 @@ fn command_requires_durable_audit(command: &Command) -> bool {
                 | SkillCommand::Project(_)
                 | SkillCommand::Capture(_)
                 | SkillCommand::Save(_)
+                | SkillCommand::Watch(_)
                 | SkillCommand::Snapshot(_)
                 | SkillCommand::Release(_)
                 | SkillCommand::Rollback(_)

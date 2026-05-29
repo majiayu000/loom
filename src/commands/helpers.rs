@@ -122,6 +122,7 @@ pub(crate) fn command_name(command: &Command) -> &'static str {
             SkillCommand::Project(_) => "skill.project",
             SkillCommand::Capture(_) => "skill.capture",
             SkillCommand::Save(_) => "skill.save",
+            SkillCommand::Watch(_) => "skill.watch",
             SkillCommand::Snapshot(_) => "skill.snapshot",
             SkillCommand::Release(_) => "skill.release",
             SkillCommand::Rollback(_) => "skill.rollback",

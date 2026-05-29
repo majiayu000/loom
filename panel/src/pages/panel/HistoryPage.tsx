@@ -84,8 +84,8 @@ export function HistoryPage({ live, mode, mutationVersion, refreshKey, onMutatio
 
   const offlineHint =
     mode === "offline-stale"
-      ? "Activity history is unavailable while the live API is offline. The panel is keeping the last known overview data in read-only mode."
-      : "Activity history needs the live panel API. Start `loom panel` to load real registry activity.";
+      ? "Activity history is offline. Showing the last overview snapshot."
+      : "Activity history needs the live panel API. Start `loom panel`.";
 
   const payload = state.kind === "ready" ? state.payload : null;
   const operations = payload?.operations ?? [];

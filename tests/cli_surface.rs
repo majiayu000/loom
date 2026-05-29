@@ -461,6 +461,7 @@ fn risky_command_help_describes_selectors_and_repair_strategy() {
             vec![
                 "Git revision or snapshot reference",
                 "Number of source commits",
+                "Preview rollback impact",
             ],
         ),
         (

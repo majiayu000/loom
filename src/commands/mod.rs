@@ -311,7 +311,7 @@ impl App {
 }
 
 fn command_records_audit(command: &Command) -> bool {
-    !matches!(command, Command::Panel(_))
+    !matches!(command, Command::Panel(_)) && !is_rollback_preview(command)
 }
 
 fn command_requires_durable_audit(command: &Command) -> bool {
@@ -330,21 +330,25 @@ fn command_requires_durable_audit(command: &Command) -> bool {
         Command::Target { command } => {
             !matches!(command, TargetCommand::List | TargetCommand::Show(_))
         }
-        Command::Skill { command } => matches!(
-            command,
+        Command::Skill { command } => match command {
             SkillCommand::Add(_)
-                | SkillCommand::ImportObserved(_)
-                | SkillCommand::MonitorObserved(_)
-                | SkillCommand::Project(_)
-                | SkillCommand::Capture(_)
-                | SkillCommand::Save(_)
-                | SkillCommand::Snapshot(_)
-                | SkillCommand::Release(_)
-                | SkillCommand::Rollback(_)
-                | SkillCommand::Orphan {
-                    command: SkillOrphanCommand::Clean(_)
-                }
-        ),
+            | SkillCommand::ImportObserved(_)
+            | SkillCommand::MonitorObserved(_)
+            | SkillCommand::Project(_)
+            | SkillCommand::Capture(_)
+            | SkillCommand::Save(_)
+            | SkillCommand::Snapshot(_)
+            | SkillCommand::Release(_)
+            | SkillCommand::Orphan {
+                command: SkillOrphanCommand::Clean(_),
+            } => true,
+            SkillCommand::Rollback(args) => !args.dry_run,
+            SkillCommand::Diff(_)
+            | SkillCommand::Verify(_)
+            | SkillCommand::Orphan {
+                command: SkillOrphanCommand::List,
+            } => false,
+        },
         Command::Sync { command } => !matches!(command, SyncCommand::Status),
         Command::Ops { command } => match command {
             OpsCommand::List => false,
@@ -354,4 +358,13 @@ fn command_requires_durable_audit(command: &Command) -> bool {
         Command::Agent { .. } => false,
         Command::Panel(_) => false,
     }
+}
+
+fn is_rollback_preview(command: &Command) -> bool {
+    matches!(
+        command,
+        Command::Skill {
+            command: SkillCommand::Rollback(args),
+        } if args.dry_run
+    )
 }

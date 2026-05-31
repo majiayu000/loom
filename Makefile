@@ -30,7 +30,7 @@ panel-typecheck:
 e2e:
 	./scripts/e2e-agent-flow.sh
 
-perf-smoke:
+perf-smoke: panel-build
 	cargo build --release --locked
 	./scripts/perf-smoke.sh
 

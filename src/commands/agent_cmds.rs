@@ -12,6 +12,8 @@ use crate::envelope::Meta;
 use crate::gitops;
 use crate::state_model::{RegistryProjectionInstance, RegistrySnapshot, RegistryStatePaths};
 
+const ROLLBACK_PREVIEW_PATH_LIMIT: usize = 50;
+
 impl App {
     pub fn cmd_agent_preflight(
         &self,
@@ -35,21 +37,46 @@ impl App {
                     &workspace,
                 )
         }) {
-            let method = args
+            let matching_rules = args
                 .skill
                 .as_deref()
-                .and_then(|skill| {
+                .map(|skill| {
                     snapshot
                         .rules
                         .rules
                         .iter()
-                        .find(|rule| {
+                        .filter(|rule| {
                             rule.binding_id == binding.binding_id && rule.skill_id == skill
                         })
-                        .map(|rule| rule.method.clone())
+                        .collect::<Vec<_>>()
                 })
-                .unwrap_or_else(|| projection_method_as_str(args.method).to_string());
-            let target = snapshot.target(&binding.default_target_id);
+                .unwrap_or_default();
+            let (method, target_id) = match matching_rules.as_slice() {
+                [] => (
+                    projection_method_as_str(args.method).to_string(),
+                    Some(binding.default_target_id.as_str()),
+                ),
+                [rule] => (rule.method.clone(), Some(rule.target_id.as_str())),
+                rules => {
+                    let target_ids = rules
+                        .iter()
+                        .map(|rule| rule.target_id.as_str())
+                        .collect::<Vec<_>>();
+                    risks.push(risk(
+                        "error",
+                        "AMBIGUOUS_SKILL_RULE",
+                        format!(
+                            "binding '{}' has {} '{}' rules for targets {}; use an explicit target selector before projecting this skill",
+                            binding.binding_id,
+                            rules.len(),
+                            args.skill.as_deref().unwrap_or_default(),
+                            target_ids.join(", ")
+                        ),
+                    ));
+                    (projection_method_as_str(args.method).to_string(), None)
+                }
+            };
+            let target = target_id.and_then(|target_id| snapshot.target(target_id));
             if let Some(target) = target {
                 push_target_risks(
                     &mut risks,
@@ -58,13 +85,13 @@ impl App {
                     &target.target_id,
                     &method,
                 );
-            } else {
+            } else if let Some(target_id) = target_id {
                 risks.push(risk(
                     "error",
                     "TARGET_NOT_FOUND",
                     format!(
                         "binding '{}' points at missing target '{}'",
-                        binding.binding_id, binding.default_target_id
+                        binding.binding_id, target_id
                     ),
                 ));
             }
@@ -73,13 +100,15 @@ impl App {
                 "agent": binding.agent,
                 "profile": binding.profile_id,
                 "matcher": binding.workspace_matcher,
-                "target_id": binding.default_target_id,
+                "target_id": target_id,
                 "target": target,
                 "method": method,
                 "existing_projection": args.skill.as_deref().and_then(|skill| {
+                    let target_id = target_id?;
                     snapshot.projections.projections.iter().find(|projection| {
                         projection.skill_id == skill
                             && projection.binding_id.as_deref() == Some(binding.binding_id.as_str())
+                            && projection.target_id == target_id
                     })
                 }),
             }));
@@ -230,6 +259,17 @@ impl App {
             ));
         }
 
+        let mut next_command = format!(
+            "loom --json --root {} skill project {} --binding {} --method {}",
+            shell_arg(&self.ctx.root),
+            shell_arg(&args.skill),
+            shell_arg(&args.binding),
+            projection_method_as_str(args.method)
+        );
+        if let Some(target_id) = target_id.as_deref() {
+            next_command.push_str(&format!(" --target {}", shell_arg(target_id)));
+        }
+
         Ok((
             json!({
                 "dry_run": true,
@@ -245,13 +285,7 @@ impl App {
                 "target_paths": materialized_path.iter().map(|p| p.display().to_string()).collect::<Vec<_>>(),
                 "will_mutate": ["live_target", "registry_state", "registry_ops", "git_history"],
                 "risks": risks,
-                "next_commands": [format!(
-                    "loom --json --root {} skill project {} --binding {} --method {}",
-                    shell_arg(&self.ctx.root),
-                    shell_arg(&args.skill),
-                    shell_arg(&args.binding),
-                    projection_method_as_str(args.method)
-                )],
+                "next_commands": [next_command],
             }),
             Meta::default(),
         ))
@@ -329,6 +363,7 @@ impl App {
     ) -> std::result::Result<(Value, Meta), CommandFailure> {
         validate_skill_name(&args.skill).map_err(map_arg)?;
         let mut risks = Vec::new();
+        let mut warnings = Vec::new();
         if args.to.is_some() && args.steps.is_some() {
             risks.push(risk(
                 "error",
@@ -336,7 +371,8 @@ impl App {
                 "--to and --steps are mutually exclusive",
             ));
         }
-        if !self.ctx.skill_path(&args.skill).exists() {
+        let skill_exists = self.ctx.skill_path(&args.skill).exists();
+        if !skill_exists {
             risks.push(risk(
                 "error",
                 "SKILL_NOT_FOUND",
@@ -348,7 +384,18 @@ impl App {
             (None, Some(n)) => format!("HEAD~{}", n),
             (None, None) => "HEAD~1".to_string(),
         };
-        let resolved = match gitops::resolve_ref(&self.ctx, &reference) {
+        let current_commit = match gitops::head(&self.ctx) {
+            Ok(rev) => Some(rev),
+            Err(err) => {
+                risks.push(risk(
+                    "error",
+                    "GIT_ERROR",
+                    format!("failed to resolve current HEAD: {}", err),
+                ));
+                None
+            }
+        };
+        let target_commit = match gitops::resolve_ref(&self.ctx, &reference) {
             Ok(rev) => Some(rev),
             Err(err) => {
                 risks.push(risk(
@@ -359,35 +406,118 @@ impl App {
                 None
             }
         };
-        let stale_projection_ids = rollback_stale_projection_ids(&self.ctx, &args.skill)?;
-        if !stale_projection_ids.is_empty() {
+        let skill_rel = format!("skills/{}", args.skill);
+        let skill_pathspec = Path::new(&skill_rel);
+        let mut would_change = false;
+        let mut files_changed = 0;
+        let mut insertions = 0;
+        let mut deletions = 0;
+        let mut changed_paths = Vec::new();
+        let mut truncated = false;
+        if skill_exists && target_commit.is_some() && current_commit.is_some() {
+            match gitops::diff_has_changes_from_ref(&self.ctx, &reference, skill_pathspec) {
+                Ok(changed) => would_change = changed,
+                Err(err) => risks.push(risk(
+                    "error",
+                    "GIT_ERROR",
+                    format!("failed to compare rollback target '{}': {}", reference, err),
+                )),
+            }
+            match gitops::diff_shortstat_from_ref(&self.ctx, &reference, skill_pathspec) {
+                Ok(stat) => {
+                    files_changed = stat.files_changed;
+                    insertions = stat.insertions;
+                    deletions = stat.deletions;
+                }
+                Err(err) => risks.push(risk(
+                    "error",
+                    "GIT_ERROR",
+                    format!("failed to summarize rollback diff '{}': {}", reference, err),
+                )),
+            }
+            match gitops::diff_changed_paths_from_ref(
+                &self.ctx,
+                &reference,
+                skill_pathspec,
+                ROLLBACK_PREVIEW_PATH_LIMIT,
+            ) {
+                Ok((paths, is_truncated)) => {
+                    changed_paths = paths;
+                    truncated = is_truncated;
+                }
+                Err(err) => risks.push(risk(
+                    "error",
+                    "GIT_ERROR",
+                    format!(
+                        "failed to list rollback diff paths '{}': {}",
+                        reference, err
+                    ),
+                )),
+            }
+        }
+
+        let (impacted_projections, projection_warnings) =
+            rollback_impacted_projections(&self.ctx, &args.skill)?;
+        for warning in projection_warnings {
+            risks.push(risk(
+                "warning",
+                "REGISTRY_STATE_UNAVAILABLE",
+                warning.clone(),
+            ));
+            warnings.push(warning);
+        }
+        let reproject_projection_ids = impacted_projections
+            .iter()
+            .filter(|projection| projection["requires_reproject"].as_bool() == Some(true))
+            .filter_map(|projection| projection["instance_id"].as_str().map(ToString::to_string))
+            .collect::<Vec<_>>();
+        if !reproject_projection_ids.is_empty() {
             risks.push(risk(
                 "warning",
                 "STALE_LIVE_PROJECTIONS",
                 format!(
                     "rollback does not update non-symlink live projections: {}",
-                    stale_projection_ids.join(", ")
+                    reproject_projection_ids.join(", ")
                 ),
             ));
         }
 
         Ok((
             json!({
+                "preview": true,
                 "dry_run": true,
                 "operation": "skill.rollback",
                 "safe_to_run": is_safe(&risks),
-                "status": status_for(&risks, usize::from(resolved.is_some())),
+                "status": status_for(&risks, usize::from(target_commit.is_some())),
                 "required_selectors": {
                     "skill": args.skill,
                     "reference": reference,
                 },
-                "resolved_ref": resolved,
-                "will_mutate": ["skill_source", "git_history", "git_tags", "registry_ops"],
-                "will_create_recovery_ref": true,
-                "stale_projection_ids": stale_projection_ids,
+                "skill": args.skill,
+                "reference": reference,
+                "target_commit": target_commit,
+                "current_commit": current_commit,
+                "resolved_ref": target_commit,
+                "would_change": would_change,
+                "diff": {
+                    "files_changed": files_changed,
+                    "insertions": insertions,
+                    "deletions": deletions,
+                    "changed_paths": changed_paths,
+                    "truncated": truncated,
+                },
+                "impacted_projections": impacted_projections,
+                "would_create_recovery_ref": would_change,
+                "will_create_recovery_ref": would_change,
+                "will_mutate": [],
+                "rollback_would_mutate": ["skill_source", "git_history", "git_tags", "registry_ops"],
+                "stale_projection_ids": reproject_projection_ids,
                 "risks": risks,
             }),
-            Meta::default(),
+            Meta {
+                warnings,
+                ..Meta::default()
+            },
         ))
     }
 
@@ -556,21 +686,38 @@ fn push_target_risks(
     }
 }
 
-fn rollback_stale_projection_ids(
+fn rollback_impacted_projections(
     ctx: &crate::state::AppContext,
     skill: &str,
-) -> std::result::Result<Vec<String>, CommandFailure> {
+) -> std::result::Result<(Vec<Value>, Vec<String>), CommandFailure> {
     let paths = RegistryStatePaths::from_app_context(ctx);
     let Some(snapshot) = paths.maybe_load_snapshot().map_err(map_registry_state)? else {
-        return Ok(Vec::new());
+        return Ok((
+            Vec::new(),
+            vec![format!(
+                "registry state not initialized under {}; impacted projections could not be determined",
+                paths.registry_dir.display()
+            )],
+        ));
     };
-    Ok(snapshot
+    let projections = snapshot
         .projections
         .projections
         .iter()
-        .filter(|projection| projection.skill_id == skill && projection.method != "symlink")
-        .map(|projection| projection.instance_id.clone())
-        .collect())
+        .filter(|projection| projection.skill_id == skill)
+        .map(|projection| {
+            let requires_reproject = matches!(projection.method.as_str(), "copy" | "materialize");
+            json!({
+                "instance_id": projection.instance_id,
+                "binding_id": projection.binding_id.as_deref(),
+                "target_id": projection.target_id,
+                "method": projection.method,
+                "live_path": projection.materialized_path,
+                "requires_reproject": requires_reproject,
+            })
+        })
+        .collect();
+    Ok((projections, Vec::new()))
 }
 
 fn build_preflight_next_commands(
@@ -584,16 +731,23 @@ fn build_preflight_next_commands(
     let Some(binding_id) = selectors["binding_id"].as_str() else {
         return Vec::new();
     };
+    if selectors["target_id"].is_null() {
+        return Vec::new();
+    }
     let method = selectors["method"]
         .as_str()
         .unwrap_or_else(|| projection_method_as_str(args.method));
-    vec![format!(
+    let mut command = format!(
         "loom --json --root {} skill project {} --binding {} --method {}",
         shell_arg(root),
         shell_arg(skill),
         shell_arg(binding_id),
         method
-    )]
+    );
+    if let Some(target_id) = selectors["target_id"].as_str() {
+        command.push_str(&format!(" --target {}", shell_arg(target_id)));
+    }
+    vec![command]
 }
 
 fn target_paths(matches: &[Value]) -> Vec<String> {

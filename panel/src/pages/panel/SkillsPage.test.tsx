@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { SkillsPage } from "./SkillsPage";
 import type { Binding, Skill, Target } from "../../lib/types";
+import type { RegistryProjection } from "../../generated/RegistryProjection";
 
 vi.mock("../../lib/api/client", () => ({
   api: {
@@ -43,12 +44,20 @@ const mockBinding: Binding = {
   policy: "auto",
 };
 
-function renderPage(overrides: { onMutation?: () => void; bindings?: Binding[]; targets?: Target[] } = {}) {
+function renderPage(
+  overrides: {
+    onMutation?: () => void;
+    bindings?: Binding[];
+    targets?: Target[];
+    projections?: RegistryProjection[];
+  } = {},
+) {
   return render(
     <SkillsPage
       skills={[mockSkill]}
       targets={overrides.targets ?? []}
       bindings={overrides.bindings ?? []}
+      projections={overrides.projections ?? []}
       selectedSkill="skill-1"
       onSelectSkill={() => {}}
       onMutation={overrides.onMutation ?? (() => {})}
@@ -130,6 +139,32 @@ describe("SkillsPage — capture action", () => {
     renderPage();
 
     expect(screen.getByRole("button", { name: "Capture" })).toBeDisabled();
+  });
+
+  it("derives capture choices from projections when bindings are shared across skills", async () => {
+    const onMutation = vi.fn();
+    const projection: RegistryProjection = {
+      instance_id: "inst-1",
+      skill_id: "my-skill",
+      binding_id: "shared-binding",
+      target_id: "target-1",
+      materialized_path: "/tmp/target-1/my-skill",
+      method: "copy",
+      last_applied_rev: "abc12345",
+      health: "healthy",
+    };
+    renderPage({
+      bindings: [{ ...mockBinding, id: "shared-binding", skill: "other-skill" }],
+      projections: [projection],
+      onMutation,
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Capture" }));
+
+    await waitFor(() => {
+      expect(api.capture).toHaveBeenCalledWith({ skill: "my-skill", binding: "shared-binding" });
+      expect(onMutation).toHaveBeenCalledTimes(1);
+    });
   });
 });
 
@@ -320,6 +355,25 @@ describe("SkillsPage — lifecycle actions", () => {
     await waitFor(() => {
       expect(api.skillRollback).toHaveBeenCalledWith("my-skill", { to: "snapshot/my-skill/abc" });
       expect(onMutation).toHaveBeenCalledTimes(4);
+    });
+  });
+
+  it("refetches lifecycle history after successful lifecycle mutations", async () => {
+    (api.skillHistory as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: true,
+      data: { skill: "my-skill", count: 0, events: [] },
+    });
+    renderPage();
+
+    await waitFor(() => {
+      expect(api.skillHistory).toHaveBeenCalledTimes(1);
+    });
+
+    fireEvent.change(screen.getByPlaceholderText("version"), { target: { value: "v1.2.3" } });
+    fireEvent.click(screen.getByRole("button", { name: "Release" }));
+
+    await waitFor(() => {
+      expect(api.skillHistory).toHaveBeenCalledTimes(2);
     });
   });
 });

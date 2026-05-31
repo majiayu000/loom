@@ -13,7 +13,7 @@ export default defineConfig({
     },
   },
   build: {
-    cssCodeSplit: false,
+    cssCodeSplit: true,
     modulePreload: false,
     target: "esnext",
     rollupOptions: {

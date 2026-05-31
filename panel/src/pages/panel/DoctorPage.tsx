@@ -76,7 +76,7 @@ export function DoctorPage({ live, mode, refreshKey }: DoctorPageProps) {
             label="Health"
             value={state.kind === "ready" ? (state.payload.healthy ? "healthy" : "attention") : state.kind}
             tone={state.kind === "ready" && !state.payload.healthy ? "err" : undefined}
-            title="Aggregate doctor verdict across git, registry, history, queue, and target checks"
+            title="Aggregate doctor verdict across registry checks."
           />
           <Kpi
             label="Checks"
@@ -87,7 +87,7 @@ export function DoctorPage({ live, mode, refreshKey }: DoctorPageProps) {
             label="Needs action"
             value={failed.length}
             tone={failed.length > 0 ? "pending" : undefined}
-            title="Doctor checks reporting a failure. Independent from sync pending counts shown in the top bar."
+            title="Failed doctor checks. Independent from pending sync."
           />
         </div>
 

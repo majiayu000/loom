@@ -61,8 +61,8 @@ export function SettingsPage({ live, mode, registryRoot }: SettingsPageProps) {
 
   const offlineHint =
     mode === "offline-stale"
-      ? "Settings are in read-only mode because the live API is offline. Registry paths below show the last known panel context."
-      : "Settings need the live panel API. Start `loom panel` to load the current registry paths.";
+      ? "Settings are read-only while the live API is offline."
+      : "Settings need the live panel API. Start `loom panel`.";
 
   const resetTweaks = () => {
     localStorage.removeItem("loom.tweaks");

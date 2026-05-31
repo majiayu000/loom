@@ -22,6 +22,7 @@ const localStorageStub = {
   getItem: (_key: string) => null,
   setItem: (_key: string, _value: string) => {},
   removeItem: (_key: string) => {},
+  clear: () => {},
 };
 (globalThis as { window?: unknown }).window = {
   setTimeout,

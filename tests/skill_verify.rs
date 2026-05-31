@@ -1,10 +1,31 @@
 mod common;
 
 use std::fs;
+use std::path::Path;
+use std::process::Command;
 
 use common::actions::save_skill;
 use common::{TestDir, run_loom, write_skill};
 use serde_json::Value;
+
+fn git_ok(root: &Path, args: &[&str]) -> String {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .arg("-c")
+        .arg("commit.gpgsign=false")
+        .args(args)
+        .output()
+        .expect("run git");
+    assert!(
+        output.status.success(),
+        "git {:?} failed: stdout={} stderr={}",
+        args,
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8_lossy(&output.stdout).trim().to_string()
+}
 
 #[test]
 fn skill_verify_matches_after_save() {
@@ -28,6 +49,44 @@ fn skill_verify_matches_after_save() {
     assert!(
         env["data"]["last_source_commit"].is_string(),
         "last_source_commit must be populated after save"
+    );
+}
+
+#[test]
+fn skill_verify_detects_drift_after_external_commit() {
+    let root = TestDir::new("skill-verify-committed-drift");
+    write_skill(root.path(), "demo", "# demo\n\nbody v1\n");
+    let (save_output, save_env) = save_skill(root.path(), "demo");
+    assert!(save_output.status.success());
+    let saved_commit = save_env["data"]["commit"]
+        .as_str()
+        .expect("save commit")
+        .to_string();
+
+    fs::write(
+        root.path().join("skills/demo/SKILL.md"),
+        "# demo\n\nbody v2 committed outside loom\n",
+    )
+    .expect("overwrite skill body");
+    git_ok(root.path(), &["add", "skills/demo/SKILL.md"]);
+    let external_commit = git_ok(root.path(), &["commit", "-m", "manual skill edit"]);
+    assert_ne!(external_commit, saved_commit);
+
+    let (output, env) = run_loom(root.path(), &["skill", "verify", "demo"]);
+    assert!(output.status.success(), "verify should still succeed");
+    assert_eq!(env["data"]["matches"], Value::Bool(false));
+    assert_eq!(
+        env["data"]["last_source_commit"],
+        Value::String(saved_commit)
+    );
+    let drifted = env["data"]["drifted_paths"]
+        .as_array()
+        .expect("drifted_paths array");
+    assert!(
+        drifted
+            .iter()
+            .any(|p| p.as_str().unwrap_or("").contains("skills/demo/SKILL.md")),
+        "expected committed drift against last save, got {drifted:?}"
     );
 }
 

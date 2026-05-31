@@ -173,6 +173,46 @@ fn skill_watch_once_commits_changed_source_and_records_autosave() {
 }
 
 #[test]
+fn skill_watch_once_preserves_unrelated_staged_changes() {
+    let root = TestDir::new("skill-watch-preserve-staged");
+    write_skill(root.path(), "demo", "# demo\n\nv1\n");
+    let (save_output, _) = save_skill(root.path(), "demo");
+    assert!(save_output.status.success(), "initial save failed");
+
+    write_file(&root.path().join("README.md"), "staged but unrelated\n");
+    run_watch_git(root.path(), &["add", "README.md"]);
+    write_skill(root.path(), "demo", "# demo\n\nv2\n");
+
+    let (output, env) = run_loom(
+        root.path(),
+        &["skill", "watch", "demo", "--once", "--debounce-ms", "0"],
+    );
+
+    assert!(
+        output.status.success(),
+        "watch failed: stderr={} stdout={}",
+        String::from_utf8_lossy(&output.stderr),
+        String::from_utf8_lossy(&output.stdout)
+    );
+    assert_eq!(env["ok"], Value::Bool(true));
+    assert_eq!(
+        run_watch_git(root.path(), &["log", "-1", "--pretty=%s"]),
+        "autosave(demo): captured local edits"
+    );
+    let committed_paths = run_watch_git(root.path(), &["show", "--name-only", "--pretty=", "HEAD"]);
+    assert!(committed_paths.contains("skills/demo/SKILL.md"));
+    assert!(committed_paths.contains("state/registry/ops/operations.jsonl"));
+    assert!(
+        !committed_paths.contains("README.md"),
+        "autosave commit included unrelated staged path: {committed_paths}"
+    );
+    assert_eq!(
+        run_watch_git(root.path(), &["status", "--porcelain", "--", "README.md"]),
+        "A  README.md"
+    );
+}
+
+#[test]
 fn skill_watch_ignores_temp_and_local_state_paths() {
     let root = TestDir::new("skill-watch-ignore");
     write_skill(root.path(), "demo", "# demo\n\nv1\n");

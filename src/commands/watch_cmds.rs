@@ -267,7 +267,7 @@ impl App {
         }
 
         let message = format!("autosave({}): captured local edits", skill.skill);
-        let commit = match gitops::commit(&self.ctx, &message) {
+        let commit = match commit_autosave_paths(&self.ctx, &skill.paths, &paths, &message) {
             Ok(commit) => commit,
             Err(err) => {
                 unstage_watch_paths(&self.ctx, &skill.paths);
@@ -623,7 +623,20 @@ fn has_staged_changes_for_paths(
     args.extend(paths.iter().cloned());
     let refs = args.iter().map(String::as_str).collect::<Vec<_>>();
     let output = gitops::run_git_allow_failure(ctx, &refs).map_err(map_git)?;
-    Ok(!output.status.success())
+    if output.status.success() {
+        return Ok(false);
+    }
+    if output.status.code() == Some(1) {
+        return Ok(true);
+    }
+
+    Err(CommandFailure::new(
+        ErrorCode::GitError,
+        format!(
+            "git diff failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ),
+    ))
 }
 
 fn unstage_watch_paths(ctx: &AppContext, paths: &[String]) {
@@ -658,6 +671,34 @@ fn stage_autosave_registry_state(
         gitops::run_git(ctx, &["add", "-A", "--", "state/v3"]).map_err(map_git)?;
     }
     Ok(())
+}
+
+fn commit_autosave_paths(
+    ctx: &AppContext,
+    skill_paths: &[String],
+    paths: &RegistryStatePaths,
+    message: &str,
+) -> anyhow::Result<String> {
+    let mut commit_paths = skill_paths.to_vec();
+    commit_paths.push("state/registry".to_string());
+    let legacy_v3_tracked =
+        gitops::run_git_allow_failure(ctx, &["ls-files", "--error-unmatch", "--", "state/v3"])?
+            .status
+            .success();
+    if paths.state_dir.join("v3").exists() || legacy_v3_tracked {
+        commit_paths.push("state/v3".to_string());
+    }
+
+    let mut args = vec![
+        "commit".to_string(),
+        "-m".to_string(),
+        message.to_string(),
+        "--".to_string(),
+    ];
+    args.extend(commit_paths);
+    let refs = args.iter().map(String::as_str).collect::<Vec<_>>();
+    gitops::run_git(ctx, &refs)?;
+    gitops::head(ctx)
 }
 
 fn rollback_autosave_registry_audit_after_failure(

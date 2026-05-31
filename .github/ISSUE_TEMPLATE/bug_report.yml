@@ -1,0 +1,54 @@
+name: Bug report
+description: Report a reproducible problem in Loom.
+title: "bug: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report this. Please include enough detail
+        for someone else to reproduce the issue from a clean checkout or release
+        archive.
+  - type: textarea
+    id: current_behavior
+    attributes:
+      label: Current behavior
+      description: What happened?
+    validations:
+      required: true
+  - type: textarea
+    id: expected_behavior
+    attributes:
+      label: Expected behavior
+      description: What should have happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: Provide the smallest command sequence or workflow that shows the problem.
+      placeholder: |
+        1. Run `loom ...`
+        2. Observe ...
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Include OS, install method, Loom version, shell, and whether you used `--root`.
+      placeholder: |
+        - OS:
+        - Loom version:
+        - Install method:
+        - Registry root:
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or output
+      description: Paste relevant command output. Redact secrets before submitting.
+      render: shell
+    validations:
+      required: false

@@ -57,6 +57,10 @@ pub fn write_skill(root: &Path, skill: &str, body: &str) {
     write_file(&root.join("skills").join(skill).join("SKILL.md"), body);
 }
 
+pub fn operations_log(root: &Path) -> String {
+    fs::read_to_string(root.join("state/registry/ops/operations.jsonl")).unwrap_or_default()
+}
+
 pub fn write_minimal_registry_state(root: &Path, schema_version: u32) {
     let registry = root.join("state/registry");
     write_file(

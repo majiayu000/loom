@@ -1,14 +1,18 @@
 mod agent_cmds;
+mod backup_cmds;
 mod event_store;
 mod file_ops;
 mod fs_probe;
 mod helpers;
+mod history_cmds;
 mod projections;
 mod skill_cmds;
 mod skill_verify;
 mod sync_cmds;
 mod target_cmds;
+mod trash_cmds;
 mod version_cmds;
+mod watch_cmds;
 mod workspace_cmds;
 
 use anyhow::Result;
@@ -17,8 +21,8 @@ use uuid::Uuid;
 
 use crate::cli::{
     AgentCommand, Cli, Command, OpsCommand, OpsHistoryCommand, RemoteCommand, SkillCommand,
-    SkillOrphanCommand, SyncCommand, TargetCommand, WorkspaceBindingCommand, WorkspaceCommand,
-    WorkspaceInitArgs,
+    SkillOrphanCommand, SkillTrashCommand, SyncCommand, TargetCommand, WorkspaceBindingCommand,
+    WorkspaceCommand, WorkspaceInitArgs,
 };
 use crate::envelope::{Envelope, Meta};
 use crate::state::AppContext;
@@ -157,6 +161,7 @@ impl App {
                 };
                 self.cmd_workspace_init(&args, &request_id)
             }
+            Command::Backup { command } => self.cmd_backup(command),
             Command::Monitor(args) => self.cmd_monitor_observed(args, &request_id),
             Command::Doctor => self.cmd_doctor(),
             Command::Workspace { command } => match command {
@@ -178,11 +183,25 @@ impl App {
                 SkillCommand::Capture(args) if args.dry_run => self.cmd_capture_plan(args),
                 SkillCommand::Capture(args) => self.cmd_capture(args, &request_id),
                 SkillCommand::Save(args) => self.cmd_save(args, &request_id),
+                SkillCommand::Watch(args) => self.cmd_watch(args, &request_id),
                 SkillCommand::Snapshot(args) => self.cmd_snapshot(args, &request_id),
                 SkillCommand::Release(args) => self.cmd_release(args, &request_id),
                 SkillCommand::Rollback(args) if args.dry_run => self.cmd_rollback_plan(args),
                 SkillCommand::Rollback(args) => self.cmd_rollback(args, &request_id),
                 SkillCommand::Diff(args) => self.cmd_diff(args),
+                SkillCommand::History(args) => self.cmd_history(args),
+                SkillCommand::Trash {
+                    command: SkillTrashCommand::Add(args),
+                } => self.cmd_skill_trash_add(args, &request_id),
+                SkillCommand::Trash {
+                    command: SkillTrashCommand::List,
+                } => self.cmd_skill_trash_list(),
+                SkillCommand::Trash {
+                    command: SkillTrashCommand::Restore(args),
+                } => self.cmd_skill_trash_restore(args, &request_id),
+                SkillCommand::Trash {
+                    command: SkillTrashCommand::Purge(args),
+                } => self.cmd_skill_trash_purge(args, &request_id),
                 SkillCommand::Verify(args) => self.cmd_verify(args),
                 SkillCommand::Orphan {
                     command: SkillOrphanCommand::List,
@@ -312,12 +331,23 @@ impl App {
 }
 
 fn command_records_audit(command: &Command) -> bool {
-    !matches!(command, Command::Panel(_)) && !is_rollback_preview(command)
+    !matches!(
+        command,
+        Command::Panel(_)
+            | Command::Backup { .. }
+            | Command::Skill {
+                command: SkillCommand::History(_)
+                    | SkillCommand::Trash {
+                        command: SkillTrashCommand::List,
+                    }
+            }
+    ) && !is_rollback_preview(command)
 }
 
 fn command_requires_durable_audit(command: &Command) -> bool {
     match command {
         Command::Init | Command::Monitor(_) => true,
+        Command::Backup { .. } => false,
         Command::Doctor => false,
         Command::Workspace { command } => match command {
             WorkspaceCommand::Status | WorkspaceCommand::Doctor => false,
@@ -338,14 +368,25 @@ fn command_requires_durable_audit(command: &Command) -> bool {
             | SkillCommand::Project(_)
             | SkillCommand::Capture(_)
             | SkillCommand::Save(_)
+            | SkillCommand::Watch(_)
             | SkillCommand::Snapshot(_)
             | SkillCommand::Release(_)
+            | SkillCommand::Trash {
+                command:
+                    SkillTrashCommand::Add(_)
+                    | SkillTrashCommand::Restore(_)
+                    | SkillTrashCommand::Purge(_),
+            }
             | SkillCommand::Orphan {
                 command: SkillOrphanCommand::Clean(_),
             } => true,
             SkillCommand::Rollback(args) => !args.dry_run,
             SkillCommand::Diff(_)
+            | SkillCommand::History(_)
             | SkillCommand::Verify(_)
+            | SkillCommand::Trash {
+                command: SkillTrashCommand::List,
+            }
             | SkillCommand::Orphan {
                 command: SkillOrphanCommand::List,
             } => false,

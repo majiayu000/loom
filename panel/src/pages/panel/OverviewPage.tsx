@@ -196,7 +196,7 @@ export function OverviewPage({
                     Inbound projections for <b style={{ color: "var(--ink-0)" }}>{selTarget.agent}/{selTarget.profile}</b>
                   </>
                 ) : (
-                  `${totalProjections} live projections · vertical lines are skills, horizontal lines are targets, and each knot is one projection`
+                  `${totalProjections} live projections · lines connect skills to targets`
                 )}
               </div>
             </div>
@@ -285,7 +285,7 @@ export function OverviewPage({
                 <span>
                   {readOnly
                     ? "Registry API is offline. Writes are disabled until the panel reconnects."
-                    : "Registry root is independent of the Loom repo. Writes are enabled for connected targets."}
+                    : "Registry root is separate from Loom. Writes enabled."}
                 </span>
               </div>
               <pre className="code" style={{ marginBottom: 10 }}>

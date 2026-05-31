@@ -37,21 +37,46 @@ impl App {
                     &workspace,
                 )
         }) {
-            let method = args
+            let matching_rules = args
                 .skill
                 .as_deref()
-                .and_then(|skill| {
+                .map(|skill| {
                     snapshot
                         .rules
                         .rules
                         .iter()
-                        .find(|rule| {
+                        .filter(|rule| {
                             rule.binding_id == binding.binding_id && rule.skill_id == skill
                         })
-                        .map(|rule| rule.method.clone())
+                        .collect::<Vec<_>>()
                 })
-                .unwrap_or_else(|| projection_method_as_str(args.method).to_string());
-            let target = snapshot.target(&binding.default_target_id);
+                .unwrap_or_default();
+            let (method, target_id) = match matching_rules.as_slice() {
+                [] => (
+                    projection_method_as_str(args.method).to_string(),
+                    Some(binding.default_target_id.as_str()),
+                ),
+                [rule] => (rule.method.clone(), Some(rule.target_id.as_str())),
+                rules => {
+                    let target_ids = rules
+                        .iter()
+                        .map(|rule| rule.target_id.as_str())
+                        .collect::<Vec<_>>();
+                    risks.push(risk(
+                        "error",
+                        "AMBIGUOUS_SKILL_RULE",
+                        format!(
+                            "binding '{}' has {} '{}' rules for targets {}; use an explicit target selector before projecting this skill",
+                            binding.binding_id,
+                            rules.len(),
+                            args.skill.as_deref().unwrap_or_default(),
+                            target_ids.join(", ")
+                        ),
+                    ));
+                    (projection_method_as_str(args.method).to_string(), None)
+                }
+            };
+            let target = target_id.and_then(|target_id| snapshot.target(target_id));
             if let Some(target) = target {
                 push_target_risks(
                     &mut risks,
@@ -60,13 +85,13 @@ impl App {
                     &target.target_id,
                     &method,
                 );
-            } else {
+            } else if let Some(target_id) = target_id {
                 risks.push(risk(
                     "error",
                     "TARGET_NOT_FOUND",
                     format!(
                         "binding '{}' points at missing target '{}'",
-                        binding.binding_id, binding.default_target_id
+                        binding.binding_id, target_id
                     ),
                 ));
             }
@@ -75,13 +100,15 @@ impl App {
                 "agent": binding.agent,
                 "profile": binding.profile_id,
                 "matcher": binding.workspace_matcher,
-                "target_id": binding.default_target_id,
+                "target_id": target_id,
                 "target": target,
                 "method": method,
                 "existing_projection": args.skill.as_deref().and_then(|skill| {
+                    let target_id = target_id?;
                     snapshot.projections.projections.iter().find(|projection| {
                         projection.skill_id == skill
                             && projection.binding_id.as_deref() == Some(binding.binding_id.as_str())
+                            && projection.target_id == target_id
                     })
                 }),
             }));
@@ -232,6 +259,17 @@ impl App {
             ));
         }
 
+        let mut next_command = format!(
+            "loom --json --root {} skill project {} --binding {} --method {}",
+            shell_arg(&self.ctx.root),
+            shell_arg(&args.skill),
+            shell_arg(&args.binding),
+            projection_method_as_str(args.method)
+        );
+        if let Some(target_id) = target_id.as_deref() {
+            next_command.push_str(&format!(" --target {}", shell_arg(target_id)));
+        }
+
         Ok((
             json!({
                 "dry_run": true,
@@ -247,13 +285,7 @@ impl App {
                 "target_paths": materialized_path.iter().map(|p| p.display().to_string()).collect::<Vec<_>>(),
                 "will_mutate": ["live_target", "registry_state", "registry_ops", "git_history"],
                 "risks": risks,
-                "next_commands": [format!(
-                    "loom --json --root {} skill project {} --binding {} --method {}",
-                    shell_arg(&self.ctx.root),
-                    shell_arg(&args.skill),
-                    shell_arg(&args.binding),
-                    projection_method_as_str(args.method)
-                )],
+                "next_commands": [next_command],
             }),
             Meta::default(),
         ))
@@ -699,16 +731,23 @@ fn build_preflight_next_commands(
     let Some(binding_id) = selectors["binding_id"].as_str() else {
         return Vec::new();
     };
+    if selectors["target_id"].is_null() {
+        return Vec::new();
+    }
     let method = selectors["method"]
         .as_str()
         .unwrap_or_else(|| projection_method_as_str(args.method));
-    vec![format!(
+    let mut command = format!(
         "loom --json --root {} skill project {} --binding {} --method {}",
         shell_arg(root),
         shell_arg(skill),
         shell_arg(binding_id),
         method
-    )]
+    );
+    if let Some(target_id) = selectors["target_id"].as_str() {
+        command.push_str(&format!(" --target {}", shell_arg(target_id)));
+    }
+    vec![command]
 }
 
 fn target_paths(matches: &[Value]) -> Vec<String> {

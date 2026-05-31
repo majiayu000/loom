@@ -15,9 +15,8 @@ export function LandingHero() {
             Weave one <em>skill registry</em> across every coding agent you use.
           </h1>
           <p className="lede">
-            Loom is a Git-backed skill registry and projection control plane for AI coding agents — Claude Code, Codex,
-            Cursor, Windsurf, Cline, Copilot, Aider, OpenCode, Gemini CLI, Goose. Bind skills to targets with explicit
-            rules; project as symlink, copy, or materialize; git-backed sync and replay.
+            Loom is a Git-backed skill registry and projection control plane for AI coding agents. Bind skills to
+            targets with explicit rules; project as symlink, copy, or materialize; sync and replay.
           </p>
           <div className="hero-ctas">
             <a href="#install" className="btn primary lg">

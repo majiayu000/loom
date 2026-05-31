@@ -206,7 +206,7 @@ export function adaptRegistryOperation(op: RegistryOperationRecord): Op {
 function operationStatus(op: RegistryOperationRecord): Op["status"] {
   const status = op.status.toLowerCase();
   if (op.last_error || status === "failed" || status === "error") return "err";
-  if (!op.ack || status === "pending" || status === "queued") return "pending";
+  if (status === "pending" || status === "queued") return "pending";
   return "ok";
 }
 

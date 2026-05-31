@@ -32,6 +32,11 @@ pub struct Cli {
 pub enum Command {
     #[command(about = "Initialize the default registry and scan existing agent skill directories")]
     Init,
+    #[command(about = "Export, inspect, and restore portable registry backups")]
+    Backup {
+        #[command(subcommand)]
+        command: BackupCommand,
+    },
     #[command(about = "Import and update skills from observed targets")]
     Monitor(MonitorObservedArgs),
     #[command(about = "Inspect and configure registry workspace state")]
@@ -72,6 +77,53 @@ pub enum Command {
         about = "Run registry integrity, history, and projection checks (alias for `workspace doctor`)"
     )]
     Doctor,
+}
+
+#[derive(Debug, Clone, Subcommand, Serialize)]
+pub enum BackupCommand {
+    #[command(about = "Create a portable registry backup artifact")]
+    Export(BackupExportArgs),
+    #[command(about = "Inspect and validate a registry backup artifact")]
+    Inspect(BackupInspectArgs),
+    #[command(about = "Restore a registry backup into a new empty root")]
+    Restore(BackupRestoreArgs),
+}
+
+#[derive(Debug, Clone, Args, Serialize)]
+pub struct BackupExportArgs {
+    /// Output tar path. Defaults to <root>/backups/loom-backup-<timestamp>.tar.
+    #[arg(long)]
+    pub output: Option<PathBuf>,
+
+    /// Backup artifact format.
+    #[arg(long, value_enum, default_value_t = BackupFormat::Tar)]
+    pub format: BackupFormat,
+
+    /// Include registry-owned target cache data if present.
+    #[arg(long)]
+    pub include_target_cache: bool,
+}
+
+#[derive(Debug, Clone, Args, Serialize)]
+pub struct BackupInspectArgs {
+    /// Backup artifact to inspect.
+    pub artifact: PathBuf,
+}
+
+#[derive(Debug, Clone, Args, Serialize)]
+pub struct BackupRestoreArgs {
+    /// Backup artifact to restore.
+    pub artifact: PathBuf,
+
+    /// Permit a destination root that contains only safe empty scaffolding.
+    #[arg(long)]
+    pub force_empty_root: bool,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum BackupFormat {
+    Tar,
 }
 
 #[derive(Debug, Clone, Subcommand, Serialize)]
@@ -145,8 +197,17 @@ pub enum SkillCommand {
     Rollback(RollbackArgs),
     #[command(about = "Diff two revisions of a skill source")]
     Diff(DiffArgs),
+    #[command(about = "Show Git history for one skill source")]
+    History(HistoryArgs),
+    #[command(about = "Move skills to trash, list trash entries, restore, or purge")]
+    Trash {
+        #[command(subcommand)]
+        command: SkillTrashCommand,
+    },
     #[command(about = "Verify a skill source has no uncommitted drift")]
     Verify(SkillOnlyArgs),
+    #[command(about = "Watch registry skill sources and autosave stable local edits")]
+    Watch(WatchArgs),
     #[command(about = "Continuously import and update skills from observed targets")]
     MonitorObserved(MonitorObservedArgs),
     #[command(about = "Run one import pass over observed targets and exit")]
@@ -156,6 +217,34 @@ pub enum SkillCommand {
         #[command(subcommand)]
         command: SkillOrphanCommand,
     },
+}
+
+#[derive(Debug, Clone, Subcommand, Serialize)]
+pub enum SkillTrashCommand {
+    #[command(about = "Move a registry skill into Git-tracked trash")]
+    Add(SkillOnlyArgs),
+    #[command(about = "List Git-tracked trash entries")]
+    List,
+    #[command(about = "Restore a skill from trash")]
+    Restore(TrashRestoreArgs),
+    #[command(about = "Permanently remove one trash entry")]
+    Purge(TrashPurgeArgs),
+}
+
+#[derive(Debug, Clone, Args, Serialize)]
+pub struct TrashRestoreArgs {
+    /// Registry skill name.
+    pub skill: String,
+
+    /// Restore a specific trash entry instead of the newest entry for the skill.
+    #[arg(long)]
+    pub trash_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Args, Serialize)]
+pub struct TrashPurgeArgs {
+    /// Trash entry id returned by `loom skill trash list`.
+    pub trash_id: String,
 }
 
 #[derive(Debug, Clone, Subcommand, Serialize)]
@@ -322,6 +411,32 @@ pub struct SaveArgs {
 }
 
 #[derive(Debug, Clone, Args, Serialize)]
+pub struct WatchArgs {
+    /// Registry skill name. Watches all registry skills when omitted.
+    pub skill: Option<String>,
+
+    /// Milliseconds changes must remain quiet before autosave.
+    #[arg(long, default_value_t = 3000)]
+    pub debounce_ms: u64,
+
+    /// Maximum changed paths allowed in one autosave batch.
+    #[arg(long, default_value_t = 20)]
+    pub max_batch: usize,
+
+    /// Print the autosave plan without committing.
+    #[arg(long)]
+    pub dry_run: bool,
+
+    /// Run one scan and exit.
+    #[arg(long)]
+    pub once: bool,
+
+    /// Stop after N scans. Mainly useful for supervised smoke tests.
+    #[arg(long, hide = true)]
+    pub max_cycles: Option<u64>,
+}
+
+#[derive(Debug, Clone, Args, Serialize)]
 pub struct SkillOnlyArgs {
     /// Registry skill name.
     pub skill: String,
@@ -348,8 +463,8 @@ pub struct RollbackArgs {
     #[arg(long)]
     pub steps: Option<u32>,
 
-    /// Show the rollback plan without changing Git refs, source files, or registry state.
-    #[arg(long)]
+    /// Preview rollback impact without changing Git refs, source files, or registry state.
+    #[arg(long = "preview", visible_alias = "dry-run")]
     pub dry_run: bool,
 }
 
@@ -361,6 +476,32 @@ pub struct DiffArgs {
     pub from: String,
     /// Newer revision, snapshot, or release reference.
     pub to: String,
+}
+
+#[derive(Debug, Clone, Args, Serialize)]
+pub struct HistoryArgs {
+    /// Registry skill name.
+    pub skill: String,
+
+    /// Maximum number of history entries to return.
+    #[arg(long, default_value_t = 30)]
+    pub limit: usize,
+
+    /// Older revision boundary. When set, history uses <from>..<to>.
+    #[arg(long)]
+    pub from: Option<String>,
+
+    /// Newer revision boundary.
+    #[arg(long, default_value = "HEAD")]
+    pub to: String,
+
+    /// Include per-commit short diff statistics.
+    #[arg(long)]
+    pub include_diff_stat: bool,
+
+    /// Include registry operations added by each history commit.
+    #[arg(long, default_value_t = true)]
+    pub include_ops: bool,
 }
 
 #[derive(Debug, Clone, Args, Serialize)]

@@ -205,7 +205,7 @@ Quick decision: **edits from the agent side → `capture`; edits inside the regi
 
 - Multi-directory behavior is explicit via `target add`; no implicit directory inference.
 - Agent automation should use explicit `--root`, `--json`, selectors such as `binding_id` / `target_id`, and branch on `ok` + `error.code`.
-- Agents can call `loom agent preflight --agent <agent> --workspace <path> --skill <skill>` before writing, and can add `--dry-run` to high-risk writes to get a no-mutation plan.
+- Agents can call `loom agent preflight --agent <agent> --workspace <path> --skill <skill>` before writing, add `--dry-run` to high-risk writes, or use `loom skill rollback --preview` to get a no-mutation rollback plan.
 - `--json` wraps both command execution errors and argument parsing failures in the same envelope. `loom panel` is the local HTTP UI server and does not return a command envelope.
 - Read commands such as `workspace status`, `workspace doctor`, `target list`, and `sync status` do not mutate registry state, Git refs, the Git index, live target directories, or the pending queue. They do write durable command audit events under `state/events/commands.jsonl`.
 - Registry metadata lives under `state/registry`; Loom does not use release-style labels for internal state names.
@@ -249,7 +249,7 @@ loom skill capture [<skill>] [--binding <binding-id>] [--instance <instance-id>]
 loom skill save <skill> [--message <msg>]
 loom skill snapshot <skill>
 loom skill release <skill> <version>
-loom skill rollback <skill> [--to <ref> | --steps <n>] [--dry-run]
+loom skill rollback <skill> [--to <ref> | --steps <n>] [--preview]
 loom skill diff <skill> <from> <to>
 loom skill verify <skill>
 loom skill import-observed [--target <target-id>]

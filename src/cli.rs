@@ -348,8 +348,8 @@ pub struct RollbackArgs {
     #[arg(long)]
     pub steps: Option<u32>,
 
-    /// Show the rollback plan without changing Git refs, source files, or registry state.
-    #[arg(long)]
+    /// Preview rollback impact without changing Git refs, source files, or registry state.
+    #[arg(long = "preview", visible_alias = "dry-run")]
     pub dry_run: bool,
 }
 

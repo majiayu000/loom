@@ -38,7 +38,7 @@ AI coding agents (Claude Code, Codex, Cursor, Windsurf, …) all read skills fro
 ```bash
 # 1. Install a prebuilt release archive (recommended)
 # Pick one target: aarch64-apple-darwin, x86_64-apple-darwin, x86_64-unknown-linux-gnu
-VERSION="0.1.1" # replace with the latest release version
+VERSION="0.1.2" # replace with the latest release version
 TARGET="aarch64-apple-darwin"
 BASE_URL="https://github.com/majiayu000/loom/releases/download/v${VERSION}"
 curl -LO "${BASE_URL}/skillloom-${VERSION}-${TARGET}.tar.gz"

@@ -165,15 +165,15 @@ impl App {
             return Err(map_git(err));
         }
         if let Err(err) = gitops::stage_path(&self.ctx, Path::new(&skill_rel)) {
-            restore_path_best_effort(
+            let mut rollback_errors = restore_path_best_effort(
                 &skill_path,
                 skill_backup.as_ref(),
                 "restore_skill_path",
                 "remove_skill_path",
             );
             remove_backup_path_best_effort(skill_backup.as_ref());
-            let _ = gitops::restore_index(&self.ctx, &previous_index);
-            return Err(map_git(err));
+            rollback_errors.extend(restore_index_best_effort(&self.ctx, &previous_index));
+            return Err(map_git(err).with_rollback_errors(rollback_errors));
         }
 
         let changed = match gitops::has_staged_changes_for_path(&self.ctx, Path::new(&skill_rel)) {

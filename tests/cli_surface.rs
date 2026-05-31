@@ -22,6 +22,7 @@ fn top_level_help_describes_command_groups() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     for expected in [
         "Initialize the default registry and scan existing agent skill directories",
+        "Export, inspect, and restore portable registry backups",
         "Import and update skills from observed targets",
         "Inspect and configure registry workspace state",
         "Register and inspect agent skill directories",
@@ -461,6 +462,7 @@ fn risky_command_help_describes_selectors_and_repair_strategy() {
             vec![
                 "Git revision or snapshot reference",
                 "Number of source commits",
+                "Preview rollback impact",
             ],
         ),
         (

@@ -7,9 +7,9 @@ import { api, ApiError, type TargetShowPayload } from "../../lib/api/client";
 import { useMutation } from "../../lib/useMutation";
 
 const OWNERSHIP_TOOLTIP: Record<Ownership, string> = {
-  managed: "managed: Loom owns this directory and may write/overwrite files (projection writes go here).",
-  observed: "observed: Loom only reads from this directory; it never writes back. Use for agent dirs you edit yourself.",
-  external: "external: Loom stays hands-off. Listed for visibility only; no reads or writes.",
+  managed: "managed: Loom owns this directory; writes projections.",
+  observed: "observed: Loom only reads; use for self-edited dirs.",
+  external: "external: hands-off; listed only.",
 };
 
 interface TargetsPageProps {

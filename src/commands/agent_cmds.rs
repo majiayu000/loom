@@ -12,6 +12,8 @@ use crate::envelope::Meta;
 use crate::gitops;
 use crate::state_model::{RegistryProjectionInstance, RegistrySnapshot, RegistryStatePaths};
 
+const ROLLBACK_PREVIEW_PATH_LIMIT: usize = 50;
+
 impl App {
     pub fn cmd_agent_preflight(
         &self,
@@ -361,6 +363,7 @@ impl App {
     ) -> std::result::Result<(Value, Meta), CommandFailure> {
         validate_skill_name(&args.skill).map_err(map_arg)?;
         let mut risks = Vec::new();
+        let mut warnings = Vec::new();
         if args.to.is_some() && args.steps.is_some() {
             risks.push(risk(
                 "error",
@@ -368,7 +371,8 @@ impl App {
                 "--to and --steps are mutually exclusive",
             ));
         }
-        if !self.ctx.skill_path(&args.skill).exists() {
+        let skill_exists = self.ctx.skill_path(&args.skill).exists();
+        if !skill_exists {
             risks.push(risk(
                 "error",
                 "SKILL_NOT_FOUND",
@@ -380,7 +384,18 @@ impl App {
             (None, Some(n)) => format!("HEAD~{}", n),
             (None, None) => "HEAD~1".to_string(),
         };
-        let resolved = match gitops::resolve_ref(&self.ctx, &reference) {
+        let current_commit = match gitops::head(&self.ctx) {
+            Ok(rev) => Some(rev),
+            Err(err) => {
+                risks.push(risk(
+                    "error",
+                    "GIT_ERROR",
+                    format!("failed to resolve current HEAD: {}", err),
+                ));
+                None
+            }
+        };
+        let target_commit = match gitops::resolve_ref(&self.ctx, &reference) {
             Ok(rev) => Some(rev),
             Err(err) => {
                 risks.push(risk(
@@ -391,35 +406,118 @@ impl App {
                 None
             }
         };
-        let stale_projection_ids = rollback_stale_projection_ids(&self.ctx, &args.skill)?;
-        if !stale_projection_ids.is_empty() {
+        let skill_rel = format!("skills/{}", args.skill);
+        let skill_pathspec = Path::new(&skill_rel);
+        let mut would_change = false;
+        let mut files_changed = 0;
+        let mut insertions = 0;
+        let mut deletions = 0;
+        let mut changed_paths = Vec::new();
+        let mut truncated = false;
+        if skill_exists && target_commit.is_some() && current_commit.is_some() {
+            match gitops::diff_has_changes_from_ref(&self.ctx, &reference, skill_pathspec) {
+                Ok(changed) => would_change = changed,
+                Err(err) => risks.push(risk(
+                    "error",
+                    "GIT_ERROR",
+                    format!("failed to compare rollback target '{}': {}", reference, err),
+                )),
+            }
+            match gitops::diff_shortstat_from_ref(&self.ctx, &reference, skill_pathspec) {
+                Ok(stat) => {
+                    files_changed = stat.files_changed;
+                    insertions = stat.insertions;
+                    deletions = stat.deletions;
+                }
+                Err(err) => risks.push(risk(
+                    "error",
+                    "GIT_ERROR",
+                    format!("failed to summarize rollback diff '{}': {}", reference, err),
+                )),
+            }
+            match gitops::diff_changed_paths_from_ref(
+                &self.ctx,
+                &reference,
+                skill_pathspec,
+                ROLLBACK_PREVIEW_PATH_LIMIT,
+            ) {
+                Ok((paths, is_truncated)) => {
+                    changed_paths = paths;
+                    truncated = is_truncated;
+                }
+                Err(err) => risks.push(risk(
+                    "error",
+                    "GIT_ERROR",
+                    format!(
+                        "failed to list rollback diff paths '{}': {}",
+                        reference, err
+                    ),
+                )),
+            }
+        }
+
+        let (impacted_projections, projection_warnings) =
+            rollback_impacted_projections(&self.ctx, &args.skill)?;
+        for warning in projection_warnings {
+            risks.push(risk(
+                "warning",
+                "REGISTRY_STATE_UNAVAILABLE",
+                warning.clone(),
+            ));
+            warnings.push(warning);
+        }
+        let reproject_projection_ids = impacted_projections
+            .iter()
+            .filter(|projection| projection["requires_reproject"].as_bool() == Some(true))
+            .filter_map(|projection| projection["instance_id"].as_str().map(ToString::to_string))
+            .collect::<Vec<_>>();
+        if !reproject_projection_ids.is_empty() {
             risks.push(risk(
                 "warning",
                 "STALE_LIVE_PROJECTIONS",
                 format!(
                     "rollback does not update non-symlink live projections: {}",
-                    stale_projection_ids.join(", ")
+                    reproject_projection_ids.join(", ")
                 ),
             ));
         }
 
         Ok((
             json!({
+                "preview": true,
                 "dry_run": true,
                 "operation": "skill.rollback",
                 "safe_to_run": is_safe(&risks),
-                "status": status_for(&risks, usize::from(resolved.is_some())),
+                "status": status_for(&risks, usize::from(target_commit.is_some())),
                 "required_selectors": {
                     "skill": args.skill,
                     "reference": reference,
                 },
-                "resolved_ref": resolved,
-                "will_mutate": ["skill_source", "git_history", "git_tags", "registry_ops"],
-                "will_create_recovery_ref": true,
-                "stale_projection_ids": stale_projection_ids,
+                "skill": args.skill,
+                "reference": reference,
+                "target_commit": target_commit,
+                "current_commit": current_commit,
+                "resolved_ref": target_commit,
+                "would_change": would_change,
+                "diff": {
+                    "files_changed": files_changed,
+                    "insertions": insertions,
+                    "deletions": deletions,
+                    "changed_paths": changed_paths,
+                    "truncated": truncated,
+                },
+                "impacted_projections": impacted_projections,
+                "would_create_recovery_ref": would_change,
+                "will_create_recovery_ref": would_change,
+                "will_mutate": [],
+                "rollback_would_mutate": ["skill_source", "git_history", "git_tags", "registry_ops"],
+                "stale_projection_ids": reproject_projection_ids,
                 "risks": risks,
             }),
-            Meta::default(),
+            Meta {
+                warnings,
+                ..Meta::default()
+            },
         ))
     }
 
@@ -588,21 +686,38 @@ fn push_target_risks(
     }
 }
 
-fn rollback_stale_projection_ids(
+fn rollback_impacted_projections(
     ctx: &crate::state::AppContext,
     skill: &str,
-) -> std::result::Result<Vec<String>, CommandFailure> {
+) -> std::result::Result<(Vec<Value>, Vec<String>), CommandFailure> {
     let paths = RegistryStatePaths::from_app_context(ctx);
     let Some(snapshot) = paths.maybe_load_snapshot().map_err(map_registry_state)? else {
-        return Ok(Vec::new());
+        return Ok((
+            Vec::new(),
+            vec![format!(
+                "registry state not initialized under {}; impacted projections could not be determined",
+                paths.registry_dir.display()
+            )],
+        ));
     };
-    Ok(snapshot
+    let projections = snapshot
         .projections
         .projections
         .iter()
-        .filter(|projection| projection.skill_id == skill && projection.method != "symlink")
-        .map(|projection| projection.instance_id.clone())
-        .collect())
+        .filter(|projection| projection.skill_id == skill)
+        .map(|projection| {
+            let requires_reproject = matches!(projection.method.as_str(), "copy" | "materialize");
+            json!({
+                "instance_id": projection.instance_id,
+                "binding_id": projection.binding_id.as_deref(),
+                "target_id": projection.target_id,
+                "method": projection.method,
+                "live_path": projection.materialized_path,
+                "requires_reproject": requires_reproject,
+            })
+        })
+        .collect();
+    Ok((projections, Vec::new()))
 }
 
 fn build_preflight_next_commands(

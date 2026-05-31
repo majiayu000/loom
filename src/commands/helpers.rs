@@ -5,8 +5,8 @@ use uuid::Uuid;
 
 use crate::cli::{
     AgentCommand, AgentKind, BindingAddArgs, Command, OpsCommand, OpsHistoryCommand,
-    ProjectionMethod, SkillCommand, SkillOrphanCommand, SyncCommand, TargetAddArgs, TargetCommand,
-    WorkspaceBindingCommand, WorkspaceCommand, WorkspaceMatcherKind,
+    ProjectionMethod, SkillCommand, SkillOrphanCommand, SkillTrashCommand, SyncCommand,
+    TargetAddArgs, TargetCommand, WorkspaceBindingCommand, WorkspaceCommand, WorkspaceMatcherKind,
 };
 use crate::state::AppContext;
 use crate::state_model::{
@@ -127,10 +127,24 @@ pub(crate) fn command_name(command: &Command) -> &'static str {
             SkillCommand::Project(_) => "skill.project",
             SkillCommand::Capture(_) => "skill.capture",
             SkillCommand::Save(_) => "skill.save",
+            SkillCommand::Watch(_) => "skill.watch",
             SkillCommand::Snapshot(_) => "skill.snapshot",
             SkillCommand::Release(_) => "skill.release",
             SkillCommand::Rollback(_) => "skill.rollback",
             SkillCommand::Diff(_) => "skill.diff",
+            SkillCommand::History(_) => "skill.history",
+            SkillCommand::Trash {
+                command: SkillTrashCommand::Add(_),
+            } => "skill.trash.add",
+            SkillCommand::Trash {
+                command: SkillTrashCommand::List,
+            } => "skill.trash.list",
+            SkillCommand::Trash {
+                command: SkillTrashCommand::Restore(_),
+            } => "skill.trash.restore",
+            SkillCommand::Trash {
+                command: SkillTrashCommand::Purge(_),
+            } => "skill.trash.purge",
             SkillCommand::Verify(_) => "skill.verify",
             SkillCommand::Orphan {
                 command: SkillOrphanCommand::List,

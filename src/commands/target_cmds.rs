@@ -1,5 +1,5 @@
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::Context;
 use chrono::Utc;
@@ -91,6 +91,16 @@ impl App {
                 }
             }
         }
+        let normalized_target_path = target_path
+            .canonicalize()
+            .with_context(|| {
+                format!(
+                    "failed to canonicalize target path '{}'",
+                    target_path.display()
+                )
+            })
+            .map_err(map_io)?;
+        let normalized_path = normalized_target_path.to_string_lossy().into_owned();
 
         let paths = self.ensure_registry_layout()?;
         let mut targets = paths.load_targets().map_err(map_registry_state)?;
@@ -100,7 +110,8 @@ impl App {
             .targets
             .iter()
             .find(|target| {
-                target.agent == agent_kind_as_str(args.agent) && target.path == args.path
+                target.agent == agent_kind_as_str(args.agent)
+                    && target_path_matches(&target.path, &normalized_target_path)
             })
             .cloned()
         {
@@ -116,11 +127,13 @@ impl App {
             return Ok((json!({"target": existing, "noop": true}), Meta::default()));
         }
 
-        let target_id = unique_target_id(&targets, args);
+        let mut target_args = args.clone();
+        target_args.path.clone_from(&normalized_path);
+        let target_id = unique_target_id(&targets, &target_args);
         let target = RegistryProjectionTarget {
             target_id: target_id.clone(),
             agent: agent_kind_as_str(args.agent).to_string(),
-            path: args.path.clone(),
+            path: normalized_path,
             ownership: target_ownership_as_str(args.ownership).to_string(),
             capabilities: target_capabilities(args.ownership),
             created_at: Some(Utc::now()),
@@ -281,4 +294,12 @@ impl App {
             meta,
         ))
     }
+}
+
+fn target_path_matches(stored_path: &str, normalized_target_path: &Path) -> bool {
+    let stored = PathBuf::from(stored_path);
+    stored.as_path() == normalized_target_path
+        || stored
+            .canonicalize()
+            .is_ok_and(|canonical| canonical == normalized_target_path)
 }

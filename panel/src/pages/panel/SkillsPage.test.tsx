@@ -1,13 +1,18 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { SkillsPage } from "./SkillsPage";
-import type { Skill } from "../../lib/types";
+import type { Binding, Skill, Target } from "../../lib/types";
+import type { RegistryProjection } from "../../generated/RegistryProjection";
 
 vi.mock("../../lib/api/client", () => ({
   api: {
     skillHistory: vi.fn(),
     skillDiff: vi.fn(),
     capture: vi.fn(),
+    skillSave: vi.fn(),
+    skillSnapshot: vi.fn(),
+    skillRelease: vi.fn(),
+    skillRollback: vi.fn(),
   },
 }));
 
@@ -19,23 +24,59 @@ const mockSkill: Skill = {
   id: "skill-1",
   name: "my-skill",
   tag: "latest",
+  sourceStatus: "present",
+  releaseTags: [],
+  snapshotTags: [],
   latestRev: "abc12345",
   ruleCount: 2,
+  bindingCount: 2,
+  projectionCount: 0,
   changed: "1h ago",
   targets: [],
 };
 
-function renderPage() {
+const mockBinding: Binding = {
+  id: "binding-1",
+  skill: "my-skill",
+  target: "target-1",
+  matcher: "path_prefix:/repo",
+  method: "copy",
+  policy: "auto",
+};
+
+function renderPage(
+  overrides: {
+    onMutation?: () => void;
+    bindings?: Binding[];
+    targets?: Target[];
+    projections?: RegistryProjection[];
+  } = {},
+) {
   return render(
     <SkillsPage
       skills={[mockSkill]}
-      targets={[]}
+      targets={overrides.targets ?? []}
+      bindings={overrides.bindings ?? []}
+      projections={overrides.projections ?? []}
       selectedSkill="skill-1"
       onSelectSkill={() => {}}
-      onMutation={() => {}}
+      onMutation={overrides.onMutation ?? (() => {})}
       readOnly={false}
     />,
   );
+}
+
+function makeTarget(overrides: Partial<Target> = {}): Target {
+  return {
+    id: "target-1",
+    agent: "claude",
+    profile: "home",
+    path: "~/.claude/skills",
+    ownership: "managed",
+    skills: 0,
+    lastSync: "now",
+    ...overrides,
+  };
 }
 
 function makeSkill(overrides: Partial<Skill> = {}): Skill {
@@ -44,6 +85,88 @@ function makeSkill(overrides: Partial<Skill> = {}): Skill {
     ...overrides,
   };
 }
+
+describe("SkillsPage — capture action", () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    (api.skillHistory as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: true,
+      data: { skill: "my-skill", count: 0, events: [] },
+    });
+    (api.capture as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: true,
+      cmd: "skill.capture",
+      request_id: "req-capture",
+    });
+  });
+
+  it("sends a binding selector for a skill with one projected binding", async () => {
+    const onMutation = vi.fn();
+    renderPage({ bindings: [mockBinding], onMutation });
+
+    fireEvent.click(screen.getByRole("button", { name: "Capture" }));
+
+    await waitFor(() => {
+      expect(api.capture).toHaveBeenCalledWith({ skill: "my-skill", binding: "binding-1" });
+      expect(onMutation).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it("lets users choose which binding to capture when a skill has multiple bindings", async () => {
+    const onMutation = vi.fn();
+    renderPage({
+      targets: [
+        makeTarget(),
+        makeTarget({ id: "target-2", agent: "codex", profile: "work", path: "~/.codex/skills" }),
+      ],
+      bindings: [
+        mockBinding,
+        { ...mockBinding, id: "binding-2", target: "target-2", method: "symlink", policy: "manual" },
+      ],
+      onMutation,
+    });
+
+    fireEvent.change(screen.getByLabelText("Capture binding"), { target: { value: "binding-2" } });
+    fireEvent.click(screen.getByRole("button", { name: "Capture" }));
+
+    await waitFor(() => {
+      expect(api.capture).toHaveBeenCalledWith({ skill: "my-skill", binding: "binding-2" });
+      expect(onMutation).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it("disables capture when the skill has no projected binding", () => {
+    renderPage();
+
+    expect(screen.getByRole("button", { name: "Capture" })).toBeDisabled();
+  });
+
+  it("derives capture choices from projections when bindings are shared across skills", async () => {
+    const onMutation = vi.fn();
+    const projection: RegistryProjection = {
+      instance_id: "inst-1",
+      skill_id: "my-skill",
+      binding_id: "shared-binding",
+      target_id: "target-1",
+      materialized_path: "/tmp/target-1/my-skill",
+      method: "copy",
+      last_applied_rev: "abc12345",
+      health: "healthy",
+    };
+    renderPage({
+      bindings: [{ ...mockBinding, id: "shared-binding", skill: "other-skill" }],
+      projections: [projection],
+      onMutation,
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Capture" }));
+
+    await waitFor(() => {
+      expect(api.capture).toHaveBeenCalledWith({ skill: "my-skill", binding: "shared-binding" });
+      expect(onMutation).toHaveBeenCalledTimes(1);
+    });
+  });
+});
 
 describe("SkillsPage — history tab", () => {
   beforeEach(() => {
@@ -188,5 +311,69 @@ describe("SkillsPage — empty registry", () => {
     expect(
       screen.getAllByText(/loom skill add <source> --name <name>/).length,
     ).toBeGreaterThan(0);
+  });
+});
+
+describe("SkillsPage — lifecycle actions", () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    (api.skillHistory as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: true,
+      data: { skill: "my-skill", count: 0, events: [] },
+    });
+    (api.skillSave as ReturnType<typeof vi.fn>).mockResolvedValue({ ok: true, cmd: "skill.save", request_id: "req-save" });
+    (api.skillSnapshot as ReturnType<typeof vi.fn>).mockResolvedValue({ ok: true, cmd: "skill.snapshot", request_id: "req-snapshot" });
+    (api.skillRelease as ReturnType<typeof vi.fn>).mockResolvedValue({ ok: true, cmd: "skill.release", request_id: "req-release" });
+    (api.skillRollback as ReturnType<typeof vi.fn>).mockResolvedValue({ ok: true, cmd: "skill.rollback", request_id: "req-rollback" });
+  });
+
+  it("runs save, snapshot, release, and rollback for the selected skill", async () => {
+    const onMutation = vi.fn();
+    renderPage({ onMutation });
+
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => {
+      expect(api.skillSave).toHaveBeenCalledWith("my-skill");
+      expect(screen.getByRole("button", { name: "Snapshot" })).not.toBeDisabled();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Snapshot" }));
+    await waitFor(() => {
+      expect(api.skillSnapshot).toHaveBeenCalledWith("my-skill");
+    });
+
+    fireEvent.change(screen.getByPlaceholderText("version"), { target: { value: "v1.0.0" } });
+    fireEvent.click(screen.getByRole("button", { name: "Release" }));
+    await waitFor(() => {
+      expect(api.skillRelease).toHaveBeenCalledWith("my-skill", { version: "v1.0.0" });
+      expect(screen.getByRole("button", { name: "Rollback" })).not.toBeDisabled();
+    });
+
+    fireEvent.change(screen.getByPlaceholderText("HEAD~1"), { target: { value: "snapshot/my-skill/abc" } });
+    fireEvent.click(screen.getByRole("button", { name: "Rollback" }));
+
+    await waitFor(() => {
+      expect(api.skillRollback).toHaveBeenCalledWith("my-skill", { to: "snapshot/my-skill/abc" });
+      expect(onMutation).toHaveBeenCalledTimes(4);
+    });
+  });
+
+  it("refetches lifecycle history after successful lifecycle mutations", async () => {
+    (api.skillHistory as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: true,
+      data: { skill: "my-skill", count: 0, events: [] },
+    });
+    renderPage();
+
+    await waitFor(() => {
+      expect(api.skillHistory).toHaveBeenCalledTimes(1);
+    });
+
+    fireEvent.change(screen.getByPlaceholderText("version"), { target: { value: "v1.2.3" } });
+    fireEvent.click(screen.getByRole("button", { name: "Release" }));
+
+    await waitFor(() => {
+      expect(api.skillHistory).toHaveBeenCalledTimes(2);
+    });
   });
 });

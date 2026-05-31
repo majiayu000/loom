@@ -209,7 +209,7 @@ fn history_event_line(scope: &str, index: usize) -> String {
 }
 
 #[test]
-fn workspace_status_is_read_only_in_empty_dir() {
+fn workspace_status_records_command_audit_without_initializing_registry() {
     let root = TestDir::new("status");
 
     let env = run_loom_ok(root.path(), &["workspace", "status"]);
@@ -217,12 +217,23 @@ fn workspace_status_is_read_only_in_empty_dir() {
     assert_eq!(env["ok"], true);
     assert!(!root.path().join(".git").exists());
     assert!(!root.path().join("state/registry").exists());
-    assert!(!root.path().join("state/events").exists());
     assert!(!root.path().join("skills").exists());
+    let events = read_command_events(root.path());
+    assert_eq!(events.len(), 2);
+    assert_eq!(
+        events[0]["cmd"],
+        Value::String("workspace.status".to_string())
+    );
+    assert_eq!(events[0]["status"], Value::String("started".to_string()));
+    assert_eq!(events[1]["status"], Value::String("succeeded".to_string()));
+    assert_eq!(
+        events[1]["output"]["registry"]["available"],
+        Value::Bool(false)
+    );
 }
 
 #[test]
-fn workspace_status_ignores_unavailable_command_audit_path() {
+fn workspace_status_surfaces_unavailable_command_audit_path_warning() {
     let root = TestDir::new("status-audit-warning");
     let events_dir = root.path().join("state/events");
     if let Some(parent) = events_dir.parent() {
@@ -238,12 +249,14 @@ fn workspace_status_ignores_unavailable_command_audit_path() {
     );
     assert_eq!(env["ok"], Value::Bool(true));
     assert!(
-        !env["meta"]["warnings"]
+        env["meta"]["warnings"]
             .as_array()
             .expect("warnings array")
             .iter()
             .filter_map(serde_json::Value::as_str)
-            .any(|warning| warning.contains("command event"))
+            .any(|warning| warning.contains("failed to prepare command event log")),
+        "expected command audit warning: {}",
+        env
     );
     assert!(!root.path().join("state/registry").exists());
 }
@@ -275,7 +288,7 @@ fn failed_command_emits_durable_command_event() {
 }
 
 #[test]
-fn workspace_status_does_not_enter_command_audit_finish_path() {
+fn workspace_status_reports_terminal_command_audit_warning() {
     let root = TestDir::new("finish-append-failure");
 
     let (output, env) = run_loom_with_env(
@@ -287,14 +300,44 @@ fn workspace_status_does_not_enter_command_audit_finish_path() {
     assert!(output.status.success(), "status should still succeed");
     assert_eq!(env["ok"], Value::Bool(true));
     assert!(
-        !env["meta"]["warnings"]
+        env["meta"]["warnings"]
             .as_array()
             .expect("warnings array")
             .iter()
             .filter_map(serde_json::Value::as_str)
-            .any(|warning| warning.contains("command event"))
+            .any(|warning| warning.contains("failed to append command event")),
+        "expected command audit warning: {}",
+        env
     );
-    assert!(!root.path().join("state/events/commands.jsonl").exists());
+    let events = read_command_events(root.path());
+    assert_eq!(events.len(), 1);
+    assert_eq!(
+        events[0]["cmd"],
+        Value::String("workspace.status".to_string())
+    );
+    assert_eq!(events[0]["status"], Value::String("started".to_string()));
+}
+
+#[test]
+fn read_list_command_emits_durable_command_event_on_failure() {
+    let root = TestDir::new("read-list-command-event");
+
+    let (output, env) = run_loom_with_env(root.path(), &[], &["target", "list"]);
+
+    assert!(
+        !output.status.success(),
+        "target list unexpectedly succeeded"
+    );
+    assert_eq!(env["ok"], Value::Bool(false));
+    let events = read_command_events(root.path());
+    assert_eq!(events.len(), 2);
+    assert_eq!(events[0]["cmd"], Value::String("target.list".to_string()));
+    assert_eq!(events[0]["status"], Value::String("started".to_string()));
+    assert_eq!(events[1]["status"], Value::String("failed".to_string()));
+    assert_eq!(
+        events[1]["error"]["code"],
+        Value::String("ARG_INVALID".to_string())
+    );
 }
 
 #[test]
@@ -387,6 +430,30 @@ fn command_audit_redacts_sensitive_input_values() {
     assert!(!raw.contains("ghp_fragment"));
     assert!(raw.contains("<redacted>"));
     assert!(raw.contains("ref=main"));
+}
+
+#[test]
+fn command_audit_redacts_embedded_sensitive_message_values() {
+    let root = TestDir::new("audit-redaction-embedded-message");
+
+    let (output, env) = run_loom_with_env(
+        root.path(),
+        &[],
+        &[
+            "skill",
+            "capture",
+            "--message",
+            "prefix sk-reviewtoken and ghp_reviewtoken",
+        ],
+    );
+
+    assert!(!output.status.success(), "capture unexpectedly succeeded");
+    assert_eq!(env["ok"], false);
+    let raw = fs::read_to_string(root.path().join("state/events/commands.jsonl"))
+        .expect("read command event log");
+    assert!(!raw.contains("sk-reviewtoken"));
+    assert!(!raw.contains("ghp_reviewtoken"));
+    assert!(raw.contains("prefix <redacted> and <redacted>"));
 }
 
 #[test]
@@ -518,6 +585,39 @@ fn snapshot_pushes_annotated_tag_to_remote() {
         "--format=%(objecttype) %(refname:strip=2)",
     ]);
     assert!(refs.lines().any(|line| line == format!("tag {}", tag)));
+    assert!(
+        run_git([
+            "--git-dir",
+            remote.to_str().unwrap(),
+            "show-ref",
+            "--verify",
+            "--quiet",
+            "refs/heads/loom-history",
+        ])
+        .status
+        .success(),
+        "snapshot should push lifecycle audit to loom-history"
+    );
+    let history_files = git_ok([
+        "--git-dir",
+        remote.to_str().unwrap(),
+        "ls-tree",
+        "-r",
+        "--name-only",
+        "loom-history",
+    ]);
+    let segment_path = history_files
+        .lines()
+        .find(|line| line.starts_with("pending_ops_history/"))
+        .expect("snapshot audit segment");
+    let segment_raw = git_ok([
+        "--git-dir",
+        remote.to_str().unwrap(),
+        "show",
+        &format!("loom-history:{segment_path}"),
+    ]);
+    assert!(segment_raw.contains("\"event\":\"audited\""));
+    assert!(segment_raw.contains("\"command\":\"skill.snapshot\""));
 
     let pending = run_loom_ok(root.path(), &["ops", "list"]);
     assert_eq!(pending["data"]["count"], 0);
@@ -711,21 +811,32 @@ fn ops_compaction_mirrors_history_into_local_git_branch() {
             .lines()
             .any(|line| line == "pending_ops_snapshot.json")
     );
-    let segment_path = files
+    let segment_paths = files
         .lines()
-        .find(|line| line.starts_with("pending_ops_history/"))
-        .expect("history segment in loom-history branch");
+        .filter(|line| line.starts_with("pending_ops_history/"))
+        .collect::<Vec<_>>();
+    assert!(
+        !segment_paths.is_empty(),
+        "history segment in loom-history branch"
+    );
     let snapshot_raw = git_ok_in(
         root.path(),
         &["show", "loom-history:pending_ops_snapshot.json"],
     );
     let snapshot: Value = serde_json::from_str(&snapshot_raw).expect("parse history snapshot");
     assert!(snapshot["history_events"].as_u64().unwrap() >= 16);
-    let segment_raw = git_ok_in(
-        root.path(),
-        &["show", &format!("loom-history:{segment_path}")],
-    );
-    assert!(segment_raw.lines().count() >= 16);
+    let segment_event_count = segment_paths
+        .iter()
+        .map(|segment_path| {
+            git_ok_in(
+                root.path(),
+                &["show", &format!("loom-history:{segment_path}")],
+            )
+            .lines()
+            .count()
+        })
+        .sum::<usize>();
+    assert!(segment_event_count >= 16);
 }
 
 #[test]

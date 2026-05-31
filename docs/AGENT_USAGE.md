@@ -61,19 +61,23 @@ loom --json --root "$REGISTRY_ROOT" skill monitor-observed --once
 ## 4. 日常操作建议（Agent）
 
 1. 读取状态：`loom --json --root <registry_root> workspace status`
-2. 保存变更：`loom --json --root <registry_root> skill save <skill>`
-3. 关键节点快照：`loom --json --root <registry_root> skill snapshot <skill>`
-4. 发布版本：`loom --json --root <registry_root> skill release <skill> vX.Y.Z`
-5. 差异检查：`loom --json --root <registry_root> skill diff <skill> <from> <to>`
-6. 远端同步：`loom --json --root <registry_root> sync push` / `sync pull`
+2. 写入前规划：`loom --json --root <registry_root> agent preflight --agent <agent> --workspace "$PWD" --skill <skill>`
+3. 高风险写入预演：在 `skill project` / `skill capture` / `skill orphan clean` / `sync push` 后加 `--dry-run`；`skill rollback` 使用 `--preview`
+4. 保存变更：`loom --json --root <registry_root> skill save <skill>`
+5. 关键节点快照：`loom --json --root <registry_root> skill snapshot <skill>`
+6. 发布版本：`loom --json --root <registry_root> skill release <skill> vX.Y.Z`
+7. 差异检查：`loom --json --root <registry_root> skill diff <skill> <from> <to>`
+8. 远端同步：`loom --json --root <registry_root> sync push` / `sync pull`
 
 ## 5. 安全护栏
 
 - 未经明确授权，不要默认使用 `--force` 覆盖同名 skill。
 - 优先 symlink 模式；只有环境不支持时再使用 `--method copy`。
 - `meta.warnings` 不为空时，视为“成功但有风险”，需写入运行日志。
+- `agent preflight` 和 `--dry-run` 返回 `ok=true` 不代表可以直接写入；必须同时检查 `data.safe_to_run=true`。
+- `--dry-run` 只允许写 command audit，不应改变 registry ops、pending queue、Git refs/index 或 live target 内容；`skill rollback --preview` 连 command audit 也不会追加。
 - `sync_state=LOCAL_ONLY` 或 `PENDING_PUSH` 时，不应宣称“远端已同步”。
-- 读命令（如 `workspace status`、`workspace doctor`、`target list`）不写 command event；不要把读命令当作审计记录来源。
+- 读命令（如 `workspace status`、`workspace doctor`、`target list`）不会修改 registry state、Git refs/index、live target 目录或 pending queue；它们会写入 durable command event。registry 写操作审计以 `meta.op_id` / `/api/v1/ops` 为准。
 
 ## 6. 常见失败码处理
 
@@ -97,7 +101,11 @@ loom --json --root "$ROOT" skill monitor-observed --once
 # 2) 日常保存
 loom --json --root "$ROOT" skill save "$SKILL"
 
-# 3) 同步
+# 3) 写入前规划
+loom --json --root "$ROOT" agent preflight --agent codex --workspace "$PWD" --skill "$SKILL"
+loom --json --root "$ROOT" sync push --dry-run
+
+# 4) 同步
 loom --json --root "$ROOT" sync push
 ```
 

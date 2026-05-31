@@ -1,11 +1,13 @@
 use std::fs;
+use std::path::Path;
+use std::process::Command;
 
 use serde_json::Value;
 
 mod common;
 
 use common::actions::save_skill;
-use common::{TestDir, operations_log, run_loom, write_skill};
+use common::{TestDir, operations_log, run_loom, write_file, write_skill};
 
 fn assert_success(output: &std::process::Output, context: &str) {
     assert!(
@@ -14,6 +16,39 @@ fn assert_success(output: &std::process::Output, context: &str) {
         String::from_utf8_lossy(&output.stderr),
         String::from_utf8_lossy(&output.stdout)
     );
+}
+
+fn git_success(root: &Path, args: &[&str]) -> String {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .arg("-c")
+        .arg("commit.gpgsign=false")
+        .args(args)
+        .output()
+        .expect("run git");
+    assert!(
+        output.status.success(),
+        "git {:?} failed: stderr={} stdout={}",
+        args,
+        String::from_utf8_lossy(&output.stderr),
+        String::from_utf8_lossy(&output.stdout)
+    );
+    String::from_utf8_lossy(&output.stdout).trim().to_string()
+}
+
+#[test]
+fn skill_trash_list_is_read_only_without_repo() {
+    let root = TestDir::new("skill-trash-list-read-only");
+
+    let (output, env) = run_loom(root.path(), &["skill", "trash", "list"]);
+
+    assert_success(&output, "trash list");
+    assert_eq!(env["ok"], Value::Bool(true));
+    assert_eq!(env["data"]["items"], Value::Array(Vec::new()));
+    assert!(!root.path().join(".git").exists());
+    assert!(!root.path().join("state/events").exists());
+    assert!(!root.path().join("state/registry").exists());
 }
 
 #[test]
@@ -72,6 +107,30 @@ fn skill_trash_add_lists_and_restores_latest_entry() {
     let operations = operations_log(root.path());
     assert!(operations.contains(r#""intent":"skill.trash.add""#));
     assert!(operations.contains(r#""intent":"skill.trash.restore""#));
+}
+
+#[test]
+fn skill_trash_add_preserves_unrelated_staged_changes() {
+    let root = TestDir::new("skill-trash-preserve-staged");
+    write_skill(root.path(), "demo", "# Demo\n\nv1\n");
+    assert_success(&save_skill(root.path(), "demo").0, "save");
+
+    write_file(&root.path().join("README.md"), "staged but unrelated\n");
+    git_success(root.path(), &["add", "README.md"]);
+
+    let (trash_output, _) = run_loom(root.path(), &["skill", "trash", "add", "demo"]);
+    assert_success(&trash_output, "trash add");
+
+    let committed_paths = git_success(root.path(), &["show", "--name-only", "--pretty=", "HEAD"]);
+    assert!(committed_paths.contains("trash/"));
+    assert!(
+        !committed_paths.contains("README.md"),
+        "trash commit included unrelated staged path: {committed_paths}"
+    );
+    assert_eq!(
+        git_success(root.path(), &["status", "--porcelain", "--", "README.md"]),
+        "A  README.md"
+    );
 }
 
 #[test]

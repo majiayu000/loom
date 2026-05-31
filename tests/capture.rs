@@ -26,6 +26,15 @@ fn read_observation_log(root: &std::path::Path, instance_id: &str) -> String {
     .expect("read observation log")
 }
 
+fn rollback_error_steps(env: &Value) -> Vec<String> {
+    env["error"]["details"]["rollback_errors"]
+        .as_array()
+        .expect("rollback errors array")
+        .iter()
+        .filter_map(|error| error["step"].as_str().map(ToString::to_string))
+        .collect()
+}
+
 fn git_ok(root: &Path, args: &[&str]) -> String {
     let output = Command::new("git")
         .arg("-C")
@@ -532,4 +541,94 @@ fn skill_capture_rolls_back_operation_log_after_append_failure() {
     );
     assert_eq!(read_operations_log(root.path()), operations_before);
     assert_eq!(read_checkpoint(root.path()), checkpoint_before);
+}
+
+#[test]
+fn skill_capture_reports_source_restore_rollback_failure() {
+    let root = TestDir::new("v3-capture-rollback-failure");
+    write_skill(
+        root.path(),
+        "model-onboarding",
+        "# model-onboarding\n\nsource v1\n",
+    );
+
+    assert!(
+        save_skill(root.path(), "model-onboarding")
+            .0
+            .status
+            .success()
+    );
+
+    let target_path = root.path().join("live/claude-project-a");
+    assert!(
+        target_add(root.path(), "claude", &target_path, "managed")
+            .0
+            .status
+            .success()
+    );
+    assert!(
+        binding_add(
+            root.path(),
+            "claude",
+            "default",
+            "path-prefix",
+            "/tmp/project-a",
+            "target_claude_claude_project_a",
+        )
+        .0
+        .status
+        .success()
+    );
+    assert!(
+        skill_project(
+            root.path(),
+            "model-onboarding",
+            "bind_claude_project_a",
+            Some("copy"),
+        )
+        .0
+        .status
+        .success()
+    );
+
+    let live_file = target_path.join("model-onboarding").join("SKILL.md");
+    fs::write(
+        &live_file,
+        "# model-onboarding\n\ncaptured from live copy\n",
+    )
+    .expect("edit live projection");
+
+    let (capture_output, capture_env) = run_loom_with_env(
+        root.path(),
+        &[
+            ("LOOM_FAULT_INJECT", "skill_capture_after_state_save"),
+            ("LOOM_ROLLBACK_FAULT_INJECT", "restore_source_path"),
+        ],
+        &[
+            "skill",
+            "capture",
+            "model-onboarding",
+            "--binding",
+            "bind_claude_project_a",
+        ],
+    );
+
+    assert!(
+        !capture_output.status.success(),
+        "capture unexpectedly succeeded"
+    );
+    assert_eq!(capture_env["ok"], Value::Bool(false));
+    assert!(
+        rollback_error_steps(&capture_env)
+            .iter()
+            .any(|step| step == "restore_source_path"),
+        "expected rollback error details: {}",
+        capture_env
+    );
+    assert!(
+        capture_env["error"]["details"]["original_error"]["message"]
+            .as_str()
+            .expect("original error message")
+            .contains("skill_capture_after_state_save")
+    );
 }

@@ -116,25 +116,29 @@ This decision does not make the panel the primary control plane. The CLI remains
 
 ### 4.1 Mutation Route Table (v1 phase 1 frozen surface)
 
-The following 15 routes are the complete mutation surface for phase 1. Every row passes through `ensure_mutation_authorized` then `run_panel_command`. Adding a new POST route without a corresponding row in this table is an explicit contract break requiring a section-4 update.
+The following 19 routes are the complete mutation surface for phase 1. Every row passes through `ensure_mutation_authorized` then `run_panel_command`. Adding a new POST route without a corresponding row in this table is an explicit contract break requiring a section-4 update.
 
 | cmd name                 | HTTP | path                                    | CLI command                  |
 |--------------------------|------|-----------------------------------------|------------------------------|
 | workspace.init           | POST | /api/v1/workspace/init                        | Workspace::Init              |
-| target.add               | POST | /api/registry/targets                         | Target::Add                  |
-| target.remove            | POST | /api/registry/targets/{target_id}/remove      | Target::Remove               |
-| workspace.binding.add    | POST | /api/registry/bindings                        | Workspace::Binding::Add      |
-| workspace.binding.remove | POST | /api/registry/bindings/{binding_id}/remove    | Workspace::Binding::Remove   |
-| skill.project            | POST | /api/registry/project                         | Skill::Project               |
-| skill.capture            | POST | /api/registry/capture                         | Skill::Capture               |
-| skill.orphan.clean       | POST | /api/registry/orphans/clean                   | Skill::Orphan::Clean         |
-| workspace.remote.set     | POST | /api/remote/set                         | Workspace::Remote::Set       |
-| ops.retry                | POST | /api/ops/retry                          | Ops::Retry                   |
-| ops.purge                | POST | /api/ops/purge                          | Ops::Purge                   |
-| ops.history.repair       | POST | /api/ops/history/repair                 | Ops::History::Repair         |
-| sync.push                | POST | /api/sync/push                          | Sync::Push                   |
-| sync.pull                | POST | /api/sync/pull                          | Sync::Pull                   |
-| sync.replay              | POST | /api/sync/replay                        | Sync::Replay                 |
+| target.add               | POST | /api/v1/targets                               | Target::Add                  |
+| target.remove            | POST | /api/v1/targets/{target_id}/remove            | Target::Remove               |
+| workspace.binding.add    | POST | /api/v1/bindings                              | Workspace::Binding::Add      |
+| workspace.binding.remove | POST | /api/v1/bindings/{binding_id}/remove          | Workspace::Binding::Remove   |
+| skill.project            | POST | /api/v1/projections/project                   | Skill::Project               |
+| skill.capture            | POST | /api/v1/projections/capture                   | Skill::Capture               |
+| skill.save               | POST | /api/v1/skills/{skill_name}/save              | Skill::Save                  |
+| skill.snapshot           | POST | /api/v1/skills/{skill_name}/snapshot          | Skill::Snapshot              |
+| skill.release            | POST | /api/v1/skills/{skill_name}/release           | Skill::Release               |
+| skill.rollback           | POST | /api/v1/skills/{skill_name}/rollback          | Skill::Rollback              |
+| skill.orphan.clean       | POST | /api/v1/orphans/clean                         | Skill::Orphan::Clean         |
+| workspace.remote.set     | POST | /api/v1/workspace/remote                      | Workspace::Remote::Set       |
+| ops.retry                | POST | /api/v1/ops/retry                             | Ops::Retry                   |
+| ops.purge                | POST | /api/v1/ops/purge                             | Ops::Purge                   |
+| ops.history.repair       | POST | /api/v1/ops/history/repair                    | Ops::History::Repair         |
+| sync.push                | POST | /api/v1/sync/push                             | Sync::Push                   |
+| sync.pull                | POST | /api/v1/sync/pull                             | Sync::Pull                   |
+| sync.replay              | POST | /api/v1/sync/replay                           | Sync::Replay                 |
 
 ## 5. Environment-Based Discovery
 

@@ -5,6 +5,7 @@ import type { RegistryTarget } from "../../generated/RegistryTarget";
 import type { PendingOp } from "../../types";
 import { normalizeAgentSlug } from "../agent_options";
 import type { AgentSlug, Binding, Op, Ownership, ProjectionMethod, Skill, Target } from "../types";
+import type { RegistryOperationRecord, SkillSummaryPayload } from "./client";
 
 /**
  * Return the backend slug verbatim (lowercased + trimmed). Unknown slugs
@@ -106,8 +107,40 @@ export function adaptSkill(
     id: `s-${name}`,
     name,
     tag: inferTag(name),
+    sourceStatus: "present",
+    releaseTags: [],
+    snapshotTags: [],
     latestRev,
     ruleCount,
+    bindingCount: ruleCount,
+    projectionCount: projForSkill.length,
+    changed,
+    targets: targetIds,
+  };
+}
+
+export function adaptSkillSummary(summary: SkillSummaryPayload): Skill {
+  const name = summary.skill_id;
+  const releaseTags = summary.release_tags ?? [];
+  const snapshotTags = summary.snapshot_tags ?? [];
+  const tag = releaseTags[0] ?? (snapshotTags.length > 0 ? "snapshot" : inferTag(name));
+  const targetIds = summary.target_ids ?? [];
+  const latestRev = summary.latest_rev ? summary.latest_rev.slice(0, 8) : "—";
+  const changed = summary.latest_updated_at ? relativeTime(summary.latest_updated_at) : "—";
+  const bindingCount = summary.bindings_count ?? 0;
+  const projectionCount = summary.projections_count ?? targetIds.length;
+
+  return {
+    id: `s-${name}`,
+    name,
+    tag,
+    sourceStatus: summary.source_status ?? "missing",
+    releaseTags,
+    snapshotTags,
+    latestRev,
+    ruleCount: bindingCount,
+    bindingCount,
+    projectionCount,
     changed,
     targets: targetIds,
   };
@@ -155,6 +188,26 @@ export function adaptPendingOp(op: PendingOp, index: number): Op {
     method: methodField,
     time: op.created_at ? relativeTime(op.created_at) : "queued",
   };
+}
+
+export function adaptRegistryOperation(op: RegistryOperationRecord): Op {
+  return {
+    id: op.op_id ?? op.audit_id ?? op.request_id ?? `${op.intent}-${op.updated_at}`,
+    status: operationStatus(op),
+    kind: op.intent,
+    skill: op.skill ?? op.intent,
+    target: op.target ?? op.binding ?? "—",
+    method: op.method ? toMethod(op.method) : "—",
+    time: op.updated_at ? relativeTime(op.updated_at) : "—",
+    reason: op.last_error?.message,
+  };
+}
+
+function operationStatus(op: RegistryOperationRecord): Op["status"] {
+  const status = op.status.toLowerCase();
+  if (op.last_error || status === "failed" || status === "error") return "err";
+  if (status === "pending" || status === "queued") return "pending";
+  return "ok";
 }
 
 export function adaptProjectionOp(p: RegistryProjection, index: AdapterIndex): Op {

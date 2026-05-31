@@ -32,6 +32,11 @@ pub struct Cli {
 pub enum Command {
     #[command(about = "Initialize the default registry and scan existing agent skill directories")]
     Init,
+    #[command(about = "Export, inspect, and restore portable registry backups")]
+    Backup {
+        #[command(subcommand)]
+        command: BackupCommand,
+    },
     #[command(about = "Import and update skills from observed targets")]
     Monitor(MonitorObservedArgs),
     #[command(about = "Inspect and configure registry workspace state")]
@@ -59,8 +64,66 @@ pub enum Command {
         #[command(subcommand)]
         command: OpsCommand,
     },
+    #[command(
+        about = "Plan safe agent automation before mutating state. Requires an existing workspace binding (`loom workspace binding add`) so preflight knows which target to project into."
+    )]
+    Agent {
+        #[command(subcommand)]
+        command: AgentCommand,
+    },
     #[command(about = "Serve the local registry control panel")]
     Panel(PanelArgs),
+    #[command(
+        about = "Run registry integrity, history, and projection checks (alias for `workspace doctor`)"
+    )]
+    Doctor,
+}
+
+#[derive(Debug, Clone, Subcommand, Serialize)]
+pub enum BackupCommand {
+    #[command(about = "Create a portable registry backup artifact")]
+    Export(BackupExportArgs),
+    #[command(about = "Inspect and validate a registry backup artifact")]
+    Inspect(BackupInspectArgs),
+    #[command(about = "Restore a registry backup into a new empty root")]
+    Restore(BackupRestoreArgs),
+}
+
+#[derive(Debug, Clone, Args, Serialize)]
+pub struct BackupExportArgs {
+    /// Output tar path. Defaults to <root>/backups/loom-backup-<timestamp>.tar.
+    #[arg(long)]
+    pub output: Option<PathBuf>,
+
+    /// Backup artifact format.
+    #[arg(long, value_enum, default_value_t = BackupFormat::Tar)]
+    pub format: BackupFormat,
+
+    /// Include registry-owned target cache data if present.
+    #[arg(long)]
+    pub include_target_cache: bool,
+}
+
+#[derive(Debug, Clone, Args, Serialize)]
+pub struct BackupInspectArgs {
+    /// Backup artifact to inspect.
+    pub artifact: PathBuf,
+}
+
+#[derive(Debug, Clone, Args, Serialize)]
+pub struct BackupRestoreArgs {
+    /// Backup artifact to restore.
+    pub artifact: PathBuf,
+
+    /// Permit a destination root that contains only safe empty scaffolding.
+    #[arg(long)]
+    pub force_empty_root: bool,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum BackupFormat {
+    Tar,
 }
 
 #[derive(Debug, Clone, Subcommand, Serialize)]
@@ -134,11 +197,17 @@ pub enum SkillCommand {
     Rollback(RollbackArgs),
     #[command(about = "Diff two revisions of a skill source")]
     Diff(DiffArgs),
+    #[command(about = "Show Git history for one skill source")]
+    History(HistoryArgs),
     #[command(about = "Move skills to trash, list trash entries, restore, or purge")]
     Trash {
         #[command(subcommand)]
         command: SkillTrashCommand,
     },
+    #[command(about = "Verify a skill source has no uncommitted drift")]
+    Verify(SkillOnlyArgs),
+    #[command(about = "Watch registry skill sources and autosave stable local edits")]
+    Watch(WatchArgs),
     #[command(about = "Continuously import and update skills from observed targets")]
     MonitorObserved(MonitorObservedArgs),
     #[command(about = "Run one import pass over observed targets and exit")]
@@ -191,6 +260,10 @@ pub struct OrphanCleanArgs {
     /// Also delete validated live projection directories.
     #[arg(long)]
     pub delete_live_paths: bool,
+
+    /// Show the cleanup plan without modifying registry state or live files.
+    #[arg(long)]
+    pub dry_run: bool,
 }
 
 #[derive(Debug, Clone, Subcommand, Serialize)]
@@ -214,6 +287,31 @@ pub enum OpsHistoryCommand {
     Diagnose,
     #[command(about = "Repair operation-history divergence")]
     Repair(HistoryRepairArgs),
+}
+
+#[derive(Debug, Clone, Subcommand, Serialize)]
+pub enum AgentCommand {
+    #[command(about = "Resolve selectors and risks for an agent workspace")]
+    Preflight(AgentPreflightArgs),
+}
+
+#[derive(Debug, Clone, Args, Serialize)]
+pub struct AgentPreflightArgs {
+    /// Agent kind asking for the plan.
+    #[arg(long, value_enum)]
+    pub agent: AgentKind,
+
+    /// Workspace path the agent is operating in.
+    #[arg(long)]
+    pub workspace: PathBuf,
+
+    /// Optional skill to resolve project/capture selectors for.
+    #[arg(long)]
+    pub skill: Option<String>,
+
+    /// Desired projection method for a new project operation.
+    #[arg(long, value_enum, default_value_t = ProjectionMethod::Symlink)]
+    pub method: ProjectionMethod,
 }
 
 #[derive(Debug, Clone, Args, Serialize)]
@@ -255,6 +353,10 @@ pub struct ProjectArgs {
     /// Projection strategy used for the live agent directory.
     #[arg(long, value_enum, default_value_t = ProjectionMethod::Symlink)]
     pub method: ProjectionMethod,
+
+    /// Show the projection plan without writing registry state or target files.
+    #[arg(long)]
+    pub dry_run: bool,
 }
 
 #[derive(Debug, Clone, Args, Serialize)]
@@ -273,6 +375,10 @@ pub struct CaptureArgs {
     /// Git commit message for the captured source revision.
     #[arg(long)]
     pub message: Option<String>,
+
+    /// Show the capture plan without writing registry state or source files.
+    #[arg(long)]
+    pub dry_run: bool,
 }
 
 #[derive(Debug, Clone, Args, Serialize)]
@@ -305,6 +411,32 @@ pub struct SaveArgs {
 }
 
 #[derive(Debug, Clone, Args, Serialize)]
+pub struct WatchArgs {
+    /// Registry skill name. Watches all registry skills when omitted.
+    pub skill: Option<String>,
+
+    /// Milliseconds changes must remain quiet before autosave.
+    #[arg(long, default_value_t = 3000)]
+    pub debounce_ms: u64,
+
+    /// Maximum changed paths allowed in one autosave batch.
+    #[arg(long, default_value_t = 20)]
+    pub max_batch: usize,
+
+    /// Print the autosave plan without committing.
+    #[arg(long)]
+    pub dry_run: bool,
+
+    /// Run one scan and exit.
+    #[arg(long)]
+    pub once: bool,
+
+    /// Stop after N scans. Mainly useful for supervised smoke tests.
+    #[arg(long, hide = true)]
+    pub max_cycles: Option<u64>,
+}
+
+#[derive(Debug, Clone, Args, Serialize)]
 pub struct SkillOnlyArgs {
     /// Registry skill name.
     pub skill: String,
@@ -330,6 +462,10 @@ pub struct RollbackArgs {
     /// Number of source commits to roll back when --to is not provided.
     #[arg(long)]
     pub steps: Option<u32>,
+
+    /// Preview rollback impact without changing Git refs, source files, or registry state.
+    #[arg(long = "preview", visible_alias = "dry-run")]
+    pub dry_run: bool,
 }
 
 #[derive(Debug, Clone, Args, Serialize)]
@@ -340,6 +476,32 @@ pub struct DiffArgs {
     pub from: String,
     /// Newer revision, snapshot, or release reference.
     pub to: String,
+}
+
+#[derive(Debug, Clone, Args, Serialize)]
+pub struct HistoryArgs {
+    /// Registry skill name.
+    pub skill: String,
+
+    /// Maximum number of history entries to return.
+    #[arg(long, default_value_t = 30)]
+    pub limit: usize,
+
+    /// Older revision boundary. When set, history uses <from>..<to>.
+    #[arg(long)]
+    pub from: Option<String>,
+
+    /// Newer revision boundary.
+    #[arg(long, default_value = "HEAD")]
+    pub to: String,
+
+    /// Include per-commit short diff statistics.
+    #[arg(long)]
+    pub include_diff_stat: bool,
+
+    /// Include registry operations added by each history commit.
+    #[arg(long, default_value_t = true)]
+    pub include_ops: bool,
 }
 
 #[derive(Debug, Clone, Args, Serialize)]
@@ -421,11 +583,18 @@ pub enum SyncCommand {
     #[command(about = "Show Git sync state")]
     Status,
     #[command(about = "Push registry state and operation history")]
-    Push,
+    Push(SyncPushArgs),
     #[command(about = "Pull registry state and operation history")]
     Pull,
     #[command(about = "Replay pending operations")]
     Replay,
+}
+
+#[derive(Debug, Clone, Args, Serialize)]
+pub struct SyncPushArgs {
+    /// Show the push plan without committing, pushing, or clearing pending ops.
+    #[arg(long)]
+    pub dry_run: bool,
 }
 
 #[derive(

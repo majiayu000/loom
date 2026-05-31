@@ -11,10 +11,17 @@ import type { RegistryRule } from "../../generated/RegistryRule";
 import type { RegistryTarget } from "../../generated/RegistryTarget";
 
 export interface RegistryOperationRecord {
-  op_id: string;
+  op_id: string | null;
+  audit_id?: string | null;
+  source?: string;
   intent: string;
   status: string;
   ack: boolean;
+  request_id?: string | null;
+  skill?: string | null;
+  target?: string | null;
+  binding?: string | null;
+  method?: string | null;
   payload?: unknown;
   effects?: unknown;
   last_error?: { code: string; message: string };
@@ -89,8 +96,24 @@ export interface TargetShowPayload {
   error?: { code?: string; message?: string };
 }
 
+export interface SkillSummaryPayload {
+  skill_id: string;
+  source_status?: "present" | "missing" | "non-compliant";
+  source_path?: string | null;
+  latest_rev?: string | null;
+  latest_updated_at?: string | null;
+  bindings_count?: number;
+  projections_count?: number;
+  target_ids?: string[];
+  release_tags?: string[];
+  snapshot_tags?: string[];
+  observed_imported?: boolean;
+  sources?: string[];
+}
+
 export interface SkillsPayload {
-  skills?: string[];
+  skills?: Array<string | SkillSummaryPayload>;
+  skill_names?: string[];
 }
 
 export interface RemoteStatusResponse {
@@ -272,6 +295,19 @@ export interface SkillAddBody {
   name: string;
 }
 
+export interface SkillSaveBody {
+  message?: string;
+}
+
+export interface SkillReleaseBody {
+  version: string;
+}
+
+export interface SkillRollbackBody {
+  to?: string;
+  steps?: number;
+}
+
 export interface CaptureBody {
   skill?: string;
   binding?: string;
@@ -359,7 +395,7 @@ export const api = {
   info: (signal?: AbortSignal) => getJsonData<InfoPayload>("/api/info", signal),
   workspaceStatus: (signal?: AbortSignal) =>
     getJsonData<WorkspaceStatusPayload>("/api/v1/workspace/status", signal),
-  skills: (signal?: AbortSignal) => getJsonData<SkillsPayload>("/api/skills", signal),
+  skills: (signal?: AbortSignal) => getJsonData<SkillsPayload>("/api/v1/skills", signal),
   registryStatus: (signal?: AbortSignal) => getJson<RegistryPayload>("/api/registry/status", signal),
   workspaceDoctor: (signal?: AbortSignal) =>
     getJsonData<DoctorPayload>("/api/v1/workspace/doctor", signal),
@@ -396,6 +432,14 @@ export const api = {
   bindingAdd: (body: BindingAddBody) => postJson("/api/v1/bindings", body),
   bindingRemove: (bindingId: string) => postJson(`/api/v1/bindings/${encodeURIComponent(bindingId)}/remove`, {}),
   skillAdd: (body: SkillAddBody) => postJson("/api/v1/skills", body),
+  skillSave: (name: string, body: SkillSaveBody = {}) =>
+    postJson(`/api/v1/skills/${encodeURIComponent(name)}/save`, body),
+  skillSnapshot: (name: string) =>
+    postJson(`/api/v1/skills/${encodeURIComponent(name)}/snapshot`, {}),
+  skillRelease: (name: string, body: SkillReleaseBody) =>
+    postJson(`/api/v1/skills/${encodeURIComponent(name)}/release`, body),
+  skillRollback: (name: string, body: SkillRollbackBody) =>
+    postJson(`/api/v1/skills/${encodeURIComponent(name)}/rollback`, body),
   project: (body: ProjectBody) => postJson("/api/v1/projections/project", body),
   capture: (body: CaptureBody) => postJson("/api/v1/projections/capture", body),
   orphanClean: (body: OrphanCleanBody) => postJson("/api/v1/orphans/clean", body),

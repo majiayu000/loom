@@ -1,13 +1,18 @@
+mod agent_cmds;
+mod backup_cmds;
 mod event_store;
 mod file_ops;
 mod fs_probe;
 mod helpers;
+mod history_cmds;
 mod projections;
 mod skill_cmds;
+mod skill_verify;
 mod sync_cmds;
 mod target_cmds;
 mod trash_cmds;
 mod version_cmds;
+mod watch_cmds;
 mod workspace_cmds;
 
 use anyhow::Result;
@@ -15,9 +20,9 @@ use serde_json::json;
 use uuid::Uuid;
 
 use crate::cli::{
-    Cli, Command, OpsCommand, OpsHistoryCommand, RemoteCommand, SkillCommand, SkillOrphanCommand,
-    SkillTrashCommand, SyncCommand, TargetCommand, WorkspaceBindingCommand, WorkspaceCommand,
-    WorkspaceInitArgs,
+    AgentCommand, Cli, Command, OpsCommand, OpsHistoryCommand, RemoteCommand, SkillCommand,
+    SkillOrphanCommand, SkillTrashCommand, SyncCommand, TargetCommand, WorkspaceBindingCommand,
+    WorkspaceCommand, WorkspaceInitArgs,
 };
 use crate::envelope::{Envelope, Meta};
 use crate::state::AppContext;
@@ -49,6 +54,22 @@ impl CommandFailure {
             message: message.into(),
             details: json!({}),
         }
+    }
+
+    pub(crate) fn with_rollback_errors(mut self, rollback_errors: Vec<serde_json::Value>) -> Self {
+        if rollback_errors.is_empty() {
+            return self;
+        }
+        let original_details = std::mem::replace(&mut self.details, json!({}));
+        self.details = json!({
+            "original_error": {
+                "code": self.code.as_str(),
+                "message": self.message.clone(),
+            },
+            "original_details": original_details,
+            "rollback_errors": rollback_errors,
+        });
+        self
     }
 }
 
@@ -83,6 +104,8 @@ impl App {
             .clone()
             .unwrap_or_else(|| Uuid::new_v4().to_string());
         let audit_required = command_requires_durable_audit(&cli.command);
+        let audit_enabled = command_records_audit(&cli.command)
+            && (audit_required || self.ctx.ensure_not_loom_tool_repo_root().is_ok());
         if audit_required && let Err(err) = self.ctx.ensure_not_loom_tool_repo_root() {
             let message = err.to_string();
             let message = message
@@ -93,31 +116,40 @@ impl App {
             return Ok((env, ErrorCode::ArgInvalid.exit_code()));
         }
         let mut audit_event_id = None;
-        if audit_required {
+        let mut audit_warnings = Vec::new();
+        if audit_enabled {
             let input = command_event_input(&cli, &request_id);
             match prepare_command_event_store(&self.ctx) {
                 Ok(()) => match append_command_started(&self.ctx, cmd, input, &request_id) {
                     Ok(event_id) => audit_event_id = Some(event_id),
                     Err(err) => {
+                        let warning = format!("failed to append command event: {}", err);
+                        if audit_required {
+                            let env = Envelope::err(
+                                cmd,
+                                request_id,
+                                ErrorCode::AuditError,
+                                warning,
+                                json!({}),
+                            );
+                            return Ok((env, ErrorCode::AuditError.exit_code()));
+                        }
+                        audit_warnings.push(warning);
+                    }
+                },
+                Err(err) => {
+                    let warning = format!("failed to prepare command event log: {}", err);
+                    if audit_required {
                         let env = Envelope::err(
                             cmd,
                             request_id,
                             ErrorCode::AuditError,
-                            format!("failed to append command event: {}", err),
+                            warning,
                             json!({}),
                         );
                         return Ok((env, ErrorCode::AuditError.exit_code()));
                     }
-                },
-                Err(err) => {
-                    let env = Envelope::err(
-                        cmd,
-                        request_id,
-                        ErrorCode::AuditError,
-                        format!("failed to prepare command event log: {}", err),
-                        json!({}),
-                    );
-                    return Ok((env, ErrorCode::AuditError.exit_code()));
+                    audit_warnings.push(warning);
                 }
             }
         }
@@ -129,7 +161,9 @@ impl App {
                 };
                 self.cmd_workspace_init(&args, &request_id)
             }
+            Command::Backup { command } => self.cmd_backup(command),
             Command::Monitor(args) => self.cmd_monitor_observed(args, &request_id),
+            Command::Doctor => self.cmd_doctor(),
             Command::Workspace { command } => match command {
                 WorkspaceCommand::Status => self.cmd_status(),
                 WorkspaceCommand::Doctor => self.cmd_doctor(),
@@ -144,13 +178,18 @@ impl App {
                 SkillCommand::Add(args) => self.cmd_add(args, &request_id),
                 SkillCommand::ImportObserved(args) => self.cmd_import_observed(args, &request_id),
                 SkillCommand::MonitorObserved(args) => self.cmd_monitor_observed(args, &request_id),
+                SkillCommand::Project(args) if args.dry_run => self.cmd_project_plan(args),
                 SkillCommand::Project(args) => self.cmd_project(args, &request_id),
+                SkillCommand::Capture(args) if args.dry_run => self.cmd_capture_plan(args),
                 SkillCommand::Capture(args) => self.cmd_capture(args, &request_id),
                 SkillCommand::Save(args) => self.cmd_save(args, &request_id),
+                SkillCommand::Watch(args) => self.cmd_watch(args, &request_id),
                 SkillCommand::Snapshot(args) => self.cmd_snapshot(args, &request_id),
                 SkillCommand::Release(args) => self.cmd_release(args, &request_id),
+                SkillCommand::Rollback(args) if args.dry_run => self.cmd_rollback_plan(args),
                 SkillCommand::Rollback(args) => self.cmd_rollback(args, &request_id),
                 SkillCommand::Diff(args) => self.cmd_diff(args),
+                SkillCommand::History(args) => self.cmd_history(args),
                 SkillCommand::Trash {
                     command: SkillTrashCommand::Add(args),
                 } => self.cmd_skill_trash_add(args, &request_id),
@@ -163,21 +202,29 @@ impl App {
                 SkillCommand::Trash {
                     command: SkillTrashCommand::Purge(args),
                 } => self.cmd_skill_trash_purge(args, &request_id),
+                SkillCommand::Verify(args) => self.cmd_verify(args),
                 SkillCommand::Orphan {
                     command: SkillOrphanCommand::List,
                 } => self.cmd_skill_orphan_list(),
+                SkillCommand::Orphan {
+                    command: SkillOrphanCommand::Clean(args),
+                } if args.dry_run => self.cmd_skill_orphan_clean_plan(args),
                 SkillCommand::Orphan {
                     command: SkillOrphanCommand::Clean(args),
                 } => self.cmd_skill_orphan_clean(args, &request_id),
             },
             Command::Sync { command } => self.cmd_sync(command),
             Command::Ops { command } => self.cmd_ops(command),
+            Command::Agent { command } => match command {
+                AgentCommand::Preflight(args) => self.cmd_agent_preflight(args),
+            },
             Command::Panel(_) => Ok((json!({"message": "panel handled in main"}), Meta::default())),
         };
 
         match result {
             Ok((data, meta)) => {
-                let env = Envelope::ok(cmd, request_id, data, meta);
+                let mut env = Envelope::ok(cmd, request_id, data, meta);
+                env.meta.warnings.extend(audit_warnings);
                 Ok(
                     self.finish_command_audit(
                         cmd,
@@ -190,7 +237,8 @@ impl App {
             }
             Err(f) => {
                 let exit_code = f.code.exit_code();
-                let env = Envelope::err(cmd, request_id, f.code, f.message, f.details);
+                let mut env = Envelope::err(cmd, request_id, f.code, f.message, f.details);
+                env.meta.warnings.extend(audit_warnings);
                 Ok(self.finish_command_audit(
                     cmd,
                     env,
@@ -282,9 +330,25 @@ impl App {
     }
 }
 
+fn command_records_audit(command: &Command) -> bool {
+    !matches!(
+        command,
+        Command::Panel(_)
+            | Command::Backup { .. }
+            | Command::Skill {
+                command: SkillCommand::History(_)
+                    | SkillCommand::Trash {
+                        command: SkillTrashCommand::List,
+                    }
+            }
+    ) && !is_rollback_preview(command)
+}
+
 fn command_requires_durable_audit(command: &Command) -> bool {
     match command {
         Command::Init | Command::Monitor(_) => true,
+        Command::Backup { .. } => false,
+        Command::Doctor => false,
         Command::Workspace { command } => match command {
             WorkspaceCommand::Status | WorkspaceCommand::Doctor => false,
             WorkspaceCommand::Init(_) => true,
@@ -297,32 +361,52 @@ fn command_requires_durable_audit(command: &Command) -> bool {
         Command::Target { command } => {
             !matches!(command, TargetCommand::List | TargetCommand::Show(_))
         }
-        Command::Skill { command } => matches!(
-            command,
+        Command::Skill { command } => match command {
             SkillCommand::Add(_)
-                | SkillCommand::ImportObserved(_)
-                | SkillCommand::MonitorObserved(_)
-                | SkillCommand::Project(_)
-                | SkillCommand::Capture(_)
-                | SkillCommand::Save(_)
-                | SkillCommand::Snapshot(_)
-                | SkillCommand::Release(_)
-                | SkillCommand::Rollback(_)
-                | SkillCommand::Trash {
-                    command: SkillTrashCommand::Add(_)
-                        | SkillTrashCommand::Restore(_)
-                        | SkillTrashCommand::Purge(_)
-                }
-                | SkillCommand::Orphan {
-                    command: SkillOrphanCommand::Clean(_)
-                }
-        ),
+            | SkillCommand::ImportObserved(_)
+            | SkillCommand::MonitorObserved(_)
+            | SkillCommand::Project(_)
+            | SkillCommand::Capture(_)
+            | SkillCommand::Save(_)
+            | SkillCommand::Watch(_)
+            | SkillCommand::Snapshot(_)
+            | SkillCommand::Release(_)
+            | SkillCommand::Trash {
+                command:
+                    SkillTrashCommand::Add(_)
+                    | SkillTrashCommand::Restore(_)
+                    | SkillTrashCommand::Purge(_),
+            }
+            | SkillCommand::Orphan {
+                command: SkillOrphanCommand::Clean(_),
+            } => true,
+            SkillCommand::Rollback(args) => !args.dry_run,
+            SkillCommand::Diff(_)
+            | SkillCommand::History(_)
+            | SkillCommand::Verify(_)
+            | SkillCommand::Trash {
+                command: SkillTrashCommand::List,
+            }
+            | SkillCommand::Orphan {
+                command: SkillOrphanCommand::List,
+            } => false,
+        },
         Command::Sync { command } => !matches!(command, SyncCommand::Status),
         Command::Ops { command } => match command {
             OpsCommand::List => false,
             OpsCommand::Retry | OpsCommand::Purge => true,
             OpsCommand::History { command } => !matches!(command, OpsHistoryCommand::Diagnose),
         },
+        Command::Agent { .. } => false,
         Command::Panel(_) => false,
     }
+}
+
+fn is_rollback_preview(command: &Command) -> bool {
+    matches!(
+        command,
+        Command::Skill {
+            command: SkillCommand::Rollback(args),
+        } if args.dry_run
+    )
 }

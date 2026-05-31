@@ -4,9 +4,9 @@ use anyhow::{Result, anyhow};
 use uuid::Uuid;
 
 use crate::cli::{
-    AgentKind, BindingAddArgs, Command, OpsCommand, OpsHistoryCommand, ProjectionMethod,
-    SkillCommand, SkillOrphanCommand, SkillTrashCommand, SyncCommand, TargetAddArgs, TargetCommand,
-    WorkspaceBindingCommand, WorkspaceCommand, WorkspaceMatcherKind,
+    AgentCommand, AgentKind, BindingAddArgs, Command, OpsCommand, OpsHistoryCommand,
+    ProjectionMethod, SkillCommand, SkillOrphanCommand, SkillTrashCommand, SyncCommand,
+    TargetAddArgs, TargetCommand, WorkspaceBindingCommand, WorkspaceCommand, WorkspaceMatcherKind,
 };
 use crate::state::AppContext;
 use crate::state_model::{
@@ -95,7 +95,13 @@ pub(crate) fn validate_skill_name(skill: &str) -> Result<()> {
 pub(crate) fn command_name(command: &Command) -> &'static str {
     match command {
         Command::Init => "init",
+        Command::Backup { command } => match command {
+            crate::cli::BackupCommand::Export(_) => "backup.export",
+            crate::cli::BackupCommand::Inspect(_) => "backup.inspect",
+            crate::cli::BackupCommand::Restore(_) => "backup.restore",
+        },
         Command::Monitor(_) => "monitor",
+        Command::Doctor => "workspace.doctor",
         Command::Workspace { command } => match command {
             WorkspaceCommand::Status => "workspace.status",
             WorkspaceCommand::Doctor => "workspace.doctor",
@@ -121,10 +127,12 @@ pub(crate) fn command_name(command: &Command) -> &'static str {
             SkillCommand::Project(_) => "skill.project",
             SkillCommand::Capture(_) => "skill.capture",
             SkillCommand::Save(_) => "skill.save",
+            SkillCommand::Watch(_) => "skill.watch",
             SkillCommand::Snapshot(_) => "skill.snapshot",
             SkillCommand::Release(_) => "skill.release",
             SkillCommand::Rollback(_) => "skill.rollback",
             SkillCommand::Diff(_) => "skill.diff",
+            SkillCommand::History(_) => "skill.history",
             SkillCommand::Trash {
                 command: SkillTrashCommand::Add(_),
             } => "skill.trash.add",
@@ -137,6 +145,7 @@ pub(crate) fn command_name(command: &Command) -> &'static str {
             SkillCommand::Trash {
                 command: SkillTrashCommand::Purge(_),
             } => "skill.trash.purge",
+            SkillCommand::Verify(_) => "skill.verify",
             SkillCommand::Orphan {
                 command: SkillOrphanCommand::List,
             } => "skill.orphan.list",
@@ -146,7 +155,7 @@ pub(crate) fn command_name(command: &Command) -> &'static str {
         },
         Command::Sync { command } => match command {
             SyncCommand::Status => "sync.status",
-            SyncCommand::Push => "sync.push",
+            SyncCommand::Push(_) => "sync.push",
             SyncCommand::Pull => "sync.pull",
             SyncCommand::Replay => "sync.replay",
         },
@@ -158,6 +167,9 @@ pub(crate) fn command_name(command: &Command) -> &'static str {
                 OpsHistoryCommand::Diagnose => "ops.history.diagnose",
                 OpsHistoryCommand::Repair(_) => "ops.history.repair",
             },
+        },
+        Command::Agent { command } => match command {
+            AgentCommand::Preflight(_) => "agent.preflight",
         },
         Command::Panel(_) => "panel",
     }

@@ -346,7 +346,10 @@ mod orphan_tests {
     }
 
     fn orphan_clean_args(delete_live_paths: bool) -> crate::cli::OrphanCleanArgs {
-        crate::cli::OrphanCleanArgs { delete_live_paths }
+        crate::cli::OrphanCleanArgs {
+            delete_live_paths,
+            dry_run: false,
+        }
     }
 
     fn setup_with_binding_and_projection(

@@ -2,31 +2,72 @@ import type { RemotePayload } from "../../types";
 import type { FormEvent } from "react";
 import { useEffect, useState } from "react";
 import { GitIcon, PlayIcon, RefreshIcon, SyncIcon } from "../../components/icons/nav_icons";
-import { api } from "../../lib/api/client";
+import { api, type OpsHistoryDiagnosePayload } from "../../lib/api/client";
 import { useMutation } from "../../lib/useMutation";
+
+type DiagnoseData = NonNullable<OpsHistoryDiagnosePayload["data"]>;
 
 interface SyncPageProps {
   remote: RemotePayload | null;
   pendingCount: number;
   registryRoot: string | null;
+  refreshKey?: string | null;
   readOnly: boolean;
   onMutation: () => void;
 }
 
-export function SyncPage({ remote, pendingCount, registryRoot, readOnly, onMutation }: SyncPageProps) {
+export function SyncPage({ remote, pendingCount, registryRoot, refreshKey, readOnly, onMutation }: SyncPageProps) {
   const push = useMutation();
   const pull = useMutation();
   const replay = useMutation();
   const setRemote = useMutation();
+  const historyRepair = useMutation();
   const [remoteUrl, setRemoteUrl] = useState(remote?.url ?? "");
-  const syncBusy = push.busy || pull.busy || replay.busy || setRemote.busy;
+  const [diagnose, setDiagnose] = useState<DiagnoseData | null>(null);
+  const [diagnoseError, setDiagnoseError] = useState<string | null>(null);
+  const [diagnoseLoading, setDiagnoseLoading] = useState(false);
+  const [repairVersion, setRepairVersion] = useState(0);
+  const syncBusy = push.busy || pull.busy || replay.busy || setRemote.busy || historyRepair.busy;
   const configured = remote?.configured === true;
   const state = remote?.sync_state ?? (configured ? "unknown" : "not configured");
   const rootDisplay = registryRoot ? registryRoot.replace(/^\/Users\/[^/]+/, "~") : "—";
+  const conflictCount = diagnose?.conflicts.length ?? 0;
 
   useEffect(() => {
     setRemoteUrl(remote?.url ?? "");
   }, [remote?.url]);
+
+  useEffect(() => {
+    if (readOnly) {
+      setDiagnose(null);
+      setDiagnoseError(null);
+      setDiagnoseLoading(false);
+      return;
+    }
+
+    const controller = new AbortController();
+    setDiagnoseError(null);
+    setDiagnoseLoading(true);
+    api.opsHistoryDiagnose(controller.signal)
+      .then((res) => {
+        if (controller.signal.aborted) return;
+        if (res.ok && res.data) {
+          setDiagnose(res.data);
+          return;
+        }
+        setDiagnose(null);
+        setDiagnoseError(res.error?.message ?? "history diagnose returned ok=false");
+      })
+      .catch((err) => {
+        if (controller.signal.aborted) return;
+        setDiagnose(null);
+        setDiagnoseError(err instanceof Error ? err.message : String(err));
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setDiagnoseLoading(false);
+      });
+    return () => controller.abort();
+  }, [readOnly, repairVersion, refreshKey]);
 
   const submitRemote = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -37,9 +78,17 @@ export function SyncPage({ remote, pendingCount, registryRoot, readOnly, onMutat
 
   const banner =
     setRemote.error ?? push.error ?? pull.error ?? replay.error ??
-    setRemote.success ?? push.success ?? pull.success ?? replay.success ?? null;
+    historyRepair.error ??
+    setRemote.success ?? push.success ?? pull.success ?? replay.success ?? historyRepair.success ?? null;
   const bannerType =
-    setRemote.error || push.error || pull.error || replay.error ? "err" : banner ? "ok" : null;
+    setRemote.error || push.error || pull.error || replay.error || historyRepair.error ? "err" : banner ? "ok" : null;
+
+  const runHistoryRepair = (strategy: "local" | "remote") => {
+    historyRepair.run(`history repair ${strategy}`, () => api.opsHistoryRepair({ strategy }), () => {
+      setRepairVersion((value) => value + 1);
+      onMutation();
+    });
+  };
 
   return (
     <>
@@ -136,6 +185,44 @@ export function SyncPage({ remote, pendingCount, registryRoot, readOnly, onMutat
                 <GitIcon /> {setRemote.busy ? "saving…" : configured ? "Update" : "Set"}
               </button>
             </form>
+          </div>
+        </div>
+
+        <div className="card" style={{ marginBottom: 16 }}>
+          <div className="card-head">
+            <h3>History repair</h3>
+            <span className={`chip ${diagnoseLoading ? "" : diagnoseError || conflictCount > 0 ? "warn" : "ok"}`}>
+              {diagnoseLoading
+                ? "checking"
+                : diagnoseError
+                  ? "diagnose failed"
+                  : conflictCount > 0
+                    ? `${conflictCount} conflict${conflictCount === 1 ? "" : "s"}`
+                    : "clean"}
+            </span>
+          </div>
+          <div className="card-body" style={{ fontSize: 12, color: "var(--ink-1)" }}>
+            {diagnoseLoading ? (
+              <span className="mono" style={{ color: "var(--ink-3)" }}>checking history branch...</span>
+            ) : diagnoseError ? (
+              <div style={{ color: "var(--warn)" }}>{diagnoseError}</div>
+            ) : conflictCount > 0 ? (
+              <>
+                <div className="mono" style={{ color: "var(--ink-2)", marginBottom: 10 }}>
+                  {diagnose?.conflicts[0]?.path}
+                </div>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  <button className="btn" disabled={readOnly || syncBusy} onClick={() => runHistoryRepair("local")}>
+                    Repair from local
+                  </button>
+                  <button className="btn" disabled={readOnly || syncBusy} onClick={() => runHistoryRepair("remote")}>
+                    Repair from remote
+                  </button>
+                </div>
+              </>
+            ) : (
+              "History branch has no path conflicts."
+            )}
           </div>
         </div>
 

@@ -35,13 +35,21 @@ AI coding agents (Claude Code, Codex, Cursor, Windsurf, …) all read skills fro
 ## Quick Start
 
 ```bash
-# 1. Install
-cargo install skillloom
+# 1. Install a prebuilt release archive (recommended)
+# Pick one target: aarch64-apple-darwin, x86_64-apple-darwin, x86_64-unknown-linux-gnu
+VERSION="0.1.0" # replace with the latest release version
+TARGET="aarch64-apple-darwin"
+BASE_URL="https://github.com/majiayu000/loom/releases/download/v${VERSION}"
+curl -LO "${BASE_URL}/skillloom-${VERSION}-${TARGET}.tar.gz"
+curl -LO "${BASE_URL}/SHA256SUMS"
+shasum -a 256 -c SHA256SUMS --ignore-missing
+tar -xzf "skillloom-${VERSION}-${TARGET}.tar.gz"
+sudo install "skillloom-${VERSION}-${TARGET}/loom" /usr/local/bin/loom
 
 # or install from the Homebrew tap after its formula PR is merged
 brew install majiayu000/tap/loom
 
-# or install from source
+# or build from source
 git clone https://github.com/majiayu000/loom.git
 cd loom && cargo install --path .
 
@@ -95,6 +103,8 @@ loom panel        # -> http://localhost:43117
 ```
 
 `loom panel` now serves a frontend bundled into the Rust binary at build time, so it works even when `--root` points at a separate registry directory. If panel assets are unavailable in your build, reinstall from a checkout with `bun` available so Loom can package the frontend during compile.
+
+Release archives are the preferred install path because their binaries are built with the Panel frontend already bundled and smoke-tested. To verify a downloaded archive, use the release `SHA256SUMS` file as shown above; if you use GitHub CLI, you can also verify provenance with `gh attestation verify skillloom-${VERSION}-${TARGET}.tar.gz --repo majiayu000/loom`.
 
 Prefer a guided walkthrough? Run `./scripts/demo.sh` for a scripted end-to-end tour (init → target add → status → panel hint) against a throwaway registry. `./scripts/e2e-agent-flow.sh` runs the four real integration scenarios used in CI.
 
@@ -167,8 +177,9 @@ The chain `add → capture → save → snapshot → release → rollback` is th
 | `loom skill release` | Tag the skill at a semantic version | You're publishing a stable revision teammates can pull (`v1.2.0`) | Source (semver tag) |
 | `loom skill rollback` | Reset the source to an earlier revision (with `recovery_ref`) | A capture or save introduced bad state — undo it without losing the recovery point | Source (history) |
 | `loom skill diff` | Compare two revisions of a skill source | Inspect what changed between any two refs (commit, snapshot, release tag) | Source (read-only) |
+| `loom skill verify` | Detect uncommitted drift in a skill source | Confirm `skills/<name>` matches the committed source tree; flag external edits that bypassed `save` | Source (read-only) |
 
-Quick decision: **edits from the agent side → `capture`; edits inside the registry repo → `save`; anchor → `snapshot`; public version → `release`; undo → `rollback`.**
+Quick decision: **edits from the agent side → `capture`; edits inside the registry repo → `save`; anchor → `snapshot`; public version → `release`; undo → `rollback`; integrity audit → `verify`.**
 
 ## Comparison
 
@@ -185,7 +196,7 @@ Quick decision: **edits from the agent side → `capture`; edits inside the regi
 | Git-native sync + replay | ❌ | cloud sync | ❌ | **✅** |
 | Hard write guard | ❌ | ❌ | ❌ | **✅** |
 | CLI-first + Web panel | GUI only | GUI only | CLI only | **✅** |
-| Breadth of agents supported | 44 | 5 | 18 | 10 (Claude, Codex, Cursor, Windsurf, Cline, Copilot, Aider, OpenCode, Gemini CLI, Goose) |
+| Breadth of agents supported | 44 | 5 | 18 | 10 ([list](docs/SUPPORTED_AGENTS.md)) |
 | Desktop app (dmg/msi) | ✅ | ✅ | ❌ | — |
 
 **Pick Loom when** you want fine-grained control (multi-project routing, Git-backed lifecycle, git-tracked audit trail) and are comfortable on the CLI. **Pick skills-hub or cc-switch** when you want a one-click GUI with broad agent coverage and don't need projection/binding semantics.
@@ -194,12 +205,14 @@ Quick decision: **edits from the agent side → `capture`; edits inside the regi
 
 - Multi-directory behavior is explicit via `target add`; no implicit directory inference.
 - Agent automation should use explicit `--root`, `--json`, selectors such as `binding_id` / `target_id`, and branch on `ok` + `error.code`.
+- Agents can call `loom agent preflight --agent <agent> --workspace <path> --skill <skill>` before writing, add `--dry-run` to high-risk writes, or use `loom skill rollback --preview` to get a no-mutation rollback plan.
 - `--json` wraps both command execution errors and argument parsing failures in the same envelope. `loom panel` is the local HTTP UI server and does not return a command envelope.
-- Read commands such as `workspace status`, `workspace doctor`, `target list`, and `sync status` do not write command audit events; write commands do.
+- Read commands such as `workspace status`, `workspace doctor`, `target list`, and `sync status` do not mutate registry state, Git refs, the Git index, live target directories, or the pending queue. They do write durable command audit events under `state/events/commands.jsonl`.
 - Registry metadata lives under `state/registry`; Loom does not use release-style labels for internal state names.
 - State-changing registry commands commit `state/registry` to Git, and `sync push` has a safety commit before pushing.
 - Hard write guard: if `--root` points to the Loom tool repo itself, write operations are rejected. Use an independent skill registry repo for mutable operations.
 - English is the primary documentation language. [中文完整指南](docs/LOOM_COMPLETE_GUIDE_ZH.md).
+- Release and install trust notes live in [Releasing Loom](docs/RELEASING.md) and [Security Policy](SECURITY.md).
 - V1 planning lives in [Loom V1 Core Spec](docs/LOOM_V1_CORE_SPEC.md).
 
 ## Command Surface
@@ -223,24 +236,29 @@ loom workspace binding remove <binding-id>
 loom workspace remote set <git-url>
 loom workspace remote status
 
+loom agent preflight --agent <agent> --workspace <path> [--skill <skill>] [--method <symlink|copy|materialize>]
+
 loom target add --agent <agent> --path <abs-path> [--ownership <managed|observed|external>]
 loom target list
 loom target show <target-id>
 loom target remove <target-id>
 
 loom skill add <path|git-url> --name <skill>
-loom skill project <skill> --binding <binding-id> [--target <target-id>] [--method <symlink|copy|materialize>]
-loom skill capture [<skill>] [--binding <binding-id>] [--instance <instance-id>] [--message <msg>]
+loom skill project <skill> --binding <binding-id> [--target <target-id>] [--method <symlink|copy|materialize>] [--dry-run]
+loom skill capture [<skill>] [--binding <binding-id>] [--instance <instance-id>] [--message <msg>] [--dry-run]
 loom skill save <skill> [--message <msg>]
 loom skill snapshot <skill>
 loom skill release <skill> <version>
-loom skill rollback <skill> [--to <ref> | --steps <n>]
+loom skill rollback <skill> [--to <ref> | --steps <n>] [--preview]
 loom skill diff <skill> <from> <to>
+loom skill verify <skill>
 loom skill import-observed [--target <target-id>]
 loom skill monitor-observed [--target <target-id>] [--once] [--interval-seconds <seconds>]
+loom skill orphan list
+loom skill orphan clean [--delete-live-paths] [--dry-run]
 
 loom sync status
-loom sync push
+loom sync push [--dry-run]
 loom sync pull
 loom sync replay
 
@@ -312,8 +330,8 @@ and fails the commit if rustfmt would make changes. Disable with
 
 ## Roadmap
 
-- Per-agent default path conventions & env overrides (beyond `CLAUDE_SKILLS_DIR` / `CODEX_SKILLS_DIR`) for the 8 newly added agents — paths are currently supplied explicitly via `target add --path`
-- Extend `loom workspace init --scan-existing` auto-import to the 8 newly added agents once their skill-directory conventions stabilize (currently scans Claude and Codex only)
+- Per-agent environment overrides beyond the default paths listed in [Supported Agents](docs/SUPPORTED_AGENTS.md).
+- Convert observed agent directories to managed projection targets from the Panel once users opt in.
 - Desktop packaging (Tauri) for users who prefer a GUI
 - Skill marketplace integration (upstream catalogs such as `agent-skills`)
 

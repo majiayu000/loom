@@ -30,6 +30,15 @@ fn read_observation_log(root: &std::path::Path, instance_id: &str) -> String {
     .expect("read observation log")
 }
 
+fn rollback_error_steps(env: &Value) -> Vec<String> {
+    env["error"]["details"]["rollback_errors"]
+        .as_array()
+        .expect("rollback errors array")
+        .iter()
+        .filter_map(|error| error["step"].as_str().map(ToString::to_string))
+        .collect()
+}
+
 fn git_output(root: &Path, args: &[&str]) -> String {
     let output = Command::new("git")
         .arg("-C")
@@ -388,6 +397,58 @@ fn skill_rollback_rolls_back_commits_and_worktree_after_late_audit_failure() {
     assert_eq!(
         git_status_short_for(root.path(), &["skills/model-onboarding", "state/registry"]),
         ""
+    );
+}
+
+#[test]
+fn skill_rollback_reports_registry_layout_restore_failure() {
+    let root = TestDir::new("registry-skill-rollback-restore-failure");
+    write_example_skill(root.path(), "model-onboarding");
+
+    assert!(
+        save_skill(root.path(), "model-onboarding")
+            .0
+            .status
+            .success()
+    );
+    write_skill(
+        root.path(),
+        "model-onboarding",
+        "# model-onboarding\n\nsource v2\n",
+    );
+    assert!(
+        save_skill(root.path(), "model-onboarding")
+            .0
+            .status
+            .success()
+    );
+
+    let (rollback_output, rollback_env) = run_loom_with_env(
+        root.path(),
+        &[
+            ("LOOM_FAULT_INJECT", "skill_rollback_after_state_commit"),
+            ("LOOM_ROLLBACK_FAULT_INJECT", "restore_registry_layout"),
+        ],
+        &["skill", "rollback", "model-onboarding", "--to", "HEAD~1"],
+    );
+
+    assert!(
+        !rollback_output.status.success(),
+        "rollback unexpectedly succeeded"
+    );
+    assert_eq!(rollback_env["ok"], Value::Bool(false));
+    assert!(
+        rollback_error_steps(&rollback_env)
+            .iter()
+            .any(|step| step == "restore_registry_layout"),
+        "expected rollback error details: {}",
+        rollback_env
+    );
+    assert!(
+        rollback_env["error"]["details"]["original_error"]["message"]
+            .as_str()
+            .expect("original error message")
+            .contains("skill_rollback_after_state_commit")
     );
 }
 
@@ -920,6 +981,72 @@ fn skill_project_rolls_back_projection_after_post_materialize_failure() {
     assert!(
         !projections.contains("model-onboarding"),
         "projection state should roll back"
+    );
+}
+
+#[test]
+fn skill_project_reports_registry_state_rollback_failure() {
+    let root = TestDir::new("v3-skill-project-rollback-failure");
+    write_example_skill(root.path(), "model-onboarding");
+
+    let (save_output, _) = save_skill(root.path(), "model-onboarding");
+    assert!(save_output.status.success(), "save should succeed");
+
+    let target_path = root.path().join("live/claude-project-a");
+    assert!(
+        target_add(root.path(), "claude", &target_path, "managed")
+            .0
+            .status
+            .success()
+    );
+    assert!(
+        binding_add(
+            root.path(),
+            "claude",
+            "default",
+            "path-prefix",
+            "/tmp/project-a",
+            "target_claude_claude_project_a",
+        )
+        .0
+        .status
+        .success()
+    );
+
+    let (project_output, project_env) = run_loom_with_env(
+        root.path(),
+        &[
+            ("LOOM_FAULT_INJECT", "skill_project_after_state_save"),
+            ("LOOM_ROLLBACK_FAULT_INJECT", "restore_registry_state"),
+        ],
+        &[
+            "skill",
+            "project",
+            "model-onboarding",
+            "--binding",
+            "bind_claude_project_a",
+            "--method",
+            "copy",
+        ],
+    );
+
+    assert!(
+        !project_output.status.success(),
+        "project unexpectedly succeeded"
+    );
+    assert_eq!(project_env["ok"], Value::Bool(false));
+    assert!(
+        rollback_error_steps(&project_env)
+            .iter()
+            .any(|step| step == "restore_registry_state"),
+        "expected rollback error details: {}",
+        project_env
+    );
+    assert!(
+        project_env["error"]["details"]["original_error"]["message"]
+            .as_str()
+            .expect("original error message")
+            .contains("skill_project_after_state_save")
     );
 }
 

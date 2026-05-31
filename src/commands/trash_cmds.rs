@@ -118,16 +118,19 @@ impl App {
             return Err(err);
         }
 
-        let commit =
-            match gitops::commit(&self.ctx, &format!("trash({}): move to trash", args.skill)) {
-                Ok(commit) => commit,
-                Err(err) => {
-                    rollback_trash_add(&skill_path, &trash_skill_path, &entry_path);
-                    let _ = restore_registry_audit_state(&paths, &registry_backup);
-                    unstage_trash_paths(&self.ctx, &[&skill_rel, &format!("trash/{}", trash_id)]);
-                    return Err(map_git(err));
-                }
-            };
+        let commit = match commit_trash_paths(
+            &self.ctx,
+            &[&skill_rel, &format!("trash/{}", trash_id)],
+            &format!("trash({}): move to trash", args.skill),
+        ) {
+            Ok(commit) => commit,
+            Err(err) => {
+                rollback_trash_add(&skill_path, &trash_skill_path, &entry_path);
+                let _ = restore_registry_audit_state(&paths, &registry_backup);
+                unstage_trash_paths(&self.ctx, &[&skill_rel, &format!("trash/{}", trash_id)]);
+                return Err(map_git(err));
+            }
+        };
 
         let mut meta = Meta {
             op_id: Some(op_id),
@@ -164,8 +167,10 @@ impl App {
                 .then_with(|| b.metadata.trash_id.cmp(&a.metadata.trash_id))
         });
 
-        let mut meta = Meta::default();
-        meta.warnings = warnings;
+        let meta = Meta {
+            warnings,
+            ..Meta::default()
+        };
         let items = entries
             .into_iter()
             .map(|entry| {
@@ -263,8 +268,9 @@ impl App {
             return Err(err);
         }
 
-        let commit = match gitops::commit(
+        let commit = match commit_trash_paths(
             &self.ctx,
+            &[&skill_rel, &trash_rel],
             &format!("restore({}): restore from trash", args.skill),
         ) {
             Ok(commit) => commit,
@@ -362,8 +368,9 @@ impl App {
             return Err(err);
         }
 
-        let commit = match gitops::commit(
+        let commit = match commit_trash_paths(
             &self.ctx,
+            &[&trash_rel],
             &format!("purge({}): remove trash entry", args.trash_id),
         ) {
             Ok(commit) => commit,
@@ -503,6 +510,17 @@ fn read_trash_metadata(entry_path: &Path) -> Result<TrashMetadata> {
         ));
     }
     validate_trash_id(&metadata.trash_id).map_err(|err| anyhow!(err.message))?;
+    let directory_id = entry_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| anyhow!("trash entry path has no valid directory name"))?;
+    if metadata.trash_id != directory_id {
+        return Err(anyhow!(
+            "trash metadata id '{}' does not match directory '{}'",
+            metadata.trash_id,
+            directory_id
+        ));
+    }
     validate_skill_name(&metadata.skill)?;
     Ok(metadata)
 }
@@ -556,6 +574,36 @@ fn stage_trash_commit_paths(
         gitops::run_git(ctx, &["add", "-A", "--", "state/v3"]).map_err(map_git)?;
     }
     Ok(())
+}
+
+fn commit_trash_paths(
+    ctx: &crate::state::AppContext,
+    paths: &[&str],
+    message: &str,
+) -> Result<String> {
+    let mut commit_paths = paths
+        .iter()
+        .map(|path| (*path).to_string())
+        .collect::<Vec<_>>();
+    commit_paths.push("state/registry".to_string());
+    let legacy_v3_tracked =
+        gitops::run_git_allow_failure(ctx, &["ls-files", "--error-unmatch", "--", "state/v3"])?
+            .status
+            .success();
+    if ctx.state_dir.join("v3").exists() || legacy_v3_tracked {
+        commit_paths.push("state/v3".to_string());
+    }
+
+    let mut args = vec![
+        "commit".to_string(),
+        "-m".to_string(),
+        message.to_string(),
+        "--".to_string(),
+    ];
+    args.extend(commit_paths);
+    let refs = args.iter().map(String::as_str).collect::<Vec<_>>();
+    gitops::run_git(ctx, &refs)?;
+    gitops::head(ctx)
 }
 
 fn unstage_trash_paths(ctx: &crate::state::AppContext, paths: &[&str]) {

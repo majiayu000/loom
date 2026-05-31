@@ -2,7 +2,7 @@ mod common;
 
 use std::fs;
 use std::path::Path;
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 use common::actions::{binding_add, target_add, target_add_with_default_ownership};
 use serde_json::Value;
@@ -31,12 +31,16 @@ fn git_ok(root: &Path, args: &[&str]) -> String {
 }
 
 fn git_status(root: &Path, args: &[&str]) -> bool {
+    // Suppress stderr; callers intentionally probe for missing paths
+    // (e.g. `cat-file -e HEAD:...`) where git logs "fatal: ..." on a clean miss.
     Command::new("git")
         .arg("-C")
         .arg(root)
         .arg("-c")
         .arg("commit.gpgsign=false")
         .args(args)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
         .status()
         .expect("run git")
         .success()
@@ -253,6 +257,56 @@ fn target_add_is_idempotent_for_same_agent_and_path() {
     assert!(first_output.status.success(), "first add should succeed");
 
     let (second_output, second_env) = target_add(root.path(), "codex", &target_path, "managed");
+    assert!(second_output.status.success(), "second add should succeed");
+    assert_eq!(second_env["data"]["noop"], Value::Bool(true));
+
+    let (list_output, list_env) = run_loom(root.path(), &["target", "list"]);
+    assert!(list_output.status.success(), "target list should succeed");
+    assert_eq!(list_env["data"]["count"], Value::from(1));
+}
+
+#[test]
+fn target_add_is_idempotent_for_equivalent_directory_path() {
+    let root = TestDir::new("registry-target-add-equivalent-path");
+    let target_path = root.path().join("live/codex-workbench");
+    let (first_output, first_env) = target_add(root.path(), "codex", &target_path, "managed");
+    assert!(first_output.status.success(), "first add should succeed");
+
+    let equivalent_path = target_path.join(".");
+    let (second_output, second_env) = target_add(root.path(), "codex", &equivalent_path, "managed");
+    assert!(second_output.status.success(), "second add should succeed");
+    assert_eq!(second_env["data"]["noop"], Value::Bool(true));
+
+    let canonical_path = target_path
+        .canonicalize()
+        .expect("canonicalize managed target")
+        .to_string_lossy()
+        .into_owned();
+    assert_eq!(
+        first_env["data"]["target"]["path"],
+        Value::from(canonical_path)
+    );
+
+    let (list_output, list_env) = run_loom(root.path(), &["target", "list"]);
+    assert!(list_output.status.success(), "target list should succeed");
+    assert_eq!(list_env["data"]["count"], Value::from(1));
+}
+
+#[cfg(unix)]
+#[test]
+fn target_add_is_idempotent_for_symlinked_directory_path() {
+    use std::os::unix::fs::symlink;
+
+    let root = TestDir::new("registry-target-add-symlink-path");
+    let target_path = root.path().join("live/codex-workbench");
+    let link_path = root.path().join("live/codex-link");
+    fs::create_dir_all(&target_path).expect("create observed target");
+    symlink(&target_path, &link_path).expect("create target symlink");
+
+    let (first_output, _) = target_add(root.path(), "codex", &target_path, "observed");
+    assert!(first_output.status.success(), "first add should succeed");
+
+    let (second_output, second_env) = target_add(root.path(), "codex", &link_path, "observed");
     assert!(second_output.status.success(), "second add should succeed");
     assert_eq!(second_env["data"]["noop"], Value::Bool(true));
 

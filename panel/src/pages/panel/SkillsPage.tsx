@@ -1,29 +1,69 @@
 import { useEffect, useState } from "react";
 import type { Binding, Skill, Target } from "../../lib/types";
+import type { RegistryProjection } from "../../generated/RegistryProjection";
 import { AgentAvatar } from "../../components/panel/AgentAvatar";
 import { PlusIcon, SearchIcon } from "../../components/icons/nav_icons";
-import { api, type SkillDiffFile, type RegistryObservationEvent } from "../../lib/api/client";
+import { api } from "../../lib/api/client";
 import { useMutation } from "../../lib/useMutation";
+import {
+  Lifecycle,
+  LifecycleActions,
+  SkillDiff,
+  mapObsToLifecycle,
+  type LifecycleEvent,
+} from "./SkillLifecycle";
 
 interface SkillsPageProps {
   skills: Skill[];
   targets: Target[];
   bindings?: Binding[];
+  projections?: RegistryProjection[];
   selectedSkill: string | null;
   onSelectSkill: (id: string) => void;
   onMutation: () => void;
   readOnly: boolean;
 }
 
-export function SkillsPage({ skills, targets, bindings = [], selectedSkill, onSelectSkill, onMutation, readOnly }: SkillsPageProps) {
+export function SkillsPage({
+  skills,
+  targets,
+  bindings = [],
+  projections = [],
+  selectedSkill,
+  onSelectSkill,
+  onMutation,
+  readOnly,
+}: SkillsPageProps) {
   const [q, setQ] = useState("");
   const [addOpen, setAddOpen] = useState(false);
+  const [captureBindingId, setCaptureBindingId] = useState("");
   const filtered = skills.filter((s) => s.name.includes(q) || s.tag.includes(q));
   const sel = skills.find((s) => s.id === selectedSkill) ?? skills[0];
   const capture = useMutation();
-  const captureDisabled = capture.busy || readOnly || !sel;
+  const selectedSkillBindings = sel ? captureBindingsForSkill(sel.name, bindings, projections) : [];
+  const bindingOptionKey = selectedSkillBindings.map((b) => `${b.id}\u001f${b.target}\u001f${b.method}`).join("\u001e");
+  const captureBinding = selectedSkillBindings.find((b) => b.id === captureBindingId) ?? null;
+  const captureDisabled = capture.busy || readOnly || !sel || !captureBinding;
+  const captureTitle = readOnly
+    ? "registry offline"
+    : !sel
+      ? "select a skill first"
+      : !captureBinding
+        ? "projection required"
+        : undefined;
+
+  useEffect(() => {
+    if (selectedSkillBindings.length === 0) {
+      setCaptureBindingId("");
+      return;
+    }
+    setCaptureBindingId((current) =>
+      selectedSkillBindings.some((b) => b.id === current) ? current : selectedSkillBindings[0].id,
+    );
+  }, [bindingOptionKey]);
+
   const emptyMessage: React.ReactNode = readOnly
-    ? "Live registry API is offline. Start the panel backend to load real skills."
+    ? "Registry API offline."
     : q
     ? "No skills match the current filter."
     : (
@@ -34,11 +74,11 @@ export function SkillsPage({ skills, targets, bindings = [], selectedSkill, onSe
       );
 
   const runCapture = () => {
-    if (!sel) return;
+    if (!sel || !captureBinding) return;
     const skillName = sel?.name;
     capture.run(
       `capture ${skillName}`,
-      () => api.capture({ skill: skillName }),
+      () => api.capture({ skill: skillName, binding: captureBinding.id }),
       onMutation,
     );
   };
@@ -58,11 +98,27 @@ export function SkillsPage({ skills, targets, bindings = [], selectedSkill, onSe
             <input placeholder="Filter skills…" value={q} onChange={(e) => setQ(e.target.value)} />
             <kbd>⌘K</kbd>
           </div>
+          {selectedSkillBindings.length > 1 && (
+            <select
+              aria-label="Capture binding"
+              value={captureBindingId}
+              onChange={(event) => setCaptureBindingId(event.target.value)}
+              disabled={readOnly || capture.busy}
+              title="Choose which projected binding to capture from"
+              style={captureSelectStyle}
+            >
+              {selectedSkillBindings.map((binding) => (
+                <option key={binding.id} value={binding.id}>
+                  {formatCaptureBinding(binding, targets)}
+                </option>
+              ))}
+            </select>
+          )}
           <button
             className="btn primary"
             onClick={runCapture}
             disabled={captureDisabled}
-            title={readOnly ? "registry offline" : !sel ? "select a skill first" : undefined}
+            title={captureTitle}
           >
             <PlusIcon /> {capture.busy ? "capturing…" : "Capture"}
           </button>
@@ -108,10 +164,11 @@ export function SkillsPage({ skills, targets, bindings = [], selectedSkill, onSe
               <thead>
                 <tr>
                   <th>Name</th>
-                  <th>Tag</th>
+                  <th>Source</th>
                   <th>Latest rev</th>
-                  <th>Rules</th>
-                  <th>Targets</th>
+                  <th>Tags</th>
+                  <th>Bindings</th>
+                  <th>Projections</th>
                   <th>Changed</th>
                 </tr>
               </thead>
@@ -124,17 +181,18 @@ export function SkillsPage({ skills, targets, bindings = [], selectedSkill, onSe
                   >
                     <td className="name">{s.name}</td>
                     <td>
-                      <span className="chip">{s.tag}</span>
+                      <span className={`chip ${s.sourceStatus}`}>{s.sourceStatus}</span>
                     </td>
                     <td className="mono">{s.latestRev}</td>
-                    <td className="mono dim">{s.ruleCount}</td>
-                    <td className="mono">{s.targets.length}</td>
+                    <td className="mono dim">{formatSkillTags(s)}</td>
+                    <td className="mono dim">{s.bindingCount}</td>
+                    <td className="mono">{s.projectionCount}</td>
                     <td className="mono dim">{s.changed}</td>
                   </tr>
                 ))}
                 {filtered.length === 0 && (
                   <tr>
-                    <td colSpan={6} style={{ color: "var(--ink-3)", padding: 22, textAlign: "center" }}>
+                    <td colSpan={7} style={{ color: "var(--ink-3)", padding: 22, textAlign: "center" }}>
                       {emptyMessage}
                     </td>
                   </tr>
@@ -206,58 +264,51 @@ function summarizePolicy(skillBindings: Binding[]): string {
   return kinds.map((k) => `${counts[k]} ${k}`).join(" · ");
 }
 
+function captureBindingsForSkill(
+  skillName: string,
+  bindings: Binding[],
+  projections: RegistryProjection[],
+): Binding[] {
+  return bindings.filter(
+    (binding) =>
+      binding.skill === skillName ||
+      projections.some(
+        (projection) => projection.skill_id === skillName && projection.binding_id === binding.id,
+      ),
+  );
+}
+
+function formatSkillTags(skill: Skill): string {
+  const tags = [
+    ...skill.releaseTags.map((tag) => `release:${tag}`),
+    ...skill.snapshotTags.map((tag) => `snapshot:${tag}`),
+  ];
+  if (tags.length === 0) return "—";
+  if (tags.length <= 2) return tags.join(" ");
+  return `${tags[0]} +${tags.length - 1}`;
+}
+
+function formatCaptureBinding(binding: Binding, targets: Target[]): string {
+  const target = targets.find((t) => t.id === binding.target);
+  const targetLabel = target ? `${target.agent}/${target.profile}` : binding.target;
+  return `${targetLabel} · ${binding.method} · ${binding.policy}`;
+}
+
+const captureSelectStyle = {
+  height: 32,
+  minWidth: 190,
+  maxWidth: 260,
+  border: "1px solid var(--line)",
+  borderRadius: 6,
+  background: "var(--bg)",
+  color: "var(--ink-0)",
+  padding: "0 8px",
+  fontFamily: "var(--font-mono)",
+  fontSize: 11,
+  outline: "none",
+};
+
 type DetailTab = "history" | "diff" | "targets";
-
-interface LifecycleEvent {
-  kind: "release" | "capture" | "save" | "snapshot" | "project" | "rollback";
-  v: string;
-  time: string;
-  who: string;
-  desc: string;
-}
-
-const KIND_COLOR: Record<LifecycleEvent["kind"], string> = {
-  release: "var(--accent)",
-  capture: "var(--pending)",
-  save: "var(--ink-2)",
-  snapshot: "var(--warn)",
-  project: "var(--ok)",
-  rollback: "var(--err)",
-};
-
-const KIND_MAP: Record<string, LifecycleEvent["kind"]> = {
-  captured: "capture",
-  projected: "project",
-  rollback: "rollback",
-  monitor: "save",
-  snapshot: "snapshot",
-  released: "release",
-  saved: "save",
-  file_changed: "save",
-  health_changed: "snapshot",
-};
-
-function toRelative(iso: string): string {
-  const ms = Date.now() - new Date(iso).getTime();
-  const secs = Math.floor(ms / 1000);
-  if (secs < 60) return `${secs}s ago`;
-  const mins = Math.floor(secs / 60);
-  if (mins < 60) return `${mins}m ago`;
-  const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs}h ago`;
-  return `${Math.floor(hrs / 24)}d ago`;
-}
-
-function mapObsToLifecycle(ev: RegistryObservationEvent): LifecycleEvent {
-  return {
-    kind: KIND_MAP[ev.kind] ?? "capture",
-    v: ev.event_id.slice(0, 8),
-    time: toRelative(ev.observed_at),
-    who: ev.instance_id.slice(0, 8),
-    desc: ev.path ?? (ev.from && ev.to ? `${ev.from} → ${ev.to}` : ev.kind),
-  };
-}
-
 
 function SkillDetail({
   skill,
@@ -276,6 +327,7 @@ function SkillDetail({
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyError, setHistoryError] = useState<string | null>(null);
   const [historyEvents, setHistoryEvents] = useState<LifecycleEvent[]>([]);
+  const [historyRefreshKey, setHistoryRefreshKey] = useState(0);
 
   const targetObjs = skill.targets
     .map((tid) => targets.find((t) => t.id === tid))
@@ -302,22 +354,33 @@ function SkillDetail({
         }
       });
     return () => ctrl.abort();
-  }, [skill.name, skill.latestRev, tab]);
+  }, [skill.name, skill.latestRev, tab, historyRefreshKey]);
+
+  const onLifecycleMutation = () => {
+    setHistoryRefreshKey((value) => value + 1);
+    onMutation();
+  };
 
   return (
     <div className="detail">
       <h4>{skill.name}</h4>
       <div className="dpath">skills/{skill.name}@{skill.latestRev}</div>
       <div className="kv">
-        <div className="k">Tag</div>
-        <div className="v">{skill.tag}</div>
+        <div className="k">Source</div>
+        <div className="v">{skill.sourceStatus}</div>
         <div className="k">Latest rev</div>
         <div className="v">{skill.latestRev}</div>
-        <div className="k">Rules</div>
-        <div className="v">{skill.ruleCount} on chain</div>
+        <div className="k">Tags</div>
+        <div className="v">{formatSkillTags(skill)}</div>
+        <div className="k">Bindings</div>
+        <div className="v">{skill.bindingCount}</div>
+        <div className="k">Projections</div>
+        <div className="v">{skill.projectionCount}</div>
         <div className="k">Policy</div>
         <div className="v">{policyLabel}</div>
       </div>
+
+      <LifecycleActions skillName={skill.name} onMutation={onLifecycleMutation} readOnly={readOnly} />
 
       <div className="tabs">
         <button className={tab === "history" ? "active" : ""} onClick={() => setTab("history")}>
@@ -357,186 +420,6 @@ function SkillDetail({
             readOnly={readOnly}
           />
           <TargetsTab targets={targetObjs} />
-        </>
-      )}
-    </div>
-  );
-}
-
-function Lifecycle({ events, skillName }: { events: LifecycleEvent[]; skillName: string }) {
-  if (events.length === 0) {
-    return (
-      <div style={{ padding: "18px 4px", fontSize: 12, color: "var(--ink-2)" }}>
-        <div style={{ marginBottom: 6 }}>No lifecycle events yet.</div>
-        <div className="mono" style={{ fontSize: 11, color: "var(--ink-3)" }}>
-          Run <span style={{ color: "var(--ink-1)" }}>loom capture {skillName}</span> to start the chain.
-        </div>
-      </div>
-    );
-  }
-  return (
-    <div style={{ position: "relative", paddingLeft: 22 }}>
-      <div style={{ position: "absolute", left: 7, top: 4, bottom: 4, width: 1, background: "var(--line)" }} />
-      {events.map((e, i) => (
-        <div key={i} style={{ position: "relative", marginBottom: 14 }}>
-          <div
-            style={{
-              position: "absolute",
-              left: -22,
-              top: 4,
-              width: 15,
-              height: 15,
-              borderRadius: 8,
-              background: "var(--bg-0)",
-              border: `2px solid ${KIND_COLOR[e.kind]}`,
-            }}
-          />
-          <div style={{ fontSize: 12 }}>
-            <span style={{ color: "var(--ink-0)", fontWeight: 500 }}>{e.kind}</span>
-            <span className="mono" style={{ color: "var(--ink-2)", marginLeft: 6 }}>
-              {e.v}
-            </span>
-            <span style={{ color: "var(--ink-3)", marginLeft: 8 }}>
-              by {e.who} · {e.time}
-            </span>
-          </div>
-          <div style={{ fontSize: 11.5, color: "var(--ink-2)", marginTop: 2 }}>{e.desc}</div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function SkillDiff({ skillName }: { skillName: string }) {
-  const [revA, setRevA] = useState("");
-  const [revB, setRevB] = useState("");
-  const [files, setFiles] = useState<SkillDiffFile[] | null>(null);
-  const [header, setHeader] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    const ctrl = new AbortController();
-    setLoading(true);
-    setError(null);
-    api
-      .skillDiff(skillName, revA || undefined, revB || undefined, ctrl.signal)
-      .then((payload) => {
-        if (payload.data) {
-          setFiles(payload.data.files);
-          setHeader(`${payload.data.rev_a.slice(0, 7)} → ${payload.data.rev_b.slice(0, 7)}`);
-        }
-        setLoading(false);
-      })
-      .catch((err: Error) => {
-        if (err.name !== "AbortError") {
-          setError(err.message);
-          setFiles(null);
-          setHeader("");
-          setLoading(false);
-        }
-      });
-    return () => ctrl.abort();
-  }, [skillName, revA, revB]);
-
-  const inputStyle: React.CSSProperties = {
-    fontSize: 11,
-    padding: "2px 6px",
-    background: "var(--bg-1)",
-    border: "1px solid var(--line)",
-    borderRadius: 4,
-    color: "var(--ink-0)",
-    width: 130,
-    fontFamily: "var(--font-mono)",
-  };
-
-  return (
-    <div>
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
-        <input
-          style={inputStyle}
-          placeholder="rev_a (default: prev)"
-          value={revA}
-          onChange={(e) => setRevA(e.target.value)}
-        />
-        <span style={{ color: "var(--ink-3)", fontSize: 11 }}>→</span>
-        <input
-          style={inputStyle}
-          placeholder="rev_b (default: HEAD)"
-          value={revB}
-          onChange={(e) => setRevB(e.target.value)}
-        />
-      </div>
-
-      {loading && (
-        <div style={{ color: "var(--ink-3)", fontSize: 12 }}>Loading diff…</div>
-      )}
-      {error && (
-        <div style={{ color: "var(--err)", fontSize: 11, fontFamily: "var(--font-mono)" }}>
-          {error}
-        </div>
-      )}
-
-      {!loading && files !== null && (
-        <>
-          {header && <div className="section-title">{header}</div>}
-          {files.length === 0 ? (
-            <div style={{ color: "var(--ink-3)", fontSize: 12 }}>
-              No changes in skills/{skillName}/
-            </div>
-          ) : (
-            files.map((file) => (
-              <div key={file.path} style={{ marginBottom: 16 }}>
-                <div
-                  className="mono"
-                  style={{ fontSize: 11, color: "var(--ink-2)", marginBottom: 4 }}
-                >
-                  {file.path}{" "}
-                  <span style={{ color: "var(--ok)" }}>+{file.added}</span>{" "}
-                  <span style={{ color: "var(--err)" }}>-{file.removed}</span>
-                  {file.truncated && (
-                    <span
-                      title={
-                        `${file.truncated_lines ?? 0} more +/- line(s) counted but not displayed; ` +
-                        "narrow the revision range or fetch the file directly to see the full diff."
-                      }
-                      style={{
-                        marginLeft: 8,
-                        padding: "0 6px",
-                        borderRadius: 3,
-                        background: "var(--bg-2)",
-                        color: "var(--warn, var(--ink-3))",
-                        fontSize: 10,
-                      }}
-                    >
-                      truncated +{file.truncated_lines ?? 0}
-                    </span>
-                  )}
-                </div>
-                <div style={{ border: "1px solid var(--line)", borderRadius: 6, overflow: "hidden" }}>
-                  {file.hunks.map((hunk, hi) => (
-                    <div key={hi}>
-                      <div className="diff-row" style={{ background: "var(--bg-1)" }}>
-                        <div className="mark" />
-                        <div className="l" style={{ color: "var(--ink-3)" }}>{hunk.header}</div>
-                      </div>
-                      {hunk.lines.map((line, li) => (
-                        <div
-                          key={li}
-                          className={`diff-row${line.startsWith("+") ? " add" : line.startsWith("-") ? " del" : ""}`}
-                        >
-                          <div className="mark">
-                            {line.startsWith("+") ? "+" : line.startsWith("-") ? "-" : ""}
-                          </div>
-                          <div className="l">{line.slice(1)}</div>
-                        </div>
-                      ))}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ))
-          )}
         </>
       )}
     </div>
@@ -644,6 +527,11 @@ const formInputStyle: React.CSSProperties = {
   fontSize: 12,
   fontFamily: "var(--font-mono)",
   minWidth: 0,
+};
+
+const fullWidthButtonStyle: React.CSSProperties = {
+  width: "100%",
+  justifyContent: "center",
 };
 
 const errorStyle: React.CSSProperties = {

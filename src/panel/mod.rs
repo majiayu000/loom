@@ -67,6 +67,25 @@ pub(super) struct SkillAddRequest {
 }
 
 #[derive(Debug, Deserialize)]
+pub(super) struct SkillSaveRequest {
+    #[serde(default)]
+    pub(super) message: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct SkillReleaseRequest {
+    pub(super) version: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct SkillRollbackRequest {
+    #[serde(default)]
+    pub(super) to: Option<String>,
+    #[serde(default)]
+    pub(super) steps: Option<u32>,
+}
+
+#[derive(Debug, Deserialize)]
 pub(super) struct CaptureRequest {
     #[serde(default)]
     pub(super) skill: Option<String>,
@@ -142,7 +161,23 @@ pub async fn run_panel(ctx: AppContext, port: u16) -> Result<()> {
             "/api/v1/bindings/{binding_id}/remove",
             post(registry_binding_remove),
         )
-        .route("/api/v1/skills", post(registry_skill_add))
+        .route("/api/v1/skills", get(v1_skills).post(registry_skill_add))
+        .route(
+            "/api/v1/skills/{skill_name}/save",
+            post(registry_skill_save),
+        )
+        .route(
+            "/api/v1/skills/{skill_name}/snapshot",
+            post(registry_skill_snapshot),
+        )
+        .route(
+            "/api/v1/skills/{skill_name}/release",
+            post(registry_skill_release),
+        )
+        .route(
+            "/api/v1/skills/{skill_name}/rollback",
+            post(registry_skill_rollback),
+        )
         .route("/api/v1/projections", get(v1_registry_projections))
         .route("/api/v1/projections/project", post(registry_project))
         .route("/api/v1/projections/capture", post(registry_capture))

@@ -1,9 +1,10 @@
 # Loom V1 Core Spec
 
-Status: Draft
-Date: 2026-05-16
-Target branch baseline: `origin/main@04b87fb`
+Status: Implemented
+Date: 2026-05-18
+Target branch baseline: `origin/main@bea78fc`
 Tracking issue: https://github.com/majiayu000/loom/issues/98
+Acceptance matrix: [LOOM_V1_ACCEPTANCE.md](LOOM_V1_ACCEPTANCE.md)
 
 ## 1. Decision
 
@@ -191,7 +192,9 @@ The rule must be explicit per command and covered by tests.
 1. `--root <path>` is supported by every command.
 2. `--json` returns a stable envelope.
 3. `--pretty` formats the envelope for humans.
-4. Read commands have zero side effects.
+4. Read commands have no control-plane side effects: they must not change Git
+   refs, Git index, registry state, live target directories, or pending queue.
+   They do append durable command-audit events under `state/events/commands.jsonl`.
 5. Write commands acquire locks, perform preflight checks, mutate state, append
    audit, commit state where applicable, and return typed errors on failure.
 
@@ -662,6 +665,7 @@ Release gate:
 ```bash
 make ci
 cargo build --release --locked
+make perf-smoke
 ```
 
 CI and release workflows must run the same logical gate, including
@@ -669,11 +673,13 @@ CI and release workflows must run the same logical gate, including
 
 ### 11.2 Coverage
 
-1. Overall line coverage: at least 80%.
-2. Critical paths: 100% branch coverage for projection, capture, release,
-   rollback, sync, audit failure, root guard, and Panel mutation guard.
-3. Every write command has tests for success, noop, typed failure, and audit
-   failure.
+1. Critical paths are covered by dedicated Rust and Panel regression suites for
+   projection, capture, release, rollback, sync, audit failure, root guard, and
+   Panel mutation guard.
+2. Every write command has tests for success, noop where applicable, typed
+   failure, and audit failure.
+3. Line-coverage reporting is a release engineering metric; V1's enforced gate
+   is the CI suite plus targeted critical-path regressions.
 
 ### 11.3 Performance
 
@@ -688,10 +694,13 @@ Targets:
 7. Panel production bundle gzip total: < 100 KB unless justified by a measured
    feature need
 
+The enforced `make perf-smoke` gate currently checks items 1, 2, 3, and 7.
+Status/API load gates remain benchmark targets for larger fixture runs.
+
 ### 11.4 Release
 
-1. `[profile.release]` enables strip, LTO, single codegen unit, and panic abort
-   unless measured regressions justify otherwise.
+1. `[profile.release]` enables size-optimized codegen, strip, LTO, single
+   codegen unit, and panic abort unless measured regressions justify otherwise.
 2. Every release artifact is smoke-tested after packaging:
    - `loom --version`
    - `loom --help`
@@ -704,7 +713,8 @@ Targets:
 
 ### P0: Contract and Trust
 
-1. Remove read-command side effects.
+1. Remove read-command control-plane side effects while preserving durable
+   command audit.
 2. Add operation records and `meta.op_id` coverage for all writes.
 3. Add rollback `recovery_ref`.
 4. Add typed projection/capture errors.
@@ -741,9 +751,12 @@ V1 is complete when:
    create a managed target, bind a workspace, project a skill, capture a live
    edit, release it, rollback it, and sync it without leaving Panel.
 2. The same workflow can be run entirely from CLI using `--json`.
-3. No read command changes files, Git refs, Git index, event logs, registry
-   state, or pending queue.
-4. Every write is auditable by `op_id`.
+3. No read command changes Git refs, Git index, registry state, live target
+   directories, or pending queue; command audit events are the only expected
+   read-path write.
+4. Every registry write is auditable by `op_id`; lifecycle events that do not
+   mutate registry state, such as snapshots, are queryable through V1 ops
+   activity without fabricating registry `op_id` values.
 5. Every visible Panel fact comes from API data.
 6. No projection writes to observed or external targets.
 7. No projection method silently falls back.

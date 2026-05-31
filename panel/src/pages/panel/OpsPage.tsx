@@ -95,7 +95,10 @@ export function OpsPage({ ops, onMutation, readOnly }: OpsPageProps) {
       )}
       <div className="page-body">
         <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12, marginBottom: 18 }}>
-          <div className="card">
+          <div
+            className="card"
+            title="All recorded registry operations. The top-bar pending count tracks only unpushed work."
+          >
             <div className="card-body">
               <div style={section_label}>Tracked changes</div>
               <div style={{ fontFamily: "var(--font-display)", fontSize: 24 }}>{counts.all}</div>

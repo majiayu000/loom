@@ -1,8 +1,9 @@
 use super::*;
 use crate::cli::{
-    BindingAddArgs, CaptureArgs, Command, OpsCommand, ProjectArgs, ProjectionMethod, RemoteCommand,
-    SkillCommand, SyncCommand, TargetAddArgs, TargetCommand, TargetOwnership,
-    WorkspaceBindingCommand, WorkspaceCommand, WorkspaceInitArgs, WorkspaceMatcherKind,
+    BindingAddArgs, CaptureArgs, Command, OpsCommand, ProjectArgs, ProjectionMethod, ReleaseArgs,
+    RemoteCommand, RollbackArgs, SaveArgs, SkillCommand, SkillOnlyArgs, SyncCommand, TargetAddArgs,
+    TargetCommand, TargetOwnership, WorkspaceBindingCommand, WorkspaceCommand, WorkspaceInitArgs,
+    WorkspaceMatcherKind,
 };
 use crate::panel::auth::{
     ensure_mutation_authorized, error_envelope, request_origin_matches, run_panel_command,
@@ -13,7 +14,7 @@ use serde_json::json;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
 // Exhaustive list of every panel mutation command. Must stay in sync with the
-// 15-row table in docs/LOOM_ARCHITECTURE_DECISIONS.md section 4.1 and the
+// 19-row table in docs/LOOM_ARCHITECTURE_DECISIONS.md section 4.1 and the
 // route registrations in `run_panel`.
 const MUTATION_COMMANDS: &[&str] = &[
     "workspace.init",
@@ -23,6 +24,10 @@ const MUTATION_COMMANDS: &[&str] = &[
     "workspace.binding.remove",
     "skill.project",
     "skill.capture",
+    "skill.save",
+    "skill.snapshot",
+    "skill.release",
+    "skill.rollback",
     "skill.orphan.clean",
     "workspace.remote.set",
     "ops.retry",
@@ -34,8 +39,8 @@ const MUTATION_COMMANDS: &[&str] = &[
 ];
 
 #[test]
-fn mutation_commands_count_is_fifteen() {
-    assert_eq!(MUTATION_COMMANDS.len(), 15);
+fn mutation_commands_count_is_nineteen() {
+    assert_eq!(MUTATION_COMMANDS.len(), 19);
 }
 
 #[test]
@@ -285,6 +290,7 @@ fn run_panel_command_returns_non_2xx_for_logical_failures_across_mutations() {
                     binding: "missing-binding".to_string(),
                     target: None,
                     method: ProjectionMethod::Symlink,
+                    dry_run: false,
                 }),
             },
         ),
@@ -297,6 +303,48 @@ fn run_panel_command_returns_non_2xx_for_logical_failures_across_mutations() {
                     binding: None,
                     instance: None,
                     message: None,
+                    dry_run: false,
+                }),
+            },
+        ),
+        (
+            "skill.save",
+            StatusCode::OK,
+            Command::Skill {
+                command: SkillCommand::Save(SaveArgs {
+                    skill: "missing-skill".to_string(),
+                    message: None,
+                }),
+            },
+        ),
+        (
+            "skill.snapshot",
+            StatusCode::OK,
+            Command::Skill {
+                command: SkillCommand::Snapshot(SkillOnlyArgs {
+                    skill: "missing-skill".to_string(),
+                }),
+            },
+        ),
+        (
+            "skill.release",
+            StatusCode::OK,
+            Command::Skill {
+                command: SkillCommand::Release(ReleaseArgs {
+                    skill: "missing-skill".to_string(),
+                    version: "v1".to_string(),
+                }),
+            },
+        ),
+        (
+            "skill.rollback",
+            StatusCode::OK,
+            Command::Skill {
+                command: SkillCommand::Rollback(RollbackArgs {
+                    skill: "missing-skill".to_string(),
+                    to: Some("HEAD~1".to_string()),
+                    steps: None,
+                    dry_run: false,
                 }),
             },
         ),
@@ -304,7 +352,7 @@ fn run_panel_command_returns_non_2xx_for_logical_failures_across_mutations() {
             "sync.push",
             StatusCode::OK,
             Command::Sync {
-                command: SyncCommand::Push,
+                command: SyncCommand::Push(crate::cli::SyncPushArgs { dry_run: false }),
             },
         ),
         (

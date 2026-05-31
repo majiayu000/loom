@@ -95,6 +95,11 @@ pub(crate) fn validate_skill_name(skill: &str) -> Result<()> {
 pub(crate) fn command_name(command: &Command) -> &'static str {
     match command {
         Command::Init => "init",
+        Command::Backup { command } => match command {
+            crate::cli::BackupCommand::Export(_) => "backup.export",
+            crate::cli::BackupCommand::Inspect(_) => "backup.inspect",
+            crate::cli::BackupCommand::Restore(_) => "backup.restore",
+        },
         Command::Monitor(_) => "monitor",
         Command::Doctor => "workspace.doctor",
         Command::Workspace { command } => match command {
@@ -122,6 +127,7 @@ pub(crate) fn command_name(command: &Command) -> &'static str {
             SkillCommand::Project(_) => "skill.project",
             SkillCommand::Capture(_) => "skill.capture",
             SkillCommand::Save(_) => "skill.save",
+            SkillCommand::Watch(_) => "skill.watch",
             SkillCommand::Snapshot(_) => "skill.snapshot",
             SkillCommand::Release(_) => "skill.release",
             SkillCommand::Rollback(_) => "skill.rollback",

@@ -96,3 +96,26 @@ version = "0.1.0"
         "guard must reject before command audit initialization"
     );
 }
+
+#[test]
+fn read_commands_skip_audit_in_loom_tool_repo_root() {
+    let root = TestDir::new("fake-tool-root-read-audit");
+    write_file(
+        &root.path().join("Cargo.toml"),
+        r#"[package]
+name = "skillloom"
+version = "0.1.0"
+"#,
+    );
+    write_file(&root.path().join("src/main.rs"), "fn main() {}\n");
+    write_file(&root.path().join("src/commands/mod.rs"), "");
+
+    let (output, env) = run_loom(root.path(), &["workspace", "status"]);
+
+    assert!(output.status.success());
+    assert_eq!(env["ok"], Value::Bool(true));
+    assert!(
+        !root.path().join("state/events").exists(),
+        "read-only commands must not create command audit files in the tool repo root"
+    );
+}

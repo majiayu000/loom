@@ -1,4 +1,6 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
+use std::fs;
+use std::io::ErrorKind;
 
 use serde_json::{Value, json};
 
@@ -22,6 +24,10 @@ impl App {
                 ErrorCode::ArgInvalid,
                 "--limit must be greater than 0",
             ));
+        }
+        validate_history_ref_arg("to", &args.to)?;
+        if let Some(from) = &args.from {
+            validate_history_ref_arg("from", from)?;
         }
         if !gitops::repo_is_initialized(&self.ctx).map_err(map_git)? {
             return Err(CommandFailure::new(
@@ -49,6 +55,11 @@ impl App {
 
         let refs_by_commit = skill_history_refs(&self.ctx, &args.skill)?;
         let mut meta = Meta::default();
+        let operations_by_effect_commit = if args.include_ops {
+            current_operations_by_effect_commit(&self.ctx, &args.skill, &mut meta)
+        } else {
+            BTreeMap::new()
+        };
         let items = commits
             .into_iter()
             .map(|commit| {
@@ -57,7 +68,17 @@ impl App {
                     .cloned()
                     .unwrap_or_default();
                 let operations = if args.include_ops {
-                    operations_added_by_commit(&self.ctx, &commit.commit, &args.skill, &mut meta)
+                    let mut operations = operations_added_by_commit(
+                        &self.ctx,
+                        &commit.commit,
+                        &args.skill,
+                        &mut meta,
+                    );
+                    if let Some(by_effect_commit) = operations_by_effect_commit.get(&commit.commit)
+                    {
+                        append_missing_operations(&mut operations, by_effect_commit);
+                    }
+                    operations
                 } else {
                     Vec::new()
                 };
@@ -100,6 +121,38 @@ impl App {
             meta,
         ))
     }
+}
+
+fn validate_history_ref_arg(name: &str, value: &str) -> std::result::Result<(), CommandFailure> {
+    if is_safe_history_ref(value) {
+        return Ok(());
+    }
+    Err(CommandFailure::new(
+        ErrorCode::ArgInvalid,
+        format!("--{} must be a safe Git revision", name),
+    ))
+}
+
+fn is_safe_history_ref(value: &str) -> bool {
+    let len = value.len();
+    !value.is_empty()
+        && len <= 256
+        && !value.starts_with('-')
+        && !value.contains("..")
+        && value.bytes().all(|byte| {
+            matches!(
+                byte,
+                b'a'..=b'z'
+                    | b'A'..=b'Z'
+                    | b'0'..=b'9'
+                    | b'.'
+                    | b'_'
+                    | b'-'
+                    | b'/'
+                    | b'~'
+                    | b'^'
+            )
+        })
 }
 
 #[derive(Debug)]
@@ -239,11 +292,7 @@ fn operations_added_by_commit(
         }
         match serde_json::from_str::<RegistryOperationRecord>(raw) {
             Ok(record) if operation_mentions_skill(&record, skill) => {
-                operations.push(json!({
-                    "op_id": record.op_id,
-                    "intent": record.intent,
-                    "created_at": record.created_at,
-                }));
+                operations.push(operation_json(&record));
             }
             Ok(_) => {}
             Err(err) => meta.warnings.push(format!(
@@ -255,6 +304,77 @@ fn operations_added_by_commit(
     operations
 }
 
+fn current_operations_by_effect_commit(
+    ctx: &crate::state::AppContext,
+    skill: &str,
+    meta: &mut Meta,
+) -> BTreeMap<String, Vec<Value>> {
+    let path = ctx.root.join("state/registry/ops/operations.jsonl");
+    let content = match fs::read_to_string(&path) {
+        Ok(content) => content,
+        Err(err) if err.kind() == ErrorKind::NotFound => return BTreeMap::new(),
+        Err(err) => {
+            meta.warnings.push(format!(
+                "failed to read current registry operations at {}: {}",
+                path.display(),
+                err
+            ));
+            return BTreeMap::new();
+        }
+    };
+
+    let mut operations_by_commit: BTreeMap<String, Vec<Value>> = BTreeMap::new();
+    for (index, line) in content.lines().enumerate() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        match serde_json::from_str::<RegistryOperationRecord>(line) {
+            Ok(record) if operation_mentions_skill(&record, skill) => {
+                if let Some(commit) = json_field_str(&record.effects, "commit") {
+                    operations_by_commit
+                        .entry(commit.to_string())
+                        .or_default()
+                        .push(operation_json(&record));
+                }
+            }
+            Ok(_) => {}
+            Err(err) => meta.warnings.push(format!(
+                "skipped malformed registry operation at current log line {}: {}",
+                index + 1,
+                err
+            )),
+        }
+    }
+    operations_by_commit
+}
+
+fn append_missing_operations(operations: &mut Vec<Value>, extra_operations: &[Value]) {
+    let mut seen = operations
+        .iter()
+        .filter_map(|operation| {
+            operation
+                .get("op_id")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        })
+        .collect::<BTreeSet<_>>();
+    for operation in extra_operations {
+        if let Some(op_id) = operation.get("op_id").and_then(Value::as_str)
+            && seen.insert(op_id.to_string())
+        {
+            operations.push(operation.clone());
+        }
+    }
+}
+
+fn operation_json(record: &RegistryOperationRecord) -> Value {
+    json!({
+        "op_id": record.op_id,
+        "intent": record.intent,
+        "created_at": record.created_at,
+    })
+}
+
 fn operation_mentions_skill(record: &RegistryOperationRecord, skill: &str) -> bool {
     json_field_eq(&record.payload, "skill", skill)
         || json_field_eq(&record.payload, "skill_id", skill)
@@ -263,10 +383,11 @@ fn operation_mentions_skill(record: &RegistryOperationRecord, skill: &str) -> bo
 }
 
 fn json_field_eq(value: &Value, key: &str, expected: &str) -> bool {
-    value
-        .get(key)
-        .and_then(Value::as_str)
-        .is_some_and(|actual| actual == expected)
+    json_field_str(value, key).is_some_and(|actual| actual == expected)
+}
+
+fn json_field_str<'a>(value: &'a Value, key: &str) -> Option<&'a str> {
+    value.get(key).and_then(Value::as_str)
 }
 
 fn skill_history_diff_stat(

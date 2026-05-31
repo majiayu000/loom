@@ -121,6 +121,59 @@ fn skill_history_limit_caps_results() {
 }
 
 #[test]
+fn skill_history_rejects_unsafe_revision_arguments() {
+    let root = TestDir::new("skill-history-unsafe-rev");
+
+    let (output, env) = run_loom(root.path(), &["skill", "history", "demo", "--to=--all"]);
+
+    assert!(!output.status.success(), "history unexpectedly succeeded");
+    assert_eq!(env["ok"], Value::Bool(false));
+    assert_eq!(
+        env["error"]["code"],
+        Value::String("ARG_INVALID".to_string())
+    );
+    assert!(
+        env["error"]["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("--to must be a safe Git revision"))
+    );
+    assert!(!root.path().join(".git").exists());
+    assert!(!root.path().join("state/events").exists());
+}
+
+#[test]
+fn skill_history_links_operations_by_effect_commit() {
+    let root = TestDir::new("skill-history-effect-commit");
+    write_skill(root.path(), "demo", "# Demo\n\nv1\n");
+    assert_success(&save_skill(root.path(), "demo").0, "save v1");
+    write_skill(root.path(), "demo", "# Demo\n\nv2\n");
+    assert_success(&save_skill(root.path(), "demo").0, "save v2");
+
+    let (rollback_output, rollback_env) =
+        run_loom(root.path(), &["skill", "rollback", "demo", "--steps", "1"]);
+    assert_success(&rollback_output, "rollback");
+    let rollback_commit = rollback_env["data"]["commit"]
+        .as_str()
+        .expect("rollback commit")
+        .to_string();
+
+    let (output, env) = run_loom(root.path(), &["skill", "history", "demo", "--limit", "1"]);
+
+    assert_success(&output, "history");
+    let items = env["data"]["items"].as_array().expect("history items");
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["commit"], Value::String(rollback_commit));
+    assert!(
+        items[0]["operations"]
+            .as_array()
+            .is_some_and(|operations| operations.iter().any(
+                |operation| operation["intent"] == Value::String("skill.rollback".to_string())
+            )),
+        "rollback operation should be attached through effects.commit"
+    );
+}
+
+#[test]
 fn skill_history_warns_on_malformed_operation_records() {
     let root = TestDir::new("skill-history-malformed-op");
     write_skill(root.path(), "demo", "# Demo\n\nv1\n");

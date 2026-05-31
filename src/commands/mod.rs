@@ -1,4 +1,5 @@
 mod agent_cmds;
+mod backup_cmds;
 mod event_store;
 mod file_ops;
 mod fs_probe;
@@ -10,6 +11,7 @@ mod skill_verify;
 mod sync_cmds;
 mod target_cmds;
 mod version_cmds;
+mod watch_cmds;
 mod workspace_cmds;
 
 use anyhow::Result;
@@ -101,7 +103,8 @@ impl App {
             .clone()
             .unwrap_or_else(|| Uuid::new_v4().to_string());
         let audit_required = command_requires_durable_audit(&cli.command);
-        let audit_enabled = command_records_audit(&cli.command);
+        let audit_enabled = command_records_audit(&cli.command)
+            && (audit_required || self.ctx.ensure_not_loom_tool_repo_root().is_ok());
         if audit_required && let Err(err) = self.ctx.ensure_not_loom_tool_repo_root() {
             let message = err.to_string();
             let message = message
@@ -157,6 +160,7 @@ impl App {
                 };
                 self.cmd_workspace_init(&args, &request_id)
             }
+            Command::Backup { command } => self.cmd_backup(command),
             Command::Monitor(args) => self.cmd_monitor_observed(args, &request_id),
             Command::Doctor => self.cmd_doctor(),
             Command::Workspace { command } => match command {
@@ -178,6 +182,7 @@ impl App {
                 SkillCommand::Capture(args) if args.dry_run => self.cmd_capture_plan(args),
                 SkillCommand::Capture(args) => self.cmd_capture(args, &request_id),
                 SkillCommand::Save(args) => self.cmd_save(args, &request_id),
+                SkillCommand::Watch(args) => self.cmd_watch(args, &request_id),
                 SkillCommand::Snapshot(args) => self.cmd_snapshot(args, &request_id),
                 SkillCommand::Release(args) => self.cmd_release(args, &request_id),
                 SkillCommand::Rollback(args) if args.dry_run => self.cmd_rollback_plan(args),
@@ -316,15 +321,17 @@ fn command_records_audit(command: &Command) -> bool {
     !matches!(
         command,
         Command::Panel(_)
+            | Command::Backup { .. }
             | Command::Skill {
                 command: SkillCommand::History(_)
             }
-    )
+    ) && !is_rollback_preview(command)
 }
 
 fn command_requires_durable_audit(command: &Command) -> bool {
     match command {
         Command::Init | Command::Monitor(_) => true,
+        Command::Backup { .. } => false,
         Command::Doctor => false,
         Command::Workspace { command } => match command {
             WorkspaceCommand::Status | WorkspaceCommand::Doctor => false,
@@ -338,21 +345,27 @@ fn command_requires_durable_audit(command: &Command) -> bool {
         Command::Target { command } => {
             !matches!(command, TargetCommand::List | TargetCommand::Show(_))
         }
-        Command::Skill { command } => matches!(
-            command,
+        Command::Skill { command } => match command {
             SkillCommand::Add(_)
-                | SkillCommand::ImportObserved(_)
-                | SkillCommand::MonitorObserved(_)
-                | SkillCommand::Project(_)
-                | SkillCommand::Capture(_)
-                | SkillCommand::Save(_)
-                | SkillCommand::Snapshot(_)
-                | SkillCommand::Release(_)
-                | SkillCommand::Rollback(_)
-                | SkillCommand::Orphan {
-                    command: SkillOrphanCommand::Clean(_)
-                }
-        ),
+            | SkillCommand::ImportObserved(_)
+            | SkillCommand::MonitorObserved(_)
+            | SkillCommand::Project(_)
+            | SkillCommand::Capture(_)
+            | SkillCommand::Save(_)
+            | SkillCommand::Watch(_)
+            | SkillCommand::Snapshot(_)
+            | SkillCommand::Release(_)
+            | SkillCommand::Orphan {
+                command: SkillOrphanCommand::Clean(_),
+            } => true,
+            SkillCommand::Rollback(args) => !args.dry_run,
+            SkillCommand::Diff(_)
+            | SkillCommand::History(_)
+            | SkillCommand::Verify(_)
+            | SkillCommand::Orphan {
+                command: SkillOrphanCommand::List,
+            } => false,
+        },
         Command::Sync { command } => !matches!(command, SyncCommand::Status),
         Command::Ops { command } => match command {
             OpsCommand::List => false,
@@ -362,4 +375,13 @@ fn command_requires_durable_audit(command: &Command) -> bool {
         Command::Agent { .. } => false,
         Command::Panel(_) => false,
     }
+}
+
+fn is_rollback_preview(command: &Command) -> bool {
+    matches!(
+        command,
+        Command::Skill {
+            command: SkillCommand::Rollback(args),
+        } if args.dry_run
+    )
 }

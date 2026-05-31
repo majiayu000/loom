@@ -11,11 +11,12 @@ interface SyncPageProps {
   remote: RemotePayload | null;
   pendingCount: number;
   registryRoot: string | null;
+  refreshKey?: string | null;
   readOnly: boolean;
   onMutation: () => void;
 }
 
-export function SyncPage({ remote, pendingCount, registryRoot, readOnly, onMutation }: SyncPageProps) {
+export function SyncPage({ remote, pendingCount, registryRoot, refreshKey, readOnly, onMutation }: SyncPageProps) {
   const push = useMutation();
   const pull = useMutation();
   const replay = useMutation();
@@ -66,7 +67,7 @@ export function SyncPage({ remote, pendingCount, registryRoot, readOnly, onMutat
         if (!controller.signal.aborted) setDiagnoseLoading(false);
       });
     return () => controller.abort();
-  }, [readOnly, repairVersion]);
+  }, [readOnly, repairVersion, refreshKey]);
 
   const submitRemote = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();

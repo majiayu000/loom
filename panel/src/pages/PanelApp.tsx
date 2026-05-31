@@ -170,6 +170,7 @@ export function PanelApp() {
             skills={skills}
             targets={targets}
             bindings={bindings}
+            projections={live.projections}
             selectedSkill={selectedSkill}
             onSelectSkill={(id) => setSelectedSkill(id)}
             onMutation={onMutation}
@@ -234,6 +235,7 @@ export function PanelApp() {
             remote={live.remote}
             pendingCount={live.pendingCount}
             registryRoot={live.registryRoot}
+            refreshKey={live.lastUpdated}
             readOnly={readOnly}
             onMutation={onMutation}
           />
@@ -337,11 +339,11 @@ export function LiveDataBanner({
   const body =
     mode === "offline-stale"
       ? error
-        ? `/api unreachable — ${error}. The panel is keeping the last successful registry snapshot in read-only mode.`
-        : "The live API is unavailable. The panel is keeping the last successful registry snapshot in read-only mode."
+        ? `/api unreachable — ${error}. Showing the last registry snapshot.`
+        : "Live API unavailable. Showing the last registry snapshot."
       : error
-      ? `/api unreachable — ${error}. Start \`loom panel\` or the panel backend to see real registry data.`
-      : "Registry API is unavailable. No real registry rows are being shown.";
+      ? `/api unreachable — ${error}. Start \`loom panel\` to see live data.`
+      : "Registry API unavailable. No real rows shown.";
 
   return (
     <div

@@ -343,6 +343,7 @@ impl AppContext {
         let entries = [
             "state/locks/",
             "state/panel.log",
+            "backups/",
             "panel/node_modules/",
             "panel/dist/",
             "target/",

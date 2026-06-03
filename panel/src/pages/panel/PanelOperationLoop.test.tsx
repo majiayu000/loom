@@ -281,6 +281,35 @@ test("SyncPage renders local-only sync state as compact readable text", async ()
   expect(markup(renderer!).includes("LOCAL_ONLY")).toBe(false);
 });
 
+test("SyncPage renders diverged sync state with error tone", async () => {
+  let renderer: ReactTestRenderer;
+  await act(async () => {
+    renderer = create(
+      <SyncPage
+        remote={{
+          configured: true,
+          url: "git@example.com:loom.git",
+          ahead: 1,
+          behind: 1,
+          sync_state: "DIVERGED",
+        }}
+        pendingCount={0}
+        registryRoot="/tmp/loom"
+        readOnly={true}
+        onMutation={() => {}}
+      />,
+    );
+  });
+
+  const syncState = renderer!.root.findAll(
+    (node: ReactTestInstance) =>
+      typeof node.props.className === "string" &&
+      node.props.className.includes("status-value") &&
+      textOf(node.props.children) === "diverged",
+  )[0];
+  expect(syncState.props.style.color).toBe("var(--err)");
+});
+
 test("SyncPage re-runs history diagnose when refreshed data arrives", async () => {
   const originalDiagnose = api.opsHistoryDiagnose;
   let diagnoseCalls = 0;

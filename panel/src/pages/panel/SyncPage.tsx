@@ -291,7 +291,14 @@ function formatSyncState(state: string): string {
 
 function syncStateTone(state: string): "pending" | "err" | undefined {
   const normalized = state.toUpperCase();
-  if (normalized.includes("CONFLICT") || normalized.includes("ERROR") || normalized.includes("FAILED")) return "err";
+  if (
+    normalized.includes("CONFLICT") ||
+    normalized.includes("DIVERGED") ||
+    normalized.includes("ERROR") ||
+    normalized.includes("FAILED")
+  ) {
+    return "err";
+  }
   if (
     normalized.includes("LOCAL") ||
     normalized.includes("PENDING") ||

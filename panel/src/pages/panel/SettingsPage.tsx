@@ -3,6 +3,7 @@ import type { PanelDataMode } from "../../lib/api/usePanelData";
 import type { InfoPayload } from "../../types";
 import { api, ApiError } from "../../lib/api/client";
 import { AGENT_OPTIONS } from "../../lib/agent_options";
+import { CopyIcon } from "../../components/icons/nav_icons";
 
 interface SettingsPageProps {
   live: boolean;
@@ -36,6 +37,7 @@ function agentRows(info: InfoPayload): Array<{ agent: string; path: string | und
 export function SettingsPage({ live, mode, registryRoot }: SettingsPageProps) {
   const [info, setInfo] = useState<InfoState>({ kind: "idle" });
   const [cleared, setCleared] = useState(false);
+  const [copyFeedback, setCopyFeedback] = useState<{ value: string; state: "copied" | "failed" } | null>(null);
 
   useEffect(() => {
     if (!live) {
@@ -68,6 +70,19 @@ export function SettingsPage({ live, mode, registryRoot }: SettingsPageProps) {
     localStorage.removeItem("loom.tweaks");
     setCleared(true);
     window.setTimeout(() => window.location.reload(), 400);
+  };
+
+  const canCopy = typeof navigator !== "undefined" && Boolean(navigator.clipboard?.writeText);
+
+  const copyValue = async (value: string) => {
+    if (!canCopy) return;
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopyFeedback({ value, state: "copied" });
+    } catch {
+      setCopyFeedback({ value, state: "failed" });
+    }
+    window.setTimeout(() => setCopyFeedback((current) => (current?.value === value ? null : current)), 1200);
   };
 
   const rows: Array<{ label: string; value: string | undefined; mono?: boolean }> = [
@@ -115,8 +130,16 @@ export function SettingsPage({ live, mode, registryRoot }: SettingsPageProps) {
                 {rows.map((r) => (
                   <tr key={r.label}>
                     <td style={{ color: "var(--ink-2)", width: 160 }}>{r.label}</td>
-                    <td className={r.mono ? "mono" : undefined} style={{ color: r.value ? "var(--ink-0)" : "var(--ink-3)" }}>
-                      {r.value ?? "—"}
+                    <td
+                      className={r.mono ? "mono settings-value-cell" : "settings-value-cell"}
+                      style={{ color: r.value ? "var(--ink-0)" : "var(--ink-3)" }}
+                    >
+                      <SettingValue
+                        value={r.value}
+                        copyState={copyFeedback && r.value === copyFeedback.value ? copyFeedback.state : null}
+                        canCopy={canCopy}
+                        onCopy={copyValue}
+                      />
                     </td>
                   </tr>
                 ))}
@@ -142,5 +165,30 @@ export function SettingsPage({ live, mode, registryRoot }: SettingsPageProps) {
         </div>
       </div>
     </>
+  );
+}
+
+function SettingValue({
+  value,
+  copyState,
+  canCopy,
+  onCopy,
+}: {
+  value: string | undefined;
+  copyState: "copied" | "failed" | null;
+  canCopy: boolean;
+  onCopy: (value: string) => void;
+}) {
+  if (!value) return <>—</>;
+
+  return (
+    <span className="setting-path-value">
+      <span className="setting-path-text" title={value}>{value}</span>
+      {canCopy && (
+        <button className="btn sm ghost setting-copy-btn" type="button" onClick={() => void onCopy(value)} title="Copy value">
+          <CopyIcon /> {copyState === "copied" ? "Copied" : copyState === "failed" ? "Failed" : "Copy"}
+        </button>
+      )}
+    </span>
   );
 }

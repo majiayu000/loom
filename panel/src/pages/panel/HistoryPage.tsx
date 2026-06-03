@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { PanelDataMode } from "../../lib/api/usePanelData";
 import { api, ApiError, type OpsHistoryDiagnosePayload, type OpsPayload, type RegistryOperationRecord } from "../../lib/api/client";
 import { useMutation } from "../../lib/useMutation";
+import { SearchIcon } from "../../components/icons/nav_icons";
 
 type FilterKey = "all" | "pending" | "ok" | "err";
 type DiagnoseData = NonNullable<OpsHistoryDiagnosePayload["data"]>;
@@ -134,6 +135,7 @@ export function HistoryPage({ live, mode, mutationVersion, refreshKey, onMutatio
         </div>
         <div className="header-actions">
           <div className="searchbar" style={{ width: 260 }}>
+            <SearchIcon />
             <input
               placeholder="Filter by id / intent / error…"
               value={query}

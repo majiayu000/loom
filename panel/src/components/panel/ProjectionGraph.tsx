@@ -171,6 +171,12 @@ interface ProjectionGraphProps {
   targets: Target[];
   /** Backend-provided projections; each link's `method` is authoritative. */
   projections: ProjectionLink[];
+  emptyAction?: {
+    label: string;
+    onClick: () => void;
+    disabled?: boolean;
+    title?: string;
+  };
 }
 
 export function ProjectionGraph({
@@ -182,6 +188,7 @@ export function ProjectionGraph({
   skills,
   targets,
   projections: projectionLinks,
+  emptyAction,
 }: ProjectionGraphProps) {
   const projections = useMemo(
     () => buildProjectionRecords(projectionLinks, targets),
@@ -242,6 +249,16 @@ export function ProjectionGraph({
             "Create a binding or project a skill to render the registry graph."
           )}
         </div>
+        {emptyAction && (
+          <button
+            className="btn primary"
+            onClick={emptyAction.onClick}
+            disabled={emptyAction.disabled}
+            title={emptyAction.title}
+          >
+            {emptyAction.label}
+          </button>
+        )}
       </div>
     );
   }

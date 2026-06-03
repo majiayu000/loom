@@ -2,6 +2,7 @@ import type { Op, ProjectionLink, Skill, Target, VizMode } from "../../lib/types
 import { OpRow } from "../../components/panel/OpRow";
 import { ProjectionGraph } from "../../components/panel/ProjectionGraph";
 import { PlusIcon, RefreshIcon, ShieldIcon, TargetIcon } from "../../components/icons/nav_icons";
+import { COUNT_TERMS, formatReplayableWrites, summarizeOps } from "../../lib/count_labels";
 
 interface OverviewPageProps {
   skills: Skill[];
@@ -45,8 +46,7 @@ export function OverviewPage({
 }: OverviewPageProps) {
   const selSkill = skills.find((s) => s.id === selectedSkill);
   const selTarget = targets.find((t) => t.id === selectedTarget);
-  const pendingOps = ops.filter((o) => o.status === "pending").length;
-  const errOps = ops.filter((o) => o.status === "err").length;
+  const opCounts = summarizeOps(ops);
   const totalProjections = skills.reduce((a, s) => a + s.targets.length, 0);
   const totalRules = skills.reduce((a, s) => a + s.ruleCount, 0);
   const uniqueAgents = new Set(targets.map((t) => t.agent)).size;
@@ -97,12 +97,12 @@ export function OverviewPage({
     {
       label: "Clear activity",
       detail:
-        pendingOps + errOps === 0
-          ? "No pending or failed registry work."
-          : `${pendingOps} pending · ${errOps} failed`,
-      done: pendingOps + errOps === 0,
-      action: errOps > 0 ? "View activity" : "Replay pending",
-      onAction: errOps > 0 ? onViewActivity : onOpenSync,
+        opCounts.actionNeeded === 0
+          ? "No replayable or failed registry work."
+          : `${formatReplayableWrites(opCounts.pending)} · ${opCounts.err} failed`,
+      done: opCounts.actionNeeded === 0,
+      action: opCounts.err > 0 ? "View activity" : "Replay queued writes",
+      onAction: opCounts.err > 0 ? onViewActivity : onOpenSync,
       disabled: readOnly,
     },
   ];
@@ -166,16 +166,16 @@ export function OverviewPage({
             }
           />
           <Kpi
-            label="Needs action"
-            value={pendingOps + errOps}
+            label={COUNT_TERMS.actionNeeded}
+            value={opCounts.actionNeeded}
             meta={
-              pendingOps === 0 && errOps === 0 ? (
+              opCounts.actionNeeded === 0 ? (
                 "all clean"
               ) : (
                 <>
-                  {pendingOps > 0 && <span style={{ color: "var(--pending)" }}>{pendingOps} pending</span>}
-                  {pendingOps > 0 && errOps > 0 && " · "}
-                  {errOps > 0 && <span style={{ color: "var(--err)" }}>{errOps} failed</span>}
+                  {opCounts.pending > 0 && <span style={{ color: "var(--pending)" }}>{formatReplayableWrites(opCounts.pending)}</span>}
+                  {opCounts.pending > 0 && opCounts.err > 0 && " · "}
+                  {opCounts.err > 0 && <span style={{ color: "var(--err)" }}>{opCounts.err} failed</span>}
                 </>
               )
             }

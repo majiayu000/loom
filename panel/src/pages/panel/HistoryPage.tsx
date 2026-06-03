@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { PanelDataMode } from "../../lib/api/usePanelData";
 import { api, ApiError, type OpsHistoryDiagnosePayload, type OpsPayload, type RegistryOperationRecord } from "../../lib/api/client";
 import { useMutation } from "../../lib/useMutation";
+import { COUNT_TERMS, filterLabel, summarizeOps } from "../../lib/count_labels";
 
 type FilterKey = "all" | "pending" | "ok" | "err";
 type DiagnoseData = NonNullable<OpsHistoryDiagnosePayload["data"]>;
@@ -103,23 +104,17 @@ export function HistoryPage({ live, mode, mutationVersion, refreshKey, onMutatio
     });
   }, [operations, filter, query]);
 
-  const counts = useMemo(() => {
-    const c = { all: operations.length, pending: 0, ok: 0, err: 0 };
-    for (const op of operations) {
-      const b = bucket(op);
-      if (b === "pending") c.pending += 1;
-      else if (b === "ok") c.ok += 1;
-      else if (b === "err") c.err += 1;
-    }
-    return c;
-  }, [operations]);
+  const counts = useMemo(
+    () => summarizeOps(operations.map((op) => ({ status: bucket(op) }))),
+    [operations],
+  );
 
   const checkpoint = payload?.checkpoint;
   const historySummary =
     payload && payload.count > payload.loaded_count
-      ? `Showing ${payload.loaded_count} of ${payload.count} recorded changes.`
+      ? `Showing ${payload.loaded_count} of ${payload.count} audit changes.`
       : payload
-      ? `${payload.loaded_count} recorded change${payload.loaded_count === 1 ? "" : "s"} loaded.`
+      ? `${payload.loaded_count} loaded audit change${payload.loaded_count === 1 ? "" : "s"}.`
       : null;
 
   return (
@@ -128,7 +123,7 @@ export function HistoryPage({ live, mode, mutationVersion, refreshKey, onMutatio
         <div className="title-block">
           <h1>Activity history</h1>
           <div className="subtitle">
-            Every registry change Loom has recorded. Pending work also appears in Activity; failed work points to a replay with{" "}
+            Every audit change Loom has recorded. Replayable writes also appear in Activity; failed work points to a replay with{" "}
             <span className="mono">loom sync replay</span>.
           </div>
         </div>
@@ -200,10 +195,10 @@ export function HistoryPage({ live, mode, mutationVersion, refreshKey, onMutatio
           </div>
         )}
         <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 18 }}>
-          <Kpi label="Loaded changes" value={counts.all} />
-          <Kpi label="Pending" value={counts.pending} tone={counts.pending > 0 ? "pending" : undefined} />
-          <Kpi label="Succeeded" value={counts.ok} />
-          <Kpi label="Failed" value={counts.err} tone={counts.err > 0 ? "err" : undefined} />
+          <Kpi label={COUNT_TERMS.loadedAuditChanges} value={payload?.loaded_count ?? counts.all} />
+          <Kpi label={COUNT_TERMS.replayableWrites} value={counts.pending} tone={counts.pending > 0 ? "pending" : undefined} />
+          <Kpi label={COUNT_TERMS.succeeded} value={counts.ok} />
+          <Kpi label={COUNT_TERMS.failed} value={counts.err} tone={counts.err > 0 ? "err" : undefined} />
         </div>
 
         <div style={{ display: "flex", gap: 12, marginBottom: 12, justifyContent: "space-between", flexWrap: "wrap" }}>
@@ -220,7 +215,7 @@ export function HistoryPage({ live, mode, mutationVersion, refreshKey, onMutatio
                   color: filter === k ? "var(--ink-0)" : "var(--ink-2)",
                 }}
               >
-                {k === "err" ? "failed" : k === "ok" ? "done" : k}{" "}
+                {filterLabel(k)}{" "}
                 <span className="mono" style={{ color: "var(--ink-3)", marginLeft: 4 }}>
                   {counts[k]}
                 </span>

@@ -4,6 +4,7 @@ import { OpRow } from "../../components/panel/OpRow";
 import { RefreshIcon } from "../../components/icons/nav_icons";
 import { api } from "../../lib/api/client";
 import { useMutation } from "../../lib/useMutation";
+import { COUNT_TERMS, filterLabel, formatReplayableWrites, summarizeOps } from "../../lib/count_labels";
 
 type FilterKey = "all" | OpStatus;
 
@@ -18,12 +19,7 @@ export function OpsPage({ ops, onMutation, readOnly }: OpsPageProps) {
   const retry = useMutation();
   const purge = useMutation();
   const filtered = filter === "all" ? ops : ops.filter((o) => o.status === filter);
-  const counts = {
-    all: ops.length,
-    pending: ops.filter((o) => o.status === "pending").length,
-    ok: ops.filter((o) => o.status === "ok").length,
-    err: ops.filter((o) => o.status === "err").length,
-  };
+  const counts = summarizeOps(ops);
   const finalized = counts.ok + counts.err;
   const successRate = finalized > 0 ? (counts.ok / finalized) * 100 : null;
   const oldestPending = ops.find((o) => o.status === "pending");
@@ -40,7 +36,7 @@ export function OpsPage({ ops, onMutation, readOnly }: OpsPageProps) {
         <div className="title-block">
           <h1>Activity</h1>
           <div className="subtitle">
-            Recent registry writes, projection checks, and queued sync work. Pending rows can be retried or cleared here.
+            Recent registry writes, projection checks, and queued sync work. Replayable rows can be retried or cleared here.
           </div>
         </div>
         <div className="header-actions">
@@ -52,11 +48,11 @@ export function OpsPage({ ops, onMutation, readOnly }: OpsPageProps) {
               readOnly
                 ? "registry offline"
                 : counts.pending === 0
-                ? "no pending writes to retry"
-                : "retry pending writes against local targets"
+                ? "no replayable writes to retry"
+                : "retry replayable writes against local targets"
             }
           >
-            <RefreshIcon /> {retry.busy ? "Retrying…" : `Retry pending (${counts.pending})`}
+            <RefreshIcon /> {retry.busy ? "Retrying…" : `Retry replayable (${counts.pending})`}
           </button>
           <button
             className="btn ghost"
@@ -66,11 +62,11 @@ export function OpsPage({ ops, onMutation, readOnly }: OpsPageProps) {
               readOnly
                 ? "registry offline"
                 : counts.pending === 0
-                ? "pending queue is already empty"
-                : "remove pending writes from the local queue"
+                ? "no replayable writes to clear"
+                : "remove replayable writes from the local queue"
             }
           >
-            {purge.busy ? "Clearing…" : "Clear pending"}
+            {purge.busy ? "Clearing…" : "Clear replayable"}
           </button>
         </div>
       </div>
@@ -97,13 +93,13 @@ export function OpsPage({ ops, onMutation, readOnly }: OpsPageProps) {
         <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12, marginBottom: 18 }}>
           <div
             className="card"
-            title="All recorded registry operations. The top-bar pending count tracks only unpushed work."
+            title="Visible Activity rows. Queued writes come from /api/pending; audit rows come from /api/ops."
           >
             <div className="card-body">
-              <div style={section_label}>Tracked changes</div>
+              <div style={section_label}>{COUNT_TERMS.activityRows}</div>
               <div style={{ fontFamily: "var(--font-display)", fontSize: 24 }}>{counts.all}</div>
               <div style={{ fontSize: 11, color: "var(--ink-2)", marginTop: 10 }}>
-                {counts.ok} done · {counts.err} failed · {counts.pending} pending
+                {counts.ok} done · {counts.err} failed · {formatReplayableWrites(counts.pending)}
               </div>
             </div>
           </div>
@@ -120,7 +116,7 @@ export function OpsPage({ ops, onMutation, readOnly }: OpsPageProps) {
           </div>
           <div className="card">
             <div className="card-body">
-              <div style={section_label}>Pending</div>
+              <div style={section_label}>{COUNT_TERMS.replayableWrites}</div>
               <div style={{ fontFamily: "var(--font-display)", fontSize: 24, color: "var(--pending)" }}>
                 {counts.pending}
               </div>
@@ -144,7 +140,7 @@ export function OpsPage({ ops, onMutation, readOnly }: OpsPageProps) {
                 color: filter === k ? "var(--ink-0)" : "var(--ink-2)",
               }}
             >
-              {k === "err" ? "failed" : k === "ok" ? "done" : k}{" "}
+              {filterLabel(k)}{" "}
               <span className="mono" style={{ color: "var(--ink-3)", marginLeft: 4 }}>
                 {counts[k]}
               </span>

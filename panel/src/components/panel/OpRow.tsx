@@ -1,4 +1,5 @@
 import type { Op } from "../../lib/types";
+import { opStatusLabel } from "../../lib/count_labels";
 
 function StatusRing({ status }: { status: Op["status"] }) {
   return <span className={`ring ${status}`} />;
@@ -11,12 +12,6 @@ function kindLabel(kind: string): string {
   if (normalized === "sync-pull") return "sync pull";
   if (normalized === "sync-replay") return "sync replay";
   return kind.replace(/[._-]/g, " ");
-}
-
-function statusLabel(status: Op["status"]): string {
-  if (status === "ok") return "done";
-  if (status === "err") return "failed";
-  return "pending";
 }
 
 export function OpRow({ op }: { op: Op }) {
@@ -41,7 +36,7 @@ export function OpRow({ op }: { op: Op }) {
           )}
         </div>
         <div className="op-sub">
-          <span className={`op-status ${op.status}`}>{statusLabel(op.status)}</span>
+          <span className={`op-status ${op.status}`}>{opStatusLabel(op.status)}</span>
           <span className="mono">{op.id}</span>
           {op.reason ? ` · ${op.status === "err" ? "Blocked: " : ""}${op.reason}` : ""}
         </div>

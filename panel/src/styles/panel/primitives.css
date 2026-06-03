@@ -39,6 +39,114 @@
   font-size: 11.5px;
 }
 
+.panel-field,
+.searchbar {
+  min-height: 32px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg-1);
+  color: var(--ink-0);
+  color-scheme: dark;
+  transition:
+    background 120ms ease,
+    border-color 120ms ease,
+    box-shadow 120ms ease,
+    color 120ms ease,
+    opacity 120ms ease;
+}
+
+.panel-field {
+  padding: 0 10px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  outline: none;
+}
+
+.panel-field.capture-select {
+  width: 260px;
+  min-width: 190px;
+  max-width: 100%;
+  flex: 0 1 260px;
+}
+
+.panel-field:hover,
+.searchbar:hover {
+  border-color: var(--line-hi);
+  background: var(--bg-2);
+}
+
+.panel-field:focus,
+.searchbar:focus-within {
+  border-color: var(--accent);
+  background: var(--bg-2);
+  box-shadow: 0 0 0 2px rgba(217, 119, 54, 0.18);
+}
+
+.panel-field:disabled,
+.searchbar:has(input:disabled) {
+  cursor: not-allowed;
+  opacity: 0.58;
+  background: var(--bg-0);
+  border-color: var(--line-soft);
+}
+
+.searchbar {
+  width: 260px;
+  max-width: 100%;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 9px;
+  flex: 1 1 240px;
+}
+
+.searchbar svg {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  color: var(--ink-2);
+}
+
+.searchbar input {
+  width: 100%;
+  min-width: 0;
+  height: 30px;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--ink-0);
+  font-size: 12px;
+}
+
+.searchbar input::placeholder {
+  color: var(--ink-3);
+}
+
+.searchbar input:disabled {
+  cursor: not-allowed;
+}
+
+.searchbar kbd {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  min-height: 20px;
+  padding: 0 6px;
+  border: 1px solid var(--line-hi);
+  border-radius: var(--radius-sm);
+  background: var(--bg-2);
+  color: var(--ink-3);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.searchbar:focus-within kbd {
+  border-color: rgba(217, 119, 54, 0.42);
+  color: var(--ink-2);
+}
+
 .card {
   background: var(--bg-1);
   border: 1px solid var(--line);

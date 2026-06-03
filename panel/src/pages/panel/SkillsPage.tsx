@@ -95,7 +95,12 @@ export function SkillsPage({
         <div className="header-actions">
           <div className="searchbar">
             <SearchIcon />
-            <input placeholder="Filter skills…" value={q} onChange={(e) => setQ(e.target.value)} />
+            <input
+              aria-label="Filter skills"
+              placeholder="Filter skills…"
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+            />
             <kbd>⌘K</kbd>
           </div>
           {selectedSkillBindings.length > 1 && (
@@ -105,7 +110,7 @@ export function SkillsPage({
               onChange={(event) => setCaptureBindingId(event.target.value)}
               disabled={readOnly || capture.busy}
               title="Choose which projected binding to capture from"
-              style={captureSelectStyle}
+              className="panel-field capture-select"
             >
               {selectedSkillBindings.map((binding) => (
                 <option key={binding.id} value={binding.id}>
@@ -293,20 +298,6 @@ function formatCaptureBinding(binding: Binding, targets: Target[]): string {
   const targetLabel = target ? `${target.agent}/${target.profile}` : binding.target;
   return `${targetLabel} · ${binding.method} · ${binding.policy}`;
 }
-
-const captureSelectStyle = {
-  height: 32,
-  minWidth: 190,
-  maxWidth: 260,
-  border: "1px solid var(--line)",
-  borderRadius: 6,
-  background: "var(--bg)",
-  color: "var(--ink-0)",
-  padding: "0 8px",
-  fontFamily: "var(--font-mono)",
-  fontSize: 11,
-  outline: "none",
-};
 
 type DetailTab = "history" | "diff" | "targets";
 

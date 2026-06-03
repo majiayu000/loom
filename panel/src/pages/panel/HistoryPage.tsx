@@ -133,8 +133,9 @@ export function HistoryPage({ live, mode, mutationVersion, refreshKey, onMutatio
           </div>
         </div>
         <div className="header-actions">
-          <div className="searchbar" style={{ width: 260 }}>
+          <div className="searchbar">
             <input
+              aria-label="Filter activity history"
               placeholder="Filter by id / intent / error…"
               value={query}
               onChange={(e) => setQuery(e.target.value)}

@@ -199,6 +199,7 @@ export function PanelApp() {
             targets={targets}
             projections={live.projections}
             onMutation={onMutation}
+            onNewTarget={onNewTarget}
             readOnly={readOnly}
             mutationVersion={mutationVersion}
           />
@@ -212,6 +213,7 @@ export function PanelApp() {
             bindings={bindings}
             readOnly={readOnly}
             onMutation={onMutation}
+            onNewBinding={onNewBinding}
           />
         );
         break;

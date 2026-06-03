@@ -383,6 +383,39 @@ test("OverviewPage disables add binding until a target exists", async () => {
   expect(addBinding.props.title).toBe("add a target first");
 });
 
+test("OverviewPage turns an empty projection graph into an action state", async () => {
+  let renderer: ReactTestRenderer;
+  await act(async () => {
+    renderer = create(
+      <OverviewPage
+        skills={[makeSkill()]}
+        targets={[makeTarget()]}
+        ops={[]}
+        projections={[]}
+        vizMode="loom"
+        setVizMode={() => {}}
+        selectedSkill={null}
+        selectedTarget={null}
+        onSelectSkill={() => {}}
+        onSelectTarget={() => {}}
+        registryRoot="/tmp/loom"
+        onMutation={() => {}}
+        onNewTarget={() => {}}
+        onNewBinding={() => {}}
+        onOpenSkills={() => {}}
+        onViewActivity={() => {}}
+        onOpenSync={() => {}}
+        readOnly={false}
+      />,
+    );
+  });
+
+  const html = markup(renderer!);
+  expect(html.includes("No projections yet")).toBe(true);
+  expect(html.includes("loom skill project <skill> --binding <binding-id> --method symlink")).toBe(true);
+  expect(html.includes("Projection method")).toBe(false);
+});
+
 test("BindingAddForm submits the canonical matcher kind", async () => {
   const originalBindingAdd = api.bindingAdd;
   const submissions: Array<Parameters<typeof api.bindingAdd>[0]> = [];
@@ -457,6 +490,7 @@ test("BindingsPage refetches selected binding details after a successful project
           readOnly={false}
           mutationVersion={mutationVersion}
           onMutation={() => setMutationVersion((cur) => cur + 1)}
+          onNewTarget={() => {}}
         />
       );
     }
@@ -517,6 +551,7 @@ test("BindingsPage exposes orphan cleanup from live projection data", async () =
           onMutation={() => {
             mutations += 1;
           }}
+          onNewTarget={() => {}}
         />,
       );
     });
@@ -535,6 +570,27 @@ test("BindingsPage exposes orphan cleanup from live projection data", async () =
   } finally {
     api.orphanClean = originalOrphanClean;
   }
+});
+
+test("BindingsPage replaces the empty table and detail pane with one action state", async () => {
+  let renderer: ReactTestRenderer;
+  await act(async () => {
+    renderer = create(
+      <BindingsPage
+        bindings={[]}
+        targets={[makeTarget()]}
+        readOnly={false}
+        mutationVersion={0}
+        onMutation={() => {}}
+        onNewTarget={() => {}}
+      />,
+    );
+  });
+
+  const html = markup(renderer!);
+  expect(html.includes("No bindings yet")).toBe(true);
+  expect(html.includes("loom workspace binding add")).toBe(true);
+  expect(html.includes("Select a binding to inspect")).toBe(false);
 });
 
 test("ProjectionsPage can capture and re-project a selected projection", async () => {
@@ -575,6 +631,7 @@ test("ProjectionsPage can capture and re-project a selected projection", async (
           onMutation={() => {
             mutations += 1;
           }}
+          onNewBinding={() => {}}
         />,
       );
     });
@@ -622,6 +679,7 @@ test("ProjectionsPage cleans orphaned projection metadata", async () => {
           onMutation={() => {
             mutations += 1;
           }}
+          onNewBinding={() => {}}
         />,
       );
     });
@@ -637,6 +695,36 @@ test("ProjectionsPage cleans orphaned projection metadata", async () => {
   } finally {
     api.orphanClean = originalOrphanClean;
   }
+});
+
+test("ProjectionsPage replaces empty list and detail messages with one action state", async () => {
+  let openedBindings = 0;
+  let renderer: ReactTestRenderer;
+  await act(async () => {
+    renderer = create(
+      <ProjectionsPage
+        projections={[]}
+        targets={[makeTarget()]}
+        bindings={[]}
+        readOnly={false}
+        onMutation={() => {}}
+        onNewBinding={() => {
+          openedBindings += 1;
+        }}
+      />,
+    );
+  });
+
+  const html = markup(renderer!);
+  expect(html.includes("No projections yet")).toBe(true);
+  expect(html.includes("loom workspace binding add")).toBe(true);
+  expect(html.includes("No projections found")).toBe(false);
+  expect(html.includes("No projections match this filter")).toBe(false);
+
+  await act(async () => {
+    buttonByLabel(renderer!, "Add binding").props.onClick();
+  });
+  expect(openedBindings).toBe(1);
 });
 
 test("HistoryPage refetches when a panel mutation completes", async () => {
@@ -913,6 +1001,7 @@ test("BindingsPage keeps a newer selection when a previous binding delete comple
           readOnly={false}
           mutationVersion={0}
           onMutation={() => {}}
+          onNewTarget={() => {}}
         />
       );
     }
@@ -973,6 +1062,7 @@ test("BindingsPage skips live detail fetches in read-only mode", async () => {
           readOnly={true}
           mutationVersion={0}
           onMutation={() => {}}
+          onNewTarget={() => {}}
         />,
       );
     });

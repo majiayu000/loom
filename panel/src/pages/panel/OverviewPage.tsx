@@ -1,6 +1,7 @@
 import type { Op, ProjectionLink, Skill, Target, VizMode } from "../../lib/types";
 import { OpRow } from "../../components/panel/OpRow";
 import { ProjectionGraph } from "../../components/panel/ProjectionGraph";
+import { ActionEmptyState } from "../../components/panel/ActionEmptyState";
 import { PlusIcon, RefreshIcon, ShieldIcon, TargetIcon } from "../../components/icons/nav_icons";
 
 interface OverviewPageProps {
@@ -214,45 +215,60 @@ export function OverviewPage({
             </div>
           </div>
           <div className="proj-canvas">
-            <ProjectionGraph
-              mode={vizMode}
-              selectedSkill={selectedSkill}
-              selectedTarget={selectedTarget}
-              onSelectSkill={onSelectSkill}
-              onSelectTarget={onSelectTarget}
-              skills={skills}
-              targets={targets}
-              projections={projections}
-            />
-            <div className="proj-legend proj-legend-grouped">
-              <span className="legend-group-title">Projection method</span>
-              <span>
-                <span className="dot" style={{ background: "#6fb78a" }} />
-                symlink
-              </span>
-              <span>
-                <span className="dot" style={{ background: "#e6b450" }} />
-                copy
-              </span>
-              <span>
-                <span className="dot" style={{ background: "#c79ee0" }} />
-                materialize
-              </span>
-              <span className="divider">│</span>
-              <span className="legend-group-title">Target ownership</span>
-              <span>
-                <span className="dot" style={{ background: "#d97736" }} />
-                managed
-              </span>
-              <span>
-                <span className="dot" style={{ background: "#4ea9a0" }} />
-                observed
-              </span>
-              <span>
-                <span className="dot" style={{ background: "#8a8271" }} />
-                external
-              </span>
-            </div>
+            {projections.length === 0 ? (
+              <OverviewProjectionEmptyState
+                skillsCount={skills.length}
+                targetsCount={targets.length}
+                totalRules={totalRules}
+                readOnly={readOnly}
+                onOpenSkills={onOpenSkills}
+                onNewTarget={onNewTarget}
+                onNewBinding={onNewBinding}
+                onOpenSync={onOpenSync}
+              />
+            ) : (
+              <>
+                <ProjectionGraph
+                  mode={vizMode}
+                  selectedSkill={selectedSkill}
+                  selectedTarget={selectedTarget}
+                  onSelectSkill={onSelectSkill}
+                  onSelectTarget={onSelectTarget}
+                  skills={skills}
+                  targets={targets}
+                  projections={projections}
+                />
+                <div className="proj-legend proj-legend-grouped">
+                  <span className="legend-group-title">Projection method</span>
+                  <span>
+                    <span className="dot" style={{ background: "#6fb78a" }} />
+                    symlink
+                  </span>
+                  <span>
+                    <span className="dot" style={{ background: "#e6b450" }} />
+                    copy
+                  </span>
+                  <span>
+                    <span className="dot" style={{ background: "#c79ee0" }} />
+                    materialize
+                  </span>
+                  <span className="divider">│</span>
+                  <span className="legend-group-title">Target ownership</span>
+                  <span>
+                    <span className="dot" style={{ background: "#d97736" }} />
+                    managed
+                  </span>
+                  <span>
+                    <span className="dot" style={{ background: "#4ea9a0" }} />
+                    observed
+                  </span>
+                  <span>
+                    <span className="dot" style={{ background: "#8a8271" }} />
+                    external
+                  </span>
+                </div>
+              </>
+            )}
           </div>
         </div>
 
@@ -307,6 +323,95 @@ export function OverviewPage({
         </div>
       </div>
     </>
+  );
+}
+
+function OverviewProjectionEmptyState({
+  skillsCount,
+  targetsCount,
+  totalRules,
+  readOnly,
+  onOpenSkills,
+  onNewTarget,
+  onNewBinding,
+  onOpenSync,
+}: {
+  skillsCount: number;
+  targetsCount: number;
+  totalRules: number;
+  readOnly: boolean;
+  onOpenSkills: () => void;
+  onNewTarget: () => void;
+  onNewBinding: () => void;
+  onOpenSync: () => void;
+}) {
+  if (readOnly) {
+    return (
+      <ActionEmptyState
+        title="Registry API offline"
+        body="Start the panel backend to load live projection data."
+        primaryLabel="Start panel"
+        primaryDisabled
+        primaryTitle="run the CLI command below"
+        primaryIcon={<RefreshIcon />}
+        command="loom panel"
+        compact
+      />
+    );
+  }
+
+  if (skillsCount === 0) {
+    return (
+      <ActionEmptyState
+        title="No projections yet"
+        body="Add a skill first, then connect it to a target with a binding."
+        primaryLabel="Open Skills"
+        onPrimary={onOpenSkills}
+        primaryIcon={<PlusIcon />}
+        command="loom skill add <source> --name <name>"
+        compact
+      />
+    );
+  }
+
+  if (targetsCount === 0) {
+    return (
+      <ActionEmptyState
+        title="No projections yet"
+        body="Add an agent target before creating bindings and projections."
+        primaryLabel="Add target"
+        onPrimary={onNewTarget}
+        primaryIcon={<TargetIcon />}
+        command="loom target add --agent <agent> --path <abs-path> --ownership observed"
+        compact
+      />
+    );
+  }
+
+  if (totalRules === 0) {
+    return (
+      <ActionEmptyState
+        title="No projections yet"
+        body="Create a binding rule so Loom knows which skill should project into which target."
+        primaryLabel="Add binding"
+        onPrimary={onNewBinding}
+        primaryIcon={<PlusIcon />}
+        command="loom workspace binding add --agent <agent> --profile <id> --matcher-kind path-prefix --matcher-value <workspace> --target <target-id>"
+        compact
+      />
+    );
+  }
+
+  return (
+    <ActionEmptyState
+      title="No projections yet"
+      body="Apply the existing binding rules to materialize skills into their target directories."
+      primaryLabel="Replay / sync"
+      onPrimary={onOpenSync}
+      primaryIcon={<RefreshIcon />}
+      command="loom skill project <skill> --binding <binding-id> --method symlink"
+      compact
+    />
   );
 }
 

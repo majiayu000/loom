@@ -3,7 +3,8 @@ import type { RegistryProjection } from "../../generated/RegistryProjection";
 import type { Binding, Target } from "../../lib/types";
 import { api } from "../../lib/api/client";
 import { useMutation } from "../../lib/useMutation";
-import { RefreshIcon } from "../../components/icons/nav_icons";
+import { PlusIcon, RefreshIcon } from "../../components/icons/nav_icons";
+import { ActionEmptyState } from "../../components/panel/ActionEmptyState";
 
 interface ProjectionsPageProps {
   projections: RegistryProjection[];
@@ -11,6 +12,7 @@ interface ProjectionsPageProps {
   bindings: Binding[];
   readOnly: boolean;
   onMutation: () => void;
+  onNewBinding: () => void;
 }
 
 type ProjectionFilter = "all" | "healthy" | "drifted" | "orphaned";
@@ -43,7 +45,7 @@ function healthClass(projection: RegistryProjection): string {
   return "err";
 }
 
-export function ProjectionsPage({ projections, targets, bindings, readOnly, onMutation }: ProjectionsPageProps) {
+export function ProjectionsPage({ projections, targets, bindings, readOnly, onMutation, onNewBinding }: ProjectionsPageProps) {
   const [filter, setFilter] = useState<ProjectionFilter>("all");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [deleteLivePaths, setDeleteLivePaths] = useState(false);
@@ -57,7 +59,7 @@ export function ProjectionsPage({ projections, targets, bindings, readOnly, onMu
     });
   }, [filter, projections]);
 
-  const selected = projections.find((projection) => projection.instance_id === selectedId) ?? filtered[0] ?? null;
+  const selected = filtered.find((projection) => projection.instance_id === selectedId) ?? filtered[0] ?? null;
   const selectedBinding = selected?.binding_id
     ? bindings.find((binding) => binding.id === selected.binding_id)
     : undefined;
@@ -117,48 +119,56 @@ export function ProjectionsPage({ projections, targets, bindings, readOnly, onMu
         </div>
       </div>
       <div className="page-body" style={{ padding: 0 }}>
-        <div className="two-col projections-layout">
-          <div className="projections-list">
-            <table className="tbl">
-              <thead>
-                <tr>
-                  <th>Instance</th>
-                  <th>Skill</th>
-                  <th>Target</th>
-                  <th>Method</th>
-                  <th>Health</th>
-                  <th>Rev</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filtered.map((projection) => (
-                  <tr
-                    key={projection.instance_id}
-                    className={selected?.instance_id === projection.instance_id ? "selected" : ""}
-                    onClick={() => setSelectedId(projection.instance_id)}
-                  >
-                    <td className="mono dim">{projection.instance_id}</td>
-                    <td className="name">{projection.skill_id}</td>
-                    <td>{targetLabel(targets, projection.target_id)}</td>
-                    <td>{projection.method}</td>
-                    <td>
-                      <span className={`badge ${healthClass(projection)}`}>
-                        {projection.observed_drift ? "drifted" : projection.health}
-                      </span>
-                    </td>
-                    <td className="mono dim">{shortRev(projection.last_applied_rev)}</td>
+        {filtered.length === 0 ? (
+          <ProjectionsEmptyState
+            filter={filter}
+            hasProjections={projections.length > 0}
+            hasBindings={bindings.length > 0}
+            readOnly={readOnly}
+            onShowAll={() => setFilter("all")}
+            onNewBinding={onNewBinding}
+          />
+        ) : (
+          <div className="two-col projections-layout">
+            <div className="projections-list">
+              <table className="tbl">
+                <thead>
+                  <tr>
+                    <th>Instance</th>
+                    <th>Skill</th>
+                    <th>Target</th>
+                    <th>Method</th>
+                    <th>Health</th>
+                    <th>Rev</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-            {filtered.length === 0 && <div className="empty">No projections match this filter.</div>}
-          </div>
-          <div className="projections-detail-panel">
-            {selected ? (
+                </thead>
+                <tbody>
+                  {filtered.map((projection) => (
+                    <tr
+                      key={projection.instance_id}
+                      className={selected?.instance_id === projection.instance_id ? "selected" : ""}
+                      onClick={() => setSelectedId(projection.instance_id)}
+                    >
+                      <td className="mono dim">{projection.instance_id}</td>
+                      <td className="name">{projection.skill_id}</td>
+                      <td>{targetLabel(targets, projection.target_id)}</td>
+                      <td>{projection.method}</td>
+                      <td>
+                        <span className={`badge ${healthClass(projection)}`}>
+                          {projection.observed_drift ? "drifted" : projection.health}
+                        </span>
+                      </td>
+                      <td className="mono dim">{shortRev(projection.last_applied_rev)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="projections-detail-panel">
               <ProjectionDetail
-                projection={selected}
+                projection={selected!}
                 binding={selectedBinding}
-                targetLabel={targetLabel(targets, selected.target_id)}
+                targetLabel={targetLabel(targets, selected!.target_id)}
                 readOnly={readOnly}
                 actionBusy={action.busy}
                 canCapture={canCapture}
@@ -172,13 +182,77 @@ export function ProjectionsPage({ projections, targets, bindings, readOnly, onMu
                 message={action.error ?? action.success}
                 messageTone={action.error ? "var(--err)" : "var(--ok)"}
               />
-            ) : (
-              <div className="empty">No projections found.</div>
-            )}
+            </div>
           </div>
-        </div>
+        )}
       </div>
     </>
+  );
+}
+
+function ProjectionsEmptyState({
+  filter,
+  hasProjections,
+  hasBindings,
+  readOnly,
+  onShowAll,
+  onNewBinding,
+}: {
+  filter: ProjectionFilter;
+  hasProjections: boolean;
+  hasBindings: boolean;
+  readOnly: boolean;
+  onShowAll: () => void;
+  onNewBinding: () => void;
+}) {
+  if (hasProjections) {
+    return (
+      <ActionEmptyState
+        title={`No ${filter} projections`}
+        body="The current filter has no projection rows."
+        primaryLabel="Show all"
+        onPrimary={onShowAll}
+        primaryIcon={<RefreshIcon />}
+      />
+    );
+  }
+
+  if (readOnly) {
+    return (
+      <ActionEmptyState
+        title="Registry API offline"
+        body="Start the panel backend to load live projections before inspecting materialized skills."
+        primaryLabel="Start panel"
+        primaryDisabled
+        primaryTitle="run the CLI command below"
+        primaryIcon={<RefreshIcon />}
+        command="loom panel"
+      />
+    );
+  }
+
+  if (!hasBindings) {
+    return (
+      <ActionEmptyState
+        title="No projections yet"
+        body="Create a binding first, then project a skill into its target."
+        primaryLabel="Add binding"
+        onPrimary={onNewBinding}
+        primaryIcon={<PlusIcon />}
+        command="loom workspace binding add --agent <agent> --profile <id> --matcher-kind path-prefix --matcher-value <workspace> --target <target-id>"
+      />
+    );
+  }
+
+  return (
+    <ActionEmptyState
+      title="No projections yet"
+      body="Project a skill through an existing binding to materialize it into an agent target."
+      primaryLabel="Open bindings"
+      onPrimary={onNewBinding}
+      primaryIcon={<RefreshIcon />}
+      command="loom skill project <skill> --binding <binding-id> --method symlink"
+    />
   );
 }
 

@@ -3,6 +3,7 @@ import type { Binding, Skill, Target } from "../../lib/types";
 import type { RegistryProjection } from "../../generated/RegistryProjection";
 import { AgentAvatar } from "../../components/panel/AgentAvatar";
 import { PlusIcon, SearchIcon } from "../../components/icons/nav_icons";
+import { ActionEmptyState } from "../../components/panel/ActionEmptyState";
 import { api } from "../../lib/api/client";
 import { useMutation } from "../../lib/useMutation";
 import {
@@ -61,17 +62,6 @@ export function SkillsPage({
       selectedSkillBindings.some((b) => b.id === current) ? current : selectedSkillBindings[0].id,
     );
   }, [bindingOptionKey]);
-
-  const emptyMessage: React.ReactNode = readOnly
-    ? "Registry API offline."
-    : q
-    ? "No skills match the current filter."
-    : (
-        <>
-          No skills in this registry yet — use the <strong>+ skill add</strong> button above, or run{" "}
-          <code className="mono">loom skill add &lt;source&gt; --name &lt;name&gt;</code>.
-        </>
-      );
 
   const runCapture = () => {
     if (!sel || !captureBinding) return;
@@ -158,58 +148,105 @@ export function SkillsPage({
             />
           </div>
         )}
-        <div className="two-col" style={{ height: "100%", gap: 0 }}>
-          <div style={{ overflow: "auto", borderRight: "1px solid var(--line)" }}>
-            <table className="tbl">
-              <thead>
-                <tr>
-                  <th>Name</th>
-                  <th>Source</th>
-                  <th>Latest rev</th>
-                  <th>Tags</th>
-                  <th>Bindings</th>
-                  <th>Projections</th>
-                  <th>Changed</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filtered.map((s) => (
-                  <tr
-                    key={s.id}
-                    className={sel?.id === s.id ? "selected" : ""}
-                    onClick={() => onSelectSkill(s.id)}
-                  >
-                    <td className="name">{s.name}</td>
-                    <td>
-                      <span className={`chip ${s.sourceStatus}`}>{s.sourceStatus}</span>
-                    </td>
-                    <td className="mono">{s.latestRev}</td>
-                    <td className="mono dim">{formatSkillTags(s)}</td>
-                    <td className="mono dim">{s.bindingCount}</td>
-                    <td className="mono">{s.projectionCount}</td>
-                    <td className="mono dim">{s.changed}</td>
-                  </tr>
-                ))}
-                {filtered.length === 0 && (
+        {filtered.length === 0 ? (
+          <SkillsEmptyState
+            query={q}
+            readOnly={readOnly}
+            onClearFilter={() => setQ("")}
+            onAddSkill={() => setAddOpen(true)}
+          />
+        ) : (
+          <div className="two-col" style={{ height: "100%", gap: 0 }}>
+            <div style={{ overflow: "auto", borderRight: "1px solid var(--line)" }}>
+              <table className="tbl">
+                <thead>
                   <tr>
-                    <td colSpan={7} style={{ color: "var(--ink-3)", padding: 22, textAlign: "center" }}>
-                      {emptyMessage}
-                    </td>
+                    <th>Name</th>
+                    <th>Source</th>
+                    <th>Latest rev</th>
+                    <th>Tags</th>
+                    <th>Bindings</th>
+                    <th>Projections</th>
+                    <th>Changed</th>
                   </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-          <div style={{ padding: 20, overflow: "auto" }}>
-            {sel ? (
+                </thead>
+                <tbody>
+                  {filtered.map((s) => (
+                    <tr
+                      key={s.id}
+                      className={sel?.id === s.id ? "selected" : ""}
+                      onClick={() => onSelectSkill(s.id)}
+                    >
+                      <td className="name">{s.name}</td>
+                      <td>
+                        <span className={`chip ${s.sourceStatus}`}>{s.sourceStatus}</span>
+                      </td>
+                      <td className="mono">{s.latestRev}</td>
+                      <td className="mono dim">{formatSkillTags(s)}</td>
+                      <td className="mono dim">{s.bindingCount}</td>
+                      <td className="mono">{s.projectionCount}</td>
+                      <td className="mono dim">{s.changed}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div style={{ padding: 20, overflow: "auto" }}>
               <SkillDetail skill={sel} targets={targets} bindings={bindings} onMutation={onMutation} readOnly={readOnly} />
-            ) : (
-              <div className="empty">{emptyMessage}</div>
-            )}
+            </div>
           </div>
-        </div>
+        )}
       </div>
     </>
+  );
+}
+
+function SkillsEmptyState({
+  query,
+  readOnly,
+  onClearFilter,
+  onAddSkill,
+}: {
+  query: string;
+  readOnly: boolean;
+  onClearFilter: () => void;
+  onAddSkill: () => void;
+}) {
+  if (query) {
+    return (
+      <ActionEmptyState
+        title="No skills match this filter"
+        body="Clear the filter to return to the tracked skill list."
+        primaryLabel="Clear filter"
+        onPrimary={onClearFilter}
+        primaryIcon={<SearchIcon />}
+      />
+    );
+  }
+
+  if (readOnly) {
+    return (
+      <ActionEmptyState
+        title="Registry API offline"
+        body="Start the panel backend to load live skills before adding to the registry."
+        primaryLabel="Start panel"
+        primaryDisabled
+        primaryTitle="run the CLI command below"
+        primaryIcon={<PlusIcon />}
+        command="loom panel"
+      />
+    );
+  }
+
+  return (
+    <ActionEmptyState
+      title="No tracked skills yet"
+      body="Add the first skill source to start capturing lifecycle history and projections."
+      primaryLabel="skill add"
+      onPrimary={onAddSkill}
+      primaryIcon={<PlusIcon />}
+      command="loom skill add <source> --name <name>"
+    />
   );
 }
 

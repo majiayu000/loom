@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import type { Binding, Target } from "../../lib/types";
 import { AgentAvatar } from "../../components/panel/AgentAvatar";
 import { PlusIcon } from "../../components/icons/nav_icons";
+import { ActionEmptyState } from "../../components/panel/ActionEmptyState";
 import { BindingAddForm } from "../../components/panel/forms/BindingAddForm";
 import { api, ApiError, type BindingShowPayload } from "../../lib/api/client";
 import { useMutation } from "../../lib/useMutation";
@@ -12,6 +13,7 @@ interface BindingsPageProps {
   targets: Target[];
   projections?: RegistryProjection[];
   onMutation: () => void;
+  onNewTarget: () => void;
   readOnly: boolean;
   mutationVersion: number;
 }
@@ -21,6 +23,7 @@ export function BindingsPage({
   targets,
   projections = [],
   onMutation,
+  onNewTarget,
   readOnly,
   mutationVersion,
 }: BindingsPageProps) {
@@ -30,6 +33,8 @@ export function BindingsPage({
   const sel = bindings.find((b) => b.id === selectedId) ?? null;
   const cleanOrphans = useMutation();
   const orphanProjections = projections.filter((p) => !p.binding_id && p.health === "orphaned");
+  const canAddBinding = !readOnly && targets.length > 0;
+  const addBindingTitle = readOnly ? "registry offline" : targets.length === 0 ? "add a target first" : undefined;
 
   const runCleanOrphans = () => {
     if (readOnly || orphanProjections.length === 0) return;
@@ -58,8 +63,8 @@ export function BindingsPage({
           <button
             className="btn primary"
             onClick={() => setAddOpen((v) => !v)}
-            disabled={readOnly}
-            title={readOnly ? "registry offline" : undefined}
+            disabled={!canAddBinding}
+            title={addBindingTitle}
           >
             <PlusIcon /> {addOpen ? "close" : "New binding"}
           </button>
@@ -134,75 +139,134 @@ export function BindingsPage({
             />
           </div>
         )}
-        <div className="two-col" style={{ height: "100%", gap: 0 }}>
-          <div style={{ overflow: "auto", borderRight: "1px solid var(--line)" }}>
-            <table className="tbl">
-              <thead>
-                <tr>
-                  <th>Binding</th>
-                  <th>Skill</th>
-                  <th>Target</th>
-                  <th>Matcher</th>
-                  <th>Method</th>
-                  <th>Policy</th>
-                </tr>
-              </thead>
-              <tbody>
-                {bindings.map((b) => {
-                  const t = targets.find((x) => x.id === b.target);
-                  return (
-                    <tr
-                      key={b.id}
-                      className={selectedId === b.id ? "selected" : ""}
-                      onClick={() => setSelectedId(b.id === selectedId ? null : b.id)}
-                    >
-                      <td className="mono dim">{b.id}</td>
-                      <td className="name">{b.skill}</td>
-                      <td>
-                        {t && (
-                          <span className="row-flex">
-                            <AgentAvatar agent={t.agent} />
-                            <span style={{ color: "var(--ink-1)" }}>
-                              {t.agent}/{t.profile}
+        {bindings.length === 0 ? (
+          <BindingsEmptyState
+            readOnly={readOnly}
+            hasTargets={targets.length > 0}
+            onAddBinding={() => setAddOpen(true)}
+            onNewTarget={onNewTarget}
+          />
+        ) : (
+          <div className="two-col" style={{ height: "100%", gap: 0 }}>
+            <div style={{ overflow: "auto", borderRight: "1px solid var(--line)" }}>
+              <table className="tbl">
+                <thead>
+                  <tr>
+                    <th>Binding</th>
+                    <th>Skill</th>
+                    <th>Target</th>
+                    <th>Matcher</th>
+                    <th>Method</th>
+                    <th>Policy</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {bindings.map((b) => {
+                    const t = targets.find((x) => x.id === b.target);
+                    return (
+                      <tr
+                        key={b.id}
+                        className={selectedId === b.id ? "selected" : ""}
+                        onClick={() => setSelectedId(b.id === selectedId ? null : b.id)}
+                      >
+                        <td className="mono dim">{b.id}</td>
+                        <td className="name">{b.skill}</td>
+                        <td>
+                          {t && (
+                            <span className="row-flex">
+                              <AgentAvatar agent={t.agent} />
+                              <span style={{ color: "var(--ink-1)" }}>
+                                {t.agent}/{t.profile}
+                              </span>
                             </span>
+                          )}
+                        </td>
+                        <td className="mono">{b.matcher}</td>
+                        <td>
+                          <span className={`chip method ${b.method}`}>{b.method}</span>
+                        </td>
+                        <td>
+                          <span
+                            className="chip"
+                            style={{ color: b.policy === "auto" ? "var(--ok)" : "var(--warn)" }}
+                          >
+                            {b.policy}
                           </span>
-                        )}
-                      </td>
-                      <td className="mono">{b.matcher}</td>
-                      <td>
-                        <span className={`chip method ${b.method}`}>{b.method}</span>
-                      </td>
-                      <td>
-                        <span
-                          className="chip"
-                          style={{ color: b.policy === "auto" ? "var(--ok)" : "var(--warn)" }}
-                        >
-                          {b.policy}
-                        </span>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+            <div style={{ padding: 20, overflow: "auto" }}>
+              {sel ? (
+                <BindingDetail
+                  binding={sel}
+                  targets={targets}
+                  readOnly={readOnly}
+                  onMutation={onMutation}
+                  mutationVersion={mutationVersion}
+                  onRemoved={(bindingId) => setSelectedId((cur) => (cur === bindingId ? null : cur))}
+                />
+              ) : (
+                <div className="empty">Select a binding to inspect its rules, projections, and default target.</div>
+              )}
+            </div>
           </div>
-          <div style={{ padding: 20, overflow: "auto" }}>
-            {sel ? (
-              <BindingDetail
-                binding={sel}
-                targets={targets}
-                readOnly={readOnly}
-                onMutation={onMutation}
-                mutationVersion={mutationVersion}
-                onRemoved={(bindingId) => setSelectedId((cur) => (cur === bindingId ? null : cur))}
-              />
-            ) : (
-              <div className="empty">Select a binding to inspect its rules, projections, and default target.</div>
-            )}
-          </div>
-        </div>
+        )}
       </div>
     </>
+  );
+}
+
+function BindingsEmptyState({
+  readOnly,
+  hasTargets,
+  onAddBinding,
+  onNewTarget,
+}: {
+  readOnly: boolean;
+  hasTargets: boolean;
+  onAddBinding: () => void;
+  onNewTarget: () => void;
+}) {
+  if (readOnly) {
+    return (
+      <ActionEmptyState
+        title="Registry API offline"
+        body="Start the panel backend to load live binding rules before editing routes."
+        primaryLabel="Start panel"
+        primaryDisabled
+        primaryTitle="run the CLI command below"
+        primaryIcon={<PlusIcon />}
+        command="loom panel"
+      />
+    );
+  }
+
+  if (!hasTargets) {
+    return (
+      <ActionEmptyState
+        title="No bindings yet"
+        body="Add a target before creating the first workspace binding."
+        primaryLabel="Add target"
+        onPrimary={onNewTarget}
+        primaryIcon={<PlusIcon />}
+        command="loom target add --agent <agent> --path <abs-path> --ownership observed"
+      />
+    );
+  }
+
+  return (
+    <ActionEmptyState
+      title="No bindings yet"
+      body="Create a workspace binding so Loom knows which skill rules map to a target."
+      primaryLabel="New binding"
+      onPrimary={onAddBinding}
+      primaryIcon={<PlusIcon />}
+      command="loom workspace binding add --agent <agent> --profile <id> --matcher-kind path-prefix --matcher-value <workspace> --target <target-id>"
+    />
   );
 }
 

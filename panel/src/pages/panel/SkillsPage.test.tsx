@@ -305,9 +305,8 @@ describe("SkillsPage — empty registry", () => {
       />,
     );
 
-    // The CTA references the in-panel button by its label so users notice it.
-    expect(screen.getAllByText(/\+ skill add/).length).toBeGreaterThan(0);
-    // And it surfaces the equivalent CLI invocation for terminal-first users.
+    expect(screen.getByText("No tracked skills yet")).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "skill add" }).length).toBeGreaterThan(0);
     expect(
       screen.getAllByText(/loom skill add <source> --name <name>/).length,
     ).toBeGreaterThan(0);

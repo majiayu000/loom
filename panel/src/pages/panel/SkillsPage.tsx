@@ -37,7 +37,13 @@ export function SkillsPage({
   const [q, setQ] = useState("");
   const [addOpen, setAddOpen] = useState(false);
   const [captureBindingId, setCaptureBindingId] = useState("");
-  const filtered = skills.filter((s) => s.name.includes(q) || s.tag.includes(q));
+  const query = q.trim().toLowerCase();
+  const filtered = skills.filter((s) => {
+    if (!query) return true;
+    return [s.name, s.tag, s.description ?? ""].some((value) =>
+      value.toLowerCase().includes(query),
+    );
+  });
   const sel = skills.find((s) => s.id === selectedSkill) ?? skills[0];
   const capture = useMutation();
   const selectedSkillBindings = sel ? captureBindingsForSkill(sel.name, bindings, projections) : [];
@@ -179,7 +185,10 @@ export function SkillsPage({
                     className={sel?.id === s.id ? "selected" : ""}
                     onClick={() => onSelectSkill(s.id)}
                   >
-                    <td className="name">{s.name}</td>
+                    <td className="name">
+                      <div>{s.name}</div>
+                      {s.description && <div style={skillDescriptionStyle}>{s.description}</div>}
+                    </td>
                     <td>
                       <span className={`chip ${s.sourceStatus}`}>{s.sourceStatus}</span>
                     </td>
@@ -364,6 +373,7 @@ function SkillDetail({
   return (
     <div className="detail">
       <h4>{skill.name}</h4>
+      {skill.description && <div style={detailDescriptionStyle}>{skill.description}</div>}
       <div className="dpath">skills/{skill.name}@{skill.latestRev}</div>
       <div className="kv">
         <div className="k">Source</div>
@@ -550,4 +560,21 @@ const okStyle: React.CSSProperties = {
   color: "var(--ok)",
   background: "rgba(111,183,138,0.08)",
   border: "1px solid rgba(111,183,138,0.3)",
+};
+
+const skillDescriptionStyle: React.CSSProperties = {
+  maxWidth: 420,
+  marginTop: 3,
+  color: "var(--ink-3)",
+  fontSize: 11,
+  fontWeight: 400,
+  lineHeight: 1.35,
+  whiteSpace: "normal",
+};
+
+const detailDescriptionStyle: React.CSSProperties = {
+  margin: "4px 0 8px",
+  color: "var(--ink-2)",
+  fontSize: 12,
+  lineHeight: 1.45,
 };

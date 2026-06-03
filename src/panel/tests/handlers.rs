@@ -273,7 +273,11 @@ async fn v1_skills_returns_union_read_model() {
     let paths = RegistryStatePaths::from_root(&root);
     let source_dir = root.join("skills/present-skill");
     fs::create_dir_all(&source_dir).expect("create present skill");
-    fs::write(source_dir.join("SKILL.md"), "# present\n").expect("write skill");
+    fs::write(
+        source_dir.join("SKILL.md"),
+        "---\nname: present-skill\ndescription: \"Shows the panel skill description\"\n---\n# present\n",
+    )
+    .expect("write skill");
     fs::create_dir_all(root.join("skills/broken-skill")).expect("create broken skill");
 
     paths
@@ -347,6 +351,10 @@ async fn v1_skills_returns_union_read_model() {
     };
 
     assert_eq!(by_id("present-skill")["source_status"], json!("present"));
+    assert_eq!(
+        by_id("present-skill")["description"],
+        json!("Shows the panel skill description")
+    );
     assert_eq!(by_id("present-skill")["bindings_count"], json!(1));
     assert_eq!(
         by_id("broken-skill")["source_status"],

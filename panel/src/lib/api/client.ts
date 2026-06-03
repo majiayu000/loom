@@ -98,6 +98,7 @@ export interface TargetShowPayload {
 
 export interface SkillSummaryPayload {
   skill_id: string;
+  description?: string | null;
   source_status?: "present" | "missing" | "non-compliant";
   source_path?: string | null;
   latest_rev?: string | null;

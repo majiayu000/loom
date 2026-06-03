@@ -106,6 +106,7 @@ export function adaptSkill(
   return {
     id: `s-${name}`,
     name,
+    description: null,
     tag: inferTag(name),
     sourceStatus: "present",
     observedImported: false,
@@ -135,6 +136,7 @@ export function adaptSkillSummary(summary: SkillSummaryPayload): Skill {
   return {
     id: `s-${name}`,
     name,
+    description: summary.description ?? null,
     tag,
     sourceStatus: summary.source_status ?? "missing",
     observedImported: summary.observed_imported ?? false,

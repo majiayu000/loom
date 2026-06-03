@@ -1,6 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
 import type { PanelDataMode } from "../../lib/api/usePanelData";
 import { api, ApiError, type OpsHistoryDiagnosePayload, type OpsPayload, type RegistryOperationRecord } from "../../lib/api/client";
+import {
+  bucketRegistryOperation,
+  describeRegistryOperation,
+  registryOperationDisplayId,
+} from "../../lib/operation_labels";
 import { useMutation } from "../../lib/useMutation";
 
 type FilterKey = "all" | "pending" | "ok" | "err";
@@ -96,7 +101,8 @@ export function HistoryPage({ live, mode, mutationVersion, refreshKey, onMutatio
       if (filter !== "all" && bucket(op) !== filter) return false;
       if (!needle) return true;
       return (
-        operationDisplayId(op).toLowerCase().includes(needle) ||
+        registryOperationDisplayId(op).toLowerCase().includes(needle) ||
+        describeRegistryOperation(op).title.toLowerCase().includes(needle) ||
         op.intent.toLowerCase().includes(needle) ||
         (op.last_error?.message ?? "").toLowerCase().includes(needle)
       );
@@ -245,20 +251,19 @@ export function HistoryPage({ live, mode, mutationVersion, refreshKey, onMutatio
         </div>
 
         <div
+          className="history-table-wrap"
           style={{
             background: "var(--bg-1)",
             borderRadius: 10,
-            overflow: "hidden",
             border: "1px solid var(--line)",
           }}
         >
-          <table className="tbl">
+          <table className="tbl history-table">
             <thead>
               <tr>
-                <th>Change id</th>
-                <th>Intent</th>
+                <th>Action</th>
+                <th>Details</th>
                 <th>Status</th>
-                <th>ack</th>
                 <th>Created</th>
                 <th>Updated</th>
               </tr>
@@ -266,14 +271,14 @@ export function HistoryPage({ live, mode, mutationVersion, refreshKey, onMutatio
             <tbody>
               {state.kind === "loading" && (
                 <tr>
-                  <td colSpan={6} className="mono" style={{ textAlign: "center", color: "var(--ink-3)", padding: 18 }}>
+                  <td colSpan={5} className="mono" style={{ textAlign: "center", color: "var(--ink-3)", padding: 18 }}>
                     loading…
                   </td>
                 </tr>
               )}
               {state.kind === "ready" && filtered.length === 0 && (
                 <tr>
-                  <td colSpan={6} style={{ textAlign: "center", color: "var(--ink-3)", padding: 18 }}>
+                  <td colSpan={5} style={{ textAlign: "center", color: "var(--ink-3)", padding: 18 }}>
                     {operations.length === 0
                       ? "No activity recorded yet — every CLI or Panel change will show up here."
                       : "No activity matches the current filter."}
@@ -281,7 +286,7 @@ export function HistoryPage({ live, mode, mutationVersion, refreshKey, onMutatio
                 </tr>
               )}
               {filtered.map((op) => (
-                <OpHistoryRow key={operationDisplayId(op)} op={op} />
+                <OpHistoryRow key={registryOperationDisplayId(op)} op={op} />
               ))}
             </tbody>
           </table>
@@ -315,26 +320,17 @@ export function HistoryPage({ live, mode, mutationVersion, refreshKey, onMutatio
 }
 
 export function bucket(op: RegistryOperationRecord): "pending" | "ok" | "err" {
-  if (op.last_error) return "err";
-  const s = op.status.toLowerCase();
-  if (s === "pending" || s === "enqueued" || s === "in_flight" || s === "retrying") return "pending";
-  if (s === "ok" || s === "applied" || s === "completed" || s === "done" || s === "succeeded") return "ok";
-  if (s === "err" || s === "error" || s === "failed") return "err";
-  return op.ack ? "ok" : "pending";
-}
-
-function operationDisplayId(op: RegistryOperationRecord): string {
-  return op.op_id ?? op.audit_id ?? op.request_id ?? `${op.intent}-${op.updated_at}`;
+  return bucketRegistryOperation(op);
 }
 
 function OpHistoryRow({ op }: { op: RegistryOperationRecord }) {
   const kind = bucket(op);
   const color = kind === "err" ? "var(--err)" : kind === "pending" ? "var(--pending)" : "var(--ok)";
+  const label = describeRegistryOperation(op);
   return (
     <tr>
-      <td className="mono dim">{operationDisplayId(op)}</td>
       <td className="name">
-        {op.intent}
+        <div>{label.title}</div>
         {op.last_error && (
           <div className="mono" style={{ color: "var(--err)", fontSize: 10.5, marginTop: 3 }}>
             {op.last_error.message}
@@ -342,11 +338,19 @@ function OpHistoryRow({ op }: { op: RegistryOperationRecord }) {
         )}
       </td>
       <td>
+        <div className="op-detail-stack">
+          {label.details.map((detail) => (
+            <span key={detail} className="op-meta" title={detail.startsWith("id ") ? label.technicalId : undefined}>
+              {detail}
+            </span>
+          ))}
+        </div>
+      </td>
+      <td>
         <span className="chip" style={{ color }}>
           {op.last_error ? op.last_error.code : op.status}
         </span>
       </td>
-      <td className="mono dim">{op.ack ? "✓" : "—"}</td>
       <td className="mono dim" style={{ fontSize: 10.5 }}>
         {op.created_at}
       </td>

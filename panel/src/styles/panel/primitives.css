@@ -90,6 +90,18 @@
   box-shadow: 0 0 0 2px rgba(217, 119, 54, 0.13);
 }
 
+.field-input:hover,
+.searchbar:hover {
+  border-color: var(--line-hi);
+  background: var(--bg-3);
+}
+
+.field-input:disabled,
+.searchbar input:disabled {
+  cursor: not-allowed;
+  color: var(--ink-3);
+}
+
 .searchbar {
   display: inline-flex;
   align-items: center;

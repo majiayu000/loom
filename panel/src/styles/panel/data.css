@@ -200,21 +200,6 @@
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .op-row {
-    grid-template-columns: 18px minmax(0, 1fr);
-    align-items: start;
-  }
-
-  .op-row .op-time {
-    grid-column: 2;
-    white-space: normal;
-  }
-
-  .op-row .op-title,
-  .op-row .op-sub {
-    overflow-wrap: anywhere;
-  }
-
   .proj-head {
     align-items: flex-start;
     flex-direction: column;
@@ -353,6 +338,24 @@
   color: var(--ink-3);
   white-space: nowrap;
 }
+
+@media (max-width: 720px) {
+  .op-row {
+    grid-template-columns: 18px minmax(0, 1fr);
+    align-items: start;
+  }
+
+  .op-row .op-time {
+    grid-column: 2;
+    white-space: normal;
+  }
+
+  .op-row .op-title,
+  .op-row .op-sub {
+    overflow-wrap: anywhere;
+  }
+}
+
 .op-kind {
   font-family: var(--font-mono);
   color: var(--ink-1);

@@ -199,7 +199,7 @@ export function HistoryPage({ live, mode, mutationVersion, refreshKey, onMutatio
             )}
           </div>
         )}
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 18 }}>
+        <div className="kpi-row">
           <Kpi label="Loaded changes" value={counts.all} />
           <Kpi label="Pending" value={counts.pending} tone={counts.pending > 0 ? "pending" : undefined} />
           <Kpi label="Succeeded" value={counts.ok} />
@@ -252,7 +252,7 @@ export function HistoryPage({ live, mode, mutationVersion, refreshKey, onMutatio
             border: "1px solid var(--line)",
           }}
         >
-          <table className="tbl">
+          <table className="tbl mobile-cards">
             <thead>
               <tr>
                 <th>Change id</th>
@@ -266,14 +266,22 @@ export function HistoryPage({ live, mode, mutationVersion, refreshKey, onMutatio
             <tbody>
               {state.kind === "loading" && (
                 <tr>
-                  <td colSpan={6} className="mono" style={{ textAlign: "center", color: "var(--ink-3)", padding: 18 }}>
+                  <td
+                    colSpan={6}
+                    className="mono table-empty-cell"
+                    style={{ textAlign: "center", color: "var(--ink-3)", padding: 18 }}
+                  >
                     loading…
                   </td>
                 </tr>
               )}
               {state.kind === "ready" && filtered.length === 0 && (
                 <tr>
-                  <td colSpan={6} style={{ textAlign: "center", color: "var(--ink-3)", padding: 18 }}>
+                  <td
+                    colSpan={6}
+                    className="table-empty-cell"
+                    style={{ textAlign: "center", color: "var(--ink-3)", padding: 18 }}
+                  >
                     {operations.length === 0
                       ? "No activity recorded yet — every CLI or Panel change will show up here."
                       : "No activity matches the current filter."}
@@ -332,8 +340,10 @@ function OpHistoryRow({ op }: { op: RegistryOperationRecord }) {
   const color = kind === "err" ? "var(--err)" : kind === "pending" ? "var(--pending)" : "var(--ok)";
   return (
     <tr>
-      <td className="mono dim">{operationDisplayId(op)}</td>
-      <td className="name">
+      <td className="mono dim" data-label="Change id">
+        {operationDisplayId(op)}
+      </td>
+      <td className="name" data-label="Intent">
         {op.intent}
         {op.last_error && (
           <div className="mono" style={{ color: "var(--err)", fontSize: 10.5, marginTop: 3 }}>
@@ -341,16 +351,18 @@ function OpHistoryRow({ op }: { op: RegistryOperationRecord }) {
           </div>
         )}
       </td>
-      <td>
+      <td data-label="Status">
         <span className="chip" style={{ color }}>
           {op.last_error ? op.last_error.code : op.status}
         </span>
       </td>
-      <td className="mono dim">{op.ack ? "✓" : "—"}</td>
-      <td className="mono dim" style={{ fontSize: 10.5 }}>
+      <td className="mono dim mobile-hide" data-label="Ack">
+        {op.ack ? "✓" : "—"}
+      </td>
+      <td className="mono dim" data-label="Created" style={{ fontSize: 10.5 }}>
         {op.created_at}
       </td>
-      <td className="mono dim" style={{ fontSize: 10.5 }}>
+      <td className="mono dim mobile-hide" data-label="Updated" style={{ fontSize: 10.5 }}>
         {op.updated_at}
       </td>
     </tr>

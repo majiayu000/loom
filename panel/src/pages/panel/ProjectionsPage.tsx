@@ -119,7 +119,7 @@ export function ProjectionsPage({ projections, targets, bindings, readOnly, onMu
       <div className="page-body" style={{ padding: 0 }}>
         <div className="two-col projections-layout">
           <div className="projections-list">
-            <table className="tbl">
+            <table className="tbl mobile-cards">
               <thead>
                 <tr>
                   <th>Instance</th>
@@ -137,16 +137,22 @@ export function ProjectionsPage({ projections, targets, bindings, readOnly, onMu
                     className={selected?.instance_id === projection.instance_id ? "selected" : ""}
                     onClick={() => setSelectedId(projection.instance_id)}
                   >
-                    <td className="mono dim">{projection.instance_id}</td>
-                    <td className="name">{projection.skill_id}</td>
-                    <td>{targetLabel(targets, projection.target_id)}</td>
-                    <td>{projection.method}</td>
-                    <td>
+                    <td className="mono dim" data-label="Instance">
+                      {projection.instance_id}
+                    </td>
+                    <td className="name" data-label="Skill">
+                      {projection.skill_id}
+                    </td>
+                    <td data-label="Target">{targetLabel(targets, projection.target_id)}</td>
+                    <td data-label="Method">{projection.method}</td>
+                    <td data-label="Health">
                       <span className={`badge ${healthClass(projection)}`}>
                         {projection.observed_drift ? "drifted" : projection.health}
                       </span>
                     </td>
-                    <td className="mono dim">{shortRev(projection.last_applied_rev)}</td>
+                    <td className="mono dim" data-label="Rev">
+                      {shortRev(projection.last_applied_rev)}
+                    </td>
                   </tr>
                 ))}
               </tbody>

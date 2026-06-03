@@ -49,6 +49,15 @@
   font-weight: 500;
 }
 
+.tbl td[data-label] {
+  min-width: 0;
+}
+
+.tbl td.mono,
+.tbl td .mono {
+  overflow-wrap: anywhere;
+}
+
 .two-col {
   display: grid;
   grid-template-columns: 1fr 360px;
@@ -90,14 +99,86 @@
     grid-template-columns: minmax(0, 1fr);
   }
 
+  .tbl.mobile-cards,
+  .tbl.mobile-cards tbody,
+  .tbl.mobile-cards tr,
+  .tbl.mobile-cards td {
+    display: block;
+    width: 100%;
+  }
+
+  .tbl.mobile-cards {
+    border-collapse: separate;
+    border-spacing: 0;
+    padding: 10px;
+  }
+
+  .tbl.mobile-cards thead {
+    display: none;
+  }
+
+  .tbl.mobile-cards tr {
+    margin-bottom: 10px;
+    padding: 10px 12px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: var(--bg-1);
+    cursor: pointer;
+  }
+
+  .tbl.mobile-cards tr.selected {
+    border-color: var(--accent);
+    background: var(--bg-2);
+  }
+
+  .tbl.mobile-cards td {
+    display: grid;
+    grid-template-columns: 92px minmax(0, 1fr);
+    gap: 10px;
+    padding: 4px 0;
+    border-bottom: 0;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+    user-select: text;
+  }
+
+  .tbl.mobile-cards td::before {
+    content: attr(data-label);
+    min-width: 0;
+    color: var(--ink-3);
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  .tbl.mobile-cards td.mobile-hide {
+    display: none;
+  }
+
+  .tbl.mobile-cards td.table-empty-cell {
+    display: block;
+    text-align: center;
+  }
+
+  .tbl.mobile-cards td.table-empty-cell::before {
+    content: none;
+  }
+
+  .tbl.mobile-cards .row-flex {
+    align-items: flex-start;
+  }
+
+  .tbl.mobile-cards .chip,
+  .tbl.mobile-cards .badge {
+    justify-self: start;
+    white-space: normal;
+  }
+
   .projections-list {
     border-right: 0;
     border-bottom: 1px solid var(--line);
-    max-height: 44vh;
-  }
-
-  .projections-list .tbl {
-    min-width: 720px;
+    max-height: none;
   }
 
   .projections-detail-panel {
@@ -107,6 +188,31 @@
   .target-grid,
   .target-detail-grid {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .target-grid .mono,
+  .target-detail-grid .mono {
+    overflow-wrap: anywhere;
+  }
+
+  .ops-summary-grid,
+  .kpi-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .op-row {
+    grid-template-columns: 18px minmax(0, 1fr);
+    align-items: start;
+  }
+
+  .op-row .op-time {
+    grid-column: 2;
+    white-space: normal;
+  }
+
+  .op-row .op-title,
+  .op-row .op-sub {
+    overflow-wrap: anywhere;
   }
 
   .proj-head {
@@ -274,6 +380,19 @@
 }
 .op-status.err {
   color: var(--err);
+}
+
+.ops-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  margin-bottom: 18px;
+}
+
+@media (max-width: 720px) {
+  .ops-summary-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 .spark {

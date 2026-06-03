@@ -136,7 +136,7 @@ export function BindingsPage({
         )}
         <div className="two-col" style={{ height: "100%", gap: 0 }}>
           <div style={{ overflow: "auto", borderRight: "1px solid var(--line)" }}>
-            <table className="tbl">
+            <table className="tbl mobile-cards">
               <thead>
                 <tr>
                   <th>Binding</th>
@@ -156,9 +156,13 @@ export function BindingsPage({
                       className={selectedId === b.id ? "selected" : ""}
                       onClick={() => setSelectedId(b.id === selectedId ? null : b.id)}
                     >
-                      <td className="mono dim">{b.id}</td>
-                      <td className="name">{b.skill}</td>
-                      <td>
+                      <td className="mono dim" data-label="Binding">
+                        {b.id}
+                      </td>
+                      <td className="name" data-label="Skill">
+                        {b.skill}
+                      </td>
+                      <td data-label="Target">
                         {t && (
                           <span className="row-flex">
                             <AgentAvatar agent={t.agent} />
@@ -168,11 +172,13 @@ export function BindingsPage({
                           </span>
                         )}
                       </td>
-                      <td className="mono">{b.matcher}</td>
-                      <td>
+                      <td className="mono" data-label="Matcher">
+                        {b.matcher}
+                      </td>
+                      <td data-label="Method">
                         <span className={`chip method ${b.method}`}>{b.method}</span>
                       </td>
-                      <td>
+                      <td data-label="Policy">
                         <span
                           className="chip"
                           style={{ color: b.policy === "auto" ? "var(--ok)" : "var(--warn)" }}

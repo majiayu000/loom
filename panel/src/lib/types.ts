@@ -45,6 +45,8 @@ export interface Skill {
   name: string;
   tag: string;
   sourceStatus: SkillSourceStatus;
+  observedImported?: boolean;
+  sources?: string[];
   releaseTags: string[];
   snapshotTags: string[];
   /**

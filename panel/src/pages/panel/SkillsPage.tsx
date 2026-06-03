@@ -62,16 +62,41 @@ export function SkillsPage({
     );
   }, [bindingOptionKey]);
 
-  const emptyMessage: React.ReactNode = readOnly
-    ? "Registry API offline."
-    : q
-    ? "No skills match the current filter."
-    : (
+  const emptyTitle = readOnly ? "Registry API offline" : q ? "No skills match this filter" : "No skills tracked";
+  const emptyCopy: React.ReactNode = readOnly ? (
+    <>
+      Start the panel backend to load live registry data before capturing or adding skills.
+    </>
+  ) : q ? (
+    "Clear the filter or search for a different skill name or tag."
+  ) : (
+    <>
+      Use the <strong>+ skill add</strong> button above, or run{" "}
+      <code className="mono">loom skill add &lt;source&gt; --name &lt;name&gt;</code>. After a skill is added,
+      bind it to a target and capture its first lifecycle event.
+    </>
+  );
+
+  const renderEmptyState = (compact = false) => (
+    <div className={`empty-panel${compact ? " compact" : ""}`}>
+      <div className="empty-panel-title">{emptyTitle}</div>
+      <div className="empty-panel-copy">{emptyCopy}</div>
+      {!readOnly && !q && (
         <>
-          No skills in this registry yet — use the <strong>+ skill add</strong> button above, or run{" "}
-          <code className="mono">loom skill add &lt;source&gt; --name &lt;name&gt;</code>.
+          <ul className="empty-panel-list">
+            <li>Add a skill from a local directory or git-backed source.</li>
+            <li>Create a binding so the skill has a target.</li>
+            <li>Capture, snapshot, or release changes from the detail panel.</li>
+          </ul>
+          <div className="empty-panel-actions">
+            <button className="btn primary" onClick={() => setAddOpen(true)}>
+              <PlusIcon /> skill add
+            </button>
+          </div>
         </>
-      );
+      )}
+    </div>
+  );
 
   const runCapture = () => {
     if (!sel || !captureBinding) return;
@@ -192,8 +217,8 @@ export function SkillsPage({
                 ))}
                 {filtered.length === 0 && (
                   <tr>
-                    <td colSpan={7} style={{ color: "var(--ink-3)", padding: 22, textAlign: "center" }}>
-                      {emptyMessage}
+                    <td colSpan={7}>
+                      {renderEmptyState(true)}
                     </td>
                   </tr>
                 )}
@@ -204,7 +229,7 @@ export function SkillsPage({
             {sel ? (
               <SkillDetail skill={sel} targets={targets} bindings={bindings} onMutation={onMutation} readOnly={readOnly} />
             ) : (
-              <div className="empty">{emptyMessage}</div>
+              renderEmptyState()
             )}
           </div>
         </div>

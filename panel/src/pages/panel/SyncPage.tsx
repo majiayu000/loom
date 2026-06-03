@@ -30,6 +30,7 @@ export function SyncPage({ remote, pendingCount, registryRoot, refreshKey, readO
   const syncBusy = push.busy || pull.busy || replay.busy || setRemote.busy || historyRepair.busy;
   const configured = remote?.configured === true;
   const state = remote?.sync_state ?? (configured ? "unknown" : "not configured");
+  const stateTone = syncStateTone(state);
   const rootDisplay = registryRoot ? registryRoot.replace(/^\/Users\/[^/]+/, "~") : "—";
   const conflictCount = diagnose?.conflicts.length ?? 0;
 
@@ -115,8 +116,8 @@ export function SyncPage({ remote, pendingCount, registryRoot, refreshKey, readO
         </div>
       )}
       <div className="page-body">
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 18 }}>
-          <Kpi label="Sync state" value={state} />
+        <div className="kpi-row">
+          <Kpi label="Sync state" value={formatSyncState(state)} tone={stateTone} valueKind="status" />
           <Kpi label="Ahead" value={remote?.ahead ?? 0} />
           <Kpi label="Behind" value={remote?.behind ?? 0} />
           <Kpi
@@ -157,7 +158,7 @@ export function SyncPage({ remote, pendingCount, registryRoot, refreshKey, readO
             </pre>
             {remote?.tracking_ref === false && (
               <div style={{ color: "var(--warn)", fontSize: 11 }}>
-                ⚠ Local-only — no upstream tracking branch configured.
+                Local only: no upstream tracking branch configured.
               </div>
             )}
             <form
@@ -284,12 +285,41 @@ const inputStyle = {
   outline: "none",
 };
 
-function Kpi({ label, value, tone }: { label: string; value: string | number; tone?: "pending" | "err" }) {
+function formatSyncState(state: string): string {
+  return state.replace(/_/g, " ").toLowerCase();
+}
+
+function syncStateTone(state: string): "pending" | "err" | undefined {
+  const normalized = state.toUpperCase();
+  if (normalized.includes("CONFLICT") || normalized.includes("ERROR") || normalized.includes("FAILED")) return "err";
+  if (
+    normalized.includes("LOCAL") ||
+    normalized.includes("PENDING") ||
+    normalized.includes("BEHIND") ||
+    normalized.includes("UNKNOWN") ||
+    normalized.includes("NOT CONFIGURED")
+  ) {
+    return "pending";
+  }
+  return undefined;
+}
+
+function Kpi({
+  label,
+  value,
+  tone,
+  valueKind,
+}: {
+  label: string;
+  value: string | number;
+  tone?: "pending" | "err";
+  valueKind?: "status";
+}) {
   const color = tone === "pending" ? "var(--pending)" : tone === "err" ? "var(--err)" : "var(--ink-0)";
   return (
     <div className="kpi">
       <div className="label">{label}</div>
-      <div className="value" style={{ color }}>
+      <div className={`value${valueKind === "status" ? " status-value" : ""}`} style={{ color }}>
         {value}
       </div>
     </div>

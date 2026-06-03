@@ -148,6 +148,35 @@ export function BindingsPage({
                 </tr>
               </thead>
               <tbody>
+                {bindings.length === 0 && (
+                  <tr>
+                    <td colSpan={6}>
+                      <div className="empty-panel compact">
+                        <div className="empty-panel-title">No bindings configured</div>
+                        <div className="empty-panel-copy">
+                          Bindings connect skills to targets. Create one after at least one target exists, then project
+                          matching skills into that target.
+                        </div>
+                        <div className="empty-panel-actions">
+                          <button
+                            className="btn primary"
+                            onClick={() => setAddOpen(true)}
+                            disabled={readOnly || targets.length === 0}
+                            title={
+                              readOnly
+                                ? "registry offline"
+                                : targets.length === 0
+                                  ? "add a target first"
+                                  : undefined
+                            }
+                          >
+                            <PlusIcon /> New binding
+                          </button>
+                        </div>
+                      </div>
+                    </td>
+                  </tr>
+                )}
                 {bindings.map((b) => {
                   const t = targets.find((x) => x.id === b.target);
                   return (
@@ -197,7 +226,21 @@ export function BindingsPage({
                 onRemoved={(bindingId) => setSelectedId((cur) => (cur === bindingId ? null : cur))}
               />
             ) : (
-              <div className="empty">Select a binding to inspect its rules, projections, and default target.</div>
+              <div className="empty-panel">
+                <div className="empty-panel-title">
+                  {bindings.length === 0 ? "Binding details will appear here" : "Select a binding"}
+                </div>
+                <div className="empty-panel-copy">
+                  {bindings.length === 0
+                    ? "After a binding is created, this panel shows its matcher, projection method, policy, and live projection status."
+                    : "Inspect a binding to review its rules, projections, and default target before projecting or deleting it."}
+                </div>
+                <ul className="empty-panel-list">
+                  <li>Matcher shows which workspaces the rule applies to.</li>
+                  <li>Method records whether the skill is symlinked, copied, or materialized.</li>
+                  <li>Policy distinguishes automatic projection from manual review.</li>
+                </ul>
+              </div>
             )}
           </div>
         </div>

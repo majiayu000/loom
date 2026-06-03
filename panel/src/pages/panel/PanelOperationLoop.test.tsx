@@ -256,6 +256,31 @@ test("SyncPage surfaces history repair actions", async () => {
   }
 });
 
+test("SyncPage renders local-only sync state as compact readable text", async () => {
+  let renderer: ReactTestRenderer;
+  await act(async () => {
+    renderer = create(
+      <SyncPage
+        remote={{
+          configured: true,
+          url: "git@example.com:loom.git",
+          ahead: 0,
+          behind: 0,
+          sync_state: "LOCAL_ONLY",
+          tracking_ref: false,
+        }}
+        pendingCount={0}
+        registryRoot="/tmp/loom"
+        readOnly={true}
+        onMutation={() => {}}
+      />,
+    );
+  });
+
+  expect(markup(renderer!).includes("local only")).toBe(true);
+  expect(markup(renderer!).includes("LOCAL_ONLY")).toBe(false);
+});
+
 test("SyncPage re-runs history diagnose when refreshed data arrives", async () => {
   const originalDiagnose = api.opsHistoryDiagnose;
   let diagnoseCalls = 0;

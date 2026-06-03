@@ -151,7 +151,23 @@ export function ProjectionsPage({ projections, targets, bindings, readOnly, onMu
                 ))}
               </tbody>
             </table>
-            {filtered.length === 0 && <div className="empty">No projections match this filter.</div>}
+            {filtered.length === 0 && (
+              <div className="empty-panel compact">
+                <div className="empty-panel-title">
+                  {projections.length === 0 ? "No projections applied" : "No projections match this filter"}
+                </div>
+                <div className="empty-panel-copy">
+                  {projections.length === 0
+                    ? "Apply a binding to materialize a skill into a target. Projection rows will show method, health, revision, and drift."
+                    : "Choose another health filter or refresh live data to review the current projection set."}
+                </div>
+                <div className="empty-panel-actions">
+                  <button className="btn ghost" onClick={onMutation} title="re-fetch projections">
+                    <RefreshIcon /> Refresh
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
           <div className="projections-detail-panel">
             {selected ? (
@@ -173,7 +189,18 @@ export function ProjectionsPage({ projections, targets, bindings, readOnly, onMu
                 messageTone={action.error ? "var(--err)" : "var(--ok)"}
               />
             ) : (
-              <div className="empty">No projections found.</div>
+              <div className="empty-panel">
+                <div className="empty-panel-title">Projection details will appear here</div>
+                <div className="empty-panel-copy">
+                  Select a projection to inspect its instance path, binding, target, applied revision, and available
+                  repair actions.
+                </div>
+                <ul className="empty-panel-list">
+                  <li>Healthy rows are in sync with the recorded revision.</li>
+                  <li>Drifted rows can be captured or re-projected.</li>
+                  <li>Orphaned rows can be cleaned when their binding was removed.</li>
+                </ul>
+              </div>
             )}
           </div>
         </div>

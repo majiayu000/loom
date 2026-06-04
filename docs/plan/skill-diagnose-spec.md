@@ -66,7 +66,7 @@ Suggested command summary:
 {
   "skill": "model-onboarding",
   "healthy": false,
-  "status": "attention",
+  "status": "blocked",
   "summary": {
     "source_status": "present",
     "binding_count": 2,

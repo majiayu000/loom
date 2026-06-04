@@ -239,8 +239,7 @@ pub(in crate::panel) async fn registry_skill_trash_purge(
     headers: HeaderMap,
     State(state): State<PanelState>,
 ) -> (StatusCode, Json<serde_json::Value>) {
-    if let Some(response) =
-        ensure_mutation_authorized(&state, peer, &headers, "skill.trash.purge")
+    if let Some(response) = ensure_mutation_authorized(&state, peer, &headers, "skill.trash.purge")
     {
         return response;
     }

@@ -2,9 +2,9 @@ use super::*;
 use crate::panel::TrashRestoreRequest;
 use crate::panel::handlers::{
     OpsQuery, info, pending, registry_ops, registry_orphan_clean, registry_skill_trash_add,
-    registry_skill_trash_purge, registry_skill_trash_restore, remote_set, remote_status,
-    v1_health, v1_overview, v1_registry_ops, v1_registry_targets, v1_skill_diagnose,
-    v1_skill_trash, v1_skills, v1_workspace_status,
+    registry_skill_trash_purge, registry_skill_trash_restore, remote_set, remote_status, v1_health,
+    v1_overview, v1_registry_ops, v1_registry_targets, v1_skill_diagnose, v1_skill_trash,
+    v1_skills, v1_workspace_status,
 };
 use crate::state_model::{
     REGISTRY_SCHEMA_VERSION, RegistryBindingRule, RegistryOperationRecord,

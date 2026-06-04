@@ -39,7 +39,7 @@ Gap:
 4. No synthetic Panel data, fake lifecycle events, or inferred health when registry state is unavailable.
 5. No new persistence schema for diagnosis results.
 6. No hidden fallback from one projection method to another.
-7. No mutation audit operation for diagnosis. Command audit events may still be written by the existing CLI read-command audit path.
+7. No mutation audit operation for diagnosis. CLI invocation may follow the existing read-command audit policy, but the Panel diagnose endpoint should not append command-audit events on every tab refresh.
 
 ## Command Contract
 
@@ -126,10 +126,11 @@ Rules:
    - Error when `skills/<skill>` does not exist and the skill is referenced by registry state.
    - Next action: restore from trash/history, re-add the skill, or clean orphaned references depending on related data.
 2. `skill_file_exists`
-   - Error when `SKILL.md` is missing.
+   - Error when neither `SKILL.md` nor `skill.md` exists.
+   - Details include which entrypoint filename was found.
    - Next action: add `skills/<skill>/SKILL.md` or remove the non-compliant source.
 3. `skill_frontmatter_description`
-   - Warning when description cannot be read from `SKILL.md`.
+   - Warning when description cannot be read from the detected entrypoint.
    - Next action: add `description:` frontmatter.
 
 ### Git Source Drift
@@ -227,9 +228,10 @@ GET /api/v1/skills/{skill_id}/diagnose
 
 Response:
 
-- CLI-style envelope via the existing `run_panel_command` read path or equivalent read wrapper.
+- CLI-style envelope via a read-only wrapper or direct command call.
 - `data` equals the `skill diagnose` payload.
 - Non-2xx only when the command cannot run or the skill is completely unknown.
+- The endpoint should avoid durable command-audit writes because the UI fetches diagnosis interactively.
 
 Back-compat route:
 
@@ -307,7 +309,7 @@ Only after PR 1 and PR 2 are manually validated:
 ## Acceptance Criteria
 
 1. `loom --json skill diagnose <skill>` returns stable JSON with `healthy`, `status`, `summary`, `checks`, and `related`.
-2. The command has no control-plane side effects beyond existing command audit behavior.
+2. The CLI command has no control-plane side effects beyond existing read-command audit behavior.
 3. All failed checks include concrete `next_action`.
 4. Projection symlink checks correctly resolve relative symlink targets from the symlink parent.
 5. Panel Skills detail can diagnose a selected skill without fabricating data.

@@ -1,7 +1,8 @@
 use super::*;
 use crate::panel::handlers::{
     OpsQuery, info, pending, registry_ops, registry_orphan_clean, remote_set, remote_status,
-    v1_health, v1_overview, v1_registry_ops, v1_registry_targets, v1_skills, v1_workspace_status,
+    v1_health, v1_overview, v1_registry_ops, v1_registry_targets, v1_skill_diagnose, v1_skills,
+    v1_workspace_status,
 };
 use crate::state_model::{
     REGISTRY_SCHEMA_VERSION, RegistryBindingRule, RegistryOperationRecord,
@@ -406,6 +407,35 @@ async fn v1_skills_warns_when_description_cannot_be_read() {
             .as_str()
             .is_some_and(|message| message.contains("failed to read skill description"))),
         "missing description warning: {warnings:?}"
+    );
+
+    cleanup_root(root);
+}
+
+#[tokio::test]
+async fn v1_skill_diagnose_returns_envelope_without_command_audit() {
+    let (root, state) = make_test_state();
+    let source_dir = root.join("skills/present-skill");
+    fs::create_dir_all(&source_dir).expect("create skill");
+    fs::write(
+        source_dir.join("SKILL.md"),
+        "---\ndescription: Present skill\n---\n",
+    )
+    .expect("write skill");
+
+    let (status, Json(payload)) = v1_skill_diagnose(
+        axum::extract::Path("present-skill".to_string()),
+        State(state),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(payload["ok"], json!(true));
+    assert_eq!(payload["cmd"], json!("skill.diagnose"));
+    assert_eq!(payload["data"]["skill"], json!("present-skill"));
+    assert!(
+        !root.join("state/events/commands.jsonl").exists(),
+        "interactive panel diagnose must not append command-audit rows"
     );
 
     cleanup_root(root);

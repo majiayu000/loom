@@ -206,6 +206,8 @@ pub enum SkillCommand {
     },
     #[command(about = "Verify a skill source has no uncommitted drift")]
     Verify(SkillOnlyArgs),
+    #[command(about = "Diagnose one skill source and registry projection state")]
+    Diagnose(SkillOnlyArgs),
     #[command(about = "Watch registry skill sources and autosave stable local edits")]
     Watch(WatchArgs),
     #[command(about = "Continuously import and update skills from observed targets")]

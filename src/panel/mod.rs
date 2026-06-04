@@ -163,6 +163,10 @@ pub async fn run_panel(ctx: AppContext, port: u16) -> Result<()> {
         )
         .route("/api/v1/skills", get(v1_skills).post(registry_skill_add))
         .route(
+            "/api/v1/skills/{skill_name}/diagnose",
+            get(v1_skill_diagnose),
+        )
+        .route(
             "/api/v1/skills/{skill_name}/save",
             post(registry_skill_save),
         )

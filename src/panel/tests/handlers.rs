@@ -372,6 +372,46 @@ async fn v1_skills_returns_union_read_model() {
 }
 
 #[tokio::test]
+async fn v1_skills_warns_when_description_cannot_be_read() {
+    let (root, state) = make_test_state();
+    write_registry_snapshot(&root, REGISTRY_SCHEMA_VERSION);
+    let source_dir = root.join("skills/unreadable-description");
+    fs::create_dir_all(&source_dir).expect("create skill");
+    fs::write(
+        source_dir.join("SKILL.md"),
+        b"---\ndescription: \xFF\n---\n# present\n",
+    )
+    .expect("write invalid skill description");
+
+    let (status, Json(payload)) = v1_skills(State(state)).await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(payload["ok"], json!(true));
+    assert_eq!(payload["data"]["count"], json!(1));
+    assert_eq!(
+        payload["data"]["skills"][0]["skill_id"],
+        json!("unreadable-description")
+    );
+    assert_eq!(
+        payload["data"]["skills"][0]["source_status"],
+        json!("present")
+    );
+    assert_eq!(payload["data"]["skills"][0]["description"], Value::Null);
+
+    let warnings = payload["meta"]["warnings"]
+        .as_array()
+        .expect("warnings array");
+    assert!(
+        warnings.iter().any(|warning| warning
+            .as_str()
+            .is_some_and(|message| message.contains("failed to read skill description"))),
+        "missing description warning: {warnings:?}"
+    );
+
+    cleanup_root(root);
+}
+
+#[tokio::test]
 async fn v1_registry_ops_returns_non_2xx_when_registry_is_missing() {
     let (root, state) = make_test_state();
 

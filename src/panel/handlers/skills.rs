@@ -80,7 +80,7 @@ fn build_skill_read_model(
     let mut warnings = Vec::new();
     let mut rows: BTreeMap<String, SkillReadRow> = BTreeMap::new();
 
-    add_source_skill_rows(&state.ctx.skills_dir, &mut rows)?;
+    add_source_skill_rows(&state.ctx.skills_dir, &mut rows, &mut warnings)?;
 
     let paths = RegistryStatePaths::from_app_context(&state.ctx);
     let snapshot = paths.maybe_load_snapshot()?;
@@ -117,6 +117,7 @@ fn skill_row<'a>(
 fn add_source_skill_rows(
     skills_dir: &Path,
     rows: &mut BTreeMap<String, SkillReadRow>,
+    warnings: &mut Vec<String>,
 ) -> anyhow::Result<()> {
     if !skills_dir.exists() {
         return Ok(());
@@ -130,7 +131,15 @@ fn add_source_skill_rows(
         row.source_path = Some(path.clone());
         let skill_file = path.join("SKILL.md");
         row.source_status = Some(if path.is_dir() && skill_file.is_file() {
-            row.description = read_skill_description(&skill_file)?;
+            match read_skill_description(&skill_file) {
+                Ok(description) => {
+                    row.description = description;
+                }
+                Err(err) => warnings.push(format!(
+                    "failed to read skill description from {}: {err}",
+                    skill_file.display()
+                )),
+            }
             "present"
         } else {
             "non-compliant"

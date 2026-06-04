@@ -140,36 +140,60 @@ fn build_skill_diagnosis(
         ));
     }
 
-    if let Ok(report) = ctx.read_pending_report() {
-        pending_ops = report
-            .ops
-            .iter()
-            .rev()
-            .filter(|op| pending_op_mentions_skill(op, skill))
-            .take(MAX_RELATED_OPS)
-            .map(|op| {
-                json!({
-                    "op_id": op.op_id,
-                    "request_id": op.request_id,
-                    "command": op.command,
-                    "created_at": op.created_at,
-                    "details": op.details
+    match ctx.read_pending_report() {
+        Ok(report) => {
+            pending_ops = report
+                .ops
+                .iter()
+                .rev()
+                .filter(|op| pending_op_mentions_skill(op, skill))
+                .take(MAX_RELATED_OPS)
+                .map(|op| {
+                    json!({
+                        "op_id": op.op_id,
+                        "request_id": op.request_id,
+                        "command": op.command,
+                        "created_at": op.created_at,
+                        "details": op.details
+                    })
                 })
-            })
-            .collect();
-        checks.push(check(
+                .collect();
+            checks.push(check(
+                "operations",
+                "recent_pending_ops",
+                pending_ops.is_empty(),
+                "warning",
+                if pending_ops.is_empty() {
+                    "no pending operations for this skill"
+                } else {
+                    "pending operations exist for this skill"
+                },
+                "run loom ops list and resolve or retry pending work",
+                json!({"operations": pending_ops}),
+            ));
+            checks.push(check(
+                "operations",
+                "pending_queue_warnings",
+                report.warnings.is_empty(),
+                "warning",
+                if report.warnings.is_empty() {
+                    "pending operation queue parsed cleanly"
+                } else {
+                    "pending operation queue has parse warnings"
+                },
+                "inspect state/pending_ops.jsonl and pending_ops_history for malformed entries",
+                json!({"warnings": report.warnings}),
+            ));
+        }
+        Err(err) => checks.push(check(
             "operations",
-            "recent_pending_ops",
-            pending_ops.is_empty(),
-            "warning",
-            if pending_ops.is_empty() {
-                "no pending operations for this skill"
-            } else {
-                "pending operations exist for this skill"
-            },
-            "run loom ops list and resolve or retry pending work",
-            json!({"operations": pending_ops}),
-        ));
+            "pending_queue_read",
+            false,
+            "error",
+            "pending operation queue could not be read",
+            "inspect state/pending_ops.jsonl and pending_ops_history permissions or file shape",
+            json!({"error": err.to_string()}),
+        )),
     }
 
     let error_count = checks_with_severity(&checks, "error");
@@ -274,28 +298,55 @@ fn add_git_checks(ctx: &AppContext, skill: &str, source_exists: bool, checks: &m
         return;
     }
     let skill_rel = format!("skills/{skill}");
-    let head_tree = head_tree_oid_for_path(ctx, &skill_rel).ok().flatten();
-    checks.push(check(
-        "git",
-        "source_tracked_at_head",
-        head_tree.is_some(),
-        "error",
-        if head_tree.is_some() {
-            "source skill is tracked at HEAD"
-        } else {
-            "source skill is not tracked at HEAD"
-        },
-        &format!("run loom skill save {skill}"),
-        json!({"head_tree_oid": head_tree}),
-    ));
 
-    let last_commit = last_saved_commit_for_skill(ctx, skill)
-        .ok()
-        .flatten()
-        .or_else(|| last_commit_for_path(ctx, &skill_rel).ok().flatten());
-    let mut drifted =
-        drifted_paths_under(ctx, &skill_rel, last_commit.as_deref()).unwrap_or_default();
-    let truncated = drifted.len() > MAX_DRIFTED_PATHS;
+    match head_tree_oid_for_path(ctx, &skill_rel) {
+        Ok(head_tree) => checks.push(check(
+            "git",
+            "source_tracked_at_head",
+            head_tree.is_some(),
+            "error",
+            if head_tree.is_some() {
+                "source skill is tracked at HEAD"
+            } else {
+                "source skill is not tracked at HEAD"
+            },
+            &format!("run loom skill save {skill}"),
+            json!({"head_tree_oid": head_tree}),
+        )),
+        Err(err) => checks.push(check(
+            "git",
+            "source_tracked_at_head",
+            false,
+            "error",
+            "source tracking could not be verified",
+            "inspect the Git repository before saving or projecting this skill",
+            json!({"error": err.to_string()}),
+        )),
+    }
+
+    let last_commit = match last_saved_commit_for_skill(ctx, skill) {
+        Ok(Some(commit)) => Some(commit),
+        Ok(None) => match last_commit_for_path(ctx, &skill_rel) {
+            Ok(commit) => commit,
+            Err(err) => {
+                push_source_drift_error(checks, None, err);
+                return;
+            }
+        },
+        Err(err) => {
+            push_source_drift_error(checks, None, err);
+            return;
+        }
+    };
+    let mut drifted = match drifted_paths_under(ctx, &skill_rel, last_commit.as_deref()) {
+        Ok(paths) => paths,
+        Err(err) => {
+            push_source_drift_error(checks, last_commit, err);
+            return;
+        }
+    };
+    let drifted_total = drifted.len();
+    let truncated = drifted_total > MAX_DRIFTED_PATHS;
     drifted.truncate(MAX_DRIFTED_PATHS);
     checks.push(check(
         "git",
@@ -310,8 +361,28 @@ fn add_git_checks(ctx: &AppContext, skill: &str, source_exists: bool, checks: &m
         &format!("run loom skill save {skill} or inspect loom skill diff"),
         json!({
             "last_source_commit": last_commit,
+            "drifted_path_count": drifted_total,
             "drifted_paths": drifted,
             "drifted_paths_truncated": truncated
+        }),
+    ));
+}
+
+fn push_source_drift_error(
+    checks: &mut Vec<Value>,
+    last_commit: Option<String>,
+    err: anyhow::Error,
+) {
+    checks.push(check(
+        "git",
+        "source_drift",
+        false,
+        "error",
+        "source drift could not be verified",
+        "inspect the Git repository before saving or projecting this skill",
+        json!({
+            "last_source_commit": last_commit,
+            "error": err.to_string()
         }),
     ));
 }
@@ -604,7 +675,7 @@ fn value_mentions_skill(value: &Value, skill: &str) -> bool {
 }
 
 fn pending_op_mentions_skill(op: &PendingOp, skill: &str) -> bool {
-    op.command.contains(skill) || value_mentions_skill(&op.details, skill)
+    value_mentions_skill(&op.details, skill)
 }
 
 fn checks_with_severity(checks: &[Value], severity: &str) -> usize {
@@ -618,7 +689,11 @@ fn drifted_path_count(checks: &[Value]) -> usize {
     checks
         .iter()
         .find(|check| check["id"].as_str() == Some("source_drift"))
-        .and_then(|check| check["details"]["drifted_paths"].as_array())
-        .map(Vec::len)
+        .and_then(|check| {
+            check["details"]["drifted_path_count"]
+                .as_u64()
+                .map(|count| count as usize)
+                .or_else(|| check["details"]["drifted_paths"].as_array().map(Vec::len))
+        })
         .unwrap_or(0)
 }

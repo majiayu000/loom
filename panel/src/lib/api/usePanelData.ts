@@ -35,7 +35,7 @@ export interface PanelLiveData {
   /** Raw Registry projections — exposed so consumers like `ProjectionGraph` can
    *  use the backend-reported `method`/`health` instead of fabricating it. */
   projections: RegistryProjection[];
-  pendingCount: number;
+  queuedWriteCount: number;
   refetch: () => void;
 }
 
@@ -61,7 +61,7 @@ const INITIAL_STATE: LiveState = {
   bindings: [],
   ops: [],
   projections: [],
-  pendingCount: 0,
+  queuedWriteCount: 0,
 };
 
 function hasLastKnownData(state: LiveState): boolean {
@@ -145,7 +145,7 @@ export function usePanelData(): PanelLiveData {
             bindings: [],
             ops: [],
             projections: [],
-            pendingCount: 0,
+            queuedWriteCount: 0,
           }),
         );
         return;
@@ -194,7 +194,7 @@ export function usePanelData(): PanelLiveData {
           bindings,
           ops,
           projections,
-          pendingCount: pending.count ?? 0,
+          queuedWriteCount: pending.count ?? 0,
         }),
       );
     } catch (err) {

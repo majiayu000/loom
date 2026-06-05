@@ -249,6 +249,7 @@ body,
   padding: 1px 6px;
   border-radius: 8px;
   background: var(--bg-2);
+  white-space: nowrap;
 }
 .nav-item.active .nav-count {
   background: var(--bg-hi);

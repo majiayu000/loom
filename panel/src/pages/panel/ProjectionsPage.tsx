@@ -4,6 +4,7 @@ import type { Binding, Target } from "../../lib/types";
 import { api } from "../../lib/api/client";
 import { useMutation } from "../../lib/useMutation";
 import { RefreshIcon } from "../../components/icons/nav_icons";
+import { EmptyState } from "../../components/panel/EmptyState";
 
 interface ProjectionsPageProps {
   projections: RegistryProjection[];
@@ -117,72 +118,83 @@ export function ProjectionsPage({ projections, targets, bindings, readOnly, onMu
         </div>
       </div>
       <div className="page-body" style={{ padding: 0 }}>
-        <div className="two-col projections-layout">
-          <div className="projections-list">
-            <table className="tbl mobile-cards">
-              <thead>
-                <tr>
-                  <th>Instance</th>
-                  <th>Skill</th>
-                  <th>Target</th>
-                  <th>Method</th>
-                  <th>Health</th>
-                  <th>Rev</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filtered.map((projection) => (
-                  <tr
-                    key={projection.instance_id}
-                    className={selected?.instance_id === projection.instance_id ? "selected" : ""}
-                    onClick={() => setSelectedId(projection.instance_id)}
-                  >
-                    <td className="mono dim" data-label="Instance">
-                      {projection.instance_id}
-                    </td>
-                    <td className="name" data-label="Skill">
-                      {projection.skill_id}
-                    </td>
-                    <td data-label="Target">{targetLabel(targets, projection.target_id)}</td>
-                    <td data-label="Method">{projection.method}</td>
-                    <td data-label="Health">
-                      <span className={`badge ${healthClass(projection)}`}>
-                        {projection.observed_drift ? "drifted" : projection.health}
-                      </span>
-                    </td>
-                    <td className="mono dim" data-label="Rev">
-                      {shortRev(projection.last_applied_rev)}
-                    </td>
+        {projections.length === 0 ? (
+          <EmptyState title="No projections yet" icon={<RefreshIcon />} command="loom sync replay">
+            Create a binding that maps skills to targets, then replay or sync pending work to materialize projections.
+          </EmptyState>
+        ) : filtered.length === 0 ? (
+          <EmptyState
+            title="No projections in this filter"
+            icon={<RefreshIcon />}
+            actions={[{ label: "Show all", onClick: () => setFilter("all"), variant: "ghost" }]}
+          >
+            Existing projections are present, but none are currently marked <span className="mono">{filter}</span>.
+          </EmptyState>
+        ) : (
+          <div className="two-col projections-layout">
+            <div className="projections-list">
+              <table className="tbl mobile-cards">
+                <thead>
+                  <tr>
+                    <th>Instance</th>
+                    <th>Skill</th>
+                    <th>Target</th>
+                    <th>Method</th>
+                    <th>Health</th>
+                    <th>Rev</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-            {filtered.length === 0 && <div className="empty">No projections match this filter.</div>}
+                </thead>
+                <tbody>
+                  {filtered.map((projection) => (
+                    <tr
+                      key={projection.instance_id}
+                      className={selected?.instance_id === projection.instance_id ? "selected" : ""}
+                      onClick={() => setSelectedId(projection.instance_id)}
+                    >
+                      <td className="mono dim" data-label="Instance">
+                        {projection.instance_id}
+                      </td>
+                      <td className="name" data-label="Skill">
+                        {projection.skill_id}
+                      </td>
+                      <td data-label="Target">{targetLabel(targets, projection.target_id)}</td>
+                      <td data-label="Method">{projection.method}</td>
+                      <td data-label="Health">
+                        <span className={`badge ${healthClass(projection)}`}>
+                          {projection.observed_drift ? "drifted" : projection.health}
+                        </span>
+                      </td>
+                      <td className="mono dim" data-label="Rev">
+                        {shortRev(projection.last_applied_rev)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="projections-detail-panel">
+              {selected && (
+                <ProjectionDetail
+                  projection={selected}
+                  binding={selectedBinding}
+                  targetLabel={targetLabel(targets, selected.target_id)}
+                  readOnly={readOnly}
+                  actionBusy={action.busy}
+                  canCapture={canCapture}
+                  canProject={canProject}
+                  canCleanOrphan={canCleanOrphan}
+                  deleteLivePaths={deleteLivePaths}
+                  setDeleteLivePaths={setDeleteLivePaths}
+                  onCapture={capture}
+                  onProject={project}
+                  onCleanOrphan={cleanOrphan}
+                  message={action.error ?? action.success}
+                  messageTone={action.error ? "var(--err)" : "var(--ok)"}
+                />
+              )}
+            </div>
           </div>
-          <div className="projections-detail-panel">
-            {selected ? (
-              <ProjectionDetail
-                projection={selected}
-                binding={selectedBinding}
-                targetLabel={targetLabel(targets, selected.target_id)}
-                readOnly={readOnly}
-                actionBusy={action.busy}
-                canCapture={canCapture}
-                canProject={canProject}
-                canCleanOrphan={canCleanOrphan}
-                deleteLivePaths={deleteLivePaths}
-                setDeleteLivePaths={setDeleteLivePaths}
-                onCapture={capture}
-                onProject={project}
-                onCleanOrphan={cleanOrphan}
-                message={action.error ?? action.success}
-                messageTone={action.error ? "var(--err)" : "var(--ok)"}
-              />
-            ) : (
-              <div className="empty">No projections found.</div>
-            )}
-          </div>
-        </div>
+        )}
       </div>
     </>
   );

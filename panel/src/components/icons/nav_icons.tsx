@@ -93,6 +93,13 @@ export const SyncIcon = (p: IconProps) => (
   </svg>
 );
 
+export const CopyIcon = (p: IconProps) => (
+  <svg width="14" height="14" viewBox="0 0 24 24" strokeWidth="1.6" {...base} {...p}>
+    <path d="M8 8h11v11H8z" />
+    <path d="M5 15H4a1 1 0 01-1-1V4a1 1 0 011-1h10a1 1 0 011 1v1" />
+  </svg>
+);
+
 export const ShieldIcon = (p: IconProps) => (
   <svg width="14" height="14" viewBox="0 0 24 24" strokeWidth="1.6" {...base} {...p}>
     <path d="M12 3l8 3v6c0 5-3.5 8.5-8 9-4.5-.5-8-4-8-9V6l8-3z" />

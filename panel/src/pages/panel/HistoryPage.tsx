@@ -1,7 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
 import type { PanelDataMode } from "../../lib/api/usePanelData";
 import { api, ApiError, type OpsHistoryDiagnosePayload, type OpsPayload, type RegistryOperationRecord } from "../../lib/api/client";
+import {
+  bucketRegistryOperation,
+  describeRegistryOperation,
+  registryOperationDisplayId,
+} from "../../lib/operation_labels";
 import { useMutation } from "../../lib/useMutation";
+import { COUNT_TERMS, filterLabel, summarizeOps } from "../../lib/count_labels";
+import { SearchIcon } from "../../components/icons/nav_icons";
 
 type FilterKey = "all" | "pending" | "ok" | "err";
 type DiagnoseData = NonNullable<OpsHistoryDiagnosePayload["data"]>;
@@ -96,30 +103,25 @@ export function HistoryPage({ live, mode, mutationVersion, refreshKey, onMutatio
       if (filter !== "all" && bucket(op) !== filter) return false;
       if (!needle) return true;
       return (
-        operationDisplayId(op).toLowerCase().includes(needle) ||
+        registryOperationDisplayId(op).toLowerCase().includes(needle) ||
+        describeRegistryOperation(op).title.toLowerCase().includes(needle) ||
         op.intent.toLowerCase().includes(needle) ||
         (op.last_error?.message ?? "").toLowerCase().includes(needle)
       );
     });
   }, [operations, filter, query]);
 
-  const counts = useMemo(() => {
-    const c = { all: operations.length, pending: 0, ok: 0, err: 0 };
-    for (const op of operations) {
-      const b = bucket(op);
-      if (b === "pending") c.pending += 1;
-      else if (b === "ok") c.ok += 1;
-      else if (b === "err") c.err += 1;
-    }
-    return c;
-  }, [operations]);
+  const counts = useMemo(
+    () => summarizeOps(operations.map((op) => ({ status: bucket(op) }))),
+    [operations],
+  );
 
   const checkpoint = payload?.checkpoint;
   const historySummary =
     payload && payload.count > payload.loaded_count
-      ? `Showing ${payload.loaded_count} of ${payload.count} recorded changes.`
+      ? `Showing ${payload.loaded_count} of ${payload.count} audit changes.`
       : payload
-      ? `${payload.loaded_count} recorded change${payload.loaded_count === 1 ? "" : "s"} loaded.`
+      ? `${payload.loaded_count} loaded audit change${payload.loaded_count === 1 ? "" : "s"}.`
       : null;
 
   return (
@@ -128,12 +130,13 @@ export function HistoryPage({ live, mode, mutationVersion, refreshKey, onMutatio
         <div className="title-block">
           <h1>Activity history</h1>
           <div className="subtitle">
-            Every registry change Loom has recorded. Pending work also appears in Activity; failed work points to a replay with{" "}
+            Every audit change Loom has recorded. Replayable writes also appear in Activity; failed work points to a replay with{" "}
             <span className="mono">loom sync replay</span>.
           </div>
         </div>
         <div className="header-actions">
           <div className="searchbar" style={{ width: 260 }}>
+            <SearchIcon />
             <input
               placeholder="Filter by id / intent / error…"
               value={query}
@@ -200,10 +203,10 @@ export function HistoryPage({ live, mode, mutationVersion, refreshKey, onMutatio
           </div>
         )}
         <div className="kpi-row">
-          <Kpi label="Loaded changes" value={counts.all} />
-          <Kpi label="Pending" value={counts.pending} tone={counts.pending > 0 ? "pending" : undefined} />
-          <Kpi label="Succeeded" value={counts.ok} />
-          <Kpi label="Failed" value={counts.err} tone={counts.err > 0 ? "err" : undefined} />
+          <Kpi label={COUNT_TERMS.loadedAuditChanges} value={payload?.loaded_count ?? counts.all} />
+          <Kpi label={COUNT_TERMS.replayableWrites} value={counts.pending} tone={counts.pending > 0 ? "pending" : undefined} />
+          <Kpi label={COUNT_TERMS.succeeded} value={counts.ok} />
+          <Kpi label={COUNT_TERMS.failed} value={counts.err} tone={counts.err > 0 ? "err" : undefined} />
         </div>
 
         <div style={{ display: "flex", gap: 12, marginBottom: 12, justifyContent: "space-between", flexWrap: "wrap" }}>
@@ -220,7 +223,7 @@ export function HistoryPage({ live, mode, mutationVersion, refreshKey, onMutatio
                   color: filter === k ? "var(--ink-0)" : "var(--ink-2)",
                 }}
               >
-                {k === "err" ? "failed" : k === "ok" ? "done" : k}{" "}
+                {filterLabel(k)}{" "}
                 <span className="mono" style={{ color: "var(--ink-3)", marginLeft: 4 }}>
                   {counts[k]}
                 </span>
@@ -245,20 +248,19 @@ export function HistoryPage({ live, mode, mutationVersion, refreshKey, onMutatio
         </div>
 
         <div
+          className="history-table-wrap"
           style={{
             background: "var(--bg-1)",
             borderRadius: 10,
-            overflow: "hidden",
             border: "1px solid var(--line)",
           }}
         >
-          <table className="tbl mobile-cards">
+          <table className="tbl history-table mobile-cards">
             <thead>
               <tr>
-                <th>Change id</th>
-                <th>Intent</th>
+                <th>Action</th>
+                <th>Details</th>
                 <th>Status</th>
-                <th>ack</th>
                 <th>Created</th>
                 <th>Updated</th>
               </tr>
@@ -267,7 +269,7 @@ export function HistoryPage({ live, mode, mutationVersion, refreshKey, onMutatio
               {state.kind === "loading" && (
                 <tr>
                   <td
-                    colSpan={6}
+                    colSpan={5}
                     className="mono table-empty-cell"
                     style={{ textAlign: "center", color: "var(--ink-3)", padding: 18 }}
                   >
@@ -278,7 +280,7 @@ export function HistoryPage({ live, mode, mutationVersion, refreshKey, onMutatio
               {state.kind === "ready" && filtered.length === 0 && (
                 <tr>
                   <td
-                    colSpan={6}
+                    colSpan={5}
                     className="table-empty-cell"
                     style={{ textAlign: "center", color: "var(--ink-3)", padding: 18 }}
                   >
@@ -289,7 +291,7 @@ export function HistoryPage({ live, mode, mutationVersion, refreshKey, onMutatio
                 </tr>
               )}
               {filtered.map((op) => (
-                <OpHistoryRow key={operationDisplayId(op)} op={op} />
+                <OpHistoryRow key={registryOperationDisplayId(op)} op={op} />
               ))}
             </tbody>
           </table>
@@ -323,41 +325,36 @@ export function HistoryPage({ live, mode, mutationVersion, refreshKey, onMutatio
 }
 
 export function bucket(op: RegistryOperationRecord): "pending" | "ok" | "err" {
-  if (op.last_error) return "err";
-  const s = op.status.toLowerCase();
-  if (s === "pending" || s === "enqueued" || s === "in_flight" || s === "retrying") return "pending";
-  if (s === "ok" || s === "applied" || s === "completed" || s === "done" || s === "succeeded") return "ok";
-  if (s === "err" || s === "error" || s === "failed") return "err";
-  return op.ack ? "ok" : "pending";
-}
-
-function operationDisplayId(op: RegistryOperationRecord): string {
-  return op.op_id ?? op.audit_id ?? op.request_id ?? `${op.intent}-${op.updated_at}`;
+  return bucketRegistryOperation(op);
 }
 
 function OpHistoryRow({ op }: { op: RegistryOperationRecord }) {
   const kind = bucket(op);
   const color = kind === "err" ? "var(--err)" : kind === "pending" ? "var(--pending)" : "var(--ok)";
+  const label = describeRegistryOperation(op);
   return (
     <tr>
-      <td className="mono dim" data-label="Change id">
-        {operationDisplayId(op)}
-      </td>
-      <td className="name" data-label="Intent">
-        {op.intent}
+      <td className="name" data-label="Action">
+        <div>{label.title}</div>
         {op.last_error && (
           <div className="mono" style={{ color: "var(--err)", fontSize: 10.5, marginTop: 3 }}>
             {op.last_error.message}
           </div>
         )}
       </td>
+      <td data-label="Details">
+        <div className="op-detail-stack">
+          {label.details.map((detail) => (
+            <span key={detail} className="op-meta" title={detail.startsWith("id ") ? label.technicalId : undefined}>
+              {detail}
+            </span>
+          ))}
+        </div>
+      </td>
       <td data-label="Status">
         <span className="chip" style={{ color }}>
           {op.last_error ? op.last_error.code : op.status}
         </span>
-      </td>
-      <td className="mono dim mobile-hide" data-label="Ack">
-        {op.ack ? "✓" : "—"}
       </td>
       <td className="mono dim" data-label="Created" style={{ fontSize: 10.5 }}>
         {op.created_at}

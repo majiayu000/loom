@@ -1,0 +1,167 @@
+{
+  "captured_at": "2026-06-03T04:00:00.000Z",
+  "base": "http://127.0.0.1:43117/",
+  "result_count": 20,
+  "results": [
+    {
+      "page": "overview",
+      "title": "Overview",
+      "viewport": "desktop",
+      "width": 1440,
+      "height": 1000,
+      "screenshot": "screenshots/desktop-overview.png"
+    },
+    {
+      "page": "skills",
+      "title": "Skills",
+      "viewport": "desktop",
+      "width": 1440,
+      "height": 1000,
+      "screenshot": "screenshots/desktop-skills.png"
+    },
+    {
+      "page": "targets",
+      "title": "Targets",
+      "viewport": "desktop",
+      "width": 1440,
+      "height": 1000,
+      "screenshot": "screenshots/desktop-targets.png"
+    },
+    {
+      "page": "bindings",
+      "title": "Bindings",
+      "viewport": "desktop",
+      "width": 1440,
+      "height": 1000,
+      "screenshot": "screenshots/desktop-bindings.png"
+    },
+    {
+      "page": "projections",
+      "title": "Projections",
+      "viewport": "desktop",
+      "width": 1440,
+      "height": 1000,
+      "screenshot": "screenshots/desktop-projections.png"
+    },
+    {
+      "page": "ops",
+      "title": "Activity",
+      "viewport": "desktop",
+      "width": 1440,
+      "height": 1000,
+      "screenshot": "screenshots/desktop-ops.png"
+    },
+    {
+      "page": "history",
+      "title": "Audit log",
+      "viewport": "desktop",
+      "width": 1440,
+      "height": 1000,
+      "screenshot": "screenshots/desktop-history.png"
+    },
+    {
+      "page": "sync",
+      "title": "Git sync",
+      "viewport": "desktop",
+      "width": 1440,
+      "height": 1000,
+      "screenshot": "screenshots/desktop-sync.png"
+    },
+    {
+      "page": "doctor",
+      "title": "Doctor",
+      "viewport": "desktop",
+      "width": 1440,
+      "height": 1000,
+      "screenshot": "screenshots/desktop-doctor.png"
+    },
+    {
+      "page": "settings",
+      "title": "Settings",
+      "viewport": "desktop",
+      "width": 1440,
+      "height": 1000,
+      "screenshot": "screenshots/desktop-settings.png"
+    },
+    {
+      "page": "overview",
+      "title": "Overview",
+      "viewport": "mobile",
+      "width": 390,
+      "height": 844,
+      "screenshot": "screenshots/mobile-overview.png"
+    },
+    {
+      "page": "skills",
+      "title": "Skills",
+      "viewport": "mobile",
+      "width": 390,
+      "height": 844,
+      "screenshot": "screenshots/mobile-skills.png"
+    },
+    {
+      "page": "targets",
+      "title": "Targets",
+      "viewport": "mobile",
+      "width": 390,
+      "height": 844,
+      "screenshot": "screenshots/mobile-targets.png"
+    },
+    {
+      "page": "bindings",
+      "title": "Bindings",
+      "viewport": "mobile",
+      "width": 390,
+      "height": 844,
+      "screenshot": "screenshots/mobile-bindings.png"
+    },
+    {
+      "page": "projections",
+      "title": "Projections",
+      "viewport": "mobile",
+      "width": 390,
+      "height": 844,
+      "screenshot": "screenshots/mobile-projections.png"
+    },
+    {
+      "page": "ops",
+      "title": "Activity",
+      "viewport": "mobile",
+      "width": 390,
+      "height": 844,
+      "screenshot": "screenshots/mobile-ops.png"
+    },
+    {
+      "page": "history",
+      "title": "Audit log",
+      "viewport": "mobile",
+      "width": 390,
+      "height": 844,
+      "screenshot": "screenshots/mobile-history.png"
+    },
+    {
+      "page": "sync",
+      "title": "Git sync",
+      "viewport": "mobile",
+      "width": 390,
+      "height": 844,
+      "screenshot": "screenshots/mobile-sync.png"
+    },
+    {
+      "page": "doctor",
+      "title": "Doctor",
+      "viewport": "mobile",
+      "width": 390,
+      "height": 844,
+      "screenshot": "screenshots/mobile-doctor.png"
+    },
+    {
+      "page": "settings",
+      "title": "Settings",
+      "viewport": "mobile",
+      "width": 390,
+      "height": 844,
+      "screenshot": "screenshots/mobile-settings.png"
+    }
+  ]
+}

@@ -106,6 +106,15 @@ export function OverviewPage({
       disabled: readOnly,
     },
   ];
+  const graphEmptyAction = readOnly
+    ? { label: "Registry offline", onClick: onOpenSync, disabled: true, title: "registry offline" }
+    : skills.length === 0
+      ? { label: "Open Skills", onClick: onOpenSkills }
+      : targets.length === 0
+        ? { label: "Add target", onClick: onNewTarget }
+        : totalRules === 0
+          ? { label: "Add binding", onClick: onNewBinding }
+          : { label: "Replay / sync", onClick: onOpenSync };
 
   return (
     <>
@@ -223,6 +232,7 @@ export function OverviewPage({
               skills={skills}
               targets={targets}
               projections={projections}
+              emptyAction={graphEmptyAction}
             />
             <div className="proj-legend proj-legend-grouped">
               <span className="legend-group-title">Projection method</span>
@@ -321,28 +331,24 @@ interface NextStep {
 }
 
 function NextStepRow({ step, active }: { step: NextStep; active: boolean }) {
+  const status = step.done ? "done" : active ? "next" : "waiting";
+
   return (
-    <div
-      style={{
-        display: "grid",
-        gridTemplateColumns: "72px minmax(0, 1fr) auto",
-        gap: 12,
-        alignItems: "center",
-        padding: "8px 0",
-        borderBottom: "1px solid var(--line)",
-      }}
-    >
-      <span className={`badge ${step.done ? "ok" : active ? "warn" : ""}`}>
-        {step.done ? "done" : active ? "next" : "waiting"}
-      </span>
-      <div style={{ minWidth: 0 }}>
+    <div className="next-step-row">
+      <span className={`next-step-state ${status}`}>{status}</span>
+      <div className="next-step-copy">
         <div className="section-title" style={{ margin: 0 }}>
           {step.label}
         </div>
-        <div style={{ color: "var(--ink-2)", fontSize: 12 }}>{step.detail}</div>
+        <div className="next-step-detail">{step.detail}</div>
       </div>
       {!step.done && (
-        <button className="btn sm" onClick={step.onAction} disabled={step.disabled} title={step.title}>
+        <button
+          className={`btn sm next-step-action ${active ? "is-primary" : ""}`}
+          onClick={step.onAction}
+          disabled={step.disabled}
+          title={step.title}
+        >
           {step.action}
         </button>
       )}

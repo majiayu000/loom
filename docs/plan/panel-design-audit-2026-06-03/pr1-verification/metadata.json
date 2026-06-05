@@ -1,0 +1,127 @@
+{
+  "captured_at": "2026-06-03T04:36:07.956Z",
+  "base": "http://127.0.0.1:43117/",
+  "result_count": 10,
+  "results": [
+    {
+      "page": "overview",
+      "viewport": "desktop",
+      "width": 1440,
+      "height": 1000,
+      "screenshot": "screenshots/desktop-overview.png",
+      "h1": "Overview",
+      "empty_state_count": 0,
+      "projection_empty_count": 1,
+      "legacy_empty_count": 0,
+      "light_control_count": 0
+    },
+    {
+      "page": "skills",
+      "viewport": "desktop",
+      "width": 1440,
+      "height": 1000,
+      "screenshot": "screenshots/desktop-skills.png",
+      "h1": "Skills",
+      "empty_state_count": 1,
+      "projection_empty_count": 0,
+      "legacy_empty_count": 0,
+      "light_control_count": 0
+    },
+    {
+      "page": "bindings",
+      "viewport": "desktop",
+      "width": 1440,
+      "height": 1000,
+      "screenshot": "screenshots/desktop-bindings.png",
+      "h1": "Bindings",
+      "empty_state_count": 1,
+      "projection_empty_count": 0,
+      "legacy_empty_count": 0,
+      "light_control_count": 0
+    },
+    {
+      "page": "projections",
+      "viewport": "desktop",
+      "width": 1440,
+      "height": 1000,
+      "screenshot": "screenshots/desktop-projections.png",
+      "h1": "Projections",
+      "empty_state_count": 1,
+      "projection_empty_count": 0,
+      "legacy_empty_count": 0,
+      "light_control_count": 0
+    },
+    {
+      "page": "history",
+      "viewport": "desktop",
+      "width": 1440,
+      "height": 1000,
+      "screenshot": "screenshots/desktop-history.png",
+      "h1": "Activity history",
+      "empty_state_count": 0,
+      "projection_empty_count": 0,
+      "legacy_empty_count": 0,
+      "light_control_count": 0
+    },
+    {
+      "page": "overview",
+      "viewport": "mobile",
+      "width": 390,
+      "height": 844,
+      "screenshot": "screenshots/mobile-overview.png",
+      "h1": "Overview",
+      "empty_state_count": 0,
+      "projection_empty_count": 1,
+      "legacy_empty_count": 0,
+      "light_control_count": 0
+    },
+    {
+      "page": "skills",
+      "viewport": "mobile",
+      "width": 390,
+      "height": 844,
+      "screenshot": "screenshots/mobile-skills.png",
+      "h1": "Skills",
+      "empty_state_count": 1,
+      "projection_empty_count": 0,
+      "legacy_empty_count": 0,
+      "light_control_count": 0
+    },
+    {
+      "page": "bindings",
+      "viewport": "mobile",
+      "width": 390,
+      "height": 844,
+      "screenshot": "screenshots/mobile-bindings.png",
+      "h1": "Bindings",
+      "empty_state_count": 1,
+      "projection_empty_count": 0,
+      "legacy_empty_count": 0,
+      "light_control_count": 0
+    },
+    {
+      "page": "projections",
+      "viewport": "mobile",
+      "width": 390,
+      "height": 844,
+      "screenshot": "screenshots/mobile-projections.png",
+      "h1": "Projections",
+      "empty_state_count": 1,
+      "projection_empty_count": 0,
+      "legacy_empty_count": 0,
+      "light_control_count": 0
+    },
+    {
+      "page": "history",
+      "viewport": "mobile",
+      "width": 390,
+      "height": 844,
+      "screenshot": "screenshots/mobile-history.png",
+      "h1": "Activity history",
+      "empty_state_count": 0,
+      "projection_empty_count": 0,
+      "legacy_empty_count": 0,
+      "light_control_count": 0
+    }
+  ]
+}

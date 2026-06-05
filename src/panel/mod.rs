@@ -67,6 +67,12 @@ pub(super) struct SkillAddRequest {
 }
 
 #[derive(Debug, Deserialize)]
+pub(super) struct ImportObservedRequest {
+    #[serde(default)]
+    pub(super) target: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 pub(super) struct SkillSaveRequest {
     #[serde(default)]
     pub(super) message: Option<String>,
@@ -162,6 +168,10 @@ pub async fn run_panel(ctx: AppContext, port: u16) -> Result<()> {
             post(registry_binding_remove),
         )
         .route("/api/v1/skills", get(v1_skills).post(registry_skill_add))
+        .route(
+            "/api/v1/skills/import-observed",
+            post(registry_skill_import_observed),
+        )
         .route(
             "/api/v1/skills/{skill_name}/diagnose",
             get(v1_skill_diagnose),

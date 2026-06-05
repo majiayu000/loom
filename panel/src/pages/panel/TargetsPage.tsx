@@ -35,6 +35,9 @@ export function TargetsPage({
 }: TargetsPageProps) {
   const [addOpen, setAddOpen] = useState(false);
   const sel = targets.find((t) => t.id === selectedTarget) ?? null;
+  const importObserved = useMutation();
+  const observedTargets = targets.filter((t) => t.ownership === "observed");
+  const showObservedImport = skills.length === 0 && observedTargets.length > 0;
 
   useEffect(() => {
     if (readOnly) setAddOpen(false);
@@ -70,6 +73,40 @@ export function TargetsPage({
               onMutation();
             }}
           />
+        )}
+        {showObservedImport && (
+          <div className="card" style={{ marginBottom: 16 }}>
+            <div className="card-head">
+              <h3>Observed skills</h3>
+              <span className="badge warn">
+                {observedTargets.length} observed target{observedTargets.length === 1 ? "" : "s"}
+              </span>
+            </div>
+            <div className="card-body observed-import-panel">
+              <div>
+                <div style={{ color: "var(--ink-0)", fontSize: 13, marginBottom: 4 }}>
+                  Import observed skills into the registry.
+                </div>
+                <div style={{ color: "var(--ink-2)", fontSize: 12 }}>
+                  Import creates managed registry skills from observed target directories. Nothing is imported until
+                  you choose this action.
+                </div>
+              </div>
+              <button
+                className="btn primary"
+                onClick={() => importObserved.run("import observed skills", () => api.skillImportObserved(), onMutation)}
+                disabled={readOnly || importObserved.busy}
+                title={readOnly ? "registry offline" : undefined}
+              >
+                <PlusIcon /> {importObserved.busy ? "Importing..." : "Import observed skills"}
+              </button>
+              {(importObserved.error || importObserved.success) && (
+                <div className="mutation-note" data-tone={importObserved.error ? "err" : "ok"}>
+                  {importObserved.error ?? `✓ ${importObserved.success}`}
+                </div>
+              )}
+            </div>
+          </div>
         )}
         {targets.length === 0 ? (
           <div className="empty-panel">

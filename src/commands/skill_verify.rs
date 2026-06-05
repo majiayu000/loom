@@ -57,7 +57,7 @@ impl App {
     }
 }
 
-fn last_saved_commit_for_skill(ctx: &AppContext, skill: &str) -> Result<Option<String>> {
+pub(crate) fn last_saved_commit_for_skill(ctx: &AppContext, skill: &str) -> Result<Option<String>> {
     let Some(op_id) = last_save_op_id_for_skill(ctx, skill)? else {
         return Ok(None);
     };
@@ -136,7 +136,7 @@ fn operation_log_contains_op_id(raw: &str, op_id: &str) -> Result<bool> {
     Ok(false)
 }
 
-fn head_tree_oid_for_path(ctx: &AppContext, path: &str) -> Result<Option<String>> {
+pub(crate) fn head_tree_oid_for_path(ctx: &AppContext, path: &str) -> Result<Option<String>> {
     let output = run_git_allow_failure(ctx, &["rev-parse", &format!("HEAD:{path}")])?;
     if output.status.success() {
         let oid = String::from_utf8_lossy(&output.stdout).trim().to_string();
@@ -150,7 +150,7 @@ fn head_tree_oid_for_path(ctx: &AppContext, path: &str) -> Result<Option<String>
     }
 }
 
-fn last_commit_for_path(ctx: &AppContext, path: &str) -> Result<Option<String>> {
+pub(crate) fn last_commit_for_path(ctx: &AppContext, path: &str) -> Result<Option<String>> {
     let stdout = run_git(ctx, &["log", "-1", "--format=%H", "--", path])?;
     let trimmed = stdout.trim();
     if trimmed.is_empty() {
@@ -160,7 +160,7 @@ fn last_commit_for_path(ctx: &AppContext, path: &str) -> Result<Option<String>> 
     }
 }
 
-fn drifted_paths_under(
+pub(crate) fn drifted_paths_under(
     ctx: &AppContext,
     prefix: &str,
     base_commit: Option<&str>,

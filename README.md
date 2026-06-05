@@ -38,7 +38,7 @@ AI coding agents (Claude Code, Codex, Cursor, Windsurf, …) all read skills fro
 ```bash
 # 1. Install a prebuilt release archive (recommended)
 # Pick one target: aarch64-apple-darwin, x86_64-apple-darwin, x86_64-unknown-linux-gnu
-VERSION="0.1.2" # replace with the latest release version
+VERSION="0.1.3" # replace with the latest release version
 TARGET="aarch64-apple-darwin"
 BASE_URL="https://github.com/majiayu000/loom/releases/download/v${VERSION}"
 curl -LO "${BASE_URL}/skillloom-${VERSION}-${TARGET}.tar.gz"
@@ -130,6 +130,7 @@ Prefer a guided walkthrough? Run `./scripts/demo.sh` for a scripted end-to-end t
 - **🔗 Binding matchers** — route a skill to a target by `path-prefix`, `exact-path`, or `name`
 - **📦 Profiles** — multiple config sets per agent (e.g. work/home Claude profiles)
 - **🧬 Git-backed lifecycle** — `add → capture → save → snapshot → release → rollback → diff` ([when to use which](#skill-lifecycle-verbs))
+- **🩺 Skill diagnosis** — `skill diagnose` checks source, bindings, targets, projections, drift, and related operations
 - **🔁 Git-backed sync** — `sync push / pull / replay` between a team's registries
 - **🛠️ Ops with audit** — `ops list / retry / purge` and `ops history diagnose / repair`
 - **🛡️ Hard write guard** — refuses to write when `--root` points at the Loom tool repo itself
@@ -181,8 +182,9 @@ The chain `add → capture → save → snapshot → release → rollback` is th
 | `loom skill rollback` | Reset the source to an earlier revision (with `recovery_ref`) | A capture or save introduced bad state — undo it without losing the recovery point | Source (history) |
 | `loom skill diff` | Compare two revisions of a skill source | Inspect what changed between any two refs (commit, snapshot, release tag) | Source (read-only) |
 | `loom skill verify` | Detect uncommitted drift in a skill source | Confirm `skills/<name>` matches the committed source tree; flag external edits that bypassed `save` | Source (read-only) |
+| `loom skill diagnose` | Run a read-only health report for one skill | Explain missing source, broken bindings/targets/projections, source drift, pending queue issues, and recent failures | Source + registry metadata (read-only) |
 
-Quick decision: **edits from the agent side → `capture`; edits inside the registry repo → `save`; anchor → `snapshot`; public version → `release`; undo → `rollback`; integrity audit → `verify`.**
+Quick decision: **edits from the agent side → `capture`; edits inside the registry repo → `save`; anchor → `snapshot`; public version → `release`; undo → `rollback`; integrity audit → `verify`; health triage → `diagnose`.**
 
 ## Comparison
 
@@ -255,6 +257,7 @@ loom skill release <skill> <version>
 loom skill rollback <skill> [--to <ref> | --steps <n>] [--preview]
 loom skill diff <skill> <from> <to>
 loom skill verify <skill>
+loom skill diagnose <skill>
 loom skill import-observed [--target <target-id>]
 loom skill monitor-observed [--target <target-id>] [--once] [--interval-seconds <seconds>]
 loom skill orphan list

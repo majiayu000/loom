@@ -7,6 +7,9 @@ mod helpers;
 mod history_cmds;
 mod projections;
 mod skill_cmds;
+mod skill_diagnose;
+#[cfg(test)]
+mod skill_diagnose_tests;
 mod skill_verify;
 mod sync_cmds;
 mod target_cmds;
@@ -203,6 +206,7 @@ impl App {
                     command: SkillTrashCommand::Purge(args),
                 } => self.cmd_skill_trash_purge(args, &request_id),
                 SkillCommand::Verify(args) => self.cmd_verify(args),
+                SkillCommand::Diagnose(args) => self.cmd_skill_diagnose(args),
                 SkillCommand::Orphan {
                     command: SkillOrphanCommand::List,
                 } => self.cmd_skill_orphan_list(),
@@ -337,6 +341,7 @@ fn command_records_audit(command: &Command) -> bool {
             | Command::Backup { .. }
             | Command::Skill {
                 command: SkillCommand::History(_)
+                    | SkillCommand::Diagnose(_)
                     | SkillCommand::Trash {
                         command: SkillTrashCommand::List,
                     }
@@ -384,6 +389,7 @@ fn command_requires_durable_audit(command: &Command) -> bool {
             SkillCommand::Diff(_)
             | SkillCommand::History(_)
             | SkillCommand::Verify(_)
+            | SkillCommand::Diagnose(_)
             | SkillCommand::Trash {
                 command: SkillTrashCommand::List,
             }

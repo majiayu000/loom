@@ -2,6 +2,7 @@ import { useState } from "react";
 import type { PanelDataMode } from "../../lib/api/usePanelData";
 import type { PanelPageKey } from "../../lib/types";
 import { api } from "../../lib/api/client";
+import { formatQueuedWrites } from "../../lib/count_labels";
 import { LoomMark } from "../icons/LoomMark";
 import { GitIcon, PlayIcon } from "../icons/nav_icons";
 
@@ -26,9 +27,11 @@ interface TopbarProps {
   mode: PanelDataMode;
   registryRoot: string | null;
   remoteState?: string;
-  pendingCount: number;
+  queuedWriteCount: number;
   onReplay: () => void;
+  onToggleTweaks: () => void;
   readOnly: boolean;
+  tweaksOpen: boolean;
 }
 
 interface StatusDisplay {
@@ -81,14 +84,14 @@ function statusDisplay(props: TopbarProps): StatusDisplay {
       title: "Remote and local history differ — run `loom sync pull` to reconcile",
     };
   }
-  if (state === "PENDING_PUSH" || state === "LOCAL_ONLY" || props.pendingCount > 0) {
-    const opNoun = props.pendingCount === 1 ? "operation" : "operations";
+  if (state === "PENDING_PUSH" || state === "LOCAL_ONLY" || props.queuedWriteCount > 0) {
+    const queuedLabel = formatQueuedWrites(props.queuedWriteCount);
     const title =
       state === "LOCAL_ONLY"
-        ? `${props.pendingCount} ${opNoun} queued — no Git remote configured. Run \`loom workspace remote set\` to enable push.`
-        : `${props.pendingCount} ${opNoun} queued for push to the Git remote`;
+        ? `${queuedLabel} waiting in the pending queue. Configure a Git remote before push.`
+        : `${queuedLabel} waiting in the pending queue. Replay them locally, then push from Git sync.`;
     return {
-      label: props.pendingCount > 0 ? `${props.pendingCount} pending` : state.toLowerCase().replace("_", " "),
+      label: props.queuedWriteCount > 0 ? queuedLabel : state.toLowerCase().replace("_", " "),
       dotStyle: { background: "var(--warn)", boxShadow: "0 0 0 3px rgba(230,180,80,0.18)" },
       title,
     };
@@ -145,7 +148,7 @@ export function Topbar(props: TopbarProps) {
         <span className="top-btn" title={props.live ? "remote sync state" : "registry offline"}>
           <GitIcon /> {props.live ? (props.remoteState ? props.remoteState.toLowerCase() : "local only") : "offline"}
         </span>
-        {(props.pendingCount > 0 || replaying || replayError) && (
+        {(props.queuedWriteCount > 0 || replaying || replayError) && (
           <button
             className="top-btn"
             onClick={replay}
@@ -154,12 +157,20 @@ export function Topbar(props: TopbarProps) {
               replayError ??
               (props.readOnly
                 ? "registry offline"
-                : `Push ${props.pendingCount} queued operation${props.pendingCount === 1 ? "" : "s"} to the Git remote`)
+                : `Replay ${formatQueuedWrites(props.queuedWriteCount)} against local targets`)
             }
           >
-            <PlayIcon /> {replaying ? "replaying…" : `Replay ${props.pendingCount}`}
+            <PlayIcon /> {replaying ? "replaying…" : `Replay queued (${props.queuedWriteCount})`}
           </button>
         )}
+        <button
+          className="top-btn"
+          onClick={props.onToggleTweaks}
+          title={props.tweaksOpen ? "hide visual tweaks" : "show visual tweaks"}
+          aria-pressed={props.tweaksOpen}
+        >
+          Tweaks
+        </button>
       </div>
     </div>
   );

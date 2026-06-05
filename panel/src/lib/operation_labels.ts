@@ -1,0 +1,164 @@
+import type { RegistryOperationRecord } from "./api/client";
+import type { Op } from "./types";
+
+export interface OperationLabel {
+  category: string;
+  title: string;
+  details: string[];
+  technicalId: string;
+}
+
+type OperationStatus = "ok" | "pending" | "err";
+
+interface IntentDescriptor {
+  category: string;
+  phrase: string;
+}
+
+const INTENT_LABELS: Record<string, IntentDescriptor> = {
+  "target.add": { category: "Target", phrase: "target registration" },
+  "target.remove": { category: "Target", phrase: "target removal" },
+  "workspace.binding.add": { category: "Binding", phrase: "workspace binding registration" },
+  "workspace.binding.remove": { category: "Binding", phrase: "workspace binding removal" },
+  "skill.project": { category: "Projection", phrase: "skill projection" },
+  "skill.capture": { category: "Capture", phrase: "skill capture" },
+  "skill.import_observed": { category: "Import", phrase: "observed skill import" },
+  "skill.monitor_observed": { category: "Monitor", phrase: "observed skill monitor" },
+  "skill.orphan.clean": { category: "Cleanup", phrase: "orphan cleanup" },
+  "skill.save": { category: "Skill", phrase: "skill save" },
+  "skill.snapshot": { category: "Snapshot", phrase: "skill snapshot" },
+  "sync.push": { category: "Sync", phrase: "remote sync push" },
+  "sync.pull": { category: "Sync", phrase: "remote sync pull" },
+  "sync.replay": { category: "Sync", phrase: "pending sync replay" },
+  "sync-push": { category: "Sync", phrase: "remote sync push" },
+  "sync-pull": { category: "Sync", phrase: "remote sync pull" },
+  "sync-replay": { category: "Sync", phrase: "pending sync replay" },
+};
+
+export function describeActivityOperation(op: Op): OperationLabel {
+  const descriptor = descriptorForIntent(op.kind);
+  const status = statusWord(op.status);
+  const subject = subjectForActivity(op, descriptor);
+  const targetDetail = meaningfulField(op.target) ? `target ${op.target}` : null;
+  const methodDetail = meaningfulField(op.method) ? `method ${op.method}` : null;
+  const details = compact([
+    `intent ${normalizeIntent(op.kind)}`,
+    targetDetail,
+    methodDetail,
+    `id ${op.id}`,
+    op.reason ? `${op.status === "err" ? "blocked" : "note"} ${op.reason}` : null,
+  ]);
+
+  return {
+    category: descriptor.category,
+    title: buildTitle(subject, descriptor.phrase, status),
+    details,
+    technicalId: op.id,
+  };
+}
+
+export function describeRegistryOperation(op: RegistryOperationRecord): OperationLabel {
+  const descriptor = descriptorForIntent(op.intent);
+  const status = statusWord(bucketRegistryOperation(op));
+  const technicalId = registryOperationDisplayId(op);
+  const subject = subjectForRegistryOperation(op, descriptor);
+  const details = compact([
+    `intent ${normalizeIntent(op.intent)}`,
+    meaningfulString(op.skill) ? `skill ${op.skill}` : null,
+    meaningfulString(op.target) ? `target ${op.target}` : null,
+    meaningfulString(op.binding) ? `binding ${op.binding}` : null,
+    meaningfulString(op.method) ? `method ${op.method}` : null,
+    op.ack ? "synced" : "not synced",
+    `id ${technicalId}`,
+  ]);
+
+  return {
+    category: descriptor.category,
+    title: buildTitle(subject, descriptor.phrase, status),
+    details,
+    technicalId,
+  };
+}
+
+export function registryOperationDisplayId(op: RegistryOperationRecord): string {
+  return op.op_id ?? op.audit_id ?? op.request_id ?? `${op.intent}-${op.updated_at}`;
+}
+
+export function bucketRegistryOperation(op: RegistryOperationRecord): OperationStatus {
+  if (op.last_error) return "err";
+  const s = op.status.toLowerCase();
+  if (s === "pending" || s === "enqueued" || s === "in_flight" || s === "retrying") return "pending";
+  if (s === "ok" || s === "applied" || s === "completed" || s === "done" || s === "succeeded") return "ok";
+  if (s === "err" || s === "error" || s === "failed") return "err";
+  return op.ack ? "ok" : "pending";
+}
+
+export function statusWord(status: OperationStatus): string {
+  if (status === "ok") return "done";
+  if (status === "err") return "failed";
+  return "pending";
+}
+
+function descriptorForIntent(intent: string): IntentDescriptor {
+  const normalized = normalizeIntent(intent);
+  return INTENT_LABELS[normalized] ?? {
+    category: titleCase(normalized.split(/[._-]/)[0] ?? "Change"),
+    phrase: normalized.replace(/[._-]/g, " "),
+  };
+}
+
+function subjectForActivity(op: Op, descriptor: IntentDescriptor): string {
+  const targetSubject = subjectFromTarget(op.target);
+  if (descriptor.category === "Target") return targetSubject ?? "";
+  if (descriptor.category === "Binding") return subjectFromBinding(op.target) ?? targetSubject ?? "";
+  if (meaningfulField(op.skill) && op.skill !== op.kind) return op.skill;
+  return targetSubject ?? "";
+}
+
+function subjectForRegistryOperation(op: RegistryOperationRecord, descriptor: IntentDescriptor): string {
+  const targetSubject = subjectFromTarget(op.target ?? null);
+  if (descriptor.category === "Target") return targetSubject ?? "";
+  if (descriptor.category === "Binding") return subjectFromBinding(op.binding ?? null) ?? targetSubject ?? "";
+  if (meaningfulString(op.skill)) return op.skill;
+  return targetSubject ?? "";
+}
+
+function subjectFromTarget(target: string | null | undefined): string | null {
+  const value = target?.trim();
+  if (!value || value === "—") return null;
+  const withoutPrefix = value.startsWith("target_") ? value.slice("target_".length) : value;
+  const candidate = withoutPrefix.split(/[_/-]/).find((part) => part.length > 0);
+  return candidate && candidate !== "target" ? titleCase(candidate) : null;
+}
+
+function subjectFromBinding(binding: string | null | undefined): string | null {
+  const value = binding?.trim();
+  if (!value || value === "—") return null;
+  return value.startsWith("bind_") ? `${titleCase(value.slice("bind_".length).split(/[_/-]/)[0] ?? "")} binding` : "Workspace";
+}
+
+function normalizeIntent(intent: string): string {
+  return intent.trim().toLowerCase();
+}
+
+function meaningfulField(value: string | null | undefined): value is string {
+  return Boolean(value && value.trim() !== "" && value !== "—");
+}
+
+function meaningfulString(value: string | null | undefined): value is string {
+  return Boolean(value && value.trim() !== "");
+}
+
+function titleCase(value: string): string {
+  if (!value) return value;
+  return value.charAt(0).toUpperCase() + value.slice(1).replace(/-/g, " ");
+}
+
+function buildTitle(subject: string, phrase: string, status: string): string {
+  const action = subject ? `${subject} ${phrase}` : titleCase(phrase);
+  return `${action} ${status}`;
+}
+
+function compact(values: Array<string | null | undefined>): string[] {
+  return values.filter((value): value is string => Boolean(value && value.trim() !== ""));
+}

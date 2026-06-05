@@ -1,8 +1,8 @@
-import type { ReactNode } from "react";
 import type { Op, ProjectionLink, Skill, Target, VizMode } from "../../lib/types";
 import { OpRow } from "../../components/panel/OpRow";
 import { ProjectionGraph } from "../../components/panel/ProjectionGraph";
 import { PlusIcon, RefreshIcon, ShieldIcon, TargetIcon } from "../../components/icons/nav_icons";
+import { COUNT_TERMS, formatReplayableWrites, summarizeOps } from "../../lib/count_labels";
 import { api } from "../../lib/api/client";
 import { useMutation } from "../../lib/useMutation";
 
@@ -50,12 +50,11 @@ export function OverviewPage({
   const selSkill = skills.find((s) => s.id === selectedSkill);
   const selTarget = targets.find((t) => t.id === selectedTarget);
   const importObserved = useMutation();
-  const pendingOps = ops.filter((o) => o.status === "pending").length;
-  const errOps = ops.filter((o) => o.status === "err").length;
+  const opCounts = summarizeOps(ops);
   const totalProjections = skills.reduce((a, s) => a + s.targets.length, 0);
   const totalRules = skills.reduce((a, s) => a + s.ruleCount, 0);
-  const observedTargets = targets.filter((t) => t.ownership === "observed");
-  const canImportObserved = skills.length === 0 && observedTargets.length > 0;
+  const observedSkillCount = skills.filter((s) => s.observedImported || s.sources?.includes("observed")).length;
+  const observedTargetCount = targets.filter((t) => t.ownership === "observed").length;
   const uniqueAgents = new Set(targets.map((t) => t.agent)).size;
   const uniqueProfiles = new Set(targets.map((t) => `${t.agent}/${t.profile}`)).size;
   const methodCounts = projections.reduce<Record<string, number>>((acc, p) => {
@@ -66,17 +65,30 @@ export function OverviewPage({
   const writeGuardTone = readOnly ? "warn" : "ok";
   const canAddBinding = !readOnly && targets.length > 0;
   const addBindingTitle = readOnly ? "registry offline" : !canAddBinding ? "add a target first" : undefined;
+  const canImportObserved = skills.length === 0 && observedTargetCount > 0;
   const runImportObserved = () => {
     importObserved.run("import observed skills", () => api.skillImportObserved(), onMutation);
   };
+  const skillStepDetail =
+    canImportObserved
+      ? `No managed registry skills yet. Import creates managed skills from ${observedTargetCount} observed target${observedTargetCount === 1 ? "" : "s"}.`
+      : skills.length === 0
+      ? "No registry skills imported yet."
+      : observedSkillCount > 0
+      ? `${skills.length} skill${skills.length === 1 ? "" : "s"} in registry · ${observedSkillCount} imported from observed targets.`
+      : `${skills.length} tracked skill${skills.length === 1 ? "" : "s"}.`;
+  const skillKpiMeta =
+    totalRules > 0
+      ? `${totalRules} binding rule${totalRules === 1 ? "" : "s"}`
+      : observedSkillCount > 0
+      ? "imported · no bindings"
+      : skills.length > 0
+      ? "tracked · no bindings"
+      : "no bindings yet";
   const nextSteps: NextStep[] = [
     {
       label: "Add a skill",
-      detail: canImportObserved
-        ? `No managed registry skills yet. Import creates managed skills from ${observedTargets.length} observed target${observedTargets.length === 1 ? "" : "s"}.`
-        : skills.length === 0
-          ? "No tracked skills yet."
-          : `${skills.length} tracked skill${skills.length === 1 ? "" : "s"}.`,
+      detail: skillStepDetail,
       done: skills.length > 0,
       action: canImportObserved ? "Import observed skills" : "Open Skills",
       onAction: canImportObserved ? runImportObserved : onOpenSkills,
@@ -112,15 +124,24 @@ export function OverviewPage({
     {
       label: "Clear activity",
       detail:
-        pendingOps + errOps === 0
-          ? "No pending or failed registry work."
-          : `${pendingOps} pending · ${errOps} failed`,
-      done: pendingOps + errOps === 0,
-      action: errOps > 0 ? "View activity" : "Replay pending",
-      onAction: errOps > 0 ? onViewActivity : onOpenSync,
+        opCounts.actionNeeded === 0
+          ? "No replayable or failed registry work."
+          : `${formatReplayableWrites(opCounts.pending)} · ${opCounts.err} failed`,
+      done: opCounts.actionNeeded === 0,
+      action: opCounts.err > 0 ? "View activity" : "Replay queued writes",
+      onAction: opCounts.err > 0 ? onViewActivity : onOpenSync,
       disabled: readOnly,
     },
   ];
+  const graphEmptyAction = readOnly
+    ? { label: "Registry offline", onClick: onOpenSync, disabled: true, title: "registry offline" }
+    : skills.length === 0
+      ? { label: "Open Skills", onClick: onOpenSkills }
+      : targets.length === 0
+        ? { label: "Add target", onClick: onNewTarget }
+        : totalRules === 0
+          ? { label: "Add binding", onClick: onNewBinding }
+          : { label: "Replay / sync", onClick: onOpenSync };
 
   return (
     <>
@@ -162,11 +183,7 @@ export function OverviewPage({
         </div>
 
         <div className="kpi-row">
-          <Kpi
-            label="Skills"
-            value={skills.length}
-            meta={totalRules > 0 ? `${totalRules} binding rule${totalRules === 1 ? "" : "s"}` : "no bindings yet"}
-          />
+          <Kpi label="Skills" value={skills.length} meta={skillKpiMeta} />
           <Kpi
             label="Targets"
             value={targets.length}
@@ -186,16 +203,16 @@ export function OverviewPage({
             }
           />
           <Kpi
-            label="Needs action"
-            value={pendingOps + errOps}
+            label={COUNT_TERMS.actionNeeded}
+            value={opCounts.actionNeeded}
             meta={
-              pendingOps === 0 && errOps === 0 ? (
+              opCounts.actionNeeded === 0 ? (
                 "all clean"
               ) : (
                 <>
-                  {pendingOps > 0 && <span style={{ color: "var(--pending)" }}>{pendingOps} pending</span>}
-                  {pendingOps > 0 && errOps > 0 && " · "}
-                  {errOps > 0 && <span style={{ color: "var(--err)" }}>{errOps} failed</span>}
+                  {opCounts.pending > 0 && <span style={{ color: "var(--pending)" }}>{formatReplayableWrites(opCounts.pending)}</span>}
+                  {opCounts.pending > 0 && opCounts.err > 0 && " · "}
+                  {opCounts.err > 0 && <span style={{ color: "var(--err)" }}>{opCounts.err} failed</span>}
                 </>
               )
             }
@@ -243,6 +260,7 @@ export function OverviewPage({
               skills={skills}
               targets={targets}
               projections={projections}
+              emptyAction={graphEmptyAction}
             />
             <div className="proj-legend proj-legend-grouped">
               <span className="legend-group-title">Projection method</span>
@@ -316,6 +334,13 @@ export function OverviewPage({
               <div style={{ color: "var(--ink-3)", fontSize: 11 }}>
                 {readOnly ? (
                   "Start the panel backend to load git HEAD and sync state."
+                ) : observedTargetCount > 0 ? (
+                  <>
+                    Observed targets are read-only imports. External edits are saved only while{" "}
+                    <span className="mono" style={{ color: "var(--ink-1)" }}>loom skill monitor-observed</span>{" "}
+                    is running; registry source edits need{" "}
+                    <span className="mono" style={{ color: "var(--ink-1)" }}>loom skill watch</span>.
+                  </>
                 ) : (
                   <>
                     Use <span className="mono" style={{ color: "var(--ink-1)" }}>Git sync</span> to pull, push, or replay registry operations.
@@ -332,7 +357,7 @@ export function OverviewPage({
 
 interface NextStep {
   label: string;
-  detail: ReactNode;
+  detail: string;
   done: boolean;
   action: string;
   onAction: () => void;
@@ -341,28 +366,24 @@ interface NextStep {
 }
 
 function NextStepRow({ step, active }: { step: NextStep; active: boolean }) {
+  const status = step.done ? "done" : active ? "next" : "waiting";
+
   return (
-    <div
-      style={{
-        display: "grid",
-        gridTemplateColumns: "72px minmax(0, 1fr) auto",
-        gap: 12,
-        alignItems: "center",
-        padding: "8px 0",
-        borderBottom: "1px solid var(--line)",
-      }}
-    >
-      <span className={`badge ${step.done ? "ok" : active ? "warn" : ""}`}>
-        {step.done ? "done" : active ? "next" : "waiting"}
-      </span>
-      <div style={{ minWidth: 0 }}>
+    <div className="next-step-row">
+      <span className={`next-step-state ${status}`}>{status}</span>
+      <div className="next-step-copy">
         <div className="section-title" style={{ margin: 0 }}>
           {step.label}
         </div>
-        <div style={{ color: "var(--ink-2)", fontSize: 12 }}>{step.detail}</div>
+        <div className="next-step-detail">{step.detail}</div>
       </div>
       {!step.done && (
-        <button className="btn sm" onClick={step.onAction} disabled={step.disabled} title={step.title}>
+        <button
+          className={`btn sm next-step-action ${active ? "is-primary" : ""}`}
+          onClick={step.onAction}
+          disabled={step.disabled}
+          title={step.title}
+        >
           {step.action}
         </button>
       )}

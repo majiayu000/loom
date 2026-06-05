@@ -2,9 +2,11 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use axum::{Json, extract::State, http::StatusCode};
+use axum::{Json, extract::Path as AxumPath, extract::State, http::StatusCode};
 use serde_json::json;
 
+use crate::cli::SkillOnlyArgs;
+use crate::commands::App;
 use crate::commands::collect_skill_inventory;
 use crate::envelope::Envelope;
 use crate::gitops;
@@ -13,10 +15,12 @@ use crate::types::ErrorCode;
 
 use super::super::PanelState;
 use super::super::auth::registry_ok;
+use super::common::panel_command_envelope;
 
 #[derive(Debug, Default)]
 struct SkillReadRow {
     skill_id: String,
+    description: Option<String>,
     source_path: Option<PathBuf>,
     source_status: Option<&'static str>,
     sources: BTreeSet<&'static str>,
@@ -73,13 +77,26 @@ pub(in crate::panel) async fn v1_skills(
     }
 }
 
+pub(in crate::panel) async fn v1_skill_diagnose(
+    AxumPath(skill_name): AxumPath<String>,
+    State(state): State<PanelState>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let app = App {
+        ctx: state.ctx.as_ref().clone(),
+    };
+    panel_command_envelope(
+        "skill.diagnose",
+        app.cmd_skill_diagnose(&SkillOnlyArgs { skill: skill_name }),
+    )
+}
+
 fn build_skill_read_model(
     state: &PanelState,
 ) -> anyhow::Result<(Vec<serde_json::Value>, Vec<String>, bool)> {
     let mut warnings = Vec::new();
     let mut rows: BTreeMap<String, SkillReadRow> = BTreeMap::new();
 
-    add_source_skill_rows(&state.ctx.skills_dir, &mut rows)?;
+    add_source_skill_rows(&state.ctx.skills_dir, &mut rows, &mut warnings)?;
 
     let paths = RegistryStatePaths::from_app_context(&state.ctx);
     let snapshot = paths.maybe_load_snapshot()?;
@@ -116,6 +133,7 @@ fn skill_row<'a>(
 fn add_source_skill_rows(
     skills_dir: &Path,
     rows: &mut BTreeMap<String, SkillReadRow>,
+    warnings: &mut Vec<String>,
 ) -> anyhow::Result<()> {
     if !skills_dir.exists() {
         return Ok(());
@@ -127,13 +145,63 @@ fn add_source_skill_rows(
         let row = skill_row(rows, &skill_id);
         row.sources.insert("source");
         row.source_path = Some(path.clone());
-        row.source_status = Some(if path.is_dir() && path.join("SKILL.md").is_file() {
+        let skill_file = path.join("SKILL.md");
+        row.source_status = Some(if path.is_dir() && skill_file.is_file() {
+            match read_skill_description(&skill_file) {
+                Ok(description) => {
+                    row.description = description;
+                }
+                Err(err) => warnings.push(format!(
+                    "failed to read skill description from {}: {err}",
+                    skill_file.display()
+                )),
+            }
             "present"
         } else {
             "non-compliant"
         });
     }
     Ok(())
+}
+
+fn read_skill_description(skill_file: &Path) -> anyhow::Result<Option<String>> {
+    let raw = fs::read_to_string(skill_file)?;
+    let Some(rest) = raw.strip_prefix("---") else {
+        return Ok(None);
+    };
+    let rest = rest
+        .strip_prefix("\r\n")
+        .or_else(|| rest.strip_prefix('\n'))
+        .unwrap_or(rest);
+
+    for line in rest.lines() {
+        let trimmed = line.trim();
+        if trimmed == "---" {
+            break;
+        }
+        let Some(value) = trimmed.strip_prefix("description:") else {
+            continue;
+        };
+        let description = normalize_description(value.trim());
+        if !description.is_empty() {
+            return Ok(Some(description));
+        }
+    }
+
+    Ok(None)
+}
+
+fn normalize_description(value: &str) -> String {
+    let unquoted = value
+        .strip_prefix('"')
+        .and_then(|inner| inner.strip_suffix('"'))
+        .or_else(|| {
+            value
+                .strip_prefix('\'')
+                .and_then(|inner| inner.strip_suffix('\''))
+        })
+        .unwrap_or(value);
+    unquoted.trim().to_string()
 }
 
 fn add_registry_skill_rows(snapshot: &RegistrySnapshot, rows: &mut BTreeMap<String, SkillReadRow>) {
@@ -235,6 +303,7 @@ fn skill_row_to_json(row: SkillReadRow) -> serde_json::Value {
     let source_status = row.source_status.unwrap_or("missing");
     json!({
         "skill_id": row.skill_id,
+        "description": row.description,
         "source_status": source_status,
         "source_path": row.source_path.map(|path| path.display().to_string()),
         "latest_rev": row.latest_rev,

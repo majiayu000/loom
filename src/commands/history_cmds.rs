@@ -375,11 +375,15 @@ fn operation_json(record: &RegistryOperationRecord) -> Value {
     })
 }
 
-fn operation_mentions_skill(record: &RegistryOperationRecord, skill: &str) -> bool {
+pub(crate) fn operation_mentions_skill(record: &RegistryOperationRecord, skill: &str) -> bool {
     json_field_eq(&record.payload, "skill", skill)
         || json_field_eq(&record.payload, "skill_id", skill)
         || json_field_eq(&record.effects, "skill", skill)
         || json_field_eq(&record.effects, "skill_id", skill)
+        || json_string_array_contains(&record.payload, "skills", skill)
+        || json_string_array_contains(&record.effects, "skills", skill)
+        || json_item_array_contains_skill(&record.effects, "imported", skill)
+        || json_item_array_contains_skill(&record.effects, "updated", skill)
 }
 
 fn json_field_eq(value: &Value, key: &str, expected: &str) -> bool {
@@ -388,6 +392,25 @@ fn json_field_eq(value: &Value, key: &str, expected: &str) -> bool {
 
 fn json_field_str<'a>(value: &'a Value, key: &str) -> Option<&'a str> {
     value.get(key).and_then(Value::as_str)
+}
+
+fn json_string_array_contains(value: &Value, key: &str, expected: &str) -> bool {
+    value
+        .get(key)
+        .and_then(Value::as_array)
+        .is_some_and(|items| items.iter().any(|item| item.as_str() == Some(expected)))
+}
+
+fn json_item_array_contains_skill(value: &Value, key: &str, expected: &str) -> bool {
+    value
+        .get(key)
+        .and_then(Value::as_array)
+        .is_some_and(|items| {
+            items.iter().any(|item| {
+                item.get("skill").and_then(Value::as_str) == Some(expected)
+                    || item.get("skill_id").and_then(Value::as_str) == Some(expected)
+            })
+        })
 }
 
 fn skill_history_diff_stat(

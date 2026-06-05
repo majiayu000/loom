@@ -98,6 +98,7 @@ export interface TargetShowPayload {
 
 export interface SkillSummaryPayload {
   skill_id: string;
+  description?: string | null;
   source_status?: "present" | "missing" | "non-compliant";
   source_path?: string | null;
   latest_rev?: string | null;
@@ -378,6 +379,36 @@ export interface SkillHistoryPayload {
   meta?: { warnings?: string[] };
 }
 
+export type SkillDiagnoseStatus = "healthy" | "attention" | "blocked";
+
+export interface SkillDiagnoseCheck {
+  section: string;
+  id: string;
+  ok: boolean;
+  severity: "ok" | "warning" | "error" | string;
+  message: string;
+  next_action?: string | null;
+  details?: Record<string, unknown>;
+}
+
+export interface SkillDiagnosePayload {
+  skill: string;
+  healthy: boolean;
+  status: SkillDiagnoseStatus | string;
+  summary: {
+    source_status: string;
+    binding_count: number;
+    target_count: number;
+    projection_count: number;
+    failed_check_count: number;
+    warning_check_count: number;
+    drifted_path_count: number;
+    recent_failed_op_count: number;
+  };
+  checks: SkillDiagnoseCheck[];
+  related?: Record<string, unknown>;
+}
+
 export interface DoctorCheck {
   section: string;
   id: string;
@@ -458,6 +489,12 @@ export const api = {
   skillHistory: (name: string, signal?: AbortSignal) =>
     getJson<SkillHistoryPayload>(
       `/api/registry/skills/${encodeURIComponent(name)}/history`,
+      signal,
+    ),
+
+  skillDiagnose: (name: string, signal?: AbortSignal) =>
+    getJsonData<SkillDiagnosePayload>(
+      `/api/v1/skills/${encodeURIComponent(name)}/diagnose`,
       signal,
     ),
 

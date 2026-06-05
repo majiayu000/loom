@@ -43,8 +43,11 @@ export interface Target {
 export interface Skill {
   id: string;
   name: string;
+  description?: string | null;
   tag: string;
   sourceStatus: SkillSourceStatus;
+  observedImported?: boolean;
+  sources?: string[];
   releaseTags: string[];
   snapshotTags: string[];
   /**

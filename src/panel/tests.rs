@@ -12,6 +12,7 @@ use uuid::Uuid;
 
 mod assets;
 mod handlers;
+mod panel_import_observed;
 mod security;
 
 fn make_test_state() -> (std::path::PathBuf, PanelState) {

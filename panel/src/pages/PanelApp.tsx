@@ -15,6 +15,7 @@ import { SyncPage } from "./panel/SyncPage";
 import { DoctorPage } from "./panel/DoctorPage";
 import { FirstRunPage } from "./panel/FirstRunPage";
 import { ProjectionsPage } from "./panel/ProjectionsPage";
+import { summarizeOps } from "../lib/count_labels";
 
 const DEFAULT_TWEAKS: TweakState = {
   vizMode: "loom",
@@ -134,6 +135,7 @@ export function PanelApp() {
   const onNewBinding = () => setPage("bindings");
   const onOpenSync = () => setPage("sync");
   const onViewActivity = () => setPage("ops");
+  const opCounts = useMemo(() => summarizeOps(ops), [ops]);
 
   let view: React.ReactNode;
   if (live.mode === "first-run") {
@@ -233,7 +235,7 @@ export function PanelApp() {
         view = (
           <SyncPage
             remote={live.remote}
-            pendingCount={live.pendingCount}
+            queuedWriteCount={live.queuedWriteCount}
             registryRoot={live.registryRoot}
             refreshKey={live.lastUpdated}
             readOnly={readOnly}
@@ -260,9 +262,11 @@ export function PanelApp() {
         mode={live.mode}
         registryRoot={live.registryRoot}
         remoteState={live.remote?.sync_state}
-        pendingCount={live.pendingCount}
+        queuedWriteCount={live.queuedWriteCount}
         onReplay={onMutation}
+        onToggleTweaks={() => setTweakVisible((value) => !value)}
         readOnly={readOnly}
+        tweaksOpen={tweakVisible}
       />
       <Sidebar
         page={page}
@@ -273,7 +277,7 @@ export function PanelApp() {
           targets: targets.length,
           bindings: bindings.length,
           projections: live.projections.length,
-          opsAttention: ops.filter((o) => o.status !== "ok").length,
+          opsAttention: opCounts.actionNeeded,
         }}
         registryRoot={live.registryRoot}
       />
@@ -281,23 +285,6 @@ export function PanelApp() {
         {live.mode !== "live" && <LiveDataBanner error={live.error} loading={live.loading} mode={live.mode} />}
         {view}
       </div>
-      <button
-        onClick={() => setTweakVisible((v) => !v)}
-        style={{
-          position: "fixed",
-          right: 16,
-          top: 56,
-          padding: "4px 10px",
-          fontSize: 11,
-          color: "var(--ink-3)",
-          background: "var(--bg-1)",
-          border: "1px solid var(--line)",
-          borderRadius: 6,
-          zIndex: 99,
-        }}
-      >
-        {tweakVisible ? "hide tweaks" : "tweaks"}
-      </button>
       {tweakVisible && (
         <TweakPanel state={tweaks} onChange={patchTweaks} onDismiss={() => setTweakVisible(false)} />
       )}

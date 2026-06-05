@@ -255,6 +255,57 @@ fn skill_diagnose_reports_unsaved_source_drift() {
 }
 
 #[test]
+fn skill_diagnose_status_blocks_when_errors_and_warnings_coexist() {
+    let root = test_root();
+    write_skill(&root, "demo");
+    commit_all(&root);
+    let dirty_write = fs::write(
+        root.join("skills").join("demo").join("SKILL.md"),
+        "---\ndescription: Changed demo skill\n---\nbody\n",
+    );
+    assert!(dirty_write.is_ok(), "dirty skill file: {dirty_write:?}");
+    let missing_target = root.join("missing-target");
+    write_snapshot(&root, &missing_target, &missing_target.join("demo"), "demo");
+
+    let diagnosis = app(&root).cmd_skill_diagnose(&SkillOnlyArgs {
+        skill: "demo".to_string(),
+    });
+    assert!(diagnosis.is_ok(), "diagnose failed: {diagnosis:?}");
+    let (payload, _) = match diagnosis {
+        Ok(value) => value,
+        Err(err) => panic!("diagnose failed: {err:?}"),
+    };
+
+    assert_eq!(payload["status"], json!("blocked"));
+    assert!(
+        payload["summary"]["failed_check_count"]
+            .as_u64()
+            .unwrap_or(0)
+            > 0
+    );
+    assert!(
+        payload["summary"]["warning_check_count"]
+            .as_u64()
+            .unwrap_or(0)
+            > 0
+    );
+    let checks = match payload["checks"].as_array() {
+        Some(value) => value,
+        None => panic!("diagnosis checks are not an array: {}", payload["checks"]),
+    };
+    assert!(
+        checks
+            .iter()
+            .any(|check| check["id"] == "source_drift" && check["severity"] == "warning")
+    );
+    assert!(checks.iter().any(|check| {
+        check["id"] == "target_path_exists:target-1" && check["severity"] == "error"
+    }));
+    let cleanup = fs::remove_dir_all(root);
+    assert!(cleanup.is_ok(), "cleanup failed: {cleanup:?}");
+}
+
+#[test]
 fn skill_diagnose_reports_total_drift_count_when_paths_are_truncated() {
     let root = test_root();
     write_skill(&root, "demo");

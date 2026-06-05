@@ -28,7 +28,9 @@ interface TopbarProps {
   remoteState?: string;
   pendingCount: number;
   onReplay: () => void;
+  onToggleTweaks: () => void;
   readOnly: boolean;
+  tweaksOpen: boolean;
 }
 
 interface StatusDisplay {
@@ -160,6 +162,14 @@ export function Topbar(props: TopbarProps) {
             <PlayIcon /> {replaying ? "replaying…" : `Replay ${props.pendingCount}`}
           </button>
         )}
+        <button
+          className="top-btn"
+          onClick={props.onToggleTweaks}
+          title={props.tweaksOpen ? "hide visual tweaks" : "show visual tweaks"}
+          aria-pressed={props.tweaksOpen}
+        >
+          Tweaks
+        </button>
       </div>
     </div>
   );

@@ -31,7 +31,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          bun-version: 1.3.14
 
       - name: Tool Versions
         run: |
@@ -58,14 +58,17 @@ jobs:
             exit 1
           fi
 
-      - name: Panel Typecheck
-        run: make panel-typecheck
+      - name: Panel Install (Bun)
+        run: cd panel && bun install --frozen-lockfile
 
-      - name: Panel Tests
-        run: make panel-test
+      - name: Panel Typecheck (Bun)
+        run: cd panel && bun run typecheck
 
-      - name: Panel Build
-        run: make panel-build
+      - name: Panel Tests (Bun)
+        run: cd panel && bun run test
+
+      - name: Panel Build (Bun)
+        run: cd panel && bun run build
 
       - name: Agent E2E
         run: make e2e

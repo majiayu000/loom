@@ -649,7 +649,8 @@ Before completion:
 
 ```bash
 cargo check
-npx tsc --noEmit
+cd panel && bun install --frozen-lockfile
+cd panel && bun run typecheck
 ```
 
 Before submission:
@@ -657,6 +658,7 @@ Before submission:
 ```bash
 cargo test
 cd panel && bun run test
+cd panel && bun run build
 ./scripts/e2e-agent-flow.sh
 ```
 
@@ -669,7 +671,9 @@ make perf-smoke
 ```
 
 CI and release workflows must run the same logical gate, including
-`panel-typecheck`.
+the Panel Bun gates (`cd panel && bun run typecheck`, `cd panel && bun run test`,
+and `cd panel && bun run build`). Root Make targets may orchestrate these gates
+for repository-wide CI.
 
 ### 11.2 Coverage
 
@@ -719,7 +723,7 @@ Status/API load gates remain benchmark targets for larger fixture runs.
 3. Add rollback `recovery_ref`.
 4. Add typed projection/capture errors.
 5. Add release profile.
-6. Add `panel-typecheck` to CI/release.
+6. Add the Panel Bun typecheck gate to CI/release orchestration.
 7. Add `skill.add` Panel mutation guard coverage.
 8. Replace Panel skill source with union data source.
 

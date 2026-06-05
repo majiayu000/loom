@@ -2,6 +2,7 @@
   "name": "loom-panel",
   "private": true,
   "version": "0.2.0",
+  "packageManager": "bun@1.3.14",
   "type": "module",
   "scripts": {
     "dev": "vite",

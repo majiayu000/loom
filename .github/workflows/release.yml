@@ -35,7 +35,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          bun-version: 1.3.14
 
       - name: Tool Versions
         run: |
@@ -59,14 +59,17 @@ jobs:
       - name: Test
         run: make test
 
-      - name: Panel typecheck
-        run: make panel-typecheck
+      - name: Panel Install (Bun)
+        run: cd panel && bun install --frozen-lockfile
 
-      - name: Panel build
-        run: make panel-build
+      - name: Panel Typecheck (Bun)
+        run: cd panel && bun run typecheck
 
-      - name: Panel tests
-        run: make panel-test
+      - name: Panel Tests (Bun)
+        run: cd panel && bun run test
+
+      - name: Panel Build (Bun)
+        run: cd panel && bun run build
 
       - name: Agent E2E
         run: make e2e
@@ -103,7 +106,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          bun-version: 1.3.14
 
       - name: Build release binary
         run: cargo build --release --locked --target "${{ matrix.target }}"
@@ -211,7 +214,7 @@ jobs:
         if: env.CARGO_REGISTRY_TOKEN != ''
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          bun-version: 1.3.14
 
       - name: Publish crate
         if: env.CARGO_REGISTRY_TOKEN != ''

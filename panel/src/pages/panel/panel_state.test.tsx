@@ -11,6 +11,7 @@ import { OverviewPage } from "./OverviewPage";
 import { DoctorPage } from "./DoctorPage";
 import { FirstRunPage } from "./FirstRunPage";
 import { ProjectionsPage } from "./ProjectionsPage";
+import { SkillsPage } from "./SkillsPage";
 import { BindingAddForm } from "../../components/panel/forms/BindingAddForm";
 import { api, type BindingShowPayload, type CommandEnvelope, type DoctorPayload, type OpsPayload, type TargetShowPayload, type RegistryOperationRecord } from "../../lib/api/client";
 import type { Binding, Skill, Target } from "../../lib/types";
@@ -308,6 +309,57 @@ test("LiveDataBanner renders nothing during live refetch loading", () => {
 test("LiveDataBanner renders nothing in first-run mode", () => {
   const html = renderToStaticMarkup(<LiveDataBanner error={null} loading={false} mode="first-run" />);
   expect(html).toBe("");
+});
+
+test("table-heavy panel pages expose mobile card row labels", () => {
+  const skillHtml = renderToStaticMarkup(
+    <SkillsPage
+      skills={[makeSkill()]}
+      targets={[makeTarget()]}
+      bindings={[makeBinding()]}
+      selectedSkill="s-skill.writer"
+      onSelectSkill={() => {}}
+      onMutation={() => {}}
+      readOnly={false}
+    />,
+  );
+  expect(skillHtml).toContain('class="tbl mobile-cards"');
+  expect(skillHtml).toContain('data-label="Latest rev"');
+  expect(skillHtml).toContain('data-label="Bindings"');
+  expect(skillHtml).toContain('data-label="Tags"');
+
+  const bindingHtml = renderToStaticMarkup(
+    <BindingsPage
+      bindings={[makeBinding()]}
+      targets={[makeTarget()]}
+      readOnly={false}
+      mutationVersion={0}
+      onMutation={() => {}}
+    />,
+  );
+  expect(bindingHtml).toContain('class="tbl mobile-cards"');
+  expect(bindingHtml).toContain('data-label="Matcher"');
+  expect(bindingHtml).toContain('data-label="Policy"');
+
+  const projectionHtml = renderToStaticMarkup(
+    <ProjectionsPage
+      projections={[makeOrphanProjection()]}
+      targets={[makeTarget()]}
+      bindings={[makeBinding()]}
+      readOnly={false}
+      onMutation={() => {}}
+    />,
+  );
+  expect(projectionHtml).toContain('class="tbl mobile-cards"');
+  expect(projectionHtml).toContain('data-label="Instance"');
+  expect(projectionHtml).toContain('data-label="Health"');
+
+  const settingsHtml = renderToStaticMarkup(
+    <SettingsPage live={false} mode="offline-empty" registryRoot="/tmp/loom" />,
+  );
+  expect(settingsHtml).toContain('class="tbl mobile-cards"');
+  expect(settingsHtml).toContain('data-label="Setting"');
+  expect(settingsHtml).toContain('data-label="Value"');
 });
 
 test("FirstRunPage initializes the registry with scan enabled", async () => {

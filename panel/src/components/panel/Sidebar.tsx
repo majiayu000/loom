@@ -1,5 +1,6 @@
 import type { ComponentType, SVGProps } from "react";
 import type { PanelPageKey } from "../../lib/types";
+import { formatActionNeededBadge } from "../../lib/count_labels";
 import {
   BindingIcon,
   GitIcon,
@@ -19,6 +20,8 @@ interface NavEntry {
   label: string;
   icon: IconComp;
   count?: number | null;
+  countLabel?: string;
+  countTitle?: string;
 }
 
 interface SidebarProps {
@@ -47,7 +50,14 @@ export function Sidebar({ page, setPage, compact, counts, registryRoot }: Sideba
     { key: "targets", label: "Targets", icon: TargetIcon, count: counts.targets },
     { key: "bindings", label: "Bindings", icon: BindingIcon, count: counts.bindings },
     { key: "projections", label: "Projections", icon: GitIcon, count: counts.projections },
-    { key: "ops", label: "Activity", icon: OpsIcon, count: counts.opsAttention || null },
+    {
+      key: "ops",
+      label: "Activity",
+      icon: OpsIcon,
+      count: counts.opsAttention || null,
+      countLabel: counts.opsAttention > 0 ? formatActionNeededBadge(counts.opsAttention) : undefined,
+      countTitle: "Replayable or failed activity rows",
+    },
   ];
   const admin: NavEntry[] = [
     { key: "history", label: "Audit log", icon: HistoryIcon },
@@ -66,7 +76,11 @@ export function Sidebar({ page, setPage, compact, counts, registryRoot }: Sideba
       >
         <Icon className="nav-icon" />
         <span className="nav-label">{n.label}</span>
-        {n.count != null && <span className="nav-count">{n.count}</span>}
+        {n.count != null && (
+          <span className="nav-count" title={n.countTitle} aria-label={`${n.label}: ${n.countLabel ?? n.count}`}>
+            {n.countLabel ?? n.count}
+          </span>
+        )}
       </button>
     );
   };

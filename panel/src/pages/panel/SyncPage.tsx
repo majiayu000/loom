@@ -4,19 +4,20 @@ import { useEffect, useState } from "react";
 import { GitIcon, PlayIcon, RefreshIcon, SyncIcon } from "../../components/icons/nav_icons";
 import { api, type OpsHistoryDiagnosePayload } from "../../lib/api/client";
 import { useMutation } from "../../lib/useMutation";
+import { COUNT_TERMS, formatQueuedWrites } from "../../lib/count_labels";
 
 type DiagnoseData = NonNullable<OpsHistoryDiagnosePayload["data"]>;
 
 interface SyncPageProps {
   remote: RemotePayload | null;
-  pendingCount: number;
+  queuedWriteCount: number;
   registryRoot: string | null;
   refreshKey?: string | null;
   readOnly: boolean;
   onMutation: () => void;
 }
 
-export function SyncPage({ remote, pendingCount, registryRoot, refreshKey, readOnly, onMutation }: SyncPageProps) {
+export function SyncPage({ remote, queuedWriteCount, registryRoot, refreshKey, readOnly, onMutation }: SyncPageProps) {
   const push = useMutation();
   const pull = useMutation();
   const replay = useMutation();
@@ -120,9 +121,9 @@ export function SyncPage({ remote, pendingCount, registryRoot, refreshKey, readO
           <Kpi label="Ahead" value={remote?.ahead ?? 0} />
           <Kpi label="Behind" value={remote?.behind ?? 0} />
           <Kpi
-            label="Pending writes"
-            value={pendingCount}
-            tone={pendingCount > 0 ? "pending" : undefined}
+            label={COUNT_TERMS.queuedWrites}
+            value={queuedWriteCount}
+            tone={queuedWriteCount > 0 ? "pending" : undefined}
           />
         </div>
 
@@ -251,15 +252,15 @@ export function SyncPage({ remote, pendingCount, registryRoot, refreshKey, readO
               className="btn primary"
               disabled={readOnly || syncBusy}
               onClick={() => replay.run("sync replay", api.syncReplay, onMutation)}
-              title={readOnly ? "registry offline" : `replay ${pendingCount} pending op${pendingCount === 1 ? "" : "s"}`}
+              title={readOnly ? "registry offline" : `replay ${formatQueuedWrites(queuedWriteCount)} against local targets`}
             >
-              <PlayIcon /> {replay.busy ? "replaying…" : `Replay pending (${pendingCount})`}
+              <PlayIcon /> {replay.busy ? "replaying…" : `Replay queued writes (${queuedWriteCount})`}
             </button>
             <button
               className="btn ghost"
               disabled={readOnly}
               onClick={onMutation}
-              title="re-fetch remote status + pending writes"
+              title="re-fetch remote status + queued writes"
             >
               <RefreshIcon /> Refresh
             </button>

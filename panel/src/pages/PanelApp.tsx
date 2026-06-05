@@ -15,6 +15,7 @@ import { SyncPage } from "./panel/SyncPage";
 import { DoctorPage } from "./panel/DoctorPage";
 import { FirstRunPage } from "./panel/FirstRunPage";
 import { ProjectionsPage } from "./panel/ProjectionsPage";
+import { summarizeOps } from "../lib/count_labels";
 
 const DEFAULT_TWEAKS: TweakState = {
   vizMode: "loom",
@@ -134,6 +135,7 @@ export function PanelApp() {
   const onNewBinding = () => setPage("bindings");
   const onOpenSync = () => setPage("sync");
   const onViewActivity = () => setPage("ops");
+  const opCounts = useMemo(() => summarizeOps(ops), [ops]);
 
   let view: React.ReactNode;
   if (live.mode === "first-run") {
@@ -233,7 +235,7 @@ export function PanelApp() {
         view = (
           <SyncPage
             remote={live.remote}
-            pendingCount={live.pendingCount}
+            queuedWriteCount={live.queuedWriteCount}
             registryRoot={live.registryRoot}
             refreshKey={live.lastUpdated}
             readOnly={readOnly}
@@ -260,7 +262,7 @@ export function PanelApp() {
         mode={live.mode}
         registryRoot={live.registryRoot}
         remoteState={live.remote?.sync_state}
-        pendingCount={live.pendingCount}
+        queuedWriteCount={live.queuedWriteCount}
         onReplay={onMutation}
         onToggleTweaks={() => setTweakVisible((value) => !value)}
         readOnly={readOnly}
@@ -275,7 +277,7 @@ export function PanelApp() {
           targets: targets.length,
           bindings: bindings.length,
           projections: live.projections.length,
-          opsAttention: ops.filter((o) => o.status !== "ok").length,
+          opsAttention: opCounts.actionNeeded,
         }}
         registryRoot={live.registryRoot}
       />

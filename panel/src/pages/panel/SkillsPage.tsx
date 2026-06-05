@@ -2,7 +2,8 @@ import { useEffect, useState } from "react";
 import type { Binding, Skill, Target } from "../../lib/types";
 import type { RegistryProjection } from "../../generated/RegistryProjection";
 import { AgentAvatar } from "../../components/panel/AgentAvatar";
-import { PlusIcon, SearchIcon } from "../../components/icons/nav_icons";
+import { PlusIcon, SearchIcon, SkillIcon } from "../../components/icons/nav_icons";
+import { EmptyState } from "../../components/panel/EmptyState";
 import { api, type SkillDiagnoseCheck, type SkillDiagnosePayload } from "../../lib/api/client";
 import { useMutation } from "../../lib/useMutation";
 import {
@@ -44,7 +45,7 @@ export function SkillsPage({
       value.toLowerCase().includes(query),
     );
   });
-  const sel = skills.find((s) => s.id === selectedSkill) ?? skills[0];
+  const sel = filtered.find((s) => s.id === selectedSkill) ?? filtered[0] ?? skills.find((s) => s.id === selectedSkill) ?? skills[0];
   const capture = useMutation();
   const selectedSkillBindings = sel ? captureBindingsForSkill(sel.name, bindings, projections) : [];
   const bindingOptionKey = selectedSkillBindings.map((b) => `${b.id}\u001f${b.target}\u001f${b.method}`).join("\u001e");
@@ -67,17 +68,6 @@ export function SkillsPage({
       selectedSkillBindings.some((b) => b.id === current) ? current : selectedSkillBindings[0].id,
     );
   }, [bindingOptionKey]);
-
-  const emptyMessage: React.ReactNode = readOnly
-    ? "Registry API offline."
-    : q
-    ? "No skills match the current filter."
-    : (
-        <>
-          No skills in this registry yet — use the <strong>+ skill add</strong> button above, or run{" "}
-          <code className="mono">loom skill add &lt;source&gt; --name &lt;name&gt;</code>.
-        </>
-      );
 
   const runCapture = () => {
     if (!sel || !captureBinding) return;
@@ -164,61 +154,112 @@ export function SkillsPage({
             />
           </div>
         )}
-        <div className="two-col" style={{ height: "100%", gap: 0 }}>
-          <div style={{ overflow: "auto", borderRight: "1px solid var(--line)" }}>
-            <table className="tbl">
-              <thead>
-                <tr>
-                  <th>Name</th>
-                  <th>Source</th>
-                  <th>Latest rev</th>
-                  <th>Tags</th>
-                  <th>Bindings</th>
-                  <th>Projections</th>
-                  <th>Changed</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filtered.map((s) => (
-                  <tr
-                    key={s.id}
-                    className={sel?.id === s.id ? "selected" : ""}
-                    onClick={() => onSelectSkill(s.id)}
-                  >
-                    <td className="name">
-                      <div>{s.name}</div>
-                      {s.description && <div style={skillDescriptionStyle}>{s.description}</div>}
-                    </td>
-                    <td>
-                      <span className={`chip ${s.sourceStatus}`}>{s.sourceStatus}</span>
-                    </td>
-                    <td className="mono">{s.latestRev}</td>
-                    <td className="mono dim">{formatSkillTags(s)}</td>
-                    <td className="mono dim">{s.bindingCount}</td>
-                    <td className="mono">{s.projectionCount}</td>
-                    <td className="mono dim">{s.changed}</td>
-                  </tr>
-                ))}
-                {filtered.length === 0 && (
+        {filtered.length === 0 ? (
+          <SkillListEmptyState
+            query={query}
+            readOnly={readOnly}
+            onAddSkill={() => setAddOpen(true)}
+            onClearFilter={() => setQ("")}
+          />
+        ) : (
+          <div className="two-col" style={{ height: "100%", gap: 0 }}>
+            <div style={{ overflow: "auto", borderRight: "1px solid var(--line)" }}>
+              <table className="tbl mobile-cards">
+                <thead>
                   <tr>
-                    <td colSpan={7} style={{ color: "var(--ink-3)", padding: 22, textAlign: "center" }}>
-                      {emptyMessage}
-                    </td>
+                    <th>Name</th>
+                    <th>Source</th>
+                    <th>Latest rev</th>
+                    <th>Tags</th>
+                    <th>Bindings</th>
+                    <th>Projections</th>
+                    <th>Changed</th>
                   </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-          <div style={{ padding: 20, overflow: "auto" }}>
-            {sel ? (
+                </thead>
+                <tbody>
+                  {filtered.map((s) => (
+                    <tr
+                      key={s.id}
+                      className={sel?.id === s.id ? "selected" : ""}
+                      onClick={() => onSelectSkill(s.id)}
+                    >
+                      <td className="name" data-label="Name">
+                        <div>{s.name}</div>
+                        {s.description && <div style={skillDescriptionStyle}>{s.description}</div>}
+                      </td>
+                      <td data-label="Source">
+                        <span className={`chip ${s.sourceStatus}`}>{s.sourceStatus}</span>
+                      </td>
+                      <td className="mono" data-label="Latest rev">
+                        {s.latestRev}
+                      </td>
+                      <td className="mono dim mobile-hide" data-label="Tags">
+                        {formatSkillTags(s)}
+                      </td>
+                      <td className="mono dim" data-label="Bindings">
+                        {s.bindingCount}
+                      </td>
+                      <td className="mono" data-label="Projections">
+                        {s.projectionCount}
+                      </td>
+                      <td className="mono dim mobile-hide" data-label="Changed">
+                        {s.changed}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div style={{ padding: 20, overflow: "auto" }}>
               <SkillDetail skill={sel} targets={targets} bindings={bindings} onMutation={onMutation} readOnly={readOnly} />
-            ) : (
-              <div className="empty">{emptyMessage}</div>
-            )}
+            </div>
           </div>
-        </div>
+        )}
       </div>
     </>
+  );
+}
+
+function SkillListEmptyState({
+  query,
+  readOnly,
+  onAddSkill,
+  onClearFilter,
+}: {
+  query: string;
+  readOnly: boolean;
+  onAddSkill: () => void;
+  onClearFilter: () => void;
+}) {
+  if (query) {
+    return (
+      <EmptyState
+        title="No matching skills"
+        icon={<SearchIcon />}
+        actions={[{ label: "Clear filter", onClick: onClearFilter, variant: "ghost" }]}
+      >
+        Nothing in the registry matches <span className="mono">{query}</span>.
+      </EmptyState>
+    );
+  }
+
+  if (readOnly) {
+    return (
+      <EmptyState title="Registry API offline" icon={<SkillIcon />}>
+        Skills need the live registry API. Start the panel again, then add or import skills from this page.
+      </EmptyState>
+    );
+  }
+
+  return (
+    <EmptyState
+      title="No tracked skills yet"
+      icon={<SkillIcon />}
+      command="loom skill add <source> --name <name>"
+      actions={[{ label: "+ skill add", onClick: onAddSkill }]}
+    >
+      Add a managed skill manually, or run <span className="mono">loom skill import-observed</span> to pull observed skill directories.
+    </EmptyState>
   );
 }
 
@@ -309,7 +350,7 @@ const captureSelectStyle = {
   maxWidth: 260,
   border: "1px solid var(--line)",
   borderRadius: 6,
-  background: "var(--bg)",
+  background: "var(--bg-2)",
   color: "var(--ink-0)",
   padding: "0 8px",
   fontFamily: "var(--font-mono)",

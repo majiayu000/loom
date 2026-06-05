@@ -134,6 +134,44 @@ fn skill_trash_add_preserves_unrelated_staged_changes() {
 }
 
 #[test]
+fn skill_trash_add_accepts_untracked_skill_and_preserves_unrelated_staged_changes() {
+    let root = TestDir::new("skill-trash-untracked-source");
+    let (init_output, _) = run_loom(root.path(), &["workspace", "init"]);
+    assert_success(&init_output, "workspace init");
+    write_skill(root.path(), "manual", "# Manual\n\nnever committed\n");
+
+    write_file(&root.path().join("README.md"), "staged but unrelated\n");
+    git_success(root.path(), &["add", "README.md"]);
+
+    let (trash_output, trash_env) = run_loom(root.path(), &["skill", "trash", "add", "manual"]);
+    assert_success(&trash_output, "trash add");
+    assert_eq!(trash_env["ok"], Value::Bool(true));
+    let trash_id = match trash_env["data"]["trash_id"].as_str() {
+        Some(trash_id) => trash_id,
+        None => panic!("trash add did not return a trash id: {trash_env}"),
+    };
+    assert!(!root.path().join("skills/manual").exists());
+    assert!(
+        root.path()
+            .join("trash")
+            .join(trash_id)
+            .join("skill/SKILL.md")
+            .exists()
+    );
+
+    let committed_paths = git_success(root.path(), &["show", "--name-only", "--pretty=", "HEAD"]);
+    assert!(committed_paths.contains("trash/"));
+    assert!(
+        !committed_paths.contains("README.md"),
+        "trash commit included unrelated staged path: {committed_paths}"
+    );
+    assert_eq!(
+        git_success(root.path(), &["status", "--porcelain", "--", "README.md"]),
+        "A  README.md"
+    );
+}
+
+#[test]
 fn skill_trash_restore_refuses_to_overwrite_existing_skill() {
     let root = TestDir::new("skill-trash-restore-conflict");
     write_skill(root.path(), "demo", "# Demo\n\nv1\n");

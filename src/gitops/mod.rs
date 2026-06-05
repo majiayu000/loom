@@ -314,7 +314,7 @@ pub fn commit_paths_if_changed(
     head(ctx).map(Some)
 }
 
-fn path_exists_or_is_tracked(ctx: &AppContext, path: &str) -> Result<bool> {
+pub(crate) fn path_exists_or_is_tracked(ctx: &AppContext, path: &str) -> Result<bool> {
     if ctx.root.join(path).exists() {
         return Ok(true);
     }

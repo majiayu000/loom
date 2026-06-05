@@ -34,8 +34,18 @@ export function BindingsPage({
 
   const runCleanOrphans = () => {
     if (readOnly || orphanProjections.length === 0) return;
+    if (
+      deleteLivePaths &&
+      !window.confirm(
+        `Delete live paths for ${orphanProjections.length} orphaned projection${
+          orphanProjections.length === 1 ? "" : "s"
+        }? This removes live projection directories as well as registry metadata.`,
+      )
+    ) {
+      return;
+    }
     cleanOrphans.run(
-      "clean orphaned projections",
+      deleteLivePaths ? "delete orphaned projection live paths" : "clean orphaned projections",
       () => api.orphanClean({ delete_live_paths: deleteLivePaths }),
       onMutation,
     );
@@ -98,15 +108,25 @@ export function BindingsPage({
                   onChange={(event) => setDeleteLivePaths(event.currentTarget.checked)}
                   disabled={readOnly || cleanOrphans.busy}
                 />
-                Delete live paths
+                Also delete all live paths
               </label>
               <button
                 className="btn ghost danger"
                 onClick={runCleanOrphans}
                 disabled={readOnly || cleanOrphans.busy}
-                title={readOnly ? "registry offline" : "clean orphaned projection metadata"}
+                title={
+                  readOnly
+                    ? "registry offline"
+                    : deleteLivePaths
+                      ? "delete live paths for all listed orphaned projections"
+                      : "clean orphaned projection metadata"
+                }
               >
-                {cleanOrphans.busy ? "Cleaning..." : "Clean metadata"}
+                {cleanOrphans.busy
+                  ? "Cleaning..."
+                  : deleteLivePaths
+                    ? "Delete live paths and clean metadata"
+                    : "Clean metadata"}
               </button>
             </div>
             {(cleanOrphans.error || cleanOrphans.success) && (

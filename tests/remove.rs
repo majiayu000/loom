@@ -1,3 +1,4 @@
+use std::fs;
 use std::path::Path;
 
 use serde_json::Value;
@@ -5,7 +6,7 @@ use serde_json::Value;
 mod common;
 
 use common::actions::{binding_add, skill_project, target_add};
-use common::{TestDir, run_loom, write_skill};
+use common::{TestDir, run_loom, run_loom_with_env, write_skill};
 
 fn bootstrap_projected_skill(root: &Path) -> (String, String, String) {
     write_skill(root, "demo", "# Demo\n");
@@ -138,6 +139,73 @@ fn binding_remove_cascades_metadata_and_leaves_live_projection_in_place() {
             .map(Vec::len),
         Some(1),
         "orphaned projection should still be visible under the target"
+    );
+}
+
+#[test]
+fn orphan_clean_after_live_delete_audit_failure_does_not_restore_removed_projection_metadata() {
+    let root = TestDir::new("registry-orphan-clean-delete-audit-failure");
+    let (_target_id, binding_id, instance_id) = bootstrap_projected_skill(root.path());
+    let live_projection_dir = root.path().join("live/claude-a/demo");
+    assert!(
+        live_projection_dir.exists(),
+        "projection should exist before orphan cleanup"
+    );
+
+    let (binding_remove_output, _) = run_loom(
+        root.path(),
+        &["workspace", "binding", "remove", &binding_id],
+    );
+    assert!(
+        binding_remove_output.status.success(),
+        "binding remove should succeed first"
+    );
+
+    let operations_before =
+        fs::read_to_string(root.path().join("state/registry/ops/operations.jsonl"))
+            .expect("read operations before orphan clean");
+    let checkpoint_before =
+        fs::read_to_string(root.path().join("state/registry/ops/checkpoint.json"))
+            .expect("read checkpoint before orphan clean");
+
+    let (output, env) = run_loom_with_env(
+        root.path(),
+        &[("LOOM_FAULT_INJECT", "record_v3_operation_after_append")],
+        &["skill", "orphan", "clean", "--delete-live-paths"],
+    );
+    assert!(
+        !output.status.success(),
+        "orphan clean unexpectedly succeeded"
+    );
+    assert_eq!(env["ok"], Value::Bool(false));
+    assert!(
+        env["error"]["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("leaving metadata removed")),
+        "error should explain why projection metadata was not restored: {env}"
+    );
+    assert!(
+        !live_projection_dir.exists(),
+        "validated live path was already deleted and cannot be restored"
+    );
+
+    let projections = fs::read_to_string(root.path().join("state/registry/projections.json"))
+        .expect("read projections after orphan clean failure");
+    assert!(
+        !projections.contains(&instance_id),
+        "failed cleanup must not restore projection metadata for a deleted live path"
+    );
+    assert_eq!(
+        fs::read_to_string(root.path().join("state/registry/ops/operations.jsonl"))
+            .expect("read operations after orphan clean"),
+        operations_before,
+        "operation log append must still roll back"
+    );
+    assert_eq!(
+        fs::read_to_string(root.path().join("state/registry/ops/checkpoint.json"))
+            .expect("read checkpoint after orphan clean"),
+        checkpoint_before,
+        "checkpoint update must still roll back"
     );
 }
 

@@ -49,6 +49,18 @@
   font-weight: 500;
 }
 
+.history-table-wrap {
+  overflow: hidden;
+}
+
+.history-table td:first-child {
+  min-width: 220px;
+}
+
+.history-table td:nth-child(2) {
+  min-width: 260px;
+}
+
 .two-col {
   display: grid;
   grid-template-columns: 1fr 360px;
@@ -98,6 +110,14 @@
 
   .projections-list .tbl {
     min-width: 720px;
+  }
+
+  .history-table-wrap {
+    overflow-x: auto;
+  }
+
+  .history-table {
+    min-width: 680px;
   }
 
   .projections-detail-panel {
@@ -234,12 +254,18 @@
 }
 .op-row .op-title {
   color: var(--ink-0);
+  line-height: 1.35;
+  overflow-wrap: anywhere;
 }
 .op-row .op-sub {
-  font-family: var(--font-mono);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  align-items: center;
   font-size: 11px;
   color: var(--ink-3);
   margin-top: 2px;
+  min-width: 0;
 }
 .op-row .op-time {
   font-family: var(--font-mono);
@@ -260,7 +286,6 @@
 .op-status {
   display: inline-flex;
   align-items: center;
-  margin-right: 8px;
   font-family: var(--font-mono);
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -274,6 +299,20 @@
 }
 .op-status.err {
   color: var(--err);
+}
+
+.op-meta {
+  font-family: var(--font-mono);
+  color: var(--ink-3);
+  overflow-wrap: anywhere;
+}
+
+.op-detail-stack {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  align-items: center;
+  max-width: 520px;
 }
 
 .spark {

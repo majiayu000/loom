@@ -3,6 +3,23 @@
 All notable public release changes are tracked here. Loom also publishes release
 archives, checksums, and provenance details on GitHub Releases.
 
+## [0.1.3] - 2026-06-04
+
+### Added
+
+- `loom skill diagnose <skill>` for read-only skill health reports covering
+  source files, Git drift, bindings, targets, projections, pending queue state,
+  and related registry operations.
+- Panel Diagnose tab on skill detail pages, including loading/error handling and
+  refresh after lifecycle mutations.
+
+### Fixed
+
+- Diagnose reports now surface pending queue read problems and Git/source drift
+  read failures instead of silently treating them as healthy.
+- Projection-only/orphaned skills now report missing targets when no rule covers
+  the projection target.
+
 ## [0.1.2] - 2026-06-01
 
 ### Added
@@ -60,6 +77,7 @@ archives, checksums, and provenance details on GitHub Releases.
 
 - Initial public release archives for Loom.
 
+[0.1.3]: https://github.com/majiayu000/loom/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/majiayu000/loom/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/majiayu000/loom/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/majiayu000/loom/releases/tag/v0.1.0

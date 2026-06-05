@@ -249,6 +249,7 @@ body,
   padding: 1px 6px;
   border-radius: 8px;
   background: var(--bg-2);
+  white-space: nowrap;
 }
 .nav-item.active .nav-count {
   background: var(--bg-hi);
@@ -382,6 +383,19 @@ body,
     gap: 10px;
     overflow-x: auto;
     overflow-y: hidden;
+    scrollbar-gutter: stable;
+    box-shadow: inset -28px 0 22px -24px rgba(0, 0, 0, 0.9);
+  }
+
+  .sidebar::after {
+    content: "";
+    position: sticky;
+    right: -10px;
+    flex: 0 0 24px;
+    align-self: stretch;
+    margin: -8px -10px -8px 0;
+    background: linear-gradient(90deg, rgba(21, 19, 15, 0), var(--bg-1));
+    pointer-events: none;
   }
 
   .sidebar .group {

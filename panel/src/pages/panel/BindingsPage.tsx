@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import type { Binding, Target } from "../../lib/types";
 import { AgentAvatar } from "../../components/panel/AgentAvatar";
-import { PlusIcon } from "../../components/icons/nav_icons";
+import { BindingIcon, PlusIcon } from "../../components/icons/nav_icons";
+import { EmptyState } from "../../components/panel/EmptyState";
 import { BindingAddForm } from "../../components/panel/forms/BindingAddForm";
 import { api, ApiError, type BindingShowPayload } from "../../lib/api/client";
 import { useMutation } from "../../lib/useMutation";
@@ -134,116 +135,97 @@ export function BindingsPage({
             />
           </div>
         )}
-        <div className="two-col" style={{ height: "100%", gap: 0 }}>
-          <div style={{ overflow: "auto", borderRight: "1px solid var(--line)" }}>
-            <table className="tbl">
-              <thead>
-                <tr>
-                  <th>Binding</th>
-                  <th>Skill</th>
-                  <th>Target</th>
-                  <th>Matcher</th>
-                  <th>Method</th>
-                  <th>Policy</th>
-                </tr>
-              </thead>
-              <tbody>
-                {bindings.length === 0 && (
+        {bindings.length === 0 ? (
+          <EmptyState
+            title="No bindings yet"
+            icon={<BindingIcon />}
+            command="loom workspace binding add --agent <agent> --profile <id> --matcher-kind path-prefix --matcher-value <workspace> --target <target-id>"
+            actions={[
+              {
+                label: "New binding",
+                onClick: () => setAddOpen(true),
+                disabled: readOnly || targets.length === 0,
+                title: readOnly ? "registry offline" : targets.length === 0 ? "add a target first" : undefined,
+              },
+            ]}
+          >
+            Bindings map a skill matcher to a registered target. Add a target first if the button is disabled.
+          </EmptyState>
+        ) : (
+          <div className="two-col" style={{ height: "100%", gap: 0 }}>
+            <div style={{ overflow: "auto", borderRight: "1px solid var(--line)" }}>
+              <table className="tbl mobile-cards">
+                <thead>
                   <tr>
-                    <td colSpan={6}>
-                      <div className="empty-panel compact">
-                        <div className="empty-panel-title">No bindings configured</div>
-                        <div className="empty-panel-copy">
-                          Bindings connect skills to targets. Create one after at least one target exists, then project
-                          matching skills into that target.
-                        </div>
-                        <div className="empty-panel-actions">
-                          <button
-                            className="btn primary"
-                            onClick={() => setAddOpen(true)}
-                            disabled={readOnly || targets.length === 0}
-                            title={
-                              readOnly
-                                ? "registry offline"
-                                : targets.length === 0
-                                  ? "add a target first"
-                                  : undefined
-                            }
-                          >
-                            <PlusIcon /> New binding
-                          </button>
-                        </div>
-                      </div>
-                    </td>
+                    <th>Binding</th>
+                    <th>Skill</th>
+                    <th>Target</th>
+                    <th>Matcher</th>
+                    <th>Method</th>
+                    <th>Policy</th>
                   </tr>
-                )}
-                {bindings.map((b) => {
-                  const t = targets.find((x) => x.id === b.target);
-                  return (
-                    <tr
-                      key={b.id}
-                      className={selectedId === b.id ? "selected" : ""}
-                      onClick={() => setSelectedId(b.id === selectedId ? null : b.id)}
-                    >
-                      <td className="mono dim">{b.id}</td>
-                      <td className="name">{b.skill}</td>
-                      <td>
-                        {t && (
-                          <span className="row-flex">
-                            <AgentAvatar agent={t.agent} />
-                            <span style={{ color: "var(--ink-1)" }}>
-                              {t.agent}/{t.profile}
+                </thead>
+                <tbody>
+                  {bindings.map((b) => {
+                    const t = targets.find((x) => x.id === b.target);
+                    return (
+                      <tr
+                        key={b.id}
+                        className={selectedId === b.id ? "selected" : ""}
+                        onClick={() => setSelectedId(b.id === selectedId ? null : b.id)}
+                      >
+                        <td className="mono dim" data-label="Binding">
+                          {b.id}
+                        </td>
+                        <td className="name" data-label="Skill">
+                          {b.skill}
+                        </td>
+                        <td data-label="Target">
+                          {t && (
+                            <span className="row-flex">
+                              <AgentAvatar agent={t.agent} />
+                              <span style={{ color: "var(--ink-1)" }}>
+                                {t.agent}/{t.profile}
+                              </span>
                             </span>
+                          )}
+                        </td>
+                        <td className="mono" data-label="Matcher">
+                          {b.matcher}
+                        </td>
+                        <td data-label="Method">
+                          <span className={`chip method ${b.method}`}>{b.method}</span>
+                        </td>
+                        <td data-label="Policy">
+                          <span
+                            className="chip"
+                            style={{ color: b.policy === "auto" ? "var(--ok)" : "var(--warn)" }}
+                          >
+                            {b.policy}
                           </span>
-                        )}
-                      </td>
-                      <td className="mono">{b.matcher}</td>
-                      <td>
-                        <span className={`chip method ${b.method}`}>{b.method}</span>
-                      </td>
-                      <td>
-                        <span
-                          className="chip"
-                          style={{ color: b.policy === "auto" ? "var(--ok)" : "var(--warn)" }}
-                        >
-                          {b.policy}
-                        </span>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+            <div style={{ padding: 20, overflow: "auto" }}>
+              {sel ? (
+                <BindingDetail
+                  binding={sel}
+                  targets={targets}
+                  readOnly={readOnly}
+                  onMutation={onMutation}
+                  mutationVersion={mutationVersion}
+                  onRemoved={(bindingId) => setSelectedId((cur) => (cur === bindingId ? null : cur))}
+                />
+              ) : (
+                <div className="empty">Select a binding to inspect its rules, projections, and default target.</div>
+              )}
+            </div>
           </div>
-          <div style={{ padding: 20, overflow: "auto" }}>
-            {sel ? (
-              <BindingDetail
-                binding={sel}
-                targets={targets}
-                readOnly={readOnly}
-                onMutation={onMutation}
-                mutationVersion={mutationVersion}
-                onRemoved={(bindingId) => setSelectedId((cur) => (cur === bindingId ? null : cur))}
-              />
-            ) : (
-              <div className="empty-panel">
-                <div className="empty-panel-title">
-                  {bindings.length === 0 ? "Binding details will appear here" : "Select a binding"}
-                </div>
-                <div className="empty-panel-copy">
-                  {bindings.length === 0
-                    ? "After a binding is created, this panel shows its matcher, projection method, policy, and live projection status."
-                    : "Inspect a binding to review its rules, projections, and default target before projecting or deleting it."}
-                </div>
-                <ul className="empty-panel-list">
-                  <li>Matcher shows which workspaces the rule applies to.</li>
-                  <li>Method records whether the skill is symlinked, copied, or materialized.</li>
-                  <li>Policy distinguishes automatic projection from manual review.</li>
-                </ul>
-              </div>
-            )}
-          </div>
-        </div>
+        )}
       </div>
     </>
   );

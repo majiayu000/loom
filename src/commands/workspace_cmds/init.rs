@@ -2,6 +2,7 @@ use serde_json::json;
 
 use crate::cli::{TargetAddArgs, TargetCommand, TargetOwnership, WorkspaceInitArgs};
 use crate::envelope::Meta;
+use crate::state::home_dir;
 use crate::types::ErrorCode;
 
 use super::super::helpers::{
@@ -27,14 +28,14 @@ impl App {
         let mut skipped: Vec<serde_json::Value> = Vec::new();
 
         if args.scan_existing {
-            let home = std::env::var("HOME").map_err(|_| {
+            let home = home_dir().ok_or_else(|| {
                 CommandFailure::new(
                     ErrorCode::ArgInvalid,
-                    "--scan-existing requires HOME to be set",
+                    "--scan-existing requires HOME or USERPROFILE to be set",
                 )
             })?;
             for agent in DEFAULT_SCAN_AGENTS {
-                let path = default_skill_dir(agent, &home);
+                let path = default_skill_dir(agent, home.as_path());
                 let path_str = path.display().to_string();
                 let p = path.as_path();
                 if !p.exists() {

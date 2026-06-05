@@ -6,6 +6,22 @@ use std::process::{Command, Stdio};
 use common::{TestDir, run_loom, run_loom_with_env};
 use serde_json::Value;
 
+fn run_loom_with_removed_home(
+    root: &std::path::Path,
+    envs: &[(&str, &str)],
+    args: &[&str],
+) -> (std::process::Output, Value) {
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_loom"));
+    cmd.arg("--json").arg("--root").arg(root).args(args);
+    cmd.env_remove("HOME").env_remove("USERPROFILE");
+    for (key, value) in envs {
+        cmd.env(key, value);
+    }
+    let output = cmd.output().expect("run loom");
+    let env = serde_json::from_slice(&output.stdout).expect("parse loom json");
+    (output, env)
+}
+
 // Exercises the reentrant-lock production path: cmd_workspace_init holds the
 // workspace lock at line 159 and then calls cmd_target_add (line 200) which
 // re-acquires the same lock.  If reentrancy is broken this hangs or panics.
@@ -76,6 +92,56 @@ fn workspace_init_scan_existing_skips_absent_dirs() {
         env["data"]["skipped"][0]["reason"],
         Value::String("does-not-exist".to_string())
     );
+}
+
+#[test]
+fn top_level_init_with_explicit_root_without_home_initializes_without_scan() {
+    let root = TestDir::new("ws-init-no-home");
+
+    let (output, env) = run_loom_with_removed_home(root.path(), &[], &["init"]);
+
+    assert!(
+        output.status.success(),
+        "top-level init without HOME failed: stderr={} stdout={}",
+        String::from_utf8_lossy(&output.stderr),
+        String::from_utf8_lossy(&output.stdout)
+    );
+    assert_eq!(env["ok"], Value::Bool(true));
+    assert_eq!(env["data"]["initialized"], Value::Bool(true));
+    assert_eq!(env["data"]["scanned"], Value::Bool(false));
+    assert_eq!(env["data"]["imported"].as_array().map(|a| a.len()), Some(0));
+    assert_eq!(env["data"]["skipped"].as_array().map(|a| a.len()), Some(0));
+
+    let (list_output, list_env) = run_loom(root.path(), &["target", "list"]);
+    assert!(list_output.status.success());
+    assert_eq!(list_env["data"]["count"], Value::from(0));
+}
+
+#[test]
+fn workspace_init_scan_existing_uses_userprofile_when_home_is_missing() {
+    let root = TestDir::new("ws-init-userprofile");
+    let fake_profile = TestDir::new("ws-init-userprofile-home");
+
+    fs::create_dir_all(fake_profile.path().join(".claude/skills")).expect("create .claude/skills");
+    fs::create_dir_all(fake_profile.path().join(".codex/skills")).expect("create .codex/skills");
+
+    let profile_str = fake_profile.path().to_string_lossy().into_owned();
+    let (output, env) = run_loom_with_removed_home(
+        root.path(),
+        &[("USERPROFILE", &profile_str)],
+        &["workspace", "init", "--scan-existing"],
+    );
+
+    assert!(
+        output.status.success(),
+        "workspace init --scan-existing with USERPROFILE failed: stderr={} stdout={}",
+        String::from_utf8_lossy(&output.stderr),
+        String::from_utf8_lossy(&output.stdout)
+    );
+    assert_eq!(env["ok"], Value::Bool(true));
+    assert_eq!(env["data"]["scanned"], Value::Bool(true));
+    assert_eq!(env["data"]["imported"].as_array().map(|a| a.len()), Some(2));
+    assert_eq!(env["data"]["skipped"].as_array().map(|a| a.len()), Some(8));
 }
 
 // Two processes race to `workspace init --scan-existing` on the same root.

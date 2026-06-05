@@ -35,6 +35,9 @@ export function TargetsPage({
 }: TargetsPageProps) {
   const [addOpen, setAddOpen] = useState(false);
   const sel = targets.find((t) => t.id === selectedTarget) ?? null;
+  const importObserved = useMutation();
+  const observedTargets = targets.filter((t) => t.ownership === "observed");
+  const showObservedImport = skills.length === 0 && observedTargets.length > 0;
 
   useEffect(() => {
     if (readOnly) setAddOpen(false);
@@ -71,56 +74,115 @@ export function TargetsPage({
             }}
           />
         )}
-        <div className="target-grid">
-          {targets.map((t) => {
-            const isSel = selectedTarget === t.id;
-            const inbound = skills.filter((s) => s.targets.includes(t.id)).length;
-            return (
-              <div
-                key={t.id}
-                className="card"
-                style={{ cursor: "pointer", borderColor: isSel ? "var(--accent)" : "var(--line)" }}
-                onClick={() => onSelectTarget(t.id)}
-              >
-                <div style={{ padding: "14px 16px", display: "flex", alignItems: "center", gap: 12 }}>
-                  <AgentAvatar agent={t.agent} size={32} radius={8} />
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontSize: 14, color: "var(--ink-0)", fontWeight: 500 }}>
-                      {t.agent}
-                      <span style={{ color: "var(--ink-3)" }}> / </span>
-                      {t.profile}
-                    </div>
-                    <div className="mono" style={{ fontSize: 11, color: "var(--ink-2)", marginTop: 2 }}>
-                      {t.path}
-                    </div>
-                  </div>
-                  <span className={`chip ${t.ownership}`} title={OWNERSHIP_TOOLTIP[t.ownership]}>
-                    <span className="dot" />
-                    {t.ownership}
-                  </span>
+        {showObservedImport && (
+          <div className="card" style={{ marginBottom: 16 }}>
+            <div className="card-head">
+              <h3>Observed skills</h3>
+              <span className="badge warn">
+                {observedTargets.length} observed target{observedTargets.length === 1 ? "" : "s"}
+              </span>
+            </div>
+            <div className="card-body observed-import-panel">
+              <div>
+                <div style={{ color: "var(--ink-0)", fontSize: 13, marginBottom: 4 }}>
+                  Import observed skills into the registry.
                 </div>
-                <div
-                  style={{
-                    padding: "10px 16px",
-                    borderTop: "1px solid var(--line-soft)",
-                    display: "flex",
-                    gap: 18,
-                    fontSize: 11.5,
-                    color: "var(--ink-2)",
-                  }}
-                >
-                  <span>
-                    <b style={{ color: "var(--ink-0)" }}>{t.skills}</b> skills present
-                  </span>
-                  <span>
-                    <b style={{ color: "var(--ink-0)" }}>{inbound}</b> inbound bindings
-                  </span>
-                  <span style={{ marginLeft: "auto", color: "var(--ink-3)" }}>synced {t.lastSync}</span>
+                <div style={{ color: "var(--ink-2)", fontSize: 12 }}>
+                  Import creates managed registry skills from observed target directories. Nothing is imported until
+                  you choose this action.
                 </div>
               </div>
-            );
-          })}
-        </div>
+              <button
+                className="btn primary"
+                onClick={() => importObserved.run("import observed skills", () => api.skillImportObserved(), onMutation)}
+                disabled={readOnly || importObserved.busy}
+                title={readOnly ? "registry offline" : undefined}
+              >
+                <PlusIcon /> {importObserved.busy ? "Importing..." : "Import observed skills"}
+              </button>
+              {(importObserved.error || importObserved.success) && (
+                <div className="mutation-note" data-tone={importObserved.error ? "err" : "ok"}>
+                  {importObserved.error ?? `✓ ${importObserved.success}`}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+        {targets.length === 0 ? (
+          <div className="empty-panel">
+            <div className="empty-panel-title">No targets connected</div>
+            <div className="empty-panel-copy">
+              Add an agent skill directory before creating bindings or applying projections. Targets can be managed,
+              observed, or external depending on how much write access Loom should have.
+            </div>
+            <ul className="empty-panel-list">
+              <li>Managed targets receive projected skills from matching bindings.</li>
+              <li>Observed targets show inventory without letting Loom write files.</li>
+              <li>External targets stay visible as context only.</li>
+            </ul>
+            <div className="empty-panel-actions">
+              <button
+                className="btn primary"
+                onClick={() => setAddOpen(true)}
+                disabled={readOnly}
+                title={readOnly ? "registry offline" : undefined}
+              >
+                <PlusIcon /> Add target
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="target-grid">
+            {targets.map((t) => {
+              const isSel = selectedTarget === t.id;
+              const inbound = skills.filter((s) => s.targets.includes(t.id)).length;
+              return (
+                <div
+                  key={t.id}
+                  className="card"
+                  style={{ cursor: "pointer", borderColor: isSel ? "var(--accent)" : "var(--line)" }}
+                  onClick={() => onSelectTarget(t.id)}
+                >
+                  <div style={{ padding: "14px 16px", display: "flex", alignItems: "center", gap: 12 }}>
+                    <AgentAvatar agent={t.agent} size={32} radius={8} />
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: 14, color: "var(--ink-0)", fontWeight: 500 }}>
+                        {t.agent}
+                        <span style={{ color: "var(--ink-3)" }}> / </span>
+                        {t.profile}
+                      </div>
+                      <div className="mono" style={{ fontSize: 11, color: "var(--ink-2)", marginTop: 2 }}>
+                        {t.path}
+                      </div>
+                    </div>
+                    <span className={`chip ${t.ownership}`} title={OWNERSHIP_TOOLTIP[t.ownership]}>
+                      <span className="dot" />
+                      {t.ownership}
+                    </span>
+                  </div>
+                  <div
+                    style={{
+                      padding: "10px 16px",
+                      borderTop: "1px solid var(--line-soft)",
+                      display: "flex",
+                      gap: 18,
+                      fontSize: 11.5,
+                      color: "var(--ink-2)",
+                    }}
+                  >
+                    <span>
+                      <b style={{ color: "var(--ink-0)" }}>{t.skills}</b> skills present
+                    </span>
+                    <span>
+                      <b style={{ color: "var(--ink-0)" }}>{inbound}</b> inbound bindings
+                    </span>
+                    <span style={{ marginLeft: "auto", color: "var(--ink-3)" }}>synced {t.lastSync}</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
         {sel && (
           <div className="card" style={{ marginTop: 16 }}>
             <div className="card-head">

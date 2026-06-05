@@ -28,6 +28,7 @@ import { api } from "../../lib/api/client";
 const mockSkill: Skill = {
   id: "skill-1",
   name: "my-skill",
+  description: "Runs a focused workflow for skill registry changes.",
   tag: "latest",
   sourceStatus: "present",
   releaseTags: [],
@@ -233,6 +234,30 @@ describe("SkillsPage — capture action", () => {
       expect(api.capture).toHaveBeenCalledWith({ skill: "my-skill", binding: "shared-binding" });
       expect(onMutation).toHaveBeenCalledTimes(1);
     });
+  });
+});
+
+describe("SkillsPage — descriptions", () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    (api.skillHistory as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: true,
+      data: { skill: "my-skill", count: 0, events: [] },
+    });
+  });
+
+  it("shows skill descriptions in the list and detail panel", async () => {
+    renderPage();
+
+    expect(screen.getAllByText("Runs a focused workflow for skill registry changes.").length).toBeGreaterThan(1);
+  });
+
+  it("filters skills by description text", async () => {
+    renderPage();
+
+    fireEvent.change(screen.getByPlaceholderText("Filter skills…"), { target: { value: "registry changes" } });
+
+    expect(screen.getAllByText("my-skill").length).toBeGreaterThan(0);
   });
 });
 

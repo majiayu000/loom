@@ -1,6 +1,9 @@
 SHELL := /usr/bin/env bash
 
-.PHONY: fmt fmt-check test lint panel-build panel-test panel-typecheck e2e perf-smoke check ci install-hooks
+PANEL_DIR := panel
+PANEL_INSTALL_STAMP := $(PANEL_DIR)/node_modules/.bun-install.stamp
+
+.PHONY: fmt fmt-check test lint panel-install panel-dev panel-build panel-test panel-typecheck e2e perf-smoke check ci install-hooks
 
 fmt:
 	cargo fmt --all
@@ -18,14 +21,24 @@ test:
 lint:
 	cargo clippy --all-targets --all-features -- -D warnings
 
-panel-build:
-	cd panel && bun install --frozen-lockfile && bun run build
+$(PANEL_INSTALL_STAMP): $(PANEL_DIR)/package.json $(PANEL_DIR)/bun.lock
+	cd $(PANEL_DIR) && bun install --frozen-lockfile
+	mkdir -p $(dir $@)
+	touch $@
 
-panel-test:
-	cd panel && bun install --frozen-lockfile && bun run test
+panel-install: $(PANEL_INSTALL_STAMP)
 
-panel-typecheck:
-	cd panel && bun install --frozen-lockfile && bun run typecheck
+panel-dev: panel-install
+	cd $(PANEL_DIR) && bun run dev
+
+panel-build: panel-install
+	cd $(PANEL_DIR) && bun run build
+
+panel-test: panel-install
+	cd $(PANEL_DIR) && bun run test
+
+panel-typecheck: panel-install
+	cd $(PANEL_DIR) && bun run typecheck
 
 e2e:
 	./scripts/e2e-agent-flow.sh

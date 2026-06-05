@@ -149,9 +149,9 @@ test("OverviewPage shows actionable next steps for a partial registry", async ()
   });
 
   expect(markup(renderer!).includes("Next steps")).toBe(true);
-  expect(markup(renderer!).includes("No tracked skills yet.")).toBe(true);
+  expect(markup(renderer!).includes("No registry skills imported yet.")).toBe(true);
   buttonByLabel(renderer!, "Open Skills").props.onClick();
-  buttonByLabel(renderer!, "Replay pending").props.onClick();
+  buttonByLabel(renderer!, "Replay queued writes").props.onClick();
   expect(openedSkills).toBe(1);
   expect(openedSync).toBe(1);
 });
@@ -229,7 +229,7 @@ test("SyncPage surfaces history repair actions", async () => {
       renderer = create(
         <SyncPage
           remote={{ configured: true, url: "git@example.com:loom.git", ahead: 0, behind: 0, sync_state: "clean" }}
-          pendingCount={0}
+          queuedWriteCount={0}
           registryRoot="/tmp/loom"
           readOnly={false}
           onMutation={() => {
@@ -256,6 +256,60 @@ test("SyncPage surfaces history repair actions", async () => {
   }
 });
 
+test("SyncPage renders local-only sync state as compact readable text", async () => {
+  let renderer: ReactTestRenderer;
+  await act(async () => {
+    renderer = create(
+      <SyncPage
+        remote={{
+          configured: true,
+          url: "git@example.com:loom.git",
+          ahead: 0,
+          behind: 0,
+          sync_state: "LOCAL_ONLY",
+          tracking_ref: false,
+        }}
+        queuedWriteCount={0}
+        registryRoot="/tmp/loom"
+        readOnly={true}
+        onMutation={() => {}}
+      />,
+    );
+  });
+
+  expect(markup(renderer!).includes("local only")).toBe(true);
+  expect(markup(renderer!).includes("LOCAL_ONLY")).toBe(false);
+});
+
+test("SyncPage renders diverged sync state with error tone", async () => {
+  let renderer: ReactTestRenderer;
+  await act(async () => {
+    renderer = create(
+      <SyncPage
+        remote={{
+          configured: true,
+          url: "git@example.com:loom.git",
+          ahead: 1,
+          behind: 1,
+          sync_state: "DIVERGED",
+        }}
+        queuedWriteCount={0}
+        registryRoot="/tmp/loom"
+        readOnly={true}
+        onMutation={() => {}}
+      />,
+    );
+  });
+
+  const syncState = renderer!.root.findAll(
+    (node: ReactTestInstance) =>
+      typeof node.props.className === "string" &&
+      node.props.className.includes("status-value") &&
+      textOf(node.props.children) === "diverged",
+  )[0];
+  expect(syncState.props.style.color).toBe("var(--err)");
+});
+
 test("SyncPage re-runs history diagnose when refreshed data arrives", async () => {
   const originalDiagnose = api.opsHistoryDiagnose;
   let diagnoseCalls = 0;
@@ -270,7 +324,7 @@ test("SyncPage re-runs history diagnose when refreshed data arrives", async () =
       renderer = create(
         <SyncPage
           remote={{ configured: true, url: "git@example.com:loom.git", ahead: 0, behind: 0, sync_state: "clean" }}
-          pendingCount={0}
+          queuedWriteCount={0}
           registryRoot="/tmp/loom"
           refreshKey="first"
           readOnly={false}
@@ -285,7 +339,7 @@ test("SyncPage re-runs history diagnose when refreshed data arrives", async () =
       renderer!.update(
         <SyncPage
           remote={{ configured: true, url: "git@example.com:loom.git", ahead: 0, behind: 0, sync_state: "clean" }}
-          pendingCount={0}
+          queuedWriteCount={0}
           registryRoot="/tmp/loom"
           refreshKey="second"
           readOnly={false}

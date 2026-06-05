@@ -286,7 +286,11 @@ async fn v1_skills_returns_union_read_model() {
     let paths = RegistryStatePaths::from_root(&root);
     let source_dir = root.join("skills/present-skill");
     fs::create_dir_all(&source_dir).expect("create present skill");
-    fs::write(source_dir.join("SKILL.md"), "# present\n").expect("write skill");
+    fs::write(
+        source_dir.join("SKILL.md"),
+        "---\nname: present-skill\ndescription: \"Shows the panel skill description\"\n---\n# present\n",
+    )
+    .expect("write skill");
     fs::create_dir_all(root.join("skills/broken-skill")).expect("create broken skill");
 
     paths
@@ -360,6 +364,10 @@ async fn v1_skills_returns_union_read_model() {
     };
 
     assert_eq!(by_id("present-skill")["source_status"], json!("present"));
+    assert_eq!(
+        by_id("present-skill")["description"],
+        json!("Shows the panel skill description")
+    );
     assert_eq!(by_id("present-skill")["bindings_count"], json!(1));
     assert_eq!(
         by_id("broken-skill")["source_status"],
@@ -372,6 +380,46 @@ async fn v1_skills_returns_union_read_model() {
         json!("abcdef1234567890")
     );
     assert_eq!(by_id("observed-only")["observed_imported"], json!(true));
+
+    cleanup_root(root);
+}
+
+#[tokio::test]
+async fn v1_skills_warns_when_description_cannot_be_read() {
+    let (root, state) = make_test_state();
+    write_registry_snapshot(&root, REGISTRY_SCHEMA_VERSION);
+    let source_dir = root.join("skills/unreadable-description");
+    fs::create_dir_all(&source_dir).expect("create skill");
+    fs::write(
+        source_dir.join("SKILL.md"),
+        b"---\ndescription: \xFF\n---\n# present\n",
+    )
+    .expect("write invalid skill description");
+
+    let (status, Json(payload)) = v1_skills(State(state)).await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(payload["ok"], json!(true));
+    assert_eq!(payload["data"]["count"], json!(1));
+    assert_eq!(
+        payload["data"]["skills"][0]["skill_id"],
+        json!("unreadable-description")
+    );
+    assert_eq!(
+        payload["data"]["skills"][0]["source_status"],
+        json!("present")
+    );
+    assert_eq!(payload["data"]["skills"][0]["description"], Value::Null);
+
+    let warnings = payload["meta"]["warnings"]
+        .as_array()
+        .expect("warnings array");
+    assert!(
+        warnings.iter().any(|warning| warning
+            .as_str()
+            .is_some_and(|message| message.contains("failed to read skill description"))),
+        "missing description warning: {warnings:?}"
+    );
 
     cleanup_root(root);
 }

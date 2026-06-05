@@ -1,4 +1,4 @@
-use super::PanelState;
+use super::{ImportObservedRequest, PanelState};
 use crate::panel::handlers::registry_status;
 use crate::state::AppContext;
 use crate::state_model::{
@@ -12,6 +12,7 @@ use uuid::Uuid;
 
 mod assets;
 mod handlers;
+mod panel_import_observed;
 mod security;
 
 fn make_test_state() -> (std::path::PathBuf, PanelState) {

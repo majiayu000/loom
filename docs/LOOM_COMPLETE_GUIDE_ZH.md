@@ -172,11 +172,22 @@ loom --json --root ~/loom-registry skill capture my-skill --instance <instance-i
 
 ## 10. 本地与 CI 统一入口
 
+Panel 开发与验证使用 Bun：
+
+```bash
+cd panel && bun install --frozen-lockfile
+cd panel && bun run dev
+cd panel && bun run typecheck
+cd panel && bun run test
+cd panel && bun run build
+```
+
+根目录 Make 目标用于编排仓库级验证：
+
 ```bash
 make fmt-check
 make lint
 make test
-make panel-build
 make e2e
 make ci
 ```

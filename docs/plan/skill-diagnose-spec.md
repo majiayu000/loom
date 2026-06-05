@@ -330,10 +330,9 @@ cargo test
 PR 2:
 
 ```bash
-cd panel
-npm run typecheck
-npm test -- SkillsPage
-npm test
+cd panel && bun run typecheck
+cd panel && bun run test -- SkillsPage
+cd panel && bun run test
 ```
 
 If a full command is too slow or blocked by environment, the PR must report the exact command, failure, and narrower command that passed.

@@ -7,16 +7,16 @@ use axum::{
 };
 
 use crate::cli::{
-    AddArgs, CaptureArgs, Command, OrphanCleanArgs, ProjectArgs, ProjectionMethod,
-    SkillOrphanCommand, SkillTrashCommand, TargetCommand, TargetOwnership, TrashPurgeArgs,
-    TrashRestoreArgs, WorkspaceBindingCommand, WorkspaceCommand,
+    AddArgs, CaptureArgs, Command, ImportObservedArgs, OrphanCleanArgs, ProjectArgs,
+    ProjectionMethod, SkillOrphanCommand, SkillTrashCommand, TargetCommand, TargetOwnership,
+    TrashPurgeArgs, TrashRestoreArgs, WorkspaceBindingCommand, WorkspaceCommand,
 };
 
 use super::super::auth::{ensure_mutation_authorized, error_envelope, run_panel_command};
 use super::super::{
-    BindingAddRequest, CaptureRequest, OrphanCleanRequest, PanelState, ProjectRequest,
-    SkillAddRequest, SkillReleaseRequest, SkillRollbackRequest, SkillSaveRequest, TargetAddRequest,
-    TrashRestoreRequest,
+    BindingAddRequest, CaptureRequest, ImportObservedRequest, OrphanCleanRequest, PanelState,
+    ProjectRequest, SkillAddRequest, SkillReleaseRequest, SkillRollbackRequest, SkillSaveRequest,
+    TargetAddRequest, TrashRestoreRequest,
 };
 
 fn policy_profile_looks_sane(value: &str) -> bool {
@@ -180,6 +180,29 @@ pub(in crate::panel) async fn registry_skill_add(
             command: crate::cli::SkillCommand::Add(AddArgs {
                 source: req.source,
                 name: req.name,
+            }),
+        },
+    )
+}
+
+pub(in crate::panel) async fn registry_skill_import_observed(
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    State(state): State<PanelState>,
+    Json(req): Json<ImportObservedRequest>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    if let Some(response) =
+        ensure_mutation_authorized(&state, peer, &headers, "skill.import_observed")
+    {
+        return response;
+    }
+    run_panel_command(
+        &state,
+        "skill.import_observed",
+        StatusCode::OK,
+        Command::Skill {
+            command: crate::cli::SkillCommand::ImportObserved(ImportObservedArgs {
+                target: req.target,
             }),
         },
     )

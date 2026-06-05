@@ -62,6 +62,7 @@ describe("api v1 routes", () => {
     });
     await api.bindingRemove("binding-1");
     await api.skillAdd({ source: "/tmp/source", name: "demo" });
+    await api.skillImportObserved();
     await api.skillSave("demo", { message: "save demo" });
     await api.skillSnapshot("demo");
     await api.skillRelease("demo", { version: "v1" });
@@ -84,6 +85,7 @@ describe("api v1 routes", () => {
       "/api/v1/bindings",
       "/api/v1/bindings/binding-1/remove",
       "/api/v1/skills",
+      "/api/v1/skills/import-observed",
       "/api/v1/skills/demo/save",
       "/api/v1/skills/demo/snapshot",
       "/api/v1/skills/demo/release",

@@ -313,13 +313,25 @@ Run four real scenarios in one command (`.claude/skills`, `.claude-work/skills`,
 
 ## Local Verification
 
+Panel development and validation use Bun directly:
+
+```bash
+cd panel && bun install --frozen-lockfile
+cd panel && bun run dev
+cd panel && bun run typecheck
+cd panel && bun run test
+cd panel && bun run build
+```
+
+Run repository-wide gates from the root. The root Make targets orchestrate
+Rust, Panel, e2e, release, and performance checks.
+
 ```bash
 make fmt-check
 make lint
 make test
-make panel-build
 make e2e
-make ci       # all of the above
+make ci       # repository-wide gate
 ```
 
 ## Pre-Commit Hook (Recommended)

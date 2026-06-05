@@ -67,6 +67,12 @@ pub(super) struct SkillAddRequest {
 }
 
 #[derive(Debug, Deserialize)]
+pub(super) struct ImportObservedRequest {
+    #[serde(default)]
+    pub(super) target: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 pub(super) struct SkillSaveRequest {
     #[serde(default)]
     pub(super) message: Option<String>,
@@ -175,6 +181,10 @@ pub async fn run_panel(ctx: AppContext, port: u16) -> Result<()> {
         .route(
             "/api/v1/skills/trash/{trash_id}/purge",
             post(registry_skill_trash_purge),
+        )
+        .route(
+            "/api/v1/skills/import-observed",
+            post(registry_skill_import_observed),
         )
         .route(
             "/api/v1/skills/{skill_name}/diagnose",

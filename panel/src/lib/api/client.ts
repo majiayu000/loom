@@ -98,6 +98,7 @@ export interface TargetShowPayload {
 
 export interface SkillSummaryPayload {
   skill_id: string;
+  description?: string | null;
   source_status?: "present" | "missing" | "non-compliant";
   source_path?: string | null;
   latest_rev?: string | null;
@@ -295,6 +296,10 @@ export interface SkillAddBody {
   name: string;
 }
 
+export interface SkillImportObservedBody {
+  target?: string;
+}
+
 export interface SkillSaveBody {
   message?: string;
 }
@@ -479,6 +484,8 @@ export const api = {
   bindingAdd: (body: BindingAddBody) => postJson("/api/v1/bindings", body),
   bindingRemove: (bindingId: string) => postJson(`/api/v1/bindings/${encodeURIComponent(bindingId)}/remove`, {}),
   skillAdd: (body: SkillAddBody) => postJson("/api/v1/skills", body),
+  skillImportObserved: (body: SkillImportObservedBody = {}) =>
+    postJson("/api/v1/skills/import-observed", body),
   skillSave: (name: string, body: SkillSaveBody = {}) =>
     postJson(`/api/v1/skills/${encodeURIComponent(name)}/save`, body),
   skillSnapshot: (name: string) =>

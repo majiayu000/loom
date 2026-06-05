@@ -11,6 +11,7 @@ import { OverviewPage } from "./OverviewPage";
 import { DoctorPage } from "./DoctorPage";
 import { FirstRunPage } from "./FirstRunPage";
 import { ProjectionsPage } from "./ProjectionsPage";
+import { SkillsPage } from "./SkillsPage";
 import { BindingAddForm } from "../../components/panel/forms/BindingAddForm";
 import { api, type BindingShowPayload, type CommandEnvelope, type DoctorPayload, type OpsPayload, type TargetShowPayload, type RegistryOperationRecord } from "../../lib/api/client";
 import type { Binding, Skill, Target } from "../../lib/types";
@@ -310,6 +311,57 @@ test("LiveDataBanner renders nothing in first-run mode", () => {
   expect(html).toBe("");
 });
 
+test("table-heavy panel pages expose mobile card row labels", () => {
+  const skillHtml = renderToStaticMarkup(
+    <SkillsPage
+      skills={[makeSkill()]}
+      targets={[makeTarget()]}
+      bindings={[makeBinding()]}
+      selectedSkill="s-skill.writer"
+      onSelectSkill={() => {}}
+      onMutation={() => {}}
+      readOnly={false}
+    />,
+  );
+  expect(skillHtml).toContain('class="tbl mobile-cards"');
+  expect(skillHtml).toContain('data-label="Latest rev"');
+  expect(skillHtml).toContain('data-label="Bindings"');
+  expect(skillHtml).toContain('data-label="Tags"');
+
+  const bindingHtml = renderToStaticMarkup(
+    <BindingsPage
+      bindings={[makeBinding()]}
+      targets={[makeTarget()]}
+      readOnly={false}
+      mutationVersion={0}
+      onMutation={() => {}}
+    />,
+  );
+  expect(bindingHtml).toContain('class="tbl mobile-cards"');
+  expect(bindingHtml).toContain('data-label="Matcher"');
+  expect(bindingHtml).toContain('data-label="Policy"');
+
+  const projectionHtml = renderToStaticMarkup(
+    <ProjectionsPage
+      projections={[makeOrphanProjection()]}
+      targets={[makeTarget()]}
+      bindings={[makeBinding()]}
+      readOnly={false}
+      onMutation={() => {}}
+    />,
+  );
+  expect(projectionHtml).toContain('class="tbl mobile-cards"');
+  expect(projectionHtml).toContain('data-label="Instance"');
+  expect(projectionHtml).toContain('data-label="Health"');
+
+  const settingsHtml = renderToStaticMarkup(
+    <SettingsPage live={false} mode="offline-empty" registryRoot="/tmp/loom" />,
+  );
+  expect(settingsHtml).toContain('class="tbl mobile-cards"');
+  expect(settingsHtml).toContain('data-label="Setting"');
+  expect(settingsHtml).toContain('data-label="Value"');
+});
+
 test("FirstRunPage initializes the registry with scan enabled", async () => {
   const originalInit = api.workspaceInit;
   const calls: Array<{ scan_existing?: boolean }> = [];
@@ -381,6 +433,65 @@ test("OverviewPage disables add binding until a target exists", async () => {
   const addBinding = buttonByLabel(renderer!, "Add binding");
   expect(addBinding.props.disabled).toBe(true);
   expect(addBinding.props.title).toBe("add a target first");
+});
+
+test("OverviewPage distinguishes observed imports from live autosave", async () => {
+  const observedSkill: Skill = {
+    ...makeSkill(),
+    id: "s-agentsmd-audit",
+    name: "agentsmd-audit",
+    tag: "skill",
+    releaseTags: [],
+    latestRev: "—",
+    ruleCount: 0,
+    bindingCount: 0,
+    projectionCount: 0,
+    changed: "—",
+    targets: [],
+    observedImported: true,
+    sources: ["observed", "source"],
+  };
+  let renderer: ReactTestRenderer;
+  await act(async () => {
+    renderer = create(
+      <OverviewPage
+        skills={[
+          observedSkill,
+          {
+            ...observedSkill,
+            id: "s-ai-slop-cleaner",
+            name: "ai-slop-cleaner",
+          },
+        ]}
+        targets={[makeTarget({ ownership: "observed" })]}
+        ops={[]}
+        projections={[]}
+        vizMode="loom"
+        setVizMode={() => {}}
+        selectedSkill={null}
+        selectedTarget={null}
+        onSelectSkill={() => {}}
+        onSelectTarget={() => {}}
+        registryRoot="/tmp/loom"
+        onMutation={() => {}}
+        onNewTarget={() => {}}
+        onNewBinding={() => {}}
+        onOpenSkills={() => {}}
+        onViewActivity={() => {}}
+        onOpenSync={() => {}}
+        readOnly={false}
+      />,
+    );
+  });
+
+  const html = markup(renderer!);
+  expect(html.includes("2 skills in registry")).toBe(true);
+  expect(html.includes("2 imported from observed targets")).toBe(true);
+  expect(html.includes("imported · no bindings")).toBe(true);
+  expect(html.includes("No tracked skills yet.")).toBe(false);
+  expect(html.includes("Observed targets are read-only imports")).toBe(true);
+  expect(html.includes("loom skill monitor-observed")).toBe(true);
+  expect(html.includes("loom skill watch")).toBe(true);
 });
 
 test("BindingAddForm submits the canonical matcher kind", async () => {

@@ -30,12 +30,13 @@ Configure repository secrets:
 2. Run local verification:
 
    ```bash
+   cd panel && bun install --frozen-lockfile
+   cd panel && bun run typecheck
+   cd panel && bun run test
+   cd panel && bun run build
    make fmt-check
    make lint
    make test
-   make panel-typecheck
-   make panel-test
-   make panel-build
    make e2e
    cargo publish --dry-run --locked
    ```
@@ -88,7 +89,7 @@ loom --help
 loom --version
 ```
 
-`cargo install skillloom` remains supported as a source-build path, but it is not the recommended first install path for users who want a guaranteed bundled Panel. Source builds need the Panel frontend inputs and `bun` available during compile time; otherwise the CLI can build without embedded Panel assets.
+`cargo install skillloom` remains supported as a source-build path, but it is not the recommended first install path for users who want a guaranteed bundled Panel. Source builds that bundle Panel assets require the Panel frontend inputs and Bun during compile time; run `cd panel && bun install --frozen-lockfile` before building from source when the bundled Panel is required. Otherwise the CLI can build without embedded Panel assets.
 
 ## Future Install Surfaces
 

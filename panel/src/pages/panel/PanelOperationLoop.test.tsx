@@ -149,7 +149,7 @@ test("OverviewPage shows actionable next steps for a partial registry", async ()
   });
 
   expect(markup(renderer!).includes("Next steps")).toBe(true);
-  expect(markup(renderer!).includes("No tracked skills yet.")).toBe(true);
+  expect(markup(renderer!).includes("No registry skills imported yet.")).toBe(true);
   buttonByLabel(renderer!, "Open Skills").props.onClick();
   buttonByLabel(renderer!, "Replay queued writes").props.onClick();
   expect(openedSkills).toBe(1);

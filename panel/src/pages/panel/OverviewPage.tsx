@@ -49,6 +49,8 @@ export function OverviewPage({
   const opCounts = summarizeOps(ops);
   const totalProjections = skills.reduce((a, s) => a + s.targets.length, 0);
   const totalRules = skills.reduce((a, s) => a + s.ruleCount, 0);
+  const observedSkillCount = skills.filter((s) => s.observedImported || s.sources?.includes("observed")).length;
+  const observedTargetCount = targets.filter((t) => t.ownership === "observed").length;
   const uniqueAgents = new Set(targets.map((t) => t.agent)).size;
   const uniqueProfiles = new Set(targets.map((t) => `${t.agent}/${t.profile}`)).size;
   const methodCounts = projections.reduce<Record<string, number>>((acc, p) => {
@@ -59,10 +61,24 @@ export function OverviewPage({
   const writeGuardTone = readOnly ? "warn" : "ok";
   const canAddBinding = !readOnly && targets.length > 0;
   const addBindingTitle = readOnly ? "registry offline" : !canAddBinding ? "add a target first" : undefined;
+  const skillStepDetail =
+    skills.length === 0
+      ? "No registry skills imported yet."
+      : observedSkillCount > 0
+      ? `${skills.length} skill${skills.length === 1 ? "" : "s"} in registry · ${observedSkillCount} imported from observed targets.`
+      : `${skills.length} tracked skill${skills.length === 1 ? "" : "s"}.`;
+  const skillKpiMeta =
+    totalRules > 0
+      ? `${totalRules} binding rule${totalRules === 1 ? "" : "s"}`
+      : observedSkillCount > 0
+      ? "imported · no bindings"
+      : skills.length > 0
+      ? "tracked · no bindings"
+      : "no bindings yet";
   const nextSteps: NextStep[] = [
     {
       label: "Add a skill",
-      detail: skills.length === 0 ? "No tracked skills yet." : `${skills.length} tracked skill${skills.length === 1 ? "" : "s"}.`,
+      detail: skillStepDetail,
       done: skills.length > 0,
       action: "Open Skills",
       onAction: onOpenSkills,
@@ -151,11 +167,7 @@ export function OverviewPage({
         </div>
 
         <div className="kpi-row">
-          <Kpi
-            label="Skills"
-            value={skills.length}
-            meta={totalRules > 0 ? `${totalRules} binding rule${totalRules === 1 ? "" : "s"}` : "no bindings yet"}
-          />
+          <Kpi label="Skills" value={skills.length} meta={skillKpiMeta} />
           <Kpi
             label="Targets"
             value={targets.length}
@@ -306,6 +318,13 @@ export function OverviewPage({
               <div style={{ color: "var(--ink-3)", fontSize: 11 }}>
                 {readOnly ? (
                   "Start the panel backend to load git HEAD and sync state."
+                ) : observedTargetCount > 0 ? (
+                  <>
+                    Observed targets are read-only imports. External edits are saved only while{" "}
+                    <span className="mono" style={{ color: "var(--ink-1)" }}>loom skill monitor-observed</span>{" "}
+                    is running; registry source edits need{" "}
+                    <span className="mono" style={{ color: "var(--ink-1)" }}>loom skill watch</span>.
+                  </>
                 ) : (
                   <>
                     Use <span className="mono" style={{ color: "var(--ink-1)" }}>Git sync</span> to pull, push, or replay registry operations.

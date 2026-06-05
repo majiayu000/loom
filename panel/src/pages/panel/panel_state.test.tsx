@@ -435,6 +435,65 @@ test("OverviewPage disables add binding until a target exists", async () => {
   expect(addBinding.props.title).toBe("add a target first");
 });
 
+test("OverviewPage distinguishes observed imports from live autosave", async () => {
+  const observedSkill: Skill = {
+    ...makeSkill(),
+    id: "s-agentsmd-audit",
+    name: "agentsmd-audit",
+    tag: "skill",
+    releaseTags: [],
+    latestRev: "—",
+    ruleCount: 0,
+    bindingCount: 0,
+    projectionCount: 0,
+    changed: "—",
+    targets: [],
+    observedImported: true,
+    sources: ["observed", "source"],
+  };
+  let renderer: ReactTestRenderer;
+  await act(async () => {
+    renderer = create(
+      <OverviewPage
+        skills={[
+          observedSkill,
+          {
+            ...observedSkill,
+            id: "s-ai-slop-cleaner",
+            name: "ai-slop-cleaner",
+          },
+        ]}
+        targets={[makeTarget({ ownership: "observed" })]}
+        ops={[]}
+        projections={[]}
+        vizMode="loom"
+        setVizMode={() => {}}
+        selectedSkill={null}
+        selectedTarget={null}
+        onSelectSkill={() => {}}
+        onSelectTarget={() => {}}
+        registryRoot="/tmp/loom"
+        onMutation={() => {}}
+        onNewTarget={() => {}}
+        onNewBinding={() => {}}
+        onOpenSkills={() => {}}
+        onViewActivity={() => {}}
+        onOpenSync={() => {}}
+        readOnly={false}
+      />,
+    );
+  });
+
+  const html = markup(renderer!);
+  expect(html.includes("2 skills in registry")).toBe(true);
+  expect(html.includes("2 imported from observed targets")).toBe(true);
+  expect(html.includes("imported · no bindings")).toBe(true);
+  expect(html.includes("No tracked skills yet.")).toBe(false);
+  expect(html.includes("Observed targets are read-only imports")).toBe(true);
+  expect(html.includes("loom skill monitor-observed")).toBe(true);
+  expect(html.includes("loom skill watch")).toBe(true);
+});
+
 test("BindingAddForm submits the canonical matcher kind", async () => {
   const originalBindingAdd = api.bindingAdd;
   const submissions: Array<Parameters<typeof api.bindingAdd>[0]> = [];

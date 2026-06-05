@@ -2,13 +2,17 @@
   position: fixed;
   right: 16px;
   bottom: 16px;
+  top: 176px;
   width: 280px;
+  max-width: calc(100vw - 32px);
   background: var(--bg-1);
   border: 1px solid var(--line-hi);
   border-radius: var(--radius-lg);
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
   z-index: 100;
   font-size: 12px;
+  display: flex;
+  flex-direction: column;
 }
 
 .tweaks .t-head {
@@ -29,7 +33,7 @@
   display: flex;
   flex-direction: column;
   gap: 14px;
-  max-height: 70vh;
+  min-height: 0;
   overflow-y: auto;
 }
 
@@ -79,4 +83,14 @@
 }
 .tweaks .swatch.on {
   border-color: var(--ink-0);
+}
+
+@media (max-width: 720px) {
+  .tweaks {
+    top: auto;
+    right: 12px;
+    bottom: 12px;
+    max-height: min(62vh, 420px);
+    max-width: calc(100vw - 24px);
+  }
 }

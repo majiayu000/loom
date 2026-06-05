@@ -100,7 +100,7 @@ export function DoctorPage({ live, mode, refreshKey }: DoctorPageProps) {
                 <div className="card-head">
                   <h3>{sectionLabel(section)}</h3>
                   <span className={`chip ${sectionChecks.every((check) => check.ok) ? "ok" : "warn"}`}>
-                    {sectionChecks.filter((check) => !check.ok).length} / {sectionChecks.length}
+                    {sectionChecks.filter((check) => !check.ok).length} issues / {sectionChecks.length} checks
                   </span>
                 </div>
                 <div className="card-body" style={{ padding: 0 }}>
@@ -122,12 +122,18 @@ export function DoctorPage({ live, mode, refreshKey }: DoctorPageProps) {
 }
 
 function DoctorRow({ check }: { check: DoctorCheck }) {
+  const label = doctorCheckLabel(check);
+  const context = doctorCheckContext(check);
+
   return (
     <tr>
       <td style={{ width: 170 }}>
-        <span className="row-flex">
+        <span className="row-flex doctor-check-label">
           <ShieldIcon />
-          <span className="mono dim">{check.id}</span>
+          <span>
+            <span className="doctor-check-name">{label}</span>
+            <span className="mono dim doctor-check-id">{context ? `${check.id} · ${context}` : check.id}</span>
+          </span>
         </span>
       </td>
       <td style={{ width: 96 }}>
@@ -215,6 +221,43 @@ function groupChecks(checks: DoctorCheck[]): Array<[string, DoctorCheck[]]> {
 
 function sectionLabel(section: string): string {
   return section.replace(/_/g, " ");
+}
+
+function doctorCheckLabel(check: DoctorCheck): string {
+  const idRoot = check.id.split(":")[0];
+  const labels: Record<string, string> = {
+    agent_skill_inventory: "Agent skill directories",
+    binding_target_agent_match: "Binding target agent",
+    binding_target_exists: "Binding default target",
+    git_fsck: "Git integrity",
+    history_branch: "History branch",
+    pending_queue_warnings: "Pending queue warnings",
+    projection_path_exists: "Projection path",
+    projection_source_exists: "Projection source skill",
+    schema_file: "Registry schema file",
+    snapshot_load: "Registry snapshot",
+    target_path_exists: "Target path",
+  };
+  return labels[idRoot] ?? titleize(idRoot);
+}
+
+function doctorCheckContext(check: DoctorCheck): string | null {
+  const detailKeys = ["target_id", "binding_id", "instance_id", "skill_id", "path"];
+  for (const key of detailKeys) {
+    const value = check.details?.[key];
+    if (typeof value === "string" && value.trim()) return value;
+  }
+
+  const [, suffix] = check.id.split(":", 2);
+  return suffix || null;
+}
+
+function titleize(value: string): string {
+  return value
+    .split("_")
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
 }
 
 function Kpi({

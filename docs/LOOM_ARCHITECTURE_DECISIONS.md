@@ -116,7 +116,7 @@ This decision does not make the panel the primary control plane. The CLI remains
 
 ### 4.1 Mutation Route Table (v1 phase 1 frozen surface)
 
-The following 19 routes are the complete mutation surface for phase 1. Every row passes through `ensure_mutation_authorized` then `run_panel_command`. Adding a new POST route without a corresponding row in this table is an explicit contract break requiring a section-4 update.
+The following 22 routes are the complete mutation surface for phase 1. Every row passes through `ensure_mutation_authorized` then `run_panel_command`. Adding a new POST route without a corresponding row in this table is an explicit contract break requiring a section-4 update.
 
 | cmd name                 | HTTP | path                                    | CLI command                  |
 |--------------------------|------|-----------------------------------------|------------------------------|
@@ -131,6 +131,9 @@ The following 19 routes are the complete mutation surface for phase 1. Every row
 | skill.snapshot           | POST | /api/v1/skills/{skill_name}/snapshot          | Skill::Snapshot              |
 | skill.release            | POST | /api/v1/skills/{skill_name}/release           | Skill::Release               |
 | skill.rollback           | POST | /api/v1/skills/{skill_name}/rollback          | Skill::Rollback              |
+| skill.trash.add          | POST | /api/v1/skills/{skill_name}/trash             | Skill::Trash::Add            |
+| skill.trash.restore      | POST | /api/v1/skills/trash/{trash_id}/restore       | Skill::Trash::Restore        |
+| skill.trash.purge        | POST | /api/v1/skills/trash/{trash_id}/purge         | Skill::Trash::Purge          |
 | skill.orphan.clean       | POST | /api/v1/orphans/clean                         | Skill::Orphan::Clean         |
 | workspace.remote.set     | POST | /api/v1/workspace/remote                      | Workspace::Remote::Set       |
 | ops.retry                | POST | /api/v1/ops/retry                             | Ops::Retry                   |

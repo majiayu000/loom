@@ -8,15 +8,15 @@ use axum::{
 
 use crate::cli::{
     AddArgs, CaptureArgs, Command, ImportObservedArgs, OrphanCleanArgs, ProjectArgs,
-    ProjectionMethod, SkillOrphanCommand, TargetCommand, TargetOwnership, WorkspaceBindingCommand,
-    WorkspaceCommand,
+    ProjectionMethod, SkillOrphanCommand, SkillTrashCommand, TargetCommand, TargetOwnership,
+    TrashPurgeArgs, TrashRestoreArgs, WorkspaceBindingCommand, WorkspaceCommand,
 };
 
 use super::super::auth::{ensure_mutation_authorized, error_envelope, run_panel_command};
 use super::super::{
     BindingAddRequest, CaptureRequest, ImportObservedRequest, OrphanCleanRequest, PanelState,
     ProjectRequest, SkillAddRequest, SkillReleaseRequest, SkillRollbackRequest, SkillSaveRequest,
-    TargetAddRequest,
+    TargetAddRequest, TrashRestoreRequest,
 };
 
 fn policy_profile_looks_sane(value: &str) -> bool {
@@ -204,6 +204,76 @@ pub(in crate::panel) async fn registry_skill_import_observed(
             command: crate::cli::SkillCommand::ImportObserved(ImportObservedArgs {
                 target: req.target,
             }),
+        },
+    )
+}
+
+pub(in crate::panel) async fn registry_skill_trash_add(
+    AxumPath(skill_name): AxumPath<String>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    State(state): State<PanelState>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    if let Some(response) = ensure_mutation_authorized(&state, peer, &headers, "skill.trash.add") {
+        return response;
+    }
+    run_panel_command(
+        &state,
+        "skill.trash.add",
+        StatusCode::OK,
+        Command::Skill {
+            command: crate::cli::SkillCommand::Trash {
+                command: SkillTrashCommand::Add(crate::cli::SkillOnlyArgs { skill: skill_name }),
+            },
+        },
+    )
+}
+
+pub(in crate::panel) async fn registry_skill_trash_restore(
+    AxumPath(trash_id): AxumPath<String>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    State(state): State<PanelState>,
+    Json(req): Json<TrashRestoreRequest>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    if let Some(response) =
+        ensure_mutation_authorized(&state, peer, &headers, "skill.trash.restore")
+    {
+        return response;
+    }
+    run_panel_command(
+        &state,
+        "skill.trash.restore",
+        StatusCode::OK,
+        Command::Skill {
+            command: crate::cli::SkillCommand::Trash {
+                command: SkillTrashCommand::Restore(TrashRestoreArgs {
+                    skill: req.skill,
+                    trash_id: Some(trash_id),
+                }),
+            },
+        },
+    )
+}
+
+pub(in crate::panel) async fn registry_skill_trash_purge(
+    AxumPath(trash_id): AxumPath<String>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    State(state): State<PanelState>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    if let Some(response) = ensure_mutation_authorized(&state, peer, &headers, "skill.trash.purge")
+    {
+        return response;
+    }
+    run_panel_command(
+        &state,
+        "skill.trash.purge",
+        StatusCode::OK,
+        Command::Skill {
+            command: crate::cli::SkillCommand::Trash {
+                command: SkillTrashCommand::Purge(TrashPurgeArgs { trash_id }),
+            },
         },
     )
 }

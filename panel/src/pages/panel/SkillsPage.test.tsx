@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { SkillsPage } from "./SkillsPage";
 import type { Binding, Skill, Target } from "../../lib/types";
@@ -14,6 +14,10 @@ vi.mock("../../lib/api/client", () => ({
     skillSnapshot: vi.fn(),
     skillRelease: vi.fn(),
     skillRollback: vi.fn(),
+    skillTrashList: vi.fn(),
+    skillTrashAdd: vi.fn(),
+    skillTrashRestore: vi.fn(),
+    skillTrashPurge: vi.fn(),
   },
 }));
 
@@ -52,6 +56,8 @@ function renderPage(
     bindings?: Binding[];
     targets?: Target[];
     projections?: RegistryProjection[];
+    readOnly?: boolean;
+    onSelectSkill?: (id: string | null) => void;
   } = {},
 ) {
   return render(
@@ -61,9 +67,9 @@ function renderPage(
       bindings={overrides.bindings ?? []}
       projections={overrides.projections ?? []}
       selectedSkill="skill-1"
-      onSelectSkill={() => {}}
+      onSelectSkill={overrides.onSelectSkill ?? (() => {})}
       onMutation={overrides.onMutation ?? (() => {})}
-      readOnly={false}
+      readOnly={overrides.readOnly ?? false}
     />,
   );
 }
@@ -133,6 +139,18 @@ function makeDiagnose(overrides: Record<string, unknown> = {}) {
       },
     ],
     related: {},
+    ...overrides,
+  };
+}
+
+function makeTrashEntry(overrides: Record<string, unknown> = {}) {
+  return {
+    trash_id: "old-skill-20260604T010203Z-a1b2c3d4",
+    skill: "old-skill",
+    original_path: "skills/old-skill",
+    trashed_at: "2026-06-04T01:02:03Z",
+    source_commit: "abcdef1234567890",
+    trash_path: "trash/old-skill-20260604T010203Z-a1b2c3d4",
     ...overrides,
   };
 }
@@ -485,6 +503,115 @@ describe("SkillsPage — empty registry", () => {
     expect(
       screen.getAllByText(/loom skill add <source> --name <name>/).length,
     ).toBeGreaterThan(0);
+  });
+});
+
+describe("SkillsPage — trash UI", () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    (api.skillHistory as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: true,
+      data: { skill: "my-skill", count: 0, events: [] },
+    });
+    (api.skillTrashList as ReturnType<typeof vi.fn>).mockResolvedValue({
+      items: [makeTrashEntry()],
+    });
+    (api.skillTrashAdd as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: true,
+      cmd: "skill.trash.add",
+      request_id: "req-trash-add",
+    });
+    (api.skillTrashRestore as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: true,
+      cmd: "skill.trash.restore",
+      request_id: "req-trash-restore",
+    });
+    (api.skillTrashPurge as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: true,
+      cmd: "skill.trash.purge",
+      request_id: "req-trash-purge",
+    });
+  });
+
+  function openTrashView() {
+    fireEvent.click(
+      within(screen.getByRole("group", { name: "Skill view" })).getByRole("button", {
+        name: "Trash",
+      }),
+    );
+  }
+
+  it("lists trash entries in the Trash view", async () => {
+    renderPage();
+    openTrashView();
+
+    await waitFor(() => {
+      expect(api.skillTrashList).toHaveBeenCalledTimes(1);
+      expect(screen.getAllByText("old-skill").length).toBeGreaterThan(0);
+      expect(screen.getByText("trash/old-skill-20260604T010203Z-a1b2c3d4")).toBeInTheDocument();
+    });
+  });
+
+  it("moves the selected skill to trash after confirmation", async () => {
+    const onMutation = vi.fn();
+    const onSelectSkill = vi.fn();
+    renderPage({ onMutation, onSelectSkill });
+
+    fireEvent.click(screen.getByRole("button", { name: "Trash my-skill" }));
+    fireEvent.click(screen.getByRole("button", { name: "Move to trash" }));
+
+    await waitFor(() => {
+      expect(api.skillTrashAdd).toHaveBeenCalledWith("my-skill");
+      expect(onSelectSkill).toHaveBeenCalledWith(null);
+      expect(onMutation).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it("restores the selected trash entry by trash id", async () => {
+    const onMutation = vi.fn();
+    renderPage({ onMutation });
+    openTrashView();
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Restore" })).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Restore" }));
+
+    await waitFor(() => {
+      expect(api.skillTrashRestore).toHaveBeenCalledWith(
+        "old-skill-20260604T010203Z-a1b2c3d4",
+        { skill: "old-skill" },
+      );
+      expect(onMutation).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it("purges only after explicit confirmation", async () => {
+    renderPage();
+    openTrashView();
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Purge" })).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Purge" }));
+    expect(api.skillTrashPurge).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Purge forever" }));
+
+    await waitFor(() => {
+      expect(api.skillTrashPurge).toHaveBeenCalledWith("old-skill-20260604T010203Z-a1b2c3d4");
+    });
+  });
+
+  it("disables trash mutations in read-only mode", async () => {
+    renderPage({ readOnly: true });
+    expect(screen.getByRole("button", { name: "Trash my-skill" })).toBeDisabled();
+
+    openTrashView();
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Restore" })).toBeDisabled();
+      expect(screen.getByRole("button", { name: "Purge" })).toBeDisabled();
+    });
   });
 });
 

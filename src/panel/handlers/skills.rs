@@ -90,6 +90,15 @@ pub(in crate::panel) async fn v1_skill_diagnose(
     )
 }
 
+pub(in crate::panel) async fn v1_skill_trash(
+    State(state): State<PanelState>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let app = App {
+        ctx: state.ctx.as_ref().clone(),
+    };
+    panel_command_envelope("skill.trash.list", app.cmd_skill_trash_list())
+}
+
 fn build_skill_read_model(
     state: &PanelState,
 ) -> anyhow::Result<(Vec<serde_json::Value>, Vec<String>, bool)> {

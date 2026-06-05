@@ -1,9 +1,9 @@
 use super::*;
 use crate::cli::{
     BindingAddArgs, CaptureArgs, Command, OpsCommand, ProjectArgs, ProjectionMethod, ReleaseArgs,
-    RemoteCommand, RollbackArgs, SaveArgs, SkillCommand, SkillOnlyArgs, SyncCommand, TargetAddArgs,
-    TargetCommand, TargetOwnership, WorkspaceBindingCommand, WorkspaceCommand, WorkspaceInitArgs,
-    WorkspaceMatcherKind,
+    RemoteCommand, RollbackArgs, SaveArgs, SkillCommand, SkillOnlyArgs, SkillTrashCommand,
+    SyncCommand, TargetAddArgs, TargetCommand, TargetOwnership, TrashPurgeArgs, TrashRestoreArgs,
+    WorkspaceBindingCommand, WorkspaceCommand, WorkspaceInitArgs, WorkspaceMatcherKind,
 };
 use crate::panel::auth::{
     ensure_mutation_authorized, error_envelope, request_origin_matches, run_panel_command,
@@ -14,7 +14,7 @@ use serde_json::json;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
 // Exhaustive list of every panel mutation command. Must stay in sync with the
-// 19-row table in docs/LOOM_ARCHITECTURE_DECISIONS.md section 4.1 and the
+// 22-row table in docs/LOOM_ARCHITECTURE_DECISIONS.md section 4.1 and the
 // route registrations in `run_panel`.
 const MUTATION_COMMANDS: &[&str] = &[
     "workspace.init",
@@ -28,6 +28,9 @@ const MUTATION_COMMANDS: &[&str] = &[
     "skill.snapshot",
     "skill.release",
     "skill.rollback",
+    "skill.trash.add",
+    "skill.trash.restore",
+    "skill.trash.purge",
     "skill.orphan.clean",
     "workspace.remote.set",
     "ops.retry",
@@ -39,8 +42,8 @@ const MUTATION_COMMANDS: &[&str] = &[
 ];
 
 #[test]
-fn mutation_commands_count_is_nineteen() {
-    assert_eq!(MUTATION_COMMANDS.len(), 19);
+fn mutation_commands_count_is_twenty_two() {
+    assert_eq!(MUTATION_COMMANDS.len(), 22);
 }
 
 #[test]
@@ -346,6 +349,40 @@ fn run_panel_command_returns_non_2xx_for_logical_failures_across_mutations() {
                     steps: None,
                     dry_run: false,
                 }),
+            },
+        ),
+        (
+            "skill.trash.add",
+            StatusCode::OK,
+            Command::Skill {
+                command: SkillCommand::Trash {
+                    command: SkillTrashCommand::Add(SkillOnlyArgs {
+                        skill: "missing-skill".to_string(),
+                    }),
+                },
+            },
+        ),
+        (
+            "skill.trash.restore",
+            StatusCode::OK,
+            Command::Skill {
+                command: SkillCommand::Trash {
+                    command: SkillTrashCommand::Restore(TrashRestoreArgs {
+                        skill: "missing-skill".to_string(),
+                        trash_id: Some("missing-trash".to_string()),
+                    }),
+                },
+            },
+        ),
+        (
+            "skill.trash.purge",
+            StatusCode::OK,
+            Command::Skill {
+                command: SkillCommand::Trash {
+                    command: SkillTrashCommand::Purge(TrashPurgeArgs {
+                        trash_id: "missing-trash".to_string(),
+                    }),
+                },
             },
         ),
         (

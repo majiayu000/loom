@@ -313,6 +313,23 @@ export interface SkillRollbackBody {
   steps?: number;
 }
 
+export interface SkillTrashEntry {
+  trash_id: string;
+  skill: string;
+  original_path: string;
+  trashed_at: string;
+  source_commit: string;
+  trash_path: string;
+}
+
+export interface SkillTrashPayload {
+  items: SkillTrashEntry[];
+}
+
+export interface SkillTrashRestoreBody {
+  skill: string;
+}
+
 export interface CaptureBody {
   skill?: string;
   binding?: string;
@@ -477,6 +494,14 @@ export const api = {
     postJson(`/api/v1/skills/${encodeURIComponent(name)}/release`, body),
   skillRollback: (name: string, body: SkillRollbackBody) =>
     postJson(`/api/v1/skills/${encodeURIComponent(name)}/rollback`, body),
+  skillTrashList: (signal?: AbortSignal) =>
+    getJsonData<SkillTrashPayload>("/api/v1/skills/trash", signal),
+  skillTrashAdd: (name: string) =>
+    postJson(`/api/v1/skills/${encodeURIComponent(name)}/trash`, {}),
+  skillTrashRestore: (trashId: string, body: SkillTrashRestoreBody) =>
+    postJson(`/api/v1/skills/trash/${encodeURIComponent(trashId)}/restore`, body),
+  skillTrashPurge: (trashId: string) =>
+    postJson(`/api/v1/skills/trash/${encodeURIComponent(trashId)}/purge`, {}),
   project: (body: ProjectBody) => postJson("/api/v1/projections/project", body),
   capture: (body: CaptureBody) => postJson("/api/v1/projections/capture", body),
   orphanClean: (body: OrphanCleanBody) => postJson("/api/v1/orphans/clean", body),

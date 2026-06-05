@@ -92,6 +92,11 @@ pub(super) struct SkillRollbackRequest {
 }
 
 #[derive(Debug, Deserialize)]
+pub(super) struct TrashRestoreRequest {
+    pub(super) skill: String,
+}
+
+#[derive(Debug, Deserialize)]
 pub(super) struct CaptureRequest {
     #[serde(default)]
     pub(super) skill: Option<String>,
@@ -168,6 +173,15 @@ pub async fn run_panel(ctx: AppContext, port: u16) -> Result<()> {
             post(registry_binding_remove),
         )
         .route("/api/v1/skills", get(v1_skills).post(registry_skill_add))
+        .route("/api/v1/skills/trash", get(v1_skill_trash))
+        .route(
+            "/api/v1/skills/trash/{trash_id}/restore",
+            post(registry_skill_trash_restore),
+        )
+        .route(
+            "/api/v1/skills/trash/{trash_id}/purge",
+            post(registry_skill_trash_purge),
+        )
         .route(
             "/api/v1/skills/import-observed",
             post(registry_skill_import_observed),
@@ -175,6 +189,10 @@ pub async fn run_panel(ctx: AppContext, port: u16) -> Result<()> {
         .route(
             "/api/v1/skills/{skill_name}/diagnose",
             get(v1_skill_diagnose),
+        )
+        .route(
+            "/api/v1/skills/{skill_name}/trash",
+            post(registry_skill_trash_add),
         )
         .route(
             "/api/v1/skills/{skill_name}/save",

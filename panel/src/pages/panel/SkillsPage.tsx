@@ -4,8 +4,10 @@ import type { RegistryProjection } from "../../generated/RegistryProjection";
 import { AgentAvatar } from "../../components/panel/AgentAvatar";
 import { PlusIcon, SearchIcon, SkillIcon } from "../../components/icons/nav_icons";
 import { EmptyState } from "../../components/panel/EmptyState";
-import { api, type SkillDiagnoseCheck, type SkillDiagnosePayload } from "../../lib/api/client";
+import { api, type SkillDiagnosePayload } from "../../lib/api/client";
 import { useMutation } from "../../lib/useMutation";
+import { SkillDiagnosePanel } from "./SkillDiagnosePanel";
+import { SkillTrashPanel, SkillViewModeSwitch, TrashSkillAction } from "./SkillTrashPanel";
 import {
   Lifecycle,
   LifecycleActions,
@@ -20,10 +22,12 @@ interface SkillsPageProps {
   bindings?: Binding[];
   projections?: RegistryProjection[];
   selectedSkill: string | null;
-  onSelectSkill: (id: string) => void;
+  onSelectSkill: (id: string | null) => void;
   onMutation: () => void;
   readOnly: boolean;
 }
+
+type SkillsViewMode = "skills" | "trash";
 
 export function SkillsPage({
   skills,
@@ -36,8 +40,10 @@ export function SkillsPage({
   readOnly,
 }: SkillsPageProps) {
   const [q, setQ] = useState("");
+  const [mode, setMode] = useState<SkillsViewMode>("skills");
   const [addOpen, setAddOpen] = useState(false);
   const [captureBindingId, setCaptureBindingId] = useState("");
+  const [trashRefreshKey, setTrashRefreshKey] = useState(0);
   const query = q.trim().toLowerCase();
   const filtered = skills.filter((s) => {
     if (!query) return true;
@@ -79,6 +85,12 @@ export function SkillsPage({
     );
   };
 
+  const onSkillTrashed = () => {
+    onSelectSkill(null);
+    setTrashRefreshKey((value) => value + 1);
+    onMutation();
+  };
+
   return (
     <>
       <div className="page-header">
@@ -89,12 +101,17 @@ export function SkillsPage({
           </div>
         </div>
         <div className="header-actions">
+          <SkillViewModeSwitch mode={mode} onModeChange={setMode} />
           <div className="searchbar">
             <SearchIcon />
-            <input placeholder="Filter skills…" value={q} onChange={(e) => setQ(e.target.value)} />
+            <input
+              placeholder={mode === "trash" ? "Filter trash…" : "Filter skills…"}
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+            />
             <kbd>⌘K</kbd>
           </div>
-          {selectedSkillBindings.length > 1 && (
+          {mode === "skills" && selectedSkillBindings.length > 1 && (
             <select
               aria-label="Capture binding"
               value={captureBindingId}
@@ -110,22 +127,26 @@ export function SkillsPage({
               ))}
             </select>
           )}
-          <button
-            className="btn primary"
-            onClick={runCapture}
-            disabled={captureDisabled}
-            title={captureTitle}
-          >
-            <PlusIcon /> {capture.busy ? "capturing…" : "Capture"}
-          </button>
-          <button
-            className="btn primary"
-            onClick={() => setAddOpen((value) => !value)}
-            disabled={readOnly}
-            title={readOnly ? "registry offline" : undefined}
-          >
-            <PlusIcon /> {addOpen ? "close" : "skill add"}
-          </button>
+          {mode === "skills" && (
+            <>
+              <button
+                className="btn primary"
+                onClick={runCapture}
+                disabled={captureDisabled}
+                title={captureTitle}
+              >
+                <PlusIcon /> {capture.busy ? "capturing…" : "Capture"}
+              </button>
+              <button
+                className="btn primary"
+                onClick={() => setAddOpen((value) => !value)}
+                disabled={readOnly}
+                title={readOnly ? "registry offline" : undefined}
+              >
+                <PlusIcon /> {addOpen ? "close" : "skill add"}
+              </button>
+            </>
+          )}
         </div>
       </div>
       {(capture.error || capture.success) && (
@@ -143,7 +164,7 @@ export function SkillsPage({
         </div>
       )}
       <div className="page-body" style={{ padding: 0 }}>
-        {addOpen && (
+        {mode === "skills" && addOpen && (
           <div style={{ padding: "0 28px 12px" }}>
             <SkillAddForm
               onCancel={() => setAddOpen(false)}
@@ -154,66 +175,86 @@ export function SkillsPage({
             />
           </div>
         )}
-        {filtered.length === 0 ? (
-          <SkillListEmptyState
-            query={query}
-            readOnly={readOnly}
-            onAddSkill={() => setAddOpen(true)}
-            onClearFilter={() => setQ("")}
-          />
-        ) : (
-          <div className="two-col" style={{ height: "100%", gap: 0 }}>
-            <div style={{ overflow: "auto", borderRight: "1px solid var(--line)" }}>
-              <table className="tbl mobile-cards">
-                <thead>
-                  <tr>
-                    <th>Name</th>
-                    <th>Source</th>
-                    <th>Latest rev</th>
-                    <th>Tags</th>
-                    <th>Bindings</th>
-                    <th>Projections</th>
-                    <th>Changed</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {filtered.map((s) => (
-                    <tr
-                      key={s.id}
-                      className={sel?.id === s.id ? "selected" : ""}
-                      onClick={() => onSelectSkill(s.id)}
-                    >
-                      <td className="name" data-label="Name">
-                        <div>{s.name}</div>
-                        {s.description && <div style={skillDescriptionStyle}>{s.description}</div>}
-                      </td>
-                      <td data-label="Source">
-                        <span className={`chip ${s.sourceStatus}`}>{s.sourceStatus}</span>
-                      </td>
-                      <td className="mono" data-label="Latest rev">
-                        {s.latestRev}
-                      </td>
-                      <td className="mono dim mobile-hide" data-label="Tags">
-                        {formatSkillTags(s)}
-                      </td>
-                      <td className="mono dim" data-label="Bindings">
-                        {s.bindingCount}
-                      </td>
-                      <td className="mono" data-label="Projections">
-                        {s.projectionCount}
-                      </td>
-                      <td className="mono dim mobile-hide" data-label="Changed">
-                        {s.changed}
-                      </td>
+        {mode === "skills" ? (
+          filtered.length === 0 ? (
+            <SkillListEmptyState
+              query={query}
+              readOnly={readOnly}
+              onAddSkill={() => setAddOpen(true)}
+              onClearFilter={() => setQ("")}
+            />
+          ) : (
+            <div className="two-col" style={{ height: "100%", gap: 0 }}>
+              <div style={{ overflow: "auto", borderRight: "1px solid var(--line)" }}>
+                <table className="tbl mobile-cards">
+                  <thead>
+                    <tr>
+                      <th>Name</th>
+                      <th>Source</th>
+                      <th>Latest rev</th>
+                      <th>Tags</th>
+                      <th>Bindings</th>
+                      <th>Projections</th>
+                      <th>Changed</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {filtered.map((s) => (
+                      <tr
+                        key={s.id}
+                        className={sel?.id === s.id ? "selected" : ""}
+                        onClick={() => onSelectSkill(s.id)}
+                      >
+                        <td className="name" data-label="Name">
+                          <div>{s.name}</div>
+                          {s.description && <div style={skillDescriptionStyle}>{s.description}</div>}
+                        </td>
+                        <td data-label="Source">
+                          <span className={`chip ${s.sourceStatus}`}>{s.sourceStatus}</span>
+                        </td>
+                        <td className="mono" data-label="Latest rev">
+                          {s.latestRev}
+                        </td>
+                        <td className="mono dim mobile-hide" data-label="Tags">
+                          {formatSkillTags(s)}
+                        </td>
+                        <td className="mono dim" data-label="Bindings">
+                          {s.bindingCount}
+                        </td>
+                        <td className="mono" data-label="Projections">
+                          {s.projectionCount}
+                        </td>
+                        <td className="mono dim mobile-hide" data-label="Changed">
+                          {s.changed}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <div style={{ padding: 20, overflow: "auto" }}>
+                {sel ? (
+                  <SkillDetail
+                    skill={sel}
+                    targets={targets}
+                    bindings={bindings}
+                    onMutation={onMutation}
+                    onTrashed={onSkillTrashed}
+                    readOnly={readOnly}
+                  />
+                ) : (
+                  <div className="empty">Select a skill.</div>
+                )}
+              </div>
             </div>
-            <div style={{ padding: 20, overflow: "auto" }}>
-              <SkillDetail skill={sel} targets={targets} bindings={bindings} onMutation={onMutation} readOnly={readOnly} />
-            </div>
-          </div>
+          )
+        ) : (
+          <SkillTrashPanel
+            query={query}
+            refreshKey={trashRefreshKey}
+            readOnly={readOnly}
+            onMutation={onMutation}
+          />
         )}
       </div>
     </>
@@ -365,12 +406,14 @@ function SkillDetail({
   targets,
   bindings,
   onMutation,
+  onTrashed,
   readOnly,
 }: {
   skill: Skill;
   targets: Target[];
   bindings: Binding[];
   onMutation: () => void;
+  onTrashed: () => void;
   readOnly: boolean;
 }) {
   const [tab, setTab] = useState<DetailTab>("history");
@@ -460,6 +503,7 @@ function SkillDetail({
       </div>
 
       <LifecycleActions skillName={skill.name} onMutation={onLifecycleMutation} readOnly={readOnly} />
+      <TrashSkillAction skill={skill} onSuccess={onTrashed} readOnly={readOnly} />
 
       <div className="tabs">
         <button className={tab === "history" ? "active" : ""} onClick={() => setTab("history")}>
@@ -505,151 +549,10 @@ function SkillDetail({
         </>
       )}
       {tab === "diagnose" && (
-        <DiagnoseTab loading={diagnoseLoading} error={diagnoseError} diagnose={diagnose} />
+        <SkillDiagnosePanel loading={diagnoseLoading} error={diagnoseError} diagnose={diagnose} />
       )}
     </div>
   );
-}
-
-function DiagnoseTab({
-  loading,
-  error,
-  diagnose,
-}: {
-  loading: boolean;
-  error: string | null;
-  diagnose: SkillDiagnosePayload | null;
-}) {
-  if (loading) {
-    return <div style={{ color: "var(--ink-3)", fontSize: 12 }}>Loading...</div>;
-  }
-  if (error) {
-    return (
-      <div style={{ color: "var(--err)", fontSize: 11, fontFamily: "var(--font-mono)" }}>
-        {error}
-      </div>
-    );
-  }
-  if (!diagnose) {
-    return <div className="empty" style={{ padding: "18px 4px" }}>No diagnose data loaded.</div>;
-  }
-
-  const grouped = groupDiagnoseChecks(diagnose.checks);
-  const failed = diagnose.summary.failed_check_count;
-  const warnings = diagnose.summary.warning_check_count;
-
-  return (
-    <div style={{ display: "grid", gap: 12 }}>
-      <div className="card">
-        <div className="card-head">
-          <h3>Diagnose</h3>
-          <span className={`chip ${statusChipClass(diagnose.status)}`}>{diagnose.status}</span>
-        </div>
-        <div
-          className="card-body"
-          style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 10 }}
-        >
-          <MiniStat label="Failed" value={failed} tone={failed > 0 ? "err" : "ok"} />
-          <MiniStat label="Warnings" value={warnings} tone={warnings > 0 ? "warn" : "ok"} />
-          <MiniStat label="Checks" value={diagnose.checks.length} />
-        </div>
-      </div>
-
-      {diagnose.checks.length === 0 ? (
-        <div className="empty" style={{ padding: "18px 4px" }}>No diagnose checks returned.</div>
-      ) : (
-        grouped.map(([section, checks]) => (
-          <div className="card" key={section}>
-            <div className="card-head">
-              <h3>{sectionLabel(section)}</h3>
-              <span className={`chip ${checks.every((check) => check.ok) ? "present" : "missing"}`}>
-                {checks.filter((check) => !check.ok).length} / {checks.length}
-              </span>
-            </div>
-            <div className="card-body" style={{ padding: 0 }}>
-              <table className="tbl" style={{ fontSize: 12 }}>
-                <tbody>
-                  {checks.map((check) => (
-                    <DiagnoseCheckRow key={check.id} check={check} />
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        ))
-      )}
-    </div>
-  );
-}
-
-function DiagnoseCheckRow({ check }: { check: SkillDiagnoseCheck }) {
-  return (
-    <tr>
-      <td style={{ width: 190 }}>
-        <span className="mono dim">{check.id}</span>
-      </td>
-      <td style={{ width: 96 }}>
-        <span className={`chip ${severityChipClass(check)}`}>
-          {check.ok ? "ok" : check.severity}
-        </span>
-      </td>
-      <td>
-        <div style={{ color: "var(--ink-1)" }}>{check.message}</div>
-        {!check.ok && check.next_action && (
-          <div className="mono" style={{ color: "var(--ink-3)", marginTop: 3 }}>
-            next_action: {check.next_action}
-          </div>
-        )}
-      </td>
-    </tr>
-  );
-}
-
-function MiniStat({
-  label,
-  value,
-  tone,
-}: {
-  label: string;
-  value: string | number;
-  tone?: "ok" | "warn" | "err";
-}) {
-  const color = tone === "ok" ? "var(--ok)" : tone === "warn" ? "var(--warn)" : tone === "err" ? "var(--err)" : "var(--ink-0)";
-  return (
-    <div className="kpi">
-      <div className="label">{label}</div>
-      <div className="value" style={{ color }}>
-        {value}
-      </div>
-    </div>
-  );
-}
-
-function groupDiagnoseChecks(checks: SkillDiagnoseCheck[]): Array<[string, SkillDiagnoseCheck[]]> {
-  const groups = new Map<string, SkillDiagnoseCheck[]>();
-  for (const check of checks) {
-    const existing = groups.get(check.section);
-    if (existing) existing.push(check);
-    else groups.set(check.section, [check]);
-  }
-  return [...groups.entries()];
-}
-
-function statusChipClass(status: string): string {
-  if (status === "healthy") return "present";
-  if (status === "attention") return "missing";
-  if (status === "blocked") return "non-compliant";
-  return "";
-}
-
-function severityChipClass(check: SkillDiagnoseCheck): string {
-  if (check.ok || check.severity === "ok") return "present";
-  if (check.severity === "warning") return "missing";
-  return "non-compliant";
-}
-
-function sectionLabel(section: string): string {
-  return section.replace(/_/g, " ");
 }
 
 function ProjectSkillForm({

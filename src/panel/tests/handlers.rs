@@ -1,8 +1,10 @@
 use super::*;
+use crate::panel::TrashRestoreRequest;
 use crate::panel::handlers::{
-    OpsQuery, info, pending, registry_ops, registry_orphan_clean, remote_set, remote_status,
-    v1_health, v1_overview, v1_registry_ops, v1_registry_targets, v1_skill_diagnose, v1_skills,
-    v1_workspace_status,
+    OpsQuery, info, pending, registry_ops, registry_orphan_clean, registry_skill_trash_add,
+    registry_skill_trash_purge, registry_skill_trash_restore, remote_set, remote_status, v1_health,
+    v1_overview, v1_registry_ops, v1_registry_targets, v1_skill_diagnose, v1_skill_trash,
+    v1_skills, v1_workspace_status,
 };
 use crate::state_model::{
     REGISTRY_SCHEMA_VERSION, RegistryBindingRule, RegistryOperationRecord,
@@ -35,6 +37,16 @@ fn git_ok(root: &Path, args: &[&str]) {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
+}
+
+fn panel_peer() -> SocketAddr {
+    SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 40000)
+}
+
+fn panel_headers() -> HeaderMap {
+    let mut headers = HeaderMap::new();
+    headers.insert("origin", HeaderValue::from_static("http://127.0.0.1:43117"));
+    headers
 }
 
 #[test]
@@ -437,6 +449,129 @@ async fn v1_skill_diagnose_returns_envelope_without_command_audit() {
         !root.join("state/events/commands.jsonl").exists(),
         "interactive panel diagnose must not append command-audit rows"
     );
+
+    cleanup_root(root);
+}
+
+#[tokio::test]
+async fn v1_skill_trash_lists_entries_without_command_audit() {
+    let (root, state) = make_test_state();
+    let trash_id = "demo-20260604T010203Z-a1b2c3d4";
+    let entry_dir = root.join("trash").join(trash_id);
+    fs::create_dir_all(&entry_dir).expect("create trash entry");
+    fs::write(
+        entry_dir.join("metadata.json"),
+        json!({
+            "schema_version": 1,
+            "trash_id": trash_id,
+            "skill": "demo",
+            "original_path": "skills/demo",
+            "trashed_at": "2026-06-04T01:02:03Z",
+            "source_commit": "abcdef1234567890"
+        })
+        .to_string(),
+    )
+    .expect("write metadata");
+
+    let (status, Json(payload)) = v1_skill_trash(State(state)).await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(payload["ok"], json!(true));
+    assert_eq!(payload["cmd"], json!("skill.trash.list"));
+    assert_eq!(payload["data"]["items"][0]["trash_id"], json!(trash_id));
+    assert_eq!(payload["data"]["items"][0]["skill"], json!("demo"));
+    assert!(
+        !root.join("state/events/commands.jsonl").exists(),
+        "interactive panel trash list must not append command-audit rows"
+    );
+
+    cleanup_root(root);
+}
+
+#[tokio::test]
+async fn registry_skill_trash_add_and_restore_use_cli_envelopes() {
+    let (root, state) = make_test_state();
+    let skill_dir = root.join("skills/trash-demo");
+    fs::create_dir_all(&skill_dir).expect("create skill");
+    fs::write(skill_dir.join("SKILL.md"), "# Trash demo\n").expect("write skill");
+    crate::gitops::ensure_repo_initialized(state.ctx.as_ref()).expect("init git");
+    git_ok(&root, &["add", "skills/trash-demo"]);
+    git_ok(&root, &["commit", "-m", "add trash demo"]);
+
+    let (add_status, Json(add_payload)) = registry_skill_trash_add(
+        axum::extract::Path("trash-demo".to_string()),
+        ConnectInfo(panel_peer()),
+        panel_headers(),
+        State(state.clone()),
+    )
+    .await;
+
+    assert_eq!(add_status, StatusCode::OK);
+    assert_eq!(add_payload["ok"], json!(true));
+    assert_eq!(add_payload["cmd"], json!("skill.trash.add"));
+    let trash_id = add_payload["data"]["trash_id"]
+        .as_str()
+        .expect("trash id")
+        .to_string();
+    assert!(!root.join("skills/trash-demo").exists());
+    assert!(root.join("trash").join(&trash_id).exists());
+
+    let (restore_status, Json(restore_payload)) = registry_skill_trash_restore(
+        axum::extract::Path(trash_id.clone()),
+        ConnectInfo(panel_peer()),
+        panel_headers(),
+        State(state),
+        Json(TrashRestoreRequest {
+            skill: "trash-demo".to_string(),
+        }),
+    )
+    .await;
+
+    assert_eq!(restore_status, StatusCode::OK);
+    assert_eq!(restore_payload["ok"], json!(true));
+    assert_eq!(restore_payload["cmd"], json!("skill.trash.restore"));
+    assert!(root.join("skills/trash-demo/SKILL.md").exists());
+    assert!(!root.join("trash").join(trash_id).exists());
+
+    cleanup_root(root);
+}
+
+#[tokio::test]
+async fn registry_skill_trash_purge_removes_one_entry() {
+    let (root, state) = make_test_state();
+    let trash_id = "purge-demo-20260604T010203Z-a1b2c3d4";
+    let entry_dir = root.join("trash").join(trash_id);
+    fs::create_dir_all(entry_dir.join("skill")).expect("create trash entry");
+    fs::write(entry_dir.join("skill/SKILL.md"), "# Purge demo\n").expect("write payload");
+    fs::write(
+        entry_dir.join("metadata.json"),
+        json!({
+            "schema_version": 1,
+            "trash_id": trash_id,
+            "skill": "purge-demo",
+            "original_path": "skills/purge-demo",
+            "trashed_at": "2026-06-04T01:02:03Z",
+            "source_commit": "abcdef1234567890"
+        })
+        .to_string(),
+    )
+    .expect("write metadata");
+    crate::gitops::ensure_repo_initialized(state.ctx.as_ref()).expect("init git");
+    git_ok(&root, &["add", "trash"]);
+    git_ok(&root, &["commit", "-m", "add trash entry"]);
+
+    let (status, Json(payload)) = registry_skill_trash_purge(
+        axum::extract::Path(trash_id.to_string()),
+        ConnectInfo(panel_peer()),
+        panel_headers(),
+        State(state),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(payload["ok"], json!(true));
+    assert_eq!(payload["cmd"], json!("skill.trash.purge"));
+    assert!(!entry_dir.exists());
 
     cleanup_root(root);
 }

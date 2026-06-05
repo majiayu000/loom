@@ -148,6 +148,7 @@ export function TrashSkillAction({ skill, readOnly, onSuccess }: TrashSkillActio
       : undefined;
 
   const moveToTrash = () => {
+    if (disabled) return;
     trash.run(`trash ${skill.name}`, () => api.skillTrashAdd(skill.name), () => {
       setConfirmOpen(false);
       onSuccess();
@@ -184,7 +185,7 @@ export function TrashSkillAction({ skill, readOnly, onSuccess }: TrashSkillActio
             <button className="btn ghost" onClick={() => setConfirmOpen(false)} disabled={trash.busy}>
               Cancel
             </button>
-            <button className="btn ghost danger" onClick={moveToTrash} disabled={trash.busy}>
+            <button className="btn ghost danger" onClick={moveToTrash} disabled={disabled} title={title}>
               Move to trash
             </button>
           </div>
@@ -209,8 +210,11 @@ function TrashEntryDetail({
   const [confirmPurge, setConfirmPurge] = useState(false);
   const restore = useMutation();
   const purge = useMutation();
+  const mutationDisabled = readOnly || restore.busy || purge.busy;
+  const mutationTitle = readOnly ? "registry offline" : undefined;
 
   const runRestore = () => {
+    if (mutationDisabled) return;
     restore.run(
       `restore ${entry.skill}`,
       () => api.skillTrashRestore(entry.trash_id, { skill: entry.skill }),
@@ -219,6 +223,7 @@ function TrashEntryDetail({
   };
 
   const runPurge = () => {
+    if (mutationDisabled) return;
     purge.run(`purge ${entry.trash_id}`, () => api.skillTrashPurge(entry.trash_id), () => {
       setConfirmPurge(false);
       onSuccess();
@@ -245,16 +250,16 @@ function TrashEntryDetail({
           <button
             className="btn primary"
             onClick={runRestore}
-            disabled={readOnly || restore.busy || purge.busy}
-            title={readOnly ? "registry offline" : undefined}
+            disabled={mutationDisabled}
+            title={mutationTitle}
           >
             {restore.busy ? "restoring..." : "Restore"}
           </button>
           <button
             className="btn ghost danger"
             onClick={() => setConfirmPurge((value) => !value)}
-            disabled={readOnly || restore.busy || purge.busy}
-            title={readOnly ? "registry offline" : undefined}
+            disabled={mutationDisabled}
+            title={mutationTitle}
           >
             Purge
           </button>
@@ -271,7 +276,12 @@ function TrashEntryDetail({
               <button className="btn ghost" onClick={() => setConfirmPurge(false)} disabled={purge.busy}>
                 Cancel
               </button>
-              <button className="btn ghost danger" onClick={runPurge} disabled={purge.busy}>
+              <button
+                className="btn ghost danger"
+                onClick={runPurge}
+                disabled={mutationDisabled}
+                title={mutationTitle}
+              >
                 {purge.busy ? "purging..." : "Purge forever"}
               </button>
             </div>

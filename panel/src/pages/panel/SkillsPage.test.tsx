@@ -50,17 +50,17 @@ const mockBinding: Binding = {
   policy: "auto",
 };
 
-function renderPage(
-  overrides: {
-    onMutation?: () => void;
-    bindings?: Binding[];
-    targets?: Target[];
-    projections?: RegistryProjection[];
-    readOnly?: boolean;
-    onSelectSkill?: (id: string | null) => void;
-  } = {},
-) {
-  return render(
+type SkillsPageOverrides = {
+  onMutation?: () => void;
+  bindings?: Binding[];
+  targets?: Target[];
+  projections?: RegistryProjection[];
+  readOnly?: boolean;
+  onSelectSkill?: (id: string | null) => void;
+};
+
+function skillsPage(overrides: SkillsPageOverrides = {}) {
+  return (
     <SkillsPage
       skills={[mockSkill]}
       targets={overrides.targets ?? []}
@@ -70,8 +70,12 @@ function renderPage(
       onSelectSkill={overrides.onSelectSkill ?? (() => {})}
       onMutation={overrides.onMutation ?? (() => {})}
       readOnly={overrides.readOnly ?? false}
-    />,
+    />
   );
+}
+
+function renderPage(overrides: SkillsPageOverrides = {}) {
+  return render(skillsPage(overrides));
 }
 
 function makeTarget(overrides: Partial<Target> = {}): Target {
@@ -567,6 +571,20 @@ describe("SkillsPage — trash UI", () => {
     });
   });
 
+  it("keeps an open trash confirmation read-only safe", async () => {
+    const view = renderPage();
+
+    fireEvent.click(screen.getByRole("button", { name: "Trash my-skill" }));
+    expect(screen.getByRole("button", { name: "Move to trash" })).not.toBeDisabled();
+
+    view.rerender(skillsPage({ readOnly: true }));
+    const confirmTrash = screen.getByRole("button", { name: "Move to trash" });
+    expect(confirmTrash).toBeDisabled();
+
+    fireEvent.click(confirmTrash);
+    expect(api.skillTrashAdd).not.toHaveBeenCalled();
+  });
+
   it("restores the selected trash entry by trash id", async () => {
     const onMutation = vi.fn();
     renderPage({ onMutation });
@@ -601,6 +619,24 @@ describe("SkillsPage — trash UI", () => {
     await waitFor(() => {
       expect(api.skillTrashPurge).toHaveBeenCalledWith("old-skill-20260604T010203Z-a1b2c3d4");
     });
+  });
+
+  it("keeps an open purge confirmation read-only safe", async () => {
+    const view = renderPage();
+    openTrashView();
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Purge" })).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Purge" }));
+    expect(screen.getByRole("button", { name: "Purge forever" })).not.toBeDisabled();
+
+    view.rerender(skillsPage({ readOnly: true }));
+    const confirmPurge = screen.getByRole("button", { name: "Purge forever" });
+    expect(confirmPurge).toBeDisabled();
+
+    fireEvent.click(confirmPurge);
+    expect(api.skillTrashPurge).not.toHaveBeenCalled();
   });
 
   it("disables trash mutations in read-only mode", async () => {

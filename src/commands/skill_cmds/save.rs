@@ -40,7 +40,26 @@ impl App {
         } else {
             None
         };
-        paths.ensure_layout().map_err(map_registry_state)?;
+        if let Err(err) = paths.ensure_layout() {
+            let mut failure = map_registry_state(err);
+            rollback_registry_layout_after_failure(
+                &self.ctx,
+                &paths,
+                had_registry_layout,
+                had_legacy_layout,
+                legacy_layout_backup.as_ref(),
+            );
+            if let Err(reset_err) = gitops::run_git(&self.ctx, &["reset", "HEAD", "--", &skill_rel])
+            {
+                failure.details = json!({
+                    "rollback_errors": [{
+                        "step": "reset_staged_skill",
+                        "message": reset_err.to_string(),
+                    }]
+                });
+            }
+            return Err(failure);
+        }
         let registry_backup = snapshot_registry_audit_state(&paths).map_err(map_registry_state)?;
         let message = args
             .message

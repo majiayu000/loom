@@ -424,6 +424,22 @@ pub(super) fn rollback_registry_audit_after_failure(
     legacy_layout_backup: Option<&serde_json::Value>,
 ) {
     let _ = restore_registry_audit_state(paths, registry_backup);
+    rollback_registry_layout_after_failure(
+        ctx,
+        paths,
+        had_registry_layout,
+        had_legacy_layout,
+        legacy_layout_backup,
+    );
+}
+
+pub(super) fn rollback_registry_layout_after_failure(
+    ctx: &crate::state::AppContext,
+    paths: &RegistryStatePaths,
+    had_registry_layout: bool,
+    had_legacy_layout: bool,
+    legacy_layout_backup: Option<&serde_json::Value>,
+) {
     if had_legacy_layout && !had_registry_layout {
         let legacy_dir = paths.state_dir.join("v3");
         if let Some(backup) = legacy_layout_backup {

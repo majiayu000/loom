@@ -131,6 +131,80 @@ fn skill_save_rolls_back_registry_operation_after_audit_failure() {
 }
 
 #[test]
+fn skill_save_restores_legacy_v3_layout_after_audit_failure() {
+    let root = TestDir::new("registry-skill-save-legacy-v3-audit-rollback");
+    write_skill(root.path(), "demo", "# demo\n\nv1\n");
+    let (initial_save, _) = run_loom(root.path(), &["skill", "save", "demo"]);
+    assert!(
+        initial_save.status.success(),
+        "initial save failed: stderr={} stdout={}",
+        String::from_utf8_lossy(&initial_save.stderr),
+        String::from_utf8_lossy(&initial_save.stdout)
+    );
+
+    fs::rename(
+        root.path().join("state/registry"),
+        root.path().join("state/v3"),
+    )
+    .expect("move registry state to legacy v3");
+    git_ok(
+        root.path(),
+        &["add", "-A", "--", "state/registry", "state/v3"],
+    );
+    git_ok(
+        root.path(),
+        &[
+            "commit",
+            "-m",
+            "legacy registry layout",
+            "--",
+            "state/registry",
+            "state/v3",
+        ],
+    );
+    assert!(root.path().join("state/v3").exists());
+    assert!(!root.path().join("state/registry").exists());
+    assert_eq!(
+        git_ok(
+            root.path(),
+            &["status", "--short", "--", "state/registry", "state/v3"]
+        ),
+        ""
+    );
+    let legacy_ops_before = fs::read_to_string(root.path().join("state/v3/ops/operations.jsonl"))
+        .expect("read legacy ops");
+    let head_before = git_ok(root.path(), &["rev-parse", "HEAD"]);
+
+    write_skill(root.path(), "demo", "# demo\n\nv2\n");
+    let (output, env) = run_loom_with_env(
+        root.path(),
+        &[("LOOM_FAULT_INJECT", "skill_save_after_operation")],
+        &["skill", "save", "demo"],
+    );
+
+    assert!(!output.status.success(), "save unexpectedly succeeded");
+    assert_eq!(env["ok"], Value::Bool(false));
+    assert_eq!(git_ok(root.path(), &["rev-parse", "HEAD"]), head_before);
+    assert!(root.path().join("state/v3").exists());
+    assert!(
+        !root.path().join("state/registry").exists(),
+        "failed save should restore legacy v3 instead of keeping migrated registry"
+    );
+    assert_eq!(
+        fs::read_to_string(root.path().join("state/v3/ops/operations.jsonl"))
+            .expect("read legacy ops"),
+        legacy_ops_before
+    );
+    assert_eq!(
+        git_ok(
+            root.path(),
+            &["status", "--short", "--", "state/registry", "state/v3"]
+        ),
+        ""
+    );
+}
+
+#[test]
 fn skill_snapshot_without_registry_operation_does_not_return_op_id() {
     let root = TestDir::new("registry-skill-snapshot-no-fake-op-id");
     write_skill(root.path(), "demo", "# demo\n\nv1\n");

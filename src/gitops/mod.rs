@@ -173,7 +173,18 @@ pub fn repo_is_initialized(ctx: &AppContext) -> Result<bool> {
 pub fn has_staged_changes_for_path(ctx: &AppContext, path: &Path) -> Result<bool> {
     let path_str = path.to_string_lossy();
     let output = run_git_allow_failure(ctx, &["diff", "--cached", "--quiet", "--", &path_str])?;
-    Ok(!output.status.success())
+    if output.status.success() {
+        return Ok(false);
+    }
+    if output.status.code() == Some(1) {
+        return Ok(true);
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    Err(anyhow!(
+        "git {:?} failed: {}",
+        ["diff", "--cached", "--quiet", "--", &path_str],
+        stderr
+    ))
 }
 
 /// Captured registry index used to restore staging after a failed mutation.

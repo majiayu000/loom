@@ -585,7 +585,7 @@ fn commit_trash_paths(
 ) -> Result<String> {
     let mut commit_paths = paths
         .iter()
-        .filter_map(|path| match gitops::path_exists_or_is_tracked(ctx, path) {
+        .filter_map(|path| match trash_path_should_be_committed(ctx, path) {
             Ok(true) => Some(Ok((*path).to_string())),
             Ok(false) => None,
             Err(err) => Some(Err(err)),
@@ -610,6 +610,13 @@ fn commit_trash_paths(
     let refs = args.iter().map(String::as_str).collect::<Vec<_>>();
     gitops::run_git(ctx, &refs)?;
     gitops::head(ctx)
+}
+
+fn trash_path_should_be_committed(ctx: &crate::state::AppContext, path: &str) -> Result<bool> {
+    if gitops::path_exists_or_is_tracked(ctx, path)? {
+        return Ok(true);
+    }
+    gitops::has_staged_changes_for_path(ctx, Path::new(path))
 }
 
 fn unstage_trash_paths(ctx: &crate::state::AppContext, paths: &[&str]) {

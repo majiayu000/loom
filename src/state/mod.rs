@@ -370,7 +370,7 @@ pub fn default_registry_root() -> Result<PathBuf> {
         .context("HOME is not set; pass --root <registry>")
 }
 
-fn home_dir() -> Option<PathBuf> {
+pub(crate) fn home_dir() -> Option<PathBuf> {
     non_empty_env_path("HOME").or_else(|| non_empty_env_path("USERPROFILE"))
 }
 

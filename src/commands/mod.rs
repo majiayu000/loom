@@ -28,7 +28,7 @@ use crate::cli::{
     WorkspaceCommand, WorkspaceInitArgs,
 };
 use crate::envelope::{Envelope, Meta};
-use crate::state::AppContext;
+use crate::state::{AppContext, home_dir};
 use crate::types::ErrorCode;
 
 pub(crate) use event_store::redact_sensitive_string;
@@ -160,7 +160,7 @@ impl App {
         let result = match &cli.command {
             Command::Init => {
                 let args = WorkspaceInitArgs {
-                    scan_existing: true,
+                    scan_existing: home_dir().is_some(),
                 };
                 self.cmd_workspace_init(&args, &request_id)
             }

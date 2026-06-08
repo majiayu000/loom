@@ -5,7 +5,7 @@ use serde_json::{Value, json};
 
 use crate::envelope::Meta;
 use crate::gitops;
-use crate::state::AppContext;
+use crate::state::{AppContext, home_dir};
 use crate::state_model::{RegistrySnapshot, RegistryStatePaths};
 
 use super::super::helpers::{agent_kind_as_str, map_git, map_io, map_registry_state};
@@ -34,7 +34,7 @@ impl App {
             .iter()
             .all(|check| check.get("ok").and_then(|v| v.as_bool()).unwrap_or(false));
 
-        let home_opt = std::env::var("HOME").ok().filter(|h| !h.is_empty());
+        let home_opt = home_dir();
         let agent_inventory =
             build_agent_skill_inventory(home_opt.as_deref(), registry_snapshot.as_ref());
         let agent_inventory_message = agent_inventory["message"]
@@ -97,7 +97,7 @@ impl App {
     }
 }
 
-fn build_agent_skill_inventory(home: Option<&str>, snapshot: Option<&RegistrySnapshot>) -> Value {
+fn build_agent_skill_inventory(home: Option<&Path>, snapshot: Option<&RegistrySnapshot>) -> Value {
     let mut agents: Vec<Value> = Vec::new();
     if let Some(h) = home {
         for agent in DEFAULT_SCAN_AGENTS {

@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { RegistryProjection } from "../../generated/RegistryProjection";
 import type { Binding, Target } from "../../lib/types";
 import { api } from "../../lib/api/client";
@@ -49,6 +49,7 @@ export function ProjectionsPage({ projections, targets, bindings, readOnly, onMu
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [deleteLivePaths, setDeleteLivePaths] = useState(false);
   const action = useMutation();
+  const cleanOrphans = useMutation();
 
   const filtered = useMemo(() => {
     return projections.filter((projection) => {
@@ -57,15 +58,23 @@ export function ProjectionsPage({ projections, targets, bindings, readOnly, onMu
       return projection.health === filter;
     });
   }, [filter, projections]);
+  const orphanProjections = useMemo(
+    () => projections.filter((projection) => projection.health === "orphaned" && !projection.binding_id),
+    [projections],
+  );
 
-  const selected = projections.find((projection) => projection.instance_id === selectedId) ?? filtered[0] ?? null;
+  useEffect(() => {
+    if (selectedId && !filtered.some((projection) => projection.instance_id === selectedId)) {
+      setSelectedId(null);
+    }
+  }, [filtered, selectedId]);
+
+  const selected = filtered.find((projection) => projection.instance_id === selectedId) ?? filtered[0] ?? null;
   const selectedBinding = selected?.binding_id
     ? bindings.find((binding) => binding.id === selected.binding_id)
     : undefined;
   const canProject = Boolean(selected?.binding_id) && !readOnly && !action.busy;
   const canCapture = Boolean(selected) && !readOnly && !action.busy;
-  const canCleanOrphan =
-    Boolean(selected) && selected?.health === "orphaned" && !selected.binding_id && !readOnly && !action.busy;
 
   const capture = () => {
     if (!selected || !canCapture) return;
@@ -91,10 +100,20 @@ export function ProjectionsPage({ projections, targets, bindings, readOnly, onMu
     );
   };
 
-  const cleanOrphan = () => {
-    if (!canCleanOrphan) return;
-    action.run(
-      "clean orphaned projection",
+  const cleanOrphansBulk = () => {
+    if (readOnly || orphanProjections.length === 0 || cleanOrphans.busy) return;
+    if (
+      deleteLivePaths &&
+      !window.confirm(
+        `Delete live paths for ${orphanProjections.length} orphaned projection${
+          orphanProjections.length === 1 ? "" : "s"
+        }? This removes live projection directories as well as registry metadata.`,
+      )
+    ) {
+      return;
+    }
+    cleanOrphans.run(
+      deleteLivePaths ? "delete orphaned projection live paths" : "clean orphaned projections",
       () => api.orphanClean({ delete_live_paths: deleteLivePaths }),
       onMutation,
     );
@@ -118,6 +137,73 @@ export function ProjectionsPage({ projections, targets, bindings, readOnly, onMu
         </div>
       </div>
       <div className="page-body" style={{ padding: 0 }}>
+        {orphanProjections.length > 0 && (
+          <div
+            style={{
+              margin: "0 28px 12px",
+              padding: "10px 12px",
+              borderRadius: 6,
+              border: "1px solid rgba(216,167,50,0.35)",
+              background: "rgba(216,167,50,0.08)",
+              display: "flex",
+              gap: 12,
+              alignItems: "center",
+              justifyContent: "space-between",
+              flexWrap: "wrap",
+            }}
+          >
+            <div style={{ minWidth: 220 }}>
+              <div style={{ color: "var(--warn)", fontWeight: 700, fontSize: 12 }}>
+                Bulk orphan cleanup · {orphanProjections.length} projection
+                {orphanProjections.length === 1 ? "" : "s"}
+              </div>
+              <div className="mono" style={{ color: "var(--ink-2)", fontSize: 11, marginTop: 3 }}>
+                {orphanProjections.map((projection) => projection.instance_id).join(", ")}
+              </div>
+            </div>
+            <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+              <label className="row-flex" style={{ fontSize: 12, color: "var(--ink-2)" }}>
+                <input
+                  type="checkbox"
+                  checked={deleteLivePaths}
+                  onChange={(event) => setDeleteLivePaths(event.currentTarget.checked)}
+                  disabled={readOnly || cleanOrphans.busy}
+                />
+                Also delete all live paths
+              </label>
+              <button
+                className="btn ghost danger"
+                onClick={cleanOrphansBulk}
+                disabled={readOnly || cleanOrphans.busy}
+                title={
+                  readOnly
+                    ? "registry offline"
+                    : deleteLivePaths
+                      ? "delete live paths for all orphaned projections"
+                      : "clean orphaned projection metadata"
+                }
+              >
+                {cleanOrphans.busy
+                  ? "Cleaning..."
+                  : deleteLivePaths
+                    ? "Delete live paths and clean metadata"
+                    : "Clean orphan metadata"}
+              </button>
+            </div>
+            {(cleanOrphans.error || cleanOrphans.success) && (
+              <div
+                className="mono"
+                style={{
+                  flexBasis: "100%",
+                  color: cleanOrphans.error ? "var(--err)" : "var(--ok)",
+                  fontSize: 11,
+                }}
+              >
+                {cleanOrphans.error ?? cleanOrphans.success}
+              </div>
+            )}
+          </div>
+        )}
         {projections.length === 0 ? (
           <EmptyState title="No projections yet" icon={<RefreshIcon />} command="loom sync replay">
             Create a binding that maps skills to targets, then replay or sync pending work to materialize projections.
@@ -182,12 +268,8 @@ export function ProjectionsPage({ projections, targets, bindings, readOnly, onMu
                   actionBusy={action.busy}
                   canCapture={canCapture}
                   canProject={canProject}
-                  canCleanOrphan={canCleanOrphan}
-                  deleteLivePaths={deleteLivePaths}
-                  setDeleteLivePaths={setDeleteLivePaths}
                   onCapture={capture}
                   onProject={project}
-                  onCleanOrphan={cleanOrphan}
                   message={action.error ?? action.success}
                   messageTone={action.error ? "var(--err)" : "var(--ok)"}
                 />
@@ -208,12 +290,8 @@ function ProjectionDetail({
   actionBusy,
   canCapture,
   canProject,
-  canCleanOrphan,
-  deleteLivePaths,
-  setDeleteLivePaths,
   onCapture,
   onProject,
-  onCleanOrphan,
   message,
   messageTone,
 }: {
@@ -224,12 +302,8 @@ function ProjectionDetail({
   actionBusy: boolean;
   canCapture: boolean;
   canProject: boolean;
-  canCleanOrphan: boolean;
-  deleteLivePaths: boolean;
-  setDeleteLivePaths: (next: boolean) => void;
   onCapture: () => void;
   onProject: () => void;
-  onCleanOrphan: () => void;
   message: string | null;
   messageTone: string;
 }) {
@@ -272,27 +346,6 @@ function ProjectionDetail({
           >
             <RefreshIcon /> {actionBusy ? "Working..." : "Re-project"}
           </button>
-          {projection.health === "orphaned" && !projection.binding_id && (
-            <>
-              <label className="row-flex" style={{ fontSize: 12, color: "var(--ink-2)" }}>
-                <input
-                  type="checkbox"
-                  checked={deleteLivePaths}
-                  onChange={(event) => setDeleteLivePaths(event.currentTarget.checked)}
-                  disabled={readOnly || actionBusy}
-                />
-                Delete live path
-              </label>
-              <button
-                className="btn ghost danger"
-                onClick={onCleanOrphan}
-                disabled={!canCleanOrphan}
-                title={readOnly ? "registry offline" : undefined}
-              >
-                Clean orphan
-              </button>
-            </>
-          )}
         </div>
 
         {message && (

@@ -39,7 +39,7 @@ export function DoctorPage({ apiReachable, mode, refreshKey }: DoctorPageProps) 
         setState({ kind: "error", message });
       });
     return () => controller.abort();
-  }, [apiReachable, refreshKey, manualTick]);
+  }, [apiReachable, mode, refreshKey, manualTick]);
 
   const checks = state.kind === "ready" ? state.payload.checks_v1 ?? [] : [];
   const failed = checks.filter((check) => !check.ok);

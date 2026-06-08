@@ -895,6 +895,34 @@ test("DoctorPage still fetches doctor diagnostics when registry data is degraded
   }
 });
 
+test("DoctorPage refreshes diagnostics when registry data degrades later", async () => {
+  const originalDoctor = api.workspaceDoctor;
+  let calls = 0;
+  api.workspaceDoctor = async () => {
+    calls += 1;
+    return doctorPayload();
+  };
+
+  try {
+    let renderer: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(<DoctorPage apiReachable={true} mode="live" refreshKey="tick-1" />);
+    });
+    await flush();
+
+    expect(calls).toBe(1);
+
+    await act(async () => {
+      renderer!.update(<DoctorPage apiReachable={true} mode="offline-stale" refreshKey="tick-1" />);
+    });
+    await flush();
+
+    expect(calls).toBe(2);
+  } finally {
+    api.workspaceDoctor = originalDoctor;
+  }
+});
+
 test("TargetsPage refetches selected target details when a panel mutation completes", async () => {
   const originalTargetShow = api.targetShow;
   const targetShowCalls: string[] = [];

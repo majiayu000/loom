@@ -16,6 +16,8 @@ pub(super) fn is_safe_git_ref(rev: &str) -> bool {
     !rev.is_empty()
         && len <= 256
         && !rev.starts_with('-')
+        && !rev.starts_with('.')
+        && !rev.ends_with('.')
         && !rev.contains("..")
         && rev.bytes().all(|b| {
             matches!(
@@ -172,10 +174,10 @@ fn parse_diff_git_path(line: &str) -> Option<String> {
 /// The cap is intentionally per file (not per hunk): a single multi-hunk file
 /// cannot exceed `MAX_HUNK_LINES` retained lines combined. Once the budget
 /// is exhausted, additional `+` / `-` lines still update the per-file
-/// `added` / `removed` counts so totals remain accurate, but their text is
-/// dropped and surfaced via `truncated: true` + `truncated_lines: N` so the
-/// client never confuses "we have all the lines" with "we counted all of
-/// them but only kept some" (see U-29 silent-degradation rule).
+/// `added` / `removed` counts so totals remain accurate, and any omitted
+/// hunk line is surfaced via `truncated: true` + `truncated_lines: N` so the
+/// client never confuses "we have all the lines" with "we kept only part of
+/// the hunk" (see U-29 silent-degradation rule).
 pub(crate) const MAX_HUNK_LINES: usize = 500;
 
 /// Mutable accumulator for one file block while parsing a unified diff.
@@ -196,8 +198,8 @@ struct FileBuf {
     /// Combined retained-line count across every hunk in this file. Used to
     /// enforce the per-file `MAX_HUNK_LINES` budget.
     retained: usize,
-    /// Total `+` / `-` lines we observed but dropped because the per-file
-    /// cap was exhausted. Surfaced as `truncated_lines` in the response.
+    /// Total hunk lines we observed but dropped because the per-file cap was
+    /// exhausted. Surfaced as `truncated_lines` in the response.
     dropped: usize,
 }
 
@@ -226,6 +228,15 @@ impl FileBuf {
             if remaining > 0 {
                 self.h_lines = Vec::with_capacity(remaining);
             }
+        }
+    }
+
+    fn push_hunk_line_or_count_drop(&mut self, line: &str) {
+        if self.retained < MAX_HUNK_LINES {
+            self.h_lines.push(line.to_string());
+            self.retained += 1;
+        } else {
+            self.dropped += 1;
         }
     }
 
@@ -290,28 +301,14 @@ pub(super) fn parse_unified_diff(diff_text: &str) -> Vec<serde_json::Value> {
             // string match, which historically dropped content lines such
             // as `++ i;` (encoded as `+++ i;` in unified diff).
             file.added += 1;
-            if file.retained < MAX_HUNK_LINES {
-                file.h_lines.push(line.to_string());
-                file.retained += 1;
-            } else {
-                file.dropped += 1;
-            }
+            file.push_hunk_line_or_count_drop(line);
         } else if !file.h_hdr.is_empty() && line.starts_with('-') {
             file.removed += 1;
-            if file.retained < MAX_HUNK_LINES {
-                file.h_lines.push(line.to_string());
-                file.retained += 1;
-            } else {
-                file.dropped += 1;
-            }
-        } else if !file.h_hdr.is_empty()
-            && (line.starts_with(' ') || line.is_empty())
-            && file.retained < MAX_HUNK_LINES
-        {
+            file.push_hunk_line_or_count_drop(line);
+        } else if !file.h_hdr.is_empty() && (line.starts_with(' ') || line.is_empty()) {
             // Context lines never bump `added` / `removed`, so we only need
-            // to keep them while the retention budget allows.
-            file.h_lines.push(line.to_string());
-            file.retained += 1;
+            // to retain or count-drop them against the hunk-line budget.
+            file.push_hunk_line_or_count_drop(line);
         }
     }
 

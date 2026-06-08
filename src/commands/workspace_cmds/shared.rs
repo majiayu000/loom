@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::cli::AgentKind;
 
@@ -15,17 +15,17 @@ pub(super) const DEFAULT_SCAN_AGENTS: [AgentKind; 10] = [
     AgentKind::Goose,
 ];
 
-pub(super) fn default_skill_dir(agent: AgentKind, home: &str) -> PathBuf {
+pub(super) fn default_skill_dir(agent: AgentKind, home: &Path) -> PathBuf {
     match agent {
-        AgentKind::Claude => PathBuf::from(format!("{home}/.claude/skills")),
-        AgentKind::Codex => PathBuf::from(format!("{home}/.codex/skills")),
-        AgentKind::Cursor => PathBuf::from(format!("{home}/.cursor/skills")),
-        AgentKind::Windsurf => PathBuf::from(format!("{home}/.windsurf/skills")),
-        AgentKind::Cline => PathBuf::from(format!("{home}/.cline/skills")),
-        AgentKind::Copilot => PathBuf::from(format!("{home}/.github/copilot/skills")),
-        AgentKind::Aider => PathBuf::from(format!("{home}/.aider/skills")),
-        AgentKind::Opencode => PathBuf::from(format!("{home}/.opencode/skills")),
-        AgentKind::GeminiCli => PathBuf::from(format!("{home}/.gemini/skills")),
-        AgentKind::Goose => PathBuf::from(format!("{home}/.config/goose/skills")),
+        AgentKind::Claude => home.join(".claude/skills"),
+        AgentKind::Codex => home.join(".codex/skills"),
+        AgentKind::Cursor => home.join(".cursor/skills"),
+        AgentKind::Windsurf => home.join(".windsurf/skills"),
+        AgentKind::Cline => home.join(".cline/skills"),
+        AgentKind::Copilot => home.join(".github/copilot/skills"),
+        AgentKind::Aider => home.join(".aider/skills"),
+        AgentKind::Opencode => home.join(".opencode/skills"),
+        AgentKind::GeminiCli => home.join(".gemini/skills"),
+        AgentKind::Goose => home.join(".config/goose/skills"),
     }
 }

@@ -562,7 +562,9 @@ fn stage_trash_commit_paths(
     paths: &[&str],
 ) -> std::result::Result<(), CommandFailure> {
     for path in paths {
-        gitops::run_git(ctx, &["add", "-A", "--", path]).map_err(map_git)?;
+        if gitops::path_exists_or_is_tracked(ctx, path).map_err(map_git)? {
+            gitops::run_git(ctx, &["add", "-A", "--", path]).map_err(map_git)?;
+        }
     }
     gitops::run_git(ctx, &["add", "-A", "--", "state/registry"]).map_err(map_git)?;
     let legacy_v3_tracked =
@@ -583,8 +585,12 @@ fn commit_trash_paths(
 ) -> Result<String> {
     let mut commit_paths = paths
         .iter()
-        .map(|path| (*path).to_string())
-        .collect::<Vec<_>>();
+        .filter_map(|path| match trash_path_should_be_committed(ctx, path) {
+            Ok(true) => Some(Ok((*path).to_string())),
+            Ok(false) => None,
+            Err(err) => Some(Err(err)),
+        })
+        .collect::<Result<Vec<_>>>()?;
     commit_paths.push("state/registry".to_string());
     let legacy_v3_tracked =
         gitops::run_git_allow_failure(ctx, &["ls-files", "--error-unmatch", "--", "state/v3"])?
@@ -604,6 +610,13 @@ fn commit_trash_paths(
     let refs = args.iter().map(String::as_str).collect::<Vec<_>>();
     gitops::run_git(ctx, &refs)?;
     gitops::head(ctx)
+}
+
+fn trash_path_should_be_committed(ctx: &crate::state::AppContext, path: &str) -> Result<bool> {
+    if gitops::path_exists_or_is_tracked(ctx, path)? {
+        return Ok(true);
+    }
+    gitops::has_staged_changes_for_path(ctx, Path::new(path))
 }
 
 fn unstage_trash_paths(ctx: &crate::state::AppContext, paths: &[&str]) {

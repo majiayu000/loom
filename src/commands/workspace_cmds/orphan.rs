@@ -106,6 +106,7 @@ impl App {
             .collect::<HashMap<_, _>>();
 
         let mut cleaned_ids: Vec<String> = Vec::new();
+        let mut deleted_projection_ids: Vec<String> = Vec::new();
         let mut deleted_paths: Vec<String> = Vec::new();
         let mut skipped_paths: Vec<serde_json::Value> = Vec::new();
         let mut retained = Vec::new();
@@ -114,7 +115,10 @@ impl App {
             if is_orphan_projection(&proj) {
                 if args.delete_live_paths {
                     match cleanup_orphan_live_path(&proj, &target_paths)? {
-                        LivePathCleanup::Deleted(path) => deleted_paths.push(path),
+                        LivePathCleanup::Deleted(path) => {
+                            deleted_projection_ids.push(proj.instance_id.clone());
+                            deleted_paths.push(path);
+                        }
                         LivePathCleanup::Skipped { path, reason } => {
                             skipped_paths.push(json!({
                                 "projection_id": proj.instance_id.clone(),
@@ -155,8 +159,14 @@ impl App {
         ) {
             Ok(op_id) => op_id,
             Err(err) => {
+                let mut restored_projections = original_projections;
+                if !deleted_projection_ids.is_empty() {
+                    restored_projections.projections.retain(|projection| {
+                        !deleted_projection_ids.contains(&projection.instance_id)
+                    });
+                }
                 paths
-                    .save_projections(&original_projections)
+                    .save_projections(&restored_projections)
                     .with_context(|| {
                         format!(
                             "failed to rollback projections after operation-log failure: {}",
@@ -164,7 +174,14 @@ impl App {
                         )
                     })
                     .map_err(map_registry_state)?;
-                return Err(map_registry_state(err));
+
+                if !deleted_projection_ids.is_empty() {
+                    return Err(map_registry_state(err.context(
+                        "operation log failed after live path deletion; leaving metadata removed for deleted live paths",
+                    )));
+                } else {
+                    return Err(map_registry_state(err));
+                }
             }
         };
 

@@ -131,6 +131,45 @@ fn parse_unified_diff_marks_truncated_when_exceeding_per_file_cap() {
 }
 
 #[test]
+fn parse_unified_diff_marks_truncated_when_context_lines_exceed_cap() {
+    let extra: usize = 25;
+    let total: usize = MAX_HUNK_LINES + extra;
+
+    let mut diff = String::with_capacity(total * 24);
+    diff.push_str("diff --git a/skills/context/context.md b/skills/context/context.md\n");
+    diff.push_str("index abc1234..def5678 100644\n");
+    diff.push_str("--- a/skills/context/context.md\n");
+    diff.push_str("+++ b/skills/context/context.md\n");
+    diff.push_str(&format!("@@ -1,{0} +1,{0} @@\n", total));
+    for i in 0..total {
+        diff.push_str(&format!(" line {}\n", i));
+    }
+
+    let files = parse_unified_diff(&diff);
+    assert_eq!(files.len(), 1, "single file expected");
+    assert_eq!(files[0]["added"], json!(0));
+    assert_eq!(files[0]["removed"], json!(0));
+    assert_eq!(
+        files[0]["truncated"],
+        json!(true),
+        "dropping context-only hunk lines must still be reported"
+    );
+    assert_eq!(
+        files[0]["truncated_lines"],
+        json!(extra),
+        "truncated_lines must count dropped context lines"
+    );
+
+    let kept: usize = files[0]["hunks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|h| h["lines"].as_array().unwrap().len())
+        .sum();
+    assert_eq!(kept, MAX_HUNK_LINES);
+}
+
+#[test]
 fn parse_unified_diff_truncation_spans_multiple_hunks_in_one_file() {
     // Two hunks in one file: first hunk retains lines until the budget is
     // half spent, second hunk should still respect the per-file cap and
@@ -278,6 +317,8 @@ fn git_ref_validation_rejects_option_like_ranges_and_pathspecs() {
         "",
         "--help",
         "main..other",
+        "main.",
+        ".feature",
         "main other",
         "main:skills/foo",
         "feature/*",
@@ -350,6 +391,51 @@ async fn registry_skill_diff_rejects_malformed_rev_a() {
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert_eq!(payload["ok"], json!(false));
     assert_eq!(payload["error"]["code"], json!("GIT_DIFF_FAILED"));
+
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[tokio::test]
+async fn registry_skill_diff_rejects_dot_boundary_refs_before_building_range() {
+    let root = std::env::temp_dir().join(format!("loom-diff-dot-range-{}", Uuid::new_v4()));
+    fs::create_dir_all(root.join("skills/foo")).unwrap();
+
+    let git = |args: &[&str]| git_ok(&root, args);
+
+    git(&["init"]);
+    git(&["checkout", "-b", "main"]);
+    git(&["config", "user.email", "test@example.com"]);
+    git(&["config", "user.name", "Test"]);
+
+    fs::write(root.join("skills/foo/foo.md"), "line one\n").unwrap();
+    git(&["add", "-A"]);
+    git(&["commit", "-m", "initial"]);
+
+    git(&["checkout", "-b", "feature"]);
+    fs::write(root.join("skills/foo/foo.md"), "line one\nline two\n").unwrap();
+    git(&["add", "-A"]);
+    git(&["commit", "-m", "add line two"]);
+
+    for (rev_a, rev_b) in [("main.", "feature"), ("main", ".feature")] {
+        let state = make_state(&root);
+        let (status, Json(payload)) = registry_skill_diff(
+            AxumPath("foo".to_string()),
+            Query(super::super::DiffParams {
+                rev_a: Some(rev_a.to_string()),
+                rev_b: Some(rev_b.to_string()),
+            }),
+            State(state),
+        )
+        .await;
+
+        assert_eq!(
+            status,
+            StatusCode::BAD_REQUEST,
+            "{rev_a:?}..{rev_b:?} must be rejected before git diff"
+        );
+        assert_eq!(payload["ok"], json!(false));
+        assert_eq!(payload["error"]["code"], json!("GIT_DIFF_FAILED"));
+    }
 
     let _ = fs::remove_dir_all(&root);
 }

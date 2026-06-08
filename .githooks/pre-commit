@@ -11,7 +11,7 @@ set -e
 
 # Skip the cargo probe when no Rust files are staged — keeps docs/config
 # commits fast.
-if ! git diff --cached --name-only --diff-filter=ACM | grep -qE '\.rs$'; then
+if ! git diff --cached --name-only --diff-filter=ACMR | grep -qE '\.rs$'; then
     exit 0
 fi
 

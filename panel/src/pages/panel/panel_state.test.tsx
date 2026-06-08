@@ -824,7 +824,7 @@ test("DoctorPage renders structured workspace doctor checks", async () => {
   try {
     let renderer: ReactTestRenderer;
     await act(async () => {
-      renderer = create(<DoctorPage live={true} mode="live" refreshKey="tick-1" />);
+      renderer = create(<DoctorPage apiReachable={true} mode="live" refreshKey="tick-1" />);
     });
     await flush();
 
@@ -840,7 +840,7 @@ test("DoctorPage renders structured workspace doctor checks", async () => {
     expect(markup(renderer!).includes("target_claude_claude_skills")).toBe(true);
 
     await act(async () => {
-      renderer!.update(<DoctorPage live={true} mode="live" refreshKey="tick-2" />);
+      renderer!.update(<DoctorPage apiReachable={true} mode="live" refreshKey="tick-2" />);
     });
     await flush();
 
@@ -850,7 +850,7 @@ test("DoctorPage renders structured workspace doctor checks", async () => {
   }
 });
 
-test("DoctorPage skips live fetches while offline", async () => {
+test("DoctorPage skips doctor fetches when the panel API is unreachable", async () => {
   const originalDoctor = api.workspaceDoctor;
   let calls = 0;
   api.workspaceDoctor = async () => {
@@ -861,12 +861,35 @@ test("DoctorPage skips live fetches while offline", async () => {
   try {
     let renderer: ReactTestRenderer;
     await act(async () => {
-      renderer = create(<DoctorPage live={false} mode="offline-empty" refreshKey={null} />);
+      renderer = create(<DoctorPage apiReachable={false} mode="offline-empty" refreshKey={null} />);
     });
     await flush();
 
     expect(calls).toBe(0);
     expect(markup(renderer!).includes("Doctor needs the live panel API.")).toBe(true);
+  } finally {
+    api.workspaceDoctor = originalDoctor;
+  }
+});
+
+test("DoctorPage still fetches doctor diagnostics when registry data is degraded", async () => {
+  const originalDoctor = api.workspaceDoctor;
+  let calls = 0;
+  api.workspaceDoctor = async () => {
+    calls += 1;
+    return doctorPayload();
+  };
+
+  try {
+    let renderer: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(<DoctorPage apiReachable={true} mode="offline-empty" refreshKey={null} />);
+    });
+    await flush();
+
+    expect(calls).toBe(1);
+    expect(markup(renderer!).includes("Doctor needs the live panel API.")).toBe(false);
+    expect(markup(renderer!).includes("pending_queue_warnings")).toBe(true);
   } finally {
     api.workspaceDoctor = originalDoctor;
   }

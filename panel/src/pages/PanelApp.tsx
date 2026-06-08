@@ -244,7 +244,7 @@ export function PanelApp() {
         );
         break;
       case "doctor":
-        view = <DoctorPage live={live.live} mode={live.mode} refreshKey={live.lastUpdated} />;
+        view = <DoctorPage apiReachable={live.apiReachable} mode={live.mode} refreshKey={live.lastUpdated} />;
         break;
       case "settings":
         view = <SettingsPage live={live.live} mode={live.mode} registryRoot={live.registryRoot} />;

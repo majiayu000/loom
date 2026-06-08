@@ -4,7 +4,7 @@ import { api, ApiError, type DoctorCheck, type DoctorPayload } from "../../lib/a
 import type { PanelDataMode } from "../../lib/api/usePanelData";
 
 interface DoctorPageProps {
-  live: boolean;
+  apiReachable: boolean;
   mode: PanelDataMode;
   refreshKey: string | null;
 }
@@ -15,12 +15,12 @@ type DoctorState =
   | { kind: "ready"; payload: DoctorPayload }
   | { kind: "error"; message: string };
 
-export function DoctorPage({ live, mode, refreshKey }: DoctorPageProps) {
+export function DoctorPage({ apiReachable, mode, refreshKey }: DoctorPageProps) {
   const [state, setState] = useState<DoctorState>({ kind: "idle" });
   const [manualTick, setManualTick] = useState(0);
 
   useEffect(() => {
-    if (!live) {
+    if (!apiReachable) {
       setState({ kind: "idle" });
       return;
     }
@@ -39,7 +39,7 @@ export function DoctorPage({ live, mode, refreshKey }: DoctorPageProps) {
         setState({ kind: "error", message });
       });
     return () => controller.abort();
-  }, [live, refreshKey, manualTick]);
+  }, [apiReachable, refreshKey, manualTick]);
 
   const checks = state.kind === "ready" ? state.payload.checks_v1 ?? [] : [];
   const failed = checks.filter((check) => !check.ok);
@@ -53,13 +53,13 @@ export function DoctorPage({ live, mode, refreshKey }: DoctorPageProps) {
           <div className="subtitle">Live registry health from the workspace doctor contract.</div>
         </div>
         <div className="header-actions">
-          <button className="btn ghost" onClick={() => setManualTick((cur) => cur + 1)} disabled={!live || state.kind === "loading"}>
+          <button className="btn ghost" onClick={() => setManualTick((cur) => cur + 1)} disabled={!apiReachable || state.kind === "loading"}>
             <RefreshIcon /> {state.kind === "loading" ? "Refreshing..." : "Refresh"}
           </button>
         </div>
       </div>
       <div className="page-body">
-        {!live && (
+        {!apiReachable && (
           <div className="empty" style={{ marginBottom: 16 }}>
             {mode === "offline-stale"
               ? "Doctor is paused while the live API is offline."

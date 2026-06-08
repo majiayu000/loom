@@ -62,7 +62,7 @@ test("DoctorPage renders human labels before internal check IDs", async () => {
   api.workspaceDoctor = async () => payload;
 
   try {
-    const { container } = render(<DoctorPage live={true} mode="live" refreshKey="tick-1" />);
+    const { container } = render(<DoctorPage apiReachable={true} mode="live" refreshKey="tick-1" />);
 
     await screen.findByText("Git integrity");
     expect(screen.getByText("Target path")).toBeTruthy();

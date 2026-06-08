@@ -19,6 +19,7 @@ export type PanelDataMode = "live" | "first-run" | "offline-empty" | "offline-st
 
 export interface PanelLiveData {
   live: boolean;
+  apiReachable: boolean;
   loading: boolean;
   error: string | null;
   mode: PanelDataMode;
@@ -47,6 +48,7 @@ type LiveState = Omit<PanelLiveData, "refetch">;
 
 const INITIAL_STATE: LiveState = {
   live: false,
+  apiReachable: false,
   loading: true,
   error: null,
   mode: "offline-empty",
@@ -98,8 +100,8 @@ export function usePanelData(): PanelLiveData {
   );
 
   const markFailure = useCallback(
-    (cur: LiveState, message: string): LiveState =>
-      withMode({ ...cur, live: false, setupRequired: false, loading: false, error: message }),
+    (cur: LiveState, message: string, apiReachable: boolean): LiveState =>
+      withMode({ ...cur, live: false, apiReachable, setupRequired: false, loading: false, error: message }),
     [withMode],
   );
 
@@ -119,6 +121,7 @@ export function usePanelData(): PanelLiveData {
     const controller = new AbortController();
     controllerRef.current = controller;
     const generation = ++generationRef.current;
+    let apiReachable = false;
 
     try {
       const [health, info, workspaceStatus] = await Promise.all([
@@ -127,11 +130,13 @@ export function usePanelData(): PanelLiveData {
         api.workspaceStatus(controller.signal),
       ]);
       if (controller.signal.aborted || generation !== generationRef.current) return;
+      apiReachable = true;
 
       if (workspaceStatus.registry?.available === false) {
         setState(
           markSuccess({
             live: true,
+            apiReachable: true,
             setupRequired: true,
             loading: false,
             error: null,
@@ -181,6 +186,7 @@ export function usePanelData(): PanelLiveData {
       setState(
         markSuccess({
           live: true,
+          apiReachable: true,
           setupRequired: false,
           loading: false,
           error: null,
@@ -200,7 +206,7 @@ export function usePanelData(): PanelLiveData {
     } catch (err) {
       if (controller.signal.aborted || generation !== generationRef.current) return;
       const message = err instanceof ApiError ? err.message : err instanceof Error ? err.message : String(err);
-      setState((cur) => markFailure(cur, message));
+      setState((cur) => markFailure(cur, message, apiReachable));
     }
   }, [markFailure, markSuccess]);
 

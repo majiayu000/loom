@@ -669,3 +669,91 @@
     padding: 28px 16px;
   }
 }
+
+/* ============================================================
+   THEME OVERRIDES — 深色徽章/代码三元组在浅色主题下反相
+   （base 规则保持深色；仅匹配的 data-theme 生效）
+   ============================================================ */
+/* ---- Warm Paper：深字 + 浅框 + 极浅 tint 底 ---- */
+[data-theme="light"] .chip.managed {
+  color: #8a4a1c;
+  border-color: #eecdb0;
+  background: #fbeede;
+}
+[data-theme="light"] .chip.observed {
+  color: #2f6b48;
+  border-color: #bfe0cc;
+  background: #e8f4ec;
+}
+[data-theme="light"] .chip.symlink {
+  color: #2f5a78;
+  border-color: #c5dcea;
+  background: #e9f2f8;
+}
+[data-theme="light"] .chip.copy {
+  color: #7a651c;
+  border-color: #e6d9a6;
+  background: #faf2d6;
+}
+[data-theme="light"] .chip.materialize {
+  color: #6a4a90;
+  border-color: #ddccec;
+  background: #f3ecfa;
+}
+[data-theme="light"] .code .k {
+  color: #a8521b;
+}
+[data-theme="light"] .code .s {
+  color: #2f6b48;
+}
+[data-theme="light"] .code .n {
+  color: #7a651c;
+}
+/* 深赤陶主按钮用奶白字，避免深色字对比不足 */
+[data-theme="light"] .btn.primary {
+  color: #fff8f0;
+}
+
+/* ---- GitHub：Label 风格浅 tint，蓝/绿/琥珀/紫 ---- */
+[data-theme="github"] .chip.managed {
+  color: #0a5cc0;
+  border-color: #b6e3ff;
+  background: #ddf4ff;
+}
+[data-theme="github"] .chip.observed {
+  color: #1a7f37;
+  border-color: #aceebb;
+  background: #dafbe1;
+}
+[data-theme="github"] .chip.symlink {
+  color: #0a5cc0;
+  border-color: #b6e3ff;
+  background: #ddf4ff;
+}
+[data-theme="github"] .chip.copy {
+  color: #9a6700;
+  border-color: #f5d9a8;
+  background: #fff8c5;
+}
+[data-theme="github"] .chip.materialize {
+  color: #8250df;
+  border-color: #e3d6fb;
+  background: #fbefff;
+}
+[data-theme="github"] .code .k {
+  color: #cf222e;
+}
+[data-theme="github"] .code .s {
+  color: #0a3069;
+}
+[data-theme="github"] .code .n {
+  color: #0550ae;
+}
+/* GitHub 主按钮是绿色（蓝色留给链接），白字 */
+[data-theme="github"] .btn.primary {
+  background: #1f883d;
+  color: #ffffff;
+}
+[data-theme="github"] .btn.primary:hover {
+  background: #1a7f37;
+}

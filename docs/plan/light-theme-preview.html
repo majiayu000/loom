@@ -1,0 +1,477 @@
+<!doctype html>
+<html lang="zh" data-theme="light">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Loom Panel · Warm Paper 浅色配色预览</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+/* ============================================================
+   TOKENS — :root 是现有深色主题原值；[data-theme=light] 是
+   提案中的 Warm Paper 浅色方案。切换 data-theme 即可对比。
+   ============================================================ */
+:root {
+  --bg-0:#0e0d0b; --bg-1:#15130f; --bg-2:#1c1915; --bg-3:#23201a; --bg-hi:#2b2720;
+  --line:#2a2620; --line-soft:#201d18; --line-hi:#3a342a;
+  --ink-0:#f4ede0; --ink-1:#c9c0ae; --ink-2:#8a8271; --ink-3:#5a5346; --ink-4:#3a3528;
+  --accent:#d97736; --accent-soft:#9e5423; --accent-bg:#2a1810;
+  --accent-2:#6fb78a; --accent-3:#c79ee0;
+  --thread-warp:#d97736; --thread-weft:#6fb78a;
+  --ok:#6fb78a; --warn:#e6b450; --err:#d85a5a; --pending:#c2a05e;
+  --managed:#d97736; --observed:#6fb78a; --external:#8a8271;
+  --font-sans:"Inter",-apple-system,"Helvetica Neue",sans-serif;
+  --font-mono:"JetBrains Mono","SF Mono",Menlo,Consolas,monospace;
+  --font-display:"Fraunces","Iowan Old Style",Georgia,serif;
+  --radius-sm:4px; --radius:6px; --radius-lg:10px;
+  /* preview-only surfaces (theme-aware below) */
+  --header-fade:rgba(12,11,9,.92);
+  --legend-bg:rgba(14,13,11,.7);
+  --scroll-thumb:#2a2620; --scroll-thumb-hi:#3a342a;
+}
+[data-theme="light"] {
+  --bg-0:#faf7f1; --bg-1:#f5f0e7; --bg-2:#efe8db; --bg-3:#e7dece; --bg-hi:#ded3bf;
+  --line:#e2dac9; --line-soft:#ece5d7; --line-hi:#cfc4ad;
+  --ink-0:#2a2620; --ink-1:#5b5343; --ink-2:#7c7258; --ink-3:#9d9075; --ink-4:#c2b69f;
+  --accent:#c05f23; --accent-soft:#9e5423; --accent-bg:#fbe9dc;
+  --accent-2:#3f8d63; --accent-3:#8a5cb0;
+  --thread-warp:#d97736; --thread-weft:#6fb78a;
+  --ok:#2f8d5e; --warn:#a9791c; --err:#c0392b; --pending:#9a7b32;
+  --managed:#c05f23; --observed:#2f8d5e; --external:#7c7258;
+  --header-fade:rgba(250,247,241,.9);
+  --legend-bg:rgba(250,247,241,.8);
+  --scroll-thumb:#cfc4ad; --scroll-thumb-hi:#bdb097;
+}
+/* ---- GitHub: 中性黑白底 + 蓝链 + 绿主按钮（Primer light）---- */
+[data-theme="github"] {
+  --bg-0:#ffffff; --bg-1:#ffffff; --bg-2:#f6f8fa; --bg-3:#eaeef2; --bg-hi:#dde4eb;
+  --line:#d1d9e0; --line-soft:#e4e8ec; --line-hi:#bac2cb;
+  --ink-0:#1f2328; --ink-1:#3d444d; --ink-2:#59636e; --ink-3:#818b98; --ink-4:#afb8c1;
+  --accent:#0969da; --accent-soft:#0a5cc0; --accent-bg:#ddf4ff;
+  --accent-2:#1a7f37; --accent-3:#8250df;
+  --thread-warp:#0969da; --thread-weft:#1a7f37;
+  --ok:#1a7f37; --warn:#9a6700; --err:#cf222e; --pending:#bf8700;
+  --managed:#0969da; --observed:#1a7f37; --external:#59636e;
+  --header-fade:rgba(255,255,255,.9);
+  --legend-bg:rgba(255,255,255,.85);
+  --scroll-thumb:#d1d9e0; --scroll-thumb-hi:#bac2cb;
+}
+/* ---- Mono: 纯黑白灰阶，无色相，黑按钮（状态靠明度+形状区分）---- */
+[data-theme="mono"] {
+  --bg-0:#ffffff; --bg-1:#ffffff; --bg-2:#f4f4f4; --bg-3:#ebebeb; --bg-hi:#e0e0e0;
+  --line:#d8d8d8; --line-soft:#ececec; --line-hi:#c2c2c2;
+  --ink-0:#111111; --ink-1:#3a3a3a; --ink-2:#6a6a6a; --ink-3:#949494; --ink-4:#c4c4c4;
+  --accent:#1a1a1a; --accent-soft:#000000; --accent-bg:#ededed;
+  --accent-2:#4d4d4d; --accent-3:#767676;
+  --thread-warp:#1a1a1a; --thread-weft:#7a7a7a;
+  --ok:#1f1f1f; --warn:#5a5a5a; --err:#000000; --pending:#8a8a8a;
+  --managed:#1a1a1a; --observed:#7a7a7a; --external:#9a9a9a;
+  --header-fade:rgba(255,255,255,.9);
+  --legend-bg:rgba(255,255,255,.85);
+  --scroll-thumb:#cccccc; --scroll-thumb-hi:#b0b0b0;
+}
+
+/* ============================================================
+   BASE (base.css 复刻)
+   ============================================================ */
+*{box-sizing:border-box;margin:0;padding:0;}
+button{font:inherit;color:inherit;background:none;border:none;cursor:pointer;}
+input,select,textarea{font:inherit;color:inherit;}
+a{color:inherit;text-decoration:none;}
+::-webkit-scrollbar{width:10px;height:10px;}
+::-webkit-scrollbar-thumb{background:var(--scroll-thumb);border-radius:10px;border:2px solid var(--bg-0);}
+::-webkit-scrollbar-thumb:hover{background:var(--scroll-thumb-hi);}
+::-webkit-scrollbar-track{background:transparent;}
+.hint{font-family:var(--font-mono);font-size:11px;color:var(--ink-3);}
+.divider{height:1px;background:var(--line);margin:14px 0;}
+
+html,body{width:100%;height:100%;background:var(--bg-0);color:var(--ink-0);
+  font-family:var(--font-sans);font-size:13px;line-height:1.45;-webkit-font-smoothing:antialiased;}
+body{overflow:hidden;}
+
+/* ============================================================
+   SHELL (shell.css 复刻)
+   ============================================================ */
+.app{display:grid;grid-template-columns:232px 1fr;grid-template-rows:46px 1fr;height:100vh;background:var(--bg-0);}
+.topbar{grid-column:1/-1;display:flex;align-items:center;padding:0 18px;border-bottom:1px solid var(--line);background:var(--bg-1);gap:16px;}
+.topbar .brand{display:flex;align-items:center;gap:10px;font-family:var(--font-display);font-size:17px;letter-spacing:-0.01em;font-weight:500;width:202px;padding-right:20px;border-right:1px solid var(--line);height:100%;}
+.topbar .brand .mark{width:26px;height:26px;display:grid;place-items:center;}
+.topbar .crumbs{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--ink-1);}
+.topbar .crumbs .sep{color:var(--ink-3);}
+.topbar .crumbs .cur{color:var(--ink-0);}
+.topbar .crumbs .registry{font-family:var(--font-mono);font-size:12px;color:var(--ink-2);padding:3px 8px;border:1px solid var(--line-hi);border-radius:var(--radius-sm);background:var(--bg-2);}
+.topbar .spacer{flex:1;}
+.topbar .top-actions{display:flex;align-items:center;gap:8px;}
+.topbar .top-chip,.topbar .top-btn{min-height:28px;padding:5px 10px;border-radius:999px;font-size:11.5px;display:inline-flex;align-items:center;gap:6px;line-height:1;white-space:nowrap;transition:all 120ms ease;}
+.topbar .top-chip{background:var(--bg-2);border:1px solid var(--line-hi);color:var(--ink-1);}
+.topbar .top-chip:first-child{color:var(--ink-0);}
+.topbar .top-btn{background:transparent;border:1px solid transparent;color:var(--ink-1);font-weight:500;}
+.topbar .top-btn:hover{background:var(--bg-2);border-color:var(--line-hi);color:var(--ink-0);}
+.topbar .status-dot{width:8px;height:8px;border-radius:50%;background:var(--ok);box-shadow:0 0 0 3px color-mix(in srgb,var(--ok) 22%,transparent);}
+
+.sidebar{background:var(--bg-1);border-right:1px solid var(--line);padding:14px 10px;display:flex;flex-direction:column;overflow-y:auto;}
+.sidebar .group{margin-bottom:18px;}
+.sidebar .group-label{font-size:10.5px;text-transform:uppercase;letter-spacing:0.1em;color:var(--ink-3);padding:0 10px 8px;font-weight:500;}
+.sidebar .nav-item{display:flex;align-items:center;gap:10px;padding:7px 10px;border-radius:var(--radius);font-size:13px;color:var(--ink-1);width:100%;text-align:left;margin-bottom:1px;position:relative;}
+.sidebar .nav-item:hover{background:var(--bg-2);color:var(--ink-0);}
+.sidebar .nav-item.active{background:var(--bg-3);color:var(--ink-0);}
+.sidebar .nav-item.active::before{content:"";position:absolute;left:0;top:8px;bottom:8px;width:2px;background:var(--accent);border-radius:0 2px 2px 0;}
+.sidebar .nav-icon{width:16px;height:16px;color:var(--ink-2);flex-shrink:0;}
+.nav-item.active .nav-icon{color:var(--accent);}
+.sidebar .nav-count{margin-left:auto;font-family:var(--font-mono);font-size:11px;color:var(--ink-3);padding:1px 6px;border-radius:8px;background:var(--bg-2);}
+.nav-item.active .nav-count{background:var(--bg-hi);color:var(--ink-1);}
+.sidebar .foot{margin-top:auto;font-size:11px;color:var(--ink-3);border-top:1px solid var(--line);padding:12px 10px 4px;font-family:var(--font-mono);}
+
+.main{position:relative;overflow:auto;background:radial-gradient(900px 480px at 50% 0%,color-mix(in srgb,var(--accent) 6%,transparent),transparent 60%),var(--bg-0);}
+.page-header{position:sticky;top:0;z-index:5;background:linear-gradient(180deg,var(--bg-0),var(--header-fade));padding:28px 28px 16px;display:flex;align-items:flex-start;justify-content:space-between;gap:16px;border-bottom:1px solid var(--line-soft);backdrop-filter:blur(8px);}
+.page-header .title-block h1{font-family:var(--font-display);font-size:22px;letter-spacing:-0.01em;font-weight:500;margin-bottom:4px;}
+.page-header .title-block .subtitle{color:var(--ink-2);font-size:12px;max-width:680px;}
+.page-header .header-actions{display:flex;gap:8px;align-items:center;}
+.page-body{padding:22px 28px 28px;}
+
+/* ============================================================
+   PRIMITIVES (primitives.css 复刻 + 浅色反相覆盖)
+   ============================================================ */
+.btn{padding:6px 12px;border-radius:var(--radius);font-size:12.5px;font-weight:500;display:inline-flex;align-items:center;gap:6px;border:1px solid transparent;color:var(--ink-1);transition:all 0.12s;}
+.btn:hover{color:var(--ink-0);background:var(--bg-2);}
+.btn.ghost{border-color:var(--line-hi);}
+.btn.danger{color:var(--err);}
+.btn.primary{background:var(--accent);color:#1a0e07;}
+[data-theme="light"] .btn.primary{color:#fff8f0;}
+.btn.primary:hover{filter:brightness(1.06);}
+.btn.danger:hover{background:color-mix(in srgb,var(--err) 10%,transparent);border-color:color-mix(in srgb,var(--err) 40%,transparent);}
+.btn.sm{padding:4px 8px;font-size:11.5px;}
+
+.card{background:var(--bg-1);border:1px solid var(--line);border-radius:var(--radius-lg);overflow:hidden;}
+.card .card-head{padding:12px 16px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;gap:12px;}
+.card .card-head h3{font-size:12px;font-weight:500;text-transform:uppercase;letter-spacing:0.08em;color:var(--ink-2);}
+.card .card-body{padding:16px;}
+
+.kpi-row{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px;}
+.kpi{background:var(--bg-1);border:1px solid var(--line);border-radius:var(--radius-lg);padding:14px 16px;position:relative;overflow:hidden;}
+.kpi .label{font-size:10.5px;text-transform:uppercase;letter-spacing:0.1em;color:var(--ink-3);font-weight:500;margin-bottom:8px;}
+.kpi .value{font-family:var(--font-display);font-size:28px;font-weight:400;letter-spacing:-0.02em;color:var(--ink-0);line-height:1;}
+.kpi .meta{font-family:var(--font-mono);font-size:11px;color:var(--ink-2);margin-top:6px;}
+.kpi .trend{color:var(--ok);}
+.kpi .trend.warn{color:var(--warn);}
+
+.chip{display:inline-flex;align-items:center;gap:5px;padding:2px 8px;border-radius:10px;font-size:11px;font-family:var(--font-mono);border:1px solid var(--line-hi);background:var(--bg-2);color:var(--ink-1);white-space:nowrap;}
+.chip .dot{width:6px;height:6px;border-radius:50%;background:var(--ink-2);}
+.chip.managed{color:#e9a679;border-color:#553520;background:#1f1510;}
+.chip.managed .dot{background:var(--managed);}
+.chip.observed{color:#a4d1b4;border-color:#2b4635;background:#131f18;}
+.chip.observed .dot{background:var(--observed);}
+.chip.present{color:var(--ok);border-color:color-mix(in srgb,var(--ok) 32%,transparent);background:color-mix(in srgb,var(--ok) 8%,transparent);}
+.chip.missing{color:var(--warn);border-color:color-mix(in srgb,var(--warn) 34%,transparent);background:color-mix(in srgb,var(--warn) 8%,transparent);}
+.chip.non-compliant{color:var(--err);border-color:color-mix(in srgb,var(--err) 34%,transparent);background:color-mix(in srgb,var(--err) 8%,transparent);}
+.chip.method{background:transparent;border-color:var(--line-hi);color:var(--ink-1);}
+.chip.symlink{color:#9dd1e8;border-color:#284250;background:#0f1c24;}
+.chip.copy{color:#d9c07f;border-color:#4b3f1f;background:#1c1810;}
+.chip.materialize{color:#c79ee0;border-color:#452f53;background:#1b1322;}
+/* 浅色：深字+浅框+极浅 tint 底 */
+[data-theme="light"] .chip.managed{color:#8a4a1c;border-color:#eecdb0;background:#fbeede;}
+[data-theme="light"] .chip.observed{color:#2f6b48;border-color:#bfe0cc;background:#e8f4ec;}
+[data-theme="light"] .chip.symlink{color:#2f5a78;border-color:#c5dcea;background:#e9f2f8;}
+[data-theme="light"] .chip.copy{color:#7a651c;border-color:#e6d9a6;background:#faf2d6;}
+[data-theme="light"] .chip.materialize{color:#6a4a90;border-color:#ddccec;background:#f3ecfa;}
+
+.badge{display:inline-flex;align-items:center;gap:5px;font-size:10.5px;font-family:var(--font-mono);padding:1px 6px;border-radius:var(--radius-sm);letter-spacing:0.02em;}
+.badge.ok{background:color-mix(in srgb,var(--ok) 14%,transparent);color:var(--ok);}
+.badge.warn{background:color-mix(in srgb,var(--warn) 16%,transparent);color:var(--warn);}
+.badge.err{background:color-mix(in srgb,var(--err) 16%,transparent);color:var(--err);}
+.badge.pending{background:color-mix(in srgb,var(--pending) 16%,transparent);color:var(--pending);}
+
+.code{font-family:var(--font-mono);font-size:11.5px;background:var(--bg-0);border:1px solid var(--line);border-radius:var(--radius);padding:10px 12px;color:var(--ink-1);white-space:pre;overflow-x:auto;}
+.code .k{color:#e9a679;}
+.code .s{color:#a4d1b4;}
+.code .c{color:var(--ink-3);font-style:italic;}
+.code .n{color:#d9c07f;}
+[data-theme="light"] .code .k{color:#a8521b;}
+[data-theme="light"] .code .s{color:#2f6b48;}
+[data-theme="light"] .code .n{color:#7a651c;}
+
+.ring{position:relative;width:10px;height:10px;}
+.ring.ok{background:var(--ok);border-radius:50%;}
+.ring.pending{background:var(--pending);border-radius:50%;}
+.ring.err{background:var(--err);border-radius:50%;}
+
+.agent-avatar{width:22px;height:22px;border-radius:5px;display:grid;place-items:center;font-family:var(--font-mono);font-size:10px;font-weight:600;letter-spacing:-0.03em;flex-shrink:0;}
+.agent-avatar.claude{background:#d97736;color:#1a0e07;}
+.agent-avatar.codex{background:#4a8a66;color:#071a10;}
+.agent-avatar.cursor{background:#5a6b8a;color:#07101a;}
+.agent-avatar.gemini-cli{background:#5a8ad2;color:#071120;}
+.agent-avatar.goose{background:#a87a3e;color:#1a1008;}
+
+.empty{text-align:center;color:var(--ink-3);padding:40px 16px;font-family:var(--font-mono);font-size:12px;}
+
+/* ============================================================
+   DATA (data.css 复刻 + 浅色 diff 覆盖)
+   ============================================================ */
+.tbl{width:100%;border-collapse:collapse;font-size:12.5px;}
+.tbl th{text-align:left;font-weight:500;font-size:10.5px;text-transform:uppercase;letter-spacing:0.1em;color:var(--ink-3);padding:10px 16px;border-bottom:1px solid var(--line);background:var(--bg-1);}
+.tbl td{padding:11px 16px;border-bottom:1px solid var(--line-soft);color:var(--ink-1);}
+.tbl tr{cursor:pointer;}
+.tbl tr:hover td{background:var(--bg-2);color:var(--ink-0);}
+.tbl tr.selected td{background:var(--bg-3);color:var(--ink-0);}
+.tbl .mono{font-family:var(--font-mono);font-size:11.5px;color:var(--ink-1);}
+.tbl .dim{color:var(--ink-3);}
+.tbl .name{color:var(--ink-0);font-weight:500;}
+
+.tabs{display:flex;gap:2px;border-bottom:1px solid var(--line);margin-bottom:12px;}
+.tabs button{padding:7px 12px;font-size:12px;color:var(--ink-2);border-bottom:1px solid transparent;margin-bottom:-1px;}
+.tabs button.active{color:var(--ink-0);border-bottom-color:var(--accent);}
+.tabs button:hover{color:var(--ink-0);}
+
+.diff-row{display:grid;grid-template-columns:28px 1fr;font-family:var(--font-mono);font-size:11.5px;line-height:1.6;}
+.diff-row .mark{text-align:center;color:var(--ink-3);}
+.diff-row.add{background:color-mix(in srgb,var(--ok) 7%,transparent);}
+.diff-row.add .mark{color:var(--ok);}
+.diff-row.add .l{color:#a4d1b4;}
+.diff-row.del{background:color-mix(in srgb,var(--err) 7%,transparent);}
+.diff-row.del .mark{color:var(--err);}
+.diff-row.del .l{color:#d88e8e;}
+[data-theme="light"] .diff-row.add .l{color:#2f6b48;}
+[data-theme="light"] .diff-row.del .l{color:#a3271b;}
+
+.op-row{display:grid;grid-template-columns:22px 1fr auto;gap:10px;align-items:center;padding:10px 12px;border:1px solid var(--line);border-radius:var(--radius);margin-bottom:6px;background:var(--bg-1);font-size:12px;}
+.op-row .op-title{color:var(--ink-0);}
+.op-row .op-sub{font-family:var(--font-mono);font-size:11px;color:var(--ink-3);margin-top:2px;}
+.op-row .op-time{font-family:var(--font-mono);font-size:11px;color:var(--ink-3);white-space:nowrap;}
+.op-kind{font-family:var(--font-mono);color:var(--ink-1);font-size:11px;background:var(--bg-2);padding:1px 6px;border-radius:3px;margin-right:8px;text-transform:lowercase;}
+.op-status{display:inline-flex;align-items:center;margin-right:8px;font-family:var(--font-mono);text-transform:uppercase;letter-spacing:0.04em;font-size:10px;}
+.op-status.ok{color:var(--ok);}
+.op-status.pending{color:var(--pending);}
+.op-status.err{color:var(--err);}
+
+.spark{display:flex;align-items:flex-end;gap:2px;height:28px;}
+.spark .bar{width:4px;background:var(--accent-soft);border-radius:1px;opacity:0.4;}
+.spark .bar.hi{opacity:0.9;background:var(--accent);}
+
+.section-title{font-size:10.5px;text-transform:uppercase;letter-spacing:0.1em;color:var(--ink-3);font-weight:500;margin:0 0 10px;}
+.swatch-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;}
+.sw{border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;background:var(--bg-1);}
+.sw .chipbar{height:48px;}
+.sw .meta{padding:6px 8px;font-family:var(--font-mono);font-size:10.5px;color:var(--ink-2);display:flex;justify-content:space-between;}
+.grid-2{display:grid;grid-template-columns:1fr 360px;gap:16px;align-items:start;}
+.stack>*+*{margin-top:8px;}
+.toggle{display:inline-flex;border:1px solid var(--line-hi);border-radius:999px;overflow:hidden;padding:2px;background:var(--bg-2);}
+.toggle button{padding:4px 12px;font-size:11.5px;border-radius:999px;color:var(--ink-2);}
+.toggle button.active{background:var(--accent);color:#fff8f0;}
+[data-theme="light"] .toggle button.active{color:#fff8f0;}
+:root .toggle button.active{color:#1a0e07;}
+[data-theme="github"] .toggle button.active{color:#fff;}
+
+/* ============================================================
+   GITHUB THEME — 硬编码三元组覆盖（运行时仅匹配项生效）
+   ============================================================ */
+[data-theme="github"] .chip.managed{color:#0a5cc0;border-color:#b6e3ff;background:#ddf4ff;}
+[data-theme="github"] .chip.observed{color:#1a7f37;border-color:#aceebb;background:#dafbe1;}
+[data-theme="github"] .chip.symlink{color:#0a5cc0;border-color:#b6e3ff;background:#ddf4ff;}
+[data-theme="github"] .chip.copy{color:#9a6700;border-color:#f5d9a8;background:#fff8c5;}
+[data-theme="github"] .chip.materialize{color:#8250df;border-color:#e3d6fb;background:#fbefff;}
+[data-theme="github"] .code .k{color:#cf222e;}
+[data-theme="github"] .code .s{color:#0a3069;}
+[data-theme="github"] .code .n{color:#0550ae;}
+[data-theme="github"] .diff-row.add{background:#e6ffec;}
+[data-theme="github"] .diff-row.add .l{color:#1f2328;}
+[data-theme="github"] .diff-row.del{background:#ffebe9;}
+[data-theme="github"] .diff-row.del .l{color:#1f2328;}
+/* GitHub 主按钮是绿色（蓝色留给链接），白字 */
+[data-theme="github"] .btn.primary{background:#1f883d;color:#fff;border-color:rgba(27,127,55,.4);}
+[data-theme="github"] .btn.primary:hover{background:#1a7f37;filter:none;}
+
+/* ============================================================
+   MONO THEME — 纯灰阶覆盖（状态靠明度 + 形状/删除线，不靠色相）
+   ============================================================ */
+[data-theme="mono"] .chip.managed,
+[data-theme="mono"] .chip.observed,
+[data-theme="mono"] .chip.symlink,
+[data-theme="mono"] .chip.copy,
+[data-theme="mono"] .chip.materialize{color:#1f1f1f;border-color:#d4d4d4;background:#f3f3f3;}
+[data-theme="mono"] .code .k{color:#111;font-weight:600;}
+[data-theme="mono"] .code .s{color:#555;}
+[data-theme="mono"] .code .n{color:#111;}
+[data-theme="mono"] .diff-row.add{background:#f0f0f0;}
+[data-theme="mono"] .diff-row.add .l{color:#111;}
+[data-theme="mono"] .diff-row.del{background:#f8f8f8;}
+[data-theme="mono"] .diff-row.del .l{color:#777;text-decoration:line-through;}
+[data-theme="mono"] .agent-avatar{background:#ebebeb;color:#1f2328;border:1px solid #d4d4d4;}
+[data-theme="mono"] .btn.primary{background:var(--accent);color:#fff;border-color:#000;}
+[data-theme="mono"] .btn.primary:hover{background:#000;filter:none;}
+[data-theme="mono"] .toggle button.active{color:#fff;}
+</style>
+</head>
+<body>
+<div class="app">
+  <!-- TOPBAR -->
+  <div class="topbar">
+    <div class="brand">
+      <span class="mark">
+        <svg width="22" height="22" viewBox="0 0 22 22" fill="none">
+          <rect x="3" y="3" width="16" height="16" rx="3" stroke="var(--thread-warp)" stroke-width="1.6"/>
+          <path d="M3 8h16M3 14h16" stroke="var(--thread-warp)" stroke-width="1.2"/>
+          <path d="M8 3v16M14 3v16" stroke="var(--thread-weft)" stroke-width="1.2"/>
+        </svg>
+      </span>
+      <span class="brand-text">loom</span>
+    </div>
+    <div class="crumbs">
+      <span>Registry</span><span class="sep">/</span>
+      <span class="cur">Skills</span>
+      <span class="registry">~/.claude/skills</span>
+    </div>
+    <div class="spacer"></div>
+    <div class="top-actions">
+      <span class="top-chip"><span class="status-dot"></span>live</span>
+      <span class="top-chip">142 skills</span>
+      <button class="top-btn">Capture</button>
+      <span class="toggle" id="themeToggle">
+        <button data-set="light" class="active">Warm</button>
+        <button data-set="github">GitHub</button>
+        <button data-set="mono">Mono</button>
+        <button data-set="dark">Dark</button>
+      </span>
+    </div>
+  </div>
+
+  <!-- SIDEBAR -->
+  <aside class="sidebar">
+    <div class="group">
+      <div class="group-label">Overview</div>
+      <button class="nav-item active"><svg class="nav-icon" viewBox="0 0 16 16" fill="none"><rect x="2" y="2" width="5" height="5" rx="1" stroke="currentColor" stroke-width="1.3"/><rect x="9" y="2" width="5" height="5" rx="1" stroke="currentColor" stroke-width="1.3"/><rect x="2" y="9" width="5" height="5" rx="1" stroke="currentColor" stroke-width="1.3"/><rect x="9" y="9" width="5" height="5" rx="1" stroke="currentColor" stroke-width="1.3"/></svg><span class="nav-label">Skills</span><span class="nav-count">142</span></button>
+      <button class="nav-item"><svg class="nav-icon" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6" stroke="currentColor" stroke-width="1.3"/><path d="M8 5v3l2 2" stroke="currentColor" stroke-width="1.3"/></svg><span class="nav-label">Operations</span><span class="nav-count">38</span></button>
+      <button class="nav-item"><svg class="nav-icon" viewBox="0 0 16 16" fill="none"><path d="M3 13V6l5-3 5 3v7" stroke="currentColor" stroke-width="1.3"/></svg><span class="nav-label">Projections</span><span class="nav-count">9</span></button>
+    </div>
+    <div class="group">
+      <div class="group-label">Health</div>
+      <button class="nav-item"><svg class="nav-icon" viewBox="0 0 16 16" fill="none"><path d="M2 8h3l2 5 2-10 2 5h3" stroke="currentColor" stroke-width="1.3"/></svg><span class="nav-label">Doctor</span><span class="nav-count">2</span></button>
+      <button class="nav-item"><svg class="nav-icon" viewBox="0 0 16 16" fill="none"><path d="M4 4h8v8H4z" stroke="currentColor" stroke-width="1.3"/><path d="M7 7h2v2H7z" fill="currentColor"/></svg><span class="nav-label">Trash</span><span class="nav-count">5</span></button>
+    </div>
+    <div class="foot">loom v0.6.2 · woven</div>
+  </aside>
+
+  <!-- MAIN -->
+  <main class="main">
+    <div class="page-header">
+      <div class="title-block">
+        <h1>Skills</h1>
+        <div class="subtitle">142 skills managed across 6 agents. Terracotta 经线标记 managed，鼠尾草绿纬线标记 observed。这是浅色 Warm Paper 方案在真实组件上的呈现。</div>
+      </div>
+      <div class="header-actions">
+        <button class="btn ghost">skill add</button>
+        <button class="btn ghost">Capture</button>
+        <button class="btn primary">＋ New Skill</button>
+      </div>
+    </div>
+
+    <div class="page-body">
+      <!-- KPIs -->
+      <div class="kpi-row">
+        <div class="kpi"><div class="label">Managed</div><div class="value">118</div><div class="meta"><span class="trend">▲ 6</span> this week</div></div>
+        <div class="kpi"><div class="label">Observed</div><div class="value">24</div><div class="meta"><span class="trend warn">▲ 2</span> unmanaged</div></div>
+        <div class="kpi"><div class="label">Operations</div><div class="value">38</div><div class="meta">3 pending</div></div>
+        <div class="kpi"><div class="label">Compliance</div><div class="value">96%</div><div class="meta"><span class="trend">5/142</span> drift</div></div>
+      </div>
+
+      <div class="grid-2">
+        <!-- 左：表格 -->
+        <div class="stack">
+          <div class="card">
+            <div class="card-head">
+              <h3>Skill Registry</h3>
+              <div class="row-flex" style="display:flex;gap:8px;align-items:center;">
+                <span class="badge ok">42 ok</span>
+                <span class="badge warn">5 drift</span>
+                <button class="btn sm ghost">filter</button>
+              </div>
+            </div>
+            <table class="tbl">
+              <thead><tr><th style="width:30px"></th><th>Skill</th><th>Source</th><th>Method</th><th>State</th><th>Agent</th></tr></thead>
+              <tbody>
+                <tr class="selected"><td><span class="ring ok" style="display:inline-block"></span></td><td><span class="name">blog-write</span><div class="mono dim">content/blog-write</div></td><td><span class="chip managed"><span class="dot"></span>managed</span></td><td><span class="chip symlink">symlink</span></td><td><span class="chip present">present</span></td><td><span class="agent-avatar claude">CL</span></td></tr>
+                <tr><td><span class="ring ok" style="display:inline-block"></span></td><td><span class="name">vibeguard</span><div class="mono dim">guard/vibeguard</div></td><td><span class="chip managed"><span class="dot"></span>managed</span></td><td><span class="chip copy">copy</span></td><td><span class="chip present">present</span></td><td><span class="agent-avatar codex">CX</span></td></tr>
+                <tr><td><span class="ring pending" style="display:inline-block"></span></td><td><span class="name">deep-research</span><div class="mono dim">research/deep</div></td><td><span class="chip observed"><span class="dot"></span>observed</span></td><td><span class="chip method">none</span></td><td><span class="chip missing">missing</span></td><td><span class="agent-avatar cursor">CU</span></td></tr>
+                <tr><td><span class="ring err" style="display:inline-block"></span></td><td><span class="name">x-post</span><div class="mono dim">social/x-post</div></td><td><span class="chip managed"><span class="dot"></span>managed</span></td><td><span class="chip materialize">materialize</span></td><td><span class="chip non-compliant">drift</span></td><td><span class="agent-avatar gemini-cli">GM</span></td></tr>
+                <tr><td><span class="ring ok" style="display:inline-block"></span></td><td><span class="name">loom</span><div class="mono dim">dev/loom</div></td><td><span class="chip observed"><span class="dot"></span>observed</span></td><td><span class="chip symlink">symlink</span></td><td><span class="chip present">present</span></td><td><span class="agent-avatar goose">GO</span></td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <!-- Operations feed -->
+          <div class="card">
+            <div class="card-head"><h3>Recent Operations</h3><button class="btn sm ghost">view all</button></div>
+            <div class="card-body">
+              <div class="op-row"><span class="ring ok" style="display:inline-block"></span><div class="op-main"><div class="op-title"><span class="op-kind">link</span>blog-write → ~/.claude/skills</div><div class="op-sub">symlink created</div></div><div class="op-time"><span class="op-status ok">done</span>2m</div></div>
+              <div class="op-row"><span class="ring pending" style="display:inline-block"></span><div class="op-main"><div class="op-title"><span class="op-kind">sync</span>deep-research materialize</div><div class="op-sub">copying 3 files…</div></div><div class="op-time"><span class="op-status pending">run</span>now</div></div>
+              <div class="op-row"><span class="ring err" style="display:inline-block"></span><div class="op-main"><div class="op-title"><span class="op-kind">verify</span>x-post compliance check</div><div class="op-sub">hash mismatch on SKILL.md</div></div><div class="op-time"><span class="op-status err">fail</span>14m</div></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 右：详情 + 代码 + diff + 色板 -->
+        <div class="stack">
+          <div class="card">
+            <div class="card-head"><h3>blog-write</h3><span class="chip managed"><span class="dot"></span>managed</span></div>
+            <div class="card-body">
+              <div class="tabs"><button class="active">Overview</button><button>Diff</button><button>History</button></div>
+              <div class="code"><span class="c"># SKILL.md frontmatter</span>
+<span class="k">name</span>: blog-write
+<span class="k">version</span>: <span class="n">2</span>
+<span class="k">desc</span>: <span class="s">"Write SEO blog posts"</span>
+<span class="k">method</span>: <span class="s">symlink</span></div>
+              <div style="margin-top:12px">
+                <div class="section-title">Pending Diff</div>
+                <div class="diff-row del"><span class="mark">-</span><span class="l">version: 1</span></div>
+                <div class="diff-row add"><span class="mark">+</span><span class="l">version: 2</span></div>
+                <div class="diff-row add"><span class="mark">+</span><span class="l">method: symlink</span></div>
+              </div>
+              <div style="margin-top:14px;display:flex;gap:8px;">
+                <button class="btn primary sm">Apply</button>
+                <button class="btn ghost sm">Preview</button>
+                <button class="btn danger sm">Discard</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-head"><h3>Palette Swatches</h3></div>
+            <div class="card-body">
+              <div class="swatch-grid">
+                <div class="sw"><div class="chipbar" style="background:var(--accent)"></div><div class="meta"><span>accent</span><span id="v-accent"></span></div></div>
+                <div class="sw"><div class="chipbar" style="background:var(--accent-2)"></div><div class="meta"><span>accent-2</span><span id="v-accent2"></span></div></div>
+                <div class="sw"><div class="chipbar" style="background:var(--thread-warp)"></div><div class="meta"><span>warp</span><span id="v-warp"></span></div></div>
+                <div class="sw"><div class="chipbar" style="background:var(--thread-weft)"></div><div class="meta"><span>weft</span><span id="v-weft"></span></div></div>
+                <div class="sw"><div class="chipbar" style="background:var(--ok)"></div><div class="meta"><span>ok</span><span id="v-ok"></span></div></div>
+                <div class="sw"><div class="chipbar" style="background:var(--warn)"></div><div class="meta"><span>warn</span><span id="v-warn"></span></div></div>
+                <div class="sw"><div class="chipbar" style="background:var(--err)"></div><div class="meta"><span>err</span><span id="v-err"></span></div></div>
+                <div class="sw"><div class="chipbar" style="background:var(--bg-0)"></div><div class="meta"><span>bg-0</span><span id="v-bg0"></span></div></div>
+              </div>
+              <div class="divider"></div>
+              <div class="hint">切换右上角 Light / Dark 对比两套主题。色值随主题实时更新。</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+</div>
+
+<script>
+  const root = document.documentElement;
+  const tg = document.getElementById('themeToggle');
+  tg.addEventListener('click', e => {
+    const b = e.target.closest('button'); if(!b) return;
+    root.setAttribute('data-theme', b.dataset.set);
+    [...tg.children].forEach(c => c.classList.toggle('active', c === b));
+    refresh();
+  });
+  function val(name){ return getComputedStyle(root).getPropertyValue(name).trim(); }
+  function refresh(){
+    const map = {'v-accent':'--accent','v-accent2':'--accent-2','v-warp':'--thread-warp','v-weft':'--thread-weft','v-ok':'--ok','v-warn':'--warn','v-err':'--err','v-bg0':'--bg-0'};
+    for(const [id,tok] of Object.entries(map)){ const el=document.getElementById(id); if(el) el.textContent = val(tok); }
+  }
+  root.setAttribute('data-theme','light');
+  refresh();
+</script>
+</body>
+</html>

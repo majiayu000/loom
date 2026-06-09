@@ -29,12 +29,12 @@ a {
   height: 10px;
 }
 ::-webkit-scrollbar-thumb {
-  background: #2a2620;
+  background: var(--scroll-thumb);
   border-radius: 10px;
   border: 2px solid var(--bg-0);
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #3a342a;
+  background: var(--scroll-thumb-hi);
 }
 ::-webkit-scrollbar-track {
   background: transparent;

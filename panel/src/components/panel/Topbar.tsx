@@ -32,6 +32,8 @@ interface TopbarProps {
   onToggleTweaks: () => void;
   readOnly: boolean;
   tweaksOpen: boolean;
+  themeLabel: string;
+  onCycleTheme: () => void;
 }
 
 interface StatusDisplay {
@@ -163,6 +165,17 @@ export function Topbar(props: TopbarProps) {
             <PlayIcon /> {replaying ? "replaying…" : `Replay queued (${props.queuedWriteCount})`}
           </button>
         )}
+        <button
+          className="top-btn"
+          onClick={props.onCycleTheme}
+          title={`Theme: ${props.themeLabel} — click to switch`}
+        >
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <circle cx="8" cy="8" r="6.4" stroke="currentColor" strokeWidth="1.3" />
+            <path d="M8 1.6a6.4 6.4 0 0 1 0 12.8z" fill="currentColor" />
+          </svg>
+          {props.themeLabel}
+        </button>
         <button
           className="top-btn"
           onClick={props.onToggleTweaks}

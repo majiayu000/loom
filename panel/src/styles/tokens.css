@@ -42,4 +42,97 @@
   --radius-sm: 4px;
   --radius: 6px;
   --radius-lg: 10px;
+
+  /* theme-aware surfaces (overridden per data-theme below) */
+  --header-fade: rgba(12, 11, 9, 0.92);
+  --legend-bg: rgba(14, 13, 11, 0.7);
+  --grid-line: rgba(255, 255, 255, 0.015);
+  --scroll-thumb: #2a2620;
+  --scroll-thumb-hi: #3a342a;
+}
+
+/* ===== Warm Paper (light) — 暖纸白，保留织机暖色基因 ===== */
+[data-theme="light"] {
+  --bg-0: #faf7f1;
+  --bg-1: #f5f0e7;
+  --bg-2: #efe8db;
+  --bg-3: #e7dece;
+  --bg-hi: #ded3bf;
+
+  --line: #e2dac9;
+  --line-soft: #ece5d7;
+  --line-hi: #cfc4ad;
+
+  --ink-0: #2a2620;
+  --ink-1: #5b5343;
+  --ink-2: #7c7258;
+  --ink-3: #9d9075;
+  --ink-4: #c2b69f;
+
+  --accent: #c05f23;
+  --accent-soft: #9e5423;
+  --accent-bg: #fbe9dc;
+  --accent-2: #3f8d63;
+  --accent-3: #8a5cb0;
+
+  --thread-warp: #d97736;
+  --thread-weft: #6fb78a;
+
+  --ok: #2f8d5e;
+  --warn: #a9791c;
+  --err: #c0392b;
+  --pending: #9a7b32;
+
+  --managed: #c05f23;
+  --observed: #2f8d5e;
+  --external: #7c7258;
+
+  --header-fade: rgba(250, 247, 241, 0.9);
+  --legend-bg: rgba(250, 247, 241, 0.82);
+  --grid-line: rgba(0, 0, 0, 0.04);
+  --scroll-thumb: #cfc4ad;
+  --scroll-thumb-hi: #bdb097;
+}
+
+/* ===== GitHub — 中性黑白底 + 蓝链 + 绿主按钮（Primer light）===== */
+[data-theme="github"] {
+  --bg-0: #ffffff;
+  --bg-1: #ffffff;
+  --bg-2: #f6f8fa;
+  --bg-3: #eaeef2;
+  --bg-hi: #dde4eb;
+
+  --line: #d1d9e0;
+  --line-soft: #e4e8ec;
+  --line-hi: #bac2cb;
+
+  --ink-0: #1f2328;
+  --ink-1: #3d444d;
+  --ink-2: #59636e;
+  --ink-3: #818b98;
+  --ink-4: #afb8c1;
+
+  --accent: #0969da;
+  --accent-soft: #0a5cc0;
+  --accent-bg: #ddf4ff;
+  --accent-2: #1a7f37;
+  --accent-3: #8250df;
+
+  --thread-warp: #0969da;
+  --thread-weft: #1a7f37;
+
+  --ok: #1a7f37;
+  --warn: #9a6700;
+  --err: #cf222e;
+  --pending: #bf8700;
+
+  --managed: #0969da;
+  --observed: #1a7f37;
+  --external: #59636e;
+
+  --header-fade: rgba(255, 255, 255, 0.9);
+  --legend-bg: rgba(255, 255, 255, 0.85);
+  --grid-line: rgba(27, 31, 36, 0.04);
+  --scroll-thumb: #d1d9e0;
+  --scroll-thumb-hi: #bac2cb;
 }

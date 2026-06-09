@@ -28,6 +28,19 @@ const DEFAULT_TWEAKS: TweakState = {
 
 const PAGE_STORAGE_KEY = "loom.page";
 const TWEAKS_STORAGE_KEY = "loom.tweaks";
+const THEME_STORAGE_KEY = "loom.theme";
+
+type PanelTheme = "dark" | "light" | "github";
+const THEME_ORDER: PanelTheme[] = ["dark", "light", "github"];
+const THEME_LABEL: Record<PanelTheme, string> = { dark: "Dark", light: "Warm", github: "GitHub" };
+// Each theme owns its accent; switching themes resets the inline accent override
+// (set by the tweaks effect) so the theme palette is not masked by it.
+const THEME_ACCENT: Record<PanelTheme, string> = { dark: "#d97736", light: "#c05f23", github: "#0969da" };
+
+function loadInitialTheme(): PanelTheme {
+  const stored = localStorage.getItem(THEME_STORAGE_KEY);
+  return THEME_ORDER.includes(stored as PanelTheme) ? (stored as PanelTheme) : "dark";
+}
 const VALID_PAGES: PanelPageKey[] = [
   "overview",
   "skills",
@@ -59,6 +72,7 @@ function loadInitialTweaks(): TweakState {
 
 export function PanelApp() {
   const [page, setPage] = useState<PanelPageKey>(loadInitialPage);
+  const [theme, setTheme] = useState<PanelTheme>(loadInitialTheme);
   const [tweaks, setTweaks] = useState<TweakState>(loadInitialTweaks);
   const [tweakVisible, setTweakVisible] = useState(false);
   const [selectedSkill, setSelectedSkill] = useState<string | null>(null);
@@ -75,6 +89,11 @@ export function PanelApp() {
   }, [tweaks]);
 
   useEffect(() => {
+    document.documentElement.setAttribute("data-theme", theme);
+    localStorage.setItem(THEME_STORAGE_KEY, theme);
+  }, [theme]);
+
+  useEffect(() => {
     document.documentElement.style.setProperty("--accent", tweaks.accent);
     const displayFontStack =
       tweaks.displayFont === "Inter"
@@ -87,6 +106,12 @@ export function PanelApp() {
 
   const setVizMode = (m: VizMode) => setTweaks((s) => ({ ...s, vizMode: m }));
   const patchTweaks = (patch: Partial<TweakState>) => setTweaks((s) => ({ ...s, ...patch }));
+
+  const cycleTheme = () => {
+    const next = THEME_ORDER[(THEME_ORDER.indexOf(theme) + 1) % THEME_ORDER.length];
+    setTheme(next);
+    setTweaks((s) => ({ ...s, accent: THEME_ACCENT[next] }));
+  };
 
   const toggleSkill = (id: string) => {
     setSelectedSkill((cur) => (cur === id ? null : id));
@@ -267,6 +292,8 @@ export function PanelApp() {
         onToggleTweaks={() => setTweakVisible((value) => !value)}
         readOnly={readOnly}
         tweaksOpen={tweakVisible}
+        themeLabel={THEME_LABEL[theme]}
+        onCycleTheme={cycleTheme}
       />
       <Sidebar
         page={page}

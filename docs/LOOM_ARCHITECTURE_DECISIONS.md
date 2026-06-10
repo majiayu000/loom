@@ -26,8 +26,8 @@ Authoritative for registry panel activity and audit display:
 Rules:
 
 1. `sync push`, `sync pull`, `sync replay`, `ops retry`, `ops purge`, and `ops history repair` continue to operate on the pending/history model.
-2. `/api/registry/ops` exposes bounded summaries from the registry operation journal for activity history.
-3. `/api/ops/retry` and `/api/ops/purge` are flat pending-queue maintenance endpoints, not registry op-id endpoints.
+2. `/api/v1/ops` exposes bounded summaries from the registry operation journal for activity history.
+3. `/api/v1/ops/retry` and `/api/v1/ops/purge` are pending-queue maintenance endpoints, not registry op-id endpoints.
 4. A future migration may make registry operations authoritative, but that requires a separate migration plan and compatibility story.
 
 Rationale:
@@ -89,7 +89,7 @@ Rules:
 4. Orphaned projections (health = "orphaned", binding_id = null) remain in the control plane until `loom skill orphan clean` is run.
 5. `loom skill orphan clean` removes orphaned projection metadata by default and preserves live paths.
 6. Live path deletion requires `loom skill orphan clean --delete-live-paths` and is limited to validated directories under the projection's registered target.
-7. `GET /api/registry/projections?health=orphaned` lists all orphaned projections for panel display.
+7. `GET /api/v1/projections?health=orphaned` lists all orphaned projections for panel display.
 
 Rationale:
 
@@ -107,8 +107,8 @@ Rules:
 2. Every panel mutation route must use `run_panel_command` or an equivalent wrapper that preserves the CLI envelope, lock acquisition, audit logging, and error mapping.
 3. The panel must hide or disable mutation actions when the backend is not live.
 4. Offline, stale, mock, and read-only modes must not expose a second path to write APIs through shortcuts or command palette actions.
-5. `/api/registry/*` remains read-oriented unless a future decision explicitly adds registry write semantics.
-6. Flat write routes such as `/api/ops/retry`, `/api/ops/purge`, and `/api/sync/replay` are compatibility/control routes backed by CLI command behavior.
+5. All Panel HTTP APIs are under `/api/v1/*`; unversioned compatibility routes are not part of the contract.
+6. Control routes such as `/api/v1/ops/retry`, `/api/v1/ops/purge`, and `/api/v1/sync/replay` are backed by CLI command behavior.
 
 Non-goal:
 
@@ -198,7 +198,7 @@ Rejected because: binding removal is a control-plane operation; silently destroy
 
 On `workspace binding remove`, remove the binding record and its rules. For each projection that belonged to the binding, set `health = "orphaned"` and `binding_id = null`. The projection record and its live filesystem path remain intact. A separate `loom skill orphan clean` command explicitly removes orphaned metadata. Operators may also pass `--delete-live-paths` to delete validated live projection directories under registered targets.
 
-Chosen because: projection records stay visible in the control plane (discoverable via `GET /api/registry/projections?health=orphaned`); operators retain full control over when files are actually deleted; the audit journal records both the orphaning event and the eventual cleanup event; the operation is recoverable (re-project the skill to a binding to restore managed status).
+Chosen because: projection records stay visible in the control plane (discoverable via `GET /api/v1/projections?health=orphaned`); operators retain full control over when files are actually deleted; the audit journal records both the orphaning event and the eventual cleanup event; the operation is recoverable (re-project the skill to a binding to restore managed status).
 
 **Option C — Require operator choice at removal time**
 
@@ -227,7 +227,7 @@ Rejected because: adding a required decision to every binding removal creates fr
 
 ### Panel surface
 
-`GET /api/registry/projections?health=orphaned` returns orphaned projection records so the panel can surface an orphaned-count badge and a "Clean up" action on the Bindings page.
+`GET /api/v1/projections?health=orphaned` returns orphaned projection records so the panel can surface an orphaned-count badge and a "Clean up" action on the Bindings page.
 
 ## Issue Mapping
 

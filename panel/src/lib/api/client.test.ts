@@ -123,6 +123,33 @@ describe("api v1 routes", () => {
     expect(fetchSpy).toHaveBeenCalledWith("/api/v1/skills", { signal: undefined });
   });
 
+  it("uses v1 endpoints for panel bootstrap reads", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      json: vi.fn().mockResolvedValue({
+        ok: true,
+        cmd: "ok",
+        request_id: "req-1",
+        data: {},
+        error: null,
+        meta: { warnings: [] },
+      }),
+    } as unknown as Response);
+
+    await api.health();
+    await api.info();
+    await api.pending();
+
+    const paths = fetchSpy.mock.calls.map((call) => call[0]);
+    expect(paths).toEqual([
+      "/api/v1/health",
+      "/api/v1/workspace/info",
+      "/api/v1/ops/pending",
+    ]);
+  });
+
   it("uses v1 endpoints for registry read routes", async () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue({
       ok: true,

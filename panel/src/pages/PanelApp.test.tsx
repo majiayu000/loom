@@ -25,10 +25,28 @@ function installFetchMock(failingPath: string, failingResponse: Response) {
   fetchMock.mockImplementation((input: RequestInfo | URL) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
     switch (url) {
-      case "/api/health":
-        return Promise.resolve(jsonResponse({ ok: true }));
-      case "/api/info":
-        return Promise.resolve(jsonResponse({ root: "/tmp/loom-registry" }));
+      case "/api/v1/health":
+        return Promise.resolve(
+          jsonResponse({
+            ok: true,
+            cmd: "panel.health",
+            request_id: "req-health",
+            data: { service: "loom-panel" },
+            error: null,
+            meta: { warnings: [] },
+          }),
+        );
+      case "/api/v1/workspace/info":
+        return Promise.resolve(
+          jsonResponse({
+            ok: true,
+            cmd: "panel.info",
+            request_id: "req-info",
+            data: { root: "/tmp/loom-registry" },
+            error: null,
+            meta: { warnings: [] },
+          }),
+        );
       case "/api/v1/workspace/status":
         return Promise.resolve(
           jsonResponse({
@@ -82,8 +100,19 @@ function installFetchMock(failingPath: string, failingResponse: Response) {
                 meta: { warnings: [] },
               }),
         );
-      case "/api/pending":
-        return Promise.resolve(url === failingPath ? failingResponse : jsonResponse({ count: 0, ops: [] }));
+      case "/api/v1/ops/pending":
+        return Promise.resolve(
+          url === failingPath
+            ? failingResponse
+            : jsonResponse({
+                ok: true,
+                cmd: "pending.list",
+                request_id: "req-pending",
+                data: { count: 0, ops: [] },
+                error: null,
+                meta: { warnings: [] },
+              }),
+        );
       case "/api/v1/ops?limit=30":
         return Promise.resolve(
           jsonResponse({
@@ -154,9 +183,9 @@ describe("PanelApp status failure UI", () => {
     expect(screen.getByText(/failed to read pending_ops\.jsonl/i)).toBeTruthy();
   });
 
-  it("shows registry error state when /api/pending returns a structured backend failure", async () => {
+  it("shows registry error state when /api/v1/ops/pending returns a structured backend failure", async () => {
     installFetchMock(
-      "/api/pending",
+      "/api/v1/ops/pending",
       errorResponse(500, {
         ok: false,
         error: { code: "IO_ERROR", message: "failed to read pending queue" },
@@ -176,10 +205,28 @@ describe("PanelApp status failure UI", () => {
     fetchMock.mockImplementation((input: RequestInfo | URL) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
       switch (url) {
-        case "/api/health":
-          return Promise.resolve(jsonResponse({ ok: true }));
-        case "/api/info":
-          return Promise.resolve(jsonResponse({ root: "/tmp/loom-registry" }));
+        case "/api/v1/health":
+          return Promise.resolve(
+            jsonResponse({
+              ok: true,
+              cmd: "panel.health",
+              request_id: "req-health",
+              data: { service: "loom-panel" },
+              error: null,
+              meta: { warnings: [] },
+            }),
+          );
+        case "/api/v1/workspace/info":
+          return Promise.resolve(
+            jsonResponse({
+              ok: true,
+              cmd: "panel.info",
+              request_id: "req-info",
+              data: { root: "/tmp/loom-registry" },
+              error: null,
+              meta: { warnings: [] },
+            }),
+          );
         case "/api/v1/workspace/status":
           return Promise.resolve(
             jsonResponse({

@@ -149,11 +149,11 @@ pub async fn run_panel(ctx: AppContext, port: u16) -> Result<()> {
 
     let app = Router::new()
         .route("/", get(frontend_index))
-        .route("/api/health", get(health))
         .route("/api/v1/health", get(v1_health))
         .route("/api/v1/overview", get(v1_overview))
         .route("/api/v1/workspace/status", get(v1_workspace_status))
         .route("/api/v1/workspace/init", post(v1_workspace_init))
+        .route("/api/v1/workspace/info", get(v1_info))
         .route("/api/v1/workspace/doctor", get(v1_workspace_doctor))
         .route("/api/v1/workspace/remote", post(remote_set))
         .route("/api/v1/registry/status", get(registry_status))
@@ -224,6 +224,7 @@ pub async fn run_panel(ctx: AppContext, port: u16) -> Result<()> {
         .route("/api/v1/orphans/clean", post(registry_orphan_clean))
         .route("/api/v1/ops", get(v1_registry_ops))
         .route("/api/v1/ops/diagnose", get(registry_ops_diagnose))
+        .route("/api/v1/ops/pending", get(v1_pending))
         .route("/api/v1/ops/retry", post(ops_retry))
         .route("/api/v1/ops/purge", post(ops_purge))
         .route("/api/v1/ops/history/repair", post(ops_history_repair))
@@ -231,53 +232,6 @@ pub async fn run_panel(ctx: AppContext, port: u16) -> Result<()> {
         .route("/api/v1/sync/push", post(sync_push))
         .route("/api/v1/sync/pull", post(sync_pull))
         .route("/api/v1/sync/replay", post(sync_replay))
-        .route("/api/info", get(info))
-        .route("/api/skills", get(skills))
-        .route("/api/registry/status", get(registry_status))
-        .route("/api/registry/ops", get(registry_ops))
-        .route("/api/registry/ops/diagnose", get(registry_ops_diagnose))
-        .route("/api/registry/projections", get(registry_projections))
-        .route("/api/registry/bindings", get(registry_bindings))
-        .route(
-            "/api/registry/bindings/{binding_id}",
-            get(registry_binding_show),
-        )
-        .route("/api/registry/targets", get(registry_targets))
-        .route(
-            "/api/registry/targets/{target_id}",
-            get(registry_target_show),
-        )
-        .route("/api/registry/targets", post(registry_target_add))
-        .route(
-            "/api/registry/targets/{target_id}/remove",
-            post(registry_target_remove),
-        )
-        .route("/api/registry/bindings", post(registry_binding_add))
-        .route(
-            "/api/registry/bindings/{binding_id}/remove",
-            post(registry_binding_remove),
-        )
-        .route("/api/registry/skills", post(registry_skill_add))
-        .route("/api/registry/project", post(registry_project))
-        .route("/api/registry/capture", post(registry_capture))
-        .route("/api/registry/orphans/clean", post(registry_orphan_clean))
-        .route(
-            "/api/registry/skills/{skill_name}/diff",
-            get(registry_skill_diff),
-        )
-        .route(
-            "/api/registry/skills/{skill_name}/history",
-            get(registry_skill_history),
-        )
-        .route("/api/remote/status", get(remote_status))
-        .route("/api/remote/set", post(remote_set))
-        .route("/api/pending", get(pending))
-        .route("/api/ops/retry", post(ops_retry))
-        .route("/api/ops/purge", post(ops_purge))
-        .route("/api/ops/history/repair", post(ops_history_repair))
-        .route("/api/sync/push", post(sync_push))
-        .route("/api/sync/pull", post(sync_pull))
-        .route("/api/sync/replay", post(sync_replay))
         .route("/{*path}", get(frontend_static_asset))
         .layer(DefaultBodyLimit::max(MAX_PANEL_BODY_BYTES))
         .with_state(state);

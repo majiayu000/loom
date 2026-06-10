@@ -83,47 +83,6 @@ pub(in crate::panel) async fn registry_status(
     }
 }
 
-pub(in crate::panel) async fn registry_projections(
-    Query(query): Query<ProjectionsQuery>,
-    State(state): State<PanelState>,
-) -> Json<serde_json::Value> {
-    match load_registry_snapshot(&state.ctx, "registry.projections") {
-        Ok(snapshot) => {
-            let projections: Vec<_> = snapshot
-                .projections
-                .projections
-                .iter()
-                .filter(|p| query.health.as_deref().is_none_or(|h| p.health == h))
-                .collect();
-            registry_ok(
-                "registry.projections",
-                json!({
-                    "state_model": "registry",
-                    "count": projections.len(),
-                    "projections": projections,
-                }),
-            )
-        }
-        Err(err) => err,
-    }
-}
-
-pub(in crate::panel) async fn registry_bindings(
-    State(state): State<PanelState>,
-) -> Json<serde_json::Value> {
-    match load_registry_snapshot(&state.ctx, "registry.bindings") {
-        Ok(snapshot) => registry_ok(
-            "registry.bindings",
-            json!({
-                "state_model": "registry",
-                "count": snapshot.bindings.bindings.len(),
-                "bindings": snapshot.bindings.bindings
-            }),
-        ),
-        Err(err) => err,
-    }
-}
-
 pub(in crate::panel) async fn registry_binding_show(
     AxumPath(binding_id): AxumPath<String>,
     State(state): State<PanelState>,
@@ -153,22 +112,6 @@ pub(in crate::panel) async fn registry_binding_show(
             "projections": snapshot.binding_projections(&binding.binding_id)
         }),
     )
-}
-
-pub(in crate::panel) async fn registry_targets(
-    State(state): State<PanelState>,
-) -> Json<serde_json::Value> {
-    match load_registry_snapshot(&state.ctx, "registry.targets") {
-        Ok(snapshot) => registry_ok(
-            "registry.targets",
-            json!({
-                "state_model": "registry",
-                "count": snapshot.targets.targets.len(),
-                "targets": snapshot.targets.targets
-            }),
-        ),
-        Err(err) => err,
-    }
 }
 
 pub(in crate::panel) async fn registry_target_show(

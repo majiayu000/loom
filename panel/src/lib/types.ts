@@ -22,9 +22,6 @@ export type KnownAgent =
 // name instead of being relabelled. `string & {}` keeps editor hints.
 export type AgentSlug = KnownAgent | (string & {});
 
-// Back-compat alias for older call sites that still import AgentKind.
-export type AgentKind = AgentSlug;
-
 export type Ownership = "managed" | "observed" | "external" | "unknown";
 export type ProjectionMethod = "symlink" | "copy" | "materialize" | "unknown";
 export type OpStatus = "ok" | "pending" | "err";
@@ -36,7 +33,7 @@ export interface Target {
   profile: string;
   path: string;
   ownership: Ownership;
-  /** Back-compat display count. Prefer `observedSkills` / `projectedSkills` for labels. */
+  /** Display count. Prefer `observedSkills` / `projectedSkills` for precise labels. */
   skills: number;
   observedSkills?: number;
   projectedSkills?: number;

@@ -15,7 +15,6 @@ returned by `status_view()`.  Update it whenever `status_view()` changes.
 |------|------------|
 | **Authoritative** | Sourced directly from registry state files or computed exclusively from registered registry entities.  Safe for decision logic. |
 | **Advisory** | Computed or aggregated from a mix of registered state and heuristic comparisons.  Useful as UX hints; must not drive control-plane decisions. |
-| **Compatibility-only** | Retained only for legacy callers; scheduled for removal in a future MAJOR version.  Must not be referenced in new code. |
 
 ---
 
@@ -62,13 +61,6 @@ All fields on `RegistryProjectionInstance` are authoritative unless noted below.
 | `updated_at` | Authoritative | Stored timestamp; optional | [source: src/state_model/mod.rs:155] |
 | `last_applied_rev` | **Advisory** (as of registry model; promotion to authoritative requires a future issue) | Git rev recorded when projection was last applied; represents a historical comparison point, not a live git state | [source: src/state_model/mod.rs:148] |
 | `observed_drift` | **Advisory** | Optional boolean; computed by comparing the stored `last_applied_rev` to the current source head at observation time — not set until a check is performed | [source: src/state_model/mod.rs:150–152] |
-
-### Compatibility-only tier
-
-No fields currently fall in this tier.  It is defined here so follow-up issues can
-promote fields to it explicitly rather than silently deprecating them.
-
----
 
 ## Environment-Based Discovery
 
@@ -125,7 +117,7 @@ deduplicated list of source scan paths.
 influence which skills are *available for registration*, but once a rule or projection
 is registered its `skill_id` is authoritative registered state.
 
-No `/api/registry/status` (or `/api/registry/workspace`) field is computed by scanning the
+No `/api/v1/registry/status` field is computed by scanning the
 filesystem paths that these agent directory variables point to.  Advisory
 skill directory hints appear only in diagnostic or migration endpoints, never in the
 counts returned by `status_view()`.

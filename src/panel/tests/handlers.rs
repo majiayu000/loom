@@ -1,10 +1,10 @@
 use super::*;
 use crate::panel::TrashRestoreRequest;
 use crate::panel::handlers::{
-    OpsQuery, info, pending, registry_ops, registry_orphan_clean, registry_skill_trash_add,
-    registry_skill_trash_purge, registry_skill_trash_restore, remote_set, remote_status, v1_health,
-    v1_overview, v1_registry_ops, v1_registry_targets, v1_skill_diagnose, v1_skill_trash,
-    v1_skills, v1_workspace_status,
+    OpsQuery, registry_orphan_clean, registry_skill_trash_add, registry_skill_trash_purge,
+    registry_skill_trash_restore, remote_set, v1_health, v1_info, v1_overview, v1_pending,
+    v1_registry_ops, v1_registry_targets, v1_skill_diagnose, v1_skill_trash, v1_skills,
+    v1_workspace_status,
 };
 use crate::state_model::{
     REGISTRY_SCHEMA_VERSION, RegistryBindingRule, RegistryOperationRecord,
@@ -50,7 +50,7 @@ fn panel_headers() -> HeaderMap {
 }
 
 #[test]
-fn registry_ops_returns_bounded_newest_first_rows() {
+fn v1_registry_ops_returns_bounded_newest_first_rows() {
     let (root, state) = make_test_state();
     let paths = RegistryStatePaths::from_app_context(state.ctx.as_ref());
     paths.ensure_layout().expect("ensure registry layout");
@@ -77,7 +77,7 @@ fn registry_ops_returns_bounded_newest_first_rows() {
         .build()
         .expect("runtime")
         .block_on(async {
-            let Json(payload) = registry_ops(
+            let (status, Json(payload)) = v1_registry_ops(
                 Query(OpsQuery {
                     limit: Some(2),
                     offset: Some(0),
@@ -85,6 +85,7 @@ fn registry_ops_returns_bounded_newest_first_rows() {
                 State(state.clone()),
             )
             .await;
+            assert_eq!(status, StatusCode::OK);
             payload
         });
 
@@ -375,43 +376,6 @@ async fn registry_status_returns_ok_when_snapshot_loads() {
 }
 
 #[tokio::test]
-async fn remote_status_returns_non_2xx_with_structured_error_body_on_failure() {
-    let (root, state) = make_test_state();
-    state
-        .ctx
-        .ensure_state_layout()
-        .expect("create pending ops layout");
-    fs::remove_file(&state.ctx.pending_ops_file).expect("remove pending ops file");
-    fs::create_dir_all(&state.ctx.pending_ops_file).expect("replace pending ops file with dir");
-
-    let (status, Json(payload)) = remote_status(State(state)).await;
-
-    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
-    assert_eq!(payload["ok"], json!(false));
-    assert_eq!(payload["error"]["code"], json!("IO_ERROR"));
-    assert!(payload["error"]["message"].as_str().is_some());
-
-    let _ = fs::remove_dir_all(root);
-}
-
-#[tokio::test]
-async fn remote_status_returns_success_payload_when_remote_is_not_configured() {
-    let (root, state) = make_test_state();
-
-    let (status, Json(payload)) = remote_status(State(state)).await;
-
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(payload["ok"], json!(true));
-    assert_eq!(payload["cmd"], json!("remote.status"));
-    assert!(payload["request_id"].as_str().is_some());
-    assert_eq!(payload["data"]["remote"]["configured"], json!(false));
-    assert!(payload["data"]["remote"].is_object());
-    assert!(payload["data"]["warnings"].is_array());
-
-    let _ = fs::remove_dir_all(root);
-}
-
-#[tokio::test]
 async fn remote_set_rejects_empty_url() {
     let (root, state) = make_test_state();
     let peer = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 40000);
@@ -460,10 +424,12 @@ async fn remote_set_configures_origin_from_authorized_panel_request() {
     assert_eq!(payload["data"]["remote"], json!("origin"));
     assert_eq!(payload["data"]["url"], json!(url));
 
-    let (remote_status_code, Json(remote_payload)) = remote_status(State(state)).await;
-    assert_eq!(remote_status_code, StatusCode::OK);
-    assert_eq!(remote_payload["data"]["remote"]["configured"], json!(true));
-    assert_eq!(remote_payload["data"]["remote"]["url"], json!(url));
+    assert_eq!(
+        crate::gitops::remote_url(&state.ctx)
+            .expect("read remote")
+            .as_deref(),
+        Some(url)
+    );
 
     cleanup_root(root);
 }
@@ -520,14 +486,14 @@ async fn registry_orphan_clean_uses_cli_envelope_and_records_operation() {
 }
 
 #[tokio::test]
-async fn info_and_remote_status_redact_remote_credentials() {
+async fn v1_info_redacts_remote_credentials() {
     let (root, state) = make_test_state();
     let url =
         "https://user:pass@example.com/loom-registry.git?token=ghp_secret&ref=main#ghp_fragment";
     crate::gitops::ensure_repo_initialized(&state.ctx).expect("init repo");
     crate::gitops::set_remote_origin(&state.ctx, url).expect("set remote");
 
-    let Json(info_payload) = info(State(state.clone())).await;
+    let Json(info_payload) = v1_info(State(state)).await;
     let info_url = info_payload["data"]["remote_url"]
         .as_str()
         .expect("info remote url");
@@ -541,15 +507,6 @@ async fn info_and_remote_status_redact_remote_credentials() {
         &Vec::<serde_json::Value>::new()
     );
 
-    let (status, Json(remote_payload)) = remote_status(State(state)).await;
-    assert_eq!(status, StatusCode::OK);
-    let status_url = remote_payload["data"]["remote"]["url"]
-        .as_str()
-        .expect("status remote url");
-    assert!(!status_url.contains("user:pass"));
-    assert!(!status_url.contains("ghp_secret"));
-    assert!(status_url.contains("<redacted>"));
-
     cleanup_root(root);
 }
 
@@ -561,7 +518,7 @@ async fn info_surfaces_warning_when_root_is_not_a_git_repository() {
     // repository" — currently mapped to Ok(None) inside gitops::remote_url.
     // The handler should probe the repo and surface the misconfiguration.
 
-    let Json(payload) = info(State(state)).await;
+    let Json(payload) = v1_info(State(state)).await;
 
     assert_eq!(payload["ok"], json!(true));
     assert_eq!(payload["data"]["remote_url"], json!(""));
@@ -583,7 +540,7 @@ async fn info_omits_warning_when_repo_initialized_but_no_remote_configured() {
     let (root, state) = make_test_state();
     crate::gitops::ensure_repo_initialized(&state.ctx).expect("init repo");
 
-    let Json(payload) = info(State(state)).await;
+    let Json(payload) = v1_info(State(state)).await;
 
     assert_eq!(payload["ok"], json!(true));
     assert_eq!(payload["data"]["remote_url"], json!(""));
@@ -604,7 +561,7 @@ async fn info_surfaces_warning_when_git_remote_lookup_fails() {
     // fail at spawn time (current_dir does not exist).
     fs::remove_dir_all(&root).expect("remove root");
 
-    let Json(payload) = info(State(state)).await;
+    let Json(payload) = v1_info(State(state)).await;
 
     assert_eq!(payload["ok"], json!(true));
     assert_eq!(payload["data"]["remote_url"], json!(""));
@@ -629,7 +586,7 @@ async fn pending_returns_non_2xx_with_structured_error_body_on_failure() {
     fs::remove_file(&state.ctx.pending_ops_file).expect("remove pending ops file");
     fs::create_dir_all(&state.ctx.pending_ops_file).expect("replace pending ops file with dir");
 
-    let (status, Json(payload)) = pending(State(state)).await;
+    let (status, Json(payload)) = v1_pending(State(state)).await;
 
     assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
     assert_eq!(payload["ok"], json!(false));
@@ -647,7 +604,7 @@ async fn pending_returns_ok_with_empty_report_on_success() {
         .ensure_state_layout()
         .expect("create pending ops layout");
 
-    let (status, Json(payload)) = pending(State(state)).await;
+    let (status, Json(payload)) = v1_pending(State(state)).await;
 
     assert_eq!(status, StatusCode::OK);
     assert_eq!(payload["ok"], json!(true));

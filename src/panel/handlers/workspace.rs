@@ -8,20 +8,15 @@ use axum::{
 use serde_json::json;
 
 use crate::cli::{Command, RemoteCommand, SyncCommand, WorkspaceCommand, WorkspaceInitArgs};
-use crate::commands::{App, redact_sensitive_string, remote_status_payload};
+use crate::commands::{App, redact_sensitive_string};
 use crate::state::resolve_agent_skill_dirs;
 use crate::state_model::RegistryStatePaths;
 
 use super::super::auth::{
-    ensure_mutation_authorized, error_envelope, registry_error, registry_ok,
-    registry_ok_with_warnings, run_panel_command, status_for_error_code,
+    ensure_mutation_authorized, error_envelope, registry_ok_with_warnings, run_panel_command,
 };
 use super::super::{PanelState, RemoteSetRequest, WorkspaceInitRequest};
 use super::common::{panel_command_envelope, panel_v1_ok};
-
-pub(in crate::panel) async fn health() -> Json<serde_json::Value> {
-    Json(json!({"ok": true, "service": "loom-panel"}))
-}
 
 pub(in crate::panel) async fn v1_health() -> (StatusCode, Json<serde_json::Value>) {
     panel_v1_ok("panel.health", json!({"service": "loom-panel"}))
@@ -96,7 +91,7 @@ pub(in crate::panel) async fn v1_sync_status(
     )
 }
 
-pub(in crate::panel) async fn info(State(state): State<PanelState>) -> Json<serde_json::Value> {
+pub(in crate::panel) async fn v1_info(State(state): State<PanelState>) -> Json<serde_json::Value> {
     let target_dirs = resolve_agent_skill_dirs(&state.ctx.root);
     let registry_paths = RegistryStatePaths::from_app_context(&state.ctx);
 
@@ -243,22 +238,4 @@ pub(in crate::panel) async fn remote_set(
             },
         },
     )
-}
-
-pub(in crate::panel) async fn remote_status(
-    State(state): State<PanelState>,
-) -> (StatusCode, Json<serde_json::Value>) {
-    match remote_status_payload(&state.ctx) {
-        Ok((remote, meta)) => (
-            StatusCode::OK,
-            registry_ok(
-                "remote.status",
-                json!({"remote": remote, "warnings": meta.warnings}),
-            ),
-        ),
-        Err(err) => (
-            status_for_error_code(Some(err.code.as_str())),
-            registry_error("remote.status", err.code.as_str(), err.message),
-        ),
-    }
 }

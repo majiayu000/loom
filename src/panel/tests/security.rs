@@ -42,7 +42,10 @@ const MUTATION_COMMANDS: &[&str] = &[
 ];
 
 const V1_REGISTRY_READ_ROUTES: &[&str] = &[
+    "/api/v1/health",
+    "/api/v1/workspace/info",
     "/api/v1/registry/status",
+    "/api/v1/ops/pending",
     "/api/v1/ops/diagnose",
     "/api/v1/bindings/{binding_id}",
     "/api/v1/targets/{target_id}",
@@ -50,7 +53,19 @@ const V1_REGISTRY_READ_ROUTES: &[&str] = &[
     "/api/v1/skills/{skill_name}/diff",
 ];
 
-const LEGACY_REGISTRY_READ_ROUTES: &[&str] = &[
+const LEGACY_PANEL_ROUTES: &[&str] = &[
+    "/api/health",
+    "/api/info",
+    "/api/skills",
+    "/api/pending",
+    "/api/remote/status",
+    "/api/remote/set",
+    "/api/ops/retry",
+    "/api/ops/purge",
+    "/api/ops/history/repair",
+    "/api/sync/push",
+    "/api/sync/pull",
+    "/api/sync/replay",
     "/api/registry/status",
     "/api/registry/ops/diagnose",
     "/api/registry/bindings/{binding_id}",
@@ -65,7 +80,7 @@ fn mutation_commands_count_is_twenty_two() {
 }
 
 #[test]
-fn panel_registry_reads_prefer_v1_routes_with_legacy_compatibility() {
+fn panel_routes_are_v1_only_without_legacy_api_compatibility() {
     let client_source = include_str!("../../../panel/src/lib/api/client.ts");
     let panel_routes = include_str!("../mod.rs");
 
@@ -76,16 +91,22 @@ fn panel_registry_reads_prefer_v1_routes_with_legacy_compatibility() {
         );
     }
 
-    for route in LEGACY_REGISTRY_READ_ROUTES {
+    for route in LEGACY_PANEL_ROUTES {
         assert!(
-            panel_routes.contains(route),
-            "missing legacy compatibility route {route}"
+            !panel_routes.contains(route),
+            "legacy panel API route must be removed: {route}"
         );
     }
 
     assert!(
-        !client_source.contains("/api/registry/"),
-        "frontend registry reads must use /api/v1 aliases"
+        !client_source.contains("\"/api/health")
+            && !client_source.contains("\"/api/info")
+            && !client_source.contains("\"/api/pending")
+            && !client_source.contains("\"/api/registry/")
+            && !client_source.contains("\"/api/remote/")
+            && !client_source.contains("\"/api/ops/")
+            && !client_source.contains("\"/api/sync/"),
+        "frontend must not call legacy panel API routes"
     );
 }
 

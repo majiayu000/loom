@@ -233,9 +233,9 @@ Response:
 - Non-2xx only when the command cannot run or the skill is completely unknown.
 - The endpoint should avoid durable command-audit writes because the UI fetches diagnosis interactively.
 
-Back-compat route:
+Route compatibility:
 
-- No legacy `/api/registry/...` route is required for MVP.
+- No unversioned or `/api/registry/...` route is required for MVP.
 
 ## Panel UX
 

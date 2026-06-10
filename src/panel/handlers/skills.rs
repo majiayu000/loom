@@ -7,14 +7,12 @@ use serde_json::json;
 
 use crate::cli::SkillOnlyArgs;
 use crate::commands::App;
-use crate::commands::collect_skill_inventory;
 use crate::envelope::Envelope;
 use crate::gitops;
 use crate::state_model::{RegistrySnapshot, RegistryStatePaths};
 use crate::types::ErrorCode;
 
 use super::super::PanelState;
-use super::super::auth::registry_ok;
 use super::common::panel_command_envelope;
 
 #[derive(Debug, Default)]
@@ -449,21 +447,4 @@ fn skill_row_to_json(row: SkillReadRow) -> serde_json::Value {
         "observed_imported": row.observed_imported,
         "sources": row.sources.into_iter().collect::<Vec<_>>(),
     })
-}
-
-pub(in crate::panel) async fn skills(State(state): State<PanelState>) -> Json<serde_json::Value> {
-    let inventory = collect_skill_inventory(&state.ctx);
-    registry_ok(
-        "panel.skills",
-        json!({
-            "skills": inventory.source_skills,
-            "backup_skills": inventory.backup_skills,
-            "source_dirs": inventory
-                .source_dirs
-                .iter()
-                .map(|path: &std::path::PathBuf| path.display().to_string())
-                .collect::<Vec<_>>(),
-            "warnings": inventory.warnings
-        }),
-    )
 }

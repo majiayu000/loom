@@ -108,7 +108,7 @@ export function SettingsPage({ live, mode, registryRoot }: SettingsPageProps) {
         <div className="title-block">
           <h1>Settings</h1>
           <div className="subtitle">
-            Where Loom keeps its state. These paths come from <span className="mono">/api/info</span> and mirror the CLI
+            Where Loom keeps its state. These paths come from <span className="mono">/api/v1/workspace/info</span> and mirror the CLI
             output of <span className="mono">loom workspace status</span>.
           </div>
         </div>

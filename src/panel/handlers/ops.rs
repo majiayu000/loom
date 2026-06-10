@@ -223,58 +223,6 @@ fn json_string_field(value: &serde_json::Value, keys: &[&str]) -> Option<String>
         .map(ToString::to_string)
 }
 
-/// Return a bounded, newest-first page of the operations journal
-/// (`.loom/registry/operations.jsonl`). History only needs row summaries, so omit
-/// per-op payload/effects blobs here and keep the response cost bounded even
-/// for long-lived registries.
-pub(in crate::panel) async fn registry_ops(
-    Query(query): Query<OpsQuery>,
-    State(state): State<PanelState>,
-) -> Json<serde_json::Value> {
-    match load_registry_snapshot(&state.ctx, "registry.ops") {
-        Ok(snapshot) => {
-            let total = snapshot.operations.len();
-            let limit = query
-                .limit
-                .unwrap_or(DEFAULT_OPS_PAGE_SIZE)
-                .clamp(1, MAX_OPS_PAGE_SIZE);
-            let offset = query.offset.unwrap_or(0);
-            let end = total.saturating_sub(offset);
-            let start = end.saturating_sub(limit);
-            let operations = snapshot.operations[start..end]
-                .iter()
-                .rev()
-                .map(|op| {
-                    json!({
-                        "op_id": op.op_id,
-                        "intent": op.intent,
-                        "status": op.status,
-                        "ack": op.ack,
-                        "last_error": op.last_error,
-                        "created_at": op.created_at,
-                        "updated_at": op.updated_at,
-                    })
-                })
-                .collect::<Vec<_>>();
-
-            registry_ok(
-                "registry.ops",
-                json!({
-                    "state_model": "registry",
-                    "count": total,
-                    "loaded_count": operations.len(),
-                    "offset": offset,
-                    "limit": limit,
-                    "has_more": start > 0,
-                    "operations": operations,
-                    "checkpoint": snapshot.checkpoint,
-                }),
-            )
-        }
-        Err(err) => err,
-    }
-}
-
 pub(in crate::panel) async fn ops_retry(
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
@@ -358,7 +306,7 @@ pub(in crate::panel) async fn registry_ops_diagnose(
     }
 }
 
-pub(in crate::panel) async fn pending(
+pub(in crate::panel) async fn v1_pending(
     State(state): State<PanelState>,
 ) -> (StatusCode, Json<serde_json::Value>) {
     match state.ctx.read_pending_report() {

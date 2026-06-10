@@ -564,43 +564,51 @@ GET  /api/v1/health
 GET  /api/v1/overview
 GET  /api/v1/workspace/status
 POST /api/v1/workspace/init
+GET  /api/v1/workspace/info
 GET  /api/v1/workspace/doctor
+POST /api/v1/workspace/remote
 
 GET  /api/v1/skills
 POST /api/v1/skills
-GET  /api/v1/skills/{skill_id}
+GET  /api/v1/skills/trash
+POST /api/v1/skills/import-observed
+GET  /api/v1/skills/{skill_id}/diagnose
 POST /api/v1/skills/{skill_id}/save
 POST /api/v1/skills/{skill_id}/snapshot
 POST /api/v1/skills/{skill_id}/release
 POST /api/v1/skills/{skill_id}/rollback
 GET  /api/v1/skills/{skill_id}/diff
 GET  /api/v1/skills/{skill_id}/history
+POST /api/v1/skills/{skill_id}/trash
+POST /api/v1/skills/trash/{trash_id}/restore
+POST /api/v1/skills/trash/{trash_id}/purge
 
 GET  /api/v1/targets
 POST /api/v1/targets
 GET  /api/v1/targets/{target_id}
-DELETE /api/v1/targets/{target_id}
+POST /api/v1/targets/{target_id}/remove
 
 GET  /api/v1/bindings
 POST /api/v1/bindings
 GET  /api/v1/bindings/{binding_id}
-DELETE /api/v1/bindings/{binding_id}
+POST /api/v1/bindings/{binding_id}/remove
 
 GET  /api/v1/projections
-POST /api/v1/projections
-GET  /api/v1/projections/{instance_id}
-POST /api/v1/projections/{instance_id}/capture
-POST /api/v1/projections/{instance_id}/reproject
+POST /api/v1/projections/project
+POST /api/v1/projections/capture
+POST /api/v1/orphans/clean
 
 GET  /api/v1/ops
+GET  /api/v1/ops/diagnose
+GET  /api/v1/ops/pending
 POST /api/v1/ops/retry
 POST /api/v1/ops/purge
+POST /api/v1/ops/history/repair
 
 GET  /api/v1/sync/status
 POST /api/v1/sync/pull
 POST /api/v1/sync/push
 POST /api/v1/sync/replay
-POST /api/v1/sync/history/repair
 ```
 
 API rules:

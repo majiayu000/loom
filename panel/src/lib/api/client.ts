@@ -154,17 +154,17 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function unwrapReadData<T>(path: string, body: unknown): T {
   if (
-    isRecord(body) &&
-    body.ok === true &&
-    typeof body.cmd === "string" &&
-    typeof body.request_id === "string"
+    !isRecord(body) ||
+    body.ok !== true ||
+    typeof body.cmd !== "string" ||
+    typeof body.request_id !== "string"
   ) {
-    if (!("data" in body)) {
-      throw new ApiError(path, 200, `GET ${path} envelope is missing data`);
-    }
-    return body.data as T;
+    throw new ApiError(path, 200, `GET ${path} returned non-envelope payload`);
   }
-  return body as T;
+  if (!("data" in body)) {
+    throw new ApiError(path, 200, `GET ${path} envelope is missing data`);
+  }
+  return body.data as T;
 }
 
 function parseRemoteStatusResponse(path: string, body: unknown): RemoteStatusResponse {

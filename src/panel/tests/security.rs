@@ -67,11 +67,21 @@ const LEGACY_PANEL_ROUTES: &[&str] = &[
     "/api/sync/pull",
     "/api/sync/replay",
     "/api/registry/status",
+    "/api/registry/ops",
     "/api/registry/ops/diagnose",
+    "/api/registry/projections",
+    "/api/registry/bindings",
     "/api/registry/bindings/{binding_id}",
+    "/api/registry/bindings/{binding_id}/remove",
+    "/api/registry/targets",
     "/api/registry/targets/{target_id}",
+    "/api/registry/targets/{target_id}/remove",
+    "/api/registry/skills",
     "/api/registry/skills/{skill_name}/history",
     "/api/registry/skills/{skill_name}/diff",
+    "/api/registry/project",
+    "/api/registry/capture",
+    "/api/registry/orphans/clean",
 ];
 
 #[test]

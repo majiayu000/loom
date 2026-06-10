@@ -150,6 +150,24 @@ describe("api v1 routes", () => {
     ]);
   });
 
+  it("rejects non-envelope payloads for v1 bootstrap reads", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      json: vi.fn().mockResolvedValue({ root: "/tmp/loom" }),
+    } as unknown as Response);
+
+    await expect(api.info()).rejects.toEqual(
+      expect.objectContaining<ApiError>({
+        name: "ApiError",
+        path: "/api/v1/workspace/info",
+        status: 200,
+        message: "GET /api/v1/workspace/info returned non-envelope payload",
+      }),
+    );
+  });
+
   it("uses v1 endpoints for registry read routes", async () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue({
       ok: true,

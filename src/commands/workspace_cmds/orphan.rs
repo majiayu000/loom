@@ -9,7 +9,8 @@ use crate::cli::OrphanCleanArgs;
 use crate::envelope::Meta;
 use crate::state_model::RegistryProjectionInstance;
 
-use super::super::helpers::{map_io, map_registry_state, record_registry_operation};
+use super::super::helpers::{map_io, map_registry_state};
+use super::super::projections::record_registry_operation;
 use super::super::{App, CommandFailure};
 
 pub(super) enum LivePathCleanup {

@@ -23,16 +23,21 @@ use crate::state_model::{
 };
 use crate::types::ErrorCode;
 
+use super::file_ops::{
+    backup_path_if_exists, copy_dir_recursive_without_symlinks, restore_path_from_backup,
+    rollback_added_skill,
+};
 use super::fs_probe::probe_symlink;
 use super::helpers::{
-    RegistryAuditStateBackup, backup_path_if_exists, commit_registry_state,
-    copy_dir_recursive_without_symlinks, ensure_skill_exists, map_arg, map_git, map_io, map_lock,
-    map_project_io, map_registry_state, maybe_autosync_or_queue, project_skill_to_target,
-    projection_instance_id, projection_method_as_str, record_registry_observation,
-    record_registry_operation, resolve_capture_projection, restore_path_from_backup,
-    restore_registry_audit_state, rollback_added_skill, snapshot_registry_audit_state,
-    update_projection_after_capture, upsert_projection, upsert_rule, validate_projection_method,
-    validate_skill_name,
+    commit_registry_state, ensure_skill_exists, map_arg, map_git, map_io, map_lock, map_project_io,
+    map_registry_state, projection_instance_id, projection_method_as_str,
+    validate_projection_method, validate_skill_name,
+};
+use super::projections::{
+    RegistryAuditStateBackup, maybe_autosync_or_queue, project_skill_to_target,
+    record_registry_observation, record_registry_operation, resolve_capture_projection,
+    restore_registry_audit_state, snapshot_registry_audit_state, update_projection_after_capture,
+    upsert_projection, upsert_rule,
 };
 use super::{App, CommandFailure};
 

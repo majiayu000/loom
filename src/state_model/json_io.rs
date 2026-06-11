@@ -14,6 +14,8 @@ use anyhow::{Context, Result, anyhow};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
+use crate::fs_util::write_atomic;
+
 pub(super) fn ensure_json_file<T>(path: &Path, value: &T) -> Result<()>
 where
     T: Serialize,
@@ -30,7 +32,7 @@ pub(super) fn ensure_text_file(path: &Path, contents: &str) -> Result<()> {
         ensure_existing_file(path)?;
         return Ok(());
     }
-    write_atomic(path, contents)
+    Ok(write_atomic(path, contents)?)
 }
 
 fn ensure_existing_file(path: &Path) -> Result<()> {
@@ -48,7 +50,7 @@ where
     T: Serialize,
 {
     let raw = serialize_json_file(value)?;
-    write_atomic(path, &raw)
+    Ok(write_atomic(path, &raw)?)
 }
 
 pub(super) fn serialize_json_file<T: Serialize>(value: &T) -> Result<String> {
@@ -164,39 +166,4 @@ where
         items.push(item);
     }
     Ok(items)
-}
-
-fn write_atomic(path: &Path, contents: &str) -> Result<()> {
-    let parent = path
-        .parent()
-        .context("cannot write atomic registry file without parent directory")?;
-    fs::create_dir_all(parent)
-        .with_context(|| format!("failed to create parent directory {}", parent.display()))?;
-
-    let tmp_path = parent.join(format!(
-        ".{}.tmp-{}",
-        path.file_name().unwrap_or_default().to_string_lossy(),
-        uuid::Uuid::new_v4()
-    ));
-
-    {
-        let mut file = OpenOptions::new()
-            .create_new(true)
-            .write(true)
-            .open(&tmp_path)
-            .with_context(|| format!("failed to create temp file {}", tmp_path.display()))?;
-        file.write_all(contents.as_bytes())
-            .with_context(|| format!("failed to write temp file {}", tmp_path.display()))?;
-        file.sync_all()
-            .with_context(|| format!("failed to sync temp file {}", tmp_path.display()))?;
-    }
-
-    crate::fs_util::rename_atomic(&tmp_path, path).with_context(|| {
-        format!(
-            "failed to atomically replace {} with {}",
-            path.display(),
-            tmp_path.display()
-        )
-    })?;
-    Ok(())
 }

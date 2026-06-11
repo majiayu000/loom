@@ -4,7 +4,8 @@
 //! destination path already exists. Every atomic-overwrite path (write-to-tmp
 //! then replace) must use [`rename_atomic`] instead of `std::fs::rename`.
 
-use std::io;
+use std::fs::{self, OpenOptions};
+use std::io::{self, Write};
 use std::path::Path;
 
 /// Atomically replace `dst` with `src`.
@@ -19,6 +20,34 @@ pub fn rename_atomic(src: &Path, dst: &Path) -> io::Result<()> {
 
     #[cfg(not(windows))]
     std::fs::rename(src, dst)
+}
+
+/// Write contents through a temp file and atomically replace the destination.
+pub fn write_atomic(path: &Path, contents: &str) -> io::Result<()> {
+    let parent = path.parent().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "cannot write atomic file without parent directory",
+        )
+    })?;
+    fs::create_dir_all(parent)?;
+
+    let tmp_path = parent.join(format!(
+        ".{}.tmp-{}",
+        path.file_name().unwrap_or_default().to_string_lossy(),
+        uuid::Uuid::new_v4()
+    ));
+
+    {
+        let mut file = OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&tmp_path)?;
+        file.write_all(contents.as_bytes())?;
+        file.sync_all()?;
+    }
+
+    rename_atomic(&tmp_path, path)
 }
 
 #[cfg(windows)]
@@ -95,6 +124,26 @@ mod tests {
 
         assert!(!src.exists());
         assert_eq!(fs::read(&dst).unwrap(), b"hello");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn write_atomic_replaces_existing_file() {
+        let dir = temp_dir("write-atomic");
+        let dst = dir.join("state.json");
+
+        fs::write(&dst, b"old").unwrap();
+        write_atomic(&dst, "new\n").expect("write_atomic must replace existing file");
+
+        assert_eq!(fs::read_to_string(&dst).unwrap(), "new\n");
+        assert!(
+            fs::read_dir(&dir).unwrap().all(|entry| !entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .contains(".tmp-")),
+            "temp file should be renamed away"
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 }

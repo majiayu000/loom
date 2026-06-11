@@ -5,7 +5,8 @@ use crate::envelope::Meta;
 use crate::gitops;
 use crate::types::ErrorCode;
 
-use super::super::helpers::{map_git, map_lock, remote_status_payload};
+use super::super::helpers::{map_git, map_lock};
+use super::super::projections::remote_status_payload;
 use super::super::{App, CommandFailure};
 
 impl App {

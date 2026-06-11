@@ -66,7 +66,7 @@ pub struct HistoryConflictReport {
     pub remote_rename_path: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Default)]
 pub struct HistoryRepairReport {
     pub result: String,
     pub strategy: String,
@@ -78,6 +78,33 @@ pub struct HistoryRepairReport {
     pub local_archives: usize,
     pub local_snapshot: bool,
     pub conflicts: Vec<HistoryConflictReport>,
+}
+
+impl HistoryRepairReport {
+    pub(crate) fn noop(strategy: HistoryRepairStrategy) -> Self {
+        Self {
+            result: "noop".to_string(),
+            strategy: strategy.as_str().to_string(),
+            ..Self::default()
+        }
+    }
+
+    pub(crate) fn from_status(
+        result: impl Into<String>,
+        strategy: HistoryRepairStrategy,
+        commit: Option<String>,
+        status: &HistoryStatusReport,
+    ) -> Self {
+        Self {
+            result: result.into(),
+            strategy: strategy.as_str().to_string(),
+            commit,
+            local_segments: status.local_segments,
+            local_archives: status.local_archives,
+            local_snapshot: status.local_snapshot,
+            ..Self::default()
+        }
+    }
 }
 
 pub fn history_status(ctx: &AppContext) -> Result<HistoryStatusReport> {
@@ -205,18 +232,7 @@ pub fn repair_history_branch(
     strategy: HistoryRepairStrategy,
 ) -> Result<HistoryRepairReport> {
     if !repo_is_initialized(ctx)? {
-        return Ok(HistoryRepairReport {
-            result: "noop".to_string(),
-            strategy: strategy.as_str().to_string(),
-            commit: None,
-            repaired_conflicts: 0,
-            compacted_segments: 0,
-            rolled_archives: 0,
-            local_segments: 0,
-            local_archives: 0,
-            local_snapshot: false,
-            conflicts: Vec::new(),
-        });
+        return Ok(HistoryRepairReport::noop(strategy));
     }
 
     let remote_history_exists = if remote_exists(ctx) {
@@ -232,33 +248,16 @@ pub fn repair_history_branch(
     };
 
     match (local, remote) {
-        (None, None) => Ok(HistoryRepairReport {
-            result: "noop".to_string(),
-            strategy: strategy.as_str().to_string(),
-            commit: None,
-            repaired_conflicts: 0,
-            compacted_segments: 0,
-            rolled_archives: 0,
-            local_segments: 0,
-            local_archives: 0,
-            local_snapshot: false,
-            conflicts: Vec::new(),
-        }),
+        (None, None) => Ok(HistoryRepairReport::noop(strategy)),
         (None, Some(remote)) => {
             update_ref(ctx, HISTORY_BRANCH_REF, &remote.commit, None)?;
             let status = history_status(ctx)?;
-            Ok(HistoryRepairReport {
-                result: "created_from_remote".to_string(),
-                strategy: strategy.as_str().to_string(),
-                commit: Some(remote.commit),
-                repaired_conflicts: 0,
-                compacted_segments: 0,
-                rolled_archives: 0,
-                local_segments: status.local_segments,
-                local_archives: status.local_archives,
-                local_snapshot: status.local_snapshot,
-                conflicts: Vec::new(),
-            })
+            Ok(HistoryRepairReport::from_status(
+                "created_from_remote",
+                strategy,
+                Some(remote.commit),
+                &status,
+            ))
         }
         (Some(local), None) => compact_local_history_branch(ctx, &local, strategy),
         (Some(local), Some(remote)) => {
@@ -266,18 +265,12 @@ pub fn repair_history_branch(
             if ahead == 0 && behind > 0 {
                 update_ref(ctx, HISTORY_BRANCH_REF, &remote.commit, Some(&local.commit))?;
                 let status = history_status(ctx)?;
-                return Ok(HistoryRepairReport {
-                    result: "fast_forwarded_from_remote".to_string(),
-                    strategy: strategy.as_str().to_string(),
-                    commit: Some(remote.commit),
-                    repaired_conflicts: 0,
-                    compacted_segments: 0,
-                    rolled_archives: 0,
-                    local_segments: status.local_segments,
-                    local_archives: status.local_archives,
-                    local_snapshot: status.local_snapshot,
-                    conflicts: Vec::new(),
-                });
+                return Ok(HistoryRepairReport::from_status(
+                    "fast_forwarded_from_remote",
+                    strategy,
+                    Some(remote.commit),
+                    &status,
+                ));
             }
             if ahead == 0 && behind == 0 {
                 return compact_local_history_branch(ctx, &local, strategy);
@@ -298,18 +291,13 @@ pub fn repair_history_branch(
             update_ref(ctx, HISTORY_BRANCH_REF, &commit, Some(&local.commit))?;
             let status = history_status(ctx)?;
 
-            Ok(HistoryRepairReport {
-                result: "repaired".to_string(),
-                strategy: strategy.as_str().to_string(),
-                commit: Some(commit),
-                repaired_conflicts: conflicts.len(),
-                compacted_segments: composed.retention.compacted_segments,
-                rolled_archives: composed.retention.rolled_archives,
-                local_segments: status.local_segments,
-                local_archives: status.local_archives,
-                local_snapshot: status.local_snapshot,
-                conflicts,
-            })
+            let mut report =
+                HistoryRepairReport::from_status("repaired", strategy, Some(commit), &status);
+            report.repaired_conflicts = conflicts.len();
+            report.compacted_segments = composed.retention.compacted_segments;
+            report.rolled_archives = composed.retention.rolled_archives;
+            report.conflicts = conflicts;
+            Ok(report)
         }
     }
 }

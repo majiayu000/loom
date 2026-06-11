@@ -5,9 +5,8 @@ use crate::envelope::Meta;
 use crate::state::home_dir;
 use crate::types::ErrorCode;
 
-use super::super::helpers::{
-    agent_kind_as_str, commit_registry_state, map_lock, maybe_autosync_or_queue,
-};
+use super::super::helpers::{agent_kind_as_str, commit_registry_state, map_lock};
+use super::super::projections::maybe_autosync_or_queue;
 use super::super::{App, CommandFailure};
 use super::shared::{DEFAULT_SCAN_AGENTS, default_skill_dir};
 

@@ -34,7 +34,7 @@ use crate::state::{AppContext, home_dir};
 use crate::types::ErrorCode;
 
 pub(crate) use event_store::redact_sensitive_string;
-pub use helpers::collect_skill_inventory;
+pub use projections::collect_skill_inventory;
 
 use event_store::{
     append_command_audit_failure, append_command_finished, append_command_started,

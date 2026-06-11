@@ -16,20 +16,6 @@ use crate::types::ErrorCode;
 
 use super::CommandFailure;
 
-// Re-export items from sibling modules so existing `use super::helpers::*` paths keep working.
-pub(crate) use super::file_ops::{
-    backup_path_if_exists, copy_dir_recursive_without_symlinks, read_git_field,
-    restore_path_from_backup, rollback_added_skill,
-};
-pub(crate) use super::projections::{
-    RegistryAuditStateBackup, maybe_autosync_or_queue, project_skill_to_target,
-    record_registry_observation, record_registry_operation, remote_status_payload_with_pending,
-    resolve_capture_projection, restore_registry_audit_state, snapshot_registry_audit_state,
-    sync_push_internal, sync_replay_internal, update_projection_after_capture, upsert_projection,
-    upsert_rule,
-};
-pub use super::projections::{collect_skill_inventory, remote_status_payload};
-
 // ---------------------------------------------------------------------------
 // Git bootstrap
 // ---------------------------------------------------------------------------

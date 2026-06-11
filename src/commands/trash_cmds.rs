@@ -14,11 +14,13 @@ use crate::state::remove_path_if_exists;
 use crate::state_model::RegistryStatePaths;
 use crate::types::ErrorCode;
 
+use super::file_ops::{backup_path_if_exists, restore_path_from_backup};
 use super::helpers::{
-    RegistryAuditStateBackup, backup_path_if_exists, map_arg, map_git, map_io, map_lock,
-    map_registry_state, maybe_autosync_or_queue, record_registry_operation,
-    restore_path_from_backup, restore_registry_audit_state, slugify, snapshot_registry_audit_state,
-    validate_skill_name,
+    map_arg, map_git, map_io, map_lock, map_registry_state, slugify, validate_skill_name,
+};
+use super::projections::{
+    RegistryAuditStateBackup, maybe_autosync_or_queue, record_registry_operation,
+    restore_registry_audit_state, snapshot_registry_audit_state,
 };
 use super::{App, CommandFailure};
 

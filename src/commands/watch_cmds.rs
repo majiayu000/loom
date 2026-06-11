@@ -14,10 +14,10 @@ use crate::state::remove_path_if_exists;
 use crate::state_model::RegistryStatePaths;
 use crate::types::ErrorCode;
 
-use super::helpers::{
-    RegistryAuditStateBackup, map_arg, map_git, map_io, map_lock, map_registry_state,
-    record_registry_operation, restore_registry_audit_state, snapshot_registry_audit_state,
-    validate_skill_name,
+use super::helpers::{map_arg, map_git, map_io, map_lock, map_registry_state, validate_skill_name};
+use super::projections::{
+    RegistryAuditStateBackup, record_registry_operation, restore_registry_audit_state,
+    snapshot_registry_audit_state,
 };
 use super::{App, CommandFailure};
 use walkdir::WalkDir;

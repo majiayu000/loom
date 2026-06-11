@@ -10,10 +10,13 @@ use crate::gitops;
 use crate::state_model::RegistryStatePaths;
 use crate::types::ErrorCode;
 
+use super::file_ops::{backup_path_if_exists, restore_path_from_backup};
 use super::helpers::{
-    backup_path_if_exists, commit_registry_state, ensure_skill_exists, map_arg, map_git, map_lock,
-    map_registry_state, maybe_autosync_or_queue, record_registry_observation,
-    record_registry_operation, restore_path_from_backup, validate_skill_name,
+    commit_registry_state, ensure_skill_exists, map_arg, map_git, map_lock, map_registry_state,
+    validate_skill_name,
+};
+use super::projections::{
+    maybe_autosync_or_queue, record_registry_observation, record_registry_operation,
 };
 use super::{App, CommandFailure};
 

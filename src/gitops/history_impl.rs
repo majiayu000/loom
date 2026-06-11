@@ -448,18 +448,9 @@ pub(super) fn compact_local_history_branch(
     let new_tree = build_tree_from_entries(ctx, &history_tree_entries(&composed))?;
     if !composed.retention.changed() || new_tree == local.tree {
         let status = history_status(ctx)?;
-        return Ok(HistoryRepairReport {
-            result: "noop".to_string(),
-            strategy: strategy.as_str().to_string(),
-            commit: None,
-            repaired_conflicts: 0,
-            compacted_segments: 0,
-            rolled_archives: 0,
-            local_segments: status.local_segments,
-            local_archives: status.local_archives,
-            local_snapshot: status.local_snapshot,
-            conflicts: Vec::new(),
-        });
+        return Ok(HistoryRepairReport::from_status(
+            "noop", strategy, None, &status,
+        ));
     }
 
     let commit = create_commit_tree(
@@ -471,18 +462,10 @@ pub(super) fn compact_local_history_branch(
     update_ref(ctx, HISTORY_BRANCH_REF, &commit, Some(&local.commit))?;
     let status = history_status(ctx)?;
 
-    Ok(HistoryRepairReport {
-        result: "compacted".to_string(),
-        strategy: strategy.as_str().to_string(),
-        commit: Some(commit),
-        repaired_conflicts: 0,
-        compacted_segments: composed.retention.compacted_segments,
-        rolled_archives: composed.retention.rolled_archives,
-        local_segments: status.local_segments,
-        local_archives: status.local_archives,
-        local_snapshot: status.local_snapshot,
-        conflicts: Vec::new(),
-    })
+    let mut report = HistoryRepairReport::from_status("compacted", strategy, Some(commit), &status);
+    report.compacted_segments = composed.retention.compacted_segments;
+    report.rolled_archives = composed.retention.rolled_archives;
+    Ok(report)
 }
 
 fn join_history_bodies<'a>(bodies: impl IntoIterator<Item = &'a str>) -> String {

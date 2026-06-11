@@ -5,10 +5,9 @@ use crate::state::resolve_agent_skill_dirs;
 use crate::state_model::RegistryStatePaths;
 use crate::types::ErrorCode;
 
-use super::super::helpers::{
-    collect_skill_inventory, map_io, map_registry_state, read_git_field,
-    remote_status_payload_with_pending,
-};
+use super::super::file_ops::read_git_field;
+use super::super::helpers::{map_io, map_registry_state};
+use super::super::projections::{collect_skill_inventory, remote_status_payload_with_pending};
 use super::super::{App, CommandFailure};
 
 impl App {

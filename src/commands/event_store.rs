@@ -1,5 +1,11 @@
-use std::fs::{self, OpenOptions};
+use std::fs::{self, File, OpenOptions};
+use std::io;
+use std::path::Path;
+
+#[cfg(not(unix))]
 use std::io::Write;
+#[cfg(unix)]
+use std::os::fd::AsRawFd;
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
@@ -143,11 +149,59 @@ fn append_command_event(ctx: &AppContext, event: &CommandEvent, fault_tags: &[&s
         .open(&path)
         .with_context(|| format!("failed to open command event log {}", path.display()))?;
     let raw = serde_json::to_string(event).context("failed to encode command event")?;
-    writeln!(file, "{raw}")
-        .with_context(|| format!("failed to append command event {}", path.display()))?;
+    append_jsonl_line(&mut file, &path, &raw)?;
     file.sync_all()
         .with_context(|| format!("failed to sync command event {}", path.display()))?;
     Ok(())
+}
+
+fn append_jsonl_line(file: &mut File, path: &Path, raw: &str) -> Result<()> {
+    let mut line = Vec::with_capacity(raw.len() + 1);
+    line.extend_from_slice(raw.as_bytes());
+    line.push(b'\n');
+    append_single_record_write(file, &line)
+        .with_context(|| format!("failed to append command event {}", path.display()))
+}
+
+#[cfg(unix)]
+fn append_single_record_write(file: &mut File, line: &[u8]) -> io::Result<()> {
+    if line.len() > isize::MAX as usize {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "command event line exceeds write size limit",
+        ));
+    }
+
+    loop {
+        // SAFETY: `line` points to a valid immutable byte buffer for `line.len()`
+        // bytes, and `file.as_raw_fd()` is an open descriptor owned by `file`.
+        let written = unsafe { libc::write(file.as_raw_fd(), line.as_ptr().cast(), line.len()) };
+        if written < 0 {
+            let err = io::Error::last_os_error();
+            if err.kind() == io::ErrorKind::Interrupted {
+                continue;
+            }
+            return Err(err);
+        }
+
+        let written = written as usize;
+        if written == line.len() {
+            return Ok(());
+        }
+        return Err(io::Error::new(
+            io::ErrorKind::WriteZero,
+            format!(
+                "short command event append: wrote {} of {} bytes",
+                written,
+                line.len()
+            ),
+        ));
+    }
+}
+
+#[cfg(not(unix))]
+fn append_single_record_write(file: &mut File, line: &[u8]) -> io::Result<()> {
+    file.write_all(line)
 }
 
 pub(crate) fn prepare_command_event_store(ctx: &AppContext) -> Result<()> {
@@ -404,9 +458,18 @@ fn looks_like_secret(raw: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
+    use std::fs;
+    use std::sync::Arc;
+
+    use chrono::Utc;
     use serde_json::json;
 
-    use super::{redact_sensitive_string, redact_sensitive_strings, redact_url_userinfo};
+    use super::{
+        COMMAND_EVENT_SCHEMA_VERSION, CommandEvent, append_command_event, redact_sensitive_string,
+        redact_sensitive_strings, redact_url_userinfo,
+    };
+    use crate::state::AppContext;
 
     #[test]
     fn redacts_url_userinfo_without_changing_plain_urls() {
@@ -470,5 +533,66 @@ mod tests {
         assert_eq!(value["api_key"], json!("<redacted>"));
         assert_eq!(value["nested"]["password"], json!("<redacted>"));
         assert_eq!(value["nested"]["plain"], json!("visible"));
+    }
+
+    #[test]
+    fn concurrent_command_event_appends_preserve_jsonl_rows() {
+        let dir = std::env::temp_dir().join(format!(
+            "loom-command-events-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        fs::create_dir_all(&dir).expect("create temp root");
+        let ctx = Arc::new(AppContext::new(Some(dir.clone())).expect("create context"));
+        let workers = 8usize;
+        let per_worker = 8usize;
+        let payload = "x".repeat(16 * 1024);
+
+        let handles = (0..workers)
+            .map(|worker| {
+                let ctx = Arc::clone(&ctx);
+                let payload = payload.clone();
+                std::thread::spawn(move || {
+                    for index in 0..per_worker {
+                        let event = CommandEvent {
+                            schema_version: COMMAND_EVENT_SCHEMA_VERSION,
+                            event_id: format!("evt_{worker}_{index}"),
+                            request_id: format!("req_{worker}_{index}"),
+                            cmd: "test.concurrent".to_string(),
+                            status: "started".to_string(),
+                            exit_code: None,
+                            input: Some(json!({
+                                "worker": worker,
+                                "index": index,
+                                "payload": payload,
+                            })),
+                            output: None,
+                            error: None,
+                            side_effects: None,
+                            created_at: Utc::now(),
+                        };
+                        append_command_event(&ctx, &event, &[]).expect("append command event");
+                    }
+                })
+            })
+            .collect::<Vec<_>>();
+
+        for handle in handles {
+            handle.join().expect("worker must not panic");
+        }
+
+        let raw = fs::read_to_string(dir.join("state/events/commands.jsonl"))
+            .expect("read command events");
+        let lines = raw.lines().collect::<Vec<_>>();
+        assert_eq!(lines.len(), workers * per_worker);
+
+        let mut ids = BTreeSet::new();
+        for line in lines {
+            let event: serde_json::Value =
+                serde_json::from_str(line).expect("each line must be a JSON event");
+            let event_id = event["event_id"].as_str().expect("event_id must be string");
+            assert!(ids.insert(event_id.to_string()), "duplicate {event_id}");
+        }
+
+        let _ = fs::remove_dir_all(&dir);
     }
 }

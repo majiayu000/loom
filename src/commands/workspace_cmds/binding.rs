@@ -4,7 +4,7 @@ use anyhow::Context;
 use chrono::Utc;
 use serde_json::json;
 
-use crate::cli::{BindingAddArgs, WorkspaceBindingCommand};
+use crate::cli::{BindingAddArgs, BindingRemoveArgs, WorkspaceBindingCommand};
 use crate::envelope::Meta;
 use crate::state_model::{RegistryWorkspaceBinding, RegistryWorkspaceMatcher};
 use crate::types::ErrorCode;
@@ -179,7 +179,7 @@ impl App {
 
     pub(super) fn cmd_workspace_binding_remove(
         &self,
-        args: &crate::cli::BindingShowArgs,
+        args: &BindingRemoveArgs,
         request_id: &str,
     ) -> std::result::Result<(serde_json::Value, Meta), CommandFailure> {
         let _workspace = self.ctx.lock_workspace().map_err(map_lock)?;
@@ -198,6 +198,28 @@ impl App {
 
         let removed_rules = snapshot.binding_rules(&args.binding_id);
         let removed_projections = snapshot.binding_projections(&args.binding_id);
+        let active_projections: Vec<_> = removed_projections
+            .iter()
+            .filter(|projection| projection.health != "orphaned")
+            .collect();
+        if !args.orphan_projections && !active_projections.is_empty() {
+            let mut failure = CommandFailure::new(
+                ErrorCode::DependencyConflict,
+                format!(
+                    "binding '{}' is still referenced; remove dependent projections first or rerun with --orphan-projections",
+                    args.binding_id
+                ),
+            );
+            failure.details = json!({
+                "binding_id": args.binding_id,
+                "projection_ids": active_projections
+                    .iter()
+                    .map(|projection| projection.instance_id.clone())
+                    .collect::<Vec<_>>(),
+                "orphan_flag": "--orphan-projections",
+            });
+            return Err(failure);
+        }
         let orphaned_paths = removed_projections
             .iter()
             .map(|projection| projection.materialized_path.clone())
@@ -240,6 +262,7 @@ impl App {
                 "binding_id": binding.binding_id,
                 "removed_rules": removed_rules.iter().map(|rule| rule.skill_id.clone()).collect::<Vec<_>>(),
                 "orphaned_projection_ids": orphaned_projection_ids,
+                "orphan_projections": args.orphan_projections,
             }),
         ) {
             Ok(op_id) => op_id,
@@ -278,7 +301,7 @@ impl App {
         }
         if !orphaned_projection_ids.is_empty() {
             meta.warnings.push(format!(
-                "binding removed; {} projection(s) marked orphaned — run `loom skill orphan clean` to remove metadata",
+                "binding removed; {} projection(s) marked orphaned - run `loom skill orphan clean` to remove metadata",
                 orphaned_projection_ids.len()
             ));
         }
@@ -291,6 +314,7 @@ impl App {
                 "orphaned_projection_ids": orphaned_projection_ids,
                 "orphaned_paths": orphaned_paths,
                 "orphaned_count": orphaned_projection_ids.len(),
+                "orphan_projections": args.orphan_projections,
                 "commit": commit,
                 "noop": false
             }),

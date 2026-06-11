@@ -369,6 +369,13 @@ mod orphan_tests {
         }
     }
 
+    fn binding_remove_orphan_args(binding_id: &str) -> crate::cli::BindingRemoveArgs {
+        crate::cli::BindingRemoveArgs {
+            binding_id: binding_id.to_string(),
+            orphan_projections: true,
+        }
+    }
+
     fn setup_with_binding_and_projection(
         root: &Path,
         mat_path: &str,
@@ -407,13 +414,8 @@ mod orphan_tests {
 
         let ctx = AppContext::new(Some(root.clone())).unwrap();
         let app = crate::commands::App { ctx };
-        app.cmd_workspace_binding_remove(
-            &crate::cli::BindingShowArgs {
-                binding_id: "bind1".into(),
-            },
-            "req-test",
-        )
-        .unwrap();
+        app.cmd_workspace_binding_remove(&binding_remove_orphan_args("bind1"), "req-test")
+            .unwrap();
 
         let paths = RegistryStatePaths::from_root(&root);
         let snapshot = paths.load_snapshot().unwrap();
@@ -438,12 +440,7 @@ mod orphan_tests {
         let ctx = AppContext::new(Some(root.clone())).unwrap();
         let app = crate::commands::App { ctx };
         let (data, _meta) = app
-            .cmd_workspace_binding_remove(
-                &crate::cli::BindingShowArgs {
-                    binding_id: "bind1".into(),
-                },
-                "req-test",
-            )
+            .cmd_workspace_binding_remove(&binding_remove_orphan_args("bind1"), "req-test")
             .unwrap();
 
         let ids = data["orphaned_projection_ids"]
@@ -467,13 +464,8 @@ mod orphan_tests {
 
         let ctx = AppContext::new(Some(root.clone())).unwrap();
         let app = crate::commands::App { ctx };
-        app.cmd_workspace_binding_remove(
-            &crate::cli::BindingShowArgs {
-                binding_id: "bind1".into(),
-            },
-            "req-test",
-        )
-        .unwrap();
+        app.cmd_workspace_binding_remove(&binding_remove_orphan_args("bind1"), "req-test")
+            .unwrap();
 
         let paths = RegistryStatePaths::from_root(&root);
         let snapshot = paths.load_snapshot().unwrap();
@@ -492,13 +484,8 @@ mod orphan_tests {
 
         let ctx = AppContext::new(Some(root.clone())).unwrap();
         let app = crate::commands::App { ctx };
-        app.cmd_workspace_binding_remove(
-            &crate::cli::BindingShowArgs {
-                binding_id: "bind1".into(),
-            },
-            "req-test",
-        )
-        .unwrap();
+        app.cmd_workspace_binding_remove(&binding_remove_orphan_args("bind1"), "req-test")
+            .unwrap();
 
         let paths = RegistryStatePaths::from_root(&root);
         let snapshot = paths.load_snapshot().unwrap();
@@ -521,13 +508,8 @@ mod orphan_tests {
         // First orphan the projection via binding removal
         let ctx = AppContext::new(Some(root.clone())).unwrap();
         let app = crate::commands::App { ctx };
-        app.cmd_workspace_binding_remove(
-            &crate::cli::BindingShowArgs {
-                binding_id: "bind1".into(),
-            },
-            "req1",
-        )
-        .unwrap();
+        app.cmd_workspace_binding_remove(&binding_remove_orphan_args("bind1"), "req1")
+            .unwrap();
 
         // Now clean orphans
         let ctx2 = AppContext::new(Some(root.clone())).unwrap();
@@ -563,13 +545,8 @@ mod orphan_tests {
 
         let ctx = AppContext::new(Some(root.clone())).unwrap();
         let app = crate::commands::App { ctx };
-        app.cmd_workspace_binding_remove(
-            &crate::cli::BindingShowArgs {
-                binding_id: "bind1".into(),
-            },
-            "req1",
-        )
-        .unwrap();
+        app.cmd_workspace_binding_remove(&binding_remove_orphan_args("bind1"), "req1")
+            .unwrap();
 
         let ctx2 = AppContext::new(Some(root.clone())).unwrap();
         let app2 = crate::commands::App { ctx: ctx2 };
@@ -596,13 +573,8 @@ mod orphan_tests {
 
         let ctx = AppContext::new(Some(root.clone())).unwrap();
         let app = crate::commands::App { ctx };
-        app.cmd_workspace_binding_remove(
-            &crate::cli::BindingShowArgs {
-                binding_id: "bind1".into(),
-            },
-            "req1",
-        )
-        .unwrap();
+        app.cmd_workspace_binding_remove(&binding_remove_orphan_args("bind1"), "req1")
+            .unwrap();
 
         let ctx2 = AppContext::new(Some(root.clone())).unwrap();
         let app2 = crate::commands::App { ctx: ctx2 };
@@ -629,13 +601,8 @@ mod orphan_tests {
 
         let ctx = AppContext::new(Some(root.clone())).unwrap();
         let app = crate::commands::App { ctx };
-        app.cmd_workspace_binding_remove(
-            &crate::cli::BindingShowArgs {
-                binding_id: "bind1".into(),
-            },
-            "req1",
-        )
-        .unwrap();
+        app.cmd_workspace_binding_remove(&binding_remove_orphan_args("bind1"), "req1")
+            .unwrap();
 
         let ctx2 = AppContext::new(Some(root.clone())).unwrap();
         let app2 = crate::commands::App { ctx: ctx2 };
@@ -692,13 +659,8 @@ mod orphan_tests {
 
         let ctx = AppContext::new(Some(root.clone())).unwrap();
         let app = crate::commands::App { ctx };
-        app.cmd_workspace_binding_remove(
-            &crate::cli::BindingShowArgs {
-                binding_id: "bind1".into(),
-            },
-            "req-test",
-        )
-        .unwrap();
+        app.cmd_workspace_binding_remove(&binding_remove_orphan_args("bind1"), "req-test")
+            .unwrap();
 
         let snap = RegistryStatePaths::from_root(&root)
             .load_snapshot()

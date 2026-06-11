@@ -164,7 +164,7 @@ pub enum WorkspaceBindingCommand {
     #[command(about = "Show one binding with rules and projections")]
     Show(BindingShowArgs),
     #[command(about = "Remove a workspace binding")]
-    Remove(BindingShowArgs),
+    Remove(BindingRemoveArgs),
 }
 
 #[derive(Debug, Clone, Subcommand, Serialize)]
@@ -523,6 +523,15 @@ pub struct PanelArgs {
 #[derive(Debug, Clone, Args, Serialize)]
 pub struct BindingShowArgs {
     pub binding_id: String,
+}
+
+#[derive(Debug, Clone, Args, Serialize)]
+pub struct BindingRemoveArgs {
+    pub binding_id: String,
+
+    /// Remove the binding and mark dependent projections orphaned.
+    #[arg(long)]
+    pub orphan_projections: bool,
 }
 
 #[derive(Debug, Clone, Args, Serialize)]

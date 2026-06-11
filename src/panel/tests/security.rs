@@ -477,8 +477,9 @@ fn run_panel_command_returns_non_2xx_for_logical_failures_across_mutations() {
             StatusCode::OK,
             Command::Workspace {
                 command: WorkspaceCommand::Binding {
-                    command: WorkspaceBindingCommand::Remove(crate::cli::BindingShowArgs {
+                    command: WorkspaceBindingCommand::Remove(crate::cli::BindingRemoveArgs {
                         binding_id: "missing-binding".to_string(),
+                        orphan_projections: false,
                     }),
                 },
             },

@@ -41,7 +41,48 @@ fn bootstrap_projected_skill(root: &Path) -> (String, String, String) {
 }
 
 #[test]
-fn binding_remove_cascades_metadata_and_leaves_live_projection_in_place() {
+fn binding_remove_rejects_live_projection_by_default() {
+    let root = TestDir::new("registry-binding-remove-default-blocked");
+    let (_target_id, binding_id, instance_id) = bootstrap_projected_skill(root.path());
+
+    let live_projection = root.path().join("live/claude-a/demo/SKILL.md");
+    assert!(
+        live_projection.exists(),
+        "projection should exist before remove"
+    );
+
+    let (output, env) = run_loom(
+        root.path(),
+        &["workspace", "binding", "remove", &binding_id],
+    );
+    assert!(
+        !output.status.success(),
+        "binding remove unexpectedly succeeded"
+    );
+    assert_eq!(env["ok"], Value::Bool(false));
+    assert_eq!(
+        env["error"]["code"],
+        Value::String("DEPENDENCY_CONFLICT".to_string())
+    );
+    assert_eq!(
+        env["error"]["details"]["projection_ids"][0],
+        Value::String(instance_id)
+    );
+    assert_eq!(
+        env["error"]["details"]["orphan_flag"],
+        Value::String("--orphan-projections".to_string())
+    );
+    assert!(
+        live_projection.exists(),
+        "failed remove must leave live projection in place"
+    );
+
+    let (_, binding_list_env) = run_loom(root.path(), &["workspace", "binding", "list"]);
+    assert_eq!(binding_list_env["data"]["count"], Value::from(1));
+}
+
+#[test]
+fn binding_remove_orphan_projections_flag_cascades_metadata_and_leaves_live_projection_in_place() {
     let root = TestDir::new("registry-binding-remove");
     let (target_id, binding_id, instance_id) = bootstrap_projected_skill(root.path());
 
@@ -58,7 +99,13 @@ fn binding_remove_cascades_metadata_and_leaves_live_projection_in_place() {
 
     let (output, env) = run_loom(
         root.path(),
-        &["workspace", "binding", "remove", &binding_id],
+        &[
+            "workspace",
+            "binding",
+            "remove",
+            &binding_id,
+            "--orphan-projections",
+        ],
     );
     assert!(
         output.status.success(),
@@ -154,7 +201,13 @@ fn orphan_clean_after_live_delete_audit_failure_does_not_restore_removed_project
 
     let (binding_remove_output, _) = run_loom(
         root.path(),
-        &["workspace", "binding", "remove", &binding_id],
+        &[
+            "workspace",
+            "binding",
+            "remove",
+            &binding_id,
+            "--orphan-projections",
+        ],
     );
     assert!(
         binding_remove_output.status.success(),
@@ -238,7 +291,13 @@ fn target_remove_succeeds_after_binding_metadata_is_cleared() {
 
     let (binding_remove_output, _) = run_loom(
         root.path(),
-        &["workspace", "binding", "remove", &binding_id],
+        &[
+            "workspace",
+            "binding",
+            "remove",
+            &binding_id,
+            "--orphan-projections",
+        ],
     );
     assert!(
         binding_remove_output.status.success(),

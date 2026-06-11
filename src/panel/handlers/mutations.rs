@@ -130,8 +130,9 @@ pub(in crate::panel) async fn registry_binding_remove(
         StatusCode::OK,
         Command::Workspace {
             command: WorkspaceCommand::Binding {
-                command: WorkspaceBindingCommand::Remove(crate::cli::BindingShowArgs {
+                command: WorkspaceBindingCommand::Remove(crate::cli::BindingRemoveArgs {
                     binding_id,
+                    orphan_projections: false,
                 }),
             },
         },

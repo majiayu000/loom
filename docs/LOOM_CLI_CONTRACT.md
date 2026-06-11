@@ -279,14 +279,15 @@ Read-only.
 ### 9.5 `workspace binding remove`
 
 ```bash
-loom --json --root <root> workspace binding remove <binding-id>
+loom --json --root <root> workspace binding remove <binding-id> [--orphan-projections]
 ```
 
 Write command.
 
 Rules:
 
-1. must fail if live projections still depend on the binding unless `--force` is explicitly supported
+1. without `--orphan-projections`, must fail with `DEPENDENCY_CONFLICT` if non-orphan projections still depend on the binding
+2. with `--orphan-projections`, removes the binding and rules, marks dependent projections `orphaned`, and leaves live projection paths in place
 
 ## 10. Target Commands
 

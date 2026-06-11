@@ -1,16 +1,24 @@
-use std::fs;
-use std::path::Path;
+use std::fs::{self, File, OpenOptions};
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
+
+#[cfg(unix)]
+use std::os::fd::AsRawFd;
 
 const LOCK_STALE_AFTER: Duration = Duration::from_secs(60 * 60);
 
 #[derive(Debug, Serialize, Deserialize)]
 pub(super) struct LockMetadata {
     pub(super) pid: u32,
+    /// Unique owner token written by the acquiring guard. Release and stale
+    /// reap paths use this to avoid deleting a replacement lock by path.
+    #[serde(default)]
+    pub(super) owner_id: String,
     /// Hostname the lock was written from. Used to gate PID probes: across
     /// hosts (or across PID namespaces sharing the same workspace via a
     /// bind mount) `kill(pid, 0)` is meaningless and would wrongly report
@@ -27,28 +35,187 @@ impl LockMetadata {
     pub(super) fn new() -> Self {
         Self {
             pid: std::process::id(),
+            owner_id: format!("lock_{}", Uuid::new_v4().simple()),
             host: current_hostname(),
             created_at: Utc::now(),
         }
     }
 }
 
-pub(super) fn try_reap_stale_lock(lock_path: &Path) -> Result<bool> {
-    if is_lock_stale(lock_path)? {
-        fs::remove_file(lock_path)
-            .with_context(|| format!("failed to remove stale lock file {}", lock_path.display()))?;
-        return Ok(true);
-    }
-    Ok(false)
+pub(super) struct LockCoordinatorGuard {
+    file: File,
 }
 
+pub(super) fn acquire_lock_coordinator(locks_dir: &Path) -> Result<LockCoordinatorGuard> {
+    fs::create_dir_all(locks_dir).with_context(|| {
+        format!(
+            "failed to create state lock directory {}",
+            locks_dir.display()
+        )
+    })?;
+    let path = locks_dir.join(".coordinator.lock");
+    let file = OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(&path)
+        .with_context(|| format!("failed to open lock coordinator {}", path.display()))?;
+    lock_coordinator_file(&file)
+        .with_context(|| format!("failed to acquire lock coordinator {}", path.display()))?;
+    Ok(LockCoordinatorGuard { file })
+}
+
+#[cfg(unix)]
+fn lock_coordinator_file(file: &File) -> Result<()> {
+    loop {
+        // SAFETY: flock operates on a valid open file descriptor and does not
+        // access Rust-managed memory.
+        let rc = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) };
+        if rc == 0 {
+            return Ok(());
+        }
+        let err = std::io::Error::last_os_error();
+        if err.kind() == std::io::ErrorKind::Interrupted {
+            continue;
+        }
+        return Err(err).context("flock failed");
+    }
+}
+
+#[cfg(not(unix))]
+fn lock_coordinator_file(_file: &File) -> Result<()> {
+    Ok(())
+}
+
+impl Drop for LockCoordinatorGuard {
+    fn drop(&mut self) {
+        unlock_coordinator_file(&self.file);
+    }
+}
+
+#[cfg(unix)]
+fn unlock_coordinator_file(file: &File) {
+    // SAFETY: flock operates on a valid open file descriptor and does not
+    // access Rust-managed memory.
+    let rc = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_UN) };
+    if rc != 0 {
+        eprintln!(
+            "loom: failed to release lock coordinator: {}",
+            std::io::Error::last_os_error()
+        );
+    }
+}
+
+#[cfg(not(unix))]
+fn unlock_coordinator_file(_file: &File) {}
+
+pub(super) fn try_reap_stale_lock(lock_path: &Path) -> Result<bool> {
+    let Some(snapshot) = read_lock_snapshot(lock_path)? else {
+        return Ok(true);
+    };
+    if !snapshot.stale {
+        return Ok(false);
+    }
+
+    let quarantine_path = quarantine_lock_path(lock_path);
+    match fs::rename(lock_path, &quarantine_path) {
+        Ok(()) => {}
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(true),
+        Err(err) => {
+            return Err(err).with_context(|| {
+                format!("failed to quarantine stale lock {}", lock_path.display())
+            });
+        }
+    }
+
+    finish_quarantined_reap(lock_path, &quarantine_path, &snapshot.raw)
+}
+
+pub(super) fn lock_file_matches_owner(lock_path: &Path, owner_id: &str) -> Result<bool> {
+    if owner_id.is_empty() {
+        return Ok(false);
+    }
+    let raw = match fs::read_to_string(lock_path) {
+        Ok(raw) => raw,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(err) => return Err(err).context("failed to read lock file for owner check"),
+    };
+    let Ok(metadata) = serde_json::from_str::<LockMetadata>(raw.trim()) else {
+        return Ok(false);
+    };
+    Ok(metadata.owner_id == owner_id)
+}
+
+struct LockSnapshot {
+    raw: String,
+    stale: bool,
+}
+
+fn read_lock_snapshot(lock_path: &Path) -> Result<Option<LockSnapshot>> {
+    let raw = match fs::read_to_string(lock_path) {
+        Ok(raw) => raw,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => return Err(err).context("failed to read lock file"),
+    };
+    let stale = is_lock_raw_stale(lock_path, &raw)?;
+    Ok(Some(LockSnapshot { raw, stale }))
+}
+
+fn finish_quarantined_reap(
+    lock_path: &Path,
+    quarantine_path: &Path,
+    expected_raw: &str,
+) -> Result<bool> {
+    let raw = match fs::read_to_string(quarantine_path) {
+        Ok(raw) => raw,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(err) => return Err(err).context("failed to read quarantined lock file"),
+    };
+
+    if raw != expected_raw || !is_lock_raw_stale(quarantine_path, &raw)? {
+        restore_quarantined_lock(lock_path, quarantine_path)?;
+        return Ok(false);
+    }
+
+    fs::remove_file(quarantine_path)
+        .with_context(|| format!("failed to remove stale lock file {}", lock_path.display()))?;
+    Ok(true)
+}
+
+fn restore_quarantined_lock(lock_path: &Path, quarantine_path: &Path) -> Result<()> {
+    fs::rename(quarantine_path, lock_path).with_context(|| {
+        format!(
+            "failed to restore quarantined lock {} to {}",
+            quarantine_path.display(),
+            lock_path.display()
+        )
+    })
+}
+
+fn quarantine_lock_path(lock_path: &Path) -> PathBuf {
+    let file_name = lock_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("lock");
+    lock_path.with_file_name(format!(
+        ".{}.reap-{}.quarantine",
+        file_name,
+        Uuid::new_v4().simple()
+    ))
+}
+
+#[cfg(test)]
 fn is_lock_stale(lock_path: &Path) -> Result<bool> {
     let raw = match fs::read_to_string(lock_path) {
         Ok(raw) => raw,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(true),
         Err(err) => return Err(err).context("failed to read lock file"),
     };
+    is_lock_raw_stale(lock_path, &raw)
+}
 
+fn is_lock_raw_stale(lock_path: &Path, raw: &str) -> Result<bool> {
     if let Ok(metadata) = serde_json::from_str::<LockMetadata>(raw.trim()) {
         // PID probes are only meaningful when the lock was written from
         // the current host. Across hosts or PID namespaces (e.g. two
@@ -213,6 +380,7 @@ mod tests {
             // on the *foreign* host it may well be alive. The point is
             // that we MUST NOT probe: cross-host probes are meaningless.
             pid: 999_999_999,
+            owner_id: "foreign-owner".to_string(),
             host: String::from("foreign-host-that-is-not-us"),
             created_at: Utc::now(),
         };
@@ -222,6 +390,75 @@ mod tests {
         assert!(
             !stale,
             "fresh cross-host lock must not be reaped via PID probe"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn stale_reap_removes_only_matching_quarantined_snapshot() {
+        use std::fs;
+        let dir = std::env::temp_dir().join(format!(
+            "loom-lock-reap-match-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        let lock_path = dir.join("test.lock");
+        let stale = LockMetadata {
+            pid: 999_999_999,
+            owner_id: "stale-owner".to_string(),
+            host: current_hostname(),
+            created_at: Utc::now() - chrono::Duration::hours(2),
+        };
+        fs::write(&lock_path, serde_json::to_string(&stale).unwrap()).unwrap();
+
+        assert!(try_reap_stale_lock(&lock_path).expect("reap stale lock"));
+        assert!(
+            !lock_path.exists(),
+            "matching stale lock must be removed after quarantine"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn stale_reap_restores_quarantined_lock_when_identity_changed() {
+        use std::fs;
+        let dir = std::env::temp_dir().join(format!(
+            "loom-lock-reap-mismatch-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        let lock_path = dir.join("test.lock");
+        let quarantine_path = dir.join(".test.lock.reap-test.quarantine");
+        let expected_stale = LockMetadata {
+            pid: 999_999_999,
+            owner_id: "stale-owner".to_string(),
+            host: current_hostname(),
+            created_at: Utc::now() - chrono::Duration::hours(2),
+        };
+        let fresh_replacement = LockMetadata {
+            pid: std::process::id(),
+            owner_id: "fresh-owner".to_string(),
+            host: current_hostname(),
+            created_at: Utc::now(),
+        };
+        let expected_raw = serde_json::to_string(&expected_stale).unwrap();
+        let replacement_raw = serde_json::to_string(&fresh_replacement).unwrap();
+        fs::write(&quarantine_path, &replacement_raw).unwrap();
+
+        assert!(
+            !finish_quarantined_reap(&lock_path, &quarantine_path, &expected_raw)
+                .expect("mismatched quarantine must restore")
+        );
+        assert_eq!(
+            fs::read_to_string(&lock_path).unwrap(),
+            replacement_raw,
+            "fresh replacement content must be restored to the live lock path"
+        );
+        assert!(
+            !quarantine_path.exists(),
+            "quarantine path must be gone after restore"
         );
 
         let _ = fs::remove_dir_all(&dir);

@@ -130,3 +130,30 @@ fn cloned_context_different_thread_not_reaped_as_stale() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn lock_drop_does_not_remove_replaced_lock_file() {
+    let dir = std::env::temp_dir().join(format!(
+        "loom-lock-release-owner-{}",
+        uuid::Uuid::new_v4().simple()
+    ));
+    let ctx = AppContext::new(Some(dir.clone())).unwrap();
+    let guard = ctx.lock_workspace().expect("acquire workspace lock");
+    let lock_path = ctx.locks_dir.join("workspace.lock");
+    let replacement = lock::LockMetadata {
+        pid: std::process::id(),
+        owner_id: "replacement-owner".to_string(),
+        host: "replacement-host".to_string(),
+        created_at: chrono::Utc::now(),
+    };
+    std::fs::write(&lock_path, serde_json::to_string(&replacement).unwrap())
+        .expect("replace lock file");
+
+    drop(guard);
+
+    let raw = std::fs::read_to_string(&lock_path).expect("replacement lock must remain");
+    let metadata: lock::LockMetadata = serde_json::from_str(raw.trim()).unwrap();
+    assert_eq!(metadata.owner_id, "replacement-owner");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}

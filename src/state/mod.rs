@@ -6,7 +6,7 @@ pub use ops::{
     synthesize_snapshot_raw_from_segment_bodies,
 };
 
-use lock::{LockMetadata, try_reap_stale_lock};
+use lock::{LockMetadata, acquire_lock_coordinator, lock_file_matches_owner, try_reap_stale_lock};
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::env;
@@ -22,7 +22,7 @@ use crate::types::PendingOp;
 const OPS_COMPACTION_THRESHOLD: usize = 16;
 pub const DEFAULT_REGISTRY_DIR: &str = ".loom-registry";
 
-type InProcMap = Arc<Mutex<HashMap<String, (PathBuf, std::thread::ThreadId, usize)>>>;
+type InProcMap = Arc<Mutex<HashMap<String, (PathBuf, std::thread::ThreadId, usize, String)>>>;
 
 #[derive(Debug, Clone)]
 pub struct AppContext {
@@ -274,7 +274,7 @@ impl AppContext {
         // block at the filesystem layer rather than bypassing it.
         {
             let mut map = self.in_proc.lock().expect("in_proc mutex poisoned");
-            if let Some((_path, holder, count)) = map.get_mut(name)
+            if let Some((_path, holder, count, _owner_id)) = map.get_mut(name)
                 && *holder == current_thread
             {
                 *count += 1;
@@ -288,6 +288,7 @@ impl AppContext {
         }
 
         // Slow path: first acquire — attempt filesystem lock.
+        let _coordinator = acquire_lock_coordinator(&self.locks_dir)?;
         for _ in 0..2 {
             match OpenOptions::new()
                 .create_new(true)
@@ -296,6 +297,7 @@ impl AppContext {
             {
                 Ok(mut file) => {
                     let metadata = LockMetadata::new();
+                    let owner_id = metadata.owner_id.clone();
                     let payload = serde_json::to_string(&metadata)
                         .context("failed to encode lock metadata")?;
                     writeln!(file, "{}", payload).context("failed to write lock file")?;
@@ -303,7 +305,7 @@ impl AppContext {
                     self.in_proc
                         .lock()
                         .expect("in_proc mutex poisoned")
-                        .insert(name.to_string(), (lock_path, current_thread, 1));
+                        .insert(name.to_string(), (lock_path, current_thread, 1, owner_id));
                     return Ok(LockGuard {
                         name: name.to_string(),
                         in_proc: Arc::clone(&self.in_proc),
@@ -320,7 +322,7 @@ impl AppContext {
                             anyhow::bail!("LOCK_BUSY:{}", name);
                         }
                     }
-                    if try_reap_stale_lock(&self.locks_dir.join(format!("{}.lock", name)))? {
+                    if try_reap_stale_lock(&lock_path)? {
                         continue;
                     }
                     anyhow::bail!("LOCK_BUSY:{}", name);
@@ -402,18 +404,46 @@ impl Drop for LockGuard {
                 return;
             }
         };
-        if let Some((lock_path, _holder, count)) = map.get_mut(&self.name) {
+        if let Some((lock_path, _holder, count, owner_id)) = map.get_mut(&self.name) {
             *count -= 1;
             if *count == 0 {
                 let lock_path = lock_path.clone();
+                let owner_id = owner_id.clone();
                 map.remove(&self.name);
                 drop(map);
-                if let Err(err) = fs::remove_file(&lock_path) {
-                    eprintln!(
-                        "loom: failed to release lock {}: {}",
-                        lock_path.display(),
-                        err
-                    );
+                let Some(locks_dir) = lock_path.parent() else {
+                    eprintln!("loom: lock path has no parent: {}", lock_path.display());
+                    return;
+                };
+                let _coordinator = match acquire_lock_coordinator(locks_dir) {
+                    Ok(coordinator) => coordinator,
+                    Err(err) => {
+                        eprintln!(
+                            "loom: failed to coordinate lock release {}: {}",
+                            lock_path.display(),
+                            err
+                        );
+                        return;
+                    }
+                };
+                match lock_file_matches_owner(&lock_path, &owner_id) {
+                    Ok(true) => {
+                        if let Err(err) = fs::remove_file(&lock_path) {
+                            eprintln!(
+                                "loom: failed to release lock {}: {}",
+                                lock_path.display(),
+                                err
+                            );
+                        }
+                    }
+                    Ok(false) => {}
+                    Err(err) => {
+                        eprintln!(
+                            "loom: failed to verify lock owner {}: {}",
+                            lock_path.display(),
+                            err
+                        );
+                    }
                 }
             }
         }

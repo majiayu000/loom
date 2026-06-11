@@ -6,12 +6,18 @@ use crate::cli::{
     WorkspaceBindingCommand, WorkspaceCommand, WorkspaceInitArgs, WorkspaceMatcherKind,
 };
 use crate::panel::auth::{
-    ensure_mutation_authorized, error_envelope, request_origin_matches, run_panel_command,
-    status_for_error_code, status_for_registry_error_payload, status_for_registry_state_load_error,
+    ensure_mutation_authorized, error_envelope, panel_host_matches, panel_request_authorized,
+    request_origin_matches, run_panel_command, status_for_error_code,
+    status_for_registry_error_payload, status_for_registry_state_load_error,
 };
-use axum::http::{HeaderMap, HeaderValue};
+use crate::state_model::REGISTRY_SCHEMA_VERSION;
+use axum::http::{
+    HeaderMap, HeaderValue,
+    header::{HOST, ORIGIN, REFERER},
+};
 use serde_json::json;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 // Exhaustive list of every panel mutation command. Must stay in sync with the
 // 22-row table in docs/LOOM_ARCHITECTURE_DECISIONS.md section 4.1 and the
@@ -120,6 +126,51 @@ fn panel_routes_are_v1_only_without_legacy_api_compatibility() {
     );
 }
 
+fn headers_with_host(host: &str) -> HeaderMap {
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        HOST,
+        HeaderValue::from_str(host).expect("valid host header"),
+    );
+    headers
+}
+
+async fn read_panel_registry_status(
+    addr: SocketAddr,
+    host: &str,
+    origin: Option<&str>,
+) -> StatusCode {
+    let mut stream = tokio::net::TcpStream::connect(addr)
+        .await
+        .expect("connect to test panel");
+    let mut request =
+        format!("GET /api/v1/registry/status HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n");
+    if let Some(origin) = origin {
+        request.push_str(&format!("Origin: {origin}\r\n"));
+    }
+    request.push_str("\r\n");
+
+    stream
+        .write_all(request.as_bytes())
+        .await
+        .expect("write panel request");
+
+    let mut response = Vec::new();
+    stream
+        .read_to_end(&mut response)
+        .await
+        .expect("read panel response");
+    let response = String::from_utf8_lossy(&response);
+    let status_line = response.lines().next().expect("response status line");
+    let status = status_line
+        .split_whitespace()
+        .nth(1)
+        .expect("response status code")
+        .parse::<u16>()
+        .expect("numeric response status code");
+    StatusCode::from_u16(status).expect("known status code")
+}
+
 #[test]
 fn error_envelope_uses_expected_shape() {
     assert_eq!(
@@ -146,19 +197,93 @@ fn error_envelope_uses_expected_shape() {
 fn request_origin_matches_origin_or_referer() {
     let panel_origin = "http://127.0.0.1:43117";
     let mut headers = HeaderMap::new();
-    headers.insert("origin", HeaderValue::from_static("http://127.0.0.1:43117"));
+    headers.insert(ORIGIN, HeaderValue::from_static("http://127.0.0.1:43117"));
     assert!(request_origin_matches(panel_origin, &headers));
+
+    let mut localhost_origin = HeaderMap::new();
+    localhost_origin.insert(ORIGIN, HeaderValue::from_static("http://localhost:43117"));
+    assert!(request_origin_matches(panel_origin, &localhost_origin));
 
     let mut referer_only = HeaderMap::new();
     referer_only.insert(
-        "referer",
+        REFERER,
         HeaderValue::from_static("http://127.0.0.1:43117/ops?x=1"),
     );
     assert!(request_origin_matches(panel_origin, &referer_only));
 
     let mut mismatched = HeaderMap::new();
-    mismatched.insert("origin", HeaderValue::from_static("http://127.0.0.1:9999"));
+    mismatched.insert(ORIGIN, HeaderValue::from_static("http://127.0.0.1:9999"));
     assert!(!request_origin_matches(panel_origin, &mismatched));
+
+    let mut mixed = HeaderMap::new();
+    mixed.insert(ORIGIN, HeaderValue::from_static("https://attacker.test"));
+    mixed.insert(
+        REFERER,
+        HeaderValue::from_static("http://127.0.0.1:43117/ops?x=1"),
+    );
+    assert!(!request_origin_matches(panel_origin, &mixed));
+}
+
+#[test]
+fn panel_request_authorization_requires_local_host_with_current_port() {
+    let panel_origin = "http://127.0.0.1:43117";
+
+    let local = headers_with_host("127.0.0.1:43117");
+    assert!(panel_host_matches(panel_origin, &local));
+    assert!(panel_request_authorized(panel_origin, &local));
+
+    let localhost = headers_with_host("localhost:43117");
+    assert!(panel_host_matches(panel_origin, &localhost));
+    assert!(panel_request_authorized(panel_origin, &localhost));
+
+    let hostile_host = headers_with_host("attacker.test:43117");
+    assert!(!panel_request_authorized(panel_origin, &hostile_host));
+
+    let wrong_port = headers_with_host("127.0.0.1:9999");
+    assert!(!panel_request_authorized(panel_origin, &wrong_port));
+
+    let mut hostile_origin = headers_with_host("127.0.0.1:43117");
+    hostile_origin.insert(ORIGIN, HeaderValue::from_static("https://attacker.test"));
+    assert!(!panel_request_authorized(panel_origin, &hostile_origin));
+}
+
+#[tokio::test]
+async fn panel_read_route_validates_host_header() {
+    let (root, mut state) = make_test_state();
+    write_registry_snapshot(&root, REGISTRY_SCHEMA_VERSION);
+
+    let listener =
+        tokio::net::TcpListener::bind(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0))
+            .await
+            .expect("bind test panel listener");
+    let addr = listener.local_addr().expect("test panel listener address");
+    state.panel_origin = format!("http://{}", addr);
+
+    let app = crate::panel::panel_router(state);
+    let server = tokio::spawn(async move {
+        axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .await
+        .expect("serve test panel router");
+    });
+
+    let hostile_host = format!("attacker.test:{}", addr.port());
+    assert_eq!(
+        read_panel_registry_status(addr, &hostile_host, None).await,
+        StatusCode::FORBIDDEN
+    );
+
+    let local_host = format!("127.0.0.1:{}", addr.port());
+    let local_origin = format!("http://{}", local_host);
+    assert_eq!(
+        read_panel_registry_status(addr, &local_host, Some(&local_origin)).await,
+        StatusCode::OK
+    );
+
+    server.abort();
+    cleanup_root(root);
 }
 
 #[test]

@@ -108,6 +108,9 @@ describe("Ops, History, and Sync pages", () => {
     expect(await screen.findByText(/skill.writer skill projection done/i)).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("Skill filter"), { target: { value: "writer" } });
     expect(screen.getByText(/skill.writer skill projection done/i)).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Request/audit/op id filter"), { target: { value: "req-1" } });
+    expect(screen.getByText(/skill.writer skill projection done/i)).toBeInTheDocument();
+
     fireEvent.change(screen.getByLabelText("Request/audit/op id filter"), { target: { value: "missing-id" } });
     expect(screen.getByText("No activity matches the current filter.")).toBeInTheDocument();
 
@@ -120,6 +123,27 @@ describe("Ops, History, and Sync pages", () => {
     expect(screen.getByText("req-1")).toBeInTheDocument();
     expect(screen.getByText(/skill:skill.writer/)).toBeInTheDocument();
     expect(screen.getAllByText(/binding binding-1/).length).toBeGreaterThan(0);
+  });
+
+  it("truncates large primitive payload fields in Audit History detail", async () => {
+    vi.spyOn(api, "ops").mockResolvedValue({
+      ok: true,
+      data: {
+        count: 1,
+        loaded_count: 1,
+        offset: 0,
+        limit: 100,
+        has_more: false,
+        operations: [operation({ payload: { note: "x".repeat(120) } })],
+      },
+    });
+    vi.spyOn(api, "opsHistoryDiagnose").mockResolvedValue(diagnosePayload());
+
+    render(<HistoryPage live={true} mode="live" mutationVersion={0} />);
+    fireEvent.click(await screen.findByText(/skill.writer skill projection done/i));
+
+    expect(screen.getByText(/^note:x{77}\.\.\.$/)).toBeInTheDocument();
+    expect(screen.queryByText(`note:${"x".repeat(120)}`)).not.toBeInTheDocument();
   });
 
   it("exposes a manual Sync history diagnosis action", async () => {

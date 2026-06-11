@@ -126,7 +126,7 @@ export function HistoryPage({
       if (!matchesField(op.skill, filters.skill)) return false;
       if (!matchesField(op.target, filters.target)) return false;
       if (!matchesField(op.binding, filters.binding)) return false;
-      if (!matchesField(registryOperationDisplayId(op), filters.id)) return false;
+      if (!matchesIdFilter(op, filters.id)) return false;
       if (!needle) return true;
       return (
         registryOperationDisplayId(op).toLowerCase().includes(needle) ||
@@ -490,6 +490,14 @@ function matchesField(value: string | null | undefined, filter: string): boolean
   return !needle || (value ?? "").toLowerCase().includes(needle);
 }
 
+function matchesIdFilter(op: RegistryOperationRecord, filter: string): boolean {
+  const needle = filter.trim().toLowerCase();
+  if (!needle) return true;
+  return [op.op_id, op.audit_id, op.request_id, registryOperationDisplayId(op)]
+    .filter((value): value is string => Boolean(value))
+    .some((value) => value.toLowerCase().includes(needle));
+}
+
 function summarizePayload(value: unknown): string {
   if (value == null) return "—";
   if (typeof value !== "object") return String(value);
@@ -501,7 +509,8 @@ function summarizePayload(value: unknown): string {
 function payloadValue(value: unknown): string {
   if (Array.isArray(value)) return `[${value.length}]`;
   if (value && typeof value === "object") return "{...}";
-  return String(value);
+  const text = String(value);
+  return text.length > 80 ? `${text.slice(0, 77)}...` : text;
 }
 
 function relatedObjects(op: RegistryOperationRecord): string[] {

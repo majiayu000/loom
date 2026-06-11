@@ -13,9 +13,7 @@ use super::{
     run_git_allow_failure, run_git_in_with_env,
 };
 
-use super::history::{
-    HistoryConflictReport, HistoryRepairReport, HistoryRepairStrategy, history_status,
-};
+use super::history_types::{HistoryConflictReport, HistoryRepairReport, HistoryRepairStrategy};
 
 #[derive(Debug, Clone)]
 pub(super) struct HistoryBranchState {
@@ -446,9 +444,13 @@ pub(super) fn compact_local_history_branch(
     let composed = compose_history_state(ctx, local, None, None)?;
     let new_tree = build_tree_from_entries(ctx, &history_tree_entries(&composed))?;
     if !composed.retention.changed() || new_tree == local.tree {
-        let status = history_status(ctx)?;
-        return Ok(HistoryRepairReport::from_status(
-            "noop", strategy, None, &status,
+        return Ok(HistoryRepairReport::from_counts(
+            "noop",
+            strategy,
+            None,
+            composed.segments.len(),
+            composed.archives.len(),
+            true,
         ));
     }
 
@@ -459,9 +461,15 @@ pub(super) fn compact_local_history_branch(
         "Compact loom-history retention",
     )?;
     update_ref(ctx, HISTORY_BRANCH_REF, &commit, Some(&local.commit))?;
-    let status = history_status(ctx)?;
 
-    let mut report = HistoryRepairReport::from_status("compacted", strategy, Some(commit), &status);
+    let mut report = HistoryRepairReport::from_counts(
+        "compacted",
+        strategy,
+        Some(commit),
+        composed.segments.len(),
+        composed.archives.len(),
+        true,
+    );
     report.compacted_segments = composed.retention.compacted_segments;
     report.rolled_archives = composed.retention.rolled_archives;
     Ok(report)

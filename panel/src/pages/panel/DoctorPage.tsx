@@ -168,12 +168,16 @@ function DoctorRow({ check, onNavigate }: { check: DoctorCheck; onNavigate?: (pa
 }
 
 function nextActionPage(check: DoctorCheck): PanelPageKey {
-  const id = check.id.toLowerCase();
-  if (id.includes("target")) return "targets";
-  if (id.includes("binding")) return "bindings";
-  if (id.includes("projection")) return "projections";
-  if (id.includes("history") || id.includes("pending")) return "history";
-  if (id.includes("git")) return "sync";
+  const idRoot = check.id.split(":")[0].toLowerCase();
+  if (idRoot.startsWith("binding_") || check.section === "bindings" || typeof check.details?.binding_id === "string") {
+    return "bindings";
+  }
+  if (idRoot.startsWith("projection_") || check.section === "projections") return "projections";
+  if (idRoot.startsWith("target_") || check.section === "targets" || typeof check.details?.target_id === "string") {
+    return "targets";
+  }
+  if (idRoot.includes("history") || idRoot.includes("pending")) return "history";
+  if (idRoot.includes("git")) return "sync";
   return "settings";
 }
 

@@ -80,6 +80,53 @@ test("DoctorPage renders human labels before internal check IDs", async () => {
   }
 });
 
+test("DoctorPage routes binding and projection checks before target fallback", async () => {
+  const originalDoctor = api.workspaceDoctor;
+  const payload: DoctorPayload = {
+    healthy: false,
+    checks_v1: [
+      {
+        section: "bindings",
+        id: "binding_target_exists:binding_claude_missing",
+        ok: false,
+        severity: "error",
+        message: "binding default target is missing",
+        next_action: "remove or update the binding",
+        details: {
+          binding_id: "binding_claude_missing",
+          target_id: "target_claude_missing",
+        },
+      },
+      {
+        section: "projections",
+        id: "projection_path_exists:projection_1",
+        ok: false,
+        severity: "warning",
+        message: "projection path is missing",
+        next_action: "recreate or capture the projection",
+        details: {
+          instance_id: "projection_1",
+          target_id: "target_claude_project_a",
+        },
+      },
+    ],
+  };
+  api.workspaceDoctor = async () => payload;
+
+  try {
+    const navigate = vi.fn();
+    render(<DoctorPage apiReachable={true} mode="live" refreshKey="tick-1" onNavigate={navigate} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Open Bindings" }));
+    fireEvent.click(screen.getByRole("button", { name: "Open Projections" }));
+
+    expect(navigate).toHaveBeenNthCalledWith(1, "bindings");
+    expect(navigate).toHaveBeenNthCalledWith(2, "projections");
+  } finally {
+    api.workspaceDoctor = originalDoctor;
+  }
+});
+
 test("SettingsPage wraps long paths and exposes copy buttons", async () => {
   const originalInfo = api.info;
   api.info = async () => ({

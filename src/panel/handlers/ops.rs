@@ -11,6 +11,7 @@ use serde_json::json;
 
 use crate::cli::{Command, HistoryRepairStrategyArg, OpsCommand, OpsHistoryCommand};
 use crate::envelope::Envelope;
+use crate::gitops;
 use crate::state::OpsAuditOperation;
 use crate::state_model::RegistryOperationRecord;
 use crate::types::ErrorCode;
@@ -28,7 +29,18 @@ pub(in crate::panel) async fn v1_registry_ops(
 ) -> (StatusCode, Json<serde_json::Value>) {
     match load_registry_snapshot(&state.ctx, "registry.ops") {
         Ok(snapshot) => {
-            let audit_report = match state.ctx.read_ops_audit_report() {
+            let (history_bodies, history_warnings) =
+                match gitops::history_journal_bodies(&state.ctx) {
+                    Ok(bodies) => (bodies, Vec::new()),
+                    Err(err) => (
+                        Vec::new(),
+                        vec![format!("failed to read loom-history branch: {}", err)],
+                    ),
+                };
+            let audit_report = match state
+                .ctx
+                .read_ops_audit_report_with_history(history_bodies, history_warnings)
+            {
                 Ok(report) => report,
                 Err(err) => {
                     let request_id = uuid::Uuid::new_v4().to_string();

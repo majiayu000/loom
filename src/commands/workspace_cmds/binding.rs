@@ -10,10 +10,10 @@ use crate::state_model::{RegistryWorkspaceBinding, RegistryWorkspaceMatcher};
 use crate::types::ErrorCode;
 
 use super::super::helpers::{
-    agent_kind_as_str, commit_registry_state, map_lock, map_registry_state,
-    maybe_autosync_or_queue, record_registry_operation, unique_binding_id, validate_non_empty,
-    validate_policy_profile, workspace_matcher_kind_as_str,
+    agent_kind_as_str, commit_registry_state, map_lock, map_registry_state, unique_binding_id,
+    validate_non_empty, validate_policy_profile, workspace_matcher_kind_as_str,
 };
+use super::super::projections::{maybe_autosync_or_queue, record_registry_operation};
 use super::super::{App, CommandFailure};
 
 impl App {

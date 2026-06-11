@@ -1,9 +1,11 @@
 mod diff;
 mod history;
 mod history_impl;
+mod history_types;
 
 pub use diff::*;
 pub use history::*;
+pub use history_types::*;
 
 use std::fs::{self, OpenOptions};
 use std::io::Write;

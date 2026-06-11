@@ -10,10 +10,13 @@ use crate::gitops;
 use crate::state_model::RegistryStatePaths;
 use crate::types::ErrorCode;
 
+use super::file_ops::{backup_path_if_exists, restore_path_from_backup};
 use super::helpers::{
-    backup_path_if_exists, commit_registry_state, ensure_skill_exists, map_arg, map_git, map_lock,
-    map_registry_state, maybe_autosync_or_queue, record_registry_observation,
-    record_registry_operation, restore_path_from_backup, validate_skill_name,
+    commit_registry_state, ensure_skill_exists, map_arg, map_git, map_lock, map_registry_state,
+    validate_skill_name,
+};
+use super::projections::{
+    maybe_autosync_or_queue, record_registry_observation, record_registry_operation,
 };
 use super::{App, CommandFailure};
 
@@ -417,7 +420,7 @@ fn restore_path_best_effort(
         }
     } else {
         if !maybe_push_rollback_fault(&mut errors, remove_step)
-            && let Err(err) = crate::state::remove_path_if_exists(path)
+            && let Err(err) = crate::fs_util::remove_path_if_exists(path)
         {
             push_rollback_error(&mut errors, remove_step, err);
         }
@@ -462,7 +465,7 @@ fn restore_registry_layout_best_effort(
         }
     } else {
         if !maybe_push_rollback_fault(&mut errors, "remove_registry_layout")
-            && let Err(err) = crate::state::remove_path_if_exists(&paths.registry_dir)
+            && let Err(err) = crate::fs_util::remove_path_if_exists(&paths.registry_dir)
         {
             push_rollback_error(&mut errors, "remove_registry_layout", err);
         }
@@ -528,7 +531,7 @@ fn remove_backup_path_best_effort(backup: Option<&serde_json::Value>) {
     else {
         return;
     };
-    let _ = crate::state::remove_path_if_exists(path);
+    let _ = crate::fs_util::remove_path_if_exists(path);
     if let Some(parent) = path.parent() {
         let _ = fs::remove_dir(parent);
         if let Some(grandparent) = parent.parent() {

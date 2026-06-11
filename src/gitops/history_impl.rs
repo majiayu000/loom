@@ -3,9 +3,8 @@ use std::path::Path;
 
 use anyhow::{Result, anyhow};
 
-use crate::state::{
-    AppContext, summarize_history_body, synthesize_snapshot_raw_from_segment_bodies,
-};
+use crate::state::AppContext;
+use crate::state::journal::{summarize_history_body, synthesize_snapshot_raw_from_segment_bodies};
 
 use super::{
     EMPTY_TREE_SHA, HISTORY_ARCHIVES_DIR, HISTORY_BRANCH_REF, HISTORY_COMPACT_AFTER_SEGMENTS,
@@ -14,9 +13,7 @@ use super::{
     run_git_allow_failure, run_git_in_with_env,
 };
 
-use super::history::{
-    HistoryConflictReport, HistoryRepairReport, HistoryRepairStrategy, history_status,
-};
+use super::history_types::{HistoryConflictReport, HistoryRepairReport, HistoryRepairStrategy};
 
 #[derive(Debug, Clone)]
 pub(super) struct HistoryBranchState {
@@ -447,19 +444,14 @@ pub(super) fn compact_local_history_branch(
     let composed = compose_history_state(ctx, local, None, None)?;
     let new_tree = build_tree_from_entries(ctx, &history_tree_entries(&composed))?;
     if !composed.retention.changed() || new_tree == local.tree {
-        let status = history_status(ctx)?;
-        return Ok(HistoryRepairReport {
-            result: "noop".to_string(),
-            strategy: strategy.as_str().to_string(),
-            commit: None,
-            repaired_conflicts: 0,
-            compacted_segments: 0,
-            rolled_archives: 0,
-            local_segments: status.local_segments,
-            local_archives: status.local_archives,
-            local_snapshot: status.local_snapshot,
-            conflicts: Vec::new(),
-        });
+        return Ok(HistoryRepairReport::from_counts(
+            "noop",
+            strategy,
+            None,
+            composed.segments.len(),
+            composed.archives.len(),
+            true,
+        ));
     }
 
     let commit = create_commit_tree(
@@ -469,20 +461,18 @@ pub(super) fn compact_local_history_branch(
         "Compact loom-history retention",
     )?;
     update_ref(ctx, HISTORY_BRANCH_REF, &commit, Some(&local.commit))?;
-    let status = history_status(ctx)?;
 
-    Ok(HistoryRepairReport {
-        result: "compacted".to_string(),
-        strategy: strategy.as_str().to_string(),
-        commit: Some(commit),
-        repaired_conflicts: 0,
-        compacted_segments: composed.retention.compacted_segments,
-        rolled_archives: composed.retention.rolled_archives,
-        local_segments: status.local_segments,
-        local_archives: status.local_archives,
-        local_snapshot: status.local_snapshot,
-        conflicts: Vec::new(),
-    })
+    let mut report = HistoryRepairReport::from_counts(
+        "compacted",
+        strategy,
+        Some(commit),
+        composed.segments.len(),
+        composed.archives.len(),
+        true,
+    );
+    report.compacted_segments = composed.retention.compacted_segments;
+    report.rolled_archives = composed.retention.rolled_archives;
+    Ok(report)
 }
 
 fn join_history_bodies<'a>(bodies: impl IntoIterator<Item = &'a str>) -> String {

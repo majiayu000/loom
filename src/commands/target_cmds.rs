@@ -12,9 +12,9 @@ use crate::types::ErrorCode;
 
 use super::helpers::{
     agent_kind_as_str, commit_registry_state, map_io, map_lock, map_registry_state,
-    maybe_autosync_or_queue, record_registry_operation, target_capabilities,
-    target_ownership_as_str, unique_target_id,
+    target_capabilities, target_ownership_as_str, unique_target_id,
 };
+use super::projections::{maybe_autosync_or_queue, record_registry_operation};
 use super::{App, CommandFailure};
 
 impl App {

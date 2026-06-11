@@ -1,10 +1,8 @@
+pub(crate) mod journal;
 mod lock;
 mod ops;
 
-pub use ops::{
-    OpsAuditOperation, remove_path_if_exists, summarize_history_body,
-    synthesize_snapshot_raw_from_segment_bodies,
-};
+pub use ops::OpsAuditOperation;
 
 use lock::{LockMetadata, acquire_lock_coordinator, lock_file_matches_owner, try_reap_stale_lock};
 
@@ -17,6 +15,7 @@ use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result};
 
+use crate::fs_util::write_atomic;
 use crate::types::PendingOp;
 
 const OPS_COMPACTION_THRESHOLD: usize = 16;
@@ -33,6 +32,7 @@ pub struct AppContext {
     pub pending_ops_file: PathBuf,
     pub pending_ops_history_dir: PathBuf,
     pub pending_ops_snapshot_file: PathBuf,
+    pub command_events_file: PathBuf,
     in_proc: InProcMap,
 }
 
@@ -218,6 +218,7 @@ impl AppContext {
         let pending_ops_file = state_dir.join("pending_ops.jsonl");
         let pending_ops_history_dir = state_dir.join("pending_ops_history");
         let pending_ops_snapshot_file = state_dir.join("pending_ops_snapshot.json");
+        let command_events_file = state_dir.join("events/commands.jsonl");
 
         Ok(Self {
             root,
@@ -227,6 +228,7 @@ impl AppContext {
             pending_ops_file,
             pending_ops_history_dir,
             pending_ops_snapshot_file,
+            command_events_file,
             in_proc: Arc::new(Mutex::new(HashMap::new())),
         })
     }
@@ -457,29 +459,6 @@ fn ensure_file_with_contents(path: &Path, contents: &str) -> Result<()> {
     write_atomic(path, contents).with_context(|| format!("failed to initialize {}", path.display()))
 }
 
-fn append_lines(path: &Path, lines: &[String]) -> Result<()> {
-    if lines.is_empty() {
-        return Ok(());
-    }
-    let parent = path
-        .parent()
-        .context("cannot append file without parent directory")?;
-    fs::create_dir_all(parent)
-        .with_context(|| format!("failed to create parent directory {}", parent.display()))?;
-    let mut file = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)
-        .with_context(|| format!("failed to open {}", path.display()))?;
-    for line in lines {
-        writeln!(file, "{}", line)
-            .with_context(|| format!("failed to append {}", path.display()))?;
-    }
-    file.sync_all()
-        .with_context(|| format!("failed to sync {}", path.display()))?;
-    Ok(())
-}
-
 fn write_history_segment_if_missing(path: &Path, raw: &str) -> Result<()> {
     if raw.is_empty() {
         return Ok(());
@@ -516,13 +495,6 @@ fn write_history_segment_if_missing(path: &Path, raw: &str) -> Result<()> {
     };
     write_atomic(path, &normalized)
         .with_context(|| format!("failed to write {}", path.display()))?;
-    Ok(())
-}
-
-fn maybe_fault_inject(tag: &str) -> Result<()> {
-    if std::env::var("LOOM_FAULT_INJECT").ok().as_deref() == Some(tag) {
-        return Err(anyhow::anyhow!("fault injected at {}", tag));
-    }
     Ok(())
 }
 
@@ -580,41 +552,6 @@ fn package_name_from_cargo_toml(path: &Path) -> Option<String> {
             .map(str::to_string);
     }
     None
-}
-
-fn write_atomic(path: &Path, contents: &str) -> Result<()> {
-    let parent = path
-        .parent()
-        .context("cannot write atomic file without parent directory")?;
-    fs::create_dir_all(parent)
-        .with_context(|| format!("failed to create parent directory {}", parent.display()))?;
-
-    let tmp_path = parent.join(format!(
-        ".{}.tmp-{}",
-        path.file_name().unwrap_or_default().to_string_lossy(),
-        uuid::Uuid::new_v4()
-    ));
-
-    {
-        let mut file = OpenOptions::new()
-            .create_new(true)
-            .write(true)
-            .open(&tmp_path)
-            .with_context(|| format!("failed to create temp file {}", tmp_path.display()))?;
-        file.write_all(contents.as_bytes())
-            .with_context(|| format!("failed to write temp file {}", tmp_path.display()))?;
-        file.sync_all()
-            .with_context(|| format!("failed to sync temp file {}", tmp_path.display()))?;
-    }
-
-    crate::fs_util::rename_atomic(&tmp_path, path).with_context(|| {
-        format!(
-            "failed to atomically replace {} with {}",
-            path.display(),
-            tmp_path.display()
-        )
-    })?;
-    Ok(())
 }
 
 #[cfg(test)]

@@ -23,8 +23,9 @@ use super::event_store::redact_sensitive_string;
 use super::file_ops::{
     copy_dir_recursive, copy_dir_recursive_preserving_symlinks, create_symlink_dir,
 };
-use super::helpers::{map_git, map_io, map_push_rejected, map_queue, map_remote_unreachable};
-use crate::state::remove_path_if_exists;
+use super::helpers::{map_git, map_io, map_queue};
+use super::sync_cmds::sync_push_internal;
+use crate::fs_util::{maybe_fault_inject, remove_path_if_exists};
 
 mod symlink_guard;
 use symlink_guard::ensure_projection_symlinks_contained;
@@ -406,10 +407,7 @@ pub(crate) fn restore_registry_audit_state(
 }
 
 fn maybe_projection_fault(tag: &str) -> Result<()> {
-    if std::env::var("LOOM_FAULT_INJECT").ok().as_deref() == Some(tag) {
-        return Err(anyhow::anyhow!("fault injected at {}", tag));
-    }
-    Ok(())
+    Ok(maybe_fault_inject(tag)?)
 }
 
 fn rollback_record_registry_operation(
@@ -543,7 +541,7 @@ fn list_unique_skills_from_dirs(
 }
 
 // ---------------------------------------------------------------------------
-// Remote status / sync internals
+// Remote status / autosync coordination
 // ---------------------------------------------------------------------------
 
 pub fn remote_status_payload(
@@ -648,6 +646,7 @@ pub(crate) fn maybe_autosync_or_queue(
     if !gitops::remote_exists(ctx) {
         ctx.append_pending(command, details, request_id.to_string())
             .map_err(map_queue)?;
+        gitops::mirror_pending_ops_history(ctx).map_err(map_git)?;
         meta.sync_state = Some(SyncState::PendingPush);
         meta.warnings
             .push("remote origin not configured, operation queued".to_string());
@@ -661,6 +660,7 @@ pub(crate) fn maybe_autosync_or_queue(
         Err(err) => {
             ctx.append_pending(command, details, request_id.to_string())
                 .map_err(map_queue)?;
+            gitops::mirror_pending_ops_history(ctx).map_err(map_git)?;
             meta.sync_state = Some(match err.code {
                 ErrorCode::RemoteDiverged => SyncState::Diverged,
                 ErrorCode::ReplayConflict => SyncState::Conflicted,
@@ -673,60 +673,6 @@ pub(crate) fn maybe_autosync_or_queue(
         }
     }
     Ok(())
-}
-
-pub(crate) fn sync_push_internal(
-    ctx: &AppContext,
-) -> std::result::Result<&'static str, CommandFailure> {
-    if !gitops::remote_exists(ctx) {
-        return Err(CommandFailure::new(
-            ErrorCode::ArgInvalid,
-            "remote origin not configured",
-        ));
-    }
-
-    let _state_commit = gitops::commit_paths_if_changed(
-        ctx,
-        &[".gitignore", "state/registry", "state/v3"],
-        "sync: commit registry state",
-    )
-    .map_err(map_git)?;
-    let pending_report = ctx.read_pending_report().map_err(map_io)?;
-    let queued_ids = pending_report
-        .ops
-        .iter()
-        .map(|op| op.stable_id())
-        .collect::<std::collections::BTreeSet<_>>();
-    let remote_main_exists =
-        gitops::fetch_origin_main_if_present(ctx).map_err(map_remote_unreachable)?;
-    let remote_history_exists =
-        gitops::fetch_origin_history_branch_if_present(ctx).map_err(map_remote_unreachable)?;
-    if remote_history_exists {
-        let _ = gitops::sync_history_branch_from_remote(ctx).map_err(map_git)?;
-    }
-    if remote_main_exists {
-        let (_ahead, behind) = gitops::ahead_behind_main(ctx).map_err(map_git)?;
-        if behind > 0 {
-            return Err(CommandFailure::new(
-                ErrorCode::RemoteDiverged,
-                "local branch is behind origin/main",
-            ));
-        }
-    }
-    gitops::push_main_with_tags(ctx).map_err(map_push_rejected)?;
-    ctx.remove_pending_ops(&queued_ids).map_err(map_queue)?;
-    Ok("pushed")
-}
-
-pub(crate) fn sync_replay_internal(
-    ctx: &AppContext,
-) -> std::result::Result<&'static str, CommandFailure> {
-    let pending = ctx.pending_count().map_err(map_io)?;
-    if pending == 0 {
-        return Ok("no_pending_ops");
-    }
-    sync_push_internal(ctx)?;
-    Ok("replayed")
 }
 
 #[cfg(test)]

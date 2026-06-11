@@ -6,13 +6,15 @@ use serde_json::json;
 use crate::cli::{HistoryRepairStrategyArg, OpsCommand, OpsHistoryCommand, SyncCommand};
 use crate::envelope::Meta;
 use crate::gitops;
-use crate::state::{AppContext, synthesize_snapshot_raw_from_segment_bodies};
+use crate::state::AppContext;
+use crate::state::journal::synthesize_snapshot_raw_from_segment_bodies;
 use crate::types::ErrorCode;
 
 use super::helpers::{
-    map_git, map_io, map_lock, map_replay_conflict, remote_status_payload, sync_push_internal,
-    sync_replay_internal,
+    map_git, map_io, map_lock, map_push_rejected, map_queue, map_remote_unreachable,
+    map_replay_conflict,
 };
+use super::projections::remote_status_payload;
 use super::{App, CommandFailure};
 
 impl App {
@@ -119,6 +121,7 @@ impl App {
                 let _workspace = self.ctx.lock_workspace().map_err(map_lock)?;
                 self.ensure_write_layout()?;
                 let purged = self.ctx.purge_pending().map_err(map_io)?;
+                gitops::mirror_pending_ops_history(&self.ctx).map_err(map_git)?;
                 Ok((json!({"purged": purged}), Meta::default()))
             }
             OpsCommand::History { command } => self.cmd_ops_history(command),
@@ -200,4 +203,59 @@ fn rebuild_local_pending_ops_snapshot(ctx: &AppContext) -> anyhow::Result<bool> 
         },
     )?;
     Ok(true)
+}
+
+pub(crate) fn sync_push_internal(
+    ctx: &AppContext,
+) -> std::result::Result<&'static str, CommandFailure> {
+    if !gitops::remote_exists(ctx) {
+        return Err(CommandFailure::new(
+            ErrorCode::ArgInvalid,
+            "remote origin not configured",
+        ));
+    }
+
+    let _state_commit = gitops::commit_paths_if_changed(
+        ctx,
+        &[".gitignore", "state/registry", "state/v3"],
+        "sync: commit registry state",
+    )
+    .map_err(map_git)?;
+    let pending_report = ctx.read_pending_report().map_err(map_io)?;
+    let queued_ids = pending_report
+        .ops
+        .iter()
+        .map(|op| op.stable_id())
+        .collect::<std::collections::BTreeSet<_>>();
+    let remote_main_exists =
+        gitops::fetch_origin_main_if_present(ctx).map_err(map_remote_unreachable)?;
+    let remote_history_exists =
+        gitops::fetch_origin_history_branch_if_present(ctx).map_err(map_remote_unreachable)?;
+    if remote_history_exists {
+        gitops::sync_history_branch_from_remote(ctx).map_err(map_git)?;
+    }
+    if remote_main_exists {
+        let (_ahead, behind) = gitops::ahead_behind_main(ctx).map_err(map_git)?;
+        if behind > 0 {
+            return Err(CommandFailure::new(
+                ErrorCode::RemoteDiverged,
+                "local branch is behind origin/main",
+            ));
+        }
+    }
+    gitops::push_main_with_tags(ctx).map_err(map_push_rejected)?;
+    ctx.remove_pending_ops(&queued_ids).map_err(map_queue)?;
+    gitops::mirror_pending_ops_history(ctx).map_err(map_git)?;
+    Ok("pushed")
+}
+
+pub(crate) fn sync_replay_internal(
+    ctx: &AppContext,
+) -> std::result::Result<&'static str, CommandFailure> {
+    let pending = ctx.pending_count().map_err(map_io)?;
+    if pending == 0 {
+        return Ok("no_pending_ops");
+    }
+    sync_push_internal(ctx)?;
+    Ok("replayed")
 }

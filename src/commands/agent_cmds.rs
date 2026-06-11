@@ -5,9 +5,9 @@ mod planning_helpers;
 use serde_json::{Value, json};
 
 use super::helpers::{
-    agent_kind_as_str, map_arg, map_git, map_io, projection_method_as_str,
-    resolve_capture_projection, validate_skill_name,
+    agent_kind_as_str, map_arg, map_git, map_io, projection_method_as_str, validate_skill_name,
 };
+use super::projections::resolve_capture_projection;
 use super::{App, CommandFailure};
 use crate::cli::{AgentPreflightArgs, CaptureArgs, OrphanCleanArgs, ProjectArgs, RollbackArgs};
 use crate::envelope::Meta;

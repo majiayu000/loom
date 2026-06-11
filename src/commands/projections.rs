@@ -26,6 +26,9 @@ use super::file_ops::{
 use super::helpers::{map_git, map_io, map_push_rejected, map_queue, map_remote_unreachable};
 use crate::state::remove_path_if_exists;
 
+mod symlink_guard;
+use symlink_guard::ensure_projection_symlinks_contained;
+
 // ---------------------------------------------------------------------------
 // Registry state mutators
 // ---------------------------------------------------------------------------
@@ -77,6 +80,7 @@ pub(crate) fn project_skill_to_target(
     match method {
         ProjectionMethod::Symlink => create_symlink_dir(src, dst),
         ProjectionMethod::Copy => {
+            ensure_projection_symlinks_contained(src, true)?;
             let parent = dst
                 .parent()
                 .context("projection target has no parent directory")?;
@@ -92,6 +96,7 @@ pub(crate) fn project_skill_to_target(
             Ok(())
         }
         ProjectionMethod::Materialize => {
+            ensure_projection_symlinks_contained(src, false)?;
             let parent = dst
                 .parent()
                 .context("projection target has no parent directory")?;

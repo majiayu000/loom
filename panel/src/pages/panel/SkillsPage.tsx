@@ -100,6 +100,19 @@ export function SkillsPage({
       onMutation,
     );
   };
+  const filtersActive =
+    Boolean(query) ||
+    sourceFilter !== "all" ||
+    targetFilter !== "all" ||
+    attentionFilter !== "all" ||
+    tagFilter !== "all";
+  const clearFilters = () => {
+    setQ("");
+    setSourceFilter("all");
+    setTargetFilter("all");
+    setAttentionFilter("all");
+    setTagFilter("all");
+  };
 
   const onSkillTrashed = () => {
     onSelectSkill(null);
@@ -229,9 +242,10 @@ export function SkillsPage({
           filtered.length === 0 ? (
             <SkillListEmptyState
               query={query}
+              filtersActive={filtersActive}
               readOnly={readOnly}
               onAddSkill={() => setAddOpen(true)}
-              onClearFilter={() => setQ("")}
+              onClearFilter={clearFilters}
             />
           ) : (
             <div className="two-col" style={{ height: "100%", gap: 0 }}>
@@ -314,23 +328,29 @@ export function SkillsPage({
 
 function SkillListEmptyState({
   query,
+  filtersActive,
   readOnly,
   onAddSkill,
   onClearFilter,
 }: {
   query: string;
+  filtersActive: boolean;
   readOnly: boolean;
   onAddSkill: () => void;
   onClearFilter: () => void;
 }) {
-  if (query) {
+  if (filtersActive) {
     return (
       <EmptyState
         title="No matching skills"
         icon={<SearchIcon />}
         actions={[{ label: "Clear filter", onClick: onClearFilter, variant: "ghost" }]}
       >
-        Nothing in the registry matches <span className="mono">{query}</span>.
+        {query ? (
+          <>Nothing in the registry matches <span className="mono">{query}</span>.</>
+        ) : (
+          "No skills match the selected filters."
+        )}
       </EmptyState>
     );
   }
@@ -656,16 +676,22 @@ function ProjectSkillForm({
   const [bindingId, setBindingId] = useState(bindings[0]?.id ?? "");
   const [method, setMethod] = useState<"symlink" | "copy" | "materialize">("symlink");
   const project = useMutation();
+  const bindingOptionKey = bindings.map((binding) => binding.id).join("\u001f");
+  const selectedBinding = bindings.find((binding) => binding.id === bindingId) ?? null;
+
+  useEffect(() => {
+    setBindingId((current) => (bindings.some((binding) => binding.id === current) ? current : bindings[0]?.id ?? ""));
+  }, [bindingOptionKey]);
 
   const runProject = () => {
-    if (!bindingId) return;
-    project.run("skill project", () => api.project({ skill: skillName, binding: bindingId, method }), onMutation);
+    if (!selectedBinding) return;
+    project.run("skill project", () => api.project({ skill: skillName, binding: selectedBinding.id, method }), onMutation);
   };
 
   return (
     <div className="card" style={{ padding: 12, marginBottom: 12 }}>
       <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) 130px auto", gap: 8 }}>
-        <select value={bindingId} onChange={(event) => setBindingId(event.target.value)} style={formInputStyle} disabled={readOnly}>
+        <select value={selectedBinding?.id ?? ""} onChange={(event) => setBindingId(event.target.value)} style={formInputStyle} disabled={readOnly}>
           {bindings.length === 0 && <option value="">(no bindings)</option>}
           {bindings.map((binding) => {
             const target = targets.find((item) => item.id === binding.target);
@@ -686,7 +712,7 @@ function ProjectSkillForm({
           <option value="copy">copy</option>
           <option value="materialize">materialize</option>
         </select>
-        <button className="btn primary" onClick={runProject} disabled={readOnly || project.busy || !bindingId}>
+        <button className="btn primary" onClick={runProject} disabled={readOnly || project.busy || !selectedBinding}>
           {project.busy ? "projecting…" : "Project"}
         </button>
       </div>

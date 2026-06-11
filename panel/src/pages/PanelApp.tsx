@@ -5,7 +5,6 @@ import { api } from "../lib/api/client";
 import { ControlRoomShell } from "../components/panel/ControlRoomShell";
 import type { ToastViewModel } from "../components/panel/Toasts";
 import { OverviewPage } from "./panel/OverviewPage";
-import { SkillsPage } from "./panel/SkillsPage";
 import { TargetsPage } from "./panel/TargetsPage";
 import { BindingsPage } from "./panel/BindingsPage";
 import { HistoryPage } from "./panel/HistoryPage";
@@ -20,6 +19,7 @@ import { selectPanelViewModel } from "../lib/panel_view_model";
 const TweakPanel = lazy(() =>
   import("../components/panel/TweakPanel").then((module) => ({ default: module.TweakPanel })),
 );
+const SkillsPage = lazy(() => import("./panel/SkillsPage").then((module) => ({ default: module.SkillsPage })));
 
 const DEFAULT_TWEAKS: TweakState = {
   vizMode: "loom",
@@ -240,16 +240,18 @@ export function PanelApp() {
         break;
       case "skills":
         view = (
-          <SkillsPage
-            skills={skills}
-            targets={targets}
-            bindings={bindings}
-            projections={live.projections}
-            selectedSkill={selectedSkill}
-            onSelectSkill={(id) => setSelectedSkill(id)}
-            onMutation={onMutation}
-            readOnly={readOnly}
-          />
+          <Suspense fallback={null}>
+            <SkillsPage
+              skills={skills}
+              targets={targets}
+              bindings={bindings}
+              projections={live.projections}
+              selectedSkill={selectedSkill}
+              onSelectSkill={(id) => setSelectedSkill(id)}
+              onMutation={onMutation}
+              readOnly={readOnly}
+            />
+          </Suspense>
         );
         break;
       case "targets":

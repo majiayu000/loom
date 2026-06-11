@@ -1,4 +1,5 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { useState } from "react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { RegistryProjection } from "../../generated/RegistryProjection";
 import type { Binding, Skill, Target } from "../../lib/types";
@@ -130,6 +131,22 @@ describe("SkillsPage filters and detail tabs", () => {
     expect(list().queryByText("attention-skill")).not.toBeInTheDocument();
   });
 
+  it("shows filter empty state and clears non-query filters", () => {
+    renderFixture();
+
+    fireEvent.change(screen.getByLabelText("Source status filter"), { target: { value: "non-compliant" } });
+
+    expect(screen.getByText("No matching skills")).toBeInTheDocument();
+    expect(screen.getByText("No skills match the selected filters.")).toBeInTheDocument();
+    expect(screen.queryByText("No tracked skills yet")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Clear filter" }));
+
+    expect((screen.getByLabelText("Source status filter") as HTMLSelectElement).value).toBe("all");
+    expect(within(screen.getByRole("table")).getByText("ready-skill")).toBeInTheDocument();
+    expect(within(screen.getByRole("table")).getByText("attention-skill")).toBeInTheDocument();
+  });
+
   it("renders real detail tabs without source or files tabs", () => {
     renderFixture();
     expect(screen.queryByRole("button", { name: "Source" })).not.toBeInTheDocument();
@@ -145,5 +162,54 @@ describe("SkillsPage filters and detail tabs", () => {
     fireEvent.click(screen.getByRole("button", { name: "Projections (1)" }));
     expect(screen.getByText("/tmp/target/ready-skill")).toBeInTheDocument();
     expect(screen.getByText("copy · abc12345")).toBeInTheDocument();
+  });
+
+  it("projects with the binding for the currently selected skill", async () => {
+    const secondSkill: Skill = {
+      ...baseSkill,
+      id: "second",
+      name: "second-skill",
+      description: "Second skill",
+      latestRev: "def67890",
+      targets: ["target-2"],
+    };
+    const secondTarget: Target = { ...target, id: "target-2", agent: "codex", profile: "work" };
+    const secondBinding: Binding = { ...binding, id: "binding-2", skill: "second-skill", target: "target-2" };
+    const secondProjection: RegistryProjection = {
+      ...projection,
+      instance_id: "projection-2",
+      skill_id: "second-skill",
+      binding_id: "binding-2",
+      target_id: "target-2",
+      materialized_path: "/tmp/target/second-skill",
+      last_applied_rev: "def67890",
+    };
+    function Harness() {
+      const [selectedSkill, setSelectedSkill] = useState<string | null>("ready");
+      return (
+        <SkillsPage
+          skills={[baseSkill, secondSkill]}
+          targets={[target, secondTarget]}
+          bindings={[binding, secondBinding]}
+          projections={[projection, secondProjection]}
+          selectedSkill={selectedSkill}
+          onSelectSkill={setSelectedSkill}
+          onMutation={() => {}}
+          readOnly={false}
+        />
+      );
+    }
+    (api.project as ReturnType<typeof vi.fn>).mockResolvedValue({ ok: true });
+
+    render(<Harness />);
+    fireEvent.click(screen.getByRole("button", { name: "Projections (1)" }));
+    fireEvent.click(within(screen.getByRole("table")).getByText("second-skill"));
+
+    await waitFor(() => expect(screen.getByDisplayValue(/binding-2/)).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: "Project" }));
+
+    await waitFor(() =>
+      expect(api.project).toHaveBeenCalledWith({ skill: "second-skill", binding: "binding-2", method: "symlink" }),
+    );
   });
 });

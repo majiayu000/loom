@@ -21,9 +21,18 @@ function errorResponse(status: number, body: unknown): Response {
   } as unknown as Response;
 }
 
-function installFetchMock(failingPath: string | null = null, failingResponse?: Response) {
+interface FetchMockOptions {
+  skillsWarnings?: string[];
+  pendingCount?: number;
+  pendingWarnings?: string[];
+  opsWarnings?: string[];
+  diagnoseConflict?: boolean;
+}
+
+function installFetchMock(failingPath: string | null = null, failingResponse?: Response, options: FetchMockOptions = {}) {
   fetchMock.mockImplementation((input: RequestInfo | URL) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    const failedResponse = url === failingPath ? failingResponse : undefined;
     switch (url) {
       case "/api/v1/health":
         return Promise.resolve(
@@ -78,19 +87,19 @@ function installFetchMock(failingPath: string | null = null, failingResponse?: R
               ],
             },
             error: null,
-            meta: { warnings: [] },
+            meta: { warnings: options.skillsWarnings ?? [] },
           }),
         );
       case "/api/v1/registry/status":
         return Promise.resolve(
-          url === failingPath && failingResponse
-            ? failingResponse
+          failedResponse
+            ? failedResponse
             : jsonResponse({ ok: true, data: { counts: {}, projections: [], rules: [], targets: [], bindings: [] } }),
         );
       case "/api/v1/sync/status":
         return Promise.resolve(
-          url === failingPath && failingResponse
-            ? failingResponse
+          failedResponse
+            ? failedResponse
             : jsonResponse({
                 ok: true,
                 cmd: "sync.status",
@@ -102,16 +111,49 @@ function installFetchMock(failingPath: string | null = null, failingResponse?: R
         );
       case "/api/v1/ops/pending":
         return Promise.resolve(
-          url === failingPath && failingResponse
-            ? failingResponse
+          failedResponse
+            ? failedResponse
             : jsonResponse({
                 ok: true,
                 cmd: "pending.list",
                 request_id: "req-pending",
-                data: { count: 0, ops: [] },
+                data: { count: options.pendingCount ?? 0, ops: [], warnings: options.pendingWarnings ?? [] },
                 error: null,
                 meta: { warnings: [] },
               }),
+        );
+      case "/api/v1/ops/diagnose":
+        return Promise.resolve(
+          jsonResponse({
+            ok: true,
+            data: {
+              local_branch: true,
+              remote_tracking: true,
+              ahead: 0,
+              behind: 0,
+              local_segments: 1,
+              local_archives: 0,
+              remote_segments: 1,
+              remote_archives: 0,
+              local_snapshot: true,
+              remote_snapshot: true,
+              compact_after_segments: 8,
+              retain_recent_segments: 4,
+              retain_archives: 4,
+              conflicts: options.diagnoseConflict
+                ? [
+                    {
+                      scope: "segment",
+                      path: "pending_ops_history/conflict.jsonl",
+                      local_blob: "local",
+                      remote_blob: "remote",
+                      local_rename_path: "pending_ops_history/conflict-local.jsonl",
+                      remote_rename_path: "pending_ops_history/conflict-remote.jsonl",
+                    },
+                  ]
+                : [],
+            },
+          }),
         );
       case "/api/v1/ops?limit=30":
         return Promise.resolve(
@@ -120,6 +162,17 @@ function installFetchMock(failingPath: string | null = null, failingResponse?: R
             cmd: "registry.ops",
             request_id: "req-ops",
             data: { count: 0, loaded_count: 0, offset: 0, limit: 30, has_more: false, operations: [] },
+            error: null,
+            meta: { warnings: options.opsWarnings ?? [] },
+          }),
+        );
+      case "/api/v1/ops?limit=100&offset=0":
+        return Promise.resolve(
+          jsonResponse({
+            ok: true,
+            cmd: "registry.ops",
+            request_id: "req-history",
+            data: { count: 0, loaded_count: 0, offset: 0, limit: 100, has_more: false, operations: [] },
             error: null,
             meta: { warnings: [] },
           }),
@@ -203,6 +256,47 @@ describe("PanelApp status failure UI", () => {
     });
 
     expect(screen.getByText(/failed to read pending queue/i)).toBeTruthy();
+  });
+
+  it("shows backend warnings returned by panel read paths", async () => {
+    installFetchMock(undefined, undefined, {
+      skillsWarnings: ["skipped malformed skill metadata"],
+      pendingWarnings: ["pending queue had parse warnings"],
+      opsWarnings: ["ignored malformed operation audit row"],
+    });
+
+    render(<PanelApp />);
+
+    await waitFor(() => {
+      expect(screen.getByText(/Backend warnings/i)).toBeTruthy();
+    });
+
+    expect(screen.getByText(/skipped malformed skill metadata/i)).toBeTruthy();
+    expect(screen.getByText(/pending queue had parse warnings/i)).toBeTruthy();
+    expect(screen.getByText(/ignored malformed operation audit row/i)).toBeTruthy();
+  });
+
+  it("disables history repair while queued writes exist", async () => {
+    localStorage.setItem("loom.page", "history");
+    installFetchMock(null, undefined, {
+      pendingCount: 2,
+      diagnoseConflict: true,
+    });
+
+    render(<PanelApp />);
+
+    const repairLocal = (await screen.findByRole("button", {
+      name: /Repair from local/i,
+    })) as HTMLButtonElement;
+    const repairRemote = (await screen.findByRole("button", {
+      name: /Repair from remote/i,
+    })) as HTMLButtonElement;
+    await waitFor(() => {
+      expect(repairLocal.disabled).toBe(true);
+      expect(repairRemote.disabled).toBe(true);
+    });
+    expect(repairLocal.title).toBe("pending operations must be replayed or purged first");
+    expect(repairRemote.title).toBe("pending operations must be replayed or purged first");
   });
 
   it("shows first-run mode when workspace status reports missing registry state", async () => {

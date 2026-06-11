@@ -212,6 +212,54 @@ test("HistoryPage repairs diagnosed history conflicts from the panel", async () 
   }
 });
 
+test("HistoryPage disables history repair actions in read-only mode", async () => {
+  const originalOps = api.ops;
+  const originalDiagnose = api.opsHistoryDiagnose;
+  const originalRepair = api.opsHistoryRepair;
+  const repairs: Array<{ strategy: "local" | "remote" }> = [];
+  let mutations = 0;
+  api.ops = async () => opsPayload(makeOperation("failed", false, "op-failed", "sync.pull"));
+  api.opsHistoryDiagnose = async () => historyDiagnosePayload(1);
+  api.opsHistoryRepair = async (body) => {
+    repairs.push(body);
+    return { ok: true, cmd: "ops.history.repair", request_id: "req-repair", data: { repaired_conflicts: 1 } };
+  };
+
+  try {
+    let renderer: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(
+        <HistoryPage
+          live={true}
+          mode="live"
+          mutationVersion={0}
+          readOnly={true}
+          onMutation={() => {
+            mutations += 1;
+          }}
+        />,
+      );
+    });
+    await flush();
+
+    const repairFromLocal = buttonByLabel(renderer!, "Repair from local");
+    expect(repairFromLocal.props.disabled).toBe(true);
+    expect(repairFromLocal.props.title).toBe("registry offline");
+
+    await act(async () => {
+      repairFromLocal.props.onClick();
+    });
+    await flush();
+
+    expect(repairs).toEqual([]);
+    expect(mutations).toBe(0);
+  } finally {
+    api.ops = originalOps;
+    api.opsHistoryDiagnose = originalDiagnose;
+    api.opsHistoryRepair = originalRepair;
+  }
+});
+
 test("SyncPage surfaces history repair actions", async () => {
   const originalDiagnose = api.opsHistoryDiagnose;
   const originalRepair = api.opsHistoryRepair;

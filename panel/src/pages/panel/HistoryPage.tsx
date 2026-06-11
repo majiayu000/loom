@@ -25,10 +25,20 @@ interface HistoryPageProps {
   mode: PanelDataMode;
   mutationVersion: number;
   refreshKey?: string | null;
+  readOnly?: boolean;
+  readOnlyReason?: string;
   onMutation?: () => void;
 }
 
-export function HistoryPage({ live, mode, mutationVersion, refreshKey, onMutation }: HistoryPageProps) {
+export function HistoryPage({
+  live,
+  mode,
+  mutationVersion,
+  refreshKey,
+  readOnly = false,
+  readOnlyReason,
+  onMutation,
+}: HistoryPageProps) {
   const [state, setState] = useState<LoadState>({ kind: "idle" });
   const [diagnose, setDiagnose] = useState<DiagnoseData | null>(null);
   const [diagnoseError, setDiagnoseError] = useState<string | null>(null);
@@ -83,6 +93,7 @@ export function HistoryPage({ live, mode, mutationVersion, refreshKey, onMutatio
   }, [live, mutationVersion, refreshKey, offset, repairVersion]);
 
   const runRepair = (strategy: "local" | "remote") => {
+    if (readOnly || repair.busy) return;
     repair.run(`history repair ${strategy}`, () => api.opsHistoryRepair({ strategy }), () => {
       setRepairVersion((value) => value + 1);
       onMutation?.();
@@ -117,6 +128,12 @@ export function HistoryPage({ live, mode, mutationVersion, refreshKey, onMutatio
   );
 
   const checkpoint = payload?.checkpoint;
+  const repairDisabled = readOnly || repair.busy;
+  const repairTitle = readOnly
+    ? readOnlyReason ?? "registry offline"
+    : repair.busy
+    ? "history repair already running"
+    : "repair conflicting history files";
   const historySummary =
     payload && payload.count > payload.loaded_count
       ? `Showing ${payload.loaded_count} of ${payload.count} audit changes.`
@@ -192,10 +209,20 @@ export function HistoryPage({ live, mode, mutationVersion, refreshKey, onMutatio
                   {diagnose.conflicts.length} conflict{diagnose.conflicts.length === 1 ? "" : "s"}
                 </span>
                 <span style={{ color: "var(--ink-2)" }}>{diagnose.conflicts[0]?.path}</span>
-                <button className="btn sm" onClick={() => runRepair("local")} disabled={repair.busy}>
+                <button
+                  className="btn sm"
+                  onClick={() => runRepair("local")}
+                  disabled={repairDisabled}
+                  title={repairTitle}
+                >
                   Repair from local
                 </button>
-                <button className="btn sm" onClick={() => runRepair("remote")} disabled={repair.busy}>
+                <button
+                  className="btn sm"
+                  onClick={() => runRepair("remote")}
+                  disabled={repairDisabled}
+                  title={repairTitle}
+                >
                   Repair from remote
                 </button>
               </>

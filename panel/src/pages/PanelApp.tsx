@@ -154,6 +154,9 @@ export function PanelApp() {
   // Future shortcuts, command palette, and hotkey handlers must check readOnly
   // before calling any /api/v1/* mutation route.
   const readOnly = live.mode !== "live";
+  const historyReadOnly = readOnly || live.queuedWriteCount > 0;
+  const historyReadOnlyReason =
+    live.queuedWriteCount > 0 ? "pending operations must be replayed or purged first" : undefined;
   const onMutation = () => {
     setMutationVersion((cur) => cur + 1);
     live.refetch();
@@ -257,6 +260,8 @@ export function PanelApp() {
             mode={live.mode}
             mutationVersion={mutationVersion}
             refreshKey={live.lastUpdated}
+            readOnly={historyReadOnly}
+            readOnlyReason={historyReadOnlyReason}
             onMutation={onMutation}
           />
         );
@@ -314,12 +319,41 @@ export function PanelApp() {
         registryRoot={live.registryRoot}
       />
       <div className="main">
+        <PanelWarningsBanner warnings={live.warnings} />
         {live.mode !== "live" && <LiveDataBanner error={live.error} loading={live.loading} mode={live.mode} />}
         {view}
       </div>
       {tweakVisible && (
         <TweakPanel state={tweaks} onChange={patchTweaks} onDismiss={() => setTweakVisible(false)} />
       )}
+    </div>
+  );
+}
+
+export function PanelWarningsBanner({ warnings }: { warnings: string[] }) {
+  if (warnings.length === 0) return null;
+
+  const visible = warnings.slice(0, 3);
+  const extra = warnings.length - visible.length;
+
+  return (
+    <div
+      role="status"
+      aria-label="Backend warnings"
+      style={{
+        padding: "8px 28px",
+        background: "rgba(230,180,80,0.08)",
+        borderBottom: "1px solid rgba(230,180,80,0.25)",
+        fontFamily: "var(--font-mono)",
+        fontSize: 11,
+        color: "var(--warn)",
+      }}
+    >
+      <span style={{ marginRight: 6 }}>{warnings.length === 1 ? "Backend warning" : "Backend warnings"}:</span>
+      <span style={{ color: "var(--ink-2)" }}>
+        {visible.join(" · ")}
+        {extra > 0 ? ` · ${extra} more` : ""}
+      </span>
     </div>
   );
 }

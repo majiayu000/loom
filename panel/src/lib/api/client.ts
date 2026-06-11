@@ -141,6 +141,11 @@ export interface CommandEnvelope {
   meta?: { warnings?: string[] };
 }
 
+export interface ReadResult<T> {
+  data: T;
+  warnings: string[];
+}
+
 export class ApiError extends Error {
   constructor(public readonly path: string, public readonly status: number, message: string) {
     super(message);
@@ -152,7 +157,26 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function unwrapReadData<T>(path: string, body: unknown): T {
+function warningStrings(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((warning): warning is string => typeof warning === "string" && warning.length > 0);
+}
+
+function envelopeWarnings(body: unknown): string[] {
+  if (!isRecord(body) || !isRecord(body.meta)) return [];
+  return warningStrings(body.meta.warnings);
+}
+
+function payloadWarnings(body: unknown): string[] {
+  if (!isRecord(body)) return [];
+  return warningStrings(body.warnings);
+}
+
+function uniqueWarnings(warnings: string[]): string[] {
+  return Array.from(new Set(warnings));
+}
+
+function unwrapReadResult<T>(path: string, body: unknown): ReadResult<T> {
   if (
     !isRecord(body) ||
     body.ok !== true ||
@@ -164,7 +188,14 @@ function unwrapReadData<T>(path: string, body: unknown): T {
   if (!("data" in body)) {
     throw new ApiError(path, 200, `GET ${path} envelope is missing data`);
   }
-  return body.data as T;
+  return {
+    data: body.data as T,
+    warnings: uniqueWarnings([...envelopeWarnings(body), ...payloadWarnings(body.data)]),
+  };
+}
+
+function unwrapReadData<T>(path: string, body: unknown): T {
+  return unwrapReadResult<T>(path, body).data;
 }
 
 function parseRemoteStatusResponse(path: string, body: unknown): RemoteStatusResponse {
@@ -229,6 +260,15 @@ async function getJson<T>(path: string, signal?: AbortSignal): Promise<T> {
 
 async function getJsonData<T>(path: string, signal?: AbortSignal): Promise<T> {
   return unwrapReadData<T>(path, await getJson<unknown>(path, signal));
+}
+
+async function getJsonWithWarnings<T>(path: string, signal?: AbortSignal): Promise<ReadResult<T>> {
+  const body = await getJson<unknown>(path, signal);
+  return { data: body as T, warnings: uniqueWarnings([...envelopeWarnings(body), ...payloadWarnings(body)]) };
+}
+
+async function getJsonDataWithWarnings<T>(path: string, signal?: AbortSignal): Promise<ReadResult<T>> {
+  return unwrapReadResult<T>(path, await getJson<unknown>(path, signal));
 }
 
 async function postJson(path: string, body: unknown): Promise<CommandEnvelope> {
@@ -443,13 +483,28 @@ export interface DoctorPayload {
   checks?: Record<string, unknown>;
 }
 
+async function remoteStatusWithWarnings(signal?: AbortSignal): Promise<ReadResult<RemoteStatusResponse>> {
+  const path = "/api/v1/sync/status";
+  const result = unwrapReadResult<RemoteStatusResponse>(path, await getJson<unknown>(path, signal));
+  const data = parseRemoteStatusResponse(path, result.data);
+  return { data, warnings: uniqueWarnings([...result.warnings, ...payloadWarnings(data)]) };
+}
+
 export const api = {
   health: (signal?: AbortSignal) => getJsonData<HealthPayload>("/api/v1/health", signal),
   info: (signal?: AbortSignal) => getJsonData<InfoPayload>("/api/v1/workspace/info", signal),
+  infoWithWarnings: (signal?: AbortSignal) =>
+    getJsonDataWithWarnings<InfoPayload>("/api/v1/workspace/info", signal),
   workspaceStatus: (signal?: AbortSignal) =>
     getJsonData<WorkspaceStatusPayload>("/api/v1/workspace/status", signal),
+  workspaceStatusWithWarnings: (signal?: AbortSignal) =>
+    getJsonDataWithWarnings<WorkspaceStatusPayload>("/api/v1/workspace/status", signal),
   skills: (signal?: AbortSignal) => getJsonData<SkillsPayload>("/api/v1/skills", signal),
+  skillsWithWarnings: (signal?: AbortSignal) =>
+    getJsonDataWithWarnings<SkillsPayload>("/api/v1/skills", signal),
   registryStatus: (signal?: AbortSignal) => getJson<RegistryPayload>("/api/v1/registry/status", signal),
+  registryStatusWithWarnings: (signal?: AbortSignal) =>
+    getJsonWithWarnings<RegistryPayload>("/api/v1/registry/status", signal),
   workspaceDoctor: (signal?: AbortSignal) =>
     getJsonData<DoctorPayload>("/api/v1/workspace/doctor", signal),
   opsHistoryDiagnose: (signal?: AbortSignal) =>
@@ -461,19 +516,23 @@ export const api = {
     const qs = params.size > 0 ? `?${params.toString()}` : "";
     return getJson<OpsPayload>(`/api/v1/ops${qs}`, signal);
   },
+  opsWithWarnings: (options?: { limit?: number; offset?: number }, signal?: AbortSignal) => {
+    const params = new URLSearchParams();
+    if (typeof options?.limit === "number") params.set("limit", String(options.limit));
+    if (typeof options?.offset === "number") params.set("offset", String(options.offset));
+    const qs = params.size > 0 ? `?${params.toString()}` : "";
+    return getJsonWithWarnings<OpsPayload>(`/api/v1/ops${qs}`, signal);
+  },
   bindingShow: (id: string, signal?: AbortSignal) =>
     getJson<BindingShowPayload>(`/api/v1/bindings/${encodeURIComponent(id)}`, signal),
   targetShow: (id: string, signal?: AbortSignal) =>
     getJson<TargetShowPayload>(`/api/v1/targets/${encodeURIComponent(id)}`, signal),
   remoteStatus: async (signal?: AbortSignal) =>
-    parseRemoteStatusResponse(
-      "/api/v1/sync/status",
-      unwrapReadData<RemoteStatusResponse>(
-        "/api/v1/sync/status",
-        await getJson<unknown>("/api/v1/sync/status", signal),
-      ),
-    ),
+    (await remoteStatusWithWarnings(signal)).data,
+  remoteStatusWithWarnings,
   pending: (signal?: AbortSignal) => getJsonData<PendingPayload>("/api/v1/ops/pending", signal),
+  pendingWithWarnings: (signal?: AbortSignal) =>
+    getJsonDataWithWarnings<PendingPayload>("/api/v1/ops/pending", signal),
 
   opsRetry: () => postJson("/api/v1/ops/retry", {}),
   opsPurge: () => postJson("/api/v1/ops/purge", {}),

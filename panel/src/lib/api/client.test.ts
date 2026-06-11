@@ -150,6 +150,75 @@ describe("api v1 routes", () => {
     ]);
   });
 
+  it("preserves envelope warnings for the skills read model", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      json: vi.fn().mockResolvedValue({
+        ok: true,
+        cmd: "registry.skills",
+        request_id: "req-1",
+        data: { skills: [] },
+        error: null,
+        meta: { warnings: ["skipped malformed skill metadata"] },
+      }),
+    } as unknown as Response);
+
+    await expect(api.skillsWithWarnings()).resolves.toEqual({
+      data: { skills: [] },
+      warnings: ["skipped malformed skill metadata"],
+    });
+  });
+
+  it("preserves envelope warnings for registry payload reads", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      json: vi.fn().mockResolvedValue({
+        ok: true,
+        cmd: "registry.status",
+        request_id: "req-1",
+        data: { counts: {}, projections: [], rules: [], targets: [], bindings: [] },
+        error: null,
+        meta: { warnings: ["ignored malformed operation audit row"] },
+      }),
+    } as unknown as Response);
+
+    const result = await api.registryStatusWithWarnings();
+
+    expect(result.warnings).toEqual(["ignored malformed operation audit row"]);
+    expect(result.data.data?.counts).toEqual({});
+  });
+
+  it("combines sync status envelope and payload warnings", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      json: vi.fn().mockResolvedValue({
+        ok: true,
+        cmd: "sync.status",
+        request_id: "req-1",
+        data: {
+          remote: { sync_state: "CLEAN" },
+          warnings: ["pending queue had parse warnings"],
+        },
+        error: null,
+        meta: { warnings: ["failed to read remote tracking ref"] },
+      }),
+    } as unknown as Response);
+
+    await expect(api.remoteStatusWithWarnings()).resolves.toEqual({
+      data: {
+        remote: { sync_state: "CLEAN" },
+        warnings: ["pending queue had parse warnings"],
+      },
+      warnings: ["failed to read remote tracking ref", "pending queue had parse warnings"],
+    });
+  });
+
   it("rejects non-envelope payloads for v1 bootstrap reads", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue({
       ok: true,

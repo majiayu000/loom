@@ -27,6 +27,7 @@ export interface PanelLiveData {
   lastUpdated: string | null;
   registryRoot: string | null;
   remote: RemotePayload | null;
+  warnings: string[];
   health: HealthPayload | null;
   counts: RegistryCounts;
   skills: Skill[];
@@ -56,6 +57,7 @@ const INITIAL_STATE: LiveState = {
   lastUpdated: null,
   registryRoot: null,
   remote: null,
+  warnings: [],
   health: null,
   counts: EMPTY_COUNTS,
   skills: [],
@@ -84,6 +86,15 @@ function modeForState(state: Omit<LiveState, "mode">): PanelDataMode {
   if (state.setupRequired) return "first-run";
   if (state.live) return "live";
   return hasLastKnownData(state as LiveState) ? "offline-stale" : "offline-empty";
+}
+
+function warningStrings(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((warning): warning is string => typeof warning === "string" && warning.length > 0);
+}
+
+function uniqueWarnings(warnings: string[]): string[] {
+  return Array.from(new Set(warnings));
 }
 
 export function usePanelData(): PanelLiveData {
@@ -126,13 +137,14 @@ export function usePanelData(): PanelLiveData {
     try {
       const [health, info, workspaceStatus] = await Promise.all([
         api.health(controller.signal),
-        api.info(controller.signal),
-        api.workspaceStatus(controller.signal),
+        api.infoWithWarnings(controller.signal),
+        api.workspaceStatusWithWarnings(controller.signal),
       ]);
       if (controller.signal.aborted || generation !== generationRef.current) return;
       apiReachable = true;
+      const baseWarnings = uniqueWarnings([...info.warnings, ...workspaceStatus.warnings]);
 
-      if (workspaceStatus.registry?.available === false) {
+      if (workspaceStatus.data.registry?.available === false) {
         setState(
           markSuccess({
             live: true,
@@ -141,8 +153,9 @@ export function usePanelData(): PanelLiveData {
             loading: false,
             error: null,
             lastUpdated: new Date().toISOString(),
-            registryRoot: info.root ?? null,
+            registryRoot: info.data.root ?? null,
             remote: null,
+            warnings: baseWarnings,
             health,
             counts: EMPTY_COUNTS,
             skills: [],
@@ -157,22 +170,22 @@ export function usePanelData(): PanelLiveData {
       }
 
       const [skillsPayload, registry, remote, pending, activity] = await Promise.all([
-        api.skills(controller.signal),
-        api.registryStatus(controller.signal),
-        api.remoteStatus(controller.signal),
-        api.pending(controller.signal),
-        api.ops({ limit: 30 }, controller.signal),
+        api.skillsWithWarnings(controller.signal),
+        api.registryStatusWithWarnings(controller.signal),
+        api.remoteStatusWithWarnings(controller.signal),
+        api.pendingWithWarnings(controller.signal),
+        api.opsWithWarnings({ limit: 30 }, controller.signal),
       ]);
       if (controller.signal.aborted || generation !== generationRef.current) return;
 
-      const registryData = registry.data ?? {};
+      const registryData = registry.data.data ?? {};
       const projections = registryData.projections ?? [];
       const rules = registryData.rules ?? [];
       const registryTargets = registryData.targets ?? [];
       const registryBindings = registryData.bindings ?? [];
 
       const index = buildAdapterIndex(registryTargets, projections);
-      const skillItems = skillsPayload.skills ?? [];
+      const skillItems = skillsPayload.data.skills ?? [];
       const skills = skillItems.map((item) =>
         typeof item === "string" ? adaptSkill(item, index, rules) : adaptSkillSummary(item),
       );
@@ -185,9 +198,19 @@ export function usePanelData(): PanelLiveData {
       const targets = registryTargets.map((t) => adaptTarget(t, index, observedSkillCounts));
       const bindings = registryBindings.map((b) => adaptBinding(b, rules));
 
-      const pendingOps: Op[] = (pending.ops ?? []).map(adaptPendingOp);
-      const activityOps: Op[] = (activity.data?.operations ?? []).map(adaptRegistryOperation);
+      const pendingOps: Op[] = (pending.data.ops ?? []).map(adaptPendingOp);
+      const activityOps: Op[] = (activity.data.data?.operations ?? []).map(adaptRegistryOperation);
       const ops = [...pendingOps, ...activityOps].slice(0, 30);
+      const warnings = uniqueWarnings([
+        ...baseWarnings,
+        ...skillsPayload.warnings,
+        ...registry.warnings,
+        ...remote.warnings,
+        ...pending.warnings,
+        ...activity.warnings,
+        ...warningStrings(remote.data.warnings),
+        ...warningStrings(pending.data.warnings),
+      ]);
 
       setState(
         markSuccess({
@@ -197,8 +220,9 @@ export function usePanelData(): PanelLiveData {
           loading: false,
           error: null,
           lastUpdated: new Date().toISOString(),
-          registryRoot: info.root ?? null,
-          remote: remote.remote ?? null,
+          registryRoot: info.data.root ?? null,
+          remote: remote.data.remote ?? null,
+          warnings,
           health,
           counts: registryData.counts ?? EMPTY_COUNTS,
           skills,
@@ -206,7 +230,7 @@ export function usePanelData(): PanelLiveData {
           bindings,
           ops,
           projections,
-          queuedWriteCount: pending.count ?? 0,
+          queuedWriteCount: pending.data.count ?? 0,
         }),
       );
     } catch (err) {

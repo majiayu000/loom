@@ -62,7 +62,7 @@ loom --json --root "$REGISTRY_ROOT" skill monitor-observed --once
 
 1. 读取状态：`loom --json --root <registry_root> workspace status`
 2. 写入前规划：`loom --json --root <registry_root> agent preflight --agent <agent> --workspace "$PWD" --skill <skill>`
-3. 高风险写入预演：在 `skill project` / `skill capture` / `skill orphan clean` / `sync push` 后加 `--dry-run`；`skill rollback` 使用 `--preview`
+3. 高风险写入预演：在 `skill project` / `skill capture` / `skill rollback` / `skill trash add` / `skill trash purge` / `skill orphan clean` / `sync push` 后加 `--dry-run`；`skill rollback --preview` 仅作为兼容别名保留
 4. 保存变更：`loom --json --root <registry_root> skill save <skill>`
 5. 关键节点快照：`loom --json --root <registry_root> skill snapshot <skill>`
 6. 发布版本：`loom --json --root <registry_root> skill release <skill> vX.Y.Z`
@@ -75,13 +75,15 @@ loom --json --root "$REGISTRY_ROOT" skill monitor-observed --once
 - 优先 symlink 模式；只有环境不支持时再使用 `--method copy`。
 - `meta.warnings` 不为空时，视为“成功但有风险”，需写入运行日志。
 - `agent preflight` 和 `--dry-run` 返回 `ok=true` 不代表可以直接写入；必须同时检查 `data.safe_to_run=true`。
-- `--dry-run` 只允许写 command audit，不应改变 registry ops、pending queue、Git refs/index 或 live target 内容；`skill rollback --preview` 连 command audit 也不会追加。
+- `--dry-run` 只允许写 command audit，不应改变 registry ops、pending queue、Git refs/index 或 live target 内容；`skill rollback --dry-run` 连 command audit 也不会追加。
 - `sync_state=LOCAL_ONLY` 或 `PENDING_PUSH` 时，不应宣称“远端已同步”。
 - 读命令（如 `workspace status`、`workspace doctor`、`target list`）不会修改 registry state、Git refs/index、live target 目录或 pending queue；它们会写入 durable command event。registry 写操作审计以 `meta.op_id` / `/api/v1/ops` 为准。
 
 ## 6. 常见失败码处理
 
 - `ARG_INVALID`：参数或输入路径错误，修正参数后重试。
+- `STATE_NOT_INITIALIZED`：当前 root 还没有 registry state，先运行 `loom init` 或 `loom workspace init`。
+- `TRASH_ENTRY_NOT_FOUND`：trash id 或对应 skill 的 trash entry 不存在，先用 `loom skill trash list` 刷新选择。
 - `SKILL_NOT_FOUND`：先导入或确认 skill 名称。
 - `LOCK_BUSY`：稍后重试，避免并发写同一 skill。
 - `REMOTE_UNREACHABLE`：网络或远端不可达，转入本地排队模式。

@@ -9,7 +9,7 @@ use axum::{
 use crate::cli::{
     AddArgs, CaptureArgs, Command, ImportObservedArgs, OrphanCleanArgs, ProjectArgs,
     ProjectionMethod, SkillOrphanCommand, SkillTrashCommand, TargetCommand, TargetOwnership,
-    TrashPurgeArgs, TrashRestoreArgs, WorkspaceBindingCommand, WorkspaceCommand,
+    TrashAddArgs, TrashPurgeArgs, TrashRestoreArgs, WorkspaceBindingCommand, WorkspaceCommand,
 };
 
 use super::super::auth::{ensure_mutation_authorized, error_envelope, run_panel_command};
@@ -224,7 +224,10 @@ pub(in crate::panel) async fn registry_skill_trash_add(
         StatusCode::OK,
         Command::Skill {
             command: crate::cli::SkillCommand::Trash {
-                command: SkillTrashCommand::Add(crate::cli::SkillOnlyArgs { skill: skill_name }),
+                command: SkillTrashCommand::Add(TrashAddArgs {
+                    skill: skill_name,
+                    dry_run: false,
+                }),
             },
         },
     )
@@ -273,7 +276,10 @@ pub(in crate::panel) async fn registry_skill_trash_purge(
         StatusCode::OK,
         Command::Skill {
             command: crate::cli::SkillCommand::Trash {
-                command: SkillTrashCommand::Purge(TrashPurgeArgs { trash_id }),
+                command: SkillTrashCommand::Purge(TrashPurgeArgs {
+                    trash_id,
+                    dry_run: false,
+                }),
             },
         },
     )

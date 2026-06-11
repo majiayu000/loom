@@ -51,6 +51,35 @@ fn seed_unregistered_skill_commit(root: &Path, skill: &str, body: &str, message:
 }
 
 #[test]
+fn rollback_dry_run_reports_preview_without_mutation() {
+    let root = TestDir::new("rollback-dry-run-spelling");
+    seed_unregistered_skill_commit(root.path(), "demo", "# Demo\n\nv1\n", "demo v1");
+    write_skill(root.path(), "demo", "# Demo\n\nv2\n");
+    git_stdout(root.path(), &["add", "skills/demo"]);
+    git_stdout(
+        root.path(),
+        &["commit", "-m", "demo v2", "--", "skills/demo"],
+    );
+    let head_before = git_stdout(root.path(), &["rev-parse", "HEAD"]);
+
+    let (output, env) = run_loom(
+        root.path(),
+        &["skill", "rollback", "demo", "--steps", "1", "--dry-run"],
+    );
+
+    assert!(
+        output.status.success(),
+        "dry-run failed: stderr={} stdout={}",
+        String::from_utf8_lossy(&output.stderr),
+        String::from_utf8_lossy(&output.stdout)
+    );
+    assert_eq!(env["ok"], Value::Bool(true));
+    assert_eq!(env["data"]["preview"], Value::Bool(true));
+    assert_eq!(git_stdout(root.path(), &["rev-parse", "HEAD"]), head_before);
+    assert!(env["meta"]["op_id"].is_null());
+}
+
+#[test]
 fn rollback_preview_reports_diff_and_projection_impact_without_mutation() {
     let root = TestDir::new("rollback-preview-impact");
     write_skill(

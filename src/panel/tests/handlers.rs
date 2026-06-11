@@ -259,7 +259,7 @@ async fn v1_registry_targets_returns_non_2xx_when_registry_is_missing() {
 
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert_eq!(payload["ok"], json!(false));
-    assert_eq!(status_code(&payload), Some("ARG_INVALID"));
+    assert_eq!(status_code(&payload), Some("STATE_NOT_INITIALIZED"));
 
     cleanup_root(root);
 }
@@ -297,7 +297,7 @@ async fn v1_registry_ops_returns_non_2xx_when_registry_is_missing() {
 
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert_eq!(payload["ok"], json!(false));
-    assert_eq!(status_code(&payload), Some("ARG_INVALID"));
+    assert_eq!(status_code(&payload), Some("STATE_NOT_INITIALIZED"));
 
     cleanup_root(root);
 }
@@ -310,7 +310,7 @@ async fn registry_status_returns_bad_request_when_state_is_missing() {
 
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert_eq!(payload["ok"], json!(false));
-    assert_eq!(status_code(&payload), Some("ARG_INVALID"));
+    assert_eq!(status_code(&payload), Some("STATE_NOT_INITIALIZED"));
     assert!(
         payload["error"]["message"]
             .as_str()

@@ -336,7 +336,7 @@ fn read_list_command_emits_durable_command_event_on_failure() {
     assert_eq!(events[1]["status"], Value::String("failed".to_string()));
     assert_eq!(
         events[1]["error"]["code"],
-        Value::String("ARG_INVALID".to_string())
+        Value::String("STATE_NOT_INITIALIZED".to_string())
     );
 }
 

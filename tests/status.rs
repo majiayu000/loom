@@ -106,6 +106,10 @@ fn workspace_status_succeeds_when_registry_state_is_missing() {
         Value::String("registry".to_string())
     );
     assert_eq!(env["data"]["registry"]["available"], Value::Bool(false));
+    assert_eq!(
+        env["data"]["registry"]["error"]["code"],
+        Value::String("STATE_NOT_INITIALIZED".to_string())
+    );
 }
 
 #[test]
@@ -367,6 +371,6 @@ fn workspace_binding_commands_fail_cleanly_without_registry_state() {
     assert_eq!(env["ok"], Value::Bool(false));
     assert_eq!(
         env["error"]["code"],
-        Value::String("ARG_INVALID".to_string())
+        Value::String("STATE_NOT_INITIALIZED".to_string())
     );
 }

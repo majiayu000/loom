@@ -203,6 +203,30 @@ fn skill_trash_add_accepts_untracked_skill_and_preserves_unrelated_staged_change
 }
 
 #[test]
+fn skill_trash_add_dry_run_reports_plan_without_mutation() {
+    let root = TestDir::new("skill-trash-add-dry-run");
+    write_skill(root.path(), "demo", "# Demo\n\nv1\n");
+    assert_success(&save_skill(root.path(), "demo").0, "save");
+    let head_before = git_success(root.path(), &["rev-parse", "HEAD"]);
+    let operations_before = operations_log(root.path());
+
+    let (output, env) = run_loom(root.path(), &["skill", "trash", "add", "demo", "--dry-run"]);
+
+    assert_success(&output, "trash add dry-run");
+    assert_eq!(env["ok"], Value::Bool(true));
+    assert_eq!(env["data"]["dry_run"], Value::Bool(true));
+    assert_eq!(env["data"]["would_move"], Value::Bool(true));
+    assert!(root.path().join("skills/demo/SKILL.md").exists());
+    assert!(!root.path().join("trash").exists());
+    assert_eq!(
+        git_success(root.path(), &["rev-parse", "HEAD"]),
+        head_before
+    );
+    assert_eq!(operations_log(root.path()), operations_before);
+    assert!(env["meta"]["op_id"].is_null());
+}
+
+#[test]
 fn skill_trash_restore_refuses_to_overwrite_existing_skill() {
     let root = TestDir::new("skill-trash-restore-conflict");
     write_skill(root.path(), "demo", "# Demo\n\nv1\n");
@@ -225,6 +249,30 @@ fn skill_trash_restore_refuses_to_overwrite_existing_skill() {
     );
     let live = fs::read_to_string(root.path().join("skills/demo/SKILL.md")).expect("read skill");
     assert!(live.contains("replacement"));
+}
+
+#[test]
+fn skill_trash_restore_missing_entry_reports_specific_error_code() {
+    let root = TestDir::new("skill-trash-restore-missing");
+
+    let (output, env) = run_loom(
+        root.path(),
+        &[
+            "skill",
+            "trash",
+            "restore",
+            "demo",
+            "--trash-id",
+            "missing-trash",
+        ],
+    );
+
+    assert!(!output.status.success(), "restore unexpectedly succeeded");
+    assert_eq!(env["ok"], Value::Bool(false));
+    assert_eq!(
+        env["error"]["code"],
+        Value::String("TRASH_ENTRY_NOT_FOUND".to_string())
+    );
 }
 
 #[test]
@@ -254,6 +302,49 @@ fn skill_trash_purge_removes_one_trash_entry() {
         ""
     );
     assert!(operations_log(root.path()).contains(r#""intent":"skill.trash.purge""#));
+}
+
+#[test]
+fn skill_trash_purge_dry_run_reports_plan_without_mutation() {
+    let root = TestDir::new("skill-trash-purge-dry-run");
+    write_skill(root.path(), "demo", "# Demo\n\nv1\n");
+    assert_success(&save_skill(root.path(), "demo").0, "save");
+    let (trash_output, trash_env) = run_loom(root.path(), &["skill", "trash", "add", "demo"]);
+    assert_success(&trash_output, "trash add");
+    let trash_id = trash_env["data"]["trash_id"].as_str().expect("trash id");
+    let head_before = git_success(root.path(), &["rev-parse", "HEAD"]);
+    let operations_before = operations_log(root.path());
+
+    let (purge_output, purge_env) = run_loom(
+        root.path(),
+        &["skill", "trash", "purge", trash_id, "--dry-run"],
+    );
+
+    assert_success(&purge_output, "trash purge dry-run");
+    assert_eq!(purge_env["ok"], Value::Bool(true));
+    assert_eq!(purge_env["data"]["dry_run"], Value::Bool(true));
+    assert_eq!(purge_env["data"]["would_purge"], Value::Bool(true));
+    assert!(root.path().join("trash").join(trash_id).exists());
+    assert_eq!(
+        git_success(root.path(), &["rev-parse", "HEAD"]),
+        head_before
+    );
+    assert_eq!(operations_log(root.path()), operations_before);
+    assert!(purge_env["meta"]["op_id"].is_null());
+}
+
+#[test]
+fn skill_trash_purge_missing_entry_reports_specific_error_code() {
+    let root = TestDir::new("skill-trash-purge-missing");
+
+    let (output, env) = run_loom(root.path(), &["skill", "trash", "purge", "missing-trash"]);
+
+    assert!(!output.status.success(), "purge unexpectedly succeeded");
+    assert_eq!(env["ok"], Value::Bool(false));
+    assert_eq!(
+        env["error"]["code"],
+        Value::String("TRASH_ENTRY_NOT_FOUND".to_string())
+    );
 }
 
 #[test]

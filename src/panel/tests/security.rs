@@ -2,8 +2,9 @@ use super::*;
 use crate::cli::{
     BindingAddArgs, CaptureArgs, Command, OpsCommand, ProjectArgs, ProjectionMethod, ReleaseArgs,
     RemoteCommand, RollbackArgs, SaveArgs, SkillCommand, SkillOnlyArgs, SkillTrashCommand,
-    SyncCommand, TargetAddArgs, TargetCommand, TargetOwnership, TrashPurgeArgs, TrashRestoreArgs,
-    WorkspaceBindingCommand, WorkspaceCommand, WorkspaceInitArgs, WorkspaceMatcherKind,
+    SyncCommand, TargetAddArgs, TargetCommand, TargetOwnership, TrashAddArgs, TrashPurgeArgs,
+    TrashRestoreArgs, WorkspaceBindingCommand, WorkspaceCommand, WorkspaceInitArgs,
+    WorkspaceMatcherKind,
 };
 use crate::panel::auth::{
     ensure_mutation_authorized, error_envelope, panel_host_matches, panel_request_authorized,
@@ -407,12 +408,24 @@ fn status_for_error_code_maps_lock_busy_to_conflict() {
         status_for_error_code(Some("ARG_INVALID")),
         StatusCode::BAD_REQUEST
     );
+    assert_eq!(
+        status_for_error_code(Some("STATE_NOT_INITIALIZED")),
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        status_for_error_code(Some("TRASH_ENTRY_NOT_FOUND")),
+        StatusCode::NOT_FOUND
+    );
 }
 
 #[test]
 fn registry_state_load_errors_map_to_observable_statuses() {
     assert_eq!(
         status_for_registry_state_load_error(Some("ARG_INVALID")),
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        status_for_registry_state_load_error(Some("STATE_NOT_INITIALIZED")),
         StatusCode::BAD_REQUEST
     );
     assert_eq!(
@@ -556,8 +569,9 @@ fn run_panel_command_returns_non_2xx_for_logical_failures_across_mutations() {
             StatusCode::OK,
             Command::Skill {
                 command: SkillCommand::Trash {
-                    command: SkillTrashCommand::Add(SkillOnlyArgs {
+                    command: SkillTrashCommand::Add(TrashAddArgs {
                         skill: "missing-skill".to_string(),
+                        dry_run: false,
                     }),
                 },
             },
@@ -581,6 +595,7 @@ fn run_panel_command_returns_non_2xx_for_logical_failures_across_mutations() {
                 command: SkillCommand::Trash {
                     command: SkillTrashCommand::Purge(TrashPurgeArgs {
                         trash_id: "missing-trash".to_string(),
+                        dry_run: false,
                     }),
                 },
             },

@@ -184,8 +184,10 @@ pub(crate) fn run_panel_command(
 
 pub(crate) fn status_for_error_code(code: Option<&str>) -> StatusCode {
     match code.unwrap_or("INTERNAL_ERROR") {
-        "ARG_INVALID" => StatusCode::BAD_REQUEST,
-        "SKILL_NOT_FOUND" | "BINDING_NOT_FOUND" | "TARGET_NOT_FOUND" => StatusCode::NOT_FOUND,
+        "ARG_INVALID" | "STATE_NOT_INITIALIZED" => StatusCode::BAD_REQUEST,
+        "SKILL_NOT_FOUND" | "BINDING_NOT_FOUND" | "TARGET_NOT_FOUND" | "TRASH_ENTRY_NOT_FOUND" => {
+            StatusCode::NOT_FOUND
+        }
         "TARGET_NOT_MANAGED"
         | "TARGET_AGENT_MISMATCH"
         | "PROJECTION_CONFLICT"
@@ -204,7 +206,7 @@ pub(crate) fn status_for_error_code(code: Option<&str>) -> StatusCode {
 
 pub(crate) fn status_for_registry_state_load_error(code: Option<&str>) -> StatusCode {
     match code {
-        Some("ARG_INVALID") => StatusCode::BAD_REQUEST,
+        Some("ARG_INVALID" | "STATE_NOT_INITIALIZED") => StatusCode::BAD_REQUEST,
         Some("SCHEMA_MISMATCH" | "STATE_CORRUPT") => StatusCode::INTERNAL_SERVER_ERROR,
         _ => status_for_error_code(code),
     }
@@ -250,7 +252,7 @@ pub(super) fn load_registry_snapshot(
         Ok(Some(snapshot)) => Ok(snapshot),
         Ok(None) => Err(registry_error(
             cmd,
-            "ARG_INVALID",
+            "STATE_NOT_INITIALIZED",
             format!(
                 "registry state not initialized under {}",
                 paths.registry_dir.display()

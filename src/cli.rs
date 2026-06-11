@@ -224,7 +224,7 @@ pub enum SkillCommand {
 #[derive(Debug, Clone, Subcommand, Serialize)]
 pub enum SkillTrashCommand {
     #[command(about = "Move a registry skill into Git-tracked trash")]
-    Add(SkillOnlyArgs),
+    Add(TrashAddArgs),
     #[command(about = "List Git-tracked trash entries")]
     List,
     #[command(about = "Restore a skill from trash")]
@@ -244,9 +244,23 @@ pub struct TrashRestoreArgs {
 }
 
 #[derive(Debug, Clone, Args, Serialize)]
+pub struct TrashAddArgs {
+    /// Registry skill name.
+    pub skill: String,
+
+    /// Show the trash plan without moving files, writing registry state, or committing.
+    #[arg(long)]
+    pub dry_run: bool,
+}
+
+#[derive(Debug, Clone, Args, Serialize)]
 pub struct TrashPurgeArgs {
     /// Trash entry id returned by `loom skill trash list`.
     pub trash_id: String,
+
+    /// Show the purge plan without deleting files, writing registry state, or committing.
+    #[arg(long)]
+    pub dry_run: bool,
 }
 
 #[derive(Debug, Clone, Subcommand, Serialize)]
@@ -466,7 +480,7 @@ pub struct RollbackArgs {
     pub steps: Option<u32>,
 
     /// Preview rollback impact without changing Git refs, source files, or registry state.
-    #[arg(long = "preview", visible_alias = "dry-run")]
+    #[arg(long, visible_alias = "preview")]
     pub dry_run: bool,
 }
 

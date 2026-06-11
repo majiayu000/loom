@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use uuid::Uuid;
 
-use crate::cli::{SkillOnlyArgs, TrashPurgeArgs, TrashRestoreArgs};
+use crate::cli::{TrashAddArgs, TrashPurgeArgs, TrashRestoreArgs};
 use crate::envelope::Meta;
 use crate::gitops;
 use crate::state::remove_path_if_exists;
@@ -43,7 +43,7 @@ struct TrashEntry {
 impl App {
     pub fn cmd_skill_trash_add(
         &self,
-        args: &SkillOnlyArgs,
+        args: &TrashAddArgs,
         request_id: &str,
     ) -> std::result::Result<(serde_json::Value, Meta), CommandFailure> {
         validate_skill_name(&args.skill).map_err(map_arg)?;
@@ -156,6 +156,34 @@ impl App {
                 "commit": commit
             }),
             meta,
+        ))
+    }
+
+    pub fn cmd_skill_trash_add_plan(
+        &self,
+        args: &TrashAddArgs,
+    ) -> std::result::Result<(serde_json::Value, Meta), CommandFailure> {
+        validate_skill_name(&args.skill).map_err(map_arg)?;
+        let skill_rel = format!("skills/{}", args.skill);
+        let skill_path = self.ctx.root.join(&skill_rel);
+        if !skill_path.exists() {
+            return Err(CommandFailure::new(
+                ErrorCode::SkillNotFound,
+                format!("skill '{}' not found", args.skill),
+            ));
+        }
+
+        Ok((
+            json!({
+                "skill": args.skill,
+                "dry_run": true,
+                "would_move": true,
+                "original_path": skill_rel,
+                "trash_path": format!("trash/{}", new_trash_id(&args.skill)),
+                "would_record_operation": true,
+                "would_commit": true
+            }),
+            Meta::default(),
         ))
     }
 
@@ -324,10 +352,7 @@ impl App {
 
         let entry_path = self.ctx.root.join("trash").join(&args.trash_id);
         if !entry_path.exists() {
-            return Err(CommandFailure::new(
-                ErrorCode::ArgInvalid,
-                format!("trash entry '{}' not found", args.trash_id),
-            ));
+            return Err(trash_entry_not_found(&args.trash_id));
         }
         let metadata = read_trash_metadata(&entry_path).map_err(map_io)?;
         let _lock = self.ctx.lock_skill(&metadata.skill).map_err(map_lock)?;
@@ -409,6 +434,31 @@ impl App {
         Ok((json!({"trash_id": args.trash_id, "commit": commit}), meta))
     }
 
+    pub fn cmd_skill_trash_purge_plan(
+        &self,
+        args: &TrashPurgeArgs,
+    ) -> std::result::Result<(serde_json::Value, Meta), CommandFailure> {
+        validate_trash_id(&args.trash_id)?;
+        let entry_path = self.ctx.root.join("trash").join(&args.trash_id);
+        if !entry_path.exists() {
+            return Err(trash_entry_not_found(&args.trash_id));
+        }
+        let metadata = read_trash_metadata(&entry_path).map_err(map_io)?;
+
+        Ok((
+            json!({
+                "trash_id": args.trash_id,
+                "skill": metadata.skill,
+                "dry_run": true,
+                "would_purge": true,
+                "trash_path": format!("trash/{}", args.trash_id),
+                "would_record_operation": true,
+                "would_commit": true
+            }),
+            Meta::default(),
+        ))
+    }
+
     fn resolve_trash_entry(
         &self,
         skill: &str,
@@ -418,10 +468,7 @@ impl App {
             validate_trash_id(trash_id)?;
             let entry_path = self.ctx.root.join("trash").join(trash_id);
             if !entry_path.exists() {
-                return Err(CommandFailure::new(
-                    ErrorCode::ArgInvalid,
-                    format!("trash entry '{}' not found", trash_id),
-                ));
+                return Err(trash_entry_not_found(trash_id));
             }
             let metadata = read_trash_metadata(&entry_path).map_err(map_io)?;
             if metadata.skill != skill {
@@ -450,11 +497,18 @@ impl App {
         });
         entries.into_iter().next().ok_or_else(|| {
             CommandFailure::new(
-                ErrorCode::ArgInvalid,
+                ErrorCode::TrashEntryNotFound,
                 format!("no trash entry found for skill '{}'", skill),
             )
         })
     }
+}
+
+fn trash_entry_not_found(trash_id: &str) -> CommandFailure {
+    CommandFailure::new(
+        ErrorCode::TrashEntryNotFound,
+        format!("trash entry '{}' not found", trash_id),
+    )
 }
 
 fn new_trash_id(skill: &str) -> String {

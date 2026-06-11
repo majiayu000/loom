@@ -197,6 +197,9 @@ impl App {
                 SkillCommand::History(args) => self.cmd_history(args),
                 SkillCommand::Trash {
                     command: SkillTrashCommand::Add(args),
+                } if args.dry_run => self.cmd_skill_trash_add_plan(args),
+                SkillCommand::Trash {
+                    command: SkillTrashCommand::Add(args),
                 } => self.cmd_skill_trash_add(args, &request_id),
                 SkillCommand::Trash {
                     command: SkillTrashCommand::List,
@@ -204,6 +207,9 @@ impl App {
                 SkillCommand::Trash {
                     command: SkillTrashCommand::Restore(args),
                 } => self.cmd_skill_trash_restore(args, &request_id),
+                SkillCommand::Trash {
+                    command: SkillTrashCommand::Purge(args),
+                } if args.dry_run => self.cmd_skill_trash_purge_plan(args),
                 SkillCommand::Trash {
                     command: SkillTrashCommand::Purge(args),
                 } => self.cmd_skill_trash_purge(args, &request_id),
@@ -318,7 +324,7 @@ impl App {
         {
             Some(snapshot) => Ok(snapshot),
             None => Err(CommandFailure::new(
-                ErrorCode::ArgInvalid,
+                ErrorCode::StateNotInitialized,
                 format!(
                     "registry state not initialized under {}",
                     paths.registry_dir.display()

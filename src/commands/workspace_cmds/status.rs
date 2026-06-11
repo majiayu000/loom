@@ -3,6 +3,7 @@ use serde_json::json;
 use crate::envelope::Meta;
 use crate::state::resolve_agent_skill_dirs;
 use crate::state_model::RegistryStatePaths;
+use crate::types::ErrorCode;
 
 use super::super::helpers::{
     collect_skill_inventory, map_io, map_registry_state, read_git_field,
@@ -27,7 +28,11 @@ impl App {
                     "state_model": "registry",
                     "available": false,
                     "error": {
-                        "code": if legacy_state_dir_present { "SCHEMA_MISMATCH" } else { "STATE_CORRUPT" },
+                        "code": if legacy_state_dir_present {
+                            ErrorCode::SchemaMismatch.as_str()
+                        } else {
+                            ErrorCode::StateNotInitialized.as_str()
+                        },
                         "message": if legacy_state_dir_present {
                             format!(
                                 "legacy registry state found under {}; run a write command to migrate it",

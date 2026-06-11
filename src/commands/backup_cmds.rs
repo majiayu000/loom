@@ -20,7 +20,7 @@ use crate::state_model::RegistryStatePaths;
 use crate::types::ErrorCode;
 
 use super::file_ops::copy_dir_recursive_preserving_symlinks;
-use super::helpers::{map_git, map_io, map_registry_state};
+use super::helpers::{map_git, map_io, map_lock, map_registry_state};
 use super::{App, CommandFailure};
 
 const BACKUP_SCHEMA_VERSION: u32 = 1;
@@ -113,6 +113,7 @@ impl App {
             ));
         }
 
+        let _workspace = self.ctx.lock_workspace().map_err(map_lock)?;
         let snapshot = self.require_backup_source_ready()?;
         let created_at = Utc::now();
         let stamp = created_at.format("%Y%m%dT%H%M%SZ").to_string();
@@ -257,16 +258,20 @@ fn export_tar(
     create_full_bundle(&ctx.root, &bundle_path).map_err(map_git)?;
     verify_bundle_file(&bundle_path).map_err(map_git)?;
 
-    if let Some(parent) = output
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-    {
-        fs::create_dir_all(parent).map_err(map_io)?;
+    let output_parent = parent_or_cwd(output);
+    fs::create_dir_all(output_parent).map_err(map_io)?;
+    if output.try_exists().map_err(map_io)? {
+        return Err(map_io(io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            format!("backup artifact already exists: {}", output.display()),
+        )));
     }
+    let output_temp = TempPath::new_in(output_parent, ".loom-backup-output").map_err(map_io)?;
+    let temp_output = output_temp.path().join("artifact.tar");
     let file = OpenOptions::new()
         .write(true)
         .create_new(true)
-        .open(output)
+        .open(&temp_output)
         .map_err(map_io)?;
     let mut builder = Builder::new(file);
     let mtime = manifest.created_at.timestamp().max(0) as u64;
@@ -319,6 +324,14 @@ fn export_tar(
         }
     }
     builder.finish().map_err(map_io)?;
+    if output.try_exists().map_err(map_io)? {
+        return Err(map_io(io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            format!("backup artifact already exists: {}", output.display()),
+        )));
+    }
+    fs::hard_link(&temp_output, output).map_err(map_io)?;
+    fs::remove_file(&temp_output).map_err(map_io)?;
     Ok(())
 }
 

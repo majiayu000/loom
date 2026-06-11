@@ -132,6 +132,43 @@ fn backup_export_inspect_restore_round_trips_registry_snapshot() {
 }
 
 #[test]
+fn backup_export_refuses_when_workspace_lock_is_held() {
+    let root = TestDir::new("backup-workspace-lock");
+    let (init_output, _) = run_loom(root.path(), &["workspace", "init"]);
+    assert!(
+        init_output.status.success(),
+        "workspace init failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&init_output.stdout),
+        String::from_utf8_lossy(&init_output.stderr)
+    );
+    write_fresh_workspace_lock(root.path());
+
+    let artifact = root.path().join("blocked-backup.tar");
+    let artifact_arg = artifact.to_string_lossy().into_owned();
+    let (export_output, export_env) = run_loom(
+        root.path(),
+        &["backup", "export", "--output", &artifact_arg],
+    );
+
+    assert!(!export_output.status.success());
+    assert_eq!(
+        export_env["error"]["code"],
+        Value::String("LOCK_BUSY".to_string())
+    );
+    assert!(
+        export_env["error"]["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("LOCK_BUSY:workspace")),
+        "unexpected lock error: {}",
+        export_env
+    );
+    assert!(
+        !artifact.exists(),
+        "backup export must not create an artifact while workspace is locked"
+    );
+}
+
+#[test]
 fn backup_restore_refuses_non_empty_destination() {
     let root = TestDir::new("backup-nonempty-source");
     let (init_output, _) = run_loom(root.path(), &["workspace", "init"]);
@@ -169,6 +206,19 @@ fn backup_inspect_rejects_malformed_artifact() {
     let (inspect_output, inspect_env) = run_loom(root.path(), &["backup", "inspect", &bad_arg]);
     assert!(!inspect_output.status.success());
     assert_eq!(inspect_env["ok"], Value::Bool(false));
+}
+
+fn write_fresh_workspace_lock(root: &Path) {
+    let lock_path = root.join("state/locks/workspace.lock");
+    fs::create_dir_all(lock_path.parent().expect("lock path parent")).expect("create locks dir");
+    fs::write(
+        lock_path,
+        format!(
+            "{{\"pid\":{},\"host\":\"\",\"created_at\":\"2999-01-01T00:00:00Z\"}}\n",
+            std::process::id()
+        ),
+    )
+    .expect("write workspace lock");
 }
 
 fn git_text(root: &Path, args: &[&str]) -> String {

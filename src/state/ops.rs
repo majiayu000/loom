@@ -9,7 +9,6 @@ use serde::Serialize;
 use serde_json::Value;
 
 use crate::fs_util::{append_lines, maybe_fault_inject, write_atomic};
-use crate::gitops;
 use crate::types::PendingOp;
 
 use super::journal::{
@@ -83,10 +82,14 @@ impl AppContext {
         })
     }
 
-    pub fn read_ops_audit_report(&self) -> Result<OpsAuditReport> {
+    pub(crate) fn read_ops_audit_report_with_history(
+        &self,
+        history_bodies: Vec<(String, String)>,
+        history_warnings: Vec<String>,
+    ) -> Result<OpsAuditReport> {
         let mut events = Vec::new();
         let mut seen_event_ids = BTreeSet::new();
-        let mut warnings = Vec::new();
+        let mut warnings = history_warnings;
 
         collect_audit_events_from_file(
             &self.pending_ops_file,
@@ -102,20 +105,15 @@ impl AppContext {
             &mut events,
             &mut warnings,
         )?;
-        match gitops::history_journal_bodies(self) {
-            Ok(bodies) => {
-                for (path, body) in bodies {
-                    collect_audit_events_from_body(
-                        &path,
-                        "loom_history",
-                        &body,
-                        &mut seen_event_ids,
-                        &mut events,
-                        &mut warnings,
-                    );
-                }
-            }
-            Err(err) => warnings.push(format!("failed to read loom-history branch: {}", err)),
+        for (path, body) in history_bodies {
+            collect_audit_events_from_body(
+                &path,
+                "loom_history",
+                &body,
+                &mut seen_event_ids,
+                &mut events,
+                &mut warnings,
+            );
         }
 
         events.sort_by(|left, right| {
@@ -341,15 +339,12 @@ impl AppContext {
         }
 
         let model = self.read_ops_model()?;
-        let segment_path = if !raw_journal.trim().is_empty() {
+        if !raw_journal.trim().is_empty() {
             let segment_path = self
                 .pending_ops_history_dir
                 .join(journal_segment_name(&raw_journal)?);
             write_history_segment_if_missing(&segment_path, &raw_journal)?;
-            Some(segment_path)
-        } else {
-            None
-        };
+        }
         maybe_fault_inject("ops_compact_after_history")?;
 
         let snapshot = OpsSnapshot {
@@ -363,10 +358,6 @@ impl AppContext {
         write_atomic(&self.pending_ops_snapshot_file, &(snapshot_raw + "\n"))
             .context("failed to write pending ops snapshot")?;
         maybe_fault_inject("ops_compact_after_snapshot")?;
-        if let Some(segment_path) = segment_path.as_ref() {
-            gitops::mirror_history_segment(self, segment_path, &self.pending_ops_snapshot_file)
-                .context("failed to mirror pending ops history into git")?;
-        }
         write_atomic(&self.pending_ops_file, "").context("failed to compact pending_ops.jsonl")?;
         Ok(())
     }

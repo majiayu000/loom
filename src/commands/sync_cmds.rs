@@ -121,6 +121,7 @@ impl App {
                 let _workspace = self.ctx.lock_workspace().map_err(map_lock)?;
                 self.ensure_write_layout()?;
                 let purged = self.ctx.purge_pending().map_err(map_io)?;
+                gitops::mirror_pending_ops_history(&self.ctx).map_err(map_git)?;
                 Ok((json!({"purged": purged}), Meta::default()))
             }
             OpsCommand::History { command } => self.cmd_ops_history(command),
@@ -244,6 +245,7 @@ pub(crate) fn sync_push_internal(
     }
     gitops::push_main_with_tags(ctx).map_err(map_push_rejected)?;
     ctx.remove_pending_ops(&queued_ids).map_err(map_queue)?;
+    gitops::mirror_pending_ops_history(ctx).map_err(map_git)?;
     Ok("pushed")
 }
 

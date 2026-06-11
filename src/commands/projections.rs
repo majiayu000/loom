@@ -646,6 +646,7 @@ pub(crate) fn maybe_autosync_or_queue(
     if !gitops::remote_exists(ctx) {
         ctx.append_pending(command, details, request_id.to_string())
             .map_err(map_queue)?;
+        gitops::mirror_pending_ops_history(ctx).map_err(map_git)?;
         meta.sync_state = Some(SyncState::PendingPush);
         meta.warnings
             .push("remote origin not configured, operation queued".to_string());
@@ -659,6 +660,7 @@ pub(crate) fn maybe_autosync_or_queue(
         Err(err) => {
             ctx.append_pending(command, details, request_id.to_string())
                 .map_err(map_queue)?;
+            gitops::mirror_pending_ops_history(ctx).map_err(map_git)?;
             meta.sync_state = Some(match err.code {
                 ErrorCode::RemoteDiverged => SyncState::Diverged,
                 ErrorCode::ReplayConflict => SyncState::Conflicted,

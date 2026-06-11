@@ -1,7 +1,8 @@
 use std::collections::BTreeMap;
+use std::fs;
 use std::path::Path;
 
-use anyhow::{Result, anyhow};
+use anyhow::{Context, Result, anyhow};
 use chrono::Utc;
 use serde::Serialize;
 use serde_json::json;
@@ -408,5 +409,37 @@ pub fn mirror_history_segment(
     )?;
     let expected_old = base.as_ref().map(|state| state.commit.as_str());
     update_ref(ctx, HISTORY_BRANCH_REF, &commit, expected_old)?;
+    Ok(())
+}
+
+pub fn mirror_pending_ops_history(ctx: &AppContext) -> Result<()> {
+    if !repo_is_initialized(ctx)? {
+        return Ok(());
+    }
+
+    let entries = match fs::read_dir(&ctx.pending_ops_history_dir) {
+        Ok(entries) => entries,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(err) => return Err(err).context("failed to read pending ops history dir"),
+    };
+
+    let mut segments = Vec::new();
+    for entry in entries {
+        let entry = entry.context("failed to read pending ops history entry")?;
+        if entry
+            .file_type()
+            .with_context(|| format!("failed to inspect {}", entry.path().display()))?
+            .is_file()
+        {
+            segments.push(entry.path());
+        }
+    }
+    segments.sort();
+
+    for segment_path in segments {
+        mirror_history_segment(ctx, &segment_path, &ctx.pending_ops_snapshot_file)
+            .context("failed to mirror pending ops history into git")?;
+    }
+
     Ok(())
 }

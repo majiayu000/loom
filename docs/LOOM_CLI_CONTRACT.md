@@ -1,6 +1,6 @@
 # Loom registry model CLI Contract
 
-Updated: 2026-05-18
+Updated: 2026-06-11
 Status: Implemented
 
 ## 1. Purpose
@@ -32,12 +32,17 @@ This document turns [LOOM_STATE_MODEL.md](LOOM_STATE_MODEL.md) into a concrete m
 
 Top-level command groups:
 
-1. `workspace`
-2. `target`
-3. `skill`
-4. `sync`
-5. `ops`
-6. `panel`
+1. `init`
+2. `backup`
+3. `monitor`
+4. `workspace`
+5. `target`
+6. `skill`
+7. `sync`
+8. `ops`
+9. `agent`
+10. `panel`
+11. `doctor`
 
 Removed from runtime surface:
 
@@ -174,15 +179,21 @@ Base error codes:
 5. `SKILL_NOT_FOUND`
 6. `BINDING_NOT_FOUND`
 7. `TARGET_NOT_FOUND`
-8. `LOCK_BUSY`
-9. `REMOTE_UNREACHABLE`
-10. `REMOTE_DIVERGED`
-11. `PUSH_REJECTED`
-12. `REPLAY_CONFLICT`
-13. `QUEUE_BLOCKED`
-14. `GIT_ERROR`
-15. `IO_ERROR`
-16. `INTERNAL_ERROR`
+8. `TARGET_NOT_MANAGED`
+9. `TARGET_AGENT_MISMATCH`
+10. `PROJECTION_CONFLICT`
+11. `PROJECTION_METHOD_UNSUPPORTED`
+12. `CAPTURE_CONFLICT`
+13. `AUDIT_ERROR`
+14. `LOCK_BUSY`
+15. `REMOTE_UNREACHABLE`
+16. `REMOTE_DIVERGED`
+17. `PUSH_REJECTED`
+18. `REPLAY_CONFLICT`
+19. `QUEUE_BLOCKED`
+20. `GIT_ERROR`
+21. `IO_ERROR`
+22. `INTERNAL_ERROR`
 
 Semantics:
 
@@ -195,7 +206,7 @@ Semantics:
 ### 9.1 `workspace status`
 
 ```bash
-loom --json --root <root> workspace status [--binding <binding-id>|--all-bindings]
+loom --json --root <root> workspace status
 ```
 
 Read-only.
@@ -233,7 +244,7 @@ Requirements:
 ### 9.2 `workspace doctor`
 
 ```bash
-loom --json --root <root> workspace doctor [--binding <binding-id>|--all-bindings]
+loom --json --root <root> workspace doctor
 ```
 
 Read-only unless a future explicit repair subcommand is introduced.

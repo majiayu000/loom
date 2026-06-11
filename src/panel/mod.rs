@@ -11,6 +11,7 @@ use anyhow::Result;
 use axum::{
     Router,
     extract::DefaultBodyLimit,
+    middleware,
     routing::{get, post},
 };
 use serde::Deserialize;
@@ -147,7 +148,21 @@ pub async fn run_panel(ctx: AppContext, port: u16) -> Result<()> {
         panel_origin: format!("http://{}", addr),
     };
 
-    let app = Router::new()
+    let app = panel_router(state);
+
+    eprintln!("panel listening on http://{}", addr);
+
+    let listener = tokio::net::TcpListener::bind(addr).await?;
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .await?;
+    Ok(())
+}
+
+fn panel_router(state: PanelState) -> Router {
+    Router::new()
         .route("/", get(frontend_index))
         .route("/api/v1/health", get(v1_health))
         .route("/api/v1/overview", get(v1_overview))
@@ -234,17 +249,11 @@ pub async fn run_panel(ctx: AppContext, port: u16) -> Result<()> {
         .route("/api/v1/sync/replay", post(sync_replay))
         .route("/{*path}", get(frontend_static_asset))
         .layer(DefaultBodyLimit::max(MAX_PANEL_BODY_BYTES))
-        .with_state(state);
-
-    eprintln!("panel listening on http://{}", addr);
-
-    let listener = tokio::net::TcpListener::bind(addr).await?;
-    axum::serve(
-        listener,
-        app.into_make_service_with_connect_info::<SocketAddr>(),
-    )
-    .await?;
-    Ok(())
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            auth::ensure_panel_request_authorized,
+        ))
+        .with_state(state)
 }
 
 #[cfg(test)]

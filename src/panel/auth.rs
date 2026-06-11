@@ -2,7 +2,13 @@ use std::net::SocketAddr;
 
 use axum::{
     Json,
-    http::{HeaderMap, StatusCode, Uri},
+    extract::{Request, State},
+    http::{
+        HeaderMap, StatusCode, Uri,
+        header::{HOST, ORIGIN, REFERER},
+    },
+    middleware::Next,
+    response::{IntoResponse, Response},
 };
 use serde_json::json;
 use uuid::Uuid;
@@ -35,19 +41,67 @@ pub(crate) fn ensure_mutation_authorized(
 }
 
 pub(crate) fn request_origin_matches(panel_origin: &str, headers: &HeaderMap) -> bool {
-    let origin_matches = headers
-        .get("origin")
+    let mut found_source_header = false;
+
+    if let Some(origin) = headers.get(ORIGIN) {
+        found_source_header = true;
+        if !origin
+            .to_str()
+            .ok()
+            .is_some_and(|value| panel_origin_matches(panel_origin, value))
+        {
+            return false;
+        }
+    }
+
+    if let Some(referer) = headers.get(REFERER) {
+        found_source_header = true;
+        if !referer
+            .to_str()
+            .ok()
+            .and_then(referer_origin)
+            .is_some_and(|value| panel_origin_matches(panel_origin, &value))
+        {
+            return false;
+        }
+    }
+
+    found_source_header
+}
+
+pub(crate) async fn ensure_panel_request_authorized(
+    State(state): State<PanelState>,
+    request: Request,
+    next: Next,
+) -> Response {
+    if panel_request_authorized(&state.panel_origin, request.headers()) {
+        return next.run(request).await;
+    }
+
+    StatusCode::FORBIDDEN.into_response()
+}
+
+pub(crate) fn panel_request_authorized(panel_origin: &str, headers: &HeaderMap) -> bool {
+    panel_host_matches(panel_origin, headers)
+        && request_source_origin_allowed(panel_origin, headers)
+}
+
+pub(crate) fn panel_host_matches(panel_origin: &str, headers: &HeaderMap) -> bool {
+    headers
+        .get(HOST)
         .and_then(|value| value.to_str().ok())
-        .is_some_and(|value| value == panel_origin);
-    if origin_matches {
+        .is_some_and(|value| panel_authority_matches(panel_origin, value))
+}
+
+fn request_source_origin_allowed(panel_origin: &str, headers: &HeaderMap) -> bool {
+    let has_origin = headers.contains_key(ORIGIN);
+    let has_referer = headers.contains_key(REFERER);
+
+    if !has_origin && !has_referer {
         return true;
     }
 
-    headers
-        .get("referer")
-        .and_then(|value| value.to_str().ok())
-        .and_then(referer_origin)
-        .is_some_and(|value| value == panel_origin)
+    request_origin_matches(panel_origin, headers)
 }
 
 fn referer_origin(referer: &str) -> Option<String> {
@@ -57,6 +111,35 @@ fn referer_origin(referer: &str) -> Option<String> {
         uri.scheme_str()?,
         uri.authority()?.as_str()
     ))
+}
+
+fn panel_origin_matches(panel_origin: &str, origin: &str) -> bool {
+    let Some(authority) = origin.strip_prefix("http://") else {
+        return false;
+    };
+    if authority.contains('/') || authority.contains('?') || authority.contains('#') {
+        return false;
+    }
+
+    panel_authority_matches(panel_origin, authority)
+}
+
+fn panel_authority_matches(panel_origin: &str, authority: &str) -> bool {
+    let Some(expected_port) = panel_origin_port(panel_origin) else {
+        return false;
+    };
+    let Some((host, port)) = authority.rsplit_once(':') else {
+        return false;
+    };
+
+    port == expected_port.as_str()
+        && (host == "127.0.0.1" || host.eq_ignore_ascii_case("localhost"))
+}
+
+fn panel_origin_port(panel_origin: &str) -> Option<String> {
+    let uri: Uri = panel_origin.parse().ok()?;
+    let (_, port) = uri.authority()?.as_str().rsplit_once(':')?;
+    Some(port.to_string())
 }
 
 pub(crate) fn run_panel_command(

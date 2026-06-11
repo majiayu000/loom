@@ -840,6 +840,44 @@ fn ops_compaction_mirrors_history_into_local_git_branch() {
 }
 
 #[test]
+fn ops_history_repair_rebuilds_corrupt_local_pending_snapshot() {
+    let root = TestDir::new("history-rebuild-local-snapshot");
+    let remote_root = TestDir::new("history-rebuild-local-snapshot-remote");
+    let remote = remote_root.path().join("origin.git");
+    let source = make_skill_source(root.path(), "source-history-rebuild-local-snapshot");
+
+    git_ok(["init", "--bare", remote.to_str().unwrap()]);
+    run_loom_ok(
+        root.path(),
+        &["workspace", "remote", "set", remote.to_str().unwrap()],
+    );
+    run_loom_ok(
+        root.path(),
+        &["skill", "add", source.to_str().unwrap(), "--name", "demo"],
+    );
+    for _ in 0..16 {
+        run_loom_ok(root.path(), &["skill", "snapshot", "demo"]);
+    }
+    assert!(git_branch_exists(root.path(), "loom-history"));
+
+    let snapshot_path = root.path().join("state/pending_ops_snapshot.json");
+    fs::write(&snapshot_path, "{not-json").expect("corrupt local pending snapshot");
+    let (failed, _) = run_loom_with_env(root.path(), &[], &["ops", "list"]);
+    assert!(
+        !failed.status.success(),
+        "corrupt local snapshot must fail closed before repair"
+    );
+
+    let repair = run_loom_ok(
+        root.path(),
+        &["ops", "history", "repair", "--strategy", "local"],
+    );
+    assert_eq!(repair["data"]["local_snapshot_rebuilt"], true);
+    let pending = run_loom_ok(root.path(), &["ops", "list"]);
+    assert!(pending["data"]["history_events"].as_u64().unwrap() >= 16);
+}
+
+#[test]
 fn sync_push_propagates_history_branch_to_remote() {
     let root = TestDir::new("history-push");
     let remote_root = TestDir::new("history-push-remote");

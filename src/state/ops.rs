@@ -355,11 +355,10 @@ impl AppContext {
                 snapshot.version,
                 OPS_SNAPSHOT_VERSION
             ),
-            Err(err) => Ok(LoadedSnapshot {
-                active_ops: Vec::new(),
-                history_events: 0,
-                warnings: vec![format!("ignored malformed pending ops snapshot: {}", err)],
-            }),
+            Err(err) => anyhow::bail!(
+                "pending ops snapshot is malformed; run `loom ops history repair` to rebuild it: {}",
+                err
+            ),
         }
     }
 
@@ -667,14 +666,20 @@ mod tests {
     use crate::types::PendingOp;
     use serde_json::json;
 
-    #[test]
-    fn pending_snapshot_version_mismatch_fails_closed() {
+    fn test_context(prefix: &str) -> Result<(std::path::PathBuf, AppContext)> {
         let root = std::env::temp_dir().join(format!(
-            "loom-ops-snapshot-version-{}",
+            "loom-ops-{}-{}",
+            prefix,
             uuid::Uuid::new_v4().simple()
         ));
-        let ctx = AppContext::new(Some(root.clone())).expect("ctx");
-        ctx.ensure_state_layout().expect("layout");
+        let ctx = AppContext::new(Some(root.clone()))?;
+        ctx.ensure_state_layout()?;
+        Ok((root, ctx))
+    }
+
+    #[test]
+    fn pending_snapshot_version_mismatch_fails_closed() -> Result<()> {
+        let (root, ctx) = test_context("snapshot-version")?;
         let op = PendingOp::new("sync.push", json!({"commit": "abc"}), "req-1".to_string());
         let snapshot = OpsSnapshot {
             version: OPS_SNAPSHOT_VERSION + 1,
@@ -682,18 +687,93 @@ mod tests {
             history_events: 10,
             active_ops: vec![op],
         };
-        let raw = serde_json::to_string_pretty(&snapshot).expect("snapshot json");
-        fs::write(&ctx.pending_ops_snapshot_file, raw).expect("write snapshot");
+        let raw = serde_json::to_string_pretty(&snapshot)?;
+        fs::write(&ctx.pending_ops_snapshot_file, raw)?;
 
-        let err = ctx
-            .read_pending_report()
-            .expect_err("version mismatch must fail closed");
+        let Err(err) = ctx.read_pending_report() else {
+            anyhow::bail!("version mismatch must fail closed");
+        };
         assert!(
             err.to_string()
                 .contains("pending ops snapshot version mismatch"),
             "unexpected error: {err}"
         );
 
-        let _ = fs::remove_dir_all(root);
+        fs::remove_dir_all(root)?;
+        Ok(())
+    }
+
+    #[test]
+    fn malformed_pending_snapshot_fails_closed_with_repair_guidance() -> Result<()> {
+        let (root, ctx) = test_context("snapshot-malformed")?;
+        fs::write(&ctx.pending_ops_snapshot_file, "{not-json")?;
+        let op = PendingOp::new("sync.push", json!({"commit": "abc"}), "req-1".to_string());
+        ctx.append_journal_events(&[OpJournalEvent::Queued {
+            event_id: "event-1".to_string(),
+            at: Utc::now(),
+            op,
+        }])?;
+
+        let Err(err) = ctx.read_pending_report() else {
+            anyhow::bail!("malformed snapshot must fail closed");
+        };
+        let message = err.to_string();
+        assert!(
+            message.contains("pending ops snapshot is malformed"),
+            "unexpected error: {err}"
+        );
+        assert!(
+            message.contains("loom ops history repair"),
+            "missing repair guidance: {err}"
+        );
+
+        fs::remove_dir_all(root)?;
+        Ok(())
+    }
+
+    #[test]
+    fn malformed_pending_snapshot_blocks_compaction_without_clearing_journal() -> Result<()> {
+        let (root, ctx) = test_context("snapshot-compact")?;
+        fs::write(&ctx.pending_ops_snapshot_file, "{not-json")?;
+        let events = (0..OPS_COMPACTION_THRESHOLD)
+            .map(|index| OpJournalEvent::Queued {
+                event_id: format!("event-{index}"),
+                at: Utc::now(),
+                op: PendingOp::new(
+                    "sync.push",
+                    json!({"commit": format!("abc-{index}")}),
+                    format!("req-{index}"),
+                ),
+            })
+            .collect::<Vec<_>>();
+        ctx.append_journal_events(&events)?;
+        let journal_before = fs::read_to_string(&ctx.pending_ops_file)?;
+
+        let Err(err) = ctx.maybe_compact_ops_journal() else {
+            anyhow::bail!("malformed snapshot must block compaction");
+        };
+        assert!(
+            err.to_string()
+                .contains("pending ops snapshot is malformed"),
+            "unexpected error: {err}"
+        );
+        assert_eq!(
+            fs::read_to_string(&ctx.pending_ops_file)?,
+            journal_before,
+            "failed compaction must not truncate pending_ops.jsonl"
+        );
+        assert_eq!(
+            fs::read_to_string(&ctx.pending_ops_snapshot_file)?,
+            "{not-json",
+            "failed compaction must not overwrite the corrupt snapshot"
+        );
+        assert_eq!(
+            fs::read_dir(&ctx.pending_ops_history_dir)?.count(),
+            0,
+            "failed compaction must not write history segments"
+        );
+
+        fs::remove_dir_all(root)?;
+        Ok(())
     }
 }

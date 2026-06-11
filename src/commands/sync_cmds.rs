@@ -1,8 +1,12 @@
+use std::fs;
+
+use anyhow::Context;
 use serde_json::json;
 
 use crate::cli::{HistoryRepairStrategyArg, OpsCommand, OpsHistoryCommand, SyncCommand};
 use crate::envelope::Meta;
 use crate::gitops;
+use crate::state::{AppContext, synthesize_snapshot_raw_from_segment_bodies};
 use crate::types::ErrorCode;
 
 use super::helpers::{
@@ -138,8 +142,62 @@ impl App {
                     HistoryRepairStrategyArg::Remote => gitops::HistoryRepairStrategy::Remote,
                 };
                 let report = gitops::repair_history_branch(&self.ctx, strategy).map_err(map_git)?;
-                Ok((json!(report), Meta::default()))
+                let snapshot_rebuilt =
+                    rebuild_local_pending_ops_snapshot(&self.ctx).map_err(map_io)?;
+                Ok((
+                    json!({
+                        "result": report.result,
+                        "strategy": report.strategy,
+                        "commit": report.commit,
+                        "repaired_conflicts": report.repaired_conflicts,
+                        "compacted_segments": report.compacted_segments,
+                        "rolled_archives": report.rolled_archives,
+                        "local_segments": report.local_segments,
+                        "local_archives": report.local_archives,
+                        "local_snapshot": report.local_snapshot,
+                        "local_snapshot_rebuilt": snapshot_rebuilt,
+                        "conflicts": report.conflicts,
+                    }),
+                    Meta::default(),
+                ))
             }
         }
     }
+}
+
+fn rebuild_local_pending_ops_snapshot(ctx: &AppContext) -> anyhow::Result<bool> {
+    let bodies = gitops::history_journal_bodies(ctx)?
+        .into_iter()
+        .map(|(_, body)| body)
+        .collect::<Vec<_>>();
+    let snapshot_raw = synthesize_snapshot_raw_from_segment_bodies(&bodies)?;
+    let parent = ctx
+        .pending_ops_snapshot_file
+        .parent()
+        .context("pending ops snapshot path has no parent directory")?;
+    fs::create_dir_all(parent).with_context(|| {
+        format!(
+            "failed to create pending ops snapshot parent {}",
+            parent.display()
+        )
+    })?;
+    let tmp_path = parent.join(format!(
+        ".pending_ops_snapshot.json.repair-{}",
+        uuid::Uuid::new_v4()
+    ));
+    fs::write(&tmp_path, format!("{snapshot_raw}\n")).with_context(|| {
+        format!(
+            "failed to write temporary pending ops snapshot {}",
+            tmp_path.display()
+        )
+    })?;
+    crate::fs_util::rename_atomic(&tmp_path, &ctx.pending_ops_snapshot_file).with_context(
+        || {
+            format!(
+                "failed to replace pending ops snapshot {}",
+                ctx.pending_ops_snapshot_file.display()
+            )
+        },
+    )?;
+    Ok(true)
 }

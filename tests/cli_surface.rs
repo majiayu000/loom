@@ -39,6 +39,90 @@ fn top_level_help_describes_command_groups() {
 }
 
 #[test]
+fn cli_contract_docs_track_current_surface() {
+    let contract = include_str!("../docs/LOOM_CLI_CONTRACT.md");
+    let readme = include_str!("../README.md");
+
+    for command in [
+        "`init`",
+        "`backup`",
+        "`monitor`",
+        "`workspace`",
+        "`target`",
+        "`skill`",
+        "`sync`",
+        "`ops`",
+        "`agent`",
+        "`panel`",
+        "`doctor`",
+    ] {
+        assert!(
+            contract.contains(command),
+            "CLI contract missing top-level command {command}"
+        );
+    }
+
+    for stale in [
+        "workspace status [--binding",
+        "workspace doctor [--binding",
+        "--all-bindings",
+    ] {
+        assert!(
+            !contract.contains(stale),
+            "CLI contract still documents stale workspace selector {stale:?}"
+        );
+    }
+
+    for code in [
+        "ARG_INVALID",
+        "DEPENDENCY_CONFLICT",
+        "SCHEMA_MISMATCH",
+        "STATE_CORRUPT",
+        "SKILL_NOT_FOUND",
+        "BINDING_NOT_FOUND",
+        "TARGET_NOT_FOUND",
+        "TARGET_NOT_MANAGED",
+        "TARGET_AGENT_MISMATCH",
+        "PROJECTION_CONFLICT",
+        "PROJECTION_METHOD_UNSUPPORTED",
+        "CAPTURE_CONFLICT",
+        "AUDIT_ERROR",
+        "LOCK_BUSY",
+        "REMOTE_UNREACHABLE",
+        "REMOTE_DIVERGED",
+        "PUSH_REJECTED",
+        "REPLAY_CONFLICT",
+        "QUEUE_BLOCKED",
+        "GIT_ERROR",
+        "IO_ERROR",
+        "INTERNAL_ERROR",
+    ] {
+        assert!(
+            contract.contains(code),
+            "CLI contract missing error code {code}"
+        );
+    }
+
+    for command in [
+        "loom backup export",
+        "loom backup inspect",
+        "loom backup restore",
+        "loom doctor",
+        "loom skill history",
+        "loom skill trash add",
+        "loom skill trash list",
+        "loom skill trash restore",
+        "loom skill trash purge",
+        "loom skill watch",
+    ] {
+        assert!(
+            readme.contains(command),
+            "README CLI reference missing command {command}"
+        );
+    }
+}
+
+#[test]
 fn top_level_init_uses_default_registry_root_and_scans_existing_dirs() {
     let home = TestDir::new("cli-default-home");
     let codex_skill = home.path().join(".codex/skills/demo-skill");

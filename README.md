@@ -229,7 +229,11 @@ Supported `--agent` values are `claude`, `codex`, `cursor`, `windsurf`, `cline`,
 
 ```bash
 loom init
+loom backup export [--output <path>] [--format tar] [--include-target-cache]
+loom backup inspect <artifact>
+loom backup restore <artifact> [--force-empty-root]
 loom monitor [--target <target-id>] [--once] [--interval-seconds <seconds>]
+loom doctor
 
 loom workspace status
 loom workspace doctor
@@ -237,7 +241,7 @@ loom workspace init [--scan-existing]
 loom workspace binding add --agent <agent> --profile <id> --matcher-kind <path-prefix|exact-path|name> --matcher-value <value> --target <target-id> [--policy-profile <id>]
 loom workspace binding list
 loom workspace binding show <binding-id>
-loom workspace binding remove <binding-id>
+loom workspace binding remove <binding-id> [--orphan-projections]
 loom workspace remote set <git-url>
 loom workspace remote status
 
@@ -256,8 +260,14 @@ loom skill snapshot <skill>
 loom skill release <skill> <version>
 loom skill rollback <skill> [--to <ref> | --steps <n>] [--preview]
 loom skill diff <skill> <from> <to>
+loom skill history <skill> [--limit <n>] [--from <rev>] [--to <rev>] [--include-diff-stat] [--include-ops]
+loom skill trash add <skill>
+loom skill trash list
+loom skill trash restore <skill> [--trash-id <id>]
+loom skill trash purge <trash-id>
 loom skill verify <skill>
 loom skill diagnose <skill>
+loom skill watch [<skill>] [--debounce-ms <ms>] [--max-batch <n>] [--dry-run] [--once]
 loom skill import-observed [--target <target-id>]
 loom skill monitor-observed [--target <target-id>] [--once] [--interval-seconds <seconds>]
 loom skill orphan list

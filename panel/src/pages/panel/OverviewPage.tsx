@@ -265,29 +265,29 @@ export function OverviewPage({
             <div className="proj-legend proj-legend-grouped">
               <span className="legend-group-title">Projection method</span>
               <span>
-                <span className="dot" style={{ background: "#6fb78a" }} />
+                <span className="dot" style={{ background: "var(--accent-2)" }} />
                 symlink
               </span>
               <span>
-                <span className="dot" style={{ background: "#e6b450" }} />
+                <span className="dot" style={{ background: "var(--warn)" }} />
                 copy
               </span>
               <span>
-                <span className="dot" style={{ background: "#c79ee0" }} />
+                <span className="dot" style={{ background: "var(--accent-3)" }} />
                 materialize
               </span>
               <span className="divider">│</span>
               <span className="legend-group-title">Target ownership</span>
               <span>
-                <span className="dot" style={{ background: "#d97736" }} />
+                <span className="dot" style={{ background: "var(--managed)" }} />
                 managed
               </span>
               <span>
-                <span className="dot" style={{ background: "#4ea9a0" }} />
+                <span className="dot" style={{ background: "var(--observed)" }} />
                 observed
               </span>
               <span>
-                <span className="dot" style={{ background: "#8a8271" }} />
+                <span className="dot" style={{ background: "var(--external)" }} />
                 external
               </span>
             </div>

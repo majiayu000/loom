@@ -37,6 +37,10 @@ const THEME_LABEL: Record<PanelTheme, string> = { dark: "Dark", light: "Warm", g
 // (set by the tweaks effect) so the theme palette is not masked by it.
 const THEME_ACCENT: Record<PanelTheme, string> = { dark: "#d97736", light: "#c05f23", github: "#0969da" };
 
+function defaultTweaksForTheme(theme: PanelTheme): TweakState {
+  return { ...DEFAULT_TWEAKS, accent: THEME_ACCENT[theme] };
+}
+
 function loadInitialTheme(): PanelTheme {
   const stored = localStorage.getItem(THEME_STORAGE_KEY);
   return THEME_ORDER.includes(stored as PanelTheme) ? (stored as PanelTheme) : "dark";
@@ -59,14 +63,15 @@ function loadInitialPage(): PanelPageKey {
   return VALID_PAGES.includes(stored as PanelPageKey) ? (stored as PanelPageKey) : "overview";
 }
 
-function loadInitialTweaks(): TweakState {
+function loadInitialTweaks(theme: PanelTheme = loadInitialTheme()): TweakState {
+  const defaults = defaultTweaksForTheme(theme);
   const raw = localStorage.getItem(TWEAKS_STORAGE_KEY);
-  if (!raw) return DEFAULT_TWEAKS;
+  if (!raw) return defaults;
   try {
     const parsed = JSON.parse(raw) as Partial<TweakState>;
-    return { ...DEFAULT_TWEAKS, ...parsed };
+    return { ...defaults, ...parsed };
   } catch {
-    return DEFAULT_TWEAKS;
+    return defaults;
   }
 }
 

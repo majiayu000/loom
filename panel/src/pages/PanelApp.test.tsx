@@ -21,7 +21,7 @@ function errorResponse(status: number, body: unknown): Response {
   } as unknown as Response;
 }
 
-function installFetchMock(failingPath: string, failingResponse: Response) {
+function installFetchMock(failingPath: string | null = null, failingResponse?: Response) {
   fetchMock.mockImplementation((input: RequestInfo | URL) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
     switch (url) {
@@ -83,13 +83,13 @@ function installFetchMock(failingPath: string, failingResponse: Response) {
         );
       case "/api/v1/registry/status":
         return Promise.resolve(
-          url === failingPath
+          url === failingPath && failingResponse
             ? failingResponse
             : jsonResponse({ ok: true, data: { counts: {}, projections: [], rules: [], targets: [], bindings: [] } }),
         );
       case "/api/v1/sync/status":
         return Promise.resolve(
-          url === failingPath
+          url === failingPath && failingResponse
             ? failingResponse
             : jsonResponse({
                 ok: true,
@@ -102,7 +102,7 @@ function installFetchMock(failingPath: string, failingResponse: Response) {
         );
       case "/api/v1/ops/pending":
         return Promise.resolve(
-          url === failingPath
+          url === failingPath && failingResponse
             ? failingResponse
             : jsonResponse({
                 ok: true,
@@ -128,6 +128,10 @@ function installFetchMock(failingPath: string, failingResponse: Response) {
         return Promise.reject(new Error(`unexpected fetch ${url}`));
     }
   });
+}
+
+function installSuccessfulFetchMock() {
+  installFetchMock();
 }
 
 describe("PanelApp status failure UI", () => {
@@ -254,5 +258,63 @@ describe("PanelApp status failure UI", () => {
       expect(screen.getByText(/Initialize Registry/i)).toBeTruthy();
     });
     expect(screen.getByText(/Scan existing agent skill directories/i)).toBeTruthy();
+  });
+});
+
+describe("PanelApp theme initialization", () => {
+  beforeEach(() => {
+    vi.stubGlobal("fetch", fetchMock);
+    fetchMock.mockReset();
+    localStorage.clear();
+    document.documentElement.removeAttribute("data-theme");
+    document.documentElement.style.removeProperty("--accent");
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+    document.documentElement.removeAttribute("data-theme");
+    document.documentElement.style.removeProperty("--accent");
+  });
+
+  it("uses the restored GitHub theme accent when tweaks were reset", async () => {
+    localStorage.setItem("loom.theme", "github");
+    installSuccessfulFetchMock();
+
+    render(<PanelApp />);
+
+    await waitFor(() => {
+      expect(document.documentElement.getAttribute("data-theme")).toBe("github");
+      expect(document.documentElement.style.getPropertyValue("--accent")).toBe("#0969da");
+    });
+    expect(JSON.parse(localStorage.getItem("loom.tweaks") ?? "{}")).toMatchObject({ accent: "#0969da" });
+  });
+
+  it("fills a missing stored accent from the restored Warm theme", async () => {
+    localStorage.setItem("loom.theme", "light");
+    localStorage.setItem(
+      "loom.tweaks",
+      JSON.stringify({
+        vizMode: "force",
+        density: "dense",
+        compact: true,
+        hero: "graph",
+        displayFont: "Inter",
+      }),
+    );
+    installSuccessfulFetchMock();
+
+    render(<PanelApp />);
+
+    await waitFor(() => {
+      expect(document.documentElement.getAttribute("data-theme")).toBe("light");
+      expect(document.documentElement.style.getPropertyValue("--accent")).toBe("#c05f23");
+    });
+    expect(JSON.parse(localStorage.getItem("loom.tweaks") ?? "{}")).toMatchObject({
+      accent: "#c05f23",
+      displayFont: "Inter",
+      vizMode: "force",
+    });
   });
 });

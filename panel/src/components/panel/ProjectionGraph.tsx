@@ -117,17 +117,17 @@ function useLayout(mode: VizMode, skills: Skill[], targets: Target[]): LayoutRes
 }
 
 function ownershipColor(o: Ownership): string {
-  if (o === "managed") return "#d97736";
-  if (o === "observed") return "#6fb78a";
-  if (o === "external") return "#8a8271";
-  return "#8a8271";
+  if (o === "managed") return "var(--managed)";
+  if (o === "observed") return "var(--observed)";
+  if (o === "external") return "var(--external)";
+  return "var(--external)";
 }
 
 function methodColor(m: ProjectionMethod): string {
-  if (m === "symlink") return "#6fb78a";
-  if (m === "copy") return "#e6b450";
-  if (m === "materialize") return "#c79ee0";
-  return "#8a8271";
+  if (m === "symlink") return "var(--accent-2)";
+  if (m === "copy") return "var(--warn)";
+  if (m === "materialize") return "var(--accent-3)";
+  return "var(--accent-3)";
 }
 
 interface ProjectionRecord {
@@ -279,9 +279,9 @@ export function ProjectionGraph({
     >
       <defs>
         <linearGradient id="warp-grad" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor="#d97736" stopOpacity="0.1" />
-          <stop offset="50%" stopColor="#d97736" stopOpacity="0.55" />
-          <stop offset="100%" stopColor="#d97736" stopOpacity="0.1" />
+          <stop offset="0%" stopColor="var(--thread-warp)" stopOpacity="0.1" />
+          <stop offset="50%" stopColor="var(--thread-warp)" stopOpacity="0.55" />
+          <stop offset="100%" stopColor="var(--thread-warp)" stopOpacity="0.1" />
         </linearGradient>
         <filter id="node-glow">
           <feGaussianBlur stdDeviation="2" result="b" />
@@ -366,11 +366,11 @@ function LoomMode({ layout, projections, selectedSkill, selectedTarget, isHi, on
               y1={s.y}
               x2={s.x}
               y2={s.y2}
-              stroke={selected ? "#f4ede0" : "url(#warp-grad)"}
+              stroke={selected ? "var(--ink-0)" : "url(#warp-grad)"}
               strokeWidth={selected ? 2 : 0.9}
               opacity={selected ? 1 : 0.55}
             />
-            <circle cx={s.x} cy={s.y} r={selected ? 4 : 2.4} fill={selected ? "#f4ede0" : "#d97736"} />
+            <circle cx={s.x} cy={s.y} r={selected ? 4 : 2.4} fill={selected ? "var(--ink-0)" : "var(--thread-warp)"} />
             {showLabel && (
               <text
                 x={s.x}
@@ -378,7 +378,7 @@ function LoomMode({ layout, projections, selectedSkill, selectedTarget, isHi, on
                 textAnchor="middle"
                 fontSize="10"
                 fontFamily="JetBrains Mono, monospace"
-                fill={selected ? "#f4ede0" : "#8a8271"}
+                fill={selected ? "var(--ink-0)" : "var(--ink-2)"}
               >
                 {shortLabel(s.label)}
               </text>
@@ -397,7 +397,7 @@ function LoomMode({ layout, projections, selectedSkill, selectedTarget, isHi, on
               y1={t.y}
               x2={t.x2}
               y2={t.y}
-              stroke={selectedTarget === t.id ? "#f4ede0" : color}
+              stroke={selectedTarget === t.id ? "var(--ink-0)" : color}
               strokeWidth={selectedTarget === t.id ? 2 : 1.3}
               opacity={selectedTarget === t.id ? 1 : 0.55}
             />
@@ -407,7 +407,7 @@ function LoomMode({ layout, projections, selectedSkill, selectedTarget, isHi, on
               textAnchor="end"
               fontSize="10.5"
               fontFamily="JetBrains Mono, monospace"
-              fill={selectedTarget === t.id ? "#f4ede0" : "#c9c0ae"}
+              fill={selectedTarget === t.id ? "var(--ink-0)" : "var(--ink-1)"}
             >
               {t.label}
             </text>
@@ -417,7 +417,7 @@ function LoomMode({ layout, projections, selectedSkill, selectedTarget, isHi, on
               textAnchor="start"
               fontSize="9.5"
               fontFamily="JetBrains Mono, monospace"
-              fill="#8a8271"
+              fill="var(--ink-2)"
             >
               {t.ownership}
             </text>
@@ -438,7 +438,7 @@ function LoomMode({ layout, projections, selectedSkill, selectedTarget, isHi, on
               cy={t.y}
               r={sel ? 4.5 : 3}
               fill={methodColor(p.method)}
-              stroke="#0e0d0b"
+              stroke="var(--bg-0)"
               strokeWidth="1.5"
               filter={sel ? "url(#node-glow)" : undefined}
             />
@@ -480,10 +480,10 @@ function ForceMode({ layout, projections, selectedSkill, selectedTarget, isHi, o
               width={108}
               height={20}
               rx={4}
-              fill="#1c1915"
-              stroke={selectedSkill === s.id ? "#d97736" : "#2a2620"}
+              fill="var(--bg-2)"
+              stroke={selectedSkill === s.id ? "var(--accent)" : "var(--line)"}
             />
-            <text x={s.x - 8} y={s.y + 4} textAnchor="end" fontSize="11" fontFamily="JetBrains Mono, monospace" fill="#f4ede0">
+            <text x={s.x - 8} y={s.y + 4} textAnchor="end" fontSize="11" fontFamily="JetBrains Mono, monospace" fill="var(--ink-0)">
               {s.label}
             </text>
           </g>
@@ -500,11 +500,11 @@ function ForceMode({ layout, projections, selectedSkill, selectedTarget, isHi, o
               width={110}
               height={20}
               rx={4}
-              fill="#1c1915"
-              stroke={selectedTarget === t.id ? color : "#2a2620"}
+              fill="var(--bg-2)"
+              stroke={selectedTarget === t.id ? color : "var(--line)"}
             />
             <circle cx={t.x + 12} cy={t.y} r={3} fill={color} />
-            <text x={t.x + 22} y={t.y + 4} fontSize="11" fontFamily="JetBrains Mono, monospace" fill="#f4ede0">
+            <text x={t.x + 22} y={t.y + 4} fontSize="11" fontFamily="JetBrains Mono, monospace" fill="var(--ink-0)">
               {t.label}
             </text>
           </g>
@@ -543,11 +543,11 @@ function TreeMode({ layout, projections, selectedSkill, selectedTarget, isHi, on
               cx={s.x}
               cy={s.y}
               r={selectedSkill === s.id ? 6 : 4}
-              fill="#d97736"
-              stroke="#0e0d0b"
+              fill="var(--accent)"
+              stroke="var(--bg-0)"
               strokeWidth="1.5"
             />
-            <text x={s.x} y={s.y - 12} textAnchor="middle" fontSize="10" fontFamily="JetBrains Mono, monospace" fill="#c9c0ae">
+            <text x={s.x} y={s.y - 12} textAnchor="middle" fontSize="10" fontFamily="JetBrains Mono, monospace" fill="var(--ink-1)">
               {s.label}
             </text>
           </g>
@@ -564,8 +564,8 @@ function TreeMode({ layout, projections, selectedSkill, selectedTarget, isHi, on
               width={110}
               height={18}
               rx={3}
-              fill="#1c1915"
-              stroke={selectedTarget === t.id ? color : "#2a2620"}
+              fill="var(--bg-2)"
+              stroke={selectedTarget === t.id ? color : "var(--line)"}
             />
             <text
               x={t.x}
@@ -573,7 +573,7 @@ function TreeMode({ layout, projections, selectedSkill, selectedTarget, isHi, on
               textAnchor="middle"
               fontSize="10.5"
               fontFamily="JetBrains Mono, monospace"
-              fill="#f4ede0"
+              fill="var(--ink-0)"
             >
               {t.label}
             </text>

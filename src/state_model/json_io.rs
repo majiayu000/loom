@@ -105,8 +105,8 @@ where
 {
     let raw = serde_json::to_string(value)
         .with_context(|| format!("failed to encode registry jsonl line {}", path.display()))?;
-    Ok(append_jsonl_raw(path, &raw)
-        .with_context(|| format!("failed to append registry jsonl file {}", path.display()))?)
+    append_jsonl_raw(path, &raw)
+        .with_context(|| format!("failed to append registry jsonl file {}", path.display()))
 }
 
 pub(super) fn read_json_file<T>(path: &Path) -> Result<T>

@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useState } from "react";
-import type { PanelPageKey, ProjectionLink, ProjectionMethod, TweakState, VizMode } from "../lib/types";
+import { useEffect, useRef, useState } from "react";
+import type { PanelPageKey, TweakState, VizMode } from "../lib/types";
 import { usePanelData } from "../lib/api/usePanelData";
-import { Sidebar } from "../components/panel/Sidebar";
-import { Topbar } from "../components/panel/Topbar";
+import { api } from "../lib/api/client";
+import { ControlRoomShell } from "../components/panel/ControlRoomShell";
 import { TweakPanel } from "../components/panel/TweakPanel";
+import type { ToastViewModel } from "../components/panel/Toasts";
 import { OverviewPage } from "./panel/OverviewPage";
 import { SkillsPage } from "./panel/SkillsPage";
 import { TargetsPage } from "./panel/TargetsPage";
@@ -15,7 +16,7 @@ import { SyncPage } from "./panel/SyncPage";
 import { DoctorPage } from "./panel/DoctorPage";
 import { FirstRunPage } from "./panel/FirstRunPage";
 import { ProjectionsPage } from "./panel/ProjectionsPage";
-import { summarizeOps } from "../lib/count_labels";
+import { selectPanelViewModel } from "../lib/panel_view_model";
 
 const DEFAULT_TWEAKS: TweakState = {
   vizMode: "loom",
@@ -82,6 +83,8 @@ export function PanelApp() {
   const [tweakVisible, setTweakVisible] = useState(false);
   const [selectedSkill, setSelectedSkill] = useState<string | null>(null);
   const [selectedTarget, setSelectedTarget] = useState<string | null>(null);
+  const [toasts, setToasts] = useState<ToastViewModel[]>([]);
+  const toastIdRef = useRef(0);
 
   const live = usePanelData();
 
@@ -135,18 +138,6 @@ export function PanelApp() {
   const bindings = live.bindings;
   const ops = live.ops;
 
-  // Projection links for the graph:
-  //   - use RegistryProjection.method verbatim (authoritative).
-  const projectionLinks: ProjectionLink[] = useMemo(() => {
-    return live.projections.map((p) => {
-      const method: ProjectionMethod =
-        p.method === "symlink" || p.method === "copy" || p.method === "materialize"
-          ? p.method
-          : "unknown";
-      return { skillId: `s-${p.skill_id}`, targetId: p.target_id, method };
-    });
-  }, [live.projections]);
-
   const densityClass = tweaks.density === "dense" ? " dense" : tweaks.density === "cozy" ? " cozy" : "";
 
   const [mutationVersion, setMutationVersion] = useState(0);
@@ -157,9 +148,43 @@ export function PanelApp() {
   const historyReadOnly = readOnly || live.queuedWriteCount > 0;
   const historyReadOnlyReason =
     live.queuedWriteCount > 0 ? "pending operations must be replayed or purged first" : undefined;
+  const viewModel = selectPanelViewModel(live, { page, readOnly, historyReadOnly });
   const onMutation = () => {
     setMutationVersion((cur) => cur + 1);
     live.refetch();
+  };
+  const pushToast = (toast: Omit<ToastViewModel, "id">) => {
+    const id = `toast-${++toastIdRef.current}`;
+    setToasts((current) => [...current.slice(-2), { ...toast, id }]);
+  };
+  const dismissToast = (id: string) => {
+    setToasts((current) => current.filter((toast) => toast.id !== id));
+  };
+  const replayQueued = async () => {
+    const action = viewModel.actions.replayQueued;
+    if (!action.enabled) {
+      pushToast({
+        tone: "warn",
+        title: action.label,
+        detail: action.disabledReason ?? "action unavailable",
+      });
+      return;
+    }
+    try {
+      await api.syncReplay();
+      pushToast({
+        tone: "success",
+        title: "Queued writes replayed",
+        detail: "Live registry data is refreshing.",
+      });
+      onMutation();
+    } catch (error) {
+      pushToast({
+        tone: "error",
+        title: "Replay failed",
+        detail: error instanceof Error ? error.message : String(error),
+      });
+    }
   };
   const onRemoveTarget = (id: string) => {
     setSelectedTarget((cur) => (cur === id ? null : cur));
@@ -168,7 +193,14 @@ export function PanelApp() {
   const onNewBinding = () => setPage("bindings");
   const onOpenSync = () => setPage("sync");
   const onViewActivity = () => setPage("ops");
-  const opCounts = useMemo(() => summarizeOps(ops), [ops]);
+  const selectSkillFromShell = (id: string) => {
+    setSelectedSkill(id);
+    setSelectedTarget(null);
+  };
+  const selectTargetFromShell = (id: string) => {
+    setSelectedTarget(id);
+    setSelectedSkill(null);
+  };
 
   let view: React.ReactNode;
   if (live.mode === "first-run") {
@@ -181,7 +213,7 @@ export function PanelApp() {
             skills={skills}
             targets={targets}
             ops={ops}
-            projections={projectionLinks}
+            projections={viewModel.graphLinks}
             vizMode={tweaks.vizMode}
             setVizMode={setVizMode}
             selectedSkill={selectedSkill}
@@ -287,46 +319,35 @@ export function PanelApp() {
     }
   }
 
+  const banners = (
+    <>
+      <PanelWarningsBanner warnings={live.warnings} />
+      {live.mode !== "live" && <LiveDataBanner error={live.error} loading={live.loading} mode={live.mode} />}
+    </>
+  );
+
   return (
-    <div className={`app ${tweaks.compact ? "compact" : ""}${densityClass}`}>
-      <Topbar
-        page={page}
-        live={live.live}
-        loading={live.loading}
-        error={live.error}
-        mode={live.mode}
-        registryRoot={live.registryRoot}
-        remoteState={live.remote?.sync_state}
-        queuedWriteCount={live.queuedWriteCount}
-        onReplay={onMutation}
-        onToggleTweaks={() => setTweakVisible((value) => !value)}
-        readOnly={readOnly}
-        tweaksOpen={tweakVisible}
-        themeLabel={THEME_LABEL[theme]}
-        onCycleTheme={cycleTheme}
-      />
-      <Sidebar
-        page={page}
-        setPage={setPage}
-        compact={tweaks.compact}
-        counts={{
-          skills: skills.length,
-          targets: targets.length,
-          bindings: bindings.length,
-          projections: live.projections.length,
-          opsAttention: opCounts.actionNeeded,
-        }}
-        registryRoot={live.registryRoot}
-      />
-      <div className="main">
-        <PanelWarningsBanner warnings={live.warnings} />
-        {live.mode !== "live" && <LiveDataBanner error={live.error} loading={live.loading} mode={live.mode} />}
-        {view}
-      </div>
+    <ControlRoomShell
+      className={`${tweaks.compact ? "compact" : ""}${densityClass}`}
+      page={page}
+      viewModel={viewModel}
+      banners={banners}
+      themeLabel={THEME_LABEL[theme]}
+      tweaksOpen={tweakVisible}
+      toasts={toasts}
+      onDismissToast={dismissToast}
+      onNavigate={setPage}
+      onSelectSkill={selectSkillFromShell}
+      onSelectTarget={selectTargetFromShell}
+      onReplayQueued={replayQueued}
+      onCycleTheme={cycleTheme}
+      onToggleTweaks={() => setTweakVisible((value) => !value)}
+    >
+      {view}
       {tweakVisible && (
         <TweakPanel state={tweaks} onChange={patchTweaks} onDismiss={() => setTweakVisible(false)} />
       )}
-    </div>
+    </ControlRoomShell>
   );
 }
 

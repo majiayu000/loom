@@ -80,7 +80,7 @@ impl App {
         }
 
         if args.once {
-            return self.watch_once(args, request_id);
+            return self.watch_once(args, request_id, false);
         }
 
         let mut cycles = 0_u64;
@@ -90,7 +90,35 @@ impl App {
         let mut meta = Meta::default();
 
         loop {
-            let (cycle, cycle_meta) = self.watch_once(args, request_id)?;
+            let (cycle, cycle_meta) = match self.watch_once(args, request_id, true) {
+                Ok(result) => result,
+                Err(err)
+                    if matches!(err.code, ErrorCode::LockBusy | ErrorCode::CaptureConflict) =>
+                {
+                    let code = err.code.as_str();
+                    let reason = match err.code {
+                        ErrorCode::LockBusy => "lock-busy",
+                        ErrorCode::CaptureConflict => "capture-conflict",
+                        _ => unreachable!(),
+                    };
+                    let mut cycle_meta = Meta::default();
+                    cycle_meta.warnings.push(format!(
+                        "watch cycle skipped after transient {}: {}",
+                        code, err.message
+                    ));
+                    (
+                        json!({
+                            "changed_skills": [],
+                            "saved_skills": [],
+                            "skipped": [{"reason": reason, "error": {"code": code, "message": err.message, "details": err.details}}],
+                            "dry_run": false,
+                            "noop": true,
+                        }),
+                        cycle_meta,
+                    )
+                }
+                Err(err) => return Err(err),
+            };
             cycles += 1;
             saved_total += cycle["saved_skills"].as_array().map(Vec::len).unwrap_or(0);
             skipped_total += cycle["skipped"].as_array().map(Vec::len).unwrap_or(0);
@@ -119,6 +147,7 @@ impl App {
         &self,
         args: &WatchArgs,
         request_id: &str,
+        continue_on_skill_error: bool,
     ) -> std::result::Result<(serde_json::Value, Meta), CommandFailure> {
         validate_watch_scope(self, args)?;
         if args.dry_run {
@@ -155,13 +184,14 @@ impl App {
             ));
         }
 
-        self.autosave_watch_plan(plan, request_id)
+        self.autosave_watch_plan(plan, request_id, continue_on_skill_error)
     }
 
     fn autosave_watch_plan(
         &self,
         plan: WatchPlan,
         request_id: &str,
+        continue_on_skill_error: bool,
     ) -> std::result::Result<(serde_json::Value, Meta), CommandFailure> {
         let mut saved = Vec::new();
         let mut skipped = Vec::new();
@@ -185,8 +215,26 @@ impl App {
                 }
             };
 
-            let saved_skill = self.autosave_skill(&skill, request_id)?;
+            let autosave_result = self.autosave_skill(&skill, request_id);
             drop(lock);
+            let saved_skill = match autosave_result {
+                Ok(saved_skill) => saved_skill,
+                Err(err) if continue_on_skill_error => {
+                    let code = err.code.as_str();
+                    meta.warnings.push(format!(
+                        "skill '{}' autosave failed; skipped this cycle: {}: {}",
+                        skill.skill, code, err.message
+                    ));
+                    skipped.push(json!({
+                        "skill": skill.skill,
+                        "paths": skill.paths,
+                        "reason": "autosave-error",
+                        "error": {"code": code, "message": err.message, "details": err.details},
+                    }));
+                    continue;
+                }
+                Err(err) => return Err(err),
+            };
             if !saved_skill["noop"].as_bool().unwrap_or(false) {
                 if let Some(op_id) = saved_skill["op_id"].as_str() {
                     meta.op_id = Some(op_id.to_string());
@@ -243,27 +291,27 @@ impl App {
             Ok(op_id) => op_id,
             Err(err) => {
                 unstage_watch_paths(&self.ctx, &skill.paths);
-                rollback_autosave_registry_audit_after_failure(
+                let rollback_errors = rollback_autosave_registry_audit_after_failure(
                     &self.ctx,
                     &paths,
                     &registry_backup,
                     had_registry_layout,
                     had_legacy_layout,
                 );
-                return Err(map_registry_state(err));
+                return Err(map_registry_state(err).with_rollback_errors(rollback_errors));
             }
         };
 
         if let Err(err) = stage_autosave_registry_state(&self.ctx, &paths) {
             unstage_watch_paths(&self.ctx, &skill.paths);
-            rollback_autosave_registry_audit_after_failure(
+            let rollback_errors = rollback_autosave_registry_audit_after_failure(
                 &self.ctx,
                 &paths,
                 &registry_backup,
                 had_registry_layout,
                 had_legacy_layout,
             );
-            return Err(err);
+            return Err(err.with_rollback_errors(rollback_errors));
         }
 
         let message = format!("autosave({}): captured local edits", skill.skill);
@@ -271,14 +319,14 @@ impl App {
             Ok(commit) => commit,
             Err(err) => {
                 unstage_watch_paths(&self.ctx, &skill.paths);
-                rollback_autosave_registry_audit_after_failure(
+                let rollback_errors = rollback_autosave_registry_audit_after_failure(
                     &self.ctx,
                     &paths,
                     &registry_backup,
                     had_registry_layout,
                     had_legacy_layout,
                 );
-                return Err(map_git(err));
+                return Err(map_git(err).with_rollback_errors(rollback_errors));
             }
         };
 
@@ -707,12 +755,13 @@ fn rollback_autosave_registry_audit_after_failure(
     registry_backup: &RegistryAuditStateBackup,
     had_registry_layout: bool,
     had_legacy_layout: bool,
-) {
-    let _ = restore_registry_audit_state(paths, registry_backup);
+) -> Vec<Value> {
+    let rollback_errors = restore_registry_audit_state_best_effort(paths, registry_backup);
     if !had_registry_layout && !had_legacy_layout {
         let _ = remove_path_if_exists(&paths.registry_dir);
     }
     unstage_registry_state(ctx);
+    rollback_errors
 }
 
 fn unstage_registry_state(ctx: &AppContext) {
@@ -728,4 +777,18 @@ fn merge_watch_meta(target: &mut Meta, source: Meta) {
     if source.op_id.is_some() {
         target.op_id = source.op_id;
     }
+}
+
+fn restore_registry_audit_state_best_effort(
+    paths: &RegistryStatePaths,
+    registry_backup: &RegistryAuditStateBackup,
+) -> Vec<Value> {
+    let step = "restore_registry_audit_state";
+    if std::env::var("LOOM_ROLLBACK_FAULT_INJECT").ok().as_deref() == Some(step) {
+        return vec![json!({"step": step, "message": format!("fault injected at {}", step)})];
+    }
+    restore_registry_audit_state(paths, registry_backup)
+        .err()
+        .map(|err| vec![json!({"step": step, "message": err.to_string()})])
+        .unwrap_or_default()
 }

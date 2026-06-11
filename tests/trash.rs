@@ -7,7 +7,7 @@ use serde_json::Value;
 mod common;
 
 use common::actions::save_skill;
-use common::{TestDir, operations_log, run_loom, write_file, write_skill};
+use common::{TestDir, operations_log, run_loom, run_loom_with_env, write_file, write_skill};
 
 fn assert_success(output: &std::process::Output, context: &str) {
     assert!(
@@ -35,6 +35,15 @@ fn git_success(root: &Path, args: &[&str]) -> String {
         String::from_utf8_lossy(&output.stdout)
     );
     String::from_utf8_lossy(&output.stdout).trim().to_string()
+}
+
+fn rollback_error_steps(env: &Value) -> Vec<String> {
+    env["error"]["details"]["rollback_errors"]
+        .as_array()
+        .expect("rollback errors array")
+        .iter()
+        .filter_map(|error| error["step"].as_str().map(ToString::to_string))
+        .collect()
 }
 
 #[test]
@@ -245,4 +254,30 @@ fn skill_trash_purge_removes_one_trash_entry() {
         ""
     );
     assert!(operations_log(root.path()).contains(r#""intent":"skill.trash.purge""#));
+}
+
+#[test]
+fn skill_trash_add_reports_audit_restore_rollback_errors() {
+    let root = TestDir::new("skill-trash-rollback-errors");
+    write_skill(root.path(), "demo", "# Demo\n\nv1\n");
+    assert_success(&save_skill(root.path(), "demo").0, "save");
+
+    let (output, env) = run_loom_with_env(
+        root.path(),
+        &[
+            ("LOOM_FAULT_INJECT", "record_v3_operation_after_checkpoint"),
+            ("LOOM_ROLLBACK_FAULT_INJECT", "restore_registry_audit_state"),
+        ],
+        &["skill", "trash", "add", "demo"],
+    );
+
+    assert!(
+        !output.status.success(),
+        "faulted trash add unexpectedly succeeded"
+    );
+    assert!(
+        rollback_error_steps(&env).contains(&"restore_registry_audit_state".to_string()),
+        "missing rollback error details: {env}"
+    );
+    assert!(root.path().join("skills/demo/SKILL.md").exists());
 }

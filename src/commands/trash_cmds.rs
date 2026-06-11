@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result, anyhow};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use serde_json::json;
+use serde_json::{Value, json};
 use uuid::Uuid;
 
 use crate::cli::{SkillOnlyArgs, TrashPurgeArgs, TrashRestoreArgs};
@@ -15,9 +15,10 @@ use crate::state_model::RegistryStatePaths;
 use crate::types::ErrorCode;
 
 use super::helpers::{
-    backup_path_if_exists, map_arg, map_git, map_io, map_lock, map_registry_state,
-    maybe_autosync_or_queue, record_registry_operation, restore_path_from_backup,
-    restore_registry_audit_state, slugify, snapshot_registry_audit_state, validate_skill_name,
+    RegistryAuditStateBackup, backup_path_if_exists, map_arg, map_git, map_io, map_lock,
+    map_registry_state, maybe_autosync_or_queue, record_registry_operation,
+    restore_path_from_backup, restore_registry_audit_state, slugify, snapshot_registry_audit_state,
+    validate_skill_name,
 };
 use super::{App, CommandFailure};
 
@@ -103,9 +104,10 @@ impl App {
             Ok(op_id) => op_id,
             Err(err) => {
                 rollback_trash_add(&skill_path, &trash_skill_path, &entry_path);
-                let _ = restore_registry_audit_state(&paths, &registry_backup);
+                let rollback_errors =
+                    restore_registry_audit_state_best_effort(&paths, &registry_backup);
                 unstage_trash_paths(&self.ctx, &[&skill_rel, &format!("trash/{}", trash_id)]);
-                return Err(map_registry_state(err));
+                return Err(map_registry_state(err).with_rollback_errors(rollback_errors));
             }
         };
 
@@ -113,9 +115,10 @@ impl App {
             stage_trash_commit_paths(&self.ctx, &[&skill_rel, &format!("trash/{}", trash_id)])
         {
             rollback_trash_add(&skill_path, &trash_skill_path, &entry_path);
-            let _ = super::projections::restore_registry_audit_state(&paths, &registry_backup);
+            let rollback_errors =
+                restore_registry_audit_state_best_effort(&paths, &registry_backup);
             unstage_trash_paths(&self.ctx, &[&skill_rel, &format!("trash/{}", trash_id)]);
-            return Err(err);
+            return Err(err.with_rollback_errors(rollback_errors));
         }
 
         let commit = match commit_trash_paths(
@@ -126,9 +129,10 @@ impl App {
             Ok(commit) => commit,
             Err(err) => {
                 rollback_trash_add(&skill_path, &trash_skill_path, &entry_path);
-                let _ = restore_registry_audit_state(&paths, &registry_backup);
+                let rollback_errors =
+                    restore_registry_audit_state_best_effort(&paths, &registry_backup);
                 unstage_trash_paths(&self.ctx, &[&skill_rel, &format!("trash/{}", trash_id)]);
-                return Err(map_git(err));
+                return Err(map_git(err).with_rollback_errors(rollback_errors));
             }
         };
 
@@ -254,18 +258,20 @@ impl App {
             Err(err) => {
                 rollback_restore_from_backup(&skill_path, &entry.entry_path, trash_backup.as_ref());
                 remove_temp_backup_best_effort(trash_backup.as_ref());
-                let _ = restore_registry_audit_state(&paths, &registry_backup);
+                let rollback_errors =
+                    restore_registry_audit_state_best_effort(&paths, &registry_backup);
                 unstage_trash_paths(&self.ctx, &[&skill_rel, &trash_rel]);
-                return Err(map_registry_state(err));
+                return Err(map_registry_state(err).with_rollback_errors(rollback_errors));
             }
         };
 
         if let Err(err) = stage_trash_commit_paths(&self.ctx, &[&skill_rel, &trash_rel]) {
             rollback_restore_from_backup(&skill_path, &entry.entry_path, trash_backup.as_ref());
             remove_temp_backup_best_effort(trash_backup.as_ref());
-            let _ = restore_registry_audit_state(&paths, &registry_backup);
+            let rollback_errors =
+                restore_registry_audit_state_best_effort(&paths, &registry_backup);
             unstage_trash_paths(&self.ctx, &[&skill_rel, &trash_rel]);
-            return Err(err);
+            return Err(err.with_rollback_errors(rollback_errors));
         }
 
         let commit = match commit_trash_paths(
@@ -277,9 +283,10 @@ impl App {
             Err(err) => {
                 rollback_restore_from_backup(&skill_path, &entry.entry_path, trash_backup.as_ref());
                 remove_temp_backup_best_effort(trash_backup.as_ref());
-                let _ = restore_registry_audit_state(&paths, &registry_backup);
+                let rollback_errors =
+                    restore_registry_audit_state_best_effort(&paths, &registry_backup);
                 unstage_trash_paths(&self.ctx, &[&skill_rel, &trash_rel]);
-                return Err(map_git(err));
+                return Err(map_git(err).with_rollback_errors(rollback_errors));
             }
         };
         remove_temp_backup_best_effort(trash_backup.as_ref());
@@ -354,18 +361,20 @@ impl App {
             Err(err) => {
                 restore_temp_backup_best_effort(&entry_path, trash_backup.as_ref());
                 remove_temp_backup_best_effort(trash_backup.as_ref());
-                let _ = restore_registry_audit_state(&paths, &registry_backup);
+                let rollback_errors =
+                    restore_registry_audit_state_best_effort(&paths, &registry_backup);
                 unstage_trash_paths(&self.ctx, &[&trash_rel]);
-                return Err(map_registry_state(err));
+                return Err(map_registry_state(err).with_rollback_errors(rollback_errors));
             }
         };
 
         if let Err(err) = stage_trash_commit_paths(&self.ctx, &[&trash_rel]) {
             restore_temp_backup_best_effort(&entry_path, trash_backup.as_ref());
             remove_temp_backup_best_effort(trash_backup.as_ref());
-            let _ = restore_registry_audit_state(&paths, &registry_backup);
+            let rollback_errors =
+                restore_registry_audit_state_best_effort(&paths, &registry_backup);
             unstage_trash_paths(&self.ctx, &[&trash_rel]);
-            return Err(err);
+            return Err(err.with_rollback_errors(rollback_errors));
         }
 
         let commit = match commit_trash_paths(
@@ -377,9 +386,10 @@ impl App {
             Err(err) => {
                 restore_temp_backup_best_effort(&entry_path, trash_backup.as_ref());
                 remove_temp_backup_best_effort(trash_backup.as_ref());
-                let _ = restore_registry_audit_state(&paths, &registry_backup);
+                let rollback_errors =
+                    restore_registry_audit_state_best_effort(&paths, &registry_backup);
                 unstage_trash_paths(&self.ctx, &[&trash_rel]);
-                return Err(map_git(err));
+                return Err(map_git(err).with_rollback_errors(rollback_errors));
             }
         };
         remove_temp_backup_best_effort(trash_backup.as_ref());
@@ -667,4 +677,18 @@ fn remove_temp_backup_best_effort(backup: Option<&serde_json::Value>) {
             let _ = fs::remove_dir(grandparent);
         }
     }
+}
+
+fn restore_registry_audit_state_best_effort(
+    paths: &RegistryStatePaths,
+    registry_backup: &RegistryAuditStateBackup,
+) -> Vec<Value> {
+    let step = "restore_registry_audit_state";
+    if std::env::var("LOOM_ROLLBACK_FAULT_INJECT").ok().as_deref() == Some(step) {
+        return vec![json!({"step": step, "message": format!("fault injected at {}", step)})];
+    }
+    restore_registry_audit_state(paths, registry_backup)
+        .err()
+        .map(|err| vec![json!({"step": step, "message": err.to_string()})])
+        .unwrap_or_default()
 }

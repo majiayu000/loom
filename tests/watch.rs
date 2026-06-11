@@ -3,9 +3,11 @@ mod common;
 use std::fs;
 use std::path::Path;
 use std::process::Command;
+use std::thread;
+use std::time::Duration;
 
 use common::actions::save_skill;
-use common::{TestDir, run_loom, write_file, write_skill};
+use common::{TestDir, run_loom, run_loom_with_env, write_file, write_skill};
 use serde_json::Value;
 
 fn run_watch_git(root: &Path, args: &[&str]) -> String {
@@ -29,6 +31,21 @@ fn run_watch_git(root: &Path, args: &[&str]) -> String {
 
 fn read_watch_operations(root: &Path) -> String {
     fs::read_to_string(root.join("state/registry/ops/operations.jsonl")).unwrap_or_default()
+}
+
+fn rollback_error_steps(env: &Value) -> Vec<String> {
+    env["error"]["details"]["rollback_errors"]
+        .as_array()
+        .expect("rollback errors array")
+        .iter()
+        .filter_map(|error| error["step"].as_str().map(ToString::to_string))
+        .collect()
+}
+
+fn write_live_workspace_lock(root: &Path) {
+    let locks = root.join("state/locks");
+    fs::create_dir_all(&locks).expect("create locks dir");
+    fs::write(locks.join("workspace.lock"), "busy\n").expect("write workspace lock");
 }
 
 #[test]
@@ -312,4 +329,175 @@ fn skill_watch_refuses_batches_over_max_batch() {
         head_before
     );
     assert!(!read_watch_operations(root.path()).contains(r#""intent":"skill.autosave""#));
+}
+
+#[test]
+fn skill_watch_long_running_skips_lock_busy_cycles() {
+    let root = TestDir::new("skill-watch-lock-busy-continue");
+    write_skill(root.path(), "demo", "# demo\n\nv1\n");
+    assert!(save_skill(root.path(), "demo").0.status.success());
+    write_skill(root.path(), "demo", "# demo\n\nv2\n");
+    write_live_workspace_lock(root.path());
+
+    let (output, env) = run_loom(
+        root.path(),
+        &[
+            "skill",
+            "watch",
+            "demo",
+            "--debounce-ms",
+            "1",
+            "--max-cycles",
+            "2",
+        ],
+    );
+
+    assert!(
+        output.status.success(),
+        "watch exited on LOCK_BUSY: stderr={} stdout={}",
+        String::from_utf8_lossy(&output.stderr),
+        String::from_utf8_lossy(&output.stdout)
+    );
+    assert_eq!(env["data"]["cycles"], Value::from(2));
+    assert_eq!(env["data"]["skipped_total"], Value::from(2));
+    assert_eq!(
+        env["data"]["last_cycle"]["skipped"][0]["error"]["code"],
+        Value::String("LOCK_BUSY".to_string())
+    );
+    assert!(
+        env["meta"]["warnings"]
+            .as_array()
+            .expect("warnings")
+            .iter()
+            .any(|warning| warning.as_str().unwrap_or_default().contains("LOCK_BUSY"))
+    );
+}
+
+#[test]
+fn skill_watch_long_running_skips_capture_conflict_cycles() {
+    let root = TestDir::new("skill-watch-capture-conflict-continue");
+    write_skill(root.path(), "demo", "# demo\n\nv1\n");
+    assert!(save_skill(root.path(), "demo").0.status.success());
+    write_skill(root.path(), "demo", "# demo\n\nv2\n");
+
+    let root_path = root.path().to_path_buf();
+    let mutator = thread::spawn(move || {
+        for index in 0..80 {
+            thread::sleep(Duration::from_millis(20));
+            write_file(
+                &root_path.join(format!("skills/demo/race-{index}.md")),
+                &format!("{index}\n"),
+            );
+        }
+    });
+    let (output, env) = run_loom(
+        root.path(),
+        &[
+            "skill",
+            "watch",
+            "demo",
+            "--debounce-ms",
+            "100",
+            "--max-cycles",
+            "2",
+        ],
+    );
+    mutator.join().expect("mutator thread");
+
+    assert!(
+        output.status.success(),
+        "watch exited on CAPTURE_CONFLICT: stderr={} stdout={}",
+        String::from_utf8_lossy(&output.stderr),
+        String::from_utf8_lossy(&output.stdout)
+    );
+    assert!(
+        env["data"]["skipped_total"].as_u64().unwrap_or(0) >= 1,
+        "expected at least one skipped conflict cycle: {env}"
+    );
+    assert!(
+        env["meta"]["warnings"]
+            .as_array()
+            .expect("warnings")
+            .iter()
+            .any(|warning| warning
+                .as_str()
+                .unwrap_or_default()
+                .contains("CAPTURE_CONFLICT")),
+        "missing capture conflict warning: {env}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn skill_watch_long_running_preserves_saved_results_when_one_skill_fails() {
+    let root = TestDir::new("skill-watch-partial-failure");
+    write_skill(root.path(), "alpha", "# alpha\n\nv1\n");
+    write_skill(root.path(), "beta", "# beta\n\nv1\n");
+    assert!(save_skill(root.path(), "alpha").0.status.success());
+    assert!(save_skill(root.path(), "beta").0.status.success());
+
+    let hook = root.path().join(".git/hooks/pre-commit");
+    fs::create_dir_all(hook.parent().unwrap()).expect("create hooks dir");
+    fs::write(
+        &hook,
+        "#!/bin/sh\nif git diff --cached --name-only | grep -q '^skills/beta/'; then\n  echo beta blocked >&2\n  exit 1\nfi\nexit 0\n",
+    )
+    .expect("write pre-commit hook");
+    #[allow(clippy::permissions_set_readonly_false)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = fs::metadata(&hook).expect("hook metadata").permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&hook, perms).expect("set hook executable");
+    }
+
+    write_skill(root.path(), "alpha", "# alpha\n\nv2\n");
+    write_skill(root.path(), "beta", "# beta\n\nv2\n");
+    let (output, env) = run_loom(
+        root.path(),
+        &["skill", "watch", "--debounce-ms", "1", "--max-cycles", "1"],
+    );
+
+    assert!(
+        output.status.success(),
+        "watch should keep saved results after one skill fails: stderr={} stdout={}",
+        String::from_utf8_lossy(&output.stderr),
+        String::from_utf8_lossy(&output.stdout)
+    );
+    assert_eq!(env["data"]["saved_total"], Value::from(1));
+    assert_eq!(env["data"]["skipped_total"], Value::from(1));
+    assert_eq!(
+        env["data"]["last_cycle"]["saved_skills"][0]["skill"],
+        Value::String("alpha".to_string())
+    );
+    assert_eq!(
+        env["data"]["last_cycle"]["skipped"][0]["skill"],
+        Value::String("beta".to_string())
+    );
+}
+
+#[test]
+fn skill_watch_once_reports_audit_restore_rollback_errors() {
+    let root = TestDir::new("skill-watch-rollback-errors");
+    write_skill(root.path(), "demo", "# demo\n\nv1\n");
+    assert!(save_skill(root.path(), "demo").0.status.success());
+    write_skill(root.path(), "demo", "# demo\n\nv2\n");
+
+    let (output, env) = run_loom_with_env(
+        root.path(),
+        &[
+            ("LOOM_FAULT_INJECT", "record_v3_operation_after_checkpoint"),
+            ("LOOM_ROLLBACK_FAULT_INJECT", "restore_registry_audit_state"),
+        ],
+        &["skill", "watch", "demo", "--once", "--debounce-ms", "0"],
+    );
+
+    assert!(
+        !output.status.success(),
+        "faulted watch unexpectedly succeeded"
+    );
+    assert!(
+        rollback_error_steps(&env).contains(&"restore_registry_audit_state".to_string()),
+        "missing rollback error details: {env}"
+    );
 }

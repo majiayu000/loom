@@ -9,8 +9,8 @@ use uuid::Uuid;
 
 use crate::cli::{TrashAddArgs, TrashPurgeArgs, TrashRestoreArgs};
 use crate::envelope::Meta;
+use crate::fs_util::remove_path_if_exists;
 use crate::gitops;
-use crate::state::remove_path_if_exists;
 use crate::state_model::RegistryStatePaths;
 use crate::types::ErrorCode;
 

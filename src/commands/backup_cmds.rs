@@ -14,8 +14,9 @@ use walkdir::WalkDir;
 use crate::cli::{
     BackupCommand, BackupExportArgs, BackupFormat, BackupInspectArgs, BackupRestoreArgs,
 };
+use crate::fs_util::remove_path_if_exists;
 use crate::gitops;
-use crate::state::{AppContext, remove_path_if_exists};
+use crate::state::AppContext;
 use crate::state_model::RegistryStatePaths;
 use crate::types::ErrorCode;
 

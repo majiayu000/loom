@@ -7,8 +7,9 @@ use serde_json::json;
 use uuid::Uuid;
 use walkdir::WalkDir;
 
+use crate::fs_util::remove_path_if_exists;
 use crate::gitops;
-use crate::state::{AppContext, remove_path_if_exists};
+use crate::state::AppContext;
 
 use super::helpers::slugify;
 

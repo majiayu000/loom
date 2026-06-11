@@ -15,8 +15,8 @@ use crate::cli::{
     SkillOnlyArgs,
 };
 use crate::envelope::Meta;
+use crate::fs_util::remove_path_if_exists;
 use crate::gitops;
-use crate::state::remove_path_if_exists;
 use crate::state_model::{
     RegistryBindingRule, RegistryBindingsFile, RegistryProjectionInstance,
     RegistryProjectionTarget, RegistryProjectionsFile, RegistryRulesFile, RegistryStatePaths,

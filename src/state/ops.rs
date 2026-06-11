@@ -5,61 +5,19 @@ use std::path::Path;
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use serde_json::Value;
 
+use crate::fs_util::{append_lines, maybe_fault_inject, write_atomic};
 use crate::gitops;
 use crate::types::PendingOp;
 
+use super::journal::{
+    OPS_SNAPSHOT_VERSION, OpJournalEvent, OpsSnapshot, apply_journal_event, journal_segment_name,
+    parse_journal_line,
+};
+use super::write_history_segment_if_missing;
 use super::{AppContext, OPS_COMPACTION_THRESHOLD};
-use super::{append_lines, maybe_fault_inject, write_atomic, write_history_segment_if_missing};
-
-const OPS_SNAPSHOT_VERSION: u32 = 1;
-
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(tag = "event", rename_all = "snake_case")]
-enum OpJournalEvent {
-    Queued {
-        event_id: String,
-        at: DateTime<Utc>,
-        op: PendingOp,
-    },
-    Audited {
-        event_id: String,
-        at: DateTime<Utc>,
-        op: PendingOp,
-    },
-    Removed {
-        event_id: String,
-        at: DateTime<Utc>,
-        op_id: String,
-        reason: String,
-    },
-}
-
-impl OpJournalEvent {
-    fn event_id(&self) -> &str {
-        match self {
-            Self::Queued { event_id, .. }
-            | Self::Audited { event_id, .. }
-            | Self::Removed { event_id, .. } => event_id,
-        }
-    }
-
-    fn at(&self) -> DateTime<Utc> {
-        match self {
-            Self::Queued { at, .. } | Self::Audited { at, .. } | Self::Removed { at, .. } => *at,
-        }
-    }
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct OpsSnapshot {
-    version: u32,
-    created_at: DateTime<Utc>,
-    history_events: usize,
-    active_ops: Vec<PendingOp>,
-}
 
 #[derive(Debug, Default)]
 struct LoadedSnapshot {
@@ -92,12 +50,6 @@ pub struct OpsAuditOperation {
 pub struct OpsAuditReport {
     pub operations: Vec<OpsAuditOperation>,
     pub warnings: Vec<String>,
-}
-
-#[derive(Debug, Clone)]
-pub struct HistoryBodySummary {
-    pub first_at: Option<DateTime<Utc>>,
-    pub last_at: Option<DateTime<Utc>>,
 }
 
 impl AppContext {
@@ -515,149 +467,8 @@ fn collect_audit_events_from_body(
     }
 }
 
-pub fn synthesize_snapshot_raw_from_segment_bodies(segment_bodies: &[String]) -> Result<String> {
-    let mut seen_event_ids = BTreeSet::new();
-    let mut ordered_events = Vec::new();
-
-    for body in segment_bodies {
-        for line in body.lines() {
-            let trimmed = line.trim();
-            if trimmed.is_empty() {
-                continue;
-            }
-            let event = parse_journal_line(trimmed)?;
-            let event_id = event.event_id().to_string();
-            if !seen_event_ids.insert(event_id.clone()) {
-                continue;
-            }
-            ordered_events.push((event.at(), event_id, event));
-        }
-    }
-
-    ordered_events.sort_by(|left, right| left.0.cmp(&right.0).then_with(|| left.1.cmp(&right.1)));
-
-    let mut active_ops = BTreeMap::new();
-    for (_, _, event) in ordered_events {
-        apply_journal_event(&mut active_ops, event);
-    }
-
-    let snapshot = OpsSnapshot {
-        version: OPS_SNAPSHOT_VERSION,
-        created_at: Utc::now(),
-        history_events: seen_event_ids.len(),
-        active_ops: active_ops.into_values().collect(),
-    };
-
-    serde_json::to_string_pretty(&snapshot).context("failed to encode synthesized ops snapshot")
-}
-
-pub fn summarize_history_body(raw: &str) -> Result<HistoryBodySummary> {
-    let mut first_at = None;
-    let mut last_at = None;
-
-    for line in raw.lines() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        let event = parse_journal_line(trimmed)?;
-        let at = event.at();
-        first_at = Some(first_at.map_or(at, |current: DateTime<Utc>| current.min(at)));
-        last_at = Some(last_at.map_or(at, |current: DateTime<Utc>| current.max(at)));
-    }
-
-    Ok(HistoryBodySummary { first_at, last_at })
-}
-
-pub fn remove_path_if_exists(path: &Path) -> Result<()> {
-    let meta = match fs::symlink_metadata(path) {
-        Ok(meta) => meta,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-        Err(e) => return Err(e).context("failed to stat path"),
-    };
-    if meta.file_type().is_symlink() || meta.is_file() {
-        fs::remove_file(path).context("failed to remove file/symlink")?;
-    } else {
-        fs::remove_dir_all(path).context("failed to remove directory")?;
-    }
-    Ok(())
-}
-
 fn new_event_id() -> String {
     uuid::Uuid::new_v4().to_string()
-}
-
-fn parse_journal_line(line: &str) -> Result<OpJournalEvent> {
-    if let Ok(event) = serde_json::from_str::<OpJournalEvent>(line) {
-        return Ok(event);
-    }
-
-    let mut op = serde_json::from_str::<PendingOp>(line)
-        .context("line is neither a journal event nor a pending op")?;
-    if op.op_id.is_none() {
-        op.op_id = Some(op.stable_id());
-    }
-    Ok(OpJournalEvent::Queued {
-        event_id: format!("legacy-{}", op.stable_id()),
-        at: op.created_at,
-        op,
-    })
-}
-
-fn journal_segment_name(raw_journal: &str) -> Result<String> {
-    let mut ids = Vec::new();
-    let mut non_empty = 0usize;
-
-    for (index, line) in raw_journal.lines().enumerate() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        non_empty += 1;
-        match parse_journal_line(trimmed) {
-            Ok(event) => ids.push(sanitize_segment_token(event.event_id())),
-            Err(_) => ids.push(format!("invalid{}-{}", index + 1, trimmed.len())),
-        }
-    }
-
-    if non_empty == 0 {
-        return Err(anyhow::anyhow!("cannot name empty journal segment"));
-    }
-
-    let first = ids.first().cloned().unwrap_or_else(|| "empty".to_string());
-    let last = ids.last().cloned().unwrap_or_else(|| "empty".to_string());
-    Ok(format!(
-        "{:05}-{}-{}.jsonl",
-        non_empty,
-        shorten_segment_token(&first),
-        shorten_segment_token(&last)
-    ))
-}
-
-fn apply_journal_event(active_ops: &mut BTreeMap<String, PendingOp>, event: OpJournalEvent) {
-    match event {
-        OpJournalEvent::Queued { mut op, .. } => {
-            if op.op_id.is_none() {
-                op.op_id = Some(op.stable_id());
-            }
-            active_ops.insert(op.stable_id(), op);
-        }
-        OpJournalEvent::Audited { .. } => {}
-        OpJournalEvent::Removed { op_id, .. } => {
-            active_ops.remove(&op_id);
-        }
-    }
-}
-
-fn sanitize_segment_token(token: &str) -> String {
-    token
-        .chars()
-        .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '_' })
-        .collect()
-}
-
-fn shorten_segment_token(token: &str) -> String {
-    token.chars().take(12).collect()
 }
 
 #[cfg(test)]

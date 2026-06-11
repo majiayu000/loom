@@ -4,9 +4,12 @@
 //! destination path already exists. Every atomic-overwrite path (write-to-tmp
 //! then replace) must use [`rename_atomic`] instead of `std::fs::rename`.
 
-use std::fs::{self, OpenOptions};
+use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
 use std::path::Path;
+
+#[cfg(unix)]
+use std::os::fd::AsRawFd;
 
 /// Atomically replace `dst` with `src`.
 ///
@@ -48,6 +51,119 @@ pub fn write_atomic(path: &Path, contents: &str) -> io::Result<()> {
     }
 
     rename_atomic(&tmp_path, path)
+}
+
+/// Append newline-terminated records and sync the file.
+pub fn append_lines(path: &Path, lines: &[String]) -> io::Result<()> {
+    if lines.is_empty() {
+        return Ok(());
+    }
+
+    let mut file = open_append_file(path)?;
+    for line in lines {
+        let mut record = Vec::with_capacity(line.len() + 1);
+        record.extend_from_slice(line.as_bytes());
+        record.push(b'\n');
+        append_single_record_write(&mut file, &record)?;
+    }
+    file.sync_all()
+}
+
+/// Append one pre-serialized JSONL record and sync the file.
+pub fn append_jsonl_raw(path: &Path, raw: &str) -> io::Result<()> {
+    let mut file = open_append_file(path)?;
+    let mut record = Vec::with_capacity(raw.len() + 1);
+    record.extend_from_slice(raw.as_bytes());
+    record.push(b'\n');
+    append_single_record_write(&mut file, &record)?;
+    file.sync_all()
+}
+
+/// Ensure an append-only log file exists and is synced to disk.
+pub fn ensure_append_log(path: &Path) -> io::Result<()> {
+    open_append_file(path)?.sync_all()
+}
+
+pub fn maybe_fault_inject(tag: &str) -> io::Result<()> {
+    if std::env::var("LOOM_FAULT_INJECT").ok().as_deref() == Some(tag) {
+        return Err(io::Error::other(format!("fault injected at {}", tag)));
+    }
+    Ok(())
+}
+
+pub fn maybe_fault_inject_any(tags: &[&str]) -> io::Result<()> {
+    let active = std::env::var("LOOM_FAULT_INJECT").ok();
+    if let Some(tag) = active.as_deref().filter(|tag| tags.contains(tag)) {
+        return Err(io::Error::other(format!("fault injected at {}", tag)));
+    }
+    Ok(())
+}
+
+pub fn remove_path_if_exists(path: &Path) -> io::Result<()> {
+    let meta = match fs::symlink_metadata(path) {
+        Ok(meta) => meta,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(err) => return Err(err),
+    };
+    if meta.file_type().is_symlink() || meta.is_file() {
+        fs::remove_file(path)
+    } else {
+        fs::remove_dir_all(path)
+    }
+}
+
+fn open_append_file(path: &Path) -> io::Result<File> {
+    let parent = path.parent().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "cannot append file without parent directory",
+        )
+    })?;
+    fs::create_dir_all(parent)?;
+    OpenOptions::new().create(true).append(true).open(path)
+}
+
+#[cfg(unix)]
+fn append_single_record_write(file: &mut File, record: &[u8]) -> io::Result<()> {
+    if record.len() > isize::MAX as usize {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "append record exceeds write size limit",
+        ));
+    }
+
+    loop {
+        // SAFETY: `record` points to a valid immutable byte buffer for
+        // `record.len()` bytes, and `file.as_raw_fd()` is an open descriptor
+        // owned by `file`.
+        let written =
+            unsafe { libc::write(file.as_raw_fd(), record.as_ptr().cast(), record.len()) };
+        if written < 0 {
+            let err = io::Error::last_os_error();
+            if err.kind() == io::ErrorKind::Interrupted {
+                continue;
+            }
+            return Err(err);
+        }
+
+        let written = written as usize;
+        if written == record.len() {
+            return Ok(());
+        }
+        return Err(io::Error::new(
+            io::ErrorKind::WriteZero,
+            format!(
+                "short append record write: wrote {} of {} bytes",
+                written,
+                record.len()
+            ),
+        ));
+    }
+}
+
+#[cfg(not(unix))]
+fn append_single_record_write(file: &mut File, record: &[u8]) -> io::Result<()> {
+    file.write_all(record)
 }
 
 #[cfg(windows)]
@@ -145,5 +261,31 @@ mod tests {
             "temp file should be renamed away"
         );
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn append_jsonl_raw_creates_parent_and_syncs_line() -> std::io::Result<()> {
+        let dir = temp_dir("append-jsonl");
+        let path = dir.join("nested/events.jsonl");
+
+        append_jsonl_raw(&path, r#"{"event":"one"}"#)?;
+        append_jsonl_raw(&path, r#"{"event":"two"}"#)?;
+
+        assert_eq!(
+            fs::read_to_string(&path)?,
+            "{\"event\":\"one\"}\n{\"event\":\"two\"}\n"
+        );
+        fs::remove_dir_all(&dir)
+    }
+
+    #[test]
+    fn append_lines_writes_each_line_once() -> std::io::Result<()> {
+        let dir = temp_dir("append-lines");
+        let path = dir.join("pending.jsonl");
+
+        append_lines(&path, &["a".to_string(), "b".to_string()])?;
+
+        assert_eq!(fs::read_to_string(&path)?, "a\nb\n");
+        fs::remove_dir_all(&dir)
     }
 }

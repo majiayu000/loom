@@ -3,9 +3,8 @@ use std::path::Path;
 
 use anyhow::{Result, anyhow};
 
-use crate::state::{
-    AppContext, summarize_history_body, synthesize_snapshot_raw_from_segment_bodies,
-};
+use crate::state::AppContext;
+use crate::state::journal::{summarize_history_body, synthesize_snapshot_raw_from_segment_bodies};
 
 use super::{
     EMPTY_TREE_SHA, HISTORY_ARCHIVES_DIR, HISTORY_BRANCH_REF, HISTORY_COMPACT_AFTER_SEGMENTS,

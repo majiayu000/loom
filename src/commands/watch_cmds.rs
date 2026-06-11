@@ -8,9 +8,9 @@ use serde_json::{Value, json};
 
 use crate::cli::WatchArgs;
 use crate::envelope::Meta;
+use crate::fs_util::remove_path_if_exists;
 use crate::gitops;
 use crate::state::AppContext;
-use crate::state::remove_path_if_exists;
 use crate::state_model::RegistryStatePaths;
 use crate::types::ErrorCode;
 

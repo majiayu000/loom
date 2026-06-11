@@ -1,12 +1,3 @@
-use std::fs::{self, File, OpenOptions};
-use std::io;
-use std::path::Path;
-
-#[cfg(not(unix))]
-use std::io::Write;
-#[cfg(unix)]
-use std::os::fd::AsRawFd;
-
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use serde::Serialize;
@@ -15,6 +6,7 @@ use uuid::Uuid;
 
 use crate::cli::Cli;
 use crate::envelope::Envelope;
+use crate::fs_util::{append_jsonl_raw, ensure_append_log, maybe_fault_inject_any};
 use crate::state::AppContext;
 
 const COMMAND_EVENT_SCHEMA_VERSION: u32 = 1;
@@ -136,98 +128,24 @@ fn append_command_finished_with_fault_tags(
 }
 
 fn append_command_event(ctx: &AppContext, event: &CommandEvent, fault_tags: &[&str]) -> Result<()> {
-    maybe_fault_inject(fault_tags)?;
-    let path = ctx.state_dir.join("events/commands.jsonl");
-    let parent = path
-        .parent()
-        .context("command event path must have a parent directory")?;
-    fs::create_dir_all(parent)
-        .with_context(|| format!("failed to create command event dir {}", parent.display()))?;
-    let mut file = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&path)
-        .with_context(|| format!("failed to open command event log {}", path.display()))?;
+    maybe_fault_inject_any(fault_tags)?;
     let raw = serde_json::to_string(event).context("failed to encode command event")?;
-    append_jsonl_line(&mut file, &path, &raw)?;
-    file.sync_all()
-        .with_context(|| format!("failed to sync command event {}", path.display()))?;
-    Ok(())
-}
-
-fn append_jsonl_line(file: &mut File, path: &Path, raw: &str) -> Result<()> {
-    let mut line = Vec::with_capacity(raw.len() + 1);
-    line.extend_from_slice(raw.as_bytes());
-    line.push(b'\n');
-    append_single_record_write(file, &line)
-        .with_context(|| format!("failed to append command event {}", path.display()))
-}
-
-#[cfg(unix)]
-fn append_single_record_write(file: &mut File, line: &[u8]) -> io::Result<()> {
-    if line.len() > isize::MAX as usize {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "command event line exceeds write size limit",
-        ));
-    }
-
-    loop {
-        // SAFETY: `line` points to a valid immutable byte buffer for `line.len()`
-        // bytes, and `file.as_raw_fd()` is an open descriptor owned by `file`.
-        let written = unsafe { libc::write(file.as_raw_fd(), line.as_ptr().cast(), line.len()) };
-        if written < 0 {
-            let err = io::Error::last_os_error();
-            if err.kind() == io::ErrorKind::Interrupted {
-                continue;
-            }
-            return Err(err);
-        }
-
-        let written = written as usize;
-        if written == line.len() {
-            return Ok(());
-        }
-        return Err(io::Error::new(
-            io::ErrorKind::WriteZero,
-            format!(
-                "short command event append: wrote {} of {} bytes",
-                written,
-                line.len()
-            ),
-        ));
-    }
-}
-
-#[cfg(not(unix))]
-fn append_single_record_write(file: &mut File, line: &[u8]) -> io::Result<()> {
-    file.write_all(line)
+    append_jsonl_raw(&ctx.command_events_file, &raw).with_context(|| {
+        format!(
+            "failed to append command event {}",
+            ctx.command_events_file.display()
+        )
+    })
 }
 
 pub(crate) fn prepare_command_event_store(ctx: &AppContext) -> Result<()> {
-    maybe_fault_inject(&["command_event_prepare"])?;
-    let path = ctx.state_dir.join("events/commands.jsonl");
-    let parent = path
-        .parent()
-        .context("command event path must have a parent directory")?;
-    fs::create_dir_all(parent)
-        .with_context(|| format!("failed to create command event dir {}", parent.display()))?;
-    let file = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&path)
-        .with_context(|| format!("failed to open command event log {}", path.display()))?;
-    file.sync_all()
-        .with_context(|| format!("failed to sync command event {}", path.display()))?;
-    Ok(())
-}
-
-fn maybe_fault_inject(tags: &[&str]) -> Result<()> {
-    let active = std::env::var("LOOM_FAULT_INJECT").ok();
-    if let Some(tag) = active.as_deref().filter(|tag| tags.contains(tag)) {
-        return Err(anyhow::anyhow!("fault injected at {}", tag));
-    }
-    Ok(())
+    maybe_fault_inject_any(&["command_event_prepare"])?;
+    ensure_append_log(&ctx.command_events_file).with_context(|| {
+        format!(
+            "failed to prepare command event log {}",
+            ctx.command_events_file.display()
+        )
+    })
 }
 
 fn redact_sensitive_strings(value: &mut serde_json::Value) {

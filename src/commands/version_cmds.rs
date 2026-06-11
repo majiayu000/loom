@@ -420,7 +420,7 @@ fn restore_path_best_effort(
         }
     } else {
         if !maybe_push_rollback_fault(&mut errors, remove_step)
-            && let Err(err) = crate::state::remove_path_if_exists(path)
+            && let Err(err) = crate::fs_util::remove_path_if_exists(path)
         {
             push_rollback_error(&mut errors, remove_step, err);
         }
@@ -465,7 +465,7 @@ fn restore_registry_layout_best_effort(
         }
     } else {
         if !maybe_push_rollback_fault(&mut errors, "remove_registry_layout")
-            && let Err(err) = crate::state::remove_path_if_exists(&paths.registry_dir)
+            && let Err(err) = crate::fs_util::remove_path_if_exists(&paths.registry_dir)
         {
             push_rollback_error(&mut errors, "remove_registry_layout", err);
         }
@@ -531,7 +531,7 @@ fn remove_backup_path_best_effort(backup: Option<&serde_json::Value>) {
     else {
         return;
     };
-    let _ = crate::state::remove_path_if_exists(path);
+    let _ = crate::fs_util::remove_path_if_exists(path);
     if let Some(parent) = path.parent() {
         let _ = fs::remove_dir(parent);
         if let Some(grandparent) = parent.parent() {

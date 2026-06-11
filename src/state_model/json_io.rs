@@ -14,7 +14,7 @@ use anyhow::{Context, Result, anyhow};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
-use crate::fs_util::write_atomic;
+use crate::fs_util::{append_jsonl_raw, write_atomic};
 
 pub(super) fn ensure_json_file<T>(path: &Path, value: &T) -> Result<()>
 where
@@ -103,23 +103,10 @@ pub(super) fn append_json_line<T>(path: &Path, value: &T) -> Result<()>
 where
     T: Serialize,
 {
-    let parent = path
-        .parent()
-        .context("cannot append registry jsonl file without parent directory")?;
-    fs::create_dir_all(parent)
-        .with_context(|| format!("failed to create parent directory {}", parent.display()))?;
     let raw = serde_json::to_string(value)
         .with_context(|| format!("failed to encode registry jsonl line {}", path.display()))?;
-    let mut file = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)
-        .with_context(|| format!("failed to open registry jsonl file {}", path.display()))?;
-    writeln!(file, "{}", raw)
-        .with_context(|| format!("failed to append registry jsonl file {}", path.display()))?;
-    file.sync_all()
-        .with_context(|| format!("failed to sync registry jsonl file {}", path.display()))?;
-    Ok(())
+    Ok(append_jsonl_raw(path, &raw)
+        .with_context(|| format!("failed to append registry jsonl file {}", path.display()))?)
 }
 
 pub(super) fn read_json_file<T>(path: &Path) -> Result<T>

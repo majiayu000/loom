@@ -1,12 +1,14 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import type { PanelDataMode } from "../../lib/api/usePanelData";
-import { api, ApiError, type OpsHistoryDiagnosePayload, type OpsPayload, type RegistryOperationRecord } from "../../lib/api/client";
+import { api, type OpsHistoryDiagnosePayload, type OpsPayload, type RegistryOperationRecord } from "../../lib/api/client";
+import { MutationBanner } from "../../components/panel/MutationBanner";
 import {
   bucketRegistryOperation,
   describeRegistryOperation,
   registryOperationDisplayId,
 } from "../../lib/operation_labels";
 import { useMutation } from "../../lib/useMutation";
+import { useApiQuery } from "../../lib/useApiQuery";
 import { COUNT_TERMS, filterLabel, summarizeOps } from "../../lib/count_labels";
 import { SearchIcon } from "../../components/icons/nav_icons";
 
@@ -14,11 +16,11 @@ type FilterKey = "all" | "pending" | "ok" | "err";
 type DiagnoseData = NonNullable<OpsHistoryDiagnosePayload["data"]>;
 const HISTORY_PAGE_SIZE = 100;
 
-type LoadState =
-  | { kind: "idle" }
-  | { kind: "loading" }
-  | { kind: "ready"; payload: NonNullable<OpsPayload["data"]> }
-  | { kind: "error"; message: string };
+type HistoryQueryPayload = {
+  ops: NonNullable<OpsPayload["data"]>;
+  diagnose: DiagnoseData | null;
+  diagnoseError: string | null;
+};
 
 interface HistoryPageProps {
   live: boolean;
@@ -39,58 +41,44 @@ export function HistoryPage({
   readOnlyReason,
   onMutation,
 }: HistoryPageProps) {
-  const [state, setState] = useState<LoadState>({ kind: "idle" });
-  const [diagnose, setDiagnose] = useState<DiagnoseData | null>(null);
-  const [diagnoseError, setDiagnoseError] = useState<string | null>(null);
   const [filter, setFilter] = useState<FilterKey>("all");
   const [query, setQuery] = useState("");
   const [offset, setOffset] = useState(0);
   const [repairVersion, setRepairVersion] = useState(0);
-  const repair = useMutation();
-
-  useEffect(() => {
-    if (!live) {
-      setState({ kind: "idle" });
-      return;
-    }
-
-    const controller = new AbortController();
-    setState({ kind: "loading" });
-    setDiagnose(null);
-    setDiagnoseError(null);
-    Promise.allSettled([
-      api.ops({ limit: HISTORY_PAGE_SIZE, offset }, controller.signal),
-      api.opsHistoryDiagnose(controller.signal),
-    ]).then(([opsResult, diagnoseResult]) => {
-      if (controller.signal.aborted) return;
+  const state = useApiQuery<HistoryQueryPayload>(
+    async (signal) => {
+      const [opsResult, diagnoseResult] = await Promise.allSettled([
+        api.ops({ limit: HISTORY_PAGE_SIZE, offset }, signal),
+        api.opsHistoryDiagnose(signal),
+      ]);
 
       if (opsResult.status === "rejected") {
-        const err = opsResult.reason;
-        const message = err instanceof ApiError ? err.message : err instanceof Error ? err.message : String(err);
-        setState({ kind: "error", message });
-        return;
+        throw opsResult.reason;
       }
 
       const res = opsResult.value;
       if (!res.ok || !res.data) {
-        setState({ kind: "error", message: res.error?.message ?? "activity fetch returned ok=false" });
-        return;
+        throw new Error(res.error?.message ?? "activity fetch returned ok=false");
       }
-      setState({ kind: "ready", payload: res.data });
 
+      let diagnose: DiagnoseData | null = null;
+      let diagnoseError: string | null = null;
       if (diagnoseResult.status === "fulfilled") {
         if (diagnoseResult.value.data) {
-          setDiagnose(diagnoseResult.value.data);
+          diagnose = diagnoseResult.value.data;
         } else if (!diagnoseResult.value.ok) {
-          setDiagnoseError(diagnoseResult.value.error?.message ?? "history diagnose returned ok=false");
+          diagnoseError = diagnoseResult.value.error?.message ?? "history diagnose returned ok=false";
         }
       } else {
-        const err = diagnoseResult.reason;
-        setDiagnoseError(err instanceof Error ? err.message : String(err));
+        diagnoseError = diagnoseResult.reason instanceof Error ? diagnoseResult.reason.message : String(diagnoseResult.reason);
       }
-    });
-    return () => controller.abort();
-  }, [live, mutationVersion, refreshKey, offset, repairVersion]);
+
+      return { ops: res.data, diagnose, diagnoseError };
+    },
+    [mutationVersion, refreshKey, offset, repairVersion],
+    { enabled: live },
+  );
+  const repair = useMutation();
 
   const runRepair = (strategy: "local" | "remote") => {
     if (readOnly || repair.busy) return;
@@ -105,7 +93,9 @@ export function HistoryPage({
       ? "Activity history is offline. Showing the last overview snapshot."
       : "Activity history needs the live panel API. Start `loom panel`.";
 
-  const payload = state.kind === "ready" ? state.payload : null;
+  const payload = state.kind === "ready" ? state.payload.ops : null;
+  const diagnose = state.kind === "ready" ? state.payload.diagnose : null;
+  const diagnoseError = state.kind === "ready" ? state.payload.diagnoseError : null;
   const operations = payload?.operations ?? [];
 
   const filtered = useMemo(() => {
@@ -162,34 +152,10 @@ export function HistoryPage({
           </div>
         </div>
       </div>
-      {(repair.error || repair.success) && (
-        <div
-          style={{
-            padding: "6px 28px",
-            fontFamily: "var(--font-mono)",
-            fontSize: 11,
-            borderBottom: "1px solid var(--line)",
-            color: repair.error ? "var(--err)" : "var(--ok)",
-            background: repair.error ? "rgba(216,90,90,0.08)" : "rgba(111,183,138,0.08)",
-          }}
-        >
-          {repair.error ?? `✓ ${repair.success}`}
-        </div>
-      )}
+      <MutationBanner state={repair} variant="bar" />
       <div className="page-body">
         {state.kind === "error" && (
-          <div
-            style={{
-              padding: "6px 28px",
-              fontFamily: "var(--font-mono)",
-              fontSize: 11,
-              borderBottom: "1px solid var(--line)",
-              color: "var(--err)",
-              background: "rgba(216,90,90,0.08)",
-            }}
-          >
-            {state.message}
-          </div>
+          <MutationBanner message={state.message} tone="err" variant="bar" />
         )}
         {!live && <div className="empty" style={{ marginBottom: 18 }}>{offlineHint}</div>}
         {diagnoseError && (

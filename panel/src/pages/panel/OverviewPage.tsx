@@ -1,6 +1,7 @@
 import type { Op, ProjectionLink, Skill, Target, VizMode } from "../../lib/types";
 import { OpRow } from "../../components/panel/OpRow";
 import { ProjectionGraph } from "../../components/panel/ProjectionGraph";
+import { MutationBanner } from "../../components/panel/MutationBanner";
 import { PlusIcon, RefreshIcon, ShieldIcon, TargetIcon } from "../../components/icons/nav_icons";
 import { COUNT_TERMS, formatReplayableWrites, summarizeOps } from "../../lib/count_labels";
 import { api } from "../../lib/api/client";
@@ -174,11 +175,7 @@ export function OverviewPage({
             {nextSteps.map((step, index) => (
               <NextStepRow key={step.label} step={step} active={!step.done && nextSteps.findIndex((candidate) => !candidate.done) === index} />
             ))}
-            {(importObserved.error || importObserved.success) && (
-              <div className="mutation-note" data-tone={importObserved.error ? "err" : "ok"}>
-                {importObserved.error ?? `✓ ${importObserved.success}`}
-              </div>
-            )}
+            <MutationBanner state={importObserved} />
           </div>
         </div>
 

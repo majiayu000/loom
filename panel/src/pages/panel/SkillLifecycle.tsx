@@ -1,4 +1,5 @@
 import { useEffect, useState, type CSSProperties, type FormEvent } from "react";
+import { MutationBanner } from "../../components/panel/MutationBanner";
 import { api, type RegistryObservationEvent, type SkillDiffFile } from "../../lib/api/client";
 import { useMutation } from "../../lib/useMutation";
 
@@ -147,7 +148,7 @@ export function LifecycleActions({
           </button>
         </form>
       </div>
-      {status && <div style={hasError ? errorStyle : okStyle}>{hasError ? status : `✓ ${status}`}</div>}
+      <MutationBanner error={hasError ? status : null} success={hasError ? null : status} spacing="top" />
     </div>
   );
 }
@@ -354,22 +355,4 @@ const formInputStyle: CSSProperties = {
 const fullWidthButtonStyle: CSSProperties = {
   width: "100%",
   justifyContent: "center",
-};
-
-const errorStyle: CSSProperties = {
-  marginTop: 10,
-  padding: "6px 10px",
-  color: "var(--err)",
-  background: "rgba(216,90,90,0.08)",
-  border: "1px solid rgba(216,90,90,0.3)",
-  borderRadius: 6,
-  fontFamily: "var(--font-mono)",
-  fontSize: 11,
-};
-
-const okStyle: CSSProperties = {
-  ...errorStyle,
-  color: "var(--ok)",
-  background: "rgba(111,183,138,0.08)",
-  border: "1px solid rgba(111,183,138,0.3)",
 };

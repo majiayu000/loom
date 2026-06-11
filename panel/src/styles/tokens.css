@@ -30,6 +30,12 @@
   --warn: #e6b450;
   --err: #d85a5a;
   --pending: #c2a05e;
+  --ok-bg: rgba(111, 183, 138, 0.08);
+  --ok-border: rgba(111, 183, 138, 0.25);
+  --warn-bg: rgba(230, 180, 80, 0.08);
+  --warn-border: rgba(230, 180, 80, 0.32);
+  --err-bg: rgba(216, 90, 90, 0.08);
+  --err-border: rgba(216, 90, 90, 0.3);
 
   --managed: #d97736;
   --observed: #6fb78a;
@@ -82,6 +88,12 @@
   --warn: #a9791c;
   --err: #c0392b;
   --pending: #9a7b32;
+  --ok-bg: rgba(47, 141, 94, 0.08);
+  --ok-border: rgba(47, 141, 94, 0.25);
+  --warn-bg: rgba(169, 121, 28, 0.08);
+  --warn-border: rgba(169, 121, 28, 0.3);
+  --err-bg: rgba(192, 57, 43, 0.08);
+  --err-border: rgba(192, 57, 43, 0.28);
 
   --managed: #c05f23;
   --observed: #2f8d5e;
@@ -125,6 +137,12 @@
   --warn: #9a6700;
   --err: #cf222e;
   --pending: #bf8700;
+  --ok-bg: rgba(26, 127, 55, 0.08);
+  --ok-border: rgba(26, 127, 55, 0.24);
+  --warn-bg: rgba(154, 103, 0, 0.08);
+  --warn-border: rgba(154, 103, 0, 0.28);
+  --err-bg: rgba(207, 34, 46, 0.08);
+  --err-border: rgba(207, 34, 46, 0.26);
 
   --managed: #0969da;
   --observed: #1a7f37;

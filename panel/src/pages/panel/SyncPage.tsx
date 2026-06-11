@@ -2,6 +2,7 @@ import type { RemotePayload } from "../../types";
 import type { FormEvent } from "react";
 import { useEffect, useState } from "react";
 import { GitIcon, PlayIcon, RefreshIcon, SyncIcon } from "../../components/icons/nav_icons";
+import { MutationBanner } from "../../components/panel/MutationBanner";
 import { api, type OpsHistoryDiagnosePayload } from "../../lib/api/client";
 import { useMutation } from "../../lib/useMutation";
 import { COUNT_TERMS, formatQueuedWrites } from "../../lib/count_labels";
@@ -78,12 +79,8 @@ export function SyncPage({ remote, queuedWriteCount, registryRoot, refreshKey, r
     setRemote.run(configured ? "remote update" : "remote set", () => api.remoteSet({ url }), onMutation);
   };
 
-  const banner =
-    setRemote.error ?? push.error ?? pull.error ?? replay.error ??
-    historyRepair.error ??
-    setRemote.success ?? push.success ?? pull.success ?? replay.success ?? historyRepair.success ?? null;
-  const bannerType =
-    setRemote.error || push.error || pull.error || replay.error || historyRepair.error ? "err" : banner ? "ok" : null;
+  const bannerError = setRemote.error ?? push.error ?? pull.error ?? replay.error ?? historyRepair.error;
+  const bannerSuccess = setRemote.success ?? push.success ?? pull.success ?? replay.success ?? historyRepair.success;
 
   const runHistoryRepair = (strategy: "local" | "remote") => {
     historyRepair.run(`history repair ${strategy}`, () => api.opsHistoryRepair({ strategy }), () => {
@@ -102,20 +99,12 @@ export function SyncPage({ remote, queuedWriteCount, registryRoot, refreshKey, r
           </div>
         </div>
       </div>
-      {banner && (
-        <div
-          style={{
-            padding: "6px 28px",
-            fontFamily: "var(--font-mono)",
-            fontSize: 11,
-            borderBottom: "1px solid var(--line)",
-            color: bannerType === "err" ? "var(--err)" : "var(--ok)",
-            background: bannerType === "err" ? "rgba(216,90,90,0.08)" : "rgba(111,183,138,0.08)",
-          }}
-        >
-          {banner}
-        </div>
-      )}
+      <MutationBanner
+        error={bannerError}
+        success={bannerSuccess}
+        variant="bar"
+        prefixSuccess={false}
+      />
       <div className="page-body">
         <div className="kpi-row">
           <Kpi label="Sync state" value={formatSyncState(state)} tone={stateTone} valueKind="status" />

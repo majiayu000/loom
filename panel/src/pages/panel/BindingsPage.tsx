@@ -1,10 +1,12 @@
 import { useEffect, useState } from "react";
 import type { Binding, Target } from "../../lib/types";
 import { AgentAvatar } from "../../components/panel/AgentAvatar";
+import { MutationBanner } from "../../components/panel/MutationBanner";
 import { BindingIcon, PlusIcon } from "../../components/icons/nav_icons";
 import { EmptyState } from "../../components/panel/EmptyState";
 import { BindingAddForm } from "../../components/panel/forms/BindingAddForm";
-import { api, ApiError, type BindingShowPayload } from "../../lib/api/client";
+import { api, type BindingShowPayload } from "../../lib/api/client";
+import { useApiQuery } from "../../lib/useApiQuery";
 import { useMutation } from "../../lib/useMutation";
 import type { RegistryProjection } from "../../generated/RegistryProjection";
 
@@ -251,12 +253,6 @@ export function BindingsPage({
   );
 }
 
-type DetailState =
-  | { kind: "idle" }
-  | { kind: "loading" }
-  | { kind: "ready"; payload: NonNullable<BindingShowPayload["data"]> }
-  | { kind: "error"; message: string };
-
 function BindingDetail({
   binding,
   targets,
@@ -272,35 +268,19 @@ function BindingDetail({
   mutationVersion: number;
   onRemoved: (bindingId: string) => void;
 }) {
-  const [state, setState] = useState<DetailState>({ kind: "idle" });
+  const state = useApiQuery<NonNullable<BindingShowPayload["data"]>>(
+    async (signal) => {
+      const res = await api.bindingShow(binding.id, signal);
+      if (!res.ok || !res.data) {
+        throw new Error(res.error?.message ?? "binding fetch returned ok=false");
+      }
+      return res.data;
+    },
+    [binding.id, mutationVersion],
+    { enabled: !readOnly },
+  );
   const project = useMutation();
   const remove = useMutation();
-
-  useEffect(() => {
-    if (readOnly) {
-      setState({ kind: "idle" });
-      return;
-    }
-
-    const controller = new AbortController();
-    setState({ kind: "loading" });
-    api
-      .bindingShow(binding.id, controller.signal)
-      .then((res) => {
-        if (controller.signal.aborted) return;
-        if (!res.ok || !res.data) {
-          setState({ kind: "error", message: res.error?.message ?? "binding fetch returned ok=false" });
-          return;
-        }
-        setState({ kind: "ready", payload: res.data });
-      })
-      .catch((err) => {
-        if (controller.signal.aborted) return;
-        const message = err instanceof ApiError ? err.message : err instanceof Error ? err.message : String(err);
-        setState({ kind: "error", message });
-      });
-    return () => controller.abort();
-  }, [binding.id, mutationVersion, readOnly]);
 
   const t = targets.find((x) => x.id === binding.target);
   const rules = state.kind === "ready" ? state.payload.rules ?? [] : [];
@@ -369,23 +349,11 @@ function BindingDetail({
           {remove.busy ? "Deleting…" : "Delete binding"}
         </button>
       </div>
-      {(project.error || project.success || remove.error || remove.success) && (
-        <div
-          style={{
-            marginBottom: 12,
-            padding: "6px 10px",
-            borderRadius: 6,
-            border: "1px solid",
-            borderColor: project.error || remove.error ? "rgba(216,90,90,0.3)" : "rgba(111,183,138,0.25)",
-            background: project.error || remove.error ? "rgba(216,90,90,0.08)" : "rgba(111,183,138,0.08)",
-            color: project.error || remove.error ? "var(--err)" : "var(--ok)",
-            fontFamily: "var(--font-mono)",
-            fontSize: 11,
-          }}
-        >
-          {project.error ?? remove.error ?? `✓ ${project.success ?? remove.success}`}
-        </div>
-      )}
+      <MutationBanner
+        error={project.error ?? remove.error}
+        success={project.success ?? remove.success}
+        spacing="bottom"
+      />
       <div className="kv">
         <div className="k">Skill</div>
         <div className="v">{binding.skill}</div>

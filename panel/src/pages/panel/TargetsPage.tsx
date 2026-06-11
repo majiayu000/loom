@@ -1,9 +1,11 @@
 import { useEffect, useState } from "react";
 import type { Ownership, Skill, Target } from "../../lib/types";
 import { AgentAvatar } from "../../components/panel/AgentAvatar";
+import { MutationBanner } from "../../components/panel/MutationBanner";
 import { PlusIcon } from "../../components/icons/nav_icons";
 import { TargetAddForm } from "../../components/panel/forms/TargetAddForm";
-import { api, ApiError, type TargetShowPayload } from "../../lib/api/client";
+import { api, type TargetShowPayload } from "../../lib/api/client";
+import { useApiQuery } from "../../lib/useApiQuery";
 import { useMutation } from "../../lib/useMutation";
 
 const OWNERSHIP_TOOLTIP: Record<Ownership, string> = {
@@ -104,11 +106,7 @@ export function TargetsPage({
               >
                 <PlusIcon /> {importObserved.busy ? "Importing..." : "Import observed skills"}
               </button>
-              {(importObserved.error || importObserved.success) && (
-                <div className="mutation-note" data-tone={importObserved.error ? "err" : "ok"}>
-                  {importObserved.error ?? `✓ ${importObserved.success}`}
-                </div>
-              )}
+              <MutationBanner state={importObserved} />
             </div>
           </div>
         )}
@@ -259,12 +257,6 @@ function ObservedSkillList({ skills }: { skills: Skill[] }) {
   );
 }
 
-type DetailState =
-  | { kind: "idle" }
-  | { kind: "loading" }
-  | { kind: "ready"; payload: NonNullable<TargetShowPayload["data"]> }
-  | { kind: "error"; message: string };
-
 function TargetDetail({
   target,
   readOnly,
@@ -278,34 +270,18 @@ function TargetDetail({
   mutationVersion: number;
   onRemoved: (id: string) => void;
 }) {
-  const [state, setState] = useState<DetailState>({ kind: "idle" });
+  const state = useApiQuery<NonNullable<TargetShowPayload["data"]>>(
+    async (signal) => {
+      const res = await api.targetShow(target.id, signal);
+      if (!res.ok || !res.data) {
+        throw new Error(res.error?.message ?? "target fetch returned ok=false");
+      }
+      return res.data;
+    },
+    [target.id, mutationVersion],
+    { enabled: !readOnly },
+  );
   const remove = useMutation();
-
-  useEffect(() => {
-    if (readOnly) {
-      setState({ kind: "idle" });
-      return;
-    }
-
-    const controller = new AbortController();
-    setState({ kind: "loading" });
-    api
-      .targetShow(target.id, controller.signal)
-      .then((res) => {
-        if (controller.signal.aborted) return;
-        if (!res.ok || !res.data) {
-          setState({ kind: "error", message: res.error?.message ?? "target fetch returned ok=false" });
-          return;
-        }
-        setState({ kind: "ready", payload: res.data });
-      })
-      .catch((err) => {
-        if (controller.signal.aborted) return;
-        const message = err instanceof ApiError ? err.message : err instanceof Error ? err.message : String(err);
-        setState({ kind: "error", message });
-      });
-    return () => controller.abort();
-  }, [readOnly, target.id, mutationVersion]);
 
   const bindings = state.kind === "ready" ? state.payload.bindings ?? [] : [];
   const projections = state.kind === "ready" ? state.payload.projections ?? [] : [];
@@ -343,23 +319,7 @@ function TargetDetail({
           <span className="hint">Target is referenced by {bindings.length} binding{bindings.length === 1 ? "" : "s"}.</span>
         )}
       </div>
-      {(remove.error || remove.success) && (
-        <div
-          style={{
-            marginBottom: 12,
-            padding: "6px 10px",
-            borderRadius: 6,
-            border: "1px solid",
-            borderColor: remove.error ? "rgba(216,90,90,0.3)" : "rgba(111,183,138,0.25)",
-            background: remove.error ? "rgba(216,90,90,0.08)" : "rgba(111,183,138,0.08)",
-            color: remove.error ? "var(--err)" : "var(--ok)",
-            fontFamily: "var(--font-mono)",
-            fontSize: 11,
-          }}
-        >
-          {remove.error ?? `✓ ${remove.success}`}
-        </div>
-      )}
+      <MutationBanner state={remove} spacing="bottom" />
       <div className="target-detail-grid">
         <div>
           <div className="section-title">Bindings → this target</div>

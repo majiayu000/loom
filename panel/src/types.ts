@@ -84,36 +84,3 @@ export type RegistryPayload = {
     message?: string;
   };
 };
-
-export type RegistryModel = {
-  available: boolean;
-  counts: NonNullable<NonNullable<RegistryPayload["data"]>["counts"]>;
-  bindings: RegistryBinding[];
-  targets: RegistryTarget[];
-  rules: RegistryRule[];
-  projections: RegistryProjection[];
-  checkpoint?: RegistryCheckpoint;
-  error?: string;
-};
-
-export type PanelData = {
-  health: HealthPayload;
-  info: InfoPayload;
-  skills: string[];
-  remote: RemotePayload;
-  pending: PendingPayload;
-  registry: RegistryModel;
-  remoteWarnings: string[];
-  live: boolean;
-  lastUpdated: string;
-};
-
-export type SkillView = {
-  name: string;
-  projections: RegistryProjection[];
-  rules: RegistryRule[];
-  bindings: RegistryBinding[];
-  targets: RegistryTarget[];
-  methods: string[];
-  driftedCount: number;
-};

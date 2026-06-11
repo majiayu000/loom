@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type { Op, OpStatus } from "../../lib/types";
 import { OpRow } from "../../components/panel/OpRow";
+import { MutationBanner } from "../../components/panel/MutationBanner";
 import { RefreshIcon } from "../../components/icons/nav_icons";
 import { api } from "../../lib/api/client";
 import { useMutation } from "../../lib/useMutation";
@@ -29,6 +30,8 @@ export function OpsPage({ ops, onMutation, readOnly }: OpsPageProps) {
       } → ${oldestPending.target}`
     : "queue empty";
   const actionBusy = retry.busy || purge.busy;
+  const bannerError = retry.error ?? purge.error;
+  const bannerSuccess = retry.success ?? purge.success;
 
   return (
     <>
@@ -70,25 +73,13 @@ export function OpsPage({ ops, onMutation, readOnly }: OpsPageProps) {
           </button>
         </div>
       </div>
-      {(retry.error || retry.success || retry.busy || purge.error || purge.success || purge.busy) && (
-        <div
-          style={{
-            padding: "6px 28px",
-            fontFamily: "var(--font-mono)",
-            fontSize: 11,
-            borderBottom: "1px solid var(--line)",
-            color: retry.error || purge.error ? "var(--err)" : retry.busy || purge.busy ? "var(--ink-2)" : "var(--ok)",
-            background:
-              retry.error || purge.error
-                ? "rgba(216,90,90,0.08)"
-                : retry.busy || purge.busy
-                ? "var(--bg-2)"
-                : "rgba(111,183,138,0.08)",
-          }}
-        >
-          {retry.busy || purge.busy ? "…" : retry.error ?? purge.error ?? `✓ ${retry.success ?? purge.success}`}
-        </div>
-      )}
+      <MutationBanner
+        message={actionBusy ? "…" : undefined}
+        error={bannerError}
+        success={bannerSuccess}
+        tone={actionBusy ? "muted" : undefined}
+        variant="bar"
+      />
       <div className="page-body">
         <div className="ops-summary-grid">
           <div

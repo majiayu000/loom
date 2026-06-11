@@ -61,17 +61,44 @@
 .mutation-note {
   padding: 6px 10px;
   border-radius: var(--radius-sm);
-  border: 1px solid rgba(111, 183, 138, 0.25);
-  background: rgba(111, 183, 138, 0.08);
+  border: 1px solid var(--ok-border);
+  background: var(--ok-bg);
   color: var(--ok);
   font-family: var(--font-mono);
   font-size: 11px;
 }
 
 .mutation-note[data-tone="err"] {
-  border-color: rgba(216, 90, 90, 0.3);
-  background: rgba(216, 90, 90, 0.08);
+  border-color: var(--err-border);
+  background: var(--err-bg);
   color: var(--err);
+}
+
+.mutation-note[data-tone="warn"] {
+  border-color: var(--warn-border);
+  background: var(--warn-bg);
+  color: var(--warn);
+}
+
+.mutation-note[data-tone="muted"] {
+  border-color: var(--line);
+  background: var(--bg-2);
+  color: var(--ink-2);
+}
+
+.mutation-note[data-variant="bar"] {
+  padding: 6px 28px;
+  border-width: 0 0 1px;
+  border-radius: 0;
+  border-bottom-color: var(--line);
+}
+
+.mutation-note[data-spacing="top"] {
+  margin-top: 10px;
+}
+
+.mutation-note[data-spacing="bottom"] {
+  margin-bottom: 12px;
 }
 
 .field-input,

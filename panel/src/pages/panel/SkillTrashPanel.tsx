@@ -1,5 +1,6 @@
 import { useEffect, useState, type CSSProperties } from "react";
 import { api, type SkillTrashEntry } from "../../lib/api/client";
+import { MutationBanner } from "../../components/panel/MutationBanner";
 import type { Skill } from "../../lib/types";
 import { useMutation } from "../../lib/useMutation";
 
@@ -176,11 +177,7 @@ export function TrashSkillAction({ skill, readOnly, onSuccess }: TrashSkillActio
           <div className="mono" style={{ color: "var(--ink-3)", fontSize: 11, marginTop: 4 }}>
             It can be restored later from the Trash view.
           </div>
-          {(trash.error || trash.success) && (
-            <div style={trash.error ? errorStyle : okStyle}>
-              {trash.error ?? `✓ ${trash.success}`}
-            </div>
-          )}
+          <MutationBanner state={trash} spacing="top" />
           <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 12 }}>
             <button className="btn ghost" onClick={() => setConfirmOpen(false)} disabled={trash.busy}>
               Cancel
@@ -191,9 +188,7 @@ export function TrashSkillAction({ skill, readOnly, onSuccess }: TrashSkillActio
           </div>
         </div>
       )}
-      {!confirmOpen && (trash.error || trash.success) && (
-        <div style={trash.error ? errorStyle : okStyle}>{trash.error ?? `✓ ${trash.success}`}</div>
-      )}
+      {!confirmOpen && <MutationBanner state={trash} spacing="top" />}
     </div>
   );
 }
@@ -287,11 +282,11 @@ function TrashEntryDetail({
             </div>
           </div>
         )}
-        {(restore.error || restore.success || purge.error || purge.success) && (
-          <div style={restore.error || purge.error ? errorStyle : okStyle}>
-            {restore.error ?? purge.error ?? `✓ ${restore.success ?? purge.success}`}
-          </div>
-        )}
+        <MutationBanner
+          error={restore.error ?? purge.error}
+          success={restore.success ?? purge.success}
+          spacing="top"
+        />
       </div>
     </div>
   );
@@ -326,24 +321,6 @@ function statusBarStyle(tone: "err" | "muted"): CSSProperties {
     background: tone === "err" ? "rgba(216,90,90,0.08)" : "var(--bg-1)",
   };
 }
-
-const errorStyle: CSSProperties = {
-  marginTop: 10,
-  padding: "6px 10px",
-  color: "var(--err)",
-  background: "rgba(216,90,90,0.08)",
-  border: "1px solid rgba(216,90,90,0.3)",
-  borderRadius: 6,
-  fontFamily: "var(--font-mono)",
-  fontSize: 11,
-};
-
-const okStyle: CSSProperties = {
-  ...errorStyle,
-  color: "var(--ok)",
-  background: "rgba(111,183,138,0.08)",
-  border: "1px solid rgba(111,183,138,0.3)",
-};
 
 const modeSwitchStyle: CSSProperties = {
   display: "inline-flex",

@@ -4,6 +4,7 @@ import type { RegistryProjection } from "../../generated/RegistryProjection";
 import { AgentAvatar } from "../../components/panel/AgentAvatar";
 import { PlusIcon, SearchIcon, SkillIcon } from "../../components/icons/nav_icons";
 import { EmptyState } from "../../components/panel/EmptyState";
+import { MutationBanner } from "../../components/panel/MutationBanner";
 import { api, type SkillDiagnosePayload } from "../../lib/api/client";
 import { useMutation } from "../../lib/useMutation";
 import { SkillDiagnosePanel } from "./SkillDiagnosePanel";
@@ -149,20 +150,7 @@ export function SkillsPage({
           )}
         </div>
       </div>
-      {(capture.error || capture.success) && (
-        <div
-          style={{
-            padding: "6px 28px",
-            fontFamily: "var(--font-mono)",
-            fontSize: 11,
-            borderBottom: "1px solid var(--line)",
-            color: capture.error ? "var(--err)" : "var(--ok)",
-            background: capture.error ? "rgba(216,90,90,0.08)" : "rgba(111,183,138,0.08)",
-          }}
-        >
-          {capture.error ?? `✓ ${capture.success}`}
-        </div>
-      )}
+      <MutationBanner state={capture} variant="bar" />
       <div className="page-body" style={{ padding: 0 }}>
         {mode === "skills" && addOpen && (
           <div style={{ padding: "0 28px 12px" }}>
@@ -331,7 +319,7 @@ function SkillAddForm({ onCancel, onSuccess }: { onCancel: () => void; onSuccess
         <label className="hint">name</label>
         <input value={name} onChange={(event) => setName(event.target.value)} placeholder="my-skill" style={formInputStyle} />
       </div>
-      {(add.error || add.success) && <div style={add.error ? errorStyle : okStyle}>{add.error ?? `✓ ${add.success}`}</div>}
+      <MutationBanner state={add} spacing="top" />
       <div style={{ display: "flex", gap: 8, marginTop: 12, justifyContent: "flex-end" }}>
         <button type="button" className="btn ghost" onClick={onCancel} disabled={add.busy}>
           Cancel
@@ -605,7 +593,7 @@ function ProjectSkillForm({
           {project.busy ? "projecting…" : "Project"}
         </button>
       </div>
-      {(project.error || project.success) && <div style={project.error ? errorStyle : okStyle}>{project.error ?? `✓ ${project.success}`}</div>}
+      <MutationBanner state={project} spacing="top" />
     </div>
   );
 }
@@ -661,24 +649,6 @@ const formInputStyle: React.CSSProperties = {
 const fullWidthButtonStyle: React.CSSProperties = {
   width: "100%",
   justifyContent: "center",
-};
-
-const errorStyle: React.CSSProperties = {
-  marginTop: 10,
-  padding: "6px 10px",
-  color: "var(--err)",
-  background: "rgba(216,90,90,0.08)",
-  border: "1px solid rgba(216,90,90,0.3)",
-  borderRadius: 6,
-  fontFamily: "var(--font-mono)",
-  fontSize: 11,
-};
-
-const okStyle: React.CSSProperties = {
-  ...errorStyle,
-  color: "var(--ok)",
-  background: "rgba(111,183,138,0.08)",
-  border: "1px solid rgba(111,183,138,0.3)",
 };
 
 const skillDescriptionStyle: React.CSSProperties = {

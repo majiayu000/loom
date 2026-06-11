@@ -53,7 +53,7 @@ function renderOverview(overrides: Partial<React.ComponentProps<typeof OverviewP
 }
 
 function controlCard(label: string): HTMLElement {
-  const card = screen.getByText(label).closest(".overview-control-card");
+  const card = screen.getByText(label).closest(".kpi");
   expect(card).toBeTruthy();
   return card as HTMLElement;
 }
@@ -128,7 +128,7 @@ describe("OverviewPage observed import", () => {
       readOnly: false,
     });
 
-    const summary = screen.getByText("Registry root").closest(".overview-control-grid");
+    const summary = screen.getByText("Registry root").closest(".kpi-row");
     expect(summary).toBeTruthy();
     expect(within(summary as HTMLElement).getByText("/tmp/loom-registry")).toBeInTheDocument();
     expect(screen.getByText("pending push")).toBeInTheDocument();

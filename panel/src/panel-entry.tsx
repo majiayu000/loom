@@ -5,7 +5,6 @@ import "./styles/tokens.css";
 import "./styles/base.css";
 import "./styles/panel/shell.css";
 import "./styles/panel/primitives.css";
-import "./styles/panel/overview.css";
 import "./styles/panel/data.css";
 import "./styles/panel/tweaks.css";
 

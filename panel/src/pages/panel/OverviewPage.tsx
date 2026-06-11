@@ -92,8 +92,6 @@ export function OverviewPage({
   const totalBindings = bindings.length;
   const observedSkillCount = skills.filter((s) => s.observedImported || s.sources?.includes("observed")).length;
   const observedTargetCount = targets.filter((t) => t.ownership === "observed").length;
-  const uniqueAgents = new Set(targets.map((t) => t.agent)).size;
-  const uniqueProfiles = new Set(targets.map((t) => `${t.agent}/${t.profile}`)).size;
   const targetOwnershipCounts = targets.reduce<Record<string, number>>((acc, target) => {
     const ownership = target.ownership || "unknown";
     acc[ownership] = (acc[ownership] ?? 0) + 1;
@@ -205,6 +203,27 @@ export function OverviewPage({
       : totalBindings === 0
       ? { label: "Add binding", onClick: onNewBinding }
       : { label: "Replay / sync", onClick: onOpenSync };
+  const summaryCards: KpiData[] = [
+    ["Registry root", rootDisplay, registryRoot ? "workspace registry" : "root unavailable", registryRoot ? "ok" : "warn"],
+    ["Sync state", syncStateLabel, queuedWriteCount > 0 ? formatQueuedWrites(queuedWriteCount) : "queue clean", syncTone(remoteState, queuedWriteCount)],
+    ["Skills", skills.length, skillKpiMeta],
+    ["Targets by ownership", targets.length, targetOwnershipMeta],
+    ["Bindings", totalBindings, totalBindings > 0 ? "routing rows from registry status" : "no bindings"],
+    ["Projection methods", totalProjections, projectionMethodMeta],
+    ["Projection health", totalProjections, projectionHealthMeta, projectionHealthTone(healthCounts)],
+    [
+      COUNT_TERMS.actionNeeded,
+      opCounts.actionNeeded,
+      opCounts.actionNeeded === 0 ? "all clean" : `${formatReplayableWrites(opCounts.pending)} · ${opCounts.err} failed`,
+      opCounts.err > 0 ? "err" : opCounts.pending > 0 ? "warn" : "ok",
+    ],
+    [
+      "Last operation",
+      lastOperation ? lastOperation.kind : "none",
+      lastOperation ? `${lastOperation.status} · ${lastOperationMeta}` : lastOperationMeta,
+      lastOperation?.status === "err" ? "err" : opCounts.actionNeeded > 0 ? "warn" : "ok",
+    ],
+  ];
 
   return (
     <>
@@ -228,47 +247,10 @@ export function OverviewPage({
         </div>
       </div>
       <div className="page-body">
-        <div className="overview-control-grid">
-          <OverviewControlCard
-            label="Registry root"
-            value={rootDisplay}
-            meta={registryRoot ? "workspace registry" : "root unavailable"}
-            mono
-          />
-          <OverviewControlCard
-            label="Sync state"
-            value={syncStateLabel}
-            meta={queuedWriteCount > 0 ? formatQueuedWrites(queuedWriteCount) : "queue clean"}
-            tone={syncTone(remoteState, queuedWriteCount)}
-          />
-          <OverviewControlCard
-            label="Skills"
-            value={skills.length}
-            meta={observedSkillCount > 0 ? `${observedSkillCount} observed import${observedSkillCount === 1 ? "" : "s"}` : skillKpiMeta}
-          />
-          <OverviewControlCard label="Targets by ownership" value={targets.length} meta={targetOwnershipMeta} />
-          <OverviewControlCard
-            label="Bindings"
-            value={totalBindings}
-            meta={totalBindings > 0 ? "routing rows from registry status" : "no bindings"}
-          />
-          <OverviewControlCard
-            label="Projection methods"
-            value={totalProjections}
-            meta={projectionMethodMeta}
-          />
-          <OverviewControlCard
-            label="Projection health"
-            value={totalProjections}
-            meta={projectionHealthMeta}
-            tone={projectionHealthTone(healthCounts)}
-          />
-          <OverviewControlCard
-            label="Last operation"
-            value={lastOperation ? lastOperation.kind : "none"}
-            meta={lastOperation ? `${lastOperation.status} · ${lastOperationMeta}` : lastOperationMeta}
-            tone={lastOperation?.status === "err" ? "err" : opCounts.actionNeeded > 0 ? "warn" : "ok"}
-          />
+        <div className="kpi-row" style={{ marginBottom: 16 }}>
+          {summaryCards.map(([label, value, meta, tone]) => (
+            <Kpi key={label} label={label} value={value} meta={meta} tone={tone} />
+          ))}
         </div>
 
         <div className="card" style={{ marginBottom: 16 }}>
@@ -282,43 +264,6 @@ export function OverviewPage({
             ))}
             <MutationBanner state={importObserved} />
           </div>
-        </div>
-
-        <div className="kpi-row">
-          <Kpi label="Skills" value={skills.length} meta={skillKpiMeta} />
-          <Kpi
-            label="Targets"
-            value={targets.length}
-            meta={
-              targets.length === 0
-                ? "no targets"
-                : `${uniqueAgents} agent${uniqueAgents === 1 ? "" : "s"} · ${uniqueProfiles} profile${uniqueProfiles === 1 ? "" : "s"}`
-            }
-          />
-          <Kpi
-            label="Projections"
-            value={totalProjections}
-            meta={
-              totalProjections === 0
-                ? "no projections"
-                : `${methodCounts.symlink ?? 0} symlink · ${methodCounts.copy ?? 0} copy · ${methodCounts.materialize ?? 0} materialize`
-            }
-          />
-          <Kpi
-            label={COUNT_TERMS.actionNeeded}
-            value={opCounts.actionNeeded}
-            meta={
-              opCounts.actionNeeded === 0 ? (
-                "all clean"
-              ) : (
-                <>
-                  {opCounts.pending > 0 && <span style={{ color: "var(--pending)" }}>{formatReplayableWrites(opCounts.pending)}</span>}
-                  {opCounts.pending > 0 && opCounts.err > 0 && " · "}
-                  {opCounts.err > 0 && <span style={{ color: "var(--err)" }}>{opCounts.err} failed</span>}
-                </>
-              )
-            }
-          />
         </div>
 
         <div className="proj-wrap">
@@ -493,36 +438,15 @@ function NextStepRow({ step, active }: { step: NextStep; active: boolean }) {
   );
 }
 
-interface KpiProps {
-  label: string;
-  value: number;
-  meta: React.ReactNode;
-}
+type KpiTone = "ok" | "warn" | "err";
+type KpiData = [label: string, value: React.ReactNode, meta: React.ReactNode, tone?: KpiTone];
 
-function Kpi({ label, value, meta }: KpiProps) {
+function Kpi({ label, value, meta, tone = "ok" }: { label: string; value: React.ReactNode; meta: React.ReactNode; tone?: KpiTone }) {
   return (
-    <div className="kpi">
+    <div className="kpi" data-tone={tone}>
       <div className="label">{label}</div>
       <div className="value">{value}</div>
       <div className="meta">{meta}</div>
-    </div>
-  );
-}
-
-interface OverviewControlCardProps {
-  label: string;
-  value: React.ReactNode;
-  meta: React.ReactNode;
-  tone?: "ok" | "warn" | "err";
-  mono?: boolean;
-}
-
-function OverviewControlCard({ label, value, meta, tone = "ok", mono = false }: OverviewControlCardProps) {
-  return (
-    <div className="overview-control-card" data-tone={tone}>
-      <div className="overview-control-label">{label}</div>
-      <div className={`overview-control-value${mono ? " mono" : ""}`}>{value}</div>
-      <div className="overview-control-meta">{meta}</div>
     </div>
   );
 }

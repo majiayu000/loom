@@ -9,6 +9,12 @@ export default defineConfig({
       "/api": {
         target: "http://127.0.0.1:43117",
         changeOrigin: true,
+        configure(proxy) {
+          proxy.on("proxyReq", (proxyReq) => {
+            proxyReq.setHeader("Origin", "http://127.0.0.1:43117");
+            proxyReq.setHeader("Referer", "http://127.0.0.1:43117/");
+          });
+        },
       },
     },
   },

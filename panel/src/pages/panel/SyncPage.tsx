@@ -182,6 +182,14 @@ export function SyncPage({ remote, queuedWriteCount, registryRoot, refreshKey, r
         <div className="card" style={{ marginBottom: 16 }}>
           <div className="card-head">
             <h3>History repair</h3>
+            <button
+              className="btn sm"
+              disabled={readOnly || diagnoseLoading}
+              onClick={() => setRepairVersion((value) => value + 1)}
+              title={readOnly ? "registry offline" : "re-run history branch diagnosis"}
+            >
+              Diagnose history
+            </button>
             <span className={`chip ${diagnoseLoading ? "" : diagnoseError || conflictCount > 0 ? "warn" : "ok"}`}>
               {diagnoseLoading
                 ? "checking"

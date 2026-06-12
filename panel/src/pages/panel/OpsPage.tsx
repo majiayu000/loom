@@ -17,9 +17,11 @@ interface OpsPageProps {
 
 export function OpsPage({ ops, onMutation, readOnly }: OpsPageProps) {
   const [filter, setFilter] = useState<FilterKey>("all");
+  const [selectedId, setSelectedId] = useState<string | null>(null);
   const retry = useMutation();
   const purge = useMutation();
-  const filtered = filter === "all" ? ops : ops.filter((o) => o.status === filter);
+  const filtered = prioritizeActionNeeded(filter === "all" ? ops : ops.filter((o) => o.status === filter));
+  const selected = filtered.find((op) => op.id === selectedId) ?? null;
   const counts = summarizeOps(ops);
   const finalized = counts.ok + counts.err;
   const successRate = finalized > 0 ? (counts.ok / finalized) * 100 : null;
@@ -145,11 +147,62 @@ export function OpsPage({ ops, onMutation, readOnly }: OpsPageProps) {
               {ops.length === 0 ? "No activity yet." : "No activity matches the current filter."}
             </div>
           ) : (
-            filtered.map((o) => <OpRow key={o.id} op={o} />)
+            filtered.map((o) => (
+              <div
+                key={o.id}
+                role="button"
+                tabIndex={0}
+                onClick={() => setSelectedId(o.id)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") setSelectedId(o.id);
+                }}
+                style={{ cursor: "pointer" }}
+              >
+                <OpRow op={o} />
+              </div>
+            ))
           )}
         </div>
+        {selected && <ActivityDetail op={selected} onClose={() => setSelectedId(null)} />}
       </div>
     </>
+  );
+}
+
+function prioritizeActionNeeded(ops: Op[]): Op[] {
+  return [...ops].sort((a, b) => statusPriority(a.status) - statusPriority(b.status));
+}
+
+function statusPriority(status: OpStatus): number {
+  if (status === "pending") return 0;
+  if (status === "err") return 1;
+  return 2;
+}
+
+function ActivityDetail({ op, onClose }: { op: Op; onClose: () => void }) {
+  return (
+    <div className="card" style={{ marginTop: 16 }}>
+      <div className="card-head">
+        <h3>Activity detail</h3>
+        <button className="btn sm" onClick={onClose}>Close</button>
+      </div>
+      <div className="card-body">
+        <div className="kv" style={{ margin: 0 }}>
+          <div className="k">Raw id</div>
+          <div className="v mono">{op.id}</div>
+          <div className="k">Command</div>
+          <div className="v mono">{op.kind}</div>
+          <div className="k">Skill</div>
+          <div className="v mono">{op.skill}</div>
+          <div className="k">Target</div>
+          <div className="v mono">{op.target}</div>
+          <div className="k">Method</div>
+          <div className="v mono">{op.method}</div>
+          <div className="k">Reason</div>
+          <div className="v">{op.reason ?? "—"}</div>
+        </div>
+      </div>
+    </div>
   );
 }
 

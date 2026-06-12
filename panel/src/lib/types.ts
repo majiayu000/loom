@@ -74,6 +74,9 @@ export interface Op {
   target: string;
   method: ProjectionMethod | "—";
   time: string;
+  /** Raw backend timestamps. Used for real activity aggregation. */
+  createdAt?: string;
+  updatedAt?: string;
   reason?: string;
 }
 

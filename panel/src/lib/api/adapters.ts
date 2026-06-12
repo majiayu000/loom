@@ -209,6 +209,8 @@ export function adaptPendingOp(op: PendingOp, index: number): Op {
     target: targetField,
     method: methodField,
     time: op.created_at ? relativeTime(op.created_at) : "queued",
+    createdAt: op.created_at,
+    updatedAt: op.created_at,
   };
 }
 
@@ -221,6 +223,8 @@ export function adaptRegistryOperation(op: RegistryOperationRecord): Op {
     target: op.target ?? op.binding ?? "—",
     method: op.method ? toMethod(op.method) : "—",
     time: op.updated_at ? relativeTime(op.updated_at) : "—",
+    createdAt: op.created_at,
+    updatedAt: op.updated_at,
     reason: op.last_error?.message,
   };
 }
@@ -244,6 +248,7 @@ export function adaptProjectionOp(p: RegistryProjection, index: AdapterIndex): O
     target: t ? `${toAgentSlug(t.agent)}/${profileFromPath(t.path)}` : p.target_id,
     method: toMethod(p.method),
     time: p.updated_at ? relativeTime(p.updated_at) : "—",
+    updatedAt: p.updated_at,
     reason: drifted ? `health=${p.health}${p.observed_drift ? "; drift observed" : ""}` : undefined,
   };
 }

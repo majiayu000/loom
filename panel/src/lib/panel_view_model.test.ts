@@ -20,6 +20,7 @@ function liveData(overrides: Partial<PanelLiveData> = {}): PanelLiveData {
     setupRequired: false,
     lastUpdated: "2026-06-11T12:00:00Z",
     registryRoot: "/tmp/loom",
+    agentDirs: [],
     remote: { sync_state: "CLEAN" },
     warnings: [],
     health: { ok: true },

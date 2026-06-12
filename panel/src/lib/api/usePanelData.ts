@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { RegistryProjection } from "../../generated/RegistryProjection";
-import type { HealthPayload, RemotePayload, RegistryPayload } from "../../types";
+import type { HealthPayload, InfoPayload, RemotePayload, RegistryPayload } from "../../types";
 import type { Binding, Op, Skill, Target } from "../types";
 import {
   adaptBinding,
@@ -14,6 +14,7 @@ import {
 import { ApiError, api } from "./client";
 
 type RegistryCounts = NonNullable<NonNullable<RegistryPayload["data"]>["counts"]>;
+type AgentDir = NonNullable<InfoPayload["agent_dirs"]>[number];
 
 export type PanelDataMode = "live" | "first-run" | "offline-empty" | "offline-stale";
 
@@ -26,6 +27,7 @@ export interface PanelLiveData {
   setupRequired: boolean;
   lastUpdated: string | null;
   registryRoot: string | null;
+  agentDirs: AgentDir[];
   remote: RemotePayload | null;
   warnings: string[];
   health: HealthPayload | null;
@@ -56,6 +58,7 @@ const INITIAL_STATE: LiveState = {
   setupRequired: false,
   lastUpdated: null,
   registryRoot: null,
+  agentDirs: [],
   remote: null,
   warnings: [],
   health: null,
@@ -154,6 +157,7 @@ export function usePanelData(): PanelLiveData {
             error: null,
             lastUpdated: new Date().toISOString(),
             registryRoot: info.data.root ?? null,
+            agentDirs: info.data.agent_dirs ?? [],
             remote: null,
             warnings: baseWarnings,
             health,
@@ -221,6 +225,7 @@ export function usePanelData(): PanelLiveData {
           error: null,
           lastUpdated: new Date().toISOString(),
           registryRoot: info.data.root ?? null,
+          agentDirs: info.data.agent_dirs ?? [],
           remote: remote.data.remote ?? null,
           warnings,
           health,

@@ -27,6 +27,15 @@ describe("adaptRegistryOperation", () => {
       ).status,
     ).toBe("err");
   });
+
+  it("preserves raw timestamps for real activity aggregation", () => {
+    const adapted = adaptRegistryOperation(
+      operation({ created_at: "2026-05-28T12:00:00Z", updated_at: "2026-05-29T13:00:00Z" }),
+    );
+
+    expect(adapted.createdAt).toBe("2026-05-28T12:00:00Z");
+    expect(adapted.updatedAt).toBe("2026-05-29T13:00:00Z");
+  });
 });
 
 describe("api adapters enum handling", () => {

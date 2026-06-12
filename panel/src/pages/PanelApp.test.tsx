@@ -1,25 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { PanelApp } from "./PanelApp";
+import { errorResponse, jsonResponse } from "./test_utils";
 
 const fetchMock = vi.fn<typeof fetch>();
-
-function jsonResponse(body: unknown): Response {
-  return {
-    ok: true,
-    status: 200,
-    json: vi.fn().mockResolvedValue(body),
-  } as unknown as Response;
-}
-
-function errorResponse(status: number, body: unknown): Response {
-  return {
-    ok: false,
-    status,
-    statusText: "Service Unavailable",
-    json: vi.fn().mockResolvedValue(body),
-  } as unknown as Response;
-}
 
 interface FetchMockOptions {
   skillsWarnings?: string[];

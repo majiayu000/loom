@@ -131,8 +131,12 @@ test("OverviewPage disables add binding until a target exists", async () => {
       <OverviewPage
         skills={[]}
         targets={[]}
+        bindings={[]}
         ops={[]}
         projections={[]}
+        registryProjections={[]}
+        remoteState="CLEAN"
+        queuedWriteCount={0}
         vizMode="loom"
         setVizMode={() => {}}
         selectedSkill={null}
@@ -185,8 +189,12 @@ test("OverviewPage distinguishes observed imports from live autosave", async () 
           },
         ]}
         targets={[makeTarget({ ownership: "observed" })]}
+        bindings={[]}
         ops={[]}
         projections={[]}
+        registryProjections={[]}
+        remoteState="CLEAN"
+        queuedWriteCount={0}
         vizMode="loom"
         setVizMode={() => {}}
         selectedSkill={null}

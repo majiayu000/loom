@@ -124,8 +124,12 @@ test("OverviewPage shows actionable next steps for a partial registry", async ()
       <OverviewPage
         skills={[]}
         targets={[makeTarget()]}
+        bindings={[]}
         ops={[makePanelOp()]}
         projections={[]}
+        registryProjections={[]}
+        remoteState="CLEAN"
+        queuedWriteCount={0}
         vizMode="loom"
         setVizMode={() => {}}
         selectedSkill={null}

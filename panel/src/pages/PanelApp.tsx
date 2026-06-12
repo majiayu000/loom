@@ -215,8 +215,12 @@ export function PanelApp() {
           <OverviewPage
             skills={skills}
             targets={targets}
+            bindings={bindings}
             ops={ops}
             projections={viewModel.graphLinks}
+            registryProjections={live.projections}
+            remoteState={live.remote?.sync_state ?? null}
+            queuedWriteCount={live.queuedWriteCount}
             vizMode={tweaks.vizMode}
             setVizMode={setVizMode}
             selectedSkill={selectedSkill}

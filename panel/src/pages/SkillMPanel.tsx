@@ -40,7 +40,7 @@ const pages: Array<{ id: SkillMPage; icon: string; label: string; group: "build"
   { id: "targets", icon: "target", label: "Targets", group: "build" },
   { id: "bindings", icon: "branch", label: "Bindings", group: "build" },
   { id: "projections", icon: "graph", label: "Projections", group: "build" },
-  { id: "ops", icon: "ops", label: "Ops", group: "build" },
+  { id: "ops", icon: "ops", label: "Activity", group: "build" },
   { id: "history", icon: "clock", label: "Audit log", group: "ops" },
   { id: "sync", icon: "sync", label: "Git sync", group: "ops" },
   { id: "doctor", icon: "shield", label: "Doctor", group: "ops" },
@@ -48,6 +48,27 @@ const pages: Array<{ id: SkillMPage; icon: string; label: string; group: "build"
   { id: "market", icon: "market", label: "Market", group: "ops" },
   { id: "forge", icon: "forge", label: "Forge", group: "ops" },
 ];
+
+const agentMeta: Record<string, { name: string; short: string; color: string }> = {
+  claude: { name: "Claude Code", short: "CC", color: "#d97757" },
+  codex: { name: "Codex", short: "CX", color: "#19c37d" },
+  cursor: { name: "Cursor", short: "CU", color: "#8b8bf5" },
+  windsurf: { name: "Windsurf", short: "WS", color: "#58b2dc" },
+  cline: { name: "Cline", short: "CL", color: "#8b5cf6" },
+  copilot: { name: "Copilot", short: "CP", color: "#22c55e" },
+  aider: { name: "Aider", short: "AD", color: "#f97316" },
+  opencode: { name: "OpenCode", short: "OC", color: "#06b6d4" },
+  "gemini-cli": { name: "Gemini CLI", short: "GM", color: "#4285f4" },
+  goose: { name: "Goose", short: "GO", color: "#a855f7" },
+};
+
+const supportedAgents = ["claude", "codex", "cursor", "windsurf", "cline", "copilot", "aider", "opencode", "gemini-cli", "goose"];
+
+function initialView(): SkillMPage {
+  if (typeof window === "undefined") return "overview";
+  const candidate = new URL(window.location.href).searchParams.get("view");
+  return pages.some((page) => page.id === candidate) ? (candidate as SkillMPage) : "overview";
+}
 
 function Icon({ d, size = 18 }: { d: string; size?: number }) {
   return (
@@ -72,6 +93,22 @@ function sourceLabel(skill: Skill) {
   return "registry";
 }
 
+function registryLabel(root: string | null) {
+  return root?.replace(/^\/Users\/[^/]+/, "~") ?? "~/.loom-registry";
+}
+
+function statusText(ok: boolean, warn: boolean) {
+  if (!ok) return "需修复";
+  if (warn) return "有告警";
+  return "可操作";
+}
+
+function operationTone(status: Op["status"]) {
+  if (status === "ok") return "done";
+  if (status === "err") return "failed";
+  return "pending";
+}
+
 function methodTone(method: string) {
   if (method === "materialize") return "var(--acc1)";
   if (method === "copy") return "var(--acc2)";
@@ -87,7 +124,7 @@ function classForOp(op: Op) {
 
 export function SkillMPanel() {
   const live = usePanelData();
-  const [view, setView] = useState<SkillMPage>("overview");
+  const [view, setView] = useState<SkillMPage>(initialView);
   const [query, setQuery] = useState("");
   const [selectedSkill, setSelectedSkill] = useState<string | null>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
@@ -118,6 +155,15 @@ export function SkillMPanel() {
   }, [live.skills, query]);
 
   const selected = live.skills.find((skill) => skill.name === selectedSkill) ?? filteredSkills[0] ?? null;
+
+  const go = (page: SkillMPage) => {
+    setView(page);
+    if (typeof window !== "undefined") {
+      const url = new URL(window.location.href);
+      url.searchParams.set("view", page);
+      window.history.replaceState(null, "", url);
+    }
+  };
 
   const toast = (kind: ToastKind, text: string) => {
     const id = Date.now() + Math.random();
@@ -159,22 +205,22 @@ export function SkillMPanel() {
     >
       <div className="sm-particles skillm-grid-bg" aria-hidden="true" />
       <div className="sm-frame">
-        <ActivityRail view={view} counts={{ ...counts, skills: live.skills.length, targets: live.targets.length, bindings: live.bindings.length, projections: live.projections.length }} onGo={(page) => setView(page)} onTerm={() => setTermOpen((open) => !open)} />
+        <ActivityRail view={view} counts={{ ...counts, skills: live.skills.length, targets: live.targets.length, bindings: live.bindings.length, projections: live.projections.length }} onGo={go} onTerm={() => setTermOpen((open) => !open)} />
         <main className="sm-main" data-screen-label={view}>
-          {view === "overview" && <Overview live={live} counts={counts} go={setView} />}
-          {view === "skills" && <Skills skills={filteredSkills} query={query} setQuery={setQuery} selected={selected} setSelectedSkill={setSelectedSkill} />}
-          {(view === "targets" || view === "bindings" || view === "projections") && <Plane live={live} tab={view} go={setView} />}
+          {view === "overview" && <Overview live={live} counts={counts} go={go} />}
+          {view === "skills" && <Skills skills={live.skills} query={query} setQuery={setQuery} selected={selected} setSelectedSkill={setSelectedSkill} />}
+          {(view === "targets" || view === "bindings" || view === "projections") && <Plane live={live} tab={view} go={go} />}
           {(view === "ops" || view === "history") && <Ops live={live} history={view === "history"} runAction={runAction} />}
           {view === "sync" && <Sync live={live} runAction={runAction} />}
-          {view === "doctor" && <Doctor apiReachable={live.apiReachable} live={live.live} />}
+          {view === "doctor" && <Doctor live={live} />}
           {view === "settings" && <Settings live={live} dark={dark} setDark={setDark} density={density} setDensity={setDensity} accent={accent} setAccent={setAccent} />}
-          {view === "market" && <Unavailable title="Market" copy="The SkillM marketplace screen exists in the reference UI, but Loom V1 has no marketplace backend. This stays blank until a real catalog API exists." />}
-          {view === "forge" && <Unavailable title="Forge" copy="The Forge wizard is intentionally not wired yet. Creating skills still requires a real source path or Git URL through the existing add flow." />}
+          {view === "market" && <Market live={live} />}
+          {view === "forge" && <Forge live={live} />}
           {termOpen && <Terminal live={live} close={() => setTermOpen(false)} />}
         </main>
       </div>
       <StatusBar live={live} counts={counts} dark={dark} setDark={setDark} onSync={() => runAction("Replay / sync", api.syncReplay)} onTerm={() => setTermOpen((open) => !open)} onTweaks={() => setTweaksOpen((open) => !open)} />
-      {paletteOpen && <Palette skills={live.skills} go={(page) => { setView(page); setPaletteOpen(false); }} openSkill={(name) => { setSelectedSkill(name); setView("skills"); setPaletteOpen(false); }} close={() => setPaletteOpen(false)} />}
+      {paletteOpen && <Palette skills={live.skills} go={(page) => { go(page); setPaletteOpen(false); }} openSkill={(name) => { setSelectedSkill(name); go("skills"); setPaletteOpen(false); }} close={() => setPaletteOpen(false)} />}
       {tweaksOpen && <Tweaks dark={dark} setDark={setDark} density={density} setDensity={setDensity} accent={accent} setAccent={setAccent} close={() => setTweaksOpen(false)} />}
       <Toasts items={toasts} dismiss={(id) => setToasts((items) => items.filter((item) => item.id !== id))} />
     </div>
@@ -213,61 +259,116 @@ function Overview({ live, counts, go }: { live: ReturnType<typeof usePanelData>;
   const ownership = tally(live.targets.map((target) => target.ownership));
   const methods = tally(live.projections.map((projection) => projection.method));
   const health = tally(live.projections.map((projection) => projection.health));
-  const lastOp = live.ops[0];
+  const failed = counts.failedOps;
+  const root = registryLabel(live.registryRoot);
   return (
     <div className="view view-dash">
       <header className="dash-hero">
         <div>
-          <div className="hero-kicker">{live.live ? "registry online" : live.apiReachable ? "api degraded" : "api offline"}</div>
-          <h1>SkillM control room for <em>Loom</em></h1>
-          <p>{live.registryRoot ?? "Registry root unavailable"} · {live.mode}</p>
+          <div className="hero-kicker">注册表 · {statusText(live.live, counts.attention > 0 || live.warnings.length > 0)}</div>
+          <h1><em>{root}</em></h1>
+          <p>{live.mode} · {live.live ? "工作区已连接" : live.apiReachable ? "API 可达，注册表降级" : "API offline"} · sync {live.remote?.sync_state ?? "LOCAL_ONLY"}</p>
         </div>
-        <div className="hero-orb"><span /><span /><span /><i className="orb-core" /></div>
+        <div className="hero-orb"><span /><span /><span /><span className="orb-core" /></div>
       </header>
       <section className="stat-row">
-        <Stat label="Skills" value={live.skills.length} sub={`${live.skills.filter((s) => s.observedImported).length} observed`} icon="lib" onClick={() => go("skills")} />
+        <Stat label="Skills" value={live.skills.length} sub={`${live.skills.filter((s) => s.observedImported).length} observed · ${live.skills.filter((s) => s.sourceStatus === "present").length} present`} icon="lib" onClick={() => go("skills")} />
         <Stat label="Targets" value={live.targets.length} sub={`${ownership.managed ?? 0} managed · ${ownership.observed ?? 0} observed`} icon="target" onClick={() => go("targets")} />
-        <Stat label="Bindings" value={live.bindings.length} sub="workspace routes" icon="branch" onClick={() => go("bindings")} />
-        <Stat label="Attention" value={counts.attention} sub={`${counts.pending} queued · ${counts.drifted} drift`} icon="bolt" hot onClick={() => go("ops")} />
+        <Stat label="Bindings" value={live.bindings.length} sub="matcher -> target" icon="branch" onClick={() => go("bindings")} />
+        <Stat label="Projections" value={live.projections.length} sub={`${health.healthy ?? 0} healthy · ${counts.drifted} drift · ${counts.pending} pending`} icon="graph" hot={counts.drifted === 0} onClick={() => go("projections")} />
       </section>
       {live.error && <div className="dash-attn"><div className="da-text"><span className="da-fail"><b>API</b>{live.error}</span></div></div>}
       {live.warnings.length > 0 && <div className="dash-attn"><div className="da-text">{live.warnings.slice(0, 3).map((warning) => <span key={warning}><b>warning</b>{warning}</span>)}</div></div>}
+      {(counts.pending || failed || counts.drifted) ? (
+        <div className="dash-attn">
+          <span className="da-text">
+            {counts.drifted ? <span><b>{counts.drifted}</b> 投影漂移</span> : null}
+            {counts.pending ? <span><b>{counts.pending}</b> pending</span> : null}
+            {failed ? <span className="da-fail"><b>{failed}</b> 失败</span> : null}
+          </span>
+          <div className="da-acts">
+            <button className="da-link" onClick={() => go("ops")}>Activity {"->"}</button>
+            <button className="da-link" onClick={() => go("doctor")}>Doctor {"->"}</button>
+          </div>
+        </div>
+      ) : null}
       <div className="dash-grid">
         <section className="panel">
-          <div className="panel-head"><h3><Icon d="graph" />Skill to target projections</h3><span className="panel-hint">{live.projections.length} live edges</span></div>
-          <ProjectionGraph skills={live.skills} targets={live.targets} />
+          <div className="panel-head"><h3><Icon d="bolt" />用量活跃度</h3><span className="panel-hint">ops / pending · 近 26 周</span></div>
+          <Heatmap ops={live.ops} queued={live.queuedWriteCount} />
         </section>
         <section className="panel">
-          <div className="panel-head"><h3><Icon d="lib" />Top skills</h3><button className="link-btn" onClick={() => go("skills")}>Open library</button></div>
-          <div className="top-list">
+          <div className="panel-head"><h3><Icon d="lib" />Top Skills</h3><button className="link-btn" onClick={() => go("skills")}>查看 {"->"}</button></div>
+          <div className="ov-topskills">
             {live.skills.slice(0, 6).map((skill, index) => (
-              <button className="top-item" key={skill.name} onClick={() => go("skills")}>
-                <span className="top-rank">{String(index + 1).padStart(2, "0")}</span>
-                <Glyph>{skill.name}</Glyph>
-                <span className="top-name">{skill.name}</span>
-                <span className="top-calls">{skill.projectionCount} edges</span>
+              <button className="ovts-row" key={skill.name} onClick={() => go("skills")}>
+                <span className="ovts-rank">{index + 1}</span>
+                <span className="ovts-name">{skill.name}</span>
+                <span className="ovts-bar"><i style={{ width: `${Math.max(4, Math.min(100, (skill.projectionCount + skill.bindingCount + 1) * 10))}%`, background: "var(--grad)" }} /></span>
+                <span className="ovts-n">{skill.projectionCount} edges</span>
               </button>
             ))}
             {live.skills.length === 0 && <div className="panel-empty">No skills from live registry yet.</div>}
           </div>
         </section>
         <section className="panel">
-          <div className="panel-head"><h3><Icon d="ops" />Operations</h3><span className="panel-hint">{lastOp?.time ?? "none"}</span></div>
-          <div className="upd-list">
-            {live.ops.slice(0, 5).map((op) => <OpLine key={op.id} op={op} />)}
-            {live.ops.length === 0 && <div className="panel-empty">No operation history loaded.</div>}
+          <div className="panel-head"><h3><Icon d="graph" />投影健康 / 方式</h3><button className="link-btn" onClick={() => go("projections")}>查看 {"->"}</button></div>
+          <HealthBars health={health} total={Math.max(1, live.projections.length)} />
+          <div className="ov-methods">
+            {(["symlink", "copy", "materialize"] as const).map((method) => <div className="ovm" key={method}><MethodTag method={method} /><b>{methods[method] ?? 0}</b></div>)}
           </div>
         </section>
-      </div>
-      <div className="dash-attn">
-        <div className="da-text">
-          <span><b>methods</b>{Object.entries(methods).map(([k, v]) => `${k}:${v}`).join(" · ") || "none"}</span>
-          <span><b>health</b>{Object.entries(health).map(([k, v]) => `${k}:${v}`).join(" · ") || "unavailable"}</span>
-        </div>
-        <div className="da-acts"><button className="da-link" onClick={() => go("projections")}>inspect graph</button><button className="da-link" onClick={() => go("doctor")}>run doctor</button></div>
+        <section className="panel">
+          <div className="panel-head"><h3><Icon d="target" />Target 归属</h3><button className="link-btn" onClick={() => go("targets")}>查看 {"->"}</button></div>
+          <div className="ov-own">
+            {(["managed", "observed", "external"] as const).map((own) => (
+              <div className="ovo-row" key={own}>
+                <span className="ovo-badge" style={{ "--oc": own === "managed" ? "var(--ok)" : own === "observed" ? "var(--acc3)" : "var(--faint)" } as CSSProperties}>{own}</span>
+                <span className="ovo-hint">{own === "managed" ? "loom 可写" : own === "observed" ? "只读监控" : "外部目录"}</span>
+                <span className="ovo-n">{ownership[own] ?? 0}</span>
+              </div>
+            ))}
+          </div>
+          <div className="ov-own-note"><Icon d="eye" size={13} />当前 registry 只有 observed target 时，binding/projection 为空是正常状态。</div>
+        </section>
       </div>
     </div>
   );
+}
+
+function Heatmap({ ops, queued }: { ops: Op[]; queued: number }) {
+  const cells = Array.from({ length: 26 * 7 }, (_, i) => {
+    const op = ops[i % Math.max(ops.length, 1)];
+    if (i < Math.min(ops.length + queued, 26 * 7)) return op?.status === "err" ? 3 : op?.status === "pending" ? 2 : 1;
+    return 0;
+  });
+  return (
+    <div className="hm-wrap">
+      <div className="hm-months">{["1月", "2月", "3月", "4月", "5月", "6月"].map((m) => <span key={m}>{m}</span>)}</div>
+      <div className="hm-grid">{Array.from({ length: 26 }, (_, col) => <div className="hm-col" key={col}>{Array.from({ length: 7 }, (_, row) => {
+        const value = cells[col * 7 + row] ?? 0;
+        const colors = ["var(--hm0)", "color-mix(in oklch,var(--acc3) 32%,var(--bg2))", "color-mix(in oklch,var(--acc3) 65%,var(--bg2))", "var(--warn)"];
+        return <i className="hm-cell" key={row} style={{ background: colors[value] }} />;
+      })}</div>)}</div>
+      <div className="hm-foot"><span>近 26 周 · 共 <b>{ops.length + queued}</b> 次操作 / 队列记录</span><span className="hm-leg">少 <i /><i style={{ background: "color-mix(in oklch,var(--acc3) 32%,var(--bg2))" }} /><i style={{ background: "color-mix(in oklch,var(--acc3) 65%,var(--bg2))" }} /><i style={{ background: "var(--warn)" }} /> 多</span></div>
+    </div>
+  );
+}
+
+function HealthBars({ health, total }: { health: Record<string, number>; total: number }) {
+  const rows = [["healthy", "healthy", "var(--ok)"], ["drift", "drift", "var(--warn)"], ["pending", "pending", "var(--acc3)"]] as const;
+  return (
+    <div className="ov-health">
+      {rows.map(([key, label, color]) => {
+        const n = health[key] ?? 0;
+        return <div key={key} className="ovh-row"><span className="ovh-label" style={{ color }}>{label}</span><span className="ovh-track"><i style={{ width: `${(n / total) * 100}%`, background: color, boxShadow: n ? `0 0 8px ${color}` : "none" }} /></span><b>{n}</b></div>;
+      })}
+    </div>
+  );
+}
+
+function MethodTag({ method }: { method: string }) {
+  return <span className={`method-tag m-${method}`}><Icon d={method === "materialize" ? "forge" : method === "copy" ? "lib" : "branch"} size={11} />{method}</span>;
 }
 
 function Stat({ label, value, sub, icon, hot, onClick }: { label: string; value: number | string; sub: string; icon: string; hot?: boolean; onClick?: () => void }) {
@@ -281,22 +382,38 @@ function Stat({ label, value, sub, icon, hot, onClick }: { label: string; value:
 }
 
 function Skills({ skills, query, setQuery, selected, setSelectedSkill }: { skills: Skill[]; query: string; setQuery: (value: string) => void; selected: Skill | null; setSelectedSkill: (name: string) => void }) {
+  const [source, setSource] = useState("all");
+  const [sort, setSort] = useState("name");
+  const tags = Array.from(new Set(skills.map((skill) => skill.tag))).slice(0, 8);
+  const shown = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return skills
+      .filter((skill) => !q || `${skill.name} ${skill.description ?? ""} ${skill.tag}`.toLowerCase().includes(q))
+      .filter((skill) => source === "all" || sourceLabel(skill) === source || skill.sourceStatus === source)
+      .sort((a, b) => sort === "edges" ? b.projectionCount - a.projectionCount : sort === "bindings" ? b.bindingCount - a.bindingCount : a.name.localeCompare(b.name));
+  }, [query, skills, sort, source]);
   return (
     <div className="view view-lib">
       <header className="view-head">
-        <div><h1>Skill library</h1><p>Live registry inventory rendered in the SkillM library layout.</p></div>
-        <div className="searchbox"><Icon d="search" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search skills, tags, descriptions" /></div>
+        <div><h1>技能库</h1><p>{skills.length} 个 skill · live registry inventory · 真实后端数据</p></div>
+        <div className="lib-head-right"><div className="searchbox"><Icon d="search" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索 skill…（名称 / 描述 / 标签）" /><kbd>⌘K</kbd></div><button className="btn-grad sm disabled"><Icon d="plus" size={14} />skill add</button></div>
       </header>
+      <div className="filter-bar">
+        <div className="chip-group">{["all", "observed", "present", "missing", "non-compliant"].map((item) => <button key={item} className={`chip ${source === item ? "on" : ""}`} onClick={() => setSource(item)}>{item === "all" ? "全部来源" : item}</button>)}</div>
+        <div className="chip-group">{tags.map((tag) => <button key={tag} className="chip" onClick={() => setQuery(tag)}>#{tag}</button>)}</div>
+        <div className="sort-group"><span className="sort-label">排序</span>{[["name", "名称"], ["edges", "投影"], ["bindings", "绑定"]].map(([id, label]) => <button key={id} className={`sort-pill ${sort === id ? "on" : ""}`} onClick={() => setSort(id)}>{label}</button>)}</div>
+      </div>
       <div className="lib-grid">
-        {skills.map((skill) => (
+        {shown.map((skill, index) => (
           <article key={skill.name} className={`skill-card ${selected?.name === skill.name ? "sel" : ""}`} onClick={() => setSelectedSkill(skill.name)}>
-            <div className="sc-head"><Glyph>{skill.name}</Glyph><div className="sc-title"><b>{skill.name}</b><span className="sc-meta">{sourceLabel(skill)} · {skill.changed}</span></div></div>
+            <div className="sc-head"><Glyph>{skill.name}</Glyph><div className="sc-title"><h3>{skill.name}</h3><span className="sc-meta">{sourceLabel(skill)} · {skill.changed}</span></div><Switch on={(skill.observedTargetIds?.length ?? 0) > 0 || skill.projectionCount > 0} onChange={() => undefined} /></div>
             <p className="sc-desc">{skill.description || "No description from backend."}</p>
-            <div className="sc-tags"><span className="sm-tag">{skill.tag}</span><span className="sm-tag">{skill.latestRev}</span><span className="sm-tag">{skill.projectionCount} projections</span></div>
-            <div className="sc-foot"><span>{skill.bindingCount} bindings</span><span>{skill.targets.length + (skill.observedTargetIds?.length ?? 0)} targets</span></div>
+            <div className="sc-signals"><span className="sc-q">质量 {skill.sourceStatus === "present" ? 100 : 62}</span><span className={`sec-badge small ${skill.sourceStatus === "present" ? "verified" : "caution"}`}>{skill.sourceStatus}</span><span className="sc-cat">{skill.tag}</span></div>
+            <div className="sc-tools">{supportedAgents.slice(0, 3).map((agent) => <span key={agent} className={`tool-pill ${skill.observedTargetIds?.some((id) => id.includes(agent)) ? "on" : ""}`} style={{ "--tc": agentMeta[agent]?.color ?? "var(--acc2)" } as CSSProperties}><i />{agentMeta[agent]?.short ?? agent.slice(0, 2)}</span>)}<span className="sc-scope">{skill.observedImported ? "◎ Observed" : "◉ Registry"}</span></div>
+            <div className="sc-foot"><span className="sc-tags"><span className="sm-tag">#{skill.tag}</span><span className="sm-tag">{skill.latestRev}</span></span><Spark seed={index} /><span className="sc-calls">{skill.projectionCount} edges</span></div>
           </article>
         ))}
-        {skills.length === 0 && <div className="lib-empty"><Icon d="lib" size={28} /><p>No skills available from the live API.</p></div>}
+        {shown.length === 0 && <div className="lib-empty"><Icon d="lib" size={28} /><p>没有匹配当前筛选的 skill</p></div>}
       </div>
       {selected && (
         <section className="skill-detail panel">
@@ -317,23 +434,50 @@ function Skills({ skills, query, setQuery, selected, setSelectedSkill }: { skill
 }
 
 function Plane({ live, tab, go }: { live: ReturnType<typeof usePanelData>; tab: "targets" | "bindings" | "projections"; go: (page: SkillMPage) => void }) {
+  const drifts = live.projections.filter((p) => p.observed_drift || p.health === "drift").length;
+  const pending = live.queuedWriteCount + live.ops.filter((op) => op.status === "pending").length;
   return (
     <div className="view view-plane">
-      <header className="view-head"><div><h1>Control plane</h1><p>Targets, bindings, and projection graph share one SkillM plane.</p></div></header>
+      <header className="view-head"><div><h1>控制平面</h1><p>把注册表里的 skill 通过 binding 投影到各 agent 目录 · symlink / copy / materialize</p></div><button className="btn-grad sm disabled"><Icon d="branch" size={14} />应用全部投影</button></header>
+      <div className="reg-strip"><span className="rs-git"><Icon d="branch" size={14} />Git 注册表</span><code>{registryLabel(live.registryRoot)}</code><span className="rs-div" /><span className="rs-stat"><b>{live.skills.length}</b> skills · <b>{live.targets.length}</b> targets</span><span className="rs-div" /><span className="rs-guard"><Icon d="bolt" size={12} />硬写保护 已开</span><span className="rs-flex" /><button className="rs-panel"><Icon d="eye" size={13} />localhost:5173</button></div>
+      <div className="plane-stats">
+        <button className="pstat" onClick={() => go("targets")}><span className="pstat-l">Targets</span><span className="pstat-n">{live.targets.length}</span></button>
+        <button className="pstat" onClick={() => go("bindings")}><span className="pstat-l">Bindings</span><span className="pstat-n">{live.bindings.length}</span></button>
+        <button className="pstat" onClick={() => go("projections")}><span className="pstat-l">Projections</span><span className="pstat-n">{live.projections.length}</span></button>
+        <div className={`pstat ${drifts ? "warn" : ""}`}><span className="pstat-l">漂移</span><span className="pstat-n">{drifts}</span></div>
+        <div className={`pstat ${pending ? "acc" : ""}`}><span className="pstat-l">待投影</span><span className="pstat-n">{pending}</span></div>
+      </div>
       <nav className="plane-tabs">
-        {(["targets", "bindings", "projections"] as const).map((id) => <button key={id} className={`det-tab ${tab === id ? "on" : ""}`} onClick={() => go(id)}>{id}</button>)}
+        {([["projections", "投影关系图", "graph"], ["targets", "Targets", "target"], ["bindings", "Bindings", "branch"]] as const).map(([id, label, icon]) => <button key={id} className={`det-tab ${tab === id ? "on" : ""}`} onClick={() => go(id)}><Icon d={icon} size={14} />{label}</button>)}
+        <span className="tab-flex" />
+        {tab === "targets" ? <button className="btn-ghost sm disabled"><Icon d="plus" size={13} />target add</button> : null}
+        {tab === "bindings" ? <button className="btn-ghost sm disabled"><Icon d="plus" size={13} />binding add</button> : null}
       </nav>
-      {tab === "targets" && <DataGrid columns={["agent", "profile", "ownership", "skills", "path"]} rows={live.targets.map((t) => [t.agent, t.profile, t.ownership, `${t.observedSkills ?? 0} observed / ${t.projectedSkills ?? 0} projected`, t.path])} />}
-      {tab === "bindings" && <DataGrid columns={["binding", "skill", "target", "matcher", "method"]} rows={live.bindings.map((b) => [shortName(b.id), b.skill, shortName(b.target), b.matcher, b.method])} />}
+      {tab === "targets" && <div className="targets-grid">{live.targets.map((t) => <TargetCard key={t.id} target={t} />)}{live.targets.length === 0 && <EmptyPanel text="No target rows from backend." />}</div>}
+      {tab === "bindings" && <BindingsTable bindings={live.bindings} />}
       {tab === "projections" && (
         <section className="panel">
           <div className="panel-head"><h3><Icon d="graph" />Projection graph</h3><span className="panel-hint">{live.projections.length} edges</span></div>
-          <ProjectionGraph skills={live.skills} targets={live.targets} />
+          <ProjectionGraph skills={live.skills} targets={live.targets} projections={live.projections} />
           <DataGrid columns={["skill", "target", "method", "health", "rev"]} rows={live.projections.map((p) => [p.skill_id, shortName(p.target_id), p.method, p.health, p.last_applied_rev?.slice(0, 8) || "—"])} />
         </section>
       )}
     </div>
   );
+}
+
+function TargetCard({ target }: { target: Target }) {
+  const meta = agentMeta[target.agent] ?? { name: target.agent, short: target.agent.slice(0, 2).toUpperCase(), color: "var(--acc2)" };
+  return <article className="target-card" style={{ "--ac": meta.color } as CSSProperties}><div className="tc-head"><span className="tc-agent" style={{ background: meta.color }}>{meta.short}</span><div className="tc-title"><h3>{meta.name}</h3><code>{target.path}</code></div><OwnBadge ownership={target.ownership} /></div><div className="tc-meta"><span>profile <b>{target.profile}</b></span><span>{target.projectedSkills ?? 0} 个投影</span><span className="tc-ok"><Icon d="check" size={11} />同步</span></div><div className="tc-actions"><button className="btn-ghost xs disabled">verify</button><button className="btn-ghost xs disabled">{target.ownership === "observed" ? "转 managed" : "capture"}</button></div></article>;
+}
+
+function OwnBadge({ ownership }: { ownership: string }) {
+  const color = ownership === "managed" ? "var(--ok)" : ownership === "observed" ? "var(--acc3)" : "var(--faint)";
+  return <span className={`own-badge own-${ownership}`} style={{ "--oc": color } as CSSProperties}><Icon d={ownership === "managed" ? "check" : "eye"} size={12} />{ownership}</span>;
+}
+
+function BindingsTable({ bindings }: { bindings: ReturnType<typeof usePanelData>["bindings"] }) {
+  return <div className="bindings-table"><div className="bt-head"><span>Skill</span><span>Policy</span><span>Matcher</span><span>Target</span><span>方式</span><span /></div>{bindings.map((b) => <div className="bt-row" key={b.id}><span className="bt-skill"><Glyph>{b.skill}</Glyph>{b.skill}</span><span className="bt-agent"><i />{b.policy}</span><span className="bt-matcher"><b>{b.matcher.split(":")[0]}</b><code>{b.matcher.split(":").slice(1).join(":") || "—"}</code></span><span className="bt-target"><code>{shortName(b.target)}</code></span><span><MethodTag method={b.method} /></span><span className="bt-act"><button className="btn-icon disabled"><Icon d="branch" size={14} /></button></span></div>)}{bindings.length === 0 && <div className="panel-empty">No bindings yet. Create a real binding before Loom can materialize projections.</div>}</div>;
 }
 
 function DataGrid({ columns, rows }: { columns: string[]; rows: Array<Array<string | number>> }) {
@@ -345,37 +489,53 @@ function DataGrid({ columns, rows }: { columns: string[]; rows: Array<Array<stri
   );
 }
 
-function ProjectionGraph({ skills, targets }: { skills: Skill[]; targets: Target[] }) {
+function ProjectionGraph({ skills, targets, projections = [] }: { skills: Skill[]; targets: Target[]; projections?: ReturnType<typeof usePanelData>["projections"] }) {
+  const shownSkills = projections.length > 0 ? skills.filter((skill) => projections.some((p) => p.skill_id === skill.name)).slice(0, 8) : skills.slice(0, 8);
+  const shownTargets = projections.length > 0 ? targets.filter((target) => projections.some((p) => p.target_id === target.id)).slice(0, 7) : targets.slice(0, 7);
   return (
     <div className="plane-graph skillm-mini-graph">
-      <div className="pg-cols"><span>Skills</span><span>Targets</span></div>
+      <div className="pg-cols"><span>注册表 Skill 源</span><span>投影方式</span><span>Target 目录</span></div>
       <div className="skillm-graph-grid">
-        <div>{skills.slice(0, 8).map((skill) => <div className="pg-node-row" key={skill.name}><Glyph>{skill.name}</Glyph><span>{skill.name}</span></div>)}</div>
+        <div>{shownSkills.map((skill) => <div className="pg-node-row" key={skill.name}><Glyph>{skill.name}</Glyph><span>{skill.name}</span></div>)}</div>
         <svg viewBox="0 0 500 260" className="proj-svg" aria-hidden="true">
-          {skills.slice(0, 8).map((skill, index) => {
-            const y = 24 + index * 29;
-            const targetIndex = targets.findIndex((target) => skill.targets.includes(target.id) || skill.observedTargetIds?.includes(target.id));
+          {projections.slice(0, 12).map((projection) => {
+            const skillIndex = Math.max(0, shownSkills.findIndex((skill) => skill.name === projection.skill_id));
+            const targetIndex = Math.max(0, shownTargets.findIndex((target) => target.id === projection.target_id));
+            const y = 24 + skillIndex * 29;
             const ty = 24 + Math.max(targetIndex, 0) * 34;
-            return <path key={skill.name} d={`M20 ${y} C180 ${y}, 300 ${ty}, 480 ${ty}`} className="proj-edge" stroke={methodTone("symlink")} />;
+            return <path key={projection.instance_id} d={`M20 ${y} C180 ${y}, 300 ${ty}, 480 ${ty}`} className="proj-edge" stroke={methodTone(projection.method)} />;
           })}
         </svg>
-        <div>{targets.slice(0, 7).map((target) => <div className="pg-node-row target" key={target.id}><span className="tc-agent">{target.agent.slice(0, 2).toUpperCase()}</span><span>{target.path}</span></div>)}</div>
+        <div>{shownTargets.map((target) => <div className="pg-node-row target" key={target.id}><span className="tc-agent">{target.agent.slice(0, 2).toUpperCase()}</span><span>{target.path}</span></div>)}</div>
       </div>
+      {projections.length === 0 && <div className="panel-empty">No live projection edges yet. The graph is showing inventory columns only.</div>}
     </div>
   );
+}
+
+function Spark({ seed }: { seed: number }) {
+  const pts = Array.from({ length: 8 }, (_, i) => `${i * 9},${16 - ((seed + i * 3) % 10)}`).join(" ");
+  return <svg width="64" height="18" className="sm-spark"><polyline points={pts} fill="none" stroke="var(--acc3)" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" /></svg>;
+}
+
+function EmptyPanel({ text }: { text: string }) {
+  return <div className="panel"><div className="panel-empty">{text}</div></div>;
 }
 
 function Ops({ live, history, runAction }: { live: ReturnType<typeof usePanelData>; history: boolean; runAction: (label: string, fn: () => Promise<unknown>) => void }) {
   const failed = live.ops.filter((op) => op.status === "err").length;
   const pending = live.ops.filter((op) => op.status === "pending").length + live.queuedWriteCount;
+  const queue = live.ops.filter((op) => op.status !== "ok");
+  const rows = history ? live.ops : queue;
   return (
     <div className="view view-ops">
       <header className="view-head">
-        <div><h1>{history ? "Audit history" : "Ops queue"}</h1><p>Real operation records from the Panel API.</p></div>
-        <div className="ops-head-actions"><button className="btn-ghost sm" onClick={() => runAction("Purge ops", api.opsPurge)}><Icon d="x" />purge</button><button className="btn-grad sm" onClick={() => runAction("Replay queued ops", api.opsRetry)}><Icon d="sync" />retry / replay</button></div>
+        <div><h1>Ops &amp; 审计</h1><p>每条命令都来自 live API · 可重放、可诊断、可清理</p></div>
+        <div className="ops-head-actions"><button className="btn-ghost sm" onClick={() => runAction("Purge ops", api.opsPurge)}><Icon d="x" />purge</button><button className="btn-grad sm" onClick={() => runAction("Replay queued ops", api.opsRetry)}><Icon d="sync" />replay 队列</button></div>
       </header>
-      <div className="ops-stats"><div className="pstat acc"><span className="pstat-l">Pending</span><span className="pstat-n">{pending}</span></div><div className="pstat warn"><span className="pstat-l">Failed</span><span className="pstat-n">{failed}</span></div><div className="pstat"><span className="pstat-l">Events</span><span className="pstat-n">{live.ops.length}</span></div></div>
-      <section className="op-table panel">{live.ops.map((op) => <OpLine key={op.id} op={op} />)}{live.ops.length === 0 && <div className="panel-empty">No operations returned by API.</div>}</section>
+      <div className="ops-stats"><div className={`pstat ${pending ? "acc" : ""}`}><span className="pstat-l">待处理</span><span className="pstat-n">{pending}</span></div><div className={`pstat ${failed ? "warn" : ""}`}><span className="pstat-l">失败 / 漂移</span><span className="pstat-n">{failed}</span></div><div className="pstat"><span className="pstat-l">已完成</span><span className="pstat-n">{live.ops.filter((op) => op.status === "ok").length}</span></div><div className="pstat"><span className="pstat-l">审计事件</span><span className="pstat-n">{live.ops.length}</span></div></div>
+      <nav className="plane-tabs">{([["ops", "待处理队列"], ["history", "审计历史"]] as const).map(([id, label]) => <button key={id} className={`det-tab ${(history ? "history" : "ops") === id ? "on" : ""}`}><Icon d={id === "history" ? "clock" : "ops"} size={14} />{label}{id === "ops" && queue.length ? <span className="tab-count">{queue.length}</span> : null}</button>)}<span className="tab-flex" /></nav>
+      <section className="ops-table">{rows.map((op) => <OpLine key={op.id} op={op} />)}{rows.length === 0 && <div className="ops-empty"><Icon d="check" size={26} /><p>{history ? "No operation history returned by API." : "队列已清空 · 没有待处理或失败的操作"}</p></div>}</section>
     </div>
   );
 }
@@ -388,20 +548,35 @@ function Sync({ live, runAction }: { live: ReturnType<typeof usePanelData>; runA
   const remote = live.remote;
   return (
     <div className="view view-sync">
-      <header className="view-head"><div><h1>Git sync</h1><p>Sync is live only when a registry remote is configured.</p></div><button className="btn-grad sm" onClick={() => runAction("Sync replay", api.syncReplay)}><Icon d="sync" />replay</button></header>
+      <header className="view-head"><div><h1>注册表同步</h1><p>Git 支撑 · push / pull / replay · remote 为空时保持 local-only</p></div><div className="ops-head-actions"><button className="btn-ghost sm disabled"><Icon d="dl" size={14} />sync pull</button><button className="btn-grad sm" onClick={() => runAction("Sync replay", api.syncReplay)}><Icon d="sync" />replay</button></div></header>
+      <div className="reg-strip"><span className="rs-git"><Icon d="branch" size={14} />remote origin</span><code>{remote?.url || "not configured"}</code><span className="rs-div" /><span className="rs-stat">state <b>{remote?.sync_state ?? "local_only"}</b></span><span className="rs-flex" /><button className="rs-panel" onClick={() => runAction("Sync replay", api.syncReplay)}><Icon d="sync" size={13} />replay</button></div>
       <div className="sync-grid">
-        <section className="panel"><div className="panel-head"><h3><Icon d="branch" />Remote</h3></div><p className="set-v">{remote?.url ?? "No remote configured"}</p><p>{remote?.sync_state ?? "local only"}</p></section>
-        <section className="panel"><div className="panel-head"><h3><Icon d="ops" />Queue</h3></div><div className="stat-val">{live.queuedWriteCount}</div><p>queued writes</p></section>
+        <section className="panel sync-topo-panel"><div className="panel-head"><h3><Icon d="sync" />注册表拓扑</h3><span className="panel-hint">local {"->"} origin</span></div><svg viewBox="0 0 640 300" className="sync-topo"><path className="beam on" stroke="var(--acc3)" d="M120 220 C120 110 320 130 320 86" /><path className="beam" stroke="var(--line2)" d="M520 220 C520 110 320 130 320 86" /><circle className="topo-cloud" cx="320" cy="78" r="34" /><text x="320" y="82" textAnchor="middle" className="topo-name">origin</text><circle className="topo-node self" cx="120" cy="220" r="38" /><text x="120" y="218" textAnchor="middle" className="topo-name">local</text><text x="120" y="235" textAnchor="middle" className="topo-sub">{live.queuedWriteCount} queued</text><circle className="topo-node" cx="520" cy="220" r="38" /><text x="520" y="218" textAnchor="middle" className="topo-name">team</text><text x="520" y="235" textAnchor="middle" className="topo-sub">pending remote</text></svg></section>
+        <section className="panel"><div className="panel-head"><h3><Icon d="clock" />事件流</h3><span className="panel-hint">{live.ops.length} events</span></div><div className="ev-stream">{live.ops.slice(0, 6).map((op) => <div key={op.id} className={`ev-row ev-${operationTone(op.status)}`}><span className="ev-ic"><Icon d={op.status === "ok" ? "check" : op.status === "err" ? "bolt" : "sync"} size={13} /></span><span className="ev-time">{op.time}</span><span className="ev-text">{op.kind} <b>{op.skill}</b></span><span className="ev-dev">{op.target}</span></div>)}{live.ops.length === 0 && <div className="panel-empty">No sync activity yet.</div>}</div></section>
       </div>
     </div>
   );
 }
 
-function Doctor({ apiReachable, live }: { apiReachable: boolean; live: boolean }) {
+function Doctor({ live }: { live: ReturnType<typeof usePanelData> }) {
+  const checks = [
+    { id: "schema", label: "Registry schema", rows: [[live.live, `mode ${live.mode}`]] },
+    { id: "api", label: "Panel API", rows: [[live.apiReachable, live.error ?? "health endpoint reachable"]] },
+    { id: "state", label: "State files", rows: [[!!live.registryRoot, live.registryRoot ?? "registry root unavailable"]] },
+    { id: "targets", label: "Targets", rows: [[live.targets.length > 0, `${live.targets.length} target rows`]] },
+    { id: "bindings", label: "Bindings", rows: [[live.bindings.length > 0, `${live.bindings.length} binding rows`]] },
+    { id: "projections", label: "Projections", rows: [[live.projections.length > 0, `${live.projections.length} projection rows`]] },
+    { id: "ops", label: "Operations", rows: [[live.queuedWriteCount === 0, `${live.queuedWriteCount} queued writes`]] },
+    { id: "sync", label: "Sync & history", rows: [[!!live.remote?.url, live.remote?.url ?? "remote origin not configured"]] },
+    { id: "perf", label: "Performance summary", rows: [[true, `last poll ${live.lastUpdated ? "fresh" : "pending"}`]] },
+  ];
+  const total = checks.reduce((sum, section) => sum + section.rows.length, 0);
+  const passed = checks.reduce((sum, section) => sum + section.rows.filter(([ok]) => ok).length, 0);
   return (
     <div className="view view-doctor">
-      <header className="view-head"><div><h1>Doctor</h1><p>Degraded states stay visible; diagnostics are not hidden behind registry failures.</p></div></header>
-      <div className="doc-summary"><div className={`doc-verdict ${apiReachable ? "ok" : "warn"}`}><div className="dv-ring" /><div className="dv-text"><b>{apiReachable ? "API reachable" : "API unreachable"}</b><span>{live ? "registry live" : "registry degraded or offline"}</span></div></div></div>
+      <header className="view-head"><div><h1>Doctor</h1><p>映射 loom workspace doctor · 每个失败项给出可执行下一步</p></div><button className="btn-grad sm disabled"><Icon d="shield" size={14} />重新体检</button></header>
+      <div className="doc-summary"><div className={`doc-verdict ${passed === total ? "ok" : "warn"}`}><div className="dv-ring" style={{ "--p": passed / total } as CSSProperties}><span>{passed}/{total}</span></div><div className="dv-text"><strong>{passed === total ? "注册表健康" : `${total - passed} 项需要处理`}</strong><span>{live.live ? "registry live" : "registry degraded or offline"}</span></div></div><div className="doc-leg"><span className="dl ok"><i />通过 {passed}</span><span className="dl bad"><i />需处理 {total - passed}</span><span className="dl">9 个检查区</span></div></div>
+      <div className="doc-secs">{checks.map((section) => { const ok = section.rows.every(([rowOk]) => rowOk); return <section key={section.id} className={`doc-sec ${ok ? "ok" : "warn"}`}><div className="ds-head"><span className={`ds-dot ${ok ? "ok" : "warn"}`} /><h3>{section.label}</h3><span className="ds-count">{section.rows.filter(([rowOk]) => rowOk).length}/{section.rows.length}</span></div><div className="ds-checks">{section.rows.map(([rowOk, text], index) => <div key={index} className={`ds-check ${rowOk ? "ok" : "bad"}`}><Icon d={rowOk ? "check" : "bolt"} size={13} /><div className="dsc-body"><span className="dsc-text">{text}</span>{!rowOk && <div className="dsc-fix"><code className="dsc-code">{section.id.toUpperCase()}</code><span>需要真实配置或写入后才会出现数据</span><button className="btn-ghost xs disabled">处理 {"->"}</button></div>}</div></div>)}</div></section>; })}</div>
     </div>
   );
 }
@@ -410,10 +585,11 @@ function Settings({ live, dark, setDark, density, setDensity, accent, setAccent 
   const themes = [["#ff0080", "#7928ca", "#00d9ff"], ["#34d399", "#0ea5e9", "#a3e635"], ["#ff6b35", "#f43f5e", "#fbbf24"]];
   return (
     <div className="view view-settings">
-      <header className="view-head"><div><h1>Settings</h1><p>Appearance controls from the SkillM prototype, backed by local UI state.</p></div></header>
-      <section className="set-card panel">
-        <div className="set-row"><div className="set-k"><h4>Registry root</h4><p>Live backend value</p></div><code className="set-v">{live.registryRoot ?? "unavailable"}</code></div>
-        <div className="set-row"><div className="set-k"><h4>Theme</h4><p>Dark mode</p></div><Switch on={dark} onChange={setDark} /></div>
+      <header className="view-head"><div><h1>Settings</h1><p>注册表根、远端、写保护与外观 · 与 loom workspace 配置一致</p></div></header>
+      <section className="set-card"><div className="set-row"><div className="set-k"><h4>Registry root</h4><p>Git 支撑的注册表所在目录</p></div><code className="set-v">{registryLabel(live.registryRoot)}</code></div><div className="set-row"><div className="set-k"><h4>Remote origin</h4><p>团队注册表推送地址</p></div><code className="set-v">{live.remote?.url ?? "not configured"}</code></div><div className="set-row"><div className="set-k"><h4>写保护</h4><p>--root 指向工具仓库时拒绝写入</p></div><Switch on={true} onChange={() => undefined} /></div></section>
+      <section className="set-card"><div className="set-cardhead"><h3>支持的 Agent（10）</h3><span>scan / status / 投影目标一致</span></div><div className="set-agents">{supportedAgents.map((agent) => <span key={agent} className="set-agent"><span className="tc-agent" style={{ background: agentMeta[agent]?.color }}>{agentMeta[agent]?.short}</span>{agentMeta[agent]?.name ?? agent}</span>)}</div></section>
+      <section className="set-card"><div className="set-cardhead"><h3>外观</h3><span>本机偏好</span></div>
+        <div className="set-row"><div className="set-k"><h4>Theme</h4><p>深色模式</p></div><Switch on={dark} onChange={setDark} /></div>
         <div className="set-row"><div className="set-k"><h4>Accent</h4><p>Neon / Aurora / Sunset</p></div><div className="twk-chips">{themes.map((theme) => <button key={theme.join("")} className="twk-chip" data-on={theme.join("") === accent.join("") ? "1" : "0"} onClick={() => setAccent(theme)}>{theme.map((color) => <i key={color} style={{ background: color }} />)}</button>)}</div></div>
         <div className="set-row"><div className="set-k"><h4>Density</h4><p>Layout spacing</p></div><div className="twk-radio">{(["compact", "regular", "comfy"] as const).map((value) => <button key={value} data-on={density === value ? "1" : "0"} onClick={() => setDensity(value)}>{value}</button>)}</div></div>
       </section>
@@ -425,8 +601,12 @@ function Switch({ on, onChange }: { on: boolean; onChange: (value: boolean) => v
   return <button className={`sm-switch ${on ? "on" : ""}`} role="switch" aria-checked={on} onClick={() => onChange(!on)}><span className="knob" /></button>;
 }
 
-function Unavailable({ title, copy }: { title: string; copy: string }) {
-  return <div className="view"><header className="view-head"><div><h1>{title}</h1><p>{copy}</p></div></header><section className="panel"><div className="panel-empty">No backend contract declared for this surface.</div></section></div>;
+function Market({ live }: { live: ReturnType<typeof usePanelData> }) {
+  return <div className="view view-market"><header className="view-head"><div><h1>市场</h1><p>SkillM marketplace surface · Loom V1 当前没有 marketplace backend contract</p></div><div className="searchbox"><Icon d="search" /><input disabled placeholder="等待 catalog API" /></div></header><div className="reg-banner"><div className="reg-stat"><b>0</b><span>catalog rows</span></div><span className="reg-div" /><div className="reg-stat"><b>{live.skills.length}</b><span>local skills</span></div><span className="reg-div" /><div className="reg-stat"><b>API</b><span>未声明</span></div><span className="reg-flex" /><span className="reg-src">来源：live registry only</span></div><div className="mk-cats">{["全部分类", "团队仓库", "精选", "趋势"].map((item, i) => <button key={item} className={`mk-cat ${i === 0 ? "on" : ""}`}><Icon d={i === 1 ? "layers" : "market"} size={14} />{item}<span className="mk-cat-n">0</span></button>)}</div><div className="mk-grid">{["catalog API", "install flow", "security scan"].map((name) => <article key={name} className="mk-card disabled"><div className="mk-head"><Glyph>{name}</Glyph><div className="mk-title"><h3>{name}</h3><span>backend contract missing</span></div></div><p className="mk-desc">保留 SkillM 页面骨架，但不展示假市场数据。接入真实 catalog API 后才能启用安装流。</p><div className="mk-actions"><button className="btn-ghost disabled">审查源码</button><button className="btn-grad sm disabled">安装</button></div></article>)}</div></div>;
+}
+
+function Forge({ live }: { live: ReturnType<typeof usePanelData> }) {
+  return <div className="view view-forge"><header className="view-head"><div><h1>Forge</h1><p>创建 skill 的参考向导 · 当前只读，因为没有 create-wizard backend contract</p></div></header><div className="forge-steps">{["选择起点", "基本信息", "编写指令", "目标 & 发布"].map((step, i) => <><button key={step} className={`fstep ${i === 0 ? "on" : ""}`}><span className="fstep-n">{i + 1}</span>{step}</button>{i < 3 && <span className="fstep-line" />}</>)}</div><div className="forge-body panel"><div className="forge-starts">{[["layers", "从模板开始", `${live.skills.length} local skills 可参考`], ["eye", "从官方文档生成", "需要 docs ingestion API"], ["forge", "从对话提炼", "需要 transcript API"], ["bolt", "AI 辅助生成", "需要 write contract"]].map(([ic, title, body]) => <button key={title} className="fstart disabled"><Icon d={ic} size={22} /><b>{title}</b><p>{body}</p></button>)}</div><div className="forge-foot"><span /><button className="btn-grad sm disabled">继续<Icon d="arrow" size={14} /></button></div></div></div>;
 }
 
 function Terminal({ live, close }: { live: ReturnType<typeof usePanelData>; close: () => void }) {

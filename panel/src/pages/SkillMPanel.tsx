@@ -30,6 +30,8 @@ const iconPath: Record<string, string> = {
   term: "M4 5h16v14H4zM7 9l3 3-3 3M12 15h5",
   plus: "M12 5v14M5 12h14",
   x: "M6 6l12 12M18 6L6 18",
+  check: "M5 12l4 4L19 6",
+  dl: "M12 3v12M7 10l5 5 5-5M5 21h14",
   eye: "M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7zm10 3a3 3 0 100-6 3 3 0 000 6z",
   bolt: "M13 2L4 14h6l-1 8 9-12h-6z",
   market: "M4 7l2-4h12l2 4M4 7h16v3a3 3 0 01-6 0 3 3 0 01-4 0 3 3 0 01-6 0V7zM5 13v8h14v-8",
@@ -273,7 +275,7 @@ export function SkillMPanel() {
               {view === "overview" && <Overview live={live} counts={counts} go={go} />}
               {view === "skills" && <Skills skills={live.skills} targets={live.targets} query={query} setQuery={setQuery} selected={selected} setSelectedSkill={setSelectedSkill} />}
               {(view === "targets" || view === "bindings" || view === "projections") && <Plane live={live} tab={view} go={go} />}
-              {(view === "ops" || view === "history") && <Ops live={live} history={view === "history"} runAction={runAction} />}
+              {(view === "ops" || view === "history") && <Ops live={live} history={view === "history"} go={go} runAction={runAction} />}
               {view === "sync" && <Sync live={live} runAction={runAction} />}
               {view === "doctor" && <Doctor live={live} go={go} />}
               {view === "settings" && <Settings live={live} dark={dark} setDark={setDark} density={density} setDensity={setDensity} accent={accent} setAccent={setAccent} />}
@@ -604,7 +606,7 @@ function EmptyPanel({ text }: { text: string }) {
   return <div className="panel"><div className="panel-empty">{text}</div></div>;
 }
 
-function Ops({ live, history, runAction }: { live: ReturnType<typeof usePanelData>; history: boolean; runAction: (label: string, fn: () => Promise<unknown>) => void }) {
+function Ops({ live, history, go, runAction }: { live: ReturnType<typeof usePanelData>; history: boolean; go: (page: SkillMPage) => void; runAction: (label: string, fn: () => Promise<unknown>) => void }) {
   const failed = live.ops.filter((op) => op.status === "err").length;
   const pending = live.ops.filter((op) => op.status === "pending").length + live.queuedWriteCount;
   const queue = live.ops.filter((op) => op.status !== "ok");
@@ -616,7 +618,7 @@ function Ops({ live, history, runAction }: { live: ReturnType<typeof usePanelDat
         <div className="ops-head-actions"><button className="btn-ghost sm" onClick={() => runAction("Purge ops", api.opsPurge)}><Icon d="x" />purge</button><button className="btn-grad sm" onClick={() => runAction("Replay queued ops", api.opsRetry)}><Icon d="sync" />replay 队列</button></div>
       </header>
       <div className="ops-stats"><div className={`pstat ${pending ? "acc" : ""}`}><span className="pstat-l">待处理</span><span className="pstat-n">{pending}</span></div><div className={`pstat ${failed ? "warn" : ""}`}><span className="pstat-l">失败 / 漂移</span><span className="pstat-n">{failed}</span></div><div className="pstat"><span className="pstat-l">已完成</span><span className="pstat-n">{live.ops.filter((op) => op.status === "ok").length}</span></div><div className="pstat"><span className="pstat-l">审计事件</span><span className="pstat-n">{live.ops.length}</span></div></div>
-      <nav className="plane-tabs">{([["ops", "待处理队列"], ["history", "审计历史"]] as const).map(([id, label]) => <button key={id} className={`det-tab ${(history ? "history" : "ops") === id ? "on" : ""}`}><Icon d={id === "history" ? "clock" : "ops"} size={14} />{label}{id === "ops" && queue.length ? <span className="tab-count">{queue.length}</span> : null}</button>)}<span className="tab-flex" /></nav>
+      <nav className="plane-tabs">{([["ops", "待处理队列"], ["history", "审计历史"]] as const).map(([id, label]) => <button key={id} className={`det-tab ${(history ? "history" : "ops") === id ? "on" : ""}`} onClick={() => go(id)}><Icon d={id === "history" ? "clock" : "ops"} size={14} />{label}{id === "ops" && queue.length ? <span className="tab-count">{queue.length}</span> : null}</button>)}<span className="tab-flex" /></nav>
       <section className="ops-table">{rows.map((op) => <OpLine key={op.id} op={op} />)}{rows.length === 0 && <div className="ops-empty"><Icon d="check" size={26} /><p>{history ? "No operation history returned by API." : "队列已清空 · 没有待处理或失败的操作"}</p></div>}</section>
     </div>
   );

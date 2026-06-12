@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { PanelApp } from "./PanelApp";
 
 const fetchMock = vi.fn<typeof fetch>();
@@ -177,6 +177,17 @@ function installFetchMock(failingPath: string | null = null, failingResponse?: R
             meta: { warnings: [] },
           }),
         );
+      case "/api/v1/sync/replay":
+        return Promise.resolve(
+          jsonResponse({
+            ok: true,
+            cmd: "sync.replay",
+            request_id: "req-replay",
+            data: { replayed: options.pendingCount ?? 0 },
+            error: null,
+            meta: { warnings: [] },
+          }),
+        );
       default:
         return Promise.reject(new Error(`unexpected fetch ${url}`));
     }
@@ -284,6 +295,7 @@ describe("PanelApp status failure UI", () => {
     });
 
     render(<PanelApp />);
+    fireEvent.click(await screen.findByRole("button", { name: /Audit log/i }));
 
     const repairLocal = (await screen.findByRole("button", {
       name: /Repair from local/i,
@@ -352,6 +364,50 @@ describe("PanelApp status failure UI", () => {
       expect(screen.getByText(/Initialize Registry/i)).toBeTruthy();
     });
     expect(screen.getByText(/Scan existing agent skill directories/i)).toBeTruthy();
+  });
+
+  it("opens the command palette with Ctrl+K and navigates to pages and skills", async () => {
+    installSuccessfulFetchMock();
+
+    render(<PanelApp />);
+
+    await screen.findByRole("heading", { name: "Overview" });
+    fireEvent.keyDown(window, { key: "k", ctrlKey: true });
+
+    let dialog = await screen.findByRole("dialog", { name: /Command palette/i });
+    const skillsPageOption = within(dialog).getAllByRole("option").find((option) => {
+      const text = option.textContent ?? "";
+      return text.includes("Pages") && text.includes("Skillsskills");
+    });
+    expect(skillsPageOption).toBeTruthy();
+    fireEvent.click(skillsPageOption as HTMLButtonElement);
+
+    await screen.findByRole("heading", { name: "Skills" });
+    expect(localStorage.getItem("loom.page")).toBe("skills");
+
+    fireEvent.keyDown(window, { key: "k", metaKey: true });
+    dialog = await screen.findByRole("dialog", { name: /Command palette/i });
+    fireEvent.change(within(dialog).getByRole("searchbox"), { target: { value: "typed-api" } });
+    fireEvent.click(within(dialog).getByText("typed-api-client").closest("button") as HTMLButtonElement);
+
+    await screen.findByRole("heading", { name: "Skills" });
+    expect(localStorage.getItem("loom.page")).toBe("skills");
+  });
+
+  it("replays queued writes from the status bar through the existing sync API", async () => {
+    installFetchMock(null, undefined, { pendingCount: 2 });
+
+    render(<PanelApp />);
+
+    const replay = (await screen.findByRole("button", { name: /queued 2/i })) as HTMLButtonElement;
+    expect(replay.disabled).toBe(false);
+
+    fireEvent.click(replay);
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith("/api/v1/sync/replay", expect.anything());
+    });
+    expect(await screen.findByText(/Queued writes replayed/i)).toBeTruthy();
   });
 });
 

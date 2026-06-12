@@ -1,4 +1,4 @@
-import { afterAll, beforeEach, expect, test } from "vitest";
+import { afterAll, beforeEach, expect, test, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { api, type DoctorPayload } from "../../lib/api/client";
 import { DoctorPage } from "./DoctorPage";
@@ -62,7 +62,8 @@ test("DoctorPage renders human labels before internal check IDs", async () => {
   api.workspaceDoctor = async () => payload;
 
   try {
-    const { container } = render(<DoctorPage apiReachable={true} mode="live" refreshKey="tick-1" />);
+    const navigate = vi.fn();
+    const { container } = render(<DoctorPage apiReachable={true} mode="live" refreshKey="tick-1" onNavigate={navigate} />);
 
     await screen.findByText("Git integrity");
     expect(screen.getByText("Target path")).toBeTruthy();
@@ -71,6 +72,56 @@ test("DoctorPage renders human labels before internal check IDs", async () => {
 
     const rendered = container.textContent ?? "";
     expect(rendered.indexOf("Target path")).toBeLessThan(rendered.indexOf("target_path_exists:target_claude_claude_project_a"));
+
+    fireEvent.click(screen.getByRole("button", { name: "Open Targets" }));
+    expect(navigate).toHaveBeenCalledWith("targets");
+  } finally {
+    api.workspaceDoctor = originalDoctor;
+  }
+});
+
+test("DoctorPage routes binding and projection checks before target fallback", async () => {
+  const originalDoctor = api.workspaceDoctor;
+  const payload: DoctorPayload = {
+    healthy: false,
+    checks_v1: [
+      {
+        section: "bindings",
+        id: "binding_target_exists:binding_claude_missing",
+        ok: false,
+        severity: "error",
+        message: "binding default target is missing",
+        next_action: "remove or update the binding",
+        details: {
+          binding_id: "binding_claude_missing",
+          target_id: "target_claude_missing",
+        },
+      },
+      {
+        section: "projections",
+        id: "projection_path_exists:projection_1",
+        ok: false,
+        severity: "warning",
+        message: "projection path is missing",
+        next_action: "recreate or capture the projection",
+        details: {
+          instance_id: "projection_1",
+          target_id: "target_claude_project_a",
+        },
+      },
+    ],
+  };
+  api.workspaceDoctor = async () => payload;
+
+  try {
+    const navigate = vi.fn();
+    render(<DoctorPage apiReachable={true} mode="live" refreshKey="tick-1" onNavigate={navigate} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Open Bindings" }));
+    fireEvent.click(screen.getByRole("button", { name: "Open Projections" }));
+
+    expect(navigate).toHaveBeenNthCalledWith(1, "bindings");
+    expect(navigate).toHaveBeenNthCalledWith(2, "projections");
   } finally {
     api.workspaceDoctor = originalDoctor;
   }
@@ -96,6 +147,9 @@ test("SettingsPage wraps long paths and exposes copy buttons", async () => {
     const { container } = render(<SettingsPage live={true} mode="live" registryRoot="/tmp/loom-registry-with-a-long-path" />);
 
     await screen.findByText("/tmp/home/.claude/projects/example-with-a-long-name/skills");
+    expect(screen.getByText("Operational metadata")).toBeInTheDocument();
+    expect(screen.getByText("Local preferences")).toBeInTheDocument();
+    expect(screen.getByText("Reduced motion")).toBeInTheDocument();
     expect(container.querySelector(".setting-path-text")).toBeTruthy();
     expect(container.querySelector(".setting-copy-btn")).toBeTruthy();
 

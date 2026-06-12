@@ -2,11 +2,13 @@ import { useEffect, useMemo, useState } from "react";
 import { RefreshIcon, ShieldIcon } from "../../components/icons/nav_icons";
 import { api, ApiError, type DoctorCheck, type DoctorPayload } from "../../lib/api/client";
 import type { PanelDataMode } from "../../lib/api/usePanelData";
+import type { PanelPageKey } from "../../lib/types";
 
 interface DoctorPageProps {
   apiReachable: boolean;
   mode: PanelDataMode;
   refreshKey: string | null;
+  onNavigate?: (page: PanelPageKey) => void;
 }
 
 type DoctorState =
@@ -15,7 +17,7 @@ type DoctorState =
   | { kind: "ready"; payload: DoctorPayload }
   | { kind: "error"; message: string };
 
-export function DoctorPage({ apiReachable, mode, refreshKey }: DoctorPageProps) {
+export function DoctorPage({ apiReachable, mode, refreshKey, onNavigate }: DoctorPageProps) {
   const [state, setState] = useState<DoctorState>({ kind: "idle" });
   const [manualTick, setManualTick] = useState(0);
 
@@ -44,6 +46,7 @@ export function DoctorPage({ apiReachable, mode, refreshKey }: DoctorPageProps) 
   const checks = state.kind === "ready" ? state.payload.checks_v1 ?? [] : [];
   const failed = checks.filter((check) => !check.ok);
   const grouped = useMemo(() => groupChecks(checks), [checks]);
+  const passed = checks.length - failed.length;
 
   return (
     <>
@@ -84,8 +87,13 @@ export function DoctorPage({ apiReachable, mode, refreshKey }: DoctorPageProps) 
             title="Total registry integrity probes executed by `loom workspace doctor`"
           />
           <Kpi
+            label="Sections"
+            value={grouped.length}
+            title="Doctor sections returned by the backend."
+          />
+          <Kpi
             label="Needs action"
-            value={failed.length}
+            value={`${failed.length} failed / ${passed} passed`}
             tone={failed.length > 0 ? "pending" : undefined}
             title="Failed doctor checks. Independent from pending sync."
           />
@@ -107,7 +115,7 @@ export function DoctorPage({ apiReachable, mode, refreshKey }: DoctorPageProps) 
                   <table className="tbl" style={{ fontSize: 12 }}>
                     <tbody>
                       {sectionChecks.map((check) => (
-                        <DoctorRow key={check.id} check={check} />
+                        <DoctorRow key={check.id} check={check} onNavigate={onNavigate} />
                       ))}
                     </tbody>
                   </table>
@@ -121,7 +129,7 @@ export function DoctorPage({ apiReachable, mode, refreshKey }: DoctorPageProps) 
   );
 }
 
-function DoctorRow({ check }: { check: DoctorCheck }) {
+function DoctorRow({ check, onNavigate }: { check: DoctorCheck; onNavigate?: (page: PanelPageKey) => void }) {
   const label = doctorCheckLabel(check);
   const context = doctorCheckContext(check);
 
@@ -144,12 +152,50 @@ function DoctorRow({ check }: { check: DoctorCheck }) {
       <td>
         <div style={{ color: "var(--ink-1)" }}>{check.message}</div>
         {!check.ok && check.next_action && (
-          <div style={{ color: "var(--ink-3)", marginTop: 3 }}>{check.next_action}</div>
+          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginTop: 5 }}>
+            <span style={{ color: "var(--ink-3)" }}>{check.next_action}</span>
+            {onNavigate && (
+              <button className="btn sm" onClick={() => onNavigate(nextActionPage(check))}>
+                Open {nextActionPageLabel(check)}
+              </button>
+            )}
+          </div>
         )}
         {check.id === "agent_skill_inventory" && <AgentInventoryDetails details={check.details} />}
       </td>
     </tr>
   );
+}
+
+function nextActionPage(check: DoctorCheck): PanelPageKey {
+  const idRoot = check.id.split(":")[0].toLowerCase();
+  if (idRoot.startsWith("binding_") || check.section === "bindings" || typeof check.details?.binding_id === "string") {
+    return "bindings";
+  }
+  if (idRoot.startsWith("projection_") || check.section === "projections") return "projections";
+  if (idRoot.startsWith("target_") || check.section === "targets" || typeof check.details?.target_id === "string") {
+    return "targets";
+  }
+  if (idRoot.includes("history") || idRoot.includes("pending")) return "history";
+  if (idRoot.includes("git")) return "sync";
+  return "settings";
+}
+
+function nextActionPageLabel(check: DoctorCheck): string {
+  const page = nextActionPage(check);
+  const labels: Record<PanelPageKey, string> = {
+    overview: "Overview",
+    skills: "Skills",
+    targets: "Targets",
+    bindings: "Bindings",
+    projections: "Projections",
+    ops: "Activity",
+    history: "Audit History",
+    sync: "Sync",
+    doctor: "Doctor",
+    settings: "Settings",
+  };
+  return labels[page];
 }
 
 type AgentInventoryRow = {

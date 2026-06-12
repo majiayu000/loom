@@ -38,6 +38,10 @@ export function SettingsPage({ live, mode, registryRoot }: SettingsPageProps) {
   const [info, setInfo] = useState<InfoState>({ kind: "idle" });
   const [cleared, setCleared] = useState(false);
   const [copyFeedback, setCopyFeedback] = useState<{ value: string; state: "copied" | "failed" } | null>(null);
+  const reducedMotion =
+    typeof window !== "undefined" && typeof window.matchMedia === "function"
+      ? window.matchMedia("(prefers-reduced-motion: reduce)").matches
+      : false;
 
   useEffect(() => {
     if (!live) {
@@ -117,7 +121,7 @@ export function SettingsPage({ live, mode, registryRoot }: SettingsPageProps) {
         {!live && <div className="empty" style={{ marginBottom: 16 }}>{offlineHint}</div>}
         <div className="card" style={{ marginBottom: 16 }}>
           <div className="card-head">
-            <h3>Registry paths</h3>
+            <h3>Operational metadata</h3>
             {info.kind === "loading" && <span className="chip">loading…</span>}
             {info.kind === "error" && <span className="chip" style={{ color: "var(--err)" }}>fetch failed</span>}
           </div>
@@ -153,13 +157,20 @@ export function SettingsPage({ live, mode, registryRoot }: SettingsPageProps) {
 
         <div className="card">
           <div className="card-head">
-            <h3>UI preferences</h3>
+            <h3>Local preferences</h3>
             {cleared && <span className="chip ok">cleared · reloading…</span>}
           </div>
           <div className="card-body" style={{ fontSize: 12 }}>
+            <div className="kv" style={{ marginTop: 0, marginBottom: 12 }}>
+              <div className="k">Theme</div>
+              <div className="v mono">{localStorage.getItem("loom.theme") ?? "dark"}</div>
+              <div className="k">Density</div>
+              <div className="v mono">{readDensityPreference()}</div>
+              <div className="k">Reduced motion</div>
+              <div className="v mono">{reducedMotion ? "system reduce" : "system no-preference"}</div>
+            </div>
             <div style={{ marginBottom: 10, color: "var(--ink-2)" }}>
-              Viz mode, accent, density, font and compact toggle live in{" "}
-              <span className="mono">localStorage.loom.tweaks</span>. Click below to reset to defaults and reload.
+              Theme, density, accent, font and compact mode are local browser preferences. Click below to reset them and reload.
             </div>
             <button className="btn" onClick={resetTweaks} disabled={cleared}>
               Reset UI preferences
@@ -169,6 +180,17 @@ export function SettingsPage({ live, mode, registryRoot }: SettingsPageProps) {
       </div>
     </>
   );
+}
+
+function readDensityPreference(): string {
+  const raw = localStorage.getItem("loom.tweaks");
+  if (!raw) return "normal";
+  try {
+    const parsed = JSON.parse(raw) as { density?: unknown };
+    return typeof parsed.density === "string" ? parsed.density : "normal";
+  } catch {
+    return "normal";
+  }
 }
 
 function SettingValue({

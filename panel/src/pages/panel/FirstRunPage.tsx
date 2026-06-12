@@ -58,6 +58,11 @@ export function FirstRunPage({ registryRoot, onReady }: FirstRunPageProps) {
             {result && <span className="chip ok">ready</span>}
           </div>
           <div className="card-body">
+            <div className="kpi-row" style={{ marginBottom: 14 }}>
+              <FirstRunKpi label="Registry root" value={registryRoot ?? "not connected"} />
+              <FirstRunKpi label="Scan mode" value={scanExisting ? "scan existing dirs" : "initialize only"} />
+              <FirstRunKpi label="State" value={running ? "running" : result ? "ready" : "waiting"} />
+            </div>
             <label style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14 }}>
               <input
                 type="checkbox"
@@ -77,5 +82,14 @@ export function FirstRunPage({ registryRoot, onReady }: FirstRunPageProps) {
         </div>
       </div>
     </>
+  );
+}
+
+function FirstRunKpi({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="kpi">
+      <div className="label">{label}</div>
+      <div className="value status-value">{value}</div>
+    </div>
   );
 }

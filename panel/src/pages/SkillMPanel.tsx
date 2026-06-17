@@ -5,6 +5,7 @@ import { api } from "../lib/api/client";
 import type { Op, PanelPageKey, Skill, Target } from "../lib/types";
 import { FirstRunPage } from "./panel/FirstRunPage";
 import { DoctorPage } from "./panel/DoctorPage";
+import { OperationLogRow } from "./OperationLogRow";
 import { SkillMAuditHistory } from "./SkillMAuditHistory";
 
 type SkillMPage = PanelPageKey | "market" | "forge";
@@ -122,12 +123,6 @@ function methodTone(method: string) {
   if (method === "copy") return "var(--acc2)";
   if (method === "symlink") return "var(--acc3)";
   return "var(--faint)";
-}
-
-function classForOp(op: Op) {
-  if (op.status === "ok") return "done";
-  if (op.status === "err") return "failed";
-  return "pending";
 }
 
 const HEATMAP_WEEKS = 26;
@@ -620,13 +615,9 @@ function Ops({ live, history, go, runAction }: { live: ReturnType<typeof usePane
       </header>
       <div className="ops-stats"><div className={`pstat ${pending ? "acc" : ""}`}><span className="pstat-l">待处理</span><span className="pstat-n">{pending}</span></div><div className={`pstat ${failed ? "warn" : ""}`}><span className="pstat-l">失败 / 漂移</span><span className="pstat-n">{failed}</span></div><div className="pstat"><span className="pstat-l">已完成</span><span className="pstat-n">{live.ops.filter((op) => op.status === "ok").length}</span></div><div className="pstat"><span className="pstat-l">审计事件</span><span className="pstat-n">{live.ops.length}</span></div></div>
       <nav className="plane-tabs">{([["ops", "待处理队列"], ["history", "审计历史"]] as const).map(([id, label]) => <button key={id} className={`det-tab ${(history ? "history" : "ops") === id ? "on" : ""}`} onClick={() => go(id)}><Icon d={id === "history" ? "clock" : "ops"} size={14} />{label}{id === "ops" && queue.length ? <span className="tab-count">{queue.length}</span> : null}</button>)}<span className="tab-flex" /></nav>
-      {history ? <SkillMAuditHistory live={live.live} refreshKey={live.lastUpdated} /> : <section className="ops-table">{rows.map((op) => <OpLine key={op.id} op={op} />)}{rows.length === 0 && <div className="ops-empty"><Icon d="check" size={26} /><p>队列已清空 · 没有待处理或失败的操作</p></div>}</section>}
+      {history ? <SkillMAuditHistory live={live.live} refreshKey={live.lastUpdated} /> : <section className="ops-table">{rows.map((op) => <OperationLogRow key={op.id} op={op} />)}{rows.length === 0 && <div className="ops-empty"><Icon d="check" size={26} /><p>队列已清空 · 没有待处理或失败的操作</p></div>}</section>}
     </div>
   );
-}
-
-function OpLine({ op }: { op: Op }) {
-  return <div className={`op-row op-row-${classForOp(op)}`}><span className={`op-pill op-${classForOp(op)}`}>{op.status}</span><span className="op-time">{op.time}</span><span className="op-verb">{op.kind}</span><span className="op-detail">{op.skill}<span className="op-arrow">{" -> "}<code>{op.target}</code></span></span><span className="op-note">{op.reason ?? op.method}</span></div>;
 }
 
 function Sync({ live, runAction }: { live: ReturnType<typeof usePanelData>; runAction: (label: string, fn: () => Promise<unknown>) => void }) {

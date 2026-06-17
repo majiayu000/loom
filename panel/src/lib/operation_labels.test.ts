@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   describeActivityOperation,
+  operationActionLabel,
+  operationDetailParts,
+  operationStatusLabel,
+  operationSubjectLabel,
   describeRegistryOperation,
   registryOperationDisplayId,
 } from "./operation_labels";
@@ -80,5 +84,22 @@ describe("operation labels", () => {
         }),
       ),
     ).toBe("audit_1");
+  });
+
+  it("summarizes multi-skill activity without exposing the raw list", () => {
+    const op: Op = {
+      id: "op_import",
+      status: "pending",
+      kind: "skill.import_observed",
+      skill: "aiproxy-workflow-auth-debug, ask-claude, ask-gemini, code-review",
+      target: "target_codex_home",
+      method: "—",
+      time: "now",
+    };
+
+    expect(operationActionLabel(op.kind)).toBe("导入观测到的技能");
+    expect(operationStatusLabel(op.status)).toBe("待处理");
+    expect(operationSubjectLabel(op)).toBe("4 个 skill");
+    expect(operationDetailParts(op)).toContain("target target_codex_home");
   });
 });

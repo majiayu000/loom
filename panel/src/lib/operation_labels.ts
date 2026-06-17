@@ -1,5 +1,5 @@
 import type { RegistryOperationRecord } from "./api/client";
-import type { Op } from "./types";
+import type { Op, OpStatus } from "./types";
 
 export interface OperationLabel {
   category: string;
@@ -33,6 +33,28 @@ const INTENT_LABELS: Record<string, IntentDescriptor> = {
   "sync-push": { category: "Sync", phrase: "remote sync push" },
   "sync-pull": { category: "Sync", phrase: "remote sync pull" },
   "sync-replay": { category: "Sync", phrase: "pending sync replay" },
+};
+
+const ACTION_LABELS: Record<string, string> = {
+  "target.add": "注册目标目录",
+  "target.remove": "移除目标目录",
+  "workspace.binding.add": "新增绑定规则",
+  "workspace.binding.remove": "移除绑定规则",
+  "skill.project": "投影到目标目录",
+  "skill.capture": "回收目标目录修改",
+  "skill.import_observed": "导入观测到的技能",
+  "skill.monitor_observed": "扫描观测目录",
+  "skill.orphan.clean": "清理孤立技能",
+  "skill.save": "保存技能源",
+  "skill.snapshot": "创建快照",
+  "skill.release": "发布版本标签",
+  "skill.rollback": "回滚技能",
+  "sync.push": "推送远端同步",
+  "sync.pull": "拉取远端同步",
+  "sync.replay": "重放同步队列",
+  "sync-push": "推送远端同步",
+  "sync-pull": "拉取远端同步",
+  "sync-replay": "重放同步队列",
 };
 
 export function describeActivityOperation(op: Op): OperationLabel {
@@ -78,6 +100,41 @@ export function describeRegistryOperation(op: RegistryOperationRecord): Operatio
     details,
     technicalId,
   };
+}
+
+export function operationActionLabel(kind: string): string {
+  const normalized = normalizeIntent(kind);
+  return ACTION_LABELS[normalized] ?? normalized.replace(/[._-]/g, " ");
+}
+
+export function operationStatusLabel(status: OpStatus): string {
+  if (status === "ok") return "已完成";
+  if (status === "err") return "失败";
+  return "待处理";
+}
+
+export function splitOperationSkills(value: string): string[] {
+  return value
+    .split(",")
+    .map((part) => part.trim().replace(/@\S+$/, ""))
+    .filter((part, index, items) => part.length > 0 && items.indexOf(part) === index);
+}
+
+export function operationSubjectLabel(op: Op): string {
+  const skills = splitOperationSkills(op.skill).filter((name) => name !== op.kind);
+  if (skills.length > 3) return `${skills.length} 个 skill`;
+  if (skills.length > 0) return skills.join(", ");
+  if (meaningfulField(op.target)) return op.target;
+  return operationActionLabel(op.kind);
+}
+
+export function operationDetailParts(op: Op): string[] {
+  return compact([
+    meaningfulField(op.target) ? `target ${op.target}` : null,
+    meaningfulField(op.method) ? `方式 ${op.method}` : null,
+    op.reason ? `${op.status === "err" ? "错误" : "说明"} ${op.reason}` : null,
+    `id ${op.id}`,
+  ]);
 }
 
 export function registryOperationDisplayId(op: RegistryOperationRecord): string {

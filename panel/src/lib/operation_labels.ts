@@ -24,6 +24,8 @@ const INTENT_LABELS: Record<string, IntentDescriptor> = {
   "skill.capture": { category: "Capture", phrase: "skill capture" },
   "skill.import_observed": { category: "Import", phrase: "observed skill import" },
   "skill.monitor_observed": { category: "Monitor", phrase: "observed skill monitor" },
+  "import-observed": { category: "Import", phrase: "observed skill import" },
+  "monitor-observed": { category: "Monitor", phrase: "observed skill monitor" },
   "skill.orphan.clean": { category: "Cleanup", phrase: "orphan cleanup" },
   "skill.save": { category: "Skill", phrase: "skill save" },
   "skill.snapshot": { category: "Snapshot", phrase: "skill snapshot" },
@@ -44,6 +46,8 @@ const ACTION_LABELS: Record<string, string> = {
   "skill.capture": "回收目标目录修改",
   "skill.import_observed": "导入观测到的技能",
   "skill.monitor_observed": "扫描观测目录",
+  "import-observed": "导入观测到的技能",
+  "monitor-observed": "扫描观测目录",
   "skill.orphan.clean": "清理孤立技能",
   "skill.save": "保存技能源",
   "skill.snapshot": "创建快照",
@@ -84,9 +88,10 @@ export function describeRegistryOperation(op: RegistryOperationRecord): Operatio
   const status = statusWord(bucketRegistryOperation(op));
   const technicalId = registryOperationDisplayId(op);
   const subject = subjectForRegistryOperation(op, descriptor);
+  const skills = meaningfulString(op.skill) ? splitOperationSkills(op.skill) : [];
   const details = compact([
     `intent ${normalizeIntent(op.intent)}`,
-    meaningfulString(op.skill) ? `skill ${op.skill}` : null,
+    skills.length > 3 ? `skills ${skills.length}` : skills.length > 0 ? `skill ${skills.join(", ")}` : null,
     meaningfulString(op.target) ? `target ${op.target}` : null,
     meaningfulString(op.binding) ? `binding ${op.binding}` : null,
     meaningfulString(op.method) ? `method ${op.method}` : null,
@@ -113,11 +118,28 @@ export function operationStatusLabel(status: OpStatus): string {
   return "待处理";
 }
 
+export function registryOperationStatusLabel(op: RegistryOperationRecord): string {
+  const status = bucketRegistryOperation(op);
+  if (status === "ok") return "已完成";
+  if (status === "err") return "失败";
+  return "待处理";
+}
+
 export function splitOperationSkills(value: string): string[] {
   return value
     .split(",")
     .map((part) => part.trim().replace(/@\S+$/, ""))
     .filter((part, index, items) => part.length > 0 && items.indexOf(part) === index);
+}
+
+export function registryOperationSubjectLabel(op: RegistryOperationRecord): string {
+  const skills = meaningfulString(op.skill) ? splitOperationSkills(op.skill) : [];
+  if (skills.length > 3) return `${skills.length} 个 skill`;
+  if (skills.length > 0) return skills.join(", ");
+  if (meaningfulString(op.target)) return op.target;
+  if (meaningfulString(op.binding)) return op.binding;
+  if (meaningfulString(op.source)) return op.source;
+  return operationActionLabel(op.intent);
 }
 
 export function operationSubjectLabel(op: Op): string {
@@ -126,6 +148,23 @@ export function operationSubjectLabel(op: Op): string {
   if (skills.length > 0) return skills.join(", ");
   if (meaningfulField(op.target)) return op.target;
   return operationActionLabel(op.kind);
+}
+
+export function registryOperationTargetLabel(op: RegistryOperationRecord): string {
+  return op.target ?? op.binding ?? op.source ?? "registry";
+}
+
+export function registryOperationDetailParts(op: RegistryOperationRecord): string[] {
+  const skills = meaningfulString(op.skill) ? splitOperationSkills(op.skill) : [];
+  return compact([
+    skills.length > 3 ? `本次批量操作包含 ${skills.length} 个 skill` : null,
+    meaningfulString(op.target) ? `target ${op.target}` : null,
+    meaningfulString(op.binding) ? `binding ${op.binding}` : null,
+    meaningfulString(op.method) ? `方式 ${op.method}` : null,
+    op.last_error?.message ? `错误 ${op.last_error.message}` : null,
+    op.ack ? "已同步" : "未同步",
+    `id ${registryOperationDisplayId(op)}`,
+  ]);
 }
 
 export function operationDetailParts(op: Op): string[] {
@@ -176,7 +215,10 @@ function subjectForRegistryOperation(op: RegistryOperationRecord, descriptor: In
   const targetSubject = subjectFromTarget(op.target ?? null);
   if (descriptor.category === "Target") return targetSubject ?? "";
   if (descriptor.category === "Binding") return subjectFromBinding(op.binding ?? null) ?? targetSubject ?? "";
-  if (meaningfulString(op.skill)) return op.skill;
+  if (meaningfulString(op.skill)) {
+    const skills = splitOperationSkills(op.skill);
+    return skills.length > 3 ? `${skills.length} skills` : skills.join(", ");
+  }
   return targetSubject ?? "";
 }
 

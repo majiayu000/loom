@@ -5,6 +5,8 @@ import {
   operationDetailParts,
   operationStatusLabel,
   operationSubjectLabel,
+  registryOperationDetailParts,
+  registryOperationSubjectLabel,
   describeRegistryOperation,
   registryOperationDisplayId,
 } from "./operation_labels";
@@ -98,8 +100,28 @@ describe("operation labels", () => {
     };
 
     expect(operationActionLabel(op.kind)).toBe("导入观测到的技能");
+    expect(operationActionLabel("import-observed")).toBe("导入观测到的技能");
+    expect(operationActionLabel("monitor-observed")).toBe("扫描观测目录");
     expect(operationStatusLabel(op.status)).toBe("待处理");
     expect(operationSubjectLabel(op)).toBe("4 个 skill");
     expect(operationDetailParts(op)).toContain("target target_codex_home");
+  });
+
+  it("summarizes multi-skill audit history without exposing the raw list", () => {
+    const skillList = "agentsmd-audit, ai-slop-cleaner, aiproxy-workflow-auth-debug, app-sizzle, app-store-screens";
+    const op = registryOperation({
+      intent: "skill.monitor_observed",
+      status: "succeeded",
+      ack: true,
+      skill: skillList,
+      source: "registry",
+    });
+    const label = describeRegistryOperation(op);
+
+    expect(registryOperationSubjectLabel(op)).toBe("5 个 skill");
+    expect(registryOperationDetailParts(op)).toContain("本次批量操作包含 5 个 skill");
+    expect(label.title).toBe("5 skills observed skill monitor done");
+    expect(label.details).toContain("skills 5");
+    expect(label.details.join(" ")).not.toContain(skillList);
   });
 });

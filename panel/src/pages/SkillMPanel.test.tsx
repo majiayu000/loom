@@ -136,11 +136,12 @@ describe("SkillMPanel", () => {
   it("switches between queued ops and audit history tabs", async () => {
     panelData.current = panelData.liveOps;
     window.history.replaceState(null, "", "/?view=ops");
+    const auditSkillList = "agentsmd-audit, ai-slop-cleaner, aiproxy-workflow-auth-debug, app-sizzle, app-store-screens";
     const ops = vi.spyOn(api, "ops").mockResolvedValue({
       ok: true,
       data: {
         count: 40,
-        loaded_count: 1,
+        loaded_count: 2,
         offset: 0,
         limit: 100,
         has_more: false,
@@ -160,6 +161,21 @@ describe("SkillMPanel", () => {
             created_at: "2026-06-12T09:00:00Z",
             updated_at: "2026-06-12T09:01:00Z",
           },
+          {
+            op_id: "hist-2",
+            audit_id: "audit-2",
+            request_id: "req-2",
+            source: "registry",
+            intent: "skill.monitor_observed",
+            status: "succeeded",
+            ack: true,
+            skill: auditSkillList,
+            target: null,
+            binding: null,
+            method: null,
+            created_at: "2026-06-12T09:02:00Z",
+            updated_at: "2026-06-12T09:03:00Z",
+          },
         ],
       },
     });
@@ -174,8 +190,11 @@ describe("SkillMPanel", () => {
 
     await userEvent.click(screen.getByRole("button", { name: /审计历史/ }));
 
-    expect(await screen.findByText("skill.release")).toBeTruthy();
+    expect(await screen.findByText("发布版本标签")).toBeTruthy();
     expect(screen.getByText("release-notes")).toBeTruthy();
+    expect(screen.getByText("5 个 skill")).toBeTruthy();
+    expect(screen.getByText(/本次批量操作包含 5 个 skill/)).toBeTruthy();
+    expect(screen.queryByText(auditSkillList)).toBeNull();
     expect(ops.mock.calls[0]?.[0]).toEqual({ limit: 100, offset: 0 });
     expect(new URL(window.location.href).searchParams.get("view")).toBe("history");
   });

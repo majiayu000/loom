@@ -74,7 +74,7 @@ export function DoctorPage({ apiReachable, mode, refreshKey, onNavigate }: Docto
             {state.message}
           </div>
         )}
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12, marginBottom: 18 }}>
+        <div className="kpi-row">
           <Kpi
             label="Health"
             value={state.kind === "ready" ? (state.payload.healthy ? "healthy" : "attention") : state.kind}

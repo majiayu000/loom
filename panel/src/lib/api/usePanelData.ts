@@ -100,6 +100,18 @@ function uniqueWarnings(warnings: string[]): string[] {
   return Array.from(new Set(warnings));
 }
 
+export function dedupePanelOps(pendingOps: Op[], activityOps: Op[]): Op[] {
+  const seen = new Set<string>();
+  const merged: Op[] = [];
+  for (const op of [...pendingOps, ...activityOps]) {
+    const key = op.id || `${op.kind}|${op.skill}|${op.target}|${op.time}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    merged.push(op);
+  }
+  return merged;
+}
+
 export function usePanelData(): PanelLiveData {
   const [state, setState] = useState<LiveState>(INITIAL_STATE);
 
@@ -202,9 +214,9 @@ export function usePanelData(): PanelLiveData {
       const targets = registryTargets.map((t) => adaptTarget(t, index, observedSkillCounts));
       const bindings = registryBindings.map((b) => adaptBinding(b, rules));
 
-      const pendingOps: Op[] = (pending.data.ops ?? []).map(adaptPendingOp);
+      const pendingOps: Op[] = dedupePanelOps((pending.data.ops ?? []).map(adaptPendingOp), []);
       const activityOps: Op[] = (activity.data.data?.operations ?? []).map(adaptRegistryOperation);
-      const ops = [...pendingOps, ...activityOps].slice(0, 30);
+      const ops = dedupePanelOps(pendingOps, activityOps).slice(0, 30);
       const warnings = uniqueWarnings([
         ...baseWarnings,
         ...skillsPayload.warnings,
@@ -235,7 +247,7 @@ export function usePanelData(): PanelLiveData {
           bindings,
           ops,
           projections,
-          queuedWriteCount: pending.data.count ?? 0,
+          queuedWriteCount: pending.data.count ?? pendingOps.length,
         }),
       );
     } catch (err) {

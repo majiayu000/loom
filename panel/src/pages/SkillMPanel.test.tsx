@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { api } from "../lib/api/client";
+import { OperationLogRow } from "./OperationLogRow";
 import { SkillMPanel } from "./SkillMPanel";
 
 const panelData = vi.hoisted(() => ({
@@ -118,6 +119,7 @@ vi.mock("../lib/api/usePanelData", () => ({
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
+  window.localStorage.clear();
   panelData.refetch.mockReset();
   panelData.current = null;
   window.history.replaceState(null, "", "/");
@@ -176,11 +178,42 @@ describe("SkillMPanel", () => {
             created_at: "2026-06-12T09:02:00Z",
             updated_at: "2026-06-12T09:03:00Z",
           },
+          {
+            op_id: "hist-3",
+            audit_id: "audit-3",
+            request_id: "req-3",
+            source: "registry",
+            intent: "sync.replay",
+            status: "enqueued",
+            ack: false,
+            skill: null,
+            target: null,
+            binding: null,
+            method: null,
+            created_at: "2026-06-12T09:04:00Z",
+            updated_at: "2026-06-12T09:05:00Z",
+          },
+          {
+            op_id: "hist-4",
+            audit_id: "audit-4",
+            request_id: "req-4",
+            source: "registry",
+            intent: "sync.push",
+            status: "succeeded",
+            ack: true,
+            skill: null,
+            target: null,
+            binding: null,
+            method: null,
+            last_error: { code: "sync_failed", message: "remote rejected push" },
+            created_at: "2026-06-12T09:06:00Z",
+            updated_at: "2026-06-12T09:07:00Z",
+          },
         ],
       },
     });
 
-    render(<SkillMPanel />);
+    const { container } = render(<SkillMPanel />);
 
     expect(screen.getByText("推送远端同步")).toBeTruthy();
     expect(screen.getByText("扫描观测目录")).toBeTruthy();
@@ -191,12 +224,36 @@ describe("SkillMPanel", () => {
     await userEvent.click(screen.getByRole("button", { name: /审计历史/ }));
 
     expect(await screen.findByText("发布版本标签")).toBeTruthy();
-    expect(screen.getByText("release-notes")).toBeTruthy();
+    expect(screen.getAllByText("release-notes").length).toBeGreaterThan(0);
     expect(screen.getByText("5 个 skill")).toBeTruthy();
-    expect(screen.getByText(/本次批量操作包含 5 个 skill/)).toBeTruthy();
+    expect(screen.getAllByText(/本次批量操作包含 5 个 skill/).length).toBeGreaterThan(0);
+    expect([...container.querySelectorAll(".op-row-pending .op-pill")].some((node) => node.textContent === "待处理")).toBe(true);
+    expect([...container.querySelectorAll(".op-row-failed .op-pill")].some((node) => node.textContent === "失败")).toBe(true);
     expect(screen.queryByText(auditSkillList)).toBeNull();
     expect(ops.mock.calls[0]?.[0]).toEqual({ limit: 100, offset: 0 });
     expect(new URL(window.location.href).searchParams.get("view")).toBe("history");
+  });
+
+  it("keeps every skill name available when expanded bulk rows exceed the summary height", () => {
+    const names = Array.from({ length: 90 }, (_, index) => `skill-${index + 1}`);
+
+    render(
+      <OperationLogRow
+        op={{
+          id: "bulk-all",
+          kind: "skill.monitor_observed",
+          skill: names.join(", "),
+          target: "target_codex_home",
+          status: "pending",
+          time: "now",
+          method: "—",
+        }}
+      />,
+    );
+
+    expect(screen.getByText("skill-1")).toBeTruthy();
+    expect(screen.getByText("skill-90")).toBeTruthy();
+    expect(screen.queryByText(/\+10 more/)).toBeNull();
   });
 
   it("keeps skill details visible while browsing many skill cards", async () => {
@@ -266,8 +323,9 @@ describe("SkillMPanel", () => {
 
     render(<SkillMPanel />);
 
-    expect(screen.getByText("扫描观测目录")).toBeTruthy();
-    expect(screen.getByText("4 个 skill")).toBeTruthy();
+    expect(screen.getByText("推送远端同步")).toBeTruthy();
+    expect(screen.queryByText("扫描观测目录")).toBeNull();
+    expect(screen.queryByText("4 个 skill")).toBeNull();
     expect(screen.queryByText("aiproxy-workflow-auth-debug, ask-claude, ask-gemini, code-review")).toBeNull();
     expect(screen.queryByText("skill.monitor_observed")).toBeNull();
   });
@@ -283,5 +341,80 @@ describe("SkillMPanel", () => {
 
     expect(screen.getByRole("heading", { name: "注册表同步" })).toBeTruthy();
     expect(syncReplay).not.toHaveBeenCalled();
+  });
+
+  it("does not underreport queued operations when the API count exceeds visible rows", () => {
+    panelData.current = { ...panelData.liveOps, queuedWriteCount: 5 };
+    window.history.replaceState(null, "", "/?view=ops");
+
+    const { container } = render(<SkillMPanel />);
+    const pendingStat = [...container.querySelectorAll(".pstat")].find((node) => node.textContent?.includes("待处理"));
+
+    expect(pendingStat?.textContent).toContain("5");
+    expect(screen.getByText(/5 queued/)).toBeTruthy();
+  });
+
+  it("makes non-wired controls read as status and gives overlays real controls", async () => {
+    panelData.current = {
+      ...panelData.liveOps,
+      skills: [
+        {
+          id: "alpha",
+          name: "alpha-skill",
+          description: "Alpha description",
+          tag: "workflow",
+          sourceStatus: "present",
+          releaseTags: [],
+          snapshotTags: [],
+          latestRev: "rev-alpha",
+          ruleCount: 0,
+          bindingCount: 1,
+          projectionCount: 2,
+          changed: "1h ago",
+          targets: [],
+        },
+        {
+          id: "beta",
+          name: "beta-skill",
+          description: "Beta description",
+          tag: "debug",
+          sourceStatus: "present",
+          releaseTags: [],
+          snapshotTags: [],
+          latestRev: "rev-beta",
+          ruleCount: 0,
+          bindingCount: 0,
+          projectionCount: 0,
+          changed: "2h ago",
+          targets: [],
+        },
+      ],
+      targets: [{ id: "target_codex", agent: "codex", path: "~/.codex/skills", profile: "default", ownership: "observed", projectedSkills: 2 }],
+      bindings: [{ id: "bind-alpha", skill: "alpha-skill", policy: "codex", matcher: "tag:workflow", target: "target_codex", method: "copy" }],
+    };
+    window.history.replaceState(null, "", "/?view=targets");
+
+    render(<SkillMPanel />);
+
+    expect(screen.queryByRole("button", { name: /target add/i })).toBeNull();
+    expect(screen.getByText("target 新增未接入")).toBeTruthy();
+    expect(screen.getByText("verify 未接入")).toBeTruthy();
+
+    await userEvent.keyboard("{Control>}k{/Control}");
+    const search = await screen.findByRole("textbox", { name: "搜索命令" });
+    await userEvent.type(search, "beta");
+
+    expect(screen.getByText("Open beta-skill")).toBeTruthy();
+    expect(screen.queryByText("Open alpha-skill")).toBeNull();
+
+    await userEvent.click(screen.getByRole("button", { name: "关闭命令面板" }));
+    await userEvent.click(screen.getByRole("button", { name: /Settings/ }));
+
+    expect(screen.getByRole("switch", { name: "切换深色模式" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "选择配色 1" })).toBeTruthy();
+
+    await userEvent.click(screen.getByRole("button", { name: "tweaks" }));
+
+    expect(screen.getByRole("button", { name: "关闭 Tweaks" })).toBeTruthy();
   });
 });

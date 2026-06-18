@@ -25,8 +25,6 @@ export function OperationLogRow({ op }: OperationLogRowProps) {
   const rowClass = classForStatus(op.status);
   const skills = splitOperationSkills(op.skill).filter((name) => name !== op.kind);
   const details = operationDetailParts(op);
-  const visibleSkills = skills.slice(0, 80);
-  const hiddenSkillCount = Math.max(0, skills.length - visibleSkills.length);
   const countLabel = skills.length > 1 ? `批量 ${skills.length}` : methodLabel(op.method);
 
   return (
@@ -54,10 +52,9 @@ export function OperationLogRow({ op }: OperationLogRowProps) {
           <div className="op-skill-block">
             <span className="op-skill-label">skills</span>
             <div className="op-skill-chips">
-              {visibleSkills.map((name) => (
+              {skills.map((name) => (
                 <span key={name}>{name}</span>
               ))}
-              {hiddenSkillCount > 0 ? <span>+{hiddenSkillCount} more</span> : null}
             </div>
           </div>
         ) : null}

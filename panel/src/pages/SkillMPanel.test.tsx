@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen, within } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { api } from "../lib/api/client";
 import { OperationLogRow } from "./OperationLogRow";
@@ -223,10 +223,9 @@ describe("SkillMPanel", () => {
 
     await userEvent.click(screen.getByRole("button", { name: /审计历史/ }));
 
-    expect(await screen.findByText("发布版本标签")).toBeTruthy();
-    expect(screen.getAllByText("release-notes").length).toBeGreaterThan(0);
-    expect(screen.getByText("5 个 skill")).toBeTruthy();
-    expect(screen.getAllByText(/本次批量操作包含 5 个 skill/).length).toBeGreaterThan(0);
+    expect(await screen.findByText("release-notes skill release done")).toBeTruthy();
+    expect(screen.getByText("5 skills observed skill monitor done")).toBeTruthy();
+    expect(screen.getByText("批量 5")).toBeTruthy();
     expect([...container.querySelectorAll(".op-row-pending .op-pill")].some((node) => node.textContent === "待处理")).toBe(true);
     expect([...container.querySelectorAll(".op-row-failed .op-pill")].some((node) => node.textContent === "失败")).toBe(true);
     expect(screen.queryByText(auditSkillList)).toBeNull();
@@ -315,6 +314,66 @@ describe("SkillMPanel", () => {
 
     expect(screen.getByTitle("当前 Panel 地址")).toBeTruthy();
     expect(screen.queryByText("localhost:5173")).toBeNull();
+  });
+
+  it("discloses projection graph truncation and scopes the table to the same page", async () => {
+    const projections = Array.from({ length: 14 }, (_, index) => ({
+      instance_id: `projection-${index + 1}`,
+      skill_id: `skill-${index + 1}`,
+      binding_id: `binding-${index + 1}`,
+      target_id: `target_${index + 1}`,
+      materialized_path: `/tmp/target-${index + 1}/skill-${index + 1}`,
+      method: "copy",
+      last_applied_rev: `rev-${index + 1}`.padEnd(8, "x"),
+      health: "ok",
+      observed_drift: false,
+    }));
+    panelData.current = {
+      ...panelData.liveOps,
+      ops: [],
+      skills: projections.map((projection) => ({
+        id: projection.skill_id,
+        name: projection.skill_id,
+        description: "Projection fixture",
+        tag: "workflow",
+        sourceStatus: "present",
+        releaseTags: [],
+        snapshotTags: [],
+        latestRev: projection.last_applied_rev,
+        ruleCount: 0,
+        bindingCount: 1,
+        projectionCount: 1,
+        changed: "now",
+        targets: [projection.target_id],
+      })),
+      targets: projections.map((projection, index) => ({
+        id: projection.target_id,
+        agent: "codex",
+        path: `/tmp/target-${index + 1}`,
+        profile: "default",
+        ownership: "managed",
+        skills: 1,
+        projectedSkills: 1,
+        lastSync: "now",
+      })),
+      projections,
+    };
+    window.history.replaceState(null, "", "/?view=projections");
+
+    render(<SkillMPanel />);
+
+    const table = screen.getByRole("table");
+    expect(screen.getByText("displaying 12 of 14 skills")).toBeTruthy();
+    expect(screen.getByText("displaying 12 of 14 targets")).toBeTruthy();
+    expect(screen.getByText("displaying 12 of 14 projections")).toBeTruthy();
+    expect(within(table).queryByText("skill-14")).toBeNull();
+
+    await userEvent.click(screen.getByRole("button", { name: "Next projection page" }));
+
+    expect(screen.getByText("displaying 2 of 14 skills")).toBeTruthy();
+    expect(screen.getByText("displaying 2 of 14 targets")).toBeTruthy();
+    expect(screen.getByText("displaying 2 of 14 projections")).toBeTruthy();
+    expect(within(table).getByText("skill-14")).toBeTruthy();
   });
 
   it("summarizes Git sync events without exposing raw bulk skill lists", () => {
@@ -416,5 +475,83 @@ describe("SkillMPanel", () => {
     await userEvent.click(screen.getByRole("button", { name: "tweaks" }));
 
     expect(screen.getByRole("button", { name: "关闭 Tweaks" })).toBeTruthy();
+  });
+
+  it("opens an explicit Ops purge confirmation before dispatching", async () => {
+    panelData.current = panelData.liveOps;
+    window.history.replaceState(null, "", "/?view=ops");
+    const purge = vi.spyOn(api, "opsPurge").mockResolvedValue({ ok: true, cmd: "ops.purge", request_id: "req-purge" });
+    const nativeConfirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+
+    render(<SkillMPanel />);
+
+    await userEvent.click(screen.getByRole("button", { name: /purge/ }));
+
+    expect(nativeConfirm).not.toHaveBeenCalled();
+    expect(purge).not.toHaveBeenCalled();
+
+    const dialog = screen.getByRole("dialog", { name: "清理 Ops 队列？" });
+    expect(within(dialog).getByText("Affected scope")).toBeTruthy();
+    expect(within(dialog).getByText(/不可自动撤销/)).toBeTruthy();
+    expect(within(dialog).getByText(/Ops purge API/)).toBeTruthy();
+
+    await userEvent.click(within(dialog).getByRole("button", { name: "确认清理" }));
+
+    await waitFor(() => expect(purge).toHaveBeenCalledTimes(1));
+    expect(panelData.refetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows queued count and defers Ops replay until the sheet confirm action", async () => {
+    panelData.current = { ...panelData.liveOps, queuedWriteCount: 5 };
+    window.history.replaceState(null, "", "/?view=ops");
+    const retry = vi.spyOn(api, "opsRetry").mockResolvedValue({ ok: true, cmd: "ops.retry", request_id: "req-retry" });
+
+    render(<SkillMPanel />);
+
+    await userEvent.click(screen.getByRole("button", { name: /replay 队列/ }));
+
+    expect(retry).not.toHaveBeenCalled();
+
+    const dialog = screen.getByRole("dialog", { name: "重放 Ops 队列？" });
+    expect(within(dialog).getByText("Queued count")).toBeTruthy();
+    expect(within(dialog).getByText("5")).toBeTruthy();
+    expect(within(dialog).getByText(/重试 pending\/failed 操作/)).toBeTruthy();
+
+    await userEvent.click(within(dialog).getByRole("button", { name: "确认重放" }));
+
+    await waitFor(() => expect(retry).toHaveBeenCalledTimes(1));
+  });
+
+  it("marks Market and Forge as preview before navigation", async () => {
+    panelData.current = panelData.liveOps;
+    render(<SkillMPanel />);
+
+    expect(screen.getByRole("button", { name: /Market Preview/ })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Forge Preview/ })).toBeTruthy();
+
+    await userEvent.keyboard("{Control>}k{/Control}");
+
+    expect(await screen.findByRole("button", { name: /Go to Market Preview not connected/ })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Go to Forge Preview not connected/ })).toBeTruthy();
+  });
+
+  it("explains Market and Forge placeholders without fake install or create controls", async () => {
+    panelData.current = panelData.liveOps;
+    render(<SkillMPanel />);
+
+    await userEvent.click(screen.getByRole("button", { name: /Market Preview/ }));
+
+    expect(screen.getByRole("heading", { name: "市场" })).toBeTruthy();
+    expect(screen.getByText("Preview · not connected")).toBeTruthy();
+    expect(screen.getByText(/只读查看本地 registry/)).toBeTruthy();
+    expect(screen.getByText(/不展示安装按钮/)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /install|安装/i })).toBeNull();
+
+    await userEvent.click(screen.getByRole("button", { name: /Forge Preview/ }));
+
+    expect(screen.getByRole("heading", { name: "Forge" })).toBeTruthy();
+    expect(screen.getByText(/只读参考本地 registry/)).toBeTruthy();
+    expect(screen.getByText(/不展示创建按钮/)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /create|创建/i })).toBeNull();
   });
 });

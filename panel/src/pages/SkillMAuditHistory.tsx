@@ -1,5 +1,15 @@
 import { useEffect, useState } from "react";
 import { api, type OpsPayload, type RegistryOperationRecord } from "../lib/api/client";
+import {
+  operationActionLabel,
+  bucketRegistryOperation,
+  registryOperationDetailParts,
+  registryOperationDisplayId,
+  registryOperationStatusLabel,
+  registryOperationSubjectLabel,
+  registryOperationTargetLabel,
+  splitOperationSkills,
+} from "../lib/operation_labels";
 
 const HISTORY_PAGE_SIZE = 100;
 
@@ -106,37 +116,66 @@ export function SkillMAuditHistory({ live, refreshKey }: SkillMAuditHistoryProps
 }
 
 function AuditHistoryLine({ op }: { op: RegistryOperationRecord }) {
+  const rowClass = historyClass(op);
+  const details = registryOperationDetailParts(op);
+  const summaryDetails = details.filter((part) => !part.startsWith("id ")).slice(0, 2);
+  const skills = op.skill ? splitOperationSkills(op.skill) : [];
+  const target = registryOperationTargetLabel(op);
+
   return (
-    <div className={`op-row op-row-${historyClass(op)}`}>
-      <span className={`op-pill op-${historyClass(op)}`}>{historyStatus(op)}</span>
-      <span className="op-time">{op.updated_at || op.created_at}</span>
-      <span className="op-verb">{op.intent}</span>
-      <span className="op-detail">
-        {op.skill ?? historyId(op)}
-        <span className="op-arrow">
-          {" -> "}
-          <code>{op.target ?? op.binding ?? op.source ?? "registry"}</code>
+    <details className={`op-row op-log-row audit-history-row op-row-${rowClass}`}>
+      <summary className="op-row-main">
+        <span className={`op-pill op-${rowClass}`}>{registryOperationStatusLabel(op)}</span>
+        <span className="op-time" title={op.updated_at || op.created_at}>{historyTime(op)}</span>
+        <span className="op-verb">{operationActionLabel(op.intent)}</span>
+        <span className="op-main-subject">
+          <b>{registryOperationSubjectLabel(op)}</b>
+          <code>{target}</code>
         </span>
-      </span>
-      <span className="op-note">{op.last_error?.message ?? op.method ?? op.source ?? historyId(op)}</span>
-    </div>
+        <span className="op-count-chip">{summaryDetails[0] ?? "详情"}</span>
+        <span className="op-more-chip">展开</span>
+      </summary>
+      <div className="op-expanded">
+        <div className="op-kv-grid">
+          <span>intent</span><code>{op.intent}</code>
+          <span>source</span><code>{op.source ?? "registry"}</code>
+          <span>status</span><code>{op.status}</code>
+          <span>id</span><code>{registryOperationDisplayId(op)}</code>
+        </div>
+        {details.length > 0 ? <div className="op-detail-line">{details.join(" · ")}</div> : null}
+        {skills.length > 0 ? (
+          <div className="op-skill-block">
+            <span className="op-skill-label">skills</span>
+            <div className="op-skill-chips">
+              {skills.map((name) => <span key={name}>{name}</span>)}
+            </div>
+          </div>
+        ) : null}
+      </div>
+    </details>
   );
 }
 
 function historyId(op: RegistryOperationRecord): string {
-  return op.op_id ?? op.audit_id ?? op.request_id ?? `${op.intent}-${op.created_at}`;
-}
-
-function historyStatus(op: RegistryOperationRecord): "ok" | "pending" | "err" {
-  const status = op.status.toLowerCase();
-  if (status === "failed" || status === "err" || status === "error") return "err";
-  if (status === "pending" || status === "queued" || status === "running") return "pending";
-  return "ok";
+  return registryOperationDisplayId(op);
 }
 
 function historyClass(op: RegistryOperationRecord): "done" | "pending" | "failed" {
-  const status = historyStatus(op);
+  const status = bucketRegistryOperation(op);
   if (status === "err") return "failed";
   if (status === "pending") return "pending";
   return "done";
+}
+
+function historyTime(op: RegistryOperationRecord): string {
+  const iso = op.updated_at || op.created_at;
+  const timestamp = Date.parse(iso);
+  if (!Number.isFinite(timestamp)) return iso;
+  const seconds = Math.max(0, Math.floor((Date.now() - timestamp) / 1000));
+  if (seconds < 60) return `${seconds}s ago`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  return `${Math.floor(hours / 24)}d ago`;
 }

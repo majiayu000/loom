@@ -5,7 +5,15 @@ import { api } from "../lib/api/client";
 import type { Op, PanelPageKey, Skill, Target } from "../lib/types";
 import { FirstRunPage } from "./panel/FirstRunPage";
 import { DoctorPage } from "./panel/DoctorPage";
+import { OperationLogRow } from "./OperationLogRow";
 import { SkillMAuditHistory } from "./SkillMAuditHistory";
+import { loadSkillMPreferences, saveSkillMPreferences } from "../lib/skillm_prefs";
+import {
+  operationActionLabel,
+  operationDetailParts,
+  operationStatusLabel,
+  operationSubjectLabel,
+} from "../lib/operation_labels";
 
 type SkillMPage = PanelPageKey | "market" | "forge";
 type ToastKind = "ok" | "err" | "info" | "sync";
@@ -19,11 +27,11 @@ interface Toast {
 const iconPath: Record<string, string> = {
   dash: "M3 3h7v9H3zM14 3h7v5h-7zM14 12h7v9h-7zM3 16h7v5H3z",
   lib: "M4 4h4v16H4zM10 4h4v16h-4zM16.5 4.5l4 1-3.5 15-4-1z",
-  target: "M12 3a9 9 0 109 9 9 9 9 0 00-9-9zm0 4a5 5 0 105 5 5 5 0 00-5-5zm0 3a2 2 0 102 2 2 2 0 00-2-2z",
+  target: "M12 2v4M12 18v4M2 12h4M18 12h4M8 12a4 4 0 1 0 8 0 4 4 0 0 0-8 0",
   branch: "M6 3v12M6 15a3 3 0 103 3M18 9a3 3 0 10-3-3M18 9a9 9 0 01-9 9",
   graph: "M5 5a2 2 0 104 0 2 2 0 10-4 0M15 12a2 2 0 104 0 2 2 0 10-4 0M7 19a2 2 0 104 0 2 2 0 10-4 0M7.5 6.5l8 4.5M9.5 17.5l6-4.5",
   ops: "M4 6h10M4 12h7M4 18h10M17 7l2.5 2.5L17 12M19 16l-2.5 2.5L14 16",
-  clock: "M12 3a9 9 0 109 9 9 9 9 0 00-9-9zm0 4v5l3.5 2",
+  clock: "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18M12 7v5l3.5 2",
   sync: "M21 12a9 9 0 01-15.5 6.2M3 12a9 9 0 0115.5-6.2M3 12l3-3M3 12l3 3M21 12l-3-3M21 12l-3 3",
   shield: "M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6zM9 12l2 2 4-4",
   gear: "M12 8a4 4 0 100 8 4 4 0 000-8zM19 12a7 7 0 00-.1-1.2l2.1-1.6-2-3.4-2.4 1a7 7 0 00-2.1-1.2L14 3h-4l-.5 2.6a7 7 0 00-2.1 1.2l-2.4-1-2 3.4 2.1 1.6A7 7 0 005 12a7 7 0 00.1 1.2L3 14.8l2 3.4 2.4-1a7 7 0 002.1 1.2L10 21h4l.5-2.6a7 7 0 002.1-1.2l2.4 1 2-3.4-2.1-1.6A7 7 0 0019 12z",
@@ -105,6 +113,11 @@ function registryLabel(root: string | null) {
   return root?.replace(/^\/Users\/[^/]+/, "~") ?? "~/.loom-registry";
 }
 
+function panelHostLabel() {
+  if (typeof window === "undefined") return "local panel";
+  return window.location.host || "local panel";
+}
+
 function statusText(ok: boolean, warn: boolean) {
   if (!ok) return "需修复";
   if (warn) return "有告警";
@@ -117,17 +130,15 @@ function operationTone(status: Op["status"]) {
   return "pending";
 }
 
+function pendingQueueCount(live: ReturnType<typeof usePanelData>) {
+  return Math.max(live.queuedWriteCount, live.ops.filter((op) => op.status === "pending").length);
+}
+
 function methodTone(method: string) {
   if (method === "materialize") return "var(--acc1)";
   if (method === "copy") return "var(--acc2)";
   if (method === "symlink") return "var(--acc3)";
   return "var(--faint)";
-}
-
-function classForOp(op: Op) {
-  if (op.status === "ok") return "done";
-  if (op.status === "err") return "failed";
-  return "pending";
 }
 
 const HEATMAP_WEEKS = 26;
@@ -186,23 +197,24 @@ function buildSkillMetrics(skills: Skill[], ops: Op[]): SkillMetric[] {
 
 export function SkillMPanel() {
   const live = usePanelData();
+  const initialPrefs = useMemo(loadSkillMPreferences, []);
   const [view, setView] = useState<SkillMPage>(initialView);
   const [query, setQuery] = useState("");
   const [selectedSkill, setSelectedSkill] = useState<string | null>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [termOpen, setTermOpen] = useState(false);
   const [tweaksOpen, setTweaksOpen] = useState(false);
-  const [dark, setDark] = useState(true);
-  const [density, setDensity] = useState<"compact" | "regular" | "comfy">("regular");
-  const [accent, setAccent] = useState(["#ff0080", "#7928ca", "#00d9ff"]);
+  const [dark, setDark] = useState(initialPrefs.dark);
+  const [density, setDensity] = useState(initialPrefs.density);
+  const [accent, setAccent] = useState(initialPrefs.accent);
   const [toasts, setToasts] = useState<Toast[]>([]);
 
   const counts = useMemo(() => {
     const failedOps = live.ops.filter((op) => op.status === "err").length;
     const drifted = live.projections.filter((p) => p.observed_drift || p.health === "drift").length;
-    const pending = live.queuedWriteCount + live.ops.filter((op) => op.status === "pending").length;
+    const pending = pendingQueueCount(live);
     return { failedOps, drifted, pending, attention: failedOps + drifted + pending };
-  }, [live.ops, live.projections, live.queuedWriteCount]);
+  }, [live]);
 
   const filteredSkills = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -233,7 +245,8 @@ export function SkillMPanel() {
     window.setTimeout(() => setToasts((items) => items.filter((item) => item.id !== id)), 3200);
   };
 
-  const runAction = async (label: string, fn: () => Promise<unknown>) => {
+  const runAction = async (label: string, fn: () => Promise<unknown>, options?: { confirm?: string }) => {
+    if (options?.confirm && typeof window !== "undefined" && !window.confirm(options.confirm)) return;
     try {
       await fn();
       toast("ok", `${label} completed`);
@@ -259,6 +272,10 @@ export function SkillMPanel() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
+
+  useEffect(() => {
+    saveSkillMPreferences({ dark, density, accent });
+  }, [accent, dark, density]);
 
   return (
     <div
@@ -287,7 +304,7 @@ export function SkillMPanel() {
           {termOpen && <Terminal live={live} close={() => setTermOpen(false)} />}
         </main>
       </div>
-      <StatusBar live={live} counts={counts} dark={dark} setDark={setDark} onSync={() => runAction("Replay / sync", api.syncReplay)} onTerm={() => setTermOpen((open) => !open)} onTweaks={() => setTweaksOpen((open) => !open)} />
+      <StatusBar live={live} counts={counts} dark={dark} setDark={setDark} onSync={() => go("sync")} onTerm={() => setTermOpen((open) => !open)} onTweaks={() => setTweaksOpen((open) => !open)} />
       {paletteOpen && <Palette skills={live.skills} go={(page) => { go(page); setPaletteOpen(false); }} openSkill={(name) => { setSelectedSkill(name); go("skills"); setPaletteOpen(false); }} close={() => setPaletteOpen(false)} />}
       {tweaksOpen && <Tweaks dark={dark} setDark={setDark} density={density} setDensity={setDensity} accent={accent} setAccent={setAccent} close={() => setTweaksOpen(false)} />}
       <Toasts items={toasts} dismiss={(id) => setToasts((items) => items.filter((item) => item.id !== id))} />
@@ -486,50 +503,80 @@ function Skills({ skills, targets, query, setQuery, selected, setSelectedSkill }
     <div className="view view-lib">
       <header className="view-head">
         <div><h1>技能库</h1><p>{skills.length} 个 skill · live registry inventory · 真实后端数据</p></div>
-        <div className="lib-head-right"><div className="searchbox"><Icon d="search" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索 skill…（名称 / 描述 / 标签）" /><kbd>⌘K</kbd></div><button className="btn-grad sm disabled"><Icon d="plus" size={14} />skill add</button></div>
+        <div className="lib-head-right"><div className="searchbox"><Icon d="search" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索 skill…（名称 / 描述 / 标签）" /><kbd>⌘K</kbd></div><span className="soon-pill"><Icon d="plus" size={14} />新增入口未接入</span></div>
       </header>
       <div className="filter-bar">
         <div className="chip-group">{["all", "observed", "present", "missing", "non-compliant"].map((item) => <button key={item} className={`chip ${source === item ? "on" : ""}`} onClick={() => setSource(item)}>{item === "all" ? "全部来源" : item}</button>)}</div>
         <div className="chip-group">{tags.map((tag) => <button key={tag} className="chip" onClick={() => setQuery(tag)}>#{tag}</button>)}</div>
         <div className="sort-group"><span className="sort-label">排序</span>{[["name", "名称"], ["edges", "投影"], ["bindings", "绑定"]].map(([id, label]) => <button key={id} className={`sort-pill ${sort === id ? "on" : ""}`} onClick={() => setSort(id)}>{label}</button>)}</div>
       </div>
-      <div className="lib-grid">
-        {shown.map((skill) => (
-          <article key={skill.name} className={`skill-card ${selected?.name === skill.name ? "sel" : ""}`} onClick={() => setSelectedSkill(skill.name)}>
-            <div className="sc-head"><Glyph>{skill.name}</Glyph><div className="sc-title"><h3>{skill.name}</h3><span className="sc-meta">{sourceLabel(skill)} · {skill.changed}</span></div><Switch on={(skill.observedTargetIds?.length ?? 0) > 0 || skill.projectionCount > 0} onChange={() => undefined} /></div>
-            <p className="sc-desc">{skill.description || "No description from backend."}</p>
-            <div className="sc-signals"><span className={`sec-badge small ${skill.sourceStatus === "present" ? "verified" : "caution"}`}>{skill.sourceStatus}</span><span className="sc-cat">{skill.bindingCount} bindings</span><span className="sc-cat">{skill.projectionCount} projections</span></div>
-            <div className="sc-tools">{agentsForSkill(skill, targets).slice(0, 3).map((agent) => <span key={agent} className="tool-pill on" style={{ "--tc": agentMeta[agent]?.color ?? "var(--acc2)" } as CSSProperties}><i />{agentMeta[agent]?.short ?? agent.slice(0, 2).toUpperCase()}</span>)}<span className="sc-scope">{agentsForSkill(skill, targets).length > 0 ? "real target rows" : "no target rows"}</span></div>
-            <div className="sc-foot"><span className="sc-tags"><span className="sm-tag">#{skill.tag}</span><span className="sm-tag">{skill.latestRev}</span></span><span className="sc-calls">{skill.projectionCount} edges</span></div>
-          </article>
-        ))}
-        {shown.length === 0 && <div className="lib-empty"><Icon d="lib" size={28} /><p>没有匹配当前筛选的 skill</p></div>}
+      <div className="lib-layout">
+        <div className="lib-grid" role="list" aria-label="Skill list">
+          {shown.map((skill) => {
+            const targetAgents = agentsForSkill(skill, targets);
+            const active = (skill.observedTargetIds?.length ?? 0) > 0 || skill.projectionCount > 0;
+            const isSelected = selected?.name === skill.name;
+            return (
+              <article
+                key={skill.name}
+                className={`skill-card ${isSelected ? "sel" : ""}`}
+                role="button"
+                tabIndex={0}
+                aria-pressed={isSelected}
+                aria-label={`查看 ${skill.name} 详情`}
+                onClick={() => setSelectedSkill(skill.name)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    setSelectedSkill(skill.name);
+                  }
+                }}
+              >
+                <div className="sc-head"><Glyph>{skill.name}</Glyph><div className="sc-title"><h3>{skill.name}</h3><span className="sc-meta">{sourceLabel(skill)} · {skill.changed}</span></div><span className={`sc-state ${active ? "on" : ""}`}>{active ? "已连接" : "未连接"}</span></div>
+                <p className="sc-desc">{skill.description || "No description from backend."}</p>
+                <div className="sc-signals"><span className={`sec-badge small ${skill.sourceStatus === "present" ? "verified" : "caution"}`}>{skill.sourceStatus}</span><span className="sc-cat">{skill.bindingCount} bindings</span><span className="sc-cat">{skill.projectionCount} projections</span></div>
+                <div className="sc-tools">{targetAgents.slice(0, 3).map((agent) => <span key={agent} className="tool-pill on" style={{ "--tc": agentMeta[agent]?.color ?? "var(--acc2)" } as CSSProperties}><i />{agentMeta[agent]?.short ?? agent.slice(0, 2).toUpperCase()}</span>)}<span className="sc-scope">{targetAgents.length > 0 ? "real target rows" : "no target rows"}</span></div>
+                <div className="sc-foot"><span className="sc-tags"><span className="sm-tag">#{skill.tag}</span><span className="sm-tag">{skill.latestRev}</span></span><span className="sc-calls">查看详情</span></div>
+              </article>
+            );
+          })}
+          {shown.length === 0 && <div className="lib-empty"><Icon d="lib" size={28} /><p>没有匹配当前筛选的 skill</p></div>}
+        </div>
+        <SkillDetail skill={selected} />
       </div>
-      {selected && (
-        <section className="skill-detail panel">
-          <div className="det-head">
-            <div className="det-title"><Glyph>{selected.name}</Glyph><div><h2>{selected.name}</h2><p>{selected.description || "No backend description."}</p></div></div>
-            <span className="sec-badge good"><Icon d="shield" />{selected.sourceStatus}</span>
-          </div>
-          <div className="det-stats">
-            <Stat label="Bindings" value={selected.bindingCount} sub="routing rules" icon="branch" />
-            <Stat label="Projections" value={selected.projectionCount} sub="materialized edges" icon="graph" />
-            <Stat label="Latest rev" value={selected.latestRev} sub="backend reported" icon="clock" />
-            <Stat label="Targets" value={selected.targets.length + (selected.observedTargetIds?.length ?? 0)} sub="observed + projected" icon="target" />
-          </div>
-        </section>
-      )}
     </div>
+  );
+}
+
+function SkillDetail({ skill }: { skill: Skill | null }) {
+  if (!skill) {
+    return <aside className="skill-detail panel"><div className="panel-empty">选择一个 skill 查看来源、目标和投影统计。</div></aside>;
+  }
+  const targetCount = skill.targets.length + (skill.observedTargetIds?.length ?? 0);
+  return (
+    <aside className="skill-detail panel" aria-label={`${skill.name} detail`}>
+      <div className="det-head">
+        <div className="det-title"><Glyph>{skill.name}</Glyph><div><h2>{skill.name}</h2><p>{skill.description || "No backend description."}</p></div></div>
+        <span className="sec-badge good"><Icon d="shield" />{skill.sourceStatus}</span>
+      </div>
+      <div className="det-metrics">
+        <div><span>Bindings</span><b>{skill.bindingCount}</b><em>routing rules</em></div>
+        <div><span>Projections</span><b>{skill.projectionCount}</b><em>materialized edges</em></div>
+        <div><span>Latest rev</span><b>{skill.latestRev}</b><em>backend reported</em></div>
+        <div><span>Targets</span><b>{targetCount}</b><em>observed + projected</em></div>
+      </div>
+    </aside>
   );
 }
 
 function Plane({ live, tab, go }: { live: ReturnType<typeof usePanelData>; tab: "targets" | "bindings" | "projections"; go: (page: SkillMPage) => void }) {
   const drifts = live.projections.filter((p) => p.observed_drift || p.health === "drift").length;
-  const pending = live.queuedWriteCount + live.ops.filter((op) => op.status === "pending").length;
+  const pending = pendingQueueCount(live);
+  const panelHost = panelHostLabel();
   return (
     <div className="view view-plane">
-      <header className="view-head"><div><h1>控制平面</h1><p>把注册表里的 skill 通过 binding 投影到各 agent 目录 · symlink / copy / materialize</p></div><button className="btn-grad sm disabled"><Icon d="branch" size={14} />应用全部投影</button></header>
-      <div className="reg-strip"><span className="rs-git"><Icon d="branch" size={14} />Git 注册表</span><code>{registryLabel(live.registryRoot)}</code><span className="rs-div" /><span className="rs-stat"><b>{live.skills.length}</b> skills · <b>{live.targets.length}</b> targets</span><span className="rs-div" /><span className="rs-guard"><Icon d="bolt" size={12} />硬写保护 已开</span><span className="rs-flex" /><button className="rs-panel"><Icon d="eye" size={13} />localhost:5173</button></div>
+      <header className="view-head"><div><h1>控制平面</h1><p>把注册表里的 skill 通过 binding 投影到各 agent 目录 · symlink / copy / materialize</p></div><span className="soon-pill"><Icon d="branch" size={14} />批量投影未接入</span></header>
+      <div className="reg-strip"><span className="rs-git"><Icon d="branch" size={14} />Git 注册表</span><code>{registryLabel(live.registryRoot)}</code><span className="rs-div" /><span className="rs-stat"><b>{live.skills.length}</b> skills · <b>{live.targets.length}</b> targets</span><span className="rs-div" /><span className="rs-guard"><Icon d="bolt" size={12} />硬写保护 已开</span><span className="rs-flex" /><span className="rs-panel" title="当前 Panel 地址"><Icon d="eye" size={13} />{panelHost}</span></div>
       <div className="plane-stats">
         <button className="pstat" onClick={() => go("targets")}><span className="pstat-l">Targets</span><span className="pstat-n">{live.targets.length}</span></button>
         <button className="pstat" onClick={() => go("bindings")}><span className="pstat-l">Bindings</span><span className="pstat-n">{live.bindings.length}</span></button>
@@ -540,8 +587,8 @@ function Plane({ live, tab, go }: { live: ReturnType<typeof usePanelData>; tab: 
       <nav className="plane-tabs">
         {([["projections", "投影关系图", "graph"], ["targets", "Targets", "target"], ["bindings", "Bindings", "branch"]] as const).map(([id, label, icon]) => <button key={id} className={`det-tab ${tab === id ? "on" : ""}`} onClick={() => go(id)}><Icon d={icon} size={14} />{label}</button>)}
         <span className="tab-flex" />
-        {tab === "targets" ? <button className="btn-ghost sm disabled"><Icon d="plus" size={13} />target add</button> : null}
-        {tab === "bindings" ? <button className="btn-ghost sm disabled"><Icon d="plus" size={13} />binding add</button> : null}
+        {tab === "targets" ? <span className="soon-pill"><Icon d="plus" size={13} />target 新增未接入</span> : null}
+        {tab === "bindings" ? <span className="soon-pill"><Icon d="plus" size={13} />binding 新增未接入</span> : null}
       </nav>
       {tab === "targets" && <div className="targets-grid">{live.targets.map((t) => <TargetCard key={t.id} target={t} />)}{live.targets.length === 0 && <EmptyPanel text="No target rows from backend." />}</div>}
       {tab === "bindings" && <BindingsTable bindings={live.bindings} />}
@@ -558,7 +605,7 @@ function Plane({ live, tab, go }: { live: ReturnType<typeof usePanelData>; tab: 
 
 function TargetCard({ target }: { target: Target }) {
   const meta = agentMeta[target.agent] ?? { name: target.agent, short: target.agent.slice(0, 2).toUpperCase(), color: "var(--acc2)" };
-  return <article className="target-card" style={{ "--ac": meta.color } as CSSProperties}><div className="tc-head"><span className="tc-agent" style={{ background: meta.color }}>{meta.short}</span><div className="tc-title"><h3>{meta.name}</h3><code>{target.path}</code></div><OwnBadge ownership={target.ownership} /></div><div className="tc-meta"><span>profile <b>{target.profile}</b></span><span>{target.projectedSkills ?? 0} 个投影</span><span className="tc-ok"><Icon d="check" size={11} />同步</span></div><div className="tc-actions"><button className="btn-ghost xs disabled">verify</button><button className="btn-ghost xs disabled">{target.ownership === "observed" ? "转 managed" : "capture"}</button></div></article>;
+  return <article className="target-card" style={{ "--ac": meta.color } as CSSProperties}><div className="tc-head"><span className="tc-agent" style={{ background: meta.color }}>{meta.short}</span><div className="tc-title"><h3>{meta.name}</h3><code>{target.path}</code></div><OwnBadge ownership={target.ownership} /></div><div className="tc-meta"><span>profile <b>{target.profile}</b></span><span>{target.projectedSkills ?? 0} 个投影</span><span className="tc-ok"><Icon d="check" size={11} />同步</span></div><div className="tc-actions"><span className="mini-state">verify 未接入</span><span className="mini-state">{target.ownership === "observed" ? "managed 转换未接入" : "capture 未接入"}</span></div></article>;
 }
 
 function OwnBadge({ ownership }: { ownership: string }) {
@@ -567,7 +614,7 @@ function OwnBadge({ ownership }: { ownership: string }) {
 }
 
 function BindingsTable({ bindings }: { bindings: ReturnType<typeof usePanelData>["bindings"] }) {
-  return <div className="bindings-table"><div className="bt-head"><span>Skill</span><span>Policy</span><span>Matcher</span><span>Target</span><span>方式</span><span /></div>{bindings.map((b) => <div className="bt-row" key={b.id}><span className="bt-skill"><Glyph>{b.skill}</Glyph>{b.skill}</span><span className="bt-agent"><i />{b.policy}</span><span className="bt-matcher"><b>{b.matcher.split(":")[0]}</b><code>{b.matcher.split(":").slice(1).join(":") || "—"}</code></span><span className="bt-target"><code>{shortName(b.target)}</code></span><span><MethodTag method={b.method} /></span><span className="bt-act"><button className="btn-icon disabled"><Icon d="branch" size={14} /></button></span></div>)}{bindings.length === 0 && <div className="panel-empty">No bindings yet. Create a real binding before Loom can materialize projections.</div>}</div>;
+  return <div className="bindings-table"><div className="bt-head"><span>Skill</span><span>Policy</span><span>Matcher</span><span>Target</span><span>方式</span><span /></div>{bindings.map((b) => <div className="bt-row" key={b.id}><span className="bt-skill"><Glyph>{b.skill}</Glyph>{b.skill}</span><span className="bt-agent"><i />{b.policy}</span><span className="bt-matcher"><b>{b.matcher.split(":")[0]}</b><code>{b.matcher.split(":").slice(1).join(":") || "—"}</code></span><span className="bt-target"><code>{shortName(b.target)}</code></span><span><MethodTag method={b.method} /></span><span className="bt-act"><span className="mini-state">只读</span></span></div>)}{bindings.length === 0 && <div className="panel-empty">No bindings yet. Create a real binding before Loom can materialize projections.</div>}</div>;
 }
 
 function DataGrid({ columns, rows }: { columns: string[]; rows: Array<Array<string | number>> }) {
@@ -607,38 +654,40 @@ function EmptyPanel({ text }: { text: string }) {
   return <div className="panel"><div className="panel-empty">{text}</div></div>;
 }
 
-function Ops({ live, history, go, runAction }: { live: ReturnType<typeof usePanelData>; history: boolean; go: (page: SkillMPage) => void; runAction: (label: string, fn: () => Promise<unknown>) => void }) {
+function Ops({ live, history, go, runAction }: { live: ReturnType<typeof usePanelData>; history: boolean; go: (page: SkillMPage) => void; runAction: (label: string, fn: () => Promise<unknown>, options?: { confirm?: string }) => void }) {
   const failed = live.ops.filter((op) => op.status === "err").length;
-  const pending = live.ops.filter((op) => op.status === "pending").length + live.queuedWriteCount;
+  const pending = pendingQueueCount(live);
   const queue = live.ops.filter((op) => op.status !== "ok");
+  const queueCount = Math.max(queue.length, live.queuedWriteCount);
   const rows = history ? live.ops : queue;
   return (
     <div className="view view-ops">
       <header className="view-head">
         <div><h1>Ops &amp; 审计</h1><p>每条命令都来自 live API · 可重放、可诊断、可清理</p></div>
-        <div className="ops-head-actions"><button className="btn-ghost sm" onClick={() => runAction("Purge ops", api.opsPurge)}><Icon d="x" />purge</button><button className="btn-grad sm" onClick={() => runAction("Replay queued ops", api.opsRetry)}><Icon d="sync" />replay 队列</button></div>
+        <div className="ops-head-actions"><button className="btn-ghost sm" onClick={() => runAction("Purge ops", api.opsPurge, { confirm: "确定要清理当前操作队列吗？这个动作会修改本地操作状态。" })}><Icon d="x" />purge</button><button className="btn-grad sm" onClick={() => runAction("Replay queued ops", api.opsRetry, { confirm: "确定要重放当前待处理队列吗？" })}><Icon d="sync" />replay 队列</button></div>
       </header>
       <div className="ops-stats"><div className={`pstat ${pending ? "acc" : ""}`}><span className="pstat-l">待处理</span><span className="pstat-n">{pending}</span></div><div className={`pstat ${failed ? "warn" : ""}`}><span className="pstat-l">失败 / 漂移</span><span className="pstat-n">{failed}</span></div><div className="pstat"><span className="pstat-l">已完成</span><span className="pstat-n">{live.ops.filter((op) => op.status === "ok").length}</span></div><div className="pstat"><span className="pstat-l">审计事件</span><span className="pstat-n">{live.ops.length}</span></div></div>
-      <nav className="plane-tabs">{([["ops", "待处理队列"], ["history", "审计历史"]] as const).map(([id, label]) => <button key={id} className={`det-tab ${(history ? "history" : "ops") === id ? "on" : ""}`} onClick={() => go(id)}><Icon d={id === "history" ? "clock" : "ops"} size={14} />{label}{id === "ops" && queue.length ? <span className="tab-count">{queue.length}</span> : null}</button>)}<span className="tab-flex" /></nav>
-      {history ? <SkillMAuditHistory live={live.live} refreshKey={live.lastUpdated} /> : <section className="ops-table">{rows.map((op) => <OpLine key={op.id} op={op} />)}{rows.length === 0 && <div className="ops-empty"><Icon d="check" size={26} /><p>队列已清空 · 没有待处理或失败的操作</p></div>}</section>}
+      <nav className="plane-tabs">{([["ops", "待处理队列"], ["history", "审计历史"]] as const).map(([id, label]) => <button key={id} className={`det-tab ${(history ? "history" : "ops") === id ? "on" : ""}`} onClick={() => go(id)}><Icon d={id === "history" ? "clock" : "ops"} size={14} />{label}{id === "ops" && queueCount ? <span className="tab-count">{queueCount}</span> : null}</button>)}<span className="tab-flex" /></nav>
+      {history ? <SkillMAuditHistory live={live.live} refreshKey={live.lastUpdated} /> : <section className="ops-table">{rows.map((op) => <OperationLogRow key={op.id} op={op} />)}{rows.length === 0 && <div className="ops-empty"><Icon d="check" size={26} /><p>队列已清空 · 没有待处理或失败的操作</p></div>}</section>}
     </div>
   );
 }
 
-function OpLine({ op }: { op: Op }) {
-  return <div className={`op-row op-row-${classForOp(op)}`}><span className={`op-pill op-${classForOp(op)}`}>{op.status}</span><span className="op-time">{op.time}</span><span className="op-verb">{op.kind}</span><span className="op-detail">{op.skill}<span className="op-arrow">{" -> "}<code>{op.target}</code></span></span><span className="op-note">{op.reason ?? op.method}</span></div>;
-}
-
-function Sync({ live, runAction }: { live: ReturnType<typeof usePanelData>; runAction: (label: string, fn: () => Promise<unknown>) => void }) {
+function Sync({ live, runAction }: { live: ReturnType<typeof usePanelData>; runAction: (label: string, fn: () => Promise<unknown>, options?: { confirm?: string }) => void }) {
   const remote = live.remote;
   const remoteConfigured = Boolean(remote?.configured || remote?.url || remote?.remote);
+  const confirmReplay = { confirm: "确定要重放同步队列吗？这会修改本地注册表同步状态。" };
+  const syncOps = live.ops.filter((op) => op.kind.startsWith("sync."));
   return (
     <div className="view view-sync">
-      <header className="view-head"><div><h1>注册表同步</h1><p>Git 支撑 · push / pull / replay · remote 为空时保持 local-only</p></div><div className="ops-head-actions"><button className="btn-ghost sm disabled"><Icon d="dl" size={14} />sync pull</button><button className="btn-grad sm" onClick={() => runAction("Sync replay", api.syncReplay)}><Icon d="sync" />replay</button></div></header>
-      <div className="reg-strip"><span className="rs-git"><Icon d="branch" size={14} />remote origin</span><code>{remote?.url || remote?.remote || "not configured"}</code><span className="rs-div" /><span className="rs-stat">state <b>{remote?.sync_state ?? "local_only"}</b></span><span className="rs-div" /><span className="rs-stat">pending <b>{remote?.pending_ops ?? live.queuedWriteCount}</b></span><span className="rs-flex" /><button className="rs-panel" onClick={() => runAction("Sync replay", api.syncReplay)}><Icon d="sync" size={13} />replay</button></div>
+      <header className="view-head"><div><h1>注册表同步</h1><p>Git 支撑 · push / pull / replay · remote 为空时保持 local-only</p></div><div className="ops-head-actions"><span className="soon-pill"><Icon d="dl" size={14} />pull 未接入</span><button className="btn-grad sm" onClick={() => runAction("Sync replay", api.syncReplay, confirmReplay)}><Icon d="sync" />replay</button></div></header>
+      <div className="reg-strip"><span className="rs-git"><Icon d="branch" size={14} />remote origin</span><code>{remote?.url || remote?.remote || "not configured"}</code><span className="rs-div" /><span className="rs-stat">state <b>{remote?.sync_state ?? "local_only"}</b></span><span className="rs-div" /><span className="rs-stat">pending <b>{remote?.pending_ops ?? live.queuedWriteCount}</b></span><span className="rs-flex" /><button className="rs-panel" onClick={() => runAction("Sync replay", api.syncReplay, confirmReplay)}><Icon d="sync" size={13} />replay</button></div>
       <div className="sync-grid">
         <section className="panel sync-topo-panel"><div className="panel-head"><h3><Icon d="sync" />注册表拓扑</h3><span className="panel-hint">{remoteConfigured ? "local -> origin" : "local only"}</span></div><svg viewBox="0 0 640 300" className="sync-topo"><path className={`beam ${remoteConfigured ? "on" : ""}`} stroke="var(--acc3)" d="M150 220 C150 112 320 132 320 86" /><circle className="topo-cloud" cx="320" cy="78" r="34" /><text x="320" y="82" textAnchor="middle" className="topo-name">origin</text><text x="320" y="104" textAnchor="middle" className="topo-sub">{remoteConfigured ? "configured" : "not configured"}</text><circle className="topo-node self" cx="150" cy="220" r="38" /><text x="150" y="218" textAnchor="middle" className="topo-name">local</text><text x="150" y="235" textAnchor="middle" className="topo-sub">{remote?.pending_ops ?? live.queuedWriteCount} pending</text></svg></section>
-        <section className="panel"><div className="panel-head"><h3><Icon d="clock" />事件流</h3><span className="panel-hint">{live.ops.length} events</span></div><div className="ev-stream">{live.ops.slice(0, 6).map((op) => <div key={op.id} className={`ev-row ev-${operationTone(op.status)}`}><span className="ev-ic"><Icon d={op.status === "ok" ? "check" : op.status === "err" ? "bolt" : "sync"} size={13} /></span><span className="ev-time">{op.time}</span><span className="ev-text">{op.kind} <b>{op.skill}</b></span><span className="ev-dev">{op.target}</span></div>)}{live.ops.length === 0 && <div className="panel-empty">No sync activity yet.</div>}</div></section>
+        <section className="panel"><div className="panel-head"><h3><Icon d="clock" />事件流</h3><span className="panel-hint">{syncOps.length} sync events</span></div><div className="ev-stream">{syncOps.slice(0, 6).map((op) => {
+          const details = operationDetailParts(op).filter((part) => !part.startsWith("id ")).slice(0, 2);
+          return <div key={op.id} className={`ev-row ev-${operationTone(op.status)}`}><span className="ev-ic"><Icon d={op.status === "ok" ? "check" : op.status === "err" ? "bolt" : "sync"} size={13} /></span><span className="ev-time">{op.time}</span><span className="ev-text"><b>{operationActionLabel(op.kind)}</b><span>{operationSubjectLabel(op)}</span></span><span className="ev-dev">{details.join(" · ") || operationStatusLabel(op.status)}</span></div>;
+        })}{syncOps.length === 0 && <div className="panel-empty">No sync activity yet.</div>}</div></section>
       </div>
     </div>
   );
@@ -653,47 +702,52 @@ function Settings({ live, dark, setDark, density, setDensity, accent, setAccent 
   return (
     <div className="view view-settings">
       <header className="view-head"><div><h1>Settings</h1><p>注册表根、远端、写保护与外观 · 与 loom workspace 配置一致</p></div></header>
-      <section className="set-card"><div className="set-row"><div className="set-k"><h4>Registry root</h4><p>Git 支撑的注册表所在目录</p></div><code className="set-v">{registryLabel(live.registryRoot)}</code></div><div className="set-row"><div className="set-k"><h4>Remote origin</h4><p>团队注册表推送地址</p></div><code className="set-v">{live.remote?.url ?? live.remote?.remote ?? "not configured"}</code></div><div className="set-row"><div className="set-k"><h4>写保护</h4><p>当前 API 未暴露该配置状态</p></div><code className="set-v">backend field missing</code></div></section>
+      <section className="set-card"><div className="set-row"><div className="set-k"><h4>Registry root</h4><p>Git 支撑的注册表所在目录</p></div><code className="set-v">{registryLabel(live.registryRoot)}</code></div><div className="set-row"><div className="set-k"><h4>Remote origin</h4><p>团队注册表推送地址</p></div><code className="set-v">{live.remote?.url ?? live.remote?.remote ?? "not configured"}</code></div><div className="set-row"><div className="set-k"><h4>写保护</h4><p>当前 API 未暴露该配置状态</p></div><code className="set-v">未暴露</code></div></section>
       <section className="set-card"><div className="set-cardhead"><h3>Agent directories ({live.agentDirs.length})</h3><span>来自 workspace/info.agent_dirs</span></div><div className="set-agents">{live.agentDirs.map((dir) => <span key={`${dir.agent}-${dir.path}`} className="set-agent" title={dir.path}><span className="tc-agent" style={{ background: agentMeta[dir.agent]?.color }}>{agentMeta[dir.agent]?.short ?? dir.agent.slice(0, 2).toUpperCase()}</span>{dir.agent}<code>{dir.env_var ?? "no env"}</code></span>)}</div>{live.agentDirs.length === 0 && <div className="panel-empty">workspace/info 没有返回 agent_dirs。</div>}</section>
       <section className="set-card"><div className="set-cardhead"><h3>外观</h3><span>本机偏好</span></div>
-        <div className="set-row"><div className="set-k"><h4>Theme</h4><p>深色模式</p></div><Switch on={dark} onChange={setDark} /></div>
-        <div className="set-row"><div className="set-k"><h4>Accent</h4><p>Neon / Aurora / Sunset</p></div><div className="twk-chips">{themes.map((theme) => <button key={theme.join("")} className="twk-chip" data-on={theme.join("") === accent.join("") ? "1" : "0"} onClick={() => setAccent(theme)}>{theme.map((color) => <i key={color} style={{ background: color }} />)}</button>)}</div></div>
+        <div className="set-row"><div className="set-k"><h4>Theme</h4><p>深色模式</p></div><Switch label="切换深色模式" on={dark} onChange={setDark} /></div>
+        <div className="set-row"><div className="set-k"><h4>Accent</h4><p>Neon / Aurora / Sunset</p></div><div className="twk-chips">{themes.map((theme, index) => <button key={theme.join("")} className="twk-chip" aria-label={`选择配色 ${index + 1}`} data-on={theme.join("") === accent.join("") ? "1" : "0"} onClick={() => setAccent(theme)}>{theme.map((color) => <i key={color} style={{ background: color }} />)}</button>)}</div></div>
         <div className="set-row"><div className="set-k"><h4>Density</h4><p>Layout spacing</p></div><div className="twk-radio">{(["compact", "regular", "comfy"] as const).map((value) => <button key={value} data-on={density === value ? "1" : "0"} onClick={() => setDensity(value)}>{value}</button>)}</div></div>
       </section>
     </div>
   );
 }
 
-function Switch({ on, onChange }: { on: boolean; onChange: (value: boolean) => void }) {
-  return <button className={`sm-switch ${on ? "on" : ""}`} role="switch" aria-checked={on} onClick={() => onChange(!on)}><span className="knob" /></button>;
+function Switch({ on, onChange, label = "切换开关" }: { on: boolean; onChange: (value: boolean) => void; label?: string }) {
+  return <button className={`sm-switch ${on ? "on" : ""}`} role="switch" aria-label={label} aria-checked={on} onClick={() => onChange(!on)}><span className="knob" /></button>;
 }
 
 function Market({ live }: { live: ReturnType<typeof usePanelData> }) {
-  return <div className="view view-market"><header className="view-head"><div><h1>市场</h1><p>Loom V1 没有 marketplace/catalog backend contract</p></div></header><div className="reg-banner"><div className="reg-stat"><b>{live.skills.length}</b><span>local registry skills</span></div><span className="reg-div" /><div className="reg-stat"><b>missing</b><span>catalog contract</span></div><span className="reg-flex" /><span className="reg-src">来源：live registry only</span></div><EmptyPanel text="未接入真实 catalog API，所以不展示市场分类或安装流。" /></div>;
+  return <div className="view view-market"><header className="view-head"><div><h1>市场</h1><p>当前只连接本地注册表，尚未接入市场目录服务</p></div></header><div className="reg-banner"><div className="reg-stat"><b>{live.skills.length}</b><span>本地 skills</span></div><span className="reg-div" /><div className="reg-stat"><b>未接入</b><span>市场目录</span></div><span className="reg-flex" /><span className="reg-src">来源：本地注册表</span></div><EmptyPanel text="未接入真实市场目录 API，所以不展示市场分类或安装流。" /></div>;
 }
 
 function Forge({ live }: { live: ReturnType<typeof usePanelData> }) {
-  return <div className="view view-forge"><header className="view-head"><div><h1>Forge</h1><p>Loom V1 没有 create-wizard/docs-ingestion/transcript backend contract</p></div></header><div className="reg-banner"><div className="reg-stat"><b>{live.skills.length}</b><span>local skills available for reference</span></div><span className="reg-div" /><div className="reg-stat"><b>missing</b><span>write contract</span></div><span className="reg-flex" /><span className="reg-src">未创建任何本地草稿</span></div><EmptyPanel text="未接入真实创建向导 API，所以不展示模板、AI 生成、文档导入或发布步骤。" /></div>;
+  return <div className="view view-forge"><header className="view-head"><div><h1>Forge</h1><p>当前只读展示本地 skill，尚未接入创建向导</p></div></header><div className="reg-banner"><div className="reg-stat"><b>{live.skills.length}</b><span>可参考 skills</span></div><span className="reg-div" /><div className="reg-stat"><b>未接入</b><span>写入流程</span></div><span className="reg-flex" /><span className="reg-src">未创建任何本地草稿</span></div><EmptyPanel text="未接入真实创建向导 API，所以不展示模板、AI 生成、文档导入或发布步骤。" /></div>;
 }
 
 function Terminal({ live, close }: { live: ReturnType<typeof usePanelData>; close: () => void }) {
   return (
     <div className="sm-terminal">
-      <div className="term-head"><span><Icon d="term" /> TERMINAL - skillm shell</span><button className="btn-icon" onClick={close}><Icon d="x" /></button></div>
+      <div className="term-head"><span><Icon d="term" /> TERMINAL - read-only preview</span><button className="btn-icon" aria-label="关闭终端预览" onClick={close}><Icon d="x" /></button></div>
       <div className="term-body"><p>SkillM Terminal - read-only preview</p><p><b>$</b> loom workspace status</p><p>{live.live ? "registry live" : live.error ?? "offline"} · {live.skills.length} skills · {live.targets.length} targets · {live.queuedWriteCount} queued</p></div>
-      <div className="term-input"><span>&gt;</span><span>help · ls · doctor · sync</span></div>
+      <div className="term-note"><span>只读命令预览</span><code>help · ls · doctor · sync</code></div>
     </div>
   );
 }
 
 function Palette({ skills, go, openSkill, close }: { skills: Skill[]; go: (page: SkillMPage) => void; openSkill: (name: string) => void; close: () => void }) {
+  const [filter, setFilter] = useState("");
+  const q = filter.trim().toLowerCase();
+  const filteredPages = pages.filter((page) => !q || `${page.label} ${page.group}`.toLowerCase().includes(q));
+  const filteredSkills = skills.filter((skill) => !q || `${skill.name} ${skill.tag} ${skill.description ?? ""}`.toLowerCase().includes(q)).slice(0, 8);
   return (
     <div className="sm-veil" onMouseDown={close}>
       <div className="cmd-pal" onMouseDown={(event) => event.stopPropagation()}>
-        <div className="cmd-search"><Icon d="search" /><span>Command palette</span><button className="btn-icon" onClick={close}><Icon d="x" /></button></div>
+        <div className="cmd-search"><Icon d="search" /><input autoFocus value={filter} onChange={(event) => setFilter(event.target.value)} placeholder="搜索页面或 skill" aria-label="搜索命令" /><button className="btn-icon" aria-label="关闭命令面板" onClick={close}><Icon d="x" /></button></div>
         <div className="cmd-list">
-          {pages.map((page) => <button key={page.id} className="cmd-item" onClick={() => go(page.id)}><Icon d={page.icon} />Go to {page.label}<span>{page.group}</span></button>)}
-          {skills.slice(0, 8).map((skill) => <button key={skill.name} className="cmd-item" onClick={() => openSkill(skill.name)}><Icon d="eye" />Open {skill.name}<span>{sourceLabel(skill)}</span></button>)}
+          {filteredPages.map((page) => <button key={page.id} className="cmd-item" onClick={() => go(page.id)}><Icon d={page.icon} />Go to {page.label}<span>{page.group}</span></button>)}
+          {filteredSkills.map((skill) => <button key={skill.name} className="cmd-item" onClick={() => openSkill(skill.name)}><Icon d="eye" />Open {skill.name}<span>{sourceLabel(skill)}</span></button>)}
+          {filteredPages.length + filteredSkills.length === 0 ? <div className="panel-empty">没有匹配的命令。</div> : null}
         </div>
       </div>
     </div>
@@ -704,11 +758,11 @@ function Tweaks({ dark, setDark, density, setDensity, accent, setAccent, close }
   const themes = [["#ff0080", "#7928ca", "#00d9ff"], ["#34d399", "#0ea5e9", "#a3e635"], ["#ff6b35", "#f43f5e", "#fbbf24"]];
   return (
     <aside className="twk-panel skillm-tweaks">
-      <div className="twk-hd"><b>Tweaks</b><button className="twk-x" onClick={close}>×</button></div>
+      <div className="twk-hd"><b>Tweaks</b><button className="twk-x" aria-label="关闭 Tweaks" onClick={close}>×</button></div>
       <div className="twk-body">
         <div className="twk-sect">视觉方向</div>
-        <div className="twk-row"><div className="twk-lbl"><span>配色（Neon / Aurora / Sunset）</span></div><div className="twk-chips">{themes.map((theme) => <button key={theme.join("")} className="twk-chip" data-on={theme.join("") === accent.join("") ? "1" : "0"} onClick={() => setAccent(theme)}>{theme.map((color) => <i key={color} style={{ background: color }} />)}</button>)}</div></div>
-        <div className="twk-row twk-row-h"><div className="twk-lbl"><span>深色模式</span></div><Switch on={dark} onChange={setDark} /></div>
+        <div className="twk-row"><div className="twk-lbl"><span>配色（Neon / Aurora / Sunset）</span></div><div className="twk-chips">{themes.map((theme, index) => <button key={theme.join("")} className="twk-chip" aria-label={`选择配色 ${index + 1}`} data-on={theme.join("") === accent.join("") ? "1" : "0"} onClick={() => setAccent(theme)}>{theme.map((color) => <i key={color} style={{ background: color }} />)}</button>)}</div></div>
+        <div className="twk-row twk-row-h"><div className="twk-lbl"><span>深色模式</span></div><Switch label="切换深色模式" on={dark} onChange={setDark} /></div>
         <div className="twk-sect">布局</div>
         <div className="twk-radio">{(["compact", "regular", "comfy"] as const).map((value) => <button key={value} data-on={density === value ? "1" : "0"} onClick={() => setDensity(value)}>{value}</button>)}</div>
       </div>

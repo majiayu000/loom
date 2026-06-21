@@ -21,6 +21,9 @@ describe("adaptRegistryOperation", () => {
 
   it("keeps queued rows pending and failed rows errored", () => {
     expect(adaptRegistryOperation(operation({ status: "pending" })).status).toBe("pending");
+    expect(adaptRegistryOperation(operation({ status: "enqueued" })).status).toBe("pending");
+    expect(adaptRegistryOperation(operation({ status: "in_flight" })).status).toBe("pending");
+    expect(adaptRegistryOperation(operation({ status: "retrying" })).status).toBe("pending");
     expect(
       adaptRegistryOperation(
         operation({ status: "succeeded", last_error: { code: "IO_ERROR", message: "failed" } }),

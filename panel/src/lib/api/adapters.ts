@@ -4,6 +4,7 @@ import type { RegistryRule } from "../../generated/RegistryRule";
 import type { RegistryTarget } from "../../generated/RegistryTarget";
 import type { PendingOp } from "../../types";
 import { normalizeAgentSlug } from "../agent_options";
+import { bucketRegistryOperation } from "../operation_labels";
 import type { AgentSlug, Binding, Op, Ownership, ProjectionMethod, Skill, Target } from "../types";
 import type { RegistryOperationRecord, SkillSummaryPayload } from "./client";
 
@@ -230,10 +231,7 @@ export function adaptRegistryOperation(op: RegistryOperationRecord): Op {
 }
 
 function operationStatus(op: RegistryOperationRecord): Op["status"] {
-  const status = op.status.toLowerCase();
-  if (op.last_error || status === "failed" || status === "error") return "err";
-  if (status === "pending" || status === "queued") return "pending";
-  return "ok";
+  return bucketRegistryOperation(op);
 }
 
 export function adaptProjectionOp(p: RegistryProjection, index: AdapterIndex): Op {

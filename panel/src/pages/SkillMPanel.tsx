@@ -17,6 +17,7 @@ import {
 
 type SkillMPage = PanelPageKey | "market" | "forge";
 type ToastKind = "ok" | "err" | "info" | "sync";
+type Confirm = { label: string; action: string; title: string; scope: string; undo: string; impact: string; count?: number; fn: () => Promise<unknown>; tone?: "danger" | "sync" };
 
 interface Toast {
   id: string;
@@ -47,7 +48,7 @@ const iconPath: Record<string, string> = {
   forge: "M12 2l2.4 7.2L22 12l-7.6 2.8L12 22l-2.4-7.2L2 12l7.6-2.8z",
 };
 
-const pages: Array<{ id: SkillMPage; icon: string; label: string; group: "build" | "ops" }> = [
+const pages: Array<{ id: SkillMPage; icon: string; label: string; group: "build" | "ops"; preview?: true }> = [
   { id: "overview", icon: "dash", label: "Overview", group: "build" },
   { id: "skills", icon: "lib", label: "Skills", group: "build" },
   { id: "targets", icon: "target", label: "Targets", group: "build" },
@@ -58,8 +59,8 @@ const pages: Array<{ id: SkillMPage; icon: string; label: string; group: "build"
   { id: "sync", icon: "sync", label: "Git sync", group: "ops" },
   { id: "doctor", icon: "shield", label: "Doctor", group: "ops" },
   { id: "settings", icon: "gear", label: "Settings", group: "ops" },
-  { id: "market", icon: "market", label: "Market", group: "ops" },
-  { id: "forge", icon: "forge", label: "Forge", group: "ops" },
+  { id: "market", icon: "market", label: "Market", group: "ops", preview: true },
+  { id: "forge", icon: "forge", label: "Forge", group: "ops", preview: true },
 ];
 
 const agentMeta: Record<string, { name: string; short: string; color: string }> = {
@@ -141,6 +142,7 @@ function methodTone(method: string) {
   return "var(--faint)";
 }
 
+const PROJECTION_PAGE_SIZE = 12;
 const HEATMAP_WEEKS = 26;
 const HEATMAP_DAYS = HEATMAP_WEEKS * 7;
 const DAY_MS = 86_400_000;
@@ -208,6 +210,7 @@ export function SkillMPanel() {
   const [density, setDensity] = useState(initialPrefs.density);
   const [accent, setAccent] = useState(initialPrefs.accent);
   const [toasts, setToasts] = useState<Toast[]>([]);
+  const [confirm, setConfirm] = useState<Confirm | null>(null);
 
   const counts = useMemo(() => {
     const failedOps = live.ops.filter((op) => op.status === "err").length;
@@ -240,13 +243,12 @@ export function SkillMPanel() {
   };
 
   const toast = (kind: ToastKind, text: string) => {
-    const id = crypto.randomUUID();
+    const id = typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`;
     setToasts((items) => [...items, { id, kind, text }]);
     window.setTimeout(() => setToasts((items) => items.filter((item) => item.id !== id)), 3200);
   };
 
-  const runAction = async (label: string, fn: () => Promise<unknown>, options?: { confirm?: string }) => {
-    if (options?.confirm && typeof window !== "undefined" && !window.confirm(options.confirm)) return;
+  const runAction = async (label: string, fn: () => Promise<unknown>) => {
     try {
       await fn();
       toast("ok", `${label} completed`);
@@ -255,6 +257,7 @@ export function SkillMPanel() {
       toast("err", error instanceof Error ? error.message : String(error));
     }
   };
+  const commitAction = async () => { const action = confirm; if (!action) return; setConfirm(null); await runAction(action.label, action.fn); };
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -293,8 +296,8 @@ export function SkillMPanel() {
               {view === "overview" && <Overview live={live} counts={counts} go={go} />}
               {view === "skills" && <Skills skills={live.skills} targets={live.targets} query={query} setQuery={setQuery} selected={selected} setSelectedSkill={setSelectedSkill} />}
               {(view === "targets" || view === "bindings" || view === "projections") && <Plane live={live} tab={view} go={go} />}
-              {(view === "ops" || view === "history") && <Ops live={live} history={view === "history"} go={go} runAction={runAction} />}
-              {view === "sync" && <Sync live={live} runAction={runAction} />}
+              {(view === "ops" || view === "history") && <Ops live={live} history={view === "history"} go={go} confirm={setConfirm} />}
+              {view === "sync" && <Sync live={live} confirm={setConfirm} />}
               {view === "doctor" && <Doctor live={live} go={go} />}
               {view === "settings" && <Settings live={live} dark={dark} setDark={setDark} density={density} setDensity={setDensity} accent={accent} setAccent={setAccent} />}
               {view === "market" && <Market live={live} />}
@@ -307,6 +310,7 @@ export function SkillMPanel() {
       <StatusBar live={live} counts={counts} dark={dark} setDark={setDark} onSync={() => go("sync")} onTerm={() => setTermOpen((open) => !open)} onTweaks={() => setTweaksOpen((open) => !open)} />
       {paletteOpen && <Palette skills={live.skills} go={(page) => { go(page); setPaletteOpen(false); }} openSkill={(name) => { setSelectedSkill(name); go("skills"); setPaletteOpen(false); }} close={() => setPaletteOpen(false)} />}
       {tweaksOpen && <Tweaks dark={dark} setDark={setDark} density={density} setDensity={setDensity} accent={accent} setAccent={setAccent} close={() => setTweaksOpen(false)} />}
+      {confirm && <div className="sm-veil" onMouseDown={() => setConfirm(null)}><section className={`action-confirm ${confirm.tone === "danger" ? "danger" : ""}`} role="dialog" aria-modal="true" aria-label={confirm.title} onMouseDown={(event) => event.stopPropagation()}><div className="ac-head"><span className="ac-icon"><Icon d={confirm.tone === "danger" ? "x" : "sync"} /></span><div><h2>{confirm.title}</h2><p>{confirm.label}</p></div><button className="btn-icon" aria-label="关闭确认" onClick={() => setConfirm(null)}><Icon d="x" /></button></div><dl className="ac-facts"><div><dt>Affected scope</dt><dd>{confirm.scope}</dd></div>{typeof confirm.count === "number" && <div><dt>Queued count</dt><dd><b>{confirm.count}</b> queued</dd></div>}<div><dt>Reversibility</dt><dd>{confirm.undo}</dd></div><div><dt>Impact</dt><dd>{confirm.impact}</dd></div></dl><div className="ac-actions"><button className="btn-ghost sm" onClick={() => setConfirm(null)}>取消</button><button className={confirm.tone === "danger" ? "btn-ghost sm danger" : "btn-grad sm"} onClick={commitAction}>{confirm.action}</button></div></section></div>}
       <Toasts items={toasts} dismiss={(id) => setToasts((items) => items.filter((item) => item.id !== id))} />
     </div>
   );
@@ -323,9 +327,9 @@ function ActivityRail({ view, counts, onGo, onTerm }: { view: SkillMPage; counts
             {pages.filter((page) => page.group === group).map((page) => {
               const count = page.id === "skills" ? counts.skills : page.id === "targets" ? counts.targets : page.id === "bindings" ? counts.bindings : page.id === "projections" ? counts.projections : page.id === "ops" ? counts.attention : 0;
               return (
-                <button key={page.id} className={`act ${view === page.id ? "on" : ""}`} title={page.label} onClick={() => onGo(page.id)}>
+                <button key={page.id} className={`act ${view === page.id ? "on" : ""} ${page.preview ? "preview" : ""}`} title={page.preview ? `${page.label} · Preview · not connected` : page.label} aria-label={page.preview ? `${page.label} Preview not connected` : page.label} onClick={() => onGo(page.id)}>
                   <Icon d={page.icon} size={20} />
-                  <span className="act-label">{page.label}</span>
+                  <span className="act-label">{page.label}</span>{page.preview && <span className="act-preview">Preview</span>}
                   {count > 0 && <span className={`act-count ${page.id === "ops" ? "attn" : ""}`}>{count}</span>}
                 </button>
               );
@@ -573,6 +577,11 @@ function Plane({ live, tab, go }: { live: ReturnType<typeof usePanelData>; tab: 
   const drifts = live.projections.filter((p) => p.observed_drift || p.health === "drift").length;
   const pending = pendingQueueCount(live);
   const panelHost = panelHostLabel();
+  const [projectionPage, setProjectionPage] = useState(0);
+  const projectionPageCount = Math.max(1, Math.ceil(live.projections.length / PROJECTION_PAGE_SIZE)), activeProjectionPage = Math.min(projectionPage, projectionPageCount - 1), scopedProjections = live.projections.slice(activeProjectionPage * PROJECTION_PAGE_SIZE, activeProjectionPage * PROJECTION_PAGE_SIZE + PROJECTION_PAGE_SIZE);
+  const allProjectionSkills = new Set(live.projections.map((p) => p.skill_id)), allProjectionTargets = new Set(live.projections.map((p) => p.target_id)), scopedProjectionSkills = new Set(scopedProjections.map((p) => p.skill_id)), scopedProjectionTargets = new Set(scopedProjections.map((p) => p.target_id));
+  const graphSkills = live.projections.length ? live.skills.filter((skill) => scopedProjectionSkills.has(skill.name)) : live.skills, graphTargets = live.projections.length ? live.targets.filter((target) => scopedProjectionTargets.has(target.id)) : live.targets;
+  const projectionScopeStats = [{ key: "skills", shown: graphSkills.length, total: live.projections.length ? live.skills.filter((skill) => allProjectionSkills.has(skill.name)).length : live.skills.length }, { key: "targets", shown: graphTargets.length, total: live.projections.length ? live.targets.filter((target) => allProjectionTargets.has(target.id)).length : live.targets.length }, { key: "projections", shown: scopedProjections.length, total: live.projections.length }].filter((item) => item.shown < item.total);
   return (
     <div className="view view-plane">
       <header className="view-head"><div><h1>控制平面</h1><p>把注册表里的 skill 通过 binding 投影到各 agent 目录 · symlink / copy / materialize</p></div><span className="soon-pill"><Icon d="branch" size={14} />批量投影未接入</span></header>
@@ -594,9 +603,10 @@ function Plane({ live, tab, go }: { live: ReturnType<typeof usePanelData>; tab: 
       {tab === "bindings" && <BindingsTable bindings={live.bindings} />}
       {tab === "projections" && (
         <section className="panel">
-          <div className="panel-head"><h3><Icon d="graph" />Projection graph</h3><span className="panel-hint">{live.projections.length} edges</span></div>
-          <ProjectionGraph skills={live.skills} targets={live.targets} projections={live.projections} />
-          <DataGrid columns={["skill", "target", "method", "health", "rev"]} rows={live.projections.map((p) => [p.skill_id, shortName(p.target_id), p.method, p.health, p.last_applied_rev?.slice(0, 8) || "—"])} />
+          <div className="panel-head projection-head"><h3><Icon d="graph" />Projection graph</h3><div className="projection-scope-controls"><span className="panel-hint">{scopedProjections.length} of {live.projections.length} edges</span>{projectionPageCount > 1 && <div className="scope-pager" aria-label="Projection scope pages"><button type="button" aria-label="Previous projection page" disabled={activeProjectionPage === 0} onClick={() => setProjectionPage(Math.max(0, activeProjectionPage - 1))}>Prev</button><span>Page {activeProjectionPage + 1} of {projectionPageCount}</span><button type="button" aria-label="Next projection page" disabled={activeProjectionPage >= projectionPageCount - 1} onClick={() => setProjectionPage(Math.min(projectionPageCount - 1, activeProjectionPage + 1))}>Next</button></div>}</div></div>
+          {projectionScopeStats.length > 0 && <div className="scope-disclosure" aria-label="Projection scope disclosure">{projectionScopeStats.map((item) => <span key={item.key}>displaying {item.shown} of {item.total} {item.key}</span>)}</div>}
+          <ProjectionGraph skills={graphSkills} targets={graphTargets} projections={scopedProjections} />
+          <DataGrid columns={["skill", "target", "method", "health", "rev"]} rows={scopedProjections.map((p) => [p.skill_id, shortName(p.target_id), p.method, p.health, p.last_applied_rev?.slice(0, 8) || "—"])} />
         </section>
       )}
     </div>
@@ -618,32 +628,25 @@ function BindingsTable({ bindings }: { bindings: ReturnType<typeof usePanelData>
 }
 
 function DataGrid({ columns, rows }: { columns: string[]; rows: Array<Array<string | number>> }) {
-  return (
-    <div className="skillm-table panel">
-      <table><thead><tr>{columns.map((column) => <th key={column}>{column}</th>)}</tr></thead><tbody>{rows.map((row, index) => <tr key={index}>{row.map((cell, cellIndex) => <td key={cellIndex}>{cell}</td>)}</tr>)}</tbody></table>
-      {rows.length === 0 && <div className="panel-empty">No live rows.</div>}
-    </div>
-  );
+  return <div className="skillm-table panel"><table><thead><tr>{columns.map((column) => <th key={column}>{column}</th>)}</tr></thead><tbody>{rows.map((row, index) => <tr key={index}>{row.map((cell, cellIndex) => <td key={cellIndex}>{cell}</td>)}</tr>)}</tbody></table>{rows.length === 0 && <div className="panel-empty">No live rows.</div>}</div>;
 }
 
 function ProjectionGraph({ skills, targets, projections = [] }: { skills: Skill[]; targets: Target[]; projections?: ReturnType<typeof usePanelData>["projections"] }) {
-  const shownSkills = projections.length > 0 ? skills.filter((skill) => projections.some((p) => p.skill_id === skill.name)).slice(0, 8) : skills.slice(0, 8);
-  const shownTargets = projections.length > 0 ? targets.filter((target) => projections.some((p) => p.target_id === target.id)).slice(0, 7) : targets.slice(0, 7);
+  const graphHeight = Math.max(260, skills.length * 35 + 20, targets.length * 40 + 20);
   return (
     <div className="plane-graph skillm-mini-graph">
       <div className="pg-cols"><span>注册表 Skill 源</span><span>投影方式</span><span>Target 目录</span></div>
       <div className="skillm-graph-grid">
-        <div>{shownSkills.map((skill) => <div className="pg-node-row" key={skill.name}><Glyph>{skill.name}</Glyph><span>{skill.name}</span></div>)}</div>
-        <svg viewBox="0 0 500 260" className="proj-svg" aria-hidden="true">
-          {projections.slice(0, 12).map((projection) => {
-            const skillIndex = Math.max(0, shownSkills.findIndex((skill) => skill.name === projection.skill_id));
-            const targetIndex = Math.max(0, shownTargets.findIndex((target) => target.id === projection.target_id));
-            const y = 24 + skillIndex * 29;
-            const ty = 24 + Math.max(targetIndex, 0) * 34;
+        <div>{skills.map((skill) => <div className="pg-node-row" key={skill.name}><Glyph>{skill.name}</Glyph><span>{skill.name}</span></div>)}</div>
+        <svg viewBox={`0 0 500 ${graphHeight}`} className="proj-svg" style={{ height: graphHeight }} aria-hidden="true">
+          {projections.map((projection) => {
+            const skillIndex = Math.max(0, skills.findIndex((skill) => skill.name === projection.skill_id));
+            const targetIndex = Math.max(0, targets.findIndex((target) => target.id === projection.target_id));
+            const y = 24 + skillIndex * 35, ty = 24 + Math.max(targetIndex, 0) * 40;
             return <path key={projection.instance_id} d={`M20 ${y} C180 ${y}, 300 ${ty}, 480 ${ty}`} className="proj-edge" stroke={methodTone(projection.method)} />;
           })}
         </svg>
-        <div>{shownTargets.map((target) => <div className="pg-node-row target" key={target.id}><span className="tc-agent">{target.agent.slice(0, 2).toUpperCase()}</span><span>{target.path}</span></div>)}</div>
+        <div>{targets.map((target) => <div className="pg-node-row target" key={target.id}><span className="tc-agent">{target.agent.slice(0, 2).toUpperCase()}</span><span>{target.path}</span></div>)}</div>
       </div>
       {projections.length === 0 && <div className="panel-empty">No live projection edges yet. The graph is showing inventory columns only.</div>}
     </div>
@@ -654,7 +657,7 @@ function EmptyPanel({ text }: { text: string }) {
   return <div className="panel"><div className="panel-empty">{text}</div></div>;
 }
 
-function Ops({ live, history, go, runAction }: { live: ReturnType<typeof usePanelData>; history: boolean; go: (page: SkillMPage) => void; runAction: (label: string, fn: () => Promise<unknown>, options?: { confirm?: string }) => void }) {
+function Ops({ live, history, go, confirm }: { live: ReturnType<typeof usePanelData>; history: boolean; go: (page: SkillMPage) => void; confirm: (action: Confirm) => void }) {
   const failed = live.ops.filter((op) => op.status === "err").length;
   const pending = pendingQueueCount(live);
   const queue = live.ops.filter((op) => op.status !== "ok");
@@ -664,7 +667,7 @@ function Ops({ live, history, go, runAction }: { live: ReturnType<typeof usePane
     <div className="view view-ops">
       <header className="view-head">
         <div><h1>Ops &amp; 审计</h1><p>每条命令都来自 live API · 可重放、可诊断、可清理</p></div>
-        <div className="ops-head-actions"><button className="btn-ghost sm" onClick={() => runAction("Purge ops", api.opsPurge, { confirm: "确定要清理当前操作队列吗？这个动作会修改本地操作状态。" })}><Icon d="x" />purge</button><button className="btn-grad sm" onClick={() => runAction("Replay queued ops", api.opsRetry, { confirm: "确定要重放当前待处理队列吗？" })}><Icon d="sync" />replay 队列</button></div>
+        <div className="ops-head-actions"><button className="btn-ghost sm" onClick={() => confirm({ label: "Purge ops", action: "确认清理", title: "清理 Ops 队列？", scope: `当前本地 Ops 队列 · ${queueCount} 条待处理/失败，${live.ops.length} 条可见记录`, undo: "不可自动撤销；清理后只能依赖底层审计归档或重新执行命令恢复上下文。", impact: "将调用 Ops purge API，移除当前队列上下文并刷新面板数据。", tone: "danger", fn: api.opsPurge })}><Icon d="x" />purge</button><button className="btn-grad sm" onClick={() => confirm({ label: "Replay queued ops", action: "确认重放", title: "重放 Ops 队列？", scope: "当前本地 Ops 待处理/失败队列", count: queueCount, undo: "重放调度本身不能撤销；每条结果会继续进入操作记录。", impact: "将调用 Ops retry API，重试 pending/failed 操作，可能触发后续投影、同步或写入效果。", tone: "sync", fn: api.opsRetry })}><Icon d="sync" />replay 队列</button></div>
       </header>
       <div className="ops-stats"><div className={`pstat ${pending ? "acc" : ""}`}><span className="pstat-l">待处理</span><span className="pstat-n">{pending}</span></div><div className={`pstat ${failed ? "warn" : ""}`}><span className="pstat-l">失败 / 漂移</span><span className="pstat-n">{failed}</span></div><div className="pstat"><span className="pstat-l">已完成</span><span className="pstat-n">{live.ops.filter((op) => op.status === "ok").length}</span></div><div className="pstat"><span className="pstat-l">审计事件</span><span className="pstat-n">{live.ops.length}</span></div></div>
       <nav className="plane-tabs">{([["ops", "待处理队列"], ["history", "审计历史"]] as const).map(([id, label]) => <button key={id} className={`det-tab ${(history ? "history" : "ops") === id ? "on" : ""}`} onClick={() => go(id)}><Icon d={id === "history" ? "clock" : "ops"} size={14} />{label}{id === "ops" && queueCount ? <span className="tab-count">{queueCount}</span> : null}</button>)}<span className="tab-flex" /></nav>
@@ -673,15 +676,14 @@ function Ops({ live, history, go, runAction }: { live: ReturnType<typeof usePane
   );
 }
 
-function Sync({ live, runAction }: { live: ReturnType<typeof usePanelData>; runAction: (label: string, fn: () => Promise<unknown>, options?: { confirm?: string }) => void }) {
+function Sync({ live, confirm }: { live: ReturnType<typeof usePanelData>; confirm: (action: Confirm) => void }) {
   const remote = live.remote;
   const remoteConfigured = Boolean(remote?.configured || remote?.url || remote?.remote);
-  const confirmReplay = { confirm: "确定要重放同步队列吗？这会修改本地注册表同步状态。" };
   const syncOps = live.ops.filter((op) => op.kind.startsWith("sync."));
   return (
     <div className="view view-sync">
-      <header className="view-head"><div><h1>注册表同步</h1><p>Git 支撑 · push / pull / replay · remote 为空时保持 local-only</p></div><div className="ops-head-actions"><span className="soon-pill"><Icon d="dl" size={14} />pull 未接入</span><button className="btn-grad sm" onClick={() => runAction("Sync replay", api.syncReplay, confirmReplay)}><Icon d="sync" />replay</button></div></header>
-      <div className="reg-strip"><span className="rs-git"><Icon d="branch" size={14} />remote origin</span><code>{remote?.url || remote?.remote || "not configured"}</code><span className="rs-div" /><span className="rs-stat">state <b>{remote?.sync_state ?? "local_only"}</b></span><span className="rs-div" /><span className="rs-stat">pending <b>{remote?.pending_ops ?? live.queuedWriteCount}</b></span><span className="rs-flex" /><button className="rs-panel" onClick={() => runAction("Sync replay", api.syncReplay, confirmReplay)}><Icon d="sync" size={13} />replay</button></div>
+      <header className="view-head"><div><h1>注册表同步</h1><p>Git 支撑 · push / pull / replay · remote 为空时保持 local-only</p></div><div className="ops-head-actions"><span className="soon-pill"><Icon d="dl" size={14} />pull 未接入</span><button className="btn-grad sm" onClick={() => confirm({ label: "Sync replay", action: "确认重放", title: "重放同步队列？", scope: `Git sync 队列 · ${remote?.url || remote?.remote || "local-only registry"}`, count: remote?.pending_ops ?? live.queuedWriteCount, undo: "重放调度本身不能撤销；同步结果会继续写入审计事件。", impact: "将调用 Sync replay API，重试同步队列并可能更新本地注册表同步状态。", tone: "sync", fn: api.syncReplay })}><Icon d="sync" />replay</button></div></header>
+      <div className="reg-strip"><span className="rs-git"><Icon d="branch" size={14} />remote origin</span><code>{remote?.url || remote?.remote || "not configured"}</code><span className="rs-div" /><span className="rs-stat">state <b>{remote?.sync_state ?? "local_only"}</b></span><span className="rs-div" /><span className="rs-stat">pending <b>{remote?.pending_ops ?? live.queuedWriteCount}</b></span><span className="rs-flex" /><button className="rs-panel" onClick={() => confirm({ label: "Sync replay", action: "确认重放", title: "重放同步队列？", scope: `Git sync 队列 · ${remote?.url || remote?.remote || "local-only registry"}`, count: remote?.pending_ops ?? live.queuedWriteCount, undo: "重放调度本身不能撤销；同步结果会继续写入审计事件。", impact: "将调用 Sync replay API，重试同步队列并可能更新本地注册表同步状态。", tone: "sync", fn: api.syncReplay })}><Icon d="sync" size={13} />replay</button></div>
       <div className="sync-grid">
         <section className="panel sync-topo-panel"><div className="panel-head"><h3><Icon d="sync" />注册表拓扑</h3><span className="panel-hint">{remoteConfigured ? "local -> origin" : "local only"}</span></div><svg viewBox="0 0 640 300" className="sync-topo"><path className={`beam ${remoteConfigured ? "on" : ""}`} stroke="var(--acc3)" d="M150 220 C150 112 320 132 320 86" /><circle className="topo-cloud" cx="320" cy="78" r="34" /><text x="320" y="82" textAnchor="middle" className="topo-name">origin</text><text x="320" y="104" textAnchor="middle" className="topo-sub">{remoteConfigured ? "configured" : "not configured"}</text><circle className="topo-node self" cx="150" cy="220" r="38" /><text x="150" y="218" textAnchor="middle" className="topo-name">local</text><text x="150" y="235" textAnchor="middle" className="topo-sub">{remote?.pending_ops ?? live.queuedWriteCount} pending</text></svg></section>
         <section className="panel"><div className="panel-head"><h3><Icon d="clock" />事件流</h3><span className="panel-hint">{syncOps.length} sync events</span></div><div className="ev-stream">{syncOps.slice(0, 6).map((op) => {
@@ -718,11 +720,11 @@ function Switch({ on, onChange, label = "切换开关" }: { on: boolean; onChang
 }
 
 function Market({ live }: { live: ReturnType<typeof usePanelData> }) {
-  return <div className="view view-market"><header className="view-head"><div><h1>市场</h1><p>当前只连接本地注册表，尚未接入市场目录服务</p></div></header><div className="reg-banner"><div className="reg-stat"><b>{live.skills.length}</b><span>本地 skills</span></div><span className="reg-div" /><div className="reg-stat"><b>未接入</b><span>市场目录</span></div><span className="reg-flex" /><span className="reg-src">来源：本地注册表</span></div><EmptyPanel text="未接入真实市场目录 API，所以不展示市场分类或安装流。" /></div>;
+  return <div className="view view-market"><header className="view-head"><div><h1>市场</h1><p>Preview only · 当前只连接本地注册表，尚未接入市场目录服务</p></div><span className="preview-pill"><Icon d="market" size={14} />Preview · not connected</span></header><div className="reg-banner"><div className="reg-stat"><b>{live.skills.length}</b><span>本地 skills</span></div><span className="reg-div" /><div className="reg-stat"><b>未接入</b><span>市场目录</span></div><span className="reg-flex" /><span className="reg-src">来源：本地注册表</span></div><section className="preview-panel"><div><h2>现在可用</h2><p>只读查看本地 registry 中已经存在的 skills 和数量。</p></div><div><h2>尚未接入</h2><p>市场目录、搜索、分类、评分和安装 API 还没有后端连接，因此这里不展示安装按钮或模拟安装流程。</p></div></section></div>;
 }
 
 function Forge({ live }: { live: ReturnType<typeof usePanelData> }) {
-  return <div className="view view-forge"><header className="view-head"><div><h1>Forge</h1><p>当前只读展示本地 skill，尚未接入创建向导</p></div></header><div className="reg-banner"><div className="reg-stat"><b>{live.skills.length}</b><span>可参考 skills</span></div><span className="reg-div" /><div className="reg-stat"><b>未接入</b><span>写入流程</span></div><span className="reg-flex" /><span className="reg-src">未创建任何本地草稿</span></div><EmptyPanel text="未接入真实创建向导 API，所以不展示模板、AI 生成、文档导入或发布步骤。" /></div>;
+  return <div className="view view-forge"><header className="view-head"><div><h1>Forge</h1><p>Preview only · 当前只读展示本地 skill，尚未接入创建向导</p></div><span className="preview-pill"><Icon d="forge" size={14} />Preview · not connected</span></header><div className="reg-banner"><div className="reg-stat"><b>{live.skills.length}</b><span>可参考 skills</span></div><span className="reg-div" /><div className="reg-stat"><b>未接入</b><span>写入流程</span></div><span className="reg-flex" /><span className="reg-src">未创建任何本地草稿</span></div><section className="preview-panel"><div><h2>现在可用</h2><p>只读参考本地 registry 中的 skill inventory，帮助确认已有命名和标签。</p></div><div><h2>尚未接入</h2><p>创建向导、模板选择、AI 生成、文档导入、发布和写入 API 还没有后端连接，因此这里不展示创建按钮或模拟草稿流程。</p></div></section></div>;
 }
 
 function Terminal({ live, close }: { live: ReturnType<typeof usePanelData>; close: () => void }) {
@@ -738,14 +740,14 @@ function Terminal({ live, close }: { live: ReturnType<typeof usePanelData>; clos
 function Palette({ skills, go, openSkill, close }: { skills: Skill[]; go: (page: SkillMPage) => void; openSkill: (name: string) => void; close: () => void }) {
   const [filter, setFilter] = useState("");
   const q = filter.trim().toLowerCase();
-  const filteredPages = pages.filter((page) => !q || `${page.label} ${page.group}`.toLowerCase().includes(q));
+  const filteredPages = pages.filter((page) => !q || `${page.label} ${page.group} ${page.preview ? "preview not connected" : ""}`.toLowerCase().includes(q));
   const filteredSkills = skills.filter((skill) => !q || `${skill.name} ${skill.tag} ${skill.description ?? ""}`.toLowerCase().includes(q)).slice(0, 8);
   return (
     <div className="sm-veil" onMouseDown={close}>
       <div className="cmd-pal" onMouseDown={(event) => event.stopPropagation()}>
         <div className="cmd-search"><Icon d="search" /><input autoFocus value={filter} onChange={(event) => setFilter(event.target.value)} placeholder="搜索页面或 skill" aria-label="搜索命令" /><button className="btn-icon" aria-label="关闭命令面板" onClick={close}><Icon d="x" /></button></div>
         <div className="cmd-list">
-          {filteredPages.map((page) => <button key={page.id} className="cmd-item" onClick={() => go(page.id)}><Icon d={page.icon} />Go to {page.label}<span>{page.group}</span></button>)}
+          {filteredPages.map((page) => <button key={page.id} className={`cmd-item ${page.preview ? "preview" : ""}`} aria-label={page.preview ? `Go to ${page.label} Preview not connected` : `Go to ${page.label}`} onClick={() => go(page.id)}><Icon d={page.icon} />Go to {page.label}<span>{page.preview ? "Preview · not connected" : page.group}</span></button>)}
           {filteredSkills.map((skill) => <button key={skill.name} className="cmd-item" onClick={() => openSkill(skill.name)}><Icon d="eye" />Open {skill.name}<span>{sourceLabel(skill)}</span></button>)}
           {filteredPages.length + filteredSkills.length === 0 ? <div className="panel-empty">没有匹配的命令。</div> : null}
         </div>

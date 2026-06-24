@@ -1,3 +1,4 @@
+use std::ffi::OsStr;
 use std::fs;
 use std::path::Path;
 
@@ -236,7 +237,15 @@ pub(crate) fn copy_dir_recursive_without_symlinks(src: &Path, dst: &Path) -> Res
     }
     fs::create_dir_all(dst).with_context(|| format!("failed to create {}", dst.display()))?;
 
-    for entry in WalkDir::new(src).follow_links(false).into_iter() {
+    for entry in WalkDir::new(src)
+        .follow_links(false)
+        .into_iter()
+        .filter_entry(|entry| {
+            entry.path() == src
+                || entry.file_name() != OsStr::new(".git")
+                || entry.file_type().is_symlink()
+        })
+    {
         let entry = entry.with_context(|| format!("failed to walk {}", src.display()))?;
         let rel = entry.path().strip_prefix(src)?;
         if rel.as_os_str().is_empty() {
@@ -300,6 +309,77 @@ fn create_symlink_like(source_link: &Path, link_target: &Path, dst: &Path) -> Re
 mod tests {
     use super::copy_dir_recursive_without_symlinks;
     use std::fs;
+
+    #[test]
+    fn copy_without_symlinks_skips_git_metadata_but_keeps_dotfiles() -> anyhow::Result<()> {
+        let base = std::env::temp_dir().join(format!(
+            "loom-copy-no-git-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let src = base.join("src");
+        let dst = base.join("dst");
+        fs::create_dir_all(src.join(".git/objects"))?;
+        fs::create_dir_all(src.join("nested"))?;
+        fs::write(src.join(".git/config"), "[core]\n")?;
+        fs::write(src.join(".git/objects/object"), "object\n")?;
+        fs::write(src.join("nested/.git"), "gitdir: ../real-git\n")?;
+        fs::write(src.join("nested/normal.txt"), "normal\n")?;
+        fs::write(src.join("SKILL.md"), "# skill\n")?;
+        fs::write(src.join(".env.example"), "LOOM=1\n")?;
+
+        copy_dir_recursive_without_symlinks(&src, &dst)?;
+
+        assert!(dst.join("SKILL.md").is_file(), "skill file must be copied");
+        assert!(
+            dst.join(".env.example").is_file(),
+            "normal dotfile must be copied"
+        );
+        assert!(
+            !dst.join(".git").exists(),
+            "git metadata directory must not be copied"
+        );
+        assert!(
+            dst.join("nested/normal.txt").is_file(),
+            "normal nested file must be copied"
+        );
+        assert!(
+            !dst.join("nested/.git").exists(),
+            "git metadata file must not be copied"
+        );
+
+        fs::remove_dir_all(base)?;
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn copy_without_symlinks_rejects_git_metadata_symlink() -> anyhow::Result<()> {
+        let base = std::env::temp_dir().join(format!(
+            "loom-copy-git-symlink-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let src = base.join("src");
+        let dst = base.join("dst");
+        fs::create_dir_all(&src)?;
+        fs::write(src.join("SKILL.md"), "# skill\n")?;
+        std::os::unix::fs::symlink("/tmp/not-git", src.join(".git"))?;
+
+        let err = match copy_dir_recursive_without_symlinks(&src, &dst) {
+            Ok(()) => anyhow::bail!(".git symlink must be rejected"),
+            Err(err) => err,
+        };
+        assert!(
+            err.to_string().contains("unsupported symlink"),
+            "unexpected error: {err}"
+        );
+        assert!(
+            !dst.join(".git").exists(),
+            "git symlink path must not be copied"
+        );
+
+        fs::remove_dir_all(base)?;
+        Ok(())
+    }
 
     #[cfg(unix)]
     #[test]

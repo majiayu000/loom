@@ -1519,6 +1519,61 @@ fn skill_add_blocks_nested_symlink_source() {
     assert!(!root.path().join("skills/demo").exists());
 }
 
+#[test]
+fn skill_add_skips_nested_git_metadata_and_stages_regular_files() {
+    let root = TestDir::new("skill-add-no-nested-git");
+    let source = make_skill_source(root.path(), "source-git-skill");
+    fs::write(source.join(".env.example"), "LOOM=1\n").expect("write dotfile");
+    git_ok_in(&source, &["init"]);
+    git_set_identity(&source, "Source Skill", "source@example.com");
+    git_ok_in(&source, &["add", "SKILL.md", ".env.example"]);
+    git_ok_in(&source, &["commit", "-m", "source skill"]);
+
+    let env = run_loom_ok(
+        root.path(),
+        &["skill", "add", source.to_str().unwrap(), "--name", "demo"],
+    );
+
+    assert_eq!(env["ok"], Value::Bool(true));
+    assert!(
+        root.path().join("skills/demo/SKILL.md").is_file(),
+        "skill entrypoint should be copied"
+    );
+    assert!(
+        root.path().join("skills/demo/.env.example").is_file(),
+        "normal dotfiles should be copied"
+    );
+    assert!(
+        !root.path().join("skills/demo/.git").exists(),
+        "nested Git metadata must not be imported into registry skill"
+    );
+
+    let staged_tree = git_ok_in(root.path(), &["ls-files", "--stage", "--", "skills/demo"]);
+    assert!(
+        staged_tree.contains("100644") && staged_tree.contains("skills/demo/SKILL.md"),
+        "skill files should be tracked as normal blobs: {staged_tree}"
+    );
+    assert!(
+        !staged_tree.contains("160000"),
+        "skill import must not stage an embedded repository gitlink: {staged_tree}"
+    );
+
+    let fresh_clone = root.path().join("fresh-clone");
+    git_ok([
+        "clone",
+        root.path().to_str().unwrap(),
+        fresh_clone.to_str().unwrap(),
+    ]);
+    assert!(
+        fresh_clone.join("skills/demo/SKILL.md").is_file(),
+        "fresh clone should contain imported skill contents"
+    );
+    assert!(
+        !fresh_clone.join("skills/demo/.git").exists(),
+        "fresh clone must not contain nested Git metadata"
+    );
+}
+
 #[cfg(unix)]
 #[test]
 fn skill_add_rolls_back_on_copy_failure_no_partial_tree() {

@@ -346,37 +346,37 @@ fn push_capability_findings(
     capabilities: &SkillCapabilities,
     findings: &mut Vec<SkillPolicyFinding>,
 ) {
-    for (key, values) in &capabilities.filesystem {
+    for key in capabilities.filesystem.keys() {
         let risk = if key == "write" { "high" } else { "medium" };
         push_raw_finding(
             findings,
             &format!("capability_filesystem_{key}"),
             risk,
-            capability_details(key, values),
+            Vec::new(),
         );
     }
-    for (key, values) in &capabilities.shell {
+    for key in capabilities.shell.keys() {
         push_raw_finding(
             findings,
             &format!("capability_shell_{key}"),
             "high",
-            capability_details(key, values),
+            Vec::new(),
         );
     }
-    for (key, values) in &capabilities.network {
+    for key in capabilities.network.keys() {
         push_raw_finding(
             findings,
             &format!("capability_network_{key}"),
             "high",
-            capability_details(key, values),
+            Vec::new(),
         );
     }
-    for (key, values) in &capabilities.secrets {
+    for key in capabilities.secrets.keys() {
         push_raw_finding(
             findings,
             &format!("capability_secrets_{key}"),
             "high",
-            capability_details(key, values),
+            Vec::new(),
         );
     }
 }
@@ -570,10 +570,6 @@ fn make_finding(id: &str, risk_level: &str, details: Vec<String>) -> SkillPolicy
         blocks_projection: false,
         details,
     }
-}
-
-fn capability_details(key: &str, values: &[String]) -> Vec<String> {
-    vec![format!("key={key}"), format!("values={}", values.join(","))]
 }
 
 fn path_details(path: &str) -> Vec<String> {

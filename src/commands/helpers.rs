@@ -4,7 +4,7 @@ use anyhow::{Result, anyhow};
 use uuid::Uuid;
 
 use crate::cli::{
-    AgentCommand, AgentKind, BindingAddArgs, Command, OpsCommand, OpsHistoryCommand,
+    AgentCommand, AgentKind, BindingAddArgs, Command, OpsCommand, OpsHistoryCommand, PlanCommand,
     ProjectionMethod, SkillCommand, SkillOrphanCommand, SkillTrashCommand, SyncCommand,
     TargetAddArgs, TargetCommand, WorkspaceBindingCommand, WorkspaceCommand, WorkspaceMatcherKind,
 };
@@ -88,6 +88,10 @@ pub(crate) fn command_name(command: &Command) -> &'static str {
         },
         Command::Monitor(_) => "monitor",
         Command::Use(_) => "use",
+        Command::Plan { command } => match command {
+            PlanCommand::Use(_) => "plan.use",
+        },
+        Command::Apply(_) => "apply",
         Command::Doctor => "workspace.doctor",
         Command::Workspace { command } => match command {
             WorkspaceCommand::Status => "workspace.status",

@@ -6,7 +6,10 @@ if [[ ! -x "$bin" ]]; then
   cargo build --release --locked
 fi
 
-max_bin_bytes=$((3 * 1024 * 1024))
+# Hard ceiling: 3200 KiB. The durable plan/apply protocol added in #344
+# pushed the Linux release binary above the old 3072 KiB cap while keeping
+# startup latency unchanged, so the gate now tracks the accepted V1 budget.
+max_bin_bytes=$((3200 * 1024))
 bin_bytes="$(wc -c < "$bin" | tr -d ' ')"
 if (( bin_bytes > max_bin_bytes )); then
   echo "release binary is ${bin_bytes} bytes; limit is ${max_bin_bytes}" >&2

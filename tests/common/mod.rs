@@ -35,9 +35,31 @@ pub fn run_loom(root: &Path, args: &[&str]) -> (Output, Value) {
     run_loom_with_env(root, &[], args)
 }
 
+pub fn run_loom_in_cwd(root: &Path, cwd: &Path, args: &[&str]) -> (Output, Value) {
+    run_loom_with_env_and_cwd(root, cwd, &[], args)
+}
+
 pub fn run_loom_with_env(root: &Path, envs: &[(&str, &str)], args: &[&str]) -> (Output, Value) {
+    run_loom_with_env_and_cwd(
+        root,
+        &std::env::current_dir().expect("resolve test cwd"),
+        envs,
+        args,
+    )
+}
+
+pub fn run_loom_with_env_and_cwd(
+    root: &Path,
+    cwd: &Path,
+    envs: &[(&str, &str)],
+    args: &[&str],
+) -> (Output, Value) {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_loom"));
-    cmd.arg("--json").arg("--root").arg(root).args(args);
+    cmd.current_dir(cwd)
+        .arg("--json")
+        .arg("--root")
+        .arg(root)
+        .args(args);
     for (key, value) in envs {
         cmd.env(key, value);
     }

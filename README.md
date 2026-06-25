@@ -184,6 +184,7 @@ The chain `add → capture → save → snapshot → release → rollback` is th
 | `loom skill provenance inspect/verify/refresh` | Inspect, check, or refresh recorded source provenance and `loom.lock` | Confirm a skill still matches the source digest and pinned ref metadata | Source metadata + `loom.lock` |
 | `loom skill policy` | Report declared capabilities, content risks, provenance drift, and policy decision | Review a skill before projection or explain why a policy profile blocks it | Source metadata + source files (read-only) |
 | `loom use` | Plan or apply target, binding, and projection setup in one flow | New users want to use a skill without copying target/binding IDs between commands | Source + target + registry metadata |
+| `loom plan use` / `loom apply` | Persist a guarded use plan, then execute it with idempotency | Agents need a retry-safe plan/apply protocol for higher-risk flows | Command audit + source/target/registry metadata |
 | `loom skill project` | Realize a registry skill into an agent directory | Make the skill visible to the agent (Claude/Codex/…) | Target (live directory) |
 | `loom skill capture` | Pull live edits from a projection back into the source | The user edited the skill **inside the agent directory** and you want those edits tracked | Projection → source |
 | `loom skill save` | Commit edits made directly to the registry source | You edited `skills/<name>/…` **inside the registry repo** itself | Source (in place) |
@@ -245,6 +246,8 @@ loom backup inspect <artifact>
 loom backup restore <artifact> [--force-empty-root]
 loom monitor [--target <target-id>] [--once] [--interval-seconds <seconds>]
 loom use <skill> --agents <agent[,agent]> [--scope project] [--workspace <path>] [--profile <id>] [--method <symlink|copy|materialize>] [--target-root <path>] [--apply]
+loom plan use <skill> --agents <agent[,agent]> [--scope project] [--workspace <path>] [--profile <id>] [--method <symlink|copy|materialize>] [--target-root <path>]
+loom apply <plan-id> --idempotency-key <key> [--approve <token[,token]>]
 loom doctor
 
 loom workspace status

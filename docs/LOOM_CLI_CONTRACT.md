@@ -614,6 +614,29 @@ Rules:
 7. apply mode returns rollback commands for removing the generated binding and then cleaning orphaned projections
 8. this command does not replace lower-level `target`, `workspace binding`, or `skill project` commands
 
+### 12.2 Durable Agent Plan/Apply
+
+```bash
+loom --json --root <root> plan use <skill-id> --agents <agent[,agent]> [--scope project] [--workspace <path>] [--profile <id>] [--method <symlink|copy|materialize>] [--target-root <path>]
+loom --json --root <root> apply <plan-id> --idempotency-key <key> [--approve <token[,token]>]
+```
+
+`plan use` creates a durable, audited plan for the same target/binding/projection setup that `loom use --apply` performs. Plan creation must not mutate registry state, Git refs, pending ops, or live target directories; its only durable write is the command-audit event under `state/events/commands.jsonl`.
+
+The top-level `plan` command owns durable plan creation. The top-level `apply` command owns guarded plan execution.
+
+The plan JSON schema is versioned separately from the binary package version at `docs/schemas/agent-plan-v1.schema.json`. Current plans use `protocol_version: "1.0"` and `schema_version: "1.0"`.
+
+Rules:
+
+1. `plan use` validates the skill exists, records the current registry `HEAD`, records the current skill source digest, freezes resolved workspace and target-root paths, lists effects/conflicts/risks, and returns a `plan_id`
+2. `apply` loads the plan from command-audit events and validates current `--root`, registry `HEAD`, skill source digest, required approvals, and idempotency key before mutation
+3. `apply` is safe to retry with the same `--idempotency-key`; successful responses include `idempotency_key_digest`, not the raw key, and a successful prior apply for the same plan/key digest returns the recorded result with `idempotent_replay=true`
+4. reusing an idempotency key for a different plan returns `DEPENDENCY_CONFLICT` with `conflict.code=IDEMPOTENCY_KEY_REUSED`
+5. missing approval tokens return `POLICY_BLOCKED` with `conflict.code=APPROVAL_REQUIRED`, `retryable=true`, `event_cursor`, and suggested `--approve` actions
+6. stale plans return `DEPENDENCY_CONFLICT` with a typed conflict such as `PLAN_STALE`, `PLAN_SOURCE_DRIFT`, or `PLAN_ROOT_MISMATCH`
+7. successful apply returns the lower-level use result plus `recovery.rollback_supported=true`, a `rollback_token`, and rollback commands when available
+
 ## 13. Sync Commands
 
 ### 13.1 `sync status`

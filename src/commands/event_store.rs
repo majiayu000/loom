@@ -1,6 +1,8 @@
+use std::{fs, io};
+
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use uuid::Uuid;
 
@@ -11,24 +13,30 @@ use crate::state::AppContext;
 
 const COMMAND_EVENT_SCHEMA_VERSION: u32 = 1;
 
-#[derive(Debug, Serialize)]
-struct CommandEvent {
-    schema_version: u32,
-    event_id: String,
-    request_id: String,
-    cmd: String,
-    status: String,
+#[derive(Debug, Serialize, Deserialize)]
+pub(crate) struct CommandEvent {
+    pub schema_version: u32,
+    pub event_id: String,
+    pub request_id: String,
+    pub cmd: String,
+    pub status: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    exit_code: Option<i32>,
+    pub exit_code: Option<i32>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    input: Option<serde_json::Value>,
+    pub input: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    output: Option<serde_json::Value>,
+    pub output: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    error: Option<serde_json::Value>,
+    pub error: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    side_effects: Option<serde_json::Value>,
-    created_at: DateTime<Utc>,
+    pub side_effects: Option<serde_json::Value>,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug)]
+pub(crate) struct CommandEventRow {
+    pub cursor: usize,
+    pub event: CommandEvent,
 }
 
 pub(crate) fn command_event_input(cli: &Cli, request_id: &str) -> serde_json::Value {
@@ -146,6 +154,40 @@ pub(crate) fn prepare_command_event_store(ctx: &AppContext) -> Result<()> {
             ctx.command_events_file.display()
         )
     })
+}
+
+pub(crate) fn read_command_events(ctx: &AppContext) -> Result<Vec<CommandEventRow>> {
+    let raw = match fs::read_to_string(&ctx.command_events_file) {
+        Ok(raw) => raw,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(err) => {
+            return Err(err).with_context(|| {
+                format!(
+                    "failed to read command event log {}",
+                    ctx.command_events_file.display()
+                )
+            });
+        }
+    };
+
+    let mut events = Vec::new();
+    for (index, line) in raw.lines().enumerate() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        let event = serde_json::from_str::<CommandEvent>(line).with_context(|| {
+            format!(
+                "failed to decode command event {} at line {}",
+                ctx.command_events_file.display(),
+                index + 1
+            )
+        })?;
+        events.push(CommandEventRow {
+            cursor: index + 1,
+            event,
+        });
+    }
+    Ok(events)
 }
 
 fn redact_sensitive_strings(value: &mut serde_json::Value) {

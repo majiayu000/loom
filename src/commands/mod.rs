@@ -7,6 +7,7 @@ mod helpers;
 mod history_cmds;
 #[cfg(test)]
 mod observed_tests;
+mod plan_cmds;
 mod projections;
 mod provenance;
 mod skill_cmds;
@@ -176,6 +177,8 @@ impl App {
             Command::Backup { command } => self.cmd_backup(command),
             Command::Monitor(args) => self.cmd_monitor_observed(args, &request_id),
             Command::Use(args) => self.cmd_use(args, &request_id),
+            Command::Plan { command } => self.cmd_plan(command),
+            Command::Apply(args) => self.cmd_apply(args, &request_id),
             Command::Doctor => self.cmd_doctor(),
             Command::Workspace { command } => match command {
                 WorkspaceCommand::Status => self.cmd_status(),
@@ -383,6 +386,7 @@ fn command_requires_durable_audit(command: &Command) -> bool {
     match command {
         Command::Init | Command::Monitor(_) => true,
         Command::Use(args) => args.apply,
+        Command::Plan { .. } | Command::Apply(_) => true,
         Command::Backup { .. } => false,
         Command::Doctor => false,
         Command::Workspace { command } => match command {

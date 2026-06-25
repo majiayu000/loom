@@ -4,7 +4,7 @@ use std::fs;
 
 use serde_json::json;
 
-use common::{TestDir, operations_log, run_loom, write_file};
+use common::{TestDir, operations_log, run_loom, run_loom_in_cwd, write_file};
 
 fn add_clean_skill(root: &TestDir, name: &str) {
     let source = TestDir::new(&format!("{name}-source"));
@@ -83,6 +83,119 @@ fn durable_plan_apply_succeeds_and_replays_same_idempotency_key() {
         operations_log(root.path()),
         operations_after_first_apply,
         "replay must not append registry operations"
+    );
+}
+
+#[test]
+fn durable_plan_apply_uses_paths_resolved_at_plan_time() {
+    let root = TestDir::new("durable-plan-relative-root");
+    let planner_cwd = TestDir::new("durable-plan-relative-planner");
+    let applier_cwd = TestDir::new("durable-plan-relative-applier");
+    let planner_base = fs::canonicalize(planner_cwd.path()).expect("canonical planner cwd");
+    add_clean_skill(&root, "pdf-helper");
+
+    let (output, plan_env) = run_loom_in_cwd(
+        root.path(),
+        planner_cwd.path(),
+        &[
+            "plan",
+            "use",
+            "pdf-helper",
+            "--agents",
+            "claude",
+            "--workspace",
+            "reviewed-workspace",
+            "--target-root",
+            "reviewed-targets",
+            "--method",
+            "copy",
+        ],
+    );
+    assert!(
+        output.status.success(),
+        "relative plan use should pass: {plan_env}"
+    );
+    let plan_id = plan_env["data"]["plan_id"].as_str().expect("plan id");
+    assert_eq!(
+        plan_env["data"]["use_args"]["workspace"],
+        json!(planner_base.join("reviewed-workspace"))
+    );
+    assert_eq!(
+        plan_env["data"]["use_args"]["target_root"],
+        json!(planner_base.join("reviewed-targets"))
+    );
+
+    let (output, apply_env) = run_loom_in_cwd(
+        root.path(),
+        applier_cwd.path(),
+        &["apply", plan_id, "--idempotency-key", "req-relative"],
+    );
+    assert!(
+        output.status.success(),
+        "apply from another cwd should pass: {apply_env}"
+    );
+    let projection_path =
+        apply_env["data"]["applied"]["applied"][0]["projection"]["materialized_path"]
+            .as_str()
+            .expect("projection path");
+    assert!(
+        projection_path.starts_with(
+            planner_base
+                .join("reviewed-targets/claude/skills")
+                .to_str()
+                .expect("target root")
+        ),
+        "projection must use plan-time target root: {projection_path}"
+    );
+    assert!(
+        fs::read_to_string(format!("{projection_path}/SKILL.md"))
+            .expect("read projected skill")
+            .contains("pdf-helper")
+    );
+}
+
+#[test]
+fn durable_plan_apply_replays_redacted_idempotency_key_by_digest() {
+    let root = TestDir::new("durable-plan-redacted-key");
+    let workspace = TestDir::new("durable-plan-redacted-key-workspace");
+    add_clean_skill(&root, "pdf-helper");
+    let first_plan = plan_use(&root, &workspace, "pdf-helper");
+
+    let (output, env) = run_loom(
+        root.path(),
+        &["apply", &first_plan, "--idempotency-key", "sk-reviewtoken"],
+    );
+    assert!(output.status.success(), "first apply should pass: {env}");
+    assert!(
+        env["data"]["idempotency_key_digest"]
+            .as_str()
+            .expect("idempotency digest")
+            .starts_with("sha256:")
+    );
+
+    let (output, replay_env) = run_loom(
+        root.path(),
+        &["apply", &first_plan, "--idempotency-key", "sk-reviewtoken"],
+    );
+    assert!(
+        output.status.success(),
+        "redacted key replay should pass: {replay_env}"
+    );
+    assert_eq!(replay_env["data"]["idempotent_replay"], json!(true));
+    assert_eq!(replay_env["data"]["idempotency_key"], json!("<redacted>"));
+
+    let second_plan = plan_use(&root, &workspace, "pdf-helper");
+    let (output, conflict_env) = run_loom(
+        root.path(),
+        &["apply", &second_plan, "--idempotency-key", "sk-reviewtoken"],
+    );
+    assert!(
+        !output.status.success(),
+        "redacted key reuse for another plan should fail: {conflict_env}"
+    );
+    assert_eq!(
+        conflict_env["error"]["details"]["conflict"]["code"],
+        json!("IDEMPOTENCY_KEY_REUSED")
     );
 }
 

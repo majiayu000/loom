@@ -1,6 +1,6 @@
 use std::collections::BTreeSet;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use serde_json::{Value, json};
 use uuid::Uuid;
@@ -8,6 +8,7 @@ use uuid::Uuid;
 use crate::cli::{ApplyArgs, PlanCommand, PlanUseArgs, UseArgs};
 use crate::envelope::Meta;
 use crate::gitops;
+use crate::sha256::{Sha256, to_hex};
 use crate::types::ErrorCode;
 
 use super::event_store::{CommandEventRow, read_command_events};
@@ -39,11 +40,12 @@ impl App {
     ) -> std::result::Result<(Value, Meta), CommandFailure> {
         validate_plan_id(&args.plan_id)?;
         validate_idempotency_key(&args.idempotency_key)?;
+        let idempotency_key_digest = idempotency_key_digest(&args.idempotency_key);
         let events = read_command_events(&self.ctx).map_err(map_io)?;
-        if let Some(replay) = find_prior_apply(&events, &args.plan_id, &args.idempotency_key)? {
+        if let Some(replay) = find_prior_apply(&events, &args.plan_id, &idempotency_key_digest)? {
             return Ok((replay, Meta::default()));
         }
-        if let Some(conflict) = find_key_conflict(&events, &args.plan_id, &args.idempotency_key) {
+        if let Some(conflict) = find_key_conflict(&events, &args.plan_id, &idempotency_key_digest) {
             return Err(plan_failure(
                 ErrorCode::DependencyConflict,
                 "idempotency key was already used for a different plan",
@@ -79,6 +81,7 @@ impl App {
                 "schema_version": PLAN_SCHEMA_VERSION,
                 "plan_id": args.plan_id,
                 "idempotency_key": args.idempotency_key,
+                "idempotency_key_digest": idempotency_key_digest,
                 "idempotent_replay": false,
                 "plan_event_cursor": stored.cursor,
                 "applied": use_data,
@@ -112,7 +115,7 @@ impl App {
         let registry_head = gitops::head(&self.ctx).map_err(map_git)?;
         let source_digest = skill_tree_digest(&self.ctx.skill_path(&args.skill)).map_err(map_io)?;
         let root = canonical_root(&self.ctx.root)?;
-        let use_args = use_args_from_plan(args, false);
+        let use_args = use_args_from_plan(args, false)?;
         let (use_plan, _) = self.cmd_use(&use_args, "")?;
         let policy = evaluate_skill_policy(&self.ctx, &args.skill, "safe-capture")?;
         let required_approvals = required_approvals(&policy);
@@ -140,10 +143,10 @@ impl App {
                     "skill": args.skill,
                     "source_digest": source_digest,
                     "agents": args.agents.iter().map(|agent| agent_kind_as_str(*agent)).collect::<Vec<_>>(),
-                    "workspace": args.workspace.as_ref().map(|path| path.display().to_string()),
+                    "workspace": use_args.workspace.as_ref().map(|path| path.display().to_string()),
                     "scope": "project",
                     "method": projection_method_as_str(args.method),
-                    "target_root": args.target_root.as_ref().map(|path| path.display().to_string()),
+                    "target_root": use_args.target_root.as_ref().map(|path| path.display().to_string()),
                 },
                 "use_args": serde_json::to_value(&use_args).map_err(map_io)?,
                 "next_actions": [
@@ -160,17 +163,29 @@ struct StoredPlan<'a> {
     plan: &'a Value,
 }
 
-fn use_args_from_plan(args: &PlanUseArgs, apply: bool) -> UseArgs {
-    UseArgs {
+fn use_args_from_plan(
+    args: &PlanUseArgs,
+    apply: bool,
+) -> std::result::Result<UseArgs, CommandFailure> {
+    let workspace = Some(match args.workspace.as_ref() {
+        Some(path) => absolute_path(path)?,
+        None => current_dir()?,
+    });
+    let target_root = args
+        .target_root
+        .as_ref()
+        .map(|path| absolute_path(path))
+        .transpose()?;
+    Ok(UseArgs {
         skill: args.skill.clone(),
         agents: args.agents.clone(),
         scope: args.scope,
-        workspace: args.workspace.clone(),
+        workspace,
         profile: args.profile.clone(),
         method: args.method,
-        target_root: args.target_root.clone(),
+        target_root,
         apply,
-    }
+    })
 }
 
 fn plan_use_args(plan: &Value) -> std::result::Result<UseArgs, CommandFailure> {
@@ -214,7 +229,7 @@ fn find_plan<'a>(events: &'a [CommandEventRow], plan_id: &str) -> Option<StoredP
 fn find_prior_apply(
     events: &[CommandEventRow],
     plan_id: &str,
-    idempotency_key: &str,
+    idempotency_key_digest: &str,
 ) -> std::result::Result<Option<Value>, CommandFailure> {
     let Some(row) = events.iter().rev().find(|row| {
         row.event.cmd == "apply"
@@ -229,8 +244,8 @@ fn find_prior_apply(
                 .event
                 .output
                 .as_ref()
-                .and_then(|data| data["idempotency_key"].as_str())
-                == Some(idempotency_key)
+                .and_then(|data| data["idempotency_key_digest"].as_str())
+                == Some(idempotency_key_digest)
     }) else {
         return Ok(None);
     };
@@ -253,7 +268,7 @@ fn find_prior_apply(
 fn find_key_conflict<'a>(
     events: &'a [CommandEventRow],
     plan_id: &str,
-    idempotency_key: &str,
+    idempotency_key_digest: &str,
 ) -> Option<&'a CommandEventRow> {
     events.iter().rev().find(|row| {
         row.event.cmd == "apply"
@@ -262,8 +277,8 @@ fn find_key_conflict<'a>(
                 .event
                 .output
                 .as_ref()
-                .and_then(|data| data["idempotency_key"].as_str())
-                == Some(idempotency_key)
+                .and_then(|data| data["idempotency_key_digest"].as_str())
+                == Some(idempotency_key_digest)
             && row
                 .event
                 .output
@@ -432,6 +447,23 @@ fn canonical_root(root: &Path) -> std::result::Result<String, CommandFailure> {
         .to_string())
 }
 
+fn absolute_path(path: &Path) -> std::result::Result<PathBuf, CommandFailure> {
+    if path.is_absolute() {
+        Ok(path.to_path_buf())
+    } else {
+        Ok(current_dir()?.join(path))
+    }
+}
+
+fn current_dir() -> std::result::Result<PathBuf, CommandFailure> {
+    std::env::current_dir().map_err(|err| {
+        CommandFailure::new(
+            ErrorCode::IoError,
+            format!("failed to resolve current workspace: {}", err),
+        )
+    })
+}
+
 fn validate_plan_id(plan_id: &str) -> std::result::Result<(), CommandFailure> {
     if plan_id.strip_prefix("plan_").is_none()
         || plan_id
@@ -455,6 +487,12 @@ fn validate_idempotency_key(key: &str) -> std::result::Result<(), CommandFailure
         ));
     }
     Ok(())
+}
+
+fn idempotency_key_digest(key: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(key.as_bytes());
+    format!("sha256:{}", to_hex(&hasher.finalize()))
 }
 
 fn plan_failure(

@@ -69,6 +69,15 @@ pub(crate) struct ArtifactDescriptor {
     pub digest: String,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct ProvenanceDigestStatus {
+    pub recorded_digest: String,
+    pub current_digest: String,
+    pub lock_digest: Option<String>,
+    pub lock_present: bool,
+    pub matches: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct LoomLockFile {
     version: u32,
@@ -309,6 +318,37 @@ pub(crate) fn stage_provenance_paths(ctx: &AppContext) -> std::result::Result<()
     gitops::stage_path(ctx, Path::new(SOURCES_REL)).map_err(map_git)?;
     gitops::stage_path(ctx, Path::new(LOCK_REL)).map_err(map_git)?;
     Ok(())
+}
+
+pub(crate) fn provenance_digest_status(
+    ctx: &AppContext,
+    skill: &str,
+) -> std::result::Result<Option<ProvenanceDigestStatus>, CommandFailure> {
+    validate_skill_name(skill).map_err(map_arg)?;
+    let sources = load_sources(ctx).map_err(map_io)?;
+    let Some(record) = sources
+        .sources
+        .into_iter()
+        .find(|record| record.skill_id == skill)
+    else {
+        return Ok(None);
+    };
+    let current_digest = skill_tree_digest(&ctx.skill_path(skill)).map_err(map_io)?;
+    let lock = load_lock_entry_for_skill(ctx, skill).map_err(map_io)?;
+    let lock_digest = lock
+        .as_ref()
+        .and_then(|entry| entry.get("digest"))
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    let matches_record = current_digest == record.artifact.digest;
+    let matches_lock = lock_digest.as_deref() == Some(current_digest.as_str());
+    Ok(Some(ProvenanceDigestStatus {
+        recorded_digest: record.artifact.digest,
+        current_digest,
+        lock_digest,
+        lock_present: lock.is_some(),
+        matches: matches_record && matches_lock,
+    }))
 }
 
 fn load_record_for_skill(

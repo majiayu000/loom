@@ -125,6 +125,7 @@ pub(crate) fn command_name(command: &Command) -> &'static str {
             SkillCommand::Diff(_) => "skill.diff",
             SkillCommand::History(_) => "skill.history",
             SkillCommand::Lint(_) => "skill.lint",
+            SkillCommand::Policy(_) => "skill.policy",
             SkillCommand::Diagnose(_) => "skill.diagnose",
             SkillCommand::Provenance { command } => match command {
                 crate::cli::SkillProvenanceCommand::Inspect(_) => "skill.provenance.inspect",

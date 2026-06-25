@@ -192,6 +192,7 @@ pub(crate) fn status_for_error_code(code: Option<&str>) -> StatusCode {
         | "TARGET_AGENT_MISMATCH"
         | "PROJECTION_CONFLICT"
         | "PROJECTION_METHOD_UNSUPPORTED"
+        | "POLICY_BLOCKED"
         | "CAPTURE_CONFLICT" => StatusCode::CONFLICT,
         "LOCK_BUSY"
         | "DEPENDENCY_CONFLICT"

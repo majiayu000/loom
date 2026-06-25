@@ -182,6 +182,7 @@ The chain `add → capture → save → snapshot → release → rollback` is th
 | `loom skill search` | Search skills with deterministic lexical scoring | Find likely skills by id, description, tags, warning state, agent, profile, status, or trust | Source + registry metadata (read-only) |
 | `loom skill resolve` | Resolve a task description to candidate skills without an LLM | Let agents choose a skill transparently from local metadata and scoring inputs | Source + registry metadata (read-only) |
 | `loom skill provenance inspect/verify/refresh` | Inspect, check, or refresh recorded source provenance and `loom.lock` | Confirm a skill still matches the source digest and pinned ref metadata | Source metadata + `loom.lock` |
+| `loom skill policy` | Report declared capabilities, content risks, provenance drift, and policy decision | Review a skill before projection or explain why a policy profile blocks it | Source metadata + source files (read-only) |
 | `loom use` | Plan or apply target, binding, and projection setup in one flow | New users want to use a skill without copying target/binding IDs between commands | Source + target + registry metadata |
 | `loom skill project` | Realize a registry skill into an agent directory | Make the skill visible to the agent (Claude/Codex/…) | Target (live directory) |
 | `loom skill capture` | Pull live edits from a projection back into the source | The user edited the skill **inside the agent directory** and you want those edits tracked | Projection → source |
@@ -271,6 +272,7 @@ loom skill add <path|git-url|github:owner/repo//subdir> --name <skill> [--ref <b
 loom skill provenance inspect <skill>
 loom skill provenance verify <skill>
 loom skill provenance refresh <skill>
+loom skill policy <skill> [--policy-profile <safe-capture|audit-only|deny-risky|strict|custom>]
 loom skill project <skill> --binding <binding-id> [--target <target-id>] [--method <symlink|copy|materialize>] [--dry-run]
 loom skill capture [<skill>] [--binding <binding-id>] [--instance <instance-id>] [--message <msg>] [--dry-run]
 loom skill save <skill> [--message <msg>]

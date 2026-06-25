@@ -15,6 +15,7 @@ mod skill_diagnose;
 mod skill_diagnose_tests;
 mod skill_inventory;
 mod skill_lint;
+mod skill_policy;
 mod skill_verify;
 mod sync_cmds;
 mod target_cmds;
@@ -229,6 +230,7 @@ impl App {
                 }
                 SkillCommand::Verify(args) => self.cmd_verify(args),
                 SkillCommand::Lint(args) => self.cmd_skill_lint(args),
+                SkillCommand::Policy(args) => self.cmd_skill_policy(args),
                 SkillCommand::Diagnose(args) => self.cmd_skill_diagnose(args),
                 SkillCommand::Orphan {
                     command: SkillOrphanCommand::List,
@@ -425,6 +427,7 @@ fn command_requires_durable_audit(command: &Command) -> bool {
             | SkillCommand::Search(_)
             | SkillCommand::Resolve(_)
             | SkillCommand::Lint(_)
+            | SkillCommand::Policy(_)
             | SkillCommand::Verify(_)
             | SkillCommand::Diagnose(_)
             | SkillCommand::Provenance {

@@ -79,6 +79,24 @@ source tree and reports modified, staged, or untracked files. It is the local
 integrity primitive for detecting source edits that bypassed `skill save`.
 The check is read-only aside from command audit events.
 
+### Skill policy check
+
+`loom skill policy <name>` reports declared skill capabilities, source-file
+risk signals, and provenance digest drift before projection. It detects
+signals such as scripts, executable files, binary-looking content, very large
+files, generated artifact directories, declared shell/network/secret
+capabilities, and prompt-injection heuristics.
+
+Projection evaluates the binding's `policy_profile` before touching the live
+target directory. Built-in `audit-only` and `safe-capture` profiles report
+findings without blocking. Built-in `deny-risky` and `strict` profiles block
+high-risk findings with `POLICY_BLOCKED`. Unknown policy profile names are
+accepted as organization-defined hooks but only produce a warning until local
+policy handling is implemented.
+
+These checks are not a sandbox and do not prove a skill is safe. Prompt
+injection scanning is heuristic and should be treated as a review signal only.
+
 ## Dependency and Release Trust
 
 - Rust dependencies are locked in `Cargo.lock`; Panel dependencies are locked
@@ -93,8 +111,10 @@ The check is read-only aside from command audit events.
 
 - Loom does not cryptographically sign commits. An attacker who can write to
   the registry directly can rewrite history.
-- Loom does not validate skill contents. Projecting a skill into an agent
-  directory makes its contents available to that agent verbatim.
+- Loom policy checks report heuristic risk signals, but they do not execute
+  code in a sandbox and do not prove skill contents are benign. Projecting a
+  skill into an agent directory still makes its contents available to that
+  agent.
 - Loom does not verify SSH or HTTPS endpoints beyond what the configured Git
   client validates. Skills pulled via `sync pull` inherit the trust level of
   the upstream registry.

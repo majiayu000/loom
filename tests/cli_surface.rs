@@ -89,6 +89,7 @@ fn cli_contract_docs_track_current_surface() {
         "TARGET_AGENT_MISMATCH",
         "PROJECTION_CONFLICT",
         "PROJECTION_METHOD_UNSUPPORTED",
+        "POLICY_BLOCKED",
         "CAPTURE_CONFLICT",
         "AUDIT_ERROR",
         "LOCK_BUSY",
@@ -125,6 +126,7 @@ fn cli_contract_docs_track_current_surface() {
         "loom skill provenance inspect",
         "loom skill provenance verify",
         "loom skill provenance refresh",
+        "loom skill policy",
         "loom skill watch",
     ] {
         assert!(
@@ -139,6 +141,8 @@ fn cli_contract_docs_track_current_surface() {
         "skill provenance verify",
         "skill provenance refresh",
         "loom.lock",
+        "skill policy <skill-id>",
+        "POLICY_BLOCKED",
     ] {
         assert!(
             contract.contains(command),

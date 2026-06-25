@@ -3,8 +3,10 @@ use std::path::PathBuf;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use serde::Serialize;
 
+mod policy;
 mod provenance;
 mod use_flow;
+pub use policy::SkillPolicyArgs;
 pub use provenance::{AddArgs, SkillProvenanceCommand};
 pub use use_flow::{UseArgs, UseScope};
 
@@ -228,6 +230,8 @@ pub enum SkillCommand {
     Verify(SkillOnlyArgs),
     #[command(about = "Lint one skill for portable Agent Skills compliance")]
     Lint(SkillLintArgs),
+    #[command(about = "Report skill capabilities, risks, and policy decision before projection")]
+    Policy(SkillPolicyArgs),
     #[command(about = "Diagnose one skill source and registry projection state")]
     Diagnose(SkillOnlyArgs),
     #[command(about = "Watch registry skill sources and autosave stable local edits")]

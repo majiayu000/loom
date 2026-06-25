@@ -17,6 +17,7 @@ pub enum ErrorCode {
     TargetAgentMismatch,
     ProjectionConflict,
     ProjectionMethodUnsupported,
+    PolicyBlocked,
     CaptureConflict,
     AuditError,
     LockBusy,
@@ -46,6 +47,7 @@ impl ErrorCode {
             Self::TargetAgentMismatch => "TARGET_AGENT_MISMATCH",
             Self::ProjectionConflict => "PROJECTION_CONFLICT",
             Self::ProjectionMethodUnsupported => "PROJECTION_METHOD_UNSUPPORTED",
+            Self::PolicyBlocked => "POLICY_BLOCKED",
             Self::CaptureConflict => "CAPTURE_CONFLICT",
             Self::AuditError => "AUDIT_ERROR",
             Self::LockBusy => "LOCK_BUSY",
@@ -84,6 +86,7 @@ impl ErrorCode {
             Self::TargetAgentMismatch => 3,
             Self::ProjectionConflict => 3,
             Self::ProjectionMethodUnsupported => 3,
+            Self::PolicyBlocked => 3,
             Self::CaptureConflict => 3,
             Self::AuditError => 3,
         }

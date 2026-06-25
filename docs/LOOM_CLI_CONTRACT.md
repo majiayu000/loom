@@ -400,7 +400,23 @@ Rules:
 7. `--once` runs one scan and exits; without it, the command polls every `--interval-seconds`
 8. `--target` must reference an observed target when supplied
 
-### 11.3 `skill project`
+### 11.3 `skill lint`
+
+```bash
+loom --json --root <root> skill lint <skill-id> [--strict | --compat | --fix]
+```
+
+Read-only command.
+
+Rules:
+
+1. default `--strict` mode requires uppercase `SKILL.md`, valid YAML frontmatter, portable `name`, matching directory/name identity, and a useful `description`
+2. `--compat` accepts legacy `skill.md` loading but returns typed warning findings
+3. `--fix` returns a read-only plan for safe normalizations such as `skill.md` to `SKILL.md`; it must not mutate files
+4. strict lint failures return `SCHEMA_MISMATCH` with the full report in `error.details.report`
+5. the report includes `entrypoint`, `frontmatter`, `findings`, `summary`, and `fix_plan`
+
+### 11.4 `skill project`
 
 ```bash
 loom --json --root <root> skill project <skill-id> --binding <binding-id> [--target <target-id>] [--method <symlink|copy|materialize>]
@@ -430,7 +446,7 @@ Rules:
 2. if `--target` is absent, Loom may use `default_target_id` from binding metadata
 3. if multiple targets are possible and no default exists, the command must fail explicitly
 
-### 11.4 `skill capture`
+### 11.5 `skill capture`
 
 ```bash
 loom --json --root <root> skill capture <skill-id> --binding <binding-id>
@@ -462,7 +478,7 @@ Rules:
 1. capture is always explicit
 2. capture must fail if drift cannot be reconciled safely
 
-### 11.5 `skill save`
+### 11.6 `skill save`
 
 ```bash
 loom --json --root <root> skill save <skill-id>
@@ -470,7 +486,7 @@ loom --json --root <root> skill save <skill-id>
 
 Acts on canonical source only.
 
-### 11.6 `skill snapshot`
+### 11.7 `skill snapshot`
 
 ```bash
 loom --json --root <root> skill snapshot <skill-id>
@@ -478,7 +494,7 @@ loom --json --root <root> skill snapshot <skill-id>
 
 Acts on canonical source only.
 
-### 11.7 `skill release`
+### 11.8 `skill release`
 
 ```bash
 loom --json --root <root> skill release <skill-id> <version>
@@ -486,7 +502,7 @@ loom --json --root <root> skill release <skill-id> <version>
 
 Acts on canonical source only.
 
-### 11.8 `skill rollback`
+### 11.9 `skill rollback`
 
 ```bash
 loom --json --root <root> skill rollback <skill-id> --to <ref>
@@ -499,7 +515,7 @@ Success response should include:
 1. `recovery_ref`
 2. resulting source revision
 
-### 11.8 `skill diff`
+### 11.10 `skill diff`
 
 ```bash
 loom --json --root <root> skill diff <skill-id> <from> <to>

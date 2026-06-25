@@ -40,7 +40,7 @@ fn skill_lint_accepts_valid_strict_skill() {
     );
 
     let (output, env) = run_loom(
-        &root.path(),
+        root.path(),
         &["skill", "lint", "portable-skill", "--strict"],
     );
 
@@ -61,7 +61,7 @@ fn skill_lint_compat_warns_for_lowercase_entrypoint() {
         "---\nname: legacy-skill\ndescription: Use when an older agent skill still ships a lowercase entrypoint.\n---\n# Legacy\n",
     );
 
-    let (output, env) = run_loom(&root.path(), &["skill", "lint", "legacy-skill", "--compat"]);
+    let (output, env) = run_loom(root.path(), &["skill", "lint", "legacy-skill", "--compat"]);
 
     assert!(
         output.status.success(),
@@ -82,7 +82,7 @@ fn skill_lint_rejects_invalid_yaml_frontmatter() {
         "---\nname: [bad\n---\n# Bad\n",
     );
 
-    let (output, env) = run_loom(&root.path(), &["skill", "lint", "bad-yaml"]);
+    let (output, env) = run_loom(root.path(), &["skill", "lint", "bad-yaml"]);
 
     assert!(
         !output.status.success(),
@@ -106,7 +106,7 @@ fn skill_lint_rejects_invalid_frontmatter_name() {
         "---\nname: Bad_Name\ndescription: Use when an agent needs to catch invalid portable skill names.\n---\n# Bad name\n",
     );
 
-    let (output, env) = run_loom(&root.path(), &["skill", "lint", "bad-name"]);
+    let (output, env) = run_loom(root.path(), &["skill", "lint", "bad-name"]);
 
     assert!(
         !output.status.success(),
@@ -125,7 +125,7 @@ fn skill_lint_rejects_missing_description() {
         "---\nname: missing-description\n---\n# Missing description\n",
     );
 
-    let (output, env) = run_loom(&root.path(), &["skill", "lint", "missing-description"]);
+    let (output, env) = run_loom(root.path(), &["skill", "lint", "missing-description"]);
 
     assert!(
         !output.status.success(),
@@ -144,7 +144,7 @@ fn skill_lint_rejects_frontmatter_directory_mismatch() {
         "---\nname: other-name\ndescription: Use when an agent needs to detect mismatched skill identity metadata.\n---\n# Mismatch\n",
     );
 
-    let (output, env) = run_loom(&root.path(), &["skill", "lint", "actual-name"]);
+    let (output, env) = run_loom(root.path(), &["skill", "lint", "actual-name"]);
 
     assert!(
         !output.status.success(),

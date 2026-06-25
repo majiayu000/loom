@@ -4,6 +4,7 @@ mod envelope;
 mod fs_util;
 mod gitops;
 mod panel;
+mod sha256;
 mod state;
 mod state_model;
 mod types;

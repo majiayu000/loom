@@ -12,6 +12,7 @@ mod skill_cmds;
 mod skill_diagnose;
 #[cfg(test)]
 mod skill_diagnose_tests;
+mod skill_inventory;
 mod skill_lint;
 mod skill_verify;
 mod sync_cmds;
@@ -36,6 +37,7 @@ use crate::types::ErrorCode;
 
 pub(crate) use event_store::redact_sensitive_string;
 pub use projections::collect_skill_inventory;
+pub(crate) use skill_inventory::build_skill_read_model;
 pub(crate) use skill_lint::{SkillLintMode, SkillLintReport, lint_skill_source};
 
 use event_store::{
@@ -215,6 +217,10 @@ impl App {
                 SkillCommand::Trash {
                     command: SkillTrashCommand::Purge(args),
                 } => self.cmd_skill_trash_purge(args, &request_id),
+                SkillCommand::List => self.cmd_skill_list(),
+                SkillCommand::Show(args) => self.cmd_skill_show(args),
+                SkillCommand::Search(args) => self.cmd_skill_search(args),
+                SkillCommand::Resolve(args) => self.cmd_skill_resolve(args),
                 SkillCommand::Verify(args) => self.cmd_verify(args),
                 SkillCommand::Lint(args) => self.cmd_skill_lint(args),
                 SkillCommand::Diagnose(args) => self.cmd_skill_diagnose(args),
@@ -352,6 +358,10 @@ fn command_records_audit(command: &Command) -> bool {
             | Command::Backup { .. }
             | Command::Skill {
                 command: SkillCommand::History(_)
+                    | SkillCommand::List
+                    | SkillCommand::Show(_)
+                    | SkillCommand::Search(_)
+                    | SkillCommand::Resolve(_)
                     | SkillCommand::Lint(_)
                     | SkillCommand::Diagnose(_)
                     | SkillCommand::Trash {
@@ -400,6 +410,10 @@ fn command_requires_durable_audit(command: &Command) -> bool {
             SkillCommand::Rollback(args) => !args.dry_run,
             SkillCommand::Diff(_)
             | SkillCommand::History(_)
+            | SkillCommand::List
+            | SkillCommand::Show(_)
+            | SkillCommand::Search(_)
+            | SkillCommand::Resolve(_)
             | SkillCommand::Lint(_)
             | SkillCommand::Verify(_)
             | SkillCommand::Diagnose(_)

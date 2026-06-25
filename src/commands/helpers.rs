@@ -107,6 +107,10 @@ pub(crate) fn command_name(command: &Command) -> &'static str {
             TargetCommand::Remove(_) => "target.remove",
         },
         Command::Skill { command } => match command {
+            SkillCommand::List => "skill.list",
+            SkillCommand::Show(_) => "skill.show",
+            SkillCommand::Search(_) => "skill.search",
+            SkillCommand::Resolve(_) => "skill.resolve",
             SkillCommand::Add(_) => "skill.add",
             SkillCommand::ImportObserved(_) => "skill.import_observed",
             SkillCommand::MonitorObserved(_) => "skill.monitor_observed",

@@ -351,6 +351,27 @@ Rules:
 
 ## 11. Skill Commands
 
+### 11.0 `skill list`, `skill show`, `skill search`, `skill resolve`
+
+```bash
+loom --json --root <root> skill list
+loom --json --root <root> skill show <skill-id>
+loom --json --root <root> skill search <query> [--agent <agent>] [--profile <profile>] [--status <status>] [--trust <trust>]
+loom --json --root <root> skill resolve <task-description> [--agent <agent>] [--workspace <path>]
+```
+
+Read-only commands.
+
+Rules:
+
+1. these commands reuse the same union read model as `GET /api/v1/skills`
+2. responses include skill id, entrypoint, description, source status, projection summary, compatible agents/targets when known, warnings, and next actions
+3. `skill search` is deterministic lexical scoring over skill id, description, tags, warning state, and source status; it does not use vectors
+4. `skill resolve` is deterministic and transparent; it must not invoke an LLM
+5. `--workspace` on `skill resolve` may boost skills whose binding matcher covers the supplied workspace path
+6. read commands must not mutate registry state, Git refs, Git index, live targets, or pending queue
+7. trust metadata is `unknown` until trust/policy metadata lands
+
 ### 11.1 `skill add`
 
 ```bash

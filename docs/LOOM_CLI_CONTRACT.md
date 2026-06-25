@@ -376,7 +376,7 @@ Rules:
 ### 11.1 `skill add`
 
 ```bash
-loom --json --root <root> skill add <path|git-url> --name <skill-id>
+loom --json --root <root> skill add <path|git-url|github:owner/repo//subdir> --name <skill-id> [--ref <branch|tag|commit>] [--subdir <path>]
 ```
 
 Write command.
@@ -385,6 +385,31 @@ Rules:
 
 1. adds canonical source under `skills/<skill-id>`
 2. must fail when target skill already exists
+3. local directory imports use provider `local_path`
+4. Git URL and local Git repository imports use provider `git`; `--ref` may be a branch, tag, or commit
+5. `github:owner/repo//subdir` imports use provider `github` and clone `https://github.com/owner/repo.git`; this command must not require or duplicate `gh` authentication scope
+6. `--subdir` selects a source subdirectory when it is not encoded in the GitHub locator
+7. successful imports write `state/registry/sources.json` and deterministic root `loom.lock`
+8. provenance records include provider, locator, requested ref, resolved commit when Git-backed, source tree hash when Git-backed, source subdir, artifact digest, import time, and importer version
+
+### 11.1.1 `skill provenance`
+
+```bash
+loom --json --root <root> skill provenance inspect <skill-id>
+loom --json --root <root> skill provenance verify <skill-id>
+loom --json --root <root> skill provenance refresh <skill-id>
+```
+
+Mixed read/write command group.
+
+Rules:
+
+1. `inspect` is read-only and returns the recorded `sources.json` entry plus the matching `loom.lock` entry
+2. `verify` is read-only and compares the current canonical skill digest against both recorded provenance and `loom.lock`
+3. `refresh` is a write command; it recomputes the current canonical skill digest, updates `state/registry/sources.json` and `loom.lock`, and commits only provenance artifacts
+4. `refresh` must not mutate projection state, target directories, binding rules, or live agent skill directories
+5. `loom.lock` is generated from sorted source records so repeated writes are deterministic
+6. missing skill sources return `SKILL_NOT_FOUND`; missing provenance records return `STATE_NOT_INITIALIZED`
 
 ### 11.2 `skill import-observed`
 

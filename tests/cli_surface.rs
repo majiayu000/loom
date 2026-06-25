@@ -122,11 +122,27 @@ fn cli_contract_docs_track_current_surface() {
         "loom skill trash list",
         "loom skill trash restore",
         "loom skill trash purge",
+        "loom skill provenance inspect",
+        "loom skill provenance verify",
+        "loom skill provenance refresh",
         "loom skill watch",
     ] {
         assert!(
             readme.contains(command),
             "README CLI reference missing command {command}"
+        );
+    }
+
+    for command in [
+        "skill add <path|git-url|github:owner/repo//subdir>",
+        "skill provenance inspect",
+        "skill provenance verify",
+        "skill provenance refresh",
+        "loom.lock",
+    ] {
+        assert!(
+            contract.contains(command),
+            "CLI contract missing provenance surface {command}"
         );
     }
 }

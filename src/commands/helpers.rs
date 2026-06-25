@@ -126,6 +126,11 @@ pub(crate) fn command_name(command: &Command) -> &'static str {
             SkillCommand::History(_) => "skill.history",
             SkillCommand::Lint(_) => "skill.lint",
             SkillCommand::Diagnose(_) => "skill.diagnose",
+            SkillCommand::Provenance { command } => match command {
+                crate::cli::SkillProvenanceCommand::Inspect(_) => "skill.provenance.inspect",
+                crate::cli::SkillProvenanceCommand::Verify(_) => "skill.provenance.verify",
+                crate::cli::SkillProvenanceCommand::Refresh(_) => "skill.provenance.refresh",
+            },
             SkillCommand::Trash {
                 command: SkillTrashCommand::Add(_),
             } => "skill.trash.add",

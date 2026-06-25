@@ -8,6 +8,7 @@ mod history_cmds;
 #[cfg(test)]
 mod observed_tests;
 mod projections;
+mod provenance;
 mod skill_cmds;
 mod skill_diagnose;
 #[cfg(test)]
@@ -29,8 +30,8 @@ use uuid::Uuid;
 
 use crate::cli::{
     AgentCommand, Cli, Command, OpsCommand, OpsHistoryCommand, RemoteCommand, SkillCommand,
-    SkillOrphanCommand, SkillTrashCommand, SyncCommand, TargetCommand, WorkspaceBindingCommand,
-    WorkspaceCommand, WorkspaceInitArgs,
+    SkillOrphanCommand, SkillProvenanceCommand, SkillTrashCommand, SyncCommand, TargetCommand,
+    WorkspaceBindingCommand, WorkspaceCommand, WorkspaceInitArgs,
 };
 use crate::envelope::{Envelope, Meta};
 use crate::state::{AppContext, home_dir};
@@ -223,6 +224,9 @@ impl App {
                 SkillCommand::Show(args) => self.cmd_skill_show(args),
                 SkillCommand::Search(args) => self.cmd_skill_search(args),
                 SkillCommand::Resolve(args) => self.cmd_skill_resolve(args),
+                SkillCommand::Provenance { command } => {
+                    self.cmd_skill_provenance(command, &request_id)
+                }
                 SkillCommand::Verify(args) => self.cmd_verify(args),
                 SkillCommand::Lint(args) => self.cmd_skill_lint(args),
                 SkillCommand::Diagnose(args) => self.cmd_skill_diagnose(args),
@@ -401,6 +405,9 @@ fn command_requires_durable_audit(command: &Command) -> bool {
             | SkillCommand::Watch(_)
             | SkillCommand::Snapshot(_)
             | SkillCommand::Release(_)
+            | SkillCommand::Provenance {
+                command: SkillProvenanceCommand::Refresh(_),
+            }
             | SkillCommand::Trash {
                 command:
                     SkillTrashCommand::Add(_)
@@ -420,6 +427,9 @@ fn command_requires_durable_audit(command: &Command) -> bool {
             | SkillCommand::Lint(_)
             | SkillCommand::Verify(_)
             | SkillCommand::Diagnose(_)
+            | SkillCommand::Provenance {
+                command: SkillProvenanceCommand::Inspect(_) | SkillProvenanceCommand::Verify(_),
+            }
             | SkillCommand::Trash {
                 command: SkillTrashCommand::List,
             }

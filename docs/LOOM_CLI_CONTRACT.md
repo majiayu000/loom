@@ -394,6 +394,7 @@ Rules:
 6. `--subdir` selects a source subdirectory when it is not encoded in the GitHub locator
 7. successful imports write `state/registry/sources.json` and deterministic root `loom.lock`
 8. provenance records include provider, locator, requested ref, resolved commit when Git-backed, source tree hash when Git-backed, source subdir, artifact digest, import time, and importer version
+9. provider resolution boundaries are defined in [SKILL_PROVIDER_BOUNDARY.md](SKILL_PROVIDER_BOUNDARY.md); `skill add` must not call `gh skill install` or write directly into agent host directories
 
 ### 11.1.1 `skill provenance`
 

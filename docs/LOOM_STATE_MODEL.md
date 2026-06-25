@@ -470,6 +470,9 @@ registry state rejects these designs:
 3. implicit two-way sync between live target and source registry
 4. panel-first workflows
 5. path-only identity without `binding_id` or `target_id`
+6. marketplace-provider identity as a substitute for Loom registry identity
+7. direct `gh skill install` or `gh skill update` writes as managed projection
+   state
 
 ## 18. Acceptance Criteria
 

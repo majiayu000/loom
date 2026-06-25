@@ -187,17 +187,18 @@ Base error codes:
 12. `PROJECTION_CONFLICT`
 13. `PROJECTION_METHOD_UNSUPPORTED`
 14. `POLICY_BLOCKED`
-15. `CAPTURE_CONFLICT`
-16. `AUDIT_ERROR`
-17. `LOCK_BUSY`
-18. `REMOTE_UNREACHABLE`
-19. `REMOTE_DIVERGED`
-20. `PUSH_REJECTED`
-21. `REPLAY_CONFLICT`
-22. `QUEUE_BLOCKED`
-23. `GIT_ERROR`
-24. `IO_ERROR`
-25. `INTERNAL_ERROR`
+15. `EVAL_FAILED`
+16. `CAPTURE_CONFLICT`
+17. `AUDIT_ERROR`
+18. `LOCK_BUSY`
+19. `REMOTE_UNREACHABLE`
+20. `REMOTE_DIVERGED`
+21. `PUSH_REJECTED`
+22. `REPLAY_CONFLICT`
+23. `QUEUE_BLOCKED`
+24. `GIT_ERROR`
+25. `IO_ERROR`
+26. `INTERNAL_ERROR`
 
 Semantics:
 
@@ -483,6 +484,33 @@ Rules:
 6. `deny-risky` and `strict` mark high-risk findings as blockers
 7. unknown profile names are valid organizational hooks but must produce a `policy_profile_unknown` warning until an implementation handles them
 8. policy checks are heuristic signals, not a sandbox, malware verdict, or guarantee that a skill is safe
+
+### 11.3.2 `skill eval`
+
+```bash
+loom --json --root <root> skill eval <skill-id> [--agent <agent> | --matrix <agent,agent>] [--model <model>]
+```
+
+Read-only command.
+
+Fixture layout:
+
+```text
+skills/<skill-id>/evals/
+├── triggers.jsonl
+├── tasks.jsonl
+└── graders/
+```
+
+Rules:
+
+1. `triggers.jsonl` contains positive and negative trigger cases with `prompt`/`input`, expected trigger labels, and optional observed trigger labels
+2. `tasks.jsonl` contains offline task fixtures with output, trace, metrics, permissions used, deterministic checks, and optional artifact checks
+3. `--agent` stamps one agent id into the report; `--matrix` replays the same offline fixtures for a comma-separated agent matrix
+4. the JSON report includes per-case status, aggregate score, trigger precision/recall, task success rate, token/command counts, permissions used, skill version metadata, and artifact check results
+5. any evaluated case with `status=failed` returns `EVAL_FAILED` with the full report in `error.details.report`; missing fixture files still return an empty successful report with a warning
+6. the local runner never calls a network or LLM provider; rubric or LLM graders must be represented explicitly in fixtures before they can be tracked
+7. eval success is quality evidence only and must not be treated as a safety guarantee
 
 ### 11.4 `skill project`
 

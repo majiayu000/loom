@@ -131,6 +131,7 @@ pub(crate) fn command_name(command: &Command) -> &'static str {
             SkillCommand::Lint(_) => "skill.lint",
             SkillCommand::Policy(_) => "skill.policy",
             SkillCommand::Diagnose(_) => "skill.diagnose",
+            SkillCommand::Eval(_) => "skill.eval",
             SkillCommand::Provenance { command } => match command {
                 crate::cli::SkillProvenanceCommand::Inspect(_) => "skill.provenance.inspect",
                 crate::cli::SkillProvenanceCommand::Verify(_) => "skill.provenance.verify",

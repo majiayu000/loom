@@ -97,6 +97,15 @@ policy handling is implemented.
 These checks are not a sandbox and do not prove a skill is safe. Prompt
 injection scanning is heuristic and should be treated as a review signal only.
 
+### Skill evals
+
+`loom skill eval <name>` runs offline fixtures under `skills/<name>/evals/`
+and reports trigger quality, task checks, efficiency metrics, permissions used,
+and artifact checks. Eval success is quality evidence for regression tracking,
+not a sandbox, malware verdict, or guarantee that a skill is safe to project.
+Rubric or LLM graders must be explicit in fixtures and reproducible enough for
+review before their scores are trusted.
+
 ## Dependency and Release Trust
 
 - Rust dependencies are locked in `Cargo.lock`; Panel dependencies are locked

@@ -110,6 +110,10 @@ fn cli_contract_docs_track_current_surface() {
         "loom backup inspect",
         "loom backup restore",
         "loom doctor",
+        "loom skill list",
+        "loom skill show",
+        "loom skill search",
+        "loom skill resolve",
         "loom skill history",
         "loom skill trash add",
         "loom skill trash list",
@@ -465,6 +469,10 @@ fn skill_help_describes_every_subcommand() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     for expected in [
         "Import a skill source into the registry",
+        "List registry and observed skills",
+        "Show one skill from the inventory read model",
+        "Search skills with deterministic lexical scoring",
+        "Resolve a task description to candidate skills without invoking an LLM",
         "Project a registry skill into a bound target",
         "Capture live projection edits back to the source",
         "Commit source changes for one skill",

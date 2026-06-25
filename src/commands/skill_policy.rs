@@ -25,7 +25,6 @@ const MAX_FINDINGS_PER_KIND: usize = 20;
 pub(crate) struct SkillPolicyReport {
     pub skill: String,
     pub policy_profile: String,
-    pub policy_known: bool,
     pub allowed: bool,
     pub capabilities: SkillCapabilities,
     pub provenance: Option<ProvenanceDigestStatus>,
@@ -158,7 +157,6 @@ pub(crate) fn evaluate_skill_policy(
     Ok(SkillPolicyReport {
         skill: skill.to_string(),
         policy_profile: policy_profile.to_string(),
-        policy_known,
         allowed: blocker_count == 0,
         capabilities,
         provenance,

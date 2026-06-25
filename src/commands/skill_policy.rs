@@ -51,8 +51,6 @@ pub(crate) struct SkillPolicyFinding {
 
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct SkillPolicySummary {
-    pub finding_count: usize,
-    pub warning_count: usize,
     pub blocker_count: usize,
     pub high_risk_count: usize,
 }
@@ -149,7 +147,6 @@ pub(crate) fn evaluate_skill_policy(
         .iter()
         .filter(|finding| finding.blocks_projection)
         .count();
-    let warning_count = findings.len().saturating_sub(blocker_count);
     let high_risk_count = findings
         .iter()
         .filter(|finding| matches!(finding.risk_level, "high" | "critical"))
@@ -161,8 +158,6 @@ pub(crate) fn evaluate_skill_policy(
         capabilities,
         provenance,
         summary: SkillPolicySummary {
-            finding_count: findings.len(),
-            warning_count,
             blocker_count,
             high_risk_count,
         },

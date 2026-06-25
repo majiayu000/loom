@@ -35,14 +35,15 @@ Top-level command groups:
 1. `init`
 2. `backup`
 3. `monitor`
-4. `workspace`
-5. `target`
-6. `skill`
-7. `sync`
-8. `ops`
-9. `agent`
-10. `panel`
-11. `doctor`
+4. `use`
+5. `workspace`
+6. `target`
+7. `skill`
+8. `sync`
+9. `ops`
+10. `agent`
+11. `panel`
+12. `doctor`
 
 Removed from runtime surface:
 
@@ -544,9 +545,30 @@ loom --json --root <root> skill diff <skill-id> <from> <to>
 
 Read-only.
 
-## 12. Sync Commands
+## 12. Human-Friendly Use Flow
 
-### 12.1 `sync status`
+### 12.1 `use`
+
+```bash
+loom --json --root <root> use <skill-id> --agents <agent[,agent]> [--scope project] [--workspace <path>] [--profile <id>] [--method <symlink|copy|materialize>] [--target-root <path>] [--apply]
+```
+
+Plan-first command. Without `--apply`, it is read-only. With `--apply`, it compiles the plan into explicit `target add`, `workspace binding add`, and `skill project` operations.
+
+Rules:
+
+1. validates that `<skill-id>` is an existing registry skill before planning or applying
+2. `--agents` must include at least one supported agent
+3. default scope is `project`; project scope uses a `path_prefix` workspace matcher
+4. default workspace is the current directory; default managed target root is `<root>/targets/<scope>/<agent>/skills`
+5. plan mode returns target/binding/projection steps and an explicit next command containing `--apply`
+6. apply mode returns every target, binding, projection, and operation id created or reused by the lower-level commands
+7. apply mode returns rollback commands for removing the generated binding and then cleaning orphaned projections
+8. this command does not replace lower-level `target`, `workspace binding`, or `skill project` commands
+
+## 13. Sync Commands
+
+### 13.1 `sync status`
 
 ```bash
 loom --json --root <root> sync status
@@ -554,7 +576,7 @@ loom --json --root <root> sync status
 
 Read-only.
 
-### 12.2 `sync push`
+### 13.2 `sync push`
 
 ```bash
 loom --json --root <root> sync push
@@ -564,7 +586,7 @@ Write command.
 
 Acts on source and operation history, not on live target directories.
 
-### 12.3 `sync pull`
+### 13.3 `sync pull`
 
 ```bash
 loom --json --root <root> sync pull
@@ -572,7 +594,7 @@ loom --json --root <root> sync pull
 
 Write command.
 
-### 12.4 `sync replay`
+### 13.4 `sync replay`
 
 ```bash
 loom --json --root <root> sync replay
@@ -580,9 +602,9 @@ loom --json --root <root> sync replay
 
 Write command.
 
-## 13. Ops Commands
+## 14. Ops Commands
 
-### 13.1 `ops list`
+### 14.1 `ops list`
 
 ```bash
 loom --json --root <root> ops list
@@ -590,7 +612,7 @@ loom --json --root <root> ops list
 
 Read-only.
 
-### 13.2 `ops retry`
+### 14.2 `ops retry`
 
 ```bash
 loom --json --root <root> ops retry
@@ -598,7 +620,7 @@ loom --json --root <root> ops retry
 
 Write command.
 
-### 13.3 `ops purge`
+### 14.3 `ops purge`
 
 ```bash
 loom --json --root <root> ops purge
@@ -606,7 +628,7 @@ loom --json --root <root> ops purge
 
 Write command.
 
-### 13.4 `ops history diagnose`
+### 14.4 `ops history diagnose`
 
 ```bash
 loom --json --root <root> ops history diagnose
@@ -614,7 +636,7 @@ loom --json --root <root> ops history diagnose
 
 Read-only.
 
-### 13.5 `ops history repair`
+### 14.5 `ops history repair`
 
 ```bash
 loom --json --root <root> ops history repair --strategy <local|remote>
@@ -622,7 +644,7 @@ loom --json --root <root> ops history repair --strategy <local|remote>
 
 Write command.
 
-## 14. Migration Policy
+## 15. Migration Policy
 
 Migration commands are intentionally removed from the runtime CLI surface.
 
@@ -632,9 +654,9 @@ Rules:
 2. operators must register targets explicitly with `target add`
 3. binding resolution must be explicit with `workspace binding add`
 
-## 15. Response Requirements by Command Type
+## 16. Response Requirements by Command Type
 
-### 15.1 Pure Reads
+### 16.1 Pure Reads
 
 Examples:
 
@@ -651,7 +673,7 @@ Requirements:
 2. no registry, Git, live-target, or pending-queue write side effects
 3. command-event audit write is expected
 
-### 15.2 Writes
+### 16.2 Writes
 
 Examples:
 
@@ -669,7 +691,7 @@ Requirements:
 1. `meta.op_id` is mandatory
 2. selector identities must be echoed in `data`
 
-## 16. Minimal Agent Workflow
+## 17. Minimal Agent Workflow
 
 Recommended agent-safe sequence:
 
@@ -688,7 +710,7 @@ Why this is safe:
 3. capture is explicit
 4. revision history stays on source
 
-## 17. Rejected CLI Shapes
+## 18. Rejected CLI Shapes
 
 These command shapes are explicitly rejected for registry state:
 
@@ -697,7 +719,7 @@ These command shapes are explicitly rejected for registry state:
 3. any command that treats `claude` as an execution identity without binding resolution
 4. any command that mutates live directories based only on a guessed default path
 
-## 18. Acceptance Criteria
+## 19. Acceptance Criteria
 
 The CLI contract is acceptable only if:
 

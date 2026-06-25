@@ -67,6 +67,7 @@ describe("api v1 routes", () => {
     await api.skillSnapshot("demo");
     await api.skillRelease("demo", { version: "v1" });
     await api.skillRollback("demo", { to: "HEAD~1" });
+    await api.skillUse("demo", { agents: ["claude"], apply: false });
     await api.project({ skill: "demo", binding: "binding-1", target: "target-1", method: "symlink" });
     await api.capture({ instance: "inst-1" });
     await api.orphanClean({ delete_live_paths: false });
@@ -90,6 +91,7 @@ describe("api v1 routes", () => {
       "/api/v1/skills/demo/snapshot",
       "/api/v1/skills/demo/release",
       "/api/v1/skills/demo/rollback",
+      "/api/v1/skills/demo/use",
       "/api/v1/projections/project",
       "/api/v1/projections/capture",
       "/api/v1/orphans/clean",

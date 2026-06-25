@@ -9,14 +9,15 @@ use axum::{
 use crate::cli::{
     AddArgs, CaptureArgs, Command, ImportObservedArgs, OrphanCleanArgs, ProjectArgs,
     ProjectionMethod, SkillOrphanCommand, SkillTrashCommand, TargetCommand, TargetOwnership,
-    TrashAddArgs, TrashPurgeArgs, TrashRestoreArgs, WorkspaceBindingCommand, WorkspaceCommand,
+    TrashAddArgs, TrashPurgeArgs, TrashRestoreArgs, UseArgs, WorkspaceBindingCommand,
+    WorkspaceCommand,
 };
 
 use super::super::auth::{ensure_mutation_authorized, error_envelope, run_panel_command};
 use super::super::{
     BindingAddRequest, CaptureRequest, ImportObservedRequest, OrphanCleanRequest, PanelState,
     ProjectRequest, SkillAddRequest, SkillReleaseRequest, SkillRollbackRequest, SkillSaveRequest,
-    TargetAddRequest, TrashRestoreRequest,
+    TargetAddRequest, TrashRestoreRequest, UseRequest,
 };
 
 fn policy_profile_looks_sane(value: &str) -> bool {
@@ -161,6 +162,33 @@ pub(in crate::panel) async fn registry_project(
                 dry_run: false,
             }),
         },
+    )
+}
+
+pub(in crate::panel) async fn registry_skill_use(
+    AxumPath(skill_name): AxumPath<String>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    State(state): State<PanelState>,
+    Json(req): Json<UseRequest>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    if let Some(response) = ensure_mutation_authorized(&state, peer, &headers, "use") {
+        return response;
+    }
+    run_panel_command(
+        &state,
+        "use",
+        StatusCode::OK,
+        Command::Use(UseArgs {
+            skill: skill_name,
+            agents: req.agents,
+            scope: req.scope.unwrap_or(crate::cli::UseScope::Project),
+            workspace: req.workspace,
+            profile: req.profile.unwrap_or_else(|| "default".to_string()),
+            method: req.method.unwrap_or(ProjectionMethod::Symlink),
+            target_root: req.target_root,
+            apply: req.apply,
+        }),
     )
 }
 

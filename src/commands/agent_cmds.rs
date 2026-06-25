@@ -5,7 +5,8 @@ mod planning_helpers;
 use serde_json::{Value, json};
 
 use super::helpers::{
-    agent_kind_as_str, map_arg, map_git, map_io, projection_method_as_str, validate_skill_name,
+    agent_kind_as_str, map_arg, map_git, map_io, projection_method_as_str, shell_arg,
+    validate_skill_name,
 };
 use super::projections::resolve_capture_projection;
 use super::{App, CommandFailure};
@@ -14,7 +15,7 @@ use crate::envelope::Meta;
 use crate::gitops;
 use planning_helpers::{
     build_preflight_next_commands, is_orphan_projection, is_safe, normalize_path,
-    push_target_risks, risk, rollback_impacted_projections, shell_arg, status_for, target_paths,
+    push_target_risks, risk, rollback_impacted_projections, status_for, target_paths,
     workspace_matches,
 };
 

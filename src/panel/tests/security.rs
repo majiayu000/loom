@@ -3,8 +3,8 @@ use crate::cli::{
     BindingAddArgs, CaptureArgs, Command, OpsCommand, ProjectArgs, ProjectionMethod, ReleaseArgs,
     RemoteCommand, RollbackArgs, SaveArgs, SkillCommand, SkillOnlyArgs, SkillTrashCommand,
     SyncCommand, TargetAddArgs, TargetCommand, TargetOwnership, TrashAddArgs, TrashPurgeArgs,
-    TrashRestoreArgs, WorkspaceBindingCommand, WorkspaceCommand, WorkspaceInitArgs,
-    WorkspaceMatcherKind,
+    TrashRestoreArgs, UseArgs, UseScope, WorkspaceBindingCommand, WorkspaceCommand,
+    WorkspaceInitArgs, WorkspaceMatcherKind,
 };
 use crate::panel::auth::{
     ensure_mutation_authorized, error_envelope, panel_host_matches, panel_request_authorized,
@@ -21,7 +21,7 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 // Exhaustive list of every panel mutation command. Must stay in sync with the
-// 22-row table in docs/LOOM_ARCHITECTURE_DECISIONS.md section 4.1 and the
+// 23-row table in docs/LOOM_ARCHITECTURE_DECISIONS.md section 4.1 and the
 // route registrations in `run_panel`.
 const MUTATION_COMMANDS: &[&str] = &[
     "workspace.init",
@@ -29,6 +29,7 @@ const MUTATION_COMMANDS: &[&str] = &[
     "target.remove",
     "workspace.binding.add",
     "workspace.binding.remove",
+    "use",
     "skill.project",
     "skill.capture",
     "skill.save",
@@ -92,8 +93,8 @@ const LEGACY_PANEL_ROUTES: &[&str] = &[
 ];
 
 #[test]
-fn mutation_commands_count_is_twenty_two() {
-    assert_eq!(MUTATION_COMMANDS.len(), 22);
+fn mutation_commands_count_is_twenty_three() {
+    assert_eq!(MUTATION_COMMANDS.len(), 23);
 }
 
 #[test]
@@ -496,6 +497,20 @@ fn run_panel_command_returns_non_2xx_for_logical_failures_across_mutations() {
                     }),
                 },
             },
+        ),
+        (
+            "use",
+            StatusCode::OK,
+            Command::Use(UseArgs {
+                skill: "missing-skill".to_string(),
+                agents: vec![crate::cli::AgentKind::Claude],
+                scope: UseScope::Project,
+                workspace: None,
+                profile: "default".to_string(),
+                method: ProjectionMethod::Symlink,
+                target_root: None,
+                apply: true,
+            }),
         ),
         (
             "skill.project",

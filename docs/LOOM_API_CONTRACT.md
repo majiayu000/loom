@@ -102,6 +102,7 @@ POST /api/v1/skills/{skill_name}/save
 POST /api/v1/skills/{skill_name}/snapshot
 POST /api/v1/skills/{skill_name}/release
 POST /api/v1/skills/{skill_name}/rollback
+POST /api/v1/skills/{skill_name}/use
 POST /api/v1/skills/{skill_name}/trash
 POST /api/v1/skills/trash/{trash_id}/restore
 POST /api/v1/skills/trash/{trash_id}/purge

@@ -14,6 +14,7 @@ vi.mock("../../lib/api/client", () => ({
     skillSnapshot: vi.fn(),
     skillRelease: vi.fn(),
     skillRollback: vi.fn(),
+    skillUse: vi.fn(),
     skillTrashList: vi.fn(),
     skillTrashAdd: vi.fn(),
     skillTrashRestore: vi.fn(),
@@ -158,6 +159,64 @@ function makeTrashEntry(overrides: Record<string, unknown> = {}) {
     ...overrides,
   };
 }
+
+describe("SkillsPage — use flow", () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    (api.skillHistory as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: true,
+      data: { skill: "my-skill", count: 0, events: [] },
+    });
+    (api.skillUse as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: true,
+      cmd: "use",
+      request_id: "req-use",
+      data: { steps: [{}] },
+    });
+  });
+
+  it("plans selected skill use from the projections tab", async () => {
+    renderPage({
+      targets: [makeTarget({ agent: "codex", profile: "work" })],
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Projections (0)" }));
+    fireEvent.change(screen.getByPlaceholderText("workspace path"), { target: { value: "/repo/a" } });
+    fireEvent.click(screen.getByRole("button", { name: "Plan" }));
+
+    await waitFor(() => {
+      expect(api.skillUse).toHaveBeenCalledWith("my-skill", {
+        agents: ["codex"],
+        scope: "project",
+        workspace: "/repo/a",
+        profile: "default",
+        method: "symlink",
+        apply: false,
+      });
+    });
+    expect(await screen.findByText("1 agent planned")).toBeInTheDocument();
+  });
+
+  it("applies selected skill use and refreshes panel data", async () => {
+    const onMutation = vi.fn();
+    renderPage({ onMutation });
+
+    fireEvent.click(screen.getByRole("button", { name: "Projections (0)" }));
+    fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+
+    await waitFor(() => {
+      expect(api.skillUse).toHaveBeenCalledWith("my-skill", {
+        agents: ["claude"],
+        scope: "project",
+        workspace: undefined,
+        profile: "default",
+        method: "symlink",
+        apply: true,
+      });
+      expect(onMutation).toHaveBeenCalledTimes(1);
+    });
+  });
+});
 
 describe("SkillsPage — capture action", () => {
   beforeEach(() => {

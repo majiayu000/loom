@@ -60,6 +60,7 @@ loom init
 # 3. Import/update observed skills once, or keep watching in the foreground
 loom monitor --once
 loom monitor --interval-seconds 30
+loom use my-skill --agents claude,codex --scope project --apply
 ```
 
 Loom defaults to `~/.loom-registry`. Pass `--root <dir>` only when you want a different registry.
@@ -178,6 +179,7 @@ The chain `add → capture → save → snapshot → release → rollback` is th
 | `loom skill show` | Show one skill from the shared inventory model | Inspect entrypoint, description, source status, projections, compatible targets, warnings, and next actions | Source + registry metadata (read-only) |
 | `loom skill search` | Search skills with deterministic lexical scoring | Find likely skills by id, description, tags, warning state, agent, profile, status, or trust | Source + registry metadata (read-only) |
 | `loom skill resolve` | Resolve a task description to candidate skills without an LLM | Let agents choose a skill transparently from local metadata and scoring inputs | Source + registry metadata (read-only) |
+| `loom use` | Plan or apply target, binding, and projection setup in one flow | New users want to use a skill without copying target/binding IDs between commands | Source + target + registry metadata |
 | `loom skill project` | Realize a registry skill into an agent directory | Make the skill visible to the agent (Claude/Codex/…) | Target (live directory) |
 | `loom skill capture` | Pull live edits from a projection back into the source | The user edited the skill **inside the agent directory** and you want those edits tracked | Projection → source |
 | `loom skill save` | Commit edits made directly to the registry source | You edited `skills/<name>/…` **inside the registry repo** itself | Source (in place) |
@@ -238,6 +240,7 @@ loom backup export [--output <path>] [--format tar] [--include-target-cache]
 loom backup inspect <artifact>
 loom backup restore <artifact> [--force-empty-root]
 loom monitor [--target <target-id>] [--once] [--interval-seconds <seconds>]
+loom use <skill> --agents <agent[,agent]> [--scope project] [--workspace <path>] [--profile <id>] [--method <symlink|copy|materialize>] [--target-root <path>] [--apply]
 loom doctor
 
 loom workspace status

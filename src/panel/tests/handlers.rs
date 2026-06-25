@@ -1,18 +1,19 @@
 use super::*;
-use crate::panel::TrashRestoreRequest;
+use crate::cli::{AgentKind, ProjectionMethod};
 use crate::panel::handlers::{
     OpsQuery, registry_orphan_clean, registry_skill_trash_add, registry_skill_trash_purge,
-    registry_skill_trash_restore, remote_set, v1_health, v1_info, v1_overview, v1_pending,
-    v1_registry_ops, v1_registry_targets, v1_skill_diagnose, v1_skill_trash, v1_skills,
+    registry_skill_trash_restore, registry_skill_use, remote_set, v1_health, v1_info, v1_overview,
+    v1_pending, v1_registry_ops, v1_registry_targets, v1_skill_diagnose, v1_skill_trash, v1_skills,
     v1_workspace_status,
 };
+use crate::panel::{TrashRestoreRequest, UseRequest};
 use crate::state_model::{
     REGISTRY_SCHEMA_VERSION, RegistryBindingRule, RegistryOperationRecord,
     RegistryProjectionInstance, RegistryProjectionsFile, RegistryRulesFile,
 };
 use axum::{
     Json,
-    extract::{ConnectInfo, Query},
+    extract::{ConnectInfo, Path as AxumPath, Query},
     http::{HeaderMap, HeaderValue},
 };
 use chrono::Duration as ChrDuration;
@@ -47,6 +48,48 @@ fn panel_headers() -> HeaderMap {
     let mut headers = HeaderMap::new();
     headers.insert("origin", HeaderValue::from_static("http://127.0.0.1:43117"));
     headers
+}
+
+#[tokio::test]
+async fn registry_skill_use_returns_plan_without_mutation() {
+    let (root, state) = make_test_state();
+    let skill_dir = root.join("skills/demo");
+    fs::create_dir_all(&skill_dir).expect("create skill dir");
+    fs::write(
+        skill_dir.join("SKILL.md"),
+        "---\nname: demo\ndescription: Demo skill for panel use planning.\n---\n# Demo\n",
+    )
+    .expect("write skill");
+
+    let (status, Json(payload)) = registry_skill_use(
+        AxumPath("demo".to_string()),
+        ConnectInfo(panel_peer()),
+        panel_headers(),
+        State(state),
+        Json(UseRequest {
+            agents: vec![AgentKind::Claude],
+            scope: None,
+            workspace: Some(root.join("workspace")),
+            profile: Some("panel".to_string()),
+            method: Some(ProjectionMethod::Copy),
+            target_root: None,
+            apply: false,
+        }),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "{payload}");
+    assert_eq!(payload["ok"], json!(true));
+    assert_eq!(payload["cmd"], json!("use"));
+    assert_eq!(payload["data"]["dry_run"], json!(true));
+    assert_eq!(payload["data"]["steps"][0]["agent"], json!("claude"));
+    assert_eq!(payload["data"]["steps"][0]["method"], json!("copy"));
+    assert!(
+        !root.join("targets").exists(),
+        "panel use planning must not create targets"
+    );
+
+    cleanup_root(root);
 }
 
 #[test]

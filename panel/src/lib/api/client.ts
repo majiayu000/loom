@@ -332,6 +332,16 @@ export interface ProjectBody {
   method?: "symlink" | "copy" | "materialize";
 }
 
+export interface UseSkillBody {
+  agents: string[];
+  scope?: "project";
+  workspace?: string;
+  profile?: string;
+  method?: "symlink" | "copy" | "materialize";
+  target_root?: string;
+  apply?: boolean;
+}
+
 export interface SkillAddBody {
   source: string;
   name: string;
@@ -562,6 +572,8 @@ export const api = {
     postJson(`/api/v1/skills/trash/${encodeURIComponent(trashId)}/restore`, body),
   skillTrashPurge: (trashId: string) =>
     postJson(`/api/v1/skills/trash/${encodeURIComponent(trashId)}/purge`, {}),
+  skillUse: (name: string, body: UseSkillBody) =>
+    postJson(`/api/v1/skills/${encodeURIComponent(name)}/use`, body),
   project: (body: ProjectBody) => postJson("/api/v1/projections/project", body),
   capture: (body: CaptureBody) => postJson("/api/v1/projections/capture", body),
   orphanClean: (body: OrphanCleanBody) => postJson("/api/v1/orphans/clean", body),

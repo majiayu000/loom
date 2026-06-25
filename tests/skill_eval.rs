@@ -100,6 +100,31 @@ fn skill_eval_reports_missing_fixtures_as_blank_with_warning() {
 }
 
 #[test]
+fn skill_eval_fails_closed_when_cases_fail() {
+    let root = TestDir::new("skill-eval-case-failure");
+    write_skill(root.path(), "demo", "# Demo\n");
+    write_file(
+        &root.path().join("skills/demo/evals/triggers.jsonl"),
+        r#"{"id":"regression","prompt":"Use demo here","expected_trigger":true,"observed_trigger":false}
+"#,
+    );
+
+    let (output, env) = run_loom(root.path(), &["skill", "eval", "demo"]);
+
+    assert!(!output.status.success(), "failing eval cases must fail");
+    assert_eq!(env["error"]["code"], json!("EVAL_FAILED"));
+    assert_eq!(env["error"]["details"]["failed"], json!(1));
+    assert_eq!(
+        env["error"]["details"]["report"]["summary"]["failed"],
+        json!(1)
+    );
+    assert_eq!(
+        env["error"]["details"]["report"]["runs"][0]["triggers"][0]["status"],
+        json!("failed")
+    );
+}
+
+#[test]
 fn skill_eval_rejects_invalid_fixture_json() {
     let root = TestDir::new("skill-eval-invalid-json");
     write_skill(root.path(), "demo", "# Demo\n");

@@ -94,6 +94,7 @@ fn cli_contract_docs_track_current_surface() {
         "PROJECTION_CONFLICT",
         "PROJECTION_METHOD_UNSUPPORTED",
         "POLICY_BLOCKED",
+        "EVAL_FAILED",
         "CAPTURE_CONFLICT",
         "AUDIT_ERROR",
         "LOCK_BUSY",

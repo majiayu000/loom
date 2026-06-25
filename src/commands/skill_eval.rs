@@ -58,6 +58,7 @@ impl App {
             })
             .collect::<std::result::Result<Vec<_>, _>>()?;
         let summary = summarize_runs(&runs);
+        let failed = summary.failed;
 
         let warnings = if triggers.is_empty() && tasks.is_empty() {
             vec![format!(
@@ -68,20 +69,33 @@ impl App {
             Vec::new()
         };
 
+        let report = json!({
+            "schema_version": EVAL_SCHEMA_VERSION,
+            "skill": args.skill,
+            "skill_version": version,
+            "eval_root": evals_dir.display().to_string(),
+            "matrix": agents,
+            "summary": summary,
+            "runs": runs,
+            "security_model": {
+                "eval_success_is_safety_guarantee": false,
+                "note": "Eval success is quality evidence only. It does not prove the skill is safe, sandboxed, or free of prompt-injection risk."
+            }
+        });
+        if failed > 0 {
+            let mut failure = CommandFailure::new(
+                ErrorCode::EvalFailed,
+                format!("skill eval failed with {failed} failing case(s)"),
+            );
+            failure.details = json!({
+                "failed": failed,
+                "report": report,
+            });
+            return Err(failure);
+        }
+
         Ok((
-            json!({
-                "schema_version": EVAL_SCHEMA_VERSION,
-                "skill": args.skill,
-                "skill_version": version,
-                "eval_root": evals_dir.display().to_string(),
-                "matrix": agents,
-                "summary": summary,
-                "runs": runs,
-                "security_model": {
-                    "eval_success_is_safety_guarantee": false,
-                    "note": "Eval success is quality evidence only. It does not prove the skill is safe, sandboxed, or free of prompt-injection risk."
-                }
-            }),
+            report,
             Meta {
                 warnings,
                 ..Meta::default()

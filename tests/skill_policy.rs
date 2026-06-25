@@ -113,11 +113,6 @@ fn skill_policy_reports_declared_capabilities_and_heuristic_risks() {
     assert!(has_finding(report, "shell_pipe_download"));
     assert!(has_finding(report, "prompt_injection_heuristic"));
     assert_eq!(report["summary"]["blocker_count"], json!(0));
-    assert!(
-        report["limitations"][0]
-            .as_str()
-            .is_some_and(|line| line.contains("heuristic"))
-    );
 }
 
 #[test]

@@ -31,7 +31,6 @@ pub(crate) struct SkillPolicyReport {
     pub provenance: Option<ProvenanceDigestStatus>,
     pub summary: SkillPolicySummary,
     pub findings: Vec<SkillPolicyFinding>,
-    pub limitations: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
@@ -46,11 +45,7 @@ pub(crate) struct SkillCapabilities {
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct SkillPolicyFinding {
     pub id: String,
-    pub severity: &'static str,
     pub risk_level: &'static str,
-    pub category: &'static str,
-    pub message: &'static str,
-    pub suggested_action: &'static str,
     pub blocks_projection: bool,
     pub details: Vec<String>,
 }
@@ -131,9 +126,6 @@ pub(crate) fn evaluate_skill_policy(
             &mut findings,
             "policy_profile_unknown",
             "medium",
-            "policy",
-            "policy profile has no built-in enforcement rules",
-            "define organization-side handling for this profile or use audit-only/deny-risky",
             vec![format!("policy_profile={policy_profile}")],
         );
     }
@@ -147,20 +139,9 @@ pub(crate) fn evaluate_skill_policy(
             &mut findings,
             "provenance_digest_mismatch",
             "high",
-            "provenance",
-            "current skill source digest does not match recorded provenance or loom.lock",
-            "review the source diff, then run skill provenance refresh only after accepting the change",
             provenance_details(status),
         ),
-        None => push_raw_finding(
-            &mut findings,
-            "provenance_missing",
-            "medium",
-            "provenance",
-            "skill has no recorded source provenance",
-            "re-import the skill with skill add or record provenance before relying on digest checks",
-            Vec::new(),
-        ),
+        None => push_raw_finding(&mut findings, "provenance_missing", "medium", Vec::new()),
         _ => {}
     }
 
@@ -169,10 +150,7 @@ pub(crate) fn evaluate_skill_policy(
         .iter()
         .filter(|finding| finding.blocks_projection)
         .count();
-    let warning_count = findings
-        .iter()
-        .filter(|finding| finding.severity == "warning")
-        .count();
+    let warning_count = findings.len().saturating_sub(blocker_count);
     let high_risk_count = findings
         .iter()
         .filter(|finding| matches!(finding.risk_level, "high" | "critical"))
@@ -191,10 +169,6 @@ pub(crate) fn evaluate_skill_policy(
             high_risk_count,
         },
         findings,
-        limitations: vec![
-            "policy checks are heuristic signals, not a sandbox or malware verdict".to_string(),
-            "prompt-injection findings are warnings that require human review".to_string(),
-        ],
     })
 }
 
@@ -220,9 +194,6 @@ fn read_declared_capabilities(
             findings,
             "capabilities_declared_empty",
             "low",
-            "capabilities",
-            "capabilities frontmatter is present but no supported capability keys were parsed",
-            "use filesystem, shell, network, or secrets capability sections",
             vec![format!("entrypoint={}", entrypoint.display())],
         );
     }
@@ -381,9 +352,6 @@ fn push_capability_findings(
             findings,
             &format!("capability_filesystem_{key}"),
             risk,
-            "capabilities",
-            "skill declares filesystem capability",
-            "review whether the target agent should receive this filesystem capability",
             capability_details(key, values),
         );
     }
@@ -392,9 +360,6 @@ fn push_capability_findings(
             findings,
             &format!("capability_shell_{key}"),
             "high",
-            "capabilities",
-            "skill declares shell capability",
-            "review command allowlist before projection",
             capability_details(key, values),
         );
     }
@@ -403,9 +368,6 @@ fn push_capability_findings(
             findings,
             &format!("capability_network_{key}"),
             "high",
-            "capabilities",
-            "skill declares network capability",
-            "review domain allowlist before projection",
             capability_details(key, values),
         );
     }
@@ -414,9 +376,6 @@ fn push_capability_findings(
             findings,
             &format!("capability_secrets_{key}"),
             "high",
-            "capabilities",
-            "skill declares secrets capability",
-            "review secret exposure before projection",
             capability_details(key, values),
         );
     }
@@ -441,14 +400,7 @@ fn scan_skill_files(
             if is_generated_dir(&rel_string) {
                 push_limited_finding(
                     findings,
-                    make_finding(
-                        "generated_artifact_dir",
-                        "high",
-                        "artifact",
-                        "skill contains a generated artifact directory",
-                        "remove generated artifacts from the skill source before projection",
-                        path_details(&rel_string),
-                    ),
+                    make_finding("generated_artifact_dir", "high", path_details(&rel_string)),
                 );
             }
             continue;
@@ -463,9 +415,6 @@ fn scan_skill_files(
                 make_finding(
                     "large_file",
                     "high",
-                    "artifact",
-                    "skill contains a very large file",
-                    "remove large generated or binary assets unless explicitly required",
                     vec![
                         format!("path={rel_string}"),
                         format!("bytes={}", metadata.len()),
@@ -476,41 +425,20 @@ fn scan_skill_files(
         if is_script_path(&rel_string) {
             push_limited_finding(
                 findings,
-                make_finding(
-                    "script_file",
-                    "high",
-                    "executable_content",
-                    "skill contains a script file",
-                    "review script contents and use deny-risky policy until approved",
-                    path_details(&rel_string),
-                ),
+                make_finding("script_file", "high", path_details(&rel_string)),
             );
         }
         if is_executable(&metadata) {
             push_limited_finding(
                 findings,
-                make_finding(
-                    "executable_file",
-                    "high",
-                    "executable_content",
-                    "skill contains an executable file",
-                    "review executable content before projection",
-                    path_details(&rel_string),
-                ),
+                make_finding("executable_file", "high", path_details(&rel_string)),
             );
         }
         let bytes = read_prefix(path, 16 * 1024)?;
         if bytes.contains(&0) {
             push_limited_finding(
                 findings,
-                make_finding(
-                    "binary_file",
-                    "high",
-                    "executable_content",
-                    "skill contains binary-looking file content",
-                    "remove or explicitly review binary files before projection",
-                    path_details(&rel_string),
-                ),
+                make_finding("binary_file", "high", path_details(&rel_string)),
             );
             continue;
         }
@@ -569,27 +497,13 @@ fn push_text_heuristics(rel_path: &str, text: &str, findings: &mut Vec<SkillPoli
     {
         push_limited_finding(
             findings,
-            make_finding(
-                "prompt_injection_heuristic",
-                "high",
-                "content",
-                "skill text matched a prompt-injection heuristic",
-                "review manually; this heuristic is not a safety verdict",
-                path_details(rel_path),
-            ),
+            make_finding("prompt_injection_heuristic", "high", path_details(rel_path)),
         );
     }
     if (text.contains("curl ") || text.contains("wget ")) && text.contains("| sh") {
         push_limited_finding(
             findings,
-            make_finding(
-                "shell_pipe_download",
-                "high",
-                "executable_content",
-                "skill content appears to pipe downloaded content into a shell",
-                "remove this pattern or approve it through explicit review",
-                path_details(rel_path),
-            ),
+            make_finding("shell_pipe_download", "high", path_details(rel_path)),
         );
     }
     if text.contains("eval(") || text.contains("exec(") {
@@ -598,9 +512,6 @@ fn push_text_heuristics(rel_path: &str, text: &str, findings: &mut Vec<SkillPoli
             make_finding(
                 "dynamic_execution_heuristic",
                 "high",
-                "executable_content",
-                "skill content matched a dynamic execution heuristic",
-                "review dynamic execution before projection",
                 path_details(rel_path),
             ),
         );
@@ -623,7 +534,6 @@ fn apply_policy_profile(profile: &str, findings: &mut [SkillPolicyFinding]) {
             _ => false,
         };
         finding.blocks_projection = blocks;
-        finding.severity = if blocks { "blocker" } else { "warning" };
     }
 }
 
@@ -643,49 +553,20 @@ fn push_raw_finding(
     findings: &mut Vec<SkillPolicyFinding>,
     id: &str,
     risk_level: &str,
-    category: &str,
-    message: &'static str,
-    suggested_action: &'static str,
     details: Vec<String>,
 ) {
-    findings.push(make_finding(
-        id,
-        risk_level,
-        category,
-        message,
-        suggested_action,
-        details,
-    ));
+    findings.push(make_finding(id, risk_level, details));
 }
 
-fn make_finding(
-    id: &str,
-    risk_level: &str,
-    category: &str,
-    message: &'static str,
-    suggested_action: &'static str,
-    details: Vec<String>,
-) -> SkillPolicyFinding {
+fn make_finding(id: &str, risk_level: &str, details: Vec<String>) -> SkillPolicyFinding {
     SkillPolicyFinding {
         id: id.to_string(),
-        severity: "warning",
         risk_level: match risk_level {
             "critical" => "critical",
             "high" => "high",
             "medium" => "medium",
             _ => "low",
         },
-        category: match category {
-            "artifact" => "artifact",
-            "capabilities" => "capabilities",
-            "content" => "content",
-            "executable_content" => "executable_content",
-            "policy" => "policy",
-            "provenance" => "provenance",
-            _ => "policy",
-        },
-        message,
-        suggested_action,
         blocks_projection: false,
         details,
     }

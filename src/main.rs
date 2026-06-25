@@ -19,7 +19,7 @@ use crate::commands::App;
 use crate::envelope::Envelope;
 use crate::types::ErrorCode;
 
-#[tokio::main]
+#[tokio::main(flavor = "current_thread")]
 async fn main() {
     let raw_args: Vec<OsString> = std::env::args_os().collect();
     let json_requested = has_flag(&raw_args, "--json");

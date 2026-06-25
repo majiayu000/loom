@@ -492,7 +492,7 @@ fn importer_version() -> String {
     format!("loom/{}", env!("CARGO_PKG_VERSION"))
 }
 
-fn skill_tree_digest(path: &Path) -> Result<String> {
+pub(crate) fn skill_tree_digest(path: &Path) -> Result<String> {
     let mut entries = Vec::new();
     for entry in WalkDir::new(path).follow_links(false).sort_by_file_name() {
         let entry = entry.with_context(|| format!("walk {}", path.display()))?;

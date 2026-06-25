@@ -1,12 +1,18 @@
 use std::path::PathBuf;
 
-use clap::{Args, ValueEnum};
-use serde::{Deserialize, Serialize};
+use clap::{Args, Subcommand};
+use serde::Serialize;
 
-use super::{AgentKind, ProjectionMethod};
+use super::{AgentKind, ProjectionMethod, UseScope};
 
-#[derive(Debug, Clone, Args, Deserialize, Serialize)]
-pub struct UseArgs {
+#[derive(Debug, Clone, Subcommand, Serialize)]
+pub enum PlanCommand {
+    #[command(about = "Create a durable plan for the skill use flow")]
+    Use(PlanUseArgs),
+}
+
+#[derive(Debug, Clone, Args, Serialize)]
+pub struct PlanUseArgs {
     /// Registry skill id to use.
     pub skill: String,
 
@@ -33,14 +39,18 @@ pub struct UseArgs {
     /// Base directory for managed targets. Defaults to <root>/targets/<scope>.
     #[arg(long)]
     pub target_root: Option<PathBuf>,
-
-    /// Apply the plan. Without this flag, `loom use` is read-only.
-    #[arg(long)]
-    pub apply: bool,
 }
 
-#[derive(Debug, Clone, Copy, ValueEnum, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
-pub enum UseScope {
-    Project,
+#[derive(Debug, Clone, Args, Serialize)]
+pub struct ApplyArgs {
+    /// Durable plan id returned by `loom plan`.
+    pub plan_id: String,
+
+    /// Caller-provided idempotency key for safe retries.
+    #[arg(long)]
+    pub idempotency_key: String,
+
+    /// Approval tokens required by the plan. Can be repeated or comma-separated.
+    #[arg(long = "approve", value_delimiter = ',')]
+    pub approvals: Vec<String>,
 }

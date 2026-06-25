@@ -3,9 +3,11 @@ use std::path::PathBuf;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use serde::Serialize;
 
+mod plan_flow;
 mod policy;
 mod provenance;
 mod use_flow;
+pub use plan_flow::{ApplyArgs, PlanCommand, PlanUseArgs};
 pub use policy::SkillPolicyArgs;
 pub use provenance::{AddArgs, SkillProvenanceCommand};
 pub use use_flow::{UseArgs, UseScope};
@@ -48,6 +50,13 @@ pub enum Command {
     Monitor(MonitorObservedArgs),
     #[command(about = "Plan or apply a human-friendly skill use flow")]
     Use(UseArgs),
+    #[command(about = "Create durable, audited agent plans")]
+    Plan {
+        #[command(subcommand)]
+        command: PlanCommand,
+    },
+    #[command(about = "Apply a durable agent plan with an idempotency key")]
+    Apply(ApplyArgs),
     #[command(about = "Inspect and configure registry workspace state")]
     Workspace {
         #[command(subcommand)]

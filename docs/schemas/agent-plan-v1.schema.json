@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/majiayu000/loom/docs/schemas/agent-plan-v1.schema.json",
+  "title": "Loom Agent Plan v1",
+  "type": "object",
+  "required": [
+    "protocol_version",
+    "schema_version",
+    "plan_id",
+    "operation",
+    "safe_to_apply",
+    "effects",
+    "conflicts",
+    "risks",
+    "required_approvals",
+    "recovery",
+    "guards"
+  ],
+  "properties": {
+    "protocol_version": { "const": "1.0" },
+    "schema_version": { "const": "1.0" },
+    "plan_id": {
+      "type": "string",
+      "pattern": "^plan_[A-Za-z0-9_]+$"
+    },
+    "operation": { "enum": ["use"] },
+    "safe_to_apply": { "type": "boolean" },
+    "effects": { "type": "array" },
+    "conflicts": { "type": "array" },
+    "risks": { "type": "array" },
+    "required_approvals": {
+      "type": "array",
+      "items": { "type": "string" },
+      "uniqueItems": true
+    },
+    "recovery": {
+      "type": "object",
+      "required": ["rollback_supported"],
+      "properties": {
+        "rollback_supported": { "type": "boolean" }
+      },
+      "additionalProperties": true
+    },
+    "guards": {
+      "type": "object",
+      "required": ["root", "registry_head", "skill", "source_digest"],
+      "properties": {
+        "root": { "type": "string" },
+        "registry_head": { "type": "string" },
+        "skill": { "type": "string" },
+        "source_digest": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        },
+        "agents": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "workspace": {
+          "type": ["string", "null"]
+        },
+        "scope": { "type": "string" },
+        "method": { "type": "string" },
+        "target_root": {
+          "type": ["string", "null"]
+        }
+      },
+      "additionalProperties": true
+    },
+    "use_args": { "type": "object" },
+    "next_actions": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  },
+  "additionalProperties": true
+}

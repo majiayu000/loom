@@ -61,7 +61,7 @@ loom --json --root "$REGISTRY_ROOT" skill monitor-observed --once
 ## 4. 日常操作建议（Agent）
 
 1. 读取状态：`loom --json --root <registry_root> workspace status`
-2. 写入前规划：`loom --json --root <registry_root> agent preflight --agent <agent> --workspace "$PWD" --skill <skill>`
+2. 写入前规划：低风险已有 binding 的写入可用 `agent preflight`；需要 durable plan/idempotency 的 flow 用 `loom plan use` 后再 `loom apply`
 3. 高风险写入预演：在 `skill project` / `skill capture` / `skill rollback` / `skill trash add` / `skill trash purge` / `skill orphan clean` / `sync push` 后加 `--dry-run`；`skill rollback --preview` 仅作为兼容别名保留
 4. 保存变更：`loom --json --root <registry_root> skill save <skill>`
 5. 关键节点快照：`loom --json --root <registry_root> skill snapshot <skill>`
@@ -74,7 +74,7 @@ loom --json --root "$REGISTRY_ROOT" skill monitor-observed --once
 - 未经明确授权，不要默认使用 `--force` 覆盖同名 skill。
 - 优先 symlink 模式；只有环境不支持时再使用 `--method copy`。
 - `meta.warnings` 不为空时，视为“成功但有风险”，需写入运行日志。
-- `agent preflight` 和 `--dry-run` 返回 `ok=true` 不代表可以直接写入；必须同时检查 `data.safe_to_run=true`。
+- `agent preflight` 和 `--dry-run` 返回 `ok=true` 不代表可以直接写入；必须同时检查 `data.safe_to_run=true`。`plan use` 返回 `ok=true` 只表示 plan 已持久化；`apply` 前仍要检查 `required_approvals`。
 - `--dry-run` 只允许写 command audit，不应改变 registry ops、pending queue、Git refs/index 或 live target 内容；`skill rollback --dry-run` 连 command audit 也不会追加。
 - `sync_state=LOCAL_ONLY` 或 `PENDING_PUSH` 时，不应宣称“远端已同步”。
 - 读命令（如 `workspace status`、`workspace doctor`、`target list`）不会修改 registry state、Git refs/index、live target 目录或 pending queue；它们会写入 durable command event。registry 写操作审计以 `meta.op_id` / `/api/v1/ops` 为准。
@@ -105,6 +105,8 @@ loom --json --root "$ROOT" skill save "$SKILL"
 
 # 3) 写入前规划
 loom --json --root "$ROOT" agent preflight --agent codex --workspace "$PWD" --skill "$SKILL"
+PLAN_ID=$(loom --json --root "$ROOT" plan use "$SKILL" --agents codex --workspace "$PWD" | jq -r '.data.plan_id')
+loom --json --root "$ROOT" apply "$PLAN_ID" --idempotency-key "$REQUEST_ID"
 loom --json --root "$ROOT" sync push --dry-run
 
 # 4) 同步

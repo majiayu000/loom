@@ -12,6 +12,7 @@ mod skill_cmds;
 mod skill_diagnose;
 #[cfg(test)]
 mod skill_diagnose_tests;
+mod skill_lint;
 mod skill_verify;
 mod sync_cmds;
 mod target_cmds;
@@ -35,6 +36,7 @@ use crate::types::ErrorCode;
 
 pub(crate) use event_store::redact_sensitive_string;
 pub use projections::collect_skill_inventory;
+pub(crate) use skill_lint::{SkillLintMode, SkillLintReport, lint_skill_source};
 
 use event_store::{
     append_command_audit_failure, append_command_finished, append_command_started,
@@ -214,6 +216,7 @@ impl App {
                     command: SkillTrashCommand::Purge(args),
                 } => self.cmd_skill_trash_purge(args, &request_id),
                 SkillCommand::Verify(args) => self.cmd_verify(args),
+                SkillCommand::Lint(args) => self.cmd_skill_lint(args),
                 SkillCommand::Diagnose(args) => self.cmd_skill_diagnose(args),
                 SkillCommand::Orphan {
                     command: SkillOrphanCommand::List,
@@ -349,6 +352,7 @@ fn command_records_audit(command: &Command) -> bool {
             | Command::Backup { .. }
             | Command::Skill {
                 command: SkillCommand::History(_)
+                    | SkillCommand::Lint(_)
                     | SkillCommand::Diagnose(_)
                     | SkillCommand::Trash {
                         command: SkillTrashCommand::List,
@@ -396,6 +400,7 @@ fn command_requires_durable_audit(command: &Command) -> bool {
             SkillCommand::Rollback(args) => !args.dry_run,
             SkillCommand::Diff(_)
             | SkillCommand::History(_)
+            | SkillCommand::Lint(_)
             | SkillCommand::Verify(_)
             | SkillCommand::Diagnose(_)
             | SkillCommand::Trash {

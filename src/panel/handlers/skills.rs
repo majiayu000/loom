@@ -6,7 +6,7 @@ use axum::{Json, extract::Path as AxumPath, extract::State, http::StatusCode};
 use serde_json::json;
 
 use crate::cli::SkillOnlyArgs;
-use crate::commands::App;
+use crate::commands::{App, SkillLintMode, lint_skill_source};
 use crate::envelope::Envelope;
 use crate::gitops;
 use crate::state_model::{RegistrySnapshot, RegistryStatePaths};
@@ -154,63 +154,27 @@ fn add_source_skill_rows(
         let row = skill_row(rows, &skill_id);
         row.sources.insert("source");
         row.source_path = Some(path.clone());
-        let skill_file = path.join("SKILL.md");
-        row.source_status = Some(if path.is_dir() && skill_file.is_file() {
-            match read_skill_description(&skill_file) {
-                Ok(description) => {
-                    row.description = description;
-                }
-                Err(err) => warnings.push(format!(
-                    "failed to read skill description from {}: {err}",
-                    skill_file.display()
-                )),
-            }
+        let lint = lint_skill_source(&path, &skill_id, SkillLintMode::Compat);
+        row.source_status = Some(if path.is_dir() && lint.entrypoint.file_name.is_some() {
+            row.description = lint.description().map(str::to_string);
             "present"
         } else {
             "non-compliant"
         });
+        warnings.extend(
+            lint.findings
+                .iter()
+                .filter(|finding| finding.id == "frontmatter_yaml_invalid")
+                .map(|finding| {
+                    format!(
+                        "failed to read skill description from {}: {}",
+                        path.display(),
+                        finding.message
+                    )
+                }),
+        );
     }
     Ok(())
-}
-
-fn read_skill_description(skill_file: &Path) -> anyhow::Result<Option<String>> {
-    let raw = fs::read_to_string(skill_file)?;
-    let Some(rest) = raw.strip_prefix("---") else {
-        return Ok(None);
-    };
-    let rest = rest
-        .strip_prefix("\r\n")
-        .or_else(|| rest.strip_prefix('\n'))
-        .unwrap_or(rest);
-
-    for line in rest.lines() {
-        let trimmed = line.trim();
-        if trimmed == "---" {
-            break;
-        }
-        let Some(value) = trimmed.strip_prefix("description:") else {
-            continue;
-        };
-        let description = normalize_description(value.trim());
-        if !description.is_empty() {
-            return Ok(Some(description));
-        }
-    }
-
-    Ok(None)
-}
-
-fn normalize_description(value: &str) -> String {
-    let unquoted = value
-        .strip_prefix('"')
-        .and_then(|inner| inner.strip_suffix('"'))
-        .or_else(|| {
-            value
-                .strip_prefix('\'')
-                .and_then(|inner| inner.strip_suffix('\''))
-        })
-        .unwrap_or(value);
-    unquoted.trim().to_string()
 }
 
 fn add_registry_skill_rows(snapshot: &RegistrySnapshot, rows: &mut BTreeMap<String, SkillReadRow>) {
@@ -354,9 +318,6 @@ fn add_observed_target_inventory_rows(
                 Some(source) => source,
                 None => continue,
             };
-            if !panel_skill_entrypoint_exists(&source) {
-                continue;
-            }
             let Some(skill_id) = entry.file_name().to_str().map(str::to_string) else {
                 warnings.push(format!(
                     "observed target {} contains non-utf8 skill entry {}",
@@ -365,6 +326,10 @@ fn add_observed_target_inventory_rows(
                 ));
                 continue;
             };
+            let lint = lint_skill_source(&source, &skill_id, SkillLintMode::Compat);
+            if !lint.compatible {
+                continue;
+            }
             let row = skill_row(rows, &skill_id);
             row.sources.insert("observed");
             row.observed_imported = true;
@@ -386,10 +351,6 @@ fn observed_inventory_source(source_path: &Path) -> Option<PathBuf> {
         return None;
     }
     fs::canonicalize(source_path).ok()
-}
-
-fn panel_skill_entrypoint_exists(path: &Path) -> bool {
-    path.join("SKILL.md").is_file() || path.join("skill.md").is_file()
 }
 
 fn add_skill_tags(

@@ -181,6 +181,7 @@ The chain `add → capture → save → snapshot → release → rollback` is th
 | `loom skill release` | Tag the skill at a semantic version | You're publishing a stable revision teammates can pull (`v1.2.0`) | Source (semver tag) |
 | `loom skill rollback` | Reset the source to an earlier revision (with `recovery_ref`) | A capture or save introduced bad state — undo it without losing the recovery point | Source (history) |
 | `loom skill diff` | Compare two revisions of a skill source | Inspect what changed between any two refs (commit, snapshot, release tag) | Source (read-only) |
+| `loom skill lint` | Check portable Agent Skills metadata compliance | Validate `SKILL.md`, YAML frontmatter, portable name, and description before projection | Source (read-only) |
 | `loom skill verify` | Detect uncommitted drift in a skill source | Confirm `skills/<name>` matches the committed source tree; flag external edits that bypassed `save` | Source (read-only) |
 | `loom skill diagnose` | Run a read-only health report for one skill | Explain missing source, broken bindings/targets/projections, source drift, pending queue issues, and recent failures | Source + registry metadata (read-only) |
 
@@ -265,6 +266,7 @@ loom skill trash add <skill> [--dry-run]
 loom skill trash list
 loom skill trash restore <skill> [--trash-id <id>]
 loom skill trash purge <trash-id> [--dry-run]
+loom skill lint <skill> [--strict | --compat | --fix]
 loom skill verify <skill>
 loom skill diagnose <skill>
 loom skill watch [<skill>] [--debounce-ms <ms>] [--max-batch <n>] [--dry-run] [--once]

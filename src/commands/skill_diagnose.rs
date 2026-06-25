@@ -1,6 +1,6 @@
 use std::collections::BTreeSet;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use serde_json::{Value, json};
 
@@ -15,7 +15,7 @@ use super::history_cmds::operation_mentions_skill as registry_operation_mentions
 use super::skill_verify::{
     drifted_paths_under, head_tree_oid_for_path, last_commit_for_path, last_saved_commit_for_skill,
 };
-use super::{App, CommandFailure};
+use super::{App, CommandFailure, SkillLintMode, SkillLintReport, lint_skill_source};
 
 const MAX_DRIFTED_PATHS: usize = 100;
 const MAX_RELATED_OPS: usize = 10;
@@ -54,8 +54,16 @@ fn build_skill_diagnosis(
     let mut projections = Vec::new();
     let mut recent_ops = Vec::new();
     let mut pending_ops = Vec::new();
+    let lint_report = lint_skill_source(&source_path, skill, SkillLintMode::Compat);
 
-    add_source_checks(ctx, skill, &source_path, source_exists, &mut checks);
+    add_source_checks(
+        ctx,
+        skill,
+        &source_path,
+        source_exists,
+        &lint_report,
+        &mut checks,
+    );
     add_git_checks(ctx, skill, source_exists, &mut checks);
 
     if let Some(snapshot) = snapshot {
@@ -240,8 +248,8 @@ fn build_skill_diagnosis(
             "related": {
                 "source": {
                     "path": source_path.display().to_string(),
-                    "entrypoint": skill_entrypoint(&source_path).map(|p| p.display().to_string()),
-                    "description": skill_description(&source_path).ok().flatten()
+                    "entrypoint": lint_report.entrypoint_path(),
+                    "description": lint_report.description()
                 },
                 "bindings": bindings,
                 "rules": rules,
@@ -260,6 +268,7 @@ fn add_source_checks(
     skill: &str,
     source_path: &Path,
     source_exists: bool,
+    lint_report: &SkillLintReport,
     checks: &mut Vec<Value>,
 ) {
     checks.push(check(
@@ -275,7 +284,7 @@ fn add_source_checks(
         "restore the source skill, re-add it, or clean orphaned references",
         json!({"path": source_path.display().to_string()}),
     ));
-    let entrypoint = skill_entrypoint(source_path);
+    let entrypoint = lint_report.entrypoint.file_name.as_deref();
     checks.push(check(
         "source",
         "skill_file_exists",
@@ -289,10 +298,10 @@ fn add_source_checks(
         &format!("add skills/{skill}/SKILL.md or remove the non-compliant source"),
         json!({
             "accepted": ["SKILL.md", "skill.md"],
-            "found": entrypoint.map(|p| p.file_name().unwrap_or_default().to_string_lossy().to_string())
+            "found": entrypoint
         }),
     ));
-    let description = skill_description(source_path).ok().flatten();
+    let description = lint_report.description();
     checks.push(check(
         "source",
         "skill_frontmatter_description",
@@ -306,6 +315,17 @@ fn add_source_checks(
         &format!("add description frontmatter to skills/{skill}/SKILL.md"),
         json!({"root": ctx.root.display().to_string()}),
     ));
+    for finding in &lint_report.findings {
+        checks.push(check(
+            "source",
+            &format!("skill_lint:{}", finding.id),
+            false,
+            &finding.severity,
+            &finding.message,
+            &finding.suggested_action,
+            finding.details.clone(),
+        ));
+    }
 }
 
 fn add_git_checks(ctx: &AppContext, skill: &str, source_exists: bool, checks: &mut Vec<Value>) {
@@ -645,39 +665,6 @@ fn skill_is_referenced(snapshot: &RegistrySnapshot, skill: &str) -> bool {
             .operations
             .iter()
             .any(|op| registry_operation_mentions_skill(op, skill))
-}
-
-fn skill_entrypoint(path: &Path) -> Option<PathBuf> {
-    for name in ["SKILL.md", "skill.md"] {
-        let candidate = path.join(name);
-        if candidate.is_file() {
-            return Some(candidate);
-        }
-    }
-    None
-}
-
-fn skill_description(path: &Path) -> anyhow::Result<Option<String>> {
-    let Some(entrypoint) = skill_entrypoint(path) else {
-        return Ok(None);
-    };
-    let raw = fs::read_to_string(entrypoint)?;
-    let Some(rest) = raw.strip_prefix("---") else {
-        return Ok(None);
-    };
-    for line in rest.lines().skip(1) {
-        let trimmed = line.trim();
-        if trimmed == "---" {
-            break;
-        }
-        if let Some(value) = trimmed.strip_prefix("description:") {
-            let value = value.trim().trim_matches('"').trim_matches('\'').trim();
-            if !value.is_empty() {
-                return Ok(Some(value.to_string()));
-            }
-        }
-    }
-    Ok(None)
 }
 
 fn value_mentions_skill(value: &Value, skill: &str) -> bool {

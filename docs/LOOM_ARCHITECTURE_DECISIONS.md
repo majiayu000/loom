@@ -1,6 +1,6 @@
 # Loom Registry Architecture Decisions
 
-Updated: 2026-04-27
+Updated: 2026-06-26
 Status: Accepted for phase 1
 
 This document closes the current design-debt split from issue #6. It freezes the phase-1 boundaries for operation history, registry vocabulary rules, projection removal, panel mutations, and environment-based discovery.
@@ -230,6 +230,29 @@ Rejected because: adding a required decision to every binding removal creates fr
 
 `GET /api/v1/projections?health=orphaned` returns orphaned projection records so the panel can surface an orphaned-count badge and a "Clean up" action on the Bindings page.
 
+## 7. Provider Boundary
+
+Decision: provider integrations discover and resolve upstream skill content, but
+do not own Loom registry state, `loom.lock`, policy, plan/apply, projection,
+audit, rollback, or eval semantics.
+
+Rules:
+
+1. GitHub and `gh skill` are upstream providers, not Loom's local control plane.
+2. `gh skill` may be used only after runtime version/help probing because the
+   GitHub CLI marks the surface as preview.
+3. Direct Git remains the fallback for GitHub repositories when `gh` is missing
+   or preview behavior changes.
+4. Provider output must be captured as deterministic provenance in
+   `state/registry/sources.json` and `loom.lock` before any local policy,
+   plan/apply, projection, rollback, or eval decision uses it.
+5. Loom must not call `gh skill install` or `gh skill update` for managed
+   projections because those commands write directly into host skill
+   directories outside Loom's binding and audit model.
+
+The full provider contract is in
+[SKILL_PROVIDER_BOUNDARY.md](SKILL_PROVIDER_BOUNDARY.md).
+
 ## Issue Mapping
 
 - #38 is closed by section 1.
@@ -237,3 +260,4 @@ Rejected because: adding a required decision to every binding removal creates fr
 - #40 is closed by sections 3 and 6.
 - #41 is closed by section 4.
 - #42 is closed by section 5.
+- #347 is closed by section 7.

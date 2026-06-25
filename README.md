@@ -33,6 +33,8 @@ AI coding agents (Claude Code, Codex, Cursor, Windsurf, …) all read skills fro
 
 **Loom treats skills like infrastructure**: a Git-backed registry (add → capture → save → snapshot → release → rollback → diff), projected onto one or many agent directories through explicit bindings (agent + profile + matcher + policy), with sync, replay, and audit trail. CLI-first for automation, Panel-assisted for visibility.
 
+Loom can import from local directories, Git URLs, and GitHub locators, but it is not a marketplace or a wrapper around `gh skill install`. Provider boundaries are documented in [Skill Provider Boundary](docs/SKILL_PROVIDER_BOUNDARY.md): upstream tools find, preview, or publish skills; Loom owns local lockfile, policy, projection, audit, rollback, and eval.
+
 ## Quick Start
 
 ```bash
@@ -387,7 +389,7 @@ and fails the commit if rustfmt would make changes. Disable with
 - Per-agent environment overrides beyond the default paths listed in [Supported Agents](docs/SUPPORTED_AGENTS.md).
 - Convert observed agent directories to managed projection targets from the Panel once users opt in.
 - Desktop packaging (Tauri) for users who prefer a GUI
-- Skill marketplace integration (upstream catalogs such as `agent-skills`)
+- Optional upstream provider integrations for discovery and preview, while keeping Loom as the local control plane
 
 ## Community
 

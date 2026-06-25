@@ -42,7 +42,10 @@ operator layer:
 4. No guessing a single Claude, Codex, or other agent directory as execution
    identity.
 5. No decorative Panel metrics or synthetic lifecycle events.
-6. No marketplace/catalog scope in V1 beyond import from local path or Git URL.
+6. No marketplace/catalog scope in V1 beyond importing provider-resolved
+   content into the local registry. GitHub and `gh skill` are upstream
+   providers; Loom remains the local control plane. See
+   [SKILL_PROVIDER_BOUNDARY.md](SKILL_PROVIDER_BOUNDARY.md).
 
 ## 4. Core Concepts
 

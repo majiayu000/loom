@@ -182,7 +182,7 @@ fn durable_plan_apply_replays_redacted_idempotency_key_by_digest() {
         "redacted key replay should pass: {replay_env}"
     );
     assert_eq!(replay_env["data"]["idempotent_replay"], json!(true));
-    assert_eq!(replay_env["data"]["idempotency_key"], json!("<redacted>"));
+    assert!(replay_env["data"]["idempotency_key"].is_null());
 
     let second_plan = plan_use(&root, &workspace, "pdf-helper");
     let (output, conflict_env) = run_loom(

@@ -80,7 +80,6 @@ impl App {
                 "protocol_version": PLAN_PROTOCOL_VERSION,
                 "schema_version": PLAN_SCHEMA_VERSION,
                 "plan_id": args.plan_id,
-                "idempotency_key": args.idempotency_key,
                 "idempotency_key_digest": idempotency_key_digest,
                 "idempotent_replay": false,
                 "plan_event_cursor": stored.cursor,

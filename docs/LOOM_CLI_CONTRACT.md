@@ -631,7 +631,7 @@ Rules:
 
 1. `plan use` validates the skill exists, records the current registry `HEAD`, records the current skill source digest, freezes resolved workspace and target-root paths, lists effects/conflicts/risks, and returns a `plan_id`
 2. `apply` loads the plan from command-audit events and validates current `--root`, registry `HEAD`, skill source digest, required approvals, and idempotency key before mutation
-3. `apply` is safe to retry with the same `--idempotency-key`; a successful prior apply for the same plan/key digest returns the recorded result with `idempotent_replay=true`
+3. `apply` is safe to retry with the same `--idempotency-key`; successful responses include `idempotency_key_digest`, not the raw key, and a successful prior apply for the same plan/key digest returns the recorded result with `idempotent_replay=true`
 4. reusing an idempotency key for a different plan returns `DEPENDENCY_CONFLICT` with `conflict.code=IDEMPOTENCY_KEY_REUSED`
 5. missing approval tokens return `POLICY_BLOCKED` with `conflict.code=APPROVAL_REQUIRED`, `retryable=true`, `event_cursor`, and suggested `--approve` actions
 6. stale plans return `DEPENDENCY_CONFLICT` with a typed conflict such as `PLAN_STALE`, `PLAN_SOURCE_DRIFT`, or `PLAN_ROOT_MISMATCH`

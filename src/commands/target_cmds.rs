@@ -5,6 +5,7 @@ use anyhow::Context;
 use chrono::Utc;
 use serde_json::json;
 
+use crate::agent_adapters::{SOURCE_BUILT_IN, decorate_target_for_output, load_agent_adapters};
 use crate::cli::{TargetAddArgs, TargetCommand, TargetOwnership, TargetShowArgs};
 use crate::envelope::Meta;
 use crate::state_model::RegistryProjectionTarget;
@@ -12,7 +13,7 @@ use crate::types::ErrorCode;
 
 use super::helpers::{
     agent_kind_as_str, commit_registry_state, map_io, map_lock, map_registry_state,
-    target_capabilities, target_ownership_as_str, unique_target_id,
+    target_capabilities, target_ownership_as_str, unique_target_id_for_agent,
 };
 use super::projections::{maybe_autosync_or_queue, record_registry_operation};
 use super::{App, CommandFailure};
@@ -28,16 +29,18 @@ impl App {
             TargetCommand::List => Ok((
                 {
                     let snapshot = self.require_registry_snapshot()?;
+                    let adapters = load_agent_adapters(&self.ctx)?;
                     json!({
                         "state_model": "registry",
                         "count": snapshot.targets.targets.len(),
-                        "targets": snapshot.targets.targets
+                        "targets": snapshot.targets.targets.iter().map(|target| decorate_target_for_output(target, &adapters)).collect::<Vec<_>>()
                     })
                 },
                 Meta::default(),
             )),
             TargetCommand::Show(args) => {
                 let snapshot = self.require_registry_snapshot()?;
+                let adapters = load_agent_adapters(&self.ctx)?;
                 let target = snapshot.target(&args.target_id).ok_or_else(|| {
                     CommandFailure::new(
                         ErrorCode::TargetNotFound,
@@ -49,7 +52,7 @@ impl App {
                 Ok((
                     json!({
                         "state_model": "registry",
-                        "target": target,
+                        "target": decorate_target_for_output(target, &adapters),
                         "bindings": relations.bindings,
                         "rules": relations.rules,
                         "projections": relations.projections
@@ -66,9 +69,26 @@ impl App {
         args: &TargetAddArgs,
         request_id: &str,
     ) -> std::result::Result<(serde_json::Value, Meta), CommandFailure> {
+        self.cmd_target_add_raw(
+            agent_kind_as_str(args.agent),
+            &args.path,
+            args.ownership,
+            SOURCE_BUILT_IN,
+            request_id,
+        )
+    }
+
+    pub(crate) fn cmd_target_add_raw(
+        &self,
+        agent: &str,
+        path: &str,
+        ownership: TargetOwnership,
+        agent_source: &str,
+        request_id: &str,
+    ) -> std::result::Result<(serde_json::Value, Meta), CommandFailure> {
         let _workspace = self.ctx.lock_workspace().map_err(map_lock)?;
         self.ensure_write_repo_ready()?;
-        let target_path = PathBuf::from(&args.path);
+        let target_path = PathBuf::from(path);
         if !target_path.is_absolute() {
             return Err(CommandFailure::new(
                 ErrorCode::ArgInvalid,
@@ -76,7 +96,7 @@ impl App {
             ));
         }
 
-        match args.ownership {
+        match ownership {
             TargetOwnership::Managed => fs::create_dir_all(&target_path).map_err(map_io)?,
             TargetOwnership::Observed | TargetOwnership::External => {
                 if !target_path.exists() {
@@ -85,7 +105,7 @@ impl App {
                         format!(
                             "target path '{}' must exist for ownership '{}'",
                             target_path.display(),
-                            target_ownership_as_str(args.ownership)
+                            target_ownership_as_str(ownership)
                         ),
                     ));
                 }
@@ -110,12 +130,11 @@ impl App {
             .targets
             .iter()
             .find(|target| {
-                target.agent == agent_kind_as_str(args.agent)
-                    && target_path_matches(&target.path, &normalized_target_path)
+                target.agent == agent && target_path_matches(&target.path, &normalized_target_path)
             })
             .cloned()
         {
-            if existing.ownership != target_ownership_as_str(args.ownership) {
+            if existing.ownership != target_ownership_as_str(ownership) {
                 return Err(CommandFailure::new(
                     ErrorCode::ArgInvalid,
                     format!(
@@ -124,18 +143,20 @@ impl App {
                     ),
                 ));
             }
-            return Ok((json!({"target": existing, "noop": true}), Meta::default()));
+            let adapters = load_agent_adapters(&self.ctx)?;
+            return Ok((
+                json!({"target": decorate_target_for_output(&existing, &adapters), "noop": true}),
+                Meta::default(),
+            ));
         }
 
-        let mut target_args = args.clone();
-        target_args.path.clone_from(&normalized_path);
-        let target_id = unique_target_id(&targets, &target_args);
+        let target_id = unique_target_id_for_agent(agent, &normalized_path, &targets);
         let target = RegistryProjectionTarget {
             target_id: target_id.clone(),
-            agent: agent_kind_as_str(args.agent).to_string(),
+            agent: agent.to_string(),
             path: normalized_path,
-            ownership: target_ownership_as_str(args.ownership).to_string(),
-            capabilities: target_capabilities(args.ownership),
+            ownership: target_ownership_as_str(ownership).to_string(),
+            capabilities: target_capabilities(ownership),
             created_at: Some(Utc::now()),
         };
 
@@ -151,6 +172,7 @@ impl App {
             json!({
                 "target_id": target.target_id,
                 "agent": target.agent,
+                "agent_source": agent_source,
                 "path": target.path,
                 "ownership": target.ownership,
                 "request_id": request_id
@@ -187,9 +209,20 @@ impl App {
                 &mut meta,
             )?;
         }
+        let mut target_value = serde_json::to_value(&target).map_err(|err| {
+            CommandFailure::new(
+                ErrorCode::InternalError,
+                format!("failed to serialize target '{}': {err}", target.target_id),
+            )
+        })?;
+        target_value["agent_source"] = json!(agent_source);
 
         Ok((
-            json!({"target": target, "commit": commit, "noop": false}),
+            json!({
+                "target": target_value,
+                "commit": commit,
+                "noop": false
+            }),
             meta,
         ))
     }

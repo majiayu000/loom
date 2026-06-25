@@ -58,6 +58,10 @@ fn workspace_status_reports_registry_snapshot_when_present() {
         env["data"]["registry"]["bindings"][0]["binding_id"],
         Value::String("bind_claude_project_a".to_string())
     );
+    assert_eq!(
+        env["data"]["registry"]["targets"][0]["agent_source"],
+        Value::String("built-in".to_string())
+    );
 }
 
 #[test]
@@ -323,6 +327,10 @@ fn target_list_returns_targets_from_registry_state() {
         env["data"]["targets"][0]["target_id"],
         Value::String("target_claude_project_a".to_string())
     );
+    assert_eq!(
+        env["data"]["targets"][0]["agent_source"],
+        Value::String("built-in".to_string())
+    );
 }
 
 #[test]
@@ -342,6 +350,10 @@ fn target_show_returns_related_bindings_rules_and_projections() {
     assert_eq!(
         env["data"]["target"]["target_id"],
         Value::String("target_claude_project_a".to_string())
+    );
+    assert_eq!(
+        env["data"]["target"]["agent_source"],
+        Value::String("built-in".to_string())
     );
     assert_eq!(env["data"]["bindings"].as_array().map(Vec::len), Some(1));
     assert_eq!(env["data"]["rules"].as_array().map(Vec::len), Some(1));

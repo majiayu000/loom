@@ -19,9 +19,9 @@ skill directory that `loom workspace init --scan-existing` and the
 | `GeminiCli` | `gemini-cli` | `$HOME/.gemini/skills` |
 | `Goose` | `goose` | `$HOME/.config/goose/skills` |
 
-The canonical source of truth is `src/cli.rs` (the `AgentKind` enum) plus
-`src/commands/workspace_cmds/shared.rs` (`DEFAULT_SCAN_AGENTS`,
-`default_skill_dir`).
+The built-in source of truth is `src/cli.rs` (the `AgentKind` enum) plus
+`src/agent_adapters.rs`. External adapters use the protocol in
+`docs/AGENT_ADAPTERS.md`.
 
 ## How `--scan-existing` uses this list
 
@@ -70,8 +70,7 @@ Adding a new built-in agent kind is a coordinated change:
 
 1. Add the variant to `AgentKind` in `src/cli.rs`, including the kebab-case
    serde rename so it round-trips through the JSON envelope.
-2. Add the variant to `DEFAULT_SCAN_AGENTS` and a matching arm in
-   `default_skill_dir` in `src/commands/workspace_cmds/shared.rs`.
+2. Add the built-in adapter metadata in `src/agent_adapters.rs`.
 3. Extend `agent_kind_as_str` in `src/commands/helpers.rs`.
 4. Update this document and the `Quick Start` block of `README.md`.
 5. Cover the new variant in `tests/cli.rs` (serde round-trip) and add a

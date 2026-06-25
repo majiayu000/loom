@@ -3,7 +3,6 @@ mod doctor;
 mod init;
 mod orphan;
 mod remote;
-mod shared;
 mod status;
 
 #[cfg(test)]

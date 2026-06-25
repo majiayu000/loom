@@ -46,6 +46,7 @@ export interface SkillViewModel {
 export interface TargetViewModel {
   id: string;
   agent: FieldViewModel;
+  agentSource: FieldViewModel;
   profile: FieldViewModel;
   path: FieldViewModel;
   ownership: FieldViewModel;
@@ -463,6 +464,7 @@ export function selectTargetViewModel(target: Target): TargetViewModel {
   return {
     id: target.id,
     agent: textField(target.agent, "target agent is unavailable"),
+    agentSource: textField(target.agentSource ?? "unknown", "target agent source is unavailable"),
     profile: textField(target.profile, "target profile is unavailable"),
     path: textField(target.path, "target path is unavailable"),
     ownership: enumField(target.ownership, KNOWN_OWNERSHIP, "target ownership is unavailable"),

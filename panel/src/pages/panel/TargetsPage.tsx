@@ -163,6 +163,9 @@ export function TargetsPage({
                       <span className="dot" />
                       {t.ownership}
                     </span>
+                    <span className="chip" title="agent adapter source">
+                      {t.agentSource ?? "unknown"}
+                    </span>
                   </div>
                   <div
                     style={{
@@ -202,6 +205,9 @@ export function TargetsPage({
               <span className={`chip ${sel.ownership}`} title={OWNERSHIP_TOOLTIP[sel.ownership]}>
                 <span className="dot" />
                 {sel.ownership}
+              </span>
+              <span className="chip" title="agent adapter source">
+                {sel.agentSource ?? "unknown"}
               </span>
             </div>
             <div className="card-body">

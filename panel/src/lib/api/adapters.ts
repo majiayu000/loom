@@ -72,6 +72,7 @@ export function adaptTarget(
   index: AdapterIndex,
   observedSkillCounts: Map<string, number> = new Map(),
 ): Target {
+  const targetWithSource = t as RegistryTarget & { agent_source?: string };
   const projections = index.projectionsByTarget.get(t.target_id) ?? [];
   const skillsOnTarget = new Set(projections.map((p) => p.skill_id));
   const projectedSkills = skillsOnTarget.size;
@@ -79,6 +80,7 @@ export function adaptTarget(
   return {
     id: t.target_id,
     agent: toAgentSlug(t.agent),
+    agentSource: targetWithSource.agent_source ?? "unknown",
     profile: profileFromPath(t.path),
     path: shortPath(t.path),
     ownership: toOwnership(t.ownership),

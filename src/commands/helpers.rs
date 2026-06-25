@@ -6,7 +6,7 @@ use uuid::Uuid;
 use crate::cli::{
     AgentCommand, AgentKind, BindingAddArgs, Command, OpsCommand, OpsHistoryCommand, PlanCommand,
     ProjectionMethod, SkillCommand, SkillOrphanCommand, SkillTrashCommand, SyncCommand,
-    TargetAddArgs, TargetCommand, WorkspaceBindingCommand, WorkspaceCommand, WorkspaceMatcherKind,
+    TargetCommand, WorkspaceBindingCommand, WorkspaceCommand, WorkspaceMatcherKind,
 };
 use crate::state::AppContext;
 use crate::state_model::{
@@ -320,13 +320,13 @@ pub(crate) fn commit_registry_state(
 // ID generation
 // ---------------------------------------------------------------------------
 
-pub(crate) fn unique_target_id(targets: &RegistryTargetsFile, args: &TargetAddArgs) -> String {
-    unique_target_id_for(args.agent, &args.path, targets)
-}
-
-fn unique_target_id_for(agent: AgentKind, path: &str, targets: &RegistryTargetsFile) -> String {
+pub(crate) fn unique_target_id_for_agent(
+    agent: &str,
+    path: &str,
+    targets: &RegistryTargetsFile,
+) -> String {
     let token = target_path_token(path, agent);
-    let base = format!("target_{}_{}", agent_kind_as_str(agent), slugify(&token));
+    let base = format!("target_{}_{}", slugify(agent), slugify(&token));
     unique_id(
         &base,
         targets
@@ -337,13 +337,13 @@ fn unique_target_id_for(agent: AgentKind, path: &str, targets: &RegistryTargetsF
     )
 }
 
-pub(crate) fn target_path_token(path: &str, agent: AgentKind) -> String {
+pub(crate) fn target_path_token(path: &str, agent: &str) -> String {
     let route = Path::new(path);
     let leaf = route
         .file_name()
         .and_then(|value| value.to_str())
         .filter(|value| !value.is_empty())
-        .unwrap_or(agent_kind_as_str(agent));
+        .unwrap_or(agent);
 
     // Names like ".../skills" are too generic. Include the parent to keep ids readable:
     // ".claude/skills" => "claude_skills", ".claude-work/skills" => "claude-work_skills".

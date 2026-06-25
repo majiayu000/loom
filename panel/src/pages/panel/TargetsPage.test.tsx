@@ -77,6 +77,23 @@ describe("TargetsPage — ownership tier tooltip", () => {
     expect(byOwnership.get("external")).toMatch(/hands-off/);
   });
 
+  it("shows the agent adapter source for each target", () => {
+    render(
+      <TargetsPage
+        targets={[{ ...makeTarget("target-external-agent", "observed"), agent: "fixture-agent", agentSource: "external" }]}
+        skills={[]}
+        selectedTarget="target-external-agent"
+        onSelectTarget={() => {}}
+        onRemoveTarget={() => {}}
+        onMutation={() => {}}
+        readOnly={false}
+        mutationVersion={0}
+      />,
+    );
+
+    expect(screen.getAllByText("external").length).toBeGreaterThan(0);
+  });
+
   it("surfaces explicit import for observed targets when no managed skills exist", async () => {
     const importObserved = vi.spyOn(api, "skillImportObserved").mockResolvedValue({
       ok: true,

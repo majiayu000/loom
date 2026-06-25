@@ -319,35 +319,167 @@ fn parse_skill_frontmatter(entrypoint: &Path) -> Result<SkillLintFrontmatter, St
         return Err("frontmatter is missing a closing --- marker".to_string());
     }
 
-    let value: yaml_serde::Value = yaml_serde::from_str(&yaml).map_err(|err| err.to_string())?;
-    let Some(mapping) = value.as_mapping() else {
-        return Err("frontmatter must be a YAML mapping".to_string());
-    };
+    let metadata = parse_frontmatter_metadata(&yaml)?;
 
     Ok(SkillLintFrontmatter {
         present: true,
         parsed: true,
-        name: yaml_string(mapping, "name")?,
-        description: yaml_string(mapping, "description")?,
+        name: metadata.name,
+        description: metadata.description,
     })
 }
 
-fn yaml_string(mapping: &yaml_serde::Mapping, key: &str) -> Result<Option<String>, String> {
-    let yaml_key = yaml_serde::Value::String(key.to_string());
-    let Some(value) = mapping.get(&yaml_key) else {
-        return Ok(None);
-    };
-    match value {
-        yaml_serde::Value::String(raw) => {
-            let trimmed = raw.trim();
-            if trimmed.is_empty() {
-                Ok(None)
-            } else {
-                Ok(Some(trimmed.to_string()))
-            }
+#[derive(Default)]
+struct FrontmatterMetadata {
+    name: Option<String>,
+    description: Option<String>,
+}
+
+fn parse_frontmatter_metadata(raw: &str) -> Result<FrontmatterMetadata, String> {
+    let mut metadata = FrontmatterMetadata::default();
+
+    for (index, line) in raw.lines().enumerate() {
+        let line_no = index + 1;
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
         }
-        _ => Err(format!("frontmatter field '{key}' must be a string")),
+        if line.chars().next().is_some_and(char::is_whitespace) {
+            return Err(format!(
+                "frontmatter line {line_no} uses nested or continued YAML; use top-level string fields"
+            ));
+        }
+
+        let Some((key, value)) = trimmed.split_once(':') else {
+            return Err(format!(
+                "frontmatter line {line_no} is not a key/value mapping entry"
+            ));
+        };
+        let key = key.trim();
+        validate_frontmatter_key(key, line_no)?;
+
+        let parsed = parse_frontmatter_string(value.trim(), key, line_no)?;
+        match key {
+            "name" => metadata.name = parsed,
+            "description" => metadata.description = parsed,
+            _ => {}
+        }
     }
+
+    Ok(metadata)
+}
+
+fn validate_frontmatter_key(key: &str, line_no: usize) -> Result<(), String> {
+    if key.is_empty() {
+        return Err(format!("frontmatter line {line_no} has an empty key"));
+    }
+    if !key
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '-')
+    {
+        return Err(format!("frontmatter line {line_no} has an unsupported key"));
+    }
+    Ok(())
+}
+
+fn parse_frontmatter_string(
+    raw: &str,
+    key: &str,
+    line_no: usize,
+) -> Result<Option<String>, String> {
+    let raw = raw.trim();
+    let value = if raw.starts_with('"') || raw.starts_with('\'') {
+        raw
+    } else {
+        strip_plain_comment(raw).trim()
+    };
+    if value.is_empty() {
+        return Ok(None);
+    }
+    if value.starts_with('[')
+        || value.starts_with('{')
+        || value.starts_with('|')
+        || value.starts_with('>')
+    {
+        return Err(format!(
+            "frontmatter field '{key}' on line {line_no} must be a string scalar"
+        ));
+    }
+
+    let parsed = if value.starts_with('"') {
+        parse_double_quoted_scalar(value, key, line_no)?
+    } else if value.starts_with('\'') {
+        parse_single_quoted_scalar(value, key, line_no)?
+    } else {
+        value.to_string()
+    };
+
+    let trimmed = parsed.trim();
+    if trimmed.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(trimmed.to_string()))
+    }
+}
+
+fn strip_plain_comment(raw: &str) -> &str {
+    let mut previous_was_space = true;
+    for (index, ch) in raw.char_indices() {
+        if ch == '#' && previous_was_space {
+            return raw[..index].trim_end();
+        }
+        previous_was_space = ch.is_whitespace();
+    }
+    raw
+}
+
+fn parse_single_quoted_scalar(value: &str, key: &str, line_no: usize) -> Result<String, String> {
+    if !value.ends_with('\'') || value.len() < 2 {
+        return Err(format!(
+            "frontmatter field '{key}' on line {line_no} has an unterminated quoted string"
+        ));
+    }
+    Ok(value[1..value.len() - 1].replace("''", "'"))
+}
+
+fn parse_double_quoted_scalar(value: &str, key: &str, line_no: usize) -> Result<String, String> {
+    if !value.ends_with('"') || value.len() < 2 {
+        return Err(format!(
+            "frontmatter field '{key}' on line {line_no} has an unterminated quoted string"
+        ));
+    }
+
+    let mut parsed = String::new();
+    let mut escaped = false;
+    for ch in value[1..value.len() - 1].chars() {
+        if escaped {
+            let translated = match ch {
+                '"' => '"',
+                '\\' => '\\',
+                'n' => '\n',
+                'r' => '\r',
+                't' => '\t',
+                other => {
+                    return Err(format!(
+                        "frontmatter field '{key}' on line {line_no} has unsupported escape '\\{other}'"
+                    ));
+                }
+            };
+            parsed.push(translated);
+            escaped = false;
+        } else if ch == '\\' {
+            escaped = true;
+        } else {
+            parsed.push(ch);
+        }
+    }
+    if escaped {
+        return Err(format!(
+            "frontmatter field '{key}' on line {line_no} ends with an incomplete escape"
+        ));
+    }
+
+    Ok(parsed)
 }
 
 fn validate_frontmatter(

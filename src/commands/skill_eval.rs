@@ -2,8 +2,8 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
+use serde::Deserialize;
 use serde::de::DeserializeOwned;
-use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::cli::SkillEvalArgs;
@@ -14,6 +14,8 @@ use crate::types::ErrorCode;
 use super::helpers::{map_arg, validate_skill_name};
 use super::skill_verify::{head_tree_oid_for_path, last_commit_for_path};
 use super::{App, CommandFailure};
+
+mod output;
 
 const EVAL_SCHEMA_VERSION: u32 = 1;
 
@@ -72,11 +74,11 @@ impl App {
             json!({
                 "schema_version": EVAL_SCHEMA_VERSION,
                 "skill": args.skill,
-                "skill_version": version,
+                "skill_version": version.to_value(),
                 "eval_root": evals_dir.display().to_string(),
                 "matrix": agents,
-                "summary": summary,
-                "runs": runs,
+                "summary": summary.to_value(),
+                "runs": runs.iter().map(EvalRun::to_value).collect::<Vec<_>>(),
                 "security_model": {
                     "eval_success_is_safety_guarantee": false,
                     "note": "Eval success is quality evidence only. It does not prove the skill is safe, sandboxed, or free of prompt-injection risk."
@@ -90,7 +92,7 @@ impl App {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone)]
 struct SkillEvalVersion {
     head_tree_oid: Option<String>,
     last_source_commit: Option<String>,
@@ -134,7 +136,7 @@ struct TaskCase {
     checks: TaskChecks,
 }
 
-#[derive(Debug, Default, Clone, Deserialize, Serialize)]
+#[derive(Debug, Default, Clone, Deserialize)]
 struct TaskMetrics {
     tokens: Option<u64>,
     commands: Option<u64>,
@@ -170,15 +172,14 @@ struct JsonlRecord<T> {
     value: T,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum EvalStatus {
     Passed,
     Failed,
     Skipped,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug)]
 struct EvalRun {
     agent: String,
     model: Option<String>,
@@ -188,7 +189,7 @@ struct EvalRun {
     tasks: Vec<TaskResult>,
 }
 
-#[derive(Debug, Default, Clone, Serialize)]
+#[derive(Debug, Default, Clone)]
 struct EvalSummary {
     case_count: usize,
     passed: usize,
@@ -203,7 +204,7 @@ struct EvalSummary {
     permissions_used: Vec<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug)]
 struct TriggerResult {
     id: String,
     line: usize,
@@ -215,7 +216,7 @@ struct TriggerResult {
     grader: &'static str,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug)]
 struct TaskResult {
     id: String,
     line: usize,
@@ -228,7 +229,7 @@ struct TaskResult {
     checks: Vec<CheckResult>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug)]
 struct CheckResult {
     id: String,
     status: EvalStatus,

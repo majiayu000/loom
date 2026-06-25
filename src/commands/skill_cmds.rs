@@ -39,6 +39,9 @@ use super::projections::{
     restore_registry_audit_state, snapshot_registry_audit_state, update_projection_after_capture,
     upsert_projection, upsert_rule,
 };
+use super::provenance::{
+    provenance_record_for_skill, resolve_add_source, save_record_and_lock, stage_provenance_paths,
+};
 use super::{App, CommandFailure};
 
 mod observed;
@@ -70,8 +73,6 @@ impl App {
             .state_dir
             .join(format!("tmp-add-{}", Uuid::new_v4()));
         let staging_skill = staging_root.join(&args.name);
-        let clone_tmp = staging_root.join("clone");
-
         let cleanup_staging = || {
             let _ = remove_path_if_exists(&staging_root);
         };
@@ -79,44 +80,10 @@ impl App {
         remove_path_if_exists(&staging_root).map_err(map_io)?;
         fs::create_dir_all(&staging_root).map_err(map_io)?;
 
-        if Path::new(&args.source).exists() {
-            if let Err(err) =
-                copy_dir_recursive_without_symlinks(Path::new(&args.source), &staging_skill)
-            {
-                cleanup_staging();
-                return Err(map_io(err));
-            }
-        } else {
-            let source = args.source.as_str();
-            gitops::validate_git_url(source).map_err(|err| {
-                CommandFailure::new(
-                    ErrorCode::ArgInvalid,
-                    format!("invalid git source '{}': {}", source, err),
-                )
-            })?;
-            let clone = gitops::run_git_allow_failure_restricted(
-                &self.ctx,
-                &[
-                    "clone",
-                    "--depth",
-                    "1",
-                    source,
-                    clone_tmp.to_string_lossy().as_ref(),
-                ],
-            )
-            .map_err(map_git)?;
-            if !clone.status.success() {
-                let stderr = String::from_utf8_lossy(&clone.stderr).to_string();
-                cleanup_staging();
-                return Err(CommandFailure::new(
-                    ErrorCode::ArgInvalid,
-                    format!("failed to clone source: {}", stderr.trim()),
-                ));
-            }
-            if let Err(err) = copy_dir_recursive_without_symlinks(&clone_tmp, &staging_skill) {
-                cleanup_staging();
-                return Err(map_io(err));
-            }
+        let source = resolve_add_source(&self.ctx, args, &staging_root)?;
+        if let Err(err) = copy_dir_recursive_without_symlinks(&source.copy_source, &staging_skill) {
+            cleanup_staging();
+            return Err(map_io(err));
         }
 
         if let Err(err) = fs::rename(&staging_skill, &dst) {
@@ -127,9 +94,18 @@ impl App {
 
         let mut meta = Meta::default();
         let skill_rel = format!("skills/{}", args.name);
+        let provenance = provenance_record_for_skill(&args.name, source.descriptor, &dst)?;
+        if let Err(err) = save_record_and_lock(&self.ctx, provenance) {
+            rollback_added_skill(&self.ctx, &skill_rel, &dst);
+            return Err(err);
+        }
         if let Err(err) = gitops::stage_path(&self.ctx, Path::new(&skill_rel)) {
             rollback_added_skill(&self.ctx, &skill_rel, &dst);
             return Err(map_git(err));
+        }
+        if let Err(err) = stage_provenance_paths(&self.ctx) {
+            rollback_added_skill(&self.ctx, &skill_rel, &dst);
+            return Err(err);
         }
         let staged = match gitops::has_staged_changes_for_path(&self.ctx, Path::new(&skill_rel)) {
             Ok(staged) => staged,

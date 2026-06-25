@@ -3,7 +3,9 @@ use std::path::PathBuf;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use serde::Serialize;
 
+mod provenance;
 mod use_flow;
+pub use provenance::{AddArgs, SkillProvenanceCommand};
 pub use use_flow::{UseArgs, UseScope};
 
 #[derive(Debug, Clone, Parser, Serialize)]
@@ -217,6 +219,11 @@ pub enum SkillCommand {
         #[command(subcommand)]
         command: SkillTrashCommand,
     },
+    #[command(about = "Inspect, verify, and refresh skill source provenance")]
+    Provenance {
+        #[command(subcommand)]
+        command: SkillProvenanceCommand,
+    },
     #[command(about = "Verify a skill source has no uncommitted drift")]
     Verify(SkillOnlyArgs),
     #[command(about = "Lint one skill for portable Agent Skills compliance")]
@@ -392,16 +399,6 @@ pub struct HistoryRepairArgs {
 pub enum HistoryRepairStrategyArg {
     Local,
     Remote,
-}
-
-#[derive(Debug, Clone, Args, Serialize)]
-pub struct AddArgs {
-    /// Local skill directory or Git URL to import.
-    pub source: String,
-
-    /// Registry skill name, e.g. rust-review.
-    #[arg(long)]
-    pub name: String,
 }
 
 #[derive(Debug, Clone, Args, Serialize)]

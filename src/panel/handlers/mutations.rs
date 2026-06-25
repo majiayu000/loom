@@ -209,6 +209,8 @@ pub(in crate::panel) async fn registry_skill_add(
             command: crate::cli::SkillCommand::Add(AddArgs {
                 source: req.source,
                 name: req.name,
+                source_ref: None,
+                subdir: None,
             }),
         },
     )

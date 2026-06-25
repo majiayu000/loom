@@ -27,39 +27,13 @@ const HISTORY_COMPACT_AFTER_SEGMENTS: usize = 8;
 const HISTORY_RETAIN_RECENT_SEGMENTS: usize = 4;
 const HISTORY_RETAIN_ARCHIVES: usize = 4;
 
-#[derive(Debug, Clone, Copy)]
-enum GitEnvMode {
-    Normal,
-    Restricted,
-}
-
 fn run_git_raw_in_with_env_and_input(
     repo_dir: &Path,
     envs: &[(&str, &str)],
     input: Option<&[u8]>,
     args: &[&str],
 ) -> Result<Output> {
-    run_git_raw_in_with_env_mode_and_input(repo_dir, envs, input, args, GitEnvMode::Normal)
-}
-
-fn run_git_raw_in_with_env_mode_and_input(
-    repo_dir: &Path,
-    envs: &[(&str, &str)],
-    input: Option<&[u8]>,
-    args: &[&str],
-    env_mode: GitEnvMode,
-) -> Result<Output> {
     let mut command = Command::new("git");
-    if matches!(env_mode, GitEnvMode::Restricted) {
-        command.env_clear();
-        if let Some(path) = std::env::var_os("PATH") {
-            command.env("PATH", path);
-        }
-        command
-            .env("GIT_CONFIG_NOSYSTEM", "1")
-            .env("GIT_CONFIG_GLOBAL", "/dev/null")
-            .env("GIT_TERMINAL_PROMPT", "0");
-    }
     command
         .current_dir(repo_dir)
         .arg("-c")
@@ -72,9 +46,7 @@ fn run_git_raw_in_with_env_mode_and_input(
         .arg("protocol.https.allow=always")
         .arg("-c")
         .arg("protocol.ssh.allow=always");
-    if matches!(env_mode, GitEnvMode::Normal) {
-        command.arg("-c").arg("protocol.file.allow=always");
-    }
+    command.arg("-c").arg("protocol.file.allow=always");
     command
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -129,10 +101,6 @@ fn run_git_in_with_input(repo_dir: &Path, args: &[&str], input: &[u8]) -> Result
 
 pub fn run_git_allow_failure(ctx: &AppContext, args: &[&str]) -> Result<Output> {
     run_git_allow_failure_in(&ctx.root, args)
-}
-
-pub fn run_git_allow_failure_restricted(ctx: &AppContext, args: &[&str]) -> Result<Output> {
-    run_git_raw_in_with_env_mode_and_input(&ctx.root, &[], None, args, GitEnvMode::Restricted)
 }
 
 fn run_git_allow_failure_in(repo_dir: &Path, args: &[&str]) -> Result<Output> {

@@ -83,6 +83,8 @@ For managed projection flows:
 ```bash
 # Import a skill into the registry
 loom skill add "$HOME/.claude/skills/my-skill" --name my-skill
+# Or pin a Git/GitHub source ref and subdirectory.
+loom skill add github:owner/repo//skills/my-skill --name my-skill --ref v1.2.3
 
 # Register a managed Claude Code target
 mkdir -p "$HOME/.loom-targets/claude/skills"
@@ -174,11 +176,12 @@ The chain `add → capture → save → snapshot → release → rollback` is th
 
 | Verb | What it does | When to reach for it | Acts on |
 |------|--------------|----------------------|---------|
-| `loom skill add` | Import a skill source into the registry | First-time onboarding of a skill from a local path or Git URL | Source (initial import) |
+| `loom skill add` | Import a skill source into the registry and record source provenance in `loom.lock` | First-time onboarding of a skill from a local path, Git URL, local Git repo, or `github:owner/repo//subdir` | Source (initial import) |
 | `loom skill list` | List registry, source, and observed skill inventory | See what skills exist before mutating registry state | Source + registry metadata (read-only) |
 | `loom skill show` | Show one skill from the shared inventory model | Inspect entrypoint, description, source status, projections, compatible targets, warnings, and next actions | Source + registry metadata (read-only) |
 | `loom skill search` | Search skills with deterministic lexical scoring | Find likely skills by id, description, tags, warning state, agent, profile, status, or trust | Source + registry metadata (read-only) |
 | `loom skill resolve` | Resolve a task description to candidate skills without an LLM | Let agents choose a skill transparently from local metadata and scoring inputs | Source + registry metadata (read-only) |
+| `loom skill provenance inspect/verify/refresh` | Inspect, check, or refresh recorded source provenance and `loom.lock` | Confirm a skill still matches the source digest and pinned ref metadata | Source metadata + `loom.lock` |
 | `loom use` | Plan or apply target, binding, and projection setup in one flow | New users want to use a skill without copying target/binding IDs between commands | Source + target + registry metadata |
 | `loom skill project` | Realize a registry skill into an agent directory | Make the skill visible to the agent (Claude/Codex/…) | Target (live directory) |
 | `loom skill capture` | Pull live edits from a projection back into the source | The user edited the skill **inside the agent directory** and you want those edits tracked | Projection → source |
@@ -264,7 +267,10 @@ loom skill list
 loom skill show <skill>
 loom skill search <query> [--agent <agent>] [--profile <profile>] [--status <status>] [--trust <trust>]
 loom skill resolve <task-description> [--agent <agent>] [--workspace <path>]
-loom skill add <path|git-url> --name <skill>
+loom skill add <path|git-url|github:owner/repo//subdir> --name <skill> [--ref <branch|tag|commit>] [--subdir <path>]
+loom skill provenance inspect <skill>
+loom skill provenance verify <skill>
+loom skill provenance refresh <skill>
 loom skill project <skill> --binding <binding-id> [--target <target-id>] [--method <symlink|copy|materialize>] [--dry-run]
 loom skill capture [<skill>] [--binding <binding-id>] [--instance <instance-id>] [--message <msg>] [--dry-run]
 loom skill save <skill> [--message <msg>]

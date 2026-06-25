@@ -186,23 +186,25 @@ Base error codes:
 11. `TARGET_AGENT_MISMATCH`
 12. `PROJECTION_CONFLICT`
 13. `PROJECTION_METHOD_UNSUPPORTED`
-14. `CAPTURE_CONFLICT`
-15. `AUDIT_ERROR`
-16. `LOCK_BUSY`
-17. `REMOTE_UNREACHABLE`
-18. `REMOTE_DIVERGED`
-19. `PUSH_REJECTED`
-20. `REPLAY_CONFLICT`
-21. `QUEUE_BLOCKED`
-22. `GIT_ERROR`
-23. `IO_ERROR`
-24. `INTERNAL_ERROR`
+14. `POLICY_BLOCKED`
+15. `CAPTURE_CONFLICT`
+16. `AUDIT_ERROR`
+17. `LOCK_BUSY`
+18. `REMOTE_UNREACHABLE`
+19. `REMOTE_DIVERGED`
+20. `PUSH_REJECTED`
+21. `REPLAY_CONFLICT`
+22. `QUEUE_BLOCKED`
+23. `GIT_ERROR`
+24. `IO_ERROR`
+25. `INTERNAL_ERROR`
 
 Semantics:
 
 1. selector-related failures must be explicit
 2. ownership and projection conflicts must not collapse into generic IO errors
 3. migration ambiguity must return structured details, not only free-form strings
+4. policy denials must return `POLICY_BLOCKED` with the full policy report in `error.details.report`
 
 ## 9. Workspace Commands
 
@@ -463,6 +465,25 @@ Rules:
 4. strict lint failures return `SCHEMA_MISMATCH` with the full report in `error.details.report`
 5. the report includes `entrypoint`, `frontmatter`, `findings`, `summary`, and `fix_plan`
 
+### 11.3.1 `skill policy`
+
+```bash
+loom --json --root <root> skill policy <skill-id> [--policy-profile <profile>]
+```
+
+Read-only command.
+
+Rules:
+
+1. reports declared frontmatter capabilities under `capabilities.filesystem`, `capabilities.shell`, `capabilities.network`, and `capabilities.secrets`
+2. scans source files for scripts, executable files, binary-looking content, large files, generated artifact directories, suspicious shell patterns, and prompt-injection heuristics
+3. includes provenance digest status when `state/registry/sources.json` and `loom.lock` contain the skill
+4. default profile is `safe-capture`; built-in profiles are `safe-capture`, `audit-only`, `deny-risky`, and `strict`
+5. `audit-only` and `safe-capture` report findings without blocking projection
+6. `deny-risky` and `strict` mark high-risk findings as blockers
+7. unknown profile names are valid organizational hooks but must produce a `policy_profile_unknown` warning until an implementation handles them
+8. policy checks are heuristic signals, not a sandbox, malware verdict, or guarantee that a skill is safe
+
 ### 11.4 `skill project`
 
 ```bash
@@ -492,6 +513,8 @@ Rules:
 1. `binding_id` is mandatory
 2. if `--target` is absent, Loom may use `default_target_id` from binding metadata
 3. if multiple targets are possible and no default exists, the command must fail explicitly
+4. before mutating target directories, the command evaluates `skill policy` using the binding's `policy_profile`
+5. if the selected profile blocks projection, the command fails with `POLICY_BLOCKED` and must not create or replace the live skill directory
 
 ### 11.5 `skill capture`
 

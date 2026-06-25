@@ -1,3 +1,4 @@
+mod agent_adapters;
 mod cli;
 mod commands;
 mod envelope;

@@ -3,7 +3,7 @@ mod common;
 use std::fs;
 use std::process::{Command, Stdio};
 
-use common::{TestDir, run_loom, run_loom_with_env};
+use common::{TestDir, run_loom, run_loom_with_env, write_file};
 use serde_json::Value;
 
 fn run_loom_with_removed_home(
@@ -91,6 +91,103 @@ fn workspace_init_scan_existing_skips_absent_dirs() {
     assert_eq!(
         env["data"]["skipped"][0]["reason"],
         Value::String("does-not-exist".to_string())
+    );
+}
+
+#[test]
+fn workspace_init_scan_existing_loads_external_adapter_fixture() {
+    let root = TestDir::new("ws-init-external-adapter");
+    let fake_home = TestDir::new("ws-init-external-adapter-home");
+    let external_dir = root.path().join("fixture-agent/skills");
+    fs::create_dir_all(&external_dir).expect("create external skill dir");
+    write_file(
+        &root.path().join("adapters/fixture-agent.json"),
+        &format!(
+            r#"{{
+  "adapter_api": "1",
+  "id": "fixture-agent",
+  "supported_scopes": ["project"],
+  "projection_methods": ["copy", "symlink"],
+  "skill_entrypoint": "SKILL.md",
+  "capabilities": {{
+    "automatic_discovery": true,
+    "explicit_invocation": true,
+    "reload_required": true
+  }},
+  "default_skill_dirs": ["{}"]
+}}
+"#,
+            external_dir.display()
+        ),
+    );
+
+    let home_str = fake_home.path().to_string_lossy().into_owned();
+    let (output, env) = run_loom_with_env(
+        root.path(),
+        &[("HOME", &home_str)],
+        &["workspace", "init", "--scan-existing"],
+    );
+    assert!(
+        output.status.success(),
+        "workspace init with external adapter failed: stderr={} stdout={}",
+        String::from_utf8_lossy(&output.stderr),
+        String::from_utf8_lossy(&output.stdout)
+    );
+    assert_eq!(env["data"]["imported"].as_array().map(Vec::len), Some(1));
+    assert_eq!(
+        env["data"]["imported"][0]["target"]["agent"],
+        "fixture-agent"
+    );
+    assert_eq!(
+        env["data"]["imported"][0]["target"]["agent_source"],
+        "external"
+    );
+
+    let (list_output, list_env) = run_loom(root.path(), &["target", "list"]);
+    assert!(list_output.status.success());
+    assert_eq!(list_env["data"]["count"], Value::from(1));
+    assert_eq!(list_env["data"]["targets"][0]["agent"], "fixture-agent");
+    assert_eq!(list_env["data"]["targets"][0]["agent_source"], "external");
+}
+
+#[test]
+fn workspace_init_scan_existing_invalid_adapter_fails_without_registry_write() {
+    let root = TestDir::new("ws-init-invalid-adapter");
+    let fake_home = TestDir::new("ws-init-invalid-adapter-home");
+    write_file(
+        &root.path().join("adapters/bad.json"),
+        r#"{
+  "adapter_api": "2",
+  "id": "bad-agent",
+  "supported_scopes": ["project"],
+  "projection_methods": ["copy"],
+  "skill_entrypoint": "SKILL.md",
+  "capabilities": {
+    "automatic_discovery": true,
+    "explicit_invocation": true,
+    "reload_required": false
+  },
+  "default_skill_dirs": ["/tmp/bad-agent/skills"]
+}
+"#,
+    );
+
+    let home_str = fake_home.path().to_string_lossy().into_owned();
+    let (output, env) = run_loom_with_env(
+        root.path(),
+        &[("HOME", &home_str)],
+        &["workspace", "init", "--scan-existing"],
+    );
+    assert!(
+        !output.status.success(),
+        "invalid adapter should fail: stdout={}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    assert_eq!(env["error"]["code"], "ADAPTER_INVALID");
+    assert_eq!(env["error"]["details"]["reason"], "ADAPTER_API_UNSUPPORTED");
+    assert!(
+        !root.path().join("state/registry/schema.json").exists(),
+        "invalid adapter must fail before registry layout writes"
     );
 }
 

@@ -3,14 +3,14 @@ use std::path::Path;
 
 use serde_json::{Value, json};
 
+use crate::agent_adapters::load_agent_adapters;
 use crate::envelope::Meta;
 use crate::gitops;
 use crate::state::{AppContext, home_dir};
 use crate::state_model::{RegistrySnapshot, RegistryStatePaths};
 
-use super::super::helpers::{agent_kind_as_str, map_git, map_io, map_registry_state};
+use super::super::helpers::{map_git, map_io, map_registry_state};
 use super::super::{App, CommandFailure};
-use super::shared::{DEFAULT_SCAN_AGENTS, default_skill_dir};
 
 impl App {
     pub fn cmd_doctor(&self) -> std::result::Result<(serde_json::Value, Meta), CommandFailure> {
@@ -34,9 +34,10 @@ impl App {
             .iter()
             .all(|check| check.get("ok").and_then(|v| v.as_bool()).unwrap_or(false));
 
-        let home_opt = home_dir();
+        let home_set = home_dir().is_some();
+        let adapters = load_agent_adapters(&self.ctx)?;
         let agent_inventory =
-            build_agent_skill_inventory(home_opt.as_deref(), registry_snapshot.as_ref());
+            build_agent_skill_inventory(&adapters, registry_snapshot.as_ref(), home_set);
         let agent_inventory_message = agent_inventory["message"]
             .as_str()
             .unwrap_or("agent skill directory inventory")
@@ -97,11 +98,14 @@ impl App {
     }
 }
 
-fn build_agent_skill_inventory(home: Option<&Path>, snapshot: Option<&RegistrySnapshot>) -> Value {
+fn build_agent_skill_inventory(
+    adapters: &crate::agent_adapters::AgentAdapterRegistry,
+    snapshot: Option<&RegistrySnapshot>,
+    home_set: bool,
+) -> Value {
     let mut agents: Vec<Value> = Vec::new();
-    if let Some(h) = home {
-        for agent in DEFAULT_SCAN_AGENTS {
-            let path = default_skill_dir(agent, h);
+    for adapter in adapters.adapters() {
+        for path in &adapter.default_skill_dirs {
             let path_str = path.display().to_string();
             let present = path.is_dir();
             let registered_targets: Vec<Value> = snapshot
@@ -109,11 +113,12 @@ fn build_agent_skill_inventory(home: Option<&Path>, snapshot: Option<&RegistrySn
                     s.targets
                         .targets
                         .iter()
-                        .filter(|target| paths_equivalent(&target.path, &path))
+                        .filter(|target| paths_equivalent(&target.path, path))
                         .map(|target| {
                             json!({
                                 "target_id": target.target_id,
                                 "agent": target.agent,
+                                "agent_source": adapters.source_for_agent(&target.agent),
                                 "ownership": target.ownership,
                             })
                         })
@@ -122,11 +127,19 @@ fn build_agent_skill_inventory(home: Option<&Path>, snapshot: Option<&RegistrySn
                 .unwrap_or_default();
             let registered_target_count = registered_targets.len();
             agents.push(json!({
-                "agent": agent_kind_as_str(agent),
+                "agent": adapter.id,
+                "agent_source": adapter.source,
                 "default_path": path_str,
                 "present": present,
                 "registered_target_count": registered_target_count,
                 "registered_targets": registered_targets,
+                "adapter": {
+                    "supported_scopes": adapter.supported_scopes.clone(),
+                    "projection_methods": adapter.projection_methods.clone(),
+                    "skill_entrypoint": adapter.skill_entrypoint.clone(),
+                    "reload_required": adapter.capabilities.reload_required,
+                    "config_path": adapter.config_path.as_ref().map(|path| path.display().to_string()),
+                },
             }));
         }
     }
@@ -135,16 +148,18 @@ fn build_agent_skill_inventory(home: Option<&Path>, snapshot: Option<&RegistrySn
         .filter(|a| a["present"].as_bool().unwrap_or(false))
         .count();
     let total = agents.len();
-    let message = if home.is_some() {
+    let message = if total > 0 {
         format!("detected {present_count} of {total} known agent skill directories")
     } else {
         "HOME not set; agent skill directory inventory unavailable".to_string()
     };
     json!({
         "agents": agents,
-        "home_set": home.is_some(),
+        "home_set": home_set,
         "present_count": present_count,
         "total": total,
+        "adapter_count": adapters.adapters().len(),
+        "adapter_config_locations": adapters.config_locations().to_vec(),
         "message": message,
     })
 }

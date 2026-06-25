@@ -30,6 +30,7 @@ export type SkillSourceStatus = "present" | "missing" | "non-compliant";
 export interface Target {
   id: string;
   agent: AgentSlug;
+  agentSource?: "built-in" | "external" | "unknown" | (string & {});
   profile: string;
   path: string;
   ownership: Ownership;

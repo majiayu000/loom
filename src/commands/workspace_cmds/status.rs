@@ -1,5 +1,6 @@
-use serde_json::json;
+use serde_json::{Value, json};
 
+use crate::agent_adapters::{AgentAdapterRegistry, load_agent_adapters};
 use crate::envelope::Meta;
 use crate::state::resolve_agent_skill_dirs;
 use crate::state_model::RegistryStatePaths;
@@ -16,12 +17,17 @@ impl App {
         let pending_report = self.ctx.read_pending_report().map_err(map_io)?;
         let pending_ops = pending_report.ops.len();
         let target_dirs = resolve_agent_skill_dirs(&self.ctx.root);
+        let adapters = load_agent_adapters(&self.ctx)?;
         let registry_paths = RegistryStatePaths::from_app_context(&self.ctx);
         let legacy_state_dir_present = registry_paths.legacy_state_dir_exists();
         let registry_status = registry_paths
             .maybe_load_snapshot()
             .map_err(map_registry_state)?
-            .map(|snapshot| snapshot.status_view())
+            .map(|snapshot| {
+                let mut status = snapshot.status_view();
+                decorate_registry_targets(&mut status, &adapters);
+                status
+            })
             .unwrap_or_else(|| {
                 json!({
                     "state_model": "registry",
@@ -98,9 +104,23 @@ impl App {
                     .map(|dir| json!({
                         "agent": dir.agent,
                         "env_var": dir.env_var,
-                        "path": dir.path.display().to_string()
+                        "path": dir.path.display().to_string(),
+                        "agent_source": adapters.source_for_agent(dir.agent)
+                    }))
+                    .chain(adapters.adapters().iter().filter(|adapter| adapter.source == "external").flat_map(|adapter| {
+                        adapter.default_skill_dirs.iter().map(|path| json!({
+                            "agent": adapter.id,
+                            "path": path.display().to_string(),
+                            "agent_source": adapter.source,
+                            "config_path": adapter.config_path.as_ref().map(|path| path.display().to_string()),
+                        })).collect::<Vec<_>>()
                     }))
                     .collect::<Vec<_>>()
+            },
+            "agent_adapters": {
+                "adapter_api": crate::agent_adapters::ADAPTER_API_VERSION,
+                "adapters": adapters.adapters_json(),
+                "config_locations": adapters.config_locations().to_vec(),
             },
             "registered_targets": {
                 "count": registered_target_count,
@@ -112,5 +132,16 @@ impl App {
         });
 
         Ok((data, meta))
+    }
+}
+
+fn decorate_registry_targets(status: &mut Value, adapters: &AgentAdapterRegistry) {
+    let Some(targets) = status.get_mut("targets").and_then(Value::as_array_mut) else {
+        return;
+    };
+    for target in targets {
+        if let Some(agent) = target.get("agent").and_then(Value::as_str) {
+            target["agent_source"] = json!(adapters.source_for_agent(agent));
+        }
     }
 }

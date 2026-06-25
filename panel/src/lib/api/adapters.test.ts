@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { RegistryTarget } from "../../generated/RegistryTarget";
 import { adaptBinding, adaptPendingOp, adaptRegistryOperation, adaptTarget, buildAdapterIndex } from "./adapters";
 import type { RegistryOperationRecord } from "./client";
 
@@ -56,6 +57,22 @@ describe("api adapters enum handling", () => {
     );
 
     expect(target.ownership).toBe("unknown");
+  });
+
+  it("preserves backend agent adapter source on targets", () => {
+    const index = buildAdapterIndex([], []);
+    const payload: RegistryTarget & { agent_source: string } = {
+      target_id: "target-1",
+      agent: "fixture-agent",
+      agent_source: "external",
+      path: "/tmp/skills",
+      ownership: "observed",
+      capabilities: { symlink: false, copy: false, watch: true },
+    };
+    const target = adaptTarget(payload, index);
+
+    expect(target.agent).toBe("fixture-agent");
+    expect(target.agentSource).toBe("external");
   });
 
   it("surfaces unknown projection methods instead of coercing them to symlink", () => {

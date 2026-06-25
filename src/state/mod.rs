@@ -72,7 +72,9 @@ const DEFAULT_AGENT_SKILL_DIRS: [(&str, &str, &str); 10] = [
 ];
 
 pub fn resolve_agent_skill_dirs(root: &Path) -> AgentSkillDirs {
-    let home = env::var("HOME").unwrap_or_else(|_| "~".to_string());
+    let home = home_dir()
+        .map(|home| home.display().to_string())
+        .unwrap_or_else(|| "~".to_string());
     let dotenv = load_dotenv_map(root);
 
     let all = DEFAULT_AGENT_SKILL_DIRS
@@ -99,7 +101,9 @@ pub fn resolve_agent_skill_dirs(root: &Path) -> AgentSkillDirs {
 }
 
 pub fn resolve_agent_skill_source_dirs(root: &Path) -> Vec<PathBuf> {
-    let home = env::var("HOME").unwrap_or_else(|_| "~".to_string());
+    let home = home_dir()
+        .map(|home| home.display().to_string())
+        .unwrap_or_else(|| "~".to_string());
     let dotenv = load_dotenv_map(root);
     let mut dirs = Vec::new();
 

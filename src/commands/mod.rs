@@ -14,6 +14,7 @@ mod skill_cmds;
 mod skill_diagnose;
 #[cfg(test)]
 mod skill_diagnose_tests;
+mod skill_eval;
 mod skill_inventory;
 mod skill_lint;
 mod skill_policy;
@@ -235,6 +236,7 @@ impl App {
                 SkillCommand::Lint(args) => self.cmd_skill_lint(args),
                 SkillCommand::Policy(args) => self.cmd_skill_policy(args),
                 SkillCommand::Diagnose(args) => self.cmd_skill_diagnose(args),
+                SkillCommand::Eval(args) => self.cmd_skill_eval(args),
                 SkillCommand::Orphan {
                     command: SkillOrphanCommand::List,
                 } => self.cmd_skill_orphan_list(),
@@ -375,6 +377,7 @@ fn command_records_audit(command: &Command) -> bool {
                     | SkillCommand::Resolve(_)
                     | SkillCommand::Lint(_)
                     | SkillCommand::Diagnose(_)
+                    | SkillCommand::Eval(_)
                     | SkillCommand::Trash {
                         command: SkillTrashCommand::List,
                     }
@@ -434,6 +437,7 @@ fn command_requires_durable_audit(command: &Command) -> bool {
             | SkillCommand::Policy(_)
             | SkillCommand::Verify(_)
             | SkillCommand::Diagnose(_)
+            | SkillCommand::Eval(_)
             | SkillCommand::Provenance {
                 command: SkillProvenanceCommand::Inspect(_) | SkillProvenanceCommand::Verify(_),
             }

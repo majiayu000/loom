@@ -133,6 +133,7 @@ fn cli_contract_docs_track_current_surface() {
         "loom skill provenance verify",
         "loom skill provenance refresh",
         "loom skill policy",
+        "loom skill eval",
         "loom skill watch",
     ] {
         assert!(
@@ -148,6 +149,7 @@ fn cli_contract_docs_track_current_surface() {
         "skill provenance refresh",
         "loom.lock",
         "skill policy <skill-id>",
+        "skill eval <skill-id>",
         "POLICY_BLOCKED",
     ] {
         assert!(
@@ -509,6 +511,7 @@ fn skill_help_describes_every_subcommand() {
         "Tag a skill release",
         "Roll back a skill source to an earlier revision",
         "Diff two revisions of a skill source",
+        "Run offline skill eval fixtures for trigger, task, and artifact checks",
         "Continuously import and update skills from observed targets",
         "Run one import pass over observed targets and exit",
         "Inspect and clean projections orphaned by binding removal",

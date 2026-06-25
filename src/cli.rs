@@ -3,10 +3,12 @@ use std::path::PathBuf;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use serde::Serialize;
 
+mod eval;
 mod plan_flow;
 mod policy;
 mod provenance;
 mod use_flow;
+pub use eval::SkillEvalArgs;
 pub use plan_flow::{ApplyArgs, PlanCommand, PlanUseArgs};
 pub use policy::SkillPolicyArgs;
 pub use provenance::{AddArgs, SkillProvenanceCommand};
@@ -243,6 +245,8 @@ pub enum SkillCommand {
     Policy(SkillPolicyArgs),
     #[command(about = "Diagnose one skill source and registry projection state")]
     Diagnose(SkillOnlyArgs),
+    #[command(about = "Run offline skill eval fixtures for trigger, task, and artifact checks")]
+    Eval(SkillEvalArgs),
     #[command(about = "Watch registry skill sources and autosave stable local edits")]
     Watch(WatchArgs),
     #[command(about = "Continuously import and update skills from observed targets")]

@@ -183,6 +183,7 @@ The chain `add → capture → save → snapshot → release → rollback` is th
 | `loom skill resolve` | Resolve a task description to candidate skills without an LLM | Let agents choose a skill transparently from local metadata and scoring inputs | Source + registry metadata (read-only) |
 | `loom skill provenance inspect/verify/refresh` | Inspect, check, or refresh recorded source provenance and `loom.lock` | Confirm a skill still matches the source digest and pinned ref metadata | Source metadata + `loom.lock` |
 | `loom skill policy` | Report declared capabilities, content risks, provenance drift, and policy decision | Review a skill before projection or explain why a policy profile blocks it | Source metadata + source files (read-only) |
+| `loom skill eval` | Run offline trigger/task/artifact eval fixtures | Track quality evidence across agent/model hosts without network calls | Source + eval fixtures (read-only) |
 | `loom use` | Plan or apply target, binding, and projection setup in one flow | New users want to use a skill without copying target/binding IDs between commands | Source + target + registry metadata |
 | `loom plan use` / `loom apply` | Persist a guarded use plan, then execute it with idempotency | Agents need a retry-safe plan/apply protocol for higher-risk flows | Command audit + source/target/registry metadata |
 | `loom skill project` | Realize a registry skill into an agent directory | Make the skill visible to the agent (Claude/Codex/…) | Target (live directory) |
@@ -196,7 +197,7 @@ The chain `add → capture → save → snapshot → release → rollback` is th
 | `loom skill verify` | Detect uncommitted drift in a skill source | Confirm `skills/<name>` matches the committed source tree; flag external edits that bypassed `save` | Source (read-only) |
 | `loom skill diagnose` | Run a read-only health report for one skill | Explain missing source, broken bindings/targets/projections, source drift, pending queue issues, and recent failures | Source + registry metadata (read-only) |
 
-Quick decision: **edits from the agent side → `capture`; edits inside the registry repo → `save`; anchor → `snapshot`; public version → `release`; undo → `rollback`; integrity audit → `verify`; health triage → `diagnose`.**
+Quick decision: **edits from the agent side → `capture`; edits inside the registry repo → `save`; anchor → `snapshot`; public version → `release`; undo → `rollback`; integrity audit → `verify`; health triage → `diagnose`; quality evidence → `eval`.**
 
 ## Comparison
 
@@ -276,6 +277,7 @@ loom skill provenance inspect <skill>
 loom skill provenance verify <skill>
 loom skill provenance refresh <skill>
 loom skill policy <skill> [--policy-profile <safe-capture|audit-only|deny-risky|strict|custom>]
+loom skill eval <skill> [--agent <agent> | --matrix <agent,agent>] [--model <model>]
 loom skill project <skill> --binding <binding-id> [--target <target-id>] [--method <symlink|copy|materialize>] [--dry-run]
 loom skill capture [<skill>] [--binding <binding-id>] [--instance <instance-id>] [--message <msg>] [--dry-run]
 loom skill save <skill> [--message <msg>]

@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use serde_json::{Value, json};
 
 use super::super::CommandFailure;
-use super::super::helpers::{map_registry_state, projection_method_as_str};
+use super::super::helpers::{map_registry_state, projection_method_as_str, shell_arg};
 use crate::cli::AgentPreflightArgs;
 use crate::state_model::{RegistryProjectionInstance, RegistrySnapshot, RegistryStatePaths};
 
@@ -192,16 +192,4 @@ pub(super) fn risk(
         "code": code.into(),
         "message": message.into(),
     })
-}
-
-pub(super) fn shell_arg(value: impl AsRef<Path>) -> String {
-    let raw = value.as_ref().display().to_string();
-    if raw
-        .chars()
-        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '/' | '.' | '_' | '-'))
-    {
-        raw
-    } else {
-        format!("'{}'", raw.replace('\'', "'\\''"))
-    }
 }

@@ -87,6 +87,7 @@ pub(crate) fn command_name(command: &Command) -> &'static str {
             crate::cli::BackupCommand::Restore(_) => "backup.restore",
         },
         Command::Monitor(_) => "monitor",
+        Command::Use(_) => "use",
         Command::Doctor => "workspace.doctor",
         Command::Workspace { command } => match command {
             WorkspaceCommand::Status => "workspace.status",
@@ -429,6 +430,18 @@ pub(crate) fn projection_instance_id(skill: &str, binding_id: &str, target_id: &
         slugify(binding_id),
         slugify(target_id)
     )
+}
+
+pub(crate) fn shell_arg(value: impl AsRef<Path>) -> String {
+    let raw = value.as_ref().display().to_string();
+    if raw
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '/' | '.' | '_' | '-'))
+    {
+        raw
+    } else {
+        format!("'{}'", raw.replace('\'', "'\\''"))
+    }
 }
 
 // ---------------------------------------------------------------------------

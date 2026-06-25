@@ -5,6 +5,7 @@ mod skill_history;
 mod static_serve;
 
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::Result;
@@ -16,7 +17,7 @@ use axum::{
 };
 use serde::Deserialize;
 
-use crate::cli::{AgentKind, ProjectionMethod, TargetOwnership, WorkspaceMatcherKind};
+use crate::cli::{AgentKind, ProjectionMethod, TargetOwnership, UseScope, WorkspaceMatcherKind};
 use crate::state::AppContext;
 
 use handlers::*;
@@ -59,6 +60,23 @@ pub(super) struct ProjectRequest {
     pub(super) target: Option<String>,
     #[serde(default)]
     pub(super) method: Option<ProjectionMethod>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct UseRequest {
+    pub(super) agents: Vec<AgentKind>,
+    #[serde(default)]
+    pub(super) scope: Option<UseScope>,
+    #[serde(default)]
+    pub(super) workspace: Option<PathBuf>,
+    #[serde(default)]
+    pub(super) profile: Option<String>,
+    #[serde(default)]
+    pub(super) method: Option<ProjectionMethod>,
+    #[serde(default)]
+    pub(super) target_root: Option<PathBuf>,
+    #[serde(default)]
+    pub(super) apply: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -208,6 +226,7 @@ fn panel_router(state: PanelState) -> Router {
             "/api/v1/skills/{skill_name}/diagnose",
             get(v1_skill_diagnose),
         )
+        .route("/api/v1/skills/{skill_name}/use", post(registry_skill_use))
         .route(
             "/api/v1/skills/{skill_name}/history",
             get(registry_skill_history),

@@ -1,0 +1,256 @@
+use std::path::{Path, PathBuf};
+
+use serde_json::{Value, json};
+
+use crate::cli::{
+    BindingAddArgs, ProjectArgs, TargetAddArgs, TargetCommand, TargetOwnership, UseArgs, UseScope,
+    WorkspaceBindingCommand, WorkspaceMatcherKind,
+};
+use crate::envelope::Meta;
+use crate::types::ErrorCode;
+
+use super::helpers::{
+    agent_kind_as_str, map_arg, projection_method_as_str, shell_arg, validate_skill_name,
+};
+use super::{App, CommandFailure};
+
+impl App {
+    pub fn cmd_use(
+        &self,
+        args: &UseArgs,
+        request_id: &str,
+    ) -> std::result::Result<(Value, Meta), CommandFailure> {
+        validate_use_args(args)?;
+        validate_skill_name(&args.skill).map_err(map_arg)?;
+        if !self.ctx.skill_path(&args.skill).is_dir() {
+            return Err(CommandFailure::new(
+                ErrorCode::SkillNotFound,
+                format!("skill '{}' not found", args.skill),
+            ));
+        }
+
+        let workspace = use_workspace(args)?;
+        let steps = args
+            .agents
+            .iter()
+            .map(|agent| {
+                let agent_name = agent_kind_as_str(*agent);
+                let target_path = target_path_for(&self.ctx.root, args, agent_name)?;
+                Ok(json!({
+                    "agent": agent_name,
+                    "scope": use_scope_as_str(args.scope),
+                    "workspace": workspace.display().to_string(),
+                    "profile": args.profile,
+                    "method": projection_method_as_str(args.method),
+                    "target_path": target_path.display().to_string(),
+                    "will_create_or_reuse": [
+                        "managed_target",
+                        "workspace_binding",
+                        "skill_projection"
+                    ],
+                }))
+            })
+            .collect::<std::result::Result<Vec<_>, CommandFailure>>()?;
+
+        let apply_command = use_apply_command(&self.ctx.root, args, &workspace);
+        if !args.apply {
+            return Ok((
+                json!({
+                    "dry_run": true,
+                    "operation": "use",
+                    "skill": args.skill,
+                    "apply_required": true,
+                    "steps": steps,
+                    "next_actions": [
+                        format!("review this plan, then run `{}`", apply_command)
+                    ],
+                }),
+                Meta::default(),
+            ));
+        }
+
+        let mut applied = Vec::new();
+        let mut warnings = Vec::new();
+        for agent in &args.agents {
+            let agent_name = agent_kind_as_str(*agent);
+            let target_path = target_path_for(&self.ctx.root, args, agent_name)?;
+            let target_result = self.cmd_target(
+                &TargetCommand::Add(TargetAddArgs {
+                    agent: *agent,
+                    path: target_path.display().to_string(),
+                    ownership: TargetOwnership::Managed,
+                }),
+                request_id,
+            )?;
+            let target_data = target_result.0;
+            warnings.extend(target_result.1.warnings);
+            let target_id = required_string(&target_data, &["target", "target_id"])?;
+
+            let binding_result = self.cmd_workspace_binding(
+                &WorkspaceBindingCommand::Add(BindingAddArgs {
+                    agent: *agent,
+                    profile: args.profile.clone(),
+                    matcher_kind: WorkspaceMatcherKind::PathPrefix,
+                    matcher_value: workspace.display().to_string(),
+                    target: target_id.clone(),
+                    policy_profile: "safe-capture".to_string(),
+                }),
+                request_id,
+            )?;
+            let binding_data = binding_result.0;
+            warnings.extend(binding_result.1.warnings);
+            let binding_id = required_string(&binding_data, &["binding", "binding_id"])?;
+
+            let project_result = self.cmd_project(
+                &ProjectArgs {
+                    skill: args.skill.clone(),
+                    binding: binding_id.clone(),
+                    target: Some(target_id.clone()),
+                    method: args.method,
+                    dry_run: false,
+                },
+                request_id,
+            )?;
+            let project_data = project_result.0;
+            warnings.extend(project_result.1.warnings);
+
+            applied.push(json!({
+                "agent": agent_name,
+                "target": target_data["target"],
+                "target_noop": target_data["noop"],
+                "binding": binding_data["binding"],
+                "binding_noop": binding_data["noop"],
+                "projection": project_data["projection"],
+                "projection_path": project_data["projection"]["materialized_path"],
+                "operation_ids": {
+                    "target": target_result.1.op_id,
+                    "binding": binding_result.1.op_id,
+                    "projection": project_result.1.op_id,
+                },
+                "rollback_commands": [
+                    format!(
+                        "loom --json --root {} workspace binding remove {} --orphan-projections",
+                        shell_arg(&self.ctx.root),
+                        shell_arg(&binding_id)
+                    ),
+                    format!(
+                        "loom --json --root {} skill orphan clean --dry-run",
+                        shell_arg(&self.ctx.root)
+                    )
+                ],
+            }));
+        }
+
+        Ok((
+            json!({
+                "dry_run": false,
+                "operation": "use",
+                "skill": args.skill,
+                "workspace": workspace.display().to_string(),
+                "applied": applied,
+                "next_actions": [
+                    "restart or refresh the selected agent if it caches skill inventory",
+                    "run `loom agent preflight` before follow-up writes",
+                    "use the returned rollback_commands if this projection should be removed"
+                ],
+            }),
+            Meta {
+                warnings,
+                ..Meta::default()
+            },
+        ))
+    }
+}
+
+fn validate_use_args(args: &UseArgs) -> std::result::Result<(), CommandFailure> {
+    if args.agents.is_empty() {
+        return Err(CommandFailure::new(
+            ErrorCode::ArgInvalid,
+            "--agents must include at least one agent",
+        ));
+    }
+    if args.profile.trim().is_empty() {
+        return Err(CommandFailure::new(
+            ErrorCode::ArgInvalid,
+            "--profile must not be empty",
+        ));
+    }
+    Ok(())
+}
+
+fn use_workspace(args: &UseArgs) -> std::result::Result<PathBuf, CommandFailure> {
+    let workspace = match args.workspace.as_ref() {
+        Some(path) => path.clone(),
+        None => std::env::current_dir().map_err(|err| {
+            CommandFailure::new(
+                ErrorCode::IoError,
+                format!("failed to resolve current workspace: {}", err),
+            )
+        })?,
+    };
+    Ok(absolute_path(&workspace))
+}
+
+fn target_path_for(
+    root: &Path,
+    args: &UseArgs,
+    agent: &str,
+) -> std::result::Result<PathBuf, CommandFailure> {
+    let base = args
+        .target_root
+        .clone()
+        .unwrap_or_else(|| root.join("targets").join(use_scope_as_str(args.scope)));
+    Ok(absolute_path(&base).join(agent).join("skills"))
+}
+
+fn absolute_path(path: &Path) -> PathBuf {
+    if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .unwrap_or_else(|_| PathBuf::from("."))
+            .join(path)
+    }
+}
+
+fn use_scope_as_str(scope: UseScope) -> &'static str {
+    match scope {
+        UseScope::Project => "project",
+    }
+}
+
+fn required_string(value: &Value, path: &[&str]) -> std::result::Result<String, CommandFailure> {
+    let mut current = value;
+    for part in path {
+        current = &current[*part];
+    }
+    current.as_str().map(str::to_string).ok_or_else(|| {
+        CommandFailure::new(
+            ErrorCode::InternalError,
+            format!("use flow expected string field {}", path.join(".")),
+        )
+    })
+}
+
+fn use_apply_command(root: &Path, args: &UseArgs, workspace: &Path) -> String {
+    let agents = args
+        .agents
+        .iter()
+        .map(|agent| agent_kind_as_str(*agent))
+        .collect::<Vec<_>>()
+        .join(",");
+    let mut command = format!(
+        "loom --json --root {} use {} --agents {} --scope {} --workspace {} --profile {} --method {} --apply",
+        shell_arg(root),
+        shell_arg(&args.skill),
+        shell_arg(&agents),
+        use_scope_as_str(args.scope),
+        shell_arg(workspace),
+        shell_arg(&args.profile),
+        projection_method_as_str(args.method),
+    );
+    if let Some(target_root) = args.target_root.as_ref() {
+        command.push_str(&format!(" --target-root {}", shell_arg(target_root)));
+    }
+    command
+}

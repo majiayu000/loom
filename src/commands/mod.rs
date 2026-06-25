@@ -18,6 +18,7 @@ mod skill_verify;
 mod sync_cmds;
 mod target_cmds;
 mod trash_cmds;
+mod use_cmds;
 mod version_cmds;
 mod watch_cmds;
 mod workspace_cmds;
@@ -172,6 +173,7 @@ impl App {
             }
             Command::Backup { command } => self.cmd_backup(command),
             Command::Monitor(args) => self.cmd_monitor_observed(args, &request_id),
+            Command::Use(args) => self.cmd_use(args, &request_id),
             Command::Doctor => self.cmd_doctor(),
             Command::Workspace { command } => match command {
                 WorkspaceCommand::Status => self.cmd_status(),
@@ -374,6 +376,7 @@ fn command_records_audit(command: &Command) -> bool {
 fn command_requires_durable_audit(command: &Command) -> bool {
     match command {
         Command::Init | Command::Monitor(_) => true,
+        Command::Use(args) => args.apply,
         Command::Backup { .. } => false,
         Command::Doctor => false,
         Command::Workspace { command } => match command {

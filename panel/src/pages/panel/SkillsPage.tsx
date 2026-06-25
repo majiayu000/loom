@@ -16,6 +16,7 @@ import {
   mapObsToLifecycle,
   type LifecycleEvent,
 } from "./SkillLifecycle";
+import { UseSkillForm } from "./UseSkillForm";
 
 interface SkillsPageProps {
   skills: Skill[];
@@ -642,6 +643,12 @@ function SkillDetail({
       {tab === "diff" && <SkillDiff skillName={skill.name} />}
       {tab === "projections" && (
         <>
+          <UseSkillForm
+            skillName={skill.name}
+            targets={targets}
+            onMutation={onMutation}
+            readOnly={readOnly}
+          />
           <ProjectSkillForm
             skillName={skill.name}
             bindings={skillBindings}

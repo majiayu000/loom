@@ -3,6 +3,9 @@ use std::path::PathBuf;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use serde::Serialize;
 
+mod use_flow;
+pub use use_flow::{UseArgs, UseScope};
+
 #[derive(Debug, Clone, Parser, Serialize)]
 #[command(name = "loom")]
 #[command(version)]
@@ -39,6 +42,8 @@ pub enum Command {
     },
     #[command(about = "Import and update skills from observed targets")]
     Monitor(MonitorObservedArgs),
+    #[command(about = "Plan or apply a human-friendly skill use flow")]
+    Use(UseArgs),
     #[command(about = "Inspect and configure registry workspace state")]
     Workspace {
         #[command(subcommand)]

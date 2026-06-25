@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::fs;
 use std::io::Read;
 use std::path::Path;
@@ -46,13 +46,13 @@ pub(crate) struct SkillCapabilities {
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct SkillPolicyFinding {
     pub id: String,
-    pub severity: String,
-    pub risk_level: String,
-    pub category: String,
-    pub message: String,
-    pub suggested_action: String,
+    pub severity: &'static str,
+    pub risk_level: &'static str,
+    pub category: &'static str,
+    pub message: &'static str,
+    pub suggested_action: &'static str,
     pub blocks_projection: bool,
-    pub details: Value,
+    pub details: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -132,12 +132,9 @@ pub(crate) fn evaluate_skill_policy(
             "policy_profile_unknown",
             "medium",
             "policy",
-            &format!(
-                "policy profile '{}' has no built-in enforcement rules",
-                policy_profile
-            ),
+            "policy profile has no built-in enforcement rules",
             "define organization-side handling for this profile or use audit-only/deny-risky",
-            json!({ "policy_profile": policy_profile }),
+            vec![format!("policy_profile={policy_profile}")],
         );
     }
 
@@ -153,12 +150,7 @@ pub(crate) fn evaluate_skill_policy(
             "provenance",
             "current skill source digest does not match recorded provenance or loom.lock",
             "review the source diff, then run skill provenance refresh only after accepting the change",
-            json!({
-                "recorded_digest": status.recorded_digest,
-                "current_digest": status.current_digest,
-                "lock_digest": status.lock_digest,
-                "lock_present": status.lock_present,
-            }),
+            provenance_details(status),
         ),
         None => push_raw_finding(
             &mut findings,
@@ -167,7 +159,7 @@ pub(crate) fn evaluate_skill_policy(
             "provenance",
             "skill has no recorded source provenance",
             "re-import the skill with skill add or record provenance before relying on digest checks",
-            json!({}),
+            Vec::new(),
         ),
         _ => {}
     }
@@ -183,7 +175,7 @@ pub(crate) fn evaluate_skill_policy(
         .count();
     let high_risk_count = findings
         .iter()
-        .filter(|finding| matches!(finding.risk_level.as_str(), "high" | "critical"))
+        .filter(|finding| matches!(finding.risk_level, "high" | "critical"))
         .count();
     Ok(SkillPolicyReport {
         skill: skill.to_string(),
@@ -231,7 +223,7 @@ fn read_declared_capabilities(
             "capabilities",
             "capabilities frontmatter is present but no supported capability keys were parsed",
             "use filesystem, shell, network, or secrets capability sections",
-            json!({ "entrypoint": entrypoint.display().to_string() }),
+            vec![format!("entrypoint={}", entrypoint.display())],
         );
     }
     Ok(capabilities)
@@ -390,9 +382,9 @@ fn push_capability_findings(
             &format!("capability_filesystem_{key}"),
             risk,
             "capabilities",
-            &format!("skill declares filesystem {key} capability"),
+            "skill declares filesystem capability",
             "review whether the target agent should receive this filesystem capability",
-            json!({ "values": values }),
+            capability_details(key, values),
         );
     }
     for (key, values) in &capabilities.shell {
@@ -401,9 +393,9 @@ fn push_capability_findings(
             &format!("capability_shell_{key}"),
             "high",
             "capabilities",
-            &format!("skill declares shell {key} capability"),
+            "skill declares shell capability",
             "review command allowlist before projection",
-            json!({ "values": values }),
+            capability_details(key, values),
         );
     }
     for (key, values) in &capabilities.network {
@@ -412,9 +404,9 @@ fn push_capability_findings(
             &format!("capability_network_{key}"),
             "high",
             "capabilities",
-            &format!("skill declares network {key} capability"),
+            "skill declares network capability",
             "review domain allowlist before projection",
-            json!({ "values": values }),
+            capability_details(key, values),
         );
     }
     for (key, values) in &capabilities.secrets {
@@ -423,9 +415,9 @@ fn push_capability_findings(
             &format!("capability_secrets_{key}"),
             "high",
             "capabilities",
-            &format!("skill declares secrets {key} capability"),
+            "skill declares secrets capability",
             "review secret exposure before projection",
-            json!({ "values": values }),
+            capability_details(key, values),
         );
     }
 }
@@ -434,8 +426,6 @@ fn scan_skill_files(
     skill_path: &Path,
     findings: &mut Vec<SkillPolicyFinding>,
 ) -> std::result::Result<(), CommandFailure> {
-    let mut generated_dirs = BTreeSet::new();
-    let mut finding_counts: BTreeMap<String, usize> = BTreeMap::new();
     for entry in WalkDir::new(skill_path)
         .follow_links(false)
         .sort_by_file_name()
@@ -448,17 +438,16 @@ fn scan_skill_files(
             .map_err(map_io)?;
         let rel_string = rel.to_string_lossy().to_string();
         if entry.file_type().is_dir() {
-            if is_generated_dir(&rel_string) && generated_dirs.insert(rel_string.clone()) {
+            if is_generated_dir(&rel_string) {
                 push_limited_finding(
                     findings,
-                    &mut finding_counts,
                     make_finding(
                         "generated_artifact_dir",
                         "high",
                         "artifact",
                         "skill contains a generated artifact directory",
                         "remove generated artifacts from the skill source before projection",
-                        json!({ "path": rel_string }),
+                        path_details(&rel_string),
                     ),
                 );
             }
@@ -471,42 +460,42 @@ fn scan_skill_files(
         if metadata.len() > LARGE_FILE_BYTES {
             push_limited_finding(
                 findings,
-                &mut finding_counts,
                 make_finding(
                     "large_file",
                     "high",
                     "artifact",
                     "skill contains a very large file",
                     "remove large generated or binary assets unless explicitly required",
-                    json!({ "path": rel_string, "bytes": metadata.len() }),
+                    vec![
+                        format!("path={rel_string}"),
+                        format!("bytes={}", metadata.len()),
+                    ],
                 ),
             );
         }
         if is_script_path(&rel_string) {
             push_limited_finding(
                 findings,
-                &mut finding_counts,
                 make_finding(
                     "script_file",
                     "high",
                     "executable_content",
                     "skill contains a script file",
                     "review script contents and use deny-risky policy until approved",
-                    json!({ "path": rel_string }),
+                    path_details(&rel_string),
                 ),
             );
         }
         if is_executable(&metadata) {
             push_limited_finding(
                 findings,
-                &mut finding_counts,
                 make_finding(
                     "executable_file",
                     "high",
                     "executable_content",
                     "skill contains an executable file",
                     "review executable content before projection",
-                    json!({ "path": rel_string }),
+                    path_details(&rel_string),
                 ),
             );
         }
@@ -514,20 +503,19 @@ fn scan_skill_files(
         if bytes.contains(&0) {
             push_limited_finding(
                 findings,
-                &mut finding_counts,
                 make_finding(
                     "binary_file",
                     "high",
                     "executable_content",
                     "skill contains binary-looking file content",
                     "remove or explicitly review binary files before projection",
-                    json!({ "path": rel_string }),
+                    path_details(&rel_string),
                 ),
             );
             continue;
         }
         let text = String::from_utf8_lossy(&bytes).to_ascii_lowercase();
-        push_text_heuristics(&rel_string, &text, findings, &mut finding_counts);
+        push_text_heuristics(&rel_string, &text, findings);
     }
     Ok(())
 }
@@ -572,12 +560,7 @@ fn read_prefix(path: &Path, max_bytes: usize) -> std::result::Result<Vec<u8>, Co
     Ok(buf)
 }
 
-fn push_text_heuristics(
-    rel_path: &str,
-    text: &str,
-    findings: &mut Vec<SkillPolicyFinding>,
-    counts: &mut BTreeMap<String, usize>,
-) {
+fn push_text_heuristics(rel_path: &str, text: &str, findings: &mut Vec<SkillPolicyFinding>) {
     if text.contains("ignore previous instructions")
         || text.contains("ignore all previous instructions")
         || text.contains("system prompt")
@@ -586,42 +569,39 @@ fn push_text_heuristics(
     {
         push_limited_finding(
             findings,
-            counts,
             make_finding(
                 "prompt_injection_heuristic",
                 "high",
                 "content",
                 "skill text matched a prompt-injection heuristic",
                 "review manually; this heuristic is not a safety verdict",
-                json!({ "path": rel_path }),
+                path_details(rel_path),
             ),
         );
     }
     if (text.contains("curl ") || text.contains("wget ")) && text.contains("| sh") {
         push_limited_finding(
             findings,
-            counts,
             make_finding(
                 "shell_pipe_download",
                 "high",
                 "executable_content",
                 "skill content appears to pipe downloaded content into a shell",
                 "remove this pattern or approve it through explicit review",
-                json!({ "path": rel_path }),
+                path_details(rel_path),
             ),
         );
     }
     if text.contains("eval(") || text.contains("exec(") {
         push_limited_finding(
             findings,
-            counts,
             make_finding(
                 "dynamic_execution_heuristic",
                 "high",
                 "executable_content",
                 "skill content matched a dynamic execution heuristic",
                 "review dynamic execution before projection",
-                json!({ "path": rel_path }),
+                path_details(rel_path),
             ),
         );
     }
@@ -638,25 +618,24 @@ fn apply_policy_profile(profile: &str, findings: &mut [SkillPolicyFinding]) {
     for finding in findings {
         let blocks = match profile {
             "deny-risky" | "strict" => {
-                matches!(finding.risk_level.as_str(), "high" | "critical")
+                matches!(finding.risk_level, "high" | "critical")
             }
             _ => false,
         };
         finding.blocks_projection = blocks;
-        finding.severity = if blocks { "blocker" } else { "warning" }.to_string();
+        finding.severity = if blocks { "blocker" } else { "warning" };
     }
 }
 
-fn push_limited_finding(
-    findings: &mut Vec<SkillPolicyFinding>,
-    counts: &mut BTreeMap<String, usize>,
-    finding: SkillPolicyFinding,
-) {
-    let count = counts.entry(finding.id.clone()).or_default();
-    if *count >= MAX_FINDINGS_PER_KIND {
+fn push_limited_finding(findings: &mut Vec<SkillPolicyFinding>, finding: SkillPolicyFinding) {
+    if findings
+        .iter()
+        .filter(|existing| existing.id == finding.id)
+        .count()
+        >= MAX_FINDINGS_PER_KIND
+    {
         return;
     }
-    *count += 1;
     findings.push(finding);
 }
 
@@ -665,9 +644,9 @@ fn push_raw_finding(
     id: &str,
     risk_level: &str,
     category: &str,
-    message: &str,
-    suggested_action: &str,
-    details: Value,
+    message: &'static str,
+    suggested_action: &'static str,
+    details: Vec<String>,
 ) {
     findings.push(make_finding(
         id,
@@ -683,18 +662,51 @@ fn make_finding(
     id: &str,
     risk_level: &str,
     category: &str,
-    message: &str,
-    suggested_action: &str,
-    details: Value,
+    message: &'static str,
+    suggested_action: &'static str,
+    details: Vec<String>,
 ) -> SkillPolicyFinding {
     SkillPolicyFinding {
         id: id.to_string(),
-        severity: "warning".to_string(),
-        risk_level: risk_level.to_string(),
-        category: category.to_string(),
-        message: message.to_string(),
-        suggested_action: suggested_action.to_string(),
+        severity: "warning",
+        risk_level: match risk_level {
+            "critical" => "critical",
+            "high" => "high",
+            "medium" => "medium",
+            _ => "low",
+        },
+        category: match category {
+            "artifact" => "artifact",
+            "capabilities" => "capabilities",
+            "content" => "content",
+            "executable_content" => "executable_content",
+            "policy" => "policy",
+            "provenance" => "provenance",
+            _ => "policy",
+        },
+        message,
+        suggested_action,
         blocks_projection: false,
         details,
     }
+}
+
+fn capability_details(key: &str, values: &[String]) -> Vec<String> {
+    vec![format!("key={key}"), format!("values={}", values.join(","))]
+}
+
+fn path_details(path: &str) -> Vec<String> {
+    vec![format!("path={path}")]
+}
+
+fn provenance_details(status: &ProvenanceDigestStatus) -> Vec<String> {
+    let mut details = vec![
+        format!("recorded_digest={}", status.recorded_digest),
+        format!("current_digest={}", status.current_digest),
+        format!("lock_present={}", status.lock_present),
+    ];
+    if let Some(lock_digest) = &status.lock_digest {
+        details.push(format!("lock_digest={lock_digest}"));
+    }
+    details
 }

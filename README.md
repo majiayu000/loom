@@ -40,7 +40,7 @@ Loom can import from local directories, Git URLs, and GitHub locators, but it is
 ```bash
 # 1. Install a prebuilt release archive (recommended)
 # Pick one target: aarch64-apple-darwin, x86_64-apple-darwin, x86_64-unknown-linux-gnu
-VERSION="0.1.3" # replace with the latest release version
+VERSION="0.1.5" # replace with the latest release version
 TARGET="aarch64-apple-darwin"
 BASE_URL="https://github.com/majiayu000/loom/releases/download/v${VERSION}"
 curl -LO "${BASE_URL}/skillloom-${VERSION}-${TARGET}.tar.gz"

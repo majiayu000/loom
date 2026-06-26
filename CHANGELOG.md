@@ -3,6 +3,48 @@
 All notable public release changes are tracked here. Loom also publishes release
 archives, checksums, and provenance details on GitHub Releases.
 
+## [0.1.5] - 2026-06-27
+
+### Added
+
+- Configurable agent adapters with documented provider boundaries, so operators
+  can keep discovery, preview, local lockfiles, policy checks, projection, and
+  audit responsibilities separate.
+- Offline skill eval matrix support for repeatable skill quality checks.
+- Codex active view projection spec for moving Codex from a full registry mirror
+  to an explicit active runtime view.
+
+### Fixed
+
+- Skill eval now fails when cases fail, making quality gates actionable instead
+  of silently passing incomplete runs.
+- Workspace status and target flows now account for configurable adapter
+  behavior.
+
+## [0.1.4] - 2026-06-26
+
+### Added
+
+- Portable skill lint checks and inventory discovery commands for stricter skill
+  validation before projection.
+- Source provenance lockfiles and skill policy checks to make local skill
+  changes auditable before they reach agent runtimes.
+- Durable `loom plan use` / `loom apply` workflows for retry-safe skill setup
+  plans.
+
+### Changed
+
+- Refactored large skill command surfaces into focused modules without changing
+  the public lifecycle contract.
+- Trimmed release binary size and kept the release performance budget current.
+
+### Fixed
+
+- Source import now skips Git metadata instead of copying nested repository
+  internals into managed skill sources.
+- Durable plan apply no longer echoes idempotency keys and handles replay
+  failures more safely.
+
 ## [0.1.3] - 2026-06-04
 
 ### Added
@@ -77,6 +119,8 @@ archives, checksums, and provenance details on GitHub Releases.
 
 - Initial public release archives for Loom.
 
+[0.1.5]: https://github.com/majiayu000/loom/compare/v0.1.4...v0.1.5
+[0.1.4]: https://github.com/majiayu000/loom/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/majiayu000/loom/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/majiayu000/loom/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/majiayu000/loom/compare/v0.1.0...v0.1.1

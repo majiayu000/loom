@@ -65,7 +65,7 @@ Relevant existing model:
 - `loom skill diagnose` already joins source, bindings, targets, projections,
   recent operations, and pending operations.
 
-Relevant historical state:
+Observed local state motivating this spec:
 
 - The June 16 unification projected normal registry skills into both Claude and
   Codex endpoints.
@@ -409,19 +409,23 @@ Default `reconcile --apply` must not edit config.
 
 1. The path belongs to the Loom registry root.
 2. The path belongs to an active Codex rule.
-3. The entry is inside a Loom-generated block, or the entry exactly matches the
-   active skill and changing it is the requested operation.
+3. For binding-wide reconcile, the entry is inside a Loom-generated block.
+4. User-authored disables are preserved by reconcile, even when the path matches
+   an active skill.
 
 Safe repairs:
 
-- Change `enabled = false` to `enabled = true` for active skills.
+- Change `enabled = false` to `enabled = true` for active skills inside a
+  Loom-generated block.
 - Or remove the matching generated disable entry.
 
 Unsafe repairs:
 
 - Editing unrelated skills.
 - Editing non-Loom skill paths.
-- Removing a user-authored disable entry without an explicit targeted command.
+- Editing or removing a user-authored disable entry from binding-wide reconcile.
+- Editing user-authored disables is out of scope for MVP unless a later
+  per-skill command requires an explicit skill name and confirmation flag.
 
 Config edits must be atomic: write to a temp file, validate TOML shape if a
 parser is available, then rename.

@@ -64,6 +64,10 @@ Relevant existing model:
   corresponding rule and projection.
 - `loom skill diagnose` already joins source, bindings, targets, projections,
   recent operations, and pending operations.
+- Historical Codex full-mirror projections may already have created Codex
+  `RegistryBindingRule` entries for skills that should not remain active.
+  Existing Codex rules are migration input, not automatically trusted
+  active-view intent.
 
 Observed local state motivating this spec:
 
@@ -78,20 +82,22 @@ Observed local state motivating this spec:
 
 ## Core Decision
 
-For Codex targets, `RegistryBindingRule` is the desired active set.
+For Codex targets, `RegistryBindingRule` is the desired active set after legacy
+full-mirror rules have been audited and either operator-approved or removed.
 
 ```text
-rule exists for codex binding + target + skill
+approved rule exists for codex binding + target + skill
 => skill should be present in ~/.codex/skills/<skill>
 => canonical SKILL.md must not be disabled by Loom-managed Codex config
 
-rule absent
+approved rule absent
 => skill remains in ~/.loom-registry/skills
 => skill should not be present in ~/.codex/skills as a Loom-owned projection
 ```
 
 `RegistryProjectionInstance` remains the actual state record. Reconcile compares
-rules, projections, filesystem entries, and Codex config.
+approved rules, legacy-rule candidates, projections, filesystem entries, and
+Codex config.
 
 ## Terminology
 
@@ -317,30 +323,43 @@ Behavior:
 loom codex reconcile --binding <binding-id> --dry-run
 loom codex reconcile --binding <binding-id> --apply
 loom codex reconcile --binding <binding-id> --apply --fix-config
+loom codex reconcile --binding <binding-id> --apply --allowlist <path>
 ```
 
 Reconcile computes:
 
 ```text
-desired = registry rules for binding + codex target
-recorded = projection instances for binding + codex target
+requested = registry rules for requested binding + codex target
+desired = union of active registry rules for all bindings that share codex target
+recorded = projection instances for codex target
 actual = filesystem entries under target.path
 config = ~/.codex/config.toml skills.config visibility
 ```
+
+The requested binding scopes create, repair, config, and reporting for the
+operator's current action. Destructive cleanup is target-scoped: a Loom-owned
+projection is stale only when no active rule for the same target wants that skill.
+This prevents one binding's reconcile from deleting another binding's active
+projection when both bindings point at the same `~/.codex/skills` directory.
 
 Plan categories:
 
 1. `create_projection`: desired rule exists, path missing.
 2. `repair_projection`: desired rule exists, path exists but points elsewhere.
-3. `remove_stale_projection`: Loom-owned projection exists without desired rule.
+3. `remove_stale_projection`: Loom-owned projection exists without any desired
+   rule in the target-level union.
 4. `remove_stale_record`: projection record exists but path is missing and rule
    is absent.
 5. `preserve_runtime_entry`: Codex-owned runtime entry exists.
 6. `preserve_external_entry`: non-Loom entry exists.
-7. `fix_config_disable`: active canonical `SKILL.md` is disabled by Codex
+7. `preserve_other_binding_projection`: another active binding on the same
+   target still wants this Loom-owned projection.
+8. `fix_config_disable`: active canonical `SKILL.md` is disabled by Codex
    config.
-8. `manual_review`: path conflict, non-symlink projection, unreadable path, or
-   user-authored config conflict.
+9. `legacy_rule_remove`: migration-only removal of a Codex rule that came from
+   the old full-mirror active set and is not in the operator allowlist.
+10. `manual_review`: path conflict, non-symlink projection, unreadable path,
+    user-authored config conflict, or shared-target ownership ambiguity.
 
 Dry-run JSON:
 
@@ -376,6 +395,11 @@ Apply behavior:
 - Apply only actions with `safe_to_apply == true`.
 - If any `manual_review` action exists, return non-zero unless
   `--allow-partial` is introduced later.
+- Before deleting a target entry, re-read the target-level rule union and refuse
+  deletion if any active binding still wants the skill.
+- `--allowlist` is valid only for migration cleanup. It supplies the complete
+  desired active set for the Codex target and allows safe `legacy_rule_remove`
+  actions before projection deletion.
 - Record operation `codex.reconcile`.
 - Commit registry state when registry files change.
 - Do not commit user home config changes to the registry Git repo.
@@ -522,6 +546,8 @@ It must report:
 4. Entries disabled by Codex config.
 5. Which entries are safe to remove from the Codex active view.
 6. Which entries require manual review.
+7. Codex rules that are not in the operator allowlist during migration.
+8. Other active bindings that share the same Codex target.
 
 No mutation in this phase.
 
@@ -542,6 +568,12 @@ agent-workflow
 The allowlist must be explicit input. Loom must not infer it from all existing
 symlinks because the existing endpoint is polluted by the full mirror.
 
+For migration, the allowlist is the desired Codex active set for the selected
+target. Any existing Codex rule on that target whose skill is not in the
+allowlist must be reported before apply. The operator must either add the skill
+to the allowlist, move it to a separate Codex target, or approve removal of that
+rule from the active view.
+
 Possible command:
 
 ```bash
@@ -554,7 +586,30 @@ Batch activation may be added later:
 loom skill activate --from-file codex-active-skills.txt --agent codex --binding bind_codex_default
 ```
 
-### Phase 2: Remove Inactive Loom Projections
+### Phase 2: Clear Legacy Full-Mirror Rules
+
+Before removing filesystem projections, remove the desired-state pollution from
+the registry:
+
+```bash
+loom codex reconcile --binding bind_codex_default --apply --allowlist codex-active-skills.txt
+```
+
+This phase may remove registry rules, not canonical skill sources:
+
+- remove Codex rules for the selected target when the skill is absent from the
+  explicit allowlist
+- preserve rules for skills present in the allowlist
+- preserve rules for other targets
+- preserve rules for another binding on the same target only when that binding is
+  intentionally included in the target-level active set
+
+If multiple active bindings share the target and the command cannot prove their
+ownership boundary, it must fail closed with `manual_review`. A later
+implementation may add an explicit migration command name, but it must keep the
+same safety rule: clear legacy desired state before projection deletion.
+
+### Phase 3: Remove Inactive Loom Projections
 
 Run:
 
@@ -567,7 +622,7 @@ This removes only safe stale projections:
 - path is under Codex target
 - path is a symlink
 - symlink resolves under Loom registry root
-- skill is not in desired active rules
+- skill is not in the target-level union of desired active rules
 
 It must preserve:
 
@@ -575,8 +630,10 @@ It must preserve:
 - `codex-primary-runtime`
 - non-Loom entries
 - directories with uncommitted local edits or non-symlink materialization
+- Loom-owned projections still desired by another active binding on the same
+  target
 
-### Phase 3: Fix Active Config Disables
+### Phase 4: Fix Active Config Disables
 
 Run:
 
@@ -587,7 +644,7 @@ loom codex reconcile --binding bind_codex_default --apply --fix-config
 This repairs active skills disabled by Codex config and reports
 `restart_required: true`.
 
-### Phase 4: Diagnose and Verify
+### Phase 5: Diagnose and Verify
 
 Run:
 
@@ -647,10 +704,13 @@ Likely files:
 Build a pure planner:
 
 ```rust
-fn plan_codex_reconcile(snapshot: &RegistrySnapshot, target: &RegistryProjectionTarget, binding_id: &str, codex_config: Option<&CodexConfigView>) -> ReconcilePlan
+fn plan_codex_reconcile(snapshot: &RegistrySnapshot, target: &RegistryProjectionTarget, request: CodexReconcileRequest, codex_config: Option<&CodexConfigView>) -> ReconcilePlan
 ```
 
-The planner should be unit-testable without touching the real home directory.
+`CodexReconcileRequest` should include the requested binding, optional migration
+allowlist, and target-level rule/projection context needed to preserve other
+bindings on the same target. The planner should be unit-testable without
+touching the real home directory.
 
 ### Step 2: Activate and Deactivate Commands
 
@@ -705,6 +765,10 @@ After CLI tests pass, expose active status and reconcile preview in Panel.
 8. Planner does not request config edits without `--fix-config`.
 9. Config editor changes only the targeted active skill entry.
 10. Config editor refuses malformed TOML.
+11. Planner preserves a Loom-owned projection desired by another binding on the
+    same Codex target.
+12. Planner marks non-allowlisted legacy Codex rules as `legacy_rule_remove`
+    only when an explicit allowlist is supplied.
 
 ### Integration Tests
 
@@ -721,6 +785,10 @@ Use temp directories for registry root, Codex home, and target path.
 8. Observed target activation fails with a typed error.
 9. Non-symlink stale projection fails closed.
 10. Existing unrelated dirty worktree files do not affect read-only reconcile.
+11. Migration with an explicit allowlist removes legacy Codex rules before
+    deleting their stale projections.
+12. Shared-target reconcile preserves projections still desired by another
+    active binding.
 
 ### Manual Verification
 
@@ -747,7 +815,11 @@ Then restart Codex and verify `threads` appears in the available skills list.
 7. `reconcile --apply` refuses unsafe deletes.
 8. `deactivate` never removes canonical registry source.
 9. `skill diagnose` explains why an active skill is not visible to Codex.
-10. Fresh `cargo check` and relevant Rust tests pass.
+10. Legacy full-mirror Codex rules outside the explicit allowlist are removed or
+    reported before projection deletion.
+11. Shared-target cleanup uses the target-level desired-rule union and never
+    deletes another active binding's projection.
+12. Fresh `cargo check` and relevant Rust tests pass.
 
 ## Open Questions
 

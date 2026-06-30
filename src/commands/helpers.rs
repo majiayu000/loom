@@ -116,6 +116,7 @@ pub(crate) fn command_name(command: &Command) -> &'static str {
             SkillCommand::Show(_) => "skill.show",
             SkillCommand::Search(_) => "skill.search",
             SkillCommand::Resolve(_) => "skill.resolve",
+            SkillCommand::New(_) => "skill.new",
             SkillCommand::Add(_) => "skill.add",
             SkillCommand::ImportObserved(_) => "skill.import_observed",
             SkillCommand::MonitorObserved(_) => "skill.monitor_observed",

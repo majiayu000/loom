@@ -183,6 +183,7 @@ The chain `add → capture → save → snapshot → release → rollback` is th
 | `loom skill show` | Show one skill from the shared inventory model | Inspect entrypoint, description, source status, projections, compatible targets, warnings, and next actions | Source + registry metadata (read-only) |
 | `loom skill search` | Search skills with deterministic lexical scoring | Find likely skills by id, description, tags, warning state, agent, profile, status, or trust | Source + registry metadata (read-only) |
 | `loom skill resolve` | Resolve a task description to candidate skills without an LLM | Let agents choose a skill transparently from local metadata and scoring inputs | Source + registry metadata (read-only) |
+| `loom skill new` | Create a lint-clean local skill skeleton | Start a new registry-owned skill with `SKILL.md`, references, scripts, assets, eval stubs, and `loom.skill.toml` | Source (initial create) |
 | `loom skill provenance inspect/verify/refresh` | Inspect, check, or refresh recorded source provenance and `loom.lock` | Confirm a skill still matches the source digest and pinned ref metadata | Source metadata + `loom.lock` |
 | `loom skill policy` | Report declared capabilities, content risks, provenance drift, and policy decision | Review a skill before projection or explain why a policy profile blocks it | Source metadata + source files (read-only) |
 | `loom skill eval` | Run offline trigger/task/artifact eval fixtures | Track quality evidence across agent/model hosts without network calls | Source + eval fixtures (read-only) |
@@ -274,6 +275,7 @@ loom skill list
 loom skill show <skill>
 loom skill search <query> [--agent <agent>] [--profile <profile>] [--status <status>] [--trust <trust>]
 loom skill resolve <task-description> [--agent <agent>] [--workspace <path>]
+loom skill new <skill> [--template <basic|coding-workflow|scripted|reference-heavy>] [--description <text>] [--agent <agent>] [--dry-run]
 loom skill add <path|git-url|github:owner/repo//subdir> --name <skill> [--ref <branch|tag|commit>] [--subdir <path>]
 loom skill provenance inspect <skill>
 loom skill provenance verify <skill>

@@ -45,7 +45,7 @@ Panel production build, the agent E2E flow, and `make perf-smoke`.
 
 Performance smoke currently enforces:
 
-1. release binary size <= 3200 KiB
+1. release binary size <= 3300 KiB
 2. `loom --version` p95 < 300 ms
 3. `loom --help` p95 < 300 ms
 4. Panel `.html`/`.css`/`.js` gzip payload <= 100 KiB

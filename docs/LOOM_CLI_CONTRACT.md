@@ -513,6 +513,30 @@ Rules:
 6. the local runner never calls a network or LLM provider; rubric or LLM graders must be represented explicitly in fixtures before they can be tracked
 7. eval success is quality evidence only and must not be treated as a safety guarantee
 
+### 11.3.3 `skillset create`, `skillset add`, `skillset remove`, `skillset show`, `skillset lint`
+
+```bash
+loom --json --root <root> skillset create <skillset-id> [--description <text>]
+loom --json --root <root> skillset add <skillset-id> <skill-id> [--role <role>] [--required|--optional]
+loom --json --root <root> skillset remove <skillset-id> <skill-id>
+loom --json --root <root> skillset show <skillset-id>
+loom --json --root <root> skillset lint <skillset-id>
+```
+
+`create`, `add`, and `remove` are write commands. `show` and `lint` are read-only commands.
+
+Rules:
+
+1. skillsets are persisted in `state/registry/skillsets.json`
+2. absent `skillsets.json` means no skillsets exist; it is not a registry corruption error
+3. `skillset add` accepts only skills present in the current skill inventory read model
+4. a skill can appear at most once in a skillset
+5. member `role` is optional advisory metadata and does not imply execution order
+6. members are required by default; `--optional` marks a member optional
+7. `skillset show` includes each member's current skill read-model summary when available and marks drifted missing members
+8. `skillset lint` validates member existence, duplicate members, empty skillsets, and required/optional counts
+9. this first surface does not activate, evaluate, release, or roll back skillsets; those behaviors depend on later single-skill lifecycle primitives
+
 ### 11.4 `skill project`
 
 ```bash

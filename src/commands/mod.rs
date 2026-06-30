@@ -19,6 +19,7 @@ mod skill_inventory;
 mod skill_lint;
 mod skill_policy;
 mod skill_verify;
+mod skillset_cmds;
 mod sync_cmds;
 mod target_cmds;
 mod trash_cmds;
@@ -33,8 +34,8 @@ use uuid::Uuid;
 
 use crate::cli::{
     AgentCommand, Cli, Command, OpsCommand, OpsHistoryCommand, RemoteCommand, SkillCommand,
-    SkillOrphanCommand, SkillProvenanceCommand, SkillTrashCommand, SyncCommand, TargetCommand,
-    WorkspaceBindingCommand, WorkspaceCommand, WorkspaceInitArgs,
+    SkillOrphanCommand, SkillProvenanceCommand, SkillTrashCommand, SkillsetCommand, SyncCommand,
+    TargetCommand, WorkspaceBindingCommand, WorkspaceCommand, WorkspaceInitArgs,
 };
 use crate::envelope::{Envelope, Meta};
 use crate::state::{AppContext, home_dir};
@@ -247,6 +248,13 @@ impl App {
                     command: SkillOrphanCommand::Clean(args),
                 } => self.cmd_skill_orphan_clean(args, &request_id),
             },
+            Command::Skillset { command } => match command {
+                SkillsetCommand::Create(args) => self.cmd_skillset_create(args),
+                SkillsetCommand::Add(args) => self.cmd_skillset_add(args),
+                SkillsetCommand::Remove(args) => self.cmd_skillset_remove(args),
+                SkillsetCommand::Show(args) => self.cmd_skillset_show(args),
+                SkillsetCommand::Lint(args) => self.cmd_skillset_lint(args),
+            },
             Command::Sync { command } => self.cmd_sync(command),
             Command::Ops { command } => self.cmd_ops(command),
             Command::Agent { command } => match command {
@@ -382,6 +390,9 @@ fn command_records_audit(command: &Command) -> bool {
                         command: SkillTrashCommand::List,
                     }
             }
+            | Command::Skillset {
+                command: SkillsetCommand::Show(_) | SkillsetCommand::Lint(_),
+            }
     ) && !is_rollback_preview(command)
 }
 
@@ -447,6 +458,12 @@ fn command_requires_durable_audit(command: &Command) -> bool {
             | SkillCommand::Orphan {
                 command: SkillOrphanCommand::List,
             } => false,
+        },
+        Command::Skillset { command } => match command {
+            SkillsetCommand::Create(_) | SkillsetCommand::Add(_) | SkillsetCommand::Remove(_) => {
+                true
+            }
+            SkillsetCommand::Show(_) | SkillsetCommand::Lint(_) => false,
         },
         Command::Sync { command } => !matches!(command, SyncCommand::Status),
         Command::Ops { command } => match command {

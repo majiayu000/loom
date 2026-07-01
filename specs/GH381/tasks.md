@@ -25,7 +25,7 @@ hosted RBAC service, replacement for Git hosting permissions, local safety gate 
 - [ ] `SP381-T002` Owner: policy-cli | Done when: `policy org init/show/check` returns allow/deny/approval_required with roles, reasons, evidence, and approval commands | Verify: `cargo test --test org_policy`
 - [ ] `SP381-T003` Owner: approval-store | Done when: approval request/list/approve/reject uses append-only audited events with source/registry/command-input evidence, required roles, approval requirements, satisfied approval tokens, redacted comments, and policy decision digest, checks approver roles before decision events, and computes terminal current request state deterministically | Verify: `cargo test --test org_policy`
 - [ ] `SP381-T004` Owner: roles | Done when: roles list/grant/revoke validates role names, requires admin policy for grant/revoke, preserves at least one resolved admin, and exposes resolved role grants in JSON | Verify: `cargo test --test org_policy`
-- [ ] `SP381-T005` Owner: enforcement | Done when: skill install/add/new/save/capture/watch/snapshot/provenance refresh/trash, project, activate/deactivate, release/rollback, trust/quarantine, provider add/remove, workspace remote set, sync pull/push/replay, ops retry, autosync, and composite apply mutations call org policy before writing | Verify: `cargo test --test skill_policy && cargo test --test agent_plan_apply`
+- [ ] `SP381-T005` Owner: enforcement | Done when: skill install/add/import-observed/monitor-observed/new/save/capture/watch/snapshot/provenance refresh/trash/orphan clean, project, activate/deactivate, release/rollback, trust/quarantine, provider add/remove, target add/remove, workspace remote/binding updates, sync pull/push/replay, ops retry/purge/history repair, autosync, and composite apply mutations call org policy before writing | Verify: `cargo test --test skill_policy && cargo test --test agent_plan_apply`
 - [ ] `SP381-T006` Owner: safety | Done when: org policy approval cannot bypass local safety gates and blocked/quarantined skills remain denied | Verify: `cargo test --test skill_policy`
 - [ ] `SP381-T007` Owner: regression | Done when: focused and full repository checks pass | Verify: `cargo check --workspace --all-targets --all-features && cargo test`
 
@@ -123,8 +123,14 @@ Depends on: SP381-T2, SP381-T3
 Done when:
 
 - Mutating commands call org policy before writing.
-- Skill draft writes, remote `skill add` imports, sync pull/replay, and autosync
-  writes are governed, not only install and activation.
+- Skill draft writes, observed skill imports/monitor updates, watch autosaves,
+  trash purge, orphan cleanup, remote `skill add` imports, target/binding
+  updates, sync pull/push/replay, ops maintenance, and autosync writes are
+  governed, not only install and activation.
+- Existing dispatcher ids are normalized to canonical dotted policy actions,
+  including `workspace.remote` as the policy alias for `workspace.remote.set`,
+  and quoted TOML requirement keys such as `[requirements."skill.activate"]`
+  resolve to those same action ids.
 - Composite apply paths such as `use --apply` preflight all target, binding,
   projection, registry, and sync writes before any mutation lands.
 - Approval-required actions return `POLICY_BLOCKED` with approval request

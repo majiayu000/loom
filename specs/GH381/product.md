@@ -70,6 +70,8 @@ Governed actions:
 
 - `skill.install`
 - `skill.add`
+- `skill.import_observed`
+- `skill.monitor_observed`
 - `skill.new`
 - `skill.save`
 - `skill.capture`
@@ -79,6 +81,7 @@ Governed actions:
 - `skill.trash.add`
 - `skill.trash.restore`
 - `skill.trash.purge`
+- `skill.orphan.clean`
 - `skill.project`
 - `skill.activate`
 - `skill.deactivate`
@@ -89,15 +92,34 @@ Governed actions:
 - `provider.add`
 - `provider.remove`
 - `workspace.remote.set`
+- `workspace.binding.add`
+- `workspace.binding.remove`
+- `target.add`
+- `target.remove`
 - `sync.pull`
 - `sync.push`
 - `sync.replay`
 - `ops.retry`
+- `ops.purge`
+- `ops.history.repair`
 
 Subject arguments are action-specific. Skill lifecycle actions require
-`--skill`; provider actions require `--provider`; sync actions require the
-configured remote or sync target. The evaluator must reject irrelevant or
-missing subject arguments instead of inventing dummy skill values.
+`--skill` when the command targets one skill; provider actions require
+`--provider`; sync actions require the configured remote or sync target; target
+actions require `target_id`; workspace binding actions require the binding
+identity and target; and `skill.trash.purge` requires `trash_id`. Commands whose
+current CLI does not carry a single skill, such as `skill watch` autosave mode,
+must derive a deterministic per-skill batch plan and evaluate each planned
+skill mutation before writing. `skill.trash.purge` must either resolve
+`trash_id` to the original skill subject from immutable trash metadata or govern
+the action with a `trash_id` subject; it must not invent a dummy skill value.
+The evaluator must reject irrelevant or missing subject arguments instead of
+guessing replacements.
+
+Policy action ids are canonical dotted ids. Existing dispatcher ids that are
+coarser than a policy action must be mapped before evaluation; for example the
+current `workspace.remote` command id aliases to `workspace.remote.set` for
+`workspace remote set` until the dispatcher exposes the split id directly.
 
 Autosync and queued sync writes inherit the skill mutation evidence but must also
 preflight the planned remote-specific `sync.push` policy before scheduling or
@@ -127,9 +149,10 @@ Default gates are:
   marks risk, live-state impact, or third-party trust as review-required.
 - release, rollback, provider, trust, and quarantine actions require
   `maintainer` or `admin`.
-- remote configuration, sync replay, `ops.retry`, snapshot/tag, provenance
-  refresh, and trash purge actions require `maintainer` or `admin` unless policy
-  explicitly delegates them.
+- remote configuration, workspace binding, target, sync pull/push/replay,
+  `ops.retry`, `ops.purge`, `ops.history.repair`, snapshot/tag, provenance
+  refresh, trash purge, and orphan cleanup actions require `maintainer` or
+  `admin` unless policy explicitly delegates them.
 - role and policy administration require `admin`.
 
 Maintainer and admin actions must verify the current actor's maintainer/admin
@@ -179,4 +202,5 @@ creates a new request id.
 6. RBAC roles are resolved from local policy and exposed in JSON.
 7. Tests cover allow, deny, approval-required, approved action, rejected action,
    missing role, initial admin bootstrap, action-specific subject matching,
-   blocked skill, and release preflight policy gates.
+   blocked skill, policy aliases for existing command ids, and release preflight
+   policy gates.

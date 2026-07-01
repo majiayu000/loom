@@ -49,18 +49,25 @@ reviewer = ["alice", "team:platform"]
 maintainer = ["team:devtools"]
 admin = ["alice"]
 
-[requirements.skill_activate]
+[requirements."skill.activate"]
 third_party_unreviewed = "approval_required"
 high_risk = "approval_required"
 blocked = "deny"
 quarantined = "deny"
 
-[requirements.skill_release]
+[requirements."skill.release"]
 requires_clean_source = true
 requires_eval_pass = true
 requires_security_scan = true
 requires_reviewer_approval = true
 ```
+
+Requirement keys use the same canonical dotted action ids as policy decisions.
+TOML must encode these as quoted keys, such as
+`[requirements."skill.activate"]`. Implementations may accept older underscore
+keys such as `[requirements.skill_activate]` only through an explicit
+normalization layer that is covered by tests and that fails on ambiguous
+duplicates.
 
 ## Policy Evaluator
 
@@ -91,21 +98,38 @@ The evaluator should join:
 - existing local policy findings
 - existing plan approval token semantics
 
+Before evaluation, command ids and CLI subjects are normalized into canonical
+policy action ids and action-specific subjects. The normalization table must
+cover existing dispatcher ids that are less specific than the governed action,
+including `workspace.remote` to `workspace.remote.set` for
+`workspace remote set`. Commands that produce multiple writes, such as
+autosaving `skill watch`, expand into a deterministic batch of per-write policy
+checks before any mutation lands.
+
 ## Enforcement
 
 Mutating commands should call org policy before writing:
 
 - install
 - remote skill add/import
+- observed skill import/monitor updates
 - skill new/save/capture draft writes
+- skill watch autosave writes
+- skill snapshot and provenance refresh
+- trash add/restore/purge
+- orphan projection cleanup
 - project
 - activate/deactivate
 - release/rollback
 - trust update
 - quarantine
 - provider add/remove
+- target add/remove
+- workspace binding add/remove
+- workspace remote set
 - sync pull/push/replay, including autosync writes inherited from an enclosing
   mutation decision
+- ops retry/purge/history repair
 
 If approval is required, return `POLICY_BLOCKED` with:
 

@@ -28,6 +28,8 @@ mod skill_lint;
 mod skill_new;
 mod skill_policy;
 mod skill_preflight;
+mod skill_recommend;
+mod skill_recommend_active;
 mod skill_safety;
 mod skill_safety_findings;
 mod skill_verify;
@@ -253,6 +255,10 @@ impl App {
                     command: SkillActiveCommand::List(args),
                 } => self.cmd_skill_active_list(args),
                 SkillCommand::Search(args) => self.cmd_skill_search(args),
+                SkillCommand::Recommend(args) => self.cmd_skill_recommend(args),
+                SkillCommand::Resolve(args) if args.semantic => {
+                    self.cmd_skill_resolve_semantic(args)
+                }
                 SkillCommand::Resolve(args) => self.cmd_skill_resolve(args),
                 SkillCommand::New(args) => self.cmd_skill_new(args, &request_id),
                 SkillCommand::Provenance { command } => {
@@ -287,6 +293,23 @@ impl App {
                 SkillsetCommand::Show(args) => self.cmd_skillset_show(args),
                 SkillsetCommand::Lint(args) => self.cmd_skillset_lint(args),
             },
+            Command::Index(args) if args.action == "build" => self.cmd_index_build(args),
+            Command::Index(args) if args.action == "status" => self.cmd_index_status(),
+            Command::Index(args) => Err(CommandFailure::new(
+                ErrorCode::ArgInvalid,
+                format!(
+                    "unknown index action '{}'; expected build or status",
+                    args.action
+                ),
+            )),
+            Command::Active(args) if args.action == "recommend" => self.cmd_active_recommend(args),
+            Command::Active(args) => Err(CommandFailure::new(
+                ErrorCode::ArgInvalid,
+                format!(
+                    "unknown active action '{}'; expected recommend",
+                    args.action
+                ),
+            )),
             Command::Sync { command } => self.cmd_sync(command),
             Command::Ops { command } => self.cmd_ops(command),
             Command::Agent { command } => match command {
@@ -437,6 +460,8 @@ fn command_records_audit(command: &Command) -> bool {
         command,
         Command::Panel(_)
             | Command::Backup { .. }
+            | Command::Index(_)
+            | Command::Active(_)
             | Command::Skill {
                 command: SkillCommand::History(_)
                     | SkillCommand::List
@@ -447,6 +472,7 @@ fn command_records_audit(command: &Command) -> bool {
                     | SkillCommand::Regression(_)
                     | SkillCommand::Active { .. }
                     | SkillCommand::Search(_)
+                    | SkillCommand::Recommend(_)
                     | SkillCommand::Resolve(_)
                     | SkillCommand::Lint(_)
                     | SkillCommand::Visibility(_)
@@ -520,6 +546,7 @@ fn command_requires_durable_audit(command: &Command) -> bool {
             | SkillCommand::Regression(_)
             | SkillCommand::Active { .. }
             | SkillCommand::Search(_)
+            | SkillCommand::Recommend(_)
             | SkillCommand::Resolve(_)
             | SkillCommand::Lint(_)
             | SkillCommand::Policy(_)
@@ -544,6 +571,7 @@ fn command_requires_durable_audit(command: &Command) -> bool {
             }
             SkillsetCommand::Show(_) | SkillsetCommand::Lint(_) => false,
         },
+        Command::Index(_) | Command::Active(_) => false,
         Command::Sync { command } => !matches!(command, SyncCommand::Status),
         Command::Ops { command } => match command {
             OpsCommand::List => false,

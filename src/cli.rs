@@ -8,6 +8,7 @@ mod deps;
 mod discovery;
 mod eval;
 mod improve;
+mod index;
 mod plan_flow;
 mod policy;
 mod provenance;
@@ -22,12 +23,13 @@ mod use_flow;
 mod version;
 pub use codex_args::{CodexCommand, CodexReconcileArgs};
 pub use deps::SkillDepsArgs;
-pub use discovery::{SkillResolveArgs, SkillSearchArgs};
+pub use discovery::{ActiveRecommendArgs, SkillRecommendArgs, SkillResolveArgs, SkillSearchArgs};
 pub use eval::{
     EvalBaselineArg, EvalRunnerArg, SkillEvalArgs, SkillEvalCommand, SkillEvalCompareArgs,
     SkillEvalOfflineArgs, SkillEvalRunArgs, SkillEvalTriggerArgs,
 };
 pub use improve::{SkillImproveArgs, SkillRegressionArgs};
+pub use index::IndexArgs;
 pub use plan_flow::{ApplyArgs, PlanCommand, PlanUseArgs};
 pub use policy::SkillPolicyArgs;
 pub use provenance::{AddArgs, SkillProvenanceCommand};
@@ -111,6 +113,10 @@ pub enum Command {
         #[command(subcommand)]
         command: SkillsetCommand,
     },
+    #[command(about = "Build and inspect local derived recommendation indexes")]
+    Index(IndexArgs),
+    #[command(about = "Inspect and plan active-view changes")]
+    Active(ActiveRecommendArgs),
     #[command(about = "Synchronize the registry through its Git remote")]
     Sync {
         #[command(subcommand)]
@@ -262,6 +268,8 @@ pub enum SkillCommand {
     },
     #[command(about = "Search skills with deterministic lexical scoring")]
     Search(SkillSearchArgs),
+    #[command(about = "Recommend skills and skillsets without mutating active views")]
+    Recommend(SkillRecommendArgs),
     #[command(about = "Resolve a task description to candidate skills without invoking an LLM")]
     Resolve(SkillResolveArgs),
     #[command(about = "Create a lint-clean local skill skeleton")]

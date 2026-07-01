@@ -162,6 +162,351 @@ fn skill_search_and_resolve_are_deterministic_and_transparent() {
 }
 
 #[test]
+fn index_build_and_status_are_local_and_deterministic() {
+    let root = TestDir::new("skill-index-build");
+    write_demo_skills(root.path());
+
+    let (output, env) = run_loom(root.path(), &["index", "build", "--no-embeddings"]);
+    assert!(output.status.success(), "index build should pass: {env}");
+    assert_eq!(env["cmd"], json!("index.build"));
+    assert_eq!(env["data"]["network_required"], json!(false));
+    assert_eq!(env["data"]["counts"]["skills"], json!(2));
+    assert!(
+        root.path()
+            .join("state/index/skills.lexical.json")
+            .is_file()
+    );
+    assert!(
+        root.path()
+            .join("state/index/skills.capabilities.json")
+            .is_file()
+    );
+    assert!(root.path().join("state/index/workspaces.json").is_file());
+
+    let first = fs::read_to_string(root.path().join("state/index/skills.lexical.json"))
+        .expect("read first lexical index");
+    let (output, env) = run_loom(root.path(), &["index", "build", "--no-embeddings"]);
+    assert!(
+        output.status.success(),
+        "second index build should pass: {env}"
+    );
+    let second = fs::read_to_string(root.path().join("state/index/skills.lexical.json"))
+        .expect("read second lexical index");
+    assert_eq!(first, second, "lexical-only index should be deterministic");
+
+    let (output, env) = run_loom(root.path(), &["index", "status"]);
+    assert!(output.status.success(), "index status should pass: {env}");
+    assert_eq!(env["cmd"], json!("index.status"));
+    assert_eq!(env["data"]["ready"], json!(true));
+    assert_eq!(env["data"]["files"]["lexical"]["records"], json!(2));
+}
+
+#[test]
+fn skill_recommend_and_resolve_semantic_fall_back_to_lexical() {
+    let root = TestDir::new("skill-recommend-semantic");
+    write_demo_skills(root.path());
+
+    let (output, env) = run_loom(
+        root.path(),
+        &["skill", "recommend", "review pull request", "--semantic"],
+    );
+    assert!(
+        output.status.success(),
+        "skill recommend should pass: {env}"
+    );
+    assert_eq!(env["cmd"], json!("skill.recommend"));
+    assert_eq!(env["data"]["mode"], json!("semantic-disabled"));
+    assert!(
+        env["meta"]["warnings"]
+            .as_array()
+            .expect("warnings")
+            .iter()
+            .any(|warning| warning
+                .as_str()
+                .is_some_and(|value| value.contains("semantic provider not configured"))),
+        "recommend should warn about semantic fallback: {env}"
+    );
+    assert_eq!(env["data"]["results"][0]["kind"], json!("skill"));
+    assert_eq!(env["data"]["results"][0]["id"], json!("review-helper"));
+    assert_eq!(
+        env["data"]["results"][0]["warnings"][0],
+        json!("no trust metadata recorded")
+    );
+
+    let (output, env) = run_loom(
+        root.path(),
+        &["skill", "resolve", "review pull request", "--semantic"],
+    );
+    assert!(output.status.success(), "skill resolve should pass: {env}");
+    assert_eq!(env["data"]["strategy"]["mode"], json!("semantic-disabled"));
+    assert!(
+        env["meta"]["warnings"]
+            .as_array()
+            .expect("warnings")
+            .iter()
+            .any(|warning| warning
+                .as_str()
+                .is_some_and(|value| value.contains("semantic provider not configured"))),
+        "resolve should warn about semantic fallback: {env}"
+    );
+}
+
+#[test]
+fn skill_recommend_filters_quarantined_activation_candidates() {
+    let root = TestDir::new("skill-recommend-quarantine");
+    write_skill(
+        root.path(),
+        "risky-review",
+        "---\nname: risky-review\ndescription: Use when reviewing risky pull requests.\n---\n# Risky\n",
+    );
+    write_file(
+        &root.path().join("state/registry/trust.json"),
+        r#"{"schema_version":1,"skills":[{"skill_id":"risky-review","trust":"local-draft","quarantined":true,"reason":"blocked","updated_at":"2026-06-30T00:00:00Z","updated_by":"test"}]}
+"#,
+    );
+
+    let (output, env) = run_loom(root.path(), &["skill", "recommend", "risky review"]);
+    assert!(
+        output.status.success(),
+        "skill recommend should pass: {env}"
+    );
+    assert_eq!(env["data"]["count"], json!(0));
+    assert!(
+        env["data"]["results"]
+            .as_array()
+            .expect("results")
+            .iter()
+            .all(|result| result["id"] != json!("risky-review")),
+        "quarantined skill must not be recommended: {env}"
+    );
+}
+
+#[test]
+fn skill_recommend_includes_read_only_skillset_candidates() {
+    let root = TestDir::new("skill-recommend-skillset");
+    write_demo_skills(root.path());
+
+    let (output, env) = run_loom(
+        root.path(),
+        &[
+            "skillset",
+            "create",
+            "coding-flow",
+            "--description",
+            "Coding flow for focused tests and review",
+        ],
+    );
+    assert!(
+        output.status.success(),
+        "skillset create should pass: {env}"
+    );
+    let (output, env) = run_loom(
+        root.path(),
+        &[
+            "skillset",
+            "add",
+            "coding-flow",
+            "test-writer",
+            "--role",
+            "testing",
+        ],
+    );
+    assert!(output.status.success(), "skillset add should pass: {env}");
+
+    let (output, env) = run_loom(
+        root.path(),
+        &["skill", "recommend", "focused tests", "--agent", "claude"],
+    );
+    assert!(
+        output.status.success(),
+        "skill recommend should pass: {env}"
+    );
+    let results = env["data"]["results"].as_array().expect("results");
+    let skillset = results
+        .iter()
+        .find(|result| result["kind"] == json!("skillset") && result["id"] == json!("coding-flow"))
+        .unwrap_or_else(|| panic!("missing skillset recommendation: {env}"));
+    assert_eq!(skillset["recommended_action"], json!("activate"));
+    assert!(
+        skillset["suggested_commands"]
+            .as_array()
+            .expect("commands")
+            .iter()
+            .all(|command| !command
+                .as_str()
+                .unwrap_or_default()
+                .contains("skill activate coding-flow")),
+        "skillset must not emit invalid direct skill activation command: {skillset}"
+    );
+}
+
+#[test]
+fn skill_recommend_degrades_unsafe_skillset_to_inspection() {
+    let root = TestDir::new("skill-recommend-unsafe-skillset");
+    write_demo_skills(root.path());
+    write_file(
+        &root.path().join("state/registry/trust.json"),
+        r#"{"schema_version":1,"skills":[{"skill_id":"review-helper","trust":"local-draft","quarantined":true,"reason":"blocked","updated_at":"2026-06-30T00:00:00Z","updated_by":"test"}]}
+"#,
+    );
+
+    let (output, env) = run_loom(
+        root.path(),
+        &[
+            "skillset",
+            "create",
+            "review-pack",
+            "--description",
+            "Review pull request workflow",
+        ],
+    );
+    assert!(
+        output.status.success(),
+        "skillset create should pass: {env}"
+    );
+    let (output, env) = run_loom(
+        root.path(),
+        &[
+            "skillset",
+            "add",
+            "review-pack",
+            "review-helper",
+            "--role",
+            "review",
+        ],
+    );
+    assert!(output.status.success(), "skillset add should pass: {env}");
+
+    let (output, env) = run_loom(
+        root.path(),
+        &[
+            "skill",
+            "recommend",
+            "review pull request",
+            "--agent",
+            "claude",
+        ],
+    );
+    assert!(
+        output.status.success(),
+        "skill recommend should pass: {env}"
+    );
+    let skillset = env["data"]["results"]
+        .as_array()
+        .expect("results")
+        .iter()
+        .find(|result| result["kind"] == json!("skillset") && result["id"] == json!("review-pack"))
+        .unwrap_or_else(|| panic!("missing unsafe skillset recommendation: {env}"));
+    assert_eq!(skillset["recommended_action"], json!("inspect"));
+    assert!(
+        skillset["risks"]
+            .as_array()
+            .expect("risks")
+            .iter()
+            .any(|risk| risk.as_str().is_some_and(
+                |value| value.contains("review-helper") && value.contains("quarantined")
+            )),
+        "unsafe member should be listed as a risk: {skillset}"
+    );
+    assert_eq!(
+        skillset["suggested_commands"],
+        json!(["loom --json skillset show review-pack"])
+    );
+}
+
+#[test]
+fn active_recommend_returns_dry_run_plan_without_mutation() {
+    let root = TestDir::new("active-recommend-readonly");
+    write_demo_skills(root.path());
+    let registry_before = tree_snapshot(&root.path().join("state/registry"));
+    let skills_before = tree_snapshot(&root.path().join("skills"));
+    let pending_before = fs::read(root.path().join("state/pending_ops.jsonl")).ok();
+
+    let (output, env) = run_loom(
+        root.path(),
+        &[
+            "active",
+            "recommend",
+            "review pull request",
+            "--agent",
+            "claude",
+        ],
+    );
+    assert!(
+        output.status.success(),
+        "active recommend should pass: {env}"
+    );
+    assert_eq!(env["cmd"], json!("active.recommend"));
+    assert_eq!(env["data"]["dry_run"], json!(true));
+    assert_eq!(env["data"]["plan"]["remove"], json!([]));
+    assert!(
+        env["data"]["plan"]["add"]
+            .as_array()
+            .expect("add plan")
+            .iter()
+            .any(|item| item["skill"] == json!("review-helper")),
+        "active recommend should plan matching skill activation: {env}"
+    );
+    assert_eq!(
+        tree_snapshot(&root.path().join("state/registry")),
+        registry_before
+    );
+    assert_eq!(tree_snapshot(&root.path().join("skills")), skills_before);
+    assert_eq!(
+        fs::read(root.path().join("state/pending_ops.jsonl")).ok(),
+        pending_before,
+        "active recommend must not mutate pending queue"
+    );
+}
+
+#[test]
+fn active_recommend_blocks_unsafe_explicit_desired_skill() {
+    let root = TestDir::new("active-recommend-unsafe-desired");
+    write_demo_skills(root.path());
+    write_file(
+        &root.path().join("state/registry/trust.json"),
+        r#"{"schema_version":1,"skills":[{"skill_id":"review-helper","trust":"local-draft","quarantined":true,"reason":"blocked","updated_at":"2026-06-30T00:00:00Z","updated_by":"test"}]}
+"#,
+    );
+    let registry_before = tree_snapshot(&root.path().join("state/registry"));
+    let skills_before = tree_snapshot(&root.path().join("skills"));
+
+    let (output, env) = run_loom(
+        root.path(),
+        &[
+            "active",
+            "recommend",
+            "review pull request",
+            "--agent",
+            "claude",
+            "--desired-skill",
+            "review-helper",
+        ],
+    );
+    assert!(
+        output.status.success(),
+        "active recommend should pass: {env}"
+    );
+    assert_eq!(env["data"]["plan"]["add"], json!([]));
+    assert_eq!(env["data"]["policy"]["allowed"], json!(false));
+    assert!(
+        env["data"]["risks"]
+            .as_array()
+            .expect("risks")
+            .iter()
+            .any(|risk| risk.as_str().is_some_and(
+                |value| value.contains("review-helper") && value.contains("quarantined")
+            )),
+        "unsafe desired skill should be listed as a risk: {env}"
+    );
+    assert_eq!(
+        tree_snapshot(&root.path().join("state/registry")),
+        registry_before
+    );
+    assert_eq!(tree_snapshot(&root.path().join("skills")), skills_before);
+}
+
+#[test]
 fn inventory_read_commands_do_not_mutate_state_or_targets() {
     let root = TestDir::new("skill-inventory-readonly");
     let live = TestDir::new("skill-inventory-live-target");

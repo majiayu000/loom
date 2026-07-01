@@ -101,7 +101,23 @@ compiled artifact:
    scripts exposed to the runtime interface.
 5. Asset file bytes or content hashes when assets are indexed or exposed to the
    runtime interface.
-6. Compiler version and agent profile.
+6. Compiler version, target agent, and agent profile.
+
+## Sidecar Schemas
+
+Every JSON sidecar uses `schema_version: 1` and typed minimal fields:
+
+- `catalog.json`: ordered `sections[]` with `id`, `title`, `content_hash`, and
+  `role`.
+- `boundaries.json`: ordered `triggers[]`, `non_triggers[]`,
+  `deferred_operations[]`, and `required_handoff_fields[]`.
+- `tool-interface.json`: ordered `allowed_tools[]` and `script_entrypoints[]`
+  with path-confined `path`, `usage`, and `risk` fields.
+- `references.index.json`: ordered `references[]` with path-confined `path`,
+  `role`, `load_condition`, and `content_hash`.
+
+Unknown required fields, unsupported enum values, malformed arrays, or duplicate
+ids fail typed verification instead of being accepted as arbitrary JSON.
 
 When a source digest does not match the manifest digest, verification returns a
 typed stale result. It must not silently fall back to the artifact.
@@ -138,11 +154,12 @@ typed stale result. It must not silently fall back to the artifact.
 2. Validate `manifest.skill` matches the CLI skill and `manifest.artifact_id`
    matches the requested artifact directory before trusting sidecars.
 3. Ensure all required files exist.
-4. Validate each JSON file with typed schema parsing.
+4. Validate each JSON file with the sidecar schemas defined above.
 5. Enforce path confinement for every indexed path in sidecars: no absolute
    paths, no `..` traversal, and canonical targets must remain inside the source
    skill tree or generated artifact tree as appropriate.
-6. Recompute the source digest and compare it with the manifest.
+6. Recompute the source digest and compare it with the manifest and
+   `source-digest.txt`.
 7. Recompute generated content hashes for `activation.md` and JSON sidecars and
    compare them with manifest `content_hashes`.
 8. Validate the generated activation/projection artifact text with the
@@ -150,8 +167,8 @@ typed stale result. It must not silently fall back to the artifact.
 9. Run or consume current safety/trust status for the source and run the safety
    gate against generated activation/projection text.
 10. Run or consume dependency readiness.
-11. Require eval evidence tied to the generated content hashes before returning
-   `valid`.
+11. Require eval evidence tied to the generated content hashes and the current
+   eval suite or threshold digest before returning `valid`.
 12. Return a structured report that deferred `skill inspect` integration can
    consume.
 

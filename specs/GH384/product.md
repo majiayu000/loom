@@ -93,6 +93,8 @@ state/compiled/skills/<skill>/<artifact-id>/
 `catalog.json` is a generated sidecar that lists deterministic runtime sections
 and sidecar entries exposed by the artifact. It lets inspect, list, and future
 activation consumers enumerate artifact content without scraping `activation.md`.
+`source-digest.txt` mirrors `manifest.source_digest`; verify must compare it to
+the manifest and recomputed digest or reject the artifact.
 
 The manifest must include at least:
 

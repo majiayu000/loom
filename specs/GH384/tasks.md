@@ -129,6 +129,7 @@ Done when:
   deterministic artifact-id order.
 - verify detects source digest mismatch after source edits.
 - verify detects generated activation or sidecar content hash mismatches.
+- verify compares `source-digest.txt` with the manifest and recomputed digest.
 - verify rejects absolute paths, `..` traversal, and canonical path escapes in
   indexed sidecar paths.
 - verify validates generated `activation.md` or projected activation text
@@ -137,7 +138,8 @@ Done when:
   source skill.
 - verify prevents `valid` status when lint, safety, dependency, or eval gates
   are missing, blocked, or failed.
-- verify requires eval evidence to match the generated content hashes.
+- verify requires eval evidence to match the generated content hashes and current
+  eval suite or threshold digest.
 - verify returns structured output that `skill inspect` can consume later.
 
 Verify:

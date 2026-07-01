@@ -7,6 +7,14 @@ pub struct ReleaseArgs {
     pub skill: String,
     /// Release tag or version label to create.
     pub version: String,
+
+    /// Run the skill improvement preflight before creating the release tag.
+    #[arg(long)]
+    pub preflight: bool,
+
+    /// Baseline ref used by release preflight, usually the previous release.
+    #[arg(long)]
+    pub baseline: Option<String>,
 }
 
 #[derive(Debug, Clone, Args, Serialize)]

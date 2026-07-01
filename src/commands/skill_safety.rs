@@ -322,7 +322,6 @@ pub(crate) fn security_diff_report(
     to: &str,
 ) -> std::result::Result<Value, CommandFailure> {
     validate_skill_name(skill).map_err(map_arg)?;
-    ensure_skill_exists(ctx, skill)?;
     let skill_rel = format!("skills/{skill}");
     let raw = gitops::run_git(ctx, &["diff", "--name-status", from, to, "--", &skill_rel])
         .map_err(map_git)?;

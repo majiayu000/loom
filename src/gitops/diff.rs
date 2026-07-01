@@ -58,7 +58,7 @@ pub fn diff_changed_paths_from_ref(
     Ok((all_paths.into_iter().take(limit).collect(), truncated))
 }
 
-fn parse_diff_shortstat(raw: &str) -> Result<DiffShortStat> {
+pub(crate) fn parse_diff_shortstat(raw: &str) -> Result<DiffShortStat> {
     let trimmed = raw.trim();
     if trimmed.is_empty() {
         return Ok(DiffShortStat::default());

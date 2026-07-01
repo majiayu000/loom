@@ -197,6 +197,8 @@ The chain `add → capture → save → snapshot → release → rollback` is th
 | `loom skill scan` | Return unified safety findings, trust state, and activation decision | Review prompt-injection, script, secret, network, provenance, and trust risks before activation | Source + trust metadata (read-only) |
 | `loom skill trust/quarantine/unquarantine` | Persist registry-owned trust and quarantine metadata | Mark review state or block a skill without editing portable `SKILL.md` | Registry trust state |
 | `loom skill eval` | Run offline fixtures or explicit eval harnesses | Compare offline quality, trigger behavior, and mock with-skill/no-skill baselines without network calls by default | Source + eval fixtures; reports under registry state |
+| `loom skill improve` | Run a read-only single-skill preflight | Aggregate source drift, lint, safety, dependency, eval, and optional real-eval planning before saving edits | Source + local environment (read-only) |
+| `loom skill regression` | Compare one skill against a baseline gate | Fail with typed regression details when lint, safety, dependency, eval, or size gates block the candidate | Source + local environment (read-only) |
 | `loom skillset create/add/remove/show/lint` | Group existing registry skills into a named set | Organize coherent skill bundles before later activation/eval support lands | Registry skillset state |
 | `loom use` | Plan or apply target, binding, and projection setup in one flow | New users want to use a skill without copying target/binding IDs between commands | Source + target + registry metadata |
 | `loom plan use` / `loom apply` | Persist a guarded use plan, then execute it with idempotency | Agents need a retry-safe plan/apply protocol for higher-risk flows | Command audit + source/target/registry metadata |
@@ -212,7 +214,7 @@ The chain `add → capture → save → snapshot → release → rollback` is th
 | `loom skill diagnose` | Run a read-only health report for one skill | Explain missing source, broken bindings/targets/projections, source drift, pending queue issues, and recent failures | Source + registry metadata (read-only) |
 | `loom codex reconcile` | Plan or repair Codex active-view visibility | Dry-run projection/config actions, repair safe Loom-owned symlinks, remove stale records, and optionally patch safe config disables | Target + registry metadata + Codex config |
 
-Quick decision: **edits from the agent side → `capture`; edits inside the registry repo → `save`; anchor → `snapshot`; public version → `release`; undo → `rollback`; integrity audit → `verify`; health triage → `diagnose`; quality evidence → `eval`.**
+Quick decision: **edits from the agent side → `capture`; edits inside the registry repo → `improve` then `save --preflight`; anchor → `snapshot`; public version → `release --preflight --baseline <ref>`; undo → `rollback`; integrity audit → `verify`; health triage → `diagnose`; quality evidence → `eval`.**
 
 ## Comparison
 
@@ -309,11 +311,13 @@ loom skill eval offline <skill> [--agent <agent> | --matrix <agent,agent>] [--mo
 loom skill eval run <skill> --agent <agent> --baseline no-skill [--cases <path>] [--runs <n>] [--runner mock|codex-cli] [--dry-run] [--output <path>]
 loom skill eval trigger <skill> --agent <agent> [--cases <path>] [--runs <n>] [--runner mock|codex-cli] [--output <path>]
 loom skill eval compare <skill> --from <ref> --to <ref|working-tree> --agent <agent> [--cases <path>] [--runner mock|codex-cli] [--output <path>]
+loom skill improve <skill> [--agent <agent>] [--workspace <path>] [--baseline <ref>] [--real-eval] [--dry-run]
+loom skill regression <skill> [--agent <agent>] [--from <ref>] [--to <ref|working-tree>]
 loom skill project <skill> --binding <binding-id> [--target <target-id>] [--method <symlink|copy|materialize>] [--dry-run]
 loom skill capture [<skill>] [--binding <binding-id>] [--instance <instance-id>] [--message <msg>] [--dry-run]
-loom skill save <skill> [--message <msg>]
+loom skill save <skill> [--message <msg>] [--preflight]
 loom skill snapshot <skill>
-loom skill release <skill> <version>
+loom skill release <skill> <version> [--preflight --baseline <ref>]
 loom skill rollback <skill> [--to <ref> | --steps <n>] [--dry-run]
 loom skill diff [--security] <skill> <from> <to>
 loom skill history <skill> [--limit <n>] [--from <rev>] [--to <rev>] [--include-diff-stat] [--include-ops]

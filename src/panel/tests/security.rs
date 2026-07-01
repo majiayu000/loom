@@ -545,6 +545,7 @@ fn run_panel_command_returns_non_2xx_for_logical_failures_across_mutations() {
                 command: SkillCommand::Save(SaveArgs {
                     skill: "missing-skill".to_string(),
                     message: None,
+                    preflight: false,
                 }),
             },
         ),
@@ -564,6 +565,8 @@ fn run_panel_command_returns_non_2xx_for_logical_failures_across_mutations() {
                 command: SkillCommand::Release(ReleaseArgs {
                     skill: "missing-skill".to_string(),
                     version: "v1".to_string(),
+                    preflight: false,
+                    baseline: None,
                 }),
             },
         ),

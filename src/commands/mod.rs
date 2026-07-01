@@ -27,6 +27,7 @@ mod skill_inventory;
 mod skill_lint;
 mod skill_new;
 mod skill_policy;
+mod skill_preflight;
 mod skill_safety;
 mod skill_safety_findings;
 mod skill_verify;
@@ -214,6 +215,8 @@ impl App {
                 SkillCommand::Project(args) => self.cmd_project(args, &request_id),
                 SkillCommand::Capture(args) if args.dry_run => self.cmd_capture_plan(args),
                 SkillCommand::Capture(args) => self.cmd_capture(args, &request_id),
+                SkillCommand::Improve(args) => self.cmd_skill_improve(args),
+                SkillCommand::Regression(args) => self.cmd_skill_regression(args),
                 SkillCommand::Save(args) => self.cmd_save(args, &request_id),
                 SkillCommand::Watch(args) => self.cmd_watch(args, &request_id),
                 SkillCommand::Snapshot(args) => self.cmd_snapshot(args, &request_id),
@@ -440,6 +443,8 @@ fn command_records_audit(command: &Command) -> bool {
                     | SkillCommand::Show(_)
                     | SkillCommand::Inspect(_)
                     | SkillCommand::Deps(_)
+                    | SkillCommand::Improve(_)
+                    | SkillCommand::Regression(_)
                     | SkillCommand::Active { .. }
                     | SkillCommand::Search(_)
                     | SkillCommand::Resolve(_)
@@ -511,6 +516,8 @@ fn command_requires_durable_audit(command: &Command) -> bool {
             | SkillCommand::Show(_)
             | SkillCommand::Inspect(_)
             | SkillCommand::Deps(_)
+            | SkillCommand::Improve(_)
+            | SkillCommand::Regression(_)
             | SkillCommand::Active { .. }
             | SkillCommand::Search(_)
             | SkillCommand::Resolve(_)

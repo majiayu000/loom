@@ -77,12 +77,15 @@ Parser output should include:
 - whether ref is pinned
 
 The prefix namespace is provider ids. `github:` and `local:` are default
-provider ids. Unknown prefixes fail with `PROVIDER_NOT_FOUND` unless a matching
-provider record exists. `team:` is reserved for a later org-provider slice and
-must fail as unsupported in v1.
+provider ids. Unknown prefixes fail with a provider-specific typed error such as
+`PROVIDER_NOT_FOUND`; the implementation slice that introduces this error must
+add it to `src/types.rs`, `docs/LOOM_CLI_CONTRACT.md`, and CLI envelope tests.
+`team:` is reserved for a later org-provider slice and must fail as unsupported
+in v1.
 
-Pinned refs include immutable commit SHAs and policy-approved tags. Branch names
-are moving refs and should fail under strict policy.
+Pinned refs include immutable commit SHAs. Tags are acceptable only when policy
+verifies immutability/signature and provenance records the resolved commit and
+source digest. Branch names are moving refs and should fail under strict policy.
 
 ## Provider Abstraction
 

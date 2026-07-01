@@ -137,12 +137,18 @@ Preview must not execute scripts. It should show:
 8. Mark trust as `third-party-unreviewed` unless explicitly reviewed.
 9. Return next actions: inspect, scan, activate.
 
+Existing remote `loom skill add <git-url|github:...>` paths must either route
+through the same provider pin, scan, provenance, trust, and policy gates once
+GH380 lands, or be explicitly deprecated/disabled for remote provider content so
+they cannot bypass `skill install`.
+
 ## Policy Gates
 
-1. Strict policy rejects unpinned moving refs. Install uses the explicit
-   `--policy-profile` when provided, otherwise the registry default policy
-   profile; if neither is configured, behavior must fail closed for unpinned refs
-   instead of silently allowing them.
+1. Strict policy rejects unpinned moving refs. Tags are treated as mutable unless
+   policy verifies tag immutability/signature and records the resolved commit
+   digest. Install uses the explicit `--policy-profile` when provided, otherwise
+   the registry default policy profile; if neither is configured, behavior must
+   fail closed for unpinned refs instead of silently allowing them.
 2. Critical scan findings block install unless a future explicit risk override
    exists and policy permits it.
 3. Public skills default to `third-party-unreviewed`.

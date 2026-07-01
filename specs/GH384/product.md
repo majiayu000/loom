@@ -90,10 +90,15 @@ state/compiled/skills/<skill>/<artifact-id>/
   source-digest.txt
 ```
 
+`catalog.json` is a generated sidecar that lists deterministic runtime sections
+and sidecar entries exposed by the artifact. It lets inspect, list, and future
+activation consumers enumerate artifact content without scraping `activation.md`.
+
 The manifest must include at least:
 
 ```json
 {
+  "schema_version": 1,
   "artifact_id": "compiled_fixflow_codex_...",
   "skill": "fixflow",
   "agent": "codex",
@@ -150,6 +155,12 @@ When `verify` is called without `--artifact`, it verifies every artifact under
 the selected skill and returns a deterministic list sorted by artifact id. It
 must not pick an arbitrary filesystem entry as the default target.
 
+Because `list` and `verify` can also be valid skill names, parser tests must
+cover disambiguation. If the positional grammar cannot unambiguously express a
+skill named `list` or `verify`, the CLI must provide a flagged selector such as
+`loom skill compile --skill list --dry-run` and document it instead of silently
+reserving those skill names.
+
 Deferred inspect integration should explain compiled artifact status, stale
 reason, gate results, and source fallback once #366 wiring is included.
 
@@ -169,7 +180,10 @@ reason, gate results, and source fallback once #366 wiring is included.
    status.
 7. Compiled activation remains opt-in and basic activation works when no
    compiled artifact exists.
-8. Tests cover dry-run planning, no-op small skills, artifact manifest parsing,
+8. `skill compile list` returns artifacts sorted by artifact id.
+9. Compiled activation rejects artifacts whose manifest agent or profile does not
+   match the requested activation agent/profile.
+10. Tests cover dry-run planning, no-op small skills, artifact manifest parsing,
    missing file verification, stale digest verification, manifest identity
    verification, generated-content hash/eval matching, gate failure handling,
    artifact-id path validation, sidecar path confinement, activation-artifact

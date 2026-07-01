@@ -123,9 +123,11 @@ typed stale result. It must not silently fall back to the artifact.
 7. Build `boundaries.json` with triggers, non-triggers, deferred operations,
    and required handoff fields.
 8. Build `tool-interface.json` from allowed tools and script entrypoints.
-9. Estimate source and activation token counts with a deterministic local
+9. Build `catalog.json` with deterministic generated sections, sidecar names,
+   content hashes, and runtime entry roles.
+10. Estimate source and activation token counts with a deterministic local
    estimator.
-10. Return planned paths, planned content hashes, token estimates, and gate
+11. Return planned paths, planned content hashes, token estimates, and gate
     statuses.
 
 ## Verification
@@ -162,12 +164,15 @@ promotion to `valid`, not pretend success.
 Compiled activation is deferred until #367 and #373 are stable. When wired:
 
 1. `--compiled` requires an artifact whose verification status is `valid`.
-2. If no valid artifact exists, the command fails with a typed next action.
-3. If an agent adapter cannot consume native compiled artifacts, Loom may
+2. The artifact manifest `agent` and `profile` must match the requested
+   activation agent/profile.
+3. If no valid matching artifact exists, the command fails with a typed next
+   action.
+4. If an agent adapter cannot consume native compiled artifacts, Loom may
    materialize an agent-compatible `SKILL.md` derived from `activation.md`.
-4. Materialized projections must preserve links to source skill files and
+5. Materialized projections must preserve links to source skill files and
    artifact manifest metadata.
-5. Normal activation without `--compiled` must not depend on compiled artifacts.
+6. Normal activation without `--compiled` must not depend on compiled artifacts.
 
 ## Test Plan
 
@@ -182,8 +187,11 @@ Focused tests:
 7. manifest identity mismatch fails verification;
 8. sidecar path escapes fail verification;
 9. verify without `--artifact` returns all artifacts in deterministic order;
-10. inspect includes artifact status once inspect wiring exists;
-11. compiled activation rejects missing or stale artifacts once activation wiring
+10. compile list returns artifacts sorted by artifact id;
+11. compiled activation rejects agent/profile mismatches once activation wiring
+    exists;
+12. inspect includes artifact status once inspect wiring exists;
+13. compiled activation rejects missing or stale artifacts once activation wiring
     exists.
 
 Suggested commands:

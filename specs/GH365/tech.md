@@ -6,7 +6,7 @@ Status: Draft for implementation
 
 ## Design Summary
 
-Implement a focused `skill lint` expansion without changing registry state:
+Implement the `skill lint` expansion without changing registry state:
 
 1. Move `SkillLintArgs` out of `src/cli.rs` to keep the CLI file under the hard line ceiling.
 2. Add `yaml_serde` and replace the hand-rolled top-level-only frontmatter parser.
@@ -50,7 +50,8 @@ Portable parser:
 1. Read only the YAML frontmatter between opening and closing `---`.
 2. Parse with `yaml_serde`.
 3. Require the YAML root to be a mapping.
-4. Preserve existing name/description validation.
+4. Preserve existing name/description validation and reject descriptions above
+   1024 characters in strict portable mode.
 5. Accept optional `license`, `compatibility`, `metadata`, and `allowed-tools`.
 6. Treat schema-shape issues as strict errors and compat/fix warnings through the existing mode rules.
 
@@ -58,7 +59,9 @@ Agent checks:
 
 1. `--agent codex` warns for Claude-only fields such as `allowed-tools`.
 2. `--agent claude` recognizes Claude-only fields without failing portable lint.
-3. Unknown agents produce a warning but do not fail portable lint.
+3. Codex and Claude checks scan configured agent skill directories and warn when
+   another same-name active copy exists outside the source skill path.
+4. Unknown agents produce a warning but do not fail portable lint.
 
 Quality checks:
 
@@ -66,6 +69,8 @@ Quality checks:
 2. Warn when `SKILL.md` exceeds the recommended line threshold.
 3. Warn when eval fixtures are missing.
 4. Warn when script files lack shebangs and no nearby usage doc exists.
+5. Warn when reference files are nested deeply enough to obscure progressive
+   disclosure.
 
 ## Test Plan
 

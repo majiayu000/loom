@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -7,6 +7,8 @@ use serde_json::{Value, json};
 
 use crate::cli::SkillLintArgs;
 use crate::envelope::Meta;
+use crate::state::resolve_agent_skill_dirs;
+use crate::state_model::RegistryStatePaths;
 use crate::types::ErrorCode;
 
 use super::helpers::{map_arg, validate_skill_name};
@@ -57,6 +59,7 @@ struct SkillLintConfig {
     mode: SkillLintMode,
     agent: Option<String>,
     quality: bool,
+    agent_skill_dirs: Vec<PathBuf>,
 }
 
 impl SkillLintConfig {
@@ -65,6 +68,7 @@ impl SkillLintConfig {
             mode: SkillLintMode::from_args(args),
             agent: args.agent.as_ref().map(|agent| agent.to_ascii_lowercase()),
             quality: args.quality,
+            agent_skill_dirs: Vec::new(),
         }
     }
 
@@ -73,6 +77,7 @@ impl SkillLintConfig {
             mode,
             agent: None,
             quality: false,
+            agent_skill_dirs: Vec::new(),
         }
     }
 }
@@ -196,7 +201,9 @@ impl App {
             ));
         }
 
-        let config = SkillLintConfig::from_args(args);
+        let mut config = SkillLintConfig::from_args(args);
+        config.agent_skill_dirs =
+            agent_skill_dirs_for_lint(&self.ctx.root, config.agent.as_deref());
         let mode = config.mode;
         let report = lint_skill_source_with_config(&skill_path, &args.skill, &config);
         if mode.strict_errors() && report.summary.error_count > 0 {
@@ -321,7 +328,13 @@ fn lint_skill_source_with_config(
         }
     }
 
-    run_agent_checks(config, &frontmatter, &mut findings);
+    run_agent_checks(
+        config,
+        skill_path,
+        expected_name,
+        &frontmatter,
+        &mut findings,
+    );
     if config.quality {
         run_quality_checks(
             skill_path,
@@ -474,6 +487,17 @@ fn validate_frontmatter(
                     json!({ "description": description }),
                 );
             }
+            if description.chars().count() > 1024 {
+                lint_or_warn(
+                    findings,
+                    mode,
+                    "description_too_long",
+                    "frontmatter description exceeds the portable 1024 character limit",
+                    "shorten description to 1024 characters or less",
+                    false,
+                    json!({ "length": description.chars().count(), "limit": 1024 }),
+                );
+            }
             let lower = description.to_ascii_lowercase();
             if !["use", "when", "for", "trigger"]
                 .iter()
@@ -500,6 +524,42 @@ fn validate_frontmatter(
             json!({}),
         ),
     }
+}
+
+fn agent_skill_dirs_for_lint(root: &Path, agent: Option<&str>) -> Vec<PathBuf> {
+    let dirs = resolve_agent_skill_dirs(root);
+    let mut agent_dirs: Vec<PathBuf> = match agent {
+        Some("codex") => vec![dirs.codex],
+        Some("claude") => vec![dirs.claude],
+        Some(other) => dirs
+            .all
+            .into_iter()
+            .filter(|dir| dir.agent == other)
+            .map(|dir| dir.path)
+            .collect(),
+        None => Vec::new(),
+    };
+    if let Some(agent) = agent {
+        agent_dirs.extend(registered_target_dirs_for_agent(root, agent));
+    }
+    let mut seen = BTreeSet::new();
+    agent_dirs
+        .into_iter()
+        .filter(|path| seen.insert(path.clone()))
+        .collect()
+}
+
+fn registered_target_dirs_for_agent(root: &Path, agent: &str) -> Vec<PathBuf> {
+    let paths = RegistryStatePaths::from_root(root);
+    let Ok(targets) = paths.load_targets() else {
+        return Vec::new();
+    };
+    targets
+        .targets
+        .into_iter()
+        .filter(|target| target.agent == agent)
+        .map(|target| PathBuf::from(target.path))
+        .collect()
 }
 
 fn portable_name_error(name: &str) -> Option<String> {

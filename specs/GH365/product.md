@@ -13,9 +13,9 @@ Locale: zh-CN
 2. 这个 skill 是否对目标 agent（本 slice 先覆盖 `codex` / `claude`）存在明显兼容风险。
 3. 这个 skill 是否有容易导致触发不准、上下文膨胀或脚本维护困难的质量风险。
 
-## Scope For First PR
+## Scope
 
-本 PR 实现最小可合并 slice：
+本 PR 完成 #365 的可执行 lint 范围：
 
 - 保留 `--strict`、`--compat`、`--fix` 现有语义。
 - 新增 `--portable` 作为 strict portable alias。
@@ -23,14 +23,16 @@ Locale: zh-CN
 - 新增 `--quality`，只产生 non-fatal warning。
 - 用真实 YAML parser 解析 frontmatter，支持 nested YAML，不再因为 `metadata` / `compatibility` 形态直接拒绝。
 - 报告 `sections.portable_spec`、`sections.agent_compatibility`、`sections.quality`、`sections.resources`、`sections.progressive_disclosure`。
+- `--agent codex` / `--agent claude` 检查已配置 agent skill directory 中的同名 active copy，作为 collision warning。
+- `--quality` 覆盖 vague/over-broad description、oversized `SKILL.md`、missing eval fixtures、script entrypoint clarity、deep references。
+- portable validation 覆盖 description 1024 字符上限。
 
 ## Non-Goals
 
 1. 不在本 slice 自动修改 skill；`--fix` 仍然只返回 read-only plan。
-2. 不实现完整 Agent Skills 官方 spec 的所有字段验证。
-3. 不做 active Codex/Claude skill directory collision 扫描。
-4. 不引入外部网络请求或远端 spec 抓取。
-5. 不改变 `skill new` 的生成模板策略。
+2. 不引入外部网络请求或远端 spec 抓取。
+3. 不改变 `skill new` 的生成模板策略。
+4. 不自动修改 skill；`--fix` 仍然只返回 read-only plan。
 
 ## Behavior Invariants
 
@@ -42,12 +44,15 @@ Locale: zh-CN
 6. `--agent codex` 对 Claude-only fields 返回 warning；`--agent claude` 识别这些字段但不把它们当作 portable failure。
 7. `--quality` 只增加 warning，不让原本 valid 的 skill 变为 invalid。
 8. 资源和 progressive disclosure 计数必须在 JSON report 中稳定输出。
+9. Agent collision checks are read-only and only report configured active skill directories; they do not remove or repair active copies.
 
 ## Acceptance Criteria
 
 1. Rich YAML frontmatter with `metadata`, `license`, `compatibility`, and `allowed-tools` passes `loom skill lint --portable`.
 2. Existing strict failures still return `SCHEMA_MISMATCH` with `error.details.report`.
 3. `--agent codex` returns an agent compatibility warning for Claude-only frontmatter fields.
-4. `--quality` warns for missing eval fixtures and unclear script entrypoints.
-5. Report JSON includes `sections.portable_spec`, `sections.agent_compatibility`, `sections.quality`, `sections.resources`, and `sections.progressive_disclosure`.
-6. Tests cover portable rich YAML, agent-specific field handling, quality warnings, and existing strict validation behavior.
+4. `--agent claude` accepts Claude-specific fields without warning, while both Codex and Claude modes warn on same-name active skill directory collisions.
+5. `--quality` warns for vague descriptions, oversized `SKILL.md`, missing eval fixtures, unclear script entrypoints, and deep references.
+6. Portable strict validation rejects descriptions above 1024 characters.
+7. Report JSON includes `sections.portable_spec`, `sections.agent_compatibility`, `sections.quality`, `sections.resources`, and `sections.progressive_disclosure`.
+8. Tests cover portable rich YAML, agent-specific field handling, active collision warnings, quality warnings, and existing strict validation behavior.

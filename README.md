@@ -28,7 +28,7 @@
 
 AI coding agents (Claude Code, Codex, Cursor, Windsurf, …) all read skills from **different directories**. Keeping them in sync is either:
 
-- **Manual**: `cp -R` or `ln -s` between `~/.claude/skills`, `~/.codex/skills`, repo-local `.claude/skills`, … — easy to drift, hard to roll back, impossible to audit.
+- **Manual**: `cp -R` or `ln -s` between `~/.claude/skills`, `~/.agents/skills`, legacy `~/.codex/skills`, repo-local `.agents/skills`, … — easy to drift, hard to roll back, impossible to audit.
 - **One-way sync apps**: install skills from a central store, but no binding logic, no per-project matching, no version history, no replay when things go wrong.
 
 **Loom treats skills like infrastructure**: a Git-backed registry (add → capture → save → snapshot → release → rollback → diff), projected onto one or many agent directories through explicit bindings (agent + profile + matcher + policy), with sync, replay, and audit trail. CLI-first for automation, Panel-assisted for visibility.
@@ -59,13 +59,30 @@ cd loom && cargo install --path .
 # 2. Initialize the default registry and auto-register existing agent skill dirs
 loom init
 
-# 3. Import/update observed skills once, or keep watching in the foreground
-loom monitor --once
-loom monitor --interval-seconds 30
-loom use my-skill --agents claude,codex --scope project --apply
+# 3. Manage one skill through the single-skill lifecycle
+loom skill new fixflow --template coding-workflow
+loom skill lint fixflow --portable
+loom skill lint fixflow --quality
+loom skill scan fixflow
+loom skill activate fixflow --agent codex --scope user --dry-run
+loom skill activate fixflow --agent codex --scope user
+loom skill visibility fixflow --agent codex
 ```
 
 Loom defaults to `~/.loom-registry`. Pass `--root <dir>` only when you want a different registry.
+
+For existing agent directories, import observed skills separately:
+
+```bash
+loom monitor --once
+loom monitor --interval-seconds 30
+```
+
+Read the workflow guides:
+
+- [Single-Skill Lifecycle](docs/SINGLE_SKILL_LIFECYCLE.md)
+- [Codex Skill Visibility](docs/CODEX_SKILL_VISIBILITY.md)
+- [Migrating To An Active View](docs/MIGRATING_TO_ACTIVE_VIEW.md)
 
 For agent automation, keep the mutable registry separate from the Loom source checkout and always use an explicit root:
 
@@ -80,7 +97,7 @@ loom --json --root "$REGISTRY_ROOT" sync status
 
 `--root` is the Git-backed skill registry directory, not the Loom tool repository.
 
-For managed projection flows:
+For advanced managed projection flows:
 
 ```bash
 # Import a skill into the registry
@@ -151,9 +168,10 @@ Prefer a guided walkthrough? Run `./scripts/demo.sh` for a scripted end-to-end t
 │   Skill Registry  │         │    Target Dirs     │
 │  (your Git repo)  │         │                    │
 │                   │         │  ~/.claude/skills  │
-│   skills/*        │         │  ~/.codex/skills   │
-│   state/registry  │ ──────▶ │  /repo/.claude/... │
-│   Git history     │         │  …                 │
+│   skills/*        │         │  ~/.agents/skills  │
+│   state/registry  │ ──────▶ │  legacy .codex     │
+│   Git history     │         │  /repo/.agents/... │
+│                   │         │  …                 │
 └─────────▲─────────┘         └──────────▲─────────┘
           │                              │
           │   capture / save / snapshot  │ projection
@@ -364,7 +382,8 @@ loom target list
 
 ### Observed Skill Monitoring
 
-Use this when the real source of truth is still an agent skill directory such as `~/.claude/skills` or `~/.codex/skills`.
+Use this when the real source of truth is still an agent skill directory such as
+`~/.claude/skills`, `~/.agents/skills`, or legacy `~/.codex/skills`.
 
 ```bash
 loom monitor --once
@@ -375,7 +394,8 @@ loom monitor --interval-seconds 30
 
 ## Agent E2E (Recommended)
 
-Run four real scenarios in one command (`.claude/skills`, `.claude-work/skills`, multi-directory selection, `.codex/skills` + failure feedback):
+Run four real scenarios in one command (`.claude/skills`, `.claude-work/skills`,
+multi-directory selection, legacy `.codex/skills` + failure feedback):
 
 ```bash
 ./scripts/e2e-agent-flow.sh                  # default output root

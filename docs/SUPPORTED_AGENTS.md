@@ -1,15 +1,15 @@
 # Supported Agents
 
-Loom defines a fixed list of agent kinds. Each kind has a canonical default
-skill directory that `loom workspace init --scan-existing` and the
-`workspace doctor` agent inventory check probe under `$HOME`.
+Loom defines a fixed list of agent kinds. Each kind has built-in adapter
+metadata for default discovery roots that `loom workspace init --scan-existing`
+and the `workspace doctor` agent inventory check probe under `$HOME`.
 
 ## Built-in agent kinds
 
 | Agent kind (`AgentKind`) | CLI value (`--agent`) | Default skill directory |
 |---|---|---|
 | `Claude` | `claude` | `$HOME/.claude/skills` |
-| `Codex` | `codex` | `$HOME/.codex/skills` |
+| `Codex` | `codex` | `$HOME/.agents/skills` preferred; `${CODEX_HOME:-$HOME/.codex}/skills` legacy |
 | `Cursor` | `cursor` | `$HOME/.cursor/skills` |
 | `Windsurf` | `windsurf` | `$HOME/.windsurf/skills` |
 | `Cline` | `cline` | `$HOME/.cline/skills` |
@@ -22,6 +22,10 @@ skill directory that `loom workspace init --scan-existing` and the
 The built-in source of truth is `src/cli.rs` (the `AgentKind` enum) plus
 `src/agent_adapters.rs`. External adapters use the protocol in
 `docs/AGENT_ADAPTERS.md`.
+
+Codex has active-view semantics beyond a single default path. See
+`docs/CODEX_SKILL_VISIBILITY.md` for the preferred user root, legacy root,
+project `.agents/skills` search chain, config disables, and restart guidance.
 
 ## How `--scan-existing` uses this list
 

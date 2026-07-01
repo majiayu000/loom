@@ -52,7 +52,10 @@ Recommended shape:
 ```
 
 Records must be deterministic before write. Malformed provider state must fail
-without overwrite.
+without overwrite. Provider URLs must be credential-free before persistence:
+reject userinfo, embedded tokens, password fields, and token-like query
+parameters. If credentials are required in a later slice, store only a redacted
+URL plus an external credential reference, never the secret value.
 
 ## Locator Parser
 
@@ -60,17 +63,23 @@ Support normalized locators:
 
 ```text
 github:owner/repo//skills/foo@v1.2.3
+corp-github:owner/repo//skills/foo@v1.2.3
 local:/path/to/catalog//skills/foo
-team:core-skills/foo@2026.06
 ```
 
 Parser output should include:
 
-- provider kind/id
+- provider id resolved from the locator prefix, then provider kind from
+  `state/registry/providers.json`
 - owner/repo or local base
 - subdir
 - requested ref
 - whether ref is pinned
+
+The prefix namespace is provider ids. `github:` and `local:` are default
+provider ids. Unknown prefixes fail with `PROVIDER_NOT_FOUND` unless a matching
+provider record exists. `team:` is reserved for a later org-provider slice and
+must fail as unsupported in v1.
 
 Pinned refs include immutable commit SHAs and policy-approved tags. Branch names
 are moving refs and should fail under strict policy.
@@ -94,6 +103,9 @@ Provider implementations:
 - `github`: GitHub locator convenience over direct Git.
 - `git`: internal fallback for Git-backed fetch.
 - `gh_skill`: optional future read-only discovery/preview adapter.
+
+No v1 `team` provider is exposed until its policy, membership, provenance, and
+fetch semantics are specified.
 
 Do not call `gh skill install` from Loom.
 
@@ -156,7 +168,8 @@ Rules:
 Focused tests:
 
 1. provider add/list/remove persists deterministic config.
-2. locator parser handles GitHub/local/team locators and pin status.
+2. locator parser handles GitHub/local/custom-provider locators, pin status, and
+   reserved-but-unsupported `team:` errors.
 3. search mock returns advisory catalog results.
 4. preview mock never executes scripts.
 5. install dry-run writes nothing.

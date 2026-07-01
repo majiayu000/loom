@@ -29,13 +29,13 @@ Production implementation is blocked by:
 Target command surface:
 
 ```bash
-loom provider add <id> --kind github|local|team --url <url>
+loom provider add <id> --kind github|local --url <url>
 loom provider list
 loom provider remove <id>
 loom catalog search <query> [--provider <provider-id>] [--agent <agent>] [--json]
 loom catalog show <locator> [--json]
 loom catalog preview <locator> [--ref <ref>] [--json]
-loom skill install <locator> --name <skill> [--ref <branch|tag|sha>] [--trust third-party-unreviewed|reviewed] [--dry-run]
+loom skill install <locator> --name <skill> [--ref <branch|tag|sha>] [--trust third-party-unreviewed|reviewed] [--policy-profile <profile>] [--dry-run]
 ```
 
 If a locator already contains `@ref`, `--ref` must either match that ref or the
@@ -46,8 +46,8 @@ Locator examples:
 
 ```text
 github:owner/repo//skills/foo@v1.2.3
+corp-github:owner/repo//skills/foo@v1.2.3
 local:/path/to/catalog//skills/foo
-team:core-skills/foo@2026.06
 ```
 
 ## Non-Goals
@@ -74,6 +74,13 @@ Provider records describe capability and trust defaults:
   "requires_network": true
 }
 ```
+
+Locator prefixes are provider ids, not only hard-coded provider kinds. The
+built-in default provider ids are `github` and `local`; custom ids such as
+`corp-github` use the same prefix position in locators, for example
+`corp-github:owner/repo//skills/foo@v1.2.3`. Team/org providers are deferred
+until a policy-backed provider contract defines search, preview, fetch, and
+provenance semantics.
 
 Provider unavailability should return structured warnings for read-only
 surfaces. Local and direct Git/GitHub locators must not require optional `gh
@@ -132,7 +139,10 @@ Preview must not execute scripts. It should show:
 
 ## Policy Gates
 
-1. Strict policy rejects unpinned moving refs.
+1. Strict policy rejects unpinned moving refs. Install uses the explicit
+   `--policy-profile` when provided, otherwise the registry default policy
+   profile; if neither is configured, behavior must fail closed for unpinned refs
+   instead of silently allowing them.
 2. Critical scan findings block install unless a future explicit risk override
    exists and policy permits it.
 3. Public skills default to `third-party-unreviewed`.

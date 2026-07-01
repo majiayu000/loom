@@ -22,12 +22,12 @@ first-party hosted marketplace, auto-trust, preview script execution, direct gh 
 ## Tasks
 
 - [ ] `SP380-T001` Owner: provider-config | Done when: provider add/list/remove persists deterministic `state/registry/providers.json` and malformed state fails without overwrite | Verify: `cargo test --test provider_cli`
-- [ ] `SP380-T002` Owner: locator | Done when: GitHub/local/team locators parse into provider id, source location, subdir, requested ref, and pinned-ref status | Verify: `cargo test --test provider_cli`
+- [ ] `SP380-T002` Owner: locator | Done when: GitHub/local/custom-provider locators parse into provider id, source location, subdir, requested ref, and pinned-ref status, while reserved-but-unsupported `team:` fails clearly | Verify: `cargo test --test provider_cli`
 - [ ] `SP380-T003` Owner: catalog | Done when: catalog search/show return advisory results with warnings and do not write registry or target state | Verify: `cargo test --test provider_cli`
 - [ ] `SP380-T004` Owner: preview | Done when: preview renders metadata, file tree, scripts, license/provenance hints, lint/safety summaries, and never executes code | Verify: `cargo test --test provider_cli`
 - [ ] `SP380-T005` Owner: install-dry-run | Done when: `skill install --dry-run` resolves locator, evaluates pin policy, stages fetch plan, reports lint/safety/provenance/trust, and writes nothing | Verify: `cargo test --test provider_cli`
 - [ ] `SP380-T006` Owner: install-apply | Done when: pinned install creates provenance, `loom.lock`, trust state, audit records, and registry import without auto-activation | Verify: `cargo test --test skill_provenance`
-- [ ] `SP380-T007` Owner: policy | Done when: strict policy rejects unpinned refs, critical scan findings block install, and public installs default to `third-party-unreviewed` | Verify: `cargo test --test skill_policy`
+- [ ] `SP380-T007` Owner: policy | Done when: strict policy rejects unpinned refs using explicit or registry-default policy profile, critical scan findings block install, and public installs default to `third-party-unreviewed` | Verify: `cargo test --test skill_policy`
 - [ ] `SP380-T008` Owner: regression | Done when: focused and full repository checks pass | Verify: `cargo check --workspace --all-targets --all-features && cargo test`
 
 ### SP380-T1: Add Provider Config
@@ -45,6 +45,8 @@ Done when:
 
 - Providers can be added, listed, and removed.
 - Provider ids are validated.
+- Provider URLs with embedded credentials or token-like query parameters are
+  rejected before persistence.
 - Provider records are sorted before write.
 - Malformed state fails without overwrite.
 
@@ -61,7 +63,9 @@ Depends on: SP380-T1
 
 Done when:
 
-- GitHub, local, and team locators parse.
+- GitHub, local, and custom provider-id locators parse.
+- `team:` locators are reserved but unsupported in v1 unless a later provider
+  contract defines them.
 - Subdirectory and ref syntax is deterministic.
 - Pinned and moving refs are classified.
 - Invalid locators fail with structured errors.
@@ -117,6 +121,8 @@ Depends on: SP380-T4
 Done when:
 
 - Dry-run resolves locator and pin policy.
+- Dry-run uses explicit `--policy-profile` or the registry default policy
+  profile; missing strict policy input fails closed for unpinned refs.
 - Dry-run reports staging/fetch plan.
 - Dry-run reports lint, safety, provenance, trust, and next actions.
 - Dry-run writes nothing.

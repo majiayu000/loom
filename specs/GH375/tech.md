@@ -57,11 +57,16 @@ Recommended envelope data:
       "agents": [
         {
           "agent": "codex",
-          "state": "disabled-by-config",
+          "active": true,
+          "projected": true,
+          "visible": true,
+          "enabled": false,
+          "restart_required": false,
+          "verdict": "disabled-by-config",
           "target_path": "/Users/example/.agents/skills",
           "materialized_path": "/Users/example/.agents/skills/fixflow",
           "suggested_commands": [
-            "loom --json skill doctor fixflow --agent codex"
+            "loom --json skill diagnose fixflow"
           ]
         }
       ]
@@ -69,10 +74,16 @@ Recommended envelope data:
     "eval": {
       "last_run_at": null,
       "offline_fixture_status": "missing",
-      "baseline": null
+      "baseline": null,
+      "with_skill": null,
+      "without_skill": null,
+      "trigger_precision": null,
+      "trigger_recall": null,
+      "baseline_delta": null
     },
     "safety": {
       "trust_level": "unknown",
+      "scan_summary": {"status": "not-implemented", "findings": 0},
       "quarantine": false,
       "blocked": false,
       "findings": []
@@ -122,7 +133,8 @@ If the app remains state-routed in the first slice:
 
 - extend `PanelPageKey` or route state so `skills` can carry
   `selectedSkill` plus an optional detail tab
-- persist selected skill and tab through local state or location hash
+- persist selected skill and tab through the URL hash or another refresh-safe
+  route state mechanism, not component-local React state alone
 - command palette skill entries should open the same detail state
 
 If URL routing is added:
@@ -180,7 +192,7 @@ Frontend tests:
 ```bash
 git diff --check
 cd panel && bun run typecheck
-cd panel && bun test
+cd panel && bun run test
 cargo check --workspace --all-targets --all-features
 cargo test
 ```

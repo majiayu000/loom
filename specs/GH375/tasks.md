@@ -23,11 +23,11 @@ Panel-only activation, config repair, quarantine/trust mutation, eval execution,
 
 - [ ] `SP375-T001` Owner: backend-read-model | Done when: `loom --json skill inspect <skill>` returns source, spec, runtime, eval, safety, and next-action sections from shared backend logic | Verify: `cargo test --test skill_inspect`
 - [ ] `SP375-T002` Owner: panel-api | Done when: `GET /api/v1/skills/{skill_name}/inspect` wraps the CLI/shared inspect read model and returns structured errors for missing skills | Verify: `cargo test panel::tests`
-- [ ] `SP375-T003` Owner: frontend-routing | Done when: skill list rows and command-palette skill results open a stable single-skill detail route or route-equivalent state | Verify: `cd panel && bun test -- SkillDetailPage`
-- [ ] `SP375-T004` Owner: frontend-detail | Done when: detail page renders source, spec/compatibility, runtime visibility, eval evidence, safety/trust, and next actions from inspect data | Verify: `cd panel && bun test -- SkillDetailPage`
-- [ ] `SP375-T005` Owner: frontend-states | Done when: disabled-by-config, needs-restart, missing projection, warning, error, and empty eval/safety states are visually and semantically distinct | Verify: `cd panel && bun test -- SkillDetailPage`
-- [ ] `SP375-T006` Owner: safety | Done when: dangerous actions are copyable CLI commands or existing confirmed mutation flows, and no Panel mutation bypasses CLI safety checks | Verify: `cargo test panel::tests::security && cd panel && bun test -- SkillDetailPage`
-- [ ] `SP375-T007` Owner: regression | Done when: TS typecheck, frontend tests, Rust check, and Rust tests all pass | Verify: `cd panel && bun run typecheck && cd panel && bun test && cargo check --workspace --all-targets --all-features && cargo test`
+- [ ] `SP375-T003` Owner: frontend-routing | Done when: skill list rows and command-palette skill results open a stable single-skill detail route or route-equivalent state | Verify: `cd panel && bun run test -- SkillDetailPage`
+- [ ] `SP375-T004` Owner: frontend-detail | Done when: detail page renders source, spec/compatibility, runtime visibility, eval evidence, safety/trust, and next actions from inspect data | Verify: `cd panel && bun run test -- SkillDetailPage`
+- [ ] `SP375-T005` Owner: frontend-states | Done when: disabled-by-config, needs-restart, missing projection, warning, error, and empty eval/safety states are visually and semantically distinct | Verify: `cd panel && bun run test -- SkillDetailPage`
+- [ ] `SP375-T006` Owner: safety | Done when: dangerous actions are copyable CLI commands or existing confirmed mutation flows, and no Panel mutation bypasses CLI safety checks | Verify: `cargo test panel::tests::security && cd panel && bun run test -- SkillDetailPage`
+- [ ] `SP375-T007` Owner: regression | Done when: TS typecheck, frontend tests, Rust check, and Rust tests all pass | Verify: `(cd panel && bun run typecheck && bun run test) && cargo check --workspace --all-targets --all-features && cargo test`
 
 ### SP375-T1: Add Shared Skill Inspect Read Model
 
@@ -119,14 +119,14 @@ Done when:
 
 - Clicking a skill row opens the detail page or detail route state.
 - Command palette skill entries open the same detail state.
-- Refreshing or navigating back does not lose the selected detail tab when the
-  route supports it.
+- Refreshing or navigating back does not lose the selected detail tab; state
+  must be stored in URL/hash routing or another refresh-safe route mechanism.
 - Unknown skill ids show a structured empty/error state.
 
 Verify:
 
 ```bash
-cd panel && bun test -- SkillDetailPage
+cd panel && bun run test -- SkillDetailPage
 ```
 
 ### SP375-T5: Render Detail Sections
@@ -145,14 +145,15 @@ Done when:
 - Source section shows path, entrypoint, drift, ref, and provenance.
 - Spec section shows portable, Codex, Claude, and findings.
 - Runtime section shows per-agent active/projected/visible/enabled states.
-- Eval section shows offline and baseline evidence when present.
+- Eval section shows offline status, with-skill/no-skill summaries, trigger
+  precision/recall, and baseline delta when present.
 - Safety section shows trust, scan, quarantine, blocked state, and findings.
 - Next actions render suggested commands.
 
 Verify:
 
 ```bash
-cd panel && bun test -- SkillDetailPage
+cd panel && bun run test -- SkillDetailPage
 ```
 
 ### SP375-T6: Preserve Safety Gates
@@ -178,7 +179,7 @@ Verify:
 
 ```bash
 cargo test panel::tests::security
-cd panel && bun test -- SkillDetailPage
+cd panel && bun run test -- SkillDetailPage
 ```
 
 ### SP375-T7: Full Verification
@@ -199,7 +200,7 @@ Verify:
 ```bash
 git diff --check
 cd panel && bun run typecheck
-cd panel && bun test
+cd panel && bun run test
 cargo check --workspace --all-targets --all-features
 cargo test
 ```

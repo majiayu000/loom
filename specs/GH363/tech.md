@@ -106,7 +106,7 @@ integration assertion that its result appears in the shared status model. The
 epic is complete only when an end-to-end test can cover:
 
 ```text
-new/import -> lint -> inspect -> activate -> doctor -> eval -> improve -> release -> rollback/deactivate
+new/import -> lint -> inspect -> safety/trust scan -> dependency/MCP readiness -> activate -> doctor -> eval -> improve -> release -> rollback/deactivate
 ```
 
 Suggested final commands:
@@ -115,8 +115,11 @@ Suggested final commands:
 git diff --check
 cargo check --workspace --all-targets --all-features
 cargo test
-cd panel && bun run typecheck
-cd panel && bun run test
+(
+  cd panel
+  bun run typecheck
+  bun run test
+)
 ```
 
 Panel commands are required when #375 or Panel API files are touched.

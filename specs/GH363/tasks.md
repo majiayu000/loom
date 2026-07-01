@@ -34,7 +34,7 @@ Done when:
 Verify:
 
 ```bash
-cargo test --test skill_new
+cargo test --test skill_new_cli
 ```
 
 ### SP363-T2: Lint And Spec Status
@@ -133,8 +133,11 @@ Done when:
 Verify:
 
 ```bash
-cd panel && bun run typecheck
-cd panel && bun run test
+(
+  cd panel
+  bun run typecheck
+  bun run test
+)
 ```
 
 ### SP363-T8: End-To-End Lifecycle
@@ -143,8 +146,9 @@ Owner: integration
 
 Done when:
 
-- an integration test covers create/import, lint, inspect, activate, doctor,
-  eval, improve/regression, release, rollback, and deactivate;
+- an integration test covers create/import, lint, inspect, safety/trust scan,
+  dependency/MCP readiness, activate, doctor, eval, improve/regression, release,
+  rollback, and deactivate;
 - the test does not require manual hidden registry inspection.
 
 Verify:

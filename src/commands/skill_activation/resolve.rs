@@ -2,8 +2,9 @@ use std::path::{Path, PathBuf};
 
 use chrono::Utc;
 
+use crate::agent_adapters::{SOURCE_BUILT_IN, load_agent_adapters, preferred_discovery_root};
 use crate::cli::{ActivationScope, ProjectionMethod, TargetOwnership};
-use crate::state::{home_dir, resolve_agent_skill_dirs};
+use crate::state::resolve_agent_skill_dirs;
 use crate::state_model::{
     REGISTRY_SCHEMA_VERSION, RegistryBindingRule, RegistryOpsCheckpoint,
     RegistryProjectionInstance, RegistryProjectionTarget, RegistrySnapshot, RegistryStatePaths,
@@ -292,10 +293,22 @@ fn default_target_path(
     ctx: &crate::state::AppContext,
     selection: &ActivationSelection,
 ) -> std::result::Result<PathBuf, CommandFailure> {
+    let scope = match selection.scope {
+        ActivationScope::User => "user",
+        ActivationScope::Project => "project",
+    };
+    let workspace = selection.workspace.as_deref().unwrap_or(&ctx.root);
+    let adapters = load_agent_adapters(ctx)?;
+    if let Some(adapter) = adapters.adapter_for_agent(&selection.agent)
+        && adapter.has_discovery_root_for_scope(scope)
+    {
+        match preferred_discovery_root(adapter, scope, workspace) {
+            Ok(root) => return Ok(root.path),
+            Err(_err) if adapter.source == SOURCE_BUILT_IN => {}
+            Err(err) => return Err(err),
+        }
+    }
     match selection.scope {
-        ActivationScope::User if selection.agent == "codex" => home_dir()
-            .map(|home| home.join(".agents/skills"))
-            .ok_or_else(|| CommandFailure::new(ErrorCode::ArgInvalid, "HOME is not set")),
         ActivationScope::User => resolve_agent_skill_dirs(&ctx.root)
             .all
             .into_iter()

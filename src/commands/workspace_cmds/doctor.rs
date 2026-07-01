@@ -138,6 +138,27 @@ fn build_agent_skill_inventory(
                     "projection_methods": adapter.projection_methods.clone(),
                     "skill_entrypoint": adapter.skill_entrypoint.clone(),
                     "reload_required": adapter.capabilities.reload_required,
+                    "discovery_roots": adapter.discovery_roots.iter().map(|root| json!({
+                        "scope": root.scope,
+                        "path_template": root.path_template,
+                        "role": root.role,
+                        "source_env_var": root.source_env_var,
+                        "priority": root.priority,
+                        "scan_eligible": root.scan_eligible,
+                        "available": root.available,
+                        "unavailable_reason": root.unavailable_reason,
+                    })).collect::<Vec<_>>(),
+                    "visibility": {
+                        "follows_symlink_dirs": adapter.visibility.follows_symlink_dirs,
+                        "identity_by_projection_method": adapter.visibility.identity_by_projection_method,
+                        "config_file": adapter.visibility.config_file,
+                        "disable_rules": adapter.visibility.disable_rules,
+                    },
+                    "reload": {
+                        "strategy": adapter.reload.strategy,
+                        "hot_reload": adapter.reload.hot_reload,
+                        "notes": adapter.reload.notes,
+                    },
                     "config_path": adapter.config_path.as_ref().map(|path| path.display().to_string()),
                 },
             }));

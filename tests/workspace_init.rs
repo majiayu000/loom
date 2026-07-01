@@ -6,6 +6,23 @@ use std::process::{Command, Stdio};
 use common::{TestDir, run_loom, run_loom_with_env, write_file};
 use serde_json::Value;
 
+fn adapter_by_id<'a>(env: &'a Value, id: &str) -> &'a Value {
+    env["data"]["agent_adapters"]["adapters"]
+        .as_array()
+        .expect("adapters")
+        .iter()
+        .find(|adapter| adapter["id"] == id)
+        .expect("adapter")
+}
+
+fn array_contains(value: &Value, expected: &str) -> bool {
+    value
+        .as_array()
+        .expect("array")
+        .iter()
+        .any(|item| item.as_str() == Some(expected))
+}
+
 fn run_loom_with_removed_home(
     root: &std::path::Path,
     envs: &[(&str, &str)],
@@ -151,13 +168,167 @@ fn workspace_init_scan_existing_loads_external_adapter_fixture() {
 }
 
 #[test]
+fn workspace_init_loads_external_v2_adapter_fixture() {
+    let root = TestDir::new("ws-init-external-adapter-v2");
+    let fake_home = TestDir::new("ws-init-external-adapter-v2-home");
+    let external_dir = root.path().join("fixture-v2/skills");
+    fs::create_dir_all(&external_dir).expect("create external skill dir");
+    write_file(
+        &root.path().join("adapters/fixture-v2.json"),
+        &format!(
+            r#"{{
+  "adapter_api": "2",
+  "id": "fixture-v2",
+  "supported_scopes": ["user", "project"],
+  "projection_methods": ["copy", "symlink"],
+  "skill_entrypoint": "SKILL.md",
+  "capabilities": {{
+    "automatic_discovery": true,
+    "explicit_invocation": true,
+    "reload_required": true
+  }},
+  "discovery_roots": [
+    {{
+      "scope": "user",
+      "path": "{}",
+      "role": "preferred-cross-client"
+    }},
+    {{
+      "scope": "project",
+      "path": "<workspace>/.fixture-v2/skills",
+      "role": "project-cross-client",
+      "scan_eligible": false
+    }}
+  ],
+  "visibility": {{
+    "follows_symlink_dirs": true,
+    "identity_by_projection_method": {{
+      "symlink": "canonical-skill-md-path",
+      "copy": "runtime-skill-md-path"
+    }},
+    "disable_rules": ["adapter-defined"]
+  }},
+  "reload": {{
+    "strategy": "restart-required",
+    "hot_reload": false
+  }}
+}}
+"#,
+            external_dir.display()
+        ),
+    );
+
+    let home_str = fake_home.path().to_string_lossy().into_owned();
+    let (output, env) = run_loom_with_env(
+        root.path(),
+        &[("HOME", &home_str)],
+        &["workspace", "init", "--scan-existing"],
+    );
+
+    assert!(
+        output.status.success(),
+        "workspace init with external v2 adapter failed: stderr={} stdout={}",
+        String::from_utf8_lossy(&output.stderr),
+        String::from_utf8_lossy(&output.stdout)
+    );
+    assert_eq!(env["data"]["imported"].as_array().map(Vec::len), Some(1));
+    assert_eq!(env["data"]["imported"][0]["target"]["agent"], "fixture-v2");
+
+    let (status_output, status_env) = run_loom(root.path(), &["workspace", "status"]);
+    assert!(status_output.status.success());
+    let adapter = adapter_by_id(&status_env, "fixture-v2");
+    assert_eq!(adapter["declared_adapter_api"], "2");
+    assert_eq!(adapter["discovery_roots"].as_array().map(Vec::len), Some(2));
+    assert_eq!(adapter["reload"]["strategy"], "restart-required");
+}
+
+#[test]
+fn workspace_status_reports_codex_v2_adapter_metadata() {
+    let root = TestDir::new("ws-status-codex-v2");
+    let fake_home = TestDir::new("ws-status-codex-v2-home");
+    let home_str = fake_home.path().to_string_lossy().into_owned();
+
+    let (output, env) = run_loom_with_env(
+        root.path(),
+        &[("HOME", &home_str)],
+        &["workspace", "status"],
+    );
+
+    assert!(
+        output.status.success(),
+        "workspace status failed: stderr={} stdout={}",
+        String::from_utf8_lossy(&output.stderr),
+        String::from_utf8_lossy(&output.stdout)
+    );
+    let adapter = adapter_by_id(&env, "codex");
+    assert_eq!(adapter["declared_adapter_api"], "2");
+    assert!(
+        adapter["discovery_roots"]
+            .as_array()
+            .expect("roots")
+            .iter()
+            .any(|root| root["scope"] == "user"
+                && root["role"] == "preferred-cross-client"
+                && root["path_template"] == "~/.agents/skills")
+    );
+    assert!(
+        adapter["discovery_roots"]
+            .as_array()
+            .expect("roots")
+            .iter()
+            .any(|root| root["scope"] == "project"
+                && root["role"] == "project-cross-client"
+                && root["path_template"] == "<workspace>/.agents/skills")
+    );
+    assert_eq!(adapter["reload"]["strategy"], "new-session-recommended");
+    assert!(array_contains(
+        &adapter["visibility"]["disable_rules"],
+        "skills.config.path"
+    ));
+}
+
+#[test]
+fn workspace_init_rejects_v1_adapter_unknown_fields() {
+    let root = TestDir::new("ws-init-v1-adapter-unknown-field");
+    let fake_home = TestDir::new("ws-init-v1-adapter-unknown-field-home");
+    write_file(
+        &root.path().join("adapters/bad-v1.json"),
+        r#"{
+  "adapter_api": "1",
+  "id": "bad-v1",
+  "supported_scopes": ["project"],
+  "projection_methods": ["copy"],
+  "skill_entrypoint": "SKILL.md",
+  "capabilities": {
+    "automatic_discovery": false,
+    "explicit_invocation": true,
+    "reload_required": false
+  },
+  "unexpected": true
+}
+"#,
+    );
+
+    let home_str = fake_home.path().to_string_lossy().into_owned();
+    let (output, env) = run_loom_with_env(
+        root.path(),
+        &[("HOME", &home_str)],
+        &["workspace", "init", "--scan-existing"],
+    );
+
+    assert!(!output.status.success());
+    assert_eq!(env["error"]["code"], "ADAPTER_INVALID");
+    assert_eq!(env["error"]["details"]["reason"], "ADAPTER_JSON_INVALID");
+}
+
+#[test]
 fn workspace_init_scan_existing_invalid_adapter_fails_without_registry_write() {
     let root = TestDir::new("ws-init-invalid-adapter");
     let fake_home = TestDir::new("ws-init-invalid-adapter-home");
     write_file(
         &root.path().join("adapters/bad.json"),
         r#"{
-  "adapter_api": "2",
+  "adapter_api": "9",
   "id": "bad-agent",
   "supported_scopes": ["project"],
   "projection_methods": ["copy"],

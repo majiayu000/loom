@@ -46,9 +46,11 @@ loom roles revoke <user-or-team> <role>
 Initial roles:
 
 - `viewer`: read status and inspect.
-- `author`: create/edit local draft skills.
+- `author`: create/edit local draft skills with commands such as `skill.new`,
+  `skill.save`, and `skill.capture`.
 - `reviewer`: approve skills for activation/release.
-- `maintainer`: release, rollback, quarantine, manage providers.
+- `maintainer`: release, rollback, quarantine, manage providers, and update trust
+  state.
 - `admin`: manage org policy and roles.
 
 Local Git and repository permissions remain authoritative for repository write
@@ -64,6 +66,10 @@ that permanently denies all future `roles grant` commands.
 Governed actions:
 
 - `skill.install`
+- `skill.add`
+- `skill.new`
+- `skill.save`
+- `skill.capture`
 - `skill.project`
 - `skill.activate`
 - `skill.deactivate`
@@ -73,12 +79,18 @@ Governed actions:
 - `skill.quarantine`
 - `provider.add`
 - `provider.remove`
+- `sync.pull`
 - `sync.push`
+- `sync.replay`
 
 Subject arguments are action-specific. Skill lifecycle actions require
 `--skill`; provider actions require `--provider`; sync actions require the
 configured remote or sync target. The evaluator must reject irrelevant or
 missing subject arguments instead of inventing dummy skill values.
+
+Autosync and queued sync writes inherit the approval and role decision from the
+enclosing mutation that scheduled them. Pull, replay, and remote `skill add`
+imports must not bypass policy by entering through sync or legacy import paths.
 
 ## Policy Behavior
 
@@ -92,6 +104,18 @@ Mutating commands must call the same policy evaluator internally. If approval
 is required, commands return `POLICY_BLOCKED` with an approval request command
 and any required approval tokens.
 
+Default gates are:
+
+- author actions require `author` or stronger.
+- activation and projection require reviewer approval when policy marks risk or
+  third-party trust as review-required.
+- release, rollback, provider, trust, and quarantine actions require
+  `maintainer` or `admin`.
+- role and policy administration require `admin`.
+
+Maintainer and admin actions must verify the current actor's maintainer/admin
+role before writing even when local Git permissions would allow the file change.
+
 ## Approval Request Model
 
 Approval requests are Git-tracked append-only events. Current request status is
@@ -99,7 +123,7 @@ derived from the event stream; implementations must not rewrite a mutable
 request record to append decisions.
 
 ```json
-{"event": "requested", "request_id": "approval_...", "action": "skill.activate", "subject": {"skill": "fixflow"}, "requester": "alice", "reason_redacted": "...", "risk_summary": {"high": 1}, "evidence": {}, "created_at": "..."}
+{"event": "requested", "request_id": "approval_...", "action": "skill.activate", "subject": {"skill": "fixflow"}, "requester": "alice", "reason_redacted": "...", "risk_summary": {"high": 1}, "evidence": {}, "required_roles": ["reviewer"], "required_approvals": ["approval:reviewer"], "policy_decision_digest": "sha256:...", "created_at": "..."}
 {"event": "approved", "request_id": "approval_...", "approver": "bob", "comment_redacted": "...", "created_at": "..."}
 ```
 

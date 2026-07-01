@@ -96,13 +96,16 @@ The evaluator should join:
 Mutating commands should call org policy before writing:
 
 - install
+- remote skill add/import
+- skill new/save/capture draft writes
 - project
 - activate/deactivate
 - release/rollback
 - trust update
 - quarantine
 - provider add/remove
-- sync push
+- sync pull/push/replay, including autosync writes inherited from an enclosing
+  mutation decision
 
 If approval is required, return `POLICY_BLOCKED` with:
 
@@ -111,6 +114,11 @@ If approval is required, return `POLICY_BLOCKED` with:
 - `required_approvals`
 - `approval_request_command`
 - evidence references
+
+Composite apply flows such as `use --apply` and `apply` must evaluate every
+planned write before mutating target, binding, projection, registry, or sync
+state. A partial allow must not let earlier writes land before a later denied
+write is discovered.
 
 Approval tokens supplied to apply commands must be validated against approved
 requests, not just string equality, once org policy is enabled.
@@ -127,7 +135,7 @@ Approval request lifecycle:
 Append-only records:
 
 ```json
-{"event":"requested","request_id":"approval_...","...": "..."}
+{"event":"requested","request_id":"approval_...","required_roles":["reviewer"],"required_approvals":["approval:reviewer"],"policy_decision_digest":"sha256:...","...": "..."}
 {"event":"approved","request_id":"approval_...","actor":"alice","comment":"..."}
 ```
 
@@ -139,8 +147,12 @@ closed.
 Role grants must be deterministic and auditable. Role resolution should support:
 
 - local username
-- Git author identity where available
+- verified local actor mappings, such as reviewed username/email bindings
 - `team:<name>` labels as policy subjects
+
+Git author identity is audit evidence only unless the repository has a trusted
+signature or reviewed actor-mapping mechanism. Implementations must not grant
+roles from mutable Git author strings alone.
 
 Team membership resolution is manual in v1. Use a deterministic, reviewed
 mapping such as:
@@ -158,6 +170,8 @@ hosted service.
 Grant/revoke operations require an admin policy decision before writing. The
 first admin must come from an explicit init-time bootstrap grant or a manually
 reviewed roles file; normal grant commands must not bypass admin checks.
+Revoking or rewriting roles must preserve at least one resolved admin; a change
+that would leave no admin fails closed with a typed policy error.
 
 ## Tests
 
@@ -176,6 +190,9 @@ Focused tests:
 11. initial admin bootstrap is explicit and fresh empty policy does not deadlock.
 12. approvals match the full action-specific subject, not only skill/evidence.
 13. team grants resolve only through deterministic local membership mappings.
+14. remote import, draft-write, sync pull/replay, and autosync paths are governed.
+15. composite apply flows preflight every planned write before any mutation.
+16. role changes cannot remove the last resolved admin.
 
 ## Verification
 

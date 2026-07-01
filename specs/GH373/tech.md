@@ -48,8 +48,8 @@ Recommended helper structs:
   `source_env_var`, optional `priority`, optional unavailable reason.
 - `ResolvedDiscoveryRoot`: resolved `path` plus the source root metadata used
   for diagnostics.
-- `AdapterVisibility`: `follows_symlink_dirs`, `identity`, optional
-  `config_file`, and `disable_rules`.
+- `AdapterVisibility`: `follows_symlink_dirs`, `identity_by_projection_method`,
+  optional `config_file`, and `disable_rules`.
 - `AdapterReload`: `strategy`, `hot_reload`, optional `notes`.
 
 Use typed enums internally for values that have a closed set, but keep JSON
@@ -64,17 +64,22 @@ record parsing.
   `default_skill_dirs` into discovery roots with role `legacy-default` and
   scope inferred from `supported_scopes` only when unambiguous. If a v1 adapter
   supports multiple scopes, duplicate each default into each supported scope
-  with `legacy-default` role and mark the scope inference in diagnostics so
-  target resolution does not pretend the adapter declared a preferred root. Map
+  with `legacy-default` role and mark those inferred roots as scan/diagnostic
+  only so target resolution does not pretend the adapter declared a preferred or
+  project write root. Map
   `capabilities.reload_required=true` to `reload.strategy=restart-required`
   and `hot_reload=false`; map `false` to `reload.strategy=no-reload-required`
-  unless a v2 adapter overrides it. Keep `default_skill_dirs` in output.
+  unless a v2 adapter overrides it. Map visibility to
+  `identity_by_projection_method.default=runtime-skill-md-path` with no config
+  disable rules unless the adapter declares a richer v2 visibility model. Keep
+  `default_skill_dirs` in output.
 - v2: require `discovery_roots` when `automatic_discovery` is true. Expand
   `~/` and `${CODEX_HOME:-...}`-style defaults only when a command resolves a
   root. Keep `<workspace>` placeholders templated until request-time selection
   so project-scope roots can use the command workspace instead of the registry
-  root. Reject empty paths, unsupported roles, unsupported scopes, unsupported
-  visibility identities, and unsupported reload strategies.
+  root. Reject empty paths, unsupported roles, unsupported scopes, discovery-root
+  scopes not present in `supported_scopes`, unsupported visibility identities,
+  and unsupported reload strategies.
 - unsupported API: preserve the existing error envelope before partial adapter
   registration: top-level `ADAPTER_INVALID` with
   `error.details.reason=ADAPTER_API_UNSUPPORTED`.
@@ -194,7 +199,11 @@ paths should call this helper unless they need legacy status output only.
 `target add` and `loom use --target-root` are excluded from inferred root
 selection because they register or use explicit caller-supplied paths.
 Adapter-driven selection applies only to default-target helpers, diagnostics,
-future activation flows, and `loom use` calls without an explicit target root.
+future activation flows, and `loom use` calls without an explicit target root for
+adapters that declare a supported project/write root. Built-in agents without
+project/write metadata must preserve the current `<root>/targets/project/<agent>/skills`
+fallback rather than selecting a home discovery directory or failing with a
+missing-root error.
 Durable `plan use` must store the resolved target root and guards before review
 so `apply` does not re-resolve a different root after adapter config or
 environment changes.

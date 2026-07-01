@@ -75,6 +75,8 @@ Implement the smallest adapter v2 slice:
 
 1. `workspace status` adapter output includes `discovery_roots`,
    `visibility`, and `reload` metadata.
+   `workspace doctor` also surfaces adapter discovery, visibility, and reload
+   metadata or regression tests prove doctor consumes the same read model.
 2. Built-in Codex adapter metadata includes `~/.agents/skills`,
    `${CODEX_HOME:-~/.codex}/skills`, and `<workspace>/.agents/skills` with
    stable roles.

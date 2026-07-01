@@ -62,7 +62,10 @@ record parsing.
 
 - v1: keep the existing strict schema and validation. Convert
   `default_skill_dirs` into discovery roots with role `legacy-default` and
-  scope inferred from `supported_scopes` only when unambiguous. Map
+  scope inferred from `supported_scopes` only when unambiguous. If a v1 adapter
+  supports multiple scopes, duplicate each default into each supported scope
+  with `legacy-default` role and mark the scope inference in diagnostics so
+  target resolution does not pretend the adapter declared a preferred root. Map
   `capabilities.reload_required=true` to `reload.strategy=restart-required`
   and `hot_reload=false`; map `false` to `reload.strategy=no-reload-required`
   unless a v2 adapter overrides it. Keep `default_skill_dirs` in output.
@@ -108,6 +111,11 @@ missing. In that case user roots are marked unavailable for diagnostics, but
 read commands such as `workspace status` and `target list` must not fail during
 adapter registry construction.
 
+Every built-in adapter must preserve its existing default discovery paths in
+the v2 `discovery_roots` list. Legacy `default_skill_dirs` output is derived
+from resolved discovery roots for backward-compatible status output, rather
+than maintained as a separate source of truth.
+
 ## Adapter-Driven Target Resolution
 
 Add one shared helper, owned by the adapter or visibility module:
@@ -145,6 +153,29 @@ manual
 
 External v2 adapters must reject unsupported role values instead of silently
 falling back to priority or declaration order.
+
+For Codex user-scope target selection, `preferred-cross-client`
+(`~/.agents/skills`) remains the default write target. `CODEX_SKILLS_DIR` is a
+preserved discovery override for status/doctor compatibility and can be selected
+only by explicit target configuration or future policy; it must not silently
+displace the documented preferred active-view root.
+
+Supported v2 visibility identities:
+
+```text
+canonical-skill-md-path
+directory-path
+adapter-defined
+```
+
+Supported v2 reload strategies:
+
+```text
+no-reload-required
+new-session-recommended
+restart-required
+unknown
+```
 
 Commands that currently ask `resolve_agent_skill_dirs()` for Codex or Claude
 paths should call this helper unless they need legacy status output only.

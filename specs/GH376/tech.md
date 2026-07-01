@@ -102,7 +102,8 @@ Umbrella spec verification:
 
 ```bash
 git diff --check
-python3 /Users/apple/Desktop/code/AI/tool/specrail/checks/check_workflow.py --repo /Users/apple/Desktop/code/AI/tool/specrail --spec-dir specs/GH376
+SPEC_RAIL_REPO=/path/to/specrail
+python3 "$SPEC_RAIL_REPO/checks/check_workflow.py" --repo "$SPEC_RAIL_REPO" --spec-dir specs/GH376
 cargo check --workspace --all-targets --all-features
 cargo test
 ```

@@ -22,7 +22,7 @@ skillset activation, recommendations, workflows, marketplace install, RBAC, prov
 ## Tasks
 
 - [ ] `SP376-T001` Owner: planning | Done when: GH376 umbrella spec defines the advanced ecosystem product boundary, blockers, phases, and non-goals | Verify: `git diff --check`
-- [ ] `SP376-T002` Owner: planning | Done when: child issues #377-#386 have a shared requirement template for blockers, read models, plan/apply, safety, audit, and tests | Verify: `python3 /Users/apple/Desktop/code/AI/tool/specrail/checks/check_workflow.py --repo /Users/apple/Desktop/code/AI/tool/specrail --spec-dir specs/GH376`
+- [ ] `SP376-T002` Owner: planning | Done when: child issues #377-#386 have a shared requirement template for blockers, read models, plan/apply, safety, audit, and tests | Verify: `SPEC_RAIL_REPO=/path/to/specrail python3 "$SPEC_RAIL_REPO/checks/check_workflow.py" --repo "$SPEC_RAIL_REPO" --spec-dir specs/GH376`
 - [ ] `SP376-T003` Owner: planning | Done when: the umbrella spec states that implementation remains blocked by #363 primitives unless a child issue is explicitly design-only or read-only | Verify: `rg -n "blocked|single-skill|dry-run|plan" specs/GH376`
 - [ ] `SP376-T004` Owner: regression | Done when: repository checks pass from this session | Verify: `cargo check --workspace --all-targets --all-features && cargo test`
 
@@ -67,7 +67,8 @@ Done when:
 Verify:
 
 ```bash
-python3 /Users/apple/Desktop/code/AI/tool/specrail/checks/check_workflow.py --repo /Users/apple/Desktop/code/AI/tool/specrail --spec-dir specs/GH376
+SPEC_RAIL_REPO=/path/to/specrail
+python3 "$SPEC_RAIL_REPO/checks/check_workflow.py" --repo "$SPEC_RAIL_REPO" --spec-dir specs/GH376
 ```
 
 ### SP376-T3: Keep Runtime Work Blocked
@@ -102,7 +103,8 @@ Verify:
 
 ```bash
 git diff --check
-python3 /Users/apple/Desktop/code/AI/tool/specrail/checks/check_workflow.py --repo /Users/apple/Desktop/code/AI/tool/specrail --spec-dir specs/GH376
+SPEC_RAIL_REPO=/path/to/specrail
+python3 "$SPEC_RAIL_REPO/checks/check_workflow.py" --repo "$SPEC_RAIL_REPO" --spec-dir specs/GH376
 cargo check --workspace --all-targets --all-features
 cargo test
 ```

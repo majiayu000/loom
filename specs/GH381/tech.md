@@ -136,11 +136,13 @@ Append-only records:
 
 ```json
 {"event":"requested","request_id":"approval_...","required_roles":["reviewer"],"required_approvals":["approval:reviewer"],"policy_decision_digest":"sha256:...","...": "..."}
-{"event":"approved","request_id":"approval_...","actor":"alice","comment":"..."}
+{"event":"approved","request_id":"approval_...","actor":"alice","satisfied_approval":"approval:reviewer","comment_redacted":"..."}
 ```
 
 Derived request state is computed from events. Malformed approval logs fail
-closed.
+closed. Decision commands reject additional approve/reject events for terminal
+approved or rejected requests unless a later explicit supersede flow creates a
+new request id.
 
 ## Roles
 

@@ -60,6 +60,9 @@ A fresh org must define the first admin explicitly. `policy org init` either
 records a reviewed `--bootstrap-admin <user>` grant or fails with instructions
 for a manual reviewed roles-file bootstrap; it must not create an empty policy
 that permanently denies all future `roles grant` commands.
+Once policy or role state exists, `policy org init` is create-only/idempotent:
+it must not reset admins or bootstrap a new admin unless an existing admin policy
+decision authorizes an explicit reset/migration flow.
 
 ## Actions
 
@@ -70,6 +73,12 @@ Governed actions:
 - `skill.new`
 - `skill.save`
 - `skill.capture`
+- `skill.watch`
+- `skill.snapshot`
+- `skill.provenance.refresh`
+- `skill.trash.add`
+- `skill.trash.restore`
+- `skill.trash.purge`
 - `skill.project`
 - `skill.activate`
 - `skill.deactivate`
@@ -79,18 +88,23 @@ Governed actions:
 - `skill.quarantine`
 - `provider.add`
 - `provider.remove`
+- `workspace.remote.set`
 - `sync.pull`
 - `sync.push`
 - `sync.replay`
+- `ops.retry`
 
 Subject arguments are action-specific. Skill lifecycle actions require
 `--skill`; provider actions require `--provider`; sync actions require the
 configured remote or sync target. The evaluator must reject irrelevant or
 missing subject arguments instead of inventing dummy skill values.
 
-Autosync and queued sync writes inherit the approval and role decision from the
-enclosing mutation that scheduled them. Pull, replay, and remote `skill add`
-imports must not bypass policy by entering through sync or legacy import paths.
+Autosync and queued sync writes inherit the skill mutation evidence but must also
+preflight the planned remote-specific `sync.push` policy before scheduling or
+executing. If sync policy requires a different role or approval, autosync queues
+or reports the blocked sync action until a matching sync approval exists. Pull,
+replay, `ops retry`, remote target changes, and remote `skill add` imports must
+not bypass policy by entering through sync, ops, or legacy import paths.
 
 ## Policy Behavior
 
@@ -106,11 +120,16 @@ and any required approval tokens.
 
 Default gates are:
 
-- author actions require `author` or stronger.
-- activation and projection require reviewer approval when policy marks risk or
-  third-party trust as review-required.
+- author actions require `author` or stronger. The default role lattice is
+  `viewer < author < reviewer < maintainer < admin`; stronger roles inherit
+  weaker permissions unless policy explicitly disables inheritance.
+- activation, deactivation, and projection require reviewer approval when policy
+  marks risk, live-state impact, or third-party trust as review-required.
 - release, rollback, provider, trust, and quarantine actions require
   `maintainer` or `admin`.
+- remote configuration, sync replay, `ops.retry`, snapshot/tag, provenance
+  refresh, and trash purge actions require `maintainer` or `admin` unless policy
+  explicitly delegates them.
 - role and policy administration require `admin`.
 
 Maintainer and admin actions must verify the current actor's maintainer/admin
@@ -123,8 +142,8 @@ derived from the event stream; implementations must not rewrite a mutable
 request record to append decisions.
 
 ```json
-{"event": "requested", "request_id": "approval_...", "action": "skill.activate", "subject": {"skill": "fixflow"}, "requester": "alice", "reason_redacted": "...", "risk_summary": {"high": 1}, "evidence": {}, "required_roles": ["reviewer"], "required_approvals": ["approval:reviewer"], "policy_decision_digest": "sha256:...", "created_at": "..."}
-{"event": "approved", "request_id": "approval_...", "approver": "bob", "comment_redacted": "...", "created_at": "..."}
+{"event": "requested", "request_id": "approval_...", "action": "skill.activate", "subject": {"skill": "fixflow"}, "requester": "alice", "reason_redacted": "...", "risk_summary": {"high": 1}, "evidence": {"skill_source_digest": "sha256:...", "registry_head": "abc123", "command_inputs_digest": "sha256:..."}, "required_roles": ["reviewer"], "required_approvals": ["approval:reviewer"], "policy_decision_digest": "sha256:...", "created_at": "..."}
+{"event": "approved", "request_id": "approval_...", "approver": "bob", "satisfied_approval": "approval:reviewer", "comment_redacted": "...", "created_at": "..."}
 ```
 
 Approve/reject commands append decision events; they must not rewrite prior
@@ -134,8 +153,12 @@ files.
 
 Decision commands must authorize the current actor against the request's
 required roles before appending approved or rejected events. An approval event
-unblocks only the exact action plus action-specific subject and evidence digest
-that were requested.
+unblocks only the exact action plus action-specific subject, immutable command
+inputs, source digest, registry head, and evidence digest that were requested.
+Every `required_approvals[]` token must be satisfied by a matching decision
+event; one approval does not satisfy unrelated required tokens. Approved and
+rejected requests are terminal unless a later explicit superseding-request flow
+creates a new request id.
 
 ## Non-Goals
 

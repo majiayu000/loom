@@ -37,15 +37,22 @@ Production implementation is blocked by:
 Target command surface:
 
 ```bash
-loom workflow create <name> [--from-skillset <skillset>]
+loom workflow create <name> --file <workflow.json>
+loom workflow create <name> --from-skillset <skillset> --dry-run
 loom workflow plan <name|task-description> --agent <agent> --workspace <path> [--json]
 loom workflow preflight <plan-id>
-loom workflow apply <plan-id> --idempotency-key <key> [--approve <token[,token]>]
 loom workflow run <name> --agent <agent> --workspace <path> [--dry-run]
 ```
 
+Deferred command:
+
+```bash
+loom workflow apply <plan-id> --idempotency-key <key> [--approve <token[,token]>]
+```
+
 The first implementation should prioritize `workflow plan` and `workflow
-preflight`. `workflow apply` must reuse durable plan/apply safety semantics.
+preflight`. `workflow apply` is deferred until those semantics are stable; when
+added, it must reuse durable plan/apply safety semantics.
 
 ## Non-Goals
 
@@ -71,7 +78,7 @@ Workflow definitions should be explicit:
       "skill_id": "repo-orientation",
       "kind": "skill",
       "requires": [],
-      "outputs": ["repo_summary"]
+      "outputs": ["repo_summary", "implementation_plan"]
     },
     {
       "id": "fix",
@@ -97,7 +104,8 @@ Workflow definitions should be explicit:
 A workflow plan must:
 
 1. Resolve candidate skills from a named workflow, skillset, or task
-   description.
+   description. For skillset or task-description input, materialize a canonical
+   workflow snapshot before planning.
 2. Validate every node's skill status with `skill inspect`.
 3. Check safety, trust, quarantine, and dependency readiness.
 4. Verify required skills are active or emit activation steps.

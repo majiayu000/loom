@@ -16,7 +16,7 @@ workflow definition model + DAG validation + workflow plan/preflight + no autono
 Do not implement:
 
 ```text
-background daemon, recursive skill invocation, automatic workflow execution, native agent sandbox bypass
+background daemon, recursive skill invocation, automatic workflow execution, workflow apply, native agent sandbox bypass
 ```
 
 ## Tasks
@@ -25,7 +25,7 @@ background daemon, recursive skill invocation, automatic workflow execution, nat
 - [ ] `SP379-T002` Owner: dag-validation | Done when: planner rejects duplicate nodes, missing edge targets, cycles, excessive depth, missing skills, blocked skills, and unmet dependencies | Verify: `cargo test --test workflow_cli`
 - [ ] `SP379-T003` Owner: workflow-plan | Done when: `workflow plan` creates an auditable read-only plan with ordered nodes, activation steps, risks, approvals, guards, and next actions | Verify: `cargo test --test workflow_cli`
 - [ ] `SP379-T004` Owner: workflow-preflight | Done when: `workflow preflight <plan-id>` revalidates current registry, workflow digest, skill digests, policy, dependency readiness, and active state | Verify: `cargo test --test workflow_cli`
-- [ ] `SP379-T005` Owner: workflow-apply | Done when: apply reuses existing idempotency, approval, stale-plan, and recovery semantics for workflow plans | Verify: `cargo test --test agent_plan_apply`
+- [ ] `SP379-T005` Owner: workflow-apply-deferred | Done when: `workflow apply` is absent or returns typed not-implemented until plan/preflight semantics are stable; future apply requirements are documented | Verify: `cargo test --test cli_surface`
 - [ ] `SP379-T006` Owner: safety | Done when: no command silently executes workflow nodes, activates skills, writes configs, or retries failed nodes without explicit apply and approvals | Verify: `cargo test --test workflow_cli && cargo test --test agent_plan_apply`
 - [ ] `SP379-T007` Owner: regression | Done when: focused and full repository checks pass | Verify: `cargo check --workspace --all-targets --all-features && cargo test`
 

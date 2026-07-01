@@ -34,23 +34,28 @@ state/registry/workflow_runs.json
 not be required for planning; it is for future apply/run audit summaries if the
 existing command event log is not enough.
 
-Workflow definition:
+Workflow definition file:
 
 ```json
 {
   "schema_version": 1,
-  "workflow_id": "coding-fix-flow",
-  "description": "Diagnose and fix a failing test or CI run.",
-  "nodes": [],
-  "edges": [],
-  "policy": {
-    "max_nodes": 8,
-    "max_depth": 6,
-    "requires_human_approval_before": [],
-    "rollback_strategy": "checkpoint-before-mutating-node"
-  },
-  "created_at": "2026-07-01T00:00:00Z",
-  "updated_at": "2026-07-01T00:00:00Z"
+  "workflows": [
+    {
+      "workflow_id": "coding-fix-flow",
+      "description": "Diagnose and fix a failing test or CI run.",
+      "nodes": [],
+      "edges": [],
+      "external_inputs": [],
+      "policy": {
+        "max_nodes": 8,
+        "max_depth": 6,
+        "requires_human_approval_before": [],
+        "rollback_strategy": "checkpoint-before-mutating-node"
+      },
+      "created_at": "2026-07-01T00:00:00Z",
+      "updated_at": "2026-07-01T00:00:00Z"
+    }
+  ]
 }
 ```
 
@@ -79,15 +84,16 @@ Use deterministic topological ordering for output and tests.
 Add a `workflow` command group:
 
 ```bash
-loom workflow create <name> [--from-skillset <skillset>]
+loom workflow create <name> --file <workflow.json>
+loom workflow create <name> --from-skillset <skillset> --dry-run
 loom workflow show <name>
 loom workflow plan <name|task-description> --agent <agent> --workspace <path>
 loom workflow preflight <plan-id>
-loom workflow apply <plan-id> --idempotency-key <key> [--approve <token[,token]>]
 ```
 
 `workflow run` should be deferred or implemented as `workflow plan` plus a
-dry-run summary until apply safety is proven.
+dry-run summary until apply safety is proven. `workflow apply` should be absent
+or return typed not-implemented until plan/preflight behavior is stable.
 
 ## Plan Contract
 
@@ -101,6 +107,7 @@ operation value:
   "plan_id": "plan_...",
   "operation": "workflow",
   "workflow": "coding-fix-flow",
+  "workflow_snapshot": {},
   "agent": "codex",
   "workspace": "/repo",
   "ready": false,
@@ -115,11 +122,16 @@ operation value:
     "root": "/registry",
     "registry_head": "abc123",
     "workflow_digest": "sha256:...",
+    "workflow_snapshot_digest": "sha256:...",
     "skill_digests": {}
   },
   "next_actions": []
 }
 ```
+
+For named workflows, `workflow_digest` identifies the persisted definition. For
+skillset or task-description planning, the planner must materialize a canonical
+workflow snapshot and use `workflow_snapshot_digest` as the guard.
 
 Apply must validate:
 
@@ -154,7 +166,8 @@ Focused tests:
 5. dependency readiness failure fails or marks not-ready.
 6. approval-required node emits approval token.
 7. activation step generation does not mutate active view.
-8. plan output is stable for the same registry state.
+8. canonical plan body is stable for the same registry state, excluding
+   volatile fields such as `plan_id`, timestamps, and audit/event metadata.
 9. apply validates idempotency key and stale guards.
 
 ## Verification

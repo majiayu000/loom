@@ -31,7 +31,7 @@ Target command surface:
 
 ```bash
 loom provision plan --target devcontainer [--workspace <path>] [--agent codex] [--output-plan <path>] [--json]
-loom provision apply <plan-id|plan-artifact> --idempotency-key <key>
+loom provision apply <plan-id|plan-artifact> --idempotency-key <key> [--approve <approval-token>...]
 loom provision doctor --target devcontainer|codespaces|remote --workspace <path>
 loom provision export --format devcontainer|shell|tar --output <path>
 loom provision import <artifact> --dry-run
@@ -78,6 +78,8 @@ Initial target kinds:
 
 - Revalidate the plan.
 - Require idempotency key.
+- Accept and validate approval tokens when org policy marks the reviewed plan as
+  approval-required.
 - Write files atomically.
 - Preserve user-authored config where possible.
 - Stop on merge conflicts.

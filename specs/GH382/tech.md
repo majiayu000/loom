@@ -29,8 +29,10 @@ Recommended plan shape:
   "schema_version": "provision-plan-v1",
   "target_kind": "devcontainer",
   "workspace": "/repo",
+  "container_workspace": "/workspaces/repo",
   "agents": ["codex"],
   "registry_source": "git+https://github.com/org/skills-registry.git",
+  "registry_clone_url": "https://github.com/org/skills-registry.git",
   "active_views": [
     {
       "agent": "codex",
@@ -56,7 +58,8 @@ Recommended plan shape:
     }
   ],
   "secrets_required": [],
-  "policy": {"requires_approval": false},
+  "policy": {"requires_approval": false, "approval_tokens": []},
+  "loom_cli": {"required": true, "version": ">=0.1.5", "install": "preinstalled"},
   "guards": {
     "root": "/registry",
     "registry_head": "abc123",
@@ -80,10 +83,27 @@ Generated setup script should be explicit:
 ```bash
 #!/usr/bin/env bash
 set -euo pipefail
-git clone "$LOOM_REGISTRY_SOURCE" /workspaces/.loom-registry
-git -C /workspaces/.loom-registry fetch origin "$LOOM_REGISTRY_HEAD"
-git -C /workspaces/.loom-registry checkout --detach "$LOOM_REGISTRY_HEAD"
-loom --root /workspaces/.loom-registry skill diagnose fixflow --json
+LOOM_WORKSPACE="${LOOM_WORKSPACE:-/workspaces/repo}"
+LOOM_REGISTRY_DIR="${LOOM_REGISTRY_DIR:-$LOOM_WORKSPACE/.loom-registry}"
+LOOM_REGISTRY_SOURCE="https://github.com/org/skills-registry.git"
+LOOM_REGISTRY_HEAD="abc123"
+command -v loom >/dev/null || {
+  echo "loom CLI is required before provisioning can continue" >&2
+  exit 127
+}
+if [ -d "$LOOM_REGISTRY_DIR/.git" ]; then
+  git -C "$LOOM_REGISTRY_DIR" fetch origin "$LOOM_REGISTRY_HEAD"
+else
+  git clone "$LOOM_REGISTRY_SOURCE" "$LOOM_REGISTRY_DIR"
+  git -C "$LOOM_REGISTRY_DIR" fetch origin "$LOOM_REGISTRY_HEAD"
+fi
+git -C "$LOOM_REGISTRY_DIR" checkout --detach "$LOOM_REGISTRY_HEAD"
+mkdir -p "$LOOM_WORKSPACE/.agents/skills"
+# Generated from reviewed active_views[].skills; repeat for every planned skill.
+loom --root "$LOOM_REGISTRY_DIR" skill diagnose fixflow --json
+# Materialize or verify the reviewed active view before success. If the
+# activation/materialization command is unavailable, fail with the reviewed
+# manual instructions instead of reporting success.
 ```
 
 Implementation must avoid assuming `~/.codex/skills` for Codex project scope.
@@ -91,12 +111,20 @@ Use project `.agents/skills` from adapter metadata.
 If activation commands are not yet implemented, generated scripts must emit
 reviewed materialization instructions or fail clearly instead of calling
 nonexistent `skillset activate` or `skill doctor` commands.
+`registry_source` values with a `git+` scheme are normalized into a separate
+cloneable `registry_clone_url` before script generation; generated shell must
+not pass `git+https://...` directly to `git clone`.
+Paths such as the workspace, registry clone directory, and active view come from
+the reviewed plan and adapter metadata, not hard-coded `/workspaces` defaults.
+The script must generate diagnose/materialization checks for every planned
+active skill, not for a literal example skill.
 
 ## File Merge Rules
 
 For `.devcontainer/devcontainer.json`:
 
-- parse JSON with a structured parser
+- parse JSONC with a structured parser that preserves valid devcontainer files
+  containing comments
 - preserve unknown fields
 - add Loom setup only under a deterministic key/comment-free field strategy
 - fail on incompatible existing commands unless a safe merge is implemented

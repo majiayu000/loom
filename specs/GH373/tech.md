@@ -181,6 +181,7 @@ Supported v2 visibility identities:
 
 ```text
 canonical-skill-md-path
+runtime-skill-md-path
 directory-path
 adapter-defined
 ```

@@ -383,7 +383,7 @@ Rules:
 10. `--workspace` on `skill resolve` may boost skills whose binding matcher covers the supplied workspace path.
 11. `skill visibility --agent codex` is a read-only Codex active-view proof. It reports source, active rule, target, symlink projection, Codex `skills.config` disables, runtime entries, external entries, and restart recommendations without claiming current-session hot reload.
 12. read commands must not mutate registry state, Git refs, Git index, live targets, or pending queue.
-13. trust metadata is `unknown` until trust/policy metadata lands.
+13. trust metadata comes from `state/registry/trust.json`; absent metadata is `unknown`.
 
 ### 11.0.1 `skill activate`, `skill deactivate`, `skill active list`
 
@@ -561,7 +561,30 @@ Rules:
 7. unknown profile names are valid organizational hooks but must produce a `policy_profile_unknown` warning until an implementation handles them
 8. policy checks are heuristic signals, not a sandbox, malware verdict, or guarantee that a skill is safe
 
-### 11.3.2 `skill eval`
+### 11.3.2 `skill scan`, `skill trust`, `skill quarantine`, `skill unquarantine`
+
+```bash
+loom --json --root <root> skill scan <skill-id> [--mode install|activate|release] [--strict]
+loom --json --root <root> skill trust <skill-id> --level <local-draft|reviewed|team-approved|third-party-unreviewed|blocked|quarantined>
+loom --json --root <root> skill quarantine <skill-id> [--reason <text>]
+loom --json --root <root> skill unquarantine <skill-id>
+```
+
+`scan` is read-only. `trust`, `quarantine`, and `unquarantine` are write commands that update registry-owned trust metadata and command audit state.
+
+Rules:
+
+1. trust metadata is stored in `state/registry/trust.json`, sorted by `skill_id`, and never written to portable `SKILL.md`
+2. absent trust metadata means `trust=unknown` and `quarantined=false`
+3. malformed `trust.json` fails closed with typed state errors and must not be overwritten by read commands
+4. `skill scan` returns `decision`, `trust`, severity `summary`, structured `findings`, `activation_allowed`, and the underlying `policy` report
+5. findings include stable ids, severity, path, optional line, message, and suggested action
+6. `blocked` and `quarantined` skills fail projection and activation before target mutation
+7. `quarantine` preserves source files and reports existing active projections as requiring manual cleanup review; it does not delete target files
+8. `unquarantine` clears quarantine without elevating trust to `reviewed` or `team-approved`
+9. safety scans are heuristic review signals, not a sandbox, malware verdict, or guarantee that a skill is safe
+
+### 11.3.3 `skill eval`
 
 ```bash
 loom --json --root <root> skill eval <skill-id> [--agent <agent> | --matrix <agent,agent>] [--model <model>]
@@ -595,7 +618,7 @@ Rules:
 8. default reports do not persist raw prompts or secrets; explicit output paths are caller-controlled
 9. eval success is quality evidence only and must not be treated as a safety guarantee
 
-### 11.3.3 `skillset create`, `skillset add`, `skillset remove`, `skillset show`, `skillset lint`
+### 11.3.4 `skillset create`, `skillset add`, `skillset remove`, `skillset show`, `skillset lint`
 
 ```bash
 loom --json --root <root> skillset create <skillset-id> [--description <text>]
@@ -648,8 +671,8 @@ Rules:
 1. `binding_id` is mandatory
 2. if `--target` is absent, Loom may use `default_target_id` from binding metadata
 3. if multiple targets are possible and no default exists, the command must fail explicitly
-4. before mutating target directories, the command evaluates `skill policy` using the binding's `policy_profile`
-5. if the selected profile blocks projection, the command fails with `POLICY_BLOCKED` and must not create or replace the live skill directory
+4. before mutating target directories, the command evaluates unified safety using trust metadata and the binding's `policy_profile`
+5. if trust state or the selected profile blocks projection, the command fails with `POLICY_BLOCKED` and must not create or replace the live skill directory
 
 ### 11.5 `skill capture`
 
@@ -724,9 +747,17 @@ Success response should include:
 
 ```bash
 loom --json --root <root> skill diff <skill-id> <from> <to>
+loom --json --root <root> skill diff --security <skill-id> <from> <to>
 ```
 
 Read-only.
+
+Rules:
+
+1. default diff returns the raw Git patch for `skills/<skill-id>`
+2. `--security` returns structured security-relevant changed paths and findings only
+3. security diff highlights changed scripts, security-relevant metadata, references, and new network, secret, destructive, shell-execution, or prompt-injection patterns
+4. missing refs or Git failures return typed Git errors
 
 ## 12. Human-Friendly Use Flow
 

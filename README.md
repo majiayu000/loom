@@ -136,6 +136,7 @@ Prefer a guided walkthrough? Run `./scripts/demo.sh` for a scripted end-to-end t
 - **📦 Profiles** — multiple config sets per agent (e.g. work/home Claude profiles)
 - **🧬 Git-backed lifecycle** — `add → capture → save → snapshot → release → rollback → diff` ([when to use which](#skill-lifecycle-verbs))
 - **🩺 Skill status** — `skill inspect` shows one read-only lifecycle card; `skill diagnose` drills into source, bindings, targets, projections, drift, and related operations
+- **🛡️ Skill safety state** — `skill scan`, trust levels, quarantine metadata, and security diff gate risky skills before projection
 - **🔁 Git-backed sync** — `sync push / pull / replay` between a team's registries
 - **🛠️ Ops with audit** — `ops list / retry / purge` and `ops history diagnose / repair`
 - **🛡️ Hard write guard** — refuses to write when `--root` points at the Loom tool repo itself
@@ -191,6 +192,8 @@ The chain `add → capture → save → snapshot → release → rollback` is th
 | `loom skill new` | Create a lint-clean local skill skeleton | Start a new registry-owned skill with `SKILL.md`, references, scripts, assets, eval stubs, and `loom.skill.toml` | Source (initial create) |
 | `loom skill provenance inspect/verify/refresh` | Inspect, check, or refresh recorded source provenance and `loom.lock` | Confirm a skill still matches the source digest and pinned ref metadata | Source metadata + `loom.lock` |
 | `loom skill policy` | Report declared capabilities, content risks, provenance drift, and policy decision | Review a skill before projection or explain why a policy profile blocks it | Source metadata + source files (read-only) |
+| `loom skill scan` | Return unified safety findings, trust state, and activation decision | Review prompt-injection, script, secret, network, provenance, and trust risks before activation | Source + trust metadata (read-only) |
+| `loom skill trust/quarantine/unquarantine` | Persist registry-owned trust and quarantine metadata | Mark review state or block a skill without editing portable `SKILL.md` | Registry trust state |
 | `loom skill eval` | Run offline fixtures or explicit eval harnesses | Compare offline quality, trigger behavior, and mock with-skill/no-skill baselines without network calls by default | Source + eval fixtures; reports under registry state |
 | `loom skillset create/add/remove/show/lint` | Group existing registry skills into a named set | Organize coherent skill bundles before later activation/eval support lands | Registry skillset state |
 | `loom use` | Plan or apply target, binding, and projection setup in one flow | New users want to use a skill without copying target/binding IDs between commands | Source + target + registry metadata |
@@ -201,7 +204,7 @@ The chain `add → capture → save → snapshot → release → rollback` is th
 | `loom skill snapshot` | Mark an unnamed checkpoint on source history | You want a labelable anchor before risky work, but no semver yet | Source (anchor) |
 | `loom skill release` | Tag the skill at a semantic version | You're publishing a stable revision teammates can pull (`v1.2.0`) | Source (semver tag) |
 | `loom skill rollback` | Reset the source to an earlier revision (with `recovery_ref`) | A capture or save introduced bad state — undo it without losing the recovery point | Source (history) |
-| `loom skill diff` | Compare two revisions of a skill source | Inspect what changed between any two refs (commit, snapshot, release tag) | Source (read-only) |
+| `loom skill diff` | Compare two revisions of a skill source | Inspect raw source changes or use `--security` for security-relevant findings only | Source (read-only) |
 | `loom skill lint` | Check portable Agent Skills metadata compliance | Validate `SKILL.md`, YAML frontmatter, portable name, and description before projection | Source (read-only) |
 | `loom skill verify` | Detect uncommitted drift in a skill source | Confirm `skills/<name>` matches the committed source tree; flag external edits that bypassed `save` | Source (read-only) |
 | `loom skill diagnose` | Run a read-only health report for one skill | Explain missing source, broken bindings/targets/projections, source drift, pending queue issues, and recent failures | Source + registry metadata (read-only) |
@@ -294,6 +297,10 @@ loom skill provenance inspect <skill>
 loom skill provenance verify <skill>
 loom skill provenance refresh <skill>
 loom skill policy <skill> [--policy-profile <safe-capture|audit-only|deny-risky|strict|custom>]
+loom skill scan <skill> [--mode <install|activate|release>] [--strict]
+loom skill trust <skill> --level <local-draft|reviewed|team-approved|third-party-unreviewed|blocked|quarantined>
+loom skill quarantine <skill> [--reason <text>]
+loom skill unquarantine <skill>
 loom skill eval <skill> [--agent <agent> | --matrix <agent,agent>] [--model <model>]
 loom skill eval offline <skill> [--agent <agent> | --matrix <agent,agent>] [--model <model>]
 loom skill eval run <skill> --agent <agent> --baseline no-skill [--cases <path>] [--runs <n>] [--runner mock|codex-cli] [--dry-run] [--output <path>]
@@ -305,7 +312,7 @@ loom skill save <skill> [--message <msg>]
 loom skill snapshot <skill>
 loom skill release <skill> <version>
 loom skill rollback <skill> [--to <ref> | --steps <n>] [--dry-run]
-loom skill diff <skill> <from> <to>
+loom skill diff [--security] <skill> <from> <to>
 loom skill history <skill> [--limit <n>] [--from <rev>] [--to <rev>] [--include-diff-stat] [--include-ops]
 loom skill trash add <skill> [--dry-run]
 loom skill trash list

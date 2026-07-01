@@ -9,10 +9,12 @@ use crate::cli::{SkillOnlyArgs, SkillResolveArgs, SkillSearchArgs};
 use crate::envelope::Meta;
 use crate::gitops;
 use crate::state::AppContext;
-use crate::state_model::{RegistryProjectionTarget, RegistrySnapshot, RegistryStatePaths};
+use crate::state_model::{
+    RegistryProjectionTarget, RegistrySnapshot, RegistryStatePaths, RegistryTrustFile,
+};
 use crate::types::ErrorCode;
 
-use super::helpers::{map_arg, validate_skill_name};
+use super::helpers::{map_arg, map_registry_state, validate_skill_name};
 use super::{App, CommandFailure, SkillLintMode, lint_skill_source};
 
 #[derive(Debug, Clone)]
@@ -44,6 +46,8 @@ struct SkillReadRow {
     release_tags: Vec<String>,
     snapshot_tags: Vec<String>,
     observed_imported: bool,
+    trust: Option<String>,
+    quarantined: bool,
 }
 
 impl SkillReadRow {
@@ -86,7 +90,7 @@ impl App {
                 "search query must not be empty",
             ));
         }
-        let mut model = build_skill_read_model(&self.ctx).map_err(map_inventory_error)?;
+        let model = build_skill_read_model(&self.ctx).map_err(map_inventory_error)?;
         let results = score_and_filter_skills(
             &model.skills,
             &args.query,
@@ -99,15 +103,6 @@ impl App {
             },
             false,
         );
-        if args
-            .trust
-            .as_deref()
-            .is_some_and(|trust| trust != "unknown")
-        {
-            model
-                .warnings
-                .push("trust metadata is not available yet; only trust=unknown can match".into());
-        }
         Ok((
             json!({
                 "query": args.query,
@@ -187,6 +182,8 @@ pub(crate) fn build_skill_read_model(ctx: &AppContext) -> Result<SkillInventoryR
             paths.registry_dir.display()
         ));
     }
+    let trust = paths.load_trust()?;
+    add_trust_rows(&trust, &mut rows);
 
     add_skill_tags(ctx, &mut rows, &mut warnings)?;
 
@@ -220,7 +217,7 @@ fn find_skill<'a>(skills: &'a [Value], skill_id: &str) -> Option<&'a Value> {
 }
 
 fn map_inventory_error(err: anyhow::Error) -> CommandFailure {
-    CommandFailure::new(ErrorCode::InternalError, err.to_string())
+    map_registry_state(err)
 }
 
 fn skill_row<'a>(
@@ -342,6 +339,17 @@ fn add_registry_skill_rows(snapshot: &RegistrySnapshot, rows: &mut BTreeMap<Stri
                 row.latest_updated_at = Some(updated_at);
                 row.latest_rev = Some(projection.last_applied_rev.clone());
             }
+        }
+    }
+}
+
+fn add_trust_rows(trust: &RegistryTrustFile, rows: &mut BTreeMap<String, SkillReadRow>) {
+    for record in &trust.skills {
+        let row = skill_row(rows, &record.skill_id);
+        row.trust = Some(record.trust.clone());
+        row.quarantined = record.quarantined;
+        if record.quarantined {
+            row.sources.insert("trust");
         }
     }
 }
@@ -540,6 +548,7 @@ fn skill_row_to_json(row: SkillReadRow) -> Value {
     let target_ids = row.target_ids.into_iter().collect::<Vec<_>>();
     let observed_target_ids = row.observed_target_ids.into_iter().collect::<Vec<_>>();
     let warnings = row.warnings;
+    let trust = row.trust.unwrap_or_else(|| "unknown".to_string());
     let next_actions = next_actions(source_status, &warnings, row.projection_count);
     json!({
         "skill_id": row.skill_id,
@@ -548,7 +557,8 @@ fn skill_row_to_json(row: SkillReadRow) -> Value {
         "description": empty_string_as_null(row.description),
         "source_status": source_status,
         "source_path": row.source_path.map(|path| path.display().to_string()),
-        "trust": "unknown",
+        "trust": trust,
+        "quarantined": row.quarantined,
         "latest_rev": row.latest_rev,
         "latest_updated_at": row.latest_updated_at,
         "bindings_count": binding_ids.len(),

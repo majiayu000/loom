@@ -26,6 +26,8 @@ mod skill_inventory;
 mod skill_lint;
 mod skill_new;
 mod skill_policy;
+mod skill_safety;
+mod skill_safety_findings;
 mod skill_verify;
 mod skillset_cmds;
 mod sync_cmds;
@@ -254,6 +256,12 @@ impl App {
                 SkillCommand::Verify(args) => self.cmd_verify(args),
                 SkillCommand::Lint(args) => self.cmd_skill_lint(args),
                 SkillCommand::Policy(args) => self.cmd_skill_policy(args),
+                SkillCommand::Scan(args) => self.cmd_skill_scan(args),
+                SkillCommand::Trust(args) => self.cmd_skill_trust(args, &request_id),
+                SkillCommand::Quarantine(args) => self.cmd_skill_quarantine(args, &request_id),
+                SkillCommand::Unquarantine(args) => {
+                    self.cmd_skill_unquarantine(&args.skill, &request_id)
+                }
                 SkillCommand::Visibility(args) => self.cmd_skill_visibility(args),
                 SkillCommand::Diagnose(args) => self.cmd_skill_diagnose(args),
                 SkillCommand::Eval(args) => self.cmd_skill_eval(args),
@@ -475,6 +483,9 @@ fn command_requires_durable_audit(command: &Command) -> bool {
             | SkillCommand::Watch(_)
             | SkillCommand::Snapshot(_)
             | SkillCommand::Release(_)
+            | SkillCommand::Trust(_)
+            | SkillCommand::Quarantine(_)
+            | SkillCommand::Unquarantine(_)
             | SkillCommand::Provenance {
                 command: SkillProvenanceCommand::Refresh(_),
             }
@@ -501,6 +512,7 @@ fn command_requires_durable_audit(command: &Command) -> bool {
             | SkillCommand::Resolve(_)
             | SkillCommand::Lint(_)
             | SkillCommand::Policy(_)
+            | SkillCommand::Scan(_)
             | SkillCommand::Verify(_)
             | SkillCommand::Visibility(_)
             | SkillCommand::Diagnose(_)

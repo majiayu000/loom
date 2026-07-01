@@ -13,7 +13,8 @@ use super::{
     REGISTRY_SCHEMA_VERSION, RegistryBindingsFile, RegistryObservationEvent,
     RegistryOperationRecord, RegistryOpsCheckpoint, RegistryProjectionsFile, RegistryRulesFile,
     RegistrySchemaFile, RegistrySnapshot, RegistryStatePaths, RegistryTargetsFile,
-    empty_bindings_file, empty_projections_file, empty_rules_file, empty_targets_file,
+    RegistryTrustFile, empty_bindings_file, empty_projections_file, empty_rules_file,
+    empty_targets_file, empty_trust_file,
 };
 
 impl RegistryStatePaths {
@@ -50,6 +51,7 @@ impl RegistryStatePaths {
             bindings_file: registry_dir.join("bindings.json"),
             rules_file: registry_dir.join("rules.json"),
             projections_file: registry_dir.join("projections.json"),
+            trust_file: registry_dir.join("trust.json"),
             ops_dir: ops_dir.clone(),
             operations_file: ops_dir.join("operations.jsonl"),
             checkpoint_file: ops_dir.join("checkpoint.json"),
@@ -195,6 +197,15 @@ impl RegistryStatePaths {
         read_json_file(&self.projections_file)
     }
 
+    pub fn load_trust(&self) -> Result<RegistryTrustFile> {
+        if !self.trust_file.exists() {
+            return Ok(empty_trust_file());
+        }
+        let trust: RegistryTrustFile = read_json_file(&self.trust_file)?;
+        validate_schema_version(trust.schema_version)?;
+        Ok(trust)
+    }
+
     pub fn load_operations(&self) -> Result<Vec<RegistryOperationRecord>> {
         read_json_lines(&self.operations_file)
     }
@@ -234,6 +245,10 @@ impl RegistryStatePaths {
 
     pub fn save_projections(&self, value: &RegistryProjectionsFile) -> Result<()> {
         write_json_file(&self.projections_file, value)
+    }
+
+    pub fn save_trust(&self, value: &RegistryTrustFile) -> Result<()> {
+        write_json_file(&self.trust_file, value)
     }
 
     /// Two-phase batch write: write all temp files first, then rename all.

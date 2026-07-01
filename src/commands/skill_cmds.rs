@@ -42,7 +42,7 @@ use super::projections::{
 use super::provenance::{
     provenance_record_for_skill, resolve_add_source, save_record_and_lock, stage_provenance_paths,
 };
-use super::skill_policy::enforce_skill_policy;
+use super::skill_safety::enforce_skill_safety;
 use super::{App, CommandFailure};
 
 mod observed;
@@ -192,7 +192,7 @@ impl App {
         validate_projection_method(&target, args.method)?;
 
         let skill_src = self.ctx.skill_path(&args.skill);
-        enforce_skill_policy(&self.ctx, &args.skill, &binding.policy_profile)?;
+        enforce_skill_safety(&self.ctx, &args.skill, &binding.policy_profile)?;
         let target_base = PathBuf::from(&target.path);
         fs::create_dir_all(&target_base).map_err(map_io)?;
         let materialized_path = target_base.join(&args.skill);

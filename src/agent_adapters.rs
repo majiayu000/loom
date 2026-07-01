@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -292,7 +292,6 @@ pub(crate) fn preferred_discovery_root(
         .discovery_roots
         .iter()
         .filter(|root| root.scope == scope && root.available)
-        .cloned()
         .collect::<Vec<_>>();
     if candidates.is_empty() {
         return Err(adapter_failure(
@@ -308,10 +307,10 @@ pub(crate) fn preferred_discovery_root(
         (
             role_rank(&root.role, scope),
             root.priority.unwrap_or(u32::MAX),
-            root.path_template.clone(),
+            root.path_template.as_str(),
         )
     });
-    let root = candidates.remove(0);
+    let root = candidates[0];
     let path = resolve_root_template(&root.path_template, workspace)?;
     Ok(ResolvedDiscoveryRoot { path })
 }
@@ -659,9 +658,8 @@ fn validate_string_set(
             Some(path),
         ));
     }
-    let allowed_set = allowed.iter().copied().collect::<BTreeSet<_>>();
     for value in values {
-        if !allowed_set.contains(value.as_str()) {
+        if !allowed.contains(&value.as_str()) {
             return Err(adapter_failure(
                 format!("adapter field '{field}' contains unsupported value '{value}'"),
                 "ADAPTER_FIELD_UNSUPPORTED",

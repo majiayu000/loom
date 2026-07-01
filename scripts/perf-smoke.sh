@@ -6,7 +6,7 @@ if [[ ! -x "$bin" ]]; then
   cargo build --release --locked
 fi
 
-# Hard ceiling: 4040 KiB. The durable plan/apply protocol, offline eval
+# Hard ceiling: 4096 KiB. The durable plan/apply protocol, offline eval
 # matrix, local skill scaffolding CLI, skillset foundation, portable YAML
 # lint parser, single-skill inspect read model, single-skill activation
 # commands, and safety/trust/quarantine/security-diff command surfaces expanded
@@ -16,9 +16,12 @@ fi
 # without ad hoc string deletion. The real agent eval harness adds explicit
 # run/trigger/compare planning and reporting surfaces. Skill preflight adds
 # consolidated gate reporting, baseline evidence comparison, security-diff
-# gating, and safe ref materialization for regression checks, while the startup
-# latency checks below continue to guard cold CLI responsiveness.
-max_bin_bytes=$((4040 * 1024))
+# gating, and safe ref materialization for regression checks. Adapter
+# visibility metadata adds versioned external adapter loading plus discovery
+# root, visibility, reload, and adapter-driven target-selection read models,
+# while the startup latency checks below continue to guard cold CLI
+# responsiveness.
+max_bin_bytes=$((4096 * 1024))
 bin_bytes="$(wc -c < "$bin" | tr -d ' ')"
 if (( bin_bytes > max_bin_bytes )); then
   echo "release binary is ${bin_bytes} bytes; limit is ${max_bin_bytes}" >&2

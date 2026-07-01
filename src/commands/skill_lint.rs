@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -10,6 +11,14 @@ use crate::types::ErrorCode;
 
 use super::helpers::{map_arg, validate_skill_name};
 use super::{App, CommandFailure};
+
+mod frontmatter;
+use frontmatter::{FrontmatterParseResult, parse_skill_frontmatter};
+mod sections;
+use sections::{
+    build_sections, collect_resources, inspect_progressive_disclosure, push_schema_issue,
+    run_agent_checks, run_quality_checks,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -43,6 +52,31 @@ impl SkillLintMode {
     }
 }
 
+#[derive(Debug, Clone)]
+struct SkillLintConfig {
+    mode: SkillLintMode,
+    agent: Option<String>,
+    quality: bool,
+}
+
+impl SkillLintConfig {
+    fn from_args(args: &SkillLintArgs) -> Self {
+        Self {
+            mode: SkillLintMode::from_args(args),
+            agent: args.agent.as_ref().map(|agent| agent.to_ascii_lowercase()),
+            quality: args.quality,
+        }
+    }
+
+    fn from_mode(mode: SkillLintMode) -> Self {
+        Self {
+            mode,
+            agent: None,
+            quality: false,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct SkillLintReport {
     pub skill: String,
@@ -52,6 +86,7 @@ pub(crate) struct SkillLintReport {
     pub path: String,
     pub entrypoint: SkillLintEntrypoint,
     pub frontmatter: SkillLintFrontmatter,
+    pub sections: SkillLintSections,
     pub summary: SkillLintSummary,
     pub findings: Vec<SkillLintFinding>,
     pub fix_plan: Vec<SkillLintFix>,
@@ -80,6 +115,39 @@ pub(crate) struct SkillLintFrontmatter {
     pub parsed: bool,
     pub name: Option<String>,
     pub description: Option<String>,
+    pub license: Option<String>,
+    pub compatibility: Option<Value>,
+    pub metadata: BTreeMap<String, String>,
+    pub allowed_tools: Option<String>,
+    pub agent_fields: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct SkillLintSections {
+    pub portable_spec: SkillLintSection,
+    pub agent_compatibility: BTreeMap<String, SkillLintSection>,
+    pub quality: SkillLintSection,
+    pub resources: SkillLintResources,
+    pub progressive_disclosure: SkillLintProgressiveDisclosure,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct SkillLintSection {
+    pub status: String,
+    pub findings: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize)]
+pub(crate) struct SkillLintResources {
+    pub scripts: usize,
+    pub references: usize,
+    pub assets: usize,
+}
+
+#[derive(Debug, Clone, Default, Serialize)]
+pub(crate) struct SkillLintProgressiveDisclosure {
+    pub main_line_count: usize,
+    pub main_token_estimate: usize,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -128,8 +196,9 @@ impl App {
             ));
         }
 
-        let mode = SkillLintMode::from_args(args);
-        let report = lint_skill_source(&skill_path, &args.skill, mode);
+        let config = SkillLintConfig::from_args(args);
+        let mode = config.mode;
+        let report = lint_skill_source_with_config(&skill_path, &args.skill, &config);
         if mode.strict_errors() && report.summary.error_count > 0 {
             let mut failure = CommandFailure::new(
                 ErrorCode::SchemaMismatch,
@@ -153,10 +222,25 @@ pub(crate) fn lint_skill_source(
     expected_name: &str,
     mode: SkillLintMode,
 ) -> SkillLintReport {
+    lint_skill_source_with_config(skill_path, expected_name, &SkillLintConfig::from_mode(mode))
+}
+
+fn lint_skill_source_with_config(
+    skill_path: &Path,
+    expected_name: &str,
+    config: &SkillLintConfig,
+) -> SkillLintReport {
+    let mode = config.mode;
     let probe = find_entrypoint(skill_path);
     let mut findings = Vec::new();
     let mut fix_plan = Vec::new();
     let mut frontmatter = SkillLintFrontmatter::default();
+    let resources = collect_resources(skill_path);
+    let progressive_disclosure = probe
+        .path
+        .as_ref()
+        .map(|entrypoint| inspect_progressive_disclosure(entrypoint))
+        .unwrap_or_default();
 
     if !skill_path.is_dir() {
         push_finding(
@@ -208,8 +292,14 @@ pub(crate) fn lint_skill_source(
 
     if let Some(entrypoint) = probe.path.as_ref() {
         match parse_skill_frontmatter(entrypoint) {
-            Ok(parsed) => {
+            Ok(FrontmatterParseResult {
+                frontmatter: parsed,
+                schema_issues,
+            }) => {
                 frontmatter = parsed;
+                for issue in schema_issues {
+                    push_schema_issue(&mut findings, mode, issue);
+                }
                 validate_frontmatter(expected_name, &frontmatter, mode, &mut findings);
             }
             Err(message) => {
@@ -231,6 +321,17 @@ pub(crate) fn lint_skill_source(
         }
     }
 
+    run_agent_checks(config, &frontmatter, &mut findings);
+    if config.quality {
+        run_quality_checks(
+            skill_path,
+            &frontmatter,
+            &resources,
+            &progressive_disclosure,
+            &mut findings,
+        );
+    }
+
     let error_count = findings
         .iter()
         .filter(|finding| finding.severity == "error")
@@ -241,6 +342,12 @@ pub(crate) fn lint_skill_source(
         .count();
     let fixable_count = findings.iter().filter(|finding| finding.fixable).count();
     let compatible = probe.status != "missing" && skill_path.is_dir();
+    let sections = build_sections(
+        &findings,
+        config.agent.as_deref(),
+        resources,
+        progressive_disclosure,
+    );
 
     SkillLintReport {
         skill: expected_name.to_string(),
@@ -254,6 +361,7 @@ pub(crate) fn lint_skill_source(
             path: probe.path.map(|path| path.display().to_string()),
         },
         frontmatter,
+        sections,
         summary: SkillLintSummary {
             error_count,
             warning_count,
@@ -296,190 +404,6 @@ fn find_entrypoint(skill_path: &Path) -> EntrypointProbe {
         file_name: None,
         path: None,
     }
-}
-
-fn parse_skill_frontmatter(entrypoint: &Path) -> Result<SkillLintFrontmatter, String> {
-    let raw = fs::read_to_string(entrypoint).map_err(|err| err.to_string())?;
-    let mut lines = raw.lines();
-    if lines.next().map(str::trim) != Some("---") {
-        return Ok(SkillLintFrontmatter::default());
-    }
-
-    let mut yaml = String::new();
-    let mut closed = false;
-    for line in lines {
-        if line.trim() == "---" {
-            closed = true;
-            break;
-        }
-        yaml.push_str(line);
-        yaml.push('\n');
-    }
-    if !closed {
-        return Err("frontmatter is missing a closing --- marker".to_string());
-    }
-
-    let metadata = parse_frontmatter_metadata(&yaml)?;
-
-    Ok(SkillLintFrontmatter {
-        present: true,
-        parsed: true,
-        name: metadata.name,
-        description: metadata.description,
-    })
-}
-
-#[derive(Default)]
-struct FrontmatterMetadata {
-    name: Option<String>,
-    description: Option<String>,
-}
-
-fn parse_frontmatter_metadata(raw: &str) -> Result<FrontmatterMetadata, String> {
-    let mut metadata = FrontmatterMetadata::default();
-
-    for (index, line) in raw.lines().enumerate() {
-        let line_no = index + 1;
-        let trimmed = line.trim();
-        if trimmed.is_empty() || trimmed.starts_with('#') {
-            continue;
-        }
-        if line.chars().next().is_some_and(char::is_whitespace) {
-            return Err(format!(
-                "frontmatter line {line_no} uses nested or continued YAML; use top-level string fields"
-            ));
-        }
-
-        let Some((key, value)) = trimmed.split_once(':') else {
-            return Err(format!(
-                "frontmatter line {line_no} is not a key/value mapping entry"
-            ));
-        };
-        let key = key.trim();
-        validate_frontmatter_key(key, line_no)?;
-
-        let parsed = parse_frontmatter_string(value.trim(), key, line_no)?;
-        match key {
-            "name" => metadata.name = parsed,
-            "description" => metadata.description = parsed,
-            _ => {}
-        }
-    }
-
-    Ok(metadata)
-}
-
-fn validate_frontmatter_key(key: &str, line_no: usize) -> Result<(), String> {
-    if key.is_empty() {
-        return Err(format!("frontmatter line {line_no} has an empty key"));
-    }
-    if !key
-        .chars()
-        .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '-')
-    {
-        return Err(format!("frontmatter line {line_no} has an unsupported key"));
-    }
-    Ok(())
-}
-
-fn parse_frontmatter_string(
-    raw: &str,
-    key: &str,
-    line_no: usize,
-) -> Result<Option<String>, String> {
-    let raw = raw.trim();
-    let value = if raw.starts_with('"') || raw.starts_with('\'') {
-        raw
-    } else {
-        strip_plain_comment(raw).trim()
-    };
-    if value.is_empty() {
-        return Ok(None);
-    }
-    if value.starts_with('[')
-        || value.starts_with('{')
-        || value.starts_with('|')
-        || value.starts_with('>')
-    {
-        return Err(format!(
-            "frontmatter field '{key}' on line {line_no} must be a string scalar"
-        ));
-    }
-
-    let parsed = if value.starts_with('"') {
-        parse_double_quoted_scalar(value, key, line_no)?
-    } else if value.starts_with('\'') {
-        parse_single_quoted_scalar(value, key, line_no)?
-    } else {
-        value.to_string()
-    };
-
-    let trimmed = parsed.trim();
-    if trimmed.is_empty() {
-        Ok(None)
-    } else {
-        Ok(Some(trimmed.to_string()))
-    }
-}
-
-fn strip_plain_comment(raw: &str) -> &str {
-    let mut previous_was_space = true;
-    for (index, ch) in raw.char_indices() {
-        if ch == '#' && previous_was_space {
-            return raw[..index].trim_end();
-        }
-        previous_was_space = ch.is_whitespace();
-    }
-    raw
-}
-
-fn parse_single_quoted_scalar(value: &str, key: &str, line_no: usize) -> Result<String, String> {
-    if !value.ends_with('\'') || value.len() < 2 {
-        return Err(format!(
-            "frontmatter field '{key}' on line {line_no} has an unterminated quoted string"
-        ));
-    }
-    Ok(value[1..value.len() - 1].replace("''", "'"))
-}
-
-fn parse_double_quoted_scalar(value: &str, key: &str, line_no: usize) -> Result<String, String> {
-    if !value.ends_with('"') || value.len() < 2 {
-        return Err(format!(
-            "frontmatter field '{key}' on line {line_no} has an unterminated quoted string"
-        ));
-    }
-
-    let mut parsed = String::new();
-    let mut escaped = false;
-    for ch in value[1..value.len() - 1].chars() {
-        if escaped {
-            let translated = match ch {
-                '"' => '"',
-                '\\' => '\\',
-                'n' => '\n',
-                'r' => '\r',
-                't' => '\t',
-                other => {
-                    return Err(format!(
-                        "frontmatter field '{key}' on line {line_no} has unsupported escape '\\{other}'"
-                    ));
-                }
-            };
-            parsed.push(translated);
-            escaped = false;
-        } else if ch == '\\' {
-            escaped = true;
-        } else {
-            parsed.push(ch);
-        }
-    }
-    if escaped {
-        return Err(format!(
-            "frontmatter field '{key}' on line {line_no} ends with an incomplete escape"
-        ));
-    }
-
-    Ok(parsed)
 }
 
 fn validate_frontmatter(

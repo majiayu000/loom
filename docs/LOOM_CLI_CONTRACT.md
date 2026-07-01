@@ -472,7 +472,7 @@ Rules:
 ### 11.3 `skill lint`
 
 ```bash
-loom --json --root <root> skill lint <skill-id> [--strict | --compat | --fix]
+loom --json --root <root> skill lint <skill-id> [--strict | --portable | --compat | --fix] [--agent <agent>] [--quality]
 ```
 
 Read-only command.
@@ -480,10 +480,13 @@ Read-only command.
 Rules:
 
 1. default `--strict` mode requires uppercase `SKILL.md`, valid YAML frontmatter, portable `name`, matching directory/name identity, and a useful `description`
-2. `--compat` accepts legacy `skill.md` loading but returns typed warning findings
-3. `--fix` returns a read-only plan for safe normalizations such as `skill.md` to `SKILL.md`; it must not mutate files
-4. strict lint failures return `SCHEMA_MISMATCH` with the full report in `error.details.report`
-5. the report includes `entrypoint`, `frontmatter`, `findings`, `summary`, and `fix_plan`
+2. `--portable` is an alias for strict portable Agent Skills compliance
+3. `--compat` accepts legacy `skill.md` loading but returns typed warning findings
+4. `--fix` returns a read-only plan for safe normalizations such as `skill.md` to `SKILL.md`; it must not mutate files
+5. `--agent codex` and `--agent claude` add target-agent compatibility sections and warnings
+6. `--quality` adds non-fatal maintainability findings for trigger quality, size, eval fixtures, and script layout
+7. strict lint failures return `SCHEMA_MISMATCH` with the full report in `error.details.report`
+8. the report includes `entrypoint`, `frontmatter`, `sections`, `findings`, `summary`, and `fix_plan`
 
 ### 11.3.1 `skill policy`
 

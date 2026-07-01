@@ -156,3 +156,101 @@ fn skill_lint_rejects_frontmatter_directory_mismatch() {
         "error"
     ));
 }
+
+#[test]
+fn skill_lint_portable_accepts_rich_yaml_frontmatter() {
+    let root = TestDir::new("skill-lint-rich-yaml");
+    write_skill_file(
+        &root,
+        "rich-skill",
+        "SKILL.md",
+        "---\nname: rich-skill\ndescription: Use when an agent needs rich portable YAML metadata before registry projection.\nlicense: MIT\ncompatibility:\n  runtimes:\n    - codex\nmetadata:\n  owner: platform\n  risk: low\nallowed-tools: Bash, Read\n---\n# Rich skill\n",
+    );
+
+    let (output, env) = run_loom(root.path(), &["skill", "lint", "rich-skill", "--portable"]);
+
+    assert!(
+        output.status.success(),
+        "portable lint should accept nested YAML frontmatter: stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report = report(&env);
+    assert_eq!(report["valid"], Value::Bool(true));
+    assert_eq!(report["frontmatter"]["license"], Value::from("MIT"));
+    assert_eq!(
+        report["frontmatter"]["metadata"]["owner"],
+        Value::from("platform")
+    );
+    assert_eq!(
+        report["sections"]["portable_spec"]["status"],
+        Value::from("pass")
+    );
+}
+
+#[test]
+fn skill_lint_agent_codex_warns_for_claude_only_fields() {
+    let root = TestDir::new("skill-lint-agent-codex");
+    write_skill_file(
+        &root,
+        "agent-skill",
+        "SKILL.md",
+        "---\nname: agent-skill\ndescription: Use when an agent needs target compatibility checks before activation.\nallowed-tools: Bash, Read\n---\n# Agent skill\n",
+    );
+
+    let (output, env) = run_loom(
+        root.path(),
+        &["skill", "lint", "agent-skill", "--agent", "codex"],
+    );
+
+    assert!(
+        output.status.success(),
+        "agent warning should not fail lint"
+    );
+    let report = report(&env);
+    assert!(has_finding(
+        report,
+        "agent_codex_unsupported_field",
+        "warning"
+    ));
+    assert_eq!(
+        report["sections"]["agent_compatibility"]["codex"]["status"],
+        Value::from("warning")
+    );
+}
+
+#[test]
+fn skill_lint_quality_reports_eval_and_script_findings() {
+    let root = TestDir::new("skill-lint-quality");
+    write_skill_file(
+        &root,
+        "scripted-skill",
+        "SKILL.md",
+        "---\nname: scripted-skill\ndescription: Use when an agent needs scripted repository cleanup checks before projection.\n---\n# Scripted skill\n",
+    );
+    write_file(
+        &root.path().join("skills/scripted-skill/scripts/run.sh"),
+        "echo missing shebang\n",
+    );
+
+    let (output, env) = run_loom(
+        root.path(),
+        &["skill", "lint", "scripted-skill", "--quality"],
+    );
+
+    assert!(
+        output.status.success(),
+        "quality warnings should not fail lint"
+    );
+    let report = report(&env);
+    assert!(has_finding(report, "quality_evals_missing", "warning"));
+    assert!(has_finding(
+        report,
+        "quality_script_entrypoint_unclear",
+        "warning"
+    ));
+    assert_eq!(report["sections"]["resources"]["scripts"], Value::from(1));
+    assert_eq!(
+        report["sections"]["quality"]["status"],
+        Value::from("warning")
+    );
+}

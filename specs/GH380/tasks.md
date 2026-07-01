@@ -48,6 +48,7 @@ Done when:
 - Provider add/remove use the same registry write/audit/commit/autosync path as
   other registry mutations.
 - Provider ids are validated.
+- Reserved provider ids such as `team` are rejected.
 - Provider URLs with embedded credentials or token-like query parameters are
   rejected before persistence.
 - Provider records are sorted before write.
@@ -127,8 +128,10 @@ Done when:
 - Dry-run uses explicit `--policy-profile` or the registry default policy
   profile; missing strict policy input fails closed for unpinned refs.
 - Dry-run reports staging/fetch plan.
-- Dry-run reports lint, safety, provenance, trust, and next actions.
-- Dry-run writes nothing.
+- Dry-run reports lint, safety, provenance, would-be `loom.lock` entry, trust,
+  and next actions.
+- Dry-run writes no registry/provenance/lockfile/target/trust state while still
+  preserving normal command-audit events.
 
 Verify:
 

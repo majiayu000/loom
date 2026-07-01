@@ -123,10 +123,10 @@ Preview must not execute scripts. It should show:
 - Estimated risk and trust.
 - Suggested install dry-run command.
 
-Catalog search is local-only by default. Network-backed providers such as GitHub
-may be queried only when the provider is explicitly selected and the command uses
-an explicit network opt-in such as `--allow-network`; locator-based preview still
-counts as explicit locator intent.
+Catalog search is local-only by default. Network-backed search requires a
+persisted provider record plus explicit `--provider <id>` and `--allow-network`;
+in-memory synthesized defaults are sufficient for parsing/locator preview, but
+not remote search. Locator-based preview still counts as explicit locator intent.
 
 ## Install Behavior
 
@@ -164,7 +164,9 @@ they cannot bypass `skill install`.
 
 1. Providers can be listed, added, and removed.
 2. GitHub/local providers support preview and install dry-run.
-3. Install creates provenance/lockfile records and trust state.
+3. Install creates provenance/lockfile records and trust state, or marks mutating
+   install apply deferred while dry-run shows the exact records that would be
+   written.
 4. Public skills default to `third-party-unreviewed`.
 5. Preview never executes code.
 6. Strict policy rejects unpinned refs.

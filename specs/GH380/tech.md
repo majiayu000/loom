@@ -51,6 +51,11 @@ Recommended shape:
 }
 ```
 
+Provider ids must reject reserved locator prefixes such as `team`. Built-in
+synthesized providers such as `github` and `local` are non-removable unless they
+have been persisted explicitly; `provider remove` must fail clearly rather than
+appearing to remove an in-memory default that later reappears.
+
 Records must be deterministic before write. Malformed provider state must fail
 without overwrite. Provider URLs must be credential-free before persistence:
 reject userinfo, embedded tokens, password fields, and token-like query
@@ -86,6 +91,8 @@ Built-in defaults such as `github:` and `local:` are synthesized in memory for
 read-only parse, catalog, and preview flows in a fresh registry. Persisting or
 customizing them still requires an explicit provider write command; read-only
 commands must not seed provider state.
+Network search is not allowed against synthesized defaults. It requires a
+persisted provider record selected by `--provider` plus explicit network opt-in.
 
 Pinned refs include immutable commit SHAs. Tags are acceptable only when policy
 verifies immutability/signature and provenance records the resolved commit and
@@ -105,6 +112,10 @@ trait SkillProvider {
     fn fetch(&self, locator: &SkillLocator, dest: &Path) -> ProviderResult<ProviderProvenance>;
 }
 ```
+
+For `kind=github`, the provider `url` is the configured GitHub or GitHub
+Enterprise base. Fetch/search/provenance endpoints derive clone and API URLs
+from that base instead of hard-coding `https://github.com`.
 
 Provider implementations:
 
@@ -147,8 +158,13 @@ state or target directories.
 - lint result
 - safety scan result
 - provenance record that would be written
+- `loom.lock` record that would be written, including resolved source, ref,
+  digest, agent/profile or scope when available
 - trust state that would be assigned
 - next actions
+
+Dry-run writes no registry, provenance, lockfile, target, or trust state, but it
+still follows the normal command-audit event behavior for read/dry-run commands.
 
 Apply path should reuse existing registry import, provenance, lockfile, command
 audit, and policy patterns. If implementation chooses to route through existing
@@ -162,6 +178,11 @@ Trust values:
 - `third-party-unreviewed`
 - `reviewed`
 - future org/team trust states from #381
+
+Recommended trust state lives in `state/registry/skill_trust.json` until the
+broader #370 trust model supersedes it. Records are keyed by skill id plus source
+digest and include trust value, optional review evidence id, provider id,
+resolved ref, and timestamps.
 
 Rules:
 

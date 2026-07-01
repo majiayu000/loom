@@ -44,8 +44,10 @@ pub(crate) struct AgentAdapter {
 
 Recommended helper structs:
 
-- `AdapterDiscoveryRoot`: `scope`, expanded `path`, `role`, optional
-  `source_env_var`, optional `priority`.
+- `AdapterDiscoveryRoot`: `scope`, `path_template`, `role`, optional
+  `source_env_var`, optional `priority`, optional unavailable reason.
+- `ResolvedDiscoveryRoot`: resolved `path` plus the source root metadata used
+  for diagnostics.
 - `AdapterVisibility`: `follows_symlink_dirs`, `identity`, optional
   `config_file`, and `disable_rules`.
 - `AdapterReload`: `strategy`, `hot_reload`, optional `notes`.
@@ -60,13 +62,16 @@ record parsing.
 
 - v1: keep the existing strict schema and validation. Convert
   `default_skill_dirs` into discovery roots with role `legacy-default` and
-  scope inferred from `supported_scopes` only when unambiguous. Keep
-  `default_skill_dirs` in output.
+  scope inferred from `supported_scopes` only when unambiguous. Map
+  `capabilities.reload_required=true` to `reload.strategy=restart-required`
+  and `hot_reload=false`; map `false` to `reload.strategy=no-reload-required`
+  unless a v2 adapter overrides it. Keep `default_skill_dirs` in output.
 - v2: require `discovery_roots` when `automatic_discovery` is true. Expand
-  `~/`, `${CODEX_HOME:-...}`-style defaults, and `<workspace>` placeholders
-  through one shared path-expansion helper. Reject empty paths, empty roles,
-  unsupported scopes, unsupported visibility identities, and unsupported reload
-  strategies.
+  `~/` and `${CODEX_HOME:-...}`-style defaults only when a command resolves a
+  root. Keep `<workspace>` placeholders templated until request-time selection
+  so project-scope roots can use the command workspace instead of the registry
+  root. Reject empty paths, unsupported roles, unsupported scopes, unsupported
+  visibility identities, and unsupported reload strategies.
 - unsupported API: return `ADAPTER_API_UNSUPPORTED` before partial adapter
   registration.
 
@@ -84,6 +89,8 @@ Codex should include:
 
 - `scope=user`, `path=~/.agents/skills`, role
   `preferred-cross-client`.
+- `scope=user`, `path=$CODEX_SKILLS_DIR`, role `env-override`, source env var
+  `CODEX_SKILLS_DIR`.
 - `scope=user`, `path=${CODEX_HOME:-~/.codex}/skills`, role `legacy`.
 - `scope=project`, `path=<workspace>/.agents/skills`, role
   `project-cross-client`.
@@ -96,6 +103,11 @@ Claude metadata may start with the existing default roots plus reload and scope
 metadata that Loom can verify locally. Do not invent plugin or enterprise path
 facts that the implementation does not inspect.
 
+Built-in adapters must remain loadable when `HOME` and `USERPROFILE` are
+missing. In that case user roots are marked unavailable for diagnostics, but
+read commands such as `workspace status` and `target list` must not fail during
+adapter registry construction.
+
 ## Adapter-Driven Target Resolution
 
 Add one shared helper, owned by the adapter or visibility module:
@@ -105,7 +117,7 @@ pub(crate) fn preferred_discovery_root(
     adapter: &AgentAdapter,
     scope: &str,
     workspace: &Path,
-) -> Result<&AdapterDiscoveryRoot, CommandFailure>
+) -> Result<ResolvedDiscoveryRoot, CommandFailure>
 ```
 
 The helper should:
@@ -115,7 +127,24 @@ The helper should:
    `preferred-cross-client` for user scope and `project-cross-client` for
    project scope.
 3. Fall back to explicit priority or declaration order.
-4. Return a structured adapter error when no root matches.
+4. Resolve `path_template` with the command workspace only after selecting the
+   root.
+5. Return a structured adapter error when no root matches or the selected root
+   is unavailable.
+
+Supported root roles in v2 are:
+
+```text
+preferred-cross-client
+project-cross-client
+legacy
+legacy-default
+env-override
+manual
+```
+
+External v2 adapters must reject unsupported role values instead of silently
+falling back to priority or declaration order.
 
 Commands that currently ask `resolve_agent_skill_dirs()` for Codex or Claude
 paths should call this helper unless they need legacy status output only.

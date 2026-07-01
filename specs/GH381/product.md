@@ -31,8 +31,8 @@ Target command surface:
 ```bash
 loom policy org init
 loom policy org show
-loom policy org check <action> --skill <skill> [--agent <agent>] [--json]
-loom approval request <action> --skill <skill> [--reason <text>]
+loom policy org check <action> [--skill <skill>] [--provider <provider-id>] [--sync-remote <remote>] [--agent <agent>] [--json]
+loom approval request <action> [--skill <skill>] [--provider <provider-id>] [--sync-remote <remote>] [--reason <text>]
 loom approval list [--pending|--approved|--rejected]
 loom approval approve <request-id> [--comment <text>]
 loom approval reject <request-id> [--comment <text>]
@@ -59,6 +59,7 @@ access. Loom roles only gate Loom actions.
 Governed actions:
 
 - `skill.install`
+- `skill.project`
 - `skill.activate`
 - `skill.deactivate`
 - `skill.release`
@@ -66,7 +67,13 @@ Governed actions:
 - `skill.trust.update`
 - `skill.quarantine`
 - `provider.add`
+- `provider.remove`
 - `sync.push`
+
+Subject arguments are action-specific. Skill lifecycle actions require
+`--skill`; provider actions require `--provider`; sync actions require the
+configured remote or sync target. The evaluator must reject irrelevant or
+missing subject arguments instead of inventing dummy skill values.
 
 ## Policy Behavior
 
@@ -82,28 +89,19 @@ and any required approval tokens.
 
 ## Approval Request Model
 
-Approval requests are Git-tracked and append-only:
+Approval requests are Git-tracked append-only events. Current request status is
+derived from the event stream; implementations must not rewrite a mutable
+request record to append decisions.
 
 ```json
-{
-  "request_id": "approval_...",
-  "action": "skill.activate",
-  "skill": "fixflow",
-  "requester": "alice",
-  "status": "pending",
-  "risk_summary": {"high": 1, "medium": 2},
-  "evidence": {
-    "inspect_ref": "...",
-    "scan_report": "...",
-    "eval_report": "..."
-  },
-  "created_at": "...",
-  "decisions": []
-}
+{"event": "requested", "request_id": "approval_...", "action": "skill.activate", "subject": {"skill": "fixflow"}, "requester": "alice", "reason_redacted": "...", "risk_summary": {"high": 1}, "evidence": {}, "created_at": "..."}
+{"event": "approved", "request_id": "approval_...", "approver": "bob", "comment_redacted": "...", "created_at": "..."}
 ```
 
-Approve/reject commands append decisions; they must not rewrite prior decision
-records silently.
+Approve/reject commands append decision events; they must not rewrite prior
+records silently. Free-form reason and comment text must be scanned or redacted
+before commit so pasted tokens or keys are not stored in Git-tracked approval
+files.
 
 ## Non-Goals
 

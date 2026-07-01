@@ -93,6 +93,7 @@ The evaluator should join:
 Mutating commands should call org policy before writing:
 
 - install
+- project
 - activate/deactivate
 - release/rollback
 - trust update

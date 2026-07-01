@@ -24,7 +24,7 @@ new CLI behavior, hidden Codex config repair, automatic full-mirror cleanup
 - [ ] `SP374-T001` Owner: docs-readme | Done when: README introduces single-skill lifecycle before advanced registry/projection internals and labels unavailable commands honestly | Verify: `git diff --check`
 - [ ] `SP374-T002` Owner: docs-lifecycle | Done when: `docs/SINGLE_SKILL_LIFECYCLE.md` defines the lifecycle terms and command sequence with implemented/planned status called out | Verify: `rg -n "active view|disabled-by-config|restart-required|--json" docs/SINGLE_SKILL_LIFECYCLE.md`
 - [ ] `SP374-T003` Owner: docs-codex | Done when: `docs/CODEX_SKILL_VISIBILITY.md` explains `~/.agents/skills`, legacy `${CODEX_HOME:-~/.codex}/skills`, the CWD-to-repo-root `.agents/skills` search chain, symlink canonicalization, path-based config disables, and restart guidance | Verify: `rg -n "\\.agents/skills|CODEX_HOME|skills.config|restart|--json" docs/CODEX_SKILL_VISIBILITY.md`
-- [ ] `SP374-T004` Owner: docs-migration | Done when: `docs/MIGRATING_TO_ACTIVE_VIEW.md` documents dry-run-first audit, allowlist, activation, reconcile, config disable repair/reporting, and verification | Verify: `rg -n "dry-run|allowlist|reconcile|doctor|--json" docs/MIGRATING_TO_ACTIVE_VIEW.md`
+- [ ] `SP374-T004` Owner: docs-migration | Done when: `docs/MIGRATING_TO_ACTIVE_VIEW.md` documents dry-run-first audit, allowlist, activation, reconcile, config disable repair/reporting, and verification | Verify: `rg -n "dry-run|allowlist|reconcile|diagnose|--json" docs/MIGRATING_TO_ACTIVE_VIEW.md`
 - [ ] `SP374-T005` Owner: docs-consistency | Done when: existing docs that imply Codex full-mirror behavior are corrected or labeled legacy and link to the new active-view docs | Verify: `rg -n "full[- ]mirror|legacy|active view" README.md docs`
 - [ ] `SP374-T006` Owner: regression | Done when: documentation diffs are whitespace-clean and repository check/test still pass | Verify: `git diff --check && cargo check --workspace --all-targets --all-features && cargo test`
 
@@ -64,7 +64,8 @@ Done when:
 - The guide defines source, target, active view, active, installed, visible,
   enabled, disabled-by-config, and restart-required.
 - The guide explains when to use `new`, `add`, `save`, `capture`, `lint`,
-  `inspect`, `doctor`, `eval`, `release`, and `rollback`.
+  current `show`/`diagnose` alternatives, planned `inspect` behavior, `eval`,
+  `release`, and `rollback`.
 - Automation examples use `--json` where output is parsed.
 - Upstream Agent Skills links are present.
 
@@ -87,7 +88,8 @@ Done when:
 
 - The guide names the preferred user root, legacy user root, and project root.
 - The guide explains why filesystem projection alone does not prove visibility.
-- The guide explains canonical `SKILL.md` path disables and skill name disables.
+- The guide explains canonical `SKILL.md` path disables; skill names are limited
+  to collision or display diagnostics.
 - New-session or restart guidance is explicit.
 - Planned reconcile examples are marked planned if not implemented.
 
@@ -118,7 +120,7 @@ Done when:
 Verify:
 
 ```bash
-rg -n "read-only|dry-run|allowlist|full-mirror|doctor|rollback|--json" docs/MIGRATING_TO_ACTIVE_VIEW.md
+rg -n "read-only|dry-run|allowlist|full-mirror|diagnose|rollback|--json" docs/MIGRATING_TO_ACTIVE_VIEW.md
 ```
 
 ### SP374-T5: Correct Conflicting Legacy Docs

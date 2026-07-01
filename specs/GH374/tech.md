@@ -105,7 +105,7 @@ Recommended sections:
 4. Explicit allowlist.
 5. Dry-run activation or reconcile.
 6. Apply only reviewed changes.
-7. Verify with doctor and JSON.
+7. Verify with `diagnose` and JSON.
 8. Rollback or recovery notes.
 
 The migration guide must say that existing full-mirror projections are

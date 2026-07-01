@@ -98,7 +98,7 @@ Explain a safe dry-run-first migration:
 3. Activate only selected skills.
 4. Reconcile stale projections.
 5. Repair or report config disables.
-6. Verify with doctor and JSON output.
+6. Verify with `diagnose` and JSON output.
 
 ## Behavior Invariants
 

@@ -565,9 +565,14 @@ Rules:
 
 ```bash
 loom --json --root <root> skill eval <skill-id> [--agent <agent> | --matrix <agent,agent>] [--model <model>]
+loom --json --root <root> skill eval offline <skill-id> [--agent <agent> | --matrix <agent,agent>] [--model <model>]
+loom --json --root <root> skill eval run <skill-id> --agent <agent> --baseline no-skill [--workspace <path>] [--cases <path>] [--runs <n>] [--runner mock|codex-cli] [--dry-run] [--output <path>]
+loom --json --root <root> skill eval trigger <skill-id> --agent <agent> [--cases <path>] [--runs <n>] [--runner mock|codex-cli] [--output <path>]
+loom --json --root <root> skill eval compare <skill-id> --from <ref> --to <ref|working-tree> --agent <agent> [--cases <path>] [--runner mock|codex-cli] [--output <path>]
 ```
 
-Read-only command.
+The legacy flat command and `offline` subcommand are read-only. `run`, `trigger`, and `compare`
+persist reports under `state/registry/evals/<skill-id>/` by default or to explicit `--output`.
 
 Fixture layout:
 
@@ -582,11 +587,13 @@ Rules:
 
 1. `triggers.jsonl` contains positive and negative trigger cases with `prompt`/`input`, expected trigger labels, and optional observed trigger labels
 2. `tasks.jsonl` contains offline task fixtures with output, trace, metrics, permissions used, deterministic checks, and optional artifact checks
-3. `--agent` stamps one agent id into the report; `--matrix` replays the same offline fixtures for a comma-separated agent matrix
-4. the JSON report includes per-case status, aggregate score, trigger precision/recall, task success rate, token/command counts, permissions used, skill version metadata, and artifact check results
-5. any evaluated case with `status=failed` returns `EVAL_FAILED` with the full report in `error.details.report`; missing fixture files still return an empty successful report with a warning
-6. the local runner never calls a network or LLM provider; rubric or LLM graders must be represented explicitly in fixtures before they can be tracked
-7. eval success is quality evidence only and must not be treated as a safety guarantee
+3. `eval <skill-id>` remains an alias for `eval offline <skill-id>`; `--agent` stamps one agent id into the report and `--matrix` replays fixtures across a comma-separated matrix
+4. `run --dry-run` returns a plan with resolved cases and writes no reports, starts no runner, and mutates no workspace
+5. the default `mock` runner deterministically compares with-skill and no-skill baselines in isolated temp workspaces; `codex-cli` is explicit opt-in and returns typed `EVAL_FAILED` when unavailable or not authorized
+6. reports include per-case status, with/without pass rates, delta, trigger precision/recall when trigger cases exist, available token/command/duration overhead, cleanup status, skill version metadata, and report path
+7. with-skill failures, trigger failures, missing runners, report persistence errors, and cleanup failures return typed errors with the full report in `error.details.report`; no-skill baseline failures are comparison evidence, not command failure by themselves
+8. default reports do not persist raw prompts or secrets; explicit output paths are caller-controlled
+9. eval success is quality evidence only and must not be treated as a safety guarantee
 
 ### 11.3.3 `skillset create`, `skillset add`, `skillset remove`, `skillset show`, `skillset lint`
 

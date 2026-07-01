@@ -191,7 +191,7 @@ The chain `add → capture → save → snapshot → release → rollback` is th
 | `loom skill new` | Create a lint-clean local skill skeleton | Start a new registry-owned skill with `SKILL.md`, references, scripts, assets, eval stubs, and `loom.skill.toml` | Source (initial create) |
 | `loom skill provenance inspect/verify/refresh` | Inspect, check, or refresh recorded source provenance and `loom.lock` | Confirm a skill still matches the source digest and pinned ref metadata | Source metadata + `loom.lock` |
 | `loom skill policy` | Report declared capabilities, content risks, provenance drift, and policy decision | Review a skill before projection or explain why a policy profile blocks it | Source metadata + source files (read-only) |
-| `loom skill eval` | Run offline trigger/task/artifact eval fixtures | Track quality evidence across agent/model hosts without network calls | Source + eval fixtures (read-only) |
+| `loom skill eval` | Run offline fixtures or explicit eval harnesses | Compare offline quality, trigger behavior, and mock with-skill/no-skill baselines without network calls by default | Source + eval fixtures; reports under registry state |
 | `loom skillset create/add/remove/show/lint` | Group existing registry skills into a named set | Organize coherent skill bundles before later activation/eval support lands | Registry skillset state |
 | `loom use` | Plan or apply target, binding, and projection setup in one flow | New users want to use a skill without copying target/binding IDs between commands | Source + target + registry metadata |
 | `loom plan use` / `loom apply` | Persist a guarded use plan, then execute it with idempotency | Agents need a retry-safe plan/apply protocol for higher-risk flows | Command audit + source/target/registry metadata |
@@ -295,6 +295,10 @@ loom skill provenance verify <skill>
 loom skill provenance refresh <skill>
 loom skill policy <skill> [--policy-profile <safe-capture|audit-only|deny-risky|strict|custom>]
 loom skill eval <skill> [--agent <agent> | --matrix <agent,agent>] [--model <model>]
+loom skill eval offline <skill> [--agent <agent> | --matrix <agent,agent>] [--model <model>]
+loom skill eval run <skill> --agent <agent> --baseline no-skill [--cases <path>] [--runs <n>] [--runner mock|codex-cli] [--dry-run] [--output <path>]
+loom skill eval trigger <skill> --agent <agent> [--cases <path>] [--runs <n>] [--runner mock|codex-cli] [--output <path>]
+loom skill eval compare <skill> --from <ref> --to <ref|working-tree> --agent <agent> [--cases <path>] [--runner mock|codex-cli] [--output <path>]
 loom skill project <skill> --binding <binding-id> [--target <target-id>] [--method <symlink|copy|materialize>] [--dry-run]
 loom skill capture [<skill>] [--binding <binding-id>] [--instance <instance-id>] [--message <msg>] [--dry-run]
 loom skill save <skill> [--message <msg>]

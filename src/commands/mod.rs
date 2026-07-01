@@ -20,6 +20,7 @@ mod skill_diagnose;
 #[cfg(test)]
 mod skill_diagnose_tests;
 mod skill_eval;
+mod skill_eval_harness;
 mod skill_inspect;
 mod skill_inventory;
 mod skill_lint;

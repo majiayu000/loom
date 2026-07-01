@@ -93,9 +93,39 @@ pub(crate) struct HarnessTriggerResult {
 pub(crate) fn read_harness_jsonl<T: for<'de> Deserialize<'de>>(
     path: &Path,
 ) -> std::result::Result<Vec<HarnessJsonlRecord<T>>, CommandFailure> {
+    read_harness_jsonl_with_missing(path, MissingCases::AllowEmpty)
+}
+
+pub(crate) fn read_required_harness_jsonl<T: for<'de> Deserialize<'de>>(
+    path: &Path,
+) -> std::result::Result<Vec<HarnessJsonlRecord<T>>, CommandFailure> {
+    read_harness_jsonl_with_missing(path, MissingCases::Fail)
+}
+
+pub(crate) fn read_harness_jsonl_str<T: for<'de> Deserialize<'de>>(
+    raw: &str,
+    label: &str,
+) -> std::result::Result<Vec<HarnessJsonlRecord<T>>, CommandFailure> {
+    parse_jsonl(raw, Path::new(label))
+}
+
+enum MissingCases {
+    AllowEmpty,
+    Fail,
+}
+
+fn read_harness_jsonl_with_missing<T: for<'de> Deserialize<'de>>(
+    path: &Path,
+    missing: MissingCases,
+) -> std::result::Result<Vec<HarnessJsonlRecord<T>>, CommandFailure> {
     let raw = match fs::read_to_string(path) {
         Ok(raw) => raw,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(err)
+            if err.kind() == std::io::ErrorKind::NotFound
+                && matches!(missing, MissingCases::AllowEmpty) =>
+        {
+            return Ok(Vec::new());
+        }
         Err(err) => {
             let mut failure = CommandFailure::new(
                 ErrorCode::IoError,
@@ -105,6 +135,13 @@ pub(crate) fn read_harness_jsonl<T: for<'de> Deserialize<'de>>(
             return Err(failure);
         }
     };
+    parse_jsonl(&raw, path)
+}
+
+fn parse_jsonl<T: for<'de> Deserialize<'de>>(
+    raw: &str,
+    path: &Path,
+) -> std::result::Result<Vec<HarnessJsonlRecord<T>>, CommandFailure> {
     let mut records = Vec::new();
     for (index, line) in raw.lines().enumerate() {
         let line_no = index + 1;

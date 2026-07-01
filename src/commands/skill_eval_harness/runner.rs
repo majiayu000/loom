@@ -29,6 +29,7 @@ pub(super) trait SkillEvalRunner {
         env: &EvalRunEnvironment,
         plan: &EvalPlan,
         case: &HarnessTaskCase,
+        case_key: &str,
         variant: EvalVariant,
         attempt: u32,
     ) -> std::result::Result<EvalCaseResult, CommandFailure>;
@@ -52,10 +53,11 @@ impl SkillEvalRunner for MockAgentRunner {
         env: &EvalRunEnvironment,
         plan: &EvalPlan,
         case: &HarnessTaskCase,
+        case_key: &str,
         variant: EvalVariant,
         attempt: u32,
     ) -> std::result::Result<EvalCaseResult, CommandFailure> {
-        let workspace = isolated_workspace(env, case, variant, attempt);
+        let workspace = isolated_workspace(env, case_key, variant, attempt);
         prepare_workspace(plan, case, &workspace)?;
         Ok(mock_case_result(plan, case, variant, attempt, workspace))
     }
@@ -221,10 +223,12 @@ pub(super) fn run_task_baseline(
     let mut without_skill = Vec::new();
     for attempt in 1..=runs {
         for record in cases {
+            let case_key = case_workspace_key(record.line, &record.value);
             with_skill.push(runner.run_case(
                 env,
                 plan,
                 &record.value,
+                &case_key,
                 EvalVariant::WithSkill,
                 attempt,
             )?);
@@ -232,6 +236,7 @@ pub(super) fn run_task_baseline(
                 env,
                 plan,
                 &record.value,
+                &case_key,
                 EvalVariant::WithoutSkill,
                 attempt,
             )?);
@@ -611,7 +616,7 @@ fn safe_fixture_path(cases_path: &Path, raw: &str) -> Option<PathBuf> {
 
 fn isolated_workspace(
     env: &EvalRunEnvironment,
-    case: &HarnessTaskCase,
+    case_key: &str,
     variant: EvalVariant,
     attempt: u32,
 ) -> PathBuf {
@@ -619,8 +624,34 @@ fn isolated_workspace(
         EvalVariant::WithSkill => "with-skill",
         EvalVariant::WithoutSkill => "without-skill",
     };
-    env.root
-        .join(format!("{}-{}-{attempt}", case.id(), variant))
+    env.root.join(format!("{case_key}-{variant}-{attempt}"))
+}
+
+fn case_workspace_key(line: usize, case: &HarnessTaskCase) -> String {
+    format!("line{}-{}", line, slug_path_component(&case.id()))
+}
+
+fn slug_path_component(raw: &str) -> String {
+    let mut slug = String::new();
+    let mut last_sep = false;
+    for ch in raw.chars().take(80) {
+        if ch.is_ascii_alphanumeric() {
+            slug.push(ch.to_ascii_lowercase());
+            last_sep = false;
+        } else if matches!(ch, '-' | '_' | '.') {
+            slug.push(ch);
+            last_sep = false;
+        } else if !last_sep {
+            slug.push('_');
+            last_sep = true;
+        }
+    }
+    let slug = slug.trim_matches(['.', '_', '-']);
+    if slug.is_empty() || slug == "." || slug == ".." {
+        "case".to_string()
+    } else {
+        slug.to_string()
+    }
 }
 
 fn baseline_id(baseline: EvalBaselineArg) -> &'static str {

@@ -238,6 +238,8 @@ fn skill_eval_run_mock_baseline_persists_report_and_redacts_prompts() {
     assert_eq!(env["data"]["report_path"], json!(report_arg));
     let raw_report = fs::read_to_string(report_path).expect("read report");
     assert!(!raw_report.contains("confidential-eval-marker"));
+    let persisted: serde_json::Value = serde_json::from_str(&raw_report).expect("parse report");
+    assert_eq!(persisted["report_path"], json!(report_arg));
 }
 
 #[test]
@@ -302,6 +304,73 @@ fn skill_eval_codex_cli_runner_missing_executable_is_typed() {
 }
 
 #[test]
+fn skill_eval_run_explicit_missing_cases_fails_closed() {
+    let root = TestDir::new("skill-eval-missing-explicit-cases");
+    write_skill(root.path(), "demo", "# Demo\n");
+
+    let (output, env) = run_loom(
+        root.path(),
+        &[
+            "skill",
+            "eval",
+            "run",
+            "demo",
+            "--agent",
+            "codex",
+            "--baseline",
+            "no-skill",
+            "--cases",
+            "evals/missing.jsonl",
+        ],
+    );
+
+    assert!(!output.status.success(), "explicit missing cases must fail");
+    assert_eq!(env["error"]["code"], json!("IO_ERROR"));
+    assert!(
+        env["error"]["details"]["path"]
+            .as_str()
+            .unwrap_or("")
+            .ends_with("skills/demo/evals/missing.jsonl")
+    );
+}
+
+#[test]
+fn skill_eval_run_sanitizes_case_ids_for_workspace_paths() {
+    let root = TestDir::new("skill-eval-sanitized-workspace");
+    write_skill(root.path(), "demo", "# Demo\n");
+    write_file(
+        &root.path().join("skills/demo/evals/tasks.jsonl"),
+        r#"{"id":"../escape/abs","prompt":"Fix tests","checks":{"outcome_contains":["tests pass"]}}
+"#,
+    );
+
+    let (output, env) = run_loom(
+        root.path(),
+        &[
+            "skill",
+            "eval",
+            "run",
+            "demo",
+            "--agent",
+            "codex",
+            "--baseline",
+            "no-skill",
+        ],
+    );
+
+    assert!(
+        output.status.success(),
+        "sanitized id run should pass: stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let workspace = env["data"]["runs"]["with_skill"][0]["workspace"]
+        .as_str()
+        .expect("workspace");
+    assert!(workspace.contains("line1-escape_abs-with-skill-1"));
+    assert!(!workspace.contains("../escape"));
+}
+
+#[test]
 fn skill_eval_cleanup_failure_keeps_report_details() {
     let root = TestDir::new("skill-eval-cleanup-failure");
     write_skill(root.path(), "demo", "# Demo\n");
@@ -347,7 +416,7 @@ fn skill_eval_compare_evaluates_refs_without_mutating_source() {
     write_skill(root.path(), "demo", "# Demo\n");
     write_file(
         &root.path().join("skills/demo/evals/tasks.jsonl"),
-        r#"{"id":"task-1","prompt":"Fix tests","checks":{"outcome_contains":["tests pass"]}}
+        r#"{"id":"task-1","prompt":"Fix tests","checks":{"outcome_contains":["never emitted"]}}
 "#,
     );
     git(root.path(), &["init", "-b", "main"]);
@@ -363,6 +432,11 @@ fn skill_eval_compare_evaluates_refs_without_mutating_source() {
             "-m",
             "seed skill",
         ],
+    );
+    write_file(
+        &root.path().join("skills/demo/evals/tasks.jsonl"),
+        r#"{"id":"task-1","prompt":"Fix tests","checks":{"outcome_contains":["tests pass"]}}
+"#,
     );
 
     let (output, env) = run_loom(
@@ -387,8 +461,9 @@ fn skill_eval_compare_evaluates_refs_without_mutating_source() {
         String::from_utf8_lossy(&output.stderr)
     );
     assert_eq!(env["data"]["mode"], json!("version_compare"));
-    assert_eq!(env["data"]["summary"]["from_pass_rate"], json!(1.0));
+    assert_eq!(env["data"]["summary"]["from_pass_rate"], json!(0.0));
     assert_eq!(env["data"]["summary"]["to_pass_rate"], json!(1.0));
+    assert_eq!(env["data"]["summary"]["delta"], json!(1.0));
     assert!(env["data"]["from"]["skill_version"]["head_tree_oid"].is_string());
 }
 

@@ -2,15 +2,19 @@ pub(crate) mod cases;
 mod report;
 mod runner;
 
+use std::path::Path;
+
 use serde_json::json;
 
 use crate::cli::{SkillEvalCompareArgs, SkillEvalRunArgs, SkillEvalTriggerArgs};
 use crate::envelope::Meta;
+use crate::gitops::run_git_allow_failure;
+use crate::state::AppContext;
 
 use super::{App, CommandFailure};
 use cases::{
     HarnessTaskCase, HarnessTriggerCase, evaluate_trigger_case, read_harness_jsonl,
-    summarize_trigger_results,
+    read_harness_jsonl_str, read_required_harness_jsonl, summarize_trigger_results,
 };
 use report::{
     cleanup_to_value, ensure_runner_available, eval_failed, persist_report, require_skill,
@@ -32,7 +36,11 @@ impl App {
         let cases_path =
             resolve_cases_path(&skill_path, args.cases.as_deref(), "evals/tasks.jsonl");
         let triggers_path = skill_path.join("evals/triggers.jsonl");
-        let cases = read_harness_jsonl::<HarnessTaskCase>(&cases_path)?;
+        let cases = if args.cases.is_some() {
+            read_required_harness_jsonl::<HarnessTaskCase>(&cases_path)?
+        } else {
+            read_harness_jsonl::<HarnessTaskCase>(&cases_path)?
+        };
         let triggers = read_harness_jsonl::<HarnessTriggerCase>(&triggers_path)?;
         let plan = EvalPlan::run(
             &self.ctx,
@@ -86,14 +94,13 @@ impl App {
             &args.skill
         ));
         report["cleanup"] = cleanup_to_value(&cleanup);
-        let report_path = persist_report(
+        persist_report(
             &self.ctx,
             &args.skill,
             "run",
             args.output.as_deref(),
-            &report,
+            &mut report,
         )?;
-        report["report_path"] = json!(report_path.display().to_string());
 
         let failed = report["summary"]["failed"].as_u64().unwrap_or(0);
         if failed > 0 || cleanup.failed() {
@@ -115,7 +122,11 @@ impl App {
         ensure_runner_available(args.runner)?;
         let cases_path =
             resolve_cases_path(&skill_path, args.cases.as_deref(), "evals/triggers.jsonl");
-        let triggers = read_harness_jsonl::<HarnessTriggerCase>(&cases_path)?;
+        let triggers = if args.cases.is_some() {
+            read_required_harness_jsonl::<HarnessTriggerCase>(&cases_path)?
+        } else {
+            read_harness_jsonl::<HarnessTriggerCase>(&cases_path)?
+        };
         let runs = report::normalize_runs(args.runs)?;
         let mut results = Vec::new();
         for attempt in 1..=runs {
@@ -141,14 +152,13 @@ impl App {
             "results": results,
             "security_model": security_model(),
         });
-        let report_path = persist_report(
+        persist_report(
             &self.ctx,
             &args.skill,
             "trigger",
             args.output.as_deref(),
-            &report,
+            &mut report,
         )?;
-        report["report_path"] = json!(report_path.display().to_string());
         let failed = report["summary"]["failed"].as_u64().unwrap_or(0);
         if failed > 0 {
             return Err(eval_failed(
@@ -169,11 +179,24 @@ impl App {
         ensure_runner_available(args.runner)?;
         let cases_path =
             resolve_cases_path(&skill_path, args.cases.as_deref(), "evals/tasks.jsonl");
-        let cases = read_harness_jsonl::<HarnessTaskCase>(&cases_path)?;
+        let from_cases = compare_cases(
+            &self.ctx,
+            &args.skill,
+            &args.from_ref,
+            args.cases.as_deref(),
+            &skill_path,
+        )?;
+        let to_cases = compare_cases(
+            &self.ctx,
+            &args.skill,
+            &args.to_ref,
+            args.cases.as_deref(),
+            &skill_path,
+        )?;
         let from_version = resolve_compare_version(&self.ctx, &args.skill, &args.from_ref)?;
         let to_version = resolve_compare_version(&self.ctx, &args.skill, &args.to_ref)?;
-        let from_summary = summarize_mock_version(&args.skill, &cases, "from");
-        let to_summary = summarize_mock_version(&args.skill, &cases, "to");
+        let from_summary = summarize_mock_version(&args.skill, &from_cases, "from");
+        let to_summary = summarize_mock_version(&args.skill, &to_cases, "to");
         let mut report = json!({
             "schema_version": EVAL_SCHEMA_VERSION,
             "skill": args.skill,
@@ -184,7 +207,8 @@ impl App {
             "from": {"ref": args.from_ref, "skill_version": from_version, "summary": from_summary},
             "to": {"ref": args.to_ref, "skill_version": to_version, "summary": to_summary},
             "summary": {
-                "case_count": cases.len(),
+                "case_count": to_cases.len(),
+                "from_case_count": from_cases.len(),
                 "from_pass_rate": from_summary.pass_rate,
                 "to_pass_rate": to_summary.pass_rate,
                 "delta": report::option_delta(to_summary.pass_rate, from_summary.pass_rate),
@@ -195,14 +219,43 @@ impl App {
             },
             "security_model": security_model(),
         });
-        let report_path = persist_report(
+        persist_report(
             &self.ctx,
             &args.skill,
             "compare",
             args.output.as_deref(),
-            &report,
+            &mut report,
         )?;
-        report["report_path"] = json!(report_path.display().to_string());
         Ok((report, Meta::default()))
     }
+}
+
+fn compare_cases(
+    ctx: &AppContext,
+    skill: &str,
+    reference: &str,
+    explicit_cases: Option<&Path>,
+    skill_path: &Path,
+) -> std::result::Result<Vec<cases::HarnessJsonlRecord<HarnessTaskCase>>, CommandFailure> {
+    if let Some(path) = explicit_cases {
+        let path = resolve_cases_path(skill_path, Some(path), "evals/tasks.jsonl");
+        return read_required_harness_jsonl::<HarnessTaskCase>(&path);
+    }
+    if reference == "working-tree" {
+        let path = skill_path.join("evals/tasks.jsonl");
+        return read_harness_jsonl::<HarnessTaskCase>(&path);
+    }
+    let spec = format!("{reference}:skills/{skill}/evals/tasks.jsonl");
+    let output = run_git_allow_failure(ctx, &["show", &spec]).map_err(|err| {
+        report::eval_failed(
+            "compare cases could not be read",
+            0,
+            "compare_cases_read_failed",
+            json!({"ref": reference, "error": err.to_string()}),
+        )
+    })?;
+    if !output.status.success() {
+        return Ok(Vec::new());
+    }
+    read_harness_jsonl_str::<HarnessTaskCase>(&String::from_utf8_lossy(&output.stdout), &spec)
 }

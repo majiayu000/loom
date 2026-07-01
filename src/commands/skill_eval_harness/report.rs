@@ -55,7 +55,7 @@ pub(super) fn persist_report(
     skill: &str,
     mode: &str,
     output_path: Option<&Path>,
-    report: &Value,
+    report: &mut Value,
 ) -> std::result::Result<PathBuf, CommandFailure> {
     let path = output_path
         .map(|path| {
@@ -66,6 +66,7 @@ pub(super) fn persist_report(
             }
         })
         .unwrap_or_else(|| default_report_path(ctx, skill, mode));
+    report["report_path"] = json!(path.display().to_string());
     let raw = serde_json::to_string_pretty(report).map_err(|err| {
         CommandFailure::new(
             ErrorCode::InternalError,

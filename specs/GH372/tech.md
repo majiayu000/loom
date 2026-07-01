@@ -60,7 +60,7 @@ unknown
 4. run lint;
 5. run safety/deps when available, otherwise mark skipped;
 6. run offline eval;
-7. optionally run real eval compare when explicitly configured;
+7. optionally run real eval compare only when `--real-eval` is set;
 8. produce recommendation.
 
 ## Regression
@@ -96,7 +96,8 @@ Focused tests:
 5. regression detects eval regression.
 6. save --preflight passes and commits when gates pass.
 7. save --preflight blocks and does not commit when gates fail.
-8. release --preflight blocks dirty/failed state.
+8. release --preflight blocks dirty/failed state and rejects a missing or
+   self-referential release baseline.
 9. report is serializable and stable.
 
 Suggested commands:
@@ -111,7 +112,8 @@ cargo check --workspace --all-targets --all-features
 For a spec-only PR:
 
 ```bash
-python3 /Users/apple/Desktop/code/AI/tool/specrail/checks/check_workflow.py --repo /Users/apple/Desktop/code/AI/tool/specrail --spec-dir /Users/apple/Desktop/code/AI/tool/loom-worktrees/GH372-improve-regression-spec/specs/GH372
+SPEC_RAIL_REPO=/path/to/specrail
+python3 "$SPEC_RAIL_REPO/checks/check_workflow.py" --repo "$SPEC_RAIL_REPO" --spec-dir specs/GH372
 ```
 
 ## Rollback

@@ -21,7 +21,7 @@ LLM patch generation, real-agent eval by default, destructive ref checkout, poli
 
 ## Tasks
 
-- [ ] `SP372-T001` Owner: cli | Done when: `skill improve`, `skill regression`, `skill save --preflight`, and `skill release --preflight` parse while legacy save/release remain unchanged | Verify: `cargo test --test cli_surface`
+- [ ] `SP372-T001` Owner: cli | Done when: `skill improve --real-eval`, `skill regression`, `skill save --preflight`, and `skill release --preflight --baseline <ref>` parse while legacy save/release remain unchanged | Verify: `cargo test --test cli_surface`
 - [ ] `SP372-T002` Owner: preflight | Done when: a shared read-only `SkillPreflightReport` aggregates drift, lint, safety, deps, eval, diff, and recommendation statuses | Verify: `cargo test --test skill_preflight`
 - [ ] `SP372-T003` Owner: regression | Done when: regression compares baseline to target/working-tree without destructive checkout and reports threshold failures | Verify: `cargo test --test skill_preflight`
 - [ ] `SP372-T004` Owner: save-release | Done when: save/release preflight blocks failed gates before staging/tagging and includes full report in error details | Verify: `cargo test --test skill_preflight`
@@ -41,6 +41,8 @@ Files:
 Done when:
 
 - New commands parse.
+- Real-agent eval requires the explicit `--real-eval` flag.
+- Release preflight requires a baseline that is not the candidate ref itself.
 - Save/release without `--preflight` keep current behavior.
 - Help output documents read-only default.
 
@@ -120,7 +122,8 @@ Verify:
 git diff --check
 cargo test --test skill_preflight
 cargo check --workspace --all-targets --all-features
-python3 /Users/apple/Desktop/code/AI/tool/specrail/checks/check_workflow.py --repo /Users/apple/Desktop/code/AI/tool/specrail --spec-dir /Users/apple/Desktop/code/AI/tool/loom-worktrees/GH372-improve-regression-spec/specs/GH372
+SPEC_RAIL_REPO=/path/to/specrail
+python3 "$SPEC_RAIL_REPO/checks/check_workflow.py" --repo "$SPEC_RAIL_REPO" --spec-dir specs/GH372
 ```
 
 ## Handoff Notes

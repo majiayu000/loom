@@ -67,7 +67,7 @@ loom skill lint fixflow --portable
 loom skill lint fixflow --quality
 loom skill activate fixflow --agent codex --binding <binding-id>
 loom skill diagnose fixflow
-loom skill eval run fixflow --agent codex --baseline no-skill
+loom skill eval fixflow --agent codex
 loom skill release fixflow v1.0.0
 ```
 
@@ -83,11 +83,16 @@ Explain Codex-specific visibility:
 - Legacy user root: `${CODEX_HOME:-~/.codex}/skills`.
 - Project roots: `.agents/skills` discovered from the current working directory
   up through the repository root.
+- Admin/system roots such as `/etc/codex/skills` and bundled system skills when
+  the guide explains why a skill can be visible or collide outside user/project
+  roots.
 - Symlink target canonicalization.
 - `skills.config` disables by canonical `SKILL.md` path; skill names are used
   only for collision/display diagnostics.
 - New session or restart guidance.
-- How to use JSON output for automation when diagnosing visibility.
+- How to use current JSON output for projection/source health, and which Codex
+  visibility/config JSON checks are planned until #368/#373 expose actual Codex
+  scan-root and `skills.config` disable data.
 
 ### `docs/MIGRATING_TO_ACTIVE_VIEW.md`
 

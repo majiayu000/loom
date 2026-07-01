@@ -1,5 +1,9 @@
 mod agent_cmds;
 mod backup_cmds;
+mod codex_cmds;
+mod codex_config;
+mod codex_reconcile_plan;
+mod codex_visibility;
 mod event_store;
 mod file_ops;
 mod fs_probe;
@@ -36,9 +40,10 @@ use serde_json::json;
 use uuid::Uuid;
 
 use crate::cli::{
-    AgentCommand, Cli, Command, OpsCommand, OpsHistoryCommand, RemoteCommand, SkillActiveCommand,
-    SkillCommand, SkillOrphanCommand, SkillProvenanceCommand, SkillTrashCommand, SkillsetCommand,
-    SyncCommand, TargetCommand, WorkspaceBindingCommand, WorkspaceCommand, WorkspaceInitArgs,
+    AgentCommand, Cli, CodexCommand, Command, OpsCommand, OpsHistoryCommand, RemoteCommand,
+    SkillActiveCommand, SkillCommand, SkillOrphanCommand, SkillProvenanceCommand,
+    SkillTrashCommand, SkillsetCommand, SyncCommand, TargetCommand, WorkspaceBindingCommand,
+    WorkspaceCommand, WorkspaceInitArgs,
 };
 use crate::envelope::{Envelope, Meta};
 use crate::state::{AppContext, home_dir};
@@ -248,6 +253,7 @@ impl App {
                 SkillCommand::Verify(args) => self.cmd_verify(args),
                 SkillCommand::Lint(args) => self.cmd_skill_lint(args),
                 SkillCommand::Policy(args) => self.cmd_skill_policy(args),
+                SkillCommand::Visibility(args) => self.cmd_skill_visibility(args),
                 SkillCommand::Diagnose(args) => self.cmd_skill_diagnose(args),
                 SkillCommand::Eval(args) => self.cmd_skill_eval(args),
                 SkillCommand::Orphan {
@@ -271,6 +277,9 @@ impl App {
             Command::Ops { command } => self.cmd_ops(command),
             Command::Agent { command } => match command {
                 AgentCommand::Preflight(args) => self.cmd_agent_preflight(args),
+            },
+            Command::Codex { command } => match command {
+                CodexCommand::Reconcile(args) => self.cmd_codex_reconcile(args, &request_id),
             },
             Command::Panel(_) => Ok((json!({"message": "panel handled in main"}), Meta::default())),
         };
@@ -403,6 +412,12 @@ fn command_records_audit(command: &Command) -> bool {
     {
         return !args.dry_run;
     }
+    if let Command::Codex {
+        command: CodexCommand::Reconcile(args),
+    } = command
+    {
+        return args.apply;
+    }
 
     !matches!(
         command,
@@ -417,6 +432,7 @@ fn command_records_audit(command: &Command) -> bool {
                     | SkillCommand::Search(_)
                     | SkillCommand::Resolve(_)
                     | SkillCommand::Lint(_)
+                    | SkillCommand::Visibility(_)
                     | SkillCommand::Diagnose(_)
                     | SkillCommand::Eval(_)
                     | SkillCommand::Trash {
@@ -485,6 +501,7 @@ fn command_requires_durable_audit(command: &Command) -> bool {
             | SkillCommand::Lint(_)
             | SkillCommand::Policy(_)
             | SkillCommand::Verify(_)
+            | SkillCommand::Visibility(_)
             | SkillCommand::Diagnose(_)
             | SkillCommand::Eval(_)
             | SkillCommand::Provenance {
@@ -510,6 +527,9 @@ fn command_requires_durable_audit(command: &Command) -> bool {
             OpsCommand::History { command } => !matches!(command, OpsHistoryCommand::Diagnose),
         },
         Command::Agent { .. } => false,
+        Command::Codex { command } => match command {
+            CodexCommand::Reconcile(args) => args.apply,
+        },
         Command::Panel(_) => false,
     }
 }

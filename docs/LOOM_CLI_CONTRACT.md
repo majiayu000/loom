@@ -42,8 +42,9 @@ Top-level command groups:
 8. `sync`
 9. `ops`
 10. `agent`
-11. `panel`
-12. `doctor`
+11. `codex`
+12. `panel`
+13. `doctor`
 
 Removed from runtime surface:
 
@@ -361,6 +362,7 @@ Rules:
 loom --json --root <root> skill list
 loom --json --root <root> skill show <skill-id>
 loom --json --root <root> skill inspect <skill-id> [--agent <agent>] [--workspace <path>] [--profile <profile>]
+loom --json --root <root> skill visibility <skill-id> --agent codex [--workspace <path>] [--profile <profile>]
 loom --json --root <root> skill search <query> [--agent <agent>] [--profile <profile>] [--status <status>] [--trust <trust>]
 loom --json --root <root> skill resolve <task-description> [--agent <agent>] [--workspace <path>]
 ```
@@ -379,8 +381,9 @@ Rules:
 8. `skill search` is deterministic lexical scoring over skill id, description, tags, warning state, and source status; it does not use vectors.
 9. `skill resolve` is deterministic and transparent; it must not invoke an LLM.
 10. `--workspace` on `skill resolve` may boost skills whose binding matcher covers the supplied workspace path.
-11. read commands must not mutate registry state, Git refs, Git index, live targets, or pending queue.
-12. trust metadata is `unknown` until trust/policy metadata lands.
+11. `skill visibility --agent codex` is a read-only Codex active-view proof. It reports source, active rule, target, symlink projection, Codex `skills.config` disables, runtime entries, external entries, and restart recommendations without claiming current-session hot reload.
+12. read commands must not mutate registry state, Git refs, Git index, live targets, or pending queue.
+13. trust metadata is `unknown` until trust/policy metadata lands.
 
 ### 11.0.1 `skill activate`, `skill deactivate`, `skill active list`
 
@@ -403,7 +406,30 @@ Rules:
 7. deactivation of `copy` or `materialize` projections fails closed with `POLICY_BLOCKED` and must not delete live target files.
 8. `skill active list` reports desired rules joined to realized projections, including `target_missing` and `projection_missing`, but must keep agent visibility fields at `not_checked`.
 
-### 11.0.2 `skill new`
+### 11.0.2 `skill visibility`, `skill diagnose --agent codex`, `codex reconcile`
+
+```bash
+loom --json --root <root> skill diagnose <skill-id> --agent codex
+loom --json --root <root> skill visibility <skill-id> --agent codex [--workspace <path>] [--profile <profile>]
+loom --json --root <root> codex reconcile --dry-run [--binding <binding-id>] [--target <target-id>] [--allowlist <path>]
+loom --json --root <root> codex reconcile --apply [--binding <binding-id>] [--target <target-id>]
+loom --json --root <root> codex reconcile --apply --fix-config [--binding <binding-id>] [--target <target-id>]
+```
+
+`skill diagnose --agent codex` and `skill visibility` are read-only. `codex reconcile` defaults to dry-run unless `--apply` is supplied.
+
+Rules:
+
+1. visibility checks must separate projection existence from Codex visibility; a symlink alone is not enough.
+2. dry-run must report planned `create_projection`, `repair_projection`, `remove_stale_projection`, `remove_stale_record`, `preserve_runtime_entry`, `preserve_external_entry`, `fix_config_disable`, and `manual_review` actions without mutation.
+3. `--apply` may repair missing or drifted safe Loom-owned symlink projections and remove stale Loom-owned symlink projections plus stale records.
+4. `--apply` without `--fix-config` must not edit Codex config.
+5. `--apply --fix-config` may flip only safe active-skill `[[skills.config]] enabled = false` entries to `true`, validates TOML before replace, writes atomically, and returns `restart_required: true`.
+6. malformed Codex config returns `SCHEMA_MISMATCH` for config repair and is never silently ignored.
+7. runtime entries such as `.system` and `codex-primary-runtime`, plus non-Loom external entries, are preserved.
+8. multiple active bindings sharing a Codex target are reconciled as a union of desired active skills.
+
+### 11.0.3 `skill new`
 
 ```bash
 loom --json --root <root> skill new <skill-id> [--template <basic|coding-workflow|scripted|reference-heavy>] [--description <text>] [--agent <agent>] [--dry-run]

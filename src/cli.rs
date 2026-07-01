@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use serde::Serialize;
 
+mod codex_args;
 mod discovery;
 mod eval;
 mod plan_flow;
@@ -12,8 +13,10 @@ mod skill_activation_args;
 mod skill_inspect_args;
 mod skill_lint_args;
 mod skill_new_args;
+mod skill_visibility_args;
 mod skillset;
 mod use_flow;
+pub use codex_args::{CodexCommand, CodexReconcileArgs};
 pub use discovery::{SkillResolveArgs, SkillSearchArgs};
 pub use eval::SkillEvalArgs;
 pub use plan_flow::{ApplyArgs, PlanCommand, PlanUseArgs};
@@ -26,6 +29,7 @@ pub use skill_activation_args::{
 pub use skill_inspect_args::SkillInspectArgs;
 pub use skill_lint_args::SkillLintArgs;
 pub use skill_new_args::{SkillNewArgs, SkillNewTemplate};
+pub use skill_visibility_args::{SkillDiagnoseArgs, SkillVisibilityArgs};
 pub use skillset::{
     SkillsetAddArgs, SkillsetCommand, SkillsetCreateArgs, SkillsetMemberArgs, SkillsetShowArgs,
 };
@@ -112,6 +116,11 @@ pub enum Command {
     Agent {
         #[command(subcommand)]
         command: AgentCommand,
+    },
+    #[command(about = "Inspect and reconcile Codex active-view visibility")]
+    Codex {
+        #[command(subcommand)]
+        command: CodexCommand,
     },
     #[command(about = "Serve the local registry control panel")]
     Panel(PanelArgs),
@@ -278,8 +287,10 @@ pub enum SkillCommand {
     Lint(SkillLintArgs),
     #[command(about = "Report skill capabilities, risks, and policy decision before projection")]
     Policy(SkillPolicyArgs),
+    #[command(about = "Explain whether one skill is visible to an agent active view")]
+    Visibility(SkillVisibilityArgs),
     #[command(about = "Diagnose one skill source and registry projection state")]
-    Diagnose(SkillOnlyArgs),
+    Diagnose(SkillDiagnoseArgs),
     #[command(about = "Run offline skill eval fixtures for trigger, task, and artifact checks")]
     Eval(SkillEvalArgs),
     #[command(about = "Watch registry skill sources and autosave stable local edits")]

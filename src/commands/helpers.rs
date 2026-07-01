@@ -4,10 +4,10 @@ use anyhow::{Result, anyhow};
 use uuid::Uuid;
 
 use crate::cli::{
-    AgentCommand, AgentKind, BindingAddArgs, Command, OpsCommand, OpsHistoryCommand, PlanCommand,
-    ProjectionMethod, SkillActiveCommand, SkillCommand, SkillOrphanCommand, SkillTrashCommand,
-    SkillsetCommand, SyncCommand, TargetCommand, WorkspaceBindingCommand, WorkspaceCommand,
-    WorkspaceMatcherKind,
+    AgentCommand, AgentKind, BindingAddArgs, CodexCommand, Command, OpsCommand, OpsHistoryCommand,
+    PlanCommand, ProjectionMethod, SkillActiveCommand, SkillCommand, SkillOrphanCommand,
+    SkillTrashCommand, SkillsetCommand, SyncCommand, TargetCommand, WorkspaceBindingCommand,
+    WorkspaceCommand, WorkspaceMatcherKind,
 };
 use crate::state::AppContext;
 use crate::state_model::{
@@ -138,6 +138,7 @@ pub(crate) fn command_name(command: &Command) -> &'static str {
             SkillCommand::History(_) => "skill.history",
             SkillCommand::Lint(_) => "skill.lint",
             SkillCommand::Policy(_) => "skill.policy",
+            SkillCommand::Visibility(_) => "skill.visibility",
             SkillCommand::Diagnose(_) => "skill.diagnose",
             SkillCommand::Eval(_) => "skill.eval",
             SkillCommand::Provenance { command } => match command {
@@ -189,6 +190,9 @@ pub(crate) fn command_name(command: &Command) -> &'static str {
         },
         Command::Agent { command } => match command {
             AgentCommand::Preflight(_) => "agent.preflight",
+        },
+        Command::Codex { command } => match command {
+            CodexCommand::Reconcile(_) => "codex.reconcile",
         },
         Command::Panel(_) => "panel",
     }

@@ -32,6 +32,7 @@ fn top_level_help_describes_command_groups() {
         "Manage skill sources, projections, and versions",
         "Synchronize the registry through its Git remote",
         "Inspect, replay, and repair operation history",
+        "Inspect and reconcile Codex active-view visibility",
         "Serve the local registry control panel",
     ] {
         assert!(
@@ -59,6 +60,7 @@ fn cli_contract_docs_track_current_surface() {
         "`sync`",
         "`ops`",
         "`agent`",
+        "`codex`",
         "`panel`",
         "`doctor`",
     ] {
@@ -127,6 +129,7 @@ fn cli_contract_docs_track_current_surface() {
         "loom skill activate",
         "loom skill deactivate",
         "loom skill active list",
+        "loom skill visibility",
         "loom skill search",
         "loom skill resolve",
         "loom skill history",
@@ -139,6 +142,7 @@ fn cli_contract_docs_track_current_surface() {
         "loom skill provenance refresh",
         "loom skill policy",
         "loom skill eval",
+        "loom codex reconcile",
         "loom skill watch",
     ] {
         assert!(
@@ -153,6 +157,8 @@ fn cli_contract_docs_track_current_surface() {
         "skill activate",
         "skill deactivate",
         "skill active list",
+        "skill visibility",
+        "codex reconcile",
         "skill provenance inspect",
         "skill provenance verify",
         "skill provenance refresh",

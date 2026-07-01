@@ -9,7 +9,7 @@ use super::helpers::{
     validate_skill_name,
 };
 use super::projections::resolve_capture_projection;
-use super::skill_policy::evaluate_skill_policy;
+use super::skill_safety::evaluate_skill_safety_with_policy;
 use super::{App, CommandFailure};
 use crate::cli::{AgentPreflightArgs, CaptureArgs, OrphanCleanArgs, ProjectArgs, RollbackArgs};
 use crate::envelope::Meta;
@@ -267,33 +267,42 @@ impl App {
             ));
         }
 
+        let mut safety_report = None;
         let mut policy_report = None;
         if self.ctx.skill_path(&args.skill).exists() {
             let profile = binding
                 .map(|binding| binding.policy_profile.as_str())
                 .unwrap_or("safe-capture");
-            match evaluate_skill_policy(&self.ctx, &args.skill, profile) {
-                Ok(report) => {
-                    if !report.allowed {
+            match evaluate_skill_safety_with_policy(
+                &self.ctx,
+                &args.skill,
+                "activate",
+                false,
+                profile,
+            ) {
+                Ok(evaluation) => {
+                    let report = evaluation.report;
+                    if !report.activation_allowed {
                         risks.push(risk(
                             "error",
                             "POLICY_BLOCKED",
                             format!(
-                                "policy profile '{}' would block projection of skill '{}'",
-                                report.policy_profile, args.skill
+                                "safety decision '{}' would block projection of skill '{}'",
+                                report.decision, args.skill
                             ),
                         ));
-                    } else if report.summary.high_risk_count > 0 {
+                    } else if report.summary.high + report.summary.critical > 0 {
                         risks.push(risk(
                             "warning",
                             "POLICY_WARNINGS",
                             format!(
-                                "policy profile '{}' reported {} high-risk finding(s)",
-                                report.policy_profile, report.summary.high_risk_count
+                                "safety scan reported {} high-risk finding(s)",
+                                report.summary.high + report.summary.critical
                             ),
                         ));
                     }
-                    policy_report = Some(report);
+                    policy_report = Some(evaluation.policy);
+                    safety_report = Some(report);
                 }
                 Err(err) => risks.push(risk("error", err.code.as_str(), err.message)),
             }
@@ -325,6 +334,7 @@ impl App {
                 "target_paths": materialized_path.iter().map(|p| p.display().to_string()).collect::<Vec<_>>(),
                 "will_mutate": ["live_target", "registry_state", "registry_ops", "git_history"],
                 "policy": policy_report,
+                "safety": safety_report,
                 "risks": risks,
                 "next_commands": [next_command],
             }),

@@ -18,6 +18,7 @@ use super::helpers::{
 use super::projections::{
     maybe_autosync_or_queue, record_registry_observation, record_registry_operation,
 };
+use super::skill_safety::security_diff_report;
 use super::{App, CommandFailure};
 
 impl App {
@@ -374,6 +375,12 @@ impl App {
     ) -> std::result::Result<(serde_json::Value, Meta), CommandFailure> {
         validate_skill_name(&args.skill).map_err(map_arg)?;
         ensure_skill_exists(&self.ctx, &args.skill)?;
+        if args.security {
+            return Ok((
+                security_diff_report(&self.ctx, &args.skill, &args.from, &args.to)?,
+                Meta::default(),
+            ));
+        }
         let skill_rel = format!("skills/{}", args.skill);
         let diff = gitops::diff_path(&self.ctx, &args.from, &args.to, Path::new(&skill_rel))
             .map_err(map_git)?;

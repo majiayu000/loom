@@ -75,32 +75,6 @@ impl App {
     }
 }
 
-pub(crate) fn enforce_skill_policy(
-    ctx: &AppContext,
-    skill: &str,
-    policy_profile: &str,
-) -> std::result::Result<SkillPolicyReport, CommandFailure> {
-    let report = evaluate_skill_policy(ctx, skill, policy_profile)?;
-    if report.allowed {
-        return Ok(report);
-    }
-    let mut failure = CommandFailure::new(
-        ErrorCode::PolicyBlocked,
-        format!(
-            "policy profile '{}' blocked projection of skill '{}'",
-            report.policy_profile, skill
-        ),
-    );
-    failure.details = json!({
-        "report": report,
-        "suggested_actions": [
-            "run loom skill policy <skill> --policy-profile <profile>",
-            "review blocked findings and update the skill or choose an explicit audit-only policy"
-        ]
-    });
-    Err(failure)
-}
-
 pub(crate) fn evaluate_skill_policy(
     ctx: &AppContext,
     skill: &str,

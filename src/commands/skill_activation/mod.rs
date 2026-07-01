@@ -19,7 +19,7 @@ use super::projections::{
     maybe_autosync_or_queue, record_registry_observation, record_registry_operation,
     upsert_projection, upsert_rule,
 };
-use super::skill_policy::enforce_skill_policy;
+use super::skill_safety::enforce_skill_safety;
 use super::{App, CommandFailure};
 
 use apply::{
@@ -48,7 +48,7 @@ impl App {
             args.method,
         )?;
         ensure_skill_exists_without_layout(&self.ctx, &selection.skill)?;
-        enforce_skill_policy(&self.ctx, &selection.skill, DEFAULT_POLICY_PROFILE)?;
+        enforce_skill_safety(&self.ctx, &selection.skill, DEFAULT_POLICY_PROFILE)?;
 
         if args.dry_run {
             let snapshot = optional_snapshot(&self.ctx)?;

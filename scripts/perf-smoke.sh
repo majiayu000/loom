@@ -6,15 +6,16 @@ if [[ ! -x "$bin" ]]; then
   cargo build --release --locked
 fi
 
-# Hard ceiling: 3880 KiB. The durable plan/apply protocol, offline eval
+# Hard ceiling: 3960 KiB. The durable plan/apply protocol, offline eval
 # matrix, local skill scaffolding CLI, skillset foundation, portable YAML
-# lint parser, single-skill inspect read model, and single-skill activation
-# commands expanded the accepted V2 budget. Codex visibility repair adds a
-# structured TOML parser/editor so `--fix-config` can patch config atomically
-# without ad hoc string deletion. The real agent eval harness adds explicit
-# run/trigger/compare planning and reporting surfaces, while the startup
-# latency checks below continue to guard cold CLI responsiveness.
-max_bin_bytes=$((3880 * 1024))
+# lint parser, single-skill inspect read model, single-skill activation
+# commands, and safety/trust/quarantine/security-diff command surfaces expanded
+# the accepted V2 budget. Codex visibility repair adds a structured TOML
+# parser/editor so `--fix-config` can patch config atomically without ad hoc
+# string deletion. The real agent eval harness adds explicit run/trigger/compare
+# planning and reporting surfaces, while the startup latency checks below
+# continue to guard cold CLI responsiveness.
+max_bin_bytes=$((3960 * 1024))
 bin_bytes="$(wc -c < "$bin" | tr -d ' ')"
 if (( bin_bytes > max_bin_bytes )); then
   echo "release binary is ${bin_bytes} bytes; limit is ${max_bin_bytes}" >&2

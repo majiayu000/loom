@@ -21,6 +21,7 @@ pub struct RegistryStatePaths {
     pub bindings_file: PathBuf,
     pub rules_file: PathBuf,
     pub projections_file: PathBuf,
+    pub trust_file: PathBuf,
     pub ops_dir: PathBuf,
     pub operations_file: PathBuf,
     pub checkpoint_file: PathBuf,
@@ -78,6 +79,24 @@ pub struct RegistryProjectionsFile {
     pub schema_version: u32,
     #[serde(default)]
     pub projections: Vec<RegistryProjectionInstance>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RegistryTrustFile {
+    pub schema_version: u32,
+    #[serde(default)]
+    pub skills: Vec<RegistryTrustRecord>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RegistryTrustRecord {
+    pub skill_id: String,
+    pub trust: String,
+    pub quarantined: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    pub updated_at: DateTime<Utc>,
+    pub updated_by: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -249,6 +268,13 @@ pub(crate) fn empty_projections_file() -> RegistryProjectionsFile {
     RegistryProjectionsFile {
         schema_version: REGISTRY_SCHEMA_VERSION,
         projections: Vec::new(),
+    }
+}
+
+pub(crate) fn empty_trust_file() -> RegistryTrustFile {
+    RegistryTrustFile {
+        schema_version: REGISTRY_SCHEMA_VERSION,
+        skills: Vec::new(),
     }
 }
 

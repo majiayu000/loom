@@ -9,6 +9,7 @@ mod eval;
 mod plan_flow;
 mod policy;
 mod provenance;
+mod safety;
 mod skill_activation_args;
 mod skill_inspect_args;
 mod skill_lint_args;
@@ -16,6 +17,7 @@ mod skill_new_args;
 mod skill_visibility_args;
 mod skillset;
 mod use_flow;
+mod version;
 pub use codex_args::{CodexCommand, CodexReconcileArgs};
 pub use discovery::{SkillResolveArgs, SkillSearchArgs};
 pub use eval::{
@@ -25,6 +27,7 @@ pub use eval::{
 pub use plan_flow::{ApplyArgs, PlanCommand, PlanUseArgs};
 pub use policy::SkillPolicyArgs;
 pub use provenance::{AddArgs, SkillProvenanceCommand};
+pub use safety::{SkillQuarantineArgs, SkillScanArgs, SkillTrustArgs};
 pub use skill_activation_args::{
     ActivationScope, SkillActivateArgs, SkillActiveCommand, SkillActiveListArgs,
     SkillDeactivateArgs,
@@ -37,6 +40,7 @@ pub use skillset::{
     SkillsetAddArgs, SkillsetCommand, SkillsetCreateArgs, SkillsetMemberArgs, SkillsetShowArgs,
 };
 pub use use_flow::{UseArgs, UseScope};
+pub use version::{DiffArgs, HistoryArgs, ReleaseArgs, RollbackArgs};
 
 #[derive(Debug, Clone, Parser, Serialize)]
 #[command(name = "loom")]
@@ -290,6 +294,14 @@ pub enum SkillCommand {
     Lint(SkillLintArgs),
     #[command(about = "Report skill capabilities, risks, and policy decision before projection")]
     Policy(SkillPolicyArgs),
+    #[command(about = "Scan one skill for safety and trust risks")]
+    Scan(SkillScanArgs),
+    #[command(about = "Persist registry-owned trust metadata for one skill")]
+    Trust(SkillTrustArgs),
+    #[command(about = "Quarantine one skill without deleting its source")]
+    Quarantine(SkillQuarantineArgs),
+    #[command(about = "Clear quarantine state for one skill")]
+    Unquarantine(SkillOnlyArgs),
     #[command(about = "Explain whether one skill is visible to an agent active view")]
     Visibility(SkillVisibilityArgs),
     #[command(about = "Diagnose one skill source and registry projection state")]
@@ -534,68 +546,6 @@ pub struct WatchArgs {
 pub struct SkillOnlyArgs {
     /// Registry skill name.
     pub skill: String,
-}
-
-#[derive(Debug, Clone, Args, Serialize)]
-pub struct ReleaseArgs {
-    /// Registry skill name.
-    pub skill: String,
-    /// Release tag or version label to create.
-    pub version: String,
-}
-
-#[derive(Debug, Clone, Args, Serialize)]
-pub struct RollbackArgs {
-    /// Registry skill name.
-    pub skill: String,
-
-    /// Git revision or snapshot reference to restore from.
-    #[arg(long)]
-    pub to: Option<String>,
-
-    /// Number of source commits to roll back when --to is not provided.
-    #[arg(long)]
-    pub steps: Option<u32>,
-
-    /// Preview rollback impact without changing Git refs, source files, or registry state.
-    #[arg(long, visible_alias = "preview")]
-    pub dry_run: bool,
-}
-
-#[derive(Debug, Clone, Args, Serialize)]
-pub struct DiffArgs {
-    /// Registry skill name.
-    pub skill: String,
-    /// Older revision, snapshot, or release reference.
-    pub from: String,
-    /// Newer revision, snapshot, or release reference.
-    pub to: String,
-}
-
-#[derive(Debug, Clone, Args, Serialize)]
-pub struct HistoryArgs {
-    /// Registry skill name.
-    pub skill: String,
-
-    /// Maximum number of history entries to return.
-    #[arg(long, default_value_t = 30)]
-    pub limit: usize,
-
-    /// Older revision boundary. When set, history uses <from>..<to>.
-    #[arg(long)]
-    pub from: Option<String>,
-
-    /// Newer revision boundary.
-    #[arg(long, default_value = "HEAD")]
-    pub to: String,
-
-    /// Include per-commit short diff statistics.
-    #[arg(long)]
-    pub include_diff_stat: bool,
-
-    /// Include registry operations added by each history commit.
-    #[arg(long, default_value_t = true)]
-    pub include_ops: bool,
 }
 
 #[derive(Debug, Clone, Args, Serialize)]

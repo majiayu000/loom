@@ -13,7 +13,7 @@ mod types;
 use std::ffi::OsString;
 
 use clap::{Parser, error::ErrorKind};
-use serde_json::json;
+use serde_json::{Value, json};
 
 use crate::cli::{Cli, Command};
 use crate::commands::App;
@@ -102,6 +102,17 @@ fn print_envelope(env: &Envelope, force_json: bool, pretty: bool) {
     }
 
     if env.ok {
+        if env.cmd == "skill.inspect" {
+            if !env.meta.warnings.is_empty() {
+                for w in &env.meta.warnings {
+                    eprintln!("warning: {}", w);
+                }
+            }
+            if !print_skill_inspect_card(&env.data) && !env.data.is_null() {
+                println!("{}", pretty_json_or_empty_object(&env.data));
+            }
+            return;
+        }
         println!("{} ok", env.cmd);
         if !env.meta.warnings.is_empty() {
             for w in &env.meta.warnings {
@@ -152,6 +163,79 @@ fn valid_request_id(value: String) -> Option<String> {
 
 fn pretty_json_or_empty_object(value: &serde_json::Value) -> String {
     serde_json::to_string_pretty(value).unwrap_or_else(|_| "{}".to_string())
+}
+
+fn print_skill_inspect_card(data: &Value) -> bool {
+    let Some(skill) = data.get("skill").and_then(Value::as_str) else {
+        return false;
+    };
+    let source = &data["source"];
+    let spec = &data["spec"];
+    let runtime = &data["runtime"];
+    let safety = &data["safety"];
+    let source_state = if source["exists"].as_bool() == Some(true) {
+        "present"
+    } else {
+        "missing"
+    };
+    let source_drift = if source["working_tree_drift"].as_bool() == Some(true) {
+        "drift"
+    } else {
+        "clean"
+    };
+    println!("{skill}");
+    if source["entrypoint_exists"].as_bool() == Some(false) {
+        println!("Source:   {source_state}, {source_drift}, entrypoint missing");
+    } else {
+        println!("Source:   {source_state}, {source_drift}");
+    }
+    println!(
+        "Spec:     portable {}, codex {}, claude {}",
+        spec["portable"].as_str().unwrap_or("unknown"),
+        spec["codex"].as_str().unwrap_or("unknown"),
+        spec["claude"].as_str().unwrap_or("unknown")
+    );
+    print!("Runtime:  ");
+    if let Some(map) = runtime.as_object() {
+        for (index, (agent, status)) in map.iter().enumerate() {
+            if index > 0 {
+                print!("; ");
+            }
+            let visible = status["visible_to_agent"].as_str().unwrap_or("unknown");
+            if status["projected_to_target"].as_bool() == Some(true) {
+                print!("{agent} projected, visibility {visible}");
+            } else if status["active_rule_present"].as_bool() == Some(true) {
+                print!("{agent} active rule, projection missing, visibility {visible}");
+            } else if status["installed_in_registry"].as_bool() == Some(true) {
+                print!("{agent} installed, not projected");
+            } else {
+                print!("{agent} not installed");
+            }
+            if status["materialized_path_exists"].as_bool() == Some(false) {
+                print!(", materialized missing");
+            }
+        }
+    } else {
+        print!("not checked");
+    }
+    println!();
+    match data["quality"]["last_eval"].as_str() {
+        Some(last_eval) => println!("Quality:  last eval {last_eval}"),
+        None => println!("Quality:  no eval evidence"),
+    }
+    let trust = safety["trust"].as_str().unwrap_or("unknown");
+    let policy = safety["policy"].as_str().unwrap_or("unknown");
+    if trust == policy {
+        println!("Safety:   {trust}");
+    } else {
+        println!("Safety:   {trust}, policy {policy}");
+    }
+    let next = data["next_actions"]
+        .as_array()
+        .and_then(|actions| actions.iter().find_map(Value::as_str))
+        .unwrap_or("none");
+    println!("Next:     {next}");
+    true
 }
 
 #[cfg(test)]

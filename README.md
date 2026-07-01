@@ -135,7 +135,7 @@ Prefer a guided walkthrough? Run `./scripts/demo.sh` for a scripted end-to-end t
 - **🔗 Binding matchers** — route a skill to a target by `path-prefix`, `exact-path`, or `name`
 - **📦 Profiles** — multiple config sets per agent (e.g. work/home Claude profiles)
 - **🧬 Git-backed lifecycle** — `add → capture → save → snapshot → release → rollback → diff` ([when to use which](#skill-lifecycle-verbs))
-- **🩺 Skill diagnosis** — `skill diagnose` checks source, bindings, targets, projections, drift, and related operations
+- **🩺 Skill status** — `skill inspect` shows one read-only lifecycle card; `skill diagnose` drills into source, bindings, targets, projections, drift, and related operations
 - **🔁 Git-backed sync** — `sync push / pull / replay` between a team's registries
 - **🛠️ Ops with audit** — `ops list / retry / purge` and `ops history diagnose / repair`
 - **🛡️ Hard write guard** — refuses to write when `--root` points at the Loom tool repo itself
@@ -181,6 +181,7 @@ The chain `add → capture → save → snapshot → release → rollback` is th
 | `loom skill add` | Import a skill source into the registry and record source provenance in `loom.lock` | First-time onboarding of a skill from a local path, Git URL, local Git repo, or `github:owner/repo//subdir` | Source (initial import) |
 | `loom skill list` | List registry, source, and observed skill inventory | See what skills exist before mutating registry state | Source + registry metadata (read-only) |
 | `loom skill show` | Show one skill from the shared inventory model | Inspect entrypoint, description, source status, projections, compatible targets, warnings, and next actions | Source + registry metadata (read-only) |
+| `loom skill inspect` | Show one skill lifecycle status card | Check source, lint, projection/runtime, quality, safety, and next actions without mutation | Source + registry metadata (read-only) |
 | `loom skill search` | Search skills with deterministic lexical scoring | Find likely skills by id, description, tags, warning state, agent, profile, status, or trust | Source + registry metadata (read-only) |
 | `loom skill resolve` | Resolve a task description to candidate skills without an LLM | Let agents choose a skill transparently from local metadata and scoring inputs | Source + registry metadata (read-only) |
 | `loom skill new` | Create a lint-clean local skill skeleton | Start a new registry-owned skill with `SKILL.md`, references, scripts, assets, eval stubs, and `loom.skill.toml` | Source (initial create) |
@@ -229,7 +230,7 @@ Quick decision: **edits from the agent side → `capture`; edits inside the regi
 - Agent automation should use explicit `--root`, `--json`, selectors such as `binding_id` / `target_id`, and branch on `ok` + `error.code`.
 - Agents can call `loom skill resolve "<task>" --agent <agent> --workspace <path>` before choosing a workflow skill, then `loom agent preflight --agent <agent> --workspace <path> --skill <skill>` before writing. Add `--dry-run` to high-risk writes, or use `loom skill rollback --dry-run` to get a no-mutation rollback plan.
 - `--json` wraps both command execution errors and argument parsing failures in the same envelope. `loom panel` is the local HTTP UI server and does not return a command envelope.
-- Read commands such as `workspace status`, `workspace doctor`, `target list`, `skill list`, `skill search`, `skill resolve`, `skillset show`, `skillset lint`, and `sync status` do not mutate registry state, Git refs, the Git index, live target directories, or the pending queue. Durable command audit events may be recorded under `state/events/commands.jsonl` for audited surfaces.
+- Read commands such as `workspace status`, `workspace doctor`, `target list`, `skill list`, `skill inspect`, `skill search`, `skill resolve`, `skillset show`, `skillset lint`, and `sync status` do not mutate registry state, Git refs, the Git index, live target directories, or the pending queue. Durable command audit events may be recorded under `state/events/commands.jsonl` for audited surfaces.
 - Registry metadata lives under `state/registry`; Loom does not use release-style labels for internal state names.
 - State-changing registry commands commit `state/registry` to Git, and `sync push` has a safety commit before pushing.
 - Hard write guard: if `--root` points to the Loom tool repo itself, write operations are rejected. Use an independent skill registry repo for mutable operations.
@@ -274,6 +275,7 @@ loom target remove <target-id>
 
 loom skill list
 loom skill show <skill>
+loom skill inspect <skill> [--agent <agent>] [--workspace <path>] [--profile <profile>]
 loom skill search <query> [--agent <agent>] [--profile <profile>] [--status <status>] [--trust <trust>]
 loom skill resolve <task-description> [--agent <agent>] [--workspace <path>]
 loom skill new <skill> [--template <basic|coding-workflow|scripted|reference-heavy>] [--description <text>] [--agent <agent>] [--dry-run]

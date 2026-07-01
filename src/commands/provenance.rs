@@ -351,6 +351,17 @@ pub(crate) fn provenance_digest_status(
     }))
 }
 
+pub(crate) fn provenance_record_status(
+    ctx: &AppContext,
+    skill: &str,
+) -> Result<Option<SkillSourceRecord>> {
+    let sources = load_sources(ctx)?;
+    Ok(sources
+        .sources
+        .into_iter()
+        .find(|record| record.skill_id == skill))
+}
+
 fn load_record_for_skill(
     ctx: &AppContext,
     skill: &str,

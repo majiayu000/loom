@@ -355,11 +355,12 @@ Rules:
 
 ## 11. Skill Commands
 
-### 11.0 `skill list`, `skill show`, `skill search`, `skill resolve`
+### 11.0 `skill list`, `skill show`, `skill inspect`, `skill search`, `skill resolve`
 
 ```bash
 loom --json --root <root> skill list
 loom --json --root <root> skill show <skill-id>
+loom --json --root <root> skill inspect <skill-id> [--agent <agent>] [--workspace <path>] [--profile <profile>]
 loom --json --root <root> skill search <query> [--agent <agent>] [--profile <profile>] [--status <status>] [--trust <trust>]
 loom --json --root <root> skill resolve <task-description> [--agent <agent>] [--workspace <path>]
 ```
@@ -368,13 +369,18 @@ Read-only commands.
 
 Rules:
 
-1. these commands reuse the same union read model as `GET /api/v1/skills`
-2. responses include skill id, entrypoint, description, source status, projection summary, compatible agents/targets when known, warnings, and next actions
-3. `skill search` is deterministic lexical scoring over skill id, description, tags, warning state, and source status; it does not use vectors
-4. `skill resolve` is deterministic and transparent; it must not invoke an LLM
-5. `--workspace` on `skill resolve` may boost skills whose binding matcher covers the supplied workspace path
-6. read commands must not mutate registry state, Git refs, Git index, live targets, or pending queue
-7. trust metadata is `unknown` until trust/policy metadata lands
+1. `skill list`, `skill show`, `skill search`, and `skill resolve` reuse the same union read model as `GET /api/v1/skills`.
+2. `skill inspect` returns the canonical single-skill status model with stable top-level keys: `skill`, `source`, `spec`, `provenance`, `runtime`, `quality`, `safety`, and `next_actions`.
+3. `skill inspect` separates registry source presence, entrypoint presence, Git drift fields, portable lint, agent compatibility lint, binding rules, projection instances, materialized path health, and unknown agent-specific visibility.
+4. `skill inspect --agent <agent>` filters runtime sections for that agent while preserving top-level source, spec, provenance, quality, safety, and next action fields.
+5. `skill inspect --workspace <path>` and `--profile <profile>` are selectors for binding/runtime classification only; they must not mutate registry state or source files.
+6. `visible_to_agent`, `enabled_by_agent_config`, and `restart_required` are `unknown` when Loom only has registry/projection evidence. Projection presence must not be reported as agent visibility.
+7. `skill inspect` returns `SKILL_NOT_FOUND` when neither the canonical source nor registry references exist for the skill. Stale registry references with missing source return a status model with explicit error findings.
+8. `skill search` is deterministic lexical scoring over skill id, description, tags, warning state, and source status; it does not use vectors.
+9. `skill resolve` is deterministic and transparent; it must not invoke an LLM.
+10. `--workspace` on `skill resolve` may boost skills whose binding matcher covers the supplied workspace path.
+11. read commands must not mutate registry state, Git refs, Git index, live targets, or pending queue.
+12. trust metadata is `unknown` until trust/policy metadata lands.
 
 ### 11.0.1 `skill new`
 

@@ -232,6 +232,19 @@ pub(crate) fn lint_skill_source(
     lint_skill_source_with_config(skill_path, expected_name, &SkillLintConfig::from_mode(mode))
 }
 
+pub(crate) fn lint_skill_source_for_agent(
+    root: &Path,
+    skill_path: &Path,
+    expected_name: &str,
+    mode: SkillLintMode,
+    agent: &str,
+) -> SkillLintReport {
+    let mut config = SkillLintConfig::from_mode(mode);
+    config.agent = Some(agent.to_ascii_lowercase());
+    config.agent_skill_dirs = agent_skill_dirs_for_lint(root, config.agent.as_deref());
+    lint_skill_source_with_config(skill_path, expected_name, &config)
+}
+
 fn lint_skill_source_with_config(
     skill_path: &Path,
     expected_name: &str,

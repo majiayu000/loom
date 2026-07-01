@@ -114,6 +114,7 @@ pub(crate) fn command_name(command: &Command) -> &'static str {
         Command::Skill { command } => match command {
             SkillCommand::List => "skill.list",
             SkillCommand::Show(_) => "skill.show",
+            SkillCommand::Inspect(_) => "skill.inspect",
             SkillCommand::Search(_) => "skill.search",
             SkillCommand::Resolve(_) => "skill.resolve",
             SkillCommand::New(_) => "skill.new",

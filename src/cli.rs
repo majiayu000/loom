@@ -9,6 +9,7 @@ mod plan_flow;
 mod policy;
 mod provenance;
 mod skill_new_args;
+mod skillset;
 mod use_flow;
 pub use discovery::{SkillResolveArgs, SkillSearchArgs};
 pub use eval::SkillEvalArgs;
@@ -16,6 +17,9 @@ pub use plan_flow::{ApplyArgs, PlanCommand, PlanUseArgs};
 pub use policy::SkillPolicyArgs;
 pub use provenance::{AddArgs, SkillProvenanceCommand};
 pub use skill_new_args::{SkillNewArgs, SkillNewTemplate};
+pub use skillset::{
+    SkillsetAddArgs, SkillsetCommand, SkillsetCreateArgs, SkillsetMemberArgs, SkillsetShowArgs,
+};
 pub use use_flow::{UseArgs, UseScope};
 
 #[derive(Debug, Clone, Parser, Serialize)]
@@ -77,6 +81,11 @@ pub enum Command {
     Skill {
         #[command(subcommand)]
         command: SkillCommand,
+    },
+    #[command(about = "Manage groups of registry skills")]
+    Skillset {
+        #[command(subcommand)]
+        command: SkillsetCommand,
     },
     #[command(about = "Synchronize the registry through its Git remote")]
     Sync {

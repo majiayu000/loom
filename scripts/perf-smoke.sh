@@ -6,11 +6,11 @@ if [[ ! -x "$bin" ]]; then
   cargo build --release --locked
 fi
 
-# Hard ceiling: 3270 KiB. The durable plan/apply protocol, offline eval
-# matrix, and local skill scaffolding CLI expanded the accepted V2 budget
-# while the startup latency checks below continue to guard cold CLI
-# responsiveness.
-max_bin_bytes=$((3270 * 1024))
+# Hard ceiling: 3330 KiB. The durable plan/apply protocol, offline eval
+# matrix, local skill scaffolding CLI, and skillset foundation expanded the
+# accepted V2 budget while the startup latency checks below continue to guard
+# cold CLI responsiveness.
+max_bin_bytes=$((3330 * 1024))
 bin_bytes="$(wc -c < "$bin" | tr -d ' ')"
 if (( bin_bytes > max_bin_bytes )); then
   echo "release binary is ${bin_bytes} bytes; limit is ${max_bin_bytes}" >&2

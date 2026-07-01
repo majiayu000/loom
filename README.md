@@ -187,6 +187,7 @@ The chain `add → capture → save → snapshot → release → rollback` is th
 | `loom skill provenance inspect/verify/refresh` | Inspect, check, or refresh recorded source provenance and `loom.lock` | Confirm a skill still matches the source digest and pinned ref metadata | Source metadata + `loom.lock` |
 | `loom skill policy` | Report declared capabilities, content risks, provenance drift, and policy decision | Review a skill before projection or explain why a policy profile blocks it | Source metadata + source files (read-only) |
 | `loom skill eval` | Run offline trigger/task/artifact eval fixtures | Track quality evidence across agent/model hosts without network calls | Source + eval fixtures (read-only) |
+| `loom skillset create/add/remove/show/lint` | Group existing registry skills into a named set | Organize coherent skill bundles before later activation/eval support lands | Registry skillset state |
 | `loom use` | Plan or apply target, binding, and projection setup in one flow | New users want to use a skill without copying target/binding IDs between commands | Source + target + registry metadata |
 | `loom plan use` / `loom apply` | Persist a guarded use plan, then execute it with idempotency | Agents need a retry-safe plan/apply protocol for higher-risk flows | Command audit + source/target/registry metadata |
 | `loom skill project` | Realize a registry skill into an agent directory | Make the skill visible to the agent (Claude/Codex/…) | Target (live directory) |
@@ -228,7 +229,7 @@ Quick decision: **edits from the agent side → `capture`; edits inside the regi
 - Agent automation should use explicit `--root`, `--json`, selectors such as `binding_id` / `target_id`, and branch on `ok` + `error.code`.
 - Agents can call `loom skill resolve "<task>" --agent <agent> --workspace <path>` before choosing a workflow skill, then `loom agent preflight --agent <agent> --workspace <path> --skill <skill>` before writing. Add `--dry-run` to high-risk writes, or use `loom skill rollback --dry-run` to get a no-mutation rollback plan.
 - `--json` wraps both command execution errors and argument parsing failures in the same envelope. `loom panel` is the local HTTP UI server and does not return a command envelope.
-- Read commands such as `workspace status`, `workspace doctor`, `target list`, `skill list`, `skill search`, `skill resolve`, and `sync status` do not mutate registry state, Git refs, the Git index, live target directories, or the pending queue. Durable command audit events may be recorded under `state/events/commands.jsonl` for audited surfaces.
+- Read commands such as `workspace status`, `workspace doctor`, `target list`, `skill list`, `skill search`, `skill resolve`, `skillset show`, `skillset lint`, and `sync status` do not mutate registry state, Git refs, the Git index, live target directories, or the pending queue. Durable command audit events may be recorded under `state/events/commands.jsonl` for audited surfaces.
 - Registry metadata lives under `state/registry`; Loom does not use release-style labels for internal state names.
 - State-changing registry commands commit `state/registry` to Git, and `sync push` has a safety commit before pushing.
 - Hard write guard: if `--root` points to the Loom tool repo itself, write operations are rejected. Use an independent skill registry repo for mutable operations.

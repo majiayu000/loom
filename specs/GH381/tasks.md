@@ -21,9 +21,9 @@ hosted RBAC service, replacement for Git hosting permissions, local safety gate 
 
 ## Tasks
 
-- [ ] `SP381-T001` Owner: policy-state | Done when: org policy and role state files are deterministic, human-reviewable, and malformed state fails closed | Verify: `cargo test --test org_policy`
+- [ ] `SP381-T001` Owner: policy-state | Done when: org policy and role state files are deterministic, human-reviewable, first-admin bootstrap is explicit, and malformed state fails closed | Verify: `cargo test --test org_policy`
 - [ ] `SP381-T002` Owner: policy-cli | Done when: `policy org init/show/check` returns allow/deny/approval_required with roles, reasons, evidence, and approval commands | Verify: `cargo test --test org_policy`
-- [ ] `SP381-T003` Owner: approval-store | Done when: approval request/list/approve/reject uses append-only audited events and computes current request state deterministically | Verify: `cargo test --test org_policy`
+- [ ] `SP381-T003` Owner: approval-store | Done when: approval request/list/approve/reject uses append-only audited events, checks approver roles before decision events, and computes current request state deterministically | Verify: `cargo test --test org_policy`
 - [ ] `SP381-T004` Owner: roles | Done when: roles list/grant/revoke validates role names, requires admin policy for grant/revoke, and exposes resolved role grants in JSON | Verify: `cargo test --test org_policy`
 - [ ] `SP381-T005` Owner: enforcement | Done when: install, project, activate/deactivate, release/rollback, trust/quarantine, provider add/remove, and sync mutations call org policy before writing | Verify: `cargo test --test skill_policy && cargo test --test agent_plan_apply`
 - [ ] `SP381-T006` Owner: safety | Done when: org policy approval cannot bypass local safety gates and blocked/quarantined skills remain denied | Verify: `cargo test --test skill_policy`
@@ -43,6 +43,8 @@ Files:
 Done when:
 
 - Policy init creates deterministic defaults.
+- Policy init records an explicit first admin or fails with manual bootstrap
+  instructions instead of creating an unusable empty-admin policy.
 - Policy show returns structured JSON.
 - Malformed policy fails closed.
 - Policy files do not contain secrets.
@@ -81,6 +83,8 @@ Done when:
 - Requests capture action, action-specific subject, requester, redacted reason,
   risk summary, and evidence as append-only events.
 - Approve/reject appends decision events with redacted comments.
+- Approve/reject verifies the current actor has one of the request's required
+  roles before appending a decision event.
 - Current state is derived from append-only events.
 - Rejected requests do not unblock actions.
 
@@ -119,7 +123,8 @@ Done when:
 - Mutating commands call org policy before writing.
 - Approval-required actions return `POLICY_BLOCKED` with approval request
   command.
-- Approved requests unblock only matching action/skill/evidence.
+- Approved requests unblock only the matching action, full action-specific
+  subject, and evidence digest.
 - Existing local policy gates still run.
 
 Verify:

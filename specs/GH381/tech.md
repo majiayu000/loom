@@ -30,11 +30,14 @@ Recommended files:
 state/registry/org_policy.toml
 state/registry/approvals.jsonl
 state/registry/roles.json
+state/registry/team_members.toml
 ```
 
 `org_policy.toml` is human-reviewable. `approvals.jsonl` is append-only.
 `roles.json` stores deterministic resolved role grants when roles are not kept
-inside the TOML file.
+inside the TOML file. `team_members.toml` is optional manual state for resolving
+offline team grants; absent team mappings mean `team:<name>` grants do not match
+the current actor.
 
 Policy example:
 
@@ -139,8 +142,22 @@ Role grants must be deterministic and auditable. Role resolution should support:
 - Git author identity where available
 - `team:<name>` labels as policy subjects
 
-Team membership resolution can remain manual in v1. Do not require a hosted
-service.
+Team membership resolution is manual in v1. Use a deterministic, reviewed
+mapping such as:
+
+```toml
+[teams.platform]
+members = ["alice", "bob@example.com"]
+```
+
+Implementations must not accept self-asserted team membership from a command
+argument. If a team grant has no local mapping, role resolution reports an
+unresolved team and fails closed for approvals or admin checks. Do not require a
+hosted service.
+
+Grant/revoke operations require an admin policy decision before writing. The
+first admin must come from an explicit init-time bootstrap grant or a manually
+reviewed roles file; normal grant commands must not bypass admin checks.
 
 ## Tests
 
@@ -152,10 +169,13 @@ Focused tests:
 4. approval request/approve/reject appends auditable records.
 5. approved request unblocks the matching action.
 6. rejected request remains blocked.
-7. missing role blocks approval.
+7. missing or unauthorized approver role blocks approval.
 8. blocked/quarantined skill denies action.
 9. release preflight enforces clean source/eval/scan requirements.
 10. local safety gates still run even when org policy allows the action.
+11. initial admin bootstrap is explicit and fresh empty policy does not deadlock.
+12. approvals match the full action-specific subject, not only skill/evidence.
+13. team grants resolve only through deterministic local membership mappings.
 
 ## Verification
 

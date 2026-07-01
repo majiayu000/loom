@@ -29,7 +29,7 @@ Production implementation is blocked by:
 Target command surface:
 
 ```bash
-loom policy org init
+loom policy org init [--bootstrap-admin <user>]
 loom policy org show
 loom policy org check <action> [--skill <skill>] [--provider <provider-id>] [--sync-remote <remote>] [--agent <agent>] [--json]
 loom approval request <action> [--skill <skill>] [--provider <provider-id>] [--sync-remote <remote>] [--reason <text>]
@@ -53,6 +53,11 @@ Initial roles:
 
 Local Git and repository permissions remain authoritative for repository write
 access. Loom roles only gate Loom actions.
+
+A fresh org must define the first admin explicitly. `policy org init` either
+records a reviewed `--bootstrap-admin <user>` grant or fails with instructions
+for a manual reviewed roles-file bootstrap; it must not create an empty policy
+that permanently denies all future `roles grant` commands.
 
 ## Actions
 
@@ -103,6 +108,11 @@ records silently. Free-form reason and comment text must be scanned or redacted
 before commit so pasted tokens or keys are not stored in Git-tracked approval
 files.
 
+Decision commands must authorize the current actor against the request's
+required roles before appending approved or rejected events. An approval event
+unblocks only the exact action plus action-specific subject and evidence digest
+that were requested.
+
 ## Non-Goals
 
 1. No hosted RBAC service in v1.
@@ -121,4 +131,5 @@ files.
 5. Approvals are auditable and Git-tracked.
 6. RBAC roles are resolved from local policy and exposed in JSON.
 7. Tests cover allow, deny, approval-required, approved action, rejected action,
-   missing role, blocked skill, and release preflight policy gates.
+   missing role, initial admin bootstrap, action-specific subject matching,
+   blocked skill, and release preflight policy gates.

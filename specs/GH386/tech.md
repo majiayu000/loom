@@ -45,7 +45,8 @@ Resolution order:
 
 1. parse `loom.skill.toml` `requires_mcp`;
 2. parse `[mcp.<server>]` detail sections;
-3. parse `SKILL.md` `metadata.loom.requires_mcp`;
+3. parse `SKILL.md` nested `metadata.loom.requires_mcp` and dotted
+   `metadata["loom.requires_mcp"]`;
 4. inspect compatibility text for conservative hints;
 5. consume agent-specific metadata when present;
 6. consume provider/catalog metadata only when provenance is trusted.
@@ -98,7 +99,8 @@ struct McpPlan {
     skill: String,
     agent: String,
     workspace: Option<PathBuf>,
-    source_digest: String,
+    skill_source_digest: String,
+    resolved_sources: Vec<McpResolvedSource>,
     adapter_digest: Option<String>,
     actions: Vec<McpPlanAction>,
     risk_summary: McpRiskSummary,
@@ -123,7 +125,8 @@ Plan output should include:
 1. current config summary, including existing matching servers and their source,
    command, transport, env-name, and scope fingerprints when available;
 2. proposed config diff;
-3. package/source provenance;
+3. package/source provenance, including resolved commit/integrity digest per MCP
+   server source;
 4. secrets required by name only;
 5. package/tool availability for required runtimes such as `node`, `npx`, `uvx`,
    and `docker`;
@@ -141,8 +144,8 @@ findings that keep dependent config writes unsafe until resolved.
 implemented:
 
 1. load the durable plan event or explicit plan artifact;
-2. revalidate skill source digest, adapter metadata, package/tool availability,
-   policy, and target config;
+2. revalidate skill source digest, every resolved MCP server source digest,
+   adapter metadata, package/tool availability, policy, and target config;
 3. require idempotency key;
 4. require approval ids issued and validated by the policy/approval backend
    for risky actions, or explicitly mark local-only consent when RBAC is not

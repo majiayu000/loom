@@ -44,7 +44,8 @@ metadata are stable.
    checks.
 4. No agent-specific config mutation without plan/apply.
 5. No bypass of trust, quarantine, RBAC, or org policy.
-6. No execution of newly installed MCP servers during planning.
+6. No execution of newly installed or existing MCP servers during planning or
+   doctor.
 
 ## Behavior Invariants
 
@@ -90,7 +91,8 @@ Skill MCP requirements may come from:
 
 1. `loom.skill.toml` `requires_mcp`;
 2. `[mcp.<server>]` sections;
-3. `SKILL.md` `metadata.loom.requires_mcp`;
+3. `SKILL.md` `metadata.loom.requires_mcp` or dotted
+   `metadata["loom.requires_mcp"]`;
 4. compatibility text heuristics;
 5. agent-specific metadata;
 6. marketplace or provider metadata after provider support lands.
@@ -129,6 +131,7 @@ permissions = ["repo:read", "issues:write"]
       "kind": "write_agent_config",
       "path": "/Users/me/.codex/config.toml",
       "diff": "@@ ...",
+      "diff_redacted": true,
       "safe_to_apply": false,
       "depends_on": ["install_server:github", "require_env:GITHUB_TOKEN", "tool:npx"]
     },
@@ -151,13 +154,15 @@ Config-write actions are unsafe until their package/tool, install, environment,
 and policy prerequisites are satisfied. A plan may show the intended diff, but
 apply must treat dependent config writes as blocked when prerequisites are
 missing or mismatched.
+Rendered config diffs must redact or omit secret-bearing fields and surrounding
+secret context before they are printed, logged, or stored in a plan artifact.
 
 ## Acceptance Criteria
 
 1. `mcp requirement list --skill <skill> --json` shows requirements from
    `loom.skill.toml` and supported skill metadata.
-2. `mcp plan` identifies missing servers, existing servers, config diffs, env
-   vars, source provenance, and approval requirements.
+2. `mcp plan` identifies missing servers, existing servers, redacted config
+   diffs, env vars, per-server source provenance, and approval requirements.
 3. `mcp plan` is read-only and writes no agent config or package state.
 4. Secret values are never printed or stored.
 5. Unpinned MCP server sources are blocked before approval unless planning first

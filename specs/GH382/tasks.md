@@ -106,6 +106,9 @@ Done when:
 
 - Shell export is deterministic.
 - Tar export includes registry/active-view artifacts but no secret values.
+- Tar export materializes active-view symlinks or rewrites them relative to the
+  packaged registry so extraction in another workspace cannot leave dangling
+  links to the planner machine.
 - Import dry-run reports what would be applied.
 - Import dry-run writes nothing.
 
@@ -126,7 +129,8 @@ Done when:
 - Apply accepts approval tokens and validates them against the reviewed plan
   policy decision when approval is required.
 - Apply revalidates registry head, active-view digest, target paths, target-file
-  preimage digests, generated content digests, and policy.
+  preimage digests, generated content digests, credential-redacted clone URL,
+  reviewed-head reachability, and policy.
 - File writes are atomic.
 - Repeated apply with same key is idempotent.
 - Recovery commands are returned.

@@ -34,7 +34,7 @@ Target command surface:
 ```bash
 loom provision plan --target devcontainer [--workspace <path>] [--agent codex] [--output-plan <path>] [--json]
 loom provision apply <plan-id|plan-artifact> --idempotency-key <key> [--approve <approval-token>...]
-loom provision doctor --target devcontainer|codespaces|remote --workspace <path>
+loom provision doctor --target devcontainer|codespaces|remote --workspace <path> [--agent <agent>] [--plan <plan-id|plan-artifact>]
 loom provision export <plan-id|plan-artifact> --format devcontainer|shell|tar --output <path>
 loom provision import <artifact> --dry-run
 ```

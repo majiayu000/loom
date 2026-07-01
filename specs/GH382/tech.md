@@ -31,7 +31,7 @@ Recommended plan shape:
   "workspace": "/repo",
   "container_workspace": "/workspaces/repo",
   "agents": ["codex"],
-  "registry_source": "git+https://github.com/org/skills-registry.git",
+  "registry_source_display": "git+https://github.com/org/skills-registry.git",
   "registry_clone_url": "https://github.com/org/skills-registry.git",
   "active_views": [
     {
@@ -65,6 +65,7 @@ Recommended plan shape:
   "guards": {
     "root": "/registry",
     "registry_head": "abc123",
+    "registry_head_reachable": true,
     "active_view_digest": "sha256:...",
     "skillset_digest": "sha256:...",
     "dependency_readiness_digest": "sha256:..."
@@ -93,7 +94,7 @@ command -v loom >/dev/null || {
   echo "loom CLI is required before provisioning can continue" >&2
   exit 127
 }
-loom --version | grep -Eq 'loom (0\\.1\\.[5-9]|0\\.[2-9]\\.|[1-9]\\.)' || {
+loom --version | grep -Eq 'loom (0\\.1\\.([5-9]|[1-9][0-9]+)|0\\.([2-9]|[1-9][0-9]+)\\.[0-9]+|[1-9][0-9]*\\.[0-9]+\\.[0-9]+)' || {
   echo "loom CLI version does not satisfy reviewed plan requirement >=0.1.5" >&2
   exit 127
 }
@@ -119,13 +120,20 @@ reviewed materialization instructions or fail clearly instead of calling
 nonexistent `skillset activate` or `skill doctor` commands.
 `registry_source` values with a `git+` scheme are normalized into a separate
 cloneable `registry_clone_url` before script generation; generated shell must
-not pass `git+https://...` directly to `git clone`.
+not pass `git+https://...` directly to `git clone`. Remote URLs with embedded
+credentials are split into a redacted display URL, a credential-free clone URL,
+and a named secret requirement. Plan JSON and generated scripts must not persist
+URL userinfo, token query parameters, or password-like fragments.
 Paths such as the workspace, registry clone directory, and active view come from
 the reviewed plan and adapter metadata, not hard-coded `/workspaces` defaults.
 The script must generate diagnose/materialization checks for every planned
 active skill, not for a literal example skill.
 The script must verify the installed `loom --version` against the reviewed
-`loom_cli.version` requirement; command presence alone is not enough.
+`loom_cli.version` requirement with a comparison that accepts multi-digit semver
+components; command presence alone is not enough.
+Plan and doctor must verify that the exact reviewed `registry_head` is fetchable
+from the credential-free clone URL. If the head is local-only, provisioning must
+use a tar/export artifact path instead of a remote clone plan.
 
 ## File Merge Rules
 

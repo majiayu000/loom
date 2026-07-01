@@ -333,6 +333,7 @@ pub(in crate::panel) async fn registry_skill_save(
             command: crate::cli::SkillCommand::Save(crate::cli::SaveArgs {
                 skill: skill_name,
                 message: req.message,
+                preflight: false,
             }),
         },
     )
@@ -377,6 +378,8 @@ pub(in crate::panel) async fn registry_skill_release(
             command: crate::cli::SkillCommand::Release(crate::cli::ReleaseArgs {
                 skill: skill_name,
                 version: req.version,
+                preflight: false,
+                baseline: None,
             }),
         },
     )

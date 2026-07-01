@@ -7,6 +7,7 @@ mod codex_args;
 mod deps;
 mod discovery;
 mod eval;
+mod improve;
 mod plan_flow;
 mod policy;
 mod provenance;
@@ -26,6 +27,7 @@ pub use eval::{
     EvalBaselineArg, EvalRunnerArg, SkillEvalArgs, SkillEvalCommand, SkillEvalCompareArgs,
     SkillEvalOfflineArgs, SkillEvalRunArgs, SkillEvalTriggerArgs,
 };
+pub use improve::{SkillImproveArgs, SkillRegressionArgs};
 pub use plan_flow::{ApplyArgs, PlanCommand, PlanUseArgs};
 pub use policy::SkillPolicyArgs;
 pub use provenance::{AddArgs, SkillProvenanceCommand};
@@ -270,6 +272,10 @@ pub enum SkillCommand {
     Project(ProjectArgs),
     #[command(about = "Capture live projection edits back to the source")]
     Capture(CaptureArgs),
+    #[command(about = "Run a read-only single-skill improvement preflight")]
+    Improve(SkillImproveArgs),
+    #[command(about = "Compare one skill against a baseline for regressions")]
+    Regression(SkillRegressionArgs),
     #[command(about = "Commit source changes for one skill")]
     Save(SaveArgs),
     #[command(about = "Create a version snapshot for one skill")]
@@ -518,6 +524,10 @@ pub struct SaveArgs {
     /// Git commit message for the saved source revision.
     #[arg(long)]
     pub message: Option<String>,
+
+    /// Run the skill improvement preflight before committing.
+    #[arg(long)]
+    pub preflight: bool,
 }
 
 #[derive(Debug, Clone, Args, Serialize)]

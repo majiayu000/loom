@@ -19,6 +19,9 @@ impl App {
                 format!("skill '{}' not found", args.skill),
             ));
         }
+        if args.preflight {
+            self.ensure_save_preflight(&args.skill)?;
+        }
 
         gitops::stage_path(&self.ctx, Path::new(&skill_rel)).map_err(map_git)?;
         let changed = gitops::has_staged_changes_for_path(&self.ctx, Path::new(&skill_rel))

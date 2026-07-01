@@ -32,6 +32,15 @@ impl App {
         self.ensure_write_repo_ready()?;
         ensure_skill_exists(&self.ctx, &args.skill)?;
         let _lock = self.ctx.lock_skill(&args.skill).map_err(map_lock)?;
+        if args.baseline.is_some() && !args.preflight {
+            return Err(CommandFailure::new(
+                ErrorCode::ArgInvalid,
+                "skill release --baseline requires --preflight",
+            ));
+        }
+        if args.preflight {
+            self.ensure_release_preflight(args)?;
+        }
 
         let previous_head = gitops::head(&self.ctx).map_err(map_git)?;
         let previous_index = gitops::snapshot_index(&self.ctx).map_err(map_git)?;

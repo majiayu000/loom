@@ -612,6 +612,8 @@ loom --json --root <root> skill eval offline <skill-id> [--agent <agent> | --mat
 loom --json --root <root> skill eval run <skill-id> --agent <agent> --baseline no-skill [--workspace <path>] [--cases <path>] [--runs <n>] [--runner mock|codex-cli] [--dry-run] [--output <path>]
 loom --json --root <root> skill eval trigger <skill-id> --agent <agent> [--cases <path>] [--runs <n>] [--runner mock|codex-cli] [--output <path>]
 loom --json --root <root> skill eval compare <skill-id> --from <ref> --to <ref|working-tree> --agent <agent> [--cases <path>] [--runner mock|codex-cli] [--output <path>]
+loom --json --root <root> skill improve <skill-id> [--agent <agent>] [--workspace <path>] [--baseline <ref>] [--real-eval] [--dry-run]
+loom --json --root <root> skill regression <skill-id> [--agent <agent>] [--from <ref>] [--to <ref|working-tree>]
 ```
 
 The legacy flat command and `offline` subcommand are read-only. `run`, `trigger`, and `compare`
@@ -638,7 +640,28 @@ Rules:
 8. default reports do not persist raw prompts or secrets; explicit output paths are caller-controlled
 9. eval success is quality evidence only and must not be treated as a safety guarantee
 
-### 11.3.5 `skillset create`, `skillset add`, `skillset remove`, `skillset show`, `skillset lint`
+### 11.3.5 `skill improve`, `skill regression`
+
+```bash
+loom --json --root <root> skill improve <skill-id> [--agent <agent>] [--workspace <path>] [--baseline <ref>] [--real-eval] [--dry-run]
+loom --json --root <root> skill regression <skill-id> [--agent <agent>] [--from <ref>] [--to <ref|working-tree>]
+```
+
+Both commands are read-only and must not stage files, create commits, create tags, mutate registry state, or check out refs destructively.
+
+Rules:
+
+1. `skill improve` returns one `SkillPreflightReport` with stable top-level keys: `schema_version`, `skill`, `mode`, `baseline`, `target`, `checks`, `regressions`, `recommendation`, `mutation_allowed`, and `details`.
+2. Checks include source drift, portable or agent-specific lint, safety scan, dependency readiness, `SKILL.md` size, offline eval fixtures, real-eval status, and security diff when comparing two refs.
+3. Check statuses are `pass`, `warning`, `fail`, `skipped`, or `unknown`. Missing optional evidence must be `warning`, `skipped`, or `unknown`, never a fabricated pass.
+4. `--real-eval` does not run a real agent in this version; it marks `real_eval` as `unknown` and points callers to explicit eval compare workflows.
+5. `skill regression` compares `--from` to `--to` or the working tree without destructive checkout and fails with `POLICY_BLOCKED` when lint, high/critical safety, dependency readiness, offline eval, or size gates fail.
+6. Blocking regression failures include the full report under `error.details.report`.
+7. `source_drift` is advisory for save/release decisions; failed or unknown gates other than source drift block mutation.
+8. The size gate fails when `SKILL.md` exceeds 800 lines without a `references/` directory and warns when references exist.
+9. `skill regression --to <ref>` materializes the selected skill and security metadata into a temporary root before running checks, rather than checking out refs or reading the current working tree.
+
+### 11.3.6 `skillset create`, `skillset add`, `skillset remove`, `skillset show`, `skillset lint`
 
 ```bash
 loom --json --root <root> skillset create <skillset-id> [--description <text>]
@@ -729,10 +752,17 @@ Rules:
 ### 11.6 `skill save`
 
 ```bash
-loom --json --root <root> skill save <skill-id>
+loom --json --root <root> skill save <skill-id> [--message <msg>] [--preflight]
 ```
 
 Acts on canonical source only.
+
+Rules:
+
+1. without `--preflight`, save preserves the existing behavior
+2. with `--preflight`, Loom runs the same report as `skill improve` before staging or committing
+3. failed gates return `POLICY_BLOCKED` with the full report in `error.details.report`
+4. a passing preflight proceeds through the existing save, audit, rollback, and autosync path
 
 ### 11.7 `skill snapshot`
 
@@ -745,10 +775,18 @@ Acts on canonical source only.
 ### 11.8 `skill release`
 
 ```bash
-loom --json --root <root> skill release <skill-id> <version>
+loom --json --root <root> skill release <skill-id> <version> [--preflight --baseline <ref>]
 ```
 
 Acts on canonical source only.
+
+Rules:
+
+1. without `--preflight`, release preserves the existing behavior
+2. with `--preflight`, `--baseline <ref>` is required and must not be `HEAD` or `working-tree`
+3. the selected skill must be clean before a preflighted release
+4. failed gates return `POLICY_BLOCKED` with the full report in `error.details.report`; invalid baseline or dirty source returns `ARG_INVALID`
+5. a passing preflight proceeds through the existing tag, registry operation, rollback, and autosync path
 
 ### 11.9 `skill rollback`
 

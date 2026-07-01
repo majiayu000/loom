@@ -226,6 +226,7 @@ fn panel_router(state: PanelState) -> Router {
             "/api/v1/skills/{skill_name}/diagnose",
             get(v1_skill_diagnose),
         )
+        .route("/api/v1/skills/{skill_name}/inspect", get(v1_skill_inspect))
         .route("/api/v1/skills/{skill_name}/use", post(registry_skill_use))
         .route(
             "/api/v1/skills/{skill_name}/history",

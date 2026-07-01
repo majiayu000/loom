@@ -8,14 +8,9 @@ import { MutationBanner } from "../../components/panel/MutationBanner";
 import { api, type SkillDiagnosePayload } from "../../lib/api/client";
 import { useMutation } from "../../lib/useMutation";
 import { SkillDiagnosePanel } from "./SkillDiagnosePanel";
+import { SkillDetailPage } from "./SkillDetailPage";
 import { SkillTrashPanel, SkillViewModeSwitch, TrashSkillAction } from "./SkillTrashPanel";
-import {
-  Lifecycle,
-  LifecycleActions,
-  SkillDiff,
-  mapObsToLifecycle,
-  type LifecycleEvent,
-} from "./SkillLifecycle";
+import { Lifecycle, LifecycleActions, SkillDiff, mapObsToLifecycle, type LifecycleEvent } from "./SkillLifecycle";
 import { UseSkillForm } from "./UseSkillForm";
 
 interface SkillsPageProps {
@@ -68,7 +63,11 @@ export function SkillsPage({
     const matchesTags = tagFilter === "all" || (tagFilter === "tagged" ? hasTags : !hasTags);
     return matchesQuery && matchesSource && matchesTarget && matchesAttention && matchesTags;
   });
-  const sel = filtered.find((s) => s.id === selectedSkill) ?? filtered[0] ?? skills.find((s) => s.id === selectedSkill) ?? skills[0];
+  const sel =
+    filtered.find((s) => s.id === selectedSkill || s.name === selectedSkill) ??
+    filtered[0] ??
+    skills.find((s) => s.id === selectedSkill || s.name === selectedSkill) ??
+    skills[0];
   const capture = useMutation();
   const selectedSkillBindings = sel ? captureBindingsForSkill(sel.name, bindings, projections) : [];
   const bindingOptionKey = selectedSkillBindings.map((b) => `${b.id}\u001f${b.target}\u001f${b.method}`).join("\u001e");
@@ -590,6 +589,7 @@ function SkillDetail({
       </div>
 
       <LifecycleActions skillName={skill.name} onMutation={onLifecycleMutation} readOnly={readOnly} />
+      <SkillDetailPage skillName={skill.name} />
 
       <div className="tabs">
         <button className={tab === "overview" ? "active" : ""} onClick={() => setTab("overview")}>

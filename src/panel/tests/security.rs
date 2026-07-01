@@ -57,6 +57,7 @@ const V1_REGISTRY_READ_ROUTES: &[&str] = &[
     "/api/v1/ops/diagnose",
     "/api/v1/bindings/{binding_id}",
     "/api/v1/targets/{target_id}",
+    "/api/v1/skills/{skill_name}/inspect",
     "/api/v1/skills/{skill_name}/history",
     "/api/v1/skills/{skill_name}/diff",
 ];

@@ -189,6 +189,53 @@ async fn v1_skill_diagnose_returns_envelope_without_command_audit() {
 }
 
 #[tokio::test]
+async fn v1_skill_inspect_returns_shared_read_model_without_command_audit() {
+    let (root, state) = make_test_state();
+    let source_dir = root.join("skills/present-skill");
+    fs::create_dir_all(&source_dir).expect("create skill");
+    fs::write(
+        source_dir.join("SKILL.md"),
+        "---\nname: present-skill\ndescription: Present skill\n---\n# Present\n",
+    )
+    .expect("write skill");
+
+    let (status, Json(payload)) = v1_skill_inspect(
+        axum::extract::Path("present-skill".to_string()),
+        State(state),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(payload["ok"], json!(true));
+    assert_eq!(payload["cmd"], json!("skill.inspect"));
+    assert_eq!(payload["data"]["skill"], json!("present-skill"));
+    assert_eq!(payload["data"]["source"]["entrypoint"], json!("SKILL.md"));
+    assert!(payload["data"]["runtime"].is_object());
+    assert!(payload["data"]["next_actions"].is_array());
+    assert!(
+        !root.join("state/events/commands.jsonl").exists(),
+        "interactive panel inspect must not append command-audit rows"
+    );
+
+    cleanup_root(root);
+}
+
+#[tokio::test]
+async fn v1_skill_inspect_missing_skill_returns_structured_error() {
+    let (root, state) = make_test_state();
+
+    let (status, Json(payload)) =
+        v1_skill_inspect(axum::extract::Path("missing".to_string()), State(state)).await;
+
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(payload["ok"], json!(false));
+    assert_eq!(payload["cmd"], json!("skill.inspect"));
+    assert_eq!(payload["error"]["code"], json!("SKILL_NOT_FOUND"));
+
+    cleanup_root(root);
+}
+
+#[tokio::test]
 async fn v1_skill_trash_lists_entries_without_command_audit() {
     let (root, state) = make_test_state();
     let trash_id = "demo-20260604T010203Z-a1b2c3d4";

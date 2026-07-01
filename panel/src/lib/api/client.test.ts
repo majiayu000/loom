@@ -244,7 +244,14 @@ describe("api v1 routes", () => {
       ok: true,
       status: 200,
       statusText: "OK",
-      json: vi.fn().mockResolvedValue({ ok: true, data: {} }),
+      json: vi.fn().mockResolvedValue({
+        ok: true,
+        cmd: "ok",
+        request_id: "req-1",
+        data: {},
+        error: null,
+        meta: { warnings: [] },
+      }),
     } as unknown as Response);
 
     await api.registryStatus();
@@ -252,6 +259,7 @@ describe("api v1 routes", () => {
     await api.bindingShow("binding 1");
     await api.targetShow("target 1");
     await api.skillHistory("demo skill");
+    await api.skillInspect("demo skill");
     await api.skillDiff("demo skill", "old", "new");
 
     const paths = fetchSpy.mock.calls.map((call) => call[0]);
@@ -261,6 +269,7 @@ describe("api v1 routes", () => {
       "/api/v1/bindings/binding%201",
       "/api/v1/targets/target%201",
       "/api/v1/skills/demo%20skill/history",
+      "/api/v1/skills/demo%20skill/inspect",
       "/api/v1/skills/demo%20skill/diff?rev_a=old&rev_b=new",
     ]);
   });

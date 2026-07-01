@@ -381,6 +381,75 @@ export interface SkillTrashRestoreBody {
   skill: string;
 }
 
+export interface SkillInspectFinding {
+  id: string;
+  severity: "ok" | "warning" | "error" | string;
+  message: string;
+  next_action?: string | null;
+  suggested_action?: string | null;
+}
+
+export interface SkillInspectRuntimeStatus {
+  installed_in_registry: boolean;
+  active_rule_present: boolean;
+  projected_to_target: boolean;
+  materialized_path_exists?: boolean | null;
+  visible_to_agent: string;
+  enabled_by_agent_config: string;
+  restart_required: string;
+  target_id?: string | null;
+  binding_id?: string | null;
+  target_path?: string | null;
+  materialized_path?: string | null;
+  health?: string | null;
+  truth_level: string;
+  findings: SkillInspectFinding[];
+}
+
+export interface SkillInspectPayload {
+  skill: string;
+  source: {
+    path: string;
+    exists: boolean;
+    entrypoint?: string | null;
+    entrypoint_exists: boolean;
+    working_tree_drift: boolean;
+    head_tree_oid?: string | null;
+    last_source_commit?: string | null;
+    drifted_paths: string[];
+  };
+  spec: {
+    portable: string;
+    codex: string;
+    claude: string;
+    findings: SkillInspectFinding[];
+  };
+  provenance?: {
+    source?: string | null;
+    pinned_ref?: string | null;
+    verified?: boolean | null;
+    drift?: boolean | null;
+  };
+  runtime: Record<string, SkillInspectRuntimeStatus>;
+  dependencies?: unknown;
+  quality: {
+    last_eval?: string | null;
+    trigger_precision?: number | null;
+    trigger_recall?: number | null;
+    baseline_delta?: number | null;
+  };
+  safety: {
+    trust: string;
+    policy: string;
+    scripts_present?: boolean | null;
+    network_requested?: boolean | null;
+    quarantined?: boolean | null;
+    reason?: string | null;
+    updated_at?: string | null;
+  };
+  next_actions: string[];
+}
+
 export interface CaptureBody {
   skill?: string;
   binding?: string;
@@ -592,6 +661,12 @@ export const api = {
   skillDiagnose: (name: string, signal?: AbortSignal) =>
     getJsonData<SkillDiagnosePayload>(
       `/api/v1/skills/${encodeURIComponent(name)}/diagnose`,
+      signal,
+    ),
+
+  skillInspect: (name: string, signal?: AbortSignal) =>
+    getJsonData<SkillInspectPayload>(
+      `/api/v1/skills/${encodeURIComponent(name)}/inspect`,
       signal,
     ),
 

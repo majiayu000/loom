@@ -34,6 +34,10 @@ state/index/
   workspaces.json
 ```
 
+`state/index/` is rebuildable cache data. It must be ignored by registry
+commit/sync/backup flows unless a later spec explicitly promotes index artifacts
+to reviewed registry state.
+
 `skills.embeddings.jsonl` is optional and may exist only when a local provider
 is configured. It must not be required for `index build` or `skill recommend`.
 
@@ -52,14 +56,15 @@ Recommended lexical record:
     "positive_triggers": ["failing tests"],
     "negative_triggers": ["write product copy"]
   },
-  "updated_at_source": "2026-07-01T00:00:00Z"
+  "source_timestamp": null
 }
 ```
 
 `skills.lexical.json` stores records sorted by `skill_id`; every record includes
-the source digest used to derive tokens. Lexical tokenization must be
-deterministic and rebuildable from registry source, `SKILL.md`, and trigger eval
-files.
+the source digest used to derive tokens. Timestamp fields are omitted unless they
+come from committed registry metadata covered by the source digest. Lexical
+tokenization must be deterministic and rebuildable from registry source,
+`SKILL.md`, and trigger eval files.
 
 Recommended capability record:
 
@@ -68,6 +73,12 @@ Recommended capability record:
   "schema_version": 1,
   "skill_id": "fixflow",
   "source_digest": "sha256:...",
+  "input_digests": {
+    "eval": "sha256:...",
+    "trust": "sha256:...",
+    "dependency_readiness": "sha256:...",
+    "skillsets": "sha256:..."
+  },
   "capabilities": ["test-diagnosis", "ci-failure", "code-fix"],
   "triggers": ["failing tests", "CI failure"],
   "domains": ["software-engineering"],
@@ -120,9 +131,9 @@ Recommended pipeline:
 7. Join skillset membership from #377.
 8. Score candidates, applying positive trigger boosts and negative trigger
    penalties or filters.
-9. Filter out blocked/quarantined activation candidates, including skillset
-   candidates whose required members are blocked, quarantined, policy-blocked,
-   or dependency-unready for activation.
+9. Filter out blocked, quarantined, or policy-blocked activation candidates,
+   including standalone skills and skillset candidates whose required members are
+   blocked, quarantined, policy-blocked, or dependency-unready for activation.
 10. Return ranked results with explanations and suggested commands.
 
 Recommendation commands must not persist rebuilt index data. If `state/index`
@@ -162,6 +173,11 @@ Semantic retrieval is optional:
 
 ## Active Recommend Plan
 
+`active recommend` requires `--binding <binding-id>` when the agent/workspace
+cannot resolve to exactly one active binding. Ambiguous or missing binding
+resolution fails closed with a structured ambiguity result rather than comparing
+against an arbitrary active view.
+
 `active recommend` should return:
 
 ```json
@@ -179,8 +195,10 @@ Semantic retrieval is optional:
 }
 ```
 
-The command is read-only. It may suggest activation/deactivation commands but
-must not apply them.
+The canonical command is `loom active recommend`; if implementation ownership
+lands under another command group, `loom active recommend` must remain available
+as a compatibility alias with the same JSON contract. The command is read-only.
+It may suggest activation/deactivation commands but must not apply them.
 
 ## Tests
 

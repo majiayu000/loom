@@ -10,6 +10,7 @@ mod observed_tests;
 mod plan_cmds;
 mod projections;
 mod provenance;
+mod skill_activation;
 mod skill_cmds;
 mod skill_diagnose;
 #[cfg(test)]
@@ -35,9 +36,9 @@ use serde_json::json;
 use uuid::Uuid;
 
 use crate::cli::{
-    AgentCommand, Cli, Command, OpsCommand, OpsHistoryCommand, RemoteCommand, SkillCommand,
-    SkillOrphanCommand, SkillProvenanceCommand, SkillTrashCommand, SkillsetCommand, SyncCommand,
-    TargetCommand, WorkspaceBindingCommand, WorkspaceCommand, WorkspaceInitArgs,
+    AgentCommand, Cli, Command, OpsCommand, OpsHistoryCommand, RemoteCommand, SkillActiveCommand,
+    SkillCommand, SkillOrphanCommand, SkillProvenanceCommand, SkillTrashCommand, SkillsetCommand,
+    SyncCommand, TargetCommand, WorkspaceBindingCommand, WorkspaceCommand, WorkspaceInitArgs,
 };
 use crate::envelope::{Envelope, Meta};
 use crate::state::{AppContext, home_dir};
@@ -233,6 +234,11 @@ impl App {
                 SkillCommand::List => self.cmd_skill_list(),
                 SkillCommand::Show(args) => self.cmd_skill_show(args),
                 SkillCommand::Inspect(args) => self.cmd_skill_inspect(args),
+                SkillCommand::Activate(args) => self.cmd_skill_activate(args, &request_id),
+                SkillCommand::Deactivate(args) => self.cmd_skill_deactivate(args, &request_id),
+                SkillCommand::Active {
+                    command: SkillActiveCommand::List(args),
+                } => self.cmd_skill_active_list(args),
                 SkillCommand::Search(args) => self.cmd_skill_search(args),
                 SkillCommand::Resolve(args) => self.cmd_skill_resolve(args),
                 SkillCommand::New(args) => self.cmd_skill_new(args, &request_id),
@@ -385,6 +391,18 @@ fn command_records_audit(command: &Command) -> bool {
     {
         return !args.dry_run;
     }
+    if let Command::Skill {
+        command: SkillCommand::Activate(args),
+    } = command
+    {
+        return !args.dry_run;
+    }
+    if let Command::Skill {
+        command: SkillCommand::Deactivate(args),
+    } = command
+    {
+        return !args.dry_run;
+    }
 
     !matches!(
         command,
@@ -395,6 +413,7 @@ fn command_records_audit(command: &Command) -> bool {
                     | SkillCommand::List
                     | SkillCommand::Show(_)
                     | SkillCommand::Inspect(_)
+                    | SkillCommand::Active { .. }
                     | SkillCommand::Search(_)
                     | SkillCommand::Resolve(_)
                     | SkillCommand::Lint(_)
@@ -453,11 +472,14 @@ fn command_requires_durable_audit(command: &Command) -> bool {
             } => true,
             SkillCommand::Rollback(args) => !args.dry_run,
             SkillCommand::New(args) => !args.dry_run,
+            SkillCommand::Activate(args) => !args.dry_run,
+            SkillCommand::Deactivate(args) => !args.dry_run,
             SkillCommand::Diff(_)
             | SkillCommand::History(_)
             | SkillCommand::List
             | SkillCommand::Show(_)
             | SkillCommand::Inspect(_)
+            | SkillCommand::Active { .. }
             | SkillCommand::Search(_)
             | SkillCommand::Resolve(_)
             | SkillCommand::Lint(_)

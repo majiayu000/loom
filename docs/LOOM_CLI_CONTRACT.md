@@ -382,7 +382,28 @@ Rules:
 11. read commands must not mutate registry state, Git refs, Git index, live targets, or pending queue.
 12. trust metadata is `unknown` until trust/policy metadata lands.
 
-### 11.0.1 `skill new`
+### 11.0.1 `skill activate`, `skill deactivate`, `skill active list`
+
+```bash
+loom --json --root <root> skill activate <skill-id> --agent <agent> [--scope <user|project>] [--workspace <path>] [--profile <profile>] [--target <target-id>] [--method <symlink|copy|materialize>] [--dry-run]
+loom --json --root <root> skill deactivate <skill-id> --agent <agent> [--scope <user|project>] [--workspace <path>] [--profile <profile>] [--target <target-id>] [--dry-run]
+loom --json --root <root> skill active list --agent <agent> [--scope <user|project>] [--workspace <path>] [--profile <profile>]
+```
+
+`activate` and `deactivate` are write commands unless `--dry-run` is supplied. `active list` is read-only.
+
+Rules:
+
+1. `skill activate` resolves a managed target and workspace binding from agent, scope, workspace, profile, and optional target id; callers must not need to pass binding ids for the common path.
+2. user-scoped Codex activation defaults to `$HOME/.agents/skills`; project-scoped Codex activation defaults to `<workspace>/.agents/skills`; project scope requires `--workspace`.
+3. `--dry-run` must return the same plan shape without creating registry files, Git commits, target directories, projections, pending ops, or command audit events.
+4. activation enforces the same target ownership, projection capability, filesystem symlink probe, and skill policy gates as projection.
+5. repeated activation is idempotent; a missing managed symlink projection is repaired without duplicating targets, bindings, rules, or projections.
+6. `skill deactivate` removes the desired rule and projection record, and deletes only a symlink that points back to the registry skill source.
+7. deactivation of `copy` or `materialize` projections fails closed with `POLICY_BLOCKED` and must not delete live target files.
+8. `skill active list` reports desired rules joined to realized projections, including `target_missing` and `projection_missing`, but must keep agent visibility fields at `not_checked`.
+
+### 11.0.2 `skill new`
 
 ```bash
 loom --json --root <root> skill new <skill-id> [--template <basic|coding-workflow|scripted|reference-heavy>] [--description <text>] [--agent <agent>] [--dry-run]

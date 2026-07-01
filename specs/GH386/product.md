@@ -129,7 +129,8 @@ permissions = ["repo:read", "issues:write"]
       "kind": "write_agent_config",
       "path": "/Users/me/.codex/config.toml",
       "diff": "@@ ...",
-      "safe_to_apply": true
+      "safe_to_apply": false,
+      "depends_on": ["install_server:github", "require_env:GITHUB_TOKEN", "tool:npx"]
     },
     {
       "kind": "require_env",
@@ -145,6 +146,11 @@ permissions = ["repo:read", "issues:write"]
   }
 }
 ```
+
+Config-write actions are unsafe until their package/tool, install, environment,
+and policy prerequisites are satisfied. A plan may show the intended diff, but
+apply must treat dependent config writes as blocked when prerequisites are
+missing or mismatched.
 
 ## Acceptance Criteria
 

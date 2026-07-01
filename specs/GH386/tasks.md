@@ -46,6 +46,9 @@ Done when:
 - `loom mcp doctor --agent <agent> [--skill <skill>] [--workspace <path>] [--json]` parses.
 - `loom mcp catalog search <query> [--json]` parses.
 - `loom mcp catalog show <server> [--json]` parses.
+- Catalog search/show JSON includes source provenance, transport, required
+  package tool, trust state, and policy warnings; missing entries and malformed
+  sources return typed errors.
 - `mcp apply` is absent or returns typed not-implemented until apply gates are
   ready.
 
@@ -111,8 +114,15 @@ Done when:
 - plan resolves requirements for a skill and agent.
 - plan inspects current config through adapter metadata where available.
 - missing servers, existing servers, and env vars are reported.
+- existing servers match only when requirement command/source, transport, env
+  names, and scope are compatible; mismatches are reported as findings, not
+  reused silently.
+- package/tool availability for `node`, `npx`, `uvx`, `docker`, or other source
+  runtime tools is reported before any config write is considered safe.
 - config diffs are generated without writes only for adapters with explicit MCP
   config path and merge support; otherwise return `manual_configuration_required`.
+- config-write actions depend on satisfied install/env/tool prerequisites and
+  remain unsafe to apply while any dependency is missing or mismatched.
 - risk summary includes network, secret, package, and external-system risk.
 - RBAC approval requirements or local-only consent requirements are included for
   risky actions.

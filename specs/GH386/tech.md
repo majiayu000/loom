@@ -103,6 +103,7 @@ struct McpPlan {
     actions: Vec<McpPlanAction>,
     risk_summary: McpRiskSummary,
     approvals_required: Vec<String>,
+    tool_availability: Vec<McpToolAvailability>,
 }
 ```
 
@@ -119,14 +120,20 @@ restart_agent
 
 Plan output should include:
 
-1. current config summary, including existing matching servers and their source
-   or command fingerprints when available;
+1. current config summary, including existing matching servers and their source,
+   command, transport, env-name, and scope fingerprints when available;
 2. proposed config diff;
 3. package/source provenance;
 4. secrets required by name only;
-5. network/file-system/external-system risk summary;
-6. policy decisions and RBAC-issued approval requirements;
-7. restart or new-session guidance.
+5. package/tool availability for required runtimes such as `node`, `npx`, `uvx`,
+   and `docker`;
+6. network/file-system/external-system risk summary;
+7. policy decisions and RBAC-issued approval requirements;
+8. restart or new-session guidance.
+
+Existing servers are reusable only when command/source, transport, env-name, and
+scope requirements are compatible with the skill requirement. Mismatches are
+findings that keep dependent config writes unsafe until resolved.
 
 ## Apply Semantics
 
@@ -134,7 +141,8 @@ Plan output should include:
 implemented:
 
 1. load the durable plan event or explicit plan artifact;
-2. revalidate skill source digest, adapter metadata, policy, and target config;
+2. revalidate skill source digest, adapter metadata, package/tool availability,
+   policy, and target config;
 3. require idempotency key;
 4. require approval ids issued and validated by the policy/approval backend
    for risky actions, or explicitly mark local-only consent when RBAC is not
@@ -146,6 +154,9 @@ implemented:
 9. return restart/new-session guidance.
 
 Plan drift must fail with a typed result and require a new plan.
+Config writes depend on satisfied install, package/tool, env, and policy
+prerequisites. Apply must not write agent config first and hope a later install
+or env step succeeds.
 
 ## Agent Config Support
 
@@ -178,14 +189,16 @@ Focused tests:
 3. parse supported `SKILL.md` metadata;
 4. malformed metadata returns typed findings;
 5. plan detects missing and existing servers;
-6. plan renders config diff without writing only for adapters with explicit MCP
+6. existing server command/source/transport/env/scope mismatch is reported;
+7. package/tool availability is included in plan criteria;
+8. plan renders config diff without writing only for adapters with explicit MCP
    config support;
-7. env secrets are redacted by value and named only;
-8. unpinned source is blocked before approval unless the plan resolves an
+9. env secrets are redacted by value and named only;
+10. unpinned source is blocked before approval unless the plan resolves an
    immutable source first;
-9. unsupported agent returns manual mode;
-10. apply revalidates and rejects drift once apply is implemented;
-11. apply is idempotent and atomic once apply is implemented.
+11. unsupported agent returns manual mode;
+12. apply revalidates and rejects drift once apply is implemented;
+13. apply is idempotent and atomic once apply is implemented.
 
 Suggested commands:
 

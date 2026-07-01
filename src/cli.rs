@@ -18,7 +18,10 @@ mod skillset;
 mod use_flow;
 pub use codex_args::{CodexCommand, CodexReconcileArgs};
 pub use discovery::{SkillResolveArgs, SkillSearchArgs};
-pub use eval::SkillEvalArgs;
+pub use eval::{
+    EvalBaselineArg, EvalRunnerArg, SkillEvalArgs, SkillEvalCommand, SkillEvalCompareArgs,
+    SkillEvalOfflineArgs, SkillEvalRunArgs, SkillEvalTriggerArgs,
+};
 pub use plan_flow::{ApplyArgs, PlanCommand, PlanUseArgs};
 pub use policy::SkillPolicyArgs;
 pub use provenance::{AddArgs, SkillProvenanceCommand};

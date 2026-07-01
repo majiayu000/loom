@@ -6,7 +6,7 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use crate::cli::SkillEvalArgs;
+use crate::cli::{SkillEvalArgs, SkillEvalCommand, SkillEvalOfflineArgs};
 use crate::envelope::Meta;
 use crate::sha256::{Sha256, to_hex};
 use crate::types::ErrorCode;
@@ -21,6 +21,33 @@ impl App {
     pub fn cmd_skill_eval(
         &self,
         args: &SkillEvalArgs,
+    ) -> std::result::Result<(Value, Meta), CommandFailure> {
+        match &args.command {
+            Some(SkillEvalCommand::Offline(offline)) => self.cmd_skill_eval_offline(offline),
+            Some(SkillEvalCommand::Run(run)) => self.cmd_skill_eval_run(run),
+            Some(SkillEvalCommand::Trigger(trigger)) => self.cmd_skill_eval_trigger(trigger),
+            Some(SkillEvalCommand::Compare(compare)) => self.cmd_skill_eval_compare(compare),
+            None => {
+                let skill = args.skill.clone().ok_or_else(|| {
+                    CommandFailure::new(
+                        ErrorCode::ArgInvalid,
+                        "skill eval requires a skill name or an eval subcommand",
+                    )
+                })?;
+                let offline = SkillEvalOfflineArgs {
+                    skill,
+                    agent: args.agent.clone(),
+                    matrix: args.matrix.clone(),
+                    model: args.model.clone(),
+                };
+                self.cmd_skill_eval_offline(&offline)
+            }
+        }
+    }
+
+    pub(crate) fn cmd_skill_eval_offline(
+        &self,
+        args: &SkillEvalOfflineArgs,
     ) -> std::result::Result<(Value, Meta), CommandFailure> {
         validate_skill_name(&args.skill).map_err(map_arg)?;
         let skill_path = self.ctx.skill_path(&args.skill);
@@ -38,11 +65,7 @@ impl App {
         let triggers = read_jsonl::<TriggerCase>(&trigger_path)?;
         let tasks = read_jsonl::<TaskCase>(&task_path)?;
 
-        let skill_rel = format!("skills/{}", args.skill);
-        let version = SkillEvalVersion {
-            head_tree_oid: head_tree_oid_for_path(&self.ctx, &skill_rel).ok().flatten(),
-            last_source_commit: last_commit_for_path(&self.ctx, &skill_rel).ok().flatten(),
-        };
+        let version = skill_eval_version(&self.ctx, &args.skill);
 
         let runs = agents
             .iter()
@@ -104,16 +127,24 @@ impl App {
     }
 }
 
+pub(crate) fn skill_eval_version(ctx: &crate::state::AppContext, skill: &str) -> SkillEvalVersion {
+    let skill_rel = format!("skills/{skill}");
+    SkillEvalVersion {
+        head_tree_oid: head_tree_oid_for_path(ctx, &skill_rel).ok().flatten(),
+        last_source_commit: last_commit_for_path(ctx, &skill_rel).ok().flatten(),
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
-struct SkillEvalVersion {
-    head_tree_oid: Option<String>,
-    last_source_commit: Option<String>,
+pub(crate) struct SkillEvalVersion {
+    pub(crate) head_tree_oid: Option<String>,
+    pub(crate) last_source_commit: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
-struct TriggerCase {
+pub(crate) struct TriggerCase {
     #[serde(default)]
-    id: Option<String>,
+    pub(crate) id: Option<String>,
     #[serde(default, alias = "prompt", alias = "text")]
     input: Option<String>,
     #[serde(default)]
@@ -131,42 +162,42 @@ struct TriggerCase {
 }
 
 #[derive(Debug, Deserialize)]
-struct TaskCase {
+pub(crate) struct TaskCase {
     #[serde(default)]
     id: Option<String>,
-    #[serde(default, alias = "input")]
-    task: Option<String>,
+    #[serde(default, alias = "input", alias = "prompt")]
+    pub(crate) task: Option<String>,
     #[serde(default)]
-    output: String,
+    pub(crate) output: String,
     #[serde(default)]
-    trace: Vec<String>,
+    pub(crate) trace: Vec<String>,
     #[serde(default)]
-    metrics: TaskMetrics,
+    pub(crate) metrics: TaskMetrics,
     #[serde(default)]
-    permissions_used: Vec<String>,
+    pub(crate) permissions_used: Vec<String>,
     #[serde(default)]
-    checks: TaskChecks,
+    pub(crate) checks: TaskChecks,
 }
 
 #[derive(Debug, Default, Clone, Deserialize, Serialize)]
-struct TaskMetrics {
-    tokens: Option<u64>,
-    commands: Option<u64>,
-    duration_ms: Option<u64>,
+pub(crate) struct TaskMetrics {
+    pub(crate) tokens: Option<u64>,
+    pub(crate) commands: Option<u64>,
+    pub(crate) duration_ms: Option<u64>,
 }
 
 #[derive(Debug, Default, Deserialize)]
-struct TaskChecks {
+pub(crate) struct TaskChecks {
     #[serde(default)]
-    outcome_contains: Vec<String>,
+    pub(crate) outcome_contains: Vec<String>,
     #[serde(default)]
-    process_contains: Vec<String>,
+    pub(crate) process_contains: Vec<String>,
     #[serde(default)]
-    style_contains: Vec<String>,
+    pub(crate) style_contains: Vec<String>,
     #[serde(default)]
-    max_tokens: Option<u64>,
+    pub(crate) max_tokens: Option<u64>,
     #[serde(default)]
-    max_commands: Option<u64>,
+    pub(crate) max_commands: Option<u64>,
     #[serde(default)]
     artifacts: Vec<ArtifactCheck>,
 }
@@ -179,46 +210,46 @@ struct ArtifactCheck {
 }
 
 #[derive(Debug)]
-struct JsonlRecord<T> {
-    line: usize,
-    value: T,
+pub(crate) struct JsonlRecord<T> {
+    pub(crate) line: usize,
+    pub(crate) value: T,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
-enum EvalStatus {
+pub(crate) enum EvalStatus {
     Passed,
     Failed,
     Skipped,
 }
 
 #[derive(Debug, Serialize)]
-struct EvalRun {
-    agent: String,
-    model: Option<String>,
-    mode: &'static str,
-    summary: EvalSummary,
-    triggers: Vec<TriggerResult>,
-    tasks: Vec<TaskResult>,
+pub(crate) struct EvalRun {
+    pub(crate) agent: String,
+    pub(crate) model: Option<String>,
+    pub(crate) mode: &'static str,
+    pub(crate) summary: EvalSummary,
+    pub(crate) triggers: Vec<TriggerResult>,
+    pub(crate) tasks: Vec<TaskResult>,
 }
 
 #[derive(Debug, Default, Clone, Serialize)]
-struct EvalSummary {
-    case_count: usize,
-    passed: usize,
-    failed: usize,
-    skipped: usize,
-    aggregate_score: Option<f64>,
-    trigger_precision: Option<f64>,
-    trigger_recall: Option<f64>,
-    task_success_rate: Option<f64>,
-    token_count: u64,
-    command_count: u64,
-    permissions_used: Vec<String>,
+pub(crate) struct EvalSummary {
+    pub(crate) case_count: usize,
+    pub(crate) passed: usize,
+    pub(crate) failed: usize,
+    pub(crate) skipped: usize,
+    pub(crate) aggregate_score: Option<f64>,
+    pub(crate) trigger_precision: Option<f64>,
+    pub(crate) trigger_recall: Option<f64>,
+    pub(crate) task_success_rate: Option<f64>,
+    pub(crate) token_count: u64,
+    pub(crate) command_count: u64,
+    pub(crate) permissions_used: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
-struct TriggerResult {
+pub(crate) struct TriggerResult {
     id: String,
     line: usize,
     prompt: String,
@@ -230,7 +261,7 @@ struct TriggerResult {
 }
 
 #[derive(Debug, Serialize)]
-struct TaskResult {
+pub(crate) struct TaskResult {
     id: String,
     line: usize,
     task: String,
@@ -243,14 +274,14 @@ struct TaskResult {
 }
 
 #[derive(Debug, Serialize)]
-struct CheckResult {
+pub(crate) struct CheckResult {
     id: String,
     status: EvalStatus,
     message: String,
     details: Value,
 }
 
-fn eval_agents(args: &SkillEvalArgs) -> std::result::Result<Vec<String>, CommandFailure> {
+fn eval_agents(args: &SkillEvalOfflineArgs) -> std::result::Result<Vec<String>, CommandFailure> {
     if args.agent.is_some() && !args.matrix.is_empty() {
         return Err(CommandFailure::new(
             ErrorCode::ArgInvalid,

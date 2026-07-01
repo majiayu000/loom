@@ -5,10 +5,10 @@ use std::fs;
 use std::path::Path;
 use std::process::Command;
 
-use serde_json::Value;
+use serde_json::{Value, json};
 
 use common::actions::{binding_add, save_skill, skill_project, target_add};
-use common::{TestDir, run_loom, write_minimal_registry_state, write_skill};
+use common::{TestDir, run_loom, write_file, write_minimal_registry_state, write_skill};
 
 fn good_skill_body(name: &str) -> String {
     format!(
@@ -104,6 +104,21 @@ fn has_runtime_finding(runtime: &Value, id: &str) -> bool {
         .any(|finding| finding["id"] == Value::String(id.to_string()))
 }
 
+fn git_init(path: &Path) {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(path)
+        .arg("init")
+        .output()
+        .expect("run git init");
+    assert!(
+        output.status.success(),
+        "git init failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
 #[test]
 fn skill_inspect_missing_skill_returns_typed_error() {
     let root = TestDir::new("skill-inspect-missing");
@@ -163,6 +178,39 @@ fn skill_inspect_source_only_reports_registry_install_without_projection() {
                 .is_some_and(|text| text.contains("skill eval demo"))),
         "missing eval evidence should produce an eval action: {env}"
     );
+}
+
+#[test]
+fn skill_inspect_handles_unborn_git_repo_without_head() {
+    let root = TestDir::new("skill-inspect-unborn-git");
+    write_good_skill(root.path(), "demo");
+    git_init(root.path());
+
+    let (output, env) = run_loom(root.path(), &["skill", "inspect", "demo"]);
+
+    assert!(output.status.success(), "inspect should pass: {env}");
+    assert_eq!(
+        env["data"]["source"]["working_tree_drift"],
+        Value::Bool(false)
+    );
+    assert_eq!(env["data"]["source"]["last_source_commit"], Value::Null);
+}
+
+#[test]
+fn skill_inspect_populates_recorded_provenance() {
+    let root = TestDir::new("skill-inspect-provenance");
+    let source = TestDir::new("skill-inspect-provenance-source");
+    write_file(&source.path().join("SKILL.md"), &good_skill_body("demo"));
+    let source_arg = source.path().to_str().expect("source path");
+    let (output, env) = run_loom(root.path(), &["skill", "add", source_arg, "--name", "demo"]);
+    assert!(output.status.success(), "skill add should pass: {env}");
+
+    let (output, env) = run_loom(root.path(), &["skill", "inspect", "demo"]);
+
+    assert!(output.status.success(), "inspect should pass: {env}");
+    assert_eq!(env["data"]["provenance"]["source"], json!(source_arg));
+    assert_eq!(env["data"]["provenance"]["verified"], Value::Bool(true));
+    assert_eq!(env["data"]["provenance"]["drift"], Value::Bool(false));
 }
 
 #[test]
@@ -257,6 +305,29 @@ fn skill_inspect_projected_source_separates_rule_projection_and_visibility() {
 }
 
 #[test]
+fn skill_inspect_path_prefix_requires_component_boundary() {
+    let (root, _) = setup_projected_skill();
+
+    let (output, env) = run_loom(
+        root.path(),
+        &[
+            "skill",
+            "inspect",
+            "model-onboarding",
+            "--agent",
+            "claude",
+            "--workspace",
+            "/tmp/project-a2/src",
+        ],
+    );
+
+    assert!(output.status.success(), "inspect should pass: {env}");
+    let claude = &env["data"]["runtime"]["claude"];
+    assert_eq!(claude["active_rule_present"], Value::Bool(false));
+    assert_eq!(claude["projected_to_target"], Value::Bool(false));
+}
+
+#[test]
 fn skill_inspect_reports_missing_materialized_projection_path() {
     let (root, _) = setup_projected_skill();
     fs::remove_file(root.path().join("live/claude-project-a/model-onboarding"))
@@ -274,6 +345,34 @@ fn skill_inspect_reports_missing_materialized_projection_path() {
     assert!(
         has_runtime_finding(claude, "materialized_path_missing"),
         "missing projection path should be explained: {env}"
+    );
+}
+
+#[test]
+fn skill_inspect_reports_projection_with_missing_target() {
+    let (root, _) = setup_projected_skill();
+    let targets_path = root.path().join("state/registry/targets.json");
+    let mut targets: Value =
+        serde_json::from_str(&fs::read_to_string(&targets_path).expect("read targets"))
+            .expect("parse targets");
+    targets["targets"] = Value::Array(Vec::new());
+    fs::write(
+        &targets_path,
+        serde_json::to_string_pretty(&targets).expect("serialize targets"),
+    )
+    .expect("write targets");
+
+    let (output, env) = run_loom(
+        root.path(),
+        &["skill", "inspect", "model-onboarding", "--agent", "claude"],
+    );
+
+    assert!(output.status.success(), "inspect should pass: {env}");
+    let claude = &env["data"]["runtime"]["claude"];
+    assert_eq!(claude["projected_to_target"], Value::Bool(true));
+    assert!(
+        has_runtime_finding(claude, "target_missing"),
+        "missing target should be explained: {env}"
     );
 }
 
@@ -355,5 +454,34 @@ fn skill_inspect_reports_broken_symlink_projection() {
     assert!(
         has_runtime_finding(claude, "broken_symlink"),
         "dangling symlink should be explained: {env}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn skill_inspect_reports_projection_symlink_to_wrong_source() {
+    let (root, _) = setup_projected_skill();
+    let wrong_source = root.path().join("wrong-source");
+    fs::create_dir_all(&wrong_source).expect("create wrong source");
+    fs::write(
+        wrong_source.join("SKILL.md"),
+        good_skill_body("wrong-source"),
+    )
+    .expect("write wrong source");
+    let projection = root.path().join("live/claude-project-a/model-onboarding");
+    fs::remove_file(&projection).expect("remove original projection");
+    std::os::unix::fs::symlink(&wrong_source, &projection).expect("create wrong symlink");
+
+    let (output, env) = run_loom(
+        root.path(),
+        &["skill", "inspect", "model-onboarding", "--agent", "claude"],
+    );
+
+    assert!(output.status.success(), "inspect should pass: {env}");
+    let claude = &env["data"]["runtime"]["claude"];
+    assert_eq!(claude["materialized_path_exists"], Value::Bool(true));
+    assert!(
+        has_runtime_finding(claude, "projection_source_mismatch"),
+        "wrong symlink target should be explained: {env}"
     );
 }

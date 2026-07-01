@@ -15,7 +15,8 @@ use crate::state_model::{
 };
 use crate::types::ErrorCode;
 
-use super::helpers::{map_arg, map_git, map_registry_state, validate_skill_name};
+use super::helpers::{map_arg, map_git, map_io, map_registry_state, validate_skill_name};
+use super::provenance::{provenance_digest_status, provenance_record_status};
 use super::skill_verify::{
     drifted_paths_under, head_tree_oid_for_path, last_commit_for_path, last_saved_commit_for_skill,
 };
@@ -145,7 +146,14 @@ impl App {
 
         let source = build_source_status(&self.ctx, &args.skill, &skill_path, source_exists)?;
         let spec = build_spec_status(&self.ctx.root, &args.skill, &skill_path, source_exists);
-        let runtime = build_runtime_status(&args.skill, source_exists, snapshot.as_ref(), selector);
+        let provenance = build_provenance_status(&self.ctx, &args.skill, source_exists)?;
+        let runtime = build_runtime_status(
+            &args.skill,
+            &skill_path,
+            source_exists,
+            snapshot.as_ref(),
+            selector,
+        );
         let mut next_actions = build_next_actions(&args.skill, &spec, &runtime, source_exists);
 
         if spec.findings.iter().any(|finding| {
@@ -168,12 +176,7 @@ impl App {
                 skill: args.skill.clone(),
                 source,
                 spec,
-                provenance: ProvenanceStatus {
-                    source: None,
-                    pinned_ref: None,
-                    verified: None,
-                    drift: None,
-                },
+                provenance,
                 runtime,
                 quality: QualityStatus {
                     last_eval: None,
@@ -240,6 +243,16 @@ fn source_git_status(
             drifted_paths: Vec::new(),
         });
     }
+    if !gitops::run_git_allow_failure(ctx, &["rev-parse", "--verify", "HEAD"])?
+        .status
+        .success()
+    {
+        return Ok(SourceGitStatus {
+            head_tree_oid: None,
+            last_source_commit: None,
+            drifted_paths: Vec::new(),
+        });
+    }
     let skill_rel = format!("skills/{skill}");
     let head_tree_oid = head_tree_oid_for_path(ctx, &skill_rel)?;
     let last_source_commit = last_saved_commit_for_skill(ctx, skill)?
@@ -299,8 +312,35 @@ fn build_spec_status(
     }
 }
 
+fn build_provenance_status(
+    ctx: &AppContext,
+    skill: &str,
+    source_exists: bool,
+) -> std::result::Result<ProvenanceStatus, CommandFailure> {
+    let record = provenance_record_status(ctx, skill).map_err(map_io)?;
+    let digest = if source_exists {
+        provenance_digest_status(ctx, skill)?
+    } else {
+        None
+    };
+    let pinned_ref = record.as_ref().and_then(|record| {
+        record
+            .source
+            .requested_ref
+            .clone()
+            .or_else(|| record.source.resolved_commit.clone())
+    });
+    Ok(ProvenanceStatus {
+        source: record.as_ref().map(|record| record.source.locator.clone()),
+        pinned_ref,
+        verified: digest.as_ref().map(|status| status.matches),
+        drift: digest.as_ref().map(|status| !status.matches),
+    })
+}
+
 fn build_runtime_status(
     skill: &str,
+    skill_path: &Path,
     source_exists: bool,
     snapshot: Option<&RegistrySnapshot>,
     selector: Selector<'_>,
@@ -309,7 +349,14 @@ fn build_runtime_status(
     agents
         .into_iter()
         .map(|agent| {
-            let status = classify_agent_runtime(skill, &agent, source_exists, snapshot, &selector);
+            let status = classify_agent_runtime(
+                skill,
+                skill_path,
+                &agent,
+                source_exists,
+                snapshot,
+                &selector,
+            );
             (agent, status)
         })
         .collect()
@@ -357,6 +404,7 @@ fn runtime_agents(
 
 fn classify_agent_runtime(
     skill: &str,
+    skill_path: &Path,
     agent: &str,
     source_exists: bool,
     snapshot: Option<&RegistrySnapshot>,
@@ -401,6 +449,7 @@ fn classify_agent_runtime(
         primary_projection.map(|projection| projection.materialized_path.clone());
     let mut findings = runtime_findings(
         source_exists,
+        skill_path,
         snapshot,
         primary_rule,
         primary_projection,
@@ -475,10 +524,18 @@ fn matching_projections<'a>(
         .projections
         .iter()
         .filter(|projection| {
+            let projection_agent = snapshot
+                .target(&projection.target_id)
+                .map(|target| target.agent.as_str())
+                .or_else(|| {
+                    projection
+                        .binding_id
+                        .as_deref()
+                        .and_then(|binding_id| snapshot.binding(binding_id))
+                        .map(|binding| binding.agent.as_str())
+                });
             projection.skill_id == skill
-                && snapshot
-                    .target(&projection.target_id)
-                    .is_some_and(|target| target.agent == agent)
+                && projection_agent.is_none_or(|projection_agent| projection_agent == agent)
                 && binding_matches(
                     projection
                         .binding_id
@@ -519,7 +576,7 @@ fn binding_matches(binding: Option<&RegistryWorkspaceBinding>, selector: &Select
     let workspace = workspace.to_string_lossy();
     let matcher = &binding.workspace_matcher;
     match matcher.kind.as_str() {
-        "path_prefix" => workspace.starts_with(&matcher.value),
+        "path_prefix" => Path::new(workspace.as_ref()).starts_with(Path::new(&matcher.value)),
         "exact_path" => workspace == matcher.value,
         "name" => {
             Path::new(workspace.as_ref())
@@ -533,6 +590,7 @@ fn binding_matches(binding: Option<&RegistryWorkspaceBinding>, selector: &Select
 
 fn runtime_findings(
     source_exists: bool,
+    skill_path: &Path,
     snapshot: &RegistrySnapshot,
     primary_rule: Option<&&RegistryBindingRule>,
     _primary_projection: Option<&&RegistryProjectionInstance>,
@@ -602,28 +660,48 @@ fn runtime_findings(
                 Some(format!("loom skill diagnose {}", projection.skill_id)),
             ));
         }
-        inspect_materialized_path(projection, &mut findings);
+        inspect_materialized_path(projection, skill_path, source_exists, &mut findings);
     }
     findings
 }
 
 fn inspect_materialized_path(
     projection: &RegistryProjectionInstance,
+    skill_path: &Path,
+    source_exists: bool,
     findings: &mut Vec<StatusFinding>,
 ) {
     let path = PathBuf::from(&projection.materialized_path);
     match fs::symlink_metadata(&path) {
         Ok(metadata) => {
-            if metadata.file_type().is_symlink() && fs::metadata(&path).is_err() {
-                findings.push(finding(
-                    "broken_symlink",
-                    "error",
-                    "projection path is a symlink whose target is missing",
-                    Some(format!(
-                        "loom skill project {} --binding <binding-id>",
-                        projection.skill_id
+            if metadata.file_type().is_symlink() {
+                match fs::canonicalize(&path) {
+                    Ok(actual) => {
+                        if source_exists
+                            && let Ok(expected) = fs::canonicalize(skill_path)
+                            && actual != expected
+                        {
+                            findings.push(finding(
+                                "projection_source_mismatch",
+                                "error",
+                                "projection symlink points to a different source path",
+                                Some(format!(
+                                    "loom skill project {} --binding <binding-id>",
+                                    projection.skill_id
+                                )),
+                            ));
+                        }
+                    }
+                    Err(_) => findings.push(finding(
+                        "broken_symlink",
+                        "error",
+                        "projection path is a symlink whose target is missing",
+                        Some(format!(
+                            "loom skill project {} --binding <binding-id>",
+                            projection.skill_id
+                        )),
                     )),
-                ));
+                }
             }
         }
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => findings.push(finding(

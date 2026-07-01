@@ -8,6 +8,7 @@ mod eval;
 mod plan_flow;
 mod policy;
 mod provenance;
+mod skill_inspect_args;
 mod skill_lint_args;
 mod skill_new_args;
 mod skillset;
@@ -17,6 +18,7 @@ pub use eval::SkillEvalArgs;
 pub use plan_flow::{ApplyArgs, PlanCommand, PlanUseArgs};
 pub use policy::SkillPolicyArgs;
 pub use provenance::{AddArgs, SkillProvenanceCommand};
+pub use skill_inspect_args::SkillInspectArgs;
 pub use skill_lint_args::SkillLintArgs;
 pub use skill_new_args::{SkillNewArgs, SkillNewTemplate};
 pub use skillset::{
@@ -220,6 +222,8 @@ pub enum SkillCommand {
     List,
     #[command(about = "Show one skill from the inventory read model")]
     Show(SkillOnlyArgs),
+    #[command(about = "Inspect one skill lifecycle status without mutating state")]
+    Inspect(SkillInspectArgs),
     #[command(about = "Search skills with deterministic lexical scoring")]
     Search(SkillSearchArgs),
     #[command(about = "Resolve a task description to candidate skills without invoking an LLM")]

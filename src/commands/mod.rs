@@ -15,6 +15,7 @@ mod skill_diagnose;
 #[cfg(test)]
 mod skill_diagnose_tests;
 mod skill_eval;
+mod skill_inspect;
 mod skill_inventory;
 mod skill_lint;
 mod skill_new;
@@ -45,7 +46,9 @@ use crate::types::ErrorCode;
 pub(crate) use event_store::redact_sensitive_string;
 pub use projections::collect_skill_inventory;
 pub(crate) use skill_inventory::build_skill_read_model;
-pub(crate) use skill_lint::{SkillLintMode, SkillLintReport, lint_skill_source};
+pub(crate) use skill_lint::{
+    SkillLintMode, SkillLintReport, lint_skill_source, lint_skill_source_for_agent,
+};
 
 use event_store::{
     append_command_audit_failure, append_command_finished, append_command_started,
@@ -229,6 +232,7 @@ impl App {
                 } => self.cmd_skill_trash_purge(args, &request_id),
                 SkillCommand::List => self.cmd_skill_list(),
                 SkillCommand::Show(args) => self.cmd_skill_show(args),
+                SkillCommand::Inspect(args) => self.cmd_skill_inspect(args),
                 SkillCommand::Search(args) => self.cmd_skill_search(args),
                 SkillCommand::Resolve(args) => self.cmd_skill_resolve(args),
                 SkillCommand::New(args) => self.cmd_skill_new(args, &request_id),
@@ -390,6 +394,7 @@ fn command_records_audit(command: &Command) -> bool {
                 command: SkillCommand::History(_)
                     | SkillCommand::List
                     | SkillCommand::Show(_)
+                    | SkillCommand::Inspect(_)
                     | SkillCommand::Search(_)
                     | SkillCommand::Resolve(_)
                     | SkillCommand::Lint(_)
@@ -452,6 +457,7 @@ fn command_requires_durable_audit(command: &Command) -> bool {
             | SkillCommand::History(_)
             | SkillCommand::List
             | SkillCommand::Show(_)
+            | SkillCommand::Inspect(_)
             | SkillCommand::Search(_)
             | SkillCommand::Resolve(_)
             | SkillCommand::Lint(_)

@@ -123,6 +123,7 @@ fn cli_contract_docs_track_current_surface() {
         "loom apply",
         "loom skill list",
         "loom skill show",
+        "loom skill inspect",
         "loom skill search",
         "loom skill resolve",
         "loom skill history",
@@ -145,6 +146,7 @@ fn cli_contract_docs_track_current_surface() {
 
     for command in [
         "skill add <path|git-url|github:owner/repo//subdir>",
+        "skill inspect",
         "skill provenance inspect",
         "skill provenance verify",
         "skill provenance refresh",

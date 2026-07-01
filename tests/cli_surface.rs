@@ -3,7 +3,7 @@ use std::process::Command;
 
 mod common;
 
-use common::TestDir;
+use common::{TestDir, run_loom_with_env, write_skill};
 
 #[test]
 fn top_level_help_describes_command_groups() {
@@ -174,6 +174,48 @@ fn cli_contract_docs_track_current_surface() {
             "CLI contract missing provenance surface {command}"
         );
     }
+}
+
+#[test]
+fn use_codex_project_default_comes_from_adapter_metadata() {
+    let root = TestDir::new("cli-use-codex-adapter-root");
+    let workspace = TestDir::new("cli-use-codex-workspace");
+    let fake_home = TestDir::new("cli-use-codex-home");
+    write_skill(
+        root.path(),
+        "demo",
+        "---\nname: demo\ndescription: Use when testing adapter-driven target roots.\n---\n# Demo\n",
+    );
+
+    let home_str = fake_home.path().to_string_lossy().into_owned();
+    let workspace_str = workspace.path().to_string_lossy().into_owned();
+    let (output, env) = run_loom_with_env(
+        root.path(),
+        &[("HOME", &home_str)],
+        &[
+            "use",
+            "demo",
+            "--agents",
+            "codex",
+            "--workspace",
+            &workspace_str,
+        ],
+    );
+
+    assert!(
+        output.status.success(),
+        "loom use failed: stderr={} stdout={}",
+        String::from_utf8_lossy(&output.stderr),
+        String::from_utf8_lossy(&output.stdout)
+    );
+    assert_eq!(
+        env["data"]["steps"][0]["target_path"],
+        workspace
+            .path()
+            .join(".agents/skills")
+            .display()
+            .to_string()
+    );
 }
 
 #[test]

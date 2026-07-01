@@ -2,11 +2,13 @@ use std::path::{Path, PathBuf};
 
 use serde_json::{Value, json};
 
+use crate::agent_adapters::{SOURCE_BUILT_IN, load_agent_adapters, preferred_discovery_root};
 use crate::cli::{
     BindingAddArgs, ProjectArgs, TargetAddArgs, TargetCommand, TargetOwnership, UseArgs, UseScope,
     WorkspaceBindingCommand, WorkspaceMatcherKind,
 };
 use crate::envelope::Meta;
+use crate::state::AppContext;
 use crate::types::ErrorCode;
 
 use super::helpers::{
@@ -35,7 +37,7 @@ impl App {
             .iter()
             .map(|agent| {
                 let agent_name = agent_kind_as_str(*agent);
-                let target_path = target_path_for(&self.ctx.root, args, agent_name)?;
+                let target_path = target_path_for(&self.ctx, args, agent_name, &workspace)?;
                 Ok(json!({
                     "agent": agent_name,
                     "scope": use_scope_as_str(args.scope),
@@ -73,7 +75,7 @@ impl App {
         let mut warnings = Vec::new();
         for agent in &args.agents {
             let agent_name = agent_kind_as_str(*agent);
-            let target_path = target_path_for(&self.ctx.root, args, agent_name)?;
+            let target_path = target_path_for(&self.ctx, args, agent_name, &workspace)?;
             let target_result = self.cmd_target(
                 &TargetCommand::Add(TargetAddArgs {
                     agent: *agent,
@@ -192,14 +194,26 @@ fn use_workspace(args: &UseArgs) -> std::result::Result<PathBuf, CommandFailure>
 }
 
 fn target_path_for(
-    root: &Path,
+    ctx: &AppContext,
     args: &UseArgs,
     agent: &str,
+    workspace: &Path,
 ) -> std::result::Result<PathBuf, CommandFailure> {
-    let base = args
-        .target_root
-        .clone()
-        .unwrap_or_else(|| root.join("targets").join(use_scope_as_str(args.scope)));
+    if let Some(target_root) = args.target_root.clone() {
+        return Ok(absolute_path(&target_root).join(agent).join("skills"));
+    }
+    let scope = use_scope_as_str(args.scope);
+    let adapters = load_agent_adapters(ctx)?;
+    if let Some(adapter) = adapters.adapter_for_agent(agent)
+        && adapter.has_discovery_root_for_scope(scope)
+    {
+        match preferred_discovery_root(adapter, scope, workspace) {
+            Ok(root) => return Ok(absolute_path(&root.path)),
+            Err(_err) if adapter.source == SOURCE_BUILT_IN => {}
+            Err(err) => return Err(err),
+        }
+    }
+    let base = ctx.root.join("targets").join(scope);
     Ok(absolute_path(&base).join(agent).join("skills"))
 }
 

@@ -10,13 +10,25 @@ use crate::state::{AppContext, home_dir, resolve_agent_skill_dirs};
 use crate::state_model::RegistryProjectionTarget;
 use crate::types::ErrorCode;
 
-pub(crate) const ADAPTER_API_VERSION: &str = "1";
+mod metadata;
+
+use metadata::{
+    adapter_json_invalid, built_in_discovery_roots, built_in_reload, built_in_visibility,
+    default_scan_eligible, default_visibility, discovery_root_json, external_discovery_root,
+    external_visibility, reload_from_capability, reload_json, resolve_root_template, role_rank,
+    v1_discovery_roots, validate_discovery_root, validate_visibility, visibility_json,
+};
+
+pub(crate) const ADAPTER_API_V1: &str = "1";
+pub(crate) const ADAPTER_API_V2: &str = "2";
+pub(crate) const ADAPTER_API_VERSION: &str = ADAPTER_API_V2;
 pub(crate) const SOURCE_BUILT_IN: &str = "built-in";
 pub(crate) const SOURCE_EXTERNAL: &str = "external";
 pub(crate) const SOURCE_UNKNOWN: &str = "unknown";
 
 #[derive(Debug, Clone)]
 pub(crate) struct AgentAdapter {
+    pub adapter_api: String,
     pub id: String,
     pub source: String,
     pub supported_scopes: Vec<String>,
@@ -24,7 +36,16 @@ pub(crate) struct AgentAdapter {
     pub skill_entrypoint: String,
     pub capabilities: AdapterCapabilities,
     pub default_skill_dirs: Vec<PathBuf>,
+    pub discovery_roots: Vec<AdapterDiscoveryRoot>,
+    pub visibility: AdapterVisibility,
+    pub reload: AdapterReload,
     pub config_path: Option<PathBuf>,
+}
+
+impl AgentAdapter {
+    pub(crate) fn has_discovery_root_for_scope(&self, scope: &str) -> bool {
+        self.discovery_roots.iter().any(|root| root.scope == scope)
+    }
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -38,6 +59,38 @@ pub(crate) struct AdapterCapabilities {
 }
 
 #[derive(Debug, Clone)]
+pub(crate) struct AdapterDiscoveryRoot {
+    pub scope: String,
+    pub path_template: String,
+    pub role: String,
+    pub source_env_var: Option<String>,
+    pub priority: Option<u32>,
+    pub scan_eligible: bool,
+    pub available: bool,
+    pub unavailable_reason: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct AdapterVisibility {
+    pub follows_symlink_dirs: bool,
+    pub identity_by_projection_method: BTreeMap<String, String>,
+    pub config_file: Option<String>,
+    pub disable_rules: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct AdapterReload {
+    pub strategy: String,
+    pub hot_reload: bool,
+    pub notes: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct ResolvedDiscoveryRoot {
+    pub path: PathBuf,
+}
+
+#[derive(Debug, Clone)]
 pub(crate) struct AgentAdapterRegistry {
     adapters: Vec<AgentAdapter>,
     by_id: BTreeMap<String, AgentAdapter>,
@@ -45,7 +98,15 @@ pub(crate) struct AgentAdapterRegistry {
 }
 
 #[derive(Debug, Deserialize)]
-struct ExternalAdapterRecord {
+struct AdapterApiProbe {
+    adapter_api: String,
+    #[serde(default)]
+    id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ExternalAdapterV1Record {
     adapter_api: String,
     id: String,
     supported_scopes: Vec<String>,
@@ -56,6 +117,61 @@ struct ExternalAdapterRecord {
     default_skill_dirs: Vec<String>,
     #[serde(default)]
     health_checks: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ExternalAdapterV2Record {
+    adapter_api: String,
+    id: String,
+    supported_scopes: Vec<String>,
+    projection_methods: Vec<String>,
+    skill_entrypoint: String,
+    capabilities: AdapterCapabilities,
+    discovery_roots: Vec<ExternalDiscoveryRootRecord>,
+    visibility: ExternalVisibilityRecord,
+    reload: ExternalReloadRecord,
+    #[serde(default)]
+    health_checks: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ExternalDiscoveryRootRecord {
+    scope: String,
+    #[serde(alias = "path")]
+    path_template: String,
+    role: String,
+    #[serde(default)]
+    source_env_var: Option<String>,
+    #[serde(default)]
+    priority: Option<u32>,
+    #[serde(default = "default_scan_eligible")]
+    scan_eligible: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ExternalVisibilityRecord {
+    #[serde(default)]
+    follows_symlink_dirs: bool,
+    #[serde(default)]
+    identity_by_projection_method: BTreeMap<String, String>,
+    #[serde(default)]
+    identity: Option<String>,
+    #[serde(default)]
+    config_file: Option<String>,
+    #[serde(default)]
+    disable_rules: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ExternalReloadRecord {
+    strategy: String,
+    hot_reload: bool,
+    #[serde(default)]
+    notes: Option<String>,
 }
 
 pub(crate) fn load_agent_adapters(
@@ -131,6 +247,10 @@ impl AgentAdapterRegistry {
             .unwrap_or(SOURCE_UNKNOWN)
     }
 
+    pub(crate) fn adapter_for_agent(&self, agent: &str) -> Option<&AgentAdapter> {
+        self.by_id.get(agent)
+    }
+
     pub(crate) fn config_locations(&self) -> &[Value] {
         &self.config_locations
     }
@@ -141,6 +261,7 @@ impl AgentAdapterRegistry {
             .map(|adapter| {
                 json!({
                     "adapter_api": ADAPTER_API_VERSION,
+                    "declared_adapter_api": adapter.adapter_api,
                     "id": adapter.id,
                     "source": adapter.source,
                     "supported_scopes": adapter.supported_scopes,
@@ -152,11 +273,47 @@ impl AgentAdapterRegistry {
                         "reload_required": adapter.capabilities.reload_required,
                     },
                     "default_skill_dirs": adapter.default_skill_dirs.iter().map(|path| path.display().to_string()).collect::<Vec<_>>(),
+                    "discovery_roots": adapter.discovery_roots.iter().map(discovery_root_json).collect::<Vec<_>>(),
+                    "visibility": visibility_json(&adapter.visibility),
+                    "reload": reload_json(&adapter.reload),
                     "config_path": adapter.config_path.as_ref().map(|path| path.display().to_string()),
                 })
             })
             .collect()
     }
+}
+
+pub(crate) fn preferred_discovery_root(
+    adapter: &AgentAdapter,
+    scope: &str,
+    workspace: &Path,
+) -> std::result::Result<ResolvedDiscoveryRoot, CommandFailure> {
+    let mut candidates = adapter
+        .discovery_roots
+        .iter()
+        .filter(|root| root.scope == scope && root.available)
+        .cloned()
+        .collect::<Vec<_>>();
+    if candidates.is_empty() {
+        return Err(adapter_failure(
+            format!(
+                "adapter '{}' does not declare an available discovery root for scope '{}'",
+                adapter.id, scope
+            ),
+            "ADAPTER_DISCOVERY_ROOT_MISSING",
+            adapter.config_path.as_deref(),
+        ));
+    }
+    candidates.sort_by_key(|root| {
+        (
+            role_rank(&root.role, scope),
+            root.priority.unwrap_or(u32::MAX),
+            root.path_template.clone(),
+        )
+    });
+    let root = candidates.remove(0);
+    let path = resolve_root_template(&root.path_template, workspace)?;
+    Ok(ResolvedDiscoveryRoot { path })
 }
 
 pub(crate) fn decorate_target_for_output(
@@ -205,6 +362,7 @@ fn built_in_adapters(root: &Path, home: Option<&Path>) -> Vec<AgentAdapter> {
     built_in_agent_specs()
         .into_iter()
         .map(|id| AgentAdapter {
+            adapter_api: ADAPTER_API_V2.to_string(),
             id: id.to_string(),
             source: SOURCE_BUILT_IN.to_string(),
             supported_scopes: vec!["user".to_string(), "project".to_string()],
@@ -220,6 +378,9 @@ fn built_in_adapters(root: &Path, home: Option<&Path>) -> Vec<AgentAdapter> {
                 reload_required: false,
             },
             default_skill_dirs: dirs_by_agent.get(id).cloned().unwrap_or_default(),
+            discovery_roots: built_in_discovery_roots(id, dirs_by_agent.get(id), home),
+            visibility: built_in_visibility(id),
+            reload: built_in_reload(id),
             config_path: None,
         })
         .collect()
@@ -245,20 +406,45 @@ fn load_external_adapter(
     home: Option<&Path>,
 ) -> std::result::Result<AgentAdapter, CommandFailure> {
     let raw = fs::read_to_string(path).map_err(|err| adapter_io_failure(path, err))?;
-    let record = serde_json::from_str::<ExternalAdapterRecord>(&raw).map_err(|err| {
+    let probe = serde_json::from_str::<AdapterApiProbe>(&raw).map_err(|err| {
         adapter_failure(
             format!("adapter config '{}' is invalid JSON: {err}", path.display()),
             "ADAPTER_JSON_INVALID",
             Some(path),
         )
     })?;
-    validate_external_record(&record, path)?;
+    match probe.adapter_api.as_str() {
+        ADAPTER_API_V1 => load_external_adapter_v1(&raw, path, home),
+        ADAPTER_API_V2 => load_external_adapter_v2(&raw, path, home),
+        _ => Err(adapter_failure(
+            format!(
+                "adapter '{}' uses unsupported adapter_api '{}'",
+                probe.id.as_deref().unwrap_or("<unknown>"),
+                probe.adapter_api
+            ),
+            "ADAPTER_API_UNSUPPORTED",
+            Some(path),
+        )),
+    }
+}
+
+fn load_external_adapter_v1(
+    raw: &str,
+    path: &Path,
+    home: Option<&Path>,
+) -> std::result::Result<AgentAdapter, CommandFailure> {
+    let record = serde_json::from_str::<ExternalAdapterV1Record>(raw)
+        .map_err(|err| adapter_json_invalid(path, err))?;
+    validate_external_v1_record(&record, path)?;
     let default_skill_dirs = record
         .default_skill_dirs
         .iter()
         .map(|raw| expand_adapter_path(raw, home, path))
         .collect::<std::result::Result<Vec<_>, _>>()?;
+    let discovery_roots = v1_discovery_roots(&record, &default_skill_dirs);
+    let reload_required = record.capabilities.reload_required;
     Ok(AgentAdapter {
+        adapter_api: ADAPTER_API_V1.to_string(),
         id: record.id,
         source: SOURCE_EXTERNAL.to_string(),
         supported_scopes: record.supported_scopes,
@@ -266,15 +452,56 @@ fn load_external_adapter(
         skill_entrypoint: record.skill_entrypoint,
         capabilities: record.capabilities,
         default_skill_dirs,
+        discovery_roots,
+        visibility: default_visibility(),
+        reload: reload_from_capability(reload_required),
         config_path: Some(path.to_path_buf()),
     })
 }
 
-fn validate_external_record(
-    record: &ExternalAdapterRecord,
+fn load_external_adapter_v2(
+    raw: &str,
+    path: &Path,
+    home: Option<&Path>,
+) -> std::result::Result<AgentAdapter, CommandFailure> {
+    let record = serde_json::from_str::<ExternalAdapterV2Record>(raw)
+        .map_err(|err| adapter_json_invalid(path, err))?;
+    validate_external_v2_record(&record, path)?;
+    let discovery_roots = record
+        .discovery_roots
+        .iter()
+        .map(|root| external_discovery_root(root, home, path))
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    let default_skill_dirs = discovery_roots
+        .iter()
+        .filter(|root| root.scan_eligible && root.available && root.scope == "user")
+        .map(|root| resolve_root_template(&root.path_template, path))
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    Ok(AgentAdapter {
+        adapter_api: ADAPTER_API_V2.to_string(),
+        id: record.id,
+        source: SOURCE_EXTERNAL.to_string(),
+        supported_scopes: record.supported_scopes,
+        projection_methods: record.projection_methods,
+        skill_entrypoint: record.skill_entrypoint,
+        capabilities: record.capabilities,
+        default_skill_dirs,
+        discovery_roots,
+        visibility: external_visibility(record.visibility),
+        reload: AdapterReload {
+            strategy: record.reload.strategy,
+            hot_reload: record.reload.hot_reload,
+            notes: record.reload.notes,
+        },
+        config_path: Some(path.to_path_buf()),
+    })
+}
+
+fn validate_external_v1_record(
+    record: &ExternalAdapterV1Record,
     path: &Path,
 ) -> std::result::Result<(), CommandFailure> {
-    if record.adapter_api != ADAPTER_API_VERSION {
+    if record.adapter_api != ADAPTER_API_V1 {
         return Err(adapter_failure(
             format!(
                 "adapter '{}' uses unsupported adapter_api '{}'",
@@ -317,6 +544,80 @@ fn validate_external_record(
             Some(path),
         ));
     }
+    for check in &record.health_checks {
+        if check.trim().is_empty() {
+            return Err(adapter_failure(
+                format!("adapter '{}' has an empty health check", record.id),
+                "ADAPTER_HEALTH_CHECK_INVALID",
+                Some(path),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn validate_external_v2_record(
+    record: &ExternalAdapterV2Record,
+    path: &Path,
+) -> std::result::Result<(), CommandFailure> {
+    if record.adapter_api != ADAPTER_API_V2 {
+        return Err(adapter_failure(
+            format!(
+                "adapter '{}' uses unsupported adapter_api '{}'",
+                record.id, record.adapter_api
+            ),
+            "ADAPTER_API_UNSUPPORTED",
+            Some(path),
+        ));
+    }
+    validate_adapter_id(&record.id, path)?;
+    validate_string_set(
+        "supported_scopes",
+        &record.supported_scopes,
+        &["user", "project"],
+        path,
+    )?;
+    validate_string_set(
+        "projection_methods",
+        &record.projection_methods,
+        &["copy", "symlink", "materialize"],
+        path,
+    )?;
+    if record.skill_entrypoint != "SKILL.md" {
+        return Err(adapter_failure(
+            format!(
+                "adapter '{}' declares unsupported skill_entrypoint '{}'",
+                record.id, record.skill_entrypoint
+            ),
+            "ADAPTER_ENTRYPOINT_UNSUPPORTED",
+            Some(path),
+        ));
+    }
+    if record.capabilities.automatic_discovery && record.discovery_roots.is_empty() {
+        return Err(adapter_failure(
+            format!(
+                "adapter '{}' enables automatic_discovery but has no discovery_roots",
+                record.id
+            ),
+            "ADAPTER_DISCOVERY_PATHS_MISSING",
+            Some(path),
+        ));
+    }
+    for root in &record.discovery_roots {
+        validate_discovery_root(root, &record.supported_scopes, path)?;
+    }
+    validate_visibility(&record.visibility, &record.projection_methods, path)?;
+    validate_string_set(
+        "reload.strategy",
+        std::slice::from_ref(&record.reload.strategy),
+        &[
+            "no-reload-required",
+            "new-session-recommended",
+            "restart-required",
+            "unknown",
+        ],
+        path,
+    )?;
     for check in &record.health_checks {
         if check.trim().is_empty() {
             return Err(adapter_failure(

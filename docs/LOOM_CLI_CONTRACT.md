@@ -362,6 +362,7 @@ Rules:
 loom --json --root <root> skill list
 loom --json --root <root> skill show <skill-id>
 loom --json --root <root> skill inspect <skill-id> [--agent <agent>] [--workspace <path>] [--profile <profile>]
+loom --json --root <root> skill deps <skill-id> [--agent <agent>] [--workspace <path>]
 loom --json --root <root> skill visibility <skill-id> --agent codex [--workspace <path>] [--profile <profile>]
 loom --json --root <root> skill search <query> [--agent <agent>] [--profile <profile>] [--status <status>] [--trust <trust>]
 loom --json --root <root> skill resolve <task-description> [--agent <agent>] [--workspace <path>]
@@ -372,7 +373,7 @@ Read-only commands.
 Rules:
 
 1. `skill list`, `skill show`, `skill search`, and `skill resolve` reuse the same union read model as `GET /api/v1/skills`.
-2. `skill inspect` returns the canonical single-skill status model with stable top-level keys: `skill`, `source`, `spec`, `provenance`, `runtime`, `quality`, `safety`, and `next_actions`.
+2. `skill inspect` returns the canonical single-skill status model with stable top-level keys: `skill`, `source`, `spec`, `provenance`, `runtime`, `dependencies`, `quality`, `safety`, and `next_actions`.
 3. `skill inspect` separates registry source presence, entrypoint presence, Git drift fields, portable lint, agent compatibility lint, binding rules, projection instances, materialized path health, and unknown agent-specific visibility.
 4. `skill inspect --agent <agent>` filters runtime sections for that agent while preserving top-level source, spec, provenance, quality, safety, and next action fields.
 5. `skill inspect --workspace <path>` and `--profile <profile>` are selectors for binding/runtime classification only; they must not mutate registry state or source files.
@@ -384,6 +385,7 @@ Rules:
 11. `skill visibility --agent codex` is a read-only Codex active-view proof. It reports source, active rule, target, symlink projection, Codex `skills.config` disables, runtime entries, external entries, and restart recommendations without claiming current-session hot reload.
 12. read commands must not mutate registry state, Git refs, Git index, live targets, or pending queue.
 13. trust metadata comes from `state/registry/trust.json`; absent metadata is `unknown`.
+14. `skill deps` is read-only and reports runtime dependency readiness for tools, MCP servers, environment variables, and network expectations without printing secret values.
 
 ### 11.0.1 `skill activate`, `skill deactivate`, `skill active list`
 
@@ -537,7 +539,7 @@ Rules:
 3. `--compat` accepts legacy `skill.md` loading but returns typed warning findings
 4. `--fix` returns a read-only plan for safe normalizations such as `skill.md` to `SKILL.md`; it must not mutate files
 5. `--agent codex` and `--agent claude` add target-agent compatibility sections and warnings, including configured active skill directory name collisions
-6. `--quality` adds non-fatal maintainability findings for trigger quality, size, eval fixtures, script layout, and deeply nested references
+6. `--quality` adds non-fatal maintainability findings for trigger quality, size, eval fixtures, script layout, deeply nested references, and runtime dependency declarations/readiness
 7. strict portable lint rejects descriptions above 1024 characters
 7. strict lint failures return `SCHEMA_MISMATCH` with the full report in `error.details.report`
 8. the report includes `entrypoint`, `frontmatter`, `sections`, `findings`, `summary`, and `fix_plan`
@@ -584,7 +586,25 @@ Rules:
 8. `unquarantine` clears quarantine without elevating trust to `reviewed` or `team-approved`
 9. safety scans are heuristic review signals, not a sandbox, malware verdict, or guarantee that a skill is safe
 
-### 11.3.3 `skill eval`
+### 11.3.3 `skill deps`
+
+```bash
+loom --json --root <root> skill deps <skill-id> [--agent <agent>] [--workspace <path>]
+```
+
+Read-only command.
+
+Rules:
+
+1. dependency declarations are read from `loom.skill.toml`, `SKILL.md` metadata/compatibility text, scripts, and agent metadata with deterministic precedence
+2. tool checks use PATH lookup and optional argv-based `--version` probes with a timeout; they must not use shell interpolation
+3. env checks report only presence and `redacted=true`; values, lengths, prefixes, and hashes must not be printed
+4. MCP checks inspect local config when supported; unsupported agents return `configured="unknown"` / `enabled="unknown"` instead of a false pass
+5. missing required tools, env vars, or MCP config set `ready=false` with actionable `next_actions`
+6. network expectations are inferred from declarations/scripts without making network calls
+7. the same readiness helper feeds `skill inspect`, `skill diagnose`, and `skill lint --quality`
+
+### 11.3.4 `skill eval`
 
 ```bash
 loom --json --root <root> skill eval <skill-id> [--agent <agent> | --matrix <agent,agent>] [--model <model>]
@@ -618,7 +638,7 @@ Rules:
 8. default reports do not persist raw prompts or secrets; explicit output paths are caller-controlled
 9. eval success is quality evidence only and must not be treated as a safety guarantee
 
-### 11.3.4 `skillset create`, `skillset add`, `skillset remove`, `skillset show`, `skillset lint`
+### 11.3.5 `skillset create`, `skillset add`, `skillset remove`, `skillset show`, `skillset lint`
 
 ```bash
 loom --json --root <root> skillset create <skillset-id> [--description <text>]

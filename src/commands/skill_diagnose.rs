@@ -13,10 +13,13 @@ use crate::types::{ErrorCode, PendingOp};
 use super::codex_visibility::build_codex_visibility_report;
 use super::helpers::{map_arg, map_registry_state, validate_skill_name};
 use super::history_cmds::operation_mentions_skill as registry_operation_mentions_skill;
+use super::skill_deps::skill_dependency_report;
 use super::skill_verify::{
     drifted_paths_under, head_tree_oid_for_path, last_commit_for_path, last_saved_commit_for_skill,
 };
 use super::{App, CommandFailure, SkillLintMode, SkillLintReport, lint_skill_source};
+
+mod dependency_checks;
 
 const MAX_DRIFTED_PATHS: usize = 100;
 const MAX_RELATED_OPS: usize = 10;
@@ -28,16 +31,24 @@ impl App {
     ) -> std::result::Result<(Value, Meta), CommandFailure> {
         let skill = args.skill();
         validate_skill_name(skill).map_err(map_arg)?;
+        let agent = args.agent();
+        if let Some(agent) = agent
+            && agent != AgentKind::Codex
+        {
+            return Err(CommandFailure::new(
+                ErrorCode::ArgInvalid,
+                "skill diagnose --agent currently supports only codex",
+            ));
+        }
         let paths = RegistryStatePaths::from_app_context(&self.ctx);
         let snapshot = paths.maybe_load_snapshot().map_err(map_registry_state)?;
-        let (mut data, meta) = build_skill_diagnosis(&self.ctx, skill, snapshot.as_ref())?;
-        if let Some(agent) = args.agent() {
-            if agent != AgentKind::Codex {
-                return Err(CommandFailure::new(
-                    ErrorCode::ArgInvalid,
-                    "skill diagnose --agent currently supports only codex",
-                ));
-            }
+        let (mut data, meta) = build_skill_diagnosis(
+            &self.ctx,
+            skill,
+            dependency_checks::dependency_agent(agent),
+            snapshot.as_ref(),
+        )?;
+        if agent == Some(AgentKind::Codex) {
             attach_codex_visibility(&self.ctx, skill, &mut data)?;
         }
         Ok((data, meta))
@@ -113,6 +124,7 @@ fn attach_codex_visibility(
 fn build_skill_diagnosis(
     ctx: &AppContext,
     skill: &str,
+    dependency_agent: Option<&str>,
     snapshot: Option<&RegistrySnapshot>,
 ) -> std::result::Result<(Value, Meta), CommandFailure> {
     let source_path = ctx.skill_path(skill);
@@ -133,6 +145,9 @@ fn build_skill_diagnosis(
     let mut recent_ops = Vec::new();
     let mut pending_ops = Vec::new();
     let lint_report = lint_skill_source(&source_path, skill, SkillLintMode::Compat);
+    let dependencies = source_exists
+        .then(|| skill_dependency_report(ctx, skill, dependency_agent, None))
+        .transpose()?;
 
     add_source_checks(
         ctx,
@@ -296,6 +311,7 @@ fn build_skill_diagnosis(
             json!({"error": err.to_string()}),
         )),
     }
+    dependency_checks::add_dependency_checks(dependencies.as_ref(), &mut checks);
 
     let error_count = checks_with_severity(&checks, "error");
     let warning_count = checks_with_severity(&checks, "warning");
@@ -334,7 +350,8 @@ fn build_skill_diagnosis(
                 "targets": targets,
                 "projections": projections,
                 "recent_operations": recent_ops,
-                "pending_operations": pending_ops
+                "pending_operations": pending_ops,
+                "dependencies": dependencies
             }
         }),
         Meta::default(),

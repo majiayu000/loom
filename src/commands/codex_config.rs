@@ -189,7 +189,7 @@ pub(crate) fn patch_disabled_entries(
     })
 }
 
-fn codex_config_path() -> std::result::Result<PathBuf, CommandFailure> {
+pub(crate) fn codex_config_path() -> std::result::Result<PathBuf, CommandFailure> {
     if let Some(home) = std::env::var_os("CODEX_HOME") {
         return Ok(PathBuf::from(home).join("config.toml"));
     }

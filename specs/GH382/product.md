@@ -21,6 +21,8 @@ Production implementation is blocked by:
 
 - #366 single-skill inspect/status.
 - #367 activation semantics.
+- #370 safety/trust/quarantine.
+- #371 dependency and MCP readiness.
 - #373 adapter discovery roots and reload metadata.
 - #377 skillsets and bundles.
 - #381 org policy/RBAC.
@@ -33,7 +35,7 @@ Target command surface:
 loom provision plan --target devcontainer [--workspace <path>] [--agent codex] [--output-plan <path>] [--json]
 loom provision apply <plan-id|plan-artifact> --idempotency-key <key> [--approve <approval-token>...]
 loom provision doctor --target devcontainer|codespaces|remote --workspace <path>
-loom provision export --format devcontainer|shell|tar --output <path>
+loom provision export <plan-id|plan-artifact> --format devcontainer|shell|tar --output <path>
 loom provision import <artifact> --dry-run
 ```
 
@@ -76,7 +78,10 @@ Initial target kinds:
 
 `provision apply` must:
 
-- Revalidate the plan.
+- Revalidate the reviewed plan or plan artifact; apply must not regenerate
+  unreviewed file content from current state.
+- Revalidate target-file preimage digests before writing so user edits after plan
+  creation fail as drift instead of being overwritten.
 - Require idempotency key.
 - Accept and validate approval tokens when org policy marks the reviewed plan as
   approval-required.

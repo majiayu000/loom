@@ -48,17 +48,19 @@ Recommended plan shape:
   "files_to_write": [
     {
       "path": ".devcontainer/loom-setup.sh",
+      "preimage_digest": null,
       "content_digest": "sha256:...",
       "preview": "#!/usr/bin/env bash\\n..."
     },
     {
       "path": ".devcontainer/devcontainer.json",
+      "preimage_digest": "sha256:...",
       "content_digest": "sha256:...",
       "patch": []
     }
   ],
   "secrets_required": [],
-  "policy": {"requires_approval": false, "approval_tokens": []},
+  "policy": {"requires_approval": false, "required_approvals": []},
   "loom_cli": {"required": true, "version": ">=0.1.5", "install": "preinstalled"},
   "guards": {
     "root": "/registry",
@@ -91,6 +93,10 @@ command -v loom >/dev/null || {
   echo "loom CLI is required before provisioning can continue" >&2
   exit 127
 }
+loom --version | grep -Eq 'loom (0\\.1\\.[5-9]|0\\.[2-9]\\.|[1-9]\\.)' || {
+  echo "loom CLI version does not satisfy reviewed plan requirement >=0.1.5" >&2
+  exit 127
+}
 if [ -d "$LOOM_REGISTRY_DIR/.git" ]; then
   git -C "$LOOM_REGISTRY_DIR" fetch origin "$LOOM_REGISTRY_HEAD"
 else
@@ -118,6 +124,8 @@ Paths such as the workspace, registry clone directory, and active view come from
 the reviewed plan and adapter metadata, not hard-coded `/workspaces` defaults.
 The script must generate diagnose/materialization checks for every planned
 active skill, not for a literal example skill.
+The script must verify the installed `loom --version` against the reviewed
+`loom_cli.version` requirement; command presence alone is not enough.
 
 ## File Merge Rules
 
@@ -135,6 +143,10 @@ For setup scripts:
 - avoid embedding secrets
 - include idempotent commands
 - include verification commands
+
+For every file write, the plan stores the target preimage digest or `null` for a
+file that must not already exist. `apply` rechecks those preimages immediately
+before writing and fails with plan drift when a target file changed after review.
 
 ## Secrets
 
@@ -175,6 +187,7 @@ Focused tests:
 7. policy approval required appears in plan.
 8. apply is idempotent with the same key.
 9. doctor is read-only and reports missing generated files.
+10. apply rejects changed target-file preimages before writing.
 
 ## Verification
 

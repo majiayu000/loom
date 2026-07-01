@@ -125,7 +125,8 @@ Done when:
 - Apply requires idempotency key.
 - Apply accepts approval tokens and validates them against the reviewed plan
   policy decision when approval is required.
-- Apply revalidates registry head, active-view digest, target paths, and policy.
+- Apply revalidates registry head, active-view digest, target paths, target-file
+  preimage digests, generated content digests, and policy.
 - File writes are atomic.
 - Repeated apply with same key is idempotent.
 - Recovery commands are returned.

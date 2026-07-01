@@ -154,7 +154,9 @@ permissions = ["repo:read", "issues:write"]
    vars, source provenance, and approval requirements.
 3. `mcp plan` is read-only and writes no agent config or package state.
 4. Secret values are never printed or stored.
-5. Untrusted or unpinned MCP server sources are blocked or approval-required.
+5. Unpinned MCP server sources are blocked before approval unless planning first
+   resolves and records an immutable version, commit, or source digest; untrusted
+   pinned sources may be approval-required.
 6. Unsupported agents return `manual_configuration_required` with required
    server details.
 7. `mcp apply` consumes a durable plan event or explicit plan artifact,
@@ -162,10 +164,10 @@ permissions = ["repo:read", "issues:write"]
    implemented.
 8. `skill diagnose` includes MCP provisioning next actions when readiness
    fails.
-9. Tests cover requirement parsing, missing server plans, config diff
-   generation, env secret redaction, unpinned rejection, approval-required
-   actions, idempotent apply, malformed config, and unsupported agent manual
-   mode.
+9. Tests cover requirement parsing, missing and existing server plans,
+   adapter-supported config diff generation, env secret redaction, unpinned
+   rejection, approval-required actions, malformed config, and unsupported agent
+   manual mode. Idempotent apply tests are required once apply is implemented.
 
 ## Open Questions
 

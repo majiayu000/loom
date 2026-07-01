@@ -24,9 +24,9 @@ agent config mutation without explicit apply
 
 - [ ] `SP386-T1` Owner: implementation | Done when: MCP requirement/list/plan/doctor/catalog CLI parses and command ids classify read-only behavior correctly | Verify: `cargo test --test cli_surface`
 - [ ] `SP386-T2` Owner: implementation | Done when: MCP requirement parser reads `loom.skill.toml`, `SKILL.md` metadata, and agent metadata without exposing secret values | Verify: `cargo test --test mcp_provisioning`
-- [ ] `SP386-T3` Owner: implementation | Done when: catalog/source policy rejects or approval-gates unpinned and unknown MCP server sources | Verify: `cargo test --test mcp_provisioning`
-- [ ] `SP386-T4` Owner: implementation | Done when: `mcp plan` returns missing servers, config diffs, env names, risk summary, and RBAC approval requirements without writes | Verify: `cargo test --test mcp_provisioning`
-- [ ] `SP386-T5` Owner: implementation | Done when: `mcp apply` loads a durable plan event or explicit artifact, revalidates plans, requires idempotency/approvals, writes atomically, and preserves user config | Verify: `cargo test --test mcp_provisioning`
+- [ ] `SP386-T3` Owner: implementation | Done when: catalog/source policy parses scoped npm locators, rejects unpinned sources before approval unless resolved to immutable source, and approval-gates unknown pinned MCP server sources | Verify: `cargo test --test mcp_provisioning`
+- [ ] `SP386-T4` Owner: implementation | Done when: `mcp plan` returns missing and existing servers, adapter-supported config diffs or manual mode, env names, risk summary, and RBAC approval requirements without writes | Verify: `cargo test --test mcp_provisioning`
+- [ ] `SP386-T5` Owner: deferred-apply | Deferred until plan semantics are stable; done when `mcp apply` loads a durable plan event or explicit artifact, revalidates plans, requires idempotency/approvals, writes atomically, and preserves user config | Verify: `cargo test --test mcp_provisioning`
 - [ ] `SP386-T6` Owner: implementation | Done when: `mcp doctor` and `skill diagnose` include provisioning next actions from the readiness read model | Verify: `cargo test --test mcp_provisioning`
 
 ### SP386-T1: Add CLI Surface
@@ -84,12 +84,15 @@ Depends on: SP386-T2
 
 Done when:
 
-- pinned npm locators parse.
+- pinned npm locators parse, including scoped packages by splitting package and
+  version at the rightmost `@` after `npm:`.
 - immutable Git commit locators parse; tag inputs must store and revalidate the
   resolved commit and source digest.
 - local path locators require digest.
 - team catalog entries include trust metadata.
-- unpinned or unknown sources are blocked or approval-required under policy.
+- unpinned sources are blocked before approval unless planning resolves and
+  records an immutable source first; unknown pinned sources are
+  approval-required or denied under policy.
 - planning never executes package code.
 
 Verify:
@@ -107,8 +110,9 @@ Done when:
 
 - plan resolves requirements for a skill and agent.
 - plan inspects current config through adapter metadata where available.
-- missing servers and env vars are reported.
-- config diffs are generated without writes.
+- missing servers, existing servers, and env vars are reported.
+- config diffs are generated without writes only for adapters with explicit MCP
+  config path and merge support; otherwise return `manual_configuration_required`.
 - risk summary includes network, secret, package, and external-system risk.
 - RBAC approval requirements or local-only consent requirements are included for
   risky actions.

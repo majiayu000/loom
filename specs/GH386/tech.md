@@ -71,9 +71,16 @@ local:<path>@sha256:<digest>
 catalog:<server>@<version>
 ```
 
+NPM locator parsing must handle scoped packages such as
+`npm:@modelcontextprotocol/server-github@1.2.3` by splitting the package/version
+at the last `@` after the `npm:` prefix. Unscoped packages use the same
+rightmost-version separator rule.
+
 Policy rules:
 
-1. unpinned package locators are blocked under strict policy;
+1. unpinned package locators are blocked under strict policy before approval, or
+   converted during planning into a pinned version/digest-backed source before
+   any approval can apply;
 2. unknown package sources require approval or fail;
 3. Git locators must resolve to immutable commits; tag input is allowed only
    when the plan stores and revalidates the resolved commit and source digest;
@@ -112,7 +119,8 @@ restart_agent
 
 Plan output should include:
 
-1. current config summary;
+1. current config summary, including existing matching servers and their source
+   or command fingerprints when available;
 2. proposed config diff;
 3. package/source provenance;
 4. secrets required by name only;
@@ -142,7 +150,8 @@ Plan drift must fail with a typed result and require a new plan.
 ## Agent Config Support
 
 Agent config paths and merge semantics must come from adapter metadata after
-#373. If an adapter lacks MCP config support:
+#373. Generate config diffs only for adapters that explicitly expose MCP config
+path and merge metadata. If an adapter lacks MCP config support:
 
 1. return `manual_configuration_required`;
 2. include server name, source, transport, required env var names, and
@@ -168,10 +177,12 @@ Focused tests:
 2. parse `[mcp.<server>]` sections;
 3. parse supported `SKILL.md` metadata;
 4. malformed metadata returns typed findings;
-5. plan detects missing server;
-6. plan renders config diff without writing;
+5. plan detects missing and existing servers;
+6. plan renders config diff without writing only for adapters with explicit MCP
+   config support;
 7. env secrets are redacted by value and named only;
-8. unpinned source is blocked or approval-required;
+8. unpinned source is blocked before approval unless the plan resolves an
+   immutable source first;
 9. unsupported agent returns manual mode;
 10. apply revalidates and rejects drift once apply is implemented;
 11. apply is idempotent and atomic once apply is implemented.

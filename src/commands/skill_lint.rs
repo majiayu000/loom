@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -8,6 +8,7 @@ use serde_json::{Value, json};
 use crate::cli::SkillLintArgs;
 use crate::envelope::Meta;
 use crate::state::resolve_agent_skill_dirs;
+use crate::state_model::RegistryStatePaths;
 use crate::types::ErrorCode;
 
 use super::helpers::{map_arg, validate_skill_name};
@@ -527,7 +528,7 @@ fn validate_frontmatter(
 
 fn agent_skill_dirs_for_lint(root: &Path, agent: Option<&str>) -> Vec<PathBuf> {
     let dirs = resolve_agent_skill_dirs(root);
-    match agent {
+    let mut agent_dirs: Vec<PathBuf> = match agent {
         Some("codex") => vec![dirs.codex],
         Some("claude") => vec![dirs.claude],
         Some(other) => dirs
@@ -537,7 +538,28 @@ fn agent_skill_dirs_for_lint(root: &Path, agent: Option<&str>) -> Vec<PathBuf> {
             .map(|dir| dir.path)
             .collect(),
         None => Vec::new(),
+    };
+    if let Some(agent) = agent {
+        agent_dirs.extend(registered_target_dirs_for_agent(root, agent));
     }
+    let mut seen = BTreeSet::new();
+    agent_dirs
+        .into_iter()
+        .filter(|path| seen.insert(path.clone()))
+        .collect()
+}
+
+fn registered_target_dirs_for_agent(root: &Path, agent: &str) -> Vec<PathBuf> {
+    let paths = RegistryStatePaths::from_root(root);
+    let Ok(targets) = paths.load_targets() else {
+        return Vec::new();
+    };
+    targets
+        .targets
+        .into_iter()
+        .filter(|target| target.agent == agent)
+        .map(|target| PathBuf::from(target.path))
+        .collect()
 }
 
 fn portable_name_error(name: &str) -> Option<String> {

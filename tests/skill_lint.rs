@@ -2,6 +2,7 @@ mod common;
 
 use serde_json::Value;
 
+use common::actions::target_add;
 use common::{TestDir, run_loom, write_file};
 
 fn write_skill_file(root: &TestDir, skill: &str, file_name: &str, body: &str) {
@@ -279,6 +280,39 @@ fn skill_lint_agent_reports_active_skill_name_collision() {
         report["sections"]["agent_compatibility"]["codex"]["status"],
         Value::from("warning")
     );
+}
+
+#[test]
+fn skill_lint_agent_reports_registered_target_name_collision() {
+    let root = TestDir::new("skill-lint-registered-target-collision");
+    let active_dir = root.path().join("registered-codex");
+    let (target_output, target_env) = target_add(root.path(), "codex", &active_dir, "managed");
+    assert!(
+        target_output.status.success(),
+        "target add should pass: {target_env}"
+    );
+    write_skill_file(
+        &root,
+        "registered-collision",
+        "SKILL.md",
+        "---\nname: registered-collision\ndescription: Use when Codex needs registered target collision checks before activation.\n---\n# Source\n",
+    );
+    write_file(
+        &active_dir.join("registered-collision/SKILL.md"),
+        "---\nname: registered-collision\ndescription: Use when a registered active copy can shadow the source skill.\n---\n# Active\n",
+    );
+
+    let (output, env) = run_loom(
+        root.path(),
+        &["skill", "lint", "registered-collision", "--agent", "codex"],
+    );
+
+    assert!(
+        output.status.success(),
+        "collision warning should not fail lint"
+    );
+    let report = report(&env);
+    assert!(has_finding(report, "agent_skill_name_collision", "warning"));
 }
 
 #[test]

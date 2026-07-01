@@ -3,6 +3,7 @@ mod common;
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
+use std::process::Command;
 
 use serde_json::Value;
 
@@ -161,6 +162,42 @@ fn skill_inspect_source_only_reports_registry_install_without_projection() {
                 .as_str()
                 .is_some_and(|text| text.contains("skill eval demo"))),
         "missing eval evidence should produce an eval action: {env}"
+    );
+}
+
+#[test]
+fn skill_inspect_human_output_prints_compact_card() {
+    let root = TestDir::new("skill-inspect-human");
+    write_good_skill(root.path(), "demo");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_loom"))
+        .arg("--root")
+        .arg(root.path())
+        .args(["skill", "inspect", "demo"])
+        .output()
+        .expect("run loom skill inspect");
+
+    assert!(
+        output.status.success(),
+        "inspect unexpectedly failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.starts_with("demo\n"),
+        "missing skill card title: {stdout}"
+    );
+    assert!(stdout.contains("Source:   present, clean"));
+    assert!(stdout.contains("Runtime:  "));
+    assert!(stdout.contains("Next:     "));
+    assert!(
+        !stdout.contains("\"source\"") && !stdout.contains("\"runtime\""),
+        "human output should not fall back to raw JSON: {stdout}"
+    );
+    assert!(
+        !stdout.contains("skill.inspect ok"),
+        "human inspect output should be just the compact card: {stdout}"
     );
 }
 

@@ -100,7 +100,9 @@ Codex should include:
 - `scope=user`, `path=${CODEX_HOME:-~/.codex}/skills`, role `legacy`.
 - `scope=project`, `path=<workspace>/.agents/skills`, role
   `project-cross-client`.
-- visibility identity `canonical-skill-md-path`.
+- visibility identity is projection-method aware: symlink projections may use
+  `canonical-skill-md-path`, while copy/materialize projections use the runtime
+  target `SKILL.md` path.
 - config file `${CODEX_HOME:-~/.codex}/config.toml`.
 - disable rule `skills.config.path`; skill names are display/collision
   diagnostics only for Codex.
@@ -109,6 +111,10 @@ Codex should include:
 Claude metadata may start with the existing default roots plus reload and scope
 metadata that Loom can verify locally. Do not invent plugin or enterprise path
 facts that the implementation does not inspect.
+For project-scope `loom use --agents claude` defaults, preserve the existing
+project target root contract such as `<registry-root>/targets/project/claude/skills`
+until a richer Claude adapter project root is specified. Do not fall back to the
+global home Claude directory for project-scope use.
 
 Built-in adapters must remain loadable when `HOME` and `USERPROFILE` are
 missing. In that case user roots are marked unavailable for diagnostics, but
@@ -185,10 +191,13 @@ unknown
 
 Commands that currently ask `resolve_agent_skill_dirs()` for Codex or Claude
 paths should call this helper unless they need legacy status output only.
-`target add` is excluded from inferred root selection because it registers an
-explicit caller-supplied absolute path. Adapter-driven selection applies to
-default-target helpers, `loom use`, diagnostics, and future activation flows
-that need Loom to choose a target root.
+`target add` and `loom use --target-root` are excluded from inferred root
+selection because they register or use explicit caller-supplied paths.
+Adapter-driven selection applies only to default-target helpers, diagnostics,
+future activation flows, and `loom use` calls without an explicit target root.
+Durable `plan use` must store the resolved target root and guards before review
+so `apply` does not re-resolve a different root after adapter config or
+environment changes.
 
 Supported visibility disable rules:
 

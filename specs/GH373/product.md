@@ -61,11 +61,14 @@ Implement the smallest adapter v2 slice:
 7. Built-in visibility metadata models Codex config disables by canonical
    `SKILL.md` path; skill names remain display/collision diagnostics only.
 8. Activation-facing default-target helpers and `loom use` flows use the
-   adapter's preferred discovery root for the requested scope and fail explicitly
-   when no matching root exists. Existing `target add --path <absolute-path>`
-   continues to register the caller-provided concrete directory and must not
-   infer or replace it from adapter roots.
-9. Reload metadata is descriptive only in this slice; commands may report it
+   adapter's preferred discovery root only when the caller did not provide an
+   explicit target root. Existing `target add --path <absolute-path>` and
+   `loom use --target-root <path>` continue to use the caller-provided concrete
+   directory and must not infer or replace it from adapter roots.
+9. Durable `plan use` records the resolved adapter-selected target root and guard
+   digests before review; apply must replay the reviewed root instead of
+   re-resolving adapter/env defaults.
+10. Reload metadata is descriptive only in this slice; commands may report it
    but must not silently mutate agent runtime state.
 
 ## Acceptance Criteria

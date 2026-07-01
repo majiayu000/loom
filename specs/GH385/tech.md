@@ -16,8 +16,9 @@ The first slice should:
 1. add CLI commands for status, enable, disable, report, export, and purge
    dry-run;
 2. add a typed event model and redaction layer;
-3. persist local events only when telemetry is enabled or when importing
-   existing command audit records;
+3. persist local events only when telemetry is enabled; existing command audit
+   records are report-only unless the user explicitly enables telemetry before
+   import;
 4. aggregate report read models for CLI and Panel API consumers;
 5. keep Panel UI deferred until report routes are stable.
 

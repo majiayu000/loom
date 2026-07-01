@@ -24,10 +24,10 @@ ranking changes, or Panel-only analytics state
 
 - [ ] `SP385-T1` Owner: implementation | Done when: telemetry status/enable/disable/report/export/purge CLI parses and command ids classify read/write behavior correctly | Verify: `cargo test --test cli_surface`
 - [ ] `SP385-T2` Owner: implementation | Done when: telemetry config and event models parse, serialize, redact, and reject malformed writes deterministically | Verify: `cargo test --test telemetry`
-- [ ] `SP385-T3` Owner: implementation | Done when: enable/disable update local config and disabled mode prevents event appends | Verify: `cargo test --test telemetry`
+- [ ] `SP385-T3` Owner: implementation | Done when: enable/disable update local config, disabled mode prevents event appends, and known command/eval/safety paths call the telemetry writer only when enabled | Verify: `cargo test --test telemetry`
 - [ ] `SP385-T4` Owner: implementation | Done when: report aggregates usage, eval, cost, drift, and risk while marking unavailable upstream data as missing | Verify: `cargo test --test telemetry`
 - [ ] `SP385-T5` Owner: implementation | Done when: export writes redacted JSONL/CSV and purge dry-run/confirm operate only on telemetry events | Verify: `cargo test --test telemetry`
-- [ ] `SP385-T6` Owner: implementation | Done when: inspect/API/Panel consume the telemetry read model without inventing independent semantics | Verify: `cargo test --test telemetry && cd panel && bun run test`
+- [ ] `SP385-T6` Owner: implementation | Done when: inspect/API consume the telemetry read model and Panel UI remains deferred until the backend report API is stable | Verify: `cargo test --test telemetry`
 
 ### SP385-T1: Add CLI Surface
 
@@ -44,9 +44,12 @@ Done when:
 - `loom telemetry status [--json]` parses.
 - `loom telemetry enable [--local-only] [--json]` parses.
 - `loom telemetry disable [--json]` parses.
-- `loom telemetry report [--skill <skill>] [--agent <agent>] [--since <date>] [--json]` parses.
+- `loom telemetry report [--skill <skill>] [--skillset <skillset>] [--agent <agent>] [--workspace <path>] [--since <date>] [--json]` parses.
 - `loom telemetry export --format jsonl|csv --output <path> [--redacted]` parses.
 - `loom telemetry purge [--before <date>] --dry-run [--json]` parses.
+- `loom telemetry purge [--before <date>] --confirm <token>` parses.
+- `loom skill inspect <skill> --include-telemetry` parses once inspect wiring is
+  included.
 - read/write command classification matches behavior.
 
 Verify:
@@ -91,6 +94,9 @@ Done when:
 - disable sets `enabled=false`.
 - disabled mode prevents appending telemetry events.
 - event writes are append-only JSONL and typed.
+- existing command, eval, and safety event sources call the writer when
+  telemetry is enabled.
+- command-audit import stays report-only when telemetry is disabled.
 - telemetry writes do not mutate skill source, active target projections, or
   unrelated registry state.
 
@@ -149,7 +155,8 @@ Done when:
 
 - CLI/API contracts document telemetry privacy and report semantics.
 - Panel API returns the telemetry report read model.
-- Panel dashboard renders only backend-provided analytics fields.
+- Panel dashboard rendering is deferred until the API read model is stable and
+  tested.
 - tests cover the first-slice acceptance criteria.
 - repository checks pass.
 
@@ -159,8 +166,6 @@ Verify:
 git diff --check
 cargo check --workspace --all-targets --all-features
 cargo test
-cd panel && bun run typecheck
-cd panel && bun run test
 ```
 
 ## Handoff Notes

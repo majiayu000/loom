@@ -68,14 +68,9 @@ Required first-slice commands:
 loom telemetry status [--json]
 loom telemetry enable [--local-only] [--json]
 loom telemetry disable [--json]
-loom telemetry report [--skill <skill>] [--agent <agent>] [--since <date>] [--json]
+loom telemetry report [--skill <skill>] [--skillset <skillset>] [--agent <agent>] [--workspace <path>] [--since <date>] [--json]
 loom telemetry export --format jsonl|csv --output <path> [--redacted]
 loom telemetry purge [--before <date>] --dry-run [--json]
-```
-
-Deferred commands:
-
-```bash
 loom telemetry purge [--before <date>] --confirm <token>
 loom skill inspect <skill> --include-telemetry
 ```
@@ -162,7 +157,8 @@ it should consume the same report API and include:
    unrelated registry state.
 9. `skill inspect` can include last usage/eval telemetry summary when telemetry
    is enabled.
-10. Panel dashboard reads backend telemetry reports once the API is available.
+10. Panel API reads backend telemetry reports once the API is available; the
+    dashboard UI remains deferred until that read model is stable.
 11. Tests cover enable, disable, event writing, disabled mode, redaction,
     aggregation, export, purge dry-run, confirmed purge, and API read model
     output.

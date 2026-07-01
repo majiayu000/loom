@@ -19,6 +19,8 @@ use super::skill_verify::{
 };
 use super::{App, CommandFailure, SkillLintMode, SkillLintReport, lint_skill_source};
 
+mod dependency_checks;
+
 const MAX_DRIFTED_PATHS: usize = 100;
 const MAX_RELATED_OPS: usize = 10;
 
@@ -29,16 +31,24 @@ impl App {
     ) -> std::result::Result<(Value, Meta), CommandFailure> {
         let skill = args.skill();
         validate_skill_name(skill).map_err(map_arg)?;
+        let agent = args.agent();
+        if let Some(agent) = agent
+            && agent != AgentKind::Codex
+        {
+            return Err(CommandFailure::new(
+                ErrorCode::ArgInvalid,
+                "skill diagnose --agent currently supports only codex",
+            ));
+        }
         let paths = RegistryStatePaths::from_app_context(&self.ctx);
         let snapshot = paths.maybe_load_snapshot().map_err(map_registry_state)?;
-        let (mut data, meta) = build_skill_diagnosis(&self.ctx, skill, snapshot.as_ref())?;
-        if let Some(agent) = args.agent() {
-            if agent != AgentKind::Codex {
-                return Err(CommandFailure::new(
-                    ErrorCode::ArgInvalid,
-                    "skill diagnose --agent currently supports only codex",
-                ));
-            }
+        let (mut data, meta) = build_skill_diagnosis(
+            &self.ctx,
+            skill,
+            dependency_checks::dependency_agent(agent),
+            snapshot.as_ref(),
+        )?;
+        if agent == Some(AgentKind::Codex) {
             attach_codex_visibility(&self.ctx, skill, &mut data)?;
         }
         Ok((data, meta))
@@ -114,6 +124,7 @@ fn attach_codex_visibility(
 fn build_skill_diagnosis(
     ctx: &AppContext,
     skill: &str,
+    dependency_agent: Option<&str>,
     snapshot: Option<&RegistrySnapshot>,
 ) -> std::result::Result<(Value, Meta), CommandFailure> {
     let source_path = ctx.skill_path(skill);
@@ -135,7 +146,7 @@ fn build_skill_diagnosis(
     let mut pending_ops = Vec::new();
     let lint_report = lint_skill_source(&source_path, skill, SkillLintMode::Compat);
     let dependencies = source_exists
-        .then(|| skill_dependency_report(ctx, skill, None, None))
+        .then(|| skill_dependency_report(ctx, skill, dependency_agent, None))
         .transpose()?;
 
     add_source_checks(
@@ -300,6 +311,7 @@ fn build_skill_diagnosis(
             json!({"error": err.to_string()}),
         )),
     }
+    dependency_checks::add_dependency_checks(dependencies.as_ref(), &mut checks);
 
     let error_count = checks_with_severity(&checks, "error");
     let warning_count = checks_with_severity(&checks, "warning");

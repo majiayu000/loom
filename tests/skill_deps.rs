@@ -2,6 +2,7 @@ mod common;
 
 use std::fs;
 use std::path::Path;
+use std::process::Command;
 
 use common::{TestDir, run_loom, run_loom_with_env, write_file};
 use serde_json::{Value, json};
@@ -36,6 +37,33 @@ fn names(items: &Value) -> Vec<String> {
         .iter()
         .filter_map(|item| item["name"].as_str().map(ToString::to_string))
         .collect()
+}
+
+fn item_named<'a>(items: &'a Value, name: &str) -> &'a Value {
+    items
+        .as_array()
+        .expect("array")
+        .iter()
+        .find(|item| item["name"] == name)
+        .expect("named dependency")
+}
+
+fn run_loom_with_home_without_codex_home(
+    root: &Path,
+    home: &Path,
+    args: &[&str],
+) -> (std::process::Output, Value) {
+    let output = Command::new(env!("CARGO_BIN_EXE_loom"))
+        .arg("--json")
+        .arg("--root")
+        .arg(root)
+        .args(args)
+        .env("HOME", home)
+        .env_remove("CODEX_HOME")
+        .output()
+        .expect("run loom");
+    let env = serde_json::from_slice(&output.stdout).expect("parse loom json");
+    (output, env)
 }
 
 #[test]
@@ -122,28 +150,45 @@ fn skill_deps_reports_manifest_tools_env_mcp_and_network_without_secret_values()
 fn skill_deps_infers_frontmatter_scripts_agent_metadata_and_unknown_mcp_agent() {
     let root = TestDir::new("skill-deps-infer");
     let source = TestDir::new("skill-deps-infer-source");
+    let bin = TestDir::new("skill-deps-infer-bin");
     write_source_skill(
         source.path(),
         "demo",
-        "---\nname: demo\ndescription: Use when checking dependencies.\ncompatibility: Requires Python and access to GitHub MCP.\nmetadata:\n  loom.requires_tools: jq\n  loom.requires_env: API_KEY\n  loom.network: optional\n---\n# Demo\n",
+        "---\nname: demo\ndescription: Use when checking dependencies.\ncompatibility: Requires git, jq, Python 3.12+, and access to GitHub MCP.\nmetadata:\n  loom.requires_tools: jq\n  loom.requires_env: API_KEY\n  loom.network: optional\n---\n# Demo\n",
     );
     write_file(
         &source.path().join("scripts/run"),
-        "#!/usr/bin/env node\ncurl https://example.com/data\n",
+        "#!/usr/bin/env node\ngit status\ncurl https://example.com/data\n",
     );
     write_file(
         &source.path().join("agents/openai.yaml"),
-        "requires_mcp: filesystem\n",
+        "requires_mcp:\n  - filesystem\nrequires_tools:\n  - fake-tool\n",
+    );
+    write_file(
+        &bin.path().join("fake-tool"),
+        "#!/usr/bin/env sh\necho no\n",
     );
     add_skill(root.path(), source.path(), "demo");
 
-    let (output, env) = run_loom(root.path(), &["skill", "deps", "demo", "--agent", "openai"]);
+    let bin_path = bin.path().to_string_lossy().to_string();
+    let (output, env) = run_loom_with_env(
+        root.path(),
+        &[("PATH", &bin_path)],
+        &["skill", "deps", "demo", "--agent", "openai"],
+    );
 
     assert!(output.status.success(), "deps should pass: {env}");
+    assert_eq!(env["data"]["ready"], json!(false));
+    assert_eq!(env["data"]["status"], json!("blocked"));
     let tool_names = names(&env["data"]["dependencies"]["tools"]);
+    assert!(tool_names.contains(&"git".to_string()));
     assert!(tool_names.contains(&"python".to_string()));
     assert!(tool_names.contains(&"jq".to_string()));
     assert!(tool_names.contains(&"node".to_string()));
+    assert_eq!(
+        item_named(&env["data"]["dependencies"]["tools"], "fake-tool")["found"],
+        json!(false)
+    );
     let mcp_names = names(&env["data"]["dependencies"]["mcp"]);
     assert!(mcp_names.contains(&"github".to_string()));
     assert!(mcp_names.contains(&"filesystem".to_string()));
@@ -158,6 +203,74 @@ fn skill_deps_infers_frontmatter_scripts_agent_metadata_and_unknown_mcp_agent() 
     assert_eq!(
         env["data"]["dependencies"]["env"][0]["redacted"],
         json!(true)
+    );
+}
+
+#[test]
+fn unsupported_agent_mcp_status_is_not_ready_without_false_pass() {
+    let root = TestDir::new("skill-deps-unknown-mcp");
+    let source = TestDir::new("skill-deps-unknown-mcp-source");
+    write_source_skill(
+        source.path(),
+        "demo",
+        "---\nname: demo\ndescription: Use when checking unsupported MCP agents.\n---\n# Demo\n",
+    );
+    write_file(
+        &source.path().join("loom.skill.toml"),
+        "requires_mcp = [\"github\"]\n",
+    );
+    add_skill(root.path(), source.path(), "demo");
+
+    let (output, env) = run_loom(root.path(), &["skill", "deps", "demo", "--agent", "openai"]);
+
+    assert!(output.status.success(), "deps should pass: {env}");
+    assert_eq!(env["data"]["ready"], json!(false));
+    assert_eq!(env["data"]["status"], json!("unknown"));
+    assert_eq!(
+        item_named(&env["data"]["dependencies"]["mcp"], "github")["configured"],
+        json!("unknown")
+    );
+}
+
+#[test]
+fn codex_mcp_config_requires_real_server_table_from_home_config() {
+    let root = TestDir::new("skill-deps-codex-mcp");
+    let source = TestDir::new("skill-deps-codex-mcp-source");
+    let home = TestDir::new("skill-deps-codex-home");
+    write_source_skill(
+        source.path(),
+        "demo",
+        "---\nname: demo\ndescription: Use when checking MCP config parsing.\n---\n# Demo\n",
+    );
+    write_file(
+        &source.path().join("loom.skill.toml"),
+        "requires_mcp = [\"github\"]\n",
+    );
+    write_file(
+        &home.path().join(".codex/config.toml"),
+        "# [mcp_servers.github]\nmodel = \"github\"\n[mcp_servers.filesystem]\ncommand = \"fs-mcp\"\n",
+    );
+    add_skill(root.path(), source.path(), "demo");
+
+    let (output, env) = run_loom_with_home_without_codex_home(
+        root.path(),
+        home.path(),
+        &["skill", "deps", "demo", "--agent", "codex"],
+    );
+
+    assert!(output.status.success(), "deps should pass: {env}");
+    assert_eq!(
+        item_named(&env["data"]["dependencies"]["mcp"], "github")["configured"],
+        json!(false)
+    );
+    assert_eq!(env["data"]["ready"], json!(false));
+    assert!(
+        env["data"]["findings"]
+            .as_array()
+            .expect("findings")
+            .iter()
+            .any(|finding| finding["id"] == "mcp_missing"),
+        "missing MCP should be reported: {env}"
     );
 }
 
@@ -201,6 +314,89 @@ fn no_dependency_skill_is_ready_and_integrates_with_inspect_lint_and_diagnose() 
             .any(|finding| finding["id"] == "quality_dependencies_undeclared"),
         "lint quality should report missing declarations: {env}"
     );
+}
+
+#[test]
+fn diagnose_and_lint_reflect_dependency_failures() {
+    let root = TestDir::new("skill-deps-diagnose-failure");
+    let source = TestDir::new("skill-deps-diagnose-failure-source");
+    write_source_skill(
+        source.path(),
+        "demo",
+        "---\nname: demo\ndescription: Use when an agent needs to diagnose dependency readiness failures before activating a skill.\n---\n# Demo\n",
+    );
+    write_file(
+        &source.path().join("loom.skill.toml"),
+        "requires_tools = [\"missing-tool\"]\n",
+    );
+    add_skill(root.path(), source.path(), "demo");
+
+    let (output, env) = run_loom(root.path(), &["skill", "diagnose", "demo"]);
+    assert!(output.status.success(), "diagnose should pass: {env}");
+    assert_eq!(env["data"]["healthy"], json!(false));
+    assert_eq!(env["data"]["status"], json!("blocked"));
+    assert!(
+        env["data"]["checks"]
+            .as_array()
+            .expect("checks")
+            .iter()
+            .any(|check| check["id"] == "skill_dependency:tool_missing"
+                && check["severity"] == "error"),
+        "diagnose checks should include dependency error: {env}"
+    );
+
+    let (output, env) = run_loom(root.path(), &["skill", "lint", "demo", "--quality"]);
+    assert!(output.status.success(), "lint should pass: {env}");
+    assert_eq!(
+        env["data"]["sections"]["quality"]["status"],
+        json!("warning")
+    );
+    assert!(
+        env["data"]["sections"]["quality"]["findings"]
+            .as_array()
+            .expect("quality findings")
+            .iter()
+            .any(|finding| finding == "quality_dependency_tool_missing"),
+        "quality section should include dependency finding: {env}"
+    );
+}
+
+#[test]
+fn diagnose_agent_codex_passes_mcp_config_to_dependency_report() {
+    let root = TestDir::new("skill-deps-diagnose-agent");
+    let source = TestDir::new("skill-deps-diagnose-agent-source");
+    let codex_home = TestDir::new("skill-deps-diagnose-agent-home");
+    write_source_skill(
+        source.path(),
+        "demo",
+        "---\nname: demo\ndescription: Use when checking codex MCP readiness.\n---\n# Demo\n",
+    );
+    write_file(
+        &source.path().join("loom.skill.toml"),
+        "requires_mcp = [\"github\"]\n",
+    );
+    write_file(
+        &codex_home.path().join("config.toml"),
+        "[mcp_servers.github]\ncommand = \"github-mcp\"\n",
+    );
+    add_skill(root.path(), source.path(), "demo");
+
+    let codex_home_arg = codex_home.path().to_string_lossy().to_string();
+    let (output, env) = run_loom_with_env(
+        root.path(),
+        &[("CODEX_HOME", &codex_home_arg)],
+        &["skill", "diagnose", "demo", "--agent", "codex"],
+    );
+
+    assert!(output.status.success(), "diagnose should pass: {env}");
+    assert_eq!(
+        item_named(
+            &env["data"]["related"]["dependencies"]["dependencies"]["mcp"],
+            "github"
+        )["configured"],
+        json!(true)
+    );
+    assert_eq!(env["data"]["related"]["dependencies"]["ready"], json!(true));
 }
 
 #[test]

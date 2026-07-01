@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
@@ -19,6 +19,11 @@ use super::helpers::{map_arg, map_io, validate_skill_name};
 use super::skill_lint::frontmatter::parse_skill_frontmatter;
 use super::skill_lint::{SkillLintFinding, SkillLintSummary};
 use super::{App, CommandFailure};
+
+mod support;
+use support::{
+    codex_mcp_configured, contains_word_token, find_executable_on_path, yaml_dependency_values,
+};
 
 const VERSION_TIMEOUT: Duration = Duration::from_millis(250);
 const SCRIPT_SCAN_BYTES: usize = 16 * 1024;
@@ -160,16 +165,17 @@ pub(crate) fn skill_dependency_report(
         .map(|(required, source)| probe_network(required, source, &mut next_actions, &mut findings))
         .unwrap_or_default();
 
-    let ready = findings.iter().all(|finding| finding.severity != "error");
-    let status = if ready {
-        "ready"
-    } else if findings
+    let has_error = findings.iter().any(|finding| finding.severity == "error");
+    let has_unknown = findings
         .iter()
-        .any(|finding| finding.id == "mcp_status_unknown")
-    {
+        .any(|finding| finding.id == "mcp_status_unknown");
+    let ready = !has_error && !has_unknown;
+    let status = if has_error {
+        "blocked"
+    } else if has_unknown {
         "unknown"
     } else {
-        "blocked"
+        "ready"
     };
 
     Ok(SkillDependencyReport {
@@ -208,7 +214,7 @@ pub(crate) fn append_dependency_lint_findings(
             finding.severity.as_str()
         };
         report.findings.push(lint_finding(
-            &format!("dependency_{}", finding.id),
+            &format!("quality_dependency_{}", finding.id),
             severity,
             &finding.message,
             &finding.suggested_action,
@@ -263,21 +269,21 @@ fn read_manifest(skill_path: &Path, declarations: &mut DependencyDeclarations) {
         }
     };
     add_array_items(
-        &doc["requires_tools"],
+        doc.get("requires_tools"),
         "loom.skill.toml",
         &mut declarations.tools,
     );
     add_array_items(
-        &doc["requires_mcp"],
+        doc.get("requires_mcp"),
         "loom.skill.toml",
         &mut declarations.mcp,
     );
     add_array_items(
-        &doc["requires_env"],
+        doc.get("requires_env"),
         "loom.skill.toml",
         &mut declarations.env,
     );
-    if let Some(network) = doc["network"].as_str() {
+    if let Some(network) = doc.get("network").and_then(Item::as_str) {
         set_network(network, "loom.skill.toml", declarations);
     }
 }
@@ -385,14 +391,13 @@ fn read_agent_metadata(
             continue;
         };
         declarations.sources.insert("agent metadata".to_string());
-        for line in raw.lines() {
-            let Some((key, value)) = line.split_once(':') else {
-                continue;
-            };
-            match key.trim() {
-                "requires_tools" => add_csv_value(value, "agent metadata", &mut declarations.tools),
-                "requires_mcp" => add_csv_value(value, "agent metadata", &mut declarations.mcp),
-                "requires_env" => add_csv_value(value, "agent metadata", &mut declarations.env),
+        for (key, value) in yaml_dependency_values(&raw) {
+            match key.as_str() {
+                "requires_tools" => {
+                    add_csv_value(&value, "agent metadata", &mut declarations.tools)
+                }
+                "requires_mcp" => add_csv_value(&value, "agent metadata", &mut declarations.mcp),
+                "requires_env" => add_csv_value(&value, "agent metadata", &mut declarations.env),
                 "network" => set_network(value.trim(), "agent metadata", declarations),
                 _ => {}
             }
@@ -406,7 +411,7 @@ fn probe_tool(
     next_actions: &mut Vec<String>,
     findings: &mut Vec<DependencyFinding>,
 ) -> ToolDependency {
-    let executable = find_on_path(tool);
+    let executable = find_executable_on_path(tool);
     let found = executable.is_some();
     let version = executable.as_ref().and_then(|path| tool_version(path));
     let install_hint = (!found).then(|| install_hint(tool));
@@ -457,7 +462,7 @@ fn probe_env(
 }
 
 fn probe_mcp(
-    ctx: &AppContext,
+    _ctx: &AppContext,
     name: &str,
     source: &str,
     agent: Option<&str>,
@@ -465,26 +470,44 @@ fn probe_mcp(
     findings: &mut Vec<DependencyFinding>,
 ) -> McpDependency {
     match agent.map(str::to_ascii_lowercase).as_deref() {
-        Some("codex") => {
-            let configured = codex_mcp_configured(ctx, name);
-            if !configured {
-                next_actions.push(format!("configure {name} MCP server"));
+        Some("codex") => match codex_mcp_configured(name) {
+            Some(configured) => {
+                if !configured {
+                    next_actions.push(format!("configure {name} MCP server"));
+                    findings.push(dep_finding(
+                        "mcp_missing",
+                        "error",
+                        "required MCP server is not configured",
+                        "configure the MCP server for the selected agent",
+                        json!({ "mcp": name, "agent": "codex" }),
+                    ));
+                }
+                McpDependency {
+                    name: name.to_string(),
+                    required: true,
+                    configured: json!(configured),
+                    enabled: json!(configured),
+                    source: source.to_string(),
+                }
+            }
+            None => {
+                next_actions.push(format!("check {name} MCP server for codex"));
                 findings.push(dep_finding(
-                    "mcp_missing",
-                    "error",
-                    "required MCP server is not configured",
-                    "configure the MCP server for the selected agent",
+                    "mcp_status_unknown",
+                    "warning",
+                    "Codex MCP config could not be parsed",
+                    "fix or inspect the Codex config before relying on MCP readiness",
                     json!({ "mcp": name, "agent": "codex" }),
                 ));
+                McpDependency {
+                    name: name.to_string(),
+                    required: true,
+                    configured: json!("unknown"),
+                    enabled: json!("unknown"),
+                    source: source.to_string(),
+                }
             }
-            McpDependency {
-                name: name.to_string(),
-                required: true,
-                configured: json!(configured),
-                enabled: json!(configured),
-                source: source.to_string(),
-            }
-        }
+        },
         Some(other) => {
             next_actions.push(format!("check {name} MCP server for {other}"));
             findings.push(dep_finding(
@@ -550,8 +573,8 @@ fn probe_network(
     }
 }
 
-fn add_array_items(item: &Item, source: &str, target: &mut BTreeMap<String, String>) {
-    if let Some(array) = item.as_array() {
+fn add_array_items(item: Option<&Item>, source: &str, target: &mut BTreeMap<String, String>) {
+    if let Some(array) = item.and_then(Item::as_array) {
         for value in array.iter().filter_map(|value| value.as_str()) {
             insert_requirement(value, source, target);
         }
@@ -597,13 +620,14 @@ fn set_network(value: &str, source: &str, declarations: &mut DependencyDeclarati
 fn infer_from_text(text: &str, source: &str, declarations: &mut DependencyDeclarations) {
     let lower = text.to_ascii_lowercase();
     for (needle, tool) in [
-        (" git ", "git"),
-        (" jq", "jq"),
+        ("git", "git"),
+        ("jq", "jq"),
         ("python", "python"),
+        ("python3", "python"),
         ("node", "node"),
-        (" uv", "uv"),
+        ("uv", "uv"),
     ] {
-        if lower.contains(needle) {
+        if contains_word_token(&lower, needle) {
             insert_requirement(tool, source, &mut declarations.tools);
             declarations.sources.insert(source.to_string());
         }
@@ -616,7 +640,10 @@ fn infer_from_text(text: &str, source: &str, declarations: &mut DependencyDeclar
         insert_requirement("filesystem", source, &mut declarations.mcp);
         declarations.sources.insert(source.to_string());
     }
-    if lower.contains("curl ") || lower.contains("wget ") || lower.contains("network") {
+    if contains_word_token(&lower, "curl")
+        || contains_word_token(&lower, "wget")
+        || contains_word_token(&lower, "network")
+    {
         set_network("required", source, declarations);
     }
 }
@@ -641,18 +668,6 @@ fn compatibility_to_text(value: &Value) -> String {
         Value::String(text) => text.clone(),
         other => other.to_string(),
     }
-}
-
-fn find_on_path(tool: &str) -> Option<PathBuf> {
-    if tool.contains('/') {
-        let path = PathBuf::from(tool);
-        return path.is_file().then_some(path);
-    }
-    env::var_os("PATH").and_then(|paths| {
-        env::split_paths(&paths)
-            .map(|dir| dir.join(tool))
-            .find(|path| path.is_file())
-    })
 }
 
 fn tool_version(path: &Path) -> Option<String> {
@@ -688,24 +703,6 @@ fn tool_version(path: &Path) -> Option<String> {
         }
         std::thread::sleep(Duration::from_millis(10));
     }
-}
-
-fn codex_mcp_configured(ctx: &AppContext, name: &str) -> bool {
-    let configured_home = env::var_os("CODEX_HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| ctx.root.join(".codex"));
-    let candidates = [
-        configured_home.join("config.toml"),
-        env::var_os("HOME")
-            .map(PathBuf::from)
-            .unwrap_or_default()
-            .join(".codex/config.toml"),
-    ];
-    candidates.iter().any(|path| {
-        fs::read_to_string(path)
-            .map(|raw| raw.contains(name))
-            .unwrap_or(false)
-    })
 }
 
 fn install_hint(tool: &str) -> String {
@@ -760,6 +757,20 @@ fn refresh_lint_summary(report: &mut super::SkillLintReport) {
         .count();
     report.valid = error_count == 0;
     report.compatible = report.compatible && error_count == 0;
+    let quality = report
+        .findings
+        .iter()
+        .filter(|finding| finding.id.starts_with("quality_"))
+        .collect::<Vec<_>>();
+    report.sections.quality.status = if quality.iter().any(|finding| finding.severity == "error") {
+        "error"
+    } else if quality.iter().any(|finding| finding.severity == "warning") {
+        "warning"
+    } else {
+        "pass"
+    }
+    .to_string();
+    report.sections.quality.findings = quality.iter().map(|finding| finding.id.clone()).collect();
     report.summary = SkillLintSummary {
         error_count,
         warning_count,

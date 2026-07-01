@@ -17,6 +17,7 @@ mod skill_diagnose_tests;
 mod skill_eval;
 mod skill_inventory;
 mod skill_lint;
+mod skill_new;
 mod skill_policy;
 mod skill_verify;
 mod skillset_cmds;
@@ -230,6 +231,7 @@ impl App {
                 SkillCommand::Show(args) => self.cmd_skill_show(args),
                 SkillCommand::Search(args) => self.cmd_skill_search(args),
                 SkillCommand::Resolve(args) => self.cmd_skill_resolve(args),
+                SkillCommand::New(args) => self.cmd_skill_new(args, &request_id),
                 SkillCommand::Provenance { command } => {
                     self.cmd_skill_provenance(command, &request_id)
                 }
@@ -373,6 +375,13 @@ impl App {
 }
 
 fn command_records_audit(command: &Command) -> bool {
+    if let Command::Skill {
+        command: SkillCommand::New(args),
+    } = command
+    {
+        return !args.dry_run;
+    }
+
     !matches!(
         command,
         Command::Panel(_)
@@ -438,6 +447,7 @@ fn command_requires_durable_audit(command: &Command) -> bool {
                 command: SkillOrphanCommand::Clean(_),
             } => true,
             SkillCommand::Rollback(args) => !args.dry_run,
+            SkillCommand::New(args) => !args.dry_run,
             SkillCommand::Diff(_)
             | SkillCommand::History(_)
             | SkillCommand::List

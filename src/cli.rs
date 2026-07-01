@@ -8,6 +8,7 @@ mod eval;
 mod plan_flow;
 mod policy;
 mod provenance;
+mod skill_new_args;
 mod skillset;
 mod use_flow;
 pub use discovery::{SkillResolveArgs, SkillSearchArgs};
@@ -15,6 +16,7 @@ pub use eval::SkillEvalArgs;
 pub use plan_flow::{ApplyArgs, PlanCommand, PlanUseArgs};
 pub use policy::SkillPolicyArgs;
 pub use provenance::{AddArgs, SkillProvenanceCommand};
+pub use skill_new_args::{SkillNewArgs, SkillNewTemplate};
 pub use skillset::{
     SkillsetAddArgs, SkillsetCommand, SkillsetCreateArgs, SkillsetMemberArgs, SkillsetShowArgs,
 };
@@ -220,6 +222,8 @@ pub enum SkillCommand {
     Search(SkillSearchArgs),
     #[command(about = "Resolve a task description to candidate skills without invoking an LLM")]
     Resolve(SkillResolveArgs),
+    #[command(about = "Create a lint-clean local skill skeleton")]
+    New(SkillNewArgs),
     #[command(about = "Import a skill source into the registry")]
     Add(AddArgs),
     #[command(about = "Project a registry skill into a bound target")]

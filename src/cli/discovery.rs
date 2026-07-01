@@ -16,7 +16,7 @@ pub struct SkillSearchArgs {
     #[arg(long)]
     pub profile: Option<String>,
 
-    /// Restrict results to a source status such as present, missing, or non-compliant.
+    /// Restrict results by source status such as present, missing, or non-compliant.
     #[arg(long)]
     pub status: Option<String>,
 

@@ -103,7 +103,7 @@ Umbrella spec verification:
 ```bash
 git diff --check
 SPEC_RAIL_REPO=/path/to/specrail
-python3 "$SPEC_RAIL_REPO/checks/check_workflow.py" --repo "$SPEC_RAIL_REPO" --spec-dir specs/GH376
+python3 "$SPEC_RAIL_REPO/checks/check_workflow.py" --repo . --spec-dir specs/GH376
 cargo check --workspace --all-targets --all-features
 cargo test
 ```

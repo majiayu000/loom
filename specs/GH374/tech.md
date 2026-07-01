@@ -52,8 +52,8 @@ Add a single-skill quick start before the managed projection flow:
 loom init
 loom skill new fixflow --template coding-workflow
 loom skill lint fixflow --portable
-loom skill activate fixflow --agent codex --scope user
-loom skill doctor fixflow --agent codex
+loom skill activate fixflow --agent codex --binding <binding-id>
+loom skill diagnose fixflow
 ```
 
 If commands are not implemented at implementation time, show them under a
@@ -86,7 +86,7 @@ Recommended sections:
 1. Codex active-view roots.
 2. Why a symlink is not enough.
 3. Canonical `SKILL.md` identity.
-4. `skills.config` disable rules by path and name.
+4. `skills.config` disable rules by canonical `SKILL.md` path.
 5. New session or restart guidance.
 6. Diagnosis command examples with `--json`.
 7. Planned reconcile flow and dry-run-first constraints.
@@ -120,7 +120,7 @@ Each new doc should link to the relevant upstream or local source:
   `https://agentskills.io/client-implementation/adding-skills-support`
 - Claude Code skills docs: `https://code.claude.com/docs/en/skills`
 - Local Codex active-view plan:
-  `docs/plan/codex-active-view-projection-spec.md`
+  `plan/codex-active-view-projection-spec.md`
 
 ## Verification
 
@@ -128,7 +128,7 @@ Docs-only verification:
 
 ```bash
 git diff --check
-rg -n "full[- ]mirror|\\.codex/skills|\\.agents/skills|skill activate|skill doctor|--json" README.md docs
+rg -n "full[- ]mirror|\\.codex/skills|\\.agents/skills|skill activate|skill diagnose|--json" README.md docs
 ```
 
 Repository verification before submission:

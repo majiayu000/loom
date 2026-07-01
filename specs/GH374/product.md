@@ -32,7 +32,7 @@ Update documentation only:
 ## Non-Goals
 
 1. Do not implement new commands in this docs slice.
-2. Do not claim `skill activate`, `skill inspect`, `skill doctor`, `codex
+2. Do not claim `skill activate`, `skill inspect`, `skill diagnose`, `codex
    reconcile`, or `skill eval run` behavior exists unless the command is
    already implemented; mark target workflows as planned when needed.
 3. Do not change runtime migration behavior.
@@ -50,7 +50,8 @@ The new docs must define these terms consistently:
 - Active: Loom intends the skill to be in a target active view.
 - Installed: skill files exist in a source or target location.
 - Visible: the target agent can discover the skill in its active view.
-- Enabled: agent config does not disable the visible skill by name or path.
+- Enabled: agent config does not disable the visible skill by canonical
+  `SKILL.md` path.
 - Disabled-by-config: files exist but agent configuration suppresses the skill.
 - Restart-required: files/config changed and the agent may need a new session.
 
@@ -63,9 +64,9 @@ Explain the target workflow:
 ```bash
 loom skill new fixflow
 loom skill lint fixflow --portable
-loom skill scan fixflow
-loom skill activate fixflow --agent codex --scope user
-loom skill doctor fixflow --agent codex
+loom skill lint fixflow --quality
+loom skill activate fixflow --agent codex --binding <binding-id>
+loom skill diagnose fixflow
 loom skill eval run fixflow --agent codex --baseline no-skill
 loom skill release fixflow v1.0.0
 ```
@@ -80,9 +81,11 @@ Explain Codex-specific visibility:
 
 - Preferred user active view: `~/.agents/skills`.
 - Legacy user root: `${CODEX_HOME:-~/.codex}/skills`.
-- Project root: `<repo>/.agents/skills`.
+- Project roots: `.agents/skills` discovered from the current working directory
+  up through the repository root.
 - Symlink target canonicalization.
-- `skills.config` disables by path and name.
+- `skills.config` disables by canonical `SKILL.md` path; skill names are used
+  only for collision/display diagnostics.
 - New session or restart guidance.
 - How to use JSON output for automation when diagnosing visibility.
 
@@ -117,7 +120,8 @@ Explain a safe dry-run-first migration:
 2. New docs define source, target, active view, active, visible, enabled,
    disabled-by-config, and restart-required.
 3. Codex docs explicitly mention `~/.agents/skills`, legacy
-   `${CODEX_HOME:-~/.codex}/skills`, and repo `.agents/skills`.
+   `${CODEX_HOME:-~/.codex}/skills`, and the current-working-directory to
+   repository-root `.agents/skills` search chain.
 4. Migration guide includes a safe dry-run-first active-view migration.
 5. Command examples use `--json` where automation output matters.
 6. Docs link back to Agent Skills spec and relevant upstream docs.

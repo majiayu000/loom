@@ -95,6 +95,34 @@ Recommended capability record:
 }
 ```
 
+Recommended workspace index record:
+
+```json
+{
+  "schema_version": 1,
+  "workspace": "/repo",
+  "agent": "codex",
+  "binding_id": "bind_codex_project",
+  "policy_profile": "deny-risky",
+  "active_view_digest": "sha256:...",
+  "source_digest": "sha256:...",
+  "compatibility": {
+    "supports_symlink": true,
+    "supports_copy": true,
+    "visible_roots_digest": "sha256:..."
+  },
+  "input_digests": {
+    "bindings": "sha256:...",
+    "targets": "sha256:...",
+    "adapter": "sha256:..."
+  }
+}
+```
+
+`workspaces.json` stores records sorted by `workspace`, `agent`, then
+`binding_id`. Every compatibility or policy signal must be derived from the
+listed input digests so stale workspace context can be detected before ranking.
+
 The index must be derived data. It can be rebuilt from registry source and
 read models. Do not make it the source of truth for skill metadata.
 
@@ -110,9 +138,9 @@ loom index status
 Extend discovery:
 
 ```bash
-loom skill recommend <task> [--agent <agent>] [--workspace <path>] [--semantic]
+loom skill recommend <task> [--agent <agent>] [--workspace <path>] [--binding <binding-id>|--policy-profile <profile>] [--semantic]
 loom skill resolve <task> [--agent <agent>] [--workspace <path>] [--semantic]
-loom active recommend --agent <agent> [--workspace <path>]
+loom active recommend <task> --agent <agent> [--workspace <path>] [--binding <binding-id>] [--desired-skill <skill>...]
 ```
 
 If `active recommend` is introduced later under a different command group, keep
@@ -129,12 +157,15 @@ Recommended pipeline:
 5. Join dependency readiness from #371.
 6. Join eval evidence from #369.
 7. Join skillset membership from #377.
-8. Score candidates, applying positive trigger boosts and negative trigger
+8. Resolve policy context from `--binding`, an explicit `--policy-profile`, or a
+   single unambiguous workspace binding; otherwise fail closed before returning
+   activation recommendations.
+9. Score candidates, applying positive trigger boosts and negative trigger
    penalties or filters.
-9. Filter out blocked, quarantined, or policy-blocked activation candidates,
+10. Filter out blocked, quarantined, or policy-blocked activation candidates,
    including standalone skills and skillset candidates whose required members are
    blocked, quarantined, policy-blocked, or dependency-unready for activation.
-10. Return ranked results with explanations and suggested commands.
+11. Return ranked results with explanations and suggested commands.
 
 Recommendation commands must not persist rebuilt index data. If `state/index`
 is missing or stale, they may use an in-memory rebuild for the current response
@@ -177,6 +208,9 @@ Semantic retrieval is optional:
 cannot resolve to exactly one active binding. Ambiguous or missing binding
 resolution fails closed with a structured ambiguity result rather than comparing
 against an arbitrary active view.
+It also requires an explicit task, desired skill list, or prior recommendation
+artifact as the desired-state input. Without that input, the command is limited
+to workspace hygiene findings and must not produce add/remove activation plans.
 
 `active recommend` should return:
 
@@ -184,6 +218,8 @@ against an arbitrary active view.
 {
   "agent": "codex",
   "workspace": "/repo",
+  "task": "fix failing CI",
+  "binding_id": "bind_codex_project",
   "dry_run": true,
   "plan": {
     "add": [],

@@ -37,6 +37,30 @@ state/index/
 `skills.embeddings.jsonl` is optional and may exist only when a local provider
 is configured. It must not be required for `index build` or `skill recommend`.
 
+Recommended lexical record:
+
+```json
+{
+  "schema_version": 1,
+  "skill_id": "fixflow",
+  "source_digest": "sha256:...",
+  "tokens": ["fixflow", "ci", "failure", "tests"],
+  "fields": {
+    "name": ["fixflow"],
+    "description": ["fix", "failing", "ci"],
+    "headings": ["workflow", "verification"],
+    "positive_triggers": ["failing tests"],
+    "negative_triggers": ["write product copy"]
+  },
+  "updated_at_source": "2026-07-01T00:00:00Z"
+}
+```
+
+`skills.lexical.json` stores records sorted by `skill_id`; every record includes
+the source digest used to derive tokens. Lexical tokenization must be
+deterministic and rebuildable from registry source, `SKILL.md`, and trigger eval
+files.
+
 Recommended capability record:
 
 ```json
@@ -88,17 +112,26 @@ the JSON plan contract equivalent.
 Recommended pipeline:
 
 1. Load current skill inventory.
-2. Load or build capability records.
+2. Load existing capability records or build transient in-memory records.
 3. Join `skill inspect` status once #366 exists.
 4. Join safety/trust/quarantine from #370.
 5. Join dependency readiness from #371.
 6. Join eval evidence from #369.
 7. Join skillset membership from #377.
-8. Score candidates.
-9. Filter out blocked/quarantined activation candidates.
+8. Score candidates, applying positive trigger boosts and negative trigger
+   penalties or filters.
+9. Filter out blocked/quarantined activation candidates, including skillset
+   candidates whose required members are blocked, quarantined, policy-blocked,
+   or dependency-unready for activation.
 10. Return ranked results with explanations and suggested commands.
 
-Lexical-only scoring must be stable. Sort ties by skill id.
+Recommendation commands must not persist rebuilt index data. If `state/index`
+is missing or stale, they may use an in-memory rebuild for the current response
+with a warning, or refuse with a suggested `loom index build`; only
+`loom index build` may write `state/index`.
+
+Lexical-only scoring must be stable. Sort by score descending, then `kind`, then
+`id`, then source path when needed for a final deterministic tie-break.
 
 ## Scoring Contract
 
@@ -122,6 +155,8 @@ Semantic retrieval is optional:
 - default mode remains lexical
 - `--semantic` without a configured local provider returns
   `semantic-disabled` with a warning and falls back to lexical ranking
+- the same fallback behavior and argument parsing apply to both `skill
+  recommend --semantic` and `skill resolve --semantic`
 - no network embedding service is called by default
 - local provider configuration must never expose secrets in output
 

@@ -84,6 +84,9 @@ Candidate score should combine:
 9. Eval evidence.
 10. Recency or staleness.
 11. Skillset coherence.
+12. Negative trigger matches from `evals/triggers.jsonl`, which must reduce the
+    score or suppress activation recommendations when the task resembles a known
+    non-trigger case.
 
 Each candidate must include explanations for positive signals and risks.
 
@@ -118,7 +121,12 @@ Each ranked result should include:
 ```
 
 Skillset recommendations use the same result shape with
-`"kind": "skillset"` and an id from the skillset read model.
+`"kind": "skillset"` and an id from the skillset read model. Until a dedicated
+`skillset activate` lifecycle exists, skillset results must not suggest
+`skill activate <skillset-id>` or any other invalid activation command. They may
+suggest read-only inspection such as `loom --json skillset show <skillset-id>`,
+or per-member activation dry-runs only when every required member passes safety,
+policy, dependency, and readiness filters.
 
 ## Behavior Invariants
 
@@ -127,7 +135,9 @@ Skillset recommendations use the same result shape with
    state.
 3. Semantic mode is optional and disabled unless a local provider is configured.
 4. Blocked or quarantined skills are filtered out of activation
-   recommendations.
+   recommendations. Skillsets containing blocked, quarantined, or policy-blocked
+   required members are either excluded from activation recommendations or
+   degraded to read-only inspection with the unsafe members listed as risks.
 5. Unevaluated skills may appear only with warnings.
 6. Missing dependencies reduce ranking and appear in risks or warnings.
 7. Recommendation output is read-only and does not write registry state, active
@@ -144,6 +154,8 @@ Skillset recommendations use the same result shape with
 4. Blocked/quarantined skills are never recommended for activation.
 5. Unevaluated skills can be recommended only with a warning.
 6. `active recommend` returns a dry-run plan, not mutations.
-7. Tests cover lexical ranking, semantic-disabled mode, blocked skill filtering,
-   dependency penalty, eval boost, workspace filter, and skillset
+7. Tests cover lexical ranking, semantic-disabled mode for both `recommend` and
+   `resolve`, blocked skill filtering, unsafe skillset-member filtering,
+   dependency penalty, positive eval boost, negative-trigger penalty, workspace
+   filter, deterministic tie-breaking across result kinds, and skillset
    recommendation.

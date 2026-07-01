@@ -24,8 +24,8 @@ automatic activation, network embedding services by default, DAG workflow execut
 - [ ] `SP378-T001` Owner: index-model | Done when: derived `state/index` schemas are defined for lexical and capability records without making index data the source of truth | Verify: `git diff --check`
 - [ ] `SP378-T002` Owner: cli-index | Done when: `loom index build` writes only rebuildable derived `state/index` data, `loom index status` is read-only, and both are deterministic over current registry data without network access | Verify: `cargo test --test skill_inventory_cli`
 - [ ] `SP378-T003` Owner: recommend | Done when: `loom skill recommend` ranks skills and skillsets with transparent `kind`, `id`, `score_inputs`, `reasons`, `risks`, warnings, and suggested commands | Verify: `cargo test --test skill_inventory_cli`
-- [ ] `SP378-T004` Owner: semantic | Done when: `--semantic` falls back to lexical with a `semantic-disabled` warning when no local provider is configured | Verify: `cargo test --test skill_inventory_cli`
-- [ ] `SP378-T005` Owner: safety-policy | Done when: blocked/quarantined skills are never recommended for activation and dependency/eval gaps are surfaced as penalties or warnings | Verify: `cargo test --test skill_policy && cargo test --test skill_eval`
+- [ ] `SP378-T004` Owner: semantic | Done when: `skill recommend --semantic` and `skill resolve --semantic` both fall back to lexical with a `semantic-disabled` warning when no local provider is configured | Verify: `cargo test --test skill_inventory_cli`
+- [ ] `SP378-T005` Owner: safety-policy | Done when: blocked/quarantined skills and skillsets with unsafe required members are never recommended for activation, negative trigger matches reduce ranking or filter activation recommendations, and dependency/eval gaps are surfaced as penalties or warnings | Verify: `cargo test --test skill_policy && cargo test --test skill_eval`
 - [ ] `SP378-T006` Owner: active-plan | Done when: `active recommend` returns a dry-run add/keep/remove plan with suggested commands and no mutation | Verify: `cargo test --test skill_inventory_cli`
 - [ ] `SP378-T007` Owner: regression | Done when: focused and full repository checks pass | Verify: `cargo check --workspace --all-targets --all-features && cargo test`
 
@@ -96,7 +96,11 @@ Done when:
 - Output includes score inputs, reasons, risks, warnings, recommended action,
   and suggested commands.
 - Lexical-only mode is deterministic.
-- Tie-breaking is stable by skill id.
+- Tie-breaking is stable by score descending, result kind, result id, and source
+  path when needed.
+- Skillset results use read-only inspection commands unless a later lifecycle
+  explicitly defines activation; they must not emit `skill activate
+  <skillset-id>`.
 
 Verify:
 
@@ -111,8 +115,10 @@ Depends on: SP378-T3
 
 Done when:
 
-- `--semantic` does not call network services by default.
-- Missing local semantic provider returns a warning and lexical fallback.
+- `skill recommend --semantic` and `skill resolve --semantic` do not call
+  network services by default.
+- Missing local semantic provider returns a warning and lexical fallback for
+  both command surfaces.
 - Output labels mode as `semantic-disabled`.
 
 Verify:
@@ -130,8 +136,12 @@ Blocked by: #369, #370, #371, #377
 Done when:
 
 - Blocked/quarantined skills are excluded from activation recommendations.
+- Skillsets with blocked, quarantined, policy-blocked, or dependency-unready
+  required members are excluded from activation recommendations or degraded to
+  read-only inspection with member-level risks.
 - Missing dependencies reduce ranking and appear in risks.
-- Eval evidence can boost ranking, and missing eval appears as a warning.
+- Positive eval evidence can boost ranking, negative trigger evidence reduces
+  ranking or filters activation, and missing eval appears as a warning.
 - Skillset recommendations explain member coherence.
 
 Verify:

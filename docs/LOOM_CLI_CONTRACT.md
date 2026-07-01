@@ -483,8 +483,9 @@ Rules:
 2. `--portable` is an alias for strict portable Agent Skills compliance
 3. `--compat` accepts legacy `skill.md` loading but returns typed warning findings
 4. `--fix` returns a read-only plan for safe normalizations such as `skill.md` to `SKILL.md`; it must not mutate files
-5. `--agent codex` and `--agent claude` add target-agent compatibility sections and warnings
-6. `--quality` adds non-fatal maintainability findings for trigger quality, size, eval fixtures, and script layout
+5. `--agent codex` and `--agent claude` add target-agent compatibility sections and warnings, including configured active skill directory name collisions
+6. `--quality` adds non-fatal maintainability findings for trigger quality, size, eval fixtures, script layout, and deeply nested references
+7. strict portable lint rejects descriptions above 1024 characters
 7. strict lint failures return `SCHEMA_MISMATCH` with the full report in `error.details.report`
 8. the report includes `entrypoint`, `frontmatter`, `sections`, `findings`, `summary`, and `fix_plan`
 

@@ -5,18 +5,18 @@ Product spec: `specs/GH365/product.md`
 Tech spec: `specs/GH365/tech.md`
 Status: Draft for implementation
 
-## Scope For First PR
+## Scope
 
-Implement only the first lint expansion slice:
+Complete the expanded lint behavior:
 
 ```text
-portable YAML parser + --portable + --agent + --quality report sections
+portable YAML parser + --portable + --agent + --quality report sections + collision/reference checks
 ```
 
 Do not implement:
 
 ```text
-active skill collision scanning, remote spec fetching, automatic fixes, complete official spec coverage
+remote spec fetching, automatic fixes, mutating fix-apply mode
 ```
 
 ## Tasks
@@ -25,6 +25,7 @@ active skill collision scanning, remote spec fetching, automatic fixes, complete
 - [x] `SP365-T002` Owner: lint | Done when: frontmatter parsing uses `yaml_serde` and rich Agent Skills fields no longer fail only because nested YAML exists | Verify: `cargo test --test skill_lint`
 - [x] `SP365-T003` Owner: lint | Done when: report includes portable, agent, quality, resources, and progressive disclosure sections | Verify: `cargo test --test skill_lint`
 - [x] `SP365-T004` Owner: docs | Done when: CLI contract and GH365 specs document the first lint expansion slice | Verify: `git diff --check`
+- [x] `SP365-T005` Owner: lint | Done when: lint rejects overlong descriptions, `--agent` reports configured active skill name collisions, `--agent claude` accepts Claude fields, and `--quality` reports vague/oversized/deep-reference risks | Verify: `cargo test --test skill_lint`
 
 ### SP365-T1: Add CLI Flags
 
@@ -83,7 +84,9 @@ Done when:
 
 - Report includes stable `sections`.
 - `--agent codex` warns on Claude-only fields.
-- `--quality` emits non-fatal warnings for eval/script/size/description quality.
+- `--agent claude` recognizes Claude-only fields without warning.
+- `--agent codex` and `--agent claude` warn on configured active skill name collisions.
+- `--quality` emits non-fatal warnings for eval/script/size/description/reference-depth quality.
 
 Verify:
 
@@ -104,7 +107,31 @@ Files:
 Done when:
 
 - Contract documents the new flags and report fields.
-- Tests cover rich YAML, agent checks, quality checks, and existing strict failures.
+- Tests cover rich YAML, agent checks, active collision checks, quality checks, and existing strict failures.
+
+### SP365-T5: Complete Remaining Lint Checks
+
+Owner: implementation
+Depends on: SP365-T3
+
+Files:
+
+- `src/commands/skill_lint.rs`
+- `src/commands/skill_lint/sections.rs`
+- `tests/skill_lint.rs`
+
+Done when:
+
+- Descriptions above 1024 characters fail strict portable lint.
+- `--agent claude` accepts Claude-only fields without warning.
+- Configured Codex/Claude skill directories are scanned for same-name active copies and reported as warnings.
+- `--quality` reports vague descriptions, oversized `SKILL.md`, missing eval fixtures, unclear scripts, and deeply nested references.
+
+Verify:
+
+```bash
+cargo test --test skill_lint
+```
 
 Verify:
 
@@ -116,4 +143,4 @@ cargo check --workspace --all-targets --all-features
 
 ## Handoff Notes
 
-Use `Refs #365` unless a later PR implements every remaining quality, agent, and collision-checking item from the GitHub issue.
+Use `Fixes #365` once this packet and implementation are verified.

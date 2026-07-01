@@ -54,6 +54,8 @@ pub(crate) fn push_schema_issue(
 
 pub(crate) fn run_agent_checks(
     config: &SkillLintConfig,
+    skill_path: &Path,
+    expected_name: &str,
     frontmatter: &SkillLintFrontmatter,
     findings: &mut Vec<SkillLintFinding>,
 ) {
@@ -90,6 +92,29 @@ pub(crate) fn run_agent_checks(
             false,
             json!({ "agent": other }),
         ),
+    }
+
+    for active_dir in &config.agent_skill_dirs {
+        let active_skill = active_dir.join(expected_name);
+        if !active_skill.is_dir() {
+            continue;
+        }
+        if paths_equivalent(skill_path, &active_skill) {
+            continue;
+        }
+        push_finding(
+            findings,
+            "agent_skill_name_collision",
+            "warning",
+            "another skill with the same name is present in the agent skill directory",
+            "rename one skill or remove the stale active copy before relying on agent visibility",
+            false,
+            json!({
+                "agent": agent,
+                "active_path": active_skill.display().to_string(),
+                "source_path": skill_path.display().to_string()
+            }),
+        );
     }
 }
 
@@ -176,6 +201,23 @@ pub(crate) fn run_quality_checks(
             );
         }
     }
+
+    for reference in deep_reference_files(skill_path) {
+        push_quality_finding(
+            findings,
+            "quality_reference_too_deep",
+            "reference file is nested deeply enough to make disclosure hard to follow",
+            "keep referenced material shallow or link it directly from SKILL.md",
+            json!({ "path": reference }),
+        );
+    }
+}
+
+fn paths_equivalent(left: &Path, right: &Path) -> bool {
+    match (fs::canonicalize(left), fs::canonicalize(right)) {
+        (Ok(left), Ok(right)) => left == right,
+        _ => left == right,
+    }
 }
 
 fn script_files_without_shebang(skill_path: &Path) -> Vec<String> {
@@ -197,6 +239,37 @@ fn script_files_without_shebang(skill_path: &Path) -> Vec<String> {
             (!raw.starts_with("#!")).then(|| path.display().to_string())
         })
         .collect()
+}
+
+fn deep_reference_files(skill_path: &Path) -> Vec<String> {
+    let root = skill_path.join("references");
+    let mut findings = Vec::new();
+    collect_deep_reference_files(&root, &root, &mut findings);
+    findings
+}
+
+fn collect_deep_reference_files(root: &Path, current: &Path, findings: &mut Vec<String>) {
+    let Ok(entries) = fs::read_dir(current) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_deep_reference_files(root, &path, findings);
+            continue;
+        }
+        if !path.is_file() {
+            continue;
+        }
+        let depth = path
+            .strip_prefix(root)
+            .ok()
+            .map(|relative| relative.components().count())
+            .unwrap_or(0);
+        if depth > 2 {
+            findings.push(path.display().to_string());
+        }
+    }
 }
 
 fn push_quality_finding(

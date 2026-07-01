@@ -69,6 +69,7 @@ Done when:
 
 - manifest, gate status, token estimate, source digest, and planned artifact
   path models parse and serialize deterministically.
+- artifact ids validate as safe path segments before any artifact path join.
 - status values are constrained to `planned`, `experimental`, `valid`, `stale`,
   `blocked`, and `invalid`.
 - gate values are constrained to `pass`, `warning`, `missing`, `blocked`, and
@@ -120,7 +121,10 @@ Done when:
 - list reports known artifacts without mutating state.
 - verify detects missing files.
 - verify detects malformed manifest and malformed JSON sidecar files.
+- verify rejects unsafe artifact ids before path resolution.
 - verify detects source digest mismatch after source edits.
+- verify validates generated `activation.md` or projected activation text
+  itself, not only the source skill lint status.
 - verify prevents `valid` status when lint, safety, dependency, or eval gates
   are missing, blocked, or failed.
 - verify returns structured output that `skill inspect` can consume later.

@@ -134,6 +134,13 @@ loom skill inspect <skill> --compiled [--artifact <id>]
 loom skill compile clean <skill> [--artifact <id>]
 ```
 
+Artifact ids are path segments, not paths. Commands accepting `--artifact`
+must validate ids against a strict safe segment grammar before joining paths
+under `state/compiled/skills/<skill>/`.
+
+Deferred inspect integration should explain compiled artifact status, stale
+reason, gate results, and source fallback once #366 wiring is included.
+
 ## Acceptance Criteria
 
 1. `loom skill compile fixflow --dry-run --agent codex --json` returns planned
@@ -149,11 +156,9 @@ loom skill compile clean <skill> [--artifact <id>]
    status.
 7. Compiled activation remains opt-in and basic activation works when no
    compiled artifact exists.
-8. `skill inspect` can explain compiled artifact status, stale reason, gate
-   results, and source fallback.
-9. Tests cover dry-run planning, no-op small skills, artifact manifest parsing,
+8. Tests cover dry-run planning, no-op small skills, artifact manifest parsing,
    missing file verification, stale digest verification, gate failure handling,
-   and compiled inspect output.
+   artifact-id path validation, and activation-artifact lint verification.
 
 ## Open Questions
 

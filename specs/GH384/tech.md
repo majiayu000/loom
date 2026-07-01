@@ -96,8 +96,8 @@ compiled artifact:
 1. `SKILL.md` bytes.
 2. Portable metadata that affects activation.
 3. Referenced files that are indexed or summarized.
-4. Script paths and executable metadata that are exposed to the runtime
-   interface.
+4. Script file bytes or content hashes, plus paths and executable metadata, for
+   scripts exposed to the runtime interface.
 5. Compiler version and agent profile.
 
 When a source digest does not match the manifest digest, verification returns a
@@ -108,7 +108,9 @@ typed stale result. It must not silently fall back to the artifact.
 `skill compile --dry-run` should:
 
 1. Resolve the skill through the existing registry read path.
-2. Validate the skill exists and is not quarantined or blocked by policy.
+2. Validate the skill exists. Quarantine or policy blocks should be represented
+   as blocked gate status in the dry-run report rather than an early generic
+   planner failure.
 3. Parse frontmatter and body through existing lint parser components where
    available.
 4. Extract trigger boundaries, non-goals, safety constraints, dependencies,
@@ -131,11 +133,13 @@ typed stale result. It must not silently fall back to the artifact.
 2. Ensure all required files exist.
 3. Validate each JSON file with typed schema parsing.
 4. Recompute the source digest and compare it with the manifest.
-5. Run or consume current lint status.
+5. Validate the generated activation/projection artifact text with the
+   portable/agent lint contract, not only the source skill.
 6. Run or consume current safety/trust status.
 7. Run or consume dependency readiness.
 8. Require eval evidence before returning `valid`.
-9. Return a structured report for `skill inspect`.
+9. Return a structured report that deferred `skill inspect` integration can
+   consume.
 
 Verification failures should use typed errors for malformed input and structured
 blocked status for unavailable gates. Missing eval evidence should block

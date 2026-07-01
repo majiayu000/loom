@@ -23,9 +23,9 @@ Codex config repair, activation rollback, eval harness behavior, marketplace/pro
 ## Tasks
 
 - [ ] `SP373-T001` Owner: adapter-model | Done when: `AgentAdapter` can represent v1-compatible defaults plus v2 `discovery_roots`, `visibility`, and `reload` metadata | Verify: `cargo test --test workspace_init`
-- [ ] `SP373-T002` Owner: adapter-loader | Done when: external v1 adapters still load, external v2 adapters parse through a versioned loader, and unsupported APIs fail with `ADAPTER_API_UNSUPPORTED` | Verify: `cargo test --test workspace_init`
-- [ ] `SP373-T003` Owner: built-ins | Done when: built-in Codex metadata includes preferred user, legacy user, project roots, config visibility, and reload semantics | Verify: `cargo test --test workspace_init`
-- [ ] `SP373-T004` Owner: target-resolution | Done when: target add/activation-facing helpers choose preferred roots from adapter metadata and fail clearly when no scoped root exists | Verify: `cargo test --test cli_surface`
+- [ ] `SP373-T002` Owner: adapter-loader | Done when: external v1 adapters still load with unknown-field rejection, external v2 adapters parse through a versioned loader, and unsupported APIs preserve `ADAPTER_INVALID` with `ADAPTER_API_UNSUPPORTED` as the structured reason | Verify: `cargo test --test workspace_init`
+- [ ] `SP373-T003` Owner: built-ins | Done when: built-in Codex metadata includes preferred user, legacy user, project roots, path-based config visibility, scan-eligible legacy defaults, and reload semantics | Verify: `cargo test --test workspace_init`
+- [ ] `SP373-T004` Owner: target-resolution | Done when: `loom use`, diagnostics, and activation-facing default-target helpers choose preferred roots from adapter metadata while `target add --path` keeps the caller's explicit path | Verify: `cargo test --test cli_surface`
 - [ ] `SP373-T005` Owner: docs-schema | Done when: `docs/schemas/agent-adapter-v2.schema.json` and `docs/AGENT_ADAPTERS.md` document v1 compatibility, v2 fields, roles, visibility, and reload semantics | Verify: `git diff --check`
 - [ ] `SP373-T006` Owner: regression | Done when: tests cover v1 compatibility, v2 Codex roots, external v2 load, unsupported API, duplicate ids, and adapter-driven target resolution | Verify: `cargo test && cargo check --workspace --all-targets --all-features`
 
@@ -68,8 +68,10 @@ Done when:
 
 - Loader dispatches by `adapter_api` before deserializing the full record.
 - Existing v1 fixture remains valid.
+- V1 fixtures with unknown fields fail to load with a structured adapter error.
 - v2 fixture accepts discovery roots, visibility, and reload metadata.
-- Unsupported APIs fail with `ADAPTER_API_UNSUPPORTED`.
+- Unsupported APIs preserve top-level `ADAPTER_INVALID` and report
+  `ADAPTER_API_UNSUPPORTED` in details.
 - Duplicate adapter ids still fail before returning mixed adapter output.
 
 Verify:
@@ -95,7 +97,9 @@ Done when:
 - Codex legacy user root includes `${CODEX_HOME:-~/.codex}/skills`.
 - Codex project root includes `<workspace>/.agents/skills`.
 - Codex visibility includes canonical `SKILL.md` path identity and
-  `skills.config.path` / `skills.config.name` disable rules.
+  `skills.config.path` disable rules.
+- Legacy defaults used by `workspace init --scan-existing` exclude project roots
+  unless project-scope scanning is requested explicitly.
 - Reload metadata reports `new-session-recommended` and no hot reload.
 
 Verify:
@@ -121,8 +125,10 @@ Done when:
 - Project scope prefers role `project-cross-client`.
 - Missing scoped roots return a structured adapter error instead of falling
   back silently.
-- `workspace doctor`, `skill inspect`, `skill doctor`, and activation-facing
-  target resolution stop duplicating Codex path constants.
+- `workspace doctor`, current `skill show`/`skill diagnose`, future inspect, and
+  activation-facing target resolution stop duplicating Codex path constants.
+- `target add --path` keeps registering the explicit path supplied by the user
+  and does not infer a different adapter root.
 
 Verify:
 

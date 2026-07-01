@@ -12,8 +12,8 @@ decided, and when agent reload is needed, so Loom can answer whether one skill
 is visible to one target agent without relying on scattered hard-coded paths.
 
 The user-visible outcome is a stable read model for commands such as
-`workspace status`, `workspace doctor`, `skill inspect`, `skill doctor`, and
-future activation flows:
+`workspace status`, `workspace doctor`, current `skill show`/`skill diagnose`,
+future `skill inspect`, and future activation flows:
 
 1. Which roots the agent scans.
 2. Which root Loom should prefer for a requested scope.
@@ -48,7 +48,8 @@ Implement the smallest adapter v2 slice:
 ## Behavior Invariants
 
 1. Existing external v1 adapter files continue to load.
-2. Unsupported `adapter_api` values fail clearly with
+2. Unsupported `adapter_api` values preserve the existing adapter error
+   envelope: top-level `ADAPTER_INVALID` with `details.reason` set to
    `ADAPTER_API_UNSUPPORTED`.
 3. Duplicate adapter ids still fail before any command returns mixed metadata.
 4. Unknown fields are accepted only for versions whose schema allows safe
@@ -57,10 +58,13 @@ Implement the smallest adapter v2 slice:
    consumers do not lose `default_skill_dirs`, `capabilities`, or
    `config_path`.
 6. Built-in Codex metadata includes user, legacy, and project discovery roots.
-7. Built-in visibility metadata models Codex config disables by name and
-   canonical path.
-8. Target selection uses the adapter's preferred discovery root for the
-   requested scope and fails explicitly when no matching root exists.
+7. Built-in visibility metadata models Codex config disables by canonical
+   `SKILL.md` path; skill names remain display/collision diagnostics only.
+8. Activation-facing default-target helpers and `loom use` flows use the
+   adapter's preferred discovery root for the requested scope and fail explicitly
+   when no matching root exists. Existing `target add --path <absolute-path>`
+   continues to register the caller-provided concrete directory and must not
+   infer or replace it from adapter roots.
 9. Reload metadata is descriptive only in this slice; commands may report it
    but must not silently mutate agent runtime state.
 
@@ -71,8 +75,9 @@ Implement the smallest adapter v2 slice:
 2. Built-in Codex adapter metadata includes `~/.agents/skills`,
    `${CODEX_HOME:-~/.codex}/skills`, and `<workspace>/.agents/skills` with
    stable roles.
-3. `skill doctor --agent codex` and target resolution do not duplicate Codex
-   skill path constants outside the adapter or visibility module.
+3. `skill diagnose --agent codex`, current `skill show`, future inspect flows,
+   and activation-facing default target resolution do not duplicate Codex skill
+   path constants outside the adapter or visibility module.
 4. External v1 adapters still load and return the same effective defaults.
 5. External v2 adapters can define discovery roots, visibility, and reload
    metadata.

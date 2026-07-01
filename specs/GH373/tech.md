@@ -75,12 +75,15 @@ record parsing.
   so project-scope roots can use the command workspace instead of the registry
   root. Reject empty paths, unsupported roles, unsupported scopes, unsupported
   visibility identities, and unsupported reload strategies.
-- unsupported API: return `ADAPTER_API_UNSUPPORTED` before partial adapter
-  registration.
+- unsupported API: preserve the existing error envelope before partial adapter
+  registration: top-level `ADAPTER_INVALID` with
+  `error.details.reason=ADAPTER_API_UNSUPPORTED`.
 
 Unknown fields:
 
 - v1 remains strict, matching `docs/schemas/agent-adapter-v1.schema.json`.
+  Add explicit unknown-field rejection in the v1 loader, because serde currently
+  ignores unknown keys unless the record type denies them.
 - v2 may allow unknown fields only when they are ignored by serde into a
   top-level `extensions` object or are explicitly documented by schema.
 
@@ -99,7 +102,8 @@ Codex should include:
   `project-cross-client`.
 - visibility identity `canonical-skill-md-path`.
 - config file `${CODEX_HOME:-~/.codex}/config.toml`.
-- disable rules `skills.config.path` and `skills.config.name`.
+- disable rule `skills.config.path`; skill names are display/collision
+  diagnostics only for Codex.
 - reload strategy `new-session-recommended`, `hot_reload=false`.
 
 Claude metadata may start with the existing default roots plus reload and scope
@@ -113,8 +117,10 @@ adapter registry construction.
 
 Every built-in adapter must preserve its existing default discovery paths in
 the v2 `discovery_roots` list. Legacy `default_skill_dirs` output is derived
-from resolved discovery roots for backward-compatible status output, rather
-than maintained as a separate source of truth.
+from resolved discovery roots that are eligible for automatic scanning, rather
+than maintained as a separate source of truth. Project-scoped roots such as
+`<workspace>/.agents/skills` are not fed into `workspace init --scan-existing`
+unless the consumer explicitly asks for project-scope scanning.
 
 ## Adapter-Driven Target Resolution
 
@@ -179,6 +185,20 @@ unknown
 
 Commands that currently ask `resolve_agent_skill_dirs()` for Codex or Claude
 paths should call this helper unless they need legacy status output only.
+`target add` is excluded from inferred root selection because it registers an
+explicit caller-supplied absolute path. Adapter-driven selection applies to
+default-target helpers, `loom use`, diagnostics, and future activation flows
+that need Loom to choose a target root.
+
+Supported visibility disable rules:
+
+```text
+skills.config.path
+adapter-defined
+```
+
+External v2 adapters must reject unsupported disable rule values unless they are
+namespaced as adapter-defined extensions with documented semantics.
 
 ## JSON Output
 
@@ -194,7 +214,7 @@ paths should call this helper unless they need legacy status output only.
     "follows_symlink_dirs": true,
     "identity": "canonical-skill-md-path",
     "config_file": "/Users/example/.codex/config.toml",
-    "disable_rules": ["skills.config.path", "skills.config.name"]
+	    "disable_rules": ["skills.config.path"]
   },
   "reload": {
     "strategy": "new-session-recommended",
@@ -222,11 +242,16 @@ Add focused tests covering:
 1. Existing v1 fixture still loads.
 2. Built-in Codex output includes all required roots and visibility metadata.
 3. External v2 fixture loads and expands roots deterministically.
-4. Unsupported `adapter_api` fails with `ADAPTER_API_UNSUPPORTED`.
+4. Unsupported `adapter_api` preserves top-level `ADAPTER_INVALID` and reports
+   `ADAPTER_API_UNSUPPORTED` in `error.details.reason`.
 5. Duplicate adapter id fails before mixed output is returned.
-6. Adapter-driven target resolution chooses preferred user and project roots.
-7. Commands consuming target roots no longer hard-code Codex path constants
-   outside the adapter or visibility module.
+6. Adapter-driven default-target resolution chooses preferred user and project
+   roots without changing explicit `target add --path` behavior.
+7. Commands consuming inferred target roots no longer hard-code Codex path
+   constants outside the adapter or visibility module.
+8. V1 adapter files with unknown fields fail to load.
+9. `workspace init --scan-existing` uses only scan-eligible legacy defaults and
+   does not import project roots by accident.
 
 ## Verification
 

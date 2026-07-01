@@ -23,18 +23,6 @@ use super::skill_verify::{
 use super::{App, CommandFailure, SkillLintMode, lint_skill_source, lint_skill_source_for_agent};
 
 #[derive(Debug, Serialize)]
-struct SkillStatusModel {
-    skill: String,
-    source: SourceStatus,
-    spec: SpecStatus,
-    provenance: ProvenanceStatus,
-    runtime: BTreeMap<String, RuntimeStatus>,
-    quality: QualityStatus,
-    safety: SafetyStatus,
-    next_actions: Vec<String>,
-}
-
-#[derive(Debug, Serialize)]
 struct SourceStatus {
     path: String,
     exists: bool,
@@ -86,23 +74,6 @@ struct StatusFinding {
     severity: String,
     message: String,
     next_action: Option<String>,
-}
-
-#[derive(Debug, Serialize)]
-struct QualityStatus {
-    last_eval: Option<String>,
-    trigger_precision: Option<f64>,
-    trigger_recall: Option<f64>,
-    baseline_delta: Option<f64>,
-}
-
-#[derive(Debug, Serialize)]
-struct SafetyStatus {
-    trust: String,
-    policy: String,
-    scripts_present: Option<bool>,
-    network_requested: Option<bool>,
-    quarantined: Option<bool>,
 }
 
 struct SourceGitStatus {
@@ -172,26 +143,26 @@ impl App {
         );
 
         Ok((
-            json!(SkillStatusModel {
-                skill: args.skill.clone(),
-                source,
-                spec,
-                provenance,
-                runtime,
-                quality: QualityStatus {
-                    last_eval: None,
-                    trigger_precision: None,
-                    trigger_recall: None,
-                    baseline_delta: None,
+            json!({
+                "skill": args.skill,
+                "source": source,
+                "spec": spec,
+                "provenance": provenance,
+                "runtime": runtime,
+                "quality": {
+                    "last_eval": Value::Null,
+                    "trigger_precision": Value::Null,
+                    "trigger_recall": Value::Null,
+                    "baseline_delta": Value::Null,
                 },
-                safety: SafetyStatus {
-                    trust: "unknown".to_string(),
-                    policy: "unknown".to_string(),
-                    scripts_present: None,
-                    network_requested: None,
-                    quarantined: None,
+                "safety": {
+                    "trust": "unknown",
+                    "policy": "unknown",
+                    "scripts_present": Value::Null,
+                    "network_requested": Value::Null,
+                    "quarantined": Value::Null,
                 },
-                next_actions,
+                "next_actions": next_actions,
             }),
             Meta::default(),
         ))

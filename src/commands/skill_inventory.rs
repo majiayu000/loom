@@ -615,15 +615,15 @@ fn next_actions(source_status: &str, warnings: &[String], projection_count: usiz
     actions
 }
 
-struct SkillDiscoveryFilters<'a> {
-    agent: Option<&'a str>,
-    profile: Option<&'a str>,
-    status: Option<&'a str>,
-    trust: Option<&'a str>,
-    workspace: Option<&'a Path>,
+pub(crate) struct SkillDiscoveryFilters<'a> {
+    pub(crate) agent: Option<&'a str>,
+    pub(crate) profile: Option<&'a str>,
+    pub(crate) status: Option<&'a str>,
+    pub(crate) trust: Option<&'a str>,
+    pub(crate) workspace: Option<&'a Path>,
 }
 
-fn score_and_filter_skills(
+pub(crate) fn score_and_filter_skills(
     skills: &[Value],
     query: &str,
     filters: SkillDiscoveryFilters<'_>,
@@ -751,7 +751,7 @@ fn add_array_score(
     }
 }
 
-fn workspace_matches(skill: &Value, workspace: &Path) -> bool {
+pub(crate) fn workspace_matches(skill: &Value, workspace: &Path) -> bool {
     let workspace = workspace.to_string_lossy();
     let Some(matchers) = skill["workspace_matchers"].as_array() else {
         return false;
@@ -779,7 +779,7 @@ fn value_array_contains(value: &Value, expected: &str) -> bool {
         .is_some_and(|items| items.iter().any(|item| item.as_str() == Some(expected)))
 }
 
-fn tokenize(query: &str) -> Vec<String> {
+pub(crate) fn tokenize(query: &str) -> Vec<String> {
     let mut tokens = query
         .split(|ch: char| !ch.is_ascii_alphanumeric() && ch != '-')
         .map(str::trim)

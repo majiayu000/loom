@@ -21,7 +21,7 @@ background daemon, direct cloud deployment without provider config, secret copyi
 
 ## Tasks
 
-- [ ] `SP382-T001` Owner: plan-model | Done when: provision plans include target kind, workspace, agents, registry source, active views, files, secrets required, policy, and guards | Verify: `cargo test --test provision_cli`
+- [ ] `SP382-T001` Owner: plan-model | Done when: provision plans include target kind, workspace, agents, registry source, active views, skillsets, dependency readiness, reviewed file changes, secrets required, policy, and guards | Verify: `cargo test --test provision_cli`
 - [ ] `SP382-T002` Owner: adapter-paths | Done when: target paths come from adapter metadata and Codex project scope uses `.agents/skills` | Verify: `cargo test --test provision_cli`
 - [ ] `SP382-T003` Owner: devcontainer | Done when: devcontainer output is deterministic, idempotent, and fails safely on incompatible existing config | Verify: `cargo test --test provision_cli`
 - [ ] `SP382-T004` Owner: export-import | Done when: shell/tar export and import dry-run are deterministic and never include secret values | Verify: `cargo test --test provision_cli`
@@ -42,9 +42,10 @@ Files:
 
 Done when:
 
-- `provision plan --target devcontainer` returns a plan without writes.
-- Plan includes active skills, skillsets, dependencies, policy gates, and
-  required secrets names.
+- `provision plan --target devcontainer` returns a plan without target writes.
+- Plan includes active skills, skillsets, dependency readiness, reviewed file
+  changes, policy gates, and required secrets names.
+- Plan can be replayed from a durable command event or explicit plan artifact.
 - Plan stores enough guards to revalidate apply.
 
 Verify:

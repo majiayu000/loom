@@ -36,25 +36,42 @@ Recommended plan shape:
       "agent": "codex",
       "scope": "project",
       "path": "/workspaces/repo/.agents/skills",
-      "skills": ["fixflow", "plan-flow"]
+      "skills": ["fixflow", "plan-flow"],
+      "skillsets": ["coding-flow"]
     }
   ],
+  "dependency_readiness": [
+    {"skill": "fixflow", "status": "ready", "digest": "sha256:..."}
+  ],
   "files_to_write": [
-    ".devcontainer/loom-setup.sh",
-    ".devcontainer/devcontainer.json"
+    {
+      "path": ".devcontainer/loom-setup.sh",
+      "content_digest": "sha256:...",
+      "preview": "#!/usr/bin/env bash\\n..."
+    },
+    {
+      "path": ".devcontainer/devcontainer.json",
+      "content_digest": "sha256:...",
+      "patch": []
+    }
   ],
   "secrets_required": [],
   "policy": {"requires_approval": false},
   "guards": {
     "root": "/registry",
     "registry_head": "abc123",
-    "active_view_digest": "sha256:..."
+    "active_view_digest": "sha256:...",
+    "skillset_digest": "sha256:...",
+    "dependency_readiness_digest": "sha256:..."
   }
 }
 ```
 
 Plans should be stored through the same durable plan/event mechanisms used by
-other apply flows where practical.
+other apply flows where practical, or written as an explicit reviewed plan
+artifact when `--output-plan` is supplied. `apply` must consume the durable plan
+or artifact that contains the reviewed file changes, not regenerate unreviewed
+content from current state.
 
 ## Devcontainer Output
 
@@ -63,13 +80,17 @@ Generated setup script should be explicit:
 ```bash
 #!/usr/bin/env bash
 set -euo pipefail
-loom --root /workspaces/.loom-registry sync pull
-loom --root /workspaces/.loom-registry skillset activate coding-flow --agent codex --scope project --workspace /workspaces/repo --apply
-loom --root /workspaces/.loom-registry skill doctor fixflow --agent codex --workspace /workspaces/repo
+git clone "$LOOM_REGISTRY_SOURCE" /workspaces/.loom-registry
+git -C /workspaces/.loom-registry fetch origin "$LOOM_REGISTRY_HEAD"
+git -C /workspaces/.loom-registry checkout --detach "$LOOM_REGISTRY_HEAD"
+loom --root /workspaces/.loom-registry skill diagnose fixflow --json
 ```
 
 Implementation must avoid assuming `~/.codex/skills` for Codex project scope.
 Use project `.agents/skills` from adapter metadata.
+If activation commands are not yet implemented, generated scripts must emit
+reviewed materialization instructions or fail clearly instead of calling
+nonexistent `skillset activate` or `skill doctor` commands.
 
 ## File Merge Rules
 

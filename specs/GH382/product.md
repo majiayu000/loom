@@ -30,8 +30,8 @@ Production implementation is blocked by:
 Target command surface:
 
 ```bash
-loom provision plan --target devcontainer [--workspace <path>] [--agent codex] [--json]
-loom provision apply <plan-id> --idempotency-key <key>
+loom provision plan --target devcontainer [--workspace <path>] [--agent codex] [--output-plan <path>] [--json]
+loom provision apply <plan-id|plan-artifact> --idempotency-key <key>
 loom provision doctor --target devcontainer|codespaces|remote --workspace <path>
 loom provision export --format devcontainer|shell|tar --output <path>
 loom provision import <artifact> --dry-run
@@ -43,6 +43,8 @@ Initial target kinds:
 
 - `devcontainer`: generate or update `.devcontainer/devcontainer.json` and
   setup scripts.
+- `codespaces`: GitHub Codespaces-specific devcontainer-compatible target with
+  Codespaces environment notes.
 - `shell`: generate a reproducible install/setup script.
 - `tar`: export a portable registry and active-view artifact.
 - `remote`: abstract target for future SSH/cloud integrations.
@@ -53,7 +55,9 @@ Initial target kinds:
 2. No direct cloud deployment without explicit provider config.
 3. No secret copying by default.
 4. No bypass of org policy/RBAC.
-5. No mutation during `provision plan` or `provision doctor`.
+5. No target-environment mutation during `provision plan` or `provision
+   doctor`; `provision plan` may write an explicit reviewed plan artifact or
+   durable command event when requested.
 6. No destructive merge of user-authored devcontainer files.
 
 ## Plan Behavior
@@ -64,9 +68,9 @@ Initial target kinds:
 2. Resolve target environment paths using adapter metadata.
 3. Include dependency readiness requirements from #371.
 4. Include safety/trust and org policy checks.
-5. Generate file diffs or artifacts.
+5. Generate reviewed file diffs or artifacts, including content digests.
 6. Report secrets as requirements but never copy or print values.
-7. Never write unless `apply` is called.
+7. Never write target files unless `apply` is called.
 
 ## Apply Behavior
 
@@ -82,7 +86,7 @@ Initial target kinds:
 ## Acceptance Criteria
 
 1. `provision plan --target devcontainer` outputs a reproducible plan without
-   writes.
+   target-environment writes.
 2. Generated devcontainer snippets use project `.agents/skills` for Codex
    project scope.
 3. Secrets are reported as required but never copied or printed.

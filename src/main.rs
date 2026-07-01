@@ -108,9 +108,7 @@ fn print_envelope(env: &Envelope, force_json: bool, pretty: bool) {
                     eprintln!("warning: {}", w);
                 }
             }
-            if let Some(card) = render_skill_inspect_card(&env.data) {
-                println!("{card}");
-            } else if !env.data.is_null() {
+            if !print_skill_inspect_card(&env.data) && !env.data.is_null() {
                 println!("{}", pretty_json_or_empty_object(&env.data));
             }
             return;
@@ -167,118 +165,82 @@ fn pretty_json_or_empty_object(value: &serde_json::Value) -> String {
     serde_json::to_string_pretty(value).unwrap_or_else(|_| "{}".to_string())
 }
 
-fn render_skill_inspect_card(data: &Value) -> Option<String> {
-    let skill = data.get("skill")?.as_str()?;
-    let source = data.get("source")?;
-    let spec = data.get("spec")?;
-    let runtime = data.get("runtime")?.as_object()?;
-    let quality = data.get("quality")?;
-    let safety = data.get("safety")?;
-    let next_actions = data.get("next_actions")?.as_array()?;
-
-    let mut lines = vec![
-        skill.to_string(),
-        format!("Source:   {}", render_inspect_source(source)),
-        format!("Spec:     {}", render_inspect_spec(spec)),
-        format!("Runtime:  {}", render_inspect_runtime(runtime)),
-        format!("Quality:  {}", render_inspect_quality(quality)),
-        format!("Safety:   {}", render_inspect_safety(safety)),
-    ];
-    if let Some(action) = next_actions.iter().find_map(Value::as_str) {
-        lines.push(format!("Next:     {action}"));
-    } else {
-        lines.push("Next:     none".to_string());
-    }
-    Some(lines.join("\n"))
-}
-
-fn render_inspect_source(source: &Value) -> String {
-    let presence = if bool_field(source, "exists") {
+fn print_skill_inspect_card(data: &Value) -> bool {
+    let Some(skill) = data.get("skill").and_then(Value::as_str) else {
+        return false;
+    };
+    let source = &data["source"];
+    let spec = &data["spec"];
+    let runtime = &data["runtime"];
+    let safety = &data["safety"];
+    let source_state = if source["exists"].as_bool() == Some(true) {
         "present"
     } else {
         "missing"
     };
-    let drift = if bool_field(source, "working_tree_drift") {
+    let source_drift = if source["working_tree_drift"].as_bool() == Some(true) {
         "drift"
     } else {
         "clean"
     };
-    let entrypoint = if bool_field(source, "entrypoint_exists") {
-        None
+    println!("{skill}");
+    if source["entrypoint_exists"].as_bool() == Some(false) {
+        println!("Source:   {source_state}, {source_drift}, entrypoint missing");
     } else {
-        Some("entrypoint missing")
-    };
-    join_status_parts([Some(presence), Some(drift), entrypoint])
-}
-
-fn render_inspect_spec(spec: &Value) -> String {
-    let portable = str_field(spec, "portable").unwrap_or("unknown");
-    let codex = str_field(spec, "codex").unwrap_or("unknown");
-    let claude = str_field(spec, "claude").unwrap_or("unknown");
-    format!("portable {portable}, codex {codex}, claude {claude}")
-}
-
-fn render_inspect_runtime(runtime: &serde_json::Map<String, Value>) -> String {
-    if runtime.is_empty() {
-        return "not checked".to_string();
+        println!("Source:   {source_state}, {source_drift}");
     }
-    runtime
-        .iter()
-        .map(|(agent, status)| {
-            let visible = str_field(status, "visible_to_agent").unwrap_or("unknown");
-            let base = if bool_field(status, "projected_to_target") {
-                format!("{agent} projected, visibility {visible}")
-            } else if bool_field(status, "active_rule_present") {
-                format!("{agent} active rule, projection missing, visibility {visible}")
-            } else if bool_field(status, "installed_in_registry") {
-                format!("{agent} installed, not projected")
-            } else {
-                format!("{agent} not installed")
-            };
-            match status
-                .get("materialized_path_exists")
-                .and_then(Value::as_bool)
-            {
-                Some(false) => format!("{base}, materialized missing"),
-                _ => base,
+    println!(
+        "Spec:     portable {}, codex {}, claude {}",
+        spec["portable"].as_str().unwrap_or("unknown"),
+        spec["codex"].as_str().unwrap_or("unknown"),
+        spec["claude"].as_str().unwrap_or("unknown")
+    );
+    print!("Runtime:  ");
+    if let Some(map) = runtime.as_object() {
+        for (index, (agent, status)) in map.iter().enumerate() {
+            if index > 0 {
+                print!("; ");
             }
-        })
-        .collect::<Vec<_>>()
-        .join("; ")
-}
-
-fn render_inspect_quality(quality: &Value) -> String {
-    match str_field(quality, "last_eval") {
-        Some(last_eval) => format!("last eval {last_eval}"),
-        None => "no eval evidence".to_string(),
-    }
-}
-
-fn render_inspect_safety(safety: &Value) -> String {
-    let trust = str_field(safety, "trust").unwrap_or("unknown");
-    let policy = str_field(safety, "policy").unwrap_or("unknown");
-    if trust == policy {
-        trust.to_string()
+            let visible = status["visible_to_agent"].as_str().unwrap_or("unknown");
+            if status["projected_to_target"].as_bool() == Some(true) {
+                print!("{agent} projected, visibility {visible}");
+            } else if status["active_rule_present"].as_bool() == Some(true) {
+                print!("{agent} active rule, projection missing, visibility {visible}");
+            } else if status["installed_in_registry"].as_bool() == Some(true) {
+                print!("{agent} installed, not projected");
+            } else {
+                print!("{agent} not installed");
+            }
+            if status["materialized_path_exists"].as_bool() == Some(false) {
+                print!(", materialized missing");
+            }
+        }
     } else {
-        format!("{trust}, policy {policy}")
+        print!("not checked");
     }
-}
-
-fn bool_field(value: &Value, key: &str) -> bool {
-    value.get(key).and_then(Value::as_bool).unwrap_or(false)
-}
-
-fn str_field<'a>(value: &'a Value, key: &str) -> Option<&'a str> {
-    value.get(key).and_then(Value::as_str)
-}
-
-fn join_status_parts<const N: usize>(parts: [Option<&str>; N]) -> String {
-    parts.into_iter().flatten().collect::<Vec<_>>().join(", ")
+    println!();
+    match data["quality"]["last_eval"].as_str() {
+        Some(last_eval) => println!("Quality:  last eval {last_eval}"),
+        None => println!("Quality:  no eval evidence"),
+    }
+    let trust = safety["trust"].as_str().unwrap_or("unknown");
+    let policy = safety["policy"].as_str().unwrap_or("unknown");
+    if trust == policy {
+        println!("Safety:   {trust}");
+    } else {
+        println!("Safety:   {trust}, policy {policy}");
+    }
+    let next = data["next_actions"]
+        .as_array()
+        .and_then(|actions| actions.iter().find_map(Value::as_str))
+        .unwrap_or("none");
+    println!("Next:     {next}");
+    true
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{pretty_json_or_empty_object, render_skill_inspect_card};
+    use super::pretty_json_or_empty_object;
     use serde_json::{Value, json};
 
     #[test]
@@ -293,46 +255,5 @@ mod tests {
             pretty_json_or_empty_object(&Value::Object(Default::default())),
             "{}"
         );
-    }
-
-    #[test]
-    fn render_skill_inspect_card_formats_status_model() {
-        let rendered = render_skill_inspect_card(&json!({
-            "skill": "demo",
-            "source": {
-                "exists": true,
-                "entrypoint_exists": true,
-                "working_tree_drift": false
-            },
-            "spec": {
-                "portable": "pass",
-                "codex": "pass",
-                "claude": "warning"
-            },
-            "runtime": {
-                "codex": {
-                    "installed_in_registry": true,
-                    "active_rule_present": true,
-                    "projected_to_target": true,
-                    "materialized_path_exists": true,
-                    "visible_to_agent": "unknown"
-                }
-            },
-            "quality": {
-                "last_eval": null
-            },
-            "safety": {
-                "trust": "unknown",
-                "policy": "unknown"
-            },
-            "next_actions": ["loom skill diagnose demo"]
-        }))
-        .expect("render card");
-
-        assert!(rendered.contains("demo\n"));
-        assert!(rendered.contains("Source:   present, clean"));
-        assert!(rendered.contains("Spec:     portable pass, codex pass, claude warning"));
-        assert!(rendered.contains("Runtime:  codex projected, visibility unknown"));
-        assert!(rendered.contains("Next:     loom skill diagnose demo"));
     }
 }

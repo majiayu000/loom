@@ -14,7 +14,7 @@ itself.
 
 - [ ] `SP363-T1` Owner: #364 | Done when: `skill new` and Loom-local manifest create/import one skill with durable source identity | Verify: child issue checks
 - [ ] `SP363-T2` Owner: #365 | Done when: lint reports portable, agent-specific, quality, resources, and progressive disclosure status | Verify: child issue checks
-- [ ] `SP363-T3` Owner: #366 | Done when: `skill inspect` exposes shared source/spec/runtime/quality/safety/dependency/release status sections | Verify: child issue checks
+- [ ] `SP363-T3` Owner: #366 | Done when: `skill inspect` exposes shared source/provenance/spec/runtime/quality/eval/safety/dependency/release status sections | Verify: child issue checks
 - [ ] `SP363-T4` Owner: #367/#368/#373 | Done when: activation, visibility, adapter discovery, and doctor states are separate and explainable | Verify: child issue checks
 - [ ] `SP363-T5` Owner: #369/#372 | Done when: eval and improve/regression workflows provide baseline-backed evidence before release claims | Verify: child issue checks
 - [ ] `SP363-T6` Owner: #370/#371 | Done when: safety, trust, quarantine, dependency, and MCP readiness gates are visible before activation | Verify: child issue checks
@@ -60,7 +60,7 @@ Owner: #366
 Done when:
 
 - `skill inspect` exposes source, spec, runtime, quality, safety,
-  dependencies, and release sections;
+  dependencies, eval, provenance, and release sections;
 - missing data is represented as missing or blocked, not pass.
 
 Verify:

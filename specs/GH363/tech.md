@@ -19,9 +19,11 @@ The shared status card should expose:
 {
   "skill": "fixflow",
   "source": {},
+  "provenance": {},
   "spec": {},
   "runtime": {},
   "quality": {},
+  "eval": {},
   "safety": {},
   "dependencies": {},
   "release": {}
@@ -44,10 +46,10 @@ Recommended implementation order:
 2. #365 lint expansion;
 3. #366 inspect/status model;
 4. #373 adapter discovery and visibility metadata;
-5. #367 activation/deactivation/list;
-6. #368 Codex visibility doctor;
-7. #371 dependency and MCP readiness;
-8. #370 safety/trust/quarantine;
+5. #371 dependency and MCP readiness;
+6. #370 safety/trust/quarantine;
+7. #367 activation/deactivation/list;
+8. #368 Codex visibility doctor;
 9. #369 real eval harness;
 10. #372 improve/regression workflow;
 11. #374 docs and migration guide;
@@ -106,7 +108,7 @@ integration assertion that its result appears in the shared status model. The
 epic is complete only when an end-to-end test can cover:
 
 ```text
-new/import -> lint -> inspect -> safety/trust scan -> dependency/MCP readiness -> activate -> doctor -> eval -> improve -> release -> rollback/deactivate
+new/import -> lint -> inspect/provenance -> safety/trust scan -> dependency/MCP readiness -> activate -> doctor -> eval -> improve -> release -> rollback/deactivate
 ```
 
 Suggested final commands:

@@ -182,6 +182,9 @@ The chain `add → capture → save → snapshot → release → rollback` is th
 | `loom skill list` | List registry, source, and observed skill inventory | See what skills exist before mutating registry state | Source + registry metadata (read-only) |
 | `loom skill show` | Show one skill from the shared inventory model | Inspect entrypoint, description, source status, projections, compatible targets, warnings, and next actions | Source + registry metadata (read-only) |
 | `loom skill inspect` | Show one skill lifecycle status card | Check source, lint, projection/runtime, quality, safety, and next actions without mutation | Source + registry metadata (read-only) |
+| `loom skill activate` | Activate one skill for an agent without manual binding IDs | Create or repair the managed target, binding, rule, and projection selected by agent/scope/profile | Source + target + registry metadata |
+| `loom skill deactivate` | Deactivate one skill from an agent target | Remove the desired rule and only delete safe symlink projections; copy/materialize fail closed | Target + registry metadata |
+| `loom skill active list` | List desired active skills and realized projections | See active rules, projection health, missing targets, and explicit `not_checked` visibility claims | Registry metadata + target filesystem (read-only) |
 | `loom skill search` | Search skills with deterministic lexical scoring | Find likely skills by id, description, tags, warning state, agent, profile, status, or trust | Source + registry metadata (read-only) |
 | `loom skill resolve` | Resolve a task description to candidate skills without an LLM | Let agents choose a skill transparently from local metadata and scoring inputs | Source + registry metadata (read-only) |
 | `loom skill new` | Create a lint-clean local skill skeleton | Start a new registry-owned skill with `SKILL.md`, references, scripts, assets, eval stubs, and `loom.skill.toml` | Source (initial create) |
@@ -276,6 +279,9 @@ loom target remove <target-id>
 loom skill list
 loom skill show <skill>
 loom skill inspect <skill> [--agent <agent>] [--workspace <path>] [--profile <profile>]
+loom skill activate <skill> --agent <agent> [--scope <user|project>] [--workspace <path>] [--profile <profile>] [--target <target-id>] [--method <symlink|copy|materialize>] [--dry-run]
+loom skill deactivate <skill> --agent <agent> [--scope <user|project>] [--workspace <path>] [--profile <profile>] [--target <target-id>] [--dry-run]
+loom skill active list --agent <agent> [--scope <user|project>] [--workspace <path>] [--profile <profile>]
 loom skill search <query> [--agent <agent>] [--profile <profile>] [--status <status>] [--trust <trust>]
 loom skill resolve <task-description> [--agent <agent>] [--workspace <path>]
 loom skill new <skill> [--template <basic|coding-workflow|scripted|reference-heavy>] [--description <text>] [--agent <agent>] [--dry-run]

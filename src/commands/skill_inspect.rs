@@ -679,13 +679,14 @@ fn build_next_actions(
         push_unique(&mut actions, format!("loom skill lint {skill} --portable"));
     }
     for status in runtime.values() {
-        if status.active_rule_present && !status.projected_to_target {
-            if let Some(binding_id) = status.binding_id.as_deref() {
-                push_unique(
-                    &mut actions,
-                    format!("loom skill project {skill} --binding {binding_id}"),
-                );
-            }
+        if status.active_rule_present
+            && !status.projected_to_target
+            && let Some(binding_id) = status.binding_id.as_deref()
+        {
+            push_unique(
+                &mut actions,
+                format!("loom skill project {skill} --binding {binding_id}"),
+            );
         }
         if !status.active_rule_present && !status.projected_to_target {
             push_unique(

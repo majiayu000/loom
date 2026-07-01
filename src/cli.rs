@@ -4,6 +4,7 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 use serde::Serialize;
 
 mod codex_args;
+mod deps;
 mod discovery;
 mod eval;
 mod plan_flow;
@@ -19,6 +20,7 @@ mod skillset;
 mod use_flow;
 mod version;
 pub use codex_args::{CodexCommand, CodexReconcileArgs};
+pub use deps::SkillDepsArgs;
 pub use discovery::{SkillResolveArgs, SkillSearchArgs};
 pub use eval::{
     EvalBaselineArg, EvalRunnerArg, SkillEvalArgs, SkillEvalCommand, SkillEvalCompareArgs,
@@ -245,6 +247,8 @@ pub enum SkillCommand {
     Show(SkillOnlyArgs),
     #[command(about = "Inspect one skill lifecycle status without mutating state")]
     Inspect(SkillInspectArgs),
+    #[command(about = "Check one skill runtime dependencies and MCP readiness")]
+    Deps(SkillDepsArgs),
     #[command(about = "Activate one skill for an agent target")]
     Activate(SkillActivateArgs),
     #[command(about = "Deactivate one skill for an agent target")]

@@ -126,6 +126,7 @@ fn cli_contract_docs_track_current_surface() {
         "loom skill list",
         "loom skill show",
         "loom skill inspect",
+        "loom skill deps",
         "loom skill activate",
         "loom skill deactivate",
         "loom skill active list",
@@ -154,6 +155,7 @@ fn cli_contract_docs_track_current_surface() {
     for command in [
         "skill add <path|git-url|github:owner/repo//subdir>",
         "skill inspect",
+        "skill deps <skill-id>",
         "skill activate",
         "skill deactivate",
         "skill active list",

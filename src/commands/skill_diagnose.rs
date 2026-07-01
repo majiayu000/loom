@@ -13,6 +13,7 @@ use crate::types::{ErrorCode, PendingOp};
 use super::codex_visibility::build_codex_visibility_report;
 use super::helpers::{map_arg, map_registry_state, validate_skill_name};
 use super::history_cmds::operation_mentions_skill as registry_operation_mentions_skill;
+use super::skill_deps::skill_dependency_report;
 use super::skill_verify::{
     drifted_paths_under, head_tree_oid_for_path, last_commit_for_path, last_saved_commit_for_skill,
 };
@@ -133,6 +134,9 @@ fn build_skill_diagnosis(
     let mut recent_ops = Vec::new();
     let mut pending_ops = Vec::new();
     let lint_report = lint_skill_source(&source_path, skill, SkillLintMode::Compat);
+    let dependencies = source_exists
+        .then(|| skill_dependency_report(ctx, skill, None, None))
+        .transpose()?;
 
     add_source_checks(
         ctx,
@@ -334,7 +338,8 @@ fn build_skill_diagnosis(
                 "targets": targets,
                 "projections": projections,
                 "recent_operations": recent_ops,
-                "pending_operations": pending_ops
+                "pending_operations": pending_ops,
+                "dependencies": dependencies
             }
         }),
         Meta::default(),

@@ -12,9 +12,10 @@ use crate::state_model::RegistryStatePaths;
 use crate::types::ErrorCode;
 
 use super::helpers::{map_arg, validate_skill_name};
+use super::skill_deps::{append_dependency_lint_findings, skill_dependency_report};
 use super::{App, CommandFailure};
 
-mod frontmatter;
+pub(crate) mod frontmatter;
 use frontmatter::{FrontmatterParseResult, parse_skill_frontmatter};
 mod sections;
 use sections::{
@@ -205,7 +206,12 @@ impl App {
         config.agent_skill_dirs =
             agent_skill_dirs_for_lint(&self.ctx.root, config.agent.as_deref());
         let mode = config.mode;
-        let report = lint_skill_source_with_config(&skill_path, &args.skill, &config);
+        let mut report = lint_skill_source_with_config(&skill_path, &args.skill, &config);
+        if args.quality {
+            let deps =
+                skill_dependency_report(&self.ctx, &args.skill, config.agent.as_deref(), None)?;
+            append_dependency_lint_findings(&mut report, &deps);
+        }
         if mode.strict_errors() && report.summary.error_count > 0 {
             let mut failure = CommandFailure::new(
                 ErrorCode::SchemaMismatch,

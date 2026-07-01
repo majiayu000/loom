@@ -17,6 +17,7 @@ use crate::types::ErrorCode;
 
 use super::helpers::{map_arg, map_git, map_io, map_registry_state, validate_skill_name};
 use super::provenance::{provenance_digest_status, provenance_record_status};
+use super::skill_deps::skill_dependency_report;
 use super::skill_safety::trust_metadata_for_skill;
 use super::skill_verify::{
     drifted_paths_under, head_tree_oid_for_path, last_commit_for_path, last_saved_commit_for_skill,
@@ -120,6 +121,16 @@ impl App {
         let spec = build_spec_status(&self.ctx.root, &args.skill, &skill_path, source_exists);
         let provenance = build_provenance_status(&self.ctx, &args.skill, source_exists)?;
         let trust = trust_metadata_for_skill(&self.ctx, &args.skill)?;
+        let dependencies = if source_exists {
+            Some(skill_dependency_report(
+                &self.ctx,
+                &args.skill,
+                selector.agent,
+                selector.workspace,
+            )?)
+        } else {
+            None
+        };
         let runtime = build_runtime_status(
             &args.skill,
             &skill_path,
@@ -151,6 +162,7 @@ impl App {
                 "spec": spec,
                 "provenance": provenance,
                 "runtime": runtime,
+                "dependencies": dependencies,
                 "quality": {
                     "last_eval": Value::Null,
                     "trigger_precision": Value::Null,

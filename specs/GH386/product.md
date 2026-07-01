@@ -26,7 +26,7 @@ The first mergeable slice should implement the non-destructive foundation:
 - requirement listing from `loom.skill.toml`, `SKILL.md` metadata, compatibility
   text, and agent metadata;
 - `mcp plan` dry-run output with missing servers, config diffs, env
-  requirements, risk summary, and approval tokens;
+  requirements, risk summary, and RBAC approval requirements;
 - catalog source policy model for pinned package, Git, local, and team catalog
   locators;
 - `mcp doctor` next actions when dependency readiness fails;
@@ -55,14 +55,15 @@ metadata are stable.
 4. Missing secrets are represented by variable names and redacted status only.
 5. Unpinned or unknown MCP server packages are blocked or approval-required
    under policy.
-6. Apply must revalidate the plan against current skill source, policy, adapter
-   metadata, and target config before writing.
+6. Apply must consume a durable plan event or explicit plan artifact and
+   revalidate it against current skill source, policy, adapter metadata, and
+   target config before writing.
 7. Apply must be idempotent and require an idempotency key.
 8. Config writes must be atomic and preserve user-authored config where
    possible.
 9. Unsupported agents return manual configuration plans rather than guessing
    paths.
-10. `skill doctor` and `mcp doctor` report next actions without silently
+10. `skill diagnose` and `mcp doctor` report next actions without silently
     installing or authenticating servers.
 
 ## User-Facing CLI
@@ -80,7 +81,7 @@ loom mcp catalog show <server> [--json]
 Deferred apply command:
 
 ```bash
-loom mcp apply <plan-id> --idempotency-key <key> [--approve <token[,token]>]
+loom mcp apply <plan-id|plan-artifact> --idempotency-key <key> [--approve <approval-id[,approval-id]>]
 ```
 
 ## Requirement Model
@@ -122,7 +123,7 @@ permissions = ["repo:read", "issues:write"]
       "server": "github",
       "source": "npm:@modelcontextprotocol/server-github@1.2.3",
       "safe_to_apply": false,
-      "approval_token": "install-third-party-mcp"
+      "approval_required": "install-third-party-mcp"
     },
     {
       "kind": "write_agent_config",
@@ -156,9 +157,11 @@ permissions = ["repo:read", "issues:write"]
 5. Untrusted or unpinned MCP server sources are blocked or approval-required.
 6. Unsupported agents return `manual_configuration_required` with required
    server details.
-7. `mcp apply` revalidates plans, writes config atomically, and is idempotent
-   once apply is implemented.
-8. `skill doctor` includes MCP provisioning next actions when readiness fails.
+7. `mcp apply` consumes a durable plan event or explicit plan artifact,
+   revalidates plans, writes config atomically, and is idempotent once apply is
+   implemented.
+8. `skill diagnose` includes MCP provisioning next actions when readiness
+   fails.
 9. Tests cover requirement parsing, missing server plans, config diff
    generation, env secret redaction, unpinned rejection, approval-required
    actions, idempotent apply, malformed config, and unsupported agent manual
@@ -170,5 +173,5 @@ permissions = ["repo:read", "issues:write"]
    provider metadata.
 2. Whether apply should install packages directly or only write agent config
    pointing to preinstalled commands in v1.
-3. Whether policy approval tokens should be reusable across plan revalidation
-   or single-use only.
+3. Whether policy approval ids should be reusable across plan revalidation or
+   single-use only.

@@ -25,9 +25,9 @@ agent config mutation without explicit apply
 - [ ] `SP386-T1` Owner: implementation | Done when: MCP requirement/list/plan/doctor/catalog CLI parses and command ids classify read-only behavior correctly | Verify: `cargo test --test cli_surface`
 - [ ] `SP386-T2` Owner: implementation | Done when: MCP requirement parser reads `loom.skill.toml`, `SKILL.md` metadata, and agent metadata without exposing secret values | Verify: `cargo test --test mcp_provisioning`
 - [ ] `SP386-T3` Owner: implementation | Done when: catalog/source policy rejects or approval-gates unpinned and unknown MCP server sources | Verify: `cargo test --test mcp_provisioning`
-- [ ] `SP386-T4` Owner: implementation | Done when: `mcp plan` returns missing servers, config diffs, env names, risk summary, and approval tokens without writes | Verify: `cargo test --test mcp_provisioning`
-- [ ] `SP386-T5` Owner: implementation | Done when: `mcp apply` revalidates plans, requires idempotency/approvals, writes atomically, and preserves user config | Verify: `cargo test --test mcp_provisioning`
-- [ ] `SP386-T6` Owner: implementation | Done when: `mcp doctor` and `skill doctor` include provisioning next actions from the readiness read model | Verify: `cargo test --test mcp_provisioning`
+- [ ] `SP386-T4` Owner: implementation | Done when: `mcp plan` returns missing servers, config diffs, env names, risk summary, and RBAC approval requirements without writes | Verify: `cargo test --test mcp_provisioning`
+- [ ] `SP386-T5` Owner: implementation | Done when: `mcp apply` loads a durable plan event or explicit artifact, revalidates plans, requires idempotency/approvals, writes atomically, and preserves user config | Verify: `cargo test --test mcp_provisioning`
+- [ ] `SP386-T6` Owner: implementation | Done when: `mcp doctor` and `skill diagnose` include provisioning next actions from the readiness read model | Verify: `cargo test --test mcp_provisioning`
 
 ### SP386-T1: Add CLI Surface
 
@@ -85,7 +85,8 @@ Depends on: SP386-T2
 Done when:
 
 - pinned npm locators parse.
-- pinned Git locators parse.
+- immutable Git commit locators parse; tag inputs must store and revalidate the
+  resolved commit and source digest.
 - local path locators require digest.
 - team catalog entries include trust metadata.
 - unpinned or unknown sources are blocked or approval-required under policy.
@@ -109,7 +110,8 @@ Done when:
 - missing servers and env vars are reported.
 - config diffs are generated without writes.
 - risk summary includes network, secret, package, and external-system risk.
-- approval tokens are included for risky actions.
+- RBAC approval requirements or local-only consent requirements are included for
+  risky actions.
 - unsupported agents return manual mode instead of guessed config paths.
 
 Verify:
@@ -127,7 +129,8 @@ Done when:
 
 - apply revalidates source digest, policy, adapter metadata, and target config.
 - apply requires an idempotency key.
-- risky actions require approval tokens.
+- risky actions require policy/approval backend-issued approval ids, or explicit
+  local-only consent when RBAC is not enabled.
 - config writes are atomic and preserve unrelated user config.
 - secrets are required by reference only and never written directly.
 - plan drift fails and asks for a new plan.
@@ -147,7 +150,7 @@ Done when:
 
 - `mcp doctor` reports missing servers, missing env names, policy blocks, and
   approval-required next actions.
-- `skill doctor` points to `mcp plan` when readiness fails.
+- `skill diagnose` points to `mcp plan` when readiness fails.
 - CLI contract documents MCP provisioning safety rules.
 - tests cover first-slice acceptance criteria.
 - repository checks pass.

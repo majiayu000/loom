@@ -66,7 +66,7 @@ Supported source locators:
 
 ```text
 npm:<package>@<version>
-git:<url>#<tag-or-commit>
+git:<url>#<commit>
 local:<path>@sha256:<digest>
 catalog:<server>@<version>
 ```
@@ -75,9 +75,11 @@ Policy rules:
 
 1. unpinned package locators are blocked under strict policy;
 2. unknown package sources require approval or fail;
-3. local paths require digest and user acknowledgement;
-4. team catalog entries include trust metadata and allowed permission scopes;
-5. install plans never execute package code during planning.
+3. Git locators must resolve to immutable commits; tag input is allowed only
+   when the plan stores and revalidates the resolved commit and source digest;
+4. local paths require digest and user acknowledgement;
+5. team catalog entries include trust metadata and allowed permission scopes;
+6. install plans never execute package code during planning.
 
 ## Plan Model
 
@@ -115,7 +117,7 @@ Plan output should include:
 3. package/source provenance;
 4. secrets required by name only;
 5. network/file-system/external-system risk summary;
-6. policy decisions and approval tokens;
+6. policy decisions and RBAC-issued approval requirements;
 7. restart or new-session guidance.
 
 ## Apply Semantics
@@ -123,10 +125,12 @@ Plan output should include:
 `mcp apply` should remain deferred until plan semantics are tested. When
 implemented:
 
-1. load the saved or reproducible plan;
+1. load the durable plan event or explicit plan artifact;
 2. revalidate skill source digest, adapter metadata, policy, and target config;
 3. require idempotency key;
-4. require approval tokens for risky actions;
+4. require approval ids issued and validated by the policy/approval backend
+   for risky actions, or explicitly mark local-only consent when RBAC is not
+   enabled;
 5. reject missing secret values without printing them;
 6. write config atomically through parse/merge/format APIs;
 7. preserve unrelated user config;
@@ -147,7 +151,7 @@ Agent config paths and merge semantics must come from adapter metadata after
 
 ## Doctor Integration
 
-`mcp doctor` and `skill doctor` should reuse the same requirement and readiness
+`mcp doctor` and `skill diagnose` should reuse the same requirement and readiness
 read model:
 
 1. present missing servers;

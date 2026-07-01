@@ -6,8 +6,8 @@ use uuid::Uuid;
 use crate::cli::{
     AgentCommand, AgentKind, BindingAddArgs, CodexCommand, Command, OpsCommand, OpsHistoryCommand,
     PlanCommand, ProjectionMethod, SkillActiveCommand, SkillCommand, SkillOrphanCommand,
-    SkillTrashCommand, SkillsetCommand, SyncCommand, TargetCommand, WorkspaceBindingCommand,
-    WorkspaceCommand, WorkspaceMatcherKind,
+    SkillTrashCommand, SkillsetCommand, SyncCommand, TargetCommand, WorkflowCommand,
+    WorkspaceBindingCommand, WorkspaceCommand, WorkspaceMatcherKind,
 };
 use crate::state::AppContext;
 use crate::state_model::{
@@ -180,6 +180,13 @@ pub(crate) fn command_name(command: &Command) -> &'static str {
             SkillsetCommand::Remove(_) => "skillset.remove",
             SkillsetCommand::Show(_) => "skillset.show",
             SkillsetCommand::Lint(_) => "skillset.lint",
+        },
+        Command::Workflow { command } => match command {
+            WorkflowCommand::Create(_) => "workflow.create",
+            WorkflowCommand::Show(_) => "workflow.show",
+            WorkflowCommand::Plan(_) => "workflow.plan",
+            WorkflowCommand::Preflight(_) => "workflow.preflight",
+            WorkflowCommand::Run(_) => "workflow.run",
         },
         Command::Index(args) if args.action == "build" => "index.build",
         Command::Index(args) if args.action == "status" => "index.status",

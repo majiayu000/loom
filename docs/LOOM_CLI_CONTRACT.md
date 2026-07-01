@@ -36,15 +36,19 @@ Top-level command groups:
 2. `backup`
 3. `monitor`
 4. `use`
-5. `workspace`
-6. `target`
-7. `skill`
-8. `sync`
-9. `ops`
-10. `agent`
-11. `codex`
-12. `panel`
-13. `doctor`
+5. `plan`
+6. `apply`
+7. `workspace`
+8. `target`
+9. `skill`
+10. `skillset`
+11. `workflow`
+12. `sync`
+13. `ops`
+14. `agent`
+15. `codex`
+16. `panel`
+17. `doctor`
 
 Removed from runtime surface:
 
@@ -684,6 +688,30 @@ Rules:
 7. `skillset show` includes each member's current skill read-model summary when available and marks drifted missing members
 8. `skillset lint` validates member existence, duplicate members, empty skillsets, and required/optional counts
 9. this first surface does not activate, evaluate, release, or roll back skillsets; those behaviors depend on later single-skill lifecycle primitives
+
+### 11.3.7 `workflow create`, `workflow show`, `workflow plan`, `workflow preflight`, `workflow run`
+
+```bash
+loom --json --root <root> workflow create <workflow-id> --file <workflow.json> [--dry-run]
+loom --json --root <root> workflow create <workflow-id> --from-skillset <skillset-id> --dry-run
+loom --json --root <root> workflow show <workflow-id>
+loom --json --root <root> workflow plan <workflow-id> --agent <agent> --workspace <path>
+loom --json --root <root> workflow preflight <plan-id>
+loom --json --root <root> workflow run <workflow-id> --agent <agent> --workspace <path> [--dry-run]
+```
+
+`workflow create` writes `state/registry/workflows.json` unless `--dry-run` is supplied. `workflow show`, `workflow preflight`, and `workflow run --dry-run` are read-only. `workflow plan` writes an auditable guarded plan under `state/registry/workflow_plans.json` without executing nodes.
+
+Rules:
+
+1. workflow definitions are explicit DAGs with `workflow_id`, `nodes`, `edges`, `external_inputs`, and `policy`
+2. cycles, self-edges, missing edge endpoints, oversized plans, excessive depth, and missing required upstream outputs fail with `ARG_INVALID`
+3. `workflow plan` requires each node skill source to exist and fails with `SKILL_NOT_FOUND` for missing skills
+4. blocked or quarantined skill trust fails with `POLICY_BLOCKED`; workflow planning must not silently skip unsafe nodes
+5. plans record root, registry head, workflow digest, skill source digests, ordered node ids, activation steps, required approvals, risks, and `safe_to_run=false`
+6. `workflow preflight` rechecks stored plan guards against the current registry root, Git head, workflow digest, and skill digests
+7. `workflow run` is a deferred surface in this version; non-dry-run execution fails with `POLICY_BLOCKED` until apply gates are implemented
+8. `--from-skillset` is preview-only until workflow apply semantics are implemented
 
 ### 11.4 `skill project`
 

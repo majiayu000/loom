@@ -376,6 +376,24 @@ Rules:
 6. read commands must not mutate registry state, Git refs, Git index, live targets, or pending queue
 7. trust metadata is `unknown` until trust/policy metadata lands
 
+### 11.0.1 `skill new`
+
+```bash
+loom --json --root <root> skill new <skill-id> [--template <basic|coding-workflow|scripted|reference-heavy>] [--description <text>] [--agent <agent>] [--dry-run]
+```
+
+Write command unless `--dry-run` is supplied.
+
+Rules:
+
+1. creates `skills/<skill-id>/SKILL.md` plus `references/`, `scripts/`, `assets/`, `evals/`, and `loom.skill.toml`
+2. generated `SKILL.md` must pass current strict portable lint
+3. `loom.skill.toml` is Loom-local management metadata and is ignored by portable agent-facing lint
+4. `--dry-run` returns paths and file previews without writing files, registry state, Git refs, pending queue, or command audit state
+5. existing skill directories fail with `ARG_INVALID` and must not be overwritten
+6. invalid portable skill names fail with `ARG_INVALID` before source skill files are created
+7. generated skills are committed as registry source changes when not dry-run
+
 ### 11.1 `skill add`
 
 ```bash
@@ -779,12 +797,13 @@ Examples:
 
 1. `workspace binding add`
 2. `target add`
-3. `skill import-observed`
-4. `skill monitor-observed`
-5. `skill project`
-6. `skill capture`
-7. `skill save`
-8. `sync push`
+3. `skill new`
+4. `skill import-observed`
+5. `skill monitor-observed`
+6. `skill project`
+7. `skill capture`
+8. `skill save`
+9. `sync push`
 
 Requirements:
 

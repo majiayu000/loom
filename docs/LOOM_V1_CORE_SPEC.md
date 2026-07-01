@@ -700,7 +700,7 @@ for repository-wide CI.
 
 Targets:
 
-1. release binary size: <= 3200 KiB
+1. release binary size: <= 3270 KiB
 2. `loom --help` p95: < 300 ms
 3. `loom --version` p95: < 300 ms
 4. `workspace status` with 1000 skills: p95 < 500 ms

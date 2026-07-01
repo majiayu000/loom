@@ -160,11 +160,13 @@ cargo test --test skill_provenance
 ### SP380-T7: Add Policy Gates
 
 Owner: security
-Depends on: SP380-T5, SP380-T6
+Depends on: SP380-T5
 
 Done when:
 
 - Strict policy rejects unpinned moving refs.
+- Dry-run policy checks run before mutating install/apply exists, including
+  rejection of unpinned remote refs and mutable local paths under strict policy.
 - Critical scan findings block install.
 - Public installs default to `third-party-unreviewed`.
 - Secrets are never printed in provider config or preview output.

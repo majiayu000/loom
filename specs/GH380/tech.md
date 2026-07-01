@@ -64,7 +64,7 @@ Support normalized locators:
 ```text
 github:owner/repo//skills/foo@v1.2.3
 corp-github:owner/repo//skills/foo@v1.2.3
-local:/path/to/catalog//skills/foo
+local:/path/to/catalog//skills/foo@sha256:<digest>
 ```
 
 Parser output should include:
@@ -82,10 +82,16 @@ provider ids. Unknown prefixes fail with a provider-specific typed error such as
 add it to `src/types.rs`, `docs/LOOM_CLI_CONTRACT.md`, and CLI envelope tests.
 `team:` is reserved for a later org-provider slice and must fail as unsupported
 in v1.
+Built-in defaults such as `github:` and `local:` are synthesized in memory for
+read-only parse, catalog, and preview flows in a fresh registry. Persisting or
+customizing them still requires an explicit provider write command; read-only
+commands must not seed provider state.
 
 Pinned refs include immutable commit SHAs. Tags are acceptable only when policy
 verifies immutability/signature and provenance records the resolved commit and
 source digest. Branch names are moving refs and should fail under strict policy.
+Local locators are pinned only when they include a content digest or reviewed
+snapshot id; strict policy rejects mutable local directories without that pin.
 
 ## Provider Abstraction
 

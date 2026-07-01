@@ -32,10 +32,10 @@ Target command surface:
 loom provider add <id> --kind github|local --url <url>
 loom provider list
 loom provider remove <id>
-loom catalog search <query> [--provider <provider-id>] [--agent <agent>] [--json]
+loom catalog search <query> [--provider <provider-id>] [--allow-network] [--agent <agent>] [--json]
 loom catalog show <locator> [--json]
 loom catalog preview <locator> [--ref <ref>] [--json]
-loom skill install <locator> --name <skill> [--ref <branch|tag|sha>] [--trust third-party-unreviewed|reviewed] [--policy-profile <profile>] [--dry-run]
+loom skill install <locator> --name <skill> [--ref <branch|tag|sha>] [--trust third-party-unreviewed|reviewed] [--review-evidence <id>] [--policy-profile <profile>] [--dry-run]
 ```
 
 If a locator already contains `@ref`, `--ref` must either match that ref or the
@@ -47,7 +47,7 @@ Locator examples:
 ```text
 github:owner/repo//skills/foo@v1.2.3
 corp-github:owner/repo//skills/foo@v1.2.3
-local:/path/to/catalog//skills/foo
+local:/path/to/catalog//skills/foo@sha256:<digest>
 ```
 
 ## Non-Goals
@@ -123,6 +123,11 @@ Preview must not execute scripts. It should show:
 - Estimated risk and trust.
 - Suggested install dry-run command.
 
+Catalog search is local-only by default. Network-backed providers such as GitHub
+may be queried only when the provider is explicitly selected and the command uses
+an explicit network opt-in such as `--allow-network`; locator-based preview still
+counts as explicit locator intent.
+
 ## Install Behavior
 
 `skill install` should:
@@ -134,7 +139,8 @@ Preview must not execute scripts. It should show:
 5. Run safety scan.
 6. Create provenance and lockfile records.
 7. Import into registry.
-8. Mark trust as `third-party-unreviewed` unless explicitly reviewed.
+8. Mark trust as `third-party-unreviewed` unless `reviewed` is backed by an
+   auditable review/approval evidence id accepted by policy.
 9. Return next actions: inspect, scan, activate.
 
 Existing remote `loom skill add <git-url|github:...>` paths must either route

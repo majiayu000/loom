@@ -23,9 +23,9 @@ new CLI behavior, hidden Codex config repair, automatic full-mirror cleanup
 
 - [ ] `SP374-T001` Owner: docs-readme | Done when: README introduces single-skill lifecycle before advanced registry/projection internals and labels unavailable commands honestly | Verify: `git diff --check`
 - [ ] `SP374-T002` Owner: docs-lifecycle | Done when: `docs/SINGLE_SKILL_LIFECYCLE.md` defines the lifecycle terms and command sequence with implemented/planned status called out | Verify: `rg -n "active view|disabled-by-config|restart-required|--json" docs/SINGLE_SKILL_LIFECYCLE.md`
-- [ ] `SP374-T003` Owner: docs-codex | Done when: `docs/CODEX_SKILL_VISIBILITY.md` explains `~/.agents/skills`, legacy `${CODEX_HOME:-~/.codex}/skills`, the CWD-to-repo-root `.agents/skills` search chain, symlink canonicalization, path-based config disables, and restart guidance | Verify: `rg -n "\\.agents/skills|CODEX_HOME|skills.config|restart|--json" docs/CODEX_SKILL_VISIBILITY.md`
-- [ ] `SP374-T004` Owner: docs-migration | Done when: `docs/MIGRATING_TO_ACTIVE_VIEW.md` documents dry-run-first audit, allowlist, activation, reconcile, config disable repair/reporting, and verification | Verify: `rg -n "dry-run|allowlist|reconcile|diagnose|--json" docs/MIGRATING_TO_ACTIVE_VIEW.md`
-- [ ] `SP374-T005` Owner: docs-consistency | Done when: existing docs that imply Codex full-mirror behavior are corrected or labeled legacy and link to the new active-view docs | Verify: `rg -n "full[- ]mirror|legacy|active view" README.md docs`
+- [ ] `SP374-T003` Owner: docs-codex | Done when: `docs/CODEX_SKILL_VISIBILITY.md` explains `~/.agents/skills`, legacy `${CODEX_HOME:-~/.codex}/skills`, admin/system roots such as `/etc/codex/skills` and bundled system skills, the CWD-to-repo-root `.agents/skills` search chain, symlink canonicalization, path-based config disables, and restart guidance | Verify: `rg -n "\\.agents/skills|CODEX_HOME|/etc/codex/skills|bundled|skills.config|restart|--json" docs/CODEX_SKILL_VISIBILITY.md`
+- [ ] `SP374-T004` Owner: docs-migration | Done when: `docs/MIGRATING_TO_ACTIVE_VIEW.md` documents dry-run-first audit, allowlist, activation, reconcile, Loom-managed config disable repair/reporting, user-authored disable preservation/report-only behavior, and verification | Verify: `rg -n "dry-run|allowlist|reconcile|diagnose|Loom-managed|user-authored|--json" docs/MIGRATING_TO_ACTIVE_VIEW.md`
+- [ ] `SP374-T005` Owner: docs-consistency | Done when: existing docs that imply Codex full-mirror behavior, projection-as-visibility, or outdated root-location defaults are corrected or labeled legacy and link to the new active-view docs | Verify: `rg -n "full[- ]mirror|projection|visible|\\.codex/skills|legacy|active view" README.md docs`
 - [ ] `SP374-T006` Owner: regression | Done when: documentation diffs are whitespace-clean and repository check/test still pass | Verify: `git diff --check && cargo check --workspace --all-targets --all-features && cargo test`
 
 ### SP374-T1: Update README Quick Start
@@ -87,6 +87,8 @@ Files:
 Done when:
 
 - The guide names the preferred user root, legacy user root, and project root.
+- The guide also covers admin/system roots such as `/etc/codex/skills` and
+  bundled system skills when explaining unexpected visibility or collisions.
 - The guide explains why filesystem projection alone does not prove visibility.
 - The guide explains canonical `SKILL.md` path disables; skill names are limited
   to collision or display diagnostics.
@@ -116,6 +118,9 @@ Done when:
 - The guide says existing full-mirror projections are migration input, not
   desired active state.
 - Verification and recovery steps are documented.
+- `--fix-config` or equivalent repair wording is limited to Loom-generated
+  config blocks; user-authored Codex disables are preserved and reported for
+  manual review.
 
 Verify:
 
@@ -137,8 +142,9 @@ Files:
 
 Done when:
 
-- Docs that imply Codex should mirror every registry skill are corrected or
-  marked legacy.
+- Docs that imply Codex should mirror every registry skill, treat projection as
+  proof of visibility, or present legacy root defaults as the only current path
+  are corrected or marked legacy.
 - Historical design docs keep context but link to the new user-facing docs.
 - No unrelated docs are rewritten.
 

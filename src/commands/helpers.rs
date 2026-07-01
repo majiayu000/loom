@@ -127,6 +127,7 @@ pub(crate) fn command_name(command: &Command) -> &'static str {
             SkillCommand::Resolve(_) => "skill.resolve",
             SkillCommand::New(_) => "skill.new",
             SkillCommand::Add(_) => "skill.add",
+            SkillCommand::Install(_) => "skill.install",
             SkillCommand::ImportObserved(_) => "skill.import_observed",
             SkillCommand::MonitorObserved(_) => "skill.monitor_observed",
             SkillCommand::Project(_) => "skill.project",
@@ -180,6 +181,16 @@ pub(crate) fn command_name(command: &Command) -> &'static str {
             SkillsetCommand::Remove(_) => "skillset.remove",
             SkillsetCommand::Show(_) => "skillset.show",
             SkillsetCommand::Lint(_) => "skillset.lint",
+        },
+        Command::Provider { command } => match command {
+            crate::cli::ProviderCommand::Add(_) => "provider.add",
+            crate::cli::ProviderCommand::List => "provider.list",
+            crate::cli::ProviderCommand::Remove(_) => "provider.remove",
+        },
+        Command::Catalog { command } => match command {
+            crate::cli::CatalogCommand::Search(_) => "catalog.search",
+            crate::cli::CatalogCommand::Show(_) => "catalog.show",
+            crate::cli::CatalogCommand::Preview(_) => "catalog.preview",
         },
         Command::Workflow { command } => match command {
             WorkflowCommand::Create(_) => "workflow.create",

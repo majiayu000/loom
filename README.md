@@ -71,6 +71,8 @@ loom skill visibility fixflow --agent codex
 
 Loom defaults to `~/.loom-registry`. Pass `--root <dir>` only when you want a different registry.
 
+Before importing a third-party or local catalog skill, use `loom catalog preview <locator>` and `loom skill install <locator> --name <skill> --dry-run` to inspect scripts, lint, safety, provenance, lockfile, and trust defaults without writing registry state.
+
 For existing agent directories, import observed skills separately:
 
 ```bash
@@ -154,6 +156,7 @@ Prefer a guided walkthrough? Run `./scripts/demo.sh` for a scripted end-to-end t
 - **🧬 Git-backed lifecycle** — `add → capture → save → snapshot → release → rollback → diff` ([when to use which](#skill-lifecycle-verbs))
 - **🩺 Skill status** — `skill inspect` shows one read-only lifecycle card; `skill diagnose` drills into source, bindings, targets, projections, drift, and related operations
 - **🛡️ Skill safety state** — `skill scan`, trust levels, quarantine metadata, and security diff gate risky skills before projection
+- **🔎 Provider previews** — `provider` and `catalog` commands preview third-party/local skills safely before any install path can write registry state
 - **🧰 Runtime readiness** — `skill deps` reports required tools, env vars, MCP config, and network expectations without printing secrets
 - **🔁 Git-backed sync** — `sync push / pull / replay` between a team's registries
 - **🛠️ Ops with audit** — `ops list / retry / purge` and `ops history diagnose / repair`
@@ -210,6 +213,9 @@ The chain `add → capture → save → snapshot → release → rollback` is th
 | `loom skill search` | Search skills with deterministic lexical scoring | Find likely skills by id, description, tags, warning state, agent, profile, status, or trust | Source + registry metadata (read-only) |
 | `loom skill resolve` | Resolve a task description to candidate skills without an LLM | Let agents choose a skill transparently from local metadata and scoring inputs | Source + registry metadata (read-only) |
 | `loom skill new` | Create a lint-clean local skill skeleton | Start a new registry-owned skill with `SKILL.md`, references, scripts, assets, eval stubs, and `loom.skill.toml` | Source (initial create) |
+| `loom provider add/list/remove` | Manage local or GitHub catalog provider records | Configure provider ids for advisory search/preview without storing credentials | Registry provider state |
+| `loom catalog search/show/preview` | Inspect provider locators without executing source code | See metadata, scripts, license/provenance hints, lint, safety, and install dry-run guidance | Provider source (read-only) |
+| `loom skill install --dry-run` | Plan a provider-backed import without writing registry state | Check pin policy, lint, safety, provenance, lockfile, and trust defaults before mutating install apply exists | Provider source + policy (read-only except command audit) |
 | `loom skill provenance inspect/verify/refresh` | Inspect, check, or refresh recorded source provenance and `loom.lock` | Confirm a skill still matches the source digest and pinned ref metadata | Source metadata + `loom.lock` |
 | `loom skill policy` | Report declared capabilities, content risks, provenance drift, and policy decision | Review a skill before projection or explain why a policy profile blocks it | Source metadata + source files (read-only) |
 | `loom skill scan` | Return unified safety findings, trust state, and activation decision | Review prompt-injection, script, secret, network, provenance, and trust risks before activation | Source + trust metadata (read-only) |

@@ -71,6 +71,7 @@ struct CompiledArtifactManifest {
     compiler_version: String,
     status: ArtifactStatus,
     gates: CompileGateStatus,
+    content_hashes: BTreeMap<String, String>,
     token_estimate: CompileTokenEstimate,
     created_at: String,
 }
@@ -98,7 +99,9 @@ compiled artifact:
 3. Referenced files that are indexed or summarized.
 4. Script file bytes or content hashes, plus paths and executable metadata, for
    scripts exposed to the runtime interface.
-5. Compiler version and agent profile.
+5. Asset file bytes or content hashes when assets are indexed or exposed to the
+   runtime interface.
+6. Compiler version and agent profile.
 
 When a source digest does not match the manifest digest, verification returns a
 typed stale result. It must not silently fall back to the artifact.
@@ -130,15 +133,24 @@ typed stale result. It must not silently fall back to the artifact.
 `skill compile verify` should:
 
 1. Load `manifest.json`.
-2. Ensure all required files exist.
-3. Validate each JSON file with typed schema parsing.
-4. Recompute the source digest and compare it with the manifest.
-5. Validate the generated activation/projection artifact text with the
+2. Validate `manifest.skill` matches the CLI skill and `manifest.artifact_id`
+   matches the requested artifact directory before trusting sidecars.
+3. Ensure all required files exist.
+4. Validate each JSON file with typed schema parsing.
+5. Enforce path confinement for every indexed path in sidecars: no absolute
+   paths, no `..` traversal, and canonical targets must remain inside the source
+   skill tree or generated artifact tree as appropriate.
+6. Recompute the source digest and compare it with the manifest.
+7. Recompute generated content hashes for `activation.md` and JSON sidecars and
+   compare them with manifest `content_hashes`.
+8. Validate the generated activation/projection artifact text with the
    portable/agent lint contract, not only the source skill.
-6. Run or consume current safety/trust status.
-7. Run or consume dependency readiness.
-8. Require eval evidence before returning `valid`.
-9. Return a structured report that deferred `skill inspect` integration can
+9. Run or consume current safety/trust status for the source and run the safety
+   gate against generated activation/projection text.
+10. Run or consume dependency readiness.
+11. Require eval evidence tied to the generated content hashes before returning
+   `valid`.
+12. Return a structured report that deferred `skill inspect` integration can
    consume.
 
 Verification failures should use typed errors for malformed input and structured
@@ -167,9 +179,12 @@ Focused tests:
 4. missing artifact files fail verification;
 5. source edit causes stale digest verification result;
 6. lint, safety, dependency, or eval gate failure prevents `valid`;
-7. inspect includes artifact status once inspect wiring exists;
-8. compiled activation rejects missing or stale artifacts once activation wiring
-   exists.
+7. manifest identity mismatch fails verification;
+8. sidecar path escapes fail verification;
+9. verify without `--artifact` returns all artifacts in deterministic order;
+10. inspect includes artifact status once inspect wiring exists;
+11. compiled activation rejects missing or stale artifacts once activation wiring
+    exists.
 
 Suggested commands:
 

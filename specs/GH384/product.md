@@ -103,11 +103,19 @@ The manifest must include at least:
   "source_digest": "...",
   "compiler_version": "loom-compiled-v1",
   "status": "planned",
-  "gates": {
-    "lint": "pass",
-    "safety": "pass",
-    "eval": "missing"
-  },
+	  "gates": {
+	    "lint": "pass",
+	    "safety": "pass",
+	    "dependency": "pass",
+	    "eval": "missing"
+	  },
+	  "content_hashes": {
+	    "activation_md": "sha256:...",
+	    "catalog_json": "sha256:...",
+	    "boundaries_json": "sha256:...",
+	    "tool_interface_json": "sha256:...",
+	    "references_index_json": "sha256:..."
+	  },
   "token_estimate": {
     "source_skill_md": 4200,
     "activation_md": 1200
@@ -138,6 +146,10 @@ Artifact ids are path segments, not paths. Commands accepting `--artifact`
 must validate ids against a strict safe segment grammar before joining paths
 under `state/compiled/skills/<skill>/`.
 
+When `verify` is called without `--artifact`, it verifies every artifact under
+the selected skill and returns a deterministic list sorted by artifact id. It
+must not pick an arbitrary filesystem entry as the default target.
+
 Deferred inspect integration should explain compiled artifact status, stale
 reason, gate results, and source fallback once #366 wiring is included.
 
@@ -149,7 +161,8 @@ reason, gate results, and source fallback once #366 wiring is included.
 2. The planner reports no-op when the source skill is already below the
    configured compile threshold.
 3. Artifact manifests include source ref, source tree OID or equivalent digest
-   input, compiler version, agent, profile, status, gates, and token estimates.
+   input, compiler version, agent, profile, status, gates including dependency
+   readiness, generated content hashes, and token estimates.
 4. `skill compile verify` detects missing files and malformed manifests.
 5. `skill compile verify` detects stale artifacts after source edits.
 6. Lint, safety, dependency, and eval gate failures prevent a `valid` artifact
@@ -157,8 +170,11 @@ reason, gate results, and source fallback once #366 wiring is included.
 7. Compiled activation remains opt-in and basic activation works when no
    compiled artifact exists.
 8. Tests cover dry-run planning, no-op small skills, artifact manifest parsing,
-   missing file verification, stale digest verification, gate failure handling,
-   artifact-id path validation, and activation-artifact lint verification.
+   missing file verification, stale digest verification, manifest identity
+   verification, generated-content hash/eval matching, gate failure handling,
+   artifact-id path validation, sidecar path confinement, activation-artifact
+   lint and safety verification, and all-artifact verification when no artifact
+   id is provided.
 
 ## Open Questions
 

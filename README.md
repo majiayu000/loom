@@ -185,6 +185,7 @@ The chain `add → capture → save → snapshot → release → rollback` is th
 | `loom skill activate` | Activate one skill for an agent without manual binding IDs | Create or repair the managed target, binding, rule, and projection selected by agent/scope/profile | Source + target + registry metadata |
 | `loom skill deactivate` | Deactivate one skill from an agent target | Remove the desired rule and only delete safe symlink projections; copy/materialize fail closed | Target + registry metadata |
 | `loom skill active list` | List desired active skills and realized projections | See active rules, projection health, missing targets, and explicit `not_checked` visibility claims | Registry metadata + target filesystem (read-only) |
+| `loom skill visibility` | Explain one skill's agent active-view visibility | For Codex, join source, active rules, projection symlink, config disables, runtime entries, external entries, and restart requirements | Source + registry metadata + target filesystem (read-only) |
 | `loom skill search` | Search skills with deterministic lexical scoring | Find likely skills by id, description, tags, warning state, agent, profile, status, or trust | Source + registry metadata (read-only) |
 | `loom skill resolve` | Resolve a task description to candidate skills without an LLM | Let agents choose a skill transparently from local metadata and scoring inputs | Source + registry metadata (read-only) |
 | `loom skill new` | Create a lint-clean local skill skeleton | Start a new registry-owned skill with `SKILL.md`, references, scripts, assets, eval stubs, and `loom.skill.toml` | Source (initial create) |
@@ -204,6 +205,7 @@ The chain `add → capture → save → snapshot → release → rollback` is th
 | `loom skill lint` | Check portable Agent Skills metadata compliance | Validate `SKILL.md`, YAML frontmatter, portable name, and description before projection | Source (read-only) |
 | `loom skill verify` | Detect uncommitted drift in a skill source | Confirm `skills/<name>` matches the committed source tree; flag external edits that bypassed `save` | Source (read-only) |
 | `loom skill diagnose` | Run a read-only health report for one skill | Explain missing source, broken bindings/targets/projections, source drift, pending queue issues, and recent failures | Source + registry metadata (read-only) |
+| `loom codex reconcile` | Plan or repair Codex active-view visibility | Dry-run projection/config actions, repair safe Loom-owned symlinks, remove stale records, and optionally patch safe config disables | Target + registry metadata + Codex config |
 
 Quick decision: **edits from the agent side → `capture`; edits inside the registry repo → `save`; anchor → `snapshot`; public version → `release`; undo → `rollback`; integrity audit → `verify`; health triage → `diagnose`; quality evidence → `eval`.**
 
@@ -270,6 +272,7 @@ loom workspace remote set <git-url>
 loom workspace remote status
 
 loom agent preflight --agent <agent> --workspace <path> [--skill <skill>] [--method <symlink|copy|materialize>]
+loom codex reconcile [--dry-run | --apply] [--fix-config] [--binding <binding-id>] [--target <target-id>] [--allowlist <path>]
 
 loom target add --agent <agent> --path <abs-path> [--ownership <managed|observed|external>]
 loom target list
@@ -282,6 +285,7 @@ loom skill inspect <skill> [--agent <agent>] [--workspace <path>] [--profile <pr
 loom skill activate <skill> --agent <agent> [--scope <user|project>] [--workspace <path>] [--profile <profile>] [--target <target-id>] [--method <symlink|copy|materialize>] [--dry-run]
 loom skill deactivate <skill> --agent <agent> [--scope <user|project>] [--workspace <path>] [--profile <profile>] [--target <target-id>] [--dry-run]
 loom skill active list --agent <agent> [--scope <user|project>] [--workspace <path>] [--profile <profile>]
+loom skill visibility <skill> --agent codex [--workspace <path>] [--profile <profile>]
 loom skill search <query> [--agent <agent>] [--profile <profile>] [--status <status>] [--trust <trust>]
 loom skill resolve <task-description> [--agent <agent>] [--workspace <path>]
 loom skill new <skill> [--template <basic|coding-workflow|scripted|reference-heavy>] [--description <text>] [--agent <agent>] [--dry-run]
@@ -305,7 +309,7 @@ loom skill trash restore <skill> [--trash-id <id>]
 loom skill trash purge <trash-id> [--dry-run]
 loom skill lint <skill> [--strict | --compat | --fix]
 loom skill verify <skill>
-loom skill diagnose <skill>
+loom skill diagnose <skill> [--agent codex]
 loom skill watch [<skill>] [--debounce-ms <ms>] [--max-batch <n>] [--dry-run] [--once]
 loom skill import-observed [--target <target-id>]
 loom skill monitor-observed [--target <target-id>] [--once] [--interval-seconds <seconds>]

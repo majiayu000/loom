@@ -4,12 +4,13 @@ use std::path::Path;
 
 use serde_json::{Value, json};
 
-use crate::cli::SkillOnlyArgs;
+use crate::cli::{AgentKind, SkillDiagnoseArgs, SkillOnlyArgs};
 use crate::envelope::Meta;
 use crate::state::AppContext;
 use crate::state_model::{RegistryProjectionInstance, RegistrySnapshot, RegistryStatePaths};
 use crate::types::{ErrorCode, PendingOp};
 
+use super::codex_visibility::build_codex_visibility_report;
 use super::helpers::{map_arg, map_registry_state, validate_skill_name};
 use super::history_cmds::operation_mentions_skill as registry_operation_mentions_skill;
 use super::skill_verify::{
@@ -21,15 +22,92 @@ const MAX_DRIFTED_PATHS: usize = 100;
 const MAX_RELATED_OPS: usize = 10;
 
 impl App {
-    pub fn cmd_skill_diagnose(
+    pub fn cmd_skill_diagnose<T: SkillDiagnoseRequest>(
         &self,
-        args: &SkillOnlyArgs,
+        args: &T,
     ) -> std::result::Result<(Value, Meta), CommandFailure> {
-        validate_skill_name(&args.skill).map_err(map_arg)?;
+        let skill = args.skill();
+        validate_skill_name(skill).map_err(map_arg)?;
         let paths = RegistryStatePaths::from_app_context(&self.ctx);
         let snapshot = paths.maybe_load_snapshot().map_err(map_registry_state)?;
-        build_skill_diagnosis(&self.ctx, &args.skill, snapshot.as_ref())
+        let (mut data, meta) = build_skill_diagnosis(&self.ctx, skill, snapshot.as_ref())?;
+        if let Some(agent) = args.agent() {
+            if agent != AgentKind::Codex {
+                return Err(CommandFailure::new(
+                    ErrorCode::ArgInvalid,
+                    "skill diagnose --agent currently supports only codex",
+                ));
+            }
+            attach_codex_visibility(&self.ctx, skill, &mut data)?;
+        }
+        Ok((data, meta))
     }
+}
+
+pub trait SkillDiagnoseRequest {
+    fn skill(&self) -> &str;
+    fn agent(&self) -> Option<AgentKind>;
+}
+
+impl SkillDiagnoseRequest for SkillDiagnoseArgs {
+    fn skill(&self) -> &str {
+        &self.skill
+    }
+
+    fn agent(&self) -> Option<AgentKind> {
+        self.agent
+    }
+}
+
+impl SkillDiagnoseRequest for SkillOnlyArgs {
+    fn skill(&self) -> &str {
+        &self.skill
+    }
+
+    fn agent(&self) -> Option<AgentKind> {
+        None
+    }
+}
+
+fn attach_codex_visibility(
+    ctx: &AppContext,
+    skill: &str,
+    data: &mut Value,
+) -> std::result::Result<(), CommandFailure> {
+    let report = build_codex_visibility_report(ctx, skill, None, None)?;
+    let report_value = json!(report);
+    if let Some(checks) = data.get_mut("checks").and_then(Value::as_array_mut)
+        && let Some(codex_checks) = report_value.get("checks").and_then(Value::as_array)
+    {
+        for check in codex_checks {
+            let mut check = check.clone();
+            if let Some(object) = check.as_object_mut() {
+                object.insert("section".to_string(), Value::String("codex".to_string()));
+            }
+            checks.push(check);
+        }
+    }
+    data["related"]["codex_visibility"] = report_value;
+    let error_count = data["checks"]
+        .as_array()
+        .map(|checks| checks_with_severity(checks, "error"))
+        .unwrap_or(0);
+    let warning_count = data["checks"]
+        .as_array()
+        .map(|checks| checks_with_severity(checks, "warning"))
+        .unwrap_or(0);
+    let status = if error_count > 0 {
+        "blocked"
+    } else if warning_count > 0 {
+        "attention"
+    } else {
+        "healthy"
+    };
+    data["healthy"] = Value::Bool(status == "healthy");
+    data["status"] = Value::String(status.to_string());
+    data["summary"]["failed_check_count"] = json!(error_count);
+    data["summary"]["warning_check_count"] = json!(warning_count);
+    Ok(())
 }
 
 fn build_skill_diagnosis(

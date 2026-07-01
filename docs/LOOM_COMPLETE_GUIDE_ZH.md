@@ -45,6 +45,12 @@ loom --json --root /path/to/your-registry ...
 
 ## 5. 快速开始（独立 Registry）
 
+单 skill 生命周期优先参考：
+
+- [Single-Skill Lifecycle](SINGLE_SKILL_LIFECYCLE.md)
+- [Codex Skill Visibility](CODEX_SKILL_VISIBILITY.md)
+- [Migrating To An Active View](MIGRATING_TO_ACTIVE_VIEW.md)
+
 ### 5.1 创建并初始化 registry 仓库
 
 ```bash
@@ -68,7 +74,10 @@ loom --json --root ~/loom-registry target add --agent claude --path "$HOME/.loom
 loom --json --root ~/loom-registry target add --agent codex --path "$HOME/.loom-targets/codex/skills" --ownership managed
 ```
 
-已有的 agent skill 目录（例如 `~/.claude/skills`、`~/.codex/skills`）默认应使用 `observed`，不要注册成 `managed`。
+已有的 agent skill 目录（例如 `~/.claude/skills`、Codex 首选
+`~/.agents/skills`、legacy `${CODEX_HOME:-~/.codex}/skills`）默认应使用
+`observed`，不要注册成 `managed`。Codex 不应再把完整 registry 镜像当作默认
+active view；应显式激活需要的 skill。
 
 ### 5.4 绑定 workspace 到默认 target
 

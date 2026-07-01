@@ -7,6 +7,10 @@ Status: Draft
 
 This plan migrates Loom from the legacy single-target mental model to a registry binding-based model.
 
+For current operator-facing active-view migration, see
+`MIGRATING_TO_ACTIVE_VIEW.md`. For Codex-specific root, config, and restart
+semantics, see `CODEX_SKILL_VISIBILITY.md`.
+
 The migration priority is:
 
 1. correct the model
@@ -189,6 +193,8 @@ Historical note:
 # use explicit registry state bootstrap:
 loom target add --agent claude --path /Users/foo/.claude/skills --ownership observed
 loom target add --agent claude --path /Users/foo/.claude-work/skills --ownership observed
+loom target add --agent codex --path /Users/foo/.agents/skills --ownership observed
+# Legacy Codex roots may also be registered as observed migration input:
 loom target add --agent codex --path /Users/foo/.codex/skills --ownership observed
 loom workspace binding add --agent claude --profile <profile> --matcher-kind path-prefix --matcher-value <workspace> --target <target-id>
 ```

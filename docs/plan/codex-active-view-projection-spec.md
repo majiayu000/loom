@@ -4,6 +4,14 @@ Date: 2026-06-26
 Status: Draft
 Scope: Make Loom-managed Codex skills visible through an explicit active view instead of projecting the full registry into `~/.codex/skills`.
 
+Implementation note (2026-07): this design note captured the original
+`~/.codex/skills` active-view migration. Current user-facing docs and adapter
+metadata prefer `~/.agents/skills`, keep `${CODEX_HOME:-~/.codex}/skills` as a
+legacy root, and include project `.agents/skills` discovery. See
+[`../CODEX_SKILL_VISIBILITY.md`](../CODEX_SKILL_VISIBILITY.md) and
+[`../MIGRATING_TO_ACTIVE_VIEW.md`](../MIGRATING_TO_ACTIVE_VIEW.md) before using
+this historical plan as operator guidance.
+
 ## Product Thesis
 
 Loom is the Git-backed registry and projection control plane for agent skills. For
@@ -224,7 +232,7 @@ the target directory. MVP behavior:
 ### Activate
 
 ```bash
-loom skill activate <skill> --agent codex --binding <binding-id> [--method symlink] [--dry-run]
+loom skill activate <skill> --agent codex --scope user [--target <target-id>] [--method symlink] [--dry-run]
 ```
 
 Behavior:
@@ -307,7 +315,7 @@ Deletion safety:
 ### Active List
 
 ```bash
-loom skill active list --agent codex [--binding <binding-id>] [--json]
+loom skill active list --agent codex [--scope user|project] [--workspace <path>] [--profile <profile>] [--json]
 ```
 
 Behavior:
@@ -577,14 +585,11 @@ rule from the active view.
 Possible command:
 
 ```bash
-loom skill activate threads --agent codex --binding bind_codex_default
+loom skill activate threads --agent codex --scope user --target target_codex_default
 ```
 
-Batch activation may be added later:
-
-```bash
-loom skill activate --from-file codex-active-skills.txt --agent codex --binding bind_codex_default
-```
+Planned-only batch activation may later consume an allowlist file, but it is not
+part of the current CLI.
 
 ### Phase 2: Clear Legacy Full-Mirror Rules
 
@@ -649,8 +654,8 @@ This repairs active skills disabled by Codex config and reports
 Run:
 
 ```bash
-loom skill active list --agent codex --binding bind_codex_default
-loom skill diagnose threads
+loom skill active list --agent codex --scope user
+loom skill diagnose threads --agent codex
 loom codex reconcile --binding bind_codex_default --dry-run
 ```
 
@@ -796,10 +801,10 @@ On a real Codex setup:
 
 ```bash
 loom codex reconcile --binding bind_codex_default --dry-run
-loom skill activate threads --agent codex --binding bind_codex_default
+loom skill activate threads --agent codex --scope user --target target_codex_default
 loom codex reconcile --binding bind_codex_default --apply --fix-config
-loom skill active list --agent codex --binding bind_codex_default
-loom skill diagnose threads
+loom skill active list --agent codex --scope user
+loom skill diagnose threads --agent codex
 ```
 
 Then restart Codex and verify `threads` appears in the available skills list.

@@ -104,6 +104,10 @@ Resolution order for skill directories is:
 | `GEMINI_CLI_SKILLS_DIR` | `$HOME/.gemini/skills` | `src/state/mod.rs` default agent map |
 | `GOOSE_SKILLS_DIR` | `$HOME/.config/goose/skills` | `src/state/mod.rs` default agent map |
 
+For Codex activation and visibility, adapter metadata prefers
+`$HOME/.agents/skills` and keeps `$HOME/.codex/skills` as a legacy scan root.
+See `CODEX_SKILL_VISIBILITY.md`.
+
 `resolve_agent_skill_dirs()` returns the first directory from each variable
 and exposes the full `agent_dirs` list for status and panel diagnostics.
 

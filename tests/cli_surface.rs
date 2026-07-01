@@ -30,6 +30,8 @@ fn top_level_help_describes_command_groups() {
         "Inspect and configure registry workspace state",
         "Register and inspect agent skill directories",
         "Manage skill sources, projections, and versions",
+        "Manage groups of registry skills",
+        "Plan and preflight guarded multi-skill workflows",
         "Synchronize the registry through its Git remote",
         "Inspect, replay, and repair operation history",
         "Inspect and reconcile Codex active-view visibility",
@@ -57,6 +59,8 @@ fn cli_contract_docs_track_current_surface() {
         "`workspace`",
         "`target`",
         "`skill`",
+        "`skillset`",
+        "`workflow`",
         "`sync`",
         "`ops`",
         "`agent`",
@@ -143,6 +147,8 @@ fn cli_contract_docs_track_current_surface() {
         "loom skill provenance refresh",
         "loom skill policy",
         "loom skill eval",
+        "loom workflow plan",
+        "loom workflow preflight",
         "loom codex reconcile",
         "loom skill watch",
     ] {
@@ -168,6 +174,8 @@ fn cli_contract_docs_track_current_surface() {
         "skill policy <skill-id>",
         "skill eval <skill-id>",
         "POLICY_BLOCKED",
+        "workflow plan <workflow-id>",
+        "workflow preflight <plan-id>",
     ] {
         assert!(
             contract.contains(command),

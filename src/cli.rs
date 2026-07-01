@@ -21,6 +21,7 @@ mod skill_visibility_args;
 mod skillset;
 mod use_flow;
 mod version;
+mod workflow;
 pub use codex_args::{CodexCommand, CodexReconcileArgs};
 pub use deps::SkillDepsArgs;
 pub use discovery::{ActiveRecommendArgs, SkillRecommendArgs, SkillResolveArgs, SkillSearchArgs};
@@ -47,6 +48,10 @@ pub use skillset::{
 };
 pub use use_flow::{UseArgs, UseScope};
 pub use version::{DiffArgs, HistoryArgs, ReleaseArgs, RollbackArgs};
+pub use workflow::{
+    WorkflowCommand, WorkflowCreateArgs, WorkflowPlanArgs, WorkflowPreflightArgs, WorkflowRunArgs,
+    WorkflowShowArgs,
+};
 
 #[derive(Debug, Clone, Parser, Serialize)]
 #[command(name = "loom")]
@@ -112,6 +117,11 @@ pub enum Command {
     Skillset {
         #[command(subcommand)]
         command: SkillsetCommand,
+    },
+    #[command(about = "Plan and preflight guarded multi-skill workflows")]
+    Workflow {
+        #[command(subcommand)]
+        command: WorkflowCommand,
     },
     #[command(about = "Build and inspect local derived recommendation indexes")]
     Index(IndexArgs),

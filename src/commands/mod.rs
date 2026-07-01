@@ -40,6 +40,7 @@ mod trash_cmds;
 mod use_cmds;
 mod version_cmds;
 mod watch_cmds;
+mod workflow_cmds;
 mod workspace_cmds;
 
 use anyhow::Result;
@@ -49,8 +50,8 @@ use uuid::Uuid;
 use crate::cli::{
     AgentCommand, Cli, CodexCommand, Command, OpsCommand, OpsHistoryCommand, RemoteCommand,
     SkillActiveCommand, SkillCommand, SkillOrphanCommand, SkillProvenanceCommand,
-    SkillTrashCommand, SkillsetCommand, SyncCommand, TargetCommand, WorkspaceBindingCommand,
-    WorkspaceCommand, WorkspaceInitArgs,
+    SkillTrashCommand, SkillsetCommand, SyncCommand, TargetCommand, WorkflowCommand,
+    WorkspaceBindingCommand, WorkspaceCommand, WorkspaceInitArgs,
 };
 use crate::envelope::{Envelope, Meta};
 use crate::state::{AppContext, home_dir};
@@ -293,6 +294,7 @@ impl App {
                 SkillsetCommand::Show(args) => self.cmd_skillset_show(args),
                 SkillsetCommand::Lint(args) => self.cmd_skillset_lint(args),
             },
+            Command::Workflow { command } => self.cmd_workflow(command),
             Command::Index(args) if args.action == "build" => self.cmd_index_build(args),
             Command::Index(args) if args.action == "status" => self.cmd_index_status(),
             Command::Index(args) => Err(CommandFailure::new(
@@ -485,6 +487,11 @@ fn command_records_audit(command: &Command) -> bool {
             | Command::Skillset {
                 command: SkillsetCommand::Show(_) | SkillsetCommand::Lint(_),
             }
+            | Command::Workflow {
+                command: WorkflowCommand::Show(_)
+                    | WorkflowCommand::Preflight(_)
+                    | WorkflowCommand::Run(_),
+            }
     ) && !is_rollback_preview(command)
 }
 
@@ -570,6 +577,13 @@ fn command_requires_durable_audit(command: &Command) -> bool {
                 true
             }
             SkillsetCommand::Show(_) | SkillsetCommand::Lint(_) => false,
+        },
+        Command::Workflow { command } => match command {
+            WorkflowCommand::Create(args) => !args.dry_run,
+            WorkflowCommand::Plan(_) => true,
+            WorkflowCommand::Show(_) | WorkflowCommand::Preflight(_) | WorkflowCommand::Run(_) => {
+                false
+            }
         },
         Command::Index(_) | Command::Active(_) => false,
         Command::Sync { command } => !matches!(command, SyncCommand::Status),

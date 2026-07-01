@@ -218,6 +218,7 @@ The chain `add → capture → save → snapshot → release → rollback` is th
 | `loom skill improve` | Run a read-only single-skill preflight | Aggregate source drift, lint, safety, dependency, eval, and optional real-eval planning before saving edits | Source + local environment (read-only) |
 | `loom skill regression` | Compare one skill against a baseline gate | Fail with typed regression details when lint, safety, dependency, eval, or size gates block the candidate | Source + local environment (read-only) |
 | `loom skillset create/add/remove/show/lint` | Group existing registry skills into a named set | Organize coherent skill bundles before later activation/eval support lands | Registry skillset state |
+| `loom workflow create/show/plan/preflight/run` | Define and guard a multi-skill DAG workflow | Agents need an auditable plan before coordinating several skills; execution remains deferred until apply gates land | Registry workflow state + source metadata |
 | `loom use` | Plan or apply target, binding, and projection setup in one flow | New users want to use a skill without copying target/binding IDs between commands | Source + target + registry metadata |
 | `loom plan use` / `loom apply` | Persist a guarded use plan, then execute it with idempotency | Agents need a retry-safe plan/apply protocol for higher-risk flows | Command audit + source/target/registry metadata |
 | `loom skill project` | Realize a registry skill into an agent directory | Make the skill visible to the agent (Claude/Codex/…) | Target (live directory) |
@@ -351,6 +352,19 @@ loom skill import-observed [--target <target-id>]
 loom skill monitor-observed [--target <target-id>] [--once] [--interval-seconds <seconds>]
 loom skill orphan list
 loom skill orphan clean [--delete-live-paths] [--dry-run]
+
+loom skillset create <skillset-id> [--description <text>]
+loom skillset add <skillset-id> <skill-id> [--role <role>] [--required|--optional]
+loom skillset remove <skillset-id> <skill-id>
+loom skillset show <skillset-id>
+loom skillset lint <skillset-id>
+
+loom workflow create <workflow-id> --file <workflow.json> [--dry-run]
+loom workflow create <workflow-id> --from-skillset <skillset-id> --dry-run
+loom workflow show <workflow-id>
+loom workflow plan <workflow-id> --agent <agent> --workspace <path>
+loom workflow preflight <plan-id>
+loom workflow run <workflow-id> --agent <agent> --workspace <path> [--dry-run]
 
 loom sync status
 loom sync push [--dry-run]

@@ -29,14 +29,18 @@ Production implementation is blocked by:
 Target command surface:
 
 ```bash
-loom provider add <id> --kind github|local|http --url <url>
+loom provider add <id> --kind github|local|team --url <url>
 loom provider list
 loom provider remove <id>
-loom catalog search <query> [--provider github|local|team] [--agent <agent>] [--json]
+loom catalog search <query> [--provider <provider-id>] [--agent <agent>] [--json]
 loom catalog show <locator> [--json]
 loom catalog preview <locator> [--ref <ref>] [--json]
 loom skill install <locator> --name <skill> [--ref <branch|tag|sha>] [--trust third-party-unreviewed|reviewed] [--dry-run]
 ```
+
+If a locator already contains `@ref`, `--ref` must either match that ref or the
+command must fail with a typed conflicting-ref error. Provenance records must
+show the authoritative resolved ref.
 
 Locator examples:
 
@@ -63,7 +67,7 @@ Provider records describe capability and trust defaults:
 
 ```json
 {
-  "provider_id": "github",
+  "id": "github",
   "kind": "github",
   "capabilities": ["search", "preview", "fetch", "provenance"],
   "trust_default": "third-party-unreviewed",

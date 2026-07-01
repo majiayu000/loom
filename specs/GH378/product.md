@@ -20,6 +20,8 @@ plans, but it must never silently activate a skill.
 Production implementation is blocked by:
 
 - #366 for the single-skill status and `skill inspect` read model.
+- #367 for authoritative activation/deactivation/list state.
+- #368 for active-view visibility and reconcile diagnostics.
 - #369 for real eval evidence.
 - #370 for blocked/quarantined/trust state.
 - #371 for dependency and MCP readiness.
@@ -91,9 +93,14 @@ Each ranked result should include:
 
 ```json
 {
-  "skill": "fixflow",
+  "kind": "skill",
+  "id": "fixflow",
   "score": 0.87,
   "mode": "lexical",
+  "score_inputs": {
+    "matched_fields": ["description", "trigger_eval"],
+    "skillsets": ["ci-maintenance"]
+  },
   "reasons": [
     "description matches 'failing CI'",
     "trigger eval recall 0.77",
@@ -105,10 +112,13 @@ Each ranked result should include:
   "warnings": ["no real-agent eval evidence yet"],
   "recommended_action": "activate",
   "suggested_commands": [
-    "loom --json skill activate fixflow --agent codex --scope user --dry-run"
+    "loom --json skill activate fixflow --agent codex --binding <binding-id> --dry-run"
   ]
 }
 ```
+
+Skillset recommendations use the same result shape with
+`"kind": "skillset"` and an id from the skillset read model.
 
 ## Behavior Invariants
 
@@ -121,7 +131,9 @@ Each ranked result should include:
 5. Unevaluated skills may appear only with warnings.
 6. Missing dependencies reduce ranking and appear in risks or warnings.
 7. Recommendation output is read-only and does not write registry state, active
-   views, agent config, or MCP config.
+   views, agent config, or MCP config. `index build` may write rebuildable
+   derived index files under `state/index`, but those files are not source of
+   truth.
 8. `active recommend` returns a dry-run plan, not mutations.
 
 ## Acceptance Criteria

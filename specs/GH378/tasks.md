@@ -22,8 +22,8 @@ automatic activation, network embedding services by default, DAG workflow execut
 ## Tasks
 
 - [ ] `SP378-T001` Owner: index-model | Done when: derived `state/index` schemas are defined for lexical and capability records without making index data the source of truth | Verify: `git diff --check`
-- [ ] `SP378-T002` Owner: cli-index | Done when: `loom index build` and `loom index status` are read-only/deterministic over current registry data and can run without network access | Verify: `cargo test --test skill_inventory_cli`
-- [ ] `SP378-T003` Owner: recommend | Done when: `loom skill recommend` ranks skills with transparent `score_inputs`, `reasons`, `risks`, warnings, and suggested commands | Verify: `cargo test --test skill_inventory_cli`
+- [ ] `SP378-T002` Owner: cli-index | Done when: `loom index build` writes only rebuildable derived `state/index` data, `loom index status` is read-only, and both are deterministic over current registry data without network access | Verify: `cargo test --test skill_inventory_cli`
+- [ ] `SP378-T003` Owner: recommend | Done when: `loom skill recommend` ranks skills and skillsets with transparent `kind`, `id`, `score_inputs`, `reasons`, `risks`, warnings, and suggested commands | Verify: `cargo test --test skill_inventory_cli`
 - [ ] `SP378-T004` Owner: semantic | Done when: `--semantic` falls back to lexical with a `semantic-disabled` warning when no local provider is configured | Verify: `cargo test --test skill_inventory_cli`
 - [ ] `SP378-T005` Owner: safety-policy | Done when: blocked/quarantined skills are never recommended for activation and dependency/eval gaps are surfaced as penalties or warnings | Verify: `cargo test --test skill_policy && cargo test --test skill_eval`
 - [ ] `SP378-T006` Owner: active-plan | Done when: `active recommend` returns a dry-run add/keep/remove plan with suggested commands and no mutation | Verify: `cargo test --test skill_inventory_cli`
@@ -68,6 +68,8 @@ Done when:
 
 - `loom index build` rebuilds local derived index data.
 - `loom index status` reports freshness, counts, and warnings.
+- build does not write registry source, active views, agent config, target dirs,
+  or MCP config.
 - Build works without network access.
 - Invalid skill records produce warnings instead of silent omission.
 

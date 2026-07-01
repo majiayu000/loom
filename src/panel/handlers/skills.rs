@@ -1,7 +1,7 @@
 use axum::{Json, extract::Path as AxumPath, extract::State, http::StatusCode};
 use serde_json::json;
 
-use crate::cli::SkillOnlyArgs;
+use crate::cli::{SkillInspectArgs, SkillOnlyArgs};
 use crate::commands::{App, build_skill_read_model};
 use crate::envelope::Envelope;
 use crate::types::ErrorCode;
@@ -53,6 +53,24 @@ pub(in crate::panel) async fn v1_skill_diagnose(
     panel_command_envelope(
         "skill.diagnose",
         app.cmd_skill_diagnose(&SkillOnlyArgs { skill: skill_name }),
+    )
+}
+
+pub(in crate::panel) async fn v1_skill_inspect(
+    AxumPath(skill_name): AxumPath<String>,
+    State(state): State<PanelState>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let app = App {
+        ctx: state.ctx.as_ref().clone(),
+    };
+    panel_command_envelope(
+        "skill.inspect",
+        app.cmd_skill_inspect(&SkillInspectArgs {
+            skill: skill_name,
+            agent: None,
+            workspace: None,
+            profile: None,
+        }),
     )
 }
 

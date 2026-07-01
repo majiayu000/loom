@@ -9,6 +9,7 @@ vi.mock("../../lib/api/client", () => ({
   api: {
     skillHistory: vi.fn(),
     skillDiagnose: vi.fn(),
+    skillInspect: vi.fn(),
     skillDiff: vi.fn(),
     capture: vi.fn(),
     skillSave: vi.fn(),
@@ -73,6 +74,36 @@ const projection: RegistryProjection = {
   health: "healthy",
 };
 
+function makeInspect(skill = "ready-skill") {
+  return {
+    skill,
+    source: {
+      path: `/tmp/registry/skills/${skill}`,
+      exists: true,
+      entrypoint: "SKILL.md",
+      entrypoint_exists: true,
+      working_tree_drift: false,
+      head_tree_oid: "tree123",
+      last_source_commit: "abc12345",
+      drifted_paths: [],
+    },
+    spec: { portable: "pass", codex: "pass", claude: "pass", findings: [] },
+    runtime: {},
+    dependencies: null,
+    quality: { last_eval: null, trigger_precision: null, trigger_recall: null, baseline_delta: null },
+    safety: {
+      trust: "unknown",
+      policy: "unknown",
+      scripts_present: null,
+      network_requested: null,
+      quarantined: false,
+      reason: null,
+      updated_at: null,
+    },
+    next_actions: [`loom skill eval ${skill}`],
+  };
+}
+
 function renderFixture() {
   const attentionSkill: Skill = {
     ...baseSkill,
@@ -105,6 +136,9 @@ describe("SkillsPage filters and detail tabs", () => {
       ok: true,
       data: { skill: "ready-skill", count: 0, events: [] },
     });
+    (api.skillInspect as ReturnType<typeof vi.fn>).mockImplementation((name: string) =>
+      Promise.resolve(makeInspect(name)),
+    );
   });
 
   it("filters by source status, target, attention state, and tags", () => {

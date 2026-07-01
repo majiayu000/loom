@@ -74,6 +74,56 @@ function installFetchMock(failingPath: string | null = null, failingResponse?: R
             meta: { warnings: options.skillsWarnings ?? [] },
           }),
         );
+      case "/api/v1/skills/typed-api-client/history":
+        return Promise.resolve(
+          jsonResponse({
+            ok: true,
+            data: { skill: "typed-api-client", count: 0, events: [] },
+          }),
+        );
+      case "/api/v1/skills/typed-api-client/inspect":
+        return Promise.resolve(
+          jsonResponse({
+            ok: true,
+            cmd: "skill.inspect",
+            request_id: "req-inspect",
+            data: {
+              skill: "typed-api-client",
+              source: {
+                path: "/tmp/loom-registry/skills/typed-api-client",
+                exists: true,
+                entrypoint: "SKILL.md",
+                entrypoint_exists: true,
+                working_tree_drift: false,
+                head_tree_oid: "tree123",
+                last_source_commit: "abc12345",
+                drifted_paths: [],
+              },
+              spec: { portable: "pass", codex: "pass", claude: "pass", findings: [] },
+              provenance: {},
+              runtime: {},
+              dependencies: null,
+              quality: {
+                last_eval: null,
+                trigger_precision: null,
+                trigger_recall: null,
+                baseline_delta: null,
+              },
+              safety: {
+                trust: "unknown",
+                policy: "unknown",
+                scripts_present: null,
+                network_requested: null,
+                quarantined: false,
+                reason: null,
+                updated_at: null,
+              },
+              next_actions: ["loom skill eval typed-api-client"],
+            },
+            error: null,
+            meta: { warnings: [] },
+          }),
+        );
       case "/api/v1/registry/status":
         return Promise.resolve(
           failedResponse
@@ -187,6 +237,7 @@ describe("PanelApp status failure UI", () => {
     vi.stubGlobal("fetch", fetchMock);
     fetchMock.mockReset();
     localStorage.clear();
+    window.history.replaceState(null, "", "/");
   });
 
   afterEach(() => {
@@ -376,6 +427,19 @@ describe("PanelApp status failure UI", () => {
 
     await screen.findByRole("heading", { name: "Skills" });
     expect(localStorage.getItem("loom.page")).toBe("skills");
+    expect(window.location.hash).toBe("#/skills/typed-api-client");
+  });
+
+  it("restores the skills detail route from the URL hash", async () => {
+    window.history.replaceState(null, "", "#/skills/typed-api-client");
+    installSuccessfulFetchMock();
+
+    render(<PanelApp />);
+
+    await screen.findByRole("heading", { name: "Skills" });
+    expect(localStorage.getItem("loom.page")).toBe("skills");
+    expect(window.location.hash).toBe("#/skills/typed-api-client");
+    expect(await screen.findByText("Runtime visibility")).toBeInTheDocument();
   });
 
   it("replays queued writes from the status bar through the existing sync API", async () => {

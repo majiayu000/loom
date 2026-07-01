@@ -8,6 +8,7 @@ vi.mock("../../lib/api/client", () => ({
   api: {
     skillHistory: vi.fn(),
     skillDiagnose: vi.fn(),
+    skillInspect: vi.fn(),
     skillDiff: vi.fn(),
     capture: vi.fn(),
     skillSave: vi.fn(),
@@ -61,6 +62,7 @@ type SkillsPageOverrides = {
 };
 
 function skillsPage(overrides: SkillsPageOverrides = {}) {
+  (api.skillInspect as ReturnType<typeof vi.fn>).mockResolvedValue(makeInspect());
   return (
     <SkillsPage
       skills={[mockSkill]}
@@ -144,6 +146,70 @@ function makeDiagnose(overrides: Record<string, unknown> = {}) {
       },
     ],
     related: {},
+    ...overrides,
+  };
+}
+
+function makeInspect(overrides: Record<string, unknown> = {}) {
+  return {
+    skill: "my-skill",
+    source: {
+      path: "/tmp/registry/skills/my-skill",
+      exists: true,
+      entrypoint: "SKILL.md",
+      entrypoint_exists: true,
+      working_tree_drift: false,
+      head_tree_oid: "tree123",
+      last_source_commit: "abc12345",
+      drifted_paths: [],
+    },
+    spec: {
+      portable: "pass",
+      codex: "pass",
+      claude: "pass",
+      findings: [],
+    },
+    provenance: {
+      source: null,
+      pinned_ref: null,
+      verified: null,
+      drift: null,
+    },
+    runtime: {
+      claude: {
+        installed_in_registry: true,
+        active_rule_present: false,
+        projected_to_target: false,
+        materialized_path_exists: null,
+        visible_to_agent: "not_checked",
+        enabled_by_agent_config: "not_checked",
+        restart_required: "not_checked",
+        target_id: null,
+        binding_id: null,
+        target_path: null,
+        materialized_path: null,
+        health: null,
+        truth_level: "source_only",
+        findings: [],
+      },
+    },
+    dependencies: null,
+    quality: {
+      last_eval: null,
+      trigger_precision: null,
+      trigger_recall: null,
+      baseline_delta: null,
+    },
+    safety: {
+      trust: "unknown",
+      policy: "unknown",
+      scripts_present: null,
+      network_requested: null,
+      quarantined: false,
+      reason: null,
+      updated_at: null,
+    },
+    next_actions: ["loom skill eval my-skill", "loom skill policy my-skill"],
     ...overrides,
   };
 }
@@ -330,6 +396,7 @@ describe("SkillsPage — history tab", () => {
     // skillDiff is only rendered when its tab is active; keep it pending so
     // it doesn't interfere with history tab assertions.
     (api.skillDiff as ReturnType<typeof vi.fn>).mockReturnValue(new Promise(() => {}));
+    (api.skillInspect as ReturnType<typeof vi.fn>).mockResolvedValue(makeInspect());
   });
 
   it("shows loading indicator while fetch is in-flight", () => {

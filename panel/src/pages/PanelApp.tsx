@@ -63,8 +63,36 @@ const VALID_PAGES: PanelPageKey[] = [
 ];
 
 function loadInitialPage(): PanelPageKey {
+  if (hasSkillsRoute()) return "skills";
   const stored = localStorage.getItem(PAGE_STORAGE_KEY);
   return VALID_PAGES.includes(stored as PanelPageKey) ? (stored as PanelPageKey) : "overview";
+}
+
+function hasSkillsRoute(): boolean {
+  if (typeof window === "undefined") return false;
+  return window.location.hash === "#/skills" || window.location.hash.startsWith("#/skills/");
+}
+
+function skillRouteSelection(): string | null {
+  if (typeof window === "undefined") return null;
+  const prefix = "#/skills/";
+  if (!window.location.hash.startsWith(prefix)) return null;
+  try {
+    return decodeURIComponent(window.location.hash.slice(prefix.length).split("/")[0]);
+  } catch {
+    return null;
+  }
+}
+
+function writeSkillRoute(skillName: string | null) {
+  if (typeof window === "undefined") return;
+  if (skillName) {
+    window.history.replaceState(null, "", `#/skills/${encodeURIComponent(skillName)}`);
+    return;
+  }
+  if (hasSkillsRoute()) {
+    window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
+  }
 }
 
 function loadInitialTweaks(theme: PanelTheme = loadInitialTheme()): TweakState {
@@ -84,7 +112,7 @@ export function PanelApp() {
   const [theme, setTheme] = useState<PanelTheme>(loadInitialTheme);
   const [tweaks, setTweaks] = useState<TweakState>(loadInitialTweaks);
   const [tweakVisible, setTweakVisible] = useState(false);
-  const [selectedSkill, setSelectedSkill] = useState<string | null>(null);
+  const [selectedSkill, setSelectedSkill] = useState<string | null>(skillRouteSelection);
   const [selectedTarget, setSelectedTarget] = useState<string | null>(null);
   const [toasts, setToasts] = useState<ToastViewModel[]>([]);
   const toastIdRef = useRef(0);
@@ -131,6 +159,7 @@ export function PanelApp() {
   const toggleTarget = (id: string) => {
     setSelectedTarget((cur) => (cur === id ? null : id));
     setSelectedSkill(null);
+    writeSkillRoute(null);
   };
 
   // Never substitute local examples for registry data. If the API is offline,
@@ -140,6 +169,15 @@ export function PanelApp() {
   const targets = live.targets;
   const bindings = live.bindings;
   const ops = live.ops;
+
+  useEffect(() => {
+    const routedSkill = skillRouteSelection();
+    if (!routedSkill || skills.length === 0) return;
+    const match = skills.find((skill) => skill.name === routedSkill || skill.id === routedSkill);
+    if (match && selectedSkill !== match.id) {
+      setSelectedSkill(match.id);
+    }
+  }, [skills, selectedSkill]);
 
   const densityClass = tweaks.density === "dense" ? " dense" : tweaks.density === "cozy" ? " cozy" : "";
 
@@ -192,17 +230,28 @@ export function PanelApp() {
   const onRemoveTarget = (id: string) => {
     setSelectedTarget((cur) => (cur === id ? null : cur));
   };
-  const onNewTarget = () => setPage("targets");
-  const onNewBinding = () => setPage("bindings");
-  const onOpenSync = () => setPage("sync");
-  const onViewActivity = () => setPage("ops");
+  const navigatePage = (nextPage: PanelPageKey) => {
+    setPage(nextPage);
+    if (nextPage !== "skills") writeSkillRoute(null);
+  };
+  const selectSkillFromSkillsPage = (id: string | null) => {
+    setSelectedSkill(id);
+    setSelectedTarget(null);
+    writeSkillRoute(id ? skills.find((skill) => skill.id === id)?.name ?? id : null);
+  };
+  const onNewTarget = () => navigatePage("targets");
+  const onNewBinding = () => navigatePage("bindings");
+  const onOpenSync = () => navigatePage("sync");
+  const onViewActivity = () => navigatePage("ops");
   const selectSkillFromShell = (id: string) => {
     setSelectedSkill(id);
     setSelectedTarget(null);
+    writeSkillRoute(skills.find((skill) => skill.id === id)?.name ?? id);
   };
   const selectTargetFromShell = (id: string) => {
     setSelectedTarget(id);
     setSelectedSkill(null);
+    writeSkillRoute(null);
   };
   const controlPlane = (initialTab: "targets" | "bindings" | "projections") => (
     <Suspense fallback={null}>
@@ -216,7 +265,7 @@ export function PanelApp() {
         onSelectTarget={toggleTarget}
         onRemoveTarget={onRemoveTarget}
         onMutation={onMutation}
-        onNavigate={setPage}
+        onNavigate={navigatePage}
         readOnly={readOnly}
         mutationVersion={mutationVersion}
       />
@@ -249,7 +298,7 @@ export function PanelApp() {
             onMutation={onMutation}
             onNewTarget={onNewTarget}
             onNewBinding={onNewBinding}
-            onOpenSkills={() => setPage("skills")}
+            onOpenSkills={() => navigatePage("skills")}
             onViewActivity={onViewActivity}
             onOpenSync={onOpenSync}
             readOnly={readOnly}
@@ -265,7 +314,7 @@ export function PanelApp() {
               bindings={bindings}
               projections={live.projections}
               selectedSkill={selectedSkill}
-              onSelectSkill={(id) => setSelectedSkill(id)}
+              onSelectSkill={selectSkillFromSkillsPage}
               onMutation={onMutation}
               readOnly={readOnly}
             />
@@ -310,7 +359,7 @@ export function PanelApp() {
         );
         break;
       case "doctor":
-        view = <DoctorPage apiReachable={live.apiReachable} mode={live.mode} refreshKey={live.lastUpdated} onNavigate={setPage} />;
+        view = <DoctorPage apiReachable={live.apiReachable} mode={live.mode} refreshKey={live.lastUpdated} onNavigate={navigatePage} />;
         break;
       case "settings":
         view = <SettingsPage live={live.live} mode={live.mode} registryRoot={live.registryRoot} />;
@@ -335,7 +384,7 @@ export function PanelApp() {
       tweaksOpen={tweakVisible}
       toasts={toasts}
       onDismissToast={dismissToast}
-      onNavigate={setPage}
+      onNavigate={navigatePage}
       onSelectSkill={selectSkillFromShell}
       onSelectTarget={selectTargetFromShell}
       onReplayQueued={replayQueued}

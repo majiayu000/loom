@@ -108,16 +108,24 @@ compiled artifact:
 Every JSON sidecar uses `schema_version: 1` and typed minimal fields:
 
 - `catalog.json`: ordered `sections[]` with `id`, `title`, `content_hash`, and
-  `role`.
+  `role`, plus ordered `sidecars[]` with `name`, `schema`, `content_hash`, and
+  `required`.
 - `boundaries.json`: ordered `triggers[]`, `non_triggers[]`,
   `deferred_operations[]`, and `required_handoff_fields[]`.
-- `tool-interface.json`: ordered `allowed_tools[]` and `script_entrypoints[]`
-  with path-confined `path`, `usage`, and `risk` fields.
+- `tool-interface.json`: ordered `allowed_tools[]` with `name` and `kind`, plus
+  `script_entrypoints[]` with path-confined `path`, `usage`, and `risk` fields.
 - `references.index.json`: ordered `references[]` with path-confined `path`,
   `role`, `load_condition`, and `content_hash`.
 
 Unknown required fields, unsupported enum values, malformed arrays, or duplicate
 ids fail typed verification instead of being accepted as arbitrary JSON.
+Allowed enum domains are:
+
+- section/catalog roles: `activation`, `boundary`, `tool-interface`,
+  `reference-index`, `metadata`
+- reference load conditions: `always`, `on-demand`, `agent-profile`
+- risk: `low`, `medium`, `high`, `blocked`
+- tool kind: `agent-tool`, `script`, `mcp`, `external-command`
 
 When a source digest does not match the manifest digest, verification returns a
 typed stale result. It must not silently fall back to the artifact.

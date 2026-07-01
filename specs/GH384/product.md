@@ -125,7 +125,8 @@ The manifest must include at least:
 	  },
   "token_estimate": {
     "source_skill_md": 4200,
-    "activation_md": 1200
+    "activation_md": 1200,
+    "compiled_runtime_total": 1600
   }
 }
 ```
@@ -139,6 +140,11 @@ loom skill compile <skill> --dry-run [--agent <agent>] [--profile <profile>] [--
 loom skill compile list <skill> [--json]
 loom skill compile verify <skill> [--artifact <id>] [--json]
 ```
+
+When `--agent` is omitted, dry-run uses the deterministic sentinel agent
+`portable`; when `--profile` is omitted, it uses `default`. A `portable` artifact
+is analyzable by list/verify but is not eligible for future compiled activation
+until recompiled for a concrete agent/profile.
 
 Deferred commands:
 
@@ -166,6 +172,12 @@ reserving those skill names.
 Deferred inspect integration should explain compiled artifact status, stale
 reason, gate results, and source fallback once #366 wiring is included.
 
+Default no-op threshold is the deterministic local token estimate for
+`SKILL.md`: compile planning returns no-op when the source is below 1500
+estimated tokens or when `compiled_runtime_total` would not reduce required
+runtime context by at least 10%. Future overrides must come from reviewed
+registry config, not environment-only defaults.
+
 ## Acceptance Criteria
 
 1. `loom skill compile fixflow --dry-run --agent codex --json` returns planned
@@ -180,17 +192,17 @@ reason, gate results, and source fallback once #366 wiring is included.
 5. `skill compile verify` detects stale artifacts after source edits.
 6. Lint, safety, dependency, and eval gate failures prevent a `valid` artifact
    status.
-7. Compiled activation remains opt-in and basic activation works when no
-   compiled artifact exists.
+7. Basic activation remains unaffected when no compiled artifact exists.
 8. `skill compile list` returns artifacts sorted by artifact id.
-9. Compiled activation rejects artifacts whose manifest agent or profile does not
-   match the requested activation agent/profile.
+9. Deferred compiled activation acceptance: once `skill activate --compiled`
+   lands, it rejects artifacts whose manifest agent or profile does not match the
+   requested activation agent/profile.
 10. Tests cover dry-run planning, no-op small skills, artifact manifest parsing,
    missing file verification, stale digest verification, manifest identity
    verification, generated-content hash/eval matching, gate failure handling,
-   artifact-id path validation, sidecar path confinement, activation-artifact
-   lint and safety verification, and all-artifact verification when no artifact
-   id is provided.
+   artifact-id path validation, sidecar path confinement, generated artifact lint
+   and safety verification, and all-artifact verification when no artifact id is
+   provided.
 
 ## Open Questions
 

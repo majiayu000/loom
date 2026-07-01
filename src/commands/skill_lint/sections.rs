@@ -253,12 +253,18 @@ fn collect_deep_reference_files(root: &Path, current: &Path, findings: &mut Vec<
         return;
     };
     for entry in entries.flatten() {
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
+        if file_type.is_symlink() {
+            continue;
+        }
         let path = entry.path();
-        if path.is_dir() {
+        if file_type.is_dir() {
             collect_deep_reference_files(root, &path, findings);
             continue;
         }
-        if !path.is_file() {
+        if !file_type.is_file() {
             continue;
         }
         let depth = path

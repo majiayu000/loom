@@ -375,3 +375,36 @@ fn skill_lint_quality_reports_vague_large_and_deep_references() {
     assert!(has_finding(report, "quality_skill_md_large", "warning"));
     assert!(has_finding(report, "quality_reference_too_deep", "warning"));
 }
+
+#[cfg(unix)]
+#[test]
+fn skill_lint_quality_skips_symlinked_reference_directories() {
+    use std::os::unix::fs::symlink;
+
+    let root = TestDir::new("skill-lint-reference-symlink-loop");
+    write_skill_file(
+        &root,
+        "linked-reference-skill",
+        "SKILL.md",
+        "---\nname: linked-reference-skill\ndescription: Use when an agent needs reference linting without following symlink loops.\n---\n# Linked references\n",
+    );
+    let references = root.path().join("skills/linked-reference-skill/references");
+    std::fs::create_dir_all(&references).expect("create references dir");
+    symlink(".", references.join("self")).expect("create self symlink");
+
+    let (output, env) = run_loom(
+        root.path(),
+        &["skill", "lint", "linked-reference-skill", "--quality"],
+    );
+
+    assert!(
+        output.status.success(),
+        "quality lint should finish without following reference symlink loops"
+    );
+    let report = report(&env);
+    assert!(!has_finding(
+        report,
+        "quality_reference_too_deep",
+        "warning"
+    ));
+}

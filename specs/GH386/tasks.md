@@ -162,7 +162,8 @@ Depends on: SP386-T4
 
 Done when:
 
-- `mcp doctor` reports missing servers, missing env names, policy blocks, and
+- `mcp doctor` reports missing servers, missing env names, missing launcher
+  tools such as `node`, `npx`, `uvx`, or `docker`, policy blocks, and
   approval-required next actions.
 - `skill diagnose` points to `mcp plan` when readiness fails.
 - CLI contract documents MCP provisioning safety rules.

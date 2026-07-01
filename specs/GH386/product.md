@@ -93,9 +93,14 @@ Skill MCP requirements may come from:
 2. `[mcp.<server>]` sections;
 3. `SKILL.md` `metadata.loom.requires_mcp` or dotted
    `metadata["loom.requires_mcp"]`;
-4. compatibility text heuristics;
-5. agent-specific metadata;
-6. marketplace or provider metadata after provider support lands.
+4. `SKILL.md` scalar string-map values such as `metadata["loom.requires_mcp"] =
+   "github,filesystem"` or `"github"`, normalized with comma splitting and
+   trimming;
+5. existing dependency-readiness environment metadata such as `requires_env`
+   and equivalent supported skill metadata;
+6. compatibility text heuristics;
+7. agent-specific metadata;
+8. marketplace or provider metadata after provider support lands.
 
 Example:
 

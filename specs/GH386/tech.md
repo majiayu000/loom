@@ -47,9 +47,14 @@ Resolution order:
 2. parse `[mcp.<server>]` detail sections;
 3. parse `SKILL.md` nested `metadata.loom.requires_mcp` and dotted
    `metadata["loom.requires_mcp"]`;
-4. inspect compatibility text for conservative hints;
-5. consume agent-specific metadata when present;
-6. consume provider/catalog metadata only when provenance is trusted.
+4. parse scalar string-map values for dotted MCP metadata, accepting single
+   values and comma-separated values after trimming empty entries;
+5. parse existing dependency-readiness env requirement metadata such as
+   `requires_env` so plans can report token blockers even when `[mcp.<server>]`
+   omits `auth`;
+6. inspect compatibility text for conservative hints;
+7. consume agent-specific metadata when present;
+8. consume provider/catalog metadata only when provenance is trusted.
 
 Rules:
 

@@ -24,7 +24,7 @@ without adapter metadata, secret packaging, or active-state claims
 
 - [ ] `SP388-T1` Owner: implementation | Done when: package plan/build/verify CLI parses and command ids classify plan/verify as read-only and build as write/output-producing | Verify: `cargo test --test cli_surface`
 - [ ] `SP388-T2` Owner: implementation | Done when: package plan resolves skill/skillset source, provenance, gate status, file manifest, and forbidden-content findings without writes | Verify: `cargo test --test package_export`
-- [ ] `SP388-T3` Owner: implementation | Done when: portable archive build revalidates plan/source digest, stages output, writes manifest/checksums, and is deterministic | Verify: `cargo test --test package_export`
+- [ ] `SP388-T3` Owner: implementation | Done when: portable archive build loads a durable plan or artifact, revalidates plan/source digest, stages output, writes manifest/checksums, redacts local provenance, rejects unsafe paths, and is deterministic | Verify: `cargo test --test package_export`
 - [ ] `SP388-T4` Owner: implementation | Done when: package verify detects checksum mismatch, stale source digest, forbidden paths/secrets, malformed metadata, and lint failures | Verify: `cargo test --test package_export`
 - [ ] `SP388-T5` Owner: implementation | Done when: Codex/Claude/npm/GitHub format adapters are gated by adapter metadata and return typed unsupported results until implemented | Verify: `cargo test --test package_export`
 - [ ] `SP388-T6` Owner: implementation | Done when: CLI docs/specs cover package boundaries and repository checks pass | Verify: `git diff --check && cargo check --workspace --all-targets --all-features`
@@ -41,8 +41,8 @@ Files:
 
 Done when:
 
-- `loom package plan <skill|skillset> --format <format> [--agent <agent>] [--json]` parses.
-- `loom package build <plan-id> --output <path> --idempotency-key <key> [--json]` parses.
+- `loom package plan <skill:<skill>|skillset:<skillset>> --format <format> [--agent <agent>] [--output-plan <path>] [--json]` parses.
+- `loom package build <plan-id|plan-artifact> --output <path> --idempotency-key <key> [--json]` parses.
 - `loom package verify <artifact> [--format <format>] [--json]` parses.
 - deferred publish is absent or returns typed not-implemented.
 - command classification treats plan/verify as read-only and build as
@@ -66,9 +66,11 @@ Done when:
 - plan includes source ref and digest.
 - plan consumes lint, safety/trust, eval, and approval gate status.
 - plan returns a redacted file manifest.
-- plan rejects or warns on local absolute paths, private registry state,
-  user-specific config, and unsupported format fields.
-- plan writes no artifacts.
+- plan rejects local absolute paths, private registry state, user-specific
+  config, and unsupported format fields that the selected format cannot
+  represent.
+- plan writes no package artifacts, but may write a reviewed plan artifact or
+  durable plan event.
 
 Verify:
 
@@ -83,13 +85,17 @@ Depends on: SP388-T2
 
 Done when:
 
-- build revalidates plan, source digest, policy, and gate status.
+- build loads a durable plan event or explicit plan artifact, then revalidates
+  plan, source digest, policy, and gate status.
 - build requires an idempotency key.
 - build stages files before moving the final artifact.
 - generated artifact includes `manifest.json`, checksums, provenance metadata,
   skill source files, references, scripts, and assets allowed by policy.
-- repeated build from identical inputs is deterministic except declared
-  timestamp or attestation fields.
+- local-path provenance is redacted before packaging.
+- symlink or hardlink escapes are rejected before copy.
+- output paths inside the packaged source or registry tree are rejected.
+- repeated build from identical inputs and reviewed plan timestamp is
+  deterministic except separately tested attestation fields.
 - build output returns install/verify guidance and no active-state claim.
 
 Verify:

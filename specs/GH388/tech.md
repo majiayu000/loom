@@ -91,22 +91,28 @@ github-release
 7. build a redacted file manifest;
 8. reject local absolute paths, secrets, private registry state, and
    user-specific config;
-9. return format-specific unsupported-field findings;
-10. write no artifacts.
+9. return format-specific unsupported-field failures when the selected package
+   format cannot represent required metadata;
+10. write no package artifacts. It may write an explicit reviewed plan artifact
+   when requested or record a durable plan event for later build.
 
 ## Build Behavior
 
 `package build` should:
 
-1. load or reproduce the package plan;
+1. load the durable plan event or explicit plan artifact;
 2. revalidate source digest, source ref, policy, and gate statuses;
 3. require an idempotency key;
 4. build into a staging directory first;
-5. copy source files through path allowlists;
-6. generate `manifest.json`, `checksums.txt`, and provenance metadata;
+5. copy source files through path allowlists after canonical containment
+   checks, rejecting symlinks or hardlinks that escape the source tree;
+6. generate `manifest.json`, `checksums.txt`, and export-safe provenance
+   metadata that redacts local source paths;
 7. avoid executable install hooks unless policy permits and the artifact marks
    them clearly;
-8. atomically move the completed artifact to the requested output path;
+8. reject output paths inside the packaged source tree or registry-managed skill
+   paths, then atomically move the completed artifact to the requested output
+   path;
 9. return install/verify guidance without active-state claims.
 
 ## Verify Behavior
@@ -117,7 +123,8 @@ github-release
 2. verify checksums;
 3. verify source digest where the source is available;
 4. scan for local absolute paths;
-5. scan for secret-looking values and forbidden private registry state;
+5. scan for secret-looking values, forbidden private registry state, and
+   user-specific config;
 6. run portable lint on packaged skill content;
 7. validate format-specific required files;
 8. report unsupported or malformed plugin/package metadata as typed failures.
@@ -162,8 +169,11 @@ Focused tests:
 7. verify rejects local absolute paths;
 8. verify rejects secret-looking values;
 9. safety/quarantine blocks package build;
-10. unsupported format fails clearly;
-11. repeated build with same source is deterministic.
+10. unsupported format or unsupported required fields fail clearly;
+11. symlink or hardlink escapes are rejected;
+12. output paths inside the packaged source or registry tree are rejected;
+13. repeated build with same source and reviewed plan timestamp is
+   deterministic.
 
 Suggested commands:
 

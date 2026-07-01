@@ -70,22 +70,27 @@ and current format docs.
 8. Publish is dry-run by default and uses provider-specific boundaries; external
    marketplaces remain outside Loom's local registry authority.
 9. Rebuilding the same source ref and format should produce deterministic file
-   content except for declared timestamp or attestation fields.
+   content. `created_at` should come from the reviewed plan timestamp; optional
+   attestations may be tested separately from byte-level rebuild checks.
 
 ## User-Facing CLI
 
 Required first-slice commands:
 
 ```bash
-loom package plan <skill|skillset> --format agent-skills-archive [--agent <agent>] [--json]
-loom package build <plan-id> --output <path> --idempotency-key <key> [--json]
+loom package plan <skill:<skill>|skillset:<skillset>> --format agent-skills-archive [--agent <agent>] [--output-plan <path>] [--json]
+loom package build <plan-id|plan-artifact> --output <path> --idempotency-key <key> [--json]
 loom package verify <artifact> [--format <format>] [--json]
 ```
+
+Bare source ids are allowed only when no skill/skillset collision exists. If a
+skill and skillset share an id, the command must require `skill:<id>`,
+`skillset:<id>`, or an equivalent `--source-kind` discriminator.
 
 Deferred commands and formats:
 
 ```bash
-loom package plan <skill|skillset> --format codex-plugin|claude-plugin|npm|github-release [--agent <agent>] [--json]
+loom package plan <skill:<skill>|skillset:<skillset>> --format codex-plugin|claude-plugin|npm|github-release [--agent <agent>] [--json]
 loom package publish <artifact> --provider github-release|npm|manual --dry-run [--json]
 ```
 
@@ -144,19 +149,22 @@ Incremental formats:
 3. The artifact records source ref, source digest, package format, created-at,
    Loom version, manifest, and checksums.
 4. `package verify` catches checksum mismatch, stale source digest, forbidden
-   absolute paths, secrets, and malformed plugin/package metadata.
+   absolute paths, secrets, private registry state, user-specific config, and
+   malformed plugin/package metadata.
 5. Codex/Claude plugin formats are gated by adapter metadata and current docs.
 6. Unsupported package fields fail clearly instead of being silently dropped.
 7. Packaging third-party-unreviewed or quarantined skills is blocked unless
    policy explicitly allows a draft/private artifact.
 8. Build output gives install and verify commands, not active-state claims.
 9. Tests cover plan, build, verify, source-ref mismatch, safety block,
-   local-path redaction, unsupported format, and deterministic rebuild.
+   local-path redaction, unsupported format, symlink escape rejection,
+   output-inside-source rejection, private registry state rejection, and
+   deterministic rebuild.
 
 ## Open Questions
 
-1. Whether package plans should be persisted in registry state or reproduced
-   from command audit and source digest.
+1. Whether package plans should be persisted only in command audit events or
+   also supported as explicit plan artifacts for offline build.
 2. Whether `github-release` publishing should call external CLIs or only produce
    release-ready assets and instructions in v1.
 3. Whether npm packaging should include optional dependencies or only metadata

@@ -4,7 +4,7 @@ use std::fs;
 use std::path::Path;
 use std::process::Command;
 
-use common::{TestDir, run_loom, run_loom_with_env, write_file};
+use common::{TestDir, run_loom, run_loom_with_env, write_file, write_skill};
 use serde_json::{Value, json};
 
 #[cfg(unix)]
@@ -46,6 +46,23 @@ fn item_named<'a>(items: &'a Value, name: &str) -> &'a Value {
         .iter()
         .find(|item| item["name"] == name)
         .expect("named dependency")
+}
+
+fn item_with_field<'a>(items: &'a Value, field: &str, value: &str) -> &'a Value {
+    items
+        .as_array()
+        .expect("array")
+        .iter()
+        .find(|item| item[field] == value)
+        .expect("matching item")
+}
+
+fn contains_string(items: &Value, value: &str) -> bool {
+    items
+        .as_array()
+        .expect("array")
+        .iter()
+        .any(|item| item.as_str() == Some(value))
 }
 
 fn run_loom_with_home_without_codex_home(
@@ -407,4 +424,218 @@ fn missing_skill_returns_typed_error() {
 
     assert!(!output.status.success(), "deps should fail: {env}");
     assert_eq!(env["error"]["code"], json!("SKILL_NOT_FOUND"));
+}
+
+#[test]
+fn mcp_requirement_list_merges_sources_and_redacts_secret_values() {
+    let root = TestDir::new("mcp-requirements");
+    write_skill(
+        root.path(),
+        "demo",
+        "---\nname: demo\ndescription: Use when planning MCP requirements.\ncompatibility: Needs GitHub MCP for issue triage.\nmetadata:\n  loom.requires_mcp: filesystem\n  loom.requires_env: FRONT_TOKEN\n---\n# Demo\n",
+    );
+    write_file(
+        &root.path().join("skills/demo/loom.skill.toml"),
+        "requires_mcp = [\"github\"]\nrequires_env = [\"ROOT_TOKEN\"]\n\n[mcp.github]\nrequired = true\ntransport = \"stdio\"\npackage = \"npm:@modelcontextprotocol/server-github@0.6.2\"\nauth = \"env:GITHUB_TOKEN\"\npermissions = [\"repo:read\"]\n",
+    );
+    write_file(
+        &root.path().join("skills/demo/agents/codex.yaml"),
+        "requires_mcp:\n  - local-index\nrequires_env:\n  - AGENT_TOKEN\n",
+    );
+
+    let (output, env) = run_loom_with_env(
+        root.path(),
+        &[("GITHUB_TOKEN", "super-secret-value")],
+        &[
+            "mcp",
+            "requirement",
+            "list",
+            "--skill",
+            "demo",
+            "--agent",
+            "codex",
+        ],
+    );
+
+    assert!(
+        output.status.success(),
+        "requirement list should pass: {env}"
+    );
+    assert_eq!(env["cmd"], json!("mcp.requirement.list"));
+    for server in ["github", "filesystem", "local-index"] {
+        item_with_field(&env["data"]["requirements"], "server", server);
+    }
+    let github = item_with_field(&env["data"]["requirements"], "server", "github");
+    assert_eq!(github["auth_env"], json!("GITHUB_TOKEN"));
+    assert!(contains_string(&github["permissions"], "repo:read"));
+    assert_eq!(
+        item_with_field(&env["data"]["env"], "name", "GITHUB_TOKEN")["redacted"],
+        json!(true)
+    );
+    assert!(
+        !serde_json::to_string(&env)
+            .expect("json")
+            .contains("super-secret-value")
+    );
+    assert!(
+        env["data"]["findings"]
+            .as_array()
+            .expect("findings")
+            .iter()
+            .any(|finding| finding["id"] == "mcp_requirement_suggestion")
+    );
+}
+
+#[test]
+fn mcp_plan_is_read_only_and_records_policy_env_tool_and_config_actions() {
+    let root = TestDir::new("mcp-plan");
+    let workspace = TestDir::new("mcp-plan-workspace");
+    let codex_home = TestDir::new("mcp-plan-codex-home");
+    write_skill(
+        root.path(),
+        "demo",
+        "---\nname: demo\ndescription: Use when planning MCP config.\n---\n# Demo\n",
+    );
+    write_file(
+        &root.path().join("skills/demo/loom.skill.toml"),
+        "requires_mcp = [\"github\"]\n\n[mcp.github]\npackage = \"npm:@modelcontextprotocol/server-github@0.6.2\"\nauth = \"env:GITHUB_TOKEN\"\n",
+    );
+
+    let codex_home_arg = codex_home.path().to_string_lossy().to_string();
+    let workspace_arg = workspace.path().to_string_lossy().to_string();
+    let (output, env) = run_loom_with_env(
+        root.path(),
+        &[
+            ("CODEX_HOME", &codex_home_arg),
+            ("GITHUB_TOKEN", "super-secret-value"),
+        ],
+        &[
+            "mcp",
+            "plan",
+            "--skill",
+            "demo",
+            "--agent",
+            "codex",
+            "--workspace",
+            &workspace_arg,
+        ],
+    );
+
+    assert!(output.status.success(), "mcp plan should pass: {env}");
+    assert_eq!(env["cmd"], json!("mcp.plan"));
+    assert_eq!(env["data"]["writes_performed"], json!(false));
+    assert!(!codex_home.path().join("config.toml").exists());
+    let source = item_with_field(&env["data"]["resolved_sources"], "server", "github");
+    assert_eq!(
+        source["package"],
+        json!("@modelcontextprotocol/server-github")
+    );
+    assert_eq!(source["version"], json!("0.6.2"));
+    assert_eq!(source["policy"], json!("approval_required"));
+    assert!(contains_string(
+        &env["data"]["approvals_required"],
+        "install-third-party-mcp"
+    ));
+    assert!(contains_string(
+        &env["data"]["approvals_required"],
+        "write-agent-mcp-config"
+    ));
+    let install = item_with_field(&env["data"]["actions"], "kind", "install_server");
+    assert_eq!(install["details"]["configured"]["status"], json!("missing"));
+    assert_eq!(install["details"]["configured"]["present"], json!(false));
+    let config = item_with_field(&env["data"]["actions"], "kind", "write_agent_config");
+    assert_eq!(config["diff_redacted"], json!(true));
+    assert!(contains_string(
+        &config["depends_on"],
+        "install_server:github"
+    ));
+    assert!(contains_string(
+        &config["depends_on"],
+        "require_env:GITHUB_TOKEN"
+    ));
+    assert!(contains_string(&config["depends_on"], "tool:npx"));
+    assert_eq!(
+        item_with_field(&env["data"]["actions"], "kind", "require_env")["present"],
+        json!(true)
+    );
+    assert!(
+        !serde_json::to_string(&env)
+            .expect("json")
+            .contains("super-secret-value")
+    );
+}
+
+#[test]
+fn mcp_catalog_source_policy_and_manual_agent_mode_are_explicit() {
+    let root = TestDir::new("mcp-catalog-policy");
+    write_skill(
+        root.path(),
+        "demo",
+        "---\nname: demo\ndescription: Use when planning unknown MCP sources.\n---\n# Demo\n",
+    );
+    write_file(
+        &root.path().join("skills/demo/loom.skill.toml"),
+        "requires_mcp = [\"custom\"]\n\n[mcp.custom]\npackage = \"npm:@scope/custom-mcp\"\n",
+    );
+
+    let (output, env) = run_loom(root.path(), &["mcp", "catalog", "show", "github"]);
+    assert!(output.status.success(), "catalog show should pass: {env}");
+    assert_eq!(env["data"]["entry"]["required_tool"], json!("npx"));
+    assert_eq!(env["data"]["entry"]["transport"], json!("stdio"));
+
+    let (output, env) = run_loom(
+        root.path(),
+        &["mcp", "plan", "--skill", "demo", "--agent", "openai"],
+    );
+    assert!(output.status.success(), "manual plan should pass: {env}");
+    let source = item_with_field(&env["data"]["resolved_sources"], "server", "custom");
+    assert_eq!(source["policy"], json!("blocked_unpinned"));
+    assert_eq!(source["approval_required"], json!("pin-mcp-source"));
+    let manual = item_with_field(
+        &env["data"]["actions"],
+        "kind",
+        "manual_configuration_required",
+    );
+    assert_eq!(manual["server"], json!("custom"));
+    assert!(manual["path"].is_null());
+}
+
+#[test]
+fn mcp_doctor_and_skill_diagnose_point_to_plan_when_readiness_fails() {
+    let root = TestDir::new("mcp-doctor-diagnose");
+    let codex_home = TestDir::new("mcp-doctor-codex-home");
+    write_skill(
+        root.path(),
+        "demo",
+        "---\nname: demo\ndescription: Use when checking MCP doctor next actions.\n---\n# Demo\n",
+    );
+    write_file(
+        &root.path().join("skills/demo/loom.skill.toml"),
+        "requires_mcp = [\"github\"]\n",
+    );
+    let codex_home_arg = codex_home.path().to_string_lossy().to_string();
+
+    let (output, env) = run_loom_with_env(
+        root.path(),
+        &[("CODEX_HOME", &codex_home_arg)],
+        &["mcp", "doctor", "--agent", "codex", "--skill", "demo"],
+    );
+    assert!(output.status.success(), "mcp doctor should pass: {env}");
+    assert_eq!(env["data"]["status"], json!("blocked"));
+    assert!(contains_string(
+        &env["data"]["next_actions"],
+        "loom mcp plan --skill demo --agent codex"
+    ));
+
+    let (output, env) = run_loom_with_env(
+        root.path(),
+        &[("CODEX_HOME", &codex_home_arg)],
+        &["skill", "diagnose", "demo", "--agent", "codex"],
+    );
+    assert!(output.status.success(), "skill diagnose should pass: {env}");
+    let readiness = item_with_field(&env["data"]["checks"], "id", "dependency_readiness");
+    assert!(contains_string(
+        &readiness["details"]["next_actions"],
+        "loom mcp plan --skill demo --agent codex"
+    ));
 }

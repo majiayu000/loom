@@ -155,11 +155,35 @@ fn parse_metadata_map(
             ));
             continue;
         };
-        if let Some(value) = parse_optional_string(&format!("metadata.{key}"), value, issues) {
-            metadata.insert(key.to_string(), value);
-        }
+        parse_metadata_entry(key, value, &mut metadata, issues);
     }
     metadata
+}
+
+fn parse_metadata_entry(
+    key: &str,
+    value: &Yaml,
+    metadata: &mut BTreeMap<String, String>,
+    issues: &mut Vec<FrontmatterSchemaIssue>,
+) {
+    if let Yaml::Hash(mapping) = value {
+        for (child_key, child_value) in mapping {
+            let Some(child_key) = yaml_as_str(child_key) else {
+                issues.push(schema_issue(
+                    "frontmatter_metadata_key_invalid",
+                    "metadata keys must be strings",
+                    "use string keys under metadata",
+                    json!({ "key": yaml_summary(child_key) }),
+                ));
+                continue;
+            };
+            parse_metadata_entry(&format!("{key}.{child_key}"), child_value, metadata, issues);
+        }
+        return;
+    }
+    if let Some(value) = parse_optional_string(&format!("metadata.{key}"), value, issues) {
+        metadata.insert(key.to_string(), value);
+    }
 }
 
 fn valid_key(key: &str) -> bool {

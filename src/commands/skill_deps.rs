@@ -20,7 +20,7 @@ use super::skill_lint::frontmatter::parse_skill_frontmatter;
 use super::skill_lint::{SkillLintFinding, SkillLintSummary};
 use super::{App, CommandFailure};
 
-mod support;
+pub(crate) mod support;
 use support::{
     codex_mcp_configured, contains_word_token, find_executable_on_path, yaml_dependency_values,
 };

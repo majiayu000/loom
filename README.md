@@ -217,6 +217,7 @@ The chain `add → capture → save → snapshot → release → rollback` is th
 | `loom provider add/list/remove` | Manage local or GitHub catalog provider records | Configure provider ids for advisory search/preview without storing credentials | Registry provider state |
 | `loom catalog search/show/preview` | Inspect provider locators without executing source code | See metadata, scripts, license/provenance hints, lint, safety, and install dry-run guidance | Provider source (read-only) |
 | `loom package plan/build/verify` | Build deterministic outbound package artifacts from reviewed skills | Create a reviewed package plan, build a portable archive, and verify manifest/checksum/content integrity without claiming active install state | Skill source + package artifact |
+| `loom mcp requirement/plan/doctor/catalog` | Plan MCP server requirements and agent configuration without mutation | List declared MCP requirements, inspect source policy, show redacted config diffs, and point to next actions before any apply exists | Skill source + local agent config (read-only) |
 | `loom skill install --dry-run` | Plan a provider-backed import without writing registry state | Check pin policy, lint, safety, provenance, lockfile, and trust defaults before mutating install apply exists | Provider source + policy (read-only except command audit) |
 | `loom policy org init/show/check` | Initialize and inspect Git-backed org policy | Review allow/deny/approval-required decisions before enforcement is wired across all mutations | Registry policy state |
 | `loom approval request/list/approve/reject` | Manage append-only approval events | Create and decide auditable approval requests with redacted reasons/comments and role checks | Registry approval log |
@@ -373,6 +374,12 @@ loom instruction migrate-plan <instruction-id> [--workspace <path>] --to <skill|
 loom package plan <skill:<skill>|skillset:<skillset>> --format agent-skills-archive [--agent <agent>] [--output-plan <path>]
 loom package build <plan-artifact> --output <path> --idempotency-key <key>
 loom package verify <artifact> [--format agent-skills-archive]
+
+loom mcp requirement list --skill <skill> [--agent <agent>]
+loom mcp plan --skill <skill> --agent <agent> [--workspace <path>]
+loom mcp doctor --agent <agent> [--skill <skill>] [--workspace <path>]
+loom mcp catalog search <query>
+loom mcp catalog show <server>
 
 loom skillset create <skillset-id> [--description <text>]
 loom skillset add <skillset-id> <skill-id> [--role <role>] [--required|--optional]

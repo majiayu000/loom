@@ -19,6 +19,7 @@ use super::helpers::{map_arg, map_git, map_io, map_registry_state, validate_skil
 use super::provenance::{provenance_digest_status, provenance_record_status};
 use super::skill_compile::compiled_artifact_summary;
 use super::skill_deps::skill_dependency_report;
+use super::skill_inventory::skill_brief_payload;
 use super::skill_safety::trust_metadata_for_skill;
 use super::skill_verify::{
     drifted_paths_under, head_tree_oid_for_path, last_commit_for_path, last_saved_commit_for_skill,
@@ -97,6 +98,9 @@ impl App {
         &self,
         args: &SkillInspectArgs,
     ) -> std::result::Result<(Value, Meta), CommandFailure> {
+        if args.brief {
+            return skill_brief_payload(&self.ctx, &args.skill);
+        }
         validate_skill_name(&args.skill).map_err(map_arg)?;
         let agent = args.agent.as_ref().map(|agent| agent.to_ascii_lowercase());
         let selector = Selector {

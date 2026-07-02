@@ -96,7 +96,6 @@ pub(crate) fn command_name(command: &Command) -> &'static str {
             PlanCommand::Use(_) => "plan.use",
         },
         Command::Apply(_) => "apply",
-        Command::Doctor => "workspace.doctor",
         Command::Workspace { command } => match command {
             WorkspaceCommand::Status => "workspace.status",
             WorkspaceCommand::Doctor => "workspace.doctor",
@@ -117,7 +116,6 @@ pub(crate) fn command_name(command: &Command) -> &'static str {
         },
         Command::Skill { command } => match command {
             SkillCommand::List => "skill.list",
-            SkillCommand::Show(_) => "skill.show",
             SkillCommand::Inspect(_) => "skill.inspect",
             SkillCommand::Deps(_) => "skill.deps",
             SkillCommand::Compile(args) => match &args.command {
@@ -132,8 +130,6 @@ pub(crate) fn command_name(command: &Command) -> &'static str {
                 SkillActiveCommand::List(_) => "skill.active.list",
             },
             SkillCommand::Search(_) => "skill.search",
-            SkillCommand::Recommend(_) => "skill.recommend",
-            SkillCommand::Resolve(_) => "skill.resolve",
             SkillCommand::Draft(_) => "skill.draft",
             SkillCommand::Extract(_) => "skill.extract",
             SkillCommand::Rewrite(_) => "skill.rewrite",

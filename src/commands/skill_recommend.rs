@@ -4,7 +4,7 @@ use std::path::Path;
 
 use serde_json::{Value, json};
 
-use crate::cli::{ActiveRecommendArgs, IndexArgs, SkillRecommendArgs, SkillResolveArgs};
+use crate::cli::{ActiveRecommendArgs, IndexArgs, SkillSearchArgs};
 use crate::envelope::Meta;
 use crate::fs_util::write_atomic;
 use crate::gitops;
@@ -117,11 +117,11 @@ impl App {
         ))
     }
 
-    pub fn cmd_skill_recommend(
+    pub fn cmd_skill_search(
         &self,
-        args: &SkillRecommendArgs,
+        args: &SkillSearchArgs,
     ) -> std::result::Result<(Value, Meta), CommandFailure> {
-        validate_non_empty("task_description", args.task_description.trim())?;
+        validate_non_empty("query", args.query.trim())?;
         let mut warnings = Vec::new();
         let mode = if args.semantic {
             warnings.push("semantic provider not configured".to_string());
@@ -129,6 +129,118 @@ impl App {
         } else {
             "lexical"
         };
+        let model = build_skill_read_model(&self.ctx).map_err(map_registry_state)?;
+        let mut results = score_and_filter_skills(
+            &model.skills,
+            &args.query,
+            SkillDiscoveryFilters {
+                agent: args.agent.as_deref(),
+                profile: args.profile.as_deref(),
+                status: args.status.as_deref(),
+                trust: args.trust.as_deref(),
+                workspace: args.workspace.as_deref(),
+            },
+            args.for_task || args.workspace.is_some(),
+        );
+        if args.active {
+            results.retain(|result| {
+                result["skill"]["projection_summary"]["count"]
+                    .as_u64()
+                    .unwrap_or_default()
+                    > 0
+            });
+        }
+        warnings.extend(model.warnings);
+        let selected = results.first().cloned();
+        let candidates = results.clone();
+        let mut payload = json!({
+            "query": args.query,
+            "mode": mode,
+            "for_task": args.for_task,
+            "filters": {
+                "agent": args.agent,
+                "profile": args.profile,
+                "status": args.status,
+                "trust": args.trust,
+                "workspace": args.workspace.as_ref().map(|path| path.display().to_string()),
+                "active": args.active,
+            },
+            "count": results.len(),
+            "results": results,
+        });
+        if args.for_task {
+            payload["task_description"] = json!(args.query);
+            payload["strategy"] = json!({
+                "type": if args.semantic {
+                    "semantic_disabled_lexical"
+                } else {
+                    "deterministic_lexical"
+                },
+                "mode": mode,
+                "llm_invoked": false,
+                "tie_break": "score_desc_then_skill_id_asc",
+            });
+            payload["selected"] = selected.unwrap_or(Value::Null);
+            payload["candidates"] = json!(candidates);
+        }
+        if args.explain {
+            let skillsets = load_skillsets_value(&self.ctx)?;
+            let recommendation_skill_results = score_and_filter_skills(
+                &model.skills,
+                &args.query,
+                SkillDiscoveryFilters {
+                    agent: None,
+                    profile: None,
+                    status: None,
+                    trust: None,
+                    workspace: args.workspace.as_deref(),
+                },
+                true,
+            );
+            let recommendations = recommendation_results(
+                &self.ctx,
+                &args.query,
+                args.agent.as_deref(),
+                args.workspace.as_deref(),
+                mode,
+                &recommendation_skill_results,
+                &skillsets,
+            )?;
+            payload["recommendations"] = json!({
+                "task_description": args.query,
+                "mode": mode,
+                "filters": {
+                    "agent": args.agent,
+                    "workspace": args.workspace.as_ref().map(|path| path.display().to_string()),
+                },
+                "count": recommendations.len(),
+                "results": recommendations,
+            });
+            payload["explain"] = json!({
+                "score_inputs": true,
+                "skillsets": true,
+                "safety_risks": true,
+            });
+        }
+        Ok((
+            payload,
+            Meta {
+                warnings,
+                ..Meta::default()
+            },
+        ))
+    }
+
+    pub fn cmd_active_recommend(
+        &self,
+        args: &ActiveRecommendArgs,
+    ) -> std::result::Result<(Value, Meta), CommandFailure> {
+        validate_non_empty("task_description", args.task_description.trim())?;
+        validate_non_empty("agent", args.agent.trim())?;
+        validate_active_agent(args.agent.trim())?;
+        for skill in &args.desired_skills {
+            validate_skill_name(skill).map_err(super::helpers::map_arg)?;
+        }
         let model = build_skill_read_model(&self.ctx).map_err(map_registry_state)?;
         let skill_results = score_and_filter_skills(
             &model.skills,
@@ -142,75 +254,25 @@ impl App {
             },
             true,
         );
-        warnings.extend(model.warnings);
         let skillsets = load_skillsets_value(&self.ctx)?;
-        let results = recommendation_results(
+        let recommend = recommendation_results(
             &self.ctx,
             &args.task_description,
-            args.agent.as_deref(),
+            None,
             args.workspace.as_deref(),
-            mode,
+            "lexical",
             &skill_results,
             &skillsets,
         )?;
-        Ok((
-            json!({
-                "task_description": args.task_description,
-                "mode": mode,
-                "filters": {
-                    "agent": args.agent,
-                    "workspace": args.workspace.as_ref().map(|path| path.display().to_string()),
-                },
-                "count": results.len(),
-                "results": results,
-            }),
-            Meta {
-                warnings,
-                ..Meta::default()
-            },
-        ))
-    }
-
-    pub fn cmd_skill_resolve_semantic(
-        &self,
-        args: &SkillResolveArgs,
-    ) -> std::result::Result<(Value, Meta), CommandFailure> {
-        let mut lexical_args = args.clone();
-        lexical_args.semantic = false;
-        let (mut payload, mut meta) = self.cmd_skill_resolve(&lexical_args)?;
-        if let Some(strategy) = payload.get_mut("strategy").and_then(Value::as_object_mut) {
-            strategy.insert("type".to_string(), json!("semantic_disabled_lexical"));
-            strategy.insert("mode".to_string(), json!("semantic-disabled"));
-        }
-        meta.warnings
-            .push("semantic provider not configured".to_string());
-        Ok((payload, meta))
-    }
-
-    pub fn cmd_active_recommend(
-        &self,
-        args: &ActiveRecommendArgs,
-    ) -> std::result::Result<(Value, Meta), CommandFailure> {
-        validate_non_empty("task_description", args.task_description.trim())?;
-        validate_non_empty("agent", args.agent.trim())?;
-        validate_active_agent(args.agent.trim())?;
-        for skill in &args.desired_skills {
-            validate_skill_name(skill).map_err(super::helpers::map_arg)?;
-        }
-        let recommend_args = SkillRecommendArgs {
-            task_description: args.task_description.clone(),
-            agent: None,
-            workspace: args.workspace.clone(),
-            semantic: false,
+        let mut meta = Meta {
+            warnings: model.warnings,
+            ..Meta::default()
         };
-        let (recommend, mut meta) = self.cmd_skill_recommend(&recommend_args)?;
         let mut desired = args.desired_skills.clone();
         if desired.is_empty() {
             desired.extend(
-                recommend["results"]
-                    .as_array()
-                    .into_iter()
-                    .flatten()
+                recommend
+                    .iter()
                     .filter(|result| result["kind"].as_str() == Some("skill"))
                     .filter(|result| result["risks"].as_array().is_none_or(Vec::is_empty))
                     .filter_map(|result| result["id"].as_str().map(str::to_string))

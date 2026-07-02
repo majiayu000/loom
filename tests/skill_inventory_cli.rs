@@ -89,9 +89,12 @@ fn skill_list_and_show_return_inventory_envelopes() {
             .is_some_and(|items| !items.is_empty())
     );
 
-    let (output, env) = run_loom(root.path(), &["skill", "show", "test-writer"]);
-    assert!(output.status.success(), "skill show should pass: {env}");
-    assert_eq!(env["cmd"], json!("skill.show"));
+    let (output, env) = run_loom(root.path(), &["skill", "inspect", "test-writer", "--brief"]);
+    assert!(
+        output.status.success(),
+        "skill inspect --brief should pass: {env}"
+    );
+    assert_eq!(env["cmd"], json!("skill.inspect"));
     assert_eq!(env["data"]["skill"]["skill_id"], json!("test-writer"));
     assert_eq!(env["data"]["skill"]["trust"], json!("unknown"));
 }
@@ -136,16 +139,20 @@ fn skill_search_and_resolve_are_deterministic_and_transparent() {
         root.path(),
         &[
             "skill",
-            "resolve",
+            "search",
             "model onboarding flow",
+            "--for-task",
             "--agent",
             "claude",
             "--workspace",
             "/tmp/project-a/src",
         ],
     );
-    assert!(output.status.success(), "skill resolve should pass: {env}");
-    assert_eq!(env["cmd"], json!("skill.resolve"));
+    assert!(
+        output.status.success(),
+        "skill search --for-task should pass: {env}"
+    );
+    assert_eq!(env["cmd"], json!("skill.search"));
     assert_eq!(env["data"]["strategy"]["llm_invoked"], json!(false));
     assert_eq!(
         env["data"]["selected"]["skill"]["skill_id"],
@@ -208,13 +215,19 @@ fn skill_recommend_and_resolve_semantic_fall_back_to_lexical() {
 
     let (output, env) = run_loom(
         root.path(),
-        &["skill", "recommend", "review pull request", "--semantic"],
+        &[
+            "skill",
+            "search",
+            "review pull request",
+            "--explain",
+            "--semantic",
+        ],
     );
     assert!(
         output.status.success(),
-        "skill recommend should pass: {env}"
+        "skill search --explain should pass: {env}"
     );
-    assert_eq!(env["cmd"], json!("skill.recommend"));
+    assert_eq!(env["cmd"], json!("skill.search"));
     assert_eq!(env["data"]["mode"], json!("semantic-disabled"));
     assert!(
         env["meta"]["warnings"]
@@ -224,20 +237,35 @@ fn skill_recommend_and_resolve_semantic_fall_back_to_lexical() {
             .any(|warning| warning
                 .as_str()
                 .is_some_and(|value| value.contains("semantic provider not configured"))),
-        "recommend should warn about semantic fallback: {env}"
+        "search explain should warn about semantic fallback: {env}"
     );
-    assert_eq!(env["data"]["results"][0]["kind"], json!("skill"));
-    assert_eq!(env["data"]["results"][0]["id"], json!("review-helper"));
     assert_eq!(
-        env["data"]["results"][0]["warnings"][0],
+        env["data"]["recommendations"]["results"][0]["kind"],
+        json!("skill")
+    );
+    assert_eq!(
+        env["data"]["recommendations"]["results"][0]["id"],
+        json!("review-helper")
+    );
+    assert_eq!(
+        env["data"]["recommendations"]["results"][0]["warnings"][0],
         json!("no trust metadata recorded")
     );
 
     let (output, env) = run_loom(
         root.path(),
-        &["skill", "resolve", "review pull request", "--semantic"],
+        &[
+            "skill",
+            "search",
+            "review pull request",
+            "--for-task",
+            "--semantic",
+        ],
     );
-    assert!(output.status.success(), "skill resolve should pass: {env}");
+    assert!(
+        output.status.success(),
+        "skill search --for-task should pass: {env}"
+    );
     assert_eq!(env["data"]["strategy"]["mode"], json!("semantic-disabled"));
     assert!(
         env["meta"]["warnings"]
@@ -247,7 +275,7 @@ fn skill_recommend_and_resolve_semantic_fall_back_to_lexical() {
             .any(|warning| warning
                 .as_str()
                 .is_some_and(|value| value.contains("semantic provider not configured"))),
-        "resolve should warn about semantic fallback: {env}"
+        "task search should warn about semantic fallback: {env}"
     );
 }
 
@@ -265,14 +293,17 @@ fn skill_recommend_filters_quarantined_activation_candidates() {
 "#,
     );
 
-    let (output, env) = run_loom(root.path(), &["skill", "recommend", "risky review"]);
+    let (output, env) = run_loom(
+        root.path(),
+        &["skill", "search", "risky review", "--explain"],
+    );
     assert!(
         output.status.success(),
-        "skill recommend should pass: {env}"
+        "skill search --explain should pass: {env}"
     );
-    assert_eq!(env["data"]["count"], json!(0));
+    assert_eq!(env["data"]["recommendations"]["count"], json!(0));
     assert!(
-        env["data"]["results"]
+        env["data"]["recommendations"]["results"]
             .as_array()
             .expect("results")
             .iter()
@@ -315,13 +346,22 @@ fn skill_recommend_includes_read_only_skillset_candidates() {
 
     let (output, env) = run_loom(
         root.path(),
-        &["skill", "recommend", "focused tests", "--agent", "claude"],
+        &[
+            "skill",
+            "search",
+            "focused tests",
+            "--explain",
+            "--agent",
+            "claude",
+        ],
     );
     assert!(
         output.status.success(),
-        "skill recommend should pass: {env}"
+        "skill search --explain should pass: {env}"
     );
-    let results = env["data"]["results"].as_array().expect("results");
+    let results = env["data"]["recommendations"]["results"]
+        .as_array()
+        .expect("results");
     let skillset = results
         .iter()
         .find(|result| result["kind"] == json!("skillset") && result["id"] == json!("coding-flow"))
@@ -381,17 +421,18 @@ fn skill_recommend_degrades_unsafe_skillset_to_inspection() {
         root.path(),
         &[
             "skill",
-            "recommend",
+            "search",
             "review pull request",
+            "--explain",
             "--agent",
             "claude",
         ],
     );
     assert!(
         output.status.success(),
-        "skill recommend should pass: {env}"
+        "skill search --explain should pass: {env}"
     );
-    let skillset = env["data"]["results"]
+    let skillset = env["data"]["recommendations"]["results"]
         .as_array()
         .expect("results")
         .iter()
@@ -527,9 +568,9 @@ fn inventory_read_commands_do_not_mutate_state_or_targets() {
 
     for args in [
         vec!["skill", "list"],
-        vec!["skill", "show", "review-helper"],
+        vec!["skill", "inspect", "review-helper", "--brief"],
         vec!["skill", "search", "review", "--status", "present"],
-        vec!["skill", "resolve", "review pull requests"],
+        vec!["skill", "search", "review pull requests", "--for-task"],
     ] {
         let (output, env) = run_loom(root.path(), &args);
         assert!(output.status.success(), "{args:?} should pass: {env}");

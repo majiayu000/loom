@@ -119,6 +119,9 @@ loom --json --root ~/loom-registry skill capture my-skill --instance <instance-i
 ### 6.3 skill
 
 - `skill add`
+- `skill list`
+- `skill inspect [--brief]`
+- `skill search [--for-task] [--explain]`
 - `skill project`
 - `skill capture`
 - `skill save`

@@ -33,12 +33,12 @@ mod skill_diagnose;
 mod skill_diagnose_tests;
 mod skill_eval;
 mod skill_eval_harness;
+mod skill_improve;
 mod skill_inspect;
 mod skill_inventory;
 mod skill_lint;
 mod skill_new;
 mod skill_policy;
-mod skill_preflight;
 mod skill_recommend;
 mod skill_recommend_active;
 mod skill_safety;
@@ -216,7 +216,6 @@ impl App {
             Command::Use(args) => self.cmd_use(args, &request_id),
             Command::Plan { command } => self.cmd_plan(command),
             Command::Apply(args) => self.cmd_apply(args, &request_id),
-            Command::Doctor => self.cmd_doctor(),
             Command::Workspace { command } => match command {
                 WorkspaceCommand::Status => self.cmd_status(),
                 WorkspaceCommand::Doctor => self.cmd_doctor(),
@@ -265,7 +264,6 @@ impl App {
                     command: SkillTrashCommand::Purge(args),
                 } => self.cmd_skill_trash_purge(args, &request_id),
                 SkillCommand::List => self.cmd_skill_list(),
-                SkillCommand::Show(args) => self.cmd_skill_show(args),
                 SkillCommand::Inspect(args) => self.cmd_skill_inspect(args),
                 SkillCommand::Deps(args) => self.cmd_skill_deps(args),
                 SkillCommand::Compile(args) => self.cmd_skill_compile(args),
@@ -275,11 +273,6 @@ impl App {
                     command: SkillActiveCommand::List(args),
                 } => self.cmd_skill_active_list(args),
                 SkillCommand::Search(args) => self.cmd_skill_search(args),
-                SkillCommand::Recommend(args) => self.cmd_skill_recommend(args),
-                SkillCommand::Resolve(args) if args.semantic => {
-                    self.cmd_skill_resolve_semantic(args)
-                }
-                SkillCommand::Resolve(args) => self.cmd_skill_resolve(args),
                 SkillCommand::Draft(args) => self.cmd_skill_draft(args),
                 SkillCommand::Extract(args) => self.cmd_skill_extract(args),
                 SkillCommand::Rewrite(args) => self.cmd_skill_rewrite(args),
@@ -587,7 +580,6 @@ fn command_records_audit(command: &Command) -> bool {
             | Command::Skill {
                 command: SkillCommand::History(_)
                     | SkillCommand::List
-                    | SkillCommand::Show(_)
                     | SkillCommand::Inspect(_)
                     | SkillCommand::Deps(_)
                     | SkillCommand::Compile(_)
@@ -595,8 +587,6 @@ fn command_records_audit(command: &Command) -> bool {
                     | SkillCommand::Regression(_)
                     | SkillCommand::Active { .. }
                     | SkillCommand::Search(_)
-                    | SkillCommand::Recommend(_)
-                    | SkillCommand::Resolve(_)
                     | SkillCommand::Lint(_)
                     | SkillCommand::Visibility(_)
                     | SkillCommand::Diagnose(_)
@@ -622,7 +612,6 @@ fn command_requires_durable_audit(command: &Command) -> bool {
         Command::Use(args) => args.apply,
         Command::Plan { .. } | Command::Apply(_) => true,
         Command::Backup { .. } => false,
-        Command::Doctor => false,
         Command::Workspace { command } => match command {
             WorkspaceCommand::Status | WorkspaceCommand::Doctor => false,
             WorkspaceCommand::Init(_) => true,
@@ -674,7 +663,6 @@ fn command_requires_durable_audit(command: &Command) -> bool {
             SkillCommand::Diff(_)
             | SkillCommand::History(_)
             | SkillCommand::List
-            | SkillCommand::Show(_)
             | SkillCommand::Inspect(_)
             | SkillCommand::Deps(_)
             | SkillCommand::Compile(_)
@@ -682,8 +670,6 @@ fn command_requires_durable_audit(command: &Command) -> bool {
             | SkillCommand::Regression(_)
             | SkillCommand::Active { .. }
             | SkillCommand::Search(_)
-            | SkillCommand::Recommend(_)
-            | SkillCommand::Resolve(_)
             | SkillCommand::Lint(_)
             | SkillCommand::Policy(_)
             | SkillCommand::Scan(_)

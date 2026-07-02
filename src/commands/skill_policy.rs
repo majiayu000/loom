@@ -15,6 +15,7 @@ use crate::types::ErrorCode;
 
 use super::helpers::{map_arg, map_io, validate_policy_profile, validate_skill_name};
 use super::provenance::{ProvenanceDigestStatus, provenance_digest_status};
+use super::skill_safety::evaluate_skill_safety_with_policy;
 use super::{App, CommandFailure};
 
 const DEFAULT_POLICY_PROFILE: &str = "safe-capture";
@@ -64,14 +65,23 @@ impl App {
         if let Some(profile) = args.policy_profile.as_deref() {
             validate_policy_profile(profile)?;
         }
-        let report = evaluate_skill_policy(
+        let evaluation = evaluate_skill_safety_with_policy(
             &self.ctx,
             &args.skill,
+            "activate",
+            false,
             args.policy_profile
                 .as_deref()
                 .unwrap_or(DEFAULT_POLICY_PROFILE),
         )?;
-        Ok((json!(report), Meta::default()))
+        let mut payload = serde_json::to_value(&evaluation.policy).map_err(|err| {
+            CommandFailure::new(
+                ErrorCode::InternalError,
+                format!("failed to serialize skill policy report: {err}"),
+            )
+        })?;
+        payload["scan"] = json!(evaluation.report);
+        Ok((payload, Meta::default()))
     }
 }
 

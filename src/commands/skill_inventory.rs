@@ -5,7 +5,6 @@ use std::path::{Path, PathBuf};
 use anyhow::Result;
 use serde_json::{Value, json};
 
-use crate::cli::{SkillOnlyArgs, SkillResolveArgs, SkillSearchArgs};
 use crate::envelope::Meta;
 use crate::gitops;
 use crate::state::AppContext;
@@ -64,103 +63,21 @@ impl App {
         let model = build_skill_read_model(&self.ctx).map_err(map_inventory_error)?;
         Ok((skill_list_payload(&model), inventory_meta(model.warnings)))
     }
+}
 
-    pub fn cmd_skill_show(
-        &self,
-        args: &SkillOnlyArgs,
-    ) -> std::result::Result<(Value, Meta), CommandFailure> {
-        validate_skill_name(&args.skill).map_err(map_arg)?;
-        let model = build_skill_read_model(&self.ctx).map_err(map_inventory_error)?;
-        let Some(skill) = find_skill(&model.skills, &args.skill).cloned() else {
-            return Err(CommandFailure::new(
-                ErrorCode::SkillNotFound,
-                format!("skill '{}' not found", args.skill),
-            ));
-        };
-        Ok((json!({ "skill": skill }), inventory_meta(model.warnings)))
-    }
-
-    pub fn cmd_skill_search(
-        &self,
-        args: &SkillSearchArgs,
-    ) -> std::result::Result<(Value, Meta), CommandFailure> {
-        if args.query.trim().is_empty() {
-            return Err(CommandFailure::new(
-                ErrorCode::ArgInvalid,
-                "search query must not be empty",
-            ));
-        }
-        let model = build_skill_read_model(&self.ctx).map_err(map_inventory_error)?;
-        let results = score_and_filter_skills(
-            &model.skills,
-            &args.query,
-            SkillDiscoveryFilters {
-                agent: args.agent.as_deref(),
-                profile: args.profile.as_deref(),
-                status: args.status.as_deref(),
-                trust: args.trust.as_deref(),
-                workspace: None,
-            },
-            false,
-        );
-        Ok((
-            json!({
-                "query": args.query,
-                "filters": {
-                    "agent": args.agent,
-                    "profile": args.profile,
-                    "status": args.status,
-                    "trust": args.trust,
-                },
-                "count": results.len(),
-                "results": results,
-            }),
-            inventory_meta(model.warnings),
-        ))
-    }
-
-    pub fn cmd_skill_resolve(
-        &self,
-        args: &SkillResolveArgs,
-    ) -> std::result::Result<(Value, Meta), CommandFailure> {
-        if args.task_description.trim().is_empty() {
-            return Err(CommandFailure::new(
-                ErrorCode::ArgInvalid,
-                "task description must not be empty",
-            ));
-        }
-        let model = build_skill_read_model(&self.ctx).map_err(map_inventory_error)?;
-        let results = score_and_filter_skills(
-            &model.skills,
-            &args.task_description,
-            SkillDiscoveryFilters {
-                agent: args.agent.as_deref(),
-                profile: None,
-                status: None,
-                trust: None,
-                workspace: args.workspace.as_deref(),
-            },
-            true,
-        );
-        let selected = results.first().cloned();
-        Ok((
-            json!({
-                "task_description": args.task_description,
-                "filters": {
-                    "agent": args.agent,
-                    "workspace": args.workspace.as_ref().map(|path| path.display().to_string()),
-                },
-                "strategy": {
-                    "type": "deterministic_lexical",
-                    "llm_invoked": false,
-                    "tie_break": "score_desc_then_skill_id_asc",
-                },
-                "selected": selected,
-                "candidates": results,
-            }),
-            inventory_meta(model.warnings),
-        ))
-    }
+pub(crate) fn skill_brief_payload(
+    ctx: &AppContext,
+    skill_id: &str,
+) -> std::result::Result<(Value, Meta), CommandFailure> {
+    validate_skill_name(skill_id).map_err(map_arg)?;
+    let model = build_skill_read_model(ctx).map_err(map_inventory_error)?;
+    let Some(skill) = find_skill(&model.skills, skill_id).cloned() else {
+        return Err(CommandFailure::new(
+            ErrorCode::SkillNotFound,
+            format!("skill '{}' not found", skill_id),
+        ));
+    };
+    Ok((json!({ "skill": skill }), inventory_meta(model.warnings)))
 }
 
 pub(crate) fn build_skill_read_model(ctx: &AppContext) -> Result<SkillInventoryReadModel> {

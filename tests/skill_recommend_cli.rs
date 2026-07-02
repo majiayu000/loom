@@ -2,7 +2,7 @@ mod common;
 
 use std::process::Command;
 
-use serde_json::json;
+use serde_json::{Value, json};
 
 use common::{TestDir, run_loom, write_file, write_skill};
 
@@ -54,6 +54,12 @@ fn write_review_active_registry(root: &std::path::Path) {
     write_file(&registry.join("ops/operations.jsonl"), "");
 }
 
+fn recommendation_results(env: &Value) -> &[Value] {
+    env["data"]["recommendations"]["results"]
+        .as_array()
+        .expect("results")
+}
+
 #[test]
 fn skill_recommend_prefers_workspace_without_filtering_source_only_agent_matches() {
     let root = TestDir::new("skill-recommend-workspace");
@@ -64,8 +70,9 @@ fn skill_recommend_prefers_workspace_without_filtering_source_only_agent_matches
         root.path(),
         &[
             "skill",
-            "recommend",
+            "search",
             "review pull request",
+            "--explain",
             "--agent",
             "claude",
             "--workspace",
@@ -74,11 +81,9 @@ fn skill_recommend_prefers_workspace_without_filtering_source_only_agent_matches
     );
     assert!(
         output.status.success(),
-        "skill recommend should pass: {env}"
+        "skill search --explain should pass: {env}"
     );
-    let review = env["data"]["results"]
-        .as_array()
-        .expect("results")
+    let review = recommendation_results(&env)
         .iter()
         .find(|result| result["kind"] == json!("skill") && result["id"] == json!("review-helper"))
         .unwrap_or_else(|| panic!("source-only compatible skill should be present: {env}"));
@@ -107,19 +112,18 @@ fn skill_recommend_treats_blocked_trust_as_activation_risk() {
         root.path(),
         &[
             "skill",
-            "recommend",
+            "search",
             "review pull request",
+            "--explain",
             "--agent",
             "claude",
         ],
     );
     assert!(
         output.status.success(),
-        "skill recommend should pass: {env}"
+        "skill search --explain should pass: {env}"
     );
-    let review = env["data"]["results"]
-        .as_array()
-        .expect("results")
+    let review = recommendation_results(&env)
         .iter()
         .find(|result| result["kind"] == json!("skill") && result["id"] == json!("review-helper"))
         .unwrap_or_else(|| panic!("missing review-helper: {env}"));
@@ -178,19 +182,18 @@ fn skill_recommend_blocks_optional_unsafe_skillset_member_activation() {
         root.path(),
         &[
             "skill",
-            "recommend",
+            "search",
             "review pull request",
+            "--explain",
             "--agent",
             "claude",
         ],
     );
     assert!(
         output.status.success(),
-        "skill recommend should pass: {env}"
+        "skill search --explain should pass: {env}"
     );
-    let skillset = env["data"]["results"]
-        .as_array()
-        .expect("results")
+    let skillset = recommendation_results(&env)
         .iter()
         .find(|result| result["kind"] == json!("skillset") && result["id"] == json!("review-pack"))
         .unwrap_or_else(|| panic!("missing skillset recommendation: {env}"));
@@ -238,19 +241,18 @@ fn skill_recommend_blocks_skillset_members_with_inventory_warnings() {
         root.path(),
         &[
             "skill",
-            "recommend",
+            "search",
             "review pull request",
+            "--explain",
             "--agent",
             "claude",
         ],
     );
     assert!(
         output.status.success(),
-        "skill recommend should pass: {env}"
+        "skill search --explain should pass: {env}"
     );
-    let skillset = env["data"]["results"]
-        .as_array()
-        .expect("results")
+    let skillset = recommendation_results(&env)
         .iter()
         .find(|result| result["kind"] == json!("skillset") && result["id"] == json!("warning-pack"))
         .unwrap_or_else(|| panic!("missing skillset recommendation: {env}"));
@@ -296,19 +298,18 @@ fn skill_recommend_defers_third_party_high_risk_skill_to_inspection() {
         root.path(),
         &[
             "skill",
-            "recommend",
+            "search",
             "review pull request",
+            "--explain",
             "--agent",
             "claude",
         ],
     );
     assert!(
         output.status.success(),
-        "skill recommend should pass: {env}"
+        "skill search --explain should pass: {env}"
     );
-    let recommendation = env["data"]["results"]
-        .as_array()
-        .expect("results")
+    let recommendation = recommendation_results(&env)
         .iter()
         .find(|result| result["kind"] == json!("skill") && result["id"] == json!("danger-review"))
         .unwrap_or_else(|| panic!("missing danger-review: {env}"));
@@ -443,10 +444,10 @@ fn skill_recommend_rejects_unsupported_skillset_schema() {
 "#,
     );
 
-    let (output, env) = run_loom(root.path(), &["skill", "recommend", "review"]);
+    let (output, env) = run_loom(root.path(), &["skill", "search", "review", "--explain"]);
     assert!(
         !output.status.success(),
-        "skill recommend should reject schema mismatch"
+        "skill search --explain should reject schema mismatch"
     );
     assert_eq!(env["error"]["code"], json!("SCHEMA_MISMATCH"));
 }

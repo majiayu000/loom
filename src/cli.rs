@@ -43,7 +43,7 @@ pub use catalog::{
 };
 pub use codex_args::{CodexCommand, CodexReconcileArgs};
 pub use deps::SkillDepsArgs;
-pub use discovery::{ActiveRecommendArgs, SkillRecommendArgs, SkillResolveArgs, SkillSearchArgs};
+pub use discovery::{ActiveRecommendArgs, SkillSearchArgs};
 pub use eval::{
     EvalBaselineArg, EvalRunnerArg, SkillEvalArgs, SkillEvalCommand, SkillEvalCompareArgs,
     SkillEvalOfflineArgs, SkillEvalRunArgs, SkillEvalTriggerArgs,
@@ -251,10 +251,6 @@ pub enum Command {
     },
     #[command(about = "Serve the local registry control panel")]
     Panel(PanelArgs),
-    #[command(
-        about = "Run registry integrity, history, and projection checks (alias for `workspace doctor`)"
-    )]
-    Doctor,
 }
 
 #[derive(Debug, Clone, Subcommand, Serialize)]
@@ -314,8 +310,6 @@ pub enum TargetCommand {
 pub enum SkillCommand {
     #[command(about = "List registry and observed skills")]
     List,
-    #[command(about = "Show one skill from the inventory read model")]
-    Show(SkillOnlyArgs),
     #[command(about = "Inspect one skill lifecycle status without mutating state")]
     Inspect(SkillInspectArgs),
     #[command(about = "Check one skill runtime dependencies and MCP readiness")]
@@ -331,12 +325,8 @@ pub enum SkillCommand {
         #[command(subcommand)]
         command: SkillActiveCommand,
     },
-    #[command(about = "Search skills with deterministic lexical scoring")]
+    #[command(about = "Search, resolve, and explain skills with deterministic scoring")]
     Search(SkillSearchArgs),
-    #[command(about = "Recommend skills and skillsets without mutating active views")]
-    Recommend(SkillRecommendArgs),
-    #[command(about = "Resolve a task description to candidate skills without invoking an LLM")]
-    Resolve(SkillResolveArgs),
     #[command(about = "Draft a new skill as a guarded patch artifact")]
     Draft(SkillDraftArgs),
     #[command(about = "Extract reviewed diff context into a guarded patch artifact")]

@@ -492,10 +492,15 @@ fn compiled_activation_block_reason(
     }) {
         return "compiled_activation_deferred";
     }
-    if !candidates.iter().any(|candidate| {
-        candidate.agent.as_deref() == Some(selection.agent.as_str())
-            && candidate.profile.as_deref() == Some(selection.profile.as_str())
-    }) {
+    let all_candidates_have_identity = candidates
+        .iter()
+        .all(|candidate| candidate.agent.is_some() && candidate.profile.is_some());
+    if all_candidates_have_identity
+        && !candidates.iter().any(|candidate| {
+            candidate.agent.as_deref() == Some(selection.agent.as_str())
+                && candidate.profile.as_deref() == Some(selection.profile.as_str())
+        })
+    {
         return "compiled_artifact_agent_profile_mismatch";
     }
     "compiled_artifact_not_valid"

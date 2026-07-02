@@ -3,7 +3,7 @@ mod plan;
 mod util;
 mod verify;
 
-use std::fs;
+use std::{fs, path::Path};
 
 use chrono::Utc;
 use serde_json::{Value, json};
@@ -316,7 +316,18 @@ pub(super) fn compiled_activation_candidates(
     };
     let mut candidates = Vec::new();
     for artifact_id in artifact_ids {
-        let report = verify_artifact(ctx, skill, &root, &artifact_id)?;
+        let report = match verify_artifact(ctx, skill, &root, &artifact_id) {
+            Ok(report) => report,
+            Err(err) if matches!(err.code, ErrorCode::SchemaMismatch) => {
+                candidates.push(compiled_activation_schema_error_candidate(
+                    &root,
+                    &artifact_id,
+                    err,
+                ));
+                continue;
+            }
+            Err(err) => return Err(err),
+        };
         let agent = report
             .manifest
             .as_ref()
@@ -335,6 +346,35 @@ pub(super) fn compiled_activation_candidates(
         });
     }
     Ok(candidates)
+}
+
+fn compiled_activation_schema_error_candidate(
+    root: &Path,
+    artifact_id: &str,
+    err: CommandFailure,
+) -> CompiledActivationCandidate {
+    let artifact_dir = root.join(artifact_id);
+    CompiledActivationCandidate {
+        valid: false,
+        status: "invalid".to_string(),
+        source_stale: false,
+        agent: None,
+        profile: None,
+        report: json!({
+            "artifact_id": artifact_id,
+            "path": artifact_dir.display().to_string(),
+            "valid": false,
+            "status": "invalid",
+            "source_stale": false,
+            "findings": [{
+                "id": "manifest_schema_mismatch",
+                "severity": "error",
+                "message": err.message,
+                "details": err.details,
+            }],
+            "manifest": null,
+        }),
+    }
 }
 
 fn compile_skill_selector(args: &SkillCompileArgs) -> std::result::Result<&str, CommandFailure> {

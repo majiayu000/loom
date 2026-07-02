@@ -343,6 +343,61 @@ fn skill_activate_compiled_rejects_agent_profile_mismatch() {
 }
 
 #[test]
+fn skill_activate_compiled_wraps_malformed_manifest_as_policy_block() {
+    let root = TestDir::new("skill-activate-compiled-malformed-manifest");
+    let home = TestDir::new("skill-activate-compiled-malformed-manifest-home");
+    write_compile_ready_skill(root.path(), "demo");
+    let artifact_id = "broken-manifest";
+    let artifact_root = root
+        .path()
+        .join("state/compiled/skills/demo")
+        .join(artifact_id);
+    fs::create_dir_all(&artifact_root).expect("artifact root");
+    fs::write(artifact_root.join("manifest.json"), "{not-json").expect("malformed manifest");
+
+    let (output, env) = run_with_home(
+        root.path(),
+        home.path(),
+        &[
+            "skill",
+            "activate",
+            "demo",
+            "--agent",
+            "codex",
+            "--compiled",
+            "--artifact",
+            artifact_id,
+            "--dry-run",
+        ],
+    );
+
+    assert!(
+        !output.status.success(),
+        "malformed compiled artifact must fail closed"
+    );
+    assert_eq!(
+        env["error"]["code"],
+        Value::String("POLICY_BLOCKED".to_string())
+    );
+    assert_eq!(
+        env["error"]["details"]["reason"],
+        Value::String("compiled_artifact_not_valid".to_string())
+    );
+    assert_eq!(
+        env["error"]["details"]["reports"][0]["artifact_id"],
+        Value::String(artifact_id.to_string())
+    );
+    assert_eq!(
+        env["error"]["details"]["reports"][0]["findings"][0]["id"],
+        Value::String("manifest_schema_mismatch".to_string())
+    );
+    assert!(
+        !home.path().join(".agents/skills/demo").exists(),
+        "malformed compiled artifact must not create a projection"
+    );
+}
+
+#[test]
 fn skill_activate_lists_repairs_and_deactivates_user_symlink() {
     let root = TestDir::new("skill-activate-cycle");
     let home = TestDir::new("skill-activate-cycle-home");

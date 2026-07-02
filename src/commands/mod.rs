@@ -14,6 +14,8 @@ mod observed_tests;
 mod plan_cmds;
 mod projections;
 mod provenance;
+#[path = "provider_cmds/model.rs"]
+mod provider_cmds;
 mod skill_activation;
 mod skill_cmds;
 mod skill_deps;
@@ -212,6 +214,7 @@ impl App {
             Command::Target { command } => self.cmd_target(command, &request_id),
             Command::Skill { command } => match command {
                 SkillCommand::Add(args) => self.cmd_add(args, &request_id),
+                SkillCommand::Install(args) => self.cmd_skill_install(args),
                 SkillCommand::ImportObserved(args) => self.cmd_import_observed(args, &request_id),
                 SkillCommand::MonitorObserved(args) => self.cmd_monitor_observed(args, &request_id),
                 SkillCommand::Project(args) if args.dry_run => self.cmd_project_plan(args),
@@ -294,6 +297,8 @@ impl App {
                 SkillsetCommand::Show(args) => self.cmd_skillset_show(args),
                 SkillsetCommand::Lint(args) => self.cmd_skillset_lint(args),
             },
+            Command::Provider { command } => self.cmd_provider(command, &request_id),
+            Command::Catalog { command } => self.cmd_catalog(command),
             Command::Workflow { command } => self.cmd_workflow(command),
             Command::Index(args) if args.action == "build" => self.cmd_index_build(args),
             Command::Index(args) if args.action == "status" => self.cmd_index_status(),
@@ -464,6 +469,10 @@ fn command_records_audit(command: &Command) -> bool {
             | Command::Backup { .. }
             | Command::Index(_)
             | Command::Active(_)
+            | Command::Catalog { .. }
+            | Command::Provider {
+                command: crate::cli::ProviderCommand::List,
+            }
             | Command::Skill {
                 command: SkillCommand::History(_)
                     | SkillCommand::List
@@ -539,6 +548,7 @@ fn command_requires_durable_audit(command: &Command) -> bool {
             | SkillCommand::Orphan {
                 command: SkillOrphanCommand::Clean(_),
             } => true,
+            SkillCommand::Install(args) => !args.dry_run,
             SkillCommand::Rollback(args) => !args.dry_run,
             SkillCommand::New(args) => !args.dry_run,
             SkillCommand::Activate(args) => !args.dry_run,
@@ -578,6 +588,8 @@ fn command_requires_durable_audit(command: &Command) -> bool {
             }
             SkillsetCommand::Show(_) | SkillsetCommand::Lint(_) => false,
         },
+        Command::Provider { command } => !matches!(command, crate::cli::ProviderCommand::List),
+        Command::Catalog { .. } => false,
         Command::Workflow { command } => match command {
             WorkflowCommand::Create(args) => !args.dry_run,
             WorkflowCommand::Plan(_) => true,

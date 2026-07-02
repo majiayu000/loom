@@ -332,3 +332,149 @@ fn skill_add_records_local_git_ref_commit_and_tree_hash() {
     assert_eq!(lock["skills"]["demo-branch"]["commit"], json!(v2));
     assert_eq!(lock["skills"]["demo-branch"]["ref"], json!("main"));
 }
+
+#[test]
+fn provider_catalog_preview_and_install_dry_run_are_safe() {
+    let root = TestDir::new("provider-cli-root");
+    let catalog = TestDir::new("provider-cli-catalog");
+    let marker = catalog.path().join("executed-marker");
+    let skill = catalog.path().join("skills/demo");
+    write_file(
+        &skill.join("SKILL.md"),
+        "---\nname: demo\ndescription: Demo provider skill.\nlicense: MIT\n---\n# Demo\n",
+    );
+    write_file(
+        &skill.join("scripts/run.sh"),
+        &format!("#!/bin/sh\ntouch {}\n", marker.display()),
+    );
+
+    let (output, env) = run_loom(
+        root.path(),
+        &[
+            "provider",
+            "add",
+            "corp-local",
+            "--kind",
+            "local",
+            "--url",
+            catalog.path().to_str().unwrap(),
+        ],
+    );
+    assert!(output.status.success(), "provider add should pass: {env}");
+    assert_eq!(env["data"]["provider"]["id"], "corp-local");
+
+    let locator = format!("local:{}//skills/demo", catalog.path().display());
+    let (output, preview) = run_loom(root.path(), &["catalog", "preview", &locator]);
+    assert!(output.status.success(), "preview should pass: {preview}");
+    assert!(!marker.exists(), "preview must not execute scripts");
+    assert_eq!(preview["data"]["preview"]["metadata"]["name"], "demo");
+    assert_eq!(
+        preview["data"]["preview"]["scripts"][0]["path"],
+        "scripts/run.sh"
+    );
+    let digest = preview["data"]["preview"]["provenance"]["digest"]
+        .as_str()
+        .expect("preview digest");
+
+    let pinned = format!("{locator}@{digest}");
+    let (output, dry_run) = run_loom(
+        root.path(),
+        &["skill", "install", &pinned, "--name", "demo", "--dry-run"],
+    );
+    assert!(
+        output.status.success(),
+        "install dry-run should pass: {dry_run}"
+    );
+    assert_eq!(
+        dry_run["data"]["would_write"]["trust_record"]["trust"],
+        "third-party-unreviewed"
+    );
+    assert_eq!(
+        dry_run["data"]["would_write"]["provenance_record"]["artifact"]["digest"],
+        digest
+    );
+    assert!(!root.path().join("skills/demo").exists());
+    assert!(!root.path().join("state/registry/sources.json").exists());
+    assert!(!root.path().join("loom.lock").exists());
+    assert!(!root.path().join("state/registry/trust.json").exists());
+
+    let (output, blocked) = run_loom(
+        root.path(),
+        &[
+            "skill",
+            "install",
+            &locator,
+            "--name",
+            "demo",
+            "--policy-profile",
+            "strict",
+            "--dry-run",
+        ],
+    );
+    assert!(
+        !output.status.success(),
+        "unpinned install must fail: {blocked}"
+    );
+    assert_eq!(blocked["error"]["code"], "POLICY_BLOCKED");
+}
+
+#[test]
+fn provider_errors_are_typed_and_block_unsafe_inputs() {
+    let root = TestDir::new("provider-cli-errors");
+
+    let (output, env) = run_loom(
+        root.path(),
+        &[
+            "provider",
+            "add",
+            "bad",
+            "--kind",
+            "github",
+            "--url",
+            "https://token@example.com/org/repo",
+        ],
+    );
+    assert!(!output.status.success(), "credential url must fail: {env}");
+    assert_eq!(env["error"]["code"], "ARG_INVALID");
+
+    let (output, env) = run_loom(
+        root.path(),
+        &["catalog", "show", "missing:owner/repo//skill"],
+    );
+    assert!(
+        !output.status.success(),
+        "unknown provider must fail: {env}"
+    );
+    assert_eq!(env["error"]["code"], "PROVIDER_NOT_FOUND");
+
+    let (output, env) = run_loom(root.path(), &["catalog", "show", "team:core/demo"]);
+    assert!(
+        !output.status.success(),
+        "reserved team provider must fail: {env}"
+    );
+    assert_eq!(env["error"]["code"], "ARG_INVALID");
+
+    let catalog = TestDir::new("provider-cli-danger");
+    let skill = catalog.path().join("skills/danger");
+    write_file(
+        &skill.join("SKILL.md"),
+        "---\nname: danger\ndescription: Dangerous demo.\n---\n# Danger\n",
+    );
+    write_file(&skill.join("scripts/danger.sh"), "#!/bin/sh\nrm -rf /\n");
+    let locator = format!("local:{}//skills/danger", catalog.path().display());
+    let (output, preview) = run_loom(root.path(), &["catalog", "preview", &locator]);
+    assert!(
+        output.status.success(),
+        "danger preview should pass: {preview}"
+    );
+    let digest = preview["data"]["preview"]["provenance"]["digest"]
+        .as_str()
+        .unwrap();
+    let pinned = format!("{locator}@{digest}");
+    let (output, env) = run_loom(
+        root.path(),
+        &["skill", "install", &pinned, "--name", "danger", "--dry-run"],
+    );
+    assert!(!output.status.success(), "critical scan must block: {env}");
+    assert_eq!(env["error"]["code"], "POLICY_BLOCKED");
+}

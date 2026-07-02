@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use serde::Serialize;
 
+mod catalog;
 mod codex_args;
 mod deps;
 mod discovery;
@@ -12,6 +13,7 @@ mod index;
 mod plan_flow;
 mod policy;
 mod provenance;
+mod provider;
 mod safety;
 mod skill_activation_args;
 mod skill_inspect_args;
@@ -22,6 +24,10 @@ mod skillset;
 mod use_flow;
 mod version;
 mod workflow;
+pub use catalog::{
+    CatalogCommand, CatalogPreviewArgs, CatalogSearchArgs, CatalogShowArgs, InstallTrustArg,
+    SkillInstallArgs,
+};
 pub use codex_args::{CodexCommand, CodexReconcileArgs};
 pub use deps::SkillDepsArgs;
 pub use discovery::{ActiveRecommendArgs, SkillRecommendArgs, SkillResolveArgs, SkillSearchArgs};
@@ -34,6 +40,7 @@ pub use index::IndexArgs;
 pub use plan_flow::{ApplyArgs, PlanCommand, PlanUseArgs};
 pub use policy::SkillPolicyArgs;
 pub use provenance::{AddArgs, SkillProvenanceCommand};
+pub use provider::{ProviderAddArgs, ProviderCommand, ProviderKindArg, ProviderRemoveArgs};
 pub use safety::{SkillQuarantineArgs, SkillScanArgs, SkillTrustArgs};
 pub use skill_activation_args::{
     ActivationScope, SkillActivateArgs, SkillActiveCommand, SkillActiveListArgs,
@@ -117,6 +124,16 @@ pub enum Command {
     Skillset {
         #[command(subcommand)]
         command: SkillsetCommand,
+    },
+    #[command(about = "Manage skill catalog providers")]
+    Provider {
+        #[command(subcommand)]
+        command: ProviderCommand,
+    },
+    #[command(about = "Search and preview skill catalogs")]
+    Catalog {
+        #[command(subcommand)]
+        command: CatalogCommand,
     },
     #[command(about = "Plan and preflight guarded multi-skill workflows")]
     Workflow {
@@ -286,6 +303,8 @@ pub enum SkillCommand {
     New(SkillNewArgs),
     #[command(about = "Import a skill source into the registry")]
     Add(AddArgs),
+    #[command(about = "Plan a provider-backed skill install")]
+    Install(SkillInstallArgs),
     #[command(about = "Project a registry skill into a bound target")]
     Project(ProjectArgs),
     #[command(about = "Capture live projection edits back to the source")]

@@ -42,13 +42,15 @@ Top-level command groups:
 8. `target`
 9. `skill`
 10. `skillset`
-11. `workflow`
-12. `sync`
-13. `ops`
-14. `agent`
-15. `codex`
-16. `panel`
-17. `doctor`
+11. `provider`
+12. `catalog`
+13. `workflow`
+14. `sync`
+15. `ops`
+16. `agent`
+17. `codex`
+18. `panel`
+19. `doctor`
 
 Removed from runtime surface:
 
@@ -183,27 +185,28 @@ Base error codes:
 3. `SCHEMA_MISMATCH`
 4. `STATE_CORRUPT`
 5. `STATE_NOT_INITIALIZED`
-6. `SKILL_NOT_FOUND`
-7. `BINDING_NOT_FOUND`
-8. `TARGET_NOT_FOUND`
-9. `TRASH_ENTRY_NOT_FOUND`
-10. `TARGET_NOT_MANAGED`
-11. `TARGET_AGENT_MISMATCH`
-12. `PROJECTION_CONFLICT`
-13. `PROJECTION_METHOD_UNSUPPORTED`
-14. `POLICY_BLOCKED`
-15. `EVAL_FAILED`
-16. `CAPTURE_CONFLICT`
-17. `AUDIT_ERROR`
-18. `LOCK_BUSY`
-19. `REMOTE_UNREACHABLE`
-20. `REMOTE_DIVERGED`
-21. `PUSH_REJECTED`
-22. `REPLAY_CONFLICT`
-23. `QUEUE_BLOCKED`
-24. `GIT_ERROR`
-25. `IO_ERROR`
-26. `INTERNAL_ERROR`
+6. `PROVIDER_NOT_FOUND`
+7. `SKILL_NOT_FOUND`
+8. `BINDING_NOT_FOUND`
+9. `TARGET_NOT_FOUND`
+10. `TRASH_ENTRY_NOT_FOUND`
+11. `TARGET_NOT_MANAGED`
+12. `TARGET_AGENT_MISMATCH`
+13. `PROJECTION_CONFLICT`
+14. `PROJECTION_METHOD_UNSUPPORTED`
+15. `POLICY_BLOCKED`
+16. `EVAL_FAILED`
+17. `CAPTURE_CONFLICT`
+18. `AUDIT_ERROR`
+19. `LOCK_BUSY`
+20. `REMOTE_UNREACHABLE`
+21. `REMOTE_DIVERGED`
+22. `PUSH_REJECTED`
+23. `REPLAY_CONFLICT`
+24. `QUEUE_BLOCKED`
+25. `GIT_ERROR`
+26. `IO_ERROR`
+27. `INTERNAL_ERROR`
 
 Semantics:
 
@@ -473,7 +476,33 @@ Rules:
 8. provenance records include provider, locator, requested ref, resolved commit when Git-backed, source tree hash when Git-backed, source subdir, artifact digest, import time, and importer version
 9. provider resolution boundaries are defined in [SKILL_PROVIDER_BOUNDARY.md](SKILL_PROVIDER_BOUNDARY.md); `skill add` must not call `gh skill install` or write directly into agent host directories
 
-### 11.1.1 `skill provenance`
+### 11.1.1 `provider`, `catalog`, and `skill install --dry-run`
+
+```bash
+loom --json --root <root> provider add <id> --kind <github|local> --url <url>
+loom --json --root <root> provider list
+loom --json --root <root> provider remove <id>
+loom --json --root <root> catalog search <query> [--provider <provider-id>] [--allow-network]
+loom --json --root <root> catalog show <locator>
+loom --json --root <root> catalog preview <locator> [--ref <ref>]
+loom --json --root <root> skill install <locator> --name <skill-id> [--ref <ref>] [--trust <third-party-unreviewed|reviewed>] [--review-evidence <id>] [--policy-profile <profile>] --dry-run
+```
+
+Provider writes persist sorted `state/registry/providers.json` records through the normal registry audit, commit, and sync/queue path. `provider list`, `catalog search`, `catalog show`, and `catalog preview` are read-only and do not seed provider state.
+
+Rules:
+
+1. provider ids are locator prefixes; built-in `github` and `local` providers are synthesized for read-only locator parsing
+2. `team:` is reserved and unsupported in this version
+3. unknown provider prefixes return `PROVIDER_NOT_FOUND`
+4. provider URLs with userinfo or token-like query parameters fail with `ARG_INVALID` before persistence
+5. catalog preview inspects files without executing scripts or build hooks
+6. `skill install --dry-run` writes no skill directory, provenance file, `loom.lock`, trust state, target directory, Git ref, or pending queue entry beyond normal command audit
+7. unpinned refs fail closed with `POLICY_BLOCKED`; local locators are pinned only by a matching `sha256:<digest>` ref and GitHub locators by a commit SHA
+8. public installs default to `third-party-unreviewed`; `--trust reviewed` requires `--review-evidence`
+9. mutating provider-backed install apply is deferred and fails with `POLICY_BLOCKED`
+
+### 11.1.2 `skill provenance`
 
 ```bash
 loom --json --root <root> skill provenance inspect <skill-id>

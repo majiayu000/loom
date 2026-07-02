@@ -48,6 +48,9 @@ Read and write responses use the CLI envelope shape:
 ```
 
 Errors use the same top-level shape with `ok: false` and a typed `error.code`.
+`error.next_actions[]` is optional and contains runnable `{cmd, reason}` hints
+when Loom can guide the caller to a recovery command. The field is omitted
+when there is no specific recovery hint.
 
 ## 4. Read Routes
 

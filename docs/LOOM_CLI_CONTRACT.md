@@ -176,13 +176,31 @@ Failure envelope shape:
   "error": {
     "code": "BINDING_NOT_FOUND",
     "message": "binding 'bind_x' does not exist",
-    "details": {}
+    "details": {},
+    "next_actions": [
+      {
+        "cmd": "loom workspace binding list --json",
+        "reason": "list existing bindings to find a valid binding_id"
+      }
+    ]
   },
   "meta": {
     "warnings": []
   }
 }
 ```
+
+`error.next_actions[]` is optional and omitted when empty. Each entry is a
+runnable command plus a short reason. Human output prints the same suggestions
+as `hint: try <cmd> - <reason>`.
+
+Default recovery hints:
+
+1. `BINDING_NOT_FOUND` -> `loom workspace binding list --json`
+2. `TARGET_NOT_FOUND` -> `loom target list --json`
+3. `SKILL_NOT_FOUND` -> `loom skill list --json`
+4. `STATE_NOT_INITIALIZED` -> `loom workspace init --json`
+5. `TARGET_NOT_MANAGED` -> `loom target list --json`
 
 ## 8. Error Codes
 

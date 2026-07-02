@@ -137,8 +137,18 @@ export interface CommandEnvelope {
   cmd: string;
   request_id: string;
   data?: Record<string, unknown>;
-  error?: { code?: string; message?: string; details?: Record<string, unknown> };
+  error?: {
+    code?: string;
+    message?: string;
+    details?: Record<string, unknown>;
+    next_actions?: ErrorNextAction[];
+  };
   meta?: { warnings?: string[] };
+}
+
+export interface ErrorNextAction {
+  cmd: string;
+  reason: string;
 }
 
 export interface ReadResult<T> {
@@ -147,8 +157,13 @@ export interface ReadResult<T> {
 }
 
 export class ApiError extends Error {
-  constructor(public readonly path: string, public readonly status: number, message: string) {
-    super(message);
+  constructor(
+    public readonly path: string,
+    public readonly status: number,
+    message: string,
+    public readonly nextActions: ErrorNextAction[] = [],
+  ) {
+    super(formatApiErrorMessage(message, nextActions));
     this.name = "ApiError";
   }
 }
@@ -160,6 +175,20 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function warningStrings(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
   return value.filter((warning): warning is string => typeof warning === "string" && warning.length > 0);
+}
+
+function errorNextActions(value: unknown): ErrorNextAction[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter(
+    (action): action is ErrorNextAction =>
+      isRecord(action) && typeof action.cmd === "string" && typeof action.reason === "string",
+  );
+}
+
+function formatApiErrorMessage(message: string, nextActions: ErrorNextAction[]): string {
+  if (nextActions.length === 0) return message;
+  const hints = nextActions.map((action) => `Try: ${action.cmd} - ${action.reason}`).join("\n");
+  return `${message}\n${hints}`;
 }
 
 function envelopeWarnings(body: unknown): string[] {
@@ -207,7 +236,7 @@ function parseRemoteStatusResponse(path: string, body: unknown): RemoteStatusRes
       typeof body.error.message === "string"
         ? body.error.message
         : `GET ${path} returned error-shaped payload`;
-    throw new ApiError(path, 200, message);
+    throw new ApiError(path, 200, message, errorNextActions(body.error.next_actions));
   }
   if (!isRecord(body.remote)) {
     throw new ApiError(path, 200, `GET ${path} returned malformed remote status payload`);
@@ -232,10 +261,14 @@ async function getJson<T>(path: string, signal?: AbortSignal): Promise<T> {
     typeof body === "object" && body !== null && "error" in body
       ? ((body as { error?: { message?: string } }).error?.message ?? null)
       : null;
+  const nextActionsFromBody =
+    typeof body === "object" && body !== null && "error" in body
+      ? errorNextActions((body as { error?: { next_actions?: unknown } }).error?.next_actions)
+      : [];
 
   if (!res.ok) {
     const msg = messageFromBody ?? `GET ${path} returned ${res.status}`;
-    throw new ApiError(path, res.status, msg);
+    throw new ApiError(path, res.status, msg, nextActionsFromBody);
   }
 
   if (parseError !== null) {
@@ -252,6 +285,7 @@ async function getJson<T>(path: string, signal?: AbortSignal): Promise<T> {
       path,
       res.status,
       messageFromBody ?? `GET ${path} envelope ok=false with no message`,
+      nextActionsFromBody,
     );
   }
 
@@ -294,7 +328,7 @@ async function postJson(path: string, body: unknown): Promise<CommandEnvelope> {
       envelope?.error?.message ??
       parseError ??
       `POST ${path} returned ${res.status} ${res.statusText || ""}`.trim();
-    throw new ApiError(path, res.status, msg);
+    throw new ApiError(path, res.status, msg, envelope?.error?.next_actions ?? []);
   }
   if (!envelope) {
     throw new ApiError(
@@ -305,7 +339,7 @@ async function postJson(path: string, body: unknown): Promise<CommandEnvelope> {
   }
   if (envelope.ok === false) {
     const msg = envelope.error?.message ?? `POST ${path} envelope ok=false with no message`;
-    throw new ApiError(path, res.status, msg);
+    throw new ApiError(path, res.status, msg, envelope.error?.next_actions ?? []);
   }
   return envelope;
 }

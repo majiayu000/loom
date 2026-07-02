@@ -84,6 +84,7 @@ use event_store::{
 };
 use helpers::{command_name, ensure_initial_commit, map_git, map_io};
 
+use crate::error_actions::{NextAction, default_next_actions};
 use crate::gitops;
 use crate::state_model::RegistryStatePaths;
 
@@ -92,6 +93,7 @@ pub struct CommandFailure {
     pub code: ErrorCode,
     pub message: String,
     pub details: serde_json::Value,
+    pub next_actions: Vec<NextAction>,
 }
 
 impl CommandFailure {
@@ -100,6 +102,7 @@ impl CommandFailure {
             code,
             message: message.into(),
             details: json!({}),
+            next_actions: Vec::new(),
         }
     }
 
@@ -372,8 +375,26 @@ impl App {
                 )
             }
             Err(f) => {
-                let exit_code = f.code.exit_code();
-                let mut env = Envelope::err(cmd, request_id, f.code, f.message, f.details);
+                let CommandFailure {
+                    code,
+                    message,
+                    details,
+                    next_actions,
+                } = f;
+                let exit_code = code.exit_code();
+                let next_actions = if next_actions.is_empty() {
+                    default_next_actions(code.as_str())
+                } else {
+                    next_actions
+                };
+                let mut env = Envelope::err_with_next_actions(
+                    cmd,
+                    request_id,
+                    code,
+                    message,
+                    details,
+                    next_actions,
+                );
                 env.meta.warnings.extend(audit_warnings);
                 Ok(self.finish_command_audit(
                     cmd,

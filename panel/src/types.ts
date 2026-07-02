@@ -82,5 +82,6 @@ export type RegistryPayload = {
   error?: {
     code?: string;
     message?: string;
+    next_actions?: { cmd: string; reason: string }[];
   };
 };

@@ -42,10 +42,6 @@
     "default_skill_dirs": {
       "type": "array",
       "items": { "type": "string", "minLength": 1 }
-    },
-    "health_checks": {
-      "type": "array",
-      "items": { "type": "string", "minLength": 1 }
     }
   },
   "additionalProperties": false

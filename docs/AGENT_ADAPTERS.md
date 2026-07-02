@@ -30,8 +30,7 @@ Schemas:
     "explicit_invocation": true,
     "reload_required": false
   },
-  "default_skill_dirs": ["/opt/fixture-agent/skills"],
-  "health_checks": ["directory_exists"]
+  "default_skill_dirs": ["/opt/fixture-agent/skills"]
 }
 ```
 
@@ -105,6 +104,13 @@ by canonical `SKILL.md` path for symlink projections and
 `skills.config.path` disable rules. Reload is reported as
 `new-session-recommended`; Loom does not claim an existing Codex session has
 hot-reloaded changed skills.
+
+Built-in Claude metadata declares `~/.claude/skills` as the preferred user
+root, `${CLAUDE_HOME:-~/.claude}/skills` as a legacy user root, and
+`<workspace>/.claude/skills` as the project root. Claude visibility is modeled
+by canonical `SKILL.md` path for symlink projections and adapter-defined
+disable rules. Reload is reported as `new-session-recommended`; Loom does not
+claim an existing Claude session has hot-reloaded changed skills.
 
 ## Source Display
 

@@ -7,8 +7,9 @@ use crate::commands::CommandFailure;
 use crate::state::home_dir;
 
 use super::{
-    AdapterDiscoveryRoot, AdapterReload, AdapterVisibility, ExternalAdapterV1Record,
-    ExternalDiscoveryRootRecord, ExternalVisibilityRecord, adapter_failure,
+    AdapterCapabilities, AdapterDiscoveryRoot, AdapterReload, AdapterVisibility,
+    ExternalAdapterV1Record, ExternalDiscoveryRootRecord, ExternalVisibilityRecord,
+    adapter_failure,
 };
 
 pub(super) fn default_scan_eligible() -> bool {
@@ -84,6 +85,9 @@ pub(super) fn built_in_discovery_roots(
     if id == "codex" {
         return codex_discovery_roots(home);
     }
+    if id == "claude" {
+        return claude_discovery_roots(home);
+    }
     default_dirs
         .into_iter()
         .flat_map(|dirs| dirs.iter())
@@ -116,10 +120,32 @@ pub(super) fn built_in_visibility(id: &str) -> AdapterVisibility {
             disable_rules: vec!["skills.config.path".to_string()],
         };
     }
+    if id == "claude" {
+        return AdapterVisibility {
+            follows_symlink_dirs: true,
+            identity_by_projection_method: BTreeMap::from([
+                ("symlink".to_string(), "canonical-skill-md-path".to_string()),
+                ("copy".to_string(), "runtime-skill-md-path".to_string()),
+                (
+                    "materialize".to_string(),
+                    "runtime-skill-md-path".to_string(),
+                ),
+            ]),
+            config_file: Some("~/.claude/settings.json".to_string()),
+            disable_rules: vec!["adapter-defined".to_string()],
+        };
+    }
     default_visibility()
 }
 
 pub(super) fn built_in_reload(id: &str) -> AdapterReload {
+    if id == "claude" {
+        return AdapterReload {
+            strategy: "new-session-recommended".to_string(),
+            hot_reload: false,
+            notes: Some("Claude skill visibility is session-scoped".to_string()),
+        };
+    }
     if id == "codex" {
         return AdapterReload {
             strategy: "new-session-recommended".to_string(),
@@ -128,6 +154,14 @@ pub(super) fn built_in_reload(id: &str) -> AdapterReload {
         };
     }
     reload_from_capability(false)
+}
+
+pub(super) fn capabilities_from_reload(reload: &AdapterReload) -> AdapterCapabilities {
+    AdapterCapabilities {
+        automatic_discovery: true,
+        explicit_invocation: true,
+        reload_required: reload.strategy == "restart-required",
+    }
 }
 
 pub(super) fn default_visibility() -> AdapterVisibility {
@@ -368,6 +402,57 @@ fn codex_discovery_roots(home: Option<&Path>) -> Vec<AdapterDiscoveryRoot> {
         AdapterDiscoveryRoot {
             scope: "project".to_string(),
             path_template: "<workspace>/.agents/skills".to_string(),
+            role: "project-cross-client".to_string(),
+            source_env_var: None,
+            priority: Some(0),
+            scan_eligible: false,
+            available: true,
+            unavailable_reason: None,
+        },
+    ]
+}
+
+fn claude_discovery_roots(home: Option<&Path>) -> Vec<AdapterDiscoveryRoot> {
+    let claude_home_available = std::env::var_os("CLAUDE_HOME").is_some() || home.is_some();
+    vec![
+        AdapterDiscoveryRoot {
+            scope: "user".to_string(),
+            path_template: "~/.claude/skills".to_string(),
+            role: "preferred-cross-client".to_string(),
+            source_env_var: None,
+            priority: Some(0),
+            scan_eligible: true,
+            available: home.is_some(),
+            unavailable_reason: home
+                .is_none()
+                .then(|| "HOME or USERPROFILE is not set".to_string()),
+        },
+        AdapterDiscoveryRoot {
+            scope: "user".to_string(),
+            path_template: "$CLAUDE_SKILLS_DIR".to_string(),
+            role: "env-override".to_string(),
+            source_env_var: Some("CLAUDE_SKILLS_DIR".to_string()),
+            priority: Some(1),
+            scan_eligible: true,
+            available: std::env::var_os("CLAUDE_SKILLS_DIR").is_some(),
+            unavailable_reason: std::env::var_os("CLAUDE_SKILLS_DIR")
+                .is_none()
+                .then(|| "CLAUDE_SKILLS_DIR is not set".to_string()),
+        },
+        AdapterDiscoveryRoot {
+            scope: "user".to_string(),
+            path_template: "${CLAUDE_HOME:-~/.claude}/skills".to_string(),
+            role: "legacy".to_string(),
+            source_env_var: Some("CLAUDE_HOME".to_string()),
+            priority: Some(2),
+            scan_eligible: true,
+            available: claude_home_available,
+            unavailable_reason: (!claude_home_available)
+                .then(|| "CLAUDE_HOME and HOME/USERPROFILE are not set".to_string()),
+        },
+        AdapterDiscoveryRoot {
+            scope: "project".to_string(),
+            path_template: "<workspace>/.claude/skills".to_string(),
             role: "project-cross-client".to_string(),
             source_env_var: None,
             priority: Some(0),

@@ -12,6 +12,7 @@ mod eval;
 mod improve;
 mod index;
 mod instruction;
+mod package;
 mod plan_flow;
 mod policy;
 mod provenance;
@@ -43,6 +44,9 @@ pub use index::IndexArgs;
 pub use instruction::{
     InstructionClassifyArgs, InstructionCommand, InstructionDoctorArgs, InstructionMigratePlanArgs,
     InstructionMigrationTarget, InstructionScanArgs, InstructionShowArgs,
+};
+pub use package::{
+    PackageBuildArgs, PackageCommand, PackageFormatArg, PackagePlanArgs, PackageVerifyArgs,
 };
 pub use plan_flow::{ApplyArgs, PlanCommand, PlanUseArgs};
 pub use policy::{
@@ -145,6 +149,11 @@ pub enum Command {
     Catalog {
         #[command(subcommand)]
         command: CatalogCommand,
+    },
+    #[command(about = "Plan, build, and verify portable skill packages")]
+    Package {
+        #[command(subcommand)]
+        command: PackageCommand,
     },
     #[command(about = "Manage Git-backed org policy checks")]
     Policy {

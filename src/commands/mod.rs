@@ -13,6 +13,7 @@ mod instruction;
 #[cfg(test)]
 mod observed_tests;
 mod org_policy;
+mod package_export;
 mod plan_cmds;
 mod projections;
 mod provenance;
@@ -53,9 +54,10 @@ use uuid::Uuid;
 
 use crate::cli::{
     AgentCommand, ApprovalCommand, Cli, CodexCommand, Command, OpsCommand, OpsHistoryCommand,
-    OrgPolicyCommand, PolicyCommand, RemoteCommand, RolesCommand, SkillActiveCommand, SkillCommand,
-    SkillOrphanCommand, SkillProvenanceCommand, SkillTrashCommand, SkillsetCommand, SyncCommand,
-    TargetCommand, WorkflowCommand, WorkspaceBindingCommand, WorkspaceCommand, WorkspaceInitArgs,
+    OrgPolicyCommand, PackageCommand, PolicyCommand, RemoteCommand, RolesCommand,
+    SkillActiveCommand, SkillCommand, SkillOrphanCommand, SkillProvenanceCommand,
+    SkillTrashCommand, SkillsetCommand, SyncCommand, TargetCommand, WorkflowCommand,
+    WorkspaceBindingCommand, WorkspaceCommand, WorkspaceInitArgs,
 };
 use crate::envelope::{Envelope, Meta};
 use crate::state::{AppContext, home_dir};
@@ -301,6 +303,7 @@ impl App {
             },
             Command::Provider { command } => self.cmd_provider(command, &request_id),
             Command::Catalog { command } => self.cmd_catalog(command),
+            Command::Package { command } => self.cmd_package(command),
             Command::Policy { command } => match command {
                 PolicyCommand::Org { command } => self.cmd_policy_org(command, &request_id),
             },
@@ -478,6 +481,9 @@ fn command_records_audit(command: &Command) -> bool {
             | Command::Index(_)
             | Command::Active(_)
             | Command::Catalog { .. }
+            | Command::Package {
+                command: PackageCommand::Plan(_) | PackageCommand::Verify(_),
+            }
             | Command::Policy {
                 command: PolicyCommand::Org {
                     command: OrgPolicyCommand::Show | OrgPolicyCommand::Check(_),
@@ -610,6 +616,10 @@ fn command_requires_durable_audit(command: &Command) -> bool {
         },
         Command::Provider { command } => !matches!(command, crate::cli::ProviderCommand::List),
         Command::Catalog { .. } => false,
+        Command::Package { command } => match command {
+            PackageCommand::Build(_) => false,
+            PackageCommand::Plan(_) | PackageCommand::Verify(_) => false,
+        },
         Command::Policy { command } => match command {
             PolicyCommand::Org { command } => matches!(command, OrgPolicyCommand::Init(_)),
         },

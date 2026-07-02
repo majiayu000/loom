@@ -320,7 +320,7 @@ pub enum SkillCommand {
     Inspect(SkillInspectArgs),
     #[command(about = "Check one skill runtime dependencies and MCP readiness")]
     Deps(SkillDepsArgs),
-    #[command(about = "Plan and verify derived compiled runtime artifacts without mutation")]
+    #[command(about = "Plan, write, list, and verify derived compiled runtime artifacts")]
     Compile(SkillCompileArgs),
     #[command(about = "Activate one skill for an agent target")]
     Activate(SkillActivateArgs),

@@ -392,7 +392,7 @@ Read-only commands.
 Rules:
 
 1. `skill list`, `skill show`, `skill search`, and `skill resolve` reuse the same union read model as `GET /api/v1/skills`.
-2. `skill inspect` returns the canonical single-skill status model with stable top-level keys: `skill`, `source`, `spec`, `provenance`, `runtime`, `dependencies`, `quality`, `safety`, `telemetry`, and `next_actions`.
+2. `skill inspect` returns the canonical single-skill status model with stable top-level keys: `skill`, `source`, `spec`, `provenance`, `runtime`, `dependencies`, `quality`, `safety`, `telemetry`, `compiled`, and `next_actions`.
 3. `skill inspect` separates registry source presence, entrypoint presence, Git drift fields, portable lint, agent compatibility lint, binding rules, projection instances, materialized path health, and unknown agent-specific visibility.
 4. `skill inspect --agent <agent>` filters runtime sections for that agent while preserving top-level source, spec, provenance, quality, safety, and next action fields.
 5. `skill inspect --workspace <path>` and `--profile <profile>` are selectors for binding/runtime classification only; they must not mutate registry state or source files.
@@ -411,26 +411,28 @@ Rules:
 ### 11.0.1 `skill compile`
 
 ```bash
+loom --json --root <root> skill compile <skill-id> [--agent <agent>] [--profile <profile>]
 loom --json --root <root> skill compile <skill-id> --dry-run [--agent <agent>] [--profile <profile>]
 loom --json --root <root> skill compile --skill <skill-id> --dry-run [--agent <agent>] [--profile <profile>]
 loom --json --root <root> skill compile list <skill-id>
 loom --json --root <root> skill compile verify <skill-id> [--artifact <artifact-id>]
 ```
 
-Read-only commands.
+Planning, artifact write, and read-only verification commands.
 
 Rules:
 
 1. `skill compile --dry-run` returns planned artifact paths, source digest inputs, token estimates, content hashes, and gate status without writing artifact files, state files, target files, or lockfiles.
-2. when `--agent` is omitted the deterministic sentinel is `portable`; when `--profile` is omitted the profile is `default`.
-3. artifact ids are path segments, not paths; `--artifact` rejects absolute paths, traversal, and unsafe characters before joining under `state/compiled/skills/<skill-id>/`.
-4. derived artifacts, when present, use `state/compiled/skills/<skill-id>/<artifact-id>/manifest.json`, `activation.md`, `catalog.json`, `boundaries.json`, `tool-interface.json`, `references.index.json`, and `source-digest.txt`.
-5. `source-digest.txt` must match `manifest.source_digest`, and `verify` recomputes the source digest from `SKILL.md`, indexed references/assets/scripts, compiler version, agent, and profile.
-6. `verify` detects missing files, malformed manifests or sidecars, stale source digests, content-hash mismatches, manifest identity mismatches, unsafe sidecar paths, and gates that prevent `valid` status.
-7. lint, safety, dependency, or eval gates that are missing, blocked, or failed prevent a `valid` artifact; missing eval evidence is blocking until reviewed eval artifacts exist.
-8. `list` and `verify` without `--artifact` return artifacts sorted by artifact id; no arbitrary filesystem entry is selected as a default.
-9. skill names that collide with nested commands such as `list` or `verify` use `--skill <skill-id>` for dry-run planning.
-10. compiled activation and artifact writes are deferred; activation without `--compiled` continues to use portable source projection.
+2. `skill compile <skill-id>` without `--dry-run` writes the deterministic artifact directory under `state/compiled/skills/<skill-id>/<artifact-id>/`, verifies the written artifact from disk, and commits the artifact state.
+3. when `--agent` is omitted the deterministic sentinel is `portable`; when `--profile` is omitted the profile is `default`.
+4. artifact ids are path segments, not paths; `--artifact` rejects absolute paths, traversal, and unsafe characters before joining under `state/compiled/skills/<skill-id>/`.
+5. derived artifacts, when present, use `state/compiled/skills/<skill-id>/<artifact-id>/manifest.json`, `activation.md`, `catalog.json`, `boundaries.json`, `tool-interface.json`, `references.index.json`, and `source-digest.txt`.
+6. `source-digest.txt` must match `manifest.source_digest`, and `verify` recomputes the source digest from `SKILL.md`, indexed references/assets/scripts, compiler version, agent, and profile.
+7. `verify` detects missing files, malformed manifests or sidecars, stale source digests, content-hash mismatches, manifest identity mismatches, unsafe sidecar paths, and gates that prevent `valid` status.
+8. lint, safety, dependency, or eval gates that are missing, blocked, or failed prevent a `valid` artifact; missing eval evidence is blocking until reviewed eval artifacts exist.
+9. `list` and `verify` without `--artifact` return artifacts sorted by artifact id; no arbitrary filesystem entry is selected as a default.
+10. skill names that collide with nested commands such as `list` or `verify` use `--skill <skill-id>` for planning or artifact writes.
+11. compiled activation remains deferred; activation continues to use portable source projection until an explicit compiled activation flag is introduced.
 
 ### 11.0.2 `skill activate`, `skill deactivate`, `skill active list`
 

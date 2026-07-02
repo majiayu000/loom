@@ -17,6 +17,7 @@ use crate::types::ErrorCode;
 
 use super::helpers::{map_arg, map_git, map_io, map_registry_state, validate_skill_name};
 use super::provenance::{provenance_digest_status, provenance_record_status};
+use super::skill_compile::compiled_artifact_summary;
 use super::skill_deps::skill_dependency_report;
 use super::skill_safety::trust_metadata_for_skill;
 use super::skill_verify::{
@@ -160,6 +161,7 @@ impl App {
         } else {
             None
         };
+        let compiled = compiled_artifact_summary(&self.ctx, &args.skill)?;
 
         Ok((
             json!({
@@ -185,6 +187,7 @@ impl App {
                     "updated_at": trust.updated_at.map(|value| value.to_rfc3339()),
                 },
                 "telemetry": telemetry,
+                "compiled": compiled,
                 "next_actions": next_actions,
             }),
             Meta::default(),

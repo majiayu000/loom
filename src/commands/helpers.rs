@@ -123,7 +123,8 @@ pub(crate) fn command_name(command: &Command) -> &'static str {
             SkillCommand::Compile(args) => match &args.command {
                 Some(SkillCompileCommand::List(_)) => "skill.compile.list",
                 Some(SkillCompileCommand::Verify(_)) => "skill.compile.verify",
-                None => "skill.compile.dry_run",
+                None if args.dry_run => "skill.compile.dry_run",
+                None => "skill.compile",
             },
             SkillCommand::Activate(_) => "skill.activate",
             SkillCommand::Deactivate(_) => "skill.deactivate",

@@ -4,6 +4,7 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 use serde::Serialize;
 
 mod agent_kind;
+mod backup;
 mod catalog;
 mod codex_args;
 mod deps;
@@ -18,6 +19,7 @@ mod plan_flow;
 mod policy;
 mod provenance;
 mod provider;
+mod provision;
 mod safety;
 mod skill_activation_args;
 mod skill_inspect_args;
@@ -29,6 +31,9 @@ mod use_flow;
 mod version;
 mod workflow;
 pub use agent_kind::AgentKind;
+pub use backup::{
+    BackupCommand, BackupExportArgs, BackupFormat, BackupInspectArgs, BackupRestoreArgs,
+};
 pub use catalog::{
     CatalogCommand, CatalogPreviewArgs, CatalogSearchArgs, CatalogShowArgs, InstallTrustArg,
     SkillInstallArgs,
@@ -61,6 +66,10 @@ pub use policy::{
 };
 pub use provenance::{AddArgs, SkillProvenanceCommand};
 pub use provider::{ProviderAddArgs, ProviderCommand, ProviderKindArg, ProviderRemoveArgs};
+pub use provision::{
+    ProvisionApplyArgs, ProvisionCommand, ProvisionDoctorArgs, ProvisionExportArgs,
+    ProvisionExportFormatArg, ProvisionImportArgs, ProvisionPlanArgs, ProvisionTargetArg,
+};
 pub use safety::{SkillQuarantineArgs, SkillScanArgs, SkillTrustArgs};
 pub use skill_activation_args::{
     ActivationScope, SkillActivateArgs, SkillActiveCommand, SkillActiveListArgs,
@@ -165,6 +174,11 @@ pub enum Command {
         #[command(subcommand)]
         command: McpCommand,
     },
+    #[command(about = "Plan remote and devcontainer skill provisioning without mutation")]
+    Provision {
+        #[command(subcommand)]
+        command: ProvisionCommand,
+    },
     #[command(about = "Manage Git-backed org policy checks")]
     Policy {
         #[command(subcommand)]
@@ -222,53 +236,6 @@ pub enum Command {
         about = "Run registry integrity, history, and projection checks (alias for `workspace doctor`)"
     )]
     Doctor,
-}
-
-#[derive(Debug, Clone, Subcommand, Serialize)]
-pub enum BackupCommand {
-    #[command(about = "Create a portable registry backup artifact")]
-    Export(BackupExportArgs),
-    #[command(about = "Inspect and validate a registry backup artifact")]
-    Inspect(BackupInspectArgs),
-    #[command(about = "Restore a registry backup into a new empty root")]
-    Restore(BackupRestoreArgs),
-}
-
-#[derive(Debug, Clone, Args, Serialize)]
-pub struct BackupExportArgs {
-    /// Output tar path. Defaults to <root>/backups/loom-backup-<timestamp>.tar.
-    #[arg(long)]
-    pub output: Option<PathBuf>,
-
-    /// Backup artifact format.
-    #[arg(long, value_enum, default_value_t = BackupFormat::Tar)]
-    pub format: BackupFormat,
-
-    /// Include registry-owned target cache data if present.
-    #[arg(long)]
-    pub include_target_cache: bool,
-}
-
-#[derive(Debug, Clone, Args, Serialize)]
-pub struct BackupInspectArgs {
-    /// Backup artifact to inspect.
-    pub artifact: PathBuf,
-}
-
-#[derive(Debug, Clone, Args, Serialize)]
-pub struct BackupRestoreArgs {
-    /// Backup artifact to restore.
-    pub artifact: PathBuf,
-
-    /// Permit a destination root that contains only safe empty scaffolding.
-    #[arg(long)]
-    pub force_empty_root: bool,
-}
-
-#[derive(Debug, Clone, Copy, ValueEnum, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
-pub enum BackupFormat {
-    Tar,
 }
 
 #[derive(Debug, Clone, Subcommand, Serialize)]

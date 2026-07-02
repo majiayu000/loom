@@ -46,17 +46,18 @@ Top-level command groups:
 12. `catalog`
 13. `package`
 14. `mcp`
-15. `policy`
-16. `approval`
-17. `roles`
-18. `instruction`
-19. `workflow`
-20. `sync`
-21. `ops`
-22. `agent`
-23. `codex`
-24. `panel`
-25. `doctor`
+15. `provision`
+16. `policy`
+17. `approval`
+18. `roles`
+19. `instruction`
+20. `workflow`
+21. `sync`
+22. `ops`
+23. `agent`
+24. `codex`
+25. `panel`
+26. `doctor`
 
 Removed from runtime surface:
 
@@ -551,7 +552,28 @@ Rules:
 5. `mcp doctor` and `skill diagnose` point to `mcp plan` when MCP dependency readiness fails
 6. apply is intentionally absent until durable plan revalidation, idempotency keys, approval validation, atomic config writes, and secret non-storage are implemented
 
-### 11.1.4 `policy org`, `approval`, and `roles`
+### 11.1.4 `provision plan`, `provision doctor`, `provision apply`, `provision export`, and `provision import`
+
+```bash
+loom --json --root <root> provision plan --target devcontainer [--workspace <path>] [--agent codex] [--output-plan <path>]
+loom --json --root <root> provision doctor --target devcontainer|codespaces|remote [--workspace <path>] [--agent <agent>] [--plan <plan-id|plan-artifact>]
+loom --json --root <root> provision apply <plan-id|plan-artifact> --idempotency-key <key> [--approve <approval-token>...]
+loom --json --root <root> provision export <plan-id|plan-artifact> --format devcontainer|shell|tar --output <path>
+loom --json --root <root> provision import <artifact> --dry-run
+```
+
+Remote provisioning is plan-first. The first implemented slice generates a read-only devcontainer plan and doctor report; it must not write target files, copy secrets, mutate registry state, or deploy remote environments. `--output-plan` writes only the explicitly requested local plan artifact.
+
+Rules:
+
+1. `provision plan --target devcontainer` returns target kind, workspace/container paths, active views, dependency readiness, generated file previews, secret names, policy gates, Loom CLI prerequisite, and guard digests
+2. Codex project active views use `<workspace>/.agents/skills`; the plan must not fall back to user-level `~/.codex/skills`
+3. `git+https://...` registry remotes normalize to cloneable `https://...`; HTTP(S) userinfo is removed from clone/display URLs and represented as a redacted secret requirement
+4. generated devcontainer setup previews use `set -euo pipefail`, require `loom`, do not print secret values, and check planned active skills without writing them
+5. `provision doctor` is read-only and reports missing/different generated files, adapter paths, dependency readiness, secrets, policy, and next actions
+6. `provision apply`, `provision export`, and `provision import` return typed `POLICY_BLOCKED` deferred gates until reviewed plan revalidation, artifact validation, approvals, idempotency, and atomic target writes are implemented
+
+### 11.1.5 `policy org`, `approval`, and `roles`
 
 ```bash
 loom --json --root <root> policy org init --bootstrap-admin <user>

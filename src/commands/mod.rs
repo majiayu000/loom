@@ -20,6 +20,7 @@ mod projections;
 mod provenance;
 #[path = "provider_cmds/model.rs"]
 mod provider_cmds;
+mod provision;
 mod skill_activation;
 mod skill_cmds;
 mod skill_deps;
@@ -55,10 +56,10 @@ use uuid::Uuid;
 
 use crate::cli::{
     AgentCommand, ApprovalCommand, Cli, CodexCommand, Command, McpCommand, OpsCommand,
-    OpsHistoryCommand, OrgPolicyCommand, PackageCommand, PolicyCommand, RemoteCommand,
-    RolesCommand, SkillActiveCommand, SkillCommand, SkillOrphanCommand, SkillProvenanceCommand,
-    SkillTrashCommand, SkillsetCommand, SyncCommand, TargetCommand, WorkflowCommand,
-    WorkspaceBindingCommand, WorkspaceCommand, WorkspaceInitArgs,
+    OpsHistoryCommand, OrgPolicyCommand, PackageCommand, PolicyCommand, ProvisionCommand,
+    RemoteCommand, RolesCommand, SkillActiveCommand, SkillCommand, SkillOrphanCommand,
+    SkillProvenanceCommand, SkillTrashCommand, SkillsetCommand, SyncCommand, TargetCommand,
+    WorkflowCommand, WorkspaceBindingCommand, WorkspaceCommand, WorkspaceInitArgs,
 };
 use crate::envelope::{Envelope, Meta};
 use crate::state::{AppContext, home_dir};
@@ -306,6 +307,7 @@ impl App {
             Command::Catalog { command } => self.cmd_catalog(command),
             Command::Package { command } => self.cmd_package(command),
             Command::Mcp { command } => self.cmd_mcp(command),
+            Command::Provision { command } => self.cmd_provision(command),
             Command::Policy { command } => match command {
                 PolicyCommand::Org { command } => self.cmd_policy_org(command, &request_id),
             },
@@ -484,6 +486,12 @@ fn command_records_audit(command: &Command) -> bool {
             | Command::Active(_)
             | Command::Catalog { .. }
             | Command::Mcp { .. }
+            | Command::Provision {
+                command: ProvisionCommand::Plan(_)
+                    | ProvisionCommand::Doctor(_)
+                    | ProvisionCommand::Export(_)
+                    | ProvisionCommand::Import(_),
+            }
             | Command::Package {
                 command: PackageCommand::Plan(_) | PackageCommand::Verify(_),
             }
@@ -628,6 +636,13 @@ fn command_requires_durable_audit(command: &Command) -> bool {
             | McpCommand::Plan(_)
             | McpCommand::Doctor(_)
             | McpCommand::Catalog { .. } => false,
+        },
+        Command::Provision { command } => match command {
+            ProvisionCommand::Plan(_)
+            | ProvisionCommand::Doctor(_)
+            | ProvisionCommand::Export(_)
+            | ProvisionCommand::Import(_) => false,
+            ProvisionCommand::Apply(_) => true,
         },
         Command::Policy { command } => match command {
             PolicyCommand::Org { command } => matches!(command, OrgPolicyCommand::Init(_)),

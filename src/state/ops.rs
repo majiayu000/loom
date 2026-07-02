@@ -52,6 +52,7 @@ pub struct OpsAuditReport {
 }
 
 impl AppContext {
+    #[allow(dead_code)]
     pub fn append_pending(
         &self,
         command: &str,
@@ -178,10 +179,12 @@ impl AppContext {
         })
     }
 
+    #[allow(dead_code)]
     pub fn pending_count(&self) -> Result<usize> {
         Ok(self.read_pending_report()?.ops.len())
     }
 
+    #[allow(dead_code)]
     pub fn remove_pending_ops(&self, op_ids: &BTreeSet<String>) -> Result<usize> {
         self.ensure_state_layout()?;
         if op_ids.is_empty() {
@@ -213,6 +216,7 @@ impl AppContext {
         Ok(removable.len())
     }
 
+    #[allow(dead_code)]
     pub fn purge_pending(&self) -> Result<usize> {
         self.ensure_state_layout()?;
         let model = self.read_ops_model()?;
@@ -312,6 +316,7 @@ impl AppContext {
         }
     }
 
+    #[allow(dead_code)]
     fn append_journal_events(&self, events: &[OpJournalEvent]) -> Result<()> {
         if events.is_empty() {
             return Ok(());
@@ -324,6 +329,7 @@ impl AppContext {
         Ok(())
     }
 
+    #[allow(dead_code)]
     fn maybe_compact_ops_journal(&self) -> Result<()> {
         let raw_journal = match fs::read_to_string(&self.pending_ops_file) {
             Ok(raw) => raw,
@@ -458,6 +464,7 @@ fn collect_audit_events_from_body(
     }
 }
 
+#[allow(dead_code)]
 fn new_event_id() -> String {
     uuid::Uuid::new_v4().to_string()
 }

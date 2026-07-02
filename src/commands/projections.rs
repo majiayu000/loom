@@ -10,7 +10,7 @@ use uuid::Uuid;
 use crate::cli::{CaptureArgs, ProjectionMethod};
 use crate::envelope::Meta;
 use crate::gitops;
-use crate::state::{AppContext, PendingOpsReport, resolve_agent_skill_source_dirs};
+use crate::state::{AppContext, resolve_agent_skill_source_dirs};
 use crate::state_model::{
     RegistryBindingRule, RegistryObservationEvent, RegistryOperationRecord,
     RegistryProjectionInstance, RegistryProjectionsFile, RegistryRulesFile, RegistrySnapshot,
@@ -547,16 +547,15 @@ fn list_unique_skills_from_dirs(
 pub fn remote_status_payload(
     ctx: &AppContext,
 ) -> std::result::Result<(serde_json::Value, Meta), CommandFailure> {
-    let pending_report = ctx.read_pending_report().map_err(map_io)?;
-    remote_status_payload_with_pending(ctx, pending_report)
+    let pending = ctx.registry_or_pending_count().map_err(map_io)?;
+    remote_status_payload_with_pending(ctx, pending, Vec::new())
 }
 
 pub(crate) fn remote_status_payload_with_pending(
     ctx: &AppContext,
-    pending_report: PendingOpsReport,
+    pending: usize,
+    warnings: Vec<String>,
 ) -> std::result::Result<(serde_json::Value, Meta), CommandFailure> {
-    let pending = pending_report.ops.len();
-
     if !gitops::remote_exists(ctx) {
         return Ok((
             json!({
@@ -565,8 +564,7 @@ pub(crate) fn remote_status_payload_with_pending(
                 "sync_state": SyncState::LocalOnly,
             }),
             Meta {
-                warnings: pending_report
-                    .warnings
+                warnings: warnings
                     .into_iter()
                     .chain(std::iter::once("remote origin not configured".to_string()))
                     .collect(),
@@ -581,7 +579,7 @@ pub(crate) fn remote_status_payload_with_pending(
         .unwrap_or_default();
     let redacted_url = redact_sensitive_string(&url);
     let mut meta = Meta {
-        warnings: pending_report.warnings,
+        warnings,
         sync_state: None,
         op_id: None,
     };
@@ -643,8 +641,10 @@ pub(crate) fn maybe_autosync_or_queue(
     details: serde_json::Value,
     meta: &mut Meta,
 ) -> std::result::Result<(), CommandFailure> {
+    ensure_registry_operation_recorded(ctx, command, request_id, details.clone(), meta)?;
+
     if !gitops::remote_exists(ctx) {
-        ctx.append_pending(command, details, request_id.to_string())
+        ctx.append_pending(command, details.clone(), request_id.to_string())
             .map_err(map_queue)?;
         gitops::mirror_pending_ops_history(ctx).map_err(map_git)?;
         meta.sync_state = Some(SyncState::PendingPush);
@@ -672,6 +672,32 @@ pub(crate) fn maybe_autosync_or_queue(
             ));
         }
     }
+    Ok(())
+}
+
+fn ensure_registry_operation_recorded(
+    ctx: &AppContext,
+    command: &str,
+    request_id: &str,
+    details: serde_json::Value,
+    meta: &mut Meta,
+) -> std::result::Result<(), CommandFailure> {
+    if meta.op_id.is_some() {
+        return Ok(());
+    }
+    let paths = RegistryStatePaths::from_app_context(ctx);
+    paths.ensure_layout().map_err(map_io)?;
+    let op_id = record_registry_operation(
+        &paths,
+        command,
+        json!({
+            "request_id": request_id,
+            "details": details,
+        }),
+        json!({}),
+    )
+    .map_err(map_io)?;
+    meta.op_id = Some(op_id);
     Ok(())
 }
 

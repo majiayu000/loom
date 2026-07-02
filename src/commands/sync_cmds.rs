@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::fs;
 
 use anyhow::Context;
@@ -6,8 +7,8 @@ use serde_json::json;
 use crate::cli::{HistoryRepairStrategyArg, OpsCommand, OpsHistoryCommand, SyncCommand};
 use crate::envelope::Meta;
 use crate::gitops;
-use crate::state::AppContext;
 use crate::state::journal::synthesize_snapshot_raw_from_segment_bodies;
+use crate::state::{AppContext, RegistryOrPendingOpsReport};
 use crate::types::ErrorCode;
 
 use super::helpers::{
@@ -87,27 +88,43 @@ impl App {
     ) -> std::result::Result<(serde_json::Value, Meta), CommandFailure> {
         match command {
             OpsCommand::List => {
-                let report = self.ctx.read_pending_report().map_err(map_io)?;
-                Ok((
-                    json!({
-                        "count": report.ops.len(),
-                        "ops": report.ops,
-                        "journal_events": report.journal_events,
-                        "history_events": report.history_events
-                    }),
-                    Meta {
-                        warnings: report.warnings,
-                        sync_state: None,
-                        op_id: None,
-                    },
-                ))
+                match self
+                    .ctx
+                    .read_registry_or_pending_ops_report()
+                    .map_err(map_io)?
+                {
+                    RegistryOrPendingOpsReport::Registry(report) => Ok((
+                        json!({
+                            "count": report.ops.len(),
+                            "ops": report.ops,
+                            "journal_events": 0,
+                            "history_events": 0,
+                            "state_model": "registry"
+                        }),
+                        Meta::default(),
+                    )),
+                    RegistryOrPendingOpsReport::Pending(report) => Ok((
+                        json!({
+                            "count": report.ops.len(),
+                            "ops": report.ops,
+                            "journal_events": report.journal_events,
+                            "history_events": report.history_events,
+                            "state_model": "pending_legacy"
+                        }),
+                        Meta {
+                            warnings: report.warnings,
+                            sync_state: None,
+                            op_id: None,
+                        },
+                    )),
+                }
             }
             OpsCommand::Retry => {
                 let _workspace = self.ctx.lock_workspace().map_err(map_lock)?;
                 self.ensure_write_repo_ready()?;
-                let pending_before = self.ctx.pending_count().map_err(map_io)?;
+                let pending_before = self.ctx.registry_pending_count().map_err(map_io)?;
                 let result = sync_replay_internal(&self.ctx)?;
-                let pending_after = self.ctx.pending_count().map_err(map_io)?;
+                let pending_after = self.ctx.registry_pending_count().map_err(map_io)?;
                 Ok((
                     json!({
                         "result": result,
@@ -120,9 +137,24 @@ impl App {
             OpsCommand::Purge => {
                 let _workspace = self.ctx.lock_workspace().map_err(map_lock)?;
                 self.ensure_write_layout()?;
-                let purged = self.ctx.purge_pending().map_err(map_io)?;
+                let purged = self.ctx.purge_registry_ops().map_err(map_io)?;
+                let legacy_purged = self.ctx.purge_pending().map_err(map_io)?;
                 gitops::mirror_pending_ops_history(&self.ctx).map_err(map_git)?;
-                Ok((json!({"purged": purged}), Meta::default()))
+                let _purge_commit = gitops::commit_paths_if_changed(
+                    &self.ctx,
+                    &[
+                        "state/registry/ops/operations.jsonl",
+                        "state/registry/ops/checkpoint.json",
+                        "state/pending_ops.jsonl",
+                        "state/pending_ops_snapshot.json",
+                    ],
+                    "ops: purge operation records",
+                )
+                .map_err(map_git)?;
+                Ok((
+                    json!({"purged": purged.max(legacy_purged)}),
+                    Meta::default(),
+                ))
             }
             OpsCommand::History { command } => self.cmd_ops_history(command),
         }
@@ -217,16 +249,23 @@ pub(crate) fn sync_push_internal(
 
     let _state_commit = gitops::commit_paths_if_changed(
         ctx,
-        &[".gitignore", "state/registry", "state/v3"],
+        &[".gitignore", ".gitattributes", "state/registry", "state/v3"],
         "sync: commit registry state",
     )
     .map_err(map_git)?;
-    let pending_report = ctx.read_pending_report().map_err(map_io)?;
+    let pending_report = ctx.read_registry_ops_report().map_err(map_io)?;
     let queued_ids = pending_report
         .ops
         .iter()
+        .map(|op| op.op_id.clone())
+        .collect::<BTreeSet<_>>();
+    let legacy_pending_ids = ctx
+        .read_pending_report()
+        .map_err(map_io)?
+        .ops
+        .iter()
         .map(|op| op.stable_id())
-        .collect::<std::collections::BTreeSet<_>>();
+        .collect::<BTreeSet<_>>();
     let remote_main_exists =
         gitops::fetch_origin_main_if_present(ctx).map_err(map_remote_unreachable)?;
     let remote_history_exists =
@@ -237,14 +276,27 @@ pub(crate) fn sync_push_internal(
     if remote_main_exists {
         let (_ahead, behind) = gitops::ahead_behind_main(ctx).map_err(map_git)?;
         if behind > 0 {
-            return Err(CommandFailure::new(
-                ErrorCode::RemoteDiverged,
-                "local branch is behind origin/main",
-            ));
+            gitops::pull_rebase_main(ctx).map_err(map_replay_conflict)?;
         }
     }
+    if let Err(err) = gitops::push_main_with_tags(ctx).map_err(map_push_rejected) {
+        ctx.fail_registry_ops(&queued_ids, err.code.as_str(), &err.message)
+            .map_err(map_io)?;
+        return Err(err);
+    }
+    ctx.ack_registry_ops(&queued_ids).map_err(map_io)?;
+    let _ack_commit = gitops::commit_paths_if_changed(
+        ctx,
+        &[
+            "state/registry/ops/operations.jsonl",
+            "state/registry/ops/checkpoint.json",
+        ],
+        "sync: acknowledge registry operations",
+    )
+    .map_err(map_git)?;
     gitops::push_main_with_tags(ctx).map_err(map_push_rejected)?;
-    ctx.remove_pending_ops(&queued_ids).map_err(map_queue)?;
+    ctx.remove_pending_ops(&legacy_pending_ids)
+        .map_err(map_queue)?;
     gitops::mirror_pending_ops_history(ctx).map_err(map_git)?;
     Ok("pushed")
 }
@@ -252,7 +304,7 @@ pub(crate) fn sync_push_internal(
 pub(crate) fn sync_replay_internal(
     ctx: &AppContext,
 ) -> std::result::Result<&'static str, CommandFailure> {
-    let pending = ctx.pending_count().map_err(map_io)?;
+    let pending = ctx.registry_pending_count().map_err(map_io)?;
     if pending == 0 {
         return Ok("no_pending_ops");
     }

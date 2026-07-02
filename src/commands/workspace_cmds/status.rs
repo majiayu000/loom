@@ -14,8 +14,7 @@ use super::super::{App, CommandFailure};
 impl App {
     pub fn cmd_status(&self) -> std::result::Result<(serde_json::Value, Meta), CommandFailure> {
         let skill_inventory = collect_skill_inventory(&self.ctx);
-        let pending_report = self.ctx.read_pending_report().map_err(map_io)?;
-        let pending_ops = pending_report.ops.len();
+        let pending_ops = self.ctx.registry_or_pending_count().map_err(map_io)?;
         let target_dirs = resolve_agent_skill_dirs(&self.ctx.root);
         let adapters = load_agent_adapters(&self.ctx)?;
         let registry_paths = RegistryStatePaths::from_app_context(&self.ctx);
@@ -70,7 +69,8 @@ impl App {
         );
         let status_short = read_git_field(&self.ctx, &["status", "--short"], &mut git_warnings);
 
-        let (remote, mut meta) = remote_status_payload_with_pending(&self.ctx, pending_report)?;
+        let (remote, mut meta) =
+            remote_status_payload_with_pending(&self.ctx, pending_ops, Vec::new())?;
         meta.warnings.splice(0..0, git_warnings);
         meta.warnings.extend(skill_inventory.warnings);
         let source_skill_sample = skill_inventory

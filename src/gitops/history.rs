@@ -268,6 +268,7 @@ pub fn sync_history_branch_from_remote(ctx: &AppContext) -> Result<Option<String
     ))
 }
 
+#[allow(dead_code)]
 pub fn mirror_history_segment(
     ctx: &AppContext,
     segment_path: &Path,
@@ -328,6 +329,7 @@ pub fn mirror_history_segment(
     Ok(())
 }
 
+#[allow(dead_code)]
 pub fn mirror_pending_ops_history(ctx: &AppContext) -> Result<()> {
     if !repo_is_initialized(ctx)? {
         return Ok(());

@@ -408,7 +408,12 @@ fn run_panel_command_exposes_workspace_init() {
     assert_eq!(payload["cmd"], json!("workspace.init"));
     assert_eq!(payload["data"]["initialized"], json!(true));
     assert_eq!(payload["data"]["scanned"], json!(false));
-    assert_eq!(payload["meta"].get("op_id"), None);
+    assert!(
+        payload["meta"]["op_id"]
+            .as_str()
+            .is_some_and(|op_id| op_id.starts_with("op_")),
+        "{payload}"
+    );
     assert!(root.join("state/registry/schema.json").exists());
 
     cleanup_root(root);

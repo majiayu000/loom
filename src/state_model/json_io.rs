@@ -109,6 +109,22 @@ where
         .with_context(|| format!("failed to append registry jsonl file {}", path.display()))
 }
 
+pub(super) fn write_json_lines<T>(path: &Path, values: &[T]) -> Result<()>
+where
+    T: Serialize,
+{
+    let mut raw = String::new();
+    for value in values {
+        raw.push_str(
+            &serde_json::to_string(value).with_context(|| {
+                format!("failed to encode registry jsonl line {}", path.display())
+            })?,
+        );
+        raw.push('\n');
+    }
+    Ok(write_atomic(path, &raw)?)
+}
+
 pub(super) fn read_json_file<T>(path: &Path) -> Result<T>
 where
     T: DeserializeOwned,

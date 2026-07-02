@@ -65,7 +65,9 @@ fi
 # core service layer adds command metadata classification plus typed
 # projection/lifecycle service entrypoints for Panel mutations. Registry domain
 # enums add shared serde/CLI/TS vocab exports for typed persisted state.
-max_bin_bytes=$((5585 * 1024))
+# Registry-backed sync/ops queue handling adds operation ack/purge/failure
+# mutation paths plus guarded Git merge/rebase handling for operation journals.
+max_bin_bytes=$((5602 * 1024))
 bin_bytes="$(wc -c < "$bin" | tr -d ' ')"
 if (( bin_bytes > max_bin_bytes )); then
   echo "release binary is ${bin_bytes} bytes; limit is ${max_bin_bytes}" >&2

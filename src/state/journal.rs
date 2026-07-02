@@ -132,6 +132,7 @@ pub(super) fn parse_journal_line(line: &str) -> Result<OpJournalEvent> {
     })
 }
 
+#[allow(dead_code)]
 pub(super) fn journal_segment_name(raw_journal: &str) -> Result<String> {
     let mut ids = Vec::new();
     let mut non_empty = 0usize;

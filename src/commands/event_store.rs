@@ -386,6 +386,9 @@ fn key_is_sensitive(key: &str) -> bool {
         .filter(|ch| ch.is_ascii_alphanumeric())
         .flat_map(char::to_lowercase)
         .collect::<String>();
+    if normalized == "idempotencykeydigest" {
+        return false;
+    }
     [
         "token",
         "secret",
@@ -395,6 +398,7 @@ fn key_is_sensitive(key: &str) -> bool {
         "authorization",
         "apikey",
         "accesskey",
+        "idempotencykey",
         "privatekey",
         "signature",
     ]
@@ -478,6 +482,8 @@ mod tests {
         let mut value = json!({
             "source": "https://example.com/repo.git?token=secret&ref=main",
             "api_key": "sk-secret",
+            "idempotency_key": "req-secret",
+            "idempotency_key_digest": "sha256:keep",
             "nested": {
                 "password": "p@ssw0rd",
                 "plain": "visible"
@@ -491,6 +497,8 @@ mod tests {
             json!("https://example.com/repo.git?token=<redacted>&ref=main")
         );
         assert_eq!(value["api_key"], json!("<redacted>"));
+        assert_eq!(value["idempotency_key"], json!("<redacted>"));
+        assert_eq!(value["idempotency_key_digest"], json!("sha256:keep"));
         assert_eq!(value["nested"]["password"], json!("<redacted>"));
         assert_eq!(value["nested"]["plain"], json!("visible"));
     }

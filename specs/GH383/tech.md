@@ -2,7 +2,7 @@
 
 Issue: https://github.com/majiayu000/loom/issues/383
 Product spec: `specs/GH383/product.md`
-Status: Blocked design packet
+Status: Partial implementation
 
 ## Current State
 
@@ -128,6 +128,13 @@ cargo test
 ```
 
 ## Handoff Notes
+
+The foundation PR implements deterministic `mock` generation, explicit redacted
+prompt material, `state/patches/skillpatch_*.json` plus `.patch` artifacts, and
+a typed `apply-patch` deferred response that requires an idempotency key. The
+actual source mutation path remains deferred until source digest revalidation,
+staging apply, lint, policy/safety, eval, commit, and recovery handling are
+implemented together.
 
 Use `Refs #383` for design-only or partial authoring slices. Use `Fixes #383`
 only after patch generation, redaction, apply-patch, validation gates, and mock

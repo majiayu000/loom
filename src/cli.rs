@@ -22,6 +22,7 @@ mod provider;
 mod provision;
 mod safety;
 mod skill_activation_args;
+mod skill_authoring_args;
 mod skill_compile_args;
 mod skill_inspect_args;
 mod skill_lint_args;
@@ -76,6 +77,10 @@ pub use safety::{SkillQuarantineArgs, SkillScanArgs, SkillTrustArgs};
 pub use skill_activation_args::{
     ActivationScope, SkillActivateArgs, SkillActiveCommand, SkillActiveListArgs,
     SkillDeactivateArgs,
+};
+pub use skill_authoring_args::{
+    SkillApplyPatchArgs, SkillAuthoringProviderArg, SkillDraftArgs, SkillExtractArgs,
+    SkillGenerateEvalsArgs, SkillRewriteArgs, SkillTuneDescriptionArgs,
 };
 pub use skill_compile_args::{
     SkillCompileArgs, SkillCompileCommand, SkillCompileListArgs, SkillCompileVerifyArgs,
@@ -332,6 +337,18 @@ pub enum SkillCommand {
     Recommend(SkillRecommendArgs),
     #[command(about = "Resolve a task description to candidate skills without invoking an LLM")]
     Resolve(SkillResolveArgs),
+    #[command(about = "Draft a new skill as a guarded patch artifact")]
+    Draft(SkillDraftArgs),
+    #[command(about = "Extract reviewed diff context into a guarded patch artifact")]
+    Extract(SkillExtractArgs),
+    #[command(about = "Rewrite one skill as a guarded patch artifact")]
+    Rewrite(SkillRewriteArgs),
+    #[command(about = "Tune one skill description as a guarded patch artifact")]
+    TuneDescription(SkillTuneDescriptionArgs),
+    #[command(about = "Generate reviewable eval fixture diffs as a patch artifact")]
+    GenerateEvals(SkillGenerateEvalsArgs),
+    #[command(about = "Apply a reviewed skill patch artifact through validation gates")]
+    ApplyPatch(SkillApplyPatchArgs),
     #[command(about = "Create a lint-clean local skill skeleton")]
     New(SkillNewArgs),
     #[command(about = "Import a skill source into the registry")]

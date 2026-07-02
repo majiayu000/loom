@@ -494,6 +494,34 @@ Rules:
 6. invalid portable skill names fail with `ARG_INVALID` before source skill files are created
 7. generated skills are committed as registry source changes when not dry-run
 
+### 11.0.5 `skill draft`, `skill extract`, `skill rewrite`, `skill tune-description`, `skill generate-evals`, and `skill apply-patch`
+
+```bash
+loom --json --root <root> skill draft <skill-id> --from-session <path|id> [--agent <agent>] [--provider mock] [--dry-run]
+loom --json --root <root> skill extract <skill-id> --from-diff <path> [--provider mock] [--dry-run]
+loom --json --root <root> skill rewrite <skill-id> --instruction <text> [--provider mock] [--dry-run]
+loom --json --root <root> skill tune-description <skill-id> [--description <text>] [--provider mock] [--dry-run]
+loom --json --root <root> skill generate-evals <skill-id> [--task <text>] [--provider mock] [--dry-run]
+loom --json --root <root> skill apply-patch <patch-id> --idempotency-key <key>
+```
+
+Authoring generation commands create reviewable patch artifacts under
+`state/patches/` by default and never mutate `skills/<skill-id>` source files.
+`--dry-run` previews the same artifact shape without writing patch files. The
+only enabled provider is deterministic `mock`; hosted/network providers are not
+available in this slice. `skill apply-patch` validates the patch id and
+idempotency key, then returns a typed deferred gate until source revalidation,
+staging apply, lint, safety, eval, commit, and recovery records are implemented.
+
+Rules:
+
+1. prompt material must come from explicit session, diff, skill source, or eval inputs
+2. prompt material is size-bounded and redacts secret-looking strings, URL credentials, token-like values, and sensitive env values before provider use
+3. patch artifacts include `schema_version`, `patch_id`, `skill`, `action`, `goal`, `source_ref`, `source_digest`, provider, files, prompt material, validation plan, risk notes, JSON path, and patch path
+4. generation commands write only `state/patches/skillpatch_*.json` and `.patch` plus normal command audit; they do not stage, commit, activate, release, or edit source files
+5. `apply-patch` must never expose the raw idempotency key; deferred responses include only `idempotency_key_digest`
+6. missing or malformed patch ids and missing `--idempotency-key` return typed `ARG_INVALID`
+
 ### 11.1 `skill add`
 
 ```bash

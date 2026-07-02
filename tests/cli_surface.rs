@@ -647,7 +647,7 @@ fn skill_help_describes_every_subcommand() {
         "Roll back a skill source to an earlier revision",
         "Diff two revisions of a skill source",
         "Run offline skill eval fixtures for trigger, task, and artifact checks",
-        "Plan and verify derived compiled runtime artifacts without mutation",
+        "Plan, write, list, and verify derived compiled runtime artifacts",
         "Continuously import and update skills from observed targets",
         "Run one import pass over observed targets and exit",
         "Inspect and clean projections orphaned by binding removal",

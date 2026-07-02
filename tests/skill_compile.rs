@@ -55,6 +55,85 @@ fn dry_run_reports_plan_and_writes_no_artifacts() {
 }
 
 #[test]
+fn compile_writes_artifact_and_read_commands_consume_it() {
+    let root = TestDir::new("skill-compile-write");
+    write_non_blocking_compile_skill(root.path(), "demo");
+
+    let (_output, env) = run_loom(
+        root.path(),
+        &["skill", "compile", "demo", "--agent", "codex"],
+    );
+
+    assert_eq!(env["ok"], json!(true), "{env}");
+    assert_eq!(env["cmd"], json!("skill.compile"));
+    assert_eq!(env["data"]["dry_run"], json!(false));
+    assert_eq!(env["data"]["writes_artifacts"], json!(true));
+    assert_eq!(env["data"]["manifest"]["status"], json!("experimental"));
+    assert!(env["data"]["manifest"]["created_at"].as_str().is_some());
+    assert_eq!(env["data"]["verification"]["valid"], json!(false));
+    assert_eq!(env["data"]["verification"]["status"], json!("experimental"));
+    assert_finding_value(&env["data"]["verification"], "artifact_status_not_valid");
+
+    let artifact_id = env["data"]["artifact"]["artifact_id"]
+        .as_str()
+        .expect("artifact id");
+    let artifact_dir = root
+        .path()
+        .join("state/compiled/skills/demo")
+        .join(artifact_id);
+    for file in [
+        "manifest.json",
+        "activation.md",
+        "catalog.json",
+        "boundaries.json",
+        "tool-interface.json",
+        "references.index.json",
+        "source-digest.txt",
+    ] {
+        assert!(
+            artifact_dir.join(file).is_file(),
+            "missing compiled file {file}: {env}"
+        );
+    }
+
+    let (_output, list) = run_loom(root.path(), &["skill", "compile", "list", "demo"]);
+    assert_eq!(list["ok"], json!(true), "{list}");
+    assert_eq!(list["data"]["count"], json!(1));
+    assert_eq!(
+        list["data"]["artifacts"][0]["artifact_id"],
+        json!(artifact_id)
+    );
+    assert_eq!(
+        list["data"]["artifacts"][0]["manifest_status"],
+        json!("parseable")
+    );
+    assert_eq!(
+        list["data"]["artifacts"][0]["status"],
+        json!("experimental")
+    );
+
+    let (_output, verify) = run_loom(
+        root.path(),
+        &[
+            "skill",
+            "compile",
+            "verify",
+            "demo",
+            "--artifact",
+            artifact_id,
+        ],
+    );
+    assert_eq!(verify["ok"], json!(true), "{verify}");
+    assert_eq!(verify["data"]["count"], json!(1));
+    assert_eq!(verify["data"]["valid"], json!(false));
+    assert_eq!(
+        verify["data"]["artifacts"][0]["artifact_id"],
+        json!(artifact_id)
+    );
+    assert_finding(&verify, "artifact_status_not_valid");
+}
+
+#[test]
 fn small_skill_reports_no_op() {
     let root = TestDir::new("skill-compile-no-op");
     write_compile_skill(root.path(), "small");
@@ -397,12 +476,30 @@ fn assert_finding(env: &Value, id: &str) {
     );
 }
 
+fn assert_finding_value(report: &Value, id: &str) {
+    let findings = report["findings"].as_array().expect("findings array");
+    assert!(
+        findings.iter().any(|finding| finding["id"] == json!(id)),
+        "missing finding {id}: {report}"
+    );
+}
+
 fn write_compile_skill(root: &Path, skill: &str) {
     write_skill(root, skill, &base_skill_body(skill));
+}
+
+fn write_non_blocking_compile_skill(root: &Path, skill: &str) {
+    write_skill(root, skill, &non_blocking_skill_body(skill));
 }
 
 fn base_skill_body(skill: &str) -> String {
     format!(
         "---\nname: {skill}\ndescription: Use when testing compile planning.\nallowed-tools: shell\n---\n# {skill}\n\nUse when testing compile planning.\n\nDo not use for production claims.\n"
+    )
+}
+
+fn non_blocking_skill_body(skill: &str) -> String {
+    format!(
+        "---\nname: {skill}\ndescription: Use when testing compile artifact writes.\n---\n# {skill}\n\nUse when testing compile artifact writes.\n\nDo not use for production claims.\n"
     )
 }

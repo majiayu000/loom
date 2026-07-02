@@ -181,6 +181,43 @@ fn skill_inspect_source_only_reports_registry_install_without_projection() {
 }
 
 #[test]
+fn skill_inspect_reports_compiled_artifact_summary() {
+    let root = TestDir::new("skill-inspect-compiled-summary");
+    write_good_skill(root.path(), "demo");
+    let (_output, compile) = run_loom(
+        root.path(),
+        &["skill", "compile", "demo", "--agent", "codex"],
+    );
+    assert_eq!(compile["ok"], json!(true), "{compile}");
+    let artifact_id = compile["data"]["artifact"]["artifact_id"]
+        .as_str()
+        .expect("artifact id")
+        .to_string();
+
+    let (output, env) = run_loom(root.path(), &["skill", "inspect", "demo"]);
+
+    assert!(output.status.success(), "inspect should pass: {env}");
+    assert_eq!(env["data"]["compiled"]["skill"], json!("demo"));
+    assert_eq!(env["data"]["compiled"]["count"], json!(1));
+    assert_eq!(
+        env["data"]["compiled"]["artifacts"][0]["artifact_id"],
+        json!(artifact_id)
+    );
+    assert_eq!(
+        env["data"]["compiled"]["artifacts"][0]["manifest_status"],
+        json!("parseable")
+    );
+    assert_eq!(
+        env["data"]["compiled"]["artifacts"][0]["status"],
+        json!("experimental")
+    );
+    assert_eq!(
+        env["data"]["compiled"]["artifacts"][0]["agent"],
+        json!("codex")
+    );
+}
+
+#[test]
 fn skill_inspect_handles_unborn_git_repo_without_head() {
     let root = TestDir::new("skill-inspect-unborn-git");
     write_good_skill(root.path(), "demo");

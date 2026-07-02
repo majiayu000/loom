@@ -3,11 +3,11 @@ use serde::Serialize;
 
 #[derive(Debug, Clone, Args, Serialize)]
 pub struct SkillCompileArgs {
-    /// Registry skill name for compile planning. Use --skill for names that
+    /// Registry skill name to compile. Use --skill for names that
     /// collide with nested commands such as list or verify.
     pub skill: Option<String>,
 
-    /// Registry skill name for compile planning when the positional grammar is
+    /// Registry skill name to compile when the positional grammar is
     /// ambiguous.
     #[arg(long = "skill")]
     pub skill_selector: Option<String>,

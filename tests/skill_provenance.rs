@@ -5,7 +5,7 @@ use std::path::Path;
 use std::process::Command;
 
 use common::actions::{binding_add, skill_project, target_add};
-use common::{TestDir, run_loom, write_file};
+use common::{TestDir, operations_log, run_loom, write_file};
 use serde_json::{Value, json};
 
 fn read_json(path: &Path) -> Value {
@@ -416,6 +416,72 @@ fn provider_catalog_preview_and_install_dry_run_are_safe() {
         "unpinned install must fail: {blocked}"
     );
     assert_eq!(blocked["error"]["code"], "POLICY_BLOCKED");
+}
+
+#[test]
+fn provider_install_apply_imports_pinned_local_skill_with_provenance_lock_and_trust() {
+    let root = TestDir::new("provider-install-apply-root");
+    let catalog = TestDir::new("provider-install-apply-catalog");
+    let marker = catalog.path().join("executed-marker");
+    let skill = catalog.path().join("skills/demo");
+    write_file(
+        &skill.join("SKILL.md"),
+        "---\nname: demo\ndescription: Demo provider skill.\nlicense: MIT\n---\n# Demo\n",
+    );
+    write_file(
+        &skill.join("scripts/run.sh"),
+        &format!("#!/bin/sh\ntouch {}\n", marker.display()),
+    );
+
+    let locator = format!("local:{}//skills/demo", catalog.path().display());
+    let (output, preview) = run_loom(root.path(), &["catalog", "preview", &locator]);
+    assert!(output.status.success(), "preview should pass: {preview}");
+    let digest = preview["data"]["preview"]["provenance"]["digest"]
+        .as_str()
+        .expect("preview digest")
+        .to_string();
+
+    let pinned = format!("{locator}@{digest}");
+    let (output, env) = run_loom(
+        root.path(),
+        &["skill", "install", &pinned, "--name", "demo"],
+    );
+    assert!(output.status.success(), "install apply should pass: {env}");
+    assert_eq!(env["data"]["dry_run"], json!(false));
+    assert_eq!(env["data"]["skill"], json!("demo"));
+    let op_id = env["meta"]["op_id"].as_str().expect("install op_id");
+    assert!(op_id.starts_with("op_"), "unexpected op_id: {op_id}");
+    assert!(
+        !marker.exists(),
+        "provider install must not execute scripts"
+    );
+    assert!(root.path().join("skills/demo/SKILL.md").exists());
+
+    let sources = read_json(&root.path().join("state/registry/sources.json"));
+    let record = &sources["sources"][0];
+    assert_eq!(record["skill_id"], json!("demo"));
+    assert_eq!(record["source"]["provider"], json!("local"));
+    assert_eq!(record["source"]["locator"], json!(pinned));
+    assert_eq!(record["artifact"]["digest"], json!(digest));
+
+    let lock = read_json(&root.path().join("loom.lock"));
+    assert_eq!(lock["skills"]["demo"]["provider"], json!("local"));
+    assert_eq!(lock["skills"]["demo"]["digest"], json!(digest));
+    assert_eq!(lock["skills"]["demo"]["ref"], json!(digest));
+
+    let trust = read_json(&root.path().join("state/registry/trust.json"));
+    assert_eq!(trust["skills"][0]["skill_id"], json!("demo"));
+    assert_eq!(trust["skills"][0]["trust"], json!("third-party-unreviewed"));
+    assert_eq!(trust["skills"][0]["quarantined"], json!(false));
+
+    let ops = operations_log(root.path());
+    assert!(ops.contains(&format!(r#""op_id":"{op_id}""#)));
+    assert!(ops.contains(r#""intent":"skill.install""#));
+
+    let (output, verify) = run_loom(root.path(), &["skill", "provenance", "verify", "demo"]);
+    assert!(output.status.success(), "verify should pass: {verify}");
+    assert_eq!(verify["data"]["matches"], json!(true));
+    assert_eq!(verify["data"]["current_digest"], json!(digest));
 }
 
 #[test]

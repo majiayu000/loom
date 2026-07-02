@@ -415,7 +415,7 @@ fn finding_key(finding: &SafetyFinding) -> (String, String, String, String) {
     )
 }
 
-fn upsert_trust_record(
+pub(crate) fn upsert_trust_record(
     file: &mut RegistryTrustFile,
     skill: &str,
     trust: &str,

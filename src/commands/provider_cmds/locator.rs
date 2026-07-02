@@ -195,6 +195,7 @@ impl App {
     pub fn cmd_skill_install(
         &self,
         args: &SkillInstallArgs,
+        request_id: &str,
     ) -> std::result::Result<(Value, Meta), CommandFailure> {
         validate_skill_name(&args.name).map_err(map_arg)?;
         if let Some(profile) = &args.policy_profile {
@@ -210,12 +211,6 @@ impl App {
                 "--trust reviewed requires --review-evidence",
             ));
         }
-        if !args.dry_run {
-            return Err(CommandFailure::new(
-                ErrorCode::PolicyBlocked,
-                "mutating provider install is deferred in this slice; rerun with --dry-run",
-            ));
-        }
         let locator = parse_locator(&self.ctx, &args.locator, args.source_ref.as_deref())?;
         if !locator.pinned {
             let mut failure = CommandFailure::new(
@@ -227,6 +222,9 @@ impl App {
                 "suggested_action": "use a commit SHA for GitHub or sha256:<digest> for local locators",
             });
             return Err(failure);
+        }
+        if !args.dry_run {
+            return self.cmd_provider_install_apply(args, locator, trust, request_id);
         }
         Ok((
             install_dry_run_plan(&locator, &args.name, trust, args.review_evidence.as_deref())?,
@@ -411,7 +409,7 @@ fn preview_for_locator(locator: &ParsedLocator) -> std::result::Result<Value, Co
     }
 }
 
-fn local_preview(
+pub(super) fn local_preview(
     path: &Path,
     expected_name: Option<&str>,
 ) -> std::result::Result<Value, CommandFailure> {
@@ -579,7 +577,7 @@ fn install_github_plan(
     ))
 }
 
-fn local_source_descriptor(
+pub(super) fn local_source_descriptor(
     locator: &ParsedLocator,
 ) -> std::result::Result<SourceDescriptor, CommandFailure> {
     let LocatorSource::Local { base_path } = &locator.source else {
@@ -629,7 +627,7 @@ fn github_source_descriptor(
     })
 }
 
-fn pin_policy(locator: &ParsedLocator, policy_profile: Option<&str>) -> Value {
+pub(super) fn pin_policy(locator: &ParsedLocator, policy_profile: Option<&str>) -> Value {
     json!({
         "policy_profile": policy_profile.unwrap_or("default-fail-closed"),
         "pinned": locator.pinned,
@@ -639,7 +637,7 @@ fn pin_policy(locator: &ParsedLocator, policy_profile: Option<&str>) -> Value {
     })
 }
 
-fn fetch_plan(locator: &ParsedLocator) -> Value {
+pub(super) fn fetch_plan(locator: &ParsedLocator) -> Value {
     match &locator.source {
         LocatorSource::Local { base_path } => json!({
             "provider": locator.provider_id(),

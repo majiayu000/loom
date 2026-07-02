@@ -1,3 +1,5 @@
+#[path = "install.rs"]
+mod install;
 #[path = "locator.rs"]
 mod locator;
 #[path = "store.rs"]

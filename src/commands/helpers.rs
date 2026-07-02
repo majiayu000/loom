@@ -4,8 +4,9 @@ use anyhow::{Result, anyhow};
 use uuid::Uuid;
 
 use crate::cli::{
-    AgentCommand, AgentKind, BindingAddArgs, CodexCommand, Command, InstructionCommand, OpsCommand,
-    OpsHistoryCommand, PlanCommand, ProjectionMethod, SkillActiveCommand, SkillCommand,
+    AgentCommand, AgentKind, ApprovalCommand, BindingAddArgs, CodexCommand, Command,
+    InstructionCommand, OpsCommand, OpsHistoryCommand, OrgPolicyCommand, PlanCommand,
+    PolicyCommand, ProjectionMethod, RolesCommand, SkillActiveCommand, SkillCommand,
     SkillOrphanCommand, SkillTrashCommand, SkillsetCommand, SyncCommand, TargetCommand,
     WorkflowCommand, WorkspaceBindingCommand, WorkspaceCommand, WorkspaceMatcherKind,
 };
@@ -191,6 +192,24 @@ pub(crate) fn command_name(command: &Command) -> &'static str {
             crate::cli::CatalogCommand::Search(_) => "catalog.search",
             crate::cli::CatalogCommand::Show(_) => "catalog.show",
             crate::cli::CatalogCommand::Preview(_) => "catalog.preview",
+        },
+        Command::Policy { command } => match command {
+            PolicyCommand::Org { command } => match command {
+                OrgPolicyCommand::Init(_) => "policy.org.init",
+                OrgPolicyCommand::Show => "policy.org.show",
+                OrgPolicyCommand::Check(_) => "policy.org.check",
+            },
+        },
+        Command::Approval { command } => match command {
+            ApprovalCommand::Request(_) => "approval.request",
+            ApprovalCommand::List(_) => "approval.list",
+            ApprovalCommand::Approve(_) => "approval.approve",
+            ApprovalCommand::Reject(_) => "approval.reject",
+        },
+        Command::Roles { command } => match command {
+            RolesCommand::List => "roles.list",
+            RolesCommand::Grant(_) => "roles.grant",
+            RolesCommand::Revoke(_) => "roles.revoke",
         },
         Command::Instruction { command } => match command {
             InstructionCommand::Scan(_) => "instruction.scan",

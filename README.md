@@ -216,6 +216,7 @@ The chain `add → capture → save → snapshot → release → rollback` is th
 | `loom skill new` | Create a lint-clean local skill skeleton | Start a new registry-owned skill with `SKILL.md`, references, scripts, assets, eval stubs, and `loom.skill.toml` | Source (initial create) |
 | `loom provider add/list/remove` | Manage local or GitHub catalog provider records | Configure provider ids for advisory search/preview without storing credentials | Registry provider state |
 | `loom catalog search/show/preview` | Inspect provider locators without executing source code | See metadata, scripts, license/provenance hints, lint, safety, and install dry-run guidance | Provider source (read-only) |
+| `loom package plan/build/verify` | Build deterministic outbound package artifacts from reviewed skills | Create a reviewed package plan, build a portable archive, and verify manifest/checksum/content integrity without claiming active install state | Skill source + package artifact |
 | `loom skill install --dry-run` | Plan a provider-backed import without writing registry state | Check pin policy, lint, safety, provenance, lockfile, and trust defaults before mutating install apply exists | Provider source + policy (read-only except command audit) |
 | `loom policy org init/show/check` | Initialize and inspect Git-backed org policy | Review allow/deny/approval-required decisions before enforcement is wired across all mutations | Registry policy state |
 | `loom approval request/list/approve/reject` | Manage append-only approval events | Create and decide auditable approval requests with redacted reasons/comments and role checks | Registry approval log |
@@ -368,6 +369,10 @@ loom instruction show <instruction-id> [--workspace <path>]
 loom instruction classify <path>
 loom instruction doctor [--agent <agent>] [--workspace <path>] [--skill <skill>]
 loom instruction migrate-plan <instruction-id> [--workspace <path>] --to <skill|reference|keep-instruction> [--name <skill>] --dry-run
+
+loom package plan <skill:<skill>|skillset:<skillset>> --format agent-skills-archive [--agent <agent>] [--output-plan <path>]
+loom package build <plan-artifact> --output <path> --idempotency-key <key>
+loom package verify <artifact> [--format agent-skills-archive]
 
 loom skillset create <skillset-id> [--description <text>]
 loom skillset add <skillset-id> <skill-id> [--role <role>] [--required|--optional]

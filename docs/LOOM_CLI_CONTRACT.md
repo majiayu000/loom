@@ -44,17 +44,18 @@ Top-level command groups:
 10. `skillset`
 11. `provider`
 12. `catalog`
-13. `policy`
-14. `approval`
-15. `roles`
-16. `instruction`
-17. `workflow`
-18. `sync`
-19. `ops`
-20. `agent`
-21. `codex`
-22. `panel`
-23. `doctor`
+13. `package`
+14. `policy`
+15. `approval`
+16. `roles`
+17. `instruction`
+18. `workflow`
+19. `sync`
+20. `ops`
+21. `agent`
+22. `codex`
+23. `panel`
+24. `doctor`
 
 Removed from runtime surface:
 
@@ -507,7 +508,28 @@ Rules:
 9. pinned provider-backed install apply copies without symlinks, writes `skills/<skill-id>`, `state/registry/sources.json`, deterministic `loom.lock`, `state/registry/trust.json`, and a `skill.install` registry operation, but never auto-activates the skill
 10. critical safety findings block install before any registry or skill mutation
 
-### 11.1.2 `policy org`, `approval`, and `roles`
+### 11.1.2 `package plan`, `package build`, and `package verify`
+
+```bash
+loom --json --root <root> package plan <skill:<skill>|skillset:<skillset>> --format agent-skills-archive [--agent <agent>] [--output-plan <path>]
+loom --json --root <root> package build <plan-artifact> --output <path> --idempotency-key <key>
+loom --json --root <root> package verify <artifact> [--format agent-skills-archive]
+```
+
+Package planning is read-only. Package build writes only the requested outbound artifact and records command audit, but it does not mutate registry source, target directories, active projections, provider state, or pending queues. Package verify is read-only.
+
+Rules:
+
+1. `package plan` resolves `skill:<id>`, `skillset:<id>`, or a bare id only when it is unambiguous
+2. the first implemented format is `agent-skills-archive`; `codex-plugin`, `claude-plugin`, `npm`, and `github-release` return typed unsupported results until adapter metadata is wired
+3. plans include source kind, source id, source ref, source digest, Loom version, gate status, and a redacted file manifest
+4. plan/build/verify reject private registry state, local absolute paths, user-specific config, symlinks, hardlinks, and secret-looking material
+5. build requires an idempotency key, loads a reviewed plan artifact, revalidates source digest and package gates, stages output, writes manifest/provenance/checksums, and rejects output inside packaged source or private registry state
+6. verify checks the manifest, package format, checksums, forbidden content, source freshness when source is available, and portable skill lint
+7. build output returns install and verify guidance only; package artifacts are not active-state, visibility, trust, or installed-state proof
+8. publish/submission to external package hosts is deferred and must not bypass Loom registry authority when later implemented
+
+### 11.1.3 `policy org`, `approval`, and `roles`
 
 ```bash
 loom --json --root <root> policy org init --bootstrap-admin <user>
@@ -536,7 +558,7 @@ Rules:
 8. role grant/revoke require current admin role and revoke must preserve at least one resolved non-team admin
 9. malformed policy, role, or approval state fails closed with `STATE_CORRUPT`
 
-### 11.1.3 `instruction scan`, `instruction show`, `instruction classify`, `instruction doctor`, `instruction migrate-plan`
+### 11.1.4 `instruction scan`, `instruction show`, `instruction classify`, `instruction doctor`, `instruction migrate-plan`
 
 ```bash
 loom --json --root <root> instruction scan [--agent <agent>] [--workspace <path>]
@@ -560,7 +582,7 @@ Rules:
 8. migration plans contain reviewable `would_write` entries only and must not edit instruction files, skill files, registry state, Git refs, live targets, or pending queues
 9. portable skill lint remains strict: `AGENTS.md`, `CLAUDE.md`, `.mdc`, and custom instruction files are not accepted as `SKILL.md`
 
-### 11.1.3 `skill provenance`
+### 11.1.5 `skill provenance`
 
 ```bash
 loom --json --root <root> skill provenance inspect <skill-id>

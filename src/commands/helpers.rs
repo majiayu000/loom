@@ -5,8 +5,8 @@ use uuid::Uuid;
 
 use crate::cli::{
     AgentCommand, AgentKind, ApprovalCommand, BindingAddArgs, CodexCommand, Command,
-    InstructionCommand, OpsCommand, OpsHistoryCommand, OrgPolicyCommand, PlanCommand,
-    PolicyCommand, ProjectionMethod, RolesCommand, SkillActiveCommand, SkillCommand,
+    InstructionCommand, OpsCommand, OpsHistoryCommand, OrgPolicyCommand, PackageCommand,
+    PlanCommand, PolicyCommand, ProjectionMethod, RolesCommand, SkillActiveCommand, SkillCommand,
     SkillOrphanCommand, SkillTrashCommand, SkillsetCommand, SyncCommand, TargetCommand,
     WorkflowCommand, WorkspaceBindingCommand, WorkspaceCommand, WorkspaceMatcherKind,
 };
@@ -192,6 +192,11 @@ pub(crate) fn command_name(command: &Command) -> &'static str {
             crate::cli::CatalogCommand::Search(_) => "catalog.search",
             crate::cli::CatalogCommand::Show(_) => "catalog.show",
             crate::cli::CatalogCommand::Preview(_) => "catalog.preview",
+        },
+        Command::Package { command } => match command {
+            PackageCommand::Plan(_) => "package.plan",
+            PackageCommand::Build(_) => "package.build",
+            PackageCommand::Verify(_) => "package.verify",
         },
         Command::Policy { command } => match command {
             PolicyCommand::Org { command } => match command {

@@ -44,6 +44,20 @@ struct SkillsetMemberRecord {
     required: bool,
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct SkillsetPackageSource {
+    pub id: String,
+    pub description: Option<String>,
+    pub members: Vec<SkillsetPackageMember>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct SkillsetPackageMember {
+    pub skill_id: String,
+    pub role: Option<String>,
+    pub required: bool,
+}
+
 impl SkillsetsFile {
     fn empty() -> Self {
         Self {
@@ -314,6 +328,33 @@ fn load_skillsets(ctx: &AppContext) -> std::result::Result<SkillsetsFile, Comman
         ));
     }
     Ok(file)
+}
+
+pub(crate) fn load_skillset_package_source(
+    ctx: &AppContext,
+    name: &str,
+) -> std::result::Result<SkillsetPackageSource, CommandFailure> {
+    validate_skillset_id(name)?;
+    let file = load_skillsets(ctx)?;
+    let skillset = file.find(name).ok_or_else(|| {
+        CommandFailure::new(
+            ErrorCode::SkillNotFound,
+            format!("skillset '{}' not found", name),
+        )
+    })?;
+    Ok(SkillsetPackageSource {
+        id: skillset.id.clone(),
+        description: skillset.description.clone(),
+        members: skillset
+            .members
+            .iter()
+            .map(|member| SkillsetPackageMember {
+                skill_id: member.skill_id.clone(),
+                role: member.role.clone(),
+                required: member.required,
+            })
+            .collect(),
+    })
 }
 
 fn save_skillsets(

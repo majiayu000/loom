@@ -543,10 +543,7 @@ fn compiled_activation_failure(
         .iter()
         .map(|candidate| candidate.report.clone())
         .collect::<Vec<_>>();
-    let mut next_actions = vec![format!(
-        "loom skill compile {} --agent {} --profile {}",
-        selection.skill, selection.agent, selection.profile
-    )];
+    let mut next_actions = vec![compile_write_action(selection)];
     next_actions.push(match artifact {
         Some(artifact) => format!(
             "loom skill compile verify {} --artifact {}",
@@ -590,6 +587,20 @@ fn activation_fallback_action(selection: &ActivationSelection) -> String {
         ));
     }
     command
+}
+
+fn compile_write_action(selection: &ActivationSelection) -> String {
+    let skill_selector = if matches!(selection.skill.as_str(), "list" | "verify") {
+        format!("--skill {}", shell_arg(&selection.skill))
+    } else {
+        shell_arg(&selection.skill)
+    };
+    format!(
+        "loom skill compile {} --agent {} --profile {}",
+        skill_selector,
+        shell_arg(&selection.agent),
+        shell_arg(&selection.profile)
+    )
 }
 
 #[cfg(test)]
@@ -640,6 +651,24 @@ mod tests {
         assert_eq!(
             activation_fallback_action(&selection),
             "loom skill activate demo --agent codex --scope project --profile team --workspace '/tmp/project space' --target project-target --method copy"
+        );
+    }
+
+    #[test]
+    fn compile_write_action_disambiguates_compile_subcommand_names() {
+        let selection = ActivationSelection {
+            skill: "verify".to_string(),
+            agent: "codex".to_string(),
+            scope: ActivationScope::User,
+            profile: "default".to_string(),
+            workspace: None,
+            target_id: None,
+            method: ProjectionMethod::Symlink,
+        };
+
+        assert_eq!(
+            compile_write_action(&selection),
+            "loom skill compile --skill verify --agent codex --profile default"
         );
     }
 }

@@ -23,6 +23,7 @@ use super::skill_safety_findings::{
     dedupe_findings, is_metadata_path, is_security_relevant_path, policy_findings, push_finding,
     push_text_safety_findings, push_trust_findings, scan_skill_safety_files, summarize_findings,
 };
+use super::telemetry::record_skill_safety_telemetry;
 use super::{App, CommandFailure};
 
 #[derive(Debug, Clone, Serialize)]
@@ -78,6 +79,12 @@ impl App {
         validate_skill_name(&args.skill).map_err(map_arg)?;
         let mode = normalize_safety_mode(&args.mode)?;
         let report = evaluate_skill_safety(&self.ctx, &args.skill, mode, args.strict)?;
+        record_skill_safety_telemetry(
+            &self.ctx,
+            &args.skill,
+            report.findings.len() as u64,
+            report.activation_allowed,
+        )?;
         Ok((json!(report), Meta::default()))
     }
 

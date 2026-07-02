@@ -232,6 +232,7 @@ The chain `add → capture → save → snapshot → release → rollback` is th
 | `loom skill improve` | Run a read-only single-skill preflight | Aggregate source drift, lint, safety, dependency, eval, and optional real-eval planning before saving edits | Source + local environment (read-only) |
 | `loom skill regression` | Compare one skill against a baseline gate | Fail with typed regression details when lint, safety, dependency, eval, or size gates block the candidate | Source + local environment (read-only) |
 | `loom skillset create/add/remove/show/lint` | Group existing registry skills into a named set | Organize coherent skill bundles before later activation/eval support lands | Registry skillset state |
+| `loom telemetry status/enable/disable/report/export/purge` | Manage local privacy-preserving telemetry | Opt in to redacted local event writes, aggregate usage/value/cost/drift/risk, export redacted events, and purge selected telemetry state with dry-run confirmation | `state/telemetry` |
 | `loom workflow create/show/plan/preflight/run` | Define and guard a multi-skill DAG workflow | Agents need an auditable plan before coordinating several skills; execution remains deferred until apply gates land | Registry workflow state + source metadata |
 | `loom use` | Plan or apply target, binding, and projection setup in one flow | New users want to use a skill without copying target/binding IDs between commands | Source + target + registry metadata |
 | `loom plan use` / `loom apply` | Persist a guarded use plan, then execute it with idempotency | Agents need a retry-safe plan/apply protocol for higher-risk flows | Command audit + source/target/registry metadata |
@@ -322,6 +323,7 @@ loom target remove <target-id>
 loom skill list
 loom skill show <skill>
 loom skill inspect <skill> [--agent <agent>] [--workspace <path>] [--profile <profile>]
+loom skill inspect <skill> --include-telemetry
 loom skill deps <skill> [--agent <agent>] [--workspace <path>]
 loom skill compile <skill> --dry-run [--agent <agent>] [--profile <profile>]
 loom skill compile --skill <skill> --dry-run [--agent <agent>] [--profile <profile>]
@@ -358,6 +360,13 @@ loom skill release <skill> <version> [--preflight --baseline <ref>]
 loom skill rollback <skill> [--to <ref> | --steps <n>] [--dry-run]
 loom skill diff [--security] <skill> <from> <to>
 loom skill history <skill> [--limit <n>] [--from <rev>] [--to <rev>] [--include-diff-stat] [--include-ops]
+loom telemetry status
+loom telemetry enable [--local-only]
+loom telemetry disable
+loom telemetry report [--skill <skill>] [--skillset <skillset>] [--agent <agent>] [--workspace <path>] [--since <date>]
+loom telemetry export --format jsonl|csv --output <path> [--redacted]
+loom telemetry purge [--before <date>] --dry-run
+loom telemetry purge [--before <date>] --confirm <token>
 loom skill trash add <skill> [--dry-run]
 loom skill trash list
 loom skill trash restore <skill> [--trash-id <id>]

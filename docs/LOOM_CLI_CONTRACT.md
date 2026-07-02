@@ -42,22 +42,23 @@ Top-level command groups:
 8. `target`
 9. `skill`
 10. `skillset`
-11. `provider`
-12. `catalog`
-13. `package`
-14. `mcp`
-15. `provision`
-16. `policy`
-17. `approval`
-18. `roles`
-19. `instruction`
-20. `workflow`
-21. `sync`
-22. `ops`
-23. `agent`
-24. `codex`
-25. `panel`
-26. `doctor`
+11. `telemetry`
+12. `provider`
+13. `catalog`
+14. `package`
+15. `mcp`
+16. `provision`
+17. `policy`
+18. `approval`
+19. `roles`
+20. `instruction`
+21. `workflow`
+22. `sync`
+23. `ops`
+24. `agent`
+25. `codex`
+26. `panel`
+27. `doctor`
 
 Removed from runtime surface:
 
@@ -375,7 +376,7 @@ Rules:
 ```bash
 loom --json --root <root> skill list
 loom --json --root <root> skill show <skill-id>
-loom --json --root <root> skill inspect <skill-id> [--agent <agent>] [--workspace <path>] [--profile <profile>]
+loom --json --root <root> skill inspect <skill-id> [--agent <agent>] [--workspace <path>] [--profile <profile>] [--include-telemetry]
 loom --json --root <root> skill deps <skill-id> [--agent <agent>] [--workspace <path>]
 loom --json --root <root> skill compile <skill-id> --dry-run [--agent <agent>] [--profile <profile>]
 loom --json --root <root> skill compile --skill <skill-id> --dry-run [--agent <agent>] [--profile <profile>]
@@ -391,7 +392,7 @@ Read-only commands.
 Rules:
 
 1. `skill list`, `skill show`, `skill search`, and `skill resolve` reuse the same union read model as `GET /api/v1/skills`.
-2. `skill inspect` returns the canonical single-skill status model with stable top-level keys: `skill`, `source`, `spec`, `provenance`, `runtime`, `dependencies`, `quality`, `safety`, and `next_actions`.
+2. `skill inspect` returns the canonical single-skill status model with stable top-level keys: `skill`, `source`, `spec`, `provenance`, `runtime`, `dependencies`, `quality`, `safety`, `telemetry`, and `next_actions`.
 3. `skill inspect` separates registry source presence, entrypoint presence, Git drift fields, portable lint, agent compatibility lint, binding rules, projection instances, materialized path health, and unknown agent-specific visibility.
 4. `skill inspect --agent <agent>` filters runtime sections for that agent while preserving top-level source, spec, provenance, quality, safety, and next action fields.
 5. `skill inspect --workspace <path>` and `--profile <profile>` are selectors for binding/runtime classification only; they must not mutate registry state or source files.
@@ -405,6 +406,7 @@ Rules:
 13. trust metadata comes from `state/registry/trust.json`; absent metadata is `unknown`.
 14. `skill deps` is read-only and reports runtime dependency readiness for tools, MCP servers, environment variables, and network expectations without printing secret values.
 15. `skill compile --dry-run`, `skill compile list`, and `skill compile verify` are read-only; they never replace portable `SKILL.md` as the source of truth.
+16. `skill inspect --include-telemetry` reads the same local telemetry summary used by `telemetry report`; without the flag, `telemetry` is `null`.
 
 ### 11.0.1 `skill compile`
 
@@ -1030,6 +1032,46 @@ Rules:
 2. `--security` returns structured security-relevant changed paths and findings only
 3. security diff highlights changed scripts, security-relevant metadata, references, and new network, secret, destructive, shell-execution, or prompt-injection patterns
 4. missing refs or Git failures return typed Git errors
+
+### 11.11 `telemetry`
+
+```bash
+loom --json --root <root> telemetry status
+loom --json --root <root> telemetry enable [--local-only]
+loom --json --root <root> telemetry disable
+loom --json --root <root> telemetry report [--skill <skill-id>] [--skillset <skillset-id>] [--agent <agent>] [--workspace <path>] [--since <date>]
+loom --json --root <root> telemetry export --format jsonl|csv --output <path> [--redacted]
+loom --json --root <root> telemetry purge [--before <date>] --dry-run
+loom --json --root <root> telemetry purge [--before <date>] --confirm <token>
+```
+
+`status` and `report` are read-only. `enable`, `disable`, and confirmed
+`purge` mutate only `state/telemetry`. `export` writes only the explicit output
+path and must reject output under registry state.
+
+Rules:
+
+1. telemetry is local-first and opt-in; absent config reports `enabled=false`.
+2. enabled config uses `state/telemetry/config.json`; events use append-only
+   `state/telemetry/events.jsonl`.
+3. telemetry events use schema version 1, typed event families, hashed
+   workspace/session identifiers, and `privacy.raw_prompt_stored=false`,
+   `privacy.raw_code_stored=false`, `privacy.redacted=true`.
+4. disabled telemetry must not append telemetry events.
+5. existing malformed event lines are surfaced as quarantined warnings in
+   status/report/export/purge responses; they are not silently dropped.
+6. `telemetry report` summarizes usage, value, cost, drift, risk, and
+   recommendation feedback. Missing upstream evidence must be reported as
+   `missing`, not zero usage.
+7. `telemetry export --format jsonl|csv` emits redacted typed events only and
+   skips malformed lines with warnings.
+8. `telemetry purge --dry-run` returns matching event count, byte impact, and a
+   confirmation token; `--confirm` must match the current dry-run token before
+   atomically rewriting telemetry event state.
+9. `skill eval`, `skill scan`, `skill activate`, and `skill deactivate` append
+   redacted telemetry events only when telemetry is enabled.
+10. Panel dashboard UI remains deferred; the CLI report shape is the backend
+   read model for future `/api/v1/telemetry/report`.
 
 ## 12. Human-Friendly Use Flow
 

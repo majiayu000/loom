@@ -19,4 +19,8 @@ pub struct SkillInspectArgs {
     /// Profile id used to select matching bindings.
     #[arg(long)]
     pub profile: Option<String>,
+
+    /// Include local telemetry usage and eval summary when telemetry state exists.
+    #[arg(long)]
+    pub include_telemetry: bool,
 }

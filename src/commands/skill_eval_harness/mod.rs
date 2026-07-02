@@ -11,6 +11,7 @@ use crate::envelope::Meta;
 use crate::gitops::run_git_allow_failure;
 use crate::state::AppContext;
 
+use super::telemetry::record_skill_eval_telemetry;
 use super::{App, CommandFailure};
 use cases::{
     HarnessTaskCase, HarnessTriggerCase, evaluate_trigger_case, read_harness_jsonl,
@@ -103,6 +104,15 @@ impl App {
         )?;
 
         let failed = report["summary"]["failed"].as_u64().unwrap_or(0);
+        record_skill_eval_telemetry(
+            &self.ctx,
+            &args.skill,
+            Some(&args.agent),
+            failed == 0 && !cleanup.failed(),
+            0,
+            0,
+            None,
+        )?;
         if failed > 0 || cleanup.failed() {
             return Err(eval_failed(
                 "skill eval run failed",
@@ -160,6 +170,15 @@ impl App {
             &mut report,
         )?;
         let failed = report["summary"]["failed"].as_u64().unwrap_or(0);
+        record_skill_eval_telemetry(
+            &self.ctx,
+            &args.skill,
+            Some(&args.agent),
+            failed == 0,
+            0,
+            0,
+            None,
+        )?;
         if failed > 0 {
             return Err(eval_failed(
                 "skill trigger eval failed",
@@ -225,6 +244,15 @@ impl App {
             "compare",
             args.output.as_deref(),
             &mut report,
+        )?;
+        record_skill_eval_telemetry(
+            &self.ctx,
+            &args.skill,
+            Some(&args.agent),
+            true,
+            0,
+            0,
+            report["summary"]["delta"].as_f64(),
         )?;
         Ok((report, Meta::default()))
     }

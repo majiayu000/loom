@@ -70,6 +70,7 @@ pub(in crate::panel) async fn v1_skill_inspect(
             agent: None,
             workspace: None,
             profile: None,
+            include_telemetry: false,
         }),
     )
 }

@@ -20,6 +20,7 @@ use super::projections::{
     upsert_projection, upsert_rule,
 };
 use super::skill_safety::enforce_skill_safety;
+use super::telemetry::record_skill_activation_telemetry;
 use super::{App, CommandFailure};
 
 use apply::{
@@ -195,6 +196,12 @@ impl App {
                 &mut meta,
             )?;
         }
+        record_skill_activation_telemetry(
+            &self.ctx,
+            &projection.skill_id,
+            &resolved.selection.agent,
+            true,
+        )?;
 
         Ok((
             json!({
@@ -356,6 +363,12 @@ impl App {
                 &mut meta,
             )?;
         }
+        record_skill_activation_telemetry(
+            &self.ctx,
+            &resolved.selection.skill,
+            &resolved.selection.agent,
+            false,
+        )?;
 
         Ok((json!({"plan": plan, "commit": commit, "noop": false}), meta))
     }

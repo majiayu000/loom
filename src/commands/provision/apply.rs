@@ -1,5 +1,6 @@
 use std::collections::BTreeSet;
-use std::fs;
+use std::fs::{self, OpenOptions};
+use std::io::{ErrorKind, Write};
 use std::path::{Component, Path, PathBuf};
 
 use serde_json::{Value, json};
@@ -15,7 +16,7 @@ use crate::types::ErrorCode;
 
 use super::artifact::load_provision_plan_artifact;
 use super::model::{ProvisionFilePlan, ProvisionPlan};
-use super::utils::{digest_file, digest_json, digest_str, normalize_clone_url};
+use super::utils::{digest_bytes, digest_json, digest_str, normalize_clone_url};
 
 const APPLY_RECORD_SCHEMA: &str = "provision-apply-record-v1";
 const DEFAULT_APPROVAL: &str = "approval:provision-apply";
@@ -25,6 +26,24 @@ struct TargetValidation {
     errors: Vec<Value>,
 }
 
+struct ApplyRecordLock {
+    path: PathBuf,
+}
+
+impl Drop for ApplyRecordLock {
+    fn drop(&mut self) {
+        match fs::remove_file(&self.path) {
+            Ok(()) => {}
+            Err(err) if err.kind() == ErrorKind::NotFound => {}
+            Err(err) => eprintln!(
+                "failed to remove provision apply lock {}: {}",
+                self.path.display(),
+                err
+            ),
+        }
+    }
+}
+
 pub(super) fn cmd_provision_apply(
     ctx: &AppContext,
     args: &ProvisionApplyArgs,
@@ -32,12 +51,18 @@ pub(super) fn cmd_provision_apply(
     validate_non_empty("idempotency-key", &args.idempotency_key)?;
     let plan = load_apply_plan(&args.plan)?;
     ensure_supported_plan(&plan)?;
-    validate_plan_guards(ctx, &plan)?;
     validate_approvals(&plan, &args.approvals)?;
 
     let plan_digest = digest_json(&plan)?;
     let key_digest = digest_str(&args.idempotency_key);
     let record_path = apply_record_path(ctx, &key_digest);
+    if record_path.is_file() {
+        let record = load_apply_record(&record_path)?;
+        return replay_existing_apply(&plan, &plan_digest, &key_digest, &record);
+    }
+
+    validate_plan_guards(ctx, &plan)?;
+    let _record_lock = claim_apply_record_lock(&record_path, &key_digest)?;
     if record_path.is_file() {
         let record = load_apply_record(&record_path)?;
         return replay_existing_apply(&plan, &plan_digest, &key_digest, &record);
@@ -62,8 +87,55 @@ pub(super) fn cmd_provision_apply(
 
     let mut written_files = Vec::new();
     for file in &plan.files_to_write {
+        let current_digest = current_target_digest(&workspace, &file.path).map_err(|error| {
+            policy_blocked(
+                "provision apply target preimage validation failed",
+                json!({
+                    "plan_id": plan.plan_id,
+                    "errors": [error],
+                    "target_writes_performed": false,
+                }),
+            )
+        })?;
+        if current_digest.as_deref() == Some(file.content_digest.as_str()) {
+            continue;
+        }
+        if let Some(error) = target_preimage_error(file, current_digest.as_deref()) {
+            return Err(policy_blocked(
+                "provision apply target preimage validation failed",
+                json!({
+                    "plan_id": plan.plan_id,
+                    "errors": [error],
+                    "target_writes_performed": false,
+                }),
+            ));
+        }
+        ensure_target_parent_chain(&workspace, &file.path)?;
+        if current_target_digest(&workspace, &file.path)
+            .map_err(|error| {
+                policy_blocked(
+                    "provision apply target preimage validation failed",
+                    json!({
+                        "plan_id": plan.plan_id,
+                        "errors": [error],
+                        "target_writes_performed": false,
+                    }),
+                )
+            })?
+            .as_deref()
+            != current_digest.as_deref()
+        {
+            return Err(policy_blocked(
+                "provision apply target changed during apply; retry with a new reviewed plan",
+                json!({
+                    "plan_id": plan.plan_id,
+                    "path": file.path,
+                    "target_writes_performed": false,
+                }),
+            ));
+        }
         let absolute = workspace.join(&file.path);
-        if digest_file(&absolute).as_deref() == Some(file.content_digest.as_str()) {
+        if current_digest.as_deref() == Some(file.content_digest.as_str()) {
             continue;
         }
         write_atomic(&absolute, &file.preview).map_err(map_io)?;
@@ -301,39 +373,224 @@ fn validate_targets(
                 ),
             ));
         }
-        let absolute = workspace.join(&file.path);
-        let current_digest = digest_file(&absolute);
+        let current_digest = match current_target_digest(workspace, &file.path) {
+            Ok(digest) => digest,
+            Err(error) => {
+                all_content_present = false;
+                errors.push(error);
+                continue;
+            }
+        };
         if current_digest.as_deref() != Some(file.content_digest.as_str()) {
             all_content_present = false;
         }
-        if !file.safe_to_apply && current_digest.as_deref() != Some(file.content_digest.as_str()) {
-            errors.push(json!({
-                "path": file.path,
-                "reason": "plan marked file unsafe to apply",
-            }));
-            continue;
-        }
-        match (&file.preimage_digest, current_digest.as_ref()) {
-            (None, None) => {}
-            (None, Some(current)) if current == &file.content_digest => {}
-            (None, Some(current)) => errors.push(json!({
-                "path": file.path,
-                "reason": "target file exists but reviewed plan expected it to be absent",
-                "actual": current,
-            })),
-            (Some(expected), Some(current)) if current == expected => {}
-            (Some(_expected), Some(current)) if current == &file.content_digest => {}
-            (Some(expected), actual) => errors.push(json!({
-                "path": file.path,
-                "reason": "target file changed since reviewed plan",
-                "expected": expected,
-                "actual": actual,
-            })),
+        if let Some(error) = target_preimage_error(file, current_digest.as_deref()) {
+            errors.push(error);
         }
     }
     Ok(TargetValidation {
         all_content_present,
         errors,
+    })
+}
+
+fn current_target_digest(
+    workspace: &Path,
+    path: &str,
+) -> std::result::Result<Option<String>, Value> {
+    validate_target_parent_chain(workspace, path)?;
+    let absolute = workspace.join(path);
+    match fs::symlink_metadata(&absolute) {
+        Ok(metadata) if metadata.file_type().is_symlink() => Err(target_error(
+            path,
+            "target path is a symlink",
+            json!({"path": absolute.display().to_string()}),
+        )),
+        Ok(metadata) if !metadata.is_file() => Err(target_error(
+            path,
+            "target path exists but is not a regular file",
+            json!({"path": absolute.display().to_string()}),
+        )),
+        Ok(_) => fs::read(&absolute)
+            .map(|raw| Some(digest_bytes(&raw)))
+            .map_err(|err| {
+                target_error(
+                    path,
+                    "target file could not be read for preimage validation",
+                    json!({"path": absolute.display().to_string(), "error": err.to_string()}),
+                )
+            }),
+        Err(err) if err.kind() == ErrorKind::NotFound => Ok(None),
+        Err(err) => Err(target_error(
+            path,
+            "target path could not be inspected",
+            json!({"path": absolute.display().to_string(), "error": err.to_string()}),
+        )),
+    }
+}
+
+fn validate_target_parent_chain(workspace: &Path, path: &str) -> std::result::Result<(), Value> {
+    validate_workspace_root(workspace, path)?;
+    let mut cursor = workspace.to_path_buf();
+    let mut components = Path::new(path).components().peekable();
+    while let Some(component) = components.next() {
+        let Component::Normal(name) = component else {
+            continue;
+        };
+        if components.peek().is_none() {
+            break;
+        }
+        cursor.push(name);
+        match fs::symlink_metadata(&cursor) {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                return Err(target_error(
+                    path,
+                    "target parent path is a symlink",
+                    json!({"path": cursor.display().to_string()}),
+                ));
+            }
+            Ok(metadata) if !metadata.is_dir() => {
+                return Err(target_error(
+                    path,
+                    "target parent path exists but is not a directory",
+                    json!({"path": cursor.display().to_string()}),
+                ));
+            }
+            Ok(_) => {}
+            Err(err) if err.kind() == ErrorKind::NotFound => return Ok(()),
+            Err(err) => {
+                return Err(target_error(
+                    path,
+                    "target parent path could not be inspected",
+                    json!({"path": cursor.display().to_string(), "error": err.to_string()}),
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn ensure_target_parent_chain(
+    workspace: &Path,
+    path: &str,
+) -> std::result::Result<(), CommandFailure> {
+    validate_workspace_root(workspace, path).map_err(|error| {
+        policy_blocked(
+            "provision apply target preimage validation failed",
+            json!({
+                "errors": [error],
+                "target_writes_performed": false,
+            }),
+        )
+    })?;
+    let mut cursor = workspace.to_path_buf();
+    let mut components = Path::new(path).components().peekable();
+    while let Some(component) = components.next() {
+        let Component::Normal(name) = component else {
+            continue;
+        };
+        if components.peek().is_none() {
+            break;
+        }
+        cursor.push(name);
+        loop {
+            match fs::symlink_metadata(&cursor) {
+                Ok(metadata) if metadata.file_type().is_symlink() => {
+                    return Err(policy_blocked(
+                        "provision apply target preimage validation failed",
+                        json!({
+                            "errors": [target_error(
+                                path,
+                                "target parent path is a symlink",
+                                json!({"path": cursor.display().to_string()}),
+                            )],
+                            "target_writes_performed": false,
+                        }),
+                    ));
+                }
+                Ok(metadata) if !metadata.is_dir() => {
+                    return Err(policy_blocked(
+                        "provision apply target preimage validation failed",
+                        json!({
+                            "errors": [target_error(
+                                path,
+                                "target parent path exists but is not a directory",
+                                json!({"path": cursor.display().to_string()}),
+                            )],
+                            "target_writes_performed": false,
+                        }),
+                    ));
+                }
+                Ok(_) => break,
+                Err(err) if err.kind() == ErrorKind::NotFound => match fs::create_dir(&cursor) {
+                    Ok(()) => break,
+                    Err(err) if err.kind() == ErrorKind::AlreadyExists => continue,
+                    Err(err) => return Err(map_io(err)),
+                },
+                Err(err) => return Err(map_io(err)),
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_workspace_root(workspace: &Path, path: &str) -> std::result::Result<(), Value> {
+    match fs::symlink_metadata(workspace) {
+        Ok(metadata) if metadata.file_type().is_symlink() => Err(target_error(
+            path,
+            "workspace path is a symlink",
+            json!({"path": workspace.display().to_string()}),
+        )),
+        Ok(metadata) if !metadata.is_dir() => Err(target_error(
+            path,
+            "workspace path exists but is not a directory",
+            json!({"path": workspace.display().to_string()}),
+        )),
+        Ok(_) => Ok(()),
+        Err(err) if err.kind() == ErrorKind::NotFound => Err(target_error(
+            path,
+            "workspace path does not exist",
+            json!({"path": workspace.display().to_string()}),
+        )),
+        Err(err) => Err(target_error(
+            path,
+            "workspace path could not be inspected",
+            json!({"path": workspace.display().to_string(), "error": err.to_string()}),
+        )),
+    }
+}
+
+fn target_preimage_error(file: &ProvisionFilePlan, current_digest: Option<&str>) -> Option<Value> {
+    if !file.safe_to_apply && current_digest != Some(file.content_digest.as_str()) {
+        return Some(target_error(
+            &file.path,
+            "plan marked file unsafe to apply",
+            json!({}),
+        ));
+    }
+    match (&file.preimage_digest, current_digest) {
+        (None, None) => None,
+        (None, Some(current)) if current == file.content_digest => None,
+        (None, Some(current)) => Some(target_error(
+            &file.path,
+            "target file exists but reviewed plan expected it to be absent",
+            json!({"actual": current}),
+        )),
+        (Some(expected), Some(current)) if current == expected => None,
+        (Some(_expected), Some(current)) if current == file.content_digest => None,
+        (Some(expected), actual) => Some(target_error(
+            &file.path,
+            "target file changed since reviewed plan",
+            json!({"expected": expected, "actual": actual}),
+        )),
+    }
+}
+
+fn target_error(path: &str, reason: &str, details: Value) -> Value {
+    json!({
+        "path": path,
+        "reason": reason,
+        "details": details,
     })
 }
 
@@ -375,8 +632,18 @@ fn replay_existing_apply(
     }
     for file in &plan.files_to_write {
         validate_target_path(&file.path)?;
-        let absolute = Path::new(&plan.workspace).join(&file.path);
-        if digest_file(&absolute).as_deref() != Some(file.content_digest.as_str()) {
+        let current_digest = current_target_digest(Path::new(&plan.workspace), &file.path)
+            .map_err(|error| {
+                policy_blocked(
+                    "provision apply replay target files no longer match the reviewed plan",
+                    json!({
+                        "plan_id": plan.plan_id,
+                        "errors": [error],
+                        "target_writes_performed": false,
+                    }),
+                )
+            })?;
+        if current_digest.as_deref() != Some(file.content_digest.as_str()) {
             return Err(policy_blocked(
                 "provision apply replay target files no longer match the reviewed plan",
                 json!({
@@ -394,6 +661,33 @@ fn load_apply_record(path: &Path) -> std::result::Result<Value, CommandFailure> 
     let raw = fs::read_to_string(path).map_err(map_io)?;
     serde_json::from_str(&raw)
         .map_err(|err| CommandFailure::new(ErrorCode::ArgInvalid, err.to_string()))
+}
+
+fn claim_apply_record_lock(
+    record_path: &Path,
+    key_digest: &str,
+) -> std::result::Result<ApplyRecordLock, CommandFailure> {
+    let lock_path = record_path.with_extension("lock");
+    fs::create_dir_all(lock_path.parent().unwrap_or(Path::new("."))).map_err(map_io)?;
+    match OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&lock_path)
+    {
+        Ok(mut file) => {
+            writeln!(file, "{key_digest}").map_err(map_io)?;
+            file.sync_all().map_err(map_io)?;
+            Ok(ApplyRecordLock { path: lock_path })
+        }
+        Err(err) if err.kind() == ErrorKind::AlreadyExists => Err(policy_blocked(
+            "provision apply idempotency key is already in progress",
+            json!({
+                "idempotency_key_digest": key_digest,
+                "target_writes_performed": false,
+            }),
+        )),
+        Err(err) => Err(map_io(err)),
+    }
 }
 
 fn write_apply_record(

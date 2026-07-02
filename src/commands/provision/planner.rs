@@ -33,6 +33,12 @@ pub(super) fn build_provision_plan(
     agent: &str,
 ) -> std::result::Result<ProvisionPlan, CommandFailure> {
     let target_kind = provision_target_name(target).to_string();
+    let apply_deferred = target != ProvisionTargetArg::Devcontainer;
+    let required_approvals = if apply_deferred {
+        Vec::<&str>::new()
+    } else {
+        vec!["approval:provision-apply"]
+    };
     let container_workspace = container_workspace_path(workspace);
     let mut findings = Vec::new();
     if target != ProvisionTargetArg::Devcontainer {
@@ -107,11 +113,11 @@ pub(super) fn build_provision_plan(
         secrets_required,
         policy: json!({
             "mode": "plan_first",
-            "apply_deferred": false,
+            "apply_deferred": apply_deferred,
             "secret_copy": false,
             "target_writes_in_plan": false,
-            "approval_required_for_apply": true,
-            "required_approvals": ["approval:provision-apply"],
+            "approval_required_for_apply": !apply_deferred,
+            "required_approvals": required_approvals,
         }),
         loom_cli: json!({
             "required": true,

@@ -278,7 +278,7 @@ pub(super) fn digest_str(raw: &str) -> String {
     digest_bytes(raw.as_bytes())
 }
 
-fn digest_bytes(raw: &[u8]) -> String {
+pub(super) fn digest_bytes(raw: &[u8]) -> String {
     let mut hash = Sha256::new();
     hash.update(raw);
     format!("sha256:{}", to_hex(&hash.finalize()))

@@ -194,6 +194,30 @@ fn provision_apply_writes_reviewed_files_and_replays_idempotently() {
     );
     assert_eq!(replay_env["data"]["idempotent_replay"], json!(true));
     assert_eq!(replay_env["data"]["target_writes_performed"], json!(false));
+
+    write_file(
+        &root.path().join("skills/demo/SKILL.md"),
+        "---\nname: demo\ndescription: Demo advanced.\n---\n# Demo Advanced\n",
+    );
+    commit_provision_registry(&root, "advance registry after apply");
+    let (stale_replay_output, stale_replay_env) = run_loom(
+        root.path(),
+        &[
+            "provision",
+            "apply",
+            &plan_arg,
+            "--idempotency-key",
+            "key-123",
+            "--approve",
+            "approval:provision-apply",
+        ],
+    );
+
+    assert!(
+        stale_replay_output.status.success(),
+        "provision apply replay after registry advance failed: {stale_replay_env}"
+    );
+    assert_eq!(stale_replay_env["data"]["idempotent_replay"], json!(true));
 }
 
 #[test]
@@ -264,6 +288,84 @@ fn provision_apply_rejects_preimage_drift_without_overwrite() {
         fs::read_to_string(devcontainer).expect("read drifted file"),
         "{\"name\":\"manual\"}\n"
     );
+}
+
+#[test]
+fn provision_apply_rejects_directory_target_without_partial_write() {
+    let root = TestDir::new("provision-apply-directory-root");
+    let workspace = TestDir::new("provision-apply-directory-workspace");
+    let plan_path = root.path().join("plan.json");
+    build_plan(&root, &workspace, &plan_path);
+    fs::create_dir_all(workspace.path().join(".devcontainer/devcontainer.json"))
+        .expect("create directory target");
+    let plan_arg = plan_path.to_string_lossy().to_string();
+
+    let (output, env) = run_loom(
+        root.path(),
+        &[
+            "provision",
+            "apply",
+            &plan_arg,
+            "--idempotency-key",
+            "key-directory",
+            "--approve",
+            "approval:provision-apply",
+        ],
+    );
+
+    assert!(!output.status.success(), "directory target should fail");
+    assert_eq!(env["error"]["code"], json!("POLICY_BLOCKED"));
+    assert_eq!(
+        env["error"]["details"]["target_writes_performed"],
+        json!(false)
+    );
+    assert!(
+        !workspace
+            .path()
+            .join(".devcontainer/loom-setup.sh")
+            .exists()
+    );
+    assert!(
+        workspace
+            .path()
+            .join(".devcontainer/devcontainer.json")
+            .is_dir()
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn provision_apply_rejects_symlink_parent_without_escape_write() {
+    let root = TestDir::new("provision-apply-symlink-root");
+    let workspace = TestDir::new("provision-apply-symlink-workspace");
+    let escape = TestDir::new("provision-apply-symlink-escape");
+    let plan_path = root.path().join("plan.json");
+    build_plan(&root, &workspace, &plan_path);
+    std::os::unix::fs::symlink(escape.path(), workspace.path().join(".devcontainer"))
+        .expect("create symlink parent");
+    let plan_arg = plan_path.to_string_lossy().to_string();
+
+    let (output, env) = run_loom(
+        root.path(),
+        &[
+            "provision",
+            "apply",
+            &plan_arg,
+            "--idempotency-key",
+            "key-symlink",
+            "--approve",
+            "approval:provision-apply",
+        ],
+    );
+
+    assert!(!output.status.success(), "symlink parent should fail");
+    assert_eq!(env["error"]["code"], json!("POLICY_BLOCKED"));
+    assert_eq!(
+        env["error"]["details"]["target_writes_performed"],
+        json!(false)
+    );
+    assert!(!escape.path().join("loom-setup.sh").exists());
+    assert!(!escape.path().join("devcontainer.json").exists());
 }
 
 #[test]
@@ -356,4 +458,45 @@ fn provision_apply_rejects_credential_bearing_clone_url_artifact() {
         json!(false)
     );
     assert!(!workspace.path().join(".devcontainer").exists());
+}
+
+#[test]
+fn provision_plan_marks_unsupported_targets_apply_deferred() {
+    let root = TestDir::new("provision-apply-unsupported-root");
+    let workspace = TestDir::new("provision-apply-unsupported-workspace");
+    write_skill(
+        root.path(),
+        "demo",
+        "---\nname: demo\ndescription: Demo.\n---\n# Demo\n",
+    );
+    write_codex_registry_state(&root, &workspace);
+    seed_git(&root);
+    let workspace_arg = workspace.path().to_string_lossy().to_string();
+
+    let (output, env) = run_loom(
+        root.path(),
+        &[
+            "provision",
+            "plan",
+            "--target",
+            "remote",
+            "--workspace",
+            &workspace_arg,
+        ],
+    );
+
+    assert!(
+        output.status.success(),
+        "remote plan should be generated: {env}"
+    );
+    assert_eq!(env["data"]["plan"]["target_kind"], json!("remote"));
+    assert_eq!(env["data"]["plan"]["policy"]["apply_deferred"], json!(true));
+    assert_eq!(
+        env["data"]["plan"]["policy"]["approval_required_for_apply"],
+        json!(false)
+    );
+    assert_eq!(
+        env["data"]["plan"]["policy"]["required_approvals"],
+        json!([])
+    );
 }

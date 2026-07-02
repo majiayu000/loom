@@ -152,7 +152,7 @@ impl App {
                     },
                     "policy": {
                         "status": "pass",
-                        "apply_deferred": false,
+                        "apply_deferred": plan.target_kind != "devcontainer",
                     },
                 },
                 "findings": plan.findings,

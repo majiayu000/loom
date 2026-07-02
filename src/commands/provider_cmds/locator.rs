@@ -272,7 +272,7 @@ impl App {
                 "query": args.query,
                 "provider": provider.record.id,
                 "agent": args.agent,
-                "results": search_local_catalog(Path::new(&provider.record.url), &args.query)?,
+                "results": search_local_catalog(&provider.record.id, Path::new(&provider.record.url), &args.query)?,
                 "warnings": ["catalog results are advisory until installed through loom skill install"],
             }),
             Meta::default(),
@@ -300,6 +300,7 @@ impl App {
 }
 
 fn search_local_catalog(
+    provider_id: &str,
     root: &Path,
     query: &str,
 ) -> std::result::Result<Vec<Value>, CommandFailure> {
@@ -343,10 +344,10 @@ fn search_local_catalog(
             .to_string_lossy()
             .to_string();
         results.push(json!({
-            "locator": format!("local:{}//{}", root.display(), rel),
+            "locator": format!("{}:{}//{}", provider_id, root.display(), rel),
             "name": name,
             "description": description,
-            "source": {"provider": "local", "path": root.display().to_string(), "subdir": rel, "ref": null},
+            "source": {"provider": provider_id, "path": root.display().to_string(), "subdir": rel, "ref": null},
             "signals": {"stars": null, "last_updated": null, "license": preview["metadata"]["license"], "verified": false},
             "warnings": ["third-party-unreviewed"],
         }));

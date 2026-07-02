@@ -11,6 +11,7 @@ mod helpers;
 mod history_cmds;
 mod instruction;
 mod mcp;
+mod meta;
 #[cfg(test)]
 mod observed_tests;
 mod org_policy;
@@ -60,12 +61,8 @@ use serde_json::json;
 use uuid::Uuid;
 
 use crate::cli::{
-    AgentCommand, ApprovalCommand, Cli, CodexCommand, Command, McpCommand, OpsCommand,
-    OpsHistoryCommand, OrgPolicyCommand, PackageCommand, PolicyCommand, ProvisionCommand,
-    RemoteCommand, RolesCommand, SkillActiveCommand, SkillCommand, SkillOrphanCommand,
-    SkillProvenanceCommand, SkillTrashCommand, SkillsetCommand, SyncCommand, TargetCommand,
-    TelemetryCommand, WorkflowCommand, WorkspaceBindingCommand, WorkspaceCommand,
-    WorkspaceInitArgs,
+    AgentCommand, Cli, CodexCommand, Command, PolicyCommand, SkillActiveCommand, SkillCommand,
+    SkillOrphanCommand, SkillTrashCommand, SkillsetCommand, WorkspaceCommand, WorkspaceInitArgs,
 };
 use crate::envelope::{Envelope, Meta};
 use crate::state::{AppContext, home_dir};
@@ -83,6 +80,7 @@ use event_store::{
     command_event_input, prepare_command_event_store,
 };
 use helpers::{command_name, ensure_initial_commit, map_git, map_io};
+use meta::command_meta;
 
 use crate::error_actions::{NextAction, default_next_actions};
 use crate::gitops;
@@ -153,8 +151,9 @@ impl App {
             .request_id
             .clone()
             .unwrap_or_else(|| Uuid::new_v4().to_string());
-        let audit_required = command_requires_durable_audit(&cli.command);
-        let audit_enabled = command_records_audit(&cli.command)
+        let command_meta = command_meta(&cli.command);
+        let audit_required = command_meta.durable_audit();
+        let audit_enabled = command_meta.records_audit()
             && (audit_required || self.ctx.ensure_not_loom_tool_repo_root().is_ok());
         if audit_required && let Err(err) = self.ctx.ensure_not_loom_tool_repo_root() {
             let message = err.to_string();
@@ -396,6 +395,74 @@ impl App {
         }
     }
 
+    pub(crate) fn execute_service_result<F>(
+        &self,
+        cmd: &str,
+        request_id: String,
+        input: serde_json::Value,
+        service: &mut F,
+    ) -> (Envelope, i32)
+    where
+        F: FnMut(String) -> std::result::Result<(serde_json::Value, Meta), CommandFailure> + ?Sized,
+    {
+        if let Err(err) = self.ctx.ensure_not_loom_tool_repo_root() {
+            let message = err.to_string();
+            let message = message
+                .strip_prefix("ARG_INVALID:")
+                .map(str::trim)
+                .unwrap_or(&message);
+            let env = Envelope::err(cmd, request_id, ErrorCode::ArgInvalid, message, json!({}));
+            return (env, ErrorCode::ArgInvalid.exit_code());
+        }
+
+        match prepare_command_event_store(&self.ctx) {
+            Ok(()) => match append_command_started(&self.ctx, cmd, input, &request_id) {
+                Ok(_) => {}
+                Err(err) => {
+                    let warning = format!("failed to append command event: {}", err);
+                    let env =
+                        Envelope::err(cmd, request_id, ErrorCode::AuditError, warning, json!({}));
+                    return (env, ErrorCode::AuditError.exit_code());
+                }
+            },
+            Err(err) => {
+                let warning = format!("failed to prepare command event log: {}", err);
+                let env = Envelope::err(cmd, request_id, ErrorCode::AuditError, warning, json!({}));
+                return (env, ErrorCode::AuditError.exit_code());
+            }
+        }
+
+        match service(request_id.clone()) {
+            Ok((data, meta)) => {
+                let env = Envelope::ok(cmd, request_id, data, meta);
+                self.finish_command_audit(cmd, env, 0, true, true)
+            }
+            Err(f) => {
+                let CommandFailure {
+                    code,
+                    message,
+                    details,
+                    next_actions,
+                } = f;
+                let exit_code = code.exit_code();
+                let next_actions = if next_actions.is_empty() {
+                    default_next_actions(code.as_str())
+                } else {
+                    next_actions
+                };
+                let env = Envelope::err_with_next_actions(
+                    cmd,
+                    request_id,
+                    code,
+                    message,
+                    details,
+                    next_actions,
+                );
+                self.finish_command_audit(cmd, env, exit_code, true, true)
+            }
+        }
+    }
+
     fn finish_command_audit(
         &self,
         cmd: &str,
@@ -474,285 +541,4 @@ impl App {
         paths.ensure_layout().map_err(helpers::map_registry_state)?;
         Ok(paths)
     }
-}
-
-fn command_records_audit(command: &Command) -> bool {
-    if let Command::Skill {
-        command: SkillCommand::Draft(args),
-    } = command
-    {
-        return !args.dry_run;
-    }
-    if let Command::Skill {
-        command: SkillCommand::Extract(args),
-    } = command
-    {
-        return !args.dry_run;
-    }
-    if let Command::Skill {
-        command: SkillCommand::Rewrite(args),
-    } = command
-    {
-        return !args.dry_run;
-    }
-    if let Command::Skill {
-        command: SkillCommand::TuneDescription(args),
-    } = command
-    {
-        return !args.dry_run;
-    }
-    if let Command::Skill {
-        command: SkillCommand::GenerateEvals(args),
-    } = command
-    {
-        return !args.dry_run;
-    }
-    if let Command::Skill {
-        command: SkillCommand::New(args),
-    } = command
-    {
-        return !args.dry_run;
-    }
-    if let Command::Skill {
-        command: SkillCommand::Activate(args),
-    } = command
-    {
-        return !args.dry_run;
-    }
-    if let Command::Skill {
-        command: SkillCommand::Deactivate(args),
-    } = command
-    {
-        return !args.dry_run;
-    }
-    if let Command::Codex {
-        command: CodexCommand::Reconcile(args),
-    } = command
-    {
-        return args.apply;
-    }
-    if let Command::Telemetry { command } = command {
-        return match command {
-            TelemetryCommand::Enable(_) | TelemetryCommand::Disable => true,
-            TelemetryCommand::Purge(args) => args.confirm.is_some(),
-            TelemetryCommand::Status
-            | TelemetryCommand::Report(_)
-            | TelemetryCommand::Export(_) => false,
-        };
-    }
-
-    !matches!(
-        command,
-        Command::Panel(_)
-            | Command::Backup { .. }
-            | Command::Index(_)
-            | Command::Active(_)
-            | Command::Catalog { .. }
-            | Command::Mcp { .. }
-            | Command::Provision {
-                command: ProvisionCommand::Plan(_)
-                    | ProvisionCommand::Doctor(_)
-                    | ProvisionCommand::Export(_)
-                    | ProvisionCommand::Import(_),
-            }
-            | Command::Package {
-                command: PackageCommand::Plan(_) | PackageCommand::Verify(_),
-            }
-            | Command::Policy {
-                command: PolicyCommand::Org {
-                    command: OrgPolicyCommand::Show | OrgPolicyCommand::Check(_),
-                },
-            }
-            | Command::Approval {
-                command: ApprovalCommand::List(_),
-            }
-            | Command::Roles {
-                command: RolesCommand::List,
-            }
-            | Command::Instruction { .. }
-            | Command::Provider {
-                command: crate::cli::ProviderCommand::List,
-            }
-            | Command::Skill {
-                command: SkillCommand::History(_)
-                    | SkillCommand::List
-                    | SkillCommand::Inspect(_)
-                    | SkillCommand::Deps(_)
-                    | SkillCommand::Compile(_)
-                    | SkillCommand::Improve(_)
-                    | SkillCommand::Regression(_)
-                    | SkillCommand::Active { .. }
-                    | SkillCommand::Search(_)
-                    | SkillCommand::Lint(_)
-                    | SkillCommand::Visibility(_)
-                    | SkillCommand::Diagnose(_)
-                    | SkillCommand::Eval(_)
-                    | SkillCommand::Trash {
-                        command: SkillTrashCommand::List,
-                    }
-            }
-            | Command::Skillset {
-                command: SkillsetCommand::Show(_) | SkillsetCommand::Lint(_),
-            }
-            | Command::Workflow {
-                command: WorkflowCommand::Show(_)
-                    | WorkflowCommand::Preflight(_)
-                    | WorkflowCommand::Run(_),
-            }
-    ) && !is_rollback_preview(command)
-}
-
-fn command_requires_durable_audit(command: &Command) -> bool {
-    match command {
-        Command::Init | Command::Monitor(_) => true,
-        Command::Use(args) => args.apply,
-        Command::Plan { .. } | Command::Apply(_) => true,
-        Command::Backup { .. } => false,
-        Command::Workspace { command } => match command {
-            WorkspaceCommand::Status | WorkspaceCommand::Doctor => false,
-            WorkspaceCommand::Init(_) => true,
-            WorkspaceCommand::Binding { command } => !matches!(
-                command,
-                WorkspaceBindingCommand::List | WorkspaceBindingCommand::Show(_)
-            ),
-            WorkspaceCommand::Remote { command } => !matches!(command, RemoteCommand::Status),
-        },
-        Command::Target { command } => {
-            !matches!(command, TargetCommand::List | TargetCommand::Show(_))
-        }
-        Command::Skill { command } => match command {
-            SkillCommand::Add(_)
-            | SkillCommand::ImportObserved(_)
-            | SkillCommand::MonitorObserved(_)
-            | SkillCommand::Project(_)
-            | SkillCommand::Commit(_)
-            | SkillCommand::Watch(_)
-            | SkillCommand::Release(_)
-            | SkillCommand::Trust(_)
-            | SkillCommand::Quarantine(_)
-            | SkillCommand::Unquarantine(_)
-            | SkillCommand::Provenance {
-                command: SkillProvenanceCommand::Refresh(_),
-            }
-            | SkillCommand::Trash {
-                command:
-                    SkillTrashCommand::Add(_)
-                    | SkillTrashCommand::Restore(_)
-                    | SkillTrashCommand::Purge(_),
-            }
-            | SkillCommand::Orphan {
-                command: SkillOrphanCommand::Clean(_),
-            } => true,
-            SkillCommand::Install(args) => !args.dry_run,
-            SkillCommand::Rollback(args) => !args.dry_run,
-            SkillCommand::New(args) => !args.dry_run,
-            SkillCommand::Draft(args) => !args.dry_run,
-            SkillCommand::Extract(args) => !args.dry_run,
-            SkillCommand::Rewrite(args) => !args.dry_run,
-            SkillCommand::TuneDescription(args) => !args.dry_run,
-            SkillCommand::GenerateEvals(args) => !args.dry_run,
-            SkillCommand::ApplyPatch(_) => true,
-            SkillCommand::Activate(args) => !args.dry_run,
-            SkillCommand::Deactivate(args) => !args.dry_run,
-            SkillCommand::Diff(_)
-            | SkillCommand::History(_)
-            | SkillCommand::List
-            | SkillCommand::Inspect(_)
-            | SkillCommand::Deps(_)
-            | SkillCommand::Compile(_)
-            | SkillCommand::Improve(_)
-            | SkillCommand::Regression(_)
-            | SkillCommand::Active { .. }
-            | SkillCommand::Search(_)
-            | SkillCommand::Lint(_)
-            | SkillCommand::Policy(_)
-            | SkillCommand::Scan(_)
-            | SkillCommand::Visibility(_)
-            | SkillCommand::Diagnose(_)
-            | SkillCommand::Eval(_)
-            | SkillCommand::Provenance {
-                command: SkillProvenanceCommand::Inspect(_) | SkillProvenanceCommand::Verify(_),
-            }
-            | SkillCommand::Trash {
-                command: SkillTrashCommand::List,
-            }
-            | SkillCommand::Orphan {
-                command: SkillOrphanCommand::List,
-            } => false,
-        },
-        Command::Skillset { command } => match command {
-            SkillsetCommand::Create(_) | SkillsetCommand::Add(_) | SkillsetCommand::Remove(_) => {
-                true
-            }
-            SkillsetCommand::Show(_) | SkillsetCommand::Lint(_) => false,
-        },
-        Command::Telemetry { command } => match command {
-            TelemetryCommand::Enable(_) | TelemetryCommand::Disable => true,
-            TelemetryCommand::Purge(args) => args.confirm.is_some(),
-            TelemetryCommand::Status
-            | TelemetryCommand::Report(_)
-            | TelemetryCommand::Export(_) => false,
-        },
-        Command::Provider { command } => !matches!(command, crate::cli::ProviderCommand::List),
-        Command::Catalog { .. } => false,
-        Command::Package { command } => match command {
-            PackageCommand::Build(_) => false,
-            PackageCommand::Plan(_) | PackageCommand::Verify(_) => false,
-        },
-        Command::Mcp { command } => match command {
-            McpCommand::Requirement { .. }
-            | McpCommand::Plan(_)
-            | McpCommand::Doctor(_)
-            | McpCommand::Catalog { .. } => false,
-        },
-        Command::Provision { command } => match command {
-            ProvisionCommand::Plan(_)
-            | ProvisionCommand::Doctor(_)
-            | ProvisionCommand::Export(_)
-            | ProvisionCommand::Import(_) => false,
-            ProvisionCommand::Apply(_) => true,
-        },
-        Command::Policy { command } => match command {
-            PolicyCommand::Org { command } => matches!(command, OrgPolicyCommand::Init(_)),
-        },
-        Command::Approval { command } => match command {
-            ApprovalCommand::Request(_)
-            | ApprovalCommand::Approve(_)
-            | ApprovalCommand::Reject(_) => true,
-            ApprovalCommand::List(_) => false,
-        },
-        Command::Roles { command } => match command {
-            RolesCommand::Grant(_) | RolesCommand::Revoke(_) => true,
-            RolesCommand::List => false,
-        },
-        Command::Instruction { .. } => false,
-        Command::Workflow { command } => match command {
-            WorkflowCommand::Create(args) => !args.dry_run,
-            WorkflowCommand::Plan(_) => true,
-            WorkflowCommand::Show(_) | WorkflowCommand::Preflight(_) | WorkflowCommand::Run(_) => {
-                false
-            }
-        },
-        Command::Index(_) | Command::Active(_) => false,
-        Command::Sync { command } => !matches!(command, SyncCommand::Status),
-        Command::Ops { command } => match command {
-            OpsCommand::List => false,
-            OpsCommand::Retry | OpsCommand::Purge => true,
-            OpsCommand::History { command } => !matches!(command, OpsHistoryCommand::Diagnose),
-        },
-        Command::Agent { .. } => false,
-        Command::Codex { command } => match command {
-            CodexCommand::Reconcile(args) => args.apply,
-        },
-        Command::Panel(_) => false,
-    }
-}
-
-fn is_rollback_preview(command: &Command) -> bool {
-    matches!(
-        command,
-        Command::Skill {
-            command: SkillCommand::Rollback(args),
-        } if args.dry_run
-    )
 }

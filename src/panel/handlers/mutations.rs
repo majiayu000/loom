@@ -5,14 +5,24 @@ use axum::{
     extract::{ConnectInfo, Path as AxumPath, State},
     http::{HeaderMap, StatusCode},
 };
+use serde_json::json;
 
 use crate::cli::{
-    AddArgs, Command, ImportObservedArgs, OrphanCleanArgs, ProjectArgs, ProjectionMethod,
-    SkillOrphanCommand, SkillTrashCommand, TargetCommand, TargetOwnership, TrashAddArgs,
-    TrashPurgeArgs, TrashRestoreArgs, UseArgs, WorkspaceBindingCommand, WorkspaceCommand,
+    AddArgs, Command, ImportObservedArgs, OrphanCleanArgs, ProjectionMethod, SkillOrphanCommand,
+    SkillTrashCommand, TargetCommand, TargetOwnership, TrashAddArgs, TrashPurgeArgs,
+    TrashRestoreArgs, UseArgs, WorkspaceBindingCommand, WorkspaceCommand,
 };
+use crate::commands::CommandFailure;
+use crate::core::lifecycle::{
+    CommitSourceInput, ReleaseAnchorInput, ReleaseVersionInput, RollbackInput,
+};
+use crate::core::projection::{CommitProjectionInput, ProjectSkillInput};
+use crate::core::vocab::ProjectionMethod as CoreProjectionMethod;
+use crate::types::ErrorCode;
 
-use super::super::auth::{ensure_mutation_authorized, error_envelope, run_panel_command};
+use super::super::auth::{
+    ensure_mutation_authorized, error_envelope, run_panel_command, run_panel_service,
+};
 use super::super::{
     BindingAddRequest, CaptureRequest, ImportObservedRequest, OrphanCleanRequest, PanelState,
     ProjectRequest, SkillAddRequest, SkillReleaseRequest, SkillRollbackRequest, SkillSaveRequest,
@@ -24,6 +34,13 @@ fn policy_profile_looks_sane(value: &str) -> bool {
         && value
             .chars()
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_')
+}
+
+fn panel_service_reused() -> CommandFailure {
+    CommandFailure::new(
+        ErrorCode::InternalError,
+        "panel service callback was invoked more than once",
+    )
 }
 
 pub(in crate::panel) async fn registry_target_add(
@@ -148,19 +165,37 @@ pub(in crate::panel) async fn registry_project(
     if let Some(response) = ensure_mutation_authorized(&state, peer, &headers, "skill.project") {
         return response;
     }
-    run_panel_command(
+    let input = ProjectSkillInput {
+        skill: req.skill,
+        binding: req.binding,
+        target: req.target,
+        method: CoreProjectionMethod::from(req.method.unwrap_or(ProjectionMethod::Symlink)),
+    };
+    let audit_input = json!({
+        "source": "panel",
+        "service": "projection.project_skill",
+        "input": {
+            "skill": input.skill,
+            "binding": input.binding,
+            "target": input.target,
+            "method": format!("{:?}", input.method),
+        }
+    });
+    let ctx = state.ctx.clone();
+    let mut input = Some(input);
+    let mut service = move |request_id: String| {
+        crate::core::projection::project_skill(
+            &ctx,
+            input.take().ok_or_else(panel_service_reused)?,
+            &request_id,
+        )
+    };
+    run_panel_service(
         &state,
         "skill.project",
         StatusCode::OK,
-        Command::Skill {
-            command: crate::cli::SkillCommand::Project(ProjectArgs {
-                skill: req.skill,
-                binding: req.binding,
-                target: req.target,
-                method: req.method.unwrap_or(ProjectionMethod::Symlink),
-                dry_run: false,
-            }),
-        },
+        audit_input,
+        &mut service,
     )
 }
 
@@ -325,21 +360,33 @@ pub(in crate::panel) async fn registry_skill_save(
     if let Some(response) = ensure_mutation_authorized(&state, peer, &headers, "skill.commit") {
         return response;
     }
-    run_panel_command(
+    let input = CommitSourceInput {
+        skill: skill_name,
+        message: req.message,
+    };
+    let audit_input = json!({
+        "source": "panel",
+        "service": "lifecycle.commit_source",
+        "input": {
+            "skill": input.skill,
+            "message": input.message,
+        }
+    });
+    let ctx = state.ctx.clone();
+    let mut input = Some(input);
+    let mut service = move |request_id: String| {
+        crate::core::lifecycle::commit_source(
+            &ctx,
+            input.take().ok_or_else(panel_service_reused)?,
+            &request_id,
+        )
+    };
+    run_panel_service(
         &state,
         "skill.commit",
         StatusCode::OK,
-        Command::Skill {
-            command: crate::cli::SkillCommand::Commit(crate::cli::SkillCommitArgs {
-                skill: skill_name,
-                message: req.message,
-                from_projection: false,
-                from_source: true,
-                binding: None,
-                instance: None,
-                preflight: false,
-            }),
-        },
+        audit_input,
+        &mut service,
     )
 }
 
@@ -352,19 +399,29 @@ pub(in crate::panel) async fn registry_skill_snapshot(
     if let Some(response) = ensure_mutation_authorized(&state, peer, &headers, "skill.release") {
         return response;
     }
-    run_panel_command(
+    let input = ReleaseAnchorInput { skill: skill_name };
+    let audit_input = json!({
+        "source": "panel",
+        "service": "lifecycle.release_anchor",
+        "input": {
+            "skill": input.skill,
+        }
+    });
+    let ctx = state.ctx.clone();
+    let mut input = Some(input);
+    let mut service = move |request_id: String| {
+        crate::core::lifecycle::release_anchor(
+            &ctx,
+            input.take().ok_or_else(panel_service_reused)?,
+            &request_id,
+        )
+    };
+    run_panel_service(
         &state,
         "skill.release",
         StatusCode::OK,
-        Command::Skill {
-            command: crate::cli::SkillCommand::Release(crate::cli::ReleaseArgs {
-                skill: skill_name,
-                version: None,
-                anchor: true,
-                preflight: false,
-                baseline: None,
-            }),
-        },
+        audit_input,
+        &mut service,
     )
 }
 
@@ -378,19 +435,33 @@ pub(in crate::panel) async fn registry_skill_release(
     if let Some(response) = ensure_mutation_authorized(&state, peer, &headers, "skill.release") {
         return response;
     }
-    run_panel_command(
+    let input = ReleaseVersionInput {
+        skill: skill_name,
+        version: req.version,
+    };
+    let audit_input = json!({
+        "source": "panel",
+        "service": "lifecycle.release_version",
+        "input": {
+            "skill": input.skill,
+            "version": input.version,
+        }
+    });
+    let ctx = state.ctx.clone();
+    let mut input = Some(input);
+    let mut service = move |request_id: String| {
+        crate::core::lifecycle::release_version(
+            &ctx,
+            input.take().ok_or_else(panel_service_reused)?,
+            &request_id,
+        )
+    };
+    run_panel_service(
         &state,
         "skill.release",
         StatusCode::OK,
-        Command::Skill {
-            command: crate::cli::SkillCommand::Release(crate::cli::ReleaseArgs {
-                skill: skill_name,
-                version: Some(req.version),
-                anchor: false,
-                preflight: false,
-                baseline: None,
-            }),
-        },
+        audit_input,
+        &mut service,
     )
 }
 
@@ -404,18 +475,35 @@ pub(in crate::panel) async fn registry_skill_rollback(
     if let Some(response) = ensure_mutation_authorized(&state, peer, &headers, "skill.rollback") {
         return response;
     }
-    run_panel_command(
+    let input = RollbackInput {
+        skill: skill_name,
+        to: req.to,
+        steps: req.steps,
+    };
+    let audit_input = json!({
+        "source": "panel",
+        "service": "lifecycle.rollback",
+        "input": {
+            "skill": input.skill,
+            "to": input.to,
+            "steps": input.steps,
+        }
+    });
+    let ctx = state.ctx.clone();
+    let mut input = Some(input);
+    let mut service = move |request_id: String| {
+        crate::core::lifecycle::rollback(
+            &ctx,
+            input.take().ok_or_else(panel_service_reused)?,
+            &request_id,
+        )
+    };
+    run_panel_service(
         &state,
         "skill.rollback",
         StatusCode::OK,
-        Command::Skill {
-            command: crate::cli::SkillCommand::Rollback(crate::cli::RollbackArgs {
-                skill: skill_name,
-                to: req.to,
-                steps: req.steps,
-                dry_run: false,
-            }),
-        },
+        audit_input,
+        &mut service,
     )
 }
 
@@ -428,21 +516,37 @@ pub(in crate::panel) async fn registry_capture(
     if let Some(response) = ensure_mutation_authorized(&state, peer, &headers, "skill.commit") {
         return response;
     }
-    run_panel_command(
+    let input = CommitProjectionInput {
+        skill: req.skill.unwrap_or_default(),
+        binding: req.binding,
+        instance: req.instance,
+        message: req.message,
+    };
+    let audit_input = json!({
+        "source": "panel",
+        "service": "projection.commit_projection",
+        "input": {
+            "skill": input.skill,
+            "binding": input.binding,
+            "instance": input.instance,
+            "message": input.message,
+        }
+    });
+    let ctx = state.ctx.clone();
+    let mut input = Some(input);
+    let mut service = move |request_id: String| {
+        crate::core::projection::commit_projection(
+            &ctx,
+            input.take().ok_or_else(panel_service_reused)?,
+            &request_id,
+        )
+    };
+    run_panel_service(
         &state,
         "skill.commit",
         StatusCode::OK,
-        Command::Skill {
-            command: crate::cli::SkillCommand::Commit(crate::cli::SkillCommitArgs {
-                skill: req.skill.unwrap_or_default(),
-                binding: req.binding,
-                instance: req.instance,
-                message: req.message,
-                from_projection: true,
-                from_source: false,
-                preflight: false,
-            }),
-        },
+        audit_input,
+        &mut service,
     )
 }
 

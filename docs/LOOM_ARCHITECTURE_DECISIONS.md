@@ -104,7 +104,7 @@ Decision: panel mutations are allowed in phase 1 only when they execute existing
 Rules:
 
 1. Every panel mutation route must pass through `ensure_mutation_authorized`.
-2. Every panel mutation route must use `run_panel_command` or an equivalent wrapper that preserves the CLI envelope, lock acquisition, audit logging, and error mapping.
+2. Every panel mutation route must use `run_panel_command`, `run_panel_service`, or an equivalent wrapper that preserves the CLI envelope, lock acquisition, audit logging, and error mapping.
 3. The panel must hide or disable mutation actions when the backend is not live.
 4. Offline, stale, mock, and read-only modes must not expose a second path to write APIs through shortcuts or command palette actions.
 5. All Panel HTTP APIs are under `/api/v1/*`; unversioned compatibility routes are not part of the contract.
@@ -116,7 +116,7 @@ This decision does not make the panel the primary control plane. The CLI remains
 
 ### 4.1 Mutation Route Table (v1 phase 1 frozen surface)
 
-The following 23 routes are the complete mutation surface for phase 1. Every row passes through `ensure_mutation_authorized` then `run_panel_command`. Adding a new POST route without a corresponding row in this table is an explicit contract break requiring a section-4 update.
+The following 23 routes are the complete mutation surface for phase 1. Every row passes through `ensure_mutation_authorized` then `run_panel_command` or `run_panel_service`. Adding a new POST route without a corresponding row in this table is an explicit contract break requiring a section-4 update.
 
 Command-surface budget: top-level CLI commands must stay at or below 28, and `loom skill` leaf commands must stay at or below 40. Adding a leaf requires removing one existing leaf or recording an ADR exception with the owner and sunset condition.
 
@@ -145,6 +145,15 @@ Command-surface budget: top-level CLI commands must stay at or below 28, and `lo
 | sync.push                | POST | /api/v1/sync/push                             | Sync::Push                   |
 | sync.pull                | POST | /api/v1/sync/pull                             | Sync::Pull                   |
 | sync.replay              | POST | /api/v1/sync/replay                           | Sync::Replay                 |
+
+### 4.2 Command Registration Metadata
+
+Adding a new CLI command requires exactly two control-plane registrations:
+
+1. Add the dispatch arm in `App::execute`.
+2. Add the command's `CommandMeta` row in `command_meta`.
+
+`CommandMeta` is the single source for command audit behavior: `records_audit` controls ordinary command-event writes, `durable_audit` makes audit append failures terminal, and `is_preview` marks dry-run or planning surfaces for callers that need preview classification.
 
 ## 5. Environment-Based Discovery
 

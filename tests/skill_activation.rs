@@ -17,6 +17,16 @@ fn write_good_skill(root: &Path, skill: &str) {
     );
 }
 
+fn write_compile_ready_skill(root: &Path, skill: &str) {
+    write_skill(
+        root,
+        skill,
+        &format!(
+            "---\nname: {skill}\ndescription: Use when testing compiled activation behavior.\n---\n# {skill}\n\nUse when testing compiled activation behavior.\n\nDo not use for production claims.\n"
+        ),
+    );
+}
+
 fn run_with_home(root: &Path, home: &Path, args: &[&str]) -> (std::process::Output, Value) {
     let home = home.to_string_lossy().to_string();
     run_loom_with_env(root, &[("HOME", &home)], args)
@@ -120,6 +130,350 @@ fn skill_activate_project_codex_requires_workspace_and_uses_agents_dir() {
     assert!(
         !workspace.path().join(".agents/skills/demo").exists(),
         "project dry-run must not create target projection"
+    );
+}
+
+#[test]
+fn skill_activate_artifact_requires_compiled_flag() {
+    let root = TestDir::new("skill-activate-artifact-without-compiled");
+    let home = TestDir::new("skill-activate-artifact-without-compiled-home");
+    write_good_skill(root.path(), "demo");
+
+    let (output, env) = run_with_home(
+        root.path(),
+        home.path(),
+        &[
+            "skill",
+            "activate",
+            "demo",
+            "--agent",
+            "codex",
+            "--artifact",
+            "artifact-a",
+            "--dry-run",
+        ],
+    );
+
+    assert!(
+        !output.status.success(),
+        "--artifact without --compiled must fail"
+    );
+    assert_eq!(
+        env["error"]["code"],
+        Value::String("ARG_INVALID".to_string())
+    );
+}
+
+#[test]
+fn skill_activate_compiled_rejects_missing_artifact_without_mutation() {
+    let root = TestDir::new("skill-activate-compiled-missing");
+    let home = TestDir::new("skill-activate-compiled-missing-home");
+    write_good_skill(root.path(), "demo");
+
+    let (output, env) = run_with_home(
+        root.path(),
+        home.path(),
+        &[
+            "skill",
+            "activate",
+            "demo",
+            "--agent",
+            "codex",
+            "--compiled",
+            "--dry-run",
+        ],
+    );
+
+    assert!(
+        !output.status.success(),
+        "compiled activation must fail closed"
+    );
+    assert_eq!(
+        env["error"]["code"],
+        Value::String("POLICY_BLOCKED".to_string())
+    );
+    assert_eq!(
+        env["error"]["details"]["reason"],
+        Value::String("compiled_artifact_missing".to_string())
+    );
+    assert!(
+        env["error"]["details"]["next_actions"]
+            .as_array()
+            .expect("next actions")
+            .iter()
+            .any(|action| action.as_str().is_some_and(
+                |text| text.contains("skill compile demo --agent codex --profile default")
+            )),
+        "missing artifact should recommend compile: {env}"
+    );
+    assert!(
+        !root.path().join("state/registry").exists(),
+        "compiled dry-run precondition failure must not initialize registry state"
+    );
+    assert!(
+        !home.path().join(".agents/skills/demo").exists(),
+        "compiled precondition failure must not create a projection"
+    );
+}
+
+#[test]
+fn skill_activate_compiled_rejects_experimental_artifact_and_normal_activation_still_works() {
+    let root = TestDir::new("skill-activate-compiled-experimental");
+    let home = TestDir::new("skill-activate-compiled-experimental-home");
+    write_compile_ready_skill(root.path(), "demo");
+
+    let (compile_output, compile_env) = run_with_home(
+        root.path(),
+        home.path(),
+        &["skill", "compile", "demo", "--agent", "codex"],
+    );
+    assert!(
+        compile_output.status.success(),
+        "compile should write artifact: {compile_env}"
+    );
+    let artifact_id = compile_env["data"]["artifact"]["artifact_id"]
+        .as_str()
+        .expect("artifact id")
+        .to_string();
+
+    let (compiled_output, compiled_env) = run_with_home(
+        root.path(),
+        home.path(),
+        &[
+            "skill",
+            "activate",
+            "demo",
+            "--agent",
+            "codex",
+            "--compiled",
+            "--artifact",
+            &artifact_id,
+        ],
+    );
+
+    assert!(
+        !compiled_output.status.success(),
+        "experimental artifact must fail compiled activation"
+    );
+    assert_eq!(
+        compiled_env["error"]["code"],
+        Value::String("POLICY_BLOCKED".to_string())
+    );
+    assert_eq!(
+        compiled_env["error"]["details"]["reason"],
+        Value::String("compiled_artifact_not_valid".to_string())
+    );
+    assert_eq!(
+        compiled_env["error"]["details"]["reports"][0]["artifact_id"],
+        Value::String(artifact_id.clone())
+    );
+    assert_eq!(
+        compiled_env["error"]["details"]["reports"][0]["status"],
+        Value::String("experimental".to_string())
+    );
+    assert!(
+        !home.path().join(".agents/skills/demo").exists(),
+        "failed compiled activation must not create a projection"
+    );
+
+    let (normal_output, normal_env) = run_with_home(
+        root.path(),
+        home.path(),
+        &["skill", "activate", "demo", "--agent", "codex"],
+    );
+    assert!(
+        normal_output.status.success(),
+        "normal activation should still pass: {normal_env}"
+    );
+    assert!(
+        home.path().join(".agents/skills/demo").exists(),
+        "normal activation should create the source projection"
+    );
+}
+
+#[test]
+fn skill_activate_compiled_rejects_agent_profile_mismatch() {
+    let root = TestDir::new("skill-activate-compiled-mismatch");
+    let home = TestDir::new("skill-activate-compiled-mismatch-home");
+    write_compile_ready_skill(root.path(), "demo");
+
+    let (compile_output, compile_env) = run_with_home(
+        root.path(),
+        home.path(),
+        &["skill", "compile", "demo", "--agent", "claude"],
+    );
+    assert!(
+        compile_output.status.success(),
+        "compile should write artifact: {compile_env}"
+    );
+    let artifact_id = compile_env["data"]["artifact"]["artifact_id"]
+        .as_str()
+        .expect("artifact id")
+        .to_string();
+
+    let (output, env) = run_with_home(
+        root.path(),
+        home.path(),
+        &[
+            "skill",
+            "activate",
+            "demo",
+            "--agent",
+            "codex",
+            "--compiled",
+            "--artifact",
+            &artifact_id,
+            "--dry-run",
+        ],
+    );
+
+    assert!(!output.status.success(), "agent mismatch must fail");
+    assert_eq!(
+        env["error"]["code"],
+        Value::String("POLICY_BLOCKED".to_string())
+    );
+    assert_eq!(
+        env["error"]["details"]["reason"],
+        Value::String("compiled_artifact_agent_profile_mismatch".to_string())
+    );
+    assert_eq!(
+        env["error"]["details"]["reports"][0]["manifest"]["agent"],
+        Value::String("claude".to_string())
+    );
+}
+
+#[test]
+fn skill_activate_compiled_wraps_malformed_manifest_as_policy_block() {
+    let root = TestDir::new("skill-activate-compiled-malformed-manifest");
+    let home = TestDir::new("skill-activate-compiled-malformed-manifest-home");
+    write_compile_ready_skill(root.path(), "demo");
+    let artifact_id = "broken-manifest";
+    let artifact_root = root
+        .path()
+        .join("state/compiled/skills/demo")
+        .join(artifact_id);
+    fs::create_dir_all(&artifact_root).expect("artifact root");
+    fs::write(artifact_root.join("manifest.json"), "{not-json").expect("malformed manifest");
+
+    let (output, env) = run_with_home(
+        root.path(),
+        home.path(),
+        &[
+            "skill",
+            "activate",
+            "demo",
+            "--agent",
+            "codex",
+            "--compiled",
+            "--artifact",
+            artifact_id,
+            "--dry-run",
+        ],
+    );
+
+    assert!(
+        !output.status.success(),
+        "malformed compiled artifact must fail closed"
+    );
+    assert_eq!(
+        env["error"]["code"],
+        Value::String("POLICY_BLOCKED".to_string())
+    );
+    assert_eq!(
+        env["error"]["details"]["reason"],
+        Value::String("compiled_artifact_not_valid".to_string())
+    );
+    assert_eq!(
+        env["error"]["details"]["reports"][0]["artifact_id"],
+        Value::String(artifact_id.to_string())
+    );
+    assert_eq!(
+        env["error"]["details"]["reports"][0]["findings"][0]["id"],
+        Value::String("manifest_schema_mismatch".to_string())
+    );
+    assert!(
+        !home.path().join(".agents/skills/demo").exists(),
+        "malformed compiled artifact must not create a projection"
+    );
+}
+
+#[test]
+fn skill_activate_compiled_reports_manifestless_artifact_as_invalid() {
+    let root = TestDir::new("skill-activate-compiled-manifestless");
+    let home = TestDir::new("skill-activate-compiled-manifestless-home");
+    write_compile_ready_skill(root.path(), "demo");
+    let artifact_id = "manifestless";
+    fs::create_dir_all(
+        root.path()
+            .join("state/compiled/skills/demo")
+            .join(artifact_id),
+    )
+    .expect("artifact root");
+
+    let (output, env) = run_with_home(
+        root.path(),
+        home.path(),
+        &[
+            "skill",
+            "activate",
+            "demo",
+            "--agent",
+            "codex",
+            "--compiled",
+            "--artifact",
+            artifact_id,
+            "--dry-run",
+        ],
+    );
+
+    assert!(
+        !output.status.success(),
+        "manifestless compiled artifact must fail closed"
+    );
+    assert_eq!(
+        env["error"]["code"],
+        Value::String("POLICY_BLOCKED".to_string())
+    );
+    assert_eq!(
+        env["error"]["details"]["reason"],
+        Value::String("compiled_artifact_not_valid".to_string())
+    );
+    assert_eq!(
+        env["error"]["details"]["reports"][0]["findings"][0]["id"],
+        Value::String("manifest_missing".to_string())
+    );
+}
+
+#[test]
+fn skill_compile_normalizes_agent_for_compiled_activation() {
+    let root = TestDir::new("skill-compile-normalizes-agent-for-activation");
+    let home = TestDir::new("skill-compile-normalizes-agent-for-activation-home");
+    write_compile_ready_skill(root.path(), "demo");
+
+    let (compile_output, compile_env) = run_with_home(
+        root.path(),
+        home.path(),
+        &[
+            "skill",
+            "compile",
+            "demo",
+            "--agent",
+            "Codex",
+            "--profile",
+            "team",
+        ],
+    );
+    assert!(
+        compile_output.status.success(),
+        "compile should write artifact: {compile_env}"
+    );
+    assert_eq!(
+        compile_env["data"]["agent"],
+        Value::String("codex".to_string())
+    );
+    assert_eq!(
+        compile_env["data"]["manifest"]["agent"],
+        Value::String("codex".to_string())
     );
 }
 

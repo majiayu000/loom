@@ -6,7 +6,7 @@ if [[ ! -x "$bin" ]]; then
   cargo build --release --locked
 fi
 
-# Hard ceiling: 5500 KiB. The durable plan/apply protocol, offline eval
+# Hard ceiling: 5530 KiB. The durable plan/apply protocol, offline eval
 # matrix, local skill scaffolding CLI, skillset foundation, portable YAML
 # lint parser, single-skill inspect read model, single-skill activation
 # commands, and safety/trust/quarantine/security-diff command surfaces expanded
@@ -54,8 +54,9 @@ fi
 # command surfaces with prompt redaction and source digest metadata. Reviewed
 # authoring apply gates add idempotency replay, staging validation, source
 # digest rechecks, contextual hunk application, preimage/index rollback, and
-# Git-backed materialization.
-max_bin_bytes=$((5500 * 1024))
+# Git-backed materialization. Compiled activation gates add artifact lookup and
+# verification plumbing while compiled projection remains deferred.
+max_bin_bytes=$((5530 * 1024))
 bin_bytes="$(wc -c < "$bin" | tr -d ' ')"
 if (( bin_bytes > max_bin_bytes )); then
   echo "release binary is ${bin_bytes} bytes; limit is ${max_bin_bytes}" >&2

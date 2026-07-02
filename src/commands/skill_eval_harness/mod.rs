@@ -109,8 +109,8 @@ impl App {
             &args.skill,
             Some(&args.agent),
             failed == 0 && !cleanup.failed(),
-            0,
-            0,
+            None,
+            None,
             None,
         )?;
         if failed > 0 || cleanup.failed() {
@@ -175,8 +175,8 @@ impl App {
             &args.skill,
             Some(&args.agent),
             failed == 0,
-            0,
-            0,
+            None,
+            None,
             None,
         )?;
         if failed > 0 {
@@ -250,8 +250,8 @@ impl App {
             &args.skill,
             Some(&args.agent),
             true,
-            0,
-            0,
+            None,
+            None,
             report["summary"]["delta"].as_f64(),
         )?;
         Ok((report, Meta::default()))

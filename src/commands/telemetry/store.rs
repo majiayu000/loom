@@ -1,3 +1,4 @@
+use std::ffi::OsString;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
@@ -91,6 +92,15 @@ pub(crate) fn append_event_if_enabled(
     ctx: &AppContext,
     draft: TelemetryEventDraft,
 ) -> std::result::Result<Option<TelemetryEvent>, CommandFailure> {
+    let Some(config) = read_config(ctx)? else {
+        return Ok(None);
+    };
+    if !config.enabled {
+        return Ok(None);
+    }
+    let _workspace = ctx
+        .lock_workspace()
+        .map_err(super::super::helpers::map_lock)?;
     let Some(config) = read_config(ctx)? else {
         return Ok(None);
     };
@@ -207,7 +217,10 @@ pub(super) fn output_path_outside_state(
     };
     let output = normalize_lexical(&output);
     let state = normalize_lexical(&ctx.state_dir);
-    if output == state || output.starts_with(&state) {
+    if output == state
+        || output.starts_with(&state)
+        || output_parent_resolves_into_state(ctx, &output)?
+    {
         return Err(CommandFailure::new(
             ErrorCode::PolicyBlocked,
             format!(
@@ -218,6 +231,42 @@ pub(super) fn output_path_outside_state(
         ));
     }
     Ok(output)
+}
+
+fn output_parent_resolves_into_state(
+    ctx: &AppContext,
+    output: &Path,
+) -> std::result::Result<bool, CommandFailure> {
+    let Some(parent) = output.parent() else {
+        return Ok(false);
+    };
+    let Ok(state) = fs::canonicalize(&ctx.state_dir) else {
+        return Ok(false);
+    };
+    let parent = canonicalize_existing_prefix(parent)?;
+    Ok(parent == state || parent.starts_with(&state))
+}
+
+fn canonicalize_existing_prefix(path: &Path) -> std::result::Result<PathBuf, CommandFailure> {
+    let mut cursor = path;
+    let mut suffix = Vec::<OsString>::new();
+    loop {
+        if fs::symlink_metadata(cursor).is_ok() {
+            let mut resolved = fs::canonicalize(cursor).map_err(map_io)?;
+            for component in suffix.iter().rev() {
+                resolved.push(component);
+            }
+            return Ok(normalize_lexical(&resolved));
+        }
+        let Some(name) = cursor.file_name() else {
+            return Ok(normalize_lexical(path));
+        };
+        suffix.push(name.to_os_string());
+        let Some(parent) = cursor.parent() else {
+            return Ok(normalize_lexical(path));
+        };
+        cursor = parent;
+    }
 }
 
 fn redacted_event_from_draft(
@@ -295,13 +344,18 @@ fn hash_identity(kind: &str, value: &str) -> String {
 }
 
 fn normalize_path_label(path: &Path) -> String {
-    if path.is_absolute() {
-        normalize_lexical(path).display().to_string()
+    let absolute = if path.is_absolute() {
+        path.to_path_buf()
     } else {
         std::env::current_dir()
-            .map(|cwd| normalize_lexical(&cwd.join(path)).display().to_string())
-            .unwrap_or_else(|_| path.display().to_string())
-    }
+            .map(|cwd| cwd.join(path))
+            .unwrap_or_else(|_| path.to_path_buf())
+    };
+    absolute
+        .canonicalize()
+        .unwrap_or_else(|_| normalize_lexical(&absolute))
+        .display()
+        .to_string()
 }
 
 fn normalize_lexical(path: &Path) -> PathBuf {

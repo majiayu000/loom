@@ -3,6 +3,7 @@ mod model;
 mod store;
 
 use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, Utc};
 use serde::Serialize;
@@ -78,6 +79,7 @@ impl App {
     ) -> std::result::Result<(Value, Meta), CommandFailure> {
         let _workspace = self.ctx.lock_workspace().map_err(map_lock)?;
         self.ensure_write_layout()?;
+        self.ctx.ensure_gitignore_entries().map_err(map_io)?;
         let config = TelemetryConfig::enabled_local();
         write_config(&self.ctx, &config)?;
         Ok((
@@ -166,9 +168,9 @@ impl App {
             ));
         }
         let before = parse_cutoff("--before", args.before.as_deref())?;
-        let log = read_event_log(&self.ctx)?;
-        let plan = purge_plan(&log, before);
         if args.dry_run {
+            let log = read_event_log(&self.ctx)?;
+            let plan = purge_plan(&log, before);
             return Ok((
                 json!({
                     "dry_run": true,
@@ -186,6 +188,10 @@ impl App {
         }
 
         let confirm = args.confirm.as_deref().unwrap_or_default();
+        let _workspace = self.ctx.lock_workspace().map_err(map_lock)?;
+        self.ensure_write_layout()?;
+        let log = read_event_log(&self.ctx)?;
+        let plan = purge_plan(&log, before);
         if confirm != plan.confirm_token {
             return Err(CommandFailure::new(
                 ErrorCode::ArgInvalid,
@@ -193,8 +199,6 @@ impl App {
             ));
         }
 
-        let _workspace = self.ctx.lock_workspace().map_err(map_lock)?;
-        self.ensure_write_layout()?;
         let mut remaining = Vec::new();
         for entry in &log.events {
             if !event_before(entry, before) {
@@ -237,6 +241,7 @@ pub(crate) fn record_skill_activation_telemetry(
     skill: &str,
     agent: &str,
     activated: bool,
+    workspace: Option<&Path>,
 ) -> std::result::Result<(), CommandFailure> {
     let mut draft = TelemetryEventDraft::new(if activated {
         TelemetryEventType::SkillActivation
@@ -245,7 +250,11 @@ pub(crate) fn record_skill_activation_telemetry(
     });
     draft.skill_id = Some(skill.to_string());
     draft.agent = Some(agent.to_string());
-    draft.workspace = Some(current_workspace()?);
+    draft.workspace = Some(
+        workspace
+            .map(Path::to_path_buf)
+            .unwrap_or(current_workspace()?),
+    );
     draft.metrics.success = Some(true);
     store::append_event_if_enabled(ctx, draft)?;
     Ok(())
@@ -256,8 +265,8 @@ pub(crate) fn record_skill_eval_telemetry(
     skill: &str,
     agent: Option<&str>,
     success: bool,
-    tokens: u64,
-    commands: u64,
+    tokens: Option<u64>,
+    commands: Option<u64>,
     baseline_delta: Option<f64>,
 ) -> std::result::Result<(), CommandFailure> {
     let mut draft = TelemetryEventDraft::new(TelemetryEventType::SkillEval);
@@ -265,14 +274,22 @@ pub(crate) fn record_skill_eval_telemetry(
     draft.agent = agent.map(str::to_string);
     draft.workspace = Some(current_workspace()?);
     draft.metrics = TelemetryMetrics {
-        tokens_in: Some(tokens),
-        commands: Some(commands),
+        tokens_in: tokens,
+        commands,
         success: Some(success),
         baseline_delta,
         ..TelemetryMetrics::default()
     };
     store::append_event_if_enabled(ctx, draft)?;
     Ok(())
+}
+
+pub(crate) fn telemetry_warning(action: &str, err: &CommandFailure) -> String {
+    format!(
+        "telemetry event for {action} was not recorded: {}: {}",
+        err.code.as_str(),
+        err.message
+    )
 }
 
 pub(crate) fn record_skill_safety_telemetry(
@@ -694,6 +711,6 @@ fn mean(values: &[f64]) -> Option<f64> {
     }
 }
 
-fn current_workspace() -> std::result::Result<std::path::PathBuf, CommandFailure> {
+fn current_workspace() -> std::result::Result<PathBuf, CommandFailure> {
     std::env::current_dir().map_err(map_io)
 }

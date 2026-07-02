@@ -106,15 +106,17 @@ impl App {
                 "note": "Eval success is quality evidence only. It does not prove the skill is safe, sandboxed, or free of prompt-injection risk."
             }
         });
-        record_skill_eval_telemetry(
-            &self.ctx,
-            &args.skill,
-            None,
-            failed == 0,
-            summary.token_count,
-            summary.command_count,
-            None,
-        )?;
+        for run in &runs {
+            record_skill_eval_telemetry(
+                &self.ctx,
+                &args.skill,
+                Some(&run.agent),
+                run.summary.failed == 0,
+                Some(run.summary.token_count),
+                Some(run.summary.command_count),
+                None,
+            )?;
+        }
         if failed > 0 {
             let mut failure = CommandFailure::new(
                 ErrorCode::EvalFailed,

@@ -20,7 +20,7 @@ use super::projections::{
     upsert_projection, upsert_rule,
 };
 use super::skill_safety::enforce_skill_safety;
-use super::telemetry::record_skill_activation_telemetry;
+use super::telemetry::{record_skill_activation_telemetry, telemetry_warning};
 use super::{App, CommandFailure};
 
 use apply::{
@@ -196,12 +196,16 @@ impl App {
                 &mut meta,
             )?;
         }
-        record_skill_activation_telemetry(
+        if let Err(err) = record_skill_activation_telemetry(
             &self.ctx,
             &projection.skill_id,
             &resolved.selection.agent,
             true,
-        )?;
+            resolved.selection.workspace.as_deref(),
+        ) {
+            meta.warnings
+                .push(telemetry_warning("skill activation", &err));
+        }
 
         Ok((
             json!({
@@ -363,12 +367,16 @@ impl App {
                 &mut meta,
             )?;
         }
-        record_skill_activation_telemetry(
+        if let Err(err) = record_skill_activation_telemetry(
             &self.ctx,
             &resolved.selection.skill,
             &resolved.selection.agent,
             false,
-        )?;
+            resolved.selection.workspace.as_deref(),
+        ) {
+            meta.warnings
+                .push(telemetry_warning("skill deactivation", &err));
+        }
 
         Ok((json!({"plan": plan, "commit": commit, "noop": false}), meta))
     }

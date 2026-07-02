@@ -584,7 +584,7 @@ fn parse_github_source(
     }))
 }
 
-fn clone_git_source<F>(
+pub(crate) fn clone_git_source<F>(
     _ctx: &AppContext,
     source: &str,
     requested_ref: Option<&str>,

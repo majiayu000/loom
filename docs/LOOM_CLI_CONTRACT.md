@@ -476,7 +476,7 @@ Rules:
 8. provenance records include provider, locator, requested ref, resolved commit when Git-backed, source tree hash when Git-backed, source subdir, artifact digest, import time, and importer version
 9. provider resolution boundaries are defined in [SKILL_PROVIDER_BOUNDARY.md](SKILL_PROVIDER_BOUNDARY.md); `skill add` must not call `gh skill install` or write directly into agent host directories
 
-### 11.1.1 `provider`, `catalog`, and `skill install --dry-run`
+### 11.1.1 `provider`, `catalog`, and `skill install`
 
 ```bash
 loom --json --root <root> provider add <id> --kind <github|local> --url <url>
@@ -485,7 +485,7 @@ loom --json --root <root> provider remove <id>
 loom --json --root <root> catalog search <query> [--provider <provider-id>] [--allow-network]
 loom --json --root <root> catalog show <locator>
 loom --json --root <root> catalog preview <locator> [--ref <ref>]
-loom --json --root <root> skill install <locator> --name <skill-id> [--ref <ref>] [--trust <third-party-unreviewed|reviewed>] [--review-evidence <id>] [--policy-profile <profile>] --dry-run
+loom --json --root <root> skill install <locator> --name <skill-id> [--ref <ref>] [--trust <third-party-unreviewed|reviewed>] [--review-evidence <id>] [--policy-profile <profile>] [--dry-run]
 ```
 
 Provider writes persist sorted `state/registry/providers.json` records through the normal registry audit, commit, and sync/queue path. `provider list`, `catalog search`, `catalog show`, and `catalog preview` are read-only and do not seed provider state.
@@ -500,7 +500,8 @@ Rules:
 6. `skill install --dry-run` writes no skill directory, provenance file, `loom.lock`, trust state, target directory, Git ref, or pending queue entry beyond normal command audit
 7. unpinned refs fail closed with `POLICY_BLOCKED`; local locators are pinned only by a matching `sha256:<digest>` ref and GitHub locators by a commit SHA
 8. public installs default to `third-party-unreviewed`; `--trust reviewed` requires `--review-evidence`
-9. mutating provider-backed install apply is deferred and fails with `POLICY_BLOCKED`
+9. pinned provider-backed install apply copies without symlinks, writes `skills/<skill-id>`, `state/registry/sources.json`, deterministic `loom.lock`, `state/registry/trust.json`, and a `skill.install` registry operation, but never auto-activates the skill
+10. critical safety findings block install before any registry or skill mutation
 
 ### 11.1.2 `skill provenance`
 

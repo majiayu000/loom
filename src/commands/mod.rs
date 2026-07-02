@@ -214,7 +214,7 @@ impl App {
             Command::Target { command } => self.cmd_target(command, &request_id),
             Command::Skill { command } => match command {
                 SkillCommand::Add(args) => self.cmd_add(args, &request_id),
-                SkillCommand::Install(args) => self.cmd_skill_install(args),
+                SkillCommand::Install(args) => self.cmd_skill_install(args, &request_id),
                 SkillCommand::ImportObserved(args) => self.cmd_import_observed(args, &request_id),
                 SkillCommand::MonitorObserved(args) => self.cmd_monitor_observed(args, &request_id),
                 SkillCommand::Project(args) if args.dry_run => self.cmd_project_plan(args),

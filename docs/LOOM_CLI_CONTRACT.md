@@ -432,7 +432,7 @@ Rules:
 8. lint, safety, dependency, or eval gates that are missing, blocked, or failed prevent a `valid` artifact; missing eval evidence is blocking until reviewed eval artifacts exist.
 9. `list` and `verify` without `--artifact` return artifacts sorted by artifact id; no arbitrary filesystem entry is selected as a default.
 10. skill names that collide with nested commands such as `list` or `verify` use `--skill <skill-id>` for planning or artifact writes.
-11. compiled activation projection remains deferred; `skill activate --compiled` performs artifact precondition checks and fails closed until projection support lands.
+11. compiled activation uses only artifacts that `verify` reports as fresh `valid`; artifact writes remain separate from dry-run planning and portable `SKILL.md` remains the source of truth.
 
 ### 11.0.2 `skill activate`, `skill deactivate`, `skill active list`
 
@@ -456,7 +456,8 @@ Rules:
 8. `skill active list` reports desired rules joined to realized projections, including `target_missing` and `projection_missing`, but must keep agent visibility fields at `not_checked`.
 9. `--artifact` is valid only with `--compiled`.
 10. `skill activate --compiled` verifies the selected compiled artifact before any projection write, rejects missing, stale, blocked, invalid, or agent/profile-mismatched artifacts with `POLICY_BLOCKED`, and returns `next_actions`.
-11. normal activation without `--compiled` continues to use portable source projection and must not require compiled artifacts.
+11. when a fresh valid artifact is selected, compiled activation materializes an agent-compatible `SKILL.md` plus `.loom/compiled/` metadata under the target skill directory and records the projection as `materialize`.
+12. normal activation without `--compiled` continues to use portable source projection and must not require compiled artifacts.
 
 ### 11.0.3 `skill visibility`, `skill diagnose --agent codex`, `codex reconcile`
 

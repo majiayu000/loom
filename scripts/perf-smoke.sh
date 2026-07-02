@@ -6,7 +6,7 @@ if [[ ! -x "$bin" ]]; then
   cargo build --release --locked
 fi
 
-# Hard ceiling: 5280 KiB. The durable plan/apply protocol, offline eval
+# Hard ceiling: 5376 KiB. The durable plan/apply protocol, offline eval
 # matrix, local skill scaffolding CLI, skillset foundation, portable YAML
 # lint parser, single-skill inspect read model, single-skill activation
 # commands, and safety/trust/quarantine/security-diff command surfaces expanded
@@ -47,8 +47,10 @@ fi
 # inspection, and write-boundary revalidation. The compiled runtime foundation
 # adds read-only compile planning, source-digest and manifest models, sidecar
 # verification, and artifact gate reporting, while the startup latency checks
-# below continue to guard cold CLI responsiveness.
-max_bin_bytes=$((5280 * 1024))
+# below continue to guard cold CLI responsiveness. The local telemetry
+# foundation adds typed redacted event models, report/export/purge read models,
+# and opt-in event writes for eval, safety, and activation paths.
+max_bin_bytes=$((5376 * 1024))
 bin_bytes="$(wc -c < "$bin" | tr -d ' ')"
 if (( bin_bytes > max_bin_bytes )); then
   echo "release binary is ${bin_bytes} bytes; limit is ${max_bin_bytes}" >&2

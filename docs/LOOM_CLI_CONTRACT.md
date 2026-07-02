@@ -44,13 +44,14 @@ Top-level command groups:
 10. `skillset`
 11. `provider`
 12. `catalog`
-13. `workflow`
-14. `sync`
-15. `ops`
-16. `agent`
-17. `codex`
-18. `panel`
-19. `doctor`
+13. `instruction`
+14. `workflow`
+15. `sync`
+16. `ops`
+17. `agent`
+18. `codex`
+19. `panel`
+20. `doctor`
 
 Removed from runtime surface:
 
@@ -503,7 +504,31 @@ Rules:
 9. pinned provider-backed install apply copies without symlinks, writes `skills/<skill-id>`, `state/registry/sources.json`, deterministic `loom.lock`, `state/registry/trust.json`, and a `skill.install` registry operation, but never auto-activates the skill
 10. critical safety findings block install before any registry or skill mutation
 
-### 11.1.2 `skill provenance`
+### 11.1.2 `instruction scan`, `instruction show`, `instruction classify`, `instruction doctor`, `instruction migrate-plan`
+
+```bash
+loom --json --root <root> instruction scan [--agent <agent>] [--workspace <path>]
+loom --json --root <root> instruction show <instruction-id> [--workspace <path>]
+loom --json --root <root> instruction classify <path>
+loom --json --root <root> instruction doctor [--agent <agent>] [--workspace <path>] [--skill <skill>]
+loom --json --root <root> instruction migrate-plan <instruction-id> [--workspace <path>] --to <skill|reference|keep-instruction> [--name <skill>] --dry-run
+```
+
+Read-only command group.
+
+Rules:
+
+1. scans known native instruction surfaces such as `AGENTS.md`, `CLAUDE.md`, Cursor rules, Windsurf files, and Copilot instructions without registering them as skills
+2. `show` and `migrate-plan` resolve ids against `--workspace` when supplied, matching ids produced by `scan --workspace`
+3. Copilot scans include active `AGENTS.md` surfaces; `.github/instructions/*.instructions.md` surfaces are path-specific, not always-on, and include parsed `applyTo` patterns when present
+4. returns paths, adapter metadata, scope, precedence notes, signals, and warnings, but not raw instruction content
+5. unsupported adapters or unknown instruction surfaces are reported explicitly when requested by the agent filter or classification path
+6. `doctor --skill <skill>` compares instruction signals with one registry skill and reports duplicate guidance, conflicts, shadowing risks, prompt-budget risks, and missing adapter metadata
+7. `migrate-plan` requires `--dry-run`; apply is deferred and non-dry-run migration returns `POLICY_BLOCKED`
+8. migration plans contain reviewable `would_write` entries only and must not edit instruction files, skill files, registry state, Git refs, live targets, or pending queues
+9. portable skill lint remains strict: `AGENTS.md`, `CLAUDE.md`, `.mdc`, and custom instruction files are not accepted as `SKILL.md`
+
+### 11.1.3 `skill provenance`
 
 ```bash
 loom --json --root <root> skill provenance inspect <skill-id>

@@ -9,6 +9,7 @@ mod file_ops;
 mod fs_probe;
 mod helpers;
 mod history_cmds;
+mod instruction;
 #[cfg(test)]
 mod observed_tests;
 mod plan_cmds;
@@ -299,6 +300,7 @@ impl App {
             },
             Command::Provider { command } => self.cmd_provider(command, &request_id),
             Command::Catalog { command } => self.cmd_catalog(command),
+            Command::Instruction { command } => self.cmd_instruction(command),
             Command::Workflow { command } => self.cmd_workflow(command),
             Command::Index(args) if args.action == "build" => self.cmd_index_build(args),
             Command::Index(args) if args.action == "status" => self.cmd_index_status(),
@@ -470,6 +472,7 @@ fn command_records_audit(command: &Command) -> bool {
             | Command::Index(_)
             | Command::Active(_)
             | Command::Catalog { .. }
+            | Command::Instruction { .. }
             | Command::Provider {
                 command: crate::cli::ProviderCommand::List,
             }
@@ -590,6 +593,7 @@ fn command_requires_durable_audit(command: &Command) -> bool {
         },
         Command::Provider { command } => !matches!(command, crate::cli::ProviderCommand::List),
         Command::Catalog { .. } => false,
+        Command::Instruction { .. } => false,
         Command::Workflow { command } => match command {
             WorkflowCommand::Create(args) => !args.dry_run,
             WorkflowCommand::Plan(_) => true,

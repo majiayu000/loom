@@ -212,6 +212,7 @@ The chain `add → capture → save → snapshot → release → rollback` is th
 | `loom skill visibility` | Explain one skill's agent active-view visibility | For Codex, join source, active rules, projection symlink, config disables, runtime entries, external entries, and restart requirements | Source + registry metadata + target filesystem (read-only) |
 | `loom skill search` | Search skills with deterministic lexical scoring | Find likely skills by id, description, tags, warning state, agent, profile, status, or trust | Source + registry metadata (read-only) |
 | `loom skill resolve` | Resolve a task description to candidate skills without an LLM | Let agents choose a skill transparently from local metadata and scoring inputs | Source + registry metadata (read-only) |
+| `loom instruction scan/show/classify/doctor/migrate-plan` | Inspect native instruction surfaces without importing them as skills | Inventory `AGENTS.md`, `CLAUDE.md`, Cursor, Windsurf, and Copilot instruction files; diagnose overlap; emit dry-run migration plans only | Workspace files (read-only) |
 | `loom skill new` | Create a lint-clean local skill skeleton | Start a new registry-owned skill with `SKILL.md`, references, scripts, assets, eval stubs, and `loom.skill.toml` | Source (initial create) |
 | `loom provider add/list/remove` | Manage local or GitHub catalog provider records | Configure provider ids for advisory search/preview without storing credentials | Registry provider state |
 | `loom catalog search/show/preview` | Inspect provider locators without executing source code | See metadata, scripts, license/provenance hints, lint, safety, and install dry-run guidance | Provider source (read-only) |
@@ -358,6 +359,12 @@ loom skill import-observed [--target <target-id>]
 loom skill monitor-observed [--target <target-id>] [--once] [--interval-seconds <seconds>]
 loom skill orphan list
 loom skill orphan clean [--delete-live-paths] [--dry-run]
+
+loom instruction scan [--agent <agent>] [--workspace <path>]
+loom instruction show <instruction-id> [--workspace <path>]
+loom instruction classify <path>
+loom instruction doctor [--agent <agent>] [--workspace <path>] [--skill <skill>]
+loom instruction migrate-plan <instruction-id> [--workspace <path>] --to <skill|reference|keep-instruction> [--name <skill>] --dry-run
 
 loom skillset create <skillset-id> [--description <text>]
 loom skillset add <skillset-id> <skill-id> [--role <role>] [--required|--optional]

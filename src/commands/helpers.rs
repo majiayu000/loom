@@ -4,10 +4,10 @@ use anyhow::{Result, anyhow};
 use uuid::Uuid;
 
 use crate::cli::{
-    AgentCommand, AgentKind, BindingAddArgs, CodexCommand, Command, OpsCommand, OpsHistoryCommand,
-    PlanCommand, ProjectionMethod, SkillActiveCommand, SkillCommand, SkillOrphanCommand,
-    SkillTrashCommand, SkillsetCommand, SyncCommand, TargetCommand, WorkflowCommand,
-    WorkspaceBindingCommand, WorkspaceCommand, WorkspaceMatcherKind,
+    AgentCommand, AgentKind, BindingAddArgs, CodexCommand, Command, InstructionCommand, OpsCommand,
+    OpsHistoryCommand, PlanCommand, ProjectionMethod, SkillActiveCommand, SkillCommand,
+    SkillOrphanCommand, SkillTrashCommand, SkillsetCommand, SyncCommand, TargetCommand,
+    WorkflowCommand, WorkspaceBindingCommand, WorkspaceCommand, WorkspaceMatcherKind,
 };
 use crate::state::AppContext;
 use crate::state_model::{
@@ -191,6 +191,13 @@ pub(crate) fn command_name(command: &Command) -> &'static str {
             crate::cli::CatalogCommand::Search(_) => "catalog.search",
             crate::cli::CatalogCommand::Show(_) => "catalog.show",
             crate::cli::CatalogCommand::Preview(_) => "catalog.preview",
+        },
+        Command::Instruction { command } => match command {
+            InstructionCommand::Scan(_) => "instruction.scan",
+            InstructionCommand::Show(_) => "instruction.show",
+            InstructionCommand::Classify(_) => "instruction.classify",
+            InstructionCommand::Doctor(_) => "instruction.doctor",
+            InstructionCommand::MigratePlan(_) => "instruction.migrate_plan",
         },
         Command::Workflow { command } => match command {
             WorkflowCommand::Create(_) => "workflow.create",

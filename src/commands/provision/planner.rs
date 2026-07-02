@@ -107,10 +107,11 @@ pub(super) fn build_provision_plan(
         secrets_required,
         policy: json!({
             "mode": "plan_first",
-            "apply_deferred": true,
+            "apply_deferred": false,
             "secret_copy": false,
             "target_writes_in_plan": false,
             "approval_required_for_apply": true,
+            "required_approvals": ["approval:provision-apply"],
         }),
         loom_cli: json!({
             "required": true,

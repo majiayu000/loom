@@ -1,3 +1,4 @@
+mod apply;
 mod artifact;
 mod model;
 mod planner;
@@ -11,15 +12,16 @@ use std::path::Path;
 use serde_json::{Value, json};
 
 use crate::cli::{
-    ProvisionApplyArgs, ProvisionCommand, ProvisionDoctorArgs, ProvisionExportArgs,
-    ProvisionImportArgs, ProvisionPlanArgs,
+    ProvisionCommand, ProvisionDoctorArgs, ProvisionExportArgs, ProvisionImportArgs,
+    ProvisionPlanArgs,
 };
 use crate::envelope::Meta;
 use crate::fs_util::write_atomic;
 use crate::types::ErrorCode;
 
-use super::helpers::{map_io, validate_non_empty};
+use super::helpers::map_io;
 use super::{App, CommandFailure};
+use apply::cmd_provision_apply;
 use artifact::{
     build_shell_export_artifact, inspect_provision_artifact, load_provision_plan_artifact,
 };
@@ -35,7 +37,7 @@ impl App {
     ) -> std::result::Result<(Value, Meta), CommandFailure> {
         match command {
             ProvisionCommand::Plan(args) => self.cmd_provision_plan(args),
-            ProvisionCommand::Apply(args) => self.cmd_provision_apply(args),
+            ProvisionCommand::Apply(args) => cmd_provision_apply(&self.ctx, args),
             ProvisionCommand::Doctor(args) => self.cmd_provision_doctor(args),
             ProvisionCommand::Export(args) => self.cmd_provision_export(args),
             ProvisionCommand::Import(args) => self.cmd_provision_import(args),
@@ -150,7 +152,7 @@ impl App {
                     },
                     "policy": {
                         "status": "pass",
-                        "apply_deferred": true,
+                        "apply_deferred": false,
                     },
                 },
                 "findings": plan.findings,
@@ -196,21 +198,6 @@ impl App {
         let workspace = resolve_workspace(self, args.workspace.as_deref())?;
         let plan = build_provision_plan(&self.ctx, args.target, &workspace, &args.agent)?;
         Ok((plan, workspace, "generated"))
-    }
-
-    fn cmd_provision_apply(
-        &self,
-        args: &ProvisionApplyArgs,
-    ) -> std::result::Result<(Value, Meta), CommandFailure> {
-        validate_non_empty("idempotency-key", &args.idempotency_key)?;
-        Err(deferred_failure(
-            "provision apply is deferred until plan revalidation, idempotency, approval, and target-write gates are implemented",
-            json!({
-                "plan": args.plan,
-                "approvals": args.approvals,
-                "target_writes_performed": false,
-            }),
-        ))
     }
 
     fn cmd_provision_export(

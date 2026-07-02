@@ -57,7 +57,8 @@ pub(super) fn build_provision_plan(
         .collect::<BTreeSet<_>>();
     let dependency_readiness =
         collect_dependency_readiness(ctx, &active_skills, agent, workspace, &mut findings)?;
-    let mut secrets_required = collect_secret_requirements(ctx, &dependency_readiness);
+    let mut secrets_required =
+        collect_secret_requirements(ctx, &dependency_readiness, agent, workspace);
     let (registry_source_display, registry_clone_url, registry_secrets) =
         registry_source(ctx, &mut findings);
     secrets_required.extend(registry_secrets);
@@ -233,10 +234,14 @@ fn collect_dependency_readiness(
 fn collect_secret_requirements(
     ctx: &AppContext,
     dependencies: &[ProvisionDependencyReadiness],
+    agent: &str,
+    workspace: &Path,
 ) -> Vec<ProvisionSecretRequirement> {
     let mut by_name = BTreeMap::new();
     for dependency in dependencies {
-        if let Ok(report) = skill_dependency_report(ctx, &dependency.skill, None, None) {
+        if let Ok(report) =
+            skill_dependency_report(ctx, &dependency.skill, Some(agent), Some(workspace))
+        {
             for env in report.dependencies.env {
                 by_name
                     .entry(env.name.clone())

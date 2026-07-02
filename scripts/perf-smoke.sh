@@ -6,7 +6,7 @@ if [[ ! -x "$bin" ]]; then
   cargo build --release --locked
 fi
 
-# Hard ceiling: 5024 KiB. The durable plan/apply protocol, offline eval
+# Hard ceiling: 5088 KiB. The durable plan/apply protocol, offline eval
 # matrix, local skill scaffolding CLI, skillset foundation, portable YAML
 # lint parser, single-skill inspect read model, single-skill activation
 # commands, and safety/trust/quarantine/security-diff command surfaces expanded
@@ -40,9 +40,11 @@ fi
 # dependency/secret readiness models. Provisioning review-gate hardening adds
 # component-aware workspace matching, SSH/query credential redaction, reviewed
 # registry-head checkout, remote secret requirements, and safety/trust policy
-# findings, while the startup latency checks below continue to guard cold CLI
-# responsiveness.
-max_bin_bytes=$((5024 * 1024))
+# findings. Tar provisioning artifacts add deterministic archive emission,
+# manifest/checksum validation, source copy inspection, and active-view import
+# dry-run verification, while the startup latency checks below continue to
+# guard cold CLI responsiveness.
+max_bin_bytes=$((5088 * 1024))
 bin_bytes="$(wc -c < "$bin" | tr -d ' ')"
 if (( bin_bytes > max_bin_bytes )); then
   echo "release binary is ${bin_bytes} bytes; limit is ${max_bin_bytes}" >&2

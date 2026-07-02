@@ -530,6 +530,7 @@ fn run_panel_command_returns_non_2xx_for_logical_failures_across_mutations() {
                 profile: "default".to_string(),
                 method: ProjectionMethod::Symlink,
                 target_root: None,
+                adopt: false,
                 apply: true,
             }),
         ),

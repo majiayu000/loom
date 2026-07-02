@@ -119,6 +119,7 @@ async fn registry_skill_use_returns_plan_without_mutation() {
             profile: Some("panel".to_string()),
             method: Some(ProjectionMethod::Copy),
             target_root: None,
+            adopt: false,
             apply: false,
         }),
     )

@@ -187,6 +187,7 @@ pub(in crate::panel) async fn registry_skill_use(
             profile: req.profile.unwrap_or_else(|| "default".to_string()),
             method: req.method.unwrap_or(ProjectionMethod::Symlink),
             target_root: req.target_root,
+            adopt: req.adopt,
             apply: req.apply,
         }),
     )

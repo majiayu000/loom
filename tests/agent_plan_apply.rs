@@ -141,7 +141,7 @@ fn durable_plan_apply_uses_paths_resolved_at_plan_time() {
     assert!(
         projection_path.starts_with(
             planner_base
-                .join("reviewed-targets/claude/skills")
+                .join("reviewed-targets")
                 .to_str()
                 .expect("target root")
         ),

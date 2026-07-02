@@ -84,6 +84,13 @@ run_json() {
   "$LOOM_BIN" --json --root "$repo" "$@"
 }
 
+run_json_with_home() {
+  local repo="$1"
+  local home="$2"
+  shift 2
+  HOME="$home" "$LOOM_BIN" --json --root "$repo" "$@"
+}
+
 run_json_expect_fail() {
   local repo="$1"
   local expected_code="$2"
@@ -284,6 +291,37 @@ EOF
   printf 'D PASS target=%s binding=%s instance=%s\n' "$target_id" "$bind_id" "$instance_id"
 }
 
+scenario_e() {
+  local root="$ROOT_BASE/e"
+  local repo="$root/repo"
+  local home="$root/home"
+  local seed="$root/seed/demo-skill-e"
+  local claude_dir="$home/.claude/skills"
+  local codex_dir="$home/.agents/skills"
+  local use_json target_count binding_count
+
+  mkdir -p "$seed" "$claude_dir" "$codex_dir"
+  cat >"$seed/SKILL.md" <<'EOF'
+# demo-skill-e
+seed line E
+EOF
+
+  assert_ok "$(run_json_with_home "$repo" "$home" skill add "$seed" --name demo-skill-e)" "E skill add"
+  use_json="$(run_json_with_home "$repo" "$home" use demo-skill-e --agents claude,codex --scope user --adopt --apply)"
+  assert_ok "$use_json" "E use user scope claude+codex"
+
+  [[ -f "$claude_dir/demo-skill-e/SKILL.md" ]]
+  [[ -f "$codex_dir/demo-skill-e/SKILL.md" ]]
+  target_count="$(json_field "$(run_json "$repo" target list)" '.data.count')"
+  binding_count="$(json_field "$(run_json "$repo" workspace binding list)" '.data.count')"
+  if [[ "$target_count" != "2" || "$binding_count" != "2" ]]; then
+    echo "FAILED [E counts]: expected two managed targets and two bindings" >&2
+    exit 1
+  fi
+
+  printf 'E PASS claude=%s codex=%s\n' "$claude_dir" "$codex_dir"
+}
+
 mkdir -p "$ROOT_BASE"
 echo "Running Loom agent E2E in: $ROOT_BASE"
 
@@ -291,6 +329,7 @@ scenario_a
 scenario_b
 scenario_c
 scenario_d
+scenario_e
 
 echo "ALL PASS"
 echo "Artifacts: $ROOT_BASE"

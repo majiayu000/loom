@@ -76,6 +76,8 @@ pub(super) struct UseRequest {
     #[serde(default)]
     pub(super) target_root: Option<PathBuf>,
     #[serde(default)]
+    pub(super) adopt: bool,
+    #[serde(default)]
     pub(super) apply: bool,
 }
 

@@ -6,7 +6,7 @@ if [[ ! -x "$bin" ]]; then
   cargo build --release --locked
 fi
 
-# Hard ceiling: 4896 KiB. The durable plan/apply protocol, offline eval
+# Hard ceiling: 5024 KiB. The durable plan/apply protocol, offline eval
 # matrix, local skill scaffolding CLI, skillset foundation, portable YAML
 # lint parser, single-skill inspect read model, single-skill activation
 # commands, and safety/trust/quarantine/security-diff command surfaces expanded
@@ -34,10 +34,15 @@ fi
 # provisioning foundation adds read-only requirement/plan/doctor/catalog
 # surfaces with source policy and redacted config planning. MCP review-thread
 # fixes add structured config compatibility checks, source override trust
-# handling, table-only doctor readiness, and nested/scalar metadata parsing,
-# while the startup latency checks below continue to guard cold CLI
+# handling, table-only doctor readiness, and nested/scalar metadata parsing.
+# Devcontainer provisioning adds read-only plan/doctor surfaces, deterministic
+# file previews, target policy gates, redacted registry clone planning, and
+# dependency/secret readiness models. Provisioning review-gate hardening adds
+# component-aware workspace matching, SSH/query credential redaction, reviewed
+# registry-head checkout, remote secret requirements, and safety/trust policy
+# findings, while the startup latency checks below continue to guard cold CLI
 # responsiveness.
-max_bin_bytes=$((4896 * 1024))
+max_bin_bytes=$((5024 * 1024))
 bin_bytes="$(wc -c < "$bin" | tr -d ' ')"
 if (( bin_bytes > max_bin_bytes )); then
   echo "release binary is ${bin_bytes} bytes; limit is ${max_bin_bytes}" >&2

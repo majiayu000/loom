@@ -7,9 +7,9 @@ use crate::cli::{
     AgentCommand, AgentKind, ApprovalCommand, BindingAddArgs, CodexCommand, Command,
     InstructionCommand, McpCatalogCommand, McpCommand, McpRequirementCommand, OpsCommand,
     OpsHistoryCommand, OrgPolicyCommand, PackageCommand, PlanCommand, PolicyCommand,
-    ProjectionMethod, RolesCommand, SkillActiveCommand, SkillCommand, SkillOrphanCommand,
-    SkillTrashCommand, SkillsetCommand, SyncCommand, TargetCommand, WorkflowCommand,
-    WorkspaceBindingCommand, WorkspaceCommand, WorkspaceMatcherKind,
+    ProjectionMethod, ProvisionCommand, RolesCommand, SkillActiveCommand, SkillCommand,
+    SkillOrphanCommand, SkillTrashCommand, SkillsetCommand, SyncCommand, TargetCommand,
+    WorkflowCommand, WorkspaceBindingCommand, WorkspaceCommand, WorkspaceMatcherKind,
 };
 use crate::state::AppContext;
 use crate::state_model::{
@@ -209,6 +209,13 @@ pub(crate) fn command_name(command: &Command) -> &'static str {
                 McpCatalogCommand::Search(_) => "mcp.catalog.search",
                 McpCatalogCommand::Show(_) => "mcp.catalog.show",
             },
+        },
+        Command::Provision { command } => match command {
+            ProvisionCommand::Plan(_) => "provision.plan",
+            ProvisionCommand::Apply(_) => "provision.apply",
+            ProvisionCommand::Doctor(_) => "provision.doctor",
+            ProvisionCommand::Export(_) => "provision.export",
+            ProvisionCommand::Import(_) => "provision.import",
         },
         Command::Policy { command } => match command {
             PolicyCommand::Org { command } => match command {

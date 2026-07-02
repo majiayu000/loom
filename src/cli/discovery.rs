@@ -8,6 +8,10 @@ pub struct SkillSearchArgs {
     /// Lexical query matched against skill id, description, tags, and warnings.
     pub query: String,
 
+    /// Treat the query as a task and include deterministic selection metadata.
+    #[arg(long)]
+    pub for_task: bool,
+
     /// Restrict results to skills compatible with this agent.
     #[arg(long)]
     pub agent: Option<String>,
@@ -23,42 +27,22 @@ pub struct SkillSearchArgs {
     /// Restrict results by trust metadata. Only unknown is available until policy metadata lands.
     #[arg(long)]
     pub trust: Option<String>,
-}
-
-#[derive(Debug, Clone, Args, Serialize)]
-pub struct SkillResolveArgs {
-    /// Task description to resolve deterministically against local skill metadata.
-    pub task_description: String,
-
-    /// Prefer skills compatible with this agent.
-    #[arg(long)]
-    pub agent: Option<String>,
 
     /// Boost skills whose binding matcher covers this workspace path.
     #[arg(long)]
     pub workspace: Option<PathBuf>,
 
-    /// Request local semantic retrieval. Falls back to lexical mode when no local provider exists.
+    /// Restrict results to skills with an active projection record.
     #[arg(long)]
-    pub semantic: bool,
-}
-
-#[derive(Debug, Clone, Args, Serialize)]
-pub struct SkillRecommendArgs {
-    /// Task description to rank skills and skillsets for.
-    pub task_description: String,
-
-    /// Prefer skills compatible with this agent.
-    #[arg(long)]
-    pub agent: Option<String>,
-
-    /// Boost skills whose binding matcher covers this workspace path.
-    #[arg(long)]
-    pub workspace: Option<PathBuf>,
+    pub active: bool,
 
     /// Request local semantic retrieval. Falls back to lexical mode when no local provider exists.
     #[arg(long)]
     pub semantic: bool,
+
+    /// Include recommendation explanations, skillset candidates, and safety/risk inputs.
+    #[arg(long)]
+    pub explain: bool,
 }
 
 #[derive(Debug, Clone, Args, Serialize)]

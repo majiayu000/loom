@@ -23,4 +23,8 @@ pub struct SkillInspectArgs {
     /// Include local telemetry usage and eval summary when telemetry state exists.
     #[arg(long)]
     pub include_telemetry: bool,
+
+    /// Return the compact inventory read-model shape that previously lived under skill show.
+    #[arg(long)]
+    pub brief: bool,
 }

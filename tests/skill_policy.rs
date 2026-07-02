@@ -113,6 +113,9 @@ fn skill_policy_reports_declared_capabilities_and_heuristic_risks() {
     assert!(has_finding(report, "shell_pipe_download"));
     assert!(has_finding(report, "prompt_injection_heuristic"));
     assert_eq!(report["summary"]["blocker_count"], json!(0));
+    assert_eq!(report["scan"]["skill"], json!("risky-skill"));
+    assert_eq!(report["scan"]["decision"], json!("review_required"));
+    assert!(has_finding(&report["scan"], "script_network_access"));
 }
 
 #[test]
@@ -217,5 +220,6 @@ fn skill_policy_reports_and_blocks_provenance_drift_under_deny_risky() {
     assert!(output.status.success(), "policy report should pass: {env}");
     assert_eq!(env["data"]["allowed"], json!(false));
     assert!(has_finding(&env["data"], "provenance_digest_mismatch"));
+    assert_eq!(env["data"]["scan"]["skill"], json!("clean-skill"));
     assert_eq!(env["data"]["summary"]["blocker_count"], json!(1));
 }

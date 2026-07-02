@@ -203,7 +203,7 @@ The chain `add → capture → save → snapshot → release → rollback` is th
 |------|--------------|----------------------|---------|
 | `loom skill add` | Import a skill source into the registry and record source provenance in `loom.lock` | First-time onboarding of a skill from a local path, Git URL, local Git repo, or `github:owner/repo//subdir` | Source (initial import) |
 | `loom skill list` | List registry, source, and observed skill inventory | See what skills exist before mutating registry state | Source + registry metadata (read-only) |
-| `loom skill show` | Show one skill from the shared inventory model | Inspect entrypoint, description, source status, projections, compatible targets, warnings, and next actions | Source + registry metadata (read-only) |
+| `loom skill inspect --brief` | Show one skill from the shared inventory model | Inspect entrypoint, description, source status, projections, compatible targets, warnings, and next actions | Source + registry metadata (read-only) |
 | `loom skill inspect` | Show one skill lifecycle status card | Check source, lint, projection/runtime, quality, safety, and next actions without mutation | Source + registry metadata (read-only) |
 | `loom skill deps` | Check runtime dependency readiness | Report required tools, env vars, MCP servers, and network expectations before activation or use | Source + local environment (read-only) |
 | `loom skill compile` | Plan and verify derived compiled runtime artifacts | Return read-only dry-run plans, list known artifacts, and verify manifests, sidecars, digests, and gates without replacing `SKILL.md` | Source + compiled artifact state (read-only) |
@@ -211,8 +211,7 @@ The chain `add → capture → save → snapshot → release → rollback` is th
 | `loom skill deactivate` | Deactivate one skill from an agent target | Remove the desired rule and only delete safe symlink projections; copy/materialize fail closed | Target + registry metadata |
 | `loom skill active list` | List desired active skills and realized projections | See active rules, projection health, missing targets, and explicit `not_checked` visibility claims | Registry metadata + target filesystem (read-only) |
 | `loom skill visibility` | Explain one skill's agent active-view visibility | For Codex, join source, active rules, projection symlink, config disables, runtime entries, external entries, and restart requirements | Source + registry metadata + target filesystem (read-only) |
-| `loom skill search` | Search skills with deterministic lexical scoring | Find likely skills by id, description, tags, warning state, agent, profile, status, or trust | Source + registry metadata (read-only) |
-| `loom skill resolve` | Resolve a task description to candidate skills without an LLM | Let agents choose a skill transparently from local metadata and scoring inputs | Source + registry metadata (read-only) |
+| `loom skill search` | Search, resolve, and explain skill candidates with deterministic scoring | Find likely skills by metadata; use `--for-task` for task resolution and `--explain` for recommendation details | Source + registry metadata (read-only) |
 | `loom skill draft/extract/rewrite/tune-description/generate-evals` | Create guarded authoring patch artifacts with the deterministic mock provider | Review proposed source/eval diffs without mutating `skills/<skill>`; prompt material is redacted and size-bounded | Source + `state/patches` artifact output |
 | `loom skill apply-patch` | Apply a reviewed authoring patch through validation gates | Requires an idempotency key, revalidates source digest/ref, runs staging lint/safety/eval gates, commits only after validation, and supports idempotent replay | Patch artifact state + skill source |
 | `loom instruction scan/show/classify/doctor/migrate-plan` | Inspect native instruction surfaces without importing them as skills | Inventory `AGENTS.md`, `CLAUDE.md`, Cursor, Windsurf, and Copilot instruction files; diagnose overlap; emit dry-run migration plans only | Workspace files (read-only) |
@@ -227,7 +226,7 @@ The chain `add → capture → save → snapshot → release → rollback` is th
 | `loom approval request/list/approve/reject` | Manage append-only approval events | Create and decide auditable approval requests with redacted reasons/comments and role checks | Registry approval log |
 | `loom roles list/grant/revoke` | Manage local org role grants | Bootstrap and review viewer/author/reviewer/maintainer/admin grants without hosted RBAC | Registry role state |
 | `loom skill provenance inspect/verify/refresh` | Inspect, check, or refresh recorded source provenance and `loom.lock` | Confirm a skill still matches the source digest and pinned ref metadata | Source metadata + `loom.lock` |
-| `loom skill policy` | Report declared capabilities, content risks, provenance drift, and policy decision | Review a skill before projection or explain why a policy profile blocks it | Source metadata + source files (read-only) |
+| `loom skill policy` | Report declared capabilities, content risks, provenance drift, policy decision, and embedded safety scan | Review a skill before projection or explain why a policy profile blocks it | Source metadata + source files (read-only) |
 | `loom skill scan` | Return unified safety findings, trust state, and activation decision | Review prompt-injection, script, secret, network, provenance, and trust risks before activation | Source + trust metadata (read-only) |
 | `loom skill trust/quarantine/unquarantine` | Persist registry-owned trust and quarantine metadata | Mark review state or block a skill without editing portable `SKILL.md` | Registry trust state |
 | `loom skill eval` | Run offline fixtures or explicit eval harnesses | Compare offline quality, trigger behavior, and mock with-skill/no-skill baselines without network calls by default | Source + eval fixtures; reports under registry state |
@@ -276,9 +275,9 @@ Quick decision: **edits from the agent side → `capture`; edits inside the regi
 
 - Multi-directory behavior is explicit via `target add`; no implicit directory inference.
 - Agent automation should use explicit `--root`, `--json`, selectors such as `binding_id` / `target_id`, and branch on `ok` + `error.code`.
-- Agents can call `loom skill resolve "<task>" --agent <agent> --workspace <path>` before choosing a workflow skill, then `loom agent preflight --agent <agent> --workspace <path> --skill <skill>` before writing. Add `--dry-run` to high-risk writes, or use `loom skill rollback --dry-run` to get a no-mutation rollback plan.
+- Agents can call `loom skill search "<task>" --for-task --agent <agent> --workspace <path>` before choosing a workflow skill, then `loom agent preflight --agent <agent> --workspace <path> --skill <skill>` before writing. Add `--dry-run` to high-risk writes, or use `loom skill rollback --dry-run` to get a no-mutation rollback plan.
 - `--json` wraps both command execution errors and argument parsing failures in the same envelope. `loom panel` is the local HTTP UI server and does not return a command envelope.
-- Read commands such as `workspace status`, `workspace doctor`, `target list`, `skill list`, `skill inspect`, `skill deps`, `skill search`, `skill resolve`, `skillset show`, `skillset lint`, and `sync status` do not mutate registry state, Git refs, the Git index, live target directories, or the pending queue. Durable command audit events may be recorded under `state/events/commands.jsonl` for audited surfaces.
+- Read commands such as `workspace status`, `workspace doctor`, `target list`, `skill list`, `skill inspect`, `skill inspect --brief`, `skill deps`, `skill search`, `skillset show`, `skillset lint`, and `sync status` do not mutate registry state, Git refs, the Git index, live target directories, or the pending queue. Durable command audit events may be recorded under `state/events/commands.jsonl` for audited surfaces.
 - Registry metadata lives under `state/registry`; Loom does not use release-style labels for internal state names.
 - State-changing registry commands commit `state/registry` to Git, and `sync push` has a safety commit before pushing.
 - Hard write guard: if `--root` points to the Loom tool repo itself, write operations are rejected. Use an independent skill registry repo for mutable operations.
@@ -302,8 +301,6 @@ loom monitor [--target <target-id>] [--once] [--interval-seconds <seconds>]
 loom use <skill> --agents <agent[,agent]> [--scope project] [--workspace <path>] [--profile <id>] [--method <symlink|copy|materialize>] [--target-root <path>] [--apply]
 loom plan use <skill> --agents <agent[,agent]> [--scope project] [--workspace <path>] [--profile <id>] [--method <symlink|copy|materialize>] [--target-root <path>]
 loom apply <plan-id> --idempotency-key <key> [--approve <token[,token]>]
-loom doctor
-
 loom workspace status
 loom workspace doctor
 loom workspace init [--scan-existing]
@@ -323,8 +320,8 @@ loom target show <target-id>
 loom target remove <target-id>
 
 loom skill list
-loom skill show <skill>
 loom skill inspect <skill> [--agent <agent>] [--workspace <path>] [--profile <profile>]
+loom skill inspect <skill> --brief
 loom skill inspect <skill> --include-telemetry
 loom skill deps <skill> [--agent <agent>] [--workspace <path>]
 loom skill compile <skill> --dry-run [--agent <agent>] [--profile <profile>]
@@ -335,8 +332,7 @@ loom skill activate <skill> --agent <agent> [--scope <user|project>] [--workspac
 loom skill deactivate <skill> --agent <agent> [--scope <user|project>] [--workspace <path>] [--profile <profile>] [--target <target-id>] [--dry-run]
 loom skill active list --agent <agent> [--scope <user|project>] [--workspace <path>] [--profile <profile>]
 loom skill visibility <skill> --agent codex [--workspace <path>] [--profile <profile>]
-loom skill search <query> [--agent <agent>] [--profile <profile>] [--status <status>] [--trust <trust>]
-loom skill resolve <task-description> [--agent <agent>] [--workspace <path>]
+loom skill search <query> [--agent <agent>] [--profile <profile>] [--status <status>] [--trust <trust>] [--workspace <path>] [--active] [--for-task] [--semantic] [--explain]
 loom skill draft <skill> --from-session <path|id> [--agent <agent>] [--provider mock] [--dry-run]
 loom skill extract <skill> --from-diff <path> [--provider mock] [--dry-run]
 loom skill rewrite <skill> --instruction <text> [--provider mock] [--dry-run]

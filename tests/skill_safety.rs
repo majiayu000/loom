@@ -275,8 +275,11 @@ fn inventory_and_inspect_surface_trust_state() {
     );
     assert!(output.status.success(), "trust should pass: {env}");
 
-    let (output, env) = run_loom(root.path(), &["skill", "show", "demo"]);
-    assert!(output.status.success(), "show should pass: {env}");
+    let (output, env) = run_loom(root.path(), &["skill", "inspect", "demo", "--brief"]);
+    assert!(
+        output.status.success(),
+        "skill inspect --brief should pass: {env}"
+    );
     assert_eq!(env["data"]["skill"]["trust"], json!("reviewed"));
 
     let (output, env) = run_loom(
@@ -300,9 +303,12 @@ fn inventory_returns_typed_state_error_for_malformed_trust_metadata() {
     add_skill(root.path(), source.path(), "demo");
     write_file(&root.path().join("state/registry/trust.json"), "{not json");
 
-    let (output, env) = run_loom(root.path(), &["skill", "show", "demo"]);
+    let (output, env) = run_loom(root.path(), &["skill", "inspect", "demo", "--brief"]);
 
-    assert!(!output.status.success(), "show should fail: {env}");
+    assert!(
+        !output.status.success(),
+        "skill inspect --brief should fail: {env}"
+    );
     assert_eq!(env["error"]["code"], json!("STATE_CORRUPT"));
 }
 

@@ -17,6 +17,10 @@ use crate::types::ErrorCode;
 
 use super::artifact::ProvisionArtifactInspection;
 use super::model::ProvisionPlan;
+use super::tar_safety::{
+    active_skill_ids, ensure_reviewed_registry_source, reject_forbidden_source_content,
+    reject_output_inside_skill_sources, reject_source_hardlink,
+};
 use super::utils::shell_safe_segment;
 
 const TAR_ARTIFACT_SCHEMA: &str = "provision-tar-artifact-v1";
@@ -69,6 +73,11 @@ struct TarActiveViewFile {
     content_digest: String,
 }
 
+struct CollectedRegistryFile {
+    manifest: TarRegistryFile,
+    bytes: Vec<u8>,
+}
+
 pub(super) fn build_tar_export_artifact(
     ctx: &AppContext,
     plan: &ProvisionPlan,
@@ -93,20 +102,22 @@ pub(super) fn build_tar_export_artifact(
         });
     }
 
-    let registry_files = collect_registry_files(ctx, plan)?;
-    for file in &registry_files {
+    let skill_ids = active_skill_ids(plan)?;
+    ensure_reviewed_registry_source(ctx, plan, &skill_ids)?;
+    reject_output_inside_skill_sources(ctx, output, &skill_ids)?;
+
+    let collected_registry_files = collect_registry_files(ctx, &skill_ids)?;
+    for file in &collected_registry_files {
         insert_entry(
             &mut entries,
-            &file.archive_path,
-            fs::read(
-                ctx.root
-                    .join("skills")
-                    .join(&file.skill)
-                    .join(&file.source_path),
-            )
-            .map_err(map_io)?,
+            &file.manifest.archive_path,
+            file.bytes.clone(),
         )?;
     }
+    let registry_files = collected_registry_files
+        .into_iter()
+        .map(|file| file.manifest)
+        .collect::<Vec<_>>();
 
     let active_view_files = collect_active_view_files(plan, &registry_files)?;
     for file in &active_view_files {
@@ -239,11 +250,11 @@ pub(super) fn inspect_tar_export_artifact(
 
 fn collect_registry_files(
     ctx: &AppContext,
-    plan: &ProvisionPlan,
-) -> Result<Vec<TarRegistryFile>, CommandFailure> {
+    skills: &BTreeSet<String>,
+) -> Result<Vec<CollectedRegistryFile>, CommandFailure> {
     let mut files = Vec::new();
-    for skill in active_skill_ids(plan) {
-        let skill_root = ctx.root.join("skills").join(&skill);
+    for skill in skills {
+        let skill_root = ctx.skill_path(skill);
         if !skill_root.is_dir() {
             return Err(CommandFailure::new(
                 ErrorCode::ArgInvalid,
@@ -252,15 +263,20 @@ fn collect_registry_files(
         }
         let mut relative_files = Vec::new();
         collect_regular_files(&skill_root, &skill_root, &mut relative_files)?;
-        let skill_segment = safe_archive_segment(&skill)?;
+        let skill_segment = safe_archive_segment(skill)?;
         for relative in relative_files {
             let source_path = archive_relative_path(&relative)?;
             let bytes = fs::read(skill_root.join(&relative)).map_err(map_io)?;
-            files.push(TarRegistryFile {
-                skill: skill.clone(),
-                source_path: source_path.clone(),
-                archive_path: format!("registry/skills/{skill_segment}/{source_path}"),
-                content_digest: digest_bytes(&bytes),
+            let archive_path = format!("registry/skills/{skill_segment}/{source_path}");
+            reject_forbidden_source_content(ctx, &archive_path, &bytes)?;
+            files.push(CollectedRegistryFile {
+                manifest: TarRegistryFile {
+                    skill: skill.clone(),
+                    source_path: source_path.clone(),
+                    archive_path,
+                    content_digest: digest_bytes(&bytes),
+                },
+                bytes,
             });
         }
     }
@@ -301,13 +317,6 @@ fn collect_active_view_files(
     Ok(files)
 }
 
-fn active_skill_ids(plan: &ProvisionPlan) -> BTreeSet<String> {
-    plan.active_views
-        .iter()
-        .flat_map(|view| view.skills.iter().cloned())
-        .collect()
-}
-
 fn collect_regular_files(
     root: &Path,
     current: &Path,
@@ -341,6 +350,7 @@ fn collect_regular_files(
         if file_type.is_dir() {
             collect_regular_files(root, &path, files)?;
         } else if file_type.is_file() {
+            reject_source_hardlink(&path)?;
             let relative = path.strip_prefix(root).map_err(map_io)?.to_path_buf();
             files.push(relative);
         }

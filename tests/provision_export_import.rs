@@ -5,7 +5,7 @@ use std::io::Read;
 use std::process::Command;
 
 use common::{TestDir, run_loom, write_file, write_minimal_registry_state, write_skill};
-use serde_json::json;
+use serde_json::{Value, json};
 use tar::Archive;
 
 fn setup_provision_export_registry() -> (TestDir, String) {
@@ -35,7 +35,39 @@ fn setup_provision_export_registry() -> (TestDir, String) {
         ])
         .output()
         .expect("git remote add");
+    commit_all(&root, "seed provision registry");
     (root, "/tmp/project-a".to_string())
+}
+
+fn commit_all(root: &TestDir, message: &str) {
+    let add = Command::new("git")
+        .current_dir(root.path())
+        .args(["add", "."])
+        .output()
+        .expect("git add");
+    assert!(
+        add.status.success(),
+        "git add failed: {}",
+        String::from_utf8_lossy(&add.stderr)
+    );
+    let commit = Command::new("git")
+        .current_dir(root.path())
+        .args([
+            "-c",
+            "user.name=Loom Test",
+            "-c",
+            "user.email=loom-test@example.com",
+            "commit",
+            "-m",
+            message,
+        ])
+        .output()
+        .expect("git commit");
+    assert!(
+        commit.status.success(),
+        "git commit failed: {}",
+        String::from_utf8_lossy(&commit.stderr)
+    );
 }
 
 fn write_plan(root: &TestDir, workspace: &str, plan_path: &str) {
@@ -184,6 +216,239 @@ fn provision_import_dry_run_inspects_shell_artifact_without_writes() {
         json!("review_only")
     );
     assert!(!root.path().join(".devcontainer").exists());
+}
+
+#[test]
+fn provision_tar_export_rejects_secret_looking_source_content() {
+    let (root, workspace) = setup_provision_export_registry();
+    write_file(
+        &root.path().join("skills/model-onboarding/notes.txt"),
+        "token=local-secret\n",
+    );
+    commit_all(&root, "add secret-looking source");
+    let plan_path = root.path().join("provision-plan.json");
+    let export_path = root.path().join("provision.tar");
+    let plan_arg = plan_path.to_string_lossy().to_string();
+    let export_arg = export_path.to_string_lossy().to_string();
+    write_plan(&root, &workspace, &plan_arg);
+
+    let (output, env) = run_loom(
+        root.path(),
+        &[
+            "provision",
+            "export",
+            &plan_arg,
+            "--format",
+            "tar",
+            "--output",
+            &export_arg,
+        ],
+    );
+
+    assert!(!output.status.success(), "secret source export should fail");
+    assert_eq!(env["error"]["code"], json!("POLICY_BLOCKED"));
+    assert!(
+        env["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("secret-looking")
+    );
+    assert!(!env.to_string().contains("local-secret"));
+}
+
+#[test]
+fn provision_tar_export_rejects_secret_named_source_files() {
+    let (root, workspace) = setup_provision_export_registry();
+    write_file(
+        &root.path().join("skills/model-onboarding/credentials.json"),
+        "{}\n",
+    );
+    commit_all(&root, "add credential-named source");
+    let plan_path = root.path().join("provision-plan.json");
+    let export_path = root.path().join("provision.tar");
+    let plan_arg = plan_path.to_string_lossy().to_string();
+    let export_arg = export_path.to_string_lossy().to_string();
+    write_plan(&root, &workspace, &plan_arg);
+
+    let (output, env) = run_loom(
+        root.path(),
+        &[
+            "provision",
+            "export",
+            &plan_arg,
+            "--format",
+            "tar",
+            "--output",
+            &export_arg,
+        ],
+    );
+
+    assert!(
+        !output.status.success(),
+        "credential source export should fail"
+    );
+    assert_eq!(env["error"]["code"], json!("POLICY_BLOCKED"));
+    assert!(
+        env["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("user-specific config")
+    );
+}
+
+#[test]
+fn provision_tar_export_rejects_stale_reviewed_registry_head() {
+    let (root, workspace) = setup_provision_export_registry();
+    let plan_path = root.path().join("provision-plan.json");
+    let export_path = root.path().join("provision.tar");
+    let plan_arg = plan_path.to_string_lossy().to_string();
+    let export_arg = export_path.to_string_lossy().to_string();
+    write_plan(&root, &workspace, &plan_arg);
+    write_file(
+        &root.path().join("skills/model-onboarding/SKILL.md"),
+        "---\nname: model-onboarding\ndescription: Updated.\n---\n# Updated\n",
+    );
+    commit_all(&root, "change source after reviewed plan");
+
+    let (output, env) = run_loom(
+        root.path(),
+        &[
+            "provision",
+            "export",
+            &plan_arg,
+            "--format",
+            "tar",
+            "--output",
+            &export_arg,
+        ],
+    );
+
+    assert!(!output.status.success(), "stale source export should fail");
+    assert_eq!(env["error"]["code"], json!("POLICY_BLOCKED"));
+    assert!(
+        env["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("registry head is stale")
+    );
+}
+
+#[test]
+fn provision_tar_export_rejects_invalid_skill_ids_before_path_join() {
+    let (root, workspace) = setup_provision_export_registry();
+    let plan_path = root.path().join("provision-plan.json");
+    let export_path = root.path().join("provision.tar");
+    let plan_arg = plan_path.to_string_lossy().to_string();
+    let export_arg = export_path.to_string_lossy().to_string();
+    write_plan(&root, &workspace, &plan_arg);
+    let mut plan: Value =
+        serde_json::from_str(&fs::read_to_string(&plan_path).expect("read plan artifact"))
+            .expect("parse plan artifact");
+    plan["active_views"][0]["skills"][0] = json!("../state/registry");
+    write_file(
+        &plan_path,
+        &format!(
+            "{}\n",
+            serde_json::to_string_pretty(&plan).expect("serialize plan")
+        ),
+    );
+
+    let (output, env) = run_loom(
+        root.path(),
+        &[
+            "provision",
+            "export",
+            &plan_arg,
+            "--format",
+            "tar",
+            "--output",
+            &export_arg,
+        ],
+    );
+
+    assert!(!output.status.success(), "invalid skill id should fail");
+    assert_eq!(env["error"]["code"], json!("ARG_INVALID"));
+    assert!(
+        env["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("unsupported characters")
+    );
+}
+
+#[test]
+fn provision_tar_export_rejects_output_inside_packaged_skill_source() {
+    let (root, workspace) = setup_provision_export_registry();
+    let plan_path = root.path().join("provision-plan.json");
+    let export_path = root
+        .path()
+        .join("skills/model-onboarding/previous-provision.tar");
+    let plan_arg = plan_path.to_string_lossy().to_string();
+    let export_arg = export_path.to_string_lossy().to_string();
+    write_plan(&root, &workspace, &plan_arg);
+
+    let (output, env) = run_loom(
+        root.path(),
+        &[
+            "provision",
+            "export",
+            &plan_arg,
+            "--format",
+            "tar",
+            "--output",
+            &export_arg,
+        ],
+    );
+
+    assert!(!output.status.success(), "nested output export should fail");
+    assert_eq!(env["error"]["code"], json!("POLICY_BLOCKED"));
+    assert!(
+        env["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("inside packaged skill source")
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn provision_tar_export_rejects_hardlinked_skill_sources() {
+    let (root, workspace) = setup_provision_export_registry();
+    let outside = root.path().join("outside-source.txt");
+    let linked = root.path().join("skills/model-onboarding/hardlinked.txt");
+    write_file(&outside, "external source\n");
+    fs::hard_link(&outside, &linked).expect("create hardlink");
+    commit_all(&root, "add hardlinked source");
+    let plan_path = root.path().join("provision-plan.json");
+    let export_path = root.path().join("provision.tar");
+    let plan_arg = plan_path.to_string_lossy().to_string();
+    let export_arg = export_path.to_string_lossy().to_string();
+    write_plan(&root, &workspace, &plan_arg);
+
+    let (output, env) = run_loom(
+        root.path(),
+        &[
+            "provision",
+            "export",
+            &plan_arg,
+            "--format",
+            "tar",
+            "--output",
+            &export_arg,
+        ],
+    );
+
+    assert!(
+        !output.status.success(),
+        "hardlinked source export should fail"
+    );
+    assert_eq!(env["error"]["code"], json!("POLICY_BLOCKED"));
+    assert!(
+        env["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("hardlink")
+    );
 }
 
 #[test]

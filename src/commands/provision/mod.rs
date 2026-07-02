@@ -2,6 +2,7 @@ mod artifact;
 mod model;
 mod planner;
 mod tar_artifact;
+mod tar_safety;
 mod utils;
 
 use std::fs;

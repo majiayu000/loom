@@ -23,6 +23,8 @@ mod provider_cmds;
 mod provision;
 mod skill_activation;
 mod skill_authoring;
+mod skill_authoring_apply;
+mod skill_authoring_patch;
 mod skill_cmds;
 mod skill_compile;
 mod skill_deps;
@@ -280,7 +282,7 @@ impl App {
                 SkillCommand::Rewrite(args) => self.cmd_skill_rewrite(args),
                 SkillCommand::TuneDescription(args) => self.cmd_skill_tune_description(args),
                 SkillCommand::GenerateEvals(args) => self.cmd_skill_generate_evals(args),
-                SkillCommand::ApplyPatch(args) => self.cmd_skill_apply_patch(args),
+                SkillCommand::ApplyPatch(args) => self.cmd_skill_apply_patch(args, &request_id),
                 SkillCommand::New(args) => self.cmd_skill_new(args, &request_id),
                 SkillCommand::Provenance { command } => {
                     self.cmd_skill_provenance(command, &request_id)

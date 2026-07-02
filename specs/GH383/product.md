@@ -2,7 +2,7 @@
 
 Issue: https://github.com/majiayu000/loom/issues/383
 Parent: https://github.com/majiayu000/loom/issues/376
-Status: Partial implementation
+Status: Implemented
 Locale: zh-CN
 
 ## Goal
@@ -110,10 +110,15 @@ LLM-assisted commands should produce a patch artifact:
 
 ## Current Implementation Boundary
 
-The first implementation slice provides deterministic mock-provider patch
-artifacts, explicit redacted prompt material, reviewable eval fixture diffs, and
-a typed `apply-patch` deferred gate. It intentionally does not apply patches to
-source, commit changes, or claim validation-gate enforcement yet.
+The implementation provides deterministic mock-provider patch artifacts,
+explicit redacted prompt material, reviewable eval fixture diffs, and guarded
+`apply-patch` execution. Applying a patch requires an idempotency key,
+revalidates source digest/ref, validates an isolated staging copy, runs strict
+lint, safety, and mock eval gates, materializes source only after gates pass,
+commits the changed skill path, and records idempotent replay metadata.
+
+Hosted/local LLM providers remain future work behind explicit opt-in. Generated
+skills are still never automatically activated or released.
 
 ## Acceptance Criteria
 

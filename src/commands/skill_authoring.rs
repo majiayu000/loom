@@ -5,8 +5,8 @@ use std::path::Path;
 use serde_json::{Value, json};
 
 use crate::cli::{
-    SkillApplyPatchArgs, SkillAuthoringProviderArg, SkillDraftArgs, SkillExtractArgs,
-    SkillGenerateEvalsArgs, SkillRewriteArgs, SkillTuneDescriptionArgs,
+    SkillAuthoringProviderArg, SkillDraftArgs, SkillExtractArgs, SkillGenerateEvalsArgs,
+    SkillRewriteArgs, SkillTuneDescriptionArgs,
 };
 use crate::envelope::Meta;
 use crate::fs_util::write_atomic;
@@ -171,57 +171,6 @@ impl App {
             patch_kind: PatchKind::GenerateEvals { task },
         };
         run_authoring_command(&self.ctx, args.provider, args.dry_run, request)
-    }
-
-    pub fn cmd_skill_apply_patch(
-        &self,
-        args: &SkillApplyPatchArgs,
-    ) -> std::result::Result<(Value, Meta), CommandFailure> {
-        validate_patch_id(&args.patch_id)?;
-        let Some(idempotency_key) = args.idempotency_key.as_deref() else {
-            return Err(CommandFailure::new(
-                ErrorCode::ArgInvalid,
-                "--idempotency-key is required for skill apply-patch",
-            ));
-        };
-        validate_non_empty("idempotency-key", idempotency_key)?;
-
-        let artifact_path = self
-            .ctx
-            .state_dir
-            .join("patches")
-            .join(format!("{}.json", args.patch_id));
-        if !artifact_path.exists() {
-            return Err(CommandFailure::new(
-                ErrorCode::ArgInvalid,
-                format!("patch artifact '{}' not found", args.patch_id),
-            ));
-        }
-
-        let key_digest = sha256_digest(idempotency_key.as_bytes());
-        let mut failure = CommandFailure::new(
-            ErrorCode::PolicyBlocked,
-            "skill apply-patch is deferred until validation gates are implemented",
-        );
-        failure.details = json!({
-            "patch_id": args.patch_id,
-            "artifact": path_display_string(&artifact_path),
-            "idempotency_key_digest": key_digest,
-            "deferred": true,
-            "required_gates": [
-                "source ref and digest revalidation",
-                "staging apply",
-                "skill lint",
-                "skill policy scan",
-                "skill eval preflight",
-                "commit and recovery record"
-            ],
-            "next_actions": [
-                format!("review {}", artifact_path.display()),
-                "wait for the apply-patch validation-gate slice".to_string()
-            ]
-        });
-        Err(failure)
     }
 }
 
@@ -477,7 +426,7 @@ fn is_sensitive_env_key(key: &str) -> bool {
     .any(|needle| upper.contains(needle))
 }
 
-fn skill_source_digest(
+pub(super) fn skill_source_digest(
     ctx: &AppContext,
     skill: &str,
 ) -> std::result::Result<String, CommandFailure> {
@@ -550,13 +499,13 @@ fn patch_id(
     format!("skillpatch_{}", &hex[..24])
 }
 
-fn sha256_digest(bytes: &[u8]) -> String {
+pub(super) fn sha256_digest(bytes: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(bytes);
     format!("sha256:{}", to_hex(&hasher.finalize()))
 }
 
-fn validate_patch_id(patch_id: &str) -> std::result::Result<(), CommandFailure> {
+pub(super) fn validate_patch_id(patch_id: &str) -> std::result::Result<(), CommandFailure> {
     if !patch_id.starts_with("skillpatch_") {
         return Err(CommandFailure::new(
             ErrorCode::ArgInvalid,
@@ -759,7 +708,7 @@ fn replace_file_patch(path: &str, old: &str, new: &str) -> String {
     patch
 }
 
-fn split_lines(raw: &str) -> Vec<String> {
+pub(super) fn split_lines(raw: &str) -> Vec<String> {
     let without_trailing = raw.strip_suffix('\n').unwrap_or(raw);
     if without_trailing.is_empty() {
         return Vec::new();
@@ -791,6 +740,6 @@ fn relative_path(root: &Path, path: &Path) -> String {
         .replace('\\', "/")
 }
 
-fn path_display_string(path: &Path) -> String {
+pub(super) fn path_display_string(path: &Path) -> String {
     path.to_string_lossy().to_string()
 }

@@ -3,7 +3,7 @@
 Issue: https://github.com/majiayu000/loom/issues/383
 Product spec: `specs/GH383/product.md`
 Tech spec: `specs/GH383/tech.md`
-Status: Partial implementation
+Status: Implemented
 
 ## Scope For First PR
 
@@ -25,9 +25,9 @@ automatic activation, unreviewed release, hidden context uploads, direct provide
 - [x] `SP383-T002` Owner: redaction | Done when: prompt material is explicit, size-bounded, and redacts secrets/env values/token-like strings before provider calls | Verify: `cargo test --test skill_authoring`
 - [x] `SP383-T003` Owner: patch-store | Done when: draft/extract/rewrite/tune/generate commands create patch artifacts and do not mutate source by default | Verify: `cargo test --test skill_authoring`
 - [x] `SP383-T004` Owner: eval-generation | Done when: tune-description and generate-evals can add positive/negative trigger cases and task fixture stubs as patch diffs | Verify: `cargo test --test skill_authoring && cargo test --test skill_eval`
-- [ ] `SP383-T005` Owner: apply-patch | Done when: apply-patch requires idempotency key, revalidates source ref/digest, stages patch, runs lint/scan/eval, and commits only after validation | Verify: `cargo test --test skill_authoring`
-- [ ] `SP383-T006` Owner: safety | Done when: high-risk generated scripts or new network/destructive behavior are blocked or marked review-required before apply | Verify: `cargo test --test skill_policy`
-- [ ] `SP383-T007` Owner: regression | Done when: focused and full repository checks pass | Verify: `cargo check --workspace --all-targets --all-features && cargo test`
+- [x] `SP383-T005` Owner: apply-patch | Done when: apply-patch requires idempotency key, revalidates source ref/digest, stages patch, runs lint/scan/eval, and commits only after validation | Verify: `cargo test --test skill_authoring`
+- [x] `SP383-T006` Owner: safety | Done when: high-risk generated scripts or new network/destructive behavior are blocked or marked review-required before apply | Verify: `cargo test --test skill_authoring && cargo test --test skill_policy`
+- [x] `SP383-T007` Owner: regression | Done when: focused and full repository checks pass | Verify: `cargo check --workspace --all-targets --all-features && cargo test`
 
 ### SP383-T1: Add Authoring Provider Abstraction
 
@@ -160,12 +160,9 @@ cargo test
 
 ## Handoff Notes
 
-This implementation covers the guarded authoring foundation: deterministic mock
-provider, redacted prompt material, reviewable patch artifacts, and a typed
-`apply-patch` deferred gate. It does not yet apply patches, run validation gates
-in staging, commit source changes, or enforce generated-script safety at apply
-time.
+This implementation covers deterministic mock provider generation, redacted
+prompt material, reviewable patch artifacts, guarded staging validation,
+idempotent `apply-patch`, source commit, and high-risk generated-script
+blocking.
 
-Use `Refs #383` for design-only or partial authoring slices. Use `Fixes #383`
-only after mock provider, redaction, patch artifacts, apply-patch, validation
-gates, and safety regression tests are complete.
+Use `Fixes #383` once focused and full verification are green.

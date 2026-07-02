@@ -510,8 +510,9 @@ Authoring generation commands create reviewable patch artifacts under
 `--dry-run` previews the same artifact shape without writing patch files. The
 only enabled provider is deterministic `mock`; hosted/network providers are not
 available in this slice. `skill apply-patch` validates the patch id and
-idempotency key, then returns a typed deferred gate until source revalidation,
-staging apply, lint, safety, eval, commit, and recovery records are implemented.
+idempotency key, revalidates the reviewed source digest/ref, applies the patch
+to an isolated staging copy, runs strict lint, safety, and mock eval gates, then
+materializes and commits the source change only after those gates pass.
 
 Rules:
 
@@ -519,8 +520,11 @@ Rules:
 2. prompt material is size-bounded and redacts secret-looking strings, URL credentials, token-like values, and sensitive env values before provider use
 3. patch artifacts include `schema_version`, `patch_id`, `skill`, `action`, `goal`, `source_ref`, `source_digest`, provider, files, prompt material, validation plan, risk notes, JSON path, and patch path
 4. generation commands write only `state/patches/skillpatch_*.json` and `.patch` plus normal command audit; they do not stage, commit, activate, release, or edit source files
-5. `apply-patch` must never expose the raw idempotency key; deferred responses include only `idempotency_key_digest`
+5. `apply-patch` must never expose the raw idempotency key; success, replay, and failure details include only `idempotency_key_digest`
 6. missing or malformed patch ids and missing `--idempotency-key` return typed `ARG_INVALID`
+7. source digest/ref drift returns `CAPTURE_CONFLICT` without mutating source files
+8. high-risk generated scripts, network access, destructive commands, or failed lint/eval gates block apply before commit
+9. rerunning `apply-patch` with the same idempotency key and patch artifact returns the recorded result without applying the patch again
 
 ### 11.1 `skill add`
 

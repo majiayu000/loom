@@ -2,7 +2,7 @@
 
 Issue: https://github.com/majiayu000/loom/issues/383
 Product spec: `specs/GH383/product.md`
-Status: Partial implementation
+Status: Implemented
 
 ## Current State
 
@@ -129,13 +129,12 @@ cargo test
 
 ## Handoff Notes
 
-The foundation PR implements deterministic `mock` generation, explicit redacted
+The implementation covers deterministic `mock` generation, explicit redacted
 prompt material, `state/patches/skillpatch_*.json` plus `.patch` artifacts, and
-a typed `apply-patch` deferred response that requires an idempotency key. The
-actual source mutation path remains deferred until source digest revalidation,
-staging apply, lint, policy/safety, eval, commit, and recovery handling are
-implemented together.
+a guarded `apply-patch` path. Apply requires an idempotency key, revalidates
+source digest/ref, validates an isolated staging copy, runs strict lint,
+policy/safety, and mock eval gates, materializes source only after gates pass,
+commits the changed skill path, and records an idempotent replay result.
 
-Use `Refs #383` for design-only or partial authoring slices. Use `Fixes #383`
-only after patch generation, redaction, apply-patch, validation gates, and mock
-provider tests satisfy the acceptance criteria.
+Use `Fixes #383` for the implementation PR once focused and full verification
+are green.

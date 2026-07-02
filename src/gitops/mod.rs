@@ -458,9 +458,49 @@ pub fn pull_rebase_main(ctx: &AppContext) -> Result<()> {
     }
 
     let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    let conflicts = rebase_conflict_paths(ctx)?;
+    if conflicts
+        .iter()
+        .any(|path| !is_registry_ops_rebase_conflict(path))
+    {
+        let _ = run_git_allow_failure(ctx, &["rebase", "--abort"]);
+        return Err(anyhow!("git pull --rebase origin main failed: {}", stderr));
+    }
     let _ = run_git_allow_failure(ctx, &["rebase", "--abort"]);
 
-    Err(anyhow!("git pull --rebase origin main failed: {}", stderr))
+    let retry =
+        run_git_allow_failure(ctx, &["pull", "--rebase", "-X", "theirs", "origin", "main"])?;
+    if retry.status.success() {
+        return Ok(());
+    }
+    let retry_stderr = String::from_utf8_lossy(&retry.stderr).trim().to_string();
+    let _ = run_git_allow_failure(ctx, &["rebase", "--abort"]);
+
+    Err(anyhow!(
+        "git pull --rebase origin main failed: {}; retry with -X theirs failed: {}",
+        stderr,
+        retry_stderr
+    ))
+}
+
+fn rebase_conflict_paths(ctx: &AppContext) -> Result<Vec<String>> {
+    let output = run_git_allow_failure(ctx, &["diff", "--name-only", "--diff-filter=U"])?;
+    if !output.status.success() {
+        return Ok(Vec::new());
+    }
+    Ok(String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(ToString::to_string)
+        .collect())
+}
+
+fn is_registry_ops_rebase_conflict(path: &str) -> bool {
+    matches!(
+        path,
+        "state/registry/ops/operations.jsonl" | "state/registry/ops/checkpoint.json"
+    )
 }
 
 fn ensure_origin_remote_url_allowed(ctx: &AppContext) -> Result<()> {
@@ -570,6 +610,7 @@ pub fn fsck(ctx: &AppContext) -> Result<String> {
     run_git(ctx, &["fsck", "--no-progress"])
 }
 
+#[allow(dead_code)]
 fn hash_object_file(ctx: &AppContext, path: &Path) -> Result<String> {
     let path_str = path.to_string_lossy();
     run_git(ctx, &["hash-object", "-w", &path_str])

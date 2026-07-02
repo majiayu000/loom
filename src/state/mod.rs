@@ -1,8 +1,10 @@
 pub(crate) mod journal;
 mod lock;
 mod ops;
+mod registry_ops;
 
 pub use ops::OpsAuditOperation;
+pub use registry_ops::RegistryOrPendingOpsReport;
 
 use lock::{LockMetadata, acquire_lock_coordinator, lock_file_matches_owner, try_reap_stale_lock};
 
@@ -18,6 +20,7 @@ use anyhow::{Context, Result};
 use crate::fs_util::write_atomic;
 use crate::types::PendingOp;
 
+#[allow(dead_code)]
 const OPS_COMPACTION_THRESHOLD: usize = 16;
 pub const DEFAULT_REGISTRY_DIR: &str = ".loom-registry";
 
@@ -371,6 +374,30 @@ impl AppContext {
         write_atomic(&path, &content).context("failed to update .gitignore")?;
         Ok(())
     }
+
+    pub fn ensure_gitattributes_entries(&self) -> Result<()> {
+        let path = self.root.join(".gitattributes");
+        let mut content = if path.exists() {
+            fs::read_to_string(&path).context("failed to read .gitattributes")?
+        } else {
+            String::new()
+        };
+
+        let entries = ["state/registry/ops/operations.jsonl merge=union"];
+
+        for entry in entries {
+            if !content.lines().any(|line| line.trim() == entry) {
+                if !content.ends_with('\n') && !content.is_empty() {
+                    content.push('\n');
+                }
+                content.push_str(entry);
+                content.push('\n');
+            }
+        }
+
+        write_atomic(&path, &content).context("failed to update .gitattributes")?;
+        Ok(())
+    }
 }
 
 pub fn default_registry_root() -> Result<PathBuf> {
@@ -464,6 +491,7 @@ fn ensure_file_with_contents(path: &Path, contents: &str) -> Result<()> {
     write_atomic(path, contents).with_context(|| format!("failed to initialize {}", path.display()))
 }
 
+#[allow(dead_code)]
 fn write_history_segment_if_missing(path: &Path, raw: &str) -> Result<()> {
     if raw.is_empty() {
         return Ok(());

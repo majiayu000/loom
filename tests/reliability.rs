@@ -30,6 +30,15 @@ fn read_command_events(root: &Path) -> Vec<Value> {
         .collect()
 }
 
+fn read_registry_operations(root: &Path) -> Vec<Value> {
+    let raw = fs::read_to_string(root.join("state/registry/ops/operations.jsonl"))
+        .expect("read registry operation log");
+    raw.lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| serde_json::from_str(line).expect("parse registry operation"))
+        .collect()
+}
+
 fn run_git<I, S>(args: I) -> Output
 where
     I: IntoIterator<Item = S>,
@@ -627,6 +636,59 @@ fn snapshot_pushes_annotated_tag_to_remote() {
 
     let pending = run_loom_ok(root.path(), &["ops", "list"]);
     assert_eq!(pending["data"]["count"], 0);
+}
+
+#[test]
+fn sync_push_marks_registry_operations_acked() {
+    let root = TestDir::new("sync-push-registry-ack");
+    let remote_root = TestDir::new("sync-push-registry-ack-remote");
+    let remote = remote_root.path().join("origin.git");
+    let source = make_skill_source(root.path(), "source-registry-ack");
+
+    git_ok(["init", "--bare", remote.to_str().unwrap()]);
+    run_loom_ok(
+        root.path(),
+        &["workspace", "remote", "set", remote.to_str().unwrap()],
+    );
+    run_loom_ok(
+        root.path(),
+        &["skill", "add", source.to_str().unwrap(), "--name", "demo"],
+    );
+
+    let ops = read_registry_operations(root.path());
+    assert!(
+        ops.iter().any(|op| op["ack"] == Value::Bool(true)),
+        "sync push should ack registry operations: {ops:?}"
+    );
+    let pending = run_loom_ok(root.path(), &["ops", "list"]);
+    assert_eq!(pending["data"]["count"], 0);
+}
+
+#[test]
+fn ops_purge_marks_registry_operations_purged() {
+    let root = TestDir::new("ops-purge-registry");
+    let source = make_skill_source(root.path(), "source-registry-purge");
+
+    run_loom_ok(
+        root.path(),
+        &["skill", "add", source.to_str().unwrap(), "--name", "demo"],
+    );
+
+    let before = read_registry_operations(root.path());
+    assert!(
+        before.iter().any(|op| op["ack"] == Value::Bool(false)),
+        "setup should leave an unacked registry operation: {before:?}"
+    );
+
+    let purge = run_loom_ok(root.path(), &["ops", "purge"]);
+    assert!(purge["data"]["purged"].as_u64().unwrap() >= 1);
+    let after = read_registry_operations(root.path());
+    assert!(
+        after
+            .iter()
+            .any(|op| op["ack"] == Value::Bool(true) && op["status"] == "purged"),
+        "ops purge should mark registry operations purged: {after:?}"
+    );
 }
 
 #[test]

@@ -54,6 +54,7 @@ pub fn write_atomic(path: &Path, contents: &str) -> io::Result<()> {
 }
 
 /// Append newline-terminated records and sync the file.
+#[allow(dead_code)]
 pub fn append_lines(path: &Path, lines: &[String]) -> io::Result<()> {
     if lines.is_empty() {
         return Ok(());

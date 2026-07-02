@@ -141,6 +141,7 @@ impl App {
         self.ensure_write_layout()?;
         gitops::ensure_repo_initialized(&self.ctx).map_err(map_git)?;
         self.ctx.ensure_gitignore_entries().map_err(map_io)?;
+        self.ctx.ensure_gitattributes_entries().map_err(map_io)?;
         ensure_initial_commit(&self.ctx).map_err(map_git)?;
         Ok(())
     }

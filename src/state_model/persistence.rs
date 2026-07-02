@@ -7,7 +7,7 @@ use serde_json::Value;
 
 use super::json_io::{
     append_json_line, ensure_json_file, ensure_text_file, read_json_file, read_json_lines,
-    serialize_json_file, write_atomic_batch, write_json_file,
+    serialize_json_file, write_atomic_batch, write_json_file, write_json_lines,
 };
 use super::{
     REGISTRY_SCHEMA_VERSION, RegistryBindingsFile, RegistryObservationEvent,
@@ -275,6 +275,10 @@ impl RegistryStatePaths {
 
     pub fn append_operation(&self, value: &RegistryOperationRecord) -> Result<()> {
         append_json_line(&self.operations_file, value)
+    }
+
+    pub fn save_operations(&self, value: &[RegistryOperationRecord]) -> Result<()> {
+        write_json_lines(&self.operations_file, value)
     }
 }
 

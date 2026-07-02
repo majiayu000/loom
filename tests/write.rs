@@ -266,7 +266,7 @@ fn skill_save_restores_legacy_v3_layout_after_layout_failure() {
 }
 
 #[test]
-fn skill_snapshot_without_registry_operation_does_not_return_op_id() {
+fn skill_snapshot_records_autosync_op_without_skill_snapshot_intent() {
     let root = TestDir::new("registry-skill-snapshot-no-fake-op-id");
     write_skill(root.path(), "demo", "# demo\n\nv1\n");
     assert!(
@@ -285,7 +285,12 @@ fn skill_snapshot_without_registry_operation_does_not_return_op_id() {
         String::from_utf8_lossy(&output.stdout)
     );
     assert_eq!(env["ok"], Value::Bool(true));
-    assert_eq!(env["meta"].get("op_id"), None);
+    assert!(
+        env["meta"]["op_id"]
+            .as_str()
+            .is_some_and(|op_id| op_id.starts_with("op_")),
+        "{env}"
+    );
     assert!(!operations_log(root.path()).contains("\"intent\":\"skill.snapshot\""));
 }
 

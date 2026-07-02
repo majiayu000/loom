@@ -562,7 +562,7 @@ loom --json --root <root> provision export <plan-id|plan-artifact> --format devc
 loom --json --root <root> provision import <artifact> --dry-run
 ```
 
-Remote provisioning is plan-first. The first implemented slices generate a read-only devcontainer plan and doctor report, plus reviewed shell export artifacts and import dry-runs; they must not write target files, copy secrets, mutate registry state, or deploy remote environments. `--output-plan` and `provision export --format shell --output <path>` write only explicitly requested local artifacts.
+Remote provisioning is plan-first. The first implemented slices generate a read-only devcontainer plan and doctor report, plus reviewed shell/tar export artifacts and import dry-runs; they must not write target files, copy secrets, mutate registry state, or deploy remote environments. `--output-plan` and `provision export --format shell|tar --output <path>` write only explicitly requested local artifacts.
 
 Rules:
 
@@ -572,8 +572,9 @@ Rules:
 4. generated devcontainer setup previews use `set -euo pipefail`, require `loom`, do not print secret values, and check planned active skills without writing them
 5. `provision doctor` is read-only and reports missing/different generated files, adapter paths, dependency readiness, secrets, policy, and next actions
 6. `provision export --format shell` requires an explicit reviewed plan artifact path, writes a deterministic shell artifact with digest metadata, and must not include secret values
-7. `provision import <artifact> --dry-run` validates shell artifact metadata/digests and reports review-only planned files without executing scripts or writing target files
-8. `provision apply`, non-dry-run `provision import`, and `provision export --format devcontainer|tar` return typed `POLICY_BLOCKED` deferred gates until durable plan lookup, portable tar/devcontainer artifact validation, approvals, idempotency, and atomic target writes are implemented
+7. `provision export --format tar` writes a deterministic portable artifact containing the reviewed plan, generated file previews, registry skill source files, materialized active-view files, manifest metadata, and checksums without secret values
+8. `provision import <artifact> --dry-run` validates shell/tar artifact metadata/digests and reports review-only planned files without executing scripts, extracting archives, or writing target files
+9. `provision apply`, non-dry-run `provision import`, and `provision export --format devcontainer` return typed `POLICY_BLOCKED` deferred gates until durable plan lookup, devcontainer artifact validation, approvals, idempotency, and atomic target writes are implemented
 
 ### 11.1.5 `policy org`, `approval`, and `roles`
 

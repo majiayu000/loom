@@ -1,6 +1,7 @@
 mod artifact;
 mod model;
 mod planner;
+mod tar_artifact;
 mod utils;
 
 use std::fs;
@@ -19,10 +20,11 @@ use crate::types::ErrorCode;
 use super::helpers::{map_io, validate_non_empty};
 use super::{App, CommandFailure};
 use artifact::{
-    build_shell_export_artifact, inspect_shell_export_artifact, load_provision_plan_artifact,
+    build_shell_export_artifact, inspect_provision_artifact, load_provision_plan_artifact,
 };
 use model::ProvisionPlan;
 use planner::{build_provision_plan, provision_export_format_name, provision_target_name};
+use tar_artifact::build_tar_export_artifact;
 use utils::{digest_file, provision_next_actions, resolve_workspace, validate_provision_agent};
 
 impl App {
@@ -214,35 +216,56 @@ impl App {
         &self,
         args: &ProvisionExportArgs,
     ) -> std::result::Result<(Value, Meta), CommandFailure> {
-        if args.format == crate::cli::ProvisionExportFormatArg::Shell {
-            let plan = load_provision_plan_artifact(&args.plan)?;
-            let artifact = build_shell_export_artifact(&plan)?;
-            write_atomic(&args.output, &artifact.body).map_err(map_io)?;
-            return Ok((
+        match args.format {
+            crate::cli::ProvisionExportFormatArg::Shell => {
+                let plan = load_provision_plan_artifact(&args.plan)?;
+                let artifact = build_shell_export_artifact(&plan)?;
+                write_atomic(&args.output, &artifact.body).map_err(map_io)?;
+                Ok((
+                    json!({
+                        "format": provision_export_format_name(args.format),
+                        "plan_id": plan.plan_id,
+                        "output": args.output.display().to_string(),
+                        "artifact_schema_version": artifact.schema_version,
+                        "artifact_written": true,
+                        "artifact_kind": "shell",
+                        "source_path": artifact.source_path,
+                        "content_digest": artifact.content_digest,
+                        "target_writes_performed": false,
+                    }),
+                    Meta::default(),
+                ))
+            }
+            crate::cli::ProvisionExportFormatArg::Tar => {
+                let plan = load_provision_plan_artifact(&args.plan)?;
+                let artifact = build_tar_export_artifact(&self.ctx, &plan, &args.output)?;
+                Ok((
+                    json!({
+                        "format": provision_export_format_name(args.format),
+                        "plan_id": plan.plan_id,
+                        "output": args.output.display().to_string(),
+                        "artifact_schema_version": artifact.schema_version,
+                        "artifact_written": true,
+                        "artifact_kind": "tar",
+                        "entry_count": artifact.entry_count,
+                        "generated_file_count": artifact.generated_file_count,
+                        "registry_file_count": artifact.registry_file_count,
+                        "active_view_file_count": artifact.active_view_file_count,
+                        "target_writes_performed": false,
+                    }),
+                    Meta::default(),
+                ))
+            }
+            crate::cli::ProvisionExportFormatArg::Devcontainer => Err(deferred_failure(
+                "provision export for this format is deferred until devcontainer artifact gates are implemented",
                 json!({
+                    "plan": args.plan,
                     "format": provision_export_format_name(args.format),
-                    "plan_id": plan.plan_id,
                     "output": args.output.display().to_string(),
-                    "artifact_schema_version": artifact.schema_version,
-                    "artifact_written": true,
-                    "artifact_kind": "shell",
-                    "source_path": artifact.source_path,
-                    "content_digest": artifact.content_digest,
                     "target_writes_performed": false,
                 }),
-                Meta::default(),
-            ));
+            )),
         }
-
-        Err(deferred_failure(
-            "provision export for this format is deferred until devcontainer and tar artifact gates are implemented",
-            json!({
-                "plan": args.plan,
-                "format": provision_export_format_name(args.format),
-                "output": args.output.display().to_string(),
-                "target_writes_performed": false,
-            }),
-        ))
     }
 
     fn cmd_provision_import(
@@ -250,24 +273,24 @@ impl App {
         args: &ProvisionImportArgs,
     ) -> std::result::Result<(Value, Meta), CommandFailure> {
         if args.dry_run {
-            let artifact = inspect_shell_export_artifact(&args.artifact)?;
+            let artifact = inspect_provision_artifact(&args.artifact)?;
             return Ok((
                 json!({
                     "artifact": args.artifact.display().to_string(),
                     "dry_run": true,
-                    "artifact_kind": "shell",
+                    "artifact_kind": artifact.kind,
                     "schema_version": artifact.schema_version,
                     "plan_id": artifact.plan_id,
                     "target_kind": artifact.target_kind,
                     "source_path": artifact.source_path,
                     "content_digest": artifact.content_digest,
                     "script_bytes": artifact.script_bytes,
-                    "planned_files": [{
-                        "path": artifact.source_path,
-                        "kind": "shell",
-                        "content_digest": artifact.content_digest,
-                        "action": "review_only",
-                    }],
+                    "checksums_verified": artifact.checksums_verified,
+                    "entry_count": artifact.entry_count,
+                    "generated_file_count": artifact.generated_file_count,
+                    "registry_file_count": artifact.registry_file_count,
+                    "active_view_file_count": artifact.active_view_file_count,
+                    "planned_files": artifact.planned_files,
                     "target_writes_performed": false,
                 }),
                 Meta::default(),

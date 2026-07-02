@@ -1,10 +1,12 @@
 mod common;
 
 use std::fs;
+use std::io::Read;
 use std::process::Command;
 
 use common::{TestDir, run_loom, write_file, write_minimal_registry_state, write_skill};
 use serde_json::json;
+use tar::Archive;
 
 fn setup_provision_export_registry() -> (TestDir, String) {
     let root = TestDir::new("provision-export-root");
@@ -53,6 +55,24 @@ fn write_plan(root: &TestDir, workspace: &str, plan_path: &str) {
         ],
     );
     assert!(output.status.success(), "provision plan failed: {env}");
+}
+
+fn tar_entries(path: &std::path::Path) -> Vec<(String, Vec<u8>)> {
+    let file = fs::File::open(path).expect("open tar artifact");
+    let mut archive = Archive::new(file);
+    let mut entries = Vec::new();
+    for entry in archive.entries().expect("tar entries") {
+        let mut entry = entry.expect("tar entry");
+        if !entry.header().entry_type().is_file() {
+            continue;
+        }
+        let path = entry.path().expect("entry path").display().to_string();
+        let mut bytes = Vec::new();
+        entry.read_to_end(&mut bytes).expect("read entry");
+        entries.push((path, bytes));
+    }
+    entries.sort_by(|left, right| left.0.cmp(&right.0));
+    entries
 }
 
 #[test]
@@ -204,4 +224,138 @@ fn provision_import_rejects_tampered_shell_artifact() {
     assert_eq!(env["cmd"], json!("provision.import"));
     assert_eq!(env["error"]["code"], json!("ARG_INVALID"));
     assert!(env["error"]["message"].as_str().unwrap().contains("digest"));
+}
+
+#[test]
+fn provision_tar_export_is_deterministic_and_redacted() {
+    let (root, workspace) = setup_provision_export_registry();
+    let plan_path = root.path().join("provision-plan.json");
+    let export_path = root.path().join("provision.tar");
+    let second_export_path = root.path().join("provision-second.tar");
+    let plan_arg = plan_path.to_string_lossy().to_string();
+    let export_arg = export_path.to_string_lossy().to_string();
+    let second_export_arg = second_export_path.to_string_lossy().to_string();
+    write_plan(&root, &workspace, &plan_arg);
+
+    let (output, env) = run_loom(
+        root.path(),
+        &[
+            "provision",
+            "export",
+            &plan_arg,
+            "--format",
+            "tar",
+            "--output",
+            &export_arg,
+        ],
+    );
+
+    assert!(
+        output.status.success(),
+        "provision tar export failed: {env}"
+    );
+    assert_eq!(env["cmd"], json!("provision.export"));
+    assert_eq!(env["data"]["artifact_kind"], json!("tar"));
+    assert_eq!(env["data"]["artifact_written"], json!(true));
+    assert_eq!(env["data"]["target_writes_performed"], json!(false));
+    assert_eq!(env["data"]["generated_file_count"], json!(2));
+    assert!(env["data"]["registry_file_count"].as_u64().unwrap() >= 2);
+    assert!(env["data"]["active_view_file_count"].as_u64().unwrap() >= 2);
+
+    let (second_output, second_env) = run_loom(
+        root.path(),
+        &[
+            "provision",
+            "export",
+            &plan_arg,
+            "--format",
+            "tar",
+            "--output",
+            &second_export_arg,
+        ],
+    );
+    assert!(
+        second_output.status.success(),
+        "second tar export failed: {second_env}"
+    );
+    assert_eq!(
+        fs::read(&export_path).expect("read tar"),
+        fs::read(&second_export_path).expect("read second tar")
+    );
+
+    let entries = tar_entries(&export_path);
+    let names = entries
+        .iter()
+        .map(|(name, _)| name.as_str())
+        .collect::<Vec<_>>();
+    let root_prefix = names[0].split('/').next().unwrap().to_string();
+    assert!(names.contains(&format!("{root_prefix}/manifest.json").as_str()));
+    assert!(names.contains(&format!("{root_prefix}/checksums.txt").as_str()));
+    assert!(names.contains(&format!("{root_prefix}/plan.json").as_str()));
+    assert!(names.contains(&format!("{root_prefix}/files/.devcontainer/loom-setup.sh").as_str()));
+    assert!(
+        names
+            .contains(&format!("{root_prefix}/registry/skills/model-onboarding/SKILL.md").as_str())
+    );
+    assert!(names.contains(
+        &format!("{root_prefix}/active-views/claude-0/model-onboarding/SKILL.md").as_str()
+    ));
+
+    let joined = entries
+        .iter()
+        .flat_map(|(_, bytes)| bytes.iter().copied())
+        .collect::<Vec<_>>();
+    let text = String::from_utf8_lossy(&joined);
+    assert!(!text.contains("token@"));
+    assert!(!text.contains("token=secret"));
+    assert!(!text.contains("MODEL_TOKEN="));
+}
+
+#[test]
+fn provision_import_dry_run_inspects_tar_artifact_without_writes() {
+    let (root, workspace) = setup_provision_export_registry();
+    let plan_path = root.path().join("provision-plan.json");
+    let export_path = root.path().join("provision.tar");
+    let plan_arg = plan_path.to_string_lossy().to_string();
+    let export_arg = export_path.to_string_lossy().to_string();
+    write_plan(&root, &workspace, &plan_arg);
+    let (export_output, export_env) = run_loom(
+        root.path(),
+        &[
+            "provision",
+            "export",
+            &plan_arg,
+            "--format",
+            "tar",
+            "--output",
+            &export_arg,
+        ],
+    );
+    assert!(
+        export_output.status.success(),
+        "provision tar export failed: {export_env}"
+    );
+
+    let (output, env) = run_loom(
+        root.path(),
+        &["provision", "import", &export_arg, "--dry-run"],
+    );
+
+    assert!(
+        output.status.success(),
+        "provision tar import failed: {env}"
+    );
+    assert_eq!(env["cmd"], json!("provision.import"));
+    assert_eq!(env["data"]["artifact_kind"], json!("tar"));
+    assert_eq!(env["data"]["checksums_verified"], json!(true));
+    assert_eq!(env["data"]["target_writes_performed"], json!(false));
+    assert_eq!(env["data"]["planned_files"].as_array().unwrap().len(), 2);
+    assert!(
+        env["data"]["planned_files"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|file| file["path"] == ".devcontainer/loom-setup.sh")
+    );
+    assert!(!root.path().join(".devcontainer").exists());
 }

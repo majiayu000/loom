@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
 
-use serde_json::json;
+use serde_json::{Value, json};
 
 use crate::commands::CommandFailure;
 use crate::commands::helpers::map_io;
@@ -21,13 +21,20 @@ pub(super) struct ShellExportArtifact {
     pub content_digest: String,
 }
 
-pub(super) struct ShellArtifactInspection {
+pub(super) struct ProvisionArtifactInspection {
+    pub kind: &'static str,
     pub schema_version: String,
     pub plan_id: String,
     pub target_kind: String,
-    pub source_path: String,
-    pub content_digest: String,
-    pub script_bytes: usize,
+    pub source_path: Option<String>,
+    pub content_digest: Option<String>,
+    pub script_bytes: Option<usize>,
+    pub checksums_verified: bool,
+    pub entry_count: usize,
+    pub generated_file_count: usize,
+    pub registry_file_count: usize,
+    pub active_view_file_count: usize,
+    pub planned_files: Value,
 }
 
 pub(super) fn load_provision_plan_artifact(plan: &str) -> Result<ProvisionPlan, CommandFailure> {
@@ -104,10 +111,20 @@ pub(super) fn build_shell_export_artifact(
     })
 }
 
-pub(super) fn inspect_shell_export_artifact(
+pub(super) fn inspect_provision_artifact(
     path: &Path,
-) -> Result<ShellArtifactInspection, CommandFailure> {
-    let raw = fs::read_to_string(path).map_err(map_io)?;
+) -> Result<ProvisionArtifactInspection, CommandFailure> {
+    if let Ok(raw) = fs::read_to_string(path)
+        && raw.starts_with(SHELL_ARTIFACT_MAGIC)
+    {
+        return inspect_shell_export_artifact_text(&raw);
+    }
+    super::tar_artifact::inspect_tar_export_artifact(path)
+}
+
+fn inspect_shell_export_artifact_text(
+    raw: &str,
+) -> Result<ProvisionArtifactInspection, CommandFailure> {
     let Some((header, script)) = raw.split_once("\n\n") else {
         return Err(invalid_artifact(
             "shell artifact is missing a header/script separator",
@@ -148,13 +165,25 @@ pub(super) fn inspect_shell_export_artifact(
         ));
     }
 
-    Ok(ShellArtifactInspection {
+    Ok(ProvisionArtifactInspection {
+        kind: "shell",
         schema_version,
         plan_id: required_metadata(&metadata, "plan_id")?,
         target_kind: required_metadata(&metadata, "target_kind")?,
-        source_path: required_metadata(&metadata, "source_path")?,
-        content_digest,
-        script_bytes: script.len(),
+        source_path: Some(required_metadata(&metadata, "source_path")?),
+        content_digest: Some(content_digest.clone()),
+        script_bytes: Some(script.len()),
+        checksums_verified: false,
+        entry_count: 1,
+        generated_file_count: 1,
+        registry_file_count: 0,
+        active_view_file_count: 0,
+        planned_files: json!([{
+            "path": required_metadata(&metadata, "source_path")?,
+            "kind": "shell",
+            "content_digest": content_digest,
+            "action": "review_only",
+        }]),
     })
 }
 

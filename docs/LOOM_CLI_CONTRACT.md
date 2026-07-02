@@ -432,12 +432,12 @@ Rules:
 8. lint, safety, dependency, or eval gates that are missing, blocked, or failed prevent a `valid` artifact; missing eval evidence is blocking until reviewed eval artifacts exist.
 9. `list` and `verify` without `--artifact` return artifacts sorted by artifact id; no arbitrary filesystem entry is selected as a default.
 10. skill names that collide with nested commands such as `list` or `verify` use `--skill <skill-id>` for planning or artifact writes.
-11. compiled activation remains deferred; activation continues to use portable source projection until an explicit compiled activation flag is introduced.
+11. compiled activation projection remains deferred; `skill activate --compiled` performs artifact precondition checks and fails closed until projection support lands.
 
 ### 11.0.2 `skill activate`, `skill deactivate`, `skill active list`
 
 ```bash
-loom --json --root <root> skill activate <skill-id> --agent <agent> [--scope <user|project>] [--workspace <path>] [--profile <profile>] [--target <target-id>] [--method <symlink|copy|materialize>] [--dry-run]
+loom --json --root <root> skill activate <skill-id> --agent <agent> [--scope <user|project>] [--workspace <path>] [--profile <profile>] [--target <target-id>] [--method <symlink|copy|materialize>] [--compiled [--artifact <artifact-id>]] [--dry-run]
 loom --json --root <root> skill deactivate <skill-id> --agent <agent> [--scope <user|project>] [--workspace <path>] [--profile <profile>] [--target <target-id>] [--dry-run]
 loom --json --root <root> skill active list --agent <agent> [--scope <user|project>] [--workspace <path>] [--profile <profile>]
 ```
@@ -454,6 +454,9 @@ Rules:
 6. `skill deactivate` removes the desired rule and projection record, and deletes only a symlink that points back to the registry skill source.
 7. deactivation of `copy` or `materialize` projections fails closed with `POLICY_BLOCKED` and must not delete live target files.
 8. `skill active list` reports desired rules joined to realized projections, including `target_missing` and `projection_missing`, but must keep agent visibility fields at `not_checked`.
+9. `--artifact` is valid only with `--compiled`.
+10. `skill activate --compiled` verifies the selected compiled artifact before any projection write, rejects missing, stale, blocked, invalid, or agent/profile-mismatched artifacts with `POLICY_BLOCKED`, and returns `next_actions`.
+11. normal activation without `--compiled` continues to use portable source projection and must not require compiled artifacts.
 
 ### 11.0.3 `skill visibility`, `skill diagnose --agent codex`, `codex reconcile`
 

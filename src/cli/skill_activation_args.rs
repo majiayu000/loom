@@ -28,6 +28,10 @@ pub struct SkillActivateArgs {
     #[arg(long, value_enum, default_value_t = ProjectionMethod::Symlink)]
     pub method: ProjectionMethod,
     #[arg(long)]
+    pub compiled: bool,
+    #[arg(long)]
+    pub artifact: Option<String>,
+    #[arg(long)]
     pub dry_run: bool,
 }
 

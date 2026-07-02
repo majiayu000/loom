@@ -38,6 +38,16 @@ struct CompilePlan {
     manifest: CompiledArtifactManifest,
 }
 
+#[derive(Debug)]
+pub(super) struct CompiledActivationCandidate {
+    pub valid: bool,
+    pub status: String,
+    pub source_stale: bool,
+    pub agent: Option<String>,
+    pub profile: Option<String>,
+    pub report: Value,
+}
+
 enum ManifestRead {
     Missing,
     Parseable(Box<CompiledArtifactManifest>),
@@ -289,6 +299,42 @@ pub(super) fn compiled_artifact_summary(
         "artifacts": artifacts,
         "count": artifacts.len(),
     }))
+}
+
+pub(super) fn compiled_activation_candidates(
+    ctx: &AppContext,
+    skill: &str,
+    artifact: Option<&str>,
+) -> std::result::Result<Vec<CompiledActivationCandidate>, CommandFailure> {
+    let root = compiled_skill_root(ctx, skill);
+    let artifact_ids = match artifact {
+        Some(artifact_id) => {
+            validate_artifact_id(artifact_id)?;
+            vec![artifact_id.to_string()]
+        }
+        None => artifact_ids(&root)?,
+    };
+    let mut candidates = Vec::new();
+    for artifact_id in artifact_ids {
+        let report = verify_artifact(ctx, skill, &root, &artifact_id)?;
+        let agent = report
+            .manifest
+            .as_ref()
+            .map(|manifest| manifest.agent.clone());
+        let profile = report
+            .manifest
+            .as_ref()
+            .map(|manifest| manifest.profile.clone());
+        candidates.push(CompiledActivationCandidate {
+            valid: report.valid,
+            status: report.status.clone(),
+            source_stale: report.source_stale,
+            agent,
+            profile,
+            report: json!(report),
+        });
+    }
+    Ok(candidates)
 }
 
 fn compile_skill_selector(args: &SkillCompileArgs) -> std::result::Result<&str, CommandFailure> {

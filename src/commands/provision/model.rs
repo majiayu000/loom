@@ -1,10 +1,10 @@
 use chrono::{DateTime, Utc};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 pub(super) const PROVISION_PLAN_SCHEMA: &str = "provision-plan-v1";
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct ProvisionPlan {
     pub schema_version: String,
     pub plan_id: String,
@@ -25,7 +25,7 @@ pub(super) struct ProvisionPlan {
     pub findings: Vec<Value>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct ProvisionActiveView {
     pub agent: String,
     pub scope: String,
@@ -37,7 +37,7 @@ pub(super) struct ProvisionActiveView {
     pub skillsets: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct ProvisionDependencyReadiness {
     pub skill: String,
     pub status: String,
@@ -46,7 +46,7 @@ pub(super) struct ProvisionDependencyReadiness {
     pub findings: Vec<Value>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct ProvisionFilePlan {
     pub path: String,
     pub kind: String,
@@ -56,7 +56,7 @@ pub(super) struct ProvisionFilePlan {
     pub preview: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct ProvisionSecretRequirement {
     pub name: String,
     pub required: bool,

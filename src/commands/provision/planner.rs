@@ -9,7 +9,7 @@ use uuid::Uuid;
 use crate::cli::{ProvisionExportFormatArg, ProvisionTargetArg};
 use crate::gitops;
 use crate::state::AppContext;
-use crate::state_model::{RegistrySnapshot, RegistryStatePaths};
+use crate::state_model::{RegistryProjectionTarget, RegistrySnapshot, RegistryStatePaths};
 
 use super::super::CommandFailure;
 use super::super::helpers::{map_io, map_registry_state, shell_arg};
@@ -20,7 +20,8 @@ use super::model::{
 };
 use super::utils::{
     container_workspace_path, digest_file, digest_json, digest_str, normalize_clone_url,
-    shell_safe_segment, target_skill_path, target_skill_path_relative, workspace_matches,
+    normalize_existing_or_raw, path_to_slash, shell_safe_segment, target_skill_path,
+    target_skill_path_relative, workspace_matches,
 };
 
 pub(super) fn build_provision_plan(
@@ -43,11 +44,13 @@ pub(super) fn build_provision_plan(
 
     let paths = RegistryStatePaths::from_app_context(ctx);
     let snapshot = paths.maybe_load_snapshot().map_err(map_registry_state)?;
+    let target_path_relative = target_skill_path_relative(ctx, workspace, agent)?;
     let active_views = collect_active_views(
         ctx,
         snapshot.as_ref(),
         workspace,
         &container_workspace,
+        &target_path_relative,
         agent,
         &mut findings,
     )?;
@@ -62,18 +65,21 @@ pub(super) fn build_provision_plan(
     let (registry_source_display, registry_clone_url, registry_secrets) =
         registry_source(ctx, &mut findings);
     secrets_required.extend(registry_secrets);
+    let (registry_head, registry_head_reachable) = match gitops::head(ctx) {
+        Ok(head) => (head, true),
+        Err(_) => ("working-tree".to_string(), false),
+    };
     let files_to_write = devcontainer_file_plan(
         workspace,
         &container_workspace,
-        agent,
         registry_clone_url.as_deref(),
+        &registry_head,
         &active_views,
         &mut findings,
     );
     let active_view_digest = digest_json(&active_views)?;
     let dependency_readiness_digest = digest_json(&dependency_readiness)?;
     let files_digest = digest_json(&files_to_write)?;
-    let registry_head = gitops::head(ctx).unwrap_or_else(|_| "working-tree".to_string());
 
     Ok(ProvisionPlan {
         schema_version: PROVISION_PLAN_SCHEMA.to_string(),
@@ -105,7 +111,7 @@ pub(super) fn build_provision_plan(
         guards: json!({
             "root": ctx.root.display().to_string(),
             "registry_head": registry_head,
-            "registry_head_reachable": gitops::head(ctx).is_ok(),
+            "registry_head_reachable": registry_head_reachable,
             "active_view_digest": active_view_digest,
             "dependency_readiness_digest": dependency_readiness_digest,
             "files_digest": files_digest,
@@ -119,11 +125,12 @@ fn collect_active_views(
     snapshot: Option<&RegistrySnapshot>,
     workspace: &Path,
     container_workspace: &str,
+    target_path_relative: &str,
     agent: &str,
     findings: &mut Vec<Value>,
 ) -> std::result::Result<Vec<ProvisionActiveView>, CommandFailure> {
     let skillsets = load_skillsets(ctx)?;
-    let target_path = target_skill_path(container_workspace, agent);
+    let target_path = target_skill_path(container_workspace, target_path_relative);
     let Some(snapshot) = snapshot else {
         findings.push(json!({
             "id": "registry_state_missing",
@@ -140,7 +147,7 @@ fn collect_active_views(
         .iter()
         .map(|target| (target.target_id.as_str(), target))
         .collect::<BTreeMap<_, _>>();
-    let mut views = snapshot
+    let matching_bindings = snapshot
         .bindings
         .bindings
         .iter()
@@ -152,26 +159,72 @@ fn collect_active_views(
                 workspace,
             )
         })
-        .map(|binding| {
-            let skills = snapshot
-                .rules
-                .rules
-                .iter()
-                .filter(|rule| rule.binding_id == binding.binding_id)
-                .map(|rule| rule.skill_id.clone())
-                .collect::<BTreeSet<_>>();
+        .collect::<Vec<_>>();
+    let mut grouped = BTreeMap::<(String, String, String, Option<String>), BTreeSet<String>>::new();
+    for binding in matching_bindings {
+        let mut saw_rule = false;
+        for rule in snapshot
+            .rules
+            .rules
+            .iter()
+            .filter(|rule| rule.binding_id == binding.binding_id)
+        {
+            saw_rule = true;
+            let target = targets.get(rule.target_id.as_str()).copied();
+            if target.is_none() {
+                findings.push(json!({
+                    "id": "provision_rule_target_missing",
+                    "severity": "warning",
+                    "message": "binding rule references a target that is missing from registry state",
+                    "details": {
+                        "binding_id": binding.binding_id,
+                        "target_id": rule.target_id,
+                        "skill": rule.skill_id,
+                    },
+                }));
+            }
+            let view_path = active_view_path_for_target(
+                target,
+                workspace,
+                container_workspace,
+                target_path_relative,
+                binding.default_target_id == rule.target_id,
+                findings,
+            );
+            grouped
+                .entry((
+                    binding.binding_id.clone(),
+                    rule.target_id.clone(),
+                    view_path,
+                    target.map(|target| target.path.clone()),
+                ))
+                .or_default()
+                .insert(rule.skill_id.clone());
+        }
+        if !saw_rule {
             let target = targets.get(binding.default_target_id.as_str()).copied();
-            ProvisionActiveView {
+            grouped.entry((
+                binding.binding_id.clone(),
+                binding.default_target_id.clone(),
+                target_path.clone(),
+                target.map(|target| target.path.clone()),
+            ));
+        }
+    }
+    let mut views = grouped
+        .into_iter()
+        .map(
+            |((binding_id, target_id, path, source_target_path), skills)| ProvisionActiveView {
                 agent: agent.to_string(),
                 scope: "project".to_string(),
-                path: target_path.clone(),
-                binding_id: Some(binding.binding_id.clone()),
-                source_target_id: Some(binding.default_target_id.clone()),
-                source_target_path: target.map(|target| target.path.clone()),
+                path,
+                binding_id: Some(binding_id),
+                source_target_id: Some(target_id),
+                source_target_path,
                 skillsets: skillsets_for_skills(&skillsets, &skills),
                 skills: skills.into_iter().collect(),
-            }
-        })
+            },
+        )
         .collect::<Vec<_>>();
 
     if views.is_empty() {
@@ -188,6 +241,41 @@ fn collect_active_views(
     }
 
     Ok(views)
+}
+
+fn active_view_path_for_target(
+    target: Option<&RegistryProjectionTarget>,
+    workspace: &Path,
+    container_workspace: &str,
+    target_path_relative: &str,
+    is_default_target: bool,
+    findings: &mut Vec<Value>,
+) -> String {
+    let default_path = target_skill_path(container_workspace, target_path_relative);
+    let Some(target) = target else {
+        return default_path;
+    };
+    let target_path = normalize_existing_or_raw(Path::new(&target.path));
+    let workspace = normalize_existing_or_raw(workspace);
+    if target_path.starts_with(&workspace)
+        && let Ok(relative) = target_path.strip_prefix(&workspace)
+    {
+        return target_skill_path(container_workspace, &path_to_slash(relative));
+    }
+    if is_default_target {
+        return default_path;
+    }
+    findings.push(json!({
+        "id": "provision_target_path_outside_workspace",
+        "severity": "warning",
+        "message": "non-default target path is outside the provisioned workspace and cannot be remapped into the devcontainer workspace",
+        "details": {
+            "target_id": target.target_id,
+            "target_path": target.path,
+            "workspace": workspace.display().to_string(),
+        },
+    }));
+    target.path.clone()
 }
 
 fn collect_dependency_readiness(
@@ -261,13 +349,17 @@ fn collect_secret_requirements(
 fn devcontainer_file_plan(
     workspace: &Path,
     container_workspace: &str,
-    agent: &str,
     registry_clone_url: Option<&str>,
+    registry_head: &str,
     active_views: &[ProvisionActiveView],
     findings: &mut Vec<Value>,
 ) -> Vec<ProvisionFilePlan> {
-    let setup =
-        devcontainer_setup_script(container_workspace, agent, registry_clone_url, active_views);
+    let setup = devcontainer_setup_script(
+        container_workspace,
+        registry_clone_url,
+        registry_head,
+        active_views,
+    );
     let devcontainer = devcontainer_json_preview();
     let mut files = Vec::new();
     for (path, kind, preview) in [
@@ -306,8 +398,8 @@ fn devcontainer_file_plan(
 
 fn devcontainer_setup_script(
     container_workspace: &str,
-    agent: &str,
     registry_clone_url: Option<&str>,
+    registry_head: &str,
     active_views: &[ProvisionActiveView],
 ) -> String {
     let registry_block = match registry_clone_url {
@@ -317,17 +409,30 @@ fn devcontainer_setup_script(
         ),
         None => "if [ ! -d \"$LOOM_REGISTRY_DIR/.git\" ]; then\n  echo \"LOOM_REGISTRY_DIR must contain a cloned Loom registry\" >&2\n  exit 1\nfi".to_string(),
     };
+    let registry_checkout = if registry_head == "working-tree" {
+        "true".to_string()
+    } else {
+        format!(
+            "REVIEWED_REGISTRY_HEAD={}\nif ! git -C \"$LOOM_REGISTRY_DIR\" rev-parse --verify --quiet \"${{REVIEWED_REGISTRY_HEAD}}^{{commit}}\" >/dev/null; then\n  git -C \"$LOOM_REGISTRY_DIR\" fetch --quiet origin \"$REVIEWED_REGISTRY_HEAD\"\nfi\ngit -C \"$LOOM_REGISTRY_DIR\" checkout --detach \"$REVIEWED_REGISTRY_HEAD\"",
+            shell_arg(registry_head)
+        )
+    };
     let mut checks = String::new();
-    for skill in active_views
-        .iter()
-        .flat_map(|view| view.skills.iter())
-        .collect::<BTreeSet<_>>()
-    {
+    for view in active_views {
+        if view.skills.is_empty() {
+            continue;
+        }
         checks.push_str(&format!(
-            "test -e \"$ACTIVE_VIEW/{}/SKILL.md\" || echo \"planned skill {} is not projected yet\" >&2\n",
-            shell_safe_segment(skill),
-            skill
+            "ACTIVE_VIEW={}\nmkdir -p \"$ACTIVE_VIEW\"\n",
+            shell_arg(&view.path)
         ));
+        for skill in &view.skills {
+            checks.push_str(&format!(
+                "if [ ! -e \"$ACTIVE_VIEW/{}/SKILL.md\" ]; then\n  echo \"planned skill {} is not projected at $ACTIVE_VIEW\" >&2\n  exit 1\nfi\n",
+                shell_safe_segment(skill),
+                skill
+            ));
+        }
     }
     if checks.is_empty() {
         checks.push_str("true\n");
@@ -339,7 +444,6 @@ set -euo pipefail
 
 WORKSPACE={}
 LOOM_REGISTRY_DIR="${{LOOM_REGISTRY_DIR:-$HOME/.loom-registry}}"
-ACTIVE_VIEW="$WORKSPACE/{}"
 
 if ! command -v loom >/dev/null 2>&1; then
   echo "loom CLI is required before provisioning active skills" >&2
@@ -347,13 +451,13 @@ if ! command -v loom >/dev/null 2>&1; then
 fi
 
 {}
-mkdir -p "$ACTIVE_VIEW"
+{}
 loom --json --root "$LOOM_REGISTRY_DIR" workspace status >/dev/null
 {}
 "#,
         shell_arg(container_workspace),
-        target_skill_path_relative(agent),
         registry_block,
+        registry_checkout,
         checks
     )
 }
@@ -373,11 +477,11 @@ fn registry_source(
         Ok(Some(raw)) => {
             let normalized = normalize_clone_url(&raw);
             let mut secrets = Vec::new();
-            if normalized.had_userinfo {
+            if normalized.secret_redacted {
                 findings.push(json!({
                     "id": "registry_remote_credentials_redacted",
                     "severity": "warning",
-                    "message": "registry remote URL contained userinfo and was redacted",
+                    "message": "registry remote URL contained credential-bearing components and was redacted",
                     "details": { "secret": "git-credentials" },
                 }));
                 secrets.push(ProvisionSecretRequirement {
@@ -388,7 +492,15 @@ fn registry_source(
                     source: "registry_remote".to_string(),
                 });
             }
-            (normalized.display, Some(normalized.clone_url), secrets)
+            if normalized.local_only {
+                findings.push(json!({
+                    "id": "registry_remote_local_only",
+                    "severity": "warning",
+                    "message": "registry origin remote is local-only and cannot be cloned from a remote devcontainer",
+                    "details": {},
+                }));
+            }
+            (normalized.display, normalized.clone_url, secrets)
         }
         Ok(None) => {
             findings.push(json!({

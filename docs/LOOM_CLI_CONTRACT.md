@@ -562,7 +562,7 @@ loom --json --root <root> provision export <plan-id|plan-artifact> --format devc
 loom --json --root <root> provision import <artifact> --dry-run
 ```
 
-Remote provisioning is plan-first. The first implemented slice generates a read-only devcontainer plan and doctor report; it must not write target files, copy secrets, mutate registry state, or deploy remote environments. `--output-plan` writes only the explicitly requested local plan artifact.
+Remote provisioning is plan-first. The first implemented slices generate a read-only devcontainer plan and doctor report, plus reviewed shell export artifacts and import dry-runs; they must not write target files, copy secrets, mutate registry state, or deploy remote environments. `--output-plan` and `provision export --format shell --output <path>` write only explicitly requested local artifacts.
 
 Rules:
 
@@ -571,7 +571,9 @@ Rules:
 3. `git+https://...` registry remotes normalize to cloneable `https://...`; HTTP(S) userinfo is removed from clone/display URLs and represented as a redacted secret requirement
 4. generated devcontainer setup previews use `set -euo pipefail`, require `loom`, do not print secret values, and check planned active skills without writing them
 5. `provision doctor` is read-only and reports missing/different generated files, adapter paths, dependency readiness, secrets, policy, and next actions
-6. `provision apply`, `provision export`, and `provision import` return typed `POLICY_BLOCKED` deferred gates until reviewed plan revalidation, artifact validation, approvals, idempotency, and atomic target writes are implemented
+6. `provision export --format shell` requires an explicit reviewed plan artifact path, writes a deterministic shell artifact with digest metadata, and must not include secret values
+7. `provision import <artifact> --dry-run` validates shell artifact metadata/digests and reports review-only planned files without executing scripts or writing target files
+8. `provision apply`, non-dry-run `provision import`, and `provision export --format devcontainer|tar` return typed `POLICY_BLOCKED` deferred gates until durable plan lookup, portable tar/devcontainer artifact validation, approvals, idempotency, and atomic target writes are implemented
 
 ### 11.1.5 `policy org`, `approval`, and `roles`
 

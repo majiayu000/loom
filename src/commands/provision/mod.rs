@@ -1,3 +1,4 @@
+mod artifact;
 mod model;
 mod planner;
 mod utils;
@@ -17,6 +18,9 @@ use crate::types::ErrorCode;
 
 use super::helpers::{map_io, validate_non_empty};
 use super::{App, CommandFailure};
+use artifact::{
+    build_shell_export_artifact, inspect_shell_export_artifact, load_provision_plan_artifact,
+};
 use model::ProvisionPlan;
 use planner::{build_provision_plan, provision_export_format_name, provision_target_name};
 use utils::{digest_file, provision_next_actions, resolve_workspace, validate_provision_agent};
@@ -210,8 +214,28 @@ impl App {
         &self,
         args: &ProvisionExportArgs,
     ) -> std::result::Result<(Value, Meta), CommandFailure> {
+        if args.format == crate::cli::ProvisionExportFormatArg::Shell {
+            let plan = load_provision_plan_artifact(&args.plan)?;
+            let artifact = build_shell_export_artifact(&plan)?;
+            write_atomic(&args.output, &artifact.body).map_err(map_io)?;
+            return Ok((
+                json!({
+                    "format": provision_export_format_name(args.format),
+                    "plan_id": plan.plan_id,
+                    "output": args.output.display().to_string(),
+                    "artifact_schema_version": artifact.schema_version,
+                    "artifact_written": true,
+                    "artifact_kind": "shell",
+                    "source_path": artifact.source_path,
+                    "content_digest": artifact.content_digest,
+                    "target_writes_performed": false,
+                }),
+                Meta::default(),
+            ));
+        }
+
         Err(deferred_failure(
-            "provision export is deferred until devcontainer, shell, and tar artifact gates are implemented",
+            "provision export for this format is deferred until devcontainer and tar artifact gates are implemented",
             json!({
                 "plan": args.plan,
                 "format": provision_export_format_name(args.format),
@@ -225,8 +249,33 @@ impl App {
         &self,
         args: &ProvisionImportArgs,
     ) -> std::result::Result<(Value, Meta), CommandFailure> {
+        if args.dry_run {
+            let artifact = inspect_shell_export_artifact(&args.artifact)?;
+            return Ok((
+                json!({
+                    "artifact": args.artifact.display().to_string(),
+                    "dry_run": true,
+                    "artifact_kind": "shell",
+                    "schema_version": artifact.schema_version,
+                    "plan_id": artifact.plan_id,
+                    "target_kind": artifact.target_kind,
+                    "source_path": artifact.source_path,
+                    "content_digest": artifact.content_digest,
+                    "script_bytes": artifact.script_bytes,
+                    "planned_files": [{
+                        "path": artifact.source_path,
+                        "kind": "shell",
+                        "content_digest": artifact.content_digest,
+                        "action": "review_only",
+                    }],
+                    "target_writes_performed": false,
+                }),
+                Meta::default(),
+            ));
+        }
+
         Err(deferred_failure(
-            "provision import is deferred until artifact validation and dry-run diff gates are implemented",
+            "provision import without --dry-run is deferred until artifact validation and apply gates are implemented",
             json!({
                 "artifact": args.artifact.display().to_string(),
                 "dry_run": args.dry_run,

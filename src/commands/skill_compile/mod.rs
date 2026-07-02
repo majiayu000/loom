@@ -40,6 +40,8 @@ struct CompilePlan {
 
 #[derive(Debug)]
 pub(super) struct CompiledActivationCandidate {
+    pub artifact_id: String,
+    pub path: String,
     pub valid: bool,
     pub status: String,
     pub source_stale: bool,
@@ -339,6 +341,8 @@ pub(super) fn compiled_activation_candidates(
             .as_ref()
             .map(|manifest| manifest.profile.clone());
         candidates.push(CompiledActivationCandidate {
+            artifact_id,
+            path: report.path.clone(),
             valid: report.valid,
             status: report.status.clone(),
             source_stale: report.source_stale,
@@ -357,6 +361,8 @@ fn compiled_activation_schema_error_candidate(
 ) -> CompiledActivationCandidate {
     let artifact_dir = root.join(artifact_id);
     CompiledActivationCandidate {
+        artifact_id: artifact_id.to_string(),
+        path: artifact_dir.display().to_string(),
         valid: false,
         status: "invalid".to_string(),
         source_stale: false,

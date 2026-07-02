@@ -75,9 +75,12 @@ pub(super) fn planned_artifact(
     let references = build_references(&skill_path, source)?;
     let tool_interface = build_tool_interface(&skill_path, &skill_md, source);
     let activation_md = build_activation(skill, agent, profile, &skill_md, &boundaries);
-    let boundaries_json = stable_json(&boundaries)?;
-    let references_json = stable_json(&references)?;
-    let tool_interface_json = stable_json(&tool_interface)?;
+    let boundaries_value = serde_json::to_value(&boundaries).map_err(map_io)?;
+    let references_value = serde_json::to_value(&references).map_err(map_io)?;
+    let tool_interface_value = serde_json::to_value(&tool_interface).map_err(map_io)?;
+    let boundaries_json = stable_json(&boundaries_value)?;
+    let references_json = stable_json(&references_value)?;
+    let tool_interface_json = stable_json(&tool_interface_value)?;
 
     let mut content_hashes = BTreeMap::new();
     content_hashes.insert(
@@ -97,7 +100,8 @@ pub(super) fn planned_artifact(
         digest_bytes_prefixed(tool_interface_json.as_bytes()),
     );
     let catalog = build_catalog(&content_hashes);
-    let catalog_json = stable_json(&catalog)?;
+    let catalog_value = serde_json::to_value(&catalog).map_err(map_io)?;
+    let catalog_json = stable_json(&catalog_value)?;
     content_hashes.insert(
         "catalog_json".to_string(),
         digest_bytes_prefixed(catalog_json.as_bytes()),
@@ -125,10 +129,10 @@ pub(super) fn planned_artifact(
         no_op_reason,
         content: json!({
             "activation.md": activation_md,
-            "catalog.json": serde_json::from_str::<Value>(&catalog_json).map_err(map_io)?,
-            "boundaries.json": serde_json::from_str::<Value>(&boundaries_json).map_err(map_io)?,
-            "tool-interface.json": serde_json::from_str::<Value>(&tool_interface_json).map_err(map_io)?,
-            "references.index.json": serde_json::from_str::<Value>(&references_json).map_err(map_io)?,
+            "catalog.json": catalog_value,
+            "boundaries.json": boundaries_value,
+            "tool-interface.json": tool_interface_value,
+            "references.index.json": references_value,
             "source-digest.txt": format!("{}\n", source.digest),
         }),
     })

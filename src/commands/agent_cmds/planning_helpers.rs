@@ -22,7 +22,7 @@ pub(super) fn push_target_risks(
         ));
         return;
     };
-    if target.ownership != "managed" {
+    if target.ownership != crate::core::vocab::Ownership::Managed {
         risks.push(risk(
             "error",
             "TARGET_NOT_MANAGED",
@@ -157,7 +157,7 @@ pub(super) fn workspace_matches(kind: &str, value: &str, workspace: &Path) -> bo
 }
 
 pub(super) fn is_orphan_projection(projection: &RegistryProjectionInstance) -> bool {
-    projection.binding_id.is_none() && projection.health == "orphaned"
+    projection.binding_id.is_none() && projection.health == crate::core::vocab::Health::Orphaned
 }
 
 pub(super) fn is_safe(risks: &[Value]) -> bool {

@@ -552,7 +552,7 @@ fn skill_active_for_workspace(
                     && snapshot.projections.projections.iter().any(|projection| {
                         projection.binding_id.as_deref() == Some(binding.binding_id.as_str())
                             && projection.skill_id == skill
-                            && projection.health == "healthy"
+                            && projection.health == crate::core::vocab::Health::Healthy
                     })
             })
     })

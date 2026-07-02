@@ -82,7 +82,7 @@ pub(super) fn cleanup_orphan_live_path(
 }
 
 pub(super) fn is_orphan_projection(projection: &RegistryProjectionInstance) -> bool {
-    projection.binding_id.is_none() && projection.health == "orphaned"
+    projection.binding_id.is_none() && projection.health == crate::core::vocab::Health::Orphaned
 }
 
 impl App {
@@ -292,7 +292,7 @@ mod orphan_tests {
                     target_id: "target1".into(),
                     agent: "claude".into(),
                     path: root.display().to_string(),
-                    ownership: "registered".into(),
+                    ownership: crate::core::vocab::Ownership::Observed,
                     capabilities: RegistryTargetCapabilities {
                         symlink: false,
                         copy: true,
@@ -333,7 +333,7 @@ mod orphan_tests {
             agent: "claude".into(),
             profile_id: "default".into(),
             workspace_matcher: RegistryWorkspaceMatcher {
-                kind: "name".into(),
+                kind: crate::core::vocab::MatcherKind::Name,
                 value: "test".into(),
             },
             default_target_id: "target1".into(),
@@ -355,9 +355,16 @@ mod orphan_tests {
             binding_id: Some(binding_id.into()),
             target_id: "target1".into(),
             materialized_path: mat_path.into(),
-            method: "copy".into(),
+            method: crate::core::vocab::ProjectionMethod::Copy,
             last_applied_rev: "abc123".into(),
-            health: health.into(),
+            health: match health {
+                "healthy" => crate::core::vocab::Health::Healthy,
+                "drifted" => crate::core::vocab::Health::Drifted,
+                "missing" => crate::core::vocab::Health::Missing,
+                "conflict" => crate::core::vocab::Health::Conflict,
+                "orphaned" => crate::core::vocab::Health::Orphaned,
+                other => panic!("unsupported test health {other}"),
+            },
             observed_drift: Some(false),
             updated_at: None,
         }

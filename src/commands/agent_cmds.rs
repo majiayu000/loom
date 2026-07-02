@@ -39,7 +39,7 @@ impl App {
             binding.active
                 && binding.agent == agent
                 && workspace_matches(
-                    &binding.workspace_matcher.kind,
+                    binding.workspace_matcher.kind.as_str(),
                     &binding.workspace_matcher.value,
                     &workspace,
                 )
@@ -59,11 +59,8 @@ impl App {
                 })
                 .unwrap_or_default();
             let (method, target_id) = match matching_rules.as_slice() {
-                [] => (
-                    projection_method_as_str(args.method).to_string(),
-                    Some(binding.default_target_id.as_str()),
-                ),
-                [rule] => (rule.method.clone(), Some(rule.target_id.as_str())),
+                [] => (args.method, Some(binding.default_target_id.as_str())),
+                [rule] => (rule.method, Some(rule.target_id.as_str())),
                 rules => {
                     let target_ids = rules
                         .iter()
@@ -80,7 +77,7 @@ impl App {
                             target_ids.join(", ")
                         ),
                     ));
-                    (projection_method_as_str(args.method).to_string(), None)
+                    (args.method, None)
                 }
             };
             let target = target_id.and_then(|target_id| snapshot.target(target_id));
@@ -90,7 +87,7 @@ impl App {
                     &snapshot,
                     &binding.binding_id,
                     &target.target_id,
-                    &method,
+                    method.as_str(),
                 );
             } else if let Some(target_id) = target_id {
                 risks.push(risk(

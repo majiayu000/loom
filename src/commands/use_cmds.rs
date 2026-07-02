@@ -335,7 +335,7 @@ fn target_is_managed(
     let normalized = normalize_existing_or_raw(target_path);
     Ok(snapshot.targets.targets.iter().any(|target| {
         target.agent == agent
-            && target.ownership == "managed"
+            && target.ownership == crate::core::vocab::Ownership::Managed
             && normalize_existing_or_raw(Path::new(&target.path)) == normalized
     }))
 }

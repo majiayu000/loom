@@ -116,7 +116,7 @@ impl App {
             binding_id: resolved.binding.binding_id.clone(),
             skill_id: resolved.selection.skill.clone(),
             target_id: resolved.target.target_id.clone(),
-            method: projection_method_as_str(resolved.selection.method).to_string(),
+            method: resolved.selection.method,
             watch_policy: "observe_only".to_string(),
             created_at: resolved
                 .existing_rule
@@ -138,9 +138,9 @@ impl App {
             binding_id: Some(resolved.binding.binding_id.clone()),
             target_id: resolved.target.target_id.clone(),
             materialized_path: resolved.materialized_path.display().to_string(),
-            method: projection_method_as_str(resolved.selection.method).to_string(),
+            method: resolved.selection.method,
             last_applied_rev: head.clone(),
-            health: "healthy".to_string(),
+            health: crate::core::vocab::Health::Healthy,
             observed_drift: Some(false),
             updated_at: Some(Utc::now()),
         };
@@ -282,7 +282,7 @@ impl App {
                 ),
             )
         })?;
-        if rule.method != "symlink" {
+        if rule.method != crate::core::vocab::ProjectionMethod::Symlink {
             return Err(CommandFailure::new(
                 ErrorCode::PolicyBlocked,
                 format!(

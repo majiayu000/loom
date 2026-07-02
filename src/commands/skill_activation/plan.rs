@@ -69,7 +69,7 @@ pub(super) fn activation_plan(resolved: &ActivationResolved, dry_run: bool) -> A
                 projection.method != projection_method_as_str(resolved.selection.method)
                     || projection.materialized_path
                         != resolved.materialized_path.display().to_string()
-                    || projection.health != "healthy"
+                    || projection.health != crate::core::vocab::Health::Healthy
             })
             || !projection_exists_for_plan(resolved),
         "project_skill",
@@ -149,7 +149,7 @@ pub(super) fn activation_state_changed(resolved: &ActivationResolved) -> bool {
                 projection.method != projection_method_as_str(resolved.selection.method)
                     || projection.materialized_path
                         != resolved.materialized_path.display().to_string()
-                    || projection.health != "healthy"
+                    || projection.health != crate::core::vocab::Health::Healthy
             })
 }
 
@@ -172,7 +172,7 @@ pub(super) fn active_status(
     };
     let path = Path::new(&projection.materialized_path);
     if path.exists() || fs::symlink_metadata(path).is_ok() {
-        projection.health.clone()
+        projection.health.to_string()
     } else {
         "missing_projection".to_string()
     }

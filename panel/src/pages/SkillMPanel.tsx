@@ -214,7 +214,7 @@ export function SkillMPanel() {
 
   const counts = useMemo(() => {
     const failedOps = live.ops.filter((op) => op.status === "err").length;
-    const drifted = live.projections.filter((p) => p.observed_drift || p.health === "drift").length;
+    const drifted = live.projections.filter((p) => p.observed_drift || p.health === "drifted").length;
     const pending = pendingQueueCount(live);
     return { failedOps, drifted, pending, attention: failedOps + drifted + pending };
   }, [live]);
@@ -574,7 +574,7 @@ function SkillDetail({ skill }: { skill: Skill | null }) {
 }
 
 function Plane({ live, tab, go }: { live: ReturnType<typeof usePanelData>; tab: "targets" | "bindings" | "projections"; go: (page: SkillMPage) => void }) {
-  const drifts = live.projections.filter((p) => p.observed_drift || p.health === "drift").length;
+  const drifts = live.projections.filter((p) => p.observed_drift || p.health === "drifted").length;
   const pending = pendingQueueCount(live);
   const panelHost = panelHostLabel();
   const [projectionPage, setProjectionPage] = useState(0);

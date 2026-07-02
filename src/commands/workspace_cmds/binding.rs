@@ -108,10 +108,10 @@ impl App {
         let binding_id = unique_binding_id(&bindings, args);
         let binding = RegistryWorkspaceBinding {
             binding_id: binding_id.clone(),
-            agent: agent_kind_as_str(args.agent).to_string(),
+            agent: agent_kind_as_str(args.agent).into(),
             profile_id: args.profile.clone(),
             workspace_matcher: RegistryWorkspaceMatcher {
-                kind: workspace_matcher_kind_as_str(args.matcher_kind).to_string(),
+                kind: args.matcher_kind,
                 value: args.matcher_value.clone(),
             },
             default_target_id: args.target.clone(),
@@ -238,7 +238,7 @@ impl App {
         for proj in snapshot.projections.projections.iter_mut() {
             if proj.binding_id.as_deref() == Some(&args.binding_id) {
                 proj.binding_id = None;
-                proj.health = "orphaned".to_string();
+                proj.health = crate::core::vocab::Health::Orphaned;
                 orphaned_projection_ids.push(proj.instance_id.clone());
             }
         }

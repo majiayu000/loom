@@ -220,7 +220,7 @@ pub(crate) fn update_projection_after_capture(
             )
         })?;
     projection.last_applied_rev = rev.to_string();
-    projection.health = "healthy".to_string();
+    projection.health = crate::core::vocab::Health::Healthy;
     projection.observed_drift = Some(false);
     projection.updated_at = Some(Utc::now());
     Ok(())

@@ -46,7 +46,7 @@ describe("panel view-model selectors", () => {
       method: "teleport",
       last_applied_rev: "abcdef123",
       health: "healthy",
-    } as RegistryProjection;
+    } as unknown as RegistryProjection;
     const target = {
       id: "target-1",
       agent: "future-agent",

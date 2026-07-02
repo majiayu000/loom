@@ -214,7 +214,9 @@ pub(super) fn check_projection_drift(
             issues.push("source skill not found in registry");
         }
 
-        if projection.method == "symlink" && materialized.exists() {
+        if projection.method == crate::core::vocab::ProjectionMethod::Symlink
+            && materialized.exists()
+        {
             match fs::read_link(materialized) {
                 Ok(link_target) => {
                     // Relative symlink targets resolve against the symlink's parent

@@ -200,7 +200,7 @@ fn dirty_projection_candidates(
 ) -> std::result::Result<Vec<RegistryProjectionInstance>, CommandFailure> {
     let mut dirty = Vec::new();
     for projection in matching_projection_candidates(ctx, args)? {
-        if projection.method == "symlink" {
+        if projection.method == crate::core::vocab::ProjectionMethod::Symlink {
             continue;
         }
         let live_path = PathBuf::from(&projection.materialized_path);

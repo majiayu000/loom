@@ -195,9 +195,9 @@ fn resolve_target(
                 &normalized_path,
                 &snapshot.targets,
             ),
-            agent: selection.agent.clone(),
+            agent: selection.agent.clone().into(),
             path: normalized_path,
-            ownership: target_ownership_as_str(TargetOwnership::Managed).to_string(),
+            ownership: crate::core::vocab::Ownership::Managed,
             capabilities: target_capabilities(TargetOwnership::Managed),
             created_at: Some(Utc::now()),
         },
@@ -217,7 +217,7 @@ fn resolve_binding(
     (
         RegistryWorkspaceBinding {
             binding_id: unique_activation_binding_id(&snapshot.bindings, selection, &matcher),
-            agent: selection.agent.clone(),
+            agent: selection.agent.clone().into(),
             profile_id: selection.profile.clone(),
             workspace_matcher: matcher,
             default_target_id: target.target_id.clone(),
@@ -274,11 +274,11 @@ fn find_projection<'a>(
 fn workspace_matcher(selection: &ActivationSelection) -> RegistryWorkspaceMatcher {
     match selection.scope {
         ActivationScope::User => RegistryWorkspaceMatcher {
-            kind: "name".to_string(),
+            kind: crate::core::vocab::MatcherKind::Name,
             value: "user".to_string(),
         },
         ActivationScope::Project => RegistryWorkspaceMatcher {
-            kind: "path_prefix".to_string(),
+            kind: crate::core::vocab::MatcherKind::PathPrefix,
             value: selection
                 .workspace
                 .as_ref()

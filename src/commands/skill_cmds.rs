@@ -180,7 +180,7 @@ impl App {
             ));
         }
 
-        if target.ownership != "managed" {
+        if target.ownership != crate::core::vocab::Ownership::Managed {
             return Err(CommandFailure::new(
                 ErrorCode::TargetNotManaged,
                 format!(
@@ -254,7 +254,7 @@ impl App {
                 binding_id: binding.binding_id.clone(),
                 skill_id: args.skill.clone(),
                 target_id: target.target_id.clone(),
-                method: projection_method_as_str(args.method).to_string(),
+                method: args.method,
                 watch_policy: "observe_only".to_string(),
                 created_at: Some(Utc::now()),
             },
@@ -269,9 +269,9 @@ impl App {
             binding_id: Some(binding.binding_id.clone()),
             target_id: target.target_id.clone(),
             materialized_path: materialized_path.display().to_string(),
-            method: projection_method_as_str(args.method).to_string(),
+            method: args.method,
             last_applied_rev: gitops::head(&self.ctx).map_err(map_git)?,
-            health: "healthy".to_string(),
+            health: crate::core::vocab::Health::Healthy,
             observed_drift: Some(false),
             updated_at: Some(Utc::now()),
         };
@@ -396,7 +396,7 @@ impl App {
         let previous_index = gitops::snapshot_index(&self.ctx).map_err(map_git)?;
         let mut source_backup = None;
         let mut source_replaced = false;
-        if projection.method != "symlink" {
+        if projection.method != crate::core::vocab::ProjectionMethod::Symlink {
             ensure_capture_source_not_drifted(&self.ctx, &projection, Path::new(&skill_rel))?;
             let tmp_path = self
                 .ctx

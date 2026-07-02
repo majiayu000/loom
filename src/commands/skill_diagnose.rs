@@ -195,7 +195,7 @@ fn build_skill_diagnosis(
                 "remove or recreate the missing binding",
                 json!({"binding_id": rule.binding_id}),
             ));
-            add_target_checks(snapshot, &rule.target_id, &rule.method, &mut checks);
+            add_target_checks(snapshot, &rule.target_id, rule.method.as_str(), &mut checks);
             rule_target_ids.insert(rule.target_id.clone());
         }
 
@@ -213,7 +213,7 @@ fn build_skill_diagnosis(
                 add_target_checks(
                     snapshot,
                     &projection.target_id,
-                    &projection.method,
+                    projection.method.as_str(),
                     &mut checks,
                 );
             }
@@ -603,9 +603,9 @@ fn add_target_checks(
     checks.push(check(
         "targets",
         &format!("target_ownership_writeable:{}", target.target_id),
-        target.ownership == "managed",
+        target.ownership == crate::core::vocab::Ownership::Managed,
         "warning",
-        if target.ownership == "managed" {
+        if target.ownership == crate::core::vocab::Ownership::Managed {
             "target is managed"
         } else {
             "target is not managed"
@@ -661,13 +661,15 @@ fn add_projection_checks(
     checks.push(check(
         "projection",
         &format!("projection_health:{}", projection.instance_id),
-        projection.health == "healthy",
-        if projection.health == "drifted" || projection.health == "orphaned" {
+        projection.health == crate::core::vocab::Health::Healthy,
+        if projection.health == crate::core::vocab::Health::Drifted
+            || projection.health == crate::core::vocab::Health::Orphaned
+        {
             "warning"
         } else {
             "error"
         },
-        if projection.health == "healthy" {
+        if projection.health == crate::core::vocab::Health::Healthy {
             "projection is healthy"
         } else {
             "projection is not healthy"
@@ -688,7 +690,8 @@ fn add_projection_checks(
         .binding_id
         .as_deref()
         .is_some_and(|id| snapshot.binding(id).is_some());
-    let orphan_ok = projection.binding_id.is_none() && projection.health == "orphaned";
+    let orphan_ok = projection.binding_id.is_none()
+        && projection.health == crate::core::vocab::Health::Orphaned;
     checks.push(check(
         "projection",
         &format!("projection_binding_exists:{}", projection.instance_id),
@@ -704,7 +707,7 @@ fn add_projection_checks(
         "recreate the binding or clean orphaned projection metadata",
         json!({"instance_id": projection.instance_id, "binding_id": projection.binding_id}),
     ));
-    if projection.method == "symlink" {
+    if projection.method == crate::core::vocab::ProjectionMethod::Symlink {
         checks.push(check_symlink_target(ctx, projection, materialized));
     }
 }

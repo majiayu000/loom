@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { RegistryRule } from "../../generated/RegistryRule";
 import type { RegistryTarget } from "../../generated/RegistryTarget";
 import { adaptBinding, adaptPendingOp, adaptRegistryOperation, adaptTarget, buildAdapterIndex } from "./adapters";
 import type { RegistryOperationRecord } from "./client";
@@ -46,13 +47,13 @@ describe("api adapters enum handling", () => {
   it("surfaces unknown target ownership instead of coercing it to external", () => {
     const index = buildAdapterIndex([], []);
     const target = adaptTarget(
-      {
+      ({
         target_id: "target-1",
         agent: "claude",
         path: "/tmp/skills",
         ownership: "delegated",
         capabilities: { symlink: false, copy: false, watch: false },
-      },
+      } as unknown) as RegistryTarget,
       index,
     );
 
@@ -87,13 +88,13 @@ describe("api adapters enum handling", () => {
         active: true,
       },
       [
-        {
+        ({
           binding_id: "binding-1",
           skill_id: "demo",
           target_id: "target-1",
           method: "teleport",
           watch_policy: "manual",
-        },
+        } as unknown) as RegistryRule,
       ],
     );
 

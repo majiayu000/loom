@@ -169,7 +169,32 @@ pub(super) fn compile_gates(ctx: &AppContext, skill: &str, agent: &str) -> GateP
             "dependency": dependency.1,
             "eval": eval.1,
         }),
+        eval_evidence: None,
     }
+}
+
+pub(super) fn eval_suite_digest(
+    ctx: &AppContext,
+    skill: &str,
+) -> std::result::Result<Option<String>, CommandFailure> {
+    let evals_dir = ctx.skill_path(skill).join("evals");
+    let mut inputs = Vec::new();
+    for rel in ["triggers.jsonl", "tasks.jsonl"] {
+        let path = evals_dir.join(rel);
+        if path.is_file() {
+            inputs.push((format!("evals/{rel}"), fs::read(path).map_err(map_io)?));
+        }
+    }
+    if inputs.is_empty() {
+        return Ok(None);
+    }
+    let mut hasher = Sha256::new();
+    update_digest_field(&mut hasher, "loom-compile-eval-suite-v1");
+    for (path, bytes) in inputs {
+        update_digest_field(&mut hasher, &path);
+        update_digest_field(&mut hasher, &digest_bytes_prefixed(&bytes));
+    }
+    Ok(Some(format!("sha256:{}", to_hex(&hasher.finalize()))))
 }
 
 fn collect_source_inputs(

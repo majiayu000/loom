@@ -10,6 +10,7 @@ use serde_json::{Value, json};
 
 use crate::cli::{
     SkillCompileArgs, SkillCompileCommand, SkillCompileListArgs, SkillCompileVerifyArgs,
+    SkillEvalOfflineArgs,
 };
 use crate::envelope::Meta;
 use crate::fs_util::write_atomic;
@@ -18,13 +19,15 @@ use crate::state::AppContext;
 use crate::types::ErrorCode;
 
 use super::helpers::{map_arg, map_git, map_io, map_lock, validate_skill_name};
+use super::skill_eval::build_skill_eval_offline_report;
 use super::skill_verify::head_tree_oid_for_path;
 use super::{App, CommandFailure};
 use model::{
-    ArtifactStatus, COMPILE_SCHEMA_VERSION, COMPILER_VERSION, CompiledArtifactManifest, GatePlan,
-    PlannedArtifact, REQUIRED_ARTIFACT_FILES, SourceDigestInfo,
+    ArtifactStatus, COMPILE_SCHEMA_VERSION, COMPILER_VERSION, CompileEvalEvidence,
+    CompiledArtifactManifest, GatePlan, GateValue, PlannedArtifact, REQUIRED_ARTIFACT_FILES,
+    SourceDigestInfo,
 };
-use plan::{compile_gates, planned_artifact, source_digest_info};
+use plan::{compile_gates, eval_suite_digest, planned_artifact, source_digest_info};
 use util::{
     artifact_ids, compiled_skill_root, ensure_skill_source_exists, stable_json,
     validate_agent_selector, validate_artifact_id,
@@ -189,7 +192,10 @@ impl App {
     ) -> std::result::Result<CompilePlan, CommandFailure> {
         let source = source_digest_info(&self.ctx, skill, agent, profile)?;
         let planned = planned_artifact(&self.ctx, skill, agent, profile, &source)?;
-        let gates = compile_gates(&self.ctx, skill, agent);
+        let mut gates = compile_gates(&self.ctx, skill, agent);
+        if !dry_run {
+            self.attach_compile_eval_gate(skill, agent, &planned.content_hashes, &mut gates)?;
+        }
         let status = artifact_status(&gates, dry_run);
         let manifest = CompiledArtifactManifest {
             schema_version: COMPILE_SCHEMA_VERSION,
@@ -205,6 +211,7 @@ impl App {
             status,
             gates: gates.manifest.clone(),
             content_hashes: planned.content_hashes.clone(),
+            eval_evidence: gates.eval_evidence.clone(),
             token_estimate: planned.token_estimate.clone(),
             created_at: created_at.or_else(|| {
                 if dry_run {
@@ -220,6 +227,78 @@ impl App {
             gates,
             manifest,
         })
+    }
+
+    fn attach_compile_eval_gate(
+        &self,
+        skill: &str,
+        agent: &str,
+        content_hashes: &std::collections::BTreeMap<String, String>,
+        gates: &mut GatePlan,
+    ) -> std::result::Result<(), CommandFailure> {
+        let Some(eval_suite_digest) = eval_suite_digest(&self.ctx, skill)? else {
+            gates.manifest.eval = GateValue::Missing;
+            gates.details["eval"] = json!({
+                "status": GateValue::Missing.as_str(),
+                "reason": "no eval fixtures found for compiled artifact promotion"
+            });
+            return Ok(());
+        };
+        let args = SkillEvalOfflineArgs {
+            skill: skill.to_string(),
+            agent: Some(agent.to_string()),
+            matrix: Vec::new(),
+            model: None,
+        };
+        match build_skill_eval_offline_report(&self.ctx, &args) {
+            Ok(result) if result.failed == 0 && result.warnings.is_empty() => {
+                let report_raw = stable_json(&result.report)?;
+                let evidence = CompileEvalEvidence {
+                    mode: "offline_fixture".to_string(),
+                    agent: agent.to_string(),
+                    eval_suite_digest,
+                    report_digest: util::digest_bytes_prefixed(report_raw.as_bytes()),
+                    generated_content_hashes: content_hashes.clone(),
+                    summary: result.report["summary"].clone(),
+                };
+                gates.manifest.eval = GateValue::Pass;
+                gates.details["eval"] = json!({
+                    "status": GateValue::Pass.as_str(),
+                    "mode": evidence.mode,
+                    "agent": evidence.agent,
+                    "eval_suite_digest": evidence.eval_suite_digest,
+                    "report_digest": evidence.report_digest,
+                    "summary": evidence.summary,
+                });
+                gates.eval_evidence = Some(evidence);
+            }
+            Ok(result) if result.failed > 0 => {
+                gates.manifest.eval = GateValue::Fail;
+                gates.details["eval"] = json!({
+                    "status": GateValue::Fail.as_str(),
+                    "reason": "offline eval fixtures failed",
+                    "failed": result.failed,
+                    "summary": result.report["summary"].clone(),
+                });
+            }
+            Ok(result) => {
+                gates.manifest.eval = GateValue::Missing;
+                gates.details["eval"] = json!({
+                    "status": GateValue::Missing.as_str(),
+                    "reason": result.warnings.join("; "),
+                });
+            }
+            Err(err) => {
+                gates.manifest.eval = GateValue::Fail;
+                gates.details["eval"] = json!({
+                    "status": GateValue::Fail.as_str(),
+                    "reason": err.message,
+                    "code": err.code.as_str(),
+                    "details": err.details,
+                });
+            }
+        }
+        Ok(())
     }
 
     fn cmd_skill_compile_list(
@@ -413,6 +492,8 @@ fn artifact_status(gates: &GatePlan, dry_run: bool) -> ArtifactStatus {
         ArtifactStatus::Blocked
     } else if dry_run {
         ArtifactStatus::Planned
+    } else if gates.manifest.all_pass() {
+        ArtifactStatus::Valid
     } else {
         ArtifactStatus::Experimental
     }

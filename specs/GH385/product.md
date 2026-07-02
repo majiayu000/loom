@@ -131,8 +131,7 @@ the relevant inputs exist:
 
 ## Panel UX
 
-Panel dashboard is deferred until backend read models are stable. When added,
-it should consume the same report API and include:
+Panel dashboard consumes the backend telemetry report read model and includes:
 
 1. skill health table;
 2. usage vs eval-delta scatterplot;
@@ -157,8 +156,8 @@ it should consume the same report API and include:
    unrelated registry state.
 9. `skill inspect` can include last usage/eval telemetry summary when telemetry
    is enabled.
-10. Panel API reads backend telemetry reports once the API is available; the
-    dashboard UI remains deferred until that read model is stable.
+10. Panel API reads backend telemetry reports and the dashboard renders that
+    read model without inventing fields absent from CLI/API state.
 11. Tests cover enable, disable, event writing, disabled mode, redaction,
     aggregation, export, purge dry-run, confirmed purge, and API read model
     output.

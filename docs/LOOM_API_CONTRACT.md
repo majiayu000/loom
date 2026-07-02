@@ -141,5 +141,5 @@ envelope semantics.
 `loom telemetry report`. It accepts the same read filters: `skill`, `skillset`,
 `agent`, `workspace`, and `since`. Missing eval, safety, dependency, and
 recommendation evidence remains `missing` rather than zero-valued. Panel
-dashboard rendering remains deferred; the route is the backend read model the
-dashboard must consume when implemented.
+Telemetry renders this route directly and must not invent analytics fields that
+are absent from the CLI/API read model.

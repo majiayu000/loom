@@ -38,6 +38,18 @@ export const OpsIcon = (p: IconProps) => (
   </svg>
 );
 
+export const TelemetryIcon = (p: IconProps) => (
+  <svg width="16" height="16" viewBox="0 0 24 24" strokeWidth="1.6" {...base} {...p}>
+    <path d="M4 19V5" />
+    <path d="M4 19h16" />
+    <path d="M7 15l3-4 3 2 4-7" />
+    <circle cx="7" cy="15" r="1" fill="currentColor" />
+    <circle cx="10" cy="11" r="1" fill="currentColor" />
+    <circle cx="13" cy="13" r="1" fill="currentColor" />
+    <circle cx="17" cy="6" r="1" fill="currentColor" />
+  </svg>
+);
+
 export const HistoryIcon = (p: IconProps) => (
   <svg width="16" height="16" viewBox="0 0 24 24" strokeWidth="1.6" {...base} {...p}>
     <path d="M3 12a9 9 0 109-9M3 4v5h5" />

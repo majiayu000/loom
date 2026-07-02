@@ -98,6 +98,7 @@ export type PanelPageKey =
   | "targets"
   | "bindings"
   | "projections"
+  | "telemetry"
   | "ops"
   | "history"
   | "sync"

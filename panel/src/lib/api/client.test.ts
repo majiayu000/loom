@@ -261,6 +261,7 @@ describe("api v1 routes", () => {
     await api.skillHistory("demo skill");
     await api.skillInspect("demo skill");
     await api.skillDiff("demo skill", "old", "new");
+    await api.telemetryReport();
 
     const paths = fetchSpy.mock.calls.map((call) => call[0]);
     expect(paths).toEqual([
@@ -271,6 +272,7 @@ describe("api v1 routes", () => {
       "/api/v1/skills/demo%20skill/history",
       "/api/v1/skills/demo%20skill/inspect",
       "/api/v1/skills/demo%20skill/diff?rev_a=old&rev_b=new",
+      "/api/v1/telemetry/report",
     ]);
   });
 });

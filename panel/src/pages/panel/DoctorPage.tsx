@@ -189,6 +189,7 @@ function nextActionPageLabel(check: DoctorCheck): string {
     targets: "Targets",
     bindings: "Bindings",
     projections: "Projections",
+    telemetry: "Telemetry",
     ops: "Activity",
     history: "Audit History",
     sync: "Sync",

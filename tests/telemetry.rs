@@ -157,6 +157,10 @@ fn telemetry_writes_redacted_eval_and_safety_events_and_reports_them() {
         report["data"]["summary"]["risk"]["status"],
         json!("available")
     );
+    assert_eq!(
+        report["data"]["panel_read_model"]["deferred_ui"],
+        json!(false)
+    );
 
     let (agent_report_output, agent_report) = run_loom(
         root.path(),

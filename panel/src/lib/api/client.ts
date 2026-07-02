@@ -562,6 +562,80 @@ export interface DoctorPayload {
   checks?: Record<string, unknown>;
 }
 
+export interface TelemetryUsageSummary {
+  activations: number;
+  deactivations: number;
+  invocations: number;
+  errors: number;
+  status: string;
+}
+
+export interface TelemetryValueSummary {
+  eval_runs: number;
+  passed: number;
+  failed: number;
+  pass_rate: number | null;
+  baseline_delta_avg: number | null;
+  status: string;
+}
+
+export interface TelemetryCostSummary {
+  tokens_in: number;
+  tokens_out: number;
+  commands: number;
+  duration_ms: number;
+  status: string;
+}
+
+export interface TelemetryDriftSummary {
+  stale_eval_days: number | null;
+  last_successful_eval_at: string | null;
+  status: string;
+}
+
+export interface TelemetryRiskSummary {
+  safety_events: number;
+  safety_findings: number;
+  dependency_findings: number;
+  status: string;
+}
+
+export interface TelemetryFeedbackSummary {
+  accepted: number;
+  rejected: number;
+  ignored: number;
+  status: string;
+}
+
+export interface TelemetryAggregate {
+  events: number;
+  usage: TelemetryUsageSummary;
+  value: TelemetryValueSummary;
+  cost: TelemetryCostSummary;
+  drift: TelemetryDriftSummary;
+  risk: TelemetryRiskSummary;
+  recommendation_feedback: TelemetryFeedbackSummary;
+}
+
+export interface TelemetryReportPayload {
+  schema_version: number;
+  enabled: boolean;
+  mode: string;
+  retention_days: number;
+  events_total: number;
+  matched_events: number;
+  malformed_events?: { count?: number; lines?: unknown[] };
+  summary: TelemetryAggregate;
+  skills: Record<string, TelemetryAggregate>;
+  privacy?: Record<string, unknown>;
+  filters?: Record<string, unknown>;
+  panel_read_model?: {
+    status?: string;
+    deferred_ui?: boolean;
+    route?: string;
+  };
+}
+
 async function remoteStatusWithWarnings(signal?: AbortSignal): Promise<ReadResult<RemoteStatusResponse>> {
   const path = "/api/v1/sync/status";
   const result = unwrapReadResult<RemoteStatusResponse>(path, await getJson<unknown>(path, signal));
@@ -586,6 +660,10 @@ export const api = {
     getJsonWithWarnings<RegistryPayload>("/api/v1/registry/status", signal),
   workspaceDoctor: (signal?: AbortSignal) =>
     getJsonData<DoctorPayload>("/api/v1/workspace/doctor", signal),
+  telemetryReport: (signal?: AbortSignal) =>
+    getJsonData<TelemetryReportPayload>("/api/v1/telemetry/report", signal),
+  telemetryReportWithWarnings: (signal?: AbortSignal) =>
+    getJsonDataWithWarnings<TelemetryReportPayload>("/api/v1/telemetry/report", signal),
   opsHistoryDiagnose: (signal?: AbortSignal) =>
     getJson<OpsHistoryDiagnosePayload>("/api/v1/ops/diagnose", signal),
   ops: (options?: { limit?: number; offset?: number }, signal?: AbortSignal) => {

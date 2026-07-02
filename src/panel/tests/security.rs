@@ -60,6 +60,7 @@ const V1_REGISTRY_READ_ROUTES: &[&str] = &[
     "/api/v1/skills/{skill_name}/inspect",
     "/api/v1/skills/{skill_name}/history",
     "/api/v1/skills/{skill_name}/diff",
+    "/api/v1/telemetry/report",
 ];
 
 const LEGACY_PANEL_ROUTES: &[&str] = &[

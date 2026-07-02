@@ -113,7 +113,7 @@ impl App {
         ))
     }
 
-    fn cmd_telemetry_report(
+    pub(crate) fn cmd_telemetry_report(
         &self,
         args: &TelemetryReportArgs,
     ) -> std::result::Result<(Value, Meta), CommandFailure> {

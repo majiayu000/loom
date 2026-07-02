@@ -263,6 +263,7 @@ fn panel_router(state: PanelState) -> Router {
         .route("/api/v1/ops/retry", post(ops_retry))
         .route("/api/v1/ops/purge", post(ops_purge))
         .route("/api/v1/ops/history/repair", post(ops_history_repair))
+        .route("/api/v1/telemetry/report", get(v1_telemetry_report))
         .route("/api/v1/sync/status", get(v1_sync_status))
         .route("/api/v1/sync/push", post(sync_push))
         .route("/api/v1/sync/pull", post(sync_pull))

@@ -45,7 +45,11 @@ pub use instruction::{
     InstructionMigrationTarget, InstructionScanArgs, InstructionShowArgs,
 };
 pub use plan_flow::{ApplyArgs, PlanCommand, PlanUseArgs};
-pub use policy::SkillPolicyArgs;
+pub use policy::{
+    ApprovalCommand, ApprovalDecisionArgs, ApprovalListArgs, ApprovalRequestArgs,
+    OrgPolicyCheckArgs, OrgPolicyCommand, OrgPolicyInitArgs, PolicyCommand, RoleGrantArgs,
+    RolesCommand, SkillPolicyArgs,
+};
 pub use provenance::{AddArgs, SkillProvenanceCommand};
 pub use provider::{ProviderAddArgs, ProviderCommand, ProviderKindArg, ProviderRemoveArgs};
 pub use safety::{SkillQuarantineArgs, SkillScanArgs, SkillTrustArgs};
@@ -141,6 +145,21 @@ pub enum Command {
     Catalog {
         #[command(subcommand)]
         command: CatalogCommand,
+    },
+    #[command(about = "Manage Git-backed org policy checks")]
+    Policy {
+        #[command(subcommand)]
+        command: PolicyCommand,
+    },
+    #[command(about = "Request and decide org policy approvals")]
+    Approval {
+        #[command(subcommand)]
+        command: ApprovalCommand,
+    },
+    #[command(about = "Manage org policy role grants")]
+    Roles {
+        #[command(subcommand)]
+        command: RolesCommand,
     },
     #[command(about = "Inspect non-skill instruction surfaces without mutation")]
     Instruction {

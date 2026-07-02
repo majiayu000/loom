@@ -12,6 +12,7 @@ mod history_cmds;
 mod instruction;
 #[cfg(test)]
 mod observed_tests;
+mod org_policy;
 mod plan_cmds;
 mod projections;
 mod provenance;
@@ -51,10 +52,10 @@ use serde_json::json;
 use uuid::Uuid;
 
 use crate::cli::{
-    AgentCommand, Cli, CodexCommand, Command, OpsCommand, OpsHistoryCommand, RemoteCommand,
-    SkillActiveCommand, SkillCommand, SkillOrphanCommand, SkillProvenanceCommand,
-    SkillTrashCommand, SkillsetCommand, SyncCommand, TargetCommand, WorkflowCommand,
-    WorkspaceBindingCommand, WorkspaceCommand, WorkspaceInitArgs,
+    AgentCommand, ApprovalCommand, Cli, CodexCommand, Command, OpsCommand, OpsHistoryCommand,
+    OrgPolicyCommand, PolicyCommand, RemoteCommand, RolesCommand, SkillActiveCommand, SkillCommand,
+    SkillOrphanCommand, SkillProvenanceCommand, SkillTrashCommand, SkillsetCommand, SyncCommand,
+    TargetCommand, WorkflowCommand, WorkspaceBindingCommand, WorkspaceCommand, WorkspaceInitArgs,
 };
 use crate::envelope::{Envelope, Meta};
 use crate::state::{AppContext, home_dir};
@@ -300,6 +301,11 @@ impl App {
             },
             Command::Provider { command } => self.cmd_provider(command, &request_id),
             Command::Catalog { command } => self.cmd_catalog(command),
+            Command::Policy { command } => match command {
+                PolicyCommand::Org { command } => self.cmd_policy_org(command, &request_id),
+            },
+            Command::Approval { command } => self.cmd_approval(command, &request_id),
+            Command::Roles { command } => self.cmd_roles(command, &request_id),
             Command::Instruction { command } => self.cmd_instruction(command),
             Command::Workflow { command } => self.cmd_workflow(command),
             Command::Index(args) if args.action == "build" => self.cmd_index_build(args),
@@ -472,6 +478,17 @@ fn command_records_audit(command: &Command) -> bool {
             | Command::Index(_)
             | Command::Active(_)
             | Command::Catalog { .. }
+            | Command::Policy {
+                command: PolicyCommand::Org {
+                    command: OrgPolicyCommand::Show | OrgPolicyCommand::Check(_),
+                },
+            }
+            | Command::Approval {
+                command: ApprovalCommand::List(_),
+            }
+            | Command::Roles {
+                command: RolesCommand::List,
+            }
             | Command::Instruction { .. }
             | Command::Provider {
                 command: crate::cli::ProviderCommand::List,
@@ -593,6 +610,19 @@ fn command_requires_durable_audit(command: &Command) -> bool {
         },
         Command::Provider { command } => !matches!(command, crate::cli::ProviderCommand::List),
         Command::Catalog { .. } => false,
+        Command::Policy { command } => match command {
+            PolicyCommand::Org { command } => matches!(command, OrgPolicyCommand::Init(_)),
+        },
+        Command::Approval { command } => match command {
+            ApprovalCommand::Request(_)
+            | ApprovalCommand::Approve(_)
+            | ApprovalCommand::Reject(_) => true,
+            ApprovalCommand::List(_) => false,
+        },
+        Command::Roles { command } => match command {
+            RolesCommand::Grant(_) | RolesCommand::Revoke(_) => true,
+            RolesCommand::List => false,
+        },
         Command::Instruction { .. } => false,
         Command::Workflow { command } => match command {
             WorkflowCommand::Create(args) => !args.dry_run,

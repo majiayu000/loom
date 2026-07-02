@@ -44,14 +44,17 @@ Top-level command groups:
 10. `skillset`
 11. `provider`
 12. `catalog`
-13. `instruction`
-14. `workflow`
-15. `sync`
-16. `ops`
-17. `agent`
-18. `codex`
-19. `panel`
-20. `doctor`
+13. `policy`
+14. `approval`
+15. `roles`
+16. `instruction`
+17. `workflow`
+18. `sync`
+19. `ops`
+20. `agent`
+21. `codex`
+22. `panel`
+23. `doctor`
 
 Removed from runtime surface:
 
@@ -504,7 +507,36 @@ Rules:
 9. pinned provider-backed install apply copies without symlinks, writes `skills/<skill-id>`, `state/registry/sources.json`, deterministic `loom.lock`, `state/registry/trust.json`, and a `skill.install` registry operation, but never auto-activates the skill
 10. critical safety findings block install before any registry or skill mutation
 
-### 11.1.2 `instruction scan`, `instruction show`, `instruction classify`, `instruction doctor`, `instruction migrate-plan`
+### 11.1.2 `policy org`, `approval`, and `roles`
+
+```bash
+loom --json --root <root> policy org init --bootstrap-admin <user>
+loom --json --root <root> policy org show
+loom --json --root <root> policy org check <action> [--skill <skill>] [--provider <provider-id>] [--sync-remote <remote>] [--agent <agent>]
+loom --json --root <root> approval request <action> [--skill <skill>] [--provider <provider-id>] [--sync-remote <remote>] [--agent <agent>] [--reason <text>]
+loom --json --root <root> approval list [--pending|--approved|--rejected]
+loom --json --root <root> approval approve <request-id> [--comment <text>]
+loom --json --root <root> approval reject <request-id> [--comment <text>]
+loom --json --root <root> roles list
+loom --json --root <root> roles grant <user-or-team> <viewer|author|reviewer|maintainer|admin>
+loom --json --root <root> roles revoke <user-or-team> <viewer|author|reviewer|maintainer|admin>
+```
+
+First-slice org governance creates Git-tracked policy, role, and approval state. It does not yet enforce org policy inside every mutating command; callers can use `policy org check` and approval events as the audited decision layer until command-wide enforcement lands.
+
+Rules:
+
+1. fresh `policy org init` requires explicit `--bootstrap-admin`; existing policy init is idempotent and must not reset admins
+2. policy state lives in `state/registry/org_policy.toml`; role grants live in deterministic `state/registry/roles.json`; approvals append to `state/registry/approvals.jsonl`
+3. `policy org check` returns `allow`, `deny`, or `approval_required` with required roles, approval tokens, evidence, and request commands
+4. `workspace.remote` is normalized to canonical policy action `workspace.remote.set`
+5. blocked or quarantined skill trust state returns `deny` and cannot be bypassed by approval events
+6. approval request reasons and decision comments are redacted before persistence
+7. approve/reject commands require the current local actor to satisfy one of the request's required roles
+8. role grant/revoke require current admin role and revoke must preserve at least one resolved non-team admin
+9. malformed policy, role, or approval state fails closed with `STATE_CORRUPT`
+
+### 11.1.3 `instruction scan`, `instruction show`, `instruction classify`, `instruction doctor`, `instruction migrate-plan`
 
 ```bash
 loom --json --root <root> instruction scan [--agent <agent>] [--workspace <path>]

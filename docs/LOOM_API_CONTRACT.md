@@ -135,11 +135,11 @@ envelope semantics.
 5. New Panel routes must be v1 routes. Do not add unversioned compatibility
    aliases.
 
-## 7. Deferred Telemetry Read Model
+## 7. Telemetry Read Model
 
-Telemetry analytics are implemented first through `loom telemetry report`. A
-future `GET /api/v1/telemetry/report` route must return the same local,
-redacted report shape and must keep missing eval, safety, dependency, and
-recommendation evidence as `missing` rather than inventing zero-valued fields.
-Panel dashboard rendering remains deferred until that route is implemented and
-tested.
+`GET /api/v1/telemetry/report` returns the same local, redacted report shape as
+`loom telemetry report`. It accepts the same read filters: `skill`, `skillset`,
+`agent`, `workspace`, and `since`. Missing eval, safety, dependency, and
+recommendation evidence remains `missing` rather than zero-valued. Panel
+dashboard rendering remains deferred; the route is the backend read model the
+dashboard must consume when implemented.

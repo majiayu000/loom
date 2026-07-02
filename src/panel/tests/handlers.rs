@@ -1,10 +1,11 @@
 use super::*;
 use crate::cli::{AgentKind, ProjectionMethod};
 use crate::panel::handlers::{
-    OpsQuery, registry_orphan_clean, registry_skill_trash_add, registry_skill_trash_purge,
-    registry_skill_trash_restore, registry_skill_use, remote_set, v1_health, v1_info, v1_overview,
-    v1_pending, v1_registry_ops, v1_registry_targets, v1_skill_diagnose, v1_skill_inspect,
-    v1_skill_trash, v1_skills, v1_workspace_status,
+    OpsQuery, TelemetryReportQuery, registry_orphan_clean, registry_skill_trash_add,
+    registry_skill_trash_purge, registry_skill_trash_restore, registry_skill_use, remote_set,
+    v1_health, v1_info, v1_overview, v1_pending, v1_registry_ops, v1_registry_targets,
+    v1_skill_diagnose, v1_skill_inspect, v1_skill_trash, v1_skills, v1_telemetry_report,
+    v1_workspace_status,
 };
 use crate::panel::{TrashRestoreRequest, UseRequest};
 use crate::state_model::{
@@ -48,6 +49,51 @@ fn panel_headers() -> HeaderMap {
     let mut headers = HeaderMap::new();
     headers.insert("origin", HeaderValue::from_static("http://127.0.0.1:43117"));
     headers
+}
+
+#[tokio::test]
+async fn v1_telemetry_report_returns_cli_read_model_without_audit_write() {
+    let (root, state) = make_test_state();
+    let telemetry_dir = root.join("state/telemetry");
+    fs::create_dir_all(&telemetry_dir).expect("create telemetry dir");
+    fs::write(
+        telemetry_dir.join("config.json"),
+        r#"{
+  "schema_version": 1,
+  "enabled": true,
+  "mode": "local-only",
+  "redaction": "default",
+  "retention_days": 90
+}
+"#,
+    )
+    .expect("write telemetry config");
+    fs::write(
+        telemetry_dir.join("events.jsonl"),
+        r#"{"schema_version":1,"event_id":"evt_panel","event_type":"skill.eval","skill_id":"demo","agent":"codex","workspace_hash":"sha256:panel","timestamp":"2026-01-01T00:00:00Z","metrics":{"tokens_in":7,"commands":2,"success":true},"privacy":{"raw_prompt_stored":false,"raw_code_stored":false,"redacted":true}}
+"#,
+    )
+    .expect("write telemetry events");
+
+    let (status, Json(payload)) =
+        v1_telemetry_report(Query(TelemetryReportQuery::default()), State(state)).await;
+
+    assert_eq!(status, StatusCode::OK, "{payload}");
+    assert_eq!(payload["ok"], json!(true));
+    assert_eq!(payload["cmd"], json!("telemetry.report"));
+    assert_eq!(payload["data"]["matched_events"], json!(1));
+    assert_eq!(payload["data"]["summary"]["value"]["eval_runs"], json!(1));
+    assert_eq!(payload["data"]["summary"]["cost"]["tokens_in"], json!(7));
+    assert_eq!(
+        payload["data"]["panel_read_model"]["route"],
+        json!("/api/v1/telemetry/report")
+    );
+    assert!(
+        !root.join("state/events/commands.jsonl").exists(),
+        "panel telemetry report must be read-only and avoid command audit writes"
+    );
+
+    cleanup_root(root);
 }
 
 #[tokio::test]

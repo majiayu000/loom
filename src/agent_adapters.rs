@@ -14,9 +14,10 @@ mod metadata;
 
 use metadata::{
     adapter_json_invalid, built_in_discovery_roots, built_in_reload, built_in_visibility,
-    default_scan_eligible, default_visibility, discovery_root_json, external_discovery_root,
-    external_visibility, reload_from_capability, reload_json, resolve_root_template, role_rank,
-    v1_discovery_roots, validate_discovery_root, validate_visibility, visibility_json,
+    capabilities_from_reload, default_scan_eligible, default_visibility, discovery_root_json,
+    external_discovery_root, external_visibility, reload_from_capability, reload_json,
+    resolve_root_template, role_rank, v1_discovery_roots, validate_discovery_root,
+    validate_visibility, visibility_json,
 };
 
 pub(crate) const ADAPTER_API_V1: &str = "1";
@@ -115,8 +116,6 @@ struct ExternalAdapterV1Record {
     capabilities: AdapterCapabilities,
     #[serde(default)]
     default_skill_dirs: Vec<String>,
-    #[serde(default)]
-    health_checks: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -131,8 +130,6 @@ struct ExternalAdapterV2Record {
     discovery_roots: Vec<ExternalDiscoveryRootRecord>,
     visibility: ExternalVisibilityRecord,
     reload: ExternalReloadRecord,
-    #[serde(default)]
-    health_checks: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -360,27 +357,26 @@ fn built_in_adapters(root: &Path, home: Option<&Path>) -> Vec<AgentAdapter> {
     };
     built_in_agent_specs()
         .into_iter()
-        .map(|id| AgentAdapter {
-            adapter_api: ADAPTER_API_V2.to_string(),
-            id: id.to_string(),
-            source: SOURCE_BUILT_IN.to_string(),
-            supported_scopes: vec!["user".to_string(), "project".to_string()],
-            projection_methods: vec![
-                "symlink".to_string(),
-                "copy".to_string(),
-                "materialize".to_string(),
-            ],
-            skill_entrypoint: "SKILL.md".to_string(),
-            capabilities: AdapterCapabilities {
-                automatic_discovery: true,
-                explicit_invocation: true,
-                reload_required: false,
-            },
-            default_skill_dirs: dirs_by_agent.get(id).cloned().unwrap_or_default(),
-            discovery_roots: built_in_discovery_roots(id, dirs_by_agent.get(id), home),
-            visibility: built_in_visibility(id),
-            reload: built_in_reload(id),
-            config_path: None,
+        .map(|id| {
+            let reload = built_in_reload(id);
+            AgentAdapter {
+                adapter_api: ADAPTER_API_V2.to_string(),
+                id: id.to_string(),
+                source: SOURCE_BUILT_IN.to_string(),
+                supported_scopes: vec!["user".to_string(), "project".to_string()],
+                projection_methods: vec![
+                    "symlink".to_string(),
+                    "copy".to_string(),
+                    "materialize".to_string(),
+                ],
+                skill_entrypoint: "SKILL.md".to_string(),
+                capabilities: capabilities_from_reload(&reload),
+                default_skill_dirs: dirs_by_agent.get(id).cloned().unwrap_or_default(),
+                discovery_roots: built_in_discovery_roots(id, dirs_by_agent.get(id), home),
+                visibility: built_in_visibility(id),
+                reload,
+                config_path: None,
+            }
         })
         .collect()
 }
@@ -543,15 +539,6 @@ fn validate_external_v1_record(
             Some(path),
         ));
     }
-    for check in &record.health_checks {
-        if check.trim().is_empty() {
-            return Err(adapter_failure(
-                format!("adapter '{}' has an empty health check", record.id),
-                "ADAPTER_HEALTH_CHECK_INVALID",
-                Some(path),
-            ));
-        }
-    }
     Ok(())
 }
 
@@ -617,15 +604,6 @@ fn validate_external_v2_record(
         ],
         path,
     )?;
-    for check in &record.health_checks {
-        if check.trim().is_empty() {
-            return Err(adapter_failure(
-                format!("adapter '{}' has an empty health check", record.id),
-                "ADAPTER_HEALTH_CHECK_INVALID",
-                Some(path),
-            ));
-        }
-    }
     Ok(())
 }
 

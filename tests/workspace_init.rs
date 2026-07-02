@@ -288,6 +288,59 @@ fn workspace_status_reports_codex_v2_adapter_metadata() {
 }
 
 #[test]
+fn workspace_status_reports_claude_v2_adapter_metadata() {
+    let root = TestDir::new("ws-status-claude-v2");
+    let fake_home = TestDir::new("ws-status-claude-v2-home");
+    let home_str = fake_home.path().to_string_lossy().into_owned();
+
+    let (output, env) = run_loom_with_env(
+        root.path(),
+        &[("HOME", &home_str)],
+        &["workspace", "status"],
+    );
+
+    assert!(
+        output.status.success(),
+        "workspace status failed: stderr={} stdout={}",
+        String::from_utf8_lossy(&output.stderr),
+        String::from_utf8_lossy(&output.stdout)
+    );
+    let adapter = adapter_by_id(&env, "claude");
+    assert_eq!(adapter["declared_adapter_api"], "2");
+    assert!(
+        adapter["discovery_roots"]
+            .as_array()
+            .expect("roots")
+            .iter()
+            .any(|root| root["scope"] == "user"
+                && root["role"] == "preferred-cross-client"
+                && root["path_template"] == "~/.claude/skills")
+    );
+    assert!(
+        adapter["discovery_roots"]
+            .as_array()
+            .expect("roots")
+            .iter()
+            .any(|root| root["scope"] == "project"
+                && root["role"] == "project-cross-client"
+                && root["path_template"] == "<workspace>/.claude/skills")
+    );
+    assert_eq!(adapter["reload"]["strategy"], "new-session-recommended");
+    assert_eq!(
+        adapter["capabilities"]["reload_required"],
+        Value::Bool(false)
+    );
+    assert_eq!(
+        adapter["visibility"]["identity_by_projection_method"]["symlink"],
+        "canonical-skill-md-path"
+    );
+    assert!(array_contains(
+        &adapter["visibility"]["disable_rules"],
+        "adapter-defined"
+    ));
+}
+
+#[test]
 fn workspace_init_rejects_v1_adapter_unknown_fields() {
     let root = TestDir::new("ws-init-v1-adapter-unknown-field");
     let fake_home = TestDir::new("ws-init-v1-adapter-unknown-field-home");
@@ -305,6 +358,49 @@ fn workspace_init_rejects_v1_adapter_unknown_fields() {
     "reload_required": false
   },
   "unexpected": true
+}
+"#,
+    );
+
+    let home_str = fake_home.path().to_string_lossy().into_owned();
+    let (output, env) = run_loom_with_env(
+        root.path(),
+        &[("HOME", &home_str)],
+        &["workspace", "init", "--scan-existing"],
+    );
+
+    assert!(!output.status.success());
+    assert_eq!(env["error"]["code"], "ADAPTER_INVALID");
+    assert_eq!(env["error"]["details"]["reason"], "ADAPTER_JSON_INVALID");
+}
+
+#[test]
+fn workspace_init_rejects_adapter_health_checks_as_unknown_surface() {
+    let root = TestDir::new("ws-init-adapter-health-checks-removed");
+    let fake_home = TestDir::new("ws-init-adapter-health-checks-removed-home");
+    write_file(
+        &root.path().join("adapters/bad-health.json"),
+        r#"{
+  "adapter_api": "2",
+  "id": "bad-health",
+  "supported_scopes": ["project"],
+  "projection_methods": ["copy"],
+  "skill_entrypoint": "SKILL.md",
+  "capabilities": {
+    "automatic_discovery": false,
+    "explicit_invocation": true,
+    "reload_required": false
+  },
+  "discovery_roots": [],
+  "visibility": {
+    "follows_symlink_dirs": true,
+    "identity": "runtime-skill-md-path"
+  },
+  "reload": {
+    "strategy": "no-reload-required",
+    "hot_reload": true
+  },
+  "health_checks": ["directory_exists"]
 }
 "#,
     );

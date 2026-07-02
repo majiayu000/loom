@@ -27,7 +27,7 @@ ranking changes, or Panel-only analytics state
 - [ ] `SP385-T3` Owner: implementation | Done when: enable/disable update local config, disabled mode prevents event appends, and known command/eval/safety paths call the telemetry writer only when enabled | Verify: `cargo test --test telemetry`
 - [ ] `SP385-T4` Owner: implementation | Done when: report aggregates usage, eval, cost, drift, and risk while marking unavailable upstream data as missing | Verify: `cargo test --test telemetry`
 - [ ] `SP385-T5` Owner: implementation | Done when: export writes redacted JSONL/CSV and purge dry-run/confirm operate only on telemetry events | Verify: `cargo test --test telemetry`
-- [ ] `SP385-T6` Owner: implementation | Done when: inspect/API consume the telemetry read model and Panel UI remains deferred until the backend report API is stable | Verify: `cargo test --test telemetry`
+- [ ] `SP385-T6` Owner: implementation | Done when: inspect/API consume the telemetry read model and Panel renders a basic dashboard from the backend report API | Verify: `cargo test --test telemetry`
 
 ### SP385-T1: Add CLI Surface
 
@@ -155,8 +155,7 @@ Done when:
 
 - CLI/API contracts document telemetry privacy and report semantics.
 - Panel API returns the telemetry report read model.
-- Panel dashboard rendering is deferred until the API read model is stable and
-  tested.
+- Panel renders a basic telemetry dashboard from the API read model.
 - tests cover the first-slice acceptance criteria.
 - repository checks pass.
 
@@ -172,7 +171,7 @@ cargo test
 
 - Use `Refs #385` for a first-slice PR unless every CLI, report, export, purge,
   inspect, API, and Panel acceptance criterion is implemented.
-- Do not use `Fixes #385` until local telemetry, dashboard, inspect summary,
+- Use `Fixes #385` only when local telemetry, dashboard, inspect summary,
   export, purge, and tests are complete.
 - Do not store raw prompts, source code, env values, secrets, or transcripts by
   default.

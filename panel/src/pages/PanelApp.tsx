@@ -11,6 +11,7 @@ import { SettingsPage } from "./panel/SettingsPage";
 import { SyncPage } from "./panel/SyncPage";
 import { DoctorPage } from "./panel/DoctorPage";
 import { FirstRunPage } from "./panel/FirstRunPage";
+import { TelemetryPage } from "./panel/TelemetryPage";
 import { selectPanelViewModel } from "../lib/panel_view_model";
 
 const TweakPanel = lazy(() =>
@@ -55,6 +56,7 @@ const VALID_PAGES: PanelPageKey[] = [
   "targets",
   "bindings",
   "projections",
+  "telemetry",
   "ops",
   "history",
   "sync",
@@ -329,6 +331,9 @@ export function PanelApp() {
         break;
       case "projections":
         view = controlPlane("projections");
+        break;
+      case "telemetry":
+        view = <TelemetryPage apiReachable={live.apiReachable} mode={live.mode} refreshKey={live.lastUpdated} />;
         break;
       case "ops":
         view = <OpsPage ops={ops} onMutation={onMutation} readOnly={readOnly} />;

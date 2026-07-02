@@ -1070,8 +1070,8 @@ Rules:
    atomically rewriting telemetry event state.
 9. `skill eval`, `skill scan`, `skill activate`, and `skill deactivate` append
    redacted telemetry events only when telemetry is enabled.
-10. Panel dashboard UI remains deferred; the CLI report shape is also exposed
-    as the backend read model at `/api/v1/telemetry/report`.
+10. Panel Telemetry consumes the same backend read model at
+    `/api/v1/telemetry/report` and preserves missing evidence as missing.
 
 ## 12. Human-Friendly Use Flow
 

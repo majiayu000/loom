@@ -20,7 +20,7 @@ The first slice should:
    records are report-only unless the user explicitly enables telemetry before
    import;
 4. aggregate report read models for CLI and Panel API consumers;
-5. keep Panel UI deferred until report routes are stable.
+5. render a Panel dashboard from the stable report route.
 
 ## Dependencies And Blocks
 
@@ -164,7 +164,7 @@ GET /api/v1/telemetry/report
 ```
 
 The API should return the same summary fields as `loom telemetry report --json`.
-Panel UI work should wait until this read model is implemented and tested.
+Panel UI should consume this read model directly.
 
 ## Test Plan
 

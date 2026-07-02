@@ -443,7 +443,7 @@ fn build_report(
         "skills": skills,
         "panel_read_model": {
             "status": "available",
-            "deferred_ui": true,
+            "deferred_ui": false,
             "route": "/api/v1/telemetry/report"
         }
     }))

@@ -12,6 +12,7 @@ import {
   ShieldIcon,
   SkillIcon,
   TargetIcon,
+  TelemetryIcon,
 } from "../icons/nav_icons";
 import { LoomMark } from "../icons/LoomMark";
 
@@ -23,6 +24,7 @@ const ICONS: Record<PanelPageKey, IconComponent> = {
   targets: TargetIcon,
   bindings: BindingIcon,
   projections: GitIcon,
+  telemetry: TelemetryIcon,
   ops: OpsIcon,
   history: HistoryIcon,
   sync: GitIcon,

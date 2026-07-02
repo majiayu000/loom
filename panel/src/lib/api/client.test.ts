@@ -20,6 +20,7 @@ describe("api.registryStatus", () => {
         path: "/api/v1/registry/status",
         status: 502,
         message: "GET /api/v1/registry/status returned 502",
+        nextActions: [],
       }),
     );
   });
@@ -103,6 +104,48 @@ describe("api v1 routes", () => {
       "/api/v1/sync/replay",
       "/api/v1/ops/history/repair",
     ]);
+  });
+
+  it("surfaces backend next actions on panel mutation errors", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: false,
+      status: 404,
+      statusText: "Not Found",
+      json: vi.fn().mockResolvedValue({
+        ok: false,
+        cmd: "target.remove",
+        request_id: "req-1",
+        data: {},
+        error: {
+          code: "TARGET_NOT_FOUND",
+          message: "target 'missing' not found",
+          details: {},
+          next_actions: [
+            {
+              cmd: "loom target list --json",
+              reason: "list registered targets to find a valid target_id",
+            },
+          ],
+        },
+        meta: { warnings: [] },
+      }),
+    } as unknown as Response);
+
+    await expect(api.targetRemove("missing")).rejects.toEqual(
+      expect.objectContaining<ApiError>({
+        name: "ApiError",
+        path: "/api/v1/targets/missing/remove",
+        status: 404,
+        message:
+          "target 'missing' not found\nTry: loom target list --json - list registered targets to find a valid target_id",
+        nextActions: [
+          {
+            cmd: "loom target list --json",
+            reason: "list registered targets to find a valid target_id",
+          },
+        ],
+      }),
+    );
   });
 
   it("uses the v1 endpoint for the skills read model", async () => {
@@ -235,6 +278,7 @@ describe("api v1 routes", () => {
         path: "/api/v1/workspace/info",
         status: 200,
         message: "GET /api/v1/workspace/info returned non-envelope payload",
+        nextActions: [],
       }),
     );
   });

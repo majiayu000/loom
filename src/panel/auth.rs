@@ -14,6 +14,7 @@ use serde_json::json;
 use uuid::Uuid;
 
 use crate::cli::{Cli, Command};
+use crate::error_actions::default_next_actions;
 use crate::state::AppContext;
 use crate::state_model::RegistryStatePaths;
 
@@ -227,17 +228,22 @@ pub(crate) fn error_envelope(
     code: &str,
     message: &str,
 ) -> serde_json::Value {
+    let next_actions = default_next_actions(code);
+    let mut error = json!({
+        "code": code,
+        "message": message,
+        "details": {}
+    });
+    if !next_actions.is_empty() {
+        error["next_actions"] = json!(next_actions);
+    }
     json!({
         "ok": false,
         "cmd": cmd,
         "request_id": request_id,
         "version": env!("CARGO_PKG_VERSION"),
         "data": {},
-        "error": {
-            "code": code,
-            "message": message,
-            "details": {}
-        },
+        "error": error,
         "meta": {
             "warnings": []
         }

@@ -2,6 +2,7 @@ mod agent_adapters;
 mod cli;
 mod commands;
 mod envelope;
+mod error_actions;
 mod fs_util;
 mod gitops;
 mod panel;
@@ -126,6 +127,9 @@ fn print_envelope(env: &Envelope, force_json: bool, pretty: bool) {
         eprintln!("{} failed: {} ({})", env.cmd, err.message, err.code);
         if !err.details.is_null() {
             eprintln!("{}", pretty_json_or_empty_object(&err.details));
+        }
+        for action in &err.next_actions {
+            eprintln!("hint: try {} - {}", action.cmd, action.reason);
         }
     } else {
         eprintln!("{} failed", env.cmd);

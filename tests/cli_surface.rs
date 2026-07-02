@@ -3,7 +3,7 @@ use std::process::Command;
 
 mod common;
 
-use common::{TestDir, run_loom_with_env, write_skill};
+use common::{TestDir, run_loom, run_loom_with_env, write_minimal_registry_state, write_skill};
 
 #[test]
 fn top_level_help_describes_command_groups() {
@@ -356,6 +356,88 @@ fn json_output_defaults_to_compact_envelope() {
         "successful envelopes must keep a stable error:null field: {stdout}"
     );
     serde_json::from_slice::<serde_json::Value>(&output.stdout).expect("parse compact json");
+}
+
+#[test]
+fn not_found_errors_include_structured_next_actions() {
+    let root = TestDir::new("cli-error-next-actions");
+    write_minimal_registry_state(root.path(), 1);
+
+    let cases = [
+        (
+            vec!["skill", "inspect", "missing-skill"],
+            "SKILL_NOT_FOUND",
+            "loom skill list --json",
+        ),
+        (
+            vec!["workspace", "binding", "show", "missing-binding"],
+            "BINDING_NOT_FOUND",
+            "loom workspace binding list --json",
+        ),
+        (
+            vec!["target", "show", "missing-target"],
+            "TARGET_NOT_FOUND",
+            "loom target list --json",
+        ),
+    ];
+
+    for (args, code, command) in cases {
+        let (output, env) = run_loom(root.path(), &args);
+        assert!(!output.status.success(), "{env}");
+        assert_eq!(env["error"]["code"], serde_json::json!(code));
+        assert_eq!(
+            env["error"]["next_actions"][0]["cmd"],
+            serde_json::json!(command),
+            "{env}"
+        );
+        assert!(
+            env["error"]["next_actions"][0]["reason"]
+                .as_str()
+                .is_some_and(|reason| !reason.is_empty()),
+            "{env}"
+        );
+    }
+}
+
+#[test]
+fn state_not_initialized_error_includes_next_action() {
+    let root = TestDir::new("cli-state-next-action");
+
+    let (output, env) = run_loom(root.path(), &["workspace", "binding", "list"]);
+    assert!(!output.status.success(), "{env}");
+    assert_eq!(
+        env["error"]["code"],
+        serde_json::json!("STATE_NOT_INITIALIZED")
+    );
+    assert_eq!(
+        env["error"]["next_actions"][0]["cmd"],
+        serde_json::json!("loom workspace init --json"),
+        "{env}"
+    );
+}
+
+#[test]
+fn human_not_found_errors_print_next_action_hints() {
+    let root = TestDir::new("cli-human-error-hint");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_loom"))
+        .arg("--root")
+        .arg(root.path())
+        .args(["skill", "inspect", "missing-skill"])
+        .output()
+        .expect("run loom");
+
+    assert!(
+        !output.status.success(),
+        "missing skill unexpectedly succeeded: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("hint: try loom skill list --json"),
+        "human error output should include next-action hint: {stderr}"
+    );
 }
 
 #[test]

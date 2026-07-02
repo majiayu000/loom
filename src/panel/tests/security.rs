@@ -198,6 +198,25 @@ fn error_envelope_uses_expected_shape() {
 }
 
 #[test]
+fn error_envelope_includes_next_actions_for_guidance_errors() {
+    let payload = error_envelope(
+        "registry.status",
+        "req-1",
+        "STATE_NOT_INITIALIZED",
+        "registry state not initialized",
+    );
+
+    assert_eq!(
+        payload["error"]["next_actions"][0]["cmd"],
+        json!("loom workspace init --json")
+    );
+    assert_eq!(
+        payload["error"]["next_actions"][0]["reason"],
+        json!("initialize registry state before running registry commands")
+    );
+}
+
+#[test]
 fn request_origin_matches_origin_or_referer() {
     let panel_origin = "http://127.0.0.1:43117";
     let mut headers = HeaderMap::new();

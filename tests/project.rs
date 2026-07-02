@@ -801,6 +801,10 @@ fn skill_project_rejects_unmanaged_target_ownership() {
         project_env["error"]["code"],
         Value::String("TARGET_NOT_MANAGED".to_string())
     );
+    assert_eq!(
+        project_env["error"]["next_actions"][0]["cmd"],
+        Value::String("loom target list --json".to_string())
+    );
 }
 
 #[test]

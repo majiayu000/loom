@@ -183,6 +183,33 @@ pub(crate) fn run_panel_command(
     }
 }
 
+pub(crate) fn run_panel_service(
+    state: &PanelState,
+    cmd: &str,
+    success_status: StatusCode,
+    input: serde_json::Value,
+    service: &mut dyn FnMut(
+        String,
+    ) -> std::result::Result<
+        (serde_json::Value, crate::envelope::Meta),
+        crate::commands::CommandFailure,
+    >,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let app = crate::commands::App {
+        ctx: (*state.ctx).clone(),
+    };
+    let request_id = Uuid::new_v4().to_string();
+    let (envelope, _code) = app.execute_service_result(cmd, request_id.clone(), input, service);
+    let status = if envelope.ok {
+        success_status
+    } else {
+        status_for_error_code(envelope.error.as_ref().map(|error| error.code.as_str()))
+    };
+    let payload = serde_json::to_value(envelope)
+        .unwrap_or_else(|err| error_envelope(cmd, &request_id, "INTERNAL_ERROR", &err.to_string()));
+    (status, Json(payload))
+}
+
 pub(crate) fn status_for_error_code(code: Option<&str>) -> StatusCode {
     match code.unwrap_or("INTERNAL_ERROR") {
         "ARG_INVALID" | "STATE_NOT_INITIALIZED" => StatusCode::BAD_REQUEST,

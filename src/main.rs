@@ -1,6 +1,7 @@
 mod agent_adapters;
 mod cli;
 mod commands;
+mod core;
 mod envelope;
 mod error_actions;
 mod fs_util;

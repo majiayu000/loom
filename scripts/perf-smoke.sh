@@ -61,8 +61,10 @@ fi
 # User-scope `loom use` adds adapter-root target resolution, adoption safety,
 # observed-target upgrade auditing, and exact target-root command plumbing.
 # Lifecycle convergence adds `skill commit` direction detection, release anchors,
-# and diagnose drift routing while deleting the old public lifecycle leaves.
-max_bin_bytes=$((5568 * 1024))
+# and diagnose drift routing while deleting the old public lifecycle leaves. The
+# core service layer adds command metadata classification plus typed
+# projection/lifecycle service entrypoints for Panel mutations.
+max_bin_bytes=$((5584 * 1024))
 bin_bytes="$(wc -c < "$bin" | tr -d ' ')"
 if (( bin_bytes > max_bin_bytes )); then
   echo "release binary is ${bin_bytes} bytes; limit is ${max_bin_bytes}" >&2

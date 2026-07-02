@@ -9,7 +9,7 @@ These decisions describe the contract Loom should preserve while implementation 
 
 ## 1. Operation History Authority
 
-Decision: phase 1 keeps the legacy pending queue and history branch as the operational authority for sync, replay, pending queue maintenance, and history repair. The registry operation journal is the activity/audit read model.
+Decision: phase 1 keeps the legacy pending queue and history branch as the operational authority for sync, replay, pending queue maintenance, and history repair. The registry operation journal is the activity/audit read model. The #459 migration plan in `docs/LOOM_STATE_MIGRATION_NOTES.md` section 11 defines how the registry journal will replace the pending queue after review; this ADR still describes current runtime behavior until that implementation lands.
 
 Authoritative for sync and replay:
 
@@ -28,7 +28,7 @@ Rules:
 1. `sync push`, `sync pull`, `sync replay`, `ops retry`, `ops purge`, and `ops history repair` continue to operate on the pending/history model.
 2. `/api/v1/ops` exposes bounded summaries from the registry operation journal for activity history.
 3. `/api/v1/ops/retry` and `/api/v1/ops/purge` are pending-queue maintenance endpoints, not registry op-id endpoints.
-4. A future migration may make registry operations authoritative, but that requires a separate migration plan and compatibility story.
+4. The #459 migration may make registry operations authoritative only by following the reviewed plan in `docs/LOOM_STATE_MIGRATION_NOTES.md` section 11.
 
 Rationale:
 

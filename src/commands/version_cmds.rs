@@ -358,7 +358,10 @@ impl App {
                 .projections
                 .projections
                 .iter()
-                .filter(|p| p.skill_id == args.skill && p.method != "symlink")
+                .filter(|p| {
+                    p.skill_id == args.skill
+                        && p.method != crate::core::vocab::ProjectionMethod::Symlink
+                })
                 .map(|p| p.instance_id.clone())
                 .collect();
             if !stale.is_empty() {

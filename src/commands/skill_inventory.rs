@@ -210,7 +210,7 @@ fn add_registry_skill_rows(snapshot: &RegistrySnapshot, rows: &mut BTreeMap<Stri
         row.target_ids.insert(rule.target_id.clone());
         if let Some(binding) = bindings.get(rule.binding_id.as_str()) {
             row.profile_ids.insert(binding.profile_id.clone());
-            row.compatible_agents.insert(binding.agent.clone());
+            row.compatible_agents.insert(binding.agent.to_string());
             row.workspace_matchers.insert(
                 binding.binding_id.clone(),
                 json!({
@@ -232,7 +232,7 @@ fn add_registry_skill_rows(snapshot: &RegistrySnapshot, rows: &mut BTreeMap<Stri
             row.binding_ids.insert(binding_id.clone());
             if let Some(binding) = bindings.get(binding_id.as_str()) {
                 row.profile_ids.insert(binding.profile_id.clone());
-                row.compatible_agents.insert(binding.agent.clone());
+                row.compatible_agents.insert(binding.agent.to_string());
             }
         }
         row.target_ids.insert(projection.target_id.clone());
@@ -272,7 +272,7 @@ fn add_trust_rows(trust: &RegistryTrustFile, rows: &mut BTreeMap<String, SkillRe
 }
 
 fn add_compatible_target(row: &mut SkillReadRow, target: &RegistryProjectionTarget) {
-    row.compatible_agents.insert(target.agent.clone());
+    row.compatible_agents.insert(target.agent.to_string());
     row.compatible_targets.insert(
         target.target_id.clone(),
         json!({

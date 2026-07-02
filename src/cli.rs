@@ -3,7 +3,9 @@ use std::path::PathBuf;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use serde::Serialize;
 
-mod agent_kind;
+pub use crate::core::vocab::{
+    AgentKind, MatcherKind as WorkspaceMatcherKind, Ownership as TargetOwnership, ProjectionMethod,
+};
 mod backup;
 mod catalog;
 mod codex_args;
@@ -33,7 +35,6 @@ mod telemetry;
 mod use_flow;
 mod version;
 mod workflow;
-pub use agent_kind::AgentKind;
 pub use backup::{
     BackupCommand, BackupExportArgs, BackupFormat, BackupInspectArgs, BackupRestoreArgs,
 };
@@ -733,46 +734,4 @@ pub struct SyncPushArgs {
     /// Show the push plan without committing, pushing, or clearing pending ops.
     #[arg(long)]
     pub dry_run: bool,
-}
-
-#[derive(Debug, Clone, Copy, ValueEnum, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum WorkspaceMatcherKind {
-    #[serde(alias = "path-prefix")]
-    PathPrefix,
-    #[serde(alias = "exact-path")]
-    ExactPath,
-    Name,
-}
-
-#[derive(Debug, Clone, Copy, ValueEnum, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
-pub enum TargetOwnership {
-    Managed,
-    Observed,
-    External,
-}
-
-#[derive(Debug, Clone, Copy, ValueEnum, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
-pub enum ProjectionMethod {
-    Symlink,
-    Copy,
-    Materialize,
-}
-
-#[cfg(test)]
-mod tests {
-    use super::WorkspaceMatcherKind;
-
-    #[test]
-    fn workspace_matcher_kind_deserializes_cli_and_api_spellings() {
-        let kebab: WorkspaceMatcherKind =
-            serde_json::from_str("\"path-prefix\"").expect("deserialize kebab-case matcher");
-        let snake: WorkspaceMatcherKind =
-            serde_json::from_str("\"path_prefix\"").expect("deserialize snake_case matcher");
-
-        assert_eq!(kebab, WorkspaceMatcherKind::PathPrefix);
-        assert_eq!(snake, WorkspaceMatcherKind::PathPrefix);
-    }
 }

@@ -29,7 +29,7 @@ pub(crate) fn project_skill(
             skill: input.skill,
             binding: input.binding,
             target: input.target,
-            method: input.method.into(),
+            method: input.method,
             dry_run: false,
         },
         request_id,

@@ -298,34 +298,15 @@ pub(crate) fn command_name(command: &Command) -> &'static str {
 // ---------------------------------------------------------------------------
 
 pub(crate) fn agent_kind_as_str(agent: AgentKind) -> &'static str {
-    match agent {
-        AgentKind::Claude => "claude",
-        AgentKind::Codex => "codex",
-        AgentKind::Cursor => "cursor",
-        AgentKind::Windsurf => "windsurf",
-        AgentKind::Cline => "cline",
-        AgentKind::Copilot => "copilot",
-        AgentKind::Aider => "aider",
-        AgentKind::Opencode => "opencode",
-        AgentKind::GeminiCli => "gemini-cli",
-        AgentKind::Goose => "goose",
-    }
+    agent.as_str()
 }
 
 pub(crate) fn workspace_matcher_kind_as_str(kind: WorkspaceMatcherKind) -> &'static str {
-    match kind {
-        WorkspaceMatcherKind::PathPrefix => "path_prefix",
-        WorkspaceMatcherKind::ExactPath => "exact_path",
-        WorkspaceMatcherKind::Name => "name",
-    }
+    kind.as_str()
 }
 
 pub(crate) fn target_ownership_as_str(ownership: crate::cli::TargetOwnership) -> &'static str {
-    match ownership {
-        crate::cli::TargetOwnership::Managed => "managed",
-        crate::cli::TargetOwnership::Observed => "observed",
-        crate::cli::TargetOwnership::External => "external",
-    }
+    ownership.as_str()
 }
 
 pub(crate) fn target_capabilities(
@@ -351,11 +332,7 @@ pub(crate) fn target_capabilities(
 }
 
 pub(crate) fn projection_method_as_str(method: ProjectionMethod) -> &'static str {
-    match method {
-        ProjectionMethod::Symlink => "symlink",
-        ProjectionMethod::Copy => "copy",
-        ProjectionMethod::Materialize => "materialize",
-    }
+    method.as_str()
 }
 
 // ---------------------------------------------------------------------------

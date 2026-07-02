@@ -63,8 +63,9 @@ fi
 # Lifecycle convergence adds `skill commit` direction detection, release anchors,
 # and diagnose drift routing while deleting the old public lifecycle leaves. The
 # core service layer adds command metadata classification plus typed
-# projection/lifecycle service entrypoints for Panel mutations.
-max_bin_bytes=$((5584 * 1024))
+# projection/lifecycle service entrypoints for Panel mutations. Registry domain
+# enums add shared serde/CLI/TS vocab exports for typed persisted state.
+max_bin_bytes=$((5585 * 1024))
 bin_bytes="$(wc -c < "$bin" | tr -d ' ')"
 if (( bin_bytes > max_bin_bytes )); then
   echo "release binary is ${bin_bytes} bytes; limit is ${max_bin_bytes}" >&2

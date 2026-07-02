@@ -467,7 +467,7 @@ fn projected_agents(ctx: &AppContext, skill: &str) -> Result<Vec<String>> {
             agents.insert(target.agent);
         }
     }
-    Ok(agents.into_iter().collect())
+    Ok(agents.into_iter().map(|agent| agent.to_string()).collect())
 }
 
 fn lock_source_locator(source: &SourceDescriptor) -> String {

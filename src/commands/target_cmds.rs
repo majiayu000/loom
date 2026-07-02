@@ -153,9 +153,9 @@ impl App {
         let target_id = unique_target_id_for_agent(agent, &normalized_path, &targets);
         let target = RegistryProjectionTarget {
             target_id: target_id.clone(),
-            agent: agent.to_string(),
+            agent: agent.into(),
             path: normalized_path,
-            ownership: target_ownership_as_str(ownership).to_string(),
+            ownership,
             capabilities: target_capabilities(ownership),
             created_at: Some(Utc::now()),
         };
@@ -274,9 +274,8 @@ impl App {
             ));
         }
 
-        let previous_ownership = targets.targets[index].ownership.clone();
-        targets.targets[index].ownership =
-            target_ownership_as_str(TargetOwnership::Managed).to_string();
+        let previous_ownership = targets.targets[index].ownership;
+        targets.targets[index].ownership = crate::core::vocab::Ownership::Managed;
         targets.targets[index].capabilities = target_capabilities(TargetOwnership::Managed);
         let target = targets.targets[index].clone();
         paths.save_targets(&targets).map_err(map_registry_state)?;

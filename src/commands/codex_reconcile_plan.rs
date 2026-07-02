@@ -46,7 +46,7 @@ fn plan_target(
     if request.allowlist_path.is_some() {
         warnings.push("allowlist is accepted for future legacy cleanup but not applied by this reconcile slice".to_string());
     }
-    if target.ownership != "managed" {
+    if target.ownership != crate::core::vocab::Ownership::Managed {
         actions.push(action(
             "manual_review",
             None,
@@ -194,7 +194,7 @@ fn plan_desired_projection(
     rule: &RegistryBindingRule,
     actions: &mut Vec<CodexReconcileAction>,
 ) {
-    if rule.method != "symlink" {
+    if rule.method != crate::core::vocab::ProjectionMethod::Symlink {
         actions.push(action(
             "manual_review",
             Some(rule.skill_id.clone()),
@@ -246,7 +246,9 @@ fn plan_desired_projection(
             if projection_path_is_safe_symlink(&expected, &source) {
                 return;
             }
-            if record.is_some_and(|record| record.method == "symlink") {
+            if record.is_some_and(|record| {
+                record.method == crate::core::vocab::ProjectionMethod::Symlink
+            }) {
                 actions.push(action(
                     "repair_projection",
                     Some(rule.skill_id.clone()),
@@ -429,7 +431,7 @@ fn stale_entry_is_safe(
     path: &Path,
 ) -> bool {
     if let Some(record) = record
-        && record.method == "symlink"
+        && record.method == crate::core::vocab::ProjectionMethod::Symlink
         && fs::symlink_metadata(path)
             .map(|metadata| metadata.file_type().is_symlink())
             .unwrap_or(false)

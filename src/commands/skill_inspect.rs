@@ -374,17 +374,17 @@ fn runtime_agents(
     let mut agents = BTreeSet::new();
     if let Some(snapshot) = snapshot {
         for target in &snapshot.targets.targets {
-            agents.insert(target.agent.clone());
+            agents.insert(target.agent.to_string());
         }
         for binding in &snapshot.bindings.bindings {
-            agents.insert(binding.agent.clone());
+            agents.insert(binding.agent.to_string());
         }
         for rule in &snapshot.rules.rules {
             if rule.skill_id == skill {
                 if let Some(target) = snapshot.target(&rule.target_id) {
-                    agents.insert(target.agent.clone());
+                    agents.insert(target.agent.to_string());
                 } else if let Some(binding) = snapshot.binding(&rule.binding_id) {
-                    agents.insert(binding.agent.clone());
+                    agents.insert(binding.agent.to_string());
                 }
             }
         }
@@ -392,7 +392,7 @@ fn runtime_agents(
             if projection.skill_id == skill
                 && let Some(target) = snapshot.target(&projection.target_id)
             {
-                agents.insert(target.agent.clone());
+                agents.insert(target.agent.to_string());
             }
         }
     }
@@ -490,7 +490,7 @@ fn classify_agent_runtime(
         binding_id: primary_binding.map(|binding| binding.binding_id.clone()),
         target_path: primary_target.map(|target| target.path.clone()),
         materialized_path,
-        health: primary_projection.map(|projection| projection.health.clone()),
+        health: primary_projection.map(|projection| projection.health.to_string()),
         truth_level: "registry_projection".to_string(),
         findings,
     }
@@ -551,11 +551,11 @@ fn matching_projections<'a>(
 fn rule_agent(snapshot: &RegistrySnapshot, rule: &RegistryBindingRule) -> Option<String> {
     snapshot
         .target(&rule.target_id)
-        .map(|target| target.agent.clone())
+        .map(|target| target.agent.to_string())
         .or_else(|| {
             snapshot
                 .binding(&rule.binding_id)
-                .map(|binding| binding.agent.clone())
+                .map(|binding| binding.agent.to_string())
         })
 }
 
@@ -653,7 +653,7 @@ fn runtime_findings(
                 Some("loom workspace binding list".to_string()),
             ));
         }
-        if projection.health != "healthy" {
+        if projection.health != crate::core::vocab::Health::Healthy {
             findings.push(finding(
                 "projection_health",
                 "warning",

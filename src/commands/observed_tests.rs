@@ -52,9 +52,9 @@ fn write_observed_target(root: &Path, target_path: &Path) {
             schema_version: REGISTRY_SCHEMA_VERSION,
             targets: vec![RegistryProjectionTarget {
                 target_id: "observed-1".to_string(),
-                agent: "claude".to_string(),
+                agent: "claude".into(),
                 path: target_path.display().to_string(),
-                ownership: "observed".to_string(),
+                ownership: crate::core::vocab::Ownership::Observed,
                 capabilities: RegistryTargetCapabilities {
                     symlink: false,
                     copy: true,

@@ -9,6 +9,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use ts_rs::TS;
 
+use crate::core::vocab::{AgentId, Health, MatcherKind, Ownership, ProjectionMethod};
+
 pub const REGISTRY_SCHEMA_VERSION: u32 = 1;
 
 #[derive(Debug, Clone)]
@@ -107,9 +109,10 @@ pub struct RegistryTrustRecord {
 )]
 pub struct RegistryProjectionTarget {
     pub target_id: String,
-    pub agent: String,
+    #[ts(type = "string")]
+    pub agent: AgentId,
     pub path: String,
-    pub ownership: String,
+    pub ownership: Ownership,
     pub capabilities: RegistryTargetCapabilities,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional, type = "string")]
@@ -132,7 +135,8 @@ pub struct RegistryTargetCapabilities {
 )]
 pub struct RegistryWorkspaceBinding {
     pub binding_id: String,
-    pub agent: String,
+    #[ts(type = "string")]
+    pub agent: AgentId,
     pub profile_id: String,
     pub workspace_matcher: RegistryWorkspaceMatcher,
     pub default_target_id: String,
@@ -146,7 +150,7 @@ pub struct RegistryWorkspaceBinding {
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "../panel/src/generated/")]
 pub struct RegistryWorkspaceMatcher {
-    pub kind: String,
+    pub kind: MatcherKind,
     pub value: String,
 }
 
@@ -156,7 +160,7 @@ pub struct RegistryBindingRule {
     pub binding_id: String,
     pub skill_id: String,
     pub target_id: String,
-    pub method: String,
+    pub method: ProjectionMethod,
     pub watch_policy: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional, type = "string")]
@@ -179,10 +183,9 @@ pub struct RegistryProjectionInstance {
     pub binding_id: Option<String>,
     pub target_id: String,
     pub materialized_path: String,
-    pub method: String,
+    pub method: ProjectionMethod,
     pub last_applied_rev: String,
-    // Valid values: "healthy", "drifted", "missing", "conflict", "orphaned".
-    pub health: String,
+    pub health: Health,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub observed_drift: Option<bool>,
@@ -291,7 +294,9 @@ impl RegistrySnapshot {
         let mut drifted = 0;
         for projection in &self.projections.projections {
             unique_skills.insert(projection.skill_id.as_str());
-            if projection.observed_drift.unwrap_or(false) || projection.health != "healthy" {
+            if projection.observed_drift.unwrap_or(false)
+                || projection.health != crate::core::vocab::Health::Healthy
+            {
                 drifted += 1;
             }
         }
@@ -423,5 +428,62 @@ impl RegistrySnapshot {
             rules,
             projections,
         }
+    }
+}
+
+#[cfg(test)]
+mod vocab_tests {
+    use super::{
+        RegistryBindingRule, RegistryProjectionInstance, RegistryProjectionTarget,
+        RegistryWorkspaceMatcher,
+    };
+
+    #[test]
+    fn registry_vocab_unknown_values_fail_deserialization() {
+        let target = r#"{
+            "target_id":"target_bad",
+            "agent":"future-agent",
+            "path":"/tmp/skills",
+            "ownership":"typo",
+            "capabilities":{"symlink":true,"copy":true,"watch":true}
+        }"#;
+        assert!(serde_json::from_str::<RegistryProjectionTarget>(target).is_err());
+
+        let matcher = r#"{"kind":"typo","value":"/tmp/work"}"#;
+        assert!(serde_json::from_str::<RegistryWorkspaceMatcher>(matcher).is_err());
+
+        let rule = r#"{
+            "binding_id":"bind",
+            "skill_id":"demo",
+            "target_id":"target",
+            "method":"typo",
+            "watch_policy":"observe_only"
+        }"#;
+        assert!(serde_json::from_str::<RegistryBindingRule>(rule).is_err());
+
+        let projection = r#"{
+            "instance_id":"inst",
+            "skill_id":"demo",
+            "target_id":"target",
+            "materialized_path":"/tmp/skills/demo",
+            "method":"copy",
+            "last_applied_rev":"abc123",
+            "health":"typo"
+        }"#;
+        assert!(serde_json::from_str::<RegistryProjectionInstance>(projection).is_err());
+    }
+
+    #[test]
+    fn registry_agent_field_preserves_unknown_reader_values() {
+        let target = r#"{
+            "target_id":"target_future",
+            "agent":"future-agent",
+            "path":"/tmp/skills",
+            "ownership":"external",
+            "capabilities":{"symlink":false,"copy":false,"watch":false}
+        }"#;
+        let parsed = serde_json::from_str::<RegistryProjectionTarget>(target)
+            .expect("unknown agent remains reader-compatible");
+        assert_eq!(parsed.agent, "future-agent");
     }
 }

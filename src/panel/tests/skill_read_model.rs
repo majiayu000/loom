@@ -18,9 +18,9 @@ fn write_observed_targets(root: &Path, targets: Vec<RegistryProjectionTarget>) {
 fn observed_target(target_id: &str, path: &Path) -> RegistryProjectionTarget {
     RegistryProjectionTarget {
         target_id: target_id.to_string(),
-        agent: "claude".to_string(),
+        agent: "claude".into(),
         path: path.display().to_string(),
-        ownership: "observed".to_string(),
+        ownership: crate::core::vocab::Ownership::Observed,
         capabilities: RegistryTargetCapabilities {
             symlink: false,
             copy: true,

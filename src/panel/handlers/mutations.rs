@@ -17,7 +17,6 @@ use crate::core::lifecycle::{
     CommitSourceInput, ReleaseAnchorInput, ReleaseVersionInput, RollbackInput,
 };
 use crate::core::projection::{CommitProjectionInput, ProjectSkillInput};
-use crate::core::vocab::ProjectionMethod as CoreProjectionMethod;
 use crate::types::ErrorCode;
 
 use super::super::auth::{
@@ -169,7 +168,7 @@ pub(in crate::panel) async fn registry_project(
         skill: req.skill,
         binding: req.binding,
         target: req.target,
-        method: CoreProjectionMethod::from(req.method.unwrap_or(ProjectionMethod::Symlink)),
+        method: req.method.unwrap_or(ProjectionMethod::Symlink),
     };
     let audit_input = json!({
         "source": "panel",

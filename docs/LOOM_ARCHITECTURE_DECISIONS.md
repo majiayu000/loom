@@ -1,6 +1,6 @@
 # Loom Registry Architecture Decisions
 
-Updated: 2026-06-26
+Updated: 2026-07-03
 Status: Accepted for phase 1
 
 This document closes the current design-debt split from issue #6. It freezes the phase-1 boundaries for operation history, registry vocabulary rules, projection removal, panel mutations, and environment-based discovery.
@@ -45,9 +45,17 @@ Writers must emit only these values:
 - `ownership`: `managed`, `observed`, `external`
 - `method`: `symlink`, `copy`, `materialize`
 - `watch_policy`: `off`, `observe_only`, `observe_and_warn`
-- `health`: `healthy`, `drifted`, `missing`, `conflict`
+- `health`: `healthy`, `drifted`, `missing`, `conflict`, `orphaned`
 
-`agent` is owned by the CLI `AgentKind` enum. JSON readers should preserve unknown agent strings for forward compatibility, but CLI and panel write paths must only write known `AgentKind` values.
+`agent` is owned by the shared `AgentKind` vocabulary. Registry readers store
+it as transparent `AgentId(String)` so future agent strings can still be loaded
+and re-emitted, while write paths construct registry state from validated
+agent inputs instead of raw persistence strings.
+
+Implementation closure: registry `ownership`, projection/binding `method`,
+projection `health`, and workspace matcher `kind` are typed shared vocabularies
+under `src/core/vocab.rs`. Unknown values in those closed fields fail schema
+load; unknown `agent` strings remain reader-compatible through `AgentId`.
 
 ### 2.2 Policy profiles
 

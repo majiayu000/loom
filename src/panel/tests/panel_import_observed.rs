@@ -26,9 +26,9 @@ async fn registry_skill_import_observed_imports_existing_observed_skill() {
             schema_version: REGISTRY_SCHEMA_VERSION,
             targets: vec![RegistryProjectionTarget {
                 target_id: "target-observed".to_string(),
-                agent: "claude".to_string(),
+                agent: "claude".into(),
                 path: observed.display().to_string(),
-                ownership: "observed".to_string(),
+                ownership: crate::core::vocab::Ownership::Observed,
                 capabilities: RegistryTargetCapabilities {
                     symlink: true,
                     copy: true,

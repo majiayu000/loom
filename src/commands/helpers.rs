@@ -8,8 +8,9 @@ use crate::cli::{
     InstructionCommand, McpCatalogCommand, McpCommand, McpRequirementCommand, OpsCommand,
     OpsHistoryCommand, OrgPolicyCommand, PackageCommand, PlanCommand, PolicyCommand,
     ProjectionMethod, ProvisionCommand, RolesCommand, SkillActiveCommand, SkillCommand,
-    SkillOrphanCommand, SkillTrashCommand, SkillsetCommand, SyncCommand, TargetCommand,
-    WorkflowCommand, WorkspaceBindingCommand, WorkspaceCommand, WorkspaceMatcherKind,
+    SkillCompileCommand, SkillOrphanCommand, SkillTrashCommand, SkillsetCommand, SyncCommand,
+    TargetCommand, WorkflowCommand, WorkspaceBindingCommand, WorkspaceCommand,
+    WorkspaceMatcherKind,
 };
 use crate::state::AppContext;
 use crate::state_model::{
@@ -119,6 +120,11 @@ pub(crate) fn command_name(command: &Command) -> &'static str {
             SkillCommand::Show(_) => "skill.show",
             SkillCommand::Inspect(_) => "skill.inspect",
             SkillCommand::Deps(_) => "skill.deps",
+            SkillCommand::Compile(args) => match &args.command {
+                Some(SkillCompileCommand::List(_)) => "skill.compile.list",
+                Some(SkillCompileCommand::Verify(_)) => "skill.compile.verify",
+                None => "skill.compile.dry_run",
+            },
             SkillCommand::Activate(_) => "skill.activate",
             SkillCommand::Deactivate(_) => "skill.deactivate",
             SkillCommand::Active { command } => match command {

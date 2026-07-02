@@ -206,6 +206,7 @@ The chain `add → capture → save → snapshot → release → rollback` is th
 | `loom skill show` | Show one skill from the shared inventory model | Inspect entrypoint, description, source status, projections, compatible targets, warnings, and next actions | Source + registry metadata (read-only) |
 | `loom skill inspect` | Show one skill lifecycle status card | Check source, lint, projection/runtime, quality, safety, and next actions without mutation | Source + registry metadata (read-only) |
 | `loom skill deps` | Check runtime dependency readiness | Report required tools, env vars, MCP servers, and network expectations before activation or use | Source + local environment (read-only) |
+| `loom skill compile` | Plan and verify derived compiled runtime artifacts | Return read-only dry-run plans, list known artifacts, and verify manifests, sidecars, digests, and gates without replacing `SKILL.md` | Source + compiled artifact state (read-only) |
 | `loom skill activate` | Activate one skill for an agent without manual binding IDs | Create or repair the managed target, binding, rule, and projection selected by agent/scope/profile | Source + target + registry metadata |
 | `loom skill deactivate` | Deactivate one skill from an agent target | Remove the desired rule and only delete safe symlink projections; copy/materialize fail closed | Target + registry metadata |
 | `loom skill active list` | List desired active skills and realized projections | See active rules, projection health, missing targets, and explicit `not_checked` visibility claims | Registry metadata + target filesystem (read-only) |
@@ -322,6 +323,10 @@ loom skill list
 loom skill show <skill>
 loom skill inspect <skill> [--agent <agent>] [--workspace <path>] [--profile <profile>]
 loom skill deps <skill> [--agent <agent>] [--workspace <path>]
+loom skill compile <skill> --dry-run [--agent <agent>] [--profile <profile>]
+loom skill compile --skill <skill> --dry-run [--agent <agent>] [--profile <profile>]
+loom skill compile list <skill>
+loom skill compile verify <skill> [--artifact <artifact-id>]
 loom skill activate <skill> --agent <agent> [--scope <user|project>] [--workspace <path>] [--profile <profile>] [--target <target-id>] [--method <symlink|copy|materialize>] [--dry-run]
 loom skill deactivate <skill> --agent <agent> [--scope <user|project>] [--workspace <path>] [--profile <profile>] [--target <target-id>] [--dry-run]
 loom skill active list --agent <agent> [--scope <user|project>] [--workspace <path>] [--profile <profile>]

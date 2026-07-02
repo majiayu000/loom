@@ -26,7 +26,7 @@ automatic promotion to valid, provider publishing, or source mutation
 - [ ] `SP384-T2` Owner: implementation | Done when: manifest, gate, token estimate, digest, and artifact plan models parse and serialize deterministically | Verify: `cargo test --test skill_compile`
 - [ ] `SP384-T3` Owner: implementation | Done when: `skill compile --dry-run` returns layout, digest inputs, gate status, token estimates, and writes no files | Verify: `cargo test --test skill_compile`
 - [ ] `SP384-T4` Owner: implementation | Done when: list/verify detect missing files, malformed manifests, stale digest, and blocked gates | Verify: `cargo test --test skill_compile`
-- [ ] `SP384-T5` Owner: implementation | Deferred until #366/#367/#373: inspect reports artifact status and compiled activation rejects missing, stale, blocked, or invalid artifacts | Verify: `cargo test --test skill_compile`
+- [ ] `SP384-T5` Owner: implementation | Done when: Deferred until #366/#367/#373: inspect reports artifact status and compiled activation rejects missing, stale, blocked, or invalid artifacts | Verify: `cargo test --test skill_compile`
 - [ ] `SP384-T6` Owner: implementation | Done when: CLI docs, tests, and SpecRail packet cover first-slice acceptance criteria | Verify: `git diff --check && cargo check --workspace --all-targets --all-features`
 
 ### SP384-T1: Add CLI Surface

@@ -23,6 +23,7 @@ mod provider_cmds;
 mod provision;
 mod skill_activation;
 mod skill_cmds;
+mod skill_compile;
 mod skill_deps;
 mod skill_diagnose;
 #[cfg(test)]
@@ -259,6 +260,7 @@ impl App {
                 SkillCommand::Show(args) => self.cmd_skill_show(args),
                 SkillCommand::Inspect(args) => self.cmd_skill_inspect(args),
                 SkillCommand::Deps(args) => self.cmd_skill_deps(args),
+                SkillCommand::Compile(args) => self.cmd_skill_compile(args),
                 SkillCommand::Activate(args) => self.cmd_skill_activate(args, &request_id),
                 SkillCommand::Deactivate(args) => self.cmd_skill_deactivate(args, &request_id),
                 SkillCommand::Active {
@@ -516,6 +518,7 @@ fn command_records_audit(command: &Command) -> bool {
                     | SkillCommand::Show(_)
                     | SkillCommand::Inspect(_)
                     | SkillCommand::Deps(_)
+                    | SkillCommand::Compile(_)
                     | SkillCommand::Improve(_)
                     | SkillCommand::Regression(_)
                     | SkillCommand::Active { .. }
@@ -596,6 +599,7 @@ fn command_requires_durable_audit(command: &Command) -> bool {
             | SkillCommand::Show(_)
             | SkillCommand::Inspect(_)
             | SkillCommand::Deps(_)
+            | SkillCommand::Compile(_)
             | SkillCommand::Improve(_)
             | SkillCommand::Regression(_)
             | SkillCommand::Active { .. }

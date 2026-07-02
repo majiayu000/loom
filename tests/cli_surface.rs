@@ -144,6 +144,7 @@ fn cli_contract_docs_track_current_surface() {
         "loom skill show",
         "loom skill inspect",
         "loom skill deps",
+        "loom skill compile",
         "loom skill activate",
         "loom skill deactivate",
         "loom skill active list",
@@ -196,6 +197,7 @@ fn cli_contract_docs_track_current_surface() {
         "skill add <path|git-url|github:owner/repo//subdir>",
         "skill inspect",
         "skill deps <skill-id>",
+        "skill compile <skill-id> --dry-run",
         "skill activate",
         "skill deactivate",
         "skill active list",
@@ -623,6 +625,7 @@ fn skill_help_describes_every_subcommand() {
         "Roll back a skill source to an earlier revision",
         "Diff two revisions of a skill source",
         "Run offline skill eval fixtures for trigger, task, and artifact checks",
+        "Plan and verify derived compiled runtime artifacts without mutation",
         "Continuously import and update skills from observed targets",
         "Run one import pass over observed targets and exit",
         "Inspect and clean projections orphaned by binding removal",
@@ -630,6 +633,36 @@ fn skill_help_describes_every_subcommand() {
         assert!(
             stdout.contains(expected),
             "skill help missing description {expected:?}: {stdout}"
+        );
+    }
+}
+
+#[test]
+fn skill_compile_help_describes_read_only_subcommands() {
+    let output = Command::new(env!("CARGO_BIN_EXE_loom"))
+        .args(["skill", "compile", "--help"])
+        .output()
+        .expect("run loom skill compile --help");
+
+    assert!(
+        output.status.success(),
+        "skill compile help unexpectedly failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    for expected in [
+        "--dry-run",
+        "--agent",
+        "--profile",
+        "--skill",
+        "List known compiled artifacts for one skill without mutation",
+        "Verify compiled artifact manifests, sidecars, digests, and gates",
+    ] {
+        assert!(
+            stdout.contains(expected),
+            "skill compile help missing {expected:?}: {stdout}"
         );
     }
 }

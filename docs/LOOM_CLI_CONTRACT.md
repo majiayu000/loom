@@ -377,6 +377,10 @@ loom --json --root <root> skill list
 loom --json --root <root> skill show <skill-id>
 loom --json --root <root> skill inspect <skill-id> [--agent <agent>] [--workspace <path>] [--profile <profile>]
 loom --json --root <root> skill deps <skill-id> [--agent <agent>] [--workspace <path>]
+loom --json --root <root> skill compile <skill-id> --dry-run [--agent <agent>] [--profile <profile>]
+loom --json --root <root> skill compile --skill <skill-id> --dry-run [--agent <agent>] [--profile <profile>]
+loom --json --root <root> skill compile list <skill-id>
+loom --json --root <root> skill compile verify <skill-id> [--artifact <artifact-id>]
 loom --json --root <root> skill visibility <skill-id> --agent codex [--workspace <path>] [--profile <profile>]
 loom --json --root <root> skill search <query> [--agent <agent>] [--profile <profile>] [--status <status>] [--trust <trust>]
 loom --json --root <root> skill resolve <task-description> [--agent <agent>] [--workspace <path>]
@@ -400,8 +404,33 @@ Rules:
 12. read commands must not mutate registry state, Git refs, Git index, live targets, or pending queue.
 13. trust metadata comes from `state/registry/trust.json`; absent metadata is `unknown`.
 14. `skill deps` is read-only and reports runtime dependency readiness for tools, MCP servers, environment variables, and network expectations without printing secret values.
+15. `skill compile --dry-run`, `skill compile list`, and `skill compile verify` are read-only; they never replace portable `SKILL.md` as the source of truth.
 
-### 11.0.1 `skill activate`, `skill deactivate`, `skill active list`
+### 11.0.1 `skill compile`
+
+```bash
+loom --json --root <root> skill compile <skill-id> --dry-run [--agent <agent>] [--profile <profile>]
+loom --json --root <root> skill compile --skill <skill-id> --dry-run [--agent <agent>] [--profile <profile>]
+loom --json --root <root> skill compile list <skill-id>
+loom --json --root <root> skill compile verify <skill-id> [--artifact <artifact-id>]
+```
+
+Read-only commands.
+
+Rules:
+
+1. `skill compile --dry-run` returns planned artifact paths, source digest inputs, token estimates, content hashes, and gate status without writing artifact files, state files, target files, or lockfiles.
+2. when `--agent` is omitted the deterministic sentinel is `portable`; when `--profile` is omitted the profile is `default`.
+3. artifact ids are path segments, not paths; `--artifact` rejects absolute paths, traversal, and unsafe characters before joining under `state/compiled/skills/<skill-id>/`.
+4. derived artifacts, when present, use `state/compiled/skills/<skill-id>/<artifact-id>/manifest.json`, `activation.md`, `catalog.json`, `boundaries.json`, `tool-interface.json`, `references.index.json`, and `source-digest.txt`.
+5. `source-digest.txt` must match `manifest.source_digest`, and `verify` recomputes the source digest from `SKILL.md`, indexed references/assets/scripts, compiler version, agent, and profile.
+6. `verify` detects missing files, malformed manifests or sidecars, stale source digests, content-hash mismatches, manifest identity mismatches, unsafe sidecar paths, and gates that prevent `valid` status.
+7. lint, safety, dependency, or eval gates that are missing, blocked, or failed prevent a `valid` artifact; missing eval evidence is blocking until reviewed eval artifacts exist.
+8. `list` and `verify` without `--artifact` return artifacts sorted by artifact id; no arbitrary filesystem entry is selected as a default.
+9. skill names that collide with nested commands such as `list` or `verify` use `--skill <skill-id>` for dry-run planning.
+10. compiled activation and artifact writes are deferred; activation without `--compiled` continues to use portable source projection.
+
+### 11.0.2 `skill activate`, `skill deactivate`, `skill active list`
 
 ```bash
 loom --json --root <root> skill activate <skill-id> --agent <agent> [--scope <user|project>] [--workspace <path>] [--profile <profile>] [--target <target-id>] [--method <symlink|copy|materialize>] [--dry-run]
@@ -422,7 +451,7 @@ Rules:
 7. deactivation of `copy` or `materialize` projections fails closed with `POLICY_BLOCKED` and must not delete live target files.
 8. `skill active list` reports desired rules joined to realized projections, including `target_missing` and `projection_missing`, but must keep agent visibility fields at `not_checked`.
 
-### 11.0.2 `skill visibility`, `skill diagnose --agent codex`, `codex reconcile`
+### 11.0.3 `skill visibility`, `skill diagnose --agent codex`, `codex reconcile`
 
 ```bash
 loom --json --root <root> skill diagnose <skill-id> --agent codex
@@ -445,7 +474,7 @@ Rules:
 7. runtime entries such as `.system` and `codex-primary-runtime`, plus non-Loom external entries, are preserved.
 8. multiple active bindings sharing a Codex target are reconciled as a union of desired active skills.
 
-### 11.0.3 `skill new`
+### 11.0.4 `skill new`
 
 ```bash
 loom --json --root <root> skill new <skill-id> [--template <basic|coding-workflow|scripted|reference-heavy>] [--description <text>] [--agent <agent>] [--dry-run]

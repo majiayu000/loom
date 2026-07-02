@@ -22,6 +22,7 @@ mod provider;
 mod provision;
 mod safety;
 mod skill_activation_args;
+mod skill_compile_args;
 mod skill_inspect_args;
 mod skill_lint_args;
 mod skill_new_args;
@@ -74,6 +75,9 @@ pub use safety::{SkillQuarantineArgs, SkillScanArgs, SkillTrustArgs};
 pub use skill_activation_args::{
     ActivationScope, SkillActivateArgs, SkillActiveCommand, SkillActiveListArgs,
     SkillDeactivateArgs,
+};
+pub use skill_compile_args::{
+    SkillCompileArgs, SkillCompileCommand, SkillCompileListArgs, SkillCompileVerifyArgs,
 };
 pub use skill_inspect_args::SkillInspectArgs;
 pub use skill_lint_args::SkillLintArgs;
@@ -301,6 +305,8 @@ pub enum SkillCommand {
     Inspect(SkillInspectArgs),
     #[command(about = "Check one skill runtime dependencies and MCP readiness")]
     Deps(SkillDepsArgs),
+    #[command(about = "Plan and verify derived compiled runtime artifacts without mutation")]
+    Compile(SkillCompileArgs),
     #[command(about = "Activate one skill for an agent target")]
     Activate(SkillActivateArgs),
     #[command(about = "Deactivate one skill for an agent target")]

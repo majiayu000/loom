@@ -13,7 +13,7 @@ use crate::types::ErrorCode;
 
 use super::helpers::{
     commit_registry_state, map_git, map_lock, map_registry_state, projection_instance_id,
-    projection_method_as_str,
+    projection_method_as_str, shell_arg,
 };
 use super::projections::{
     maybe_autosync_or_queue, record_registry_observation, record_registry_operation,
@@ -487,8 +487,7 @@ fn compiled_activation_block_reason(
         candidate.valid
             && candidate.status == "valid"
             && !candidate.source_stale
-            && candidate.agent.as_deref() == Some(selection.agent.as_str())
-            && candidate.profile.as_deref() == Some(selection.profile.as_str())
+            && candidate_matches_selection(candidate, selection)
     }) {
         return "compiled_activation_deferred";
     }
@@ -496,14 +495,24 @@ fn compiled_activation_block_reason(
         .iter()
         .all(|candidate| candidate.agent.is_some() && candidate.profile.is_some());
     if all_candidates_have_identity
-        && !candidates.iter().any(|candidate| {
-            candidate.agent.as_deref() == Some(selection.agent.as_str())
-                && candidate.profile.as_deref() == Some(selection.profile.as_str())
-        })
+        && !candidates
+            .iter()
+            .any(|candidate| candidate_matches_selection(candidate, selection))
     {
         return "compiled_artifact_agent_profile_mismatch";
     }
     "compiled_artifact_not_valid"
+}
+
+fn candidate_matches_selection(
+    candidate: &CompiledActivationCandidate,
+    selection: &ActivationSelection,
+) -> bool {
+    candidate
+        .agent
+        .as_deref()
+        .is_some_and(|agent| agent.eq_ignore_ascii_case(selection.agent.as_str()))
+        && candidate.profile.as_deref() == Some(selection.profile.as_str())
 }
 
 fn compiled_activation_failure(
@@ -546,10 +555,7 @@ fn compiled_activation_failure(
         None => format!("loom skill compile verify {}", selection.skill),
     });
     if reason == "compiled_activation_deferred" {
-        next_actions.push(format!(
-            "loom skill activate {} --agent {}",
-            selection.skill, selection.agent
-        ));
+        next_actions.push(activation_fallback_action(selection));
     }
     failure.details = json!({
         "reason": reason,
@@ -561,4 +567,79 @@ fn compiled_activation_failure(
         "next_actions": next_actions,
     });
     failure
+}
+
+fn activation_fallback_action(selection: &ActivationSelection) -> String {
+    let mut command = format!(
+        "loom skill activate {} --agent {} --scope {} --profile {}",
+        shell_arg(&selection.skill),
+        shell_arg(&selection.agent),
+        scope_str(selection.scope),
+        shell_arg(&selection.profile)
+    );
+    if let Some(workspace) = &selection.workspace {
+        command.push_str(&format!(" --workspace {}", shell_arg(workspace)));
+    }
+    if let Some(target_id) = &selection.target_id {
+        command.push_str(&format!(" --target {}", shell_arg(target_id)));
+    }
+    if !matches!(selection.method, ProjectionMethod::Symlink) {
+        command.push_str(&format!(
+            " --method {}",
+            projection_method_as_str(selection.method)
+        ));
+    }
+    command
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use serde_json::json;
+
+    use crate::cli::ActivationScope;
+
+    use super::*;
+
+    #[test]
+    fn candidate_match_treats_agent_case_as_normalized() {
+        let selection = ActivationSelection {
+            skill: "demo".to_string(),
+            agent: "codex".to_string(),
+            scope: ActivationScope::User,
+            profile: "team".to_string(),
+            workspace: None,
+            target_id: None,
+            method: ProjectionMethod::Symlink,
+        };
+        let candidate = CompiledActivationCandidate {
+            valid: true,
+            status: "valid".to_string(),
+            source_stale: false,
+            agent: Some("Codex".to_string()),
+            profile: Some("team".to_string()),
+            report: json!({}),
+        };
+
+        assert!(candidate_matches_selection(&candidate, &selection));
+    }
+
+    #[test]
+    fn activation_fallback_action_preserves_selectors() {
+        let selection = ActivationSelection {
+            skill: "demo".to_string(),
+            agent: "codex".to_string(),
+            scope: ActivationScope::Project,
+            profile: "team".to_string(),
+            workspace: Some(PathBuf::from("/tmp/project space")),
+            target_id: Some("project-target".to_string()),
+            method: ProjectionMethod::Copy,
+        };
+
+        assert_eq!(
+            activation_fallback_action(&selection),
+            "loom skill activate demo --agent codex --scope project --profile team --workspace '/tmp/project space' --target project-target --method copy"
+        );
+    }
 }

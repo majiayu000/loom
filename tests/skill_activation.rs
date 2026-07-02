@@ -398,6 +398,86 @@ fn skill_activate_compiled_wraps_malformed_manifest_as_policy_block() {
 }
 
 #[test]
+fn skill_activate_compiled_reports_manifestless_artifact_as_invalid() {
+    let root = TestDir::new("skill-activate-compiled-manifestless");
+    let home = TestDir::new("skill-activate-compiled-manifestless-home");
+    write_compile_ready_skill(root.path(), "demo");
+    let artifact_id = "manifestless";
+    fs::create_dir_all(
+        root.path()
+            .join("state/compiled/skills/demo")
+            .join(artifact_id),
+    )
+    .expect("artifact root");
+
+    let (output, env) = run_with_home(
+        root.path(),
+        home.path(),
+        &[
+            "skill",
+            "activate",
+            "demo",
+            "--agent",
+            "codex",
+            "--compiled",
+            "--artifact",
+            artifact_id,
+            "--dry-run",
+        ],
+    );
+
+    assert!(
+        !output.status.success(),
+        "manifestless compiled artifact must fail closed"
+    );
+    assert_eq!(
+        env["error"]["code"],
+        Value::String("POLICY_BLOCKED".to_string())
+    );
+    assert_eq!(
+        env["error"]["details"]["reason"],
+        Value::String("compiled_artifact_not_valid".to_string())
+    );
+    assert_eq!(
+        env["error"]["details"]["reports"][0]["findings"][0]["id"],
+        Value::String("manifest_missing".to_string())
+    );
+}
+
+#[test]
+fn skill_compile_normalizes_agent_for_compiled_activation() {
+    let root = TestDir::new("skill-compile-normalizes-agent-for-activation");
+    let home = TestDir::new("skill-compile-normalizes-agent-for-activation-home");
+    write_compile_ready_skill(root.path(), "demo");
+
+    let (compile_output, compile_env) = run_with_home(
+        root.path(),
+        home.path(),
+        &[
+            "skill",
+            "compile",
+            "demo",
+            "--agent",
+            "Codex",
+            "--profile",
+            "team",
+        ],
+    );
+    assert!(
+        compile_output.status.success(),
+        "compile should write artifact: {compile_env}"
+    );
+    assert_eq!(
+        compile_env["data"]["agent"],
+        Value::String("codex".to_string())
+    );
+    assert_eq!(
+        compile_env["data"]["manifest"]["agent"],
+        Value::String("codex".to_string())
+    );
+}
+
+#[test]
 fn skill_activate_lists_repairs_and_deactivates_user_symlink() {
     let root = TestDir::new("skill-activate-cycle");
     let home = TestDir::new("skill-activate-cycle-home");

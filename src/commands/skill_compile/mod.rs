@@ -78,16 +78,16 @@ impl App {
             ));
         }
         let skill = compile_skill_selector(args)?;
-        validate_agent_selector("agent", &args.agent)?;
+        let agent = normalize_compile_agent(&args.agent)?;
         validate_agent_selector("profile", &args.profile)?;
         ensure_skill_source_exists(&self.ctx, skill)?;
 
-        let plan = self.build_compile_plan(skill, args, None, true)?;
+        let plan = self.build_compile_plan(skill, &agent, &args.profile, None, true)?;
         let artifact_id = plan.manifest.artifact_id.clone();
         Ok((
             json!({
                 "skill": skill,
-                "agent": args.agent,
+                "agent": agent,
                 "profile": args.profile,
                 "dry_run": true,
                 "writes_artifacts": false,
@@ -118,15 +118,16 @@ impl App {
         args: &SkillCompileArgs,
     ) -> std::result::Result<(Value, Meta), CommandFailure> {
         let skill = compile_skill_selector(args)?;
-        validate_agent_selector("agent", &args.agent)?;
+        let agent = normalize_compile_agent(&args.agent)?;
         validate_agent_selector("profile", &args.profile)?;
         ensure_skill_source_exists(&self.ctx, skill)?;
 
         let _workspace = self.ctx.lock_workspace().map_err(map_lock)?;
         self.ensure_write_repo_ready()?;
 
-        let existing_created_at = existing_created_at(&self.ctx, skill, args)?;
-        let plan = self.build_compile_plan(skill, args, existing_created_at, false)?;
+        let existing_created_at = existing_created_at(&self.ctx, skill, &agent, &args.profile)?;
+        let plan =
+            self.build_compile_plan(skill, &agent, &args.profile, existing_created_at, false)?;
         write_compiled_artifact(&plan.planned, &plan.manifest)?;
 
         let root = compiled_skill_root(&self.ctx, skill);
@@ -148,7 +149,7 @@ impl App {
         Ok((
             json!({
                 "skill": skill,
-                "agent": args.agent,
+                "agent": agent,
                 "profile": args.profile,
                 "dry_run": false,
                 "writes_artifacts": true,
@@ -179,20 +180,21 @@ impl App {
     fn build_compile_plan(
         &self,
         skill: &str,
-        args: &SkillCompileArgs,
+        agent: &str,
+        profile: &str,
         created_at: Option<String>,
         dry_run: bool,
     ) -> std::result::Result<CompilePlan, CommandFailure> {
-        let source = source_digest_info(&self.ctx, skill, &args.agent, &args.profile)?;
-        let planned = planned_artifact(&self.ctx, skill, &args.agent, &args.profile, &source)?;
-        let gates = compile_gates(&self.ctx, skill, &args.agent);
+        let source = source_digest_info(&self.ctx, skill, agent, profile)?;
+        let planned = planned_artifact(&self.ctx, skill, agent, profile, &source)?;
+        let gates = compile_gates(&self.ctx, skill, agent);
         let status = artifact_status(&gates, dry_run);
         let manifest = CompiledArtifactManifest {
             schema_version: COMPILE_SCHEMA_VERSION,
             artifact_id: planned.artifact_id.clone(),
             skill: skill.to_string(),
-            agent: args.agent.clone(),
-            profile: args.profile.clone(),
+            agent: agent.to_string(),
+            profile: profile.to_string(),
             source_ref: gitops::head(&self.ctx).unwrap_or_else(|_| "working-tree".to_string()),
             source_tree_oid: head_tree_oid_for_path(&self.ctx, &format!("skills/{skill}"))
                 .unwrap_or(None),
@@ -394,6 +396,12 @@ fn compile_skill_selector(args: &SkillCompileArgs) -> std::result::Result<&str, 
     }
 }
 
+fn normalize_compile_agent(agent: &str) -> std::result::Result<String, CommandFailure> {
+    let normalized = agent.trim().to_ascii_lowercase();
+    validate_agent_selector("agent", &normalized)?;
+    Ok(normalized)
+}
+
 fn artifact_status(gates: &GatePlan, dry_run: bool) -> ArtifactStatus {
     if gates.has_blocking_failure() {
         ArtifactStatus::Blocked
@@ -407,10 +415,11 @@ fn artifact_status(gates: &GatePlan, dry_run: bool) -> ArtifactStatus {
 fn existing_created_at(
     ctx: &AppContext,
     skill: &str,
-    args: &SkillCompileArgs,
+    agent: &str,
+    profile: &str,
 ) -> std::result::Result<Option<String>, CommandFailure> {
-    let source = source_digest_info(ctx, skill, &args.agent, &args.profile)?;
-    let planned = planned_artifact(ctx, skill, &args.agent, &args.profile, &source)?;
+    let source = source_digest_info(ctx, skill, agent, profile)?;
+    let planned = planned_artifact(ctx, skill, agent, profile, &source)?;
     let manifest_path = planned.artifact_root.join("manifest.json");
     let Some(manifest) = read_manifest_for_existing(&manifest_path)? else {
         return Ok(None);

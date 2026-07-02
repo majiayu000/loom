@@ -2,7 +2,7 @@
 
 Issue: https://github.com/majiayu000/loom/issues/383
 Parent: https://github.com/majiayu000/loom/issues/376
-Status: Blocked design packet
+Status: Partial implementation
 Locale: zh-CN
 
 ## Goal
@@ -30,11 +30,11 @@ Production implementation is blocked by:
 Target command surface:
 
 ```bash
-loom skill draft <name> --from-session <path|id> [--agent <agent>] [--dry-run]
-loom skill extract <name> --from-diff <git-range> [--dry-run]
-loom skill rewrite <skill> --goal "improve trigger precision" [--dry-run]
-loom skill tune-description <skill> --agent <agent> [--cases evals/triggers.jsonl] [--dry-run]
-loom skill generate-evals <skill> [--count <n>] [--from-history] [--dry-run]
+loom skill draft <name> --from-session <path|id> [--agent <agent>] [--provider mock] [--dry-run]
+loom skill extract <name> --from-diff <path> [--provider mock] [--dry-run]
+loom skill rewrite <skill> --instruction "improve trigger precision" [--provider mock] [--dry-run]
+loom skill tune-description <skill> [--description <text>] [--provider mock] [--dry-run]
+loom skill generate-evals <skill> [--task <text>] [--provider mock] [--dry-run]
 loom skill apply-patch <patch-id> --idempotency-key <key>
 ```
 
@@ -107,6 +107,13 @@ LLM-assisted commands should produce a patch artifact:
 3. No dependency on one hosted model provider in core.
 4. No hidden prompt/context uploads without explicit user opt-in.
 5. No acceptance of unvalidated patches.
+
+## Current Implementation Boundary
+
+The first implementation slice provides deterministic mock-provider patch
+artifacts, explicit redacted prompt material, reviewable eval fixture diffs, and
+a typed `apply-patch` deferred gate. It intentionally does not apply patches to
+source, commit changes, or claim validation-gate enforcement yet.
 
 ## Acceptance Criteria
 

@@ -22,6 +22,7 @@ mod provenance;
 mod provider_cmds;
 mod provision;
 mod skill_activation;
+mod skill_authoring;
 mod skill_cmds;
 mod skill_compile;
 mod skill_deps;
@@ -274,6 +275,12 @@ impl App {
                     self.cmd_skill_resolve_semantic(args)
                 }
                 SkillCommand::Resolve(args) => self.cmd_skill_resolve(args),
+                SkillCommand::Draft(args) => self.cmd_skill_draft(args),
+                SkillCommand::Extract(args) => self.cmd_skill_extract(args),
+                SkillCommand::Rewrite(args) => self.cmd_skill_rewrite(args),
+                SkillCommand::TuneDescription(args) => self.cmd_skill_tune_description(args),
+                SkillCommand::GenerateEvals(args) => self.cmd_skill_generate_evals(args),
+                SkillCommand::ApplyPatch(args) => self.cmd_skill_apply_patch(args),
                 SkillCommand::New(args) => self.cmd_skill_new(args, &request_id),
                 SkillCommand::Provenance { command } => {
                     self.cmd_skill_provenance(command, &request_id)
@@ -459,6 +466,36 @@ impl App {
 
 fn command_records_audit(command: &Command) -> bool {
     if let Command::Skill {
+        command: SkillCommand::Draft(args),
+    } = command
+    {
+        return !args.dry_run;
+    }
+    if let Command::Skill {
+        command: SkillCommand::Extract(args),
+    } = command
+    {
+        return !args.dry_run;
+    }
+    if let Command::Skill {
+        command: SkillCommand::Rewrite(args),
+    } = command
+    {
+        return !args.dry_run;
+    }
+    if let Command::Skill {
+        command: SkillCommand::TuneDescription(args),
+    } = command
+    {
+        return !args.dry_run;
+    }
+    if let Command::Skill {
+        command: SkillCommand::GenerateEvals(args),
+    } = command
+    {
+        return !args.dry_run;
+    }
+    if let Command::Skill {
         command: SkillCommand::New(args),
     } = command
     {
@@ -603,6 +640,12 @@ fn command_requires_durable_audit(command: &Command) -> bool {
             SkillCommand::Install(args) => !args.dry_run,
             SkillCommand::Rollback(args) => !args.dry_run,
             SkillCommand::New(args) => !args.dry_run,
+            SkillCommand::Draft(args) => !args.dry_run,
+            SkillCommand::Extract(args) => !args.dry_run,
+            SkillCommand::Rewrite(args) => !args.dry_run,
+            SkillCommand::TuneDescription(args) => !args.dry_run,
+            SkillCommand::GenerateEvals(args) => !args.dry_run,
+            SkillCommand::ApplyPatch(_) => true,
             SkillCommand::Activate(args) => !args.dry_run,
             SkillCommand::Deactivate(args) => !args.dry_run,
             SkillCommand::Diff(_)

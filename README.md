@@ -213,6 +213,8 @@ The chain `add → capture → save → snapshot → release → rollback` is th
 | `loom skill visibility` | Explain one skill's agent active-view visibility | For Codex, join source, active rules, projection symlink, config disables, runtime entries, external entries, and restart requirements | Source + registry metadata + target filesystem (read-only) |
 | `loom skill search` | Search skills with deterministic lexical scoring | Find likely skills by id, description, tags, warning state, agent, profile, status, or trust | Source + registry metadata (read-only) |
 | `loom skill resolve` | Resolve a task description to candidate skills without an LLM | Let agents choose a skill transparently from local metadata and scoring inputs | Source + registry metadata (read-only) |
+| `loom skill draft/extract/rewrite/tune-description/generate-evals` | Create guarded authoring patch artifacts with the deterministic mock provider | Review proposed source/eval diffs without mutating `skills/<skill>`; prompt material is redacted and size-bounded | Source + `state/patches` artifact output |
+| `loom skill apply-patch` | Validate a reviewed authoring patch request | Requires an idempotency key and currently returns a typed deferred gate until apply validation is implemented | Patch artifact state |
 | `loom instruction scan/show/classify/doctor/migrate-plan` | Inspect native instruction surfaces without importing them as skills | Inventory `AGENTS.md`, `CLAUDE.md`, Cursor, Windsurf, and Copilot instruction files; diagnose overlap; emit dry-run migration plans only | Workspace files (read-only) |
 | `loom skill new` | Create a lint-clean local skill skeleton | Start a new registry-owned skill with `SKILL.md`, references, scripts, assets, eval stubs, and `loom.skill.toml` | Source (initial create) |
 | `loom provider add/list/remove` | Manage local or GitHub catalog provider records | Configure provider ids for advisory search/preview without storing credentials | Registry provider state |
@@ -335,6 +337,12 @@ loom skill active list --agent <agent> [--scope <user|project>] [--workspace <pa
 loom skill visibility <skill> --agent codex [--workspace <path>] [--profile <profile>]
 loom skill search <query> [--agent <agent>] [--profile <profile>] [--status <status>] [--trust <trust>]
 loom skill resolve <task-description> [--agent <agent>] [--workspace <path>]
+loom skill draft <skill> --from-session <path|id> [--agent <agent>] [--provider mock] [--dry-run]
+loom skill extract <skill> --from-diff <path> [--provider mock] [--dry-run]
+loom skill rewrite <skill> --instruction <text> [--provider mock] [--dry-run]
+loom skill tune-description <skill> [--description <text>] [--provider mock] [--dry-run]
+loom skill generate-evals <skill> [--task <text>] [--provider mock] [--dry-run]
+loom skill apply-patch <patch-id> --idempotency-key <key>
 loom skill new <skill> [--template <basic|coding-workflow|scripted|reference-heavy>] [--description <text>] [--agent <agent>] [--dry-run]
 loom skill add <path|git-url|github:owner/repo//subdir> --name <skill> [--ref <branch|tag|commit>] [--subdir <path>]
 loom skill provenance inspect <skill>

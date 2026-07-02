@@ -695,7 +695,7 @@ fn provision_doctor_is_read_only_and_reports_missing_generated_files() {
 }
 
 #[test]
-fn provision_apply_is_deferred_by_policy_gate() {
+fn provision_apply_requires_reviewed_artifact_path() {
     let root = TestDir::new("provision-apply-root");
 
     let (output, env) = run_loom(
@@ -712,6 +712,12 @@ fn provision_apply_is_deferred_by_policy_gate() {
     assert!(!output.status.success(), "provision apply should fail");
     assert_eq!(env["cmd"], json!("provision.apply"));
     assert_eq!(env["error"]["code"], json!("POLICY_BLOCKED"));
+    assert!(
+        env["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("reviewed plan artifact path")
+    );
     assert_eq!(
         env["error"]["details"]["target_writes_performed"],
         json!(false)

@@ -562,7 +562,7 @@ loom --json --root <root> provision export <plan-id|plan-artifact> --format devc
 loom --json --root <root> provision import <artifact> --dry-run
 ```
 
-Remote provisioning is plan-first. The first implemented slices generate a read-only devcontainer plan and doctor report, plus reviewed shell/tar export artifacts and import dry-runs; they must not write target files, copy secrets, mutate registry state, or deploy remote environments. `--output-plan` and `provision export --format shell|tar --output <path>` write only explicitly requested local artifacts.
+Remote provisioning is plan-first. The implemented slices generate a read-only devcontainer plan and doctor report, reviewed shell/tar export artifacts, import dry-runs, and artifact-backed apply for reviewed target files. They must not copy secrets, mutate registry state outside the apply idempotency record, or deploy remote environments. `--output-plan` and `provision export --format shell|tar --output <path>` write only explicitly requested local artifacts.
 
 Rules:
 
@@ -574,7 +574,8 @@ Rules:
 6. `provision export --format shell` requires an explicit reviewed plan artifact path, writes a deterministic shell artifact with digest metadata, and must not include secret values
 7. `provision export --format tar` writes a deterministic portable artifact containing the reviewed plan, generated file previews, registry skill source files, materialized active-view files, manifest metadata, and checksums without secret values
 8. `provision import <artifact> --dry-run` validates shell/tar artifact metadata/digests and reports review-only planned files without executing scripts, extracting archives, or writing target files
-9. `provision apply`, non-dry-run `provision import`, and `provision export --format devcontainer` return typed `POLICY_BLOCKED` deferred gates until durable plan lookup, devcontainer artifact validation, approvals, idempotency, and atomic target writes are implemented
+9. `provision apply <plan-artifact>` requires an idempotency key and reviewed approval tokens when policy requires them; it revalidates guard digests, reviewed registry head reachability, credential-redacted registry clone URL, target preimages, target paths, and generated content digests before atomic writes, and repeated apply with the same key is idempotent
+10. `provision apply <plan-id>` still returns a typed `POLICY_BLOCKED` gate until durable plan-id lookup exists; non-dry-run `provision import` and `provision export --format devcontainer` remain deferred until their artifact validation and write gates are implemented
 
 ### 11.1.5 `policy org`, `approval`, and `roles`
 

@@ -224,7 +224,125 @@ These are intentionally after the core migration:
 4. automatic watch-based capture
 5. cross-machine optimization
 
-## 11. Risks and Countermeasures
+## 11. Operation Log Authority Migration
+
+Status: plan for #459 implementation review. Runtime behavior is not migrated
+by this document.
+
+### 11.1 Target State
+
+The registry journal becomes the only operation-log write authority:
+
+- durable log: `state/registry/ops/operations.jsonl`
+- replay cursor: `state/registry/ops/checkpoint.json`
+- history branch mirror: `loom-history`
+
+The legacy pending queue files are removed after sync and ops command families
+read and write through the registry journal:
+
+- `state/pending_ops.jsonl`
+- `state/pending_ops_snapshot.json`
+- `state/pending_ops_history/`
+
+No command may dual-write both models after the migration lands. During the
+code migration, a PR may include a temporary adapter only inside the command
+family being migrated, but that PR must delete the replaced legacy writer before
+merge.
+
+### 11.2 Registry Journal Semantics
+
+Each durable operation record must carry enough information to replace the
+pending queue row without reading command audit events:
+
+1. `op_id`: stable idempotency key for retry, purge, replay, and ack.
+2. `intent`: command family and action, such as `sync.push` or
+   `skill.project`.
+3. `status`: `pending`, `running`, `succeeded`, `failed`, or `blocked`.
+4. `ack`: whether the operation has been mirrored to the remote authority.
+5. `payload`: sanitized command input needed to replay the operation.
+6. `effects`: source commits, registry commits, history refs, projection ids,
+   and other observed outputs.
+7. `last_error`: typed retry guidance for failed or blocked operations.
+8. timestamps: append time and last status update time.
+
+`status` is the local execution state. `ack` is the remote synchronization
+state. A succeeded operation can still have `ack=false` when local work
+completed but the remote push has not.
+
+### 11.3 `loom-history` Interplay
+
+The `loom-history` branch remains the remote reconciliation surface, but it
+mirrors registry journal segments instead of pending snapshots.
+
+1. `sync push` reads registry operations with `ack=false`, writes or updates a
+   deterministic history segment for those operations, pushes `main` and
+   `loom-history`, then marks the successfully pushed operation ids `ack=true`.
+2. `sync pull` fetches `main` and `loom-history`, imports remote journal
+   segments that are not present locally, fast-forwards local state when
+   possible, and leaves conflicting operations as `blocked` with a typed
+   conflict error.
+3. `sync replay` selects unacked or blocked registry operations by `op_id` and
+   replays from `payload` only after validating the current registry head and
+   idempotency preimage.
+4. `ops history repair` rebuilds missing or corrupt history segments from the
+   registry journal when local registry state is trusted, or rebuilds the local
+   registry journal from `loom-history` when the history branch is the only
+   intact copy.
+
+History repair must never silently drop an operation. If the two sources
+disagree and neither side can be proven newer by commit ancestry plus operation
+timestamps, the operation becomes `blocked` and requires explicit retry or purge.
+
+### 11.4 Command Family Migration Order
+
+Migrate one command family per PR after this plan is reviewed:
+
+1. Read-only ops views: make `ops list/history diagnose` derive from the
+   registry journal while leaving pending writers untouched.
+2. `ops retry` and `ops purge`: operate on registry operation ids and update
+   `status`, `ack`, and `last_error` in place.
+3. `sync push` and `sync pull`: replace pending snapshot reads with registry
+   journal queries and history segment import/export.
+4. `sync replay`: replay registry payloads with stale-head and idempotency
+   checks.
+5. Deletion PR: remove `pending_ops.*` files, writers, and repair code once the
+   migrated tests cover the old recorded fixtures.
+
+Each code PR must include equivalence tests against recorded pending-queue
+fixtures for the command family it migrates.
+
+### 11.5 Failure And Rollback Rules
+
+1. Append failures in the registry journal are terminal for durable mutation
+   commands.
+2. A failed remote push does not roll back completed local registry operations;
+   it leaves `ack=false` and records `last_error`.
+3. A failed replay must keep the operation row and update `status=failed` with
+   typed guidance.
+4. Purge must tombstone or archive the registry operation before deleting any
+   replay input needed for audit.
+5. Rollback of a migration PR is allowed only before its deletion PR lands. Once
+   legacy writers are deleted, rollback means restoring from registry journal
+   plus `loom-history`, not reviving pending queue writes.
+
+### 11.6 Verification Matrix
+
+The implementation PRs must keep these checks green:
+
+- `cargo test --test sync --test ops`
+- `cargo test reliability`
+- `./scripts/e2e-agent-flow.sh`
+- fixtures that compare legacy pending queue inputs to registry journal
+  outcomes for push, pull, replay, retry, purge, and history repair
+
+The final deletion PR must also prove:
+
+- `rg pending_ops src/` returns only migration notes or test fixtures, or
+  returns nothing.
+- `docs/LOOM_ARCHITECTURE_DECISIONS.md` section 1 records the registry journal
+  as the single operation history authority.
+
+## 12. Risks and Countermeasures
 
 1. Risk: users expect one global Claude directory.
 Countermeasure: require explicit bindings and show clear status output.
@@ -238,7 +356,7 @@ Countermeasure: stop editing legacy schema docs once registry state spec is adop
 4. Risk: panel work outruns core model work.
 Countermeasure: make panel consume registry state only after CLI semantics stabilize.
 
-## 12. Release Gate
+## 13. Release Gate
 
 registry state should not be considered ready until:
 

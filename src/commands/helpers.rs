@@ -9,7 +9,7 @@ use crate::cli::{
     OpsHistoryCommand, OrgPolicyCommand, PackageCommand, PlanCommand, PolicyCommand,
     ProjectionMethod, ProvisionCommand, RolesCommand, SkillActiveCommand, SkillCommand,
     SkillCompileCommand, SkillOrphanCommand, SkillTrashCommand, SkillsetCommand, SyncCommand,
-    TargetCommand, WorkflowCommand, WorkspaceBindingCommand, WorkspaceCommand,
+    TargetCommand, TelemetryCommand, WorkflowCommand, WorkspaceBindingCommand, WorkspaceCommand,
     WorkspaceMatcherKind,
 };
 use crate::state::AppContext;
@@ -189,6 +189,14 @@ pub(crate) fn command_name(command: &Command) -> &'static str {
             SkillsetCommand::Remove(_) => "skillset.remove",
             SkillsetCommand::Show(_) => "skillset.show",
             SkillsetCommand::Lint(_) => "skillset.lint",
+        },
+        Command::Telemetry { command } => match command {
+            TelemetryCommand::Status => "telemetry.status",
+            TelemetryCommand::Enable(_) => "telemetry.enable",
+            TelemetryCommand::Disable => "telemetry.disable",
+            TelemetryCommand::Report(_) => "telemetry.report",
+            TelemetryCommand::Export(_) => "telemetry.export",
+            TelemetryCommand::Purge(_) => "telemetry.purge",
         },
         Command::Provider { command } => match command {
             crate::cli::ProviderCommand::Add(_) => "provider.add",

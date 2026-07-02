@@ -13,6 +13,7 @@ use crate::types::ErrorCode;
 
 use super::helpers::{map_arg, validate_skill_name};
 use super::skill_verify::{head_tree_oid_for_path, last_commit_for_path};
+use super::telemetry::record_skill_eval_telemetry;
 use super::{App, CommandFailure};
 
 const EVAL_SCHEMA_VERSION: u32 = 1;
@@ -105,6 +106,17 @@ impl App {
                 "note": "Eval success is quality evidence only. It does not prove the skill is safe, sandboxed, or free of prompt-injection risk."
             }
         });
+        for run in &runs {
+            record_skill_eval_telemetry(
+                &self.ctx,
+                &args.skill,
+                Some(&run.agent),
+                run.summary.failed == 0,
+                Some(run.summary.token_count),
+                Some(run.summary.command_count),
+                None,
+            )?;
+        }
         if failed > 0 {
             let mut failure = CommandFailure::new(
                 ErrorCode::EvalFailed,

@@ -31,6 +31,7 @@ fn top_level_help_describes_command_groups() {
         "Register and inspect agent skill directories",
         "Manage skill sources, projections, and versions",
         "Manage groups of registry skills",
+        "Manage local privacy-preserving telemetry and analytics",
         "Manage skill catalog providers",
         "Search and preview skill catalogs",
         "Plan, build, and verify portable skill packages",
@@ -66,6 +67,7 @@ fn cli_contract_docs_track_current_surface() {
         "`target`",
         "`skill`",
         "`skillset`",
+        "`telemetry`",
         "`provider`",
         "`catalog`",
         "`package`",
@@ -186,6 +188,11 @@ fn cli_contract_docs_track_current_surface() {
         "loom workflow preflight",
         "loom codex reconcile",
         "loom skill watch",
+        "loom telemetry status",
+        "loom telemetry enable",
+        "loom telemetry report",
+        "loom telemetry export",
+        "loom telemetry purge",
     ] {
         assert!(
             readme.contains(command),
@@ -222,6 +229,9 @@ fn cli_contract_docs_track_current_surface() {
         "provision apply <plan-id|plan-artifact>",
         "instruction scan",
         "instruction migrate-plan",
+        "telemetry report",
+        "telemetry export --format jsonl|csv",
+        "telemetry purge",
     ] {
         assert!(
             contract.contains(command),

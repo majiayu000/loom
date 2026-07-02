@@ -350,6 +350,7 @@ impl AppContext {
 
         let entries = [
             "state/locks/",
+            "state/telemetry/",
             "state/panel.log",
             "backups/",
             "panel/node_modules/",

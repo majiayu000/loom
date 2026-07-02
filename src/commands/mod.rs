@@ -44,6 +44,7 @@ mod skill_verify;
 mod skillset_cmds;
 mod sync_cmds;
 mod target_cmds;
+mod telemetry;
 mod trash_cmds;
 mod use_cmds;
 mod version_cmds;
@@ -60,7 +61,8 @@ use crate::cli::{
     OpsHistoryCommand, OrgPolicyCommand, PackageCommand, PolicyCommand, ProvisionCommand,
     RemoteCommand, RolesCommand, SkillActiveCommand, SkillCommand, SkillOrphanCommand,
     SkillProvenanceCommand, SkillTrashCommand, SkillsetCommand, SyncCommand, TargetCommand,
-    WorkflowCommand, WorkspaceBindingCommand, WorkspaceCommand, WorkspaceInitArgs,
+    TelemetryCommand, WorkflowCommand, WorkspaceBindingCommand, WorkspaceCommand,
+    WorkspaceInitArgs,
 };
 use crate::envelope::{Envelope, Meta};
 use crate::state::{AppContext, home_dir};
@@ -305,6 +307,7 @@ impl App {
                 SkillsetCommand::Show(args) => self.cmd_skillset_show(args),
                 SkillsetCommand::Lint(args) => self.cmd_skillset_lint(args),
             },
+            Command::Telemetry { command } => self.cmd_telemetry(command),
             Command::Provider { command } => self.cmd_provider(command, &request_id),
             Command::Catalog { command } => self.cmd_catalog(command),
             Command::Package { command } => self.cmd_package(command),
@@ -479,6 +482,15 @@ fn command_records_audit(command: &Command) -> bool {
     {
         return args.apply;
     }
+    if let Command::Telemetry { command } = command {
+        return match command {
+            TelemetryCommand::Enable(_) | TelemetryCommand::Disable => true,
+            TelemetryCommand::Purge(args) => args.confirm.is_some(),
+            TelemetryCommand::Status
+            | TelemetryCommand::Report(_)
+            | TelemetryCommand::Export(_) => false,
+        };
+    }
 
     !matches!(
         command,
@@ -628,6 +640,13 @@ fn command_requires_durable_audit(command: &Command) -> bool {
                 true
             }
             SkillsetCommand::Show(_) | SkillsetCommand::Lint(_) => false,
+        },
+        Command::Telemetry { command } => match command {
+            TelemetryCommand::Enable(_) | TelemetryCommand::Disable => true,
+            TelemetryCommand::Purge(args) => args.confirm.is_some(),
+            TelemetryCommand::Status
+            | TelemetryCommand::Report(_)
+            | TelemetryCommand::Export(_) => false,
         },
         Command::Provider { command } => !matches!(command, crate::cli::ProviderCommand::List),
         Command::Catalog { .. } => false,

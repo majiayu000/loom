@@ -22,6 +22,7 @@ use super::skill_safety::trust_metadata_for_skill;
 use super::skill_verify::{
     drifted_paths_under, head_tree_oid_for_path, last_commit_for_path, last_saved_commit_for_skill,
 };
+use super::telemetry::skill_telemetry_summary;
 use super::{App, CommandFailure, SkillLintMode, lint_skill_source, lint_skill_source_for_agent};
 
 #[derive(Debug, Serialize)]
@@ -154,6 +155,11 @@ impl App {
             &mut next_actions,
             format!("loom skill policy {}", args.skill),
         );
+        let telemetry = if args.include_telemetry {
+            Some(skill_telemetry_summary(&self.ctx, &args.skill)?)
+        } else {
+            None
+        };
 
         Ok((
             json!({
@@ -178,6 +184,7 @@ impl App {
                     "reason": trust.reason,
                     "updated_at": trust.updated_at.map(|value| value.to_rfc3339()),
                 },
+                "telemetry": telemetry,
                 "next_actions": next_actions,
             }),
             Meta::default(),

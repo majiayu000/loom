@@ -28,6 +28,7 @@ mod skill_lint_args;
 mod skill_new_args;
 mod skill_visibility_args;
 mod skillset;
+mod telemetry;
 mod use_flow;
 mod version;
 mod workflow;
@@ -85,6 +86,10 @@ pub use skill_new_args::{SkillNewArgs, SkillNewTemplate};
 pub use skill_visibility_args::{SkillDiagnoseArgs, SkillVisibilityArgs};
 pub use skillset::{
     SkillsetAddArgs, SkillsetCommand, SkillsetCreateArgs, SkillsetMemberArgs, SkillsetShowArgs,
+};
+pub use telemetry::{
+    TelemetryCommand, TelemetryEnableArgs, TelemetryExportArgs, TelemetryExportFormat,
+    TelemetryPurgeArgs, TelemetryReportArgs,
 };
 pub use use_flow::{UseArgs, UseScope};
 pub use version::{DiffArgs, HistoryArgs, ReleaseArgs, RollbackArgs};
@@ -157,6 +162,11 @@ pub enum Command {
     Skillset {
         #[command(subcommand)]
         command: SkillsetCommand,
+    },
+    #[command(about = "Manage local privacy-preserving telemetry and analytics")]
+    Telemetry {
+        #[command(subcommand)]
+        command: TelemetryCommand,
     },
     #[command(about = "Manage skill catalog providers")]
     Provider {

@@ -179,6 +179,14 @@ pub(super) fn normalize_clone_url(raw: &str) -> NormalizedCloneUrl {
             local_only: false,
         };
     }
+    if let Some((clone_url, secret_redacted)) = sanitize_ssh_clone_url(without_git_prefix) {
+        return NormalizedCloneUrl {
+            display: clone_url.clone(),
+            clone_url: Some(clone_url),
+            secret_redacted,
+            local_only: false,
+        };
+    }
     if is_remote_clone_url(without_git_prefix) {
         return NormalizedCloneUrl {
             display: without_git_prefix.to_string(),
@@ -216,6 +224,26 @@ fn sanitize_http_clone_url(raw: &str) -> Option<(String, bool)> {
         return Some((sanitized, secret_redacted));
     }
     None
+}
+
+fn sanitize_ssh_clone_url(raw: &str) -> Option<(String, bool)> {
+    let rest = raw.strip_prefix("ssh://")?;
+    let authority_end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+    let (authority, suffix) = rest.split_at(authority_end);
+    let (authority, mut secret_redacted) = authority
+        .rsplit_once('@')
+        .and_then(|(userinfo, host)| {
+            let (user, password) = userinfo.split_once(':')?;
+            (!user.is_empty() && !password.is_empty() && !host.is_empty())
+                .then(|| (format!("{user}@{host}"), true))
+        })
+        .unwrap_or_else(|| (authority.to_string(), false));
+    let mut sanitized = format!("ssh://{authority}{suffix}");
+    if let Some(query_start) = sanitized.find(['?', '#']) {
+        sanitized.truncate(query_start);
+        secret_redacted = true;
+    }
+    Some((sanitized, secret_redacted))
 }
 
 fn is_remote_clone_url(raw: &str) -> bool {

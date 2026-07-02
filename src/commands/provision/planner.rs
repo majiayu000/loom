@@ -10,10 +10,12 @@ use crate::cli::{ProvisionExportFormatArg, ProvisionTargetArg};
 use crate::gitops;
 use crate::state::AppContext;
 use crate::state_model::{RegistryProjectionTarget, RegistrySnapshot, RegistryStatePaths};
+use crate::types::ErrorCode;
 
 use super::super::CommandFailure;
 use super::super::helpers::{map_io, map_registry_state, shell_arg};
 use super::super::skill_deps::skill_dependency_report;
+use super::super::skill_safety::evaluate_skill_safety_with_policy;
 use super::model::{
     PROVISION_PLAN_SCHEMA, ProvisionActiveView, ProvisionDependencyReadiness, ProvisionFilePlan,
     ProvisionPlan, ProvisionSecretRequirement,
@@ -60,6 +62,14 @@ pub(super) fn build_provision_plan(
         .collect::<BTreeSet<_>>();
     let dependency_readiness =
         collect_dependency_readiness(ctx, &active_skills, agent, workspace, &mut findings)?;
+    collect_safety_policy_findings(
+        ctx,
+        snapshot.as_ref(),
+        workspace,
+        agent,
+        &active_skills,
+        &mut findings,
+    )?;
     let mut secrets_required =
         collect_secret_requirements(ctx, &dependency_readiness, agent, workspace);
     let (registry_source_display, registry_clone_url, registry_secrets) =
@@ -287,7 +297,35 @@ fn collect_dependency_readiness(
 ) -> std::result::Result<Vec<ProvisionDependencyReadiness>, CommandFailure> {
     let mut readiness = Vec::new();
     for skill in skills {
-        let report = skill_dependency_report(ctx, skill, Some(agent), Some(workspace))?;
+        let report = match skill_dependency_report(ctx, skill, Some(agent), Some(workspace)) {
+            Ok(report) => report,
+            Err(err) if matches!(err.code, ErrorCode::SkillNotFound) => {
+                findings.push(json!({
+                    "id": "active_skill_missing",
+                    "severity": "error",
+                    "message": "active binding references a skill missing from the registry source",
+                    "details": { "skill": skill },
+                }));
+                readiness.push(ProvisionDependencyReadiness {
+                    skill: skill.clone(),
+                    status: "missing".to_string(),
+                    ready: false,
+                    next_actions: vec![format!(
+                        "restore skill '{}' in the Loom registry before provisioning",
+                        skill
+                    )],
+                    findings: vec![json!({
+                        "id": "active_skill_missing",
+                        "severity": "error",
+                        "message": "skill source is missing from the registry",
+                        "suggested_action": "restore the skill source or remove the active binding rule",
+                        "details": {},
+                    })],
+                });
+                continue;
+            }
+            Err(err) => return Err(err),
+        };
         for finding in &report.findings {
             findings.push(json!({
                 "id": format!("dependency_{}", finding.id),
@@ -319,6 +357,77 @@ fn collect_dependency_readiness(
     Ok(readiness)
 }
 
+fn collect_safety_policy_findings(
+    ctx: &AppContext,
+    snapshot: Option<&RegistrySnapshot>,
+    workspace: &Path,
+    agent: &str,
+    active_skills: &BTreeSet<String>,
+    findings: &mut Vec<Value>,
+) -> std::result::Result<(), CommandFailure> {
+    let Some(snapshot) = snapshot else {
+        return Ok(());
+    };
+    let mut checked = BTreeSet::new();
+    for binding in snapshot
+        .bindings
+        .bindings
+        .iter()
+        .filter(|binding| binding.active && binding.agent == agent)
+        .filter(|binding| {
+            workspace_matches(
+                binding.workspace_matcher.kind.as_str(),
+                &binding.workspace_matcher.value,
+                workspace,
+            )
+        })
+    {
+        for rule in snapshot
+            .rules
+            .rules
+            .iter()
+            .filter(|rule| rule.binding_id == binding.binding_id)
+        {
+            if !active_skills.contains(&rule.skill_id)
+                || !checked.insert((rule.skill_id.clone(), binding.policy_profile.clone()))
+            {
+                continue;
+            }
+            let evaluation = match evaluate_skill_safety_with_policy(
+                ctx,
+                &rule.skill_id,
+                "provision",
+                false,
+                &binding.policy_profile,
+            ) {
+                Ok(evaluation) => evaluation,
+                Err(err) if matches!(err.code, ErrorCode::SkillNotFound) => continue,
+                Err(err) => return Err(err),
+            };
+            if !evaluation.report.activation_allowed {
+                findings.push(json!({
+                    "id": "skill_safety_policy_blocked",
+                    "severity": "error",
+                    "message": "active skill is blocked by safety or trust policy",
+                    "details": {
+                        "skill": rule.skill_id,
+                        "binding_id": binding.binding_id,
+                        "policy_profile": binding.policy_profile,
+                        "decision": evaluation.report.decision,
+                        "trust": {
+                            "trust": evaluation.report.trust.trust,
+                            "quarantined": evaluation.report.trust.quarantined,
+                            "reason": evaluation.report.trust.reason,
+                        },
+                        "summary": evaluation.report.summary,
+                    },
+                }));
+            }
+        }
+    }
+    Ok(())
+}
+
 fn collect_secret_requirements(
     ctx: &AppContext,
     dependencies: &[ProvisionDependencyReadiness],
@@ -336,7 +445,7 @@ fn collect_secret_requirements(
                     .or_insert(ProvisionSecretRequirement {
                         name: env.name,
                         required: env.required,
-                        present: env.present,
+                        present: false,
                         redacted: true,
                         source: env.source,
                     });

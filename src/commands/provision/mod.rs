@@ -83,7 +83,28 @@ impl App {
         } else {
             "warning"
         };
-        let healthy = dependency_status == "pass" && generated_status == "pass";
+        let secrets_status = if plan
+            .secrets_required
+            .iter()
+            .any(|secret| secret.required && !secret.present)
+        {
+            "warning"
+        } else {
+            "pass"
+        };
+        let findings_status = if plan
+            .findings
+            .iter()
+            .any(|finding| matches!(finding["severity"].as_str(), Some("warning" | "error")))
+        {
+            "warning"
+        } else {
+            "pass"
+        };
+        let healthy = dependency_status == "pass"
+            && generated_status == "pass"
+            && secrets_status == "pass"
+            && findings_status == "pass";
 
         Ok((
             json!({
@@ -113,8 +134,12 @@ impl App {
                         "readiness": plan.dependency_readiness,
                     },
                     "secrets": {
-                        "status": if plan.secrets_required.iter().all(|secret| secret.present) { "pass" } else { "warning" },
+                        "status": secrets_status,
                         "required": plan.secrets_required,
+                    },
+                    "findings": {
+                        "status": findings_status,
+                        "count": plan.findings.len(),
                     },
                     "policy": {
                         "status": "pass",

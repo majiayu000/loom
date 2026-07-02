@@ -53,6 +53,29 @@ fn skill_lint_accepts_valid_strict_skill() {
 }
 
 #[test]
+fn skill_lint_rejects_instruction_file_without_skill_entrypoint() {
+    let root = TestDir::new("skill-lint-instruction-boundary");
+    write_skill_file(
+        &root,
+        "native-instruction",
+        "AGENTS.md",
+        "# Agents\n\nWorkflow steps: run CI tests and lint before merge.\n",
+    );
+
+    let (output, env) = run_loom(
+        root.path(),
+        &["skill", "lint", "native-instruction", "--strict"],
+    );
+
+    assert!(
+        !output.status.success(),
+        "AGENTS.md must not be accepted as a portable skill entrypoint"
+    );
+    assert_eq!(env["error"]["code"], Value::from("SCHEMA_MISMATCH"));
+    assert!(has_finding(report(&env), "entrypoint_missing", "error"));
+}
+
+#[test]
 fn skill_lint_compat_warns_for_lowercase_entrypoint() {
     let root = TestDir::new("skill-lint-legacy");
     write_skill_file(

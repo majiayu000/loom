@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use serde::Serialize;
 
+mod agent_kind;
 mod catalog;
 mod codex_args;
 mod deps;
@@ -10,6 +11,7 @@ mod discovery;
 mod eval;
 mod improve;
 mod index;
+mod instruction;
 mod plan_flow;
 mod policy;
 mod provenance;
@@ -24,6 +26,7 @@ mod skillset;
 mod use_flow;
 mod version;
 mod workflow;
+pub use agent_kind::AgentKind;
 pub use catalog::{
     CatalogCommand, CatalogPreviewArgs, CatalogSearchArgs, CatalogShowArgs, InstallTrustArg,
     SkillInstallArgs,
@@ -37,6 +40,10 @@ pub use eval::{
 };
 pub use improve::{SkillImproveArgs, SkillRegressionArgs};
 pub use index::IndexArgs;
+pub use instruction::{
+    InstructionClassifyArgs, InstructionCommand, InstructionDoctorArgs, InstructionMigratePlanArgs,
+    InstructionMigrationTarget, InstructionScanArgs, InstructionShowArgs,
+};
 pub use plan_flow::{ApplyArgs, PlanCommand, PlanUseArgs};
 pub use policy::SkillPolicyArgs;
 pub use provenance::{AddArgs, SkillProvenanceCommand};
@@ -134,6 +141,11 @@ pub enum Command {
     Catalog {
         #[command(subcommand)]
         command: CatalogCommand,
+    },
+    #[command(about = "Inspect non-skill instruction surfaces without mutation")]
+    Instruction {
+        #[command(subcommand)]
+        command: InstructionCommand,
     },
     #[command(about = "Plan and preflight guarded multi-skill workflows")]
     Workflow {
@@ -701,32 +713,6 @@ pub struct SyncPushArgs {
     pub dry_run: bool,
 }
 
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    ValueEnum,
-    serde::Serialize,
-    serde::Deserialize,
-    PartialEq,
-    Eq,
-    PartialOrd,
-    Ord,
-)]
-#[serde(rename_all = "kebab-case")]
-pub enum AgentKind {
-    Claude,
-    Codex,
-    Cursor,
-    Windsurf,
-    Cline,
-    Copilot,
-    Aider,
-    Opencode,
-    GeminiCli,
-    Goose,
-}
-
 #[derive(Debug, Clone, Copy, ValueEnum, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum WorkspaceMatcherKind {
@@ -755,7 +741,7 @@ pub enum ProjectionMethod {
 
 #[cfg(test)]
 mod tests {
-    use super::{AgentKind, WorkspaceMatcherKind};
+    use super::WorkspaceMatcherKind;
 
     #[test]
     fn workspace_matcher_kind_deserializes_cli_and_api_spellings() {
@@ -766,31 +752,5 @@ mod tests {
 
         assert_eq!(kebab, WorkspaceMatcherKind::PathPrefix);
         assert_eq!(snake, WorkspaceMatcherKind::PathPrefix);
-    }
-
-    #[test]
-    fn agent_kind_serde_round_trip_uses_kebab_case() {
-        // Existing single-word variants must keep their legacy lowercase spelling
-        // (kebab-case == lowercase for single words, so persisted data is unaffected).
-        for (variant, wire) in [
-            (AgentKind::Claude, "\"claude\""),
-            (AgentKind::Codex, "\"codex\""),
-            (AgentKind::Cursor, "\"cursor\""),
-            (AgentKind::Windsurf, "\"windsurf\""),
-            (AgentKind::Cline, "\"cline\""),
-            (AgentKind::Copilot, "\"copilot\""),
-            (AgentKind::Aider, "\"aider\""),
-            (AgentKind::Opencode, "\"opencode\""),
-            (AgentKind::Goose, "\"goose\""),
-            // Multi-word variant uses kebab-case, matching the CLI flag value.
-            (AgentKind::GeminiCli, "\"gemini-cli\""),
-        ] {
-            let serialized = serde_json::to_string(&variant).expect("serialize AgentKind");
-            assert_eq!(serialized, wire, "serialize {:?}", variant);
-
-            let deserialized: AgentKind =
-                serde_json::from_str(wire).expect("deserialize AgentKind");
-            assert_eq!(deserialized, variant, "deserialize {}", wire);
-        }
     }
 }

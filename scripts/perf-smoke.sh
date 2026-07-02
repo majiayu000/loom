@@ -6,7 +6,7 @@ if [[ ! -x "$bin" ]]; then
   cargo build --release --locked
 fi
 
-# Hard ceiling: 4496 KiB. The durable plan/apply protocol, offline eval
+# Hard ceiling: 4560 KiB. The durable plan/apply protocol, offline eval
 # matrix, local skill scaffolding CLI, skillset foundation, portable YAML
 # lint parser, single-skill inspect read model, single-skill activation
 # commands, and safety/trust/quarantine/security-diff command surfaces expanded
@@ -25,9 +25,11 @@ fi
 # adds definition storage, topological validation, guarded plan/preflight
 # checks, and deferred execution surfaces. Provider/catalog dry-run install
 # planning adds safe provider persistence, locator parsing, local preview, and
-# trust/provenance planning surfaces, while the startup latency checks below
-# continue to guard cold CLI responsiveness.
-max_bin_bytes=$((4496 * 1024))
+# trust/provenance planning surfaces. Instruction surface inventory adds
+# read-only scan/show/classify/doctor/migrate-plan commands for native
+# instruction files, while the startup latency checks below continue to guard
+# cold CLI responsiveness.
+max_bin_bytes=$((4560 * 1024))
 bin_bytes="$(wc -c < "$bin" | tr -d ' ')"
 if (( bin_bytes > max_bin_bytes )); then
   echo "release binary is ${bin_bytes} bytes; limit is ${max_bin_bytes}" >&2

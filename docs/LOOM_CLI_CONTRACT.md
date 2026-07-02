@@ -45,17 +45,18 @@ Top-level command groups:
 11. `provider`
 12. `catalog`
 13. `package`
-14. `policy`
-15. `approval`
-16. `roles`
-17. `instruction`
-18. `workflow`
-19. `sync`
-20. `ops`
-21. `agent`
-22. `codex`
-23. `panel`
-24. `doctor`
+14. `mcp`
+15. `policy`
+16. `approval`
+17. `roles`
+18. `instruction`
+19. `workflow`
+20. `sync`
+21. `ops`
+22. `agent`
+23. `codex`
+24. `panel`
+25. `doctor`
 
 Removed from runtime surface:
 
@@ -529,7 +530,28 @@ Rules:
 7. build output returns install and verify guidance only; package artifacts are not active-state, visibility, trust, or installed-state proof
 8. publish/submission to external package hosts is deferred and must not bypass Loom registry authority when later implemented
 
-### 11.1.3 `policy org`, `approval`, and `roles`
+### 11.1.3 `mcp requirement`, `mcp plan`, `mcp doctor`, and `mcp catalog`
+
+```bash
+loom --json --root <root> mcp requirement list --skill <skill> [--agent <agent>]
+loom --json --root <root> mcp plan --skill <skill> --agent <agent> [--workspace <path>]
+loom --json --root <root> mcp doctor --agent <agent> [--skill <skill>] [--workspace <path>]
+loom --json --root <root> mcp catalog search <query>
+loom --json --root <root> mcp catalog show <server>
+```
+
+MCP provisioning is plan-first. The first slice is read-only and must not install packages, execute MCP servers, write agent config, write secrets, mutate registry state, or change live target directories.
+
+Rules:
+
+1. `mcp requirement list` merges `loom.skill.toml`, supported `SKILL.md` metadata, agent metadata, and compatibility suggestions without printing secret values
+2. `mcp plan` returns missing/existing server status, resolved source policy, launcher tool availability, env names, redacted config diffs, risk summary, and approval requirements
+3. pinned npm locators split scoped package names at the rightmost `@`; unpinned package, Git, local, or unknown sources are blocked or approval-required until immutable provenance is recorded
+4. unsupported agents return `manual_configuration_required` actions instead of guessed config paths
+5. `mcp doctor` and `skill diagnose` point to `mcp plan` when MCP dependency readiness fails
+6. apply is intentionally absent until durable plan revalidation, idempotency keys, approval validation, atomic config writes, and secret non-storage are implemented
+
+### 11.1.4 `policy org`, `approval`, and `roles`
 
 ```bash
 loom --json --root <root> policy org init --bootstrap-admin <user>
@@ -558,7 +580,7 @@ Rules:
 8. role grant/revoke require current admin role and revoke must preserve at least one resolved non-team admin
 9. malformed policy, role, or approval state fails closed with `STATE_CORRUPT`
 
-### 11.1.4 `instruction scan`, `instruction show`, `instruction classify`, `instruction doctor`, `instruction migrate-plan`
+### 11.1.5 `instruction scan`, `instruction show`, `instruction classify`, `instruction doctor`, `instruction migrate-plan`
 
 ```bash
 loom --json --root <root> instruction scan [--agent <agent>] [--workspace <path>]
@@ -582,7 +604,7 @@ Rules:
 8. migration plans contain reviewable `would_write` entries only and must not edit instruction files, skill files, registry state, Git refs, live targets, or pending queues
 9. portable skill lint remains strict: `AGENTS.md`, `CLAUDE.md`, `.mdc`, and custom instruction files are not accepted as `SKILL.md`
 
-### 11.1.5 `skill provenance`
+### 11.1.6 `skill provenance`
 
 ```bash
 loom --json --root <root> skill provenance inspect <skill-id>

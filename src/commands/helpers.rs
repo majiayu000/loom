@@ -5,10 +5,11 @@ use uuid::Uuid;
 
 use crate::cli::{
     AgentCommand, AgentKind, ApprovalCommand, BindingAddArgs, CodexCommand, Command,
-    InstructionCommand, OpsCommand, OpsHistoryCommand, OrgPolicyCommand, PackageCommand,
-    PlanCommand, PolicyCommand, ProjectionMethod, RolesCommand, SkillActiveCommand, SkillCommand,
-    SkillOrphanCommand, SkillTrashCommand, SkillsetCommand, SyncCommand, TargetCommand,
-    WorkflowCommand, WorkspaceBindingCommand, WorkspaceCommand, WorkspaceMatcherKind,
+    InstructionCommand, McpCatalogCommand, McpCommand, McpRequirementCommand, OpsCommand,
+    OpsHistoryCommand, OrgPolicyCommand, PackageCommand, PlanCommand, PolicyCommand,
+    ProjectionMethod, RolesCommand, SkillActiveCommand, SkillCommand, SkillOrphanCommand,
+    SkillTrashCommand, SkillsetCommand, SyncCommand, TargetCommand, WorkflowCommand,
+    WorkspaceBindingCommand, WorkspaceCommand, WorkspaceMatcherKind,
 };
 use crate::state::AppContext;
 use crate::state_model::{
@@ -197,6 +198,17 @@ pub(crate) fn command_name(command: &Command) -> &'static str {
             PackageCommand::Plan(_) => "package.plan",
             PackageCommand::Build(_) => "package.build",
             PackageCommand::Verify(_) => "package.verify",
+        },
+        Command::Mcp { command } => match command {
+            McpCommand::Requirement { command } => match command {
+                McpRequirementCommand::List(_) => "mcp.requirement.list",
+            },
+            McpCommand::Plan(_) => "mcp.plan",
+            McpCommand::Doctor(_) => "mcp.doctor",
+            McpCommand::Catalog { command } => match command {
+                McpCatalogCommand::Search(_) => "mcp.catalog.search",
+                McpCatalogCommand::Show(_) => "mcp.catalog.show",
+            },
         },
         Command::Policy { command } => match command {
             PolicyCommand::Org { command } => match command {

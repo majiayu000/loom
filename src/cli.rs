@@ -12,6 +12,7 @@ mod eval;
 mod improve;
 mod index;
 mod instruction;
+mod mcp;
 mod package;
 mod plan_flow;
 mod policy;
@@ -44,6 +45,10 @@ pub use index::IndexArgs;
 pub use instruction::{
     InstructionClassifyArgs, InstructionCommand, InstructionDoctorArgs, InstructionMigratePlanArgs,
     InstructionMigrationTarget, InstructionScanArgs, InstructionShowArgs,
+};
+pub use mcp::{
+    McpCatalogCommand, McpCatalogSearchArgs, McpCatalogShowArgs, McpCommand, McpDoctorArgs,
+    McpPlanArgs, McpRequirementCommand, McpRequirementListArgs,
 };
 pub use package::{
     PackageBuildArgs, PackageCommand, PackageFormatArg, PackagePlanArgs, PackageVerifyArgs,
@@ -154,6 +159,11 @@ pub enum Command {
     Package {
         #[command(subcommand)]
         command: PackageCommand,
+    },
+    #[command(about = "Plan MCP server requirements and provisioning without mutation")]
+    Mcp {
+        #[command(subcommand)]
+        command: McpCommand,
     },
     #[command(about = "Manage Git-backed org policy checks")]
     Policy {

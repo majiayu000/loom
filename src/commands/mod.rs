@@ -10,6 +10,7 @@ mod fs_probe;
 mod helpers;
 mod history_cmds;
 mod instruction;
+mod mcp;
 #[cfg(test)]
 mod observed_tests;
 mod org_policy;
@@ -53,9 +54,9 @@ use serde_json::json;
 use uuid::Uuid;
 
 use crate::cli::{
-    AgentCommand, ApprovalCommand, Cli, CodexCommand, Command, OpsCommand, OpsHistoryCommand,
-    OrgPolicyCommand, PackageCommand, PolicyCommand, RemoteCommand, RolesCommand,
-    SkillActiveCommand, SkillCommand, SkillOrphanCommand, SkillProvenanceCommand,
+    AgentCommand, ApprovalCommand, Cli, CodexCommand, Command, McpCommand, OpsCommand,
+    OpsHistoryCommand, OrgPolicyCommand, PackageCommand, PolicyCommand, RemoteCommand,
+    RolesCommand, SkillActiveCommand, SkillCommand, SkillOrphanCommand, SkillProvenanceCommand,
     SkillTrashCommand, SkillsetCommand, SyncCommand, TargetCommand, WorkflowCommand,
     WorkspaceBindingCommand, WorkspaceCommand, WorkspaceInitArgs,
 };
@@ -304,6 +305,7 @@ impl App {
             Command::Provider { command } => self.cmd_provider(command, &request_id),
             Command::Catalog { command } => self.cmd_catalog(command),
             Command::Package { command } => self.cmd_package(command),
+            Command::Mcp { command } => self.cmd_mcp(command),
             Command::Policy { command } => match command {
                 PolicyCommand::Org { command } => self.cmd_policy_org(command, &request_id),
             },
@@ -481,6 +483,7 @@ fn command_records_audit(command: &Command) -> bool {
             | Command::Index(_)
             | Command::Active(_)
             | Command::Catalog { .. }
+            | Command::Mcp { .. }
             | Command::Package {
                 command: PackageCommand::Plan(_) | PackageCommand::Verify(_),
             }
@@ -619,6 +622,12 @@ fn command_requires_durable_audit(command: &Command) -> bool {
         Command::Package { command } => match command {
             PackageCommand::Build(_) => false,
             PackageCommand::Plan(_) | PackageCommand::Verify(_) => false,
+        },
+        Command::Mcp { command } => match command {
+            McpCommand::Requirement { .. }
+            | McpCommand::Plan(_)
+            | McpCommand::Doctor(_)
+            | McpCommand::Catalog { .. } => false,
         },
         Command::Policy { command } => match command {
             PolicyCommand::Org { command } => matches!(command, OrgPolicyCommand::Init(_)),

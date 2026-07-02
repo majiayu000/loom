@@ -134,6 +134,86 @@ fn compile_writes_artifact_and_read_commands_consume_it() {
 }
 
 #[test]
+fn compile_promotes_valid_artifact_with_eval_evidence() {
+    let root = TestDir::new("skill-compile-valid-eval");
+    write_non_blocking_compile_skill(root.path(), "demo");
+    write_passing_eval(root.path(), "demo");
+
+    let (_output, env) = run_loom(
+        root.path(),
+        &["skill", "compile", "demo", "--agent", "codex"],
+    );
+
+    assert_eq!(env["ok"], json!(true), "{env}");
+    assert_eq!(env["data"]["manifest"]["status"], json!("valid"));
+    assert_eq!(env["data"]["manifest"]["gates"]["eval"], json!("pass"));
+    assert_eq!(
+        env["data"]["manifest"]["eval_evidence"]["agent"],
+        json!("codex")
+    );
+    assert_eq!(env["data"]["verification"]["valid"], json!(true));
+    let artifact_id = env["data"]["artifact"]["artifact_id"]
+        .as_str()
+        .expect("artifact id");
+
+    let (_output, verify) = run_loom(
+        root.path(),
+        &[
+            "skill",
+            "compile",
+            "verify",
+            "demo",
+            "--artifact",
+            artifact_id,
+        ],
+    );
+    assert_eq!(verify["ok"], json!(true), "{verify}");
+    assert_eq!(verify["data"]["valid"], json!(true), "{verify}");
+
+    write_file(
+        &root.path().join("skills/demo/evals/tasks.jsonl"),
+        r#"{"id":"changed","task":"Run the compile eval","output":"Changed result","trace":["read SKILL.md"],"checks":{"outcome_contains":["Changed"]}}
+"#,
+    );
+    let (_output, stale) = run_loom(
+        root.path(),
+        &[
+            "skill",
+            "compile",
+            "verify",
+            "demo",
+            "--artifact",
+            artifact_id,
+        ],
+    );
+    assert_eq!(stale["ok"], json!(true), "{stale}");
+    assert_eq!(stale["data"]["valid"], json!(false));
+    assert_finding(&stale, "eval_evidence_stale");
+}
+
+#[test]
+fn compile_keeps_artifact_experimental_when_eval_fails() {
+    let root = TestDir::new("skill-compile-eval-fail");
+    write_non_blocking_compile_skill(root.path(), "demo");
+    write_file(
+        &root.path().join("skills/demo/evals/triggers.jsonl"),
+        r#"{"id":"regression","prompt":"Use demo here","expected_trigger":true,"observed_trigger":false}
+"#,
+    );
+
+    let (_output, env) = run_loom(
+        root.path(),
+        &["skill", "compile", "demo", "--agent", "codex"],
+    );
+
+    assert_eq!(env["ok"], json!(true), "{env}");
+    assert_eq!(env["data"]["manifest"]["status"], json!("experimental"));
+    assert_eq!(env["data"]["manifest"]["gates"]["eval"], json!("fail"));
+    assert_eq!(env["data"]["verification"]["valid"], json!(false));
+    assert_finding_value(&env["data"]["verification"], "gate_blocks_valid_artifact");
+}
+
+#[test]
 fn small_skill_reports_no_op() {
     let root = TestDir::new("skill-compile-no-op");
     write_compile_skill(root.path(), "small");
@@ -490,6 +570,14 @@ fn write_compile_skill(root: &Path, skill: &str) {
 
 fn write_non_blocking_compile_skill(root: &Path, skill: &str) {
     write_skill(root, skill, &non_blocking_skill_body(skill));
+}
+
+fn write_passing_eval(root: &Path, skill: &str) {
+    write_file(
+        &root.join("skills").join(skill).join("evals/tasks.jsonl"),
+        r#"{"id":"happy-path","task":"Run the compile eval","output":"Done with concise result","trace":["read SKILL.md","checked output"],"metrics":{"tokens":40,"commands":1},"checks":{"outcome_contains":["Done"],"process_contains":["SKILL.md"],"style_contains":["concise"],"max_tokens":100,"max_commands":3}}
+"#,
+    );
 }
 
 fn base_skill_body(skill: &str) -> String {

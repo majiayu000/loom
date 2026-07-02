@@ -4,7 +4,7 @@ use std::path::Path;
 use serde_json::{Value, json};
 
 mod common;
-use common::{TestDir, run_loom_with_env, write_skill};
+use common::{TestDir, run_loom_with_env, write_file, write_skill};
 
 fn write_compile_ready_skill(root: &Path, skill: &str) {
     write_skill(
@@ -26,6 +26,7 @@ fn compiled_activation_materializes_valid_artifact_projection() {
     let root = TestDir::new("skill-compiled-activation");
     let home = TestDir::new("skill-compiled-activation-home");
     write_compile_ready_skill(root.path(), "demo");
+    write_passing_eval(root.path(), "demo");
 
     let (_compile_output, compile_env) = run_with_home(
         root.path(),
@@ -33,11 +34,15 @@ fn compiled_activation_materializes_valid_artifact_projection() {
         &["skill", "compile", "demo", "--agent", "codex"],
     );
     assert_eq!(compile_env["ok"], json!(true), "{compile_env}");
+    assert_eq!(compile_env["data"]["manifest"]["status"], json!("valid"));
+    assert_eq!(
+        compile_env["data"]["manifest"]["eval_evidence"]["agent"],
+        json!("codex")
+    );
     let artifact_id = compile_env["data"]["artifact"]["artifact_id"]
         .as_str()
         .expect("artifact id")
         .to_string();
-    promote_artifact_to_valid(root.path(), "demo", &artifact_id);
 
     let (_verify_output, verify_env) = run_with_home(
         root.path(),
@@ -170,22 +175,10 @@ fn compiled_activation_materializes_valid_artifact_projection() {
     assert_eq!(noop_env["data"]["noop"], json!(true));
 }
 
-fn promote_artifact_to_valid(root: &Path, skill: &str, artifact_id: &str) {
-    let manifest_path = root
-        .join("state/compiled/skills")
-        .join(skill)
-        .join(artifact_id)
-        .join("manifest.json");
-    let raw = fs::read_to_string(&manifest_path).expect("read manifest");
-    let mut manifest: Value = serde_json::from_str(&raw).expect("parse manifest");
-    manifest["status"] = json!("valid");
-    manifest["gates"] = json!({
-        "lint": "pass",
-        "safety": "pass",
-        "dependency": "pass",
-        "eval": "pass"
-    });
-    let mut raw = serde_json::to_string_pretty(&manifest).expect("serialize manifest");
-    raw.push('\n');
-    fs::write(manifest_path, raw).expect("write manifest");
+fn write_passing_eval(root: &Path, skill: &str) {
+    write_file(
+        &root.join("skills").join(skill).join("evals/tasks.jsonl"),
+        r#"{"id":"happy-path","task":"Run the compiled activation eval","output":"Done with concise result","trace":["read SKILL.md","checked output"],"metrics":{"tokens":40,"commands":1},"checks":{"outcome_contains":["Done"],"process_contains":["SKILL.md"],"style_contains":["concise"],"max_tokens":100,"max_commands":3}}
+"#,
+    );
 }

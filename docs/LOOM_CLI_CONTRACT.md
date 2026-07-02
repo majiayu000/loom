@@ -430,9 +430,11 @@ Rules:
 6. `source-digest.txt` must match `manifest.source_digest`, and `verify` recomputes the source digest from `SKILL.md`, indexed references/assets/scripts, compiler version, agent, and profile.
 7. `verify` detects missing files, malformed manifests or sidecars, stale source digests, content-hash mismatches, manifest identity mismatches, unsafe sidecar paths, and gates that prevent `valid` status.
 8. lint, safety, dependency, or eval gates that are missing, blocked, or failed prevent a `valid` artifact; missing eval evidence is blocking until reviewed eval artifacts exist.
-9. `list` and `verify` without `--artifact` return artifacts sorted by artifact id; no arbitrary filesystem entry is selected as a default.
-10. skill names that collide with nested commands such as `list` or `verify` use `--skill <skill-id>` for planning or artifact writes.
-11. compiled activation uses only artifacts that `verify` reports as fresh `valid`; artifact writes remain separate from dry-run planning and portable `SKILL.md` remains the source of truth.
+9. artifact writes run the local offline eval gate when eval fixtures exist; passing evidence is recorded in `manifest.eval_evidence` with the current generated content hashes and eval suite digest before an artifact may be promoted to `valid`.
+10. `verify` rejects `valid` artifacts whose eval evidence is missing, stale, agent-mismatched, or no longer matches generated content hashes.
+11. `list` and `verify` without `--artifact` return artifacts sorted by artifact id; no arbitrary filesystem entry is selected as a default.
+12. skill names that collide with nested commands such as `list` or `verify` use `--skill <skill-id>` for planning or artifact writes.
+13. compiled activation uses only artifacts that `verify` reports as fresh `valid`; artifact writes remain separate from dry-run planning and portable `SKILL.md` remains the source of truth.
 
 ### 11.0.2 `skill activate`, `skill deactivate`, `skill active list`
 

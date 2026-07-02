@@ -11,10 +11,13 @@ use crate::envelope::Meta;
 use crate::sha256::{Sha256, to_hex};
 use crate::types::ErrorCode;
 
-use super::helpers::{map_arg, validate_skill_name};
 use super::skill_verify::{head_tree_oid_for_path, last_commit_for_path};
 use super::telemetry::record_skill_eval_telemetry;
 use super::{App, CommandFailure};
+
+#[path = "skill_eval/offline.rs"]
+mod offline;
+pub(crate) use offline::build_skill_eval_offline_report;
 
 const EVAL_SCHEMA_VERSION: u32 = 1;
 
@@ -50,63 +53,8 @@ impl App {
         &self,
         args: &SkillEvalOfflineArgs,
     ) -> std::result::Result<(Value, Meta), CommandFailure> {
-        validate_skill_name(&args.skill).map_err(map_arg)?;
-        let skill_path = self.ctx.skill_path(&args.skill);
-        if !skill_path.is_dir() {
-            return Err(CommandFailure::new(
-                ErrorCode::SkillNotFound,
-                format!("skill '{}' not found", args.skill),
-            ));
-        }
-
-        let agents = eval_agents(args)?;
-        let evals_dir = skill_path.join("evals");
-        let trigger_path = evals_dir.join("triggers.jsonl");
-        let task_path = evals_dir.join("tasks.jsonl");
-        let triggers = read_jsonl::<TriggerCase>(&trigger_path)?;
-        let tasks = read_jsonl::<TaskCase>(&task_path)?;
-
-        let version = skill_eval_version(&self.ctx, &args.skill);
-
-        let runs = agents
-            .iter()
-            .map(|agent| {
-                evaluate_run(
-                    &args.skill,
-                    &skill_path,
-                    agent,
-                    args.model.as_deref(),
-                    &triggers,
-                    &tasks,
-                )
-            })
-            .collect::<std::result::Result<Vec<_>, _>>()?;
-        let summary = summarize_runs(&runs);
-        let failed = summary.failed;
-
-        let warnings = if triggers.is_empty() && tasks.is_empty() {
-            vec![format!(
-                "no eval cases found under {}; expected triggers.jsonl and/or tasks.jsonl",
-                evals_dir.display()
-            )]
-        } else {
-            Vec::new()
-        };
-
-        let report = json!({
-            "schema_version": EVAL_SCHEMA_VERSION,
-            "skill": args.skill,
-            "skill_version": version,
-            "eval_root": evals_dir.display().to_string(),
-            "matrix": agents,
-            "summary": summary,
-            "runs": runs,
-            "security_model": {
-                "eval_success_is_safety_guarantee": false,
-                "note": "Eval success is quality evidence only. It does not prove the skill is safe, sandboxed, or free of prompt-injection risk."
-            }
-        });
-        for run in &runs {
+        let result = build_skill_eval_offline_report(&self.ctx, args)?;
+        for run in &result.runs {
             record_skill_eval_telemetry(
                 &self.ctx,
                 &args.skill,
@@ -117,22 +65,22 @@ impl App {
                 None,
             )?;
         }
-        if failed > 0 {
+        if result.failed > 0 {
             let mut failure = CommandFailure::new(
                 ErrorCode::EvalFailed,
-                format!("skill eval failed with {failed} failing case(s)"),
+                format!("skill eval failed with {} failing case(s)", result.failed),
             );
             failure.details = json!({
-                "failed": failed,
-                "report": report,
+                "failed": result.failed,
+                "report": result.report,
             });
             return Err(failure);
         }
 
         Ok((
-            report,
+            result.report,
             Meta {
-                warnings,
+                warnings: result.warnings,
                 ..Meta::default()
             },
         ))

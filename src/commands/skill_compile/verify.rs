@@ -15,7 +15,7 @@ use super::model::{
     CatalogDoc, CompiledArtifactManifest, REQUIRED_ARTIFACT_FILES, ReferencesDoc, ToolInterfaceDoc,
     VerifyFinding,
 };
-use super::plan::source_digest_info;
+use super::plan::{eval_suite_digest, source_digest_info};
 use super::util::{digest_bytes_prefixed, push_compile_finding, validate_artifact_id};
 
 pub(super) fn verify_artifact(
@@ -77,6 +77,7 @@ pub(super) fn verify_artifact(
     validate_activation_text(&artifact_dir.join("activation.md"), &mut findings);
     let source_stale = validate_source_digest(ctx, skill, &artifact_dir, &manifest, &mut findings)?;
     validate_gate_status(&manifest, &mut findings);
+    validate_eval_evidence(ctx, skill, &manifest, &mut findings)?;
 
     let valid = findings.is_empty()
         && manifest.status == ArtifactStatus::Valid
@@ -524,4 +525,73 @@ fn validate_gate_status(manifest: &CompiledArtifactManifest, findings: &mut Vec<
             json!({ "status": manifest.status.as_str() }),
         );
     }
+}
+
+fn validate_eval_evidence(
+    ctx: &AppContext,
+    skill: &str,
+    manifest: &CompiledArtifactManifest,
+    findings: &mut Vec<VerifyFinding>,
+) -> std::result::Result<(), CommandFailure> {
+    if manifest.status != ArtifactStatus::Valid && !manifest.gates.eval.allows_valid() {
+        return Ok(());
+    }
+    let Some(evidence) = &manifest.eval_evidence else {
+        push_compile_finding(
+            findings,
+            "eval_evidence_missing",
+            "error",
+            "valid compiled artifacts require eval evidence",
+            json!({ "artifact_id": manifest.artifact_id.as_str() }),
+        );
+        return Ok(());
+    };
+    if evidence.generated_content_hashes != manifest.content_hashes {
+        push_compile_finding(
+            findings,
+            "eval_evidence_content_hash_mismatch",
+            "error",
+            "eval evidence does not match generated content hashes",
+            json!({ "artifact_id": manifest.artifact_id.as_str() }),
+        );
+    }
+    match eval_suite_digest(ctx, skill)? {
+        Some(current) if current == evidence.eval_suite_digest => {}
+        Some(current) => push_compile_finding(
+            findings,
+            "eval_evidence_stale",
+            "error",
+            "eval evidence does not match the current eval suite",
+            json!({
+                "expected": evidence.eval_suite_digest.as_str(),
+                "actual": current,
+            }),
+        ),
+        None => push_compile_finding(
+            findings,
+            "eval_evidence_suite_missing",
+            "error",
+            "eval evidence references an eval suite that is no longer present",
+            json!({ "expected": evidence.eval_suite_digest.as_str() }),
+        ),
+    }
+    if evidence.agent != manifest.agent {
+        push_compile_finding(
+            findings,
+            "eval_evidence_agent_mismatch",
+            "error",
+            "eval evidence agent does not match the artifact manifest",
+            json!({"expected": manifest.agent.as_str(), "actual": evidence.agent.as_str()}),
+        );
+    }
+    if !evidence.report_digest.starts_with("sha256:") {
+        push_compile_finding(
+            findings,
+            "eval_evidence_report_digest_invalid",
+            "error",
+            "eval evidence report digest must be sha256-prefixed",
+            json!({"report_digest": evidence.report_digest.as_str()}),
+        );
+    }
+    Ok(())
 }

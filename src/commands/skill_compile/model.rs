@@ -107,9 +107,22 @@ pub(super) struct CompiledArtifactManifest {
     pub status: ArtifactStatus,
     pub gates: CompileGateStatus,
     pub content_hashes: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub eval_evidence: Option<CompileEvalEvidence>,
     pub token_estimate: CompileTokenEstimate,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub created_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct CompileEvalEvidence {
+    pub mode: String,
+    pub agent: String,
+    pub eval_suite_digest: String,
+    pub report_digest: String,
+    pub generated_content_hashes: BTreeMap<String, String>,
+    pub summary: Value,
 }
 
 #[derive(Debug, Serialize)]
@@ -132,6 +145,7 @@ pub(super) struct SourceDigestInfo {
 pub(super) struct GatePlan {
     pub manifest: CompileGateStatus,
     pub details: Value,
+    pub eval_evidence: Option<CompileEvalEvidence>,
 }
 
 impl GatePlan {

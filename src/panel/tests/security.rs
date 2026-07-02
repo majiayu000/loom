@@ -1,10 +1,9 @@
 use super::*;
 use crate::cli::{
-    BindingAddArgs, CaptureArgs, Command, OpsCommand, ProjectArgs, ProjectionMethod, ReleaseArgs,
-    RemoteCommand, RollbackArgs, SaveArgs, SkillCommand, SkillOnlyArgs, SkillTrashCommand,
-    SyncCommand, TargetAddArgs, TargetCommand, TargetOwnership, TrashAddArgs, TrashPurgeArgs,
-    TrashRestoreArgs, UseArgs, UseScope, WorkspaceBindingCommand, WorkspaceCommand,
-    WorkspaceInitArgs, WorkspaceMatcherKind,
+    BindingAddArgs, Command, OpsCommand, ProjectArgs, ProjectionMethod, ReleaseArgs, RemoteCommand,
+    RollbackArgs, SkillCommand, SkillCommitArgs, SkillTrashCommand, SyncCommand, TargetAddArgs,
+    TargetCommand, TargetOwnership, TrashAddArgs, TrashPurgeArgs, TrashRestoreArgs, UseArgs,
+    UseScope, WorkspaceBindingCommand, WorkspaceCommand, WorkspaceInitArgs, WorkspaceMatcherKind,
 };
 use crate::panel::auth::{
     ensure_mutation_authorized, error_envelope, panel_host_matches, panel_request_authorized,
@@ -21,8 +20,9 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 // Exhaustive list of every panel mutation command. Must stay in sync with the
-// 23-row table in docs/LOOM_ARCHITECTURE_DECISIONS.md section 4.1 and the
-// route registrations in `run_panel`.
+// Unique panel mutation command ids. The 23 HTTP routes in
+// docs/LOOM_ARCHITECTURE_DECISIONS.md section 4.1 include two commit routes and
+// two release routes that share command ids.
 const MUTATION_COMMANDS: &[&str] = &[
     "workspace.init",
     "target.add",
@@ -31,9 +31,7 @@ const MUTATION_COMMANDS: &[&str] = &[
     "workspace.binding.remove",
     "use",
     "skill.project",
-    "skill.capture",
-    "skill.save",
-    "skill.snapshot",
+    "skill.commit",
     "skill.release",
     "skill.rollback",
     "skill.trash.add",
@@ -95,8 +93,8 @@ const LEGACY_PANEL_ROUTES: &[&str] = &[
 ];
 
 #[test]
-fn mutation_commands_count_is_twenty_three() {
-    assert_eq!(MUTATION_COMMANDS.len(), 23);
+fn mutation_commands_count_tracks_unique_mutation_command_ids() {
+    assert_eq!(MUTATION_COMMANDS.len(), 21);
 }
 
 #[test]
@@ -178,10 +176,10 @@ async fn read_panel_registry_status(
 #[test]
 fn error_envelope_uses_expected_shape() {
     assert_eq!(
-        error_envelope("skill.capture", "req-1", "INTERNAL_ERROR", "boom"),
+        error_envelope("skill.commit", "req-1", "INTERNAL_ERROR", "boom"),
         json!({
             "ok": false,
-            "cmd": "skill.capture",
+            "cmd": "skill.commit",
             "request_id": "req-1",
             "version": env!("CARGO_PKG_VERSION"),
             "data": {},
@@ -548,35 +546,17 @@ fn run_panel_command_returns_non_2xx_for_logical_failures_across_mutations() {
             },
         ),
         (
-            "skill.capture",
+            "skill.commit",
             StatusCode::OK,
             Command::Skill {
-                command: SkillCommand::Capture(CaptureArgs {
-                    skill: None,
+                command: SkillCommand::Commit(SkillCommitArgs {
+                    skill: "missing-skill".to_string(),
                     binding: None,
                     instance: None,
                     message: None,
-                    dry_run: false,
-                }),
-            },
-        ),
-        (
-            "skill.save",
-            StatusCode::OK,
-            Command::Skill {
-                command: SkillCommand::Save(SaveArgs {
-                    skill: "missing-skill".to_string(),
-                    message: None,
+                    from_projection: true,
+                    from_source: false,
                     preflight: false,
-                }),
-            },
-        ),
-        (
-            "skill.snapshot",
-            StatusCode::OK,
-            Command::Skill {
-                command: SkillCommand::Snapshot(SkillOnlyArgs {
-                    skill: "missing-skill".to_string(),
                 }),
             },
         ),
@@ -586,7 +566,21 @@ fn run_panel_command_returns_non_2xx_for_logical_failures_across_mutations() {
             Command::Skill {
                 command: SkillCommand::Release(ReleaseArgs {
                     skill: "missing-skill".to_string(),
-                    version: "v1".to_string(),
+                    version: None,
+                    anchor: true,
+                    preflight: false,
+                    baseline: None,
+                }),
+            },
+        ),
+        (
+            "skill.release",
+            StatusCode::OK,
+            Command::Skill {
+                command: SkillCommand::Release(ReleaseArgs {
+                    skill: "missing-skill".to_string(),
+                    version: Some("v1".to_string()),
+                    anchor: false,
                     preflight: false,
                     baseline: None,
                 }),

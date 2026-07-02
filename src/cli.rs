@@ -88,7 +88,7 @@ pub use skill_compile_args::{
 pub use skill_inspect_args::SkillInspectArgs;
 pub use skill_lint_args::SkillLintArgs;
 pub use skill_new_args::{SkillNewArgs, SkillNewTemplate};
-pub use skill_visibility_args::{SkillDiagnoseArgs, SkillVisibilityArgs};
+pub use skill_visibility_args::{SkillDiagnoseArgs, SkillDiagnoseCheck, SkillVisibilityArgs};
 pub use skillset::{
     SkillsetAddArgs, SkillsetCommand, SkillsetCreateArgs, SkillsetMemberArgs, SkillsetShowArgs,
 };
@@ -97,7 +97,7 @@ pub use telemetry::{
     TelemetryPurgeArgs, TelemetryReportArgs,
 };
 pub use use_flow::{UseArgs, UseScope};
-pub use version::{DiffArgs, HistoryArgs, ReleaseArgs, RollbackArgs};
+pub use version::{DiffArgs, HistoryArgs, ReleaseArgs, RollbackArgs, SkillCommitArgs};
 pub use workflow::{
     WorkflowCommand, WorkflowCreateArgs, WorkflowPlanArgs, WorkflowPreflightArgs, WorkflowRunArgs,
     WorkflowShowArgs,
@@ -347,16 +347,12 @@ pub enum SkillCommand {
     Install(SkillInstallArgs),
     #[command(about = "Project a registry skill into a bound target")]
     Project(ProjectArgs),
-    #[command(about = "Capture live projection edits back to the source")]
-    Capture(CaptureArgs),
+    #[command(about = "Commit source changes from the registry or a live projection")]
+    Commit(SkillCommitArgs),
     #[command(about = "Run a read-only single-skill improvement preflight")]
     Improve(SkillImproveArgs),
     #[command(about = "Compare one skill against a baseline for regressions")]
     Regression(SkillRegressionArgs),
-    #[command(about = "Commit source changes for one skill")]
-    Save(SaveArgs),
-    #[command(about = "Create a version snapshot for one skill")]
-    Snapshot(SkillOnlyArgs),
     #[command(about = "Tag a skill release")]
     Release(ReleaseArgs),
     #[command(about = "Roll back a skill source to an earlier revision")]
@@ -375,8 +371,6 @@ pub enum SkillCommand {
         #[command(subcommand)]
         command: SkillProvenanceCommand,
     },
-    #[command(about = "Verify a skill source has no uncommitted drift")]
-    Verify(SkillOnlyArgs),
     #[command(about = "Lint one skill for portable Agent Skills compliance")]
     Lint(SkillLintArgs),
     #[command(about = "Report skill capabilities, risks, and policy decision before projection")]

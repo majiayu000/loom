@@ -10,9 +10,9 @@ vi.mock("../../lib/api/client", () => ({
     skillDiagnose: vi.fn(),
     skillInspect: vi.fn(),
     skillDiff: vi.fn(),
-    capture: vi.fn(),
-    skillSave: vi.fn(),
-    skillSnapshot: vi.fn(),
+    commitProjection: vi.fn(),
+    skillCommit: vi.fn(),
+    skillReleaseAnchor: vi.fn(),
     skillRelease: vi.fn(),
     skillRollback: vi.fn(),
     skillUse: vi.fn(),
@@ -291,9 +291,9 @@ describe("SkillsPage — capture action", () => {
       ok: true,
       data: { skill: "my-skill", count: 0, events: [] },
     });
-    (api.capture as ReturnType<typeof vi.fn>).mockResolvedValue({
+    (api.commitProjection as ReturnType<typeof vi.fn>).mockResolvedValue({
       ok: true,
-      cmd: "skill.capture",
+      cmd: "skill.commit",
       request_id: "req-capture",
     });
   });
@@ -305,7 +305,7 @@ describe("SkillsPage — capture action", () => {
     fireEvent.click(screen.getByRole("button", { name: "Capture" }));
 
     await waitFor(() => {
-      expect(api.capture).toHaveBeenCalledWith({ skill: "my-skill", binding: "binding-1" });
+      expect(api.commitProjection).toHaveBeenCalledWith({ skill: "my-skill", binding: "binding-1" });
       expect(onMutation).toHaveBeenCalledTimes(1);
     });
   });
@@ -328,7 +328,7 @@ describe("SkillsPage — capture action", () => {
     fireEvent.click(screen.getByRole("button", { name: "Capture" }));
 
     await waitFor(() => {
-      expect(api.capture).toHaveBeenCalledWith({ skill: "my-skill", binding: "binding-2" });
+      expect(api.commitProjection).toHaveBeenCalledWith({ skill: "my-skill", binding: "binding-2" });
       expect(onMutation).toHaveBeenCalledTimes(1);
     });
   });
@@ -360,7 +360,7 @@ describe("SkillsPage — capture action", () => {
     fireEvent.click(screen.getByRole("button", { name: "Capture" }));
 
     await waitFor(() => {
-      expect(api.capture).toHaveBeenCalledWith({ skill: "my-skill", binding: "shared-binding" });
+      expect(api.commitProjection).toHaveBeenCalledWith({ skill: "my-skill", binding: "shared-binding" });
       expect(onMutation).toHaveBeenCalledTimes(1);
     });
   });
@@ -426,7 +426,7 @@ describe("SkillsPage — history tab", () => {
     });
   });
 
-  it("renders file_changed events as 'save' and health_changed events as 'snapshot'", async () => {
+  it("renders file_changed events as 'commit' and health_changed events as 'anchor'", async () => {
     const now = new Date().toISOString();
     const earlier = new Date(Date.now() - 60_000).toISOString();
     (api.skillHistory as ReturnType<typeof vi.fn>).mockResolvedValue({
@@ -455,8 +455,8 @@ describe("SkillsPage — history tab", () => {
     });
     renderPage();
     await waitFor(() => {
-      expect(screen.getByText("save")).toBeInTheDocument();
-      expect(screen.getByText("snapshot")).toBeInTheDocument();
+      expect(screen.getByText("commit")).toBeInTheDocument();
+      expect(screen.getByText("anchor")).toBeInTheDocument();
     });
   });
 
@@ -524,9 +524,9 @@ describe("SkillsPage — diagnose tab", () => {
     });
     (api.skillDiff as ReturnType<typeof vi.fn>).mockReturnValue(new Promise(() => {}));
     (api.skillDiagnose as ReturnType<typeof vi.fn>).mockResolvedValue(makeDiagnose());
-    (api.skillSave as ReturnType<typeof vi.fn>).mockResolvedValue({
+    (api.skillCommit as ReturnType<typeof vi.fn>).mockResolvedValue({
       ok: true,
-      cmd: "skill.save",
+      cmd: "skill.commit",
       request_id: "req-save",
     });
   });
@@ -604,10 +604,10 @@ describe("SkillsPage — diagnose tab", () => {
       expect(screen.getByText("blocked")).toBeInTheDocument();
     });
 
-    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    fireEvent.click(screen.getByRole("button", { name: "Commit" }));
 
     await waitFor(() => {
-      expect(api.skillSave).toHaveBeenCalledWith("my-skill");
+      expect(api.skillCommit).toHaveBeenCalledWith("my-skill");
       expect(api.skillDiagnose).toHaveBeenCalledTimes(2);
       expect(screen.getByText("healthy")).toBeInTheDocument();
     });
@@ -791,25 +791,25 @@ describe("SkillsPage — lifecycle actions", () => {
       ok: true,
       data: { skill: "my-skill", count: 0, events: [] },
     });
-    (api.skillSave as ReturnType<typeof vi.fn>).mockResolvedValue({ ok: true, cmd: "skill.save", request_id: "req-save" });
-    (api.skillSnapshot as ReturnType<typeof vi.fn>).mockResolvedValue({ ok: true, cmd: "skill.snapshot", request_id: "req-snapshot" });
+    (api.skillCommit as ReturnType<typeof vi.fn>).mockResolvedValue({ ok: true, cmd: "skill.commit", request_id: "req-save" });
+    (api.skillReleaseAnchor as ReturnType<typeof vi.fn>).mockResolvedValue({ ok: true, cmd: "skill.release", request_id: "req-snapshot" });
     (api.skillRelease as ReturnType<typeof vi.fn>).mockResolvedValue({ ok: true, cmd: "skill.release", request_id: "req-release" });
     (api.skillRollback as ReturnType<typeof vi.fn>).mockResolvedValue({ ok: true, cmd: "skill.rollback", request_id: "req-rollback" });
   });
 
-  it("runs save, snapshot, release, and rollback for the selected skill", async () => {
+  it("runs commit, anchor, release, and rollback for the selected skill", async () => {
     const onMutation = vi.fn();
     renderPage({ onMutation });
 
-    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    fireEvent.click(screen.getByRole("button", { name: "Commit" }));
     await waitFor(() => {
-      expect(api.skillSave).toHaveBeenCalledWith("my-skill");
-      expect(screen.getByRole("button", { name: "Snapshot" })).not.toBeDisabled();
+      expect(api.skillCommit).toHaveBeenCalledWith("my-skill");
+      expect(screen.getByRole("button", { name: "Anchor" })).not.toBeDisabled();
     });
 
-    fireEvent.click(screen.getByRole("button", { name: "Snapshot" }));
+    fireEvent.click(screen.getByRole("button", { name: "Anchor" }));
     await waitFor(() => {
-      expect(api.skillSnapshot).toHaveBeenCalledWith("my-skill");
+      expect(api.skillReleaseAnchor).toHaveBeenCalledWith("my-skill");
     });
 
     fireEvent.change(screen.getByPlaceholderText("version"), { target: { value: "v1.0.0" } });

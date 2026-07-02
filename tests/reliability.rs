@@ -265,14 +265,18 @@ fn workspace_status_surfaces_unavailable_command_audit_path_warning() {
 fn failed_command_emits_durable_command_event() {
     let root = TestDir::new("failed-command-event");
 
-    let (output, env) = run_loom_with_env(root.path(), &[], &["skill", "capture"]);
+    let (output, env) = run_loom_with_env(
+        root.path(),
+        &[],
+        &["skill", "commit", "demo", "--from-projection"],
+    );
 
-    assert!(!output.status.success(), "capture unexpectedly succeeded");
+    assert!(!output.status.success(), "commit unexpectedly succeeded");
     assert_eq!(env["ok"], Value::Bool(false));
 
     let events = read_command_events(root.path());
     assert_eq!(events.len(), 2);
-    assert_eq!(events[0]["cmd"], Value::String("skill.capture".to_string()));
+    assert_eq!(events[0]["cmd"], Value::String("skill.commit".to_string()));
     assert_eq!(events[0]["status"], Value::String("started".to_string()));
     assert!(events[0]["input"]["request_id"].as_str().is_some());
     assert_eq!(events[1]["status"], Value::String("failed".to_string()));
@@ -282,8 +286,8 @@ fn failed_command_emits_durable_command_event() {
         Value::String("ARG_INVALID".to_string())
     );
     assert!(
-        events[0]["input"]["command"]["Skill"]["command"]["Capture"].is_object(),
-        "command input should preserve structured capture args"
+        events[0]["input"]["command"]["Skill"]["command"]["Commit"].is_object(),
+        "command input should preserve structured commit args"
     );
 }
 
@@ -441,13 +445,15 @@ fn command_audit_redacts_embedded_sensitive_message_values() {
         &[],
         &[
             "skill",
-            "capture",
+            "commit",
+            "--from-projection",
             "--message",
             "prefix sk-reviewtoken and ghp_reviewtoken",
+            "demo",
         ],
     );
 
-    assert!(!output.status.success(), "capture unexpectedly succeeded");
+    assert!(!output.status.success(), "commit unexpectedly succeeded");
     assert_eq!(env["ok"], false);
     let raw = fs::read_to_string(root.path().join("state/events/commands.jsonl"))
         .expect("read command event log");
@@ -574,7 +580,7 @@ fn snapshot_pushes_annotated_tag_to_remote() {
         &["skill", "add", source.to_str().unwrap(), "--name", "demo"],
     );
 
-    let snapshot = run_loom_ok(root.path(), &["skill", "snapshot", "demo"]);
+    let snapshot = run_loom_ok(root.path(), &["skill", "release", "demo", "--anchor"]);
     let tag = snapshot["data"]["tag"].as_str().unwrap();
 
     let refs = git_ok([
@@ -617,7 +623,7 @@ fn snapshot_pushes_annotated_tag_to_remote() {
         &format!("loom-history:{segment_path}"),
     ]);
     assert!(segment_raw.contains("\"event\":\"audited\""));
-    assert!(segment_raw.contains("\"command\":\"skill.snapshot\""));
+    assert!(segment_raw.contains("\"command\":\"skill.release\""));
 
     let pending = run_loom_ok(root.path(), &["ops", "list"]);
     assert_eq!(pending["data"]["count"], 0);
@@ -737,7 +743,7 @@ fn stale_skill_lock_is_reaped_automatically() {
     )
     .expect("write stale lock");
 
-    let env = run_loom_ok(root.path(), &["skill", "snapshot", "demo"]);
+    let env = run_loom_ok(root.path(), &["skill", "release", "demo", "--anchor"]);
     assert_eq!(env["ok"], true);
     assert!(!lock_path.exists());
 }
@@ -753,7 +759,7 @@ fn ops_journal_compacts_into_snapshot_and_history() {
     );
 
     for _ in 0..20 {
-        run_loom_ok(root.path(), &["skill", "snapshot", "demo"]);
+        run_loom_ok(root.path(), &["skill", "release", "demo", "--anchor"]);
     }
 
     let purge = run_loom_ok(root.path(), &["ops", "purge"]);
@@ -772,7 +778,7 @@ fn ops_journal_compacts_into_snapshot_and_history() {
     );
 
     for _ in 0..20 {
-        run_loom_ok(root.path(), &["skill", "snapshot", "demo"]);
+        run_loom_ok(root.path(), &["skill", "release", "demo", "--anchor"]);
     }
     run_loom_ok(root.path(), &["ops", "purge"]);
     assert!(history_segment_count(root.path()) >= 2);
@@ -798,7 +804,7 @@ fn ops_compaction_mirrors_history_into_local_git_branch() {
     git_ok_in(root.path(), &["remote", "remove", "origin"]);
 
     for _ in 0..16 {
-        run_loom_ok(root.path(), &["skill", "snapshot", "demo"]);
+        run_loom_ok(root.path(), &["skill", "release", "demo", "--anchor"]);
     }
 
     assert!(git_branch_exists(root.path(), "loom-history"));
@@ -856,7 +862,7 @@ fn ops_history_repair_rebuilds_corrupt_local_pending_snapshot() {
         &["skill", "add", source.to_str().unwrap(), "--name", "demo"],
     );
     for _ in 0..16 {
-        run_loom_ok(root.path(), &["skill", "snapshot", "demo"]);
+        run_loom_ok(root.path(), &["skill", "release", "demo", "--anchor"]);
     }
     assert!(git_branch_exists(root.path(), "loom-history"));
 
@@ -896,7 +902,7 @@ fn sync_push_propagates_history_branch_to_remote() {
     git_ok_in(root.path(), &["remote", "remove", "origin"]);
 
     for _ in 0..16 {
-        run_loom_ok(root.path(), &["skill", "snapshot", "demo"]);
+        run_loom_ok(root.path(), &["skill", "release", "demo", "--anchor"]);
     }
 
     run_loom_ok(
@@ -960,7 +966,7 @@ fn sync_pull_creates_local_history_branch_from_remote() {
     git_ok_in(producer.path(), &["remote", "remove", "origin"]);
 
     for _ in 0..16 {
-        run_loom_ok(producer.path(), &["skill", "snapshot", "demo"]);
+        run_loom_ok(producer.path(), &["skill", "release", "demo", "--anchor"]);
     }
 
     run_loom_ok(
@@ -1034,7 +1040,7 @@ fn sync_push_reconciles_divergent_history_branch_before_push() {
 
     git_ok_in(producer.path(), &["remote", "remove", "origin"]);
     for _ in 0..16 {
-        run_loom_ok(producer.path(), &["skill", "snapshot", "demo"]);
+        run_loom_ok(producer.path(), &["skill", "release", "demo", "--anchor"]);
     }
     run_loom_ok(
         producer.path(),
@@ -1046,12 +1052,12 @@ fn sync_push_reconciles_divergent_history_branch_before_push() {
 
     git_ok_in(consumer.path(), &["remote", "remove", "origin"]);
     for _ in 0..16 {
-        run_loom_ok(consumer.path(), &["skill", "snapshot", "demo"]);
+        run_loom_ok(consumer.path(), &["skill", "release", "demo", "--anchor"]);
     }
 
     git_ok_in(producer.path(), &["remote", "remove", "origin"]);
     for _ in 0..16 {
-        run_loom_ok(producer.path(), &["skill", "snapshot", "demo"]);
+        run_loom_ok(producer.path(), &["skill", "release", "demo", "--anchor"]);
     }
     run_loom_ok(
         producer.path(),
@@ -1133,7 +1139,7 @@ fn sync_pull_reconciles_divergent_history_branch_without_pending_ops() {
 
     git_ok_in(producer.path(), &["remote", "remove", "origin"]);
     for _ in 0..16 {
-        run_loom_ok(producer.path(), &["skill", "snapshot", "demo"]);
+        run_loom_ok(producer.path(), &["skill", "release", "demo", "--anchor"]);
     }
     run_loom_ok(
         producer.path(),
@@ -1145,7 +1151,7 @@ fn sync_pull_reconciles_divergent_history_branch_without_pending_ops() {
 
     git_ok_in(consumer.path(), &["remote", "remove", "origin"]);
     for _ in 0..16 {
-        run_loom_ok(consumer.path(), &["skill", "snapshot", "demo"]);
+        run_loom_ok(consumer.path(), &["skill", "release", "demo", "--anchor"]);
     }
     run_loom_ok(consumer.path(), &["ops", "purge"]);
     let pending_before = run_loom_ok(consumer.path(), &["ops", "list"]);
@@ -1153,7 +1159,7 @@ fn sync_pull_reconciles_divergent_history_branch_without_pending_ops() {
 
     git_ok_in(producer.path(), &["remote", "remove", "origin"]);
     for _ in 0..16 {
-        run_loom_ok(producer.path(), &["skill", "snapshot", "demo"]);
+        run_loom_ok(producer.path(), &["skill", "release", "demo", "--anchor"]);
     }
     run_loom_ok(
         producer.path(),
@@ -1219,13 +1225,13 @@ fn assert_compaction_fault_recovers(injection_point: &str) {
     git_ok_in(root.path(), &["remote", "remove", "origin"]);
 
     for _ in 0..15 {
-        run_loom_ok(root.path(), &["skill", "snapshot", "demo"]);
+        run_loom_ok(root.path(), &["skill", "release", "demo", "--anchor"]);
     }
 
     let (output, env) = run_loom_with_env(
         root.path(),
         &[("LOOM_FAULT_INJECT", injection_point)],
-        &["skill", "snapshot", "demo"],
+        &["skill", "release", "demo", "--anchor"],
     );
     assert!(!output.status.success(), "expected injected failure");
     assert_eq!(env["error"]["code"], "QUEUE_BLOCKED");
@@ -1275,7 +1281,7 @@ fn concurrent_snapshots_keep_pending_journal_consistent() {
             thread::spawn(move || {
                 barrier.wait();
                 let (output, env) =
-                    run_loom_with_env(&root_path, &[], &["skill", "snapshot", "demo"]);
+                    run_loom_with_env(&root_path, &[], &["skill", "release", "demo", "--anchor"]);
                 (
                     output.status.code().unwrap_or(-1),
                     env["ok"].as_bool().unwrap_or(false),

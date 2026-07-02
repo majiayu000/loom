@@ -27,6 +27,10 @@ impl App {
         args: &ReleaseArgs,
         request_id: &str,
     ) -> std::result::Result<(serde_json::Value, Meta), CommandFailure> {
+        if args.anchor || args.version.is_none() {
+            return self.cmd_release_anchor(args, request_id);
+        }
+        let version = args.version.as_deref().expect("version checked above");
         validate_skill_name(&args.skill).map_err(map_arg)?;
         let _workspace = self.ctx.lock_workspace().map_err(map_lock)?;
         self.ensure_write_repo_ready()?;
@@ -44,7 +48,7 @@ impl App {
 
         let previous_head = gitops::head(&self.ctx).map_err(map_git)?;
         let previous_index = gitops::snapshot_index(&self.ctx).map_err(map_git)?;
-        let tag = format!("release/{}/{}", args.skill, args.version);
+        let tag = format!("release/{}/{}", args.skill, version);
         let paths = RegistryStatePaths::from_app_context(&self.ctx);
         let registry_layout_backup =
             backup_registry_layout(&self.ctx, &paths).map_err(map_registry_state)?;
@@ -58,7 +62,7 @@ impl App {
         if let Err(err) = gitops::create_annotated_tag(
             &self.ctx,
             &tag,
-            &format!("release {} {}", args.skill, args.version),
+            &format!("release {} {}", args.skill, version),
         ) {
             restore_registry_layout_best_effort(&paths, &registry_layout_backup);
             remove_registry_layout_backups_best_effort(&registry_layout_backup);
@@ -72,7 +76,7 @@ impl App {
                 "skill.release",
                 json!({
                     "skill": args.skill,
-                    "version": args.version,
+                    "version": version,
                     "tag": tag,
                     "request_id": request_id
                 }),
@@ -128,7 +132,7 @@ impl App {
         };
 
         Ok((
-            json!({"skill": args.skill, "version": args.version, "tag": tag, "state_commit": state_commit}),
+            json!({"skill": args.skill, "version": version, "tag": tag, "state_commit": state_commit}),
             meta,
         ))
     }

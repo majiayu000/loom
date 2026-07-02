@@ -292,8 +292,16 @@ fn command_surface_budget_tracks_read_surface_convergence() {
     assert!(output.status.success(), "skill help should pass");
     let stdout = String::from_utf8_lossy(&output.stdout);
     let skill = command_names_from_help(&stdout);
-    assert_eq!(skill.len(), 43, "skill command budget changed");
-    for removed in ["show", "resolve", "recommend"] {
+    assert_eq!(skill.len(), 40, "skill command budget changed");
+    for removed in [
+        "show",
+        "resolve",
+        "recommend",
+        "capture",
+        "save",
+        "snapshot",
+        "verify",
+    ] {
         assert!(
             !skill.contains(&removed.to_string()),
             "removed skill command still present: {removed}"
@@ -776,9 +784,7 @@ fn skill_help_describes_every_subcommand() {
         "Generate reviewable eval fixture diffs as a patch artifact",
         "Apply a reviewed skill patch artifact through validation gates",
         "Project a registry skill into a bound target",
-        "Capture live projection edits back to the source",
-        "Commit source changes for one skill",
-        "Create a version snapshot for one skill",
+        "Commit source changes from the registry or a live projection",
         "Tag a skill release",
         "Roll back a skill source to an earlier revision",
         "Diff two revisions of a skill source",
@@ -877,12 +883,14 @@ fn top_level_monitor_command_is_available() {
 fn risky_command_help_describes_selectors_and_repair_strategy() {
     for (args, expected) in [
         (
-            vec!["skill", "capture", "--help"],
+            vec!["skill", "commit", "--help"],
             vec![
                 "Registry skill name",
                 "Binding id",
                 "Projection instance id",
                 "Git commit message",
+                "--from-projection",
+                "--from-source",
             ],
         ),
         (

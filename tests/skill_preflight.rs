@@ -67,7 +67,14 @@ fn save_initial_skill(root: &Path, skill: &str) {
     write_clean_skill(root, skill);
     let (output, env) = run_loom(
         root,
-        &["skill", "save", skill, "--message", "initial skill"],
+        &[
+            "skill",
+            "commit",
+            skill,
+            "--message",
+            "initial skill",
+            "--from-source",
+        ],
     );
     assert_success(&output, &env);
 }
@@ -135,10 +142,10 @@ fn improve_reports_safe_drift_and_recommends_save() {
     assert_eq!(env["data"]["checks"]["lint"], json!("pass"));
     assert_eq!(env["data"]["checks"]["offline_eval"], json!("pass"));
     assert_eq!(env["data"]["mutation_allowed"], json!(true));
-    assert_eq!(env["data"]["recommendation"]["action"], json!("save"));
+    assert_eq!(env["data"]["recommendation"]["action"], json!("commit"));
     assert_eq!(
         env["data"]["recommendation"]["command"],
-        json!("loom skill save demo --preflight --message 'improve demo'")
+        json!("loom skill commit demo --from-source --preflight --message 'improve demo'")
     );
 }
 
@@ -368,8 +375,9 @@ fn save_preflight_commits_only_after_passing_gates() {
         root.path(),
         &[
             "skill",
-            "save",
+            "commit",
             "demo",
+            "--from-source",
             "--preflight",
             "--message",
             "preflight save",
@@ -396,7 +404,10 @@ fn save_preflight_blocks_failed_gate_before_staging_or_commit() {
     let head_before = git_stdout(root.path(), &["rev-parse", "HEAD"]);
     write_skill(root.path(), "demo", "---\nname: demo\n---\n# Demo\n");
 
-    let (output, env) = run_loom(root.path(), &["skill", "save", "demo", "--preflight"]);
+    let (output, env) = run_loom(
+        root.path(),
+        &["skill", "commit", "demo", "--preflight", "--from-source"],
+    );
 
     assert_failure(&output, &env);
     assert_eq!(env["error"]["code"], json!("POLICY_BLOCKED"));
@@ -484,8 +495,9 @@ fn release_preflight_rejects_baseline_that_resolves_to_head() {
         root.path(),
         &[
             "skill",
-            "save",
+            "commit",
             "demo",
+            "--from-source",
             "--preflight",
             "--message",
             "release candidate",
@@ -526,8 +538,9 @@ fn release_preflight_tags_after_passing_gates() {
         root.path(),
         &[
             "skill",
-            "save",
+            "commit",
             "demo",
+            "--from-source",
             "--preflight",
             "--message",
             "release candidate",

@@ -6,7 +6,7 @@ import type { RegistryOperationRecord } from "./client";
 function operation(overrides: Partial<RegistryOperationRecord> = {}): RegistryOperationRecord {
   return {
     op_id: "op-1",
-    intent: "skill.save",
+    intent: "skill.commit",
     status: "succeeded",
     ack: false,
     created_at: "2026-05-29T00:00:00Z",

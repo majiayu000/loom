@@ -737,10 +737,10 @@ export const api = {
   skillAdd: (body: SkillAddBody) => postJson("/api/v1/skills", body),
   skillImportObserved: (body: SkillImportObservedBody = {}) =>
     postJson("/api/v1/skills/import-observed", body),
-  skillSave: (name: string, body: SkillSaveBody = {}) =>
-    postJson(`/api/v1/skills/${encodeURIComponent(name)}/save`, body),
-  skillSnapshot: (name: string) =>
-    postJson(`/api/v1/skills/${encodeURIComponent(name)}/snapshot`, {}),
+  skillCommit: (name: string, body: SkillSaveBody = {}) =>
+    postJson(`/api/v1/skills/${encodeURIComponent(name)}/commit`, body),
+  skillReleaseAnchor: (name: string) =>
+    postJson(`/api/v1/skills/${encodeURIComponent(name)}/release-anchor`, {}),
   skillRelease: (name: string, body: SkillReleaseBody) =>
     postJson(`/api/v1/skills/${encodeURIComponent(name)}/release`, body),
   skillRollback: (name: string, body: SkillRollbackBody) =>
@@ -756,7 +756,7 @@ export const api = {
   skillUse: (name: string, body: UseSkillBody) =>
     postJson(`/api/v1/skills/${encodeURIComponent(name)}/use`, body),
   project: (body: ProjectBody) => postJson("/api/v1/projections/project", body),
-  capture: (body: CaptureBody) => postJson("/api/v1/projections/capture", body),
+  commitProjection: (body: CaptureBody) => postJson("/api/v1/projections/commit", body),
   orphanClean: (body: OrphanCleanBody) => postJson("/api/v1/orphans/clean", body),
 
   syncPush: () => postJson("/api/v1/sync/push", {}),

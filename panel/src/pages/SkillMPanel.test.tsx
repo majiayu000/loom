@@ -78,7 +78,7 @@ const panelData = vi.hoisted(() => ({
     ops: [
       {
         id: "op-ok",
-        kind: "skill.save",
+        kind: "skill.commit",
         skill: "docs",
         target: "codex",
         status: "ok" as const,
@@ -219,7 +219,7 @@ describe("SkillMPanel", () => {
     expect(screen.getByText("扫描观测目录")).toBeTruthy();
     expect(screen.getByText("4 个 skill")).toBeTruthy();
     expect(screen.queryByText("aiproxy-workflow-auth-debug, ask-claude, ask-gemini, code-review")).toBeNull();
-    expect(screen.queryByText("skill.save")).toBeNull();
+    expect(screen.queryByText("skill.commit")).toBeNull();
 
     await userEvent.click(screen.getByRole("button", { name: /审计历史/ }));
 

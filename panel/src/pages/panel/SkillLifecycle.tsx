@@ -4,7 +4,7 @@ import { api, type RegistryObservationEvent, type SkillDiffFile } from "../../li
 import { useMutation } from "../../lib/useMutation";
 
 export interface LifecycleEvent {
-  kind: "release" | "capture" | "save" | "snapshot" | "project" | "rollback";
+  kind: "release" | "commit" | "anchor" | "project" | "rollback";
   v: string;
   time: string;
   who: string;
@@ -13,28 +13,27 @@ export interface LifecycleEvent {
 
 const KIND_COLOR: Record<LifecycleEvent["kind"], string> = {
   release: "var(--accent)",
-  capture: "var(--pending)",
-  save: "var(--ink-2)",
-  snapshot: "var(--warn)",
+  commit: "var(--pending)",
+  anchor: "var(--warn)",
   project: "var(--ok)",
   rollback: "var(--err)",
 };
 
 const KIND_MAP: Record<string, LifecycleEvent["kind"]> = {
-  captured: "capture",
+  captured: "commit",
   projected: "project",
   rollback: "rollback",
-  monitor: "save",
-  snapshot: "snapshot",
+  monitor: "commit",
+  snapshot: "anchor",
   released: "release",
-  saved: "save",
-  file_changed: "save",
-  health_changed: "snapshot",
+  saved: "commit",
+  file_changed: "commit",
+  health_changed: "anchor",
 };
 
 export function mapObsToLifecycle(ev: RegistryObservationEvent): LifecycleEvent {
   return {
-    kind: KIND_MAP[ev.kind] ?? "capture",
+    kind: KIND_MAP[ev.kind] ?? "commit",
     v: ev.event_id.slice(0, 8),
     time: toRelative(ev.observed_at),
     who: ev.instance_id.slice(0, 8),
@@ -53,17 +52,17 @@ export function LifecycleActions({
 }) {
   const [version, setVersion] = useState("");
   const [rollbackRef, setRollbackRef] = useState("");
-  const save = useMutation();
-  const snapshot = useMutation();
+  const commit = useMutation();
+  const anchor = useMutation();
   const release = useMutation();
   const rollback = useMutation();
 
-  const runSave = () => {
-    save.run("skill save", () => api.skillSave(skillName), onMutation);
+  const runCommit = () => {
+    commit.run("skill commit", () => api.skillCommit(skillName), onMutation);
   };
 
-  const runSnapshot = () => {
-    snapshot.run("skill snapshot", () => api.skillSnapshot(skillName), onMutation);
+  const runAnchor = () => {
+    anchor.run("skill release --anchor", () => api.skillReleaseAnchor(skillName), onMutation);
   };
 
   const submitRelease = (event: FormEvent) => {
@@ -89,39 +88,39 @@ export function LifecycleActions({
     );
   };
 
-  const busy = save.busy || snapshot.busy || release.busy || rollback.busy;
+  const busy = commit.busy || anchor.busy || release.busy || rollback.busy;
   const disabled = readOnly || busy;
   const status =
-    save.error ??
-    snapshot.error ??
+    commit.error ??
+    anchor.error ??
     release.error ??
     rollback.error ??
-    save.success ??
-    snapshot.success ??
+    commit.success ??
+    anchor.success ??
     release.success ??
     rollback.success;
-  const hasError = Boolean(save.error ?? snapshot.error ?? release.error ?? rollback.error);
+  const hasError = Boolean(commit.error ?? anchor.error ?? release.error ?? rollback.error);
 
   return (
     <div className="card" style={{ padding: 12, margin: "14px 0" }}>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))", gap: 10 }}>
         <button
           className="btn ghost"
-          onClick={runSave}
+          onClick={runCommit}
           disabled={disabled}
           title={readOnly ? "registry offline" : undefined}
           style={fullWidthButtonStyle}
         >
-          {save.busy ? "saving..." : "Save"}
+          {commit.busy ? "committing..." : "Commit"}
         </button>
         <button
           className="btn ghost"
-          onClick={runSnapshot}
+          onClick={runAnchor}
           disabled={disabled}
           title={readOnly ? "registry offline" : undefined}
           style={fullWidthButtonStyle}
         >
-          {snapshot.busy ? "snapshotting..." : "Snapshot"}
+          {anchor.busy ? "anchoring..." : "Anchor"}
         </button>
         <form onSubmit={submitRelease} style={{ display: "flex", gap: 8, minWidth: 0 }}>
           <input
@@ -159,7 +158,7 @@ export function Lifecycle({ events, skillName }: { events: LifecycleEvent[]; ski
       <div style={{ padding: "18px 4px", fontSize: 12, color: "var(--ink-2)" }}>
         <div style={{ marginBottom: 6 }}>No lifecycle events yet.</div>
         <div className="mono" style={{ fontSize: 11, color: "var(--ink-3)" }}>
-          Run <span style={{ color: "var(--ink-1)" }}>loom capture {skillName}</span> to start the chain.
+          Run <span style={{ color: "var(--ink-1)" }}>loom skill commit {skillName}</span> to start the chain.
         </div>
       </div>
     );

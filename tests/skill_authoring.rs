@@ -630,7 +630,7 @@ fn apply_patch_resets_index_when_commit_hook_rejects_commit() {
         "demo",
         "---\nname: demo\ndescription: Use when agents need demo workflow checks for focused local tasks.\n---\n# Demo\n",
     );
-    let (output, saved) = run_loom(root.path(), &["skill", "save", "demo"]);
+    let (output, saved) = run_loom(root.path(), &["skill", "commit", "demo", "--from-source"]);
     assert!(output.status.success(), "seed save should pass: {saved}");
 
     let (output, generated) = run_loom(

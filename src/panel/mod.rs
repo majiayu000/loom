@@ -240,11 +240,11 @@ fn panel_router(state: PanelState) -> Router {
             post(registry_skill_trash_add),
         )
         .route(
-            "/api/v1/skills/{skill_name}/save",
+            "/api/v1/skills/{skill_name}/commit",
             post(registry_skill_save),
         )
         .route(
-            "/api/v1/skills/{skill_name}/snapshot",
+            "/api/v1/skills/{skill_name}/release-anchor",
             post(registry_skill_snapshot),
         )
         .route(
@@ -257,7 +257,7 @@ fn panel_router(state: PanelState) -> Router {
         )
         .route("/api/v1/projections", get(v1_registry_projections))
         .route("/api/v1/projections/project", post(registry_project))
-        .route("/api/v1/projections/capture", post(registry_capture))
+        .route("/api/v1/projections/commit", post(registry_capture))
         .route("/api/v1/orphans/clean", post(registry_orphan_clean))
         .route("/api/v1/ops", get(v1_registry_ops))
         .route("/api/v1/ops/diagnose", get(registry_ops_diagnose))

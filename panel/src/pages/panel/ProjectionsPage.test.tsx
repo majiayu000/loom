@@ -102,9 +102,9 @@ describe("ProjectionsPage filters", () => {
       materialized_path: "/tmp/hidden",
       health: "orphaned",
     });
-    const capture = vi.spyOn(api, "capture").mockResolvedValue({
+    const commitProjection = vi.spyOn(api, "commitProjection").mockResolvedValue({
       ok: true,
-      cmd: "skill.capture",
+      cmd: "skill.commit",
       request_id: "req-capture",
     });
 
@@ -124,10 +124,10 @@ describe("ProjectionsPage filters", () => {
     fireEvent.click(screen.getByRole("button", { name: "healthy" }));
     expect(screen.queryByText("/tmp/hidden")).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Capture" }));
+    fireEvent.click(screen.getByRole("button", { name: "Commit" }));
 
     await waitFor(() => {
-      expect(capture).toHaveBeenCalledWith({ instance: "inst-visible" });
+      expect(commitProjection).toHaveBeenCalledWith({ skill: "skill.writer", instance: "inst-visible" });
     });
   });
 });

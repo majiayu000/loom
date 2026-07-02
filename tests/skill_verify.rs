@@ -33,7 +33,10 @@ fn skill_verify_matches_after_save() {
     write_skill(root.path(), "demo", "# demo\n\nbody v1\n");
     assert!(save_skill(root.path(), "demo").0.status.success());
 
-    let (output, env) = run_loom(root.path(), &["skill", "verify", "demo"]);
+    let (output, env) = run_loom(
+        root.path(),
+        &["skill", "diagnose", "demo", "--check", "drift"],
+    );
     assert!(output.status.success(), "verify should succeed");
     assert_eq!(env["ok"], Value::Bool(true));
     assert_eq!(env["data"]["skill"], Value::String("demo".to_string()));
@@ -72,7 +75,10 @@ fn skill_verify_detects_drift_after_external_commit() {
     let external_commit = git_ok(root.path(), &["commit", "-m", "manual skill edit"]);
     assert_ne!(external_commit, saved_commit);
 
-    let (output, env) = run_loom(root.path(), &["skill", "verify", "demo"]);
+    let (output, env) = run_loom(
+        root.path(),
+        &["skill", "diagnose", "demo", "--check", "drift"],
+    );
     assert!(output.status.success(), "verify should still succeed");
     assert_eq!(env["data"]["matches"], Value::Bool(false));
     assert_eq!(
@@ -103,7 +109,10 @@ fn skill_verify_detects_drift_after_external_edit() {
     )
     .expect("overwrite skill body");
 
-    let (output, env) = run_loom(root.path(), &["skill", "verify", "demo"]);
+    let (output, env) = run_loom(
+        root.path(),
+        &["skill", "diagnose", "demo", "--check", "drift"],
+    );
     assert!(output.status.success(), "verify should still succeed");
     assert_eq!(env["data"]["matches"], Value::Bool(false));
     let drifted = env["data"]["drifted_paths"]
@@ -134,7 +143,10 @@ fn skill_verify_detects_untracked_file_drift() {
     )
     .expect("write untracked note");
 
-    let (output, env) = run_loom(root.path(), &["skill", "verify", "demo"]);
+    let (output, env) = run_loom(
+        root.path(),
+        &["skill", "diagnose", "demo", "--check", "drift"],
+    );
     assert!(output.status.success());
     assert_eq!(env["data"]["matches"], Value::Bool(false));
     let drifted = env["data"]["drifted_paths"]
@@ -151,7 +163,10 @@ fn skill_verify_detects_untracked_file_drift() {
 #[test]
 fn skill_verify_reports_skill_not_found() {
     let root = TestDir::new("skill-verify-missing");
-    let (output, env) = run_loom(root.path(), &["skill", "verify", "ghost"]);
+    let (output, env) = run_loom(
+        root.path(),
+        &["skill", "diagnose", "ghost", "--check", "drift"],
+    );
     assert!(
         !output.status.success(),
         "verify on missing skill should fail"

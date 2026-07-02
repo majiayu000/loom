@@ -324,7 +324,14 @@ fn security_diff_reports_new_risky_script_patterns() {
     );
     let (output, env) = run_loom(
         root.path(),
-        &["skill", "save", "demo", "--message", "add risky script"],
+        &[
+            "skill",
+            "commit",
+            "demo",
+            "--message",
+            "add risky script",
+            "--from-source",
+        ],
     );
     assert!(output.status.success(), "save should pass: {env}");
 
@@ -354,7 +361,14 @@ fn security_diff_reports_new_risky_script_patterns() {
     );
     let (output, env) = run_loom(
         root.path(),
-        &["skill", "save", "demo", "--message", "comment only"],
+        &[
+            "skill",
+            "commit",
+            "demo",
+            "--message",
+            "comment only",
+            "--from-source",
+        ],
     );
     assert!(output.status.success(), "save should pass: {env}");
 

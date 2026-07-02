@@ -8,10 +8,9 @@ use super::helpers::{
     agent_kind_as_str, map_arg, map_git, map_io, projection_method_as_str, shell_arg,
     validate_skill_name,
 };
-use super::projections::resolve_capture_projection;
 use super::skill_safety::evaluate_skill_safety_with_policy;
 use super::{App, CommandFailure};
-use crate::cli::{AgentPreflightArgs, CaptureArgs, OrphanCleanArgs, ProjectArgs, RollbackArgs};
+use crate::cli::{AgentPreflightArgs, OrphanCleanArgs, ProjectArgs, RollbackArgs};
 use crate::envelope::Meta;
 use crate::gitops;
 use planning_helpers::{
@@ -337,72 +336,6 @@ impl App {
                 "safety": safety_report,
                 "risks": risks,
                 "next_commands": [next_command],
-            }),
-            Meta::default(),
-        ))
-    }
-
-    pub fn cmd_capture_plan(
-        &self,
-        args: &CaptureArgs,
-    ) -> std::result::Result<(Value, Meta), CommandFailure> {
-        let snapshot = self.require_registry_snapshot()?;
-        let mut risks = Vec::new();
-        let projection = match resolve_capture_projection(&snapshot, args) {
-            Ok(projection) => Some(projection),
-            Err(err) => {
-                risks.push(risk("error", err.code.as_str(), err.message));
-                None
-            }
-        };
-
-        if let Some(projection) = projection.as_ref() {
-            if !self.ctx.skill_path(&projection.skill_id).exists() {
-                risks.push(risk(
-                    "error",
-                    "SKILL_NOT_FOUND",
-                    format!("skill '{}' not found", projection.skill_id),
-                ));
-            }
-            let live_path = Path::new(&projection.materialized_path);
-            if !live_path.exists() {
-                risks.push(risk(
-                    "error",
-                    "LIVE_PATH_MISSING",
-                    format!("projection path '{}' does not exist", live_path.display()),
-                ));
-            }
-            if projection.method != "symlink" {
-                risks.push(risk(
-                    "warning",
-                    "SOURCE_REPLACE",
-                    format!(
-                        "capture from '{}' would replace the registry source copy",
-                        projection.instance_id
-                    ),
-                ));
-            }
-        }
-        let target_paths = projection
-            .iter()
-            .map(|p| p.materialized_path.clone())
-            .collect::<Vec<_>>();
-
-        Ok((
-            json!({
-                "dry_run": true,
-                "operation": "skill.capture",
-                "safe_to_run": is_safe(&risks),
-                "status": status_for(&risks, usize::from(projection.is_some())),
-                "required_selectors": {
-                    "skill": args.skill,
-                    "binding_id": args.binding,
-                    "instance_id": args.instance,
-                },
-                "projection": projection,
-                "target_paths": target_paths,
-                "will_mutate": ["skill_source", "registry_state", "registry_ops", "git_history"],
-                "risks": risks,
             }),
             Meta::default(),
         ))

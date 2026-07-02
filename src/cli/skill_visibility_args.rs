@@ -1,9 +1,16 @@
 use std::path::PathBuf;
 
-use clap::Args;
+use clap::{Args, ValueEnum};
 use serde::Serialize;
 
 use super::AgentKind;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ValueEnum)]
+#[serde(rename_all = "snake_case")]
+pub enum SkillDiagnoseCheck {
+    All,
+    Drift,
+}
 
 #[derive(Debug, Clone, Args, Serialize)]
 pub struct SkillDiagnoseArgs {
@@ -13,6 +20,10 @@ pub struct SkillDiagnoseArgs {
     /// Include agent-specific visibility checks. Currently supports codex.
     #[arg(long, value_enum)]
     pub agent: Option<AgentKind>,
+
+    /// Restrict diagnosis to one check family.
+    #[arg(long, value_enum, default_value_t = SkillDiagnoseCheck::All)]
+    pub check: SkillDiagnoseCheck,
 }
 
 #[derive(Debug, Clone, Args, Serialize)]

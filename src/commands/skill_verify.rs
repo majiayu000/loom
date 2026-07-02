@@ -3,58 +3,53 @@ use std::fs;
 use anyhow::Result;
 use serde_json::json;
 
-use crate::cli::SkillOnlyArgs;
 use crate::envelope::Meta;
 use crate::gitops::{run_git, run_git_allow_failure};
 use crate::state::AppContext;
 use crate::types::ErrorCode;
 
-use super::helpers::{map_arg, map_git, validate_skill_name};
-use super::{App, CommandFailure};
+use super::CommandFailure;
+use super::helpers::map_git;
 
 const REGISTRY_OPERATIONS_LOG: &str = "state/registry/ops/operations.jsonl";
 
-impl App {
-    pub fn cmd_verify(
-        &self,
-        args: &SkillOnlyArgs,
-    ) -> std::result::Result<(serde_json::Value, Meta), CommandFailure> {
-        validate_skill_name(&args.skill).map_err(map_arg)?;
-        let skill_rel = format!("skills/{}", args.skill);
-        let skill_path = self.ctx.root.join(&skill_rel);
-        if !skill_path.exists() {
-            return Err(CommandFailure::new(
-                ErrorCode::SkillNotFound,
-                format!("skill '{}' not found", args.skill),
-            ));
-        }
-
-        let head_tree_oid = head_tree_oid_for_path(&self.ctx, &skill_rel).map_err(map_git)?;
-        let last_source_commit = last_saved_commit_for_skill(&self.ctx, &args.skill)
-            .and_then(|commit| {
-                if commit.is_some() {
-                    Ok(commit)
-                } else {
-                    last_commit_for_path(&self.ctx, &skill_rel)
-                }
-            })
-            .map_err(map_git)?;
-        let drifted_paths =
-            drifted_paths_under(&self.ctx, &skill_rel, last_source_commit.as_deref())
-                .map_err(map_git)?;
-        let matches = drifted_paths.is_empty() && head_tree_oid.is_some();
-
-        Ok((
-            json!({
-                "skill": args.skill,
-                "matches": matches,
-                "head_tree_oid": head_tree_oid,
-                "last_source_commit": last_source_commit,
-                "drifted_paths": drifted_paths,
-            }),
-            Meta::default(),
-        ))
+pub(crate) fn skill_drift_report(
+    ctx: &AppContext,
+    skill: &str,
+) -> std::result::Result<(serde_json::Value, Meta), CommandFailure> {
+    let skill_rel = format!("skills/{skill}");
+    let skill_path = ctx.root.join(&skill_rel);
+    if !skill_path.exists() {
+        return Err(CommandFailure::new(
+            ErrorCode::SkillNotFound,
+            format!("skill '{skill}' not found"),
+        ));
     }
+
+    let head_tree_oid = head_tree_oid_for_path(ctx, &skill_rel).map_err(map_git)?;
+    let last_source_commit = last_saved_commit_for_skill(ctx, skill)
+        .and_then(|commit| {
+            if commit.is_some() {
+                Ok(commit)
+            } else {
+                last_commit_for_path(ctx, &skill_rel)
+            }
+        })
+        .map_err(map_git)?;
+    let drifted_paths =
+        drifted_paths_under(ctx, &skill_rel, last_source_commit.as_deref()).map_err(map_git)?;
+    let matches = drifted_paths.is_empty() && head_tree_oid.is_some();
+
+    Ok((
+        json!({
+            "skill": skill,
+            "matches": matches,
+            "head_tree_oid": head_tree_oid,
+            "last_source_commit": last_source_commit,
+            "drifted_paths": drifted_paths,
+        }),
+        Meta::default(),
+    ))
 }
 
 pub(crate) fn last_saved_commit_for_skill(ctx: &AppContext, skill: &str) -> Result<Option<String>> {

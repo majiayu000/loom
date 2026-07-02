@@ -99,8 +99,8 @@ loom --json --root ~/loom-registry skill project my-skill --binding bind_claude_
 # 或显式选择另一个 target
 loom --json --root ~/loom-registry skill project my-skill --binding bind_claude_project_a --target target_claude_claude_work_skills --method copy
 
-# 编辑 live 文件后，按实例回写
-loom --json --root ~/loom-registry skill capture my-skill --instance <instance-id> --message "capture live edits"
+# 编辑 live 文件后，提交投影侧修改
+loom --json --root ~/loom-registry skill commit my-skill --from-projection --instance <instance-id> --message "capture live edits"
 ```
 
 ## 6. 当前命令面
@@ -123,12 +123,11 @@ loom --json --root ~/loom-registry skill capture my-skill --instance <instance-i
 - `skill inspect [--brief]`
 - `skill search [--for-task] [--explain]`
 - `skill project`
-- `skill capture`
-- `skill save`
-- `skill snapshot`
-- `skill release`
+- `skill commit`
+- `skill release [version|--anchor]`
 - `skill rollback`
 - `skill diff`
+- `skill diagnose [--check drift]`
 
 ### 6.4 sync
 

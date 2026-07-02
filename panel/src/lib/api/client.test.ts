@@ -64,13 +64,13 @@ describe("api v1 routes", () => {
     await api.bindingRemove("binding-1");
     await api.skillAdd({ source: "/tmp/source", name: "demo" });
     await api.skillImportObserved();
-    await api.skillSave("demo", { message: "save demo" });
-    await api.skillSnapshot("demo");
+    await api.skillCommit("demo", { message: "save demo" });
+    await api.skillReleaseAnchor("demo");
     await api.skillRelease("demo", { version: "v1" });
     await api.skillRollback("demo", { to: "HEAD~1" });
     await api.skillUse("demo", { agents: ["claude"], apply: false });
     await api.project({ skill: "demo", binding: "binding-1", target: "target-1", method: "symlink" });
-    await api.capture({ instance: "inst-1" });
+    await api.commitProjection({ instance: "inst-1" });
     await api.orphanClean({ delete_live_paths: false });
     await api.opsRetry();
     await api.opsPurge();
@@ -88,13 +88,13 @@ describe("api v1 routes", () => {
       "/api/v1/bindings/binding-1/remove",
       "/api/v1/skills",
       "/api/v1/skills/import-observed",
-      "/api/v1/skills/demo/save",
-      "/api/v1/skills/demo/snapshot",
+      "/api/v1/skills/demo/commit",
+      "/api/v1/skills/demo/release-anchor",
       "/api/v1/skills/demo/release",
       "/api/v1/skills/demo/rollback",
       "/api/v1/skills/demo/use",
       "/api/v1/projections/project",
-      "/api/v1/projections/capture",
+      "/api/v1/projections/commit",
       "/api/v1/orphans/clean",
       "/api/v1/ops/retry",
       "/api/v1/ops/purge",

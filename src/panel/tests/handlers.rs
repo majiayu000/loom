@@ -242,19 +242,19 @@ async fn v1_registry_ops_returns_activity_summary_fields() {
 }
 
 #[tokio::test]
-async fn v1_registry_ops_includes_snapshot_history_audit_without_registry_op_id() {
+async fn v1_registry_ops_includes_release_anchor_history_audit_without_registry_op_id() {
     let (root, state) = make_test_state();
     git_ok(&root, &["init"]);
     let paths = RegistryStatePaths::from_app_context(state.ctx.as_ref());
     paths.ensure_layout().expect("ensure registry layout");
     crate::gitops::append_history_audit_event(
         state.ctx.as_ref(),
-        "skill.snapshot",
+        "skill.release",
         json!({
             "skill": "demo-skill",
             "tag": "snapshot/demo-skill/20260518T000000Z-deadbee"
         }),
-        "req-snapshot",
+        "req-anchor",
     )
     .expect("append history audit");
 
@@ -274,9 +274,9 @@ async fn v1_registry_ops_includes_snapshot_history_audit_without_registry_op_id(
     assert_eq!(op["op_id"], Value::Null);
     assert!(op["audit_id"].as_str().is_some());
     assert_eq!(op["source"], json!("loom_history"));
-    assert_eq!(op["intent"], json!("skill.snapshot"));
+    assert_eq!(op["intent"], json!("skill.release"));
     assert_eq!(op["status"], json!("succeeded"));
-    assert_eq!(op["request_id"], json!("req-snapshot"));
+    assert_eq!(op["request_id"], json!("req-anchor"));
     assert_eq!(op["skill"], json!("demo-skill"));
     assert!(
         std::fs::read_to_string(paths.operations_file)

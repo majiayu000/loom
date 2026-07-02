@@ -4,7 +4,7 @@ use std::path::Path;
 
 use serde_json::{Value, json};
 
-use crate::cli::{AgentKind, SkillDiagnoseArgs, SkillOnlyArgs};
+use crate::cli::{AgentKind, SkillDiagnoseArgs, SkillDiagnoseCheck, SkillOnlyArgs};
 use crate::envelope::Meta;
 use crate::state::AppContext;
 use crate::state_model::{RegistryProjectionInstance, RegistrySnapshot, RegistryStatePaths};
@@ -40,6 +40,9 @@ impl App {
                 "skill diagnose --agent currently supports only codex",
             ));
         }
+        if args.check() == SkillDiagnoseCheck::Drift {
+            return super::skill_verify::skill_drift_report(&self.ctx, skill);
+        }
         let paths = RegistryStatePaths::from_app_context(&self.ctx);
         let snapshot = paths.maybe_load_snapshot().map_err(map_registry_state)?;
         let (mut data, meta) = build_skill_diagnosis(
@@ -58,6 +61,7 @@ impl App {
 pub trait SkillDiagnoseRequest {
     fn skill(&self) -> &str;
     fn agent(&self) -> Option<AgentKind>;
+    fn check(&self) -> SkillDiagnoseCheck;
 }
 
 impl SkillDiagnoseRequest for SkillDiagnoseArgs {
@@ -68,6 +72,10 @@ impl SkillDiagnoseRequest for SkillDiagnoseArgs {
     fn agent(&self) -> Option<AgentKind> {
         self.agent
     }
+
+    fn check(&self) -> SkillDiagnoseCheck {
+        self.check
+    }
 }
 
 impl SkillDiagnoseRequest for SkillOnlyArgs {
@@ -77,6 +85,10 @@ impl SkillDiagnoseRequest for SkillOnlyArgs {
 
     fn agent(&self) -> Option<AgentKind> {
         None
+    }
+
+    fn check(&self) -> SkillDiagnoseCheck {
+        SkillDiagnoseCheck::All
     }
 }
 
@@ -440,7 +452,7 @@ fn add_git_checks(ctx: &AppContext, skill: &str, source_exists: bool, checks: &m
             } else {
                 "source skill is not tracked at HEAD"
             },
-            &format!("run loom skill save {skill}"),
+            &format!("run loom skill commit {skill} --from-source"),
             json!({"head_tree_oid": head_tree}),
         )),
         Err(err) => checks.push(check(
@@ -488,7 +500,7 @@ fn add_git_checks(ctx: &AppContext, skill: &str, source_exists: bool, checks: &m
         } else {
             "source has unsaved drift"
         },
-        &format!("run loom skill save {skill} or inspect loom skill diff"),
+        &format!("run loom skill commit {skill} --from-source or inspect loom skill diff"),
         json!({
             "last_source_commit": last_commit,
             "drifted_path_count": drifted_total,

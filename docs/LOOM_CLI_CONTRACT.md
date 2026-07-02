@@ -991,16 +991,10 @@ Rules:
 4. before mutating target directories, the command evaluates unified safety using trust metadata and the binding's `policy_profile`
 5. if trust state or the selected profile blocks projection, the command fails with `POLICY_BLOCKED` and must not create or replace the live skill directory
 
-### 11.5 `skill capture`
+### 11.5 `skill commit`
 
 ```bash
-loom --json --root <root> skill capture <skill-id> --binding <binding-id>
-```
-
-Optional disambiguating form:
-
-```bash
-loom --json --root <root> skill capture --instance <instance-id>
+loom --json --root <root> skill commit <skill-id> [--message <msg>] [--from-projection | --from-source] [--binding <binding-id>] [--instance <instance-id>] [--preflight]
 ```
 
 Write command.
@@ -1009,47 +1003,24 @@ Success response:
 
 ```json
 {
-  "capture": {
-    "skill_id": "loom",
-    "binding_id": "bind_claude_project_a",
-    "instance_id": "inst_loom_bind_claude_project_a",
-    "commit": "abc123"
-  }
+  "skill": "loom",
+  "direction": "source",
+  "commit": "abc123",
+  "noop": false
 }
 ```
 
 Rules:
 
-1. capture is always explicit
-2. capture must fail if drift cannot be reconciled safely
+1. exactly one dirty side is selected automatically
+2. dirty source plus dirty projection fails with `COMMIT_DIRECTION_AMBIGUOUS`
+3. use `--from-source` or `--from-projection` to resolve ambiguity
+4. neither dirty side returns `noop: true`
 
-### 11.6 `skill save`
-
-```bash
-loom --json --root <root> skill save <skill-id> [--message <msg>] [--preflight]
-```
-
-Acts on canonical source only.
-
-Rules:
-
-1. without `--preflight`, save preserves the existing behavior
-2. with `--preflight`, Loom runs the same report as `skill improve` before staging or committing
-3. failed gates return `POLICY_BLOCKED` with the full report in `error.details.report`
-4. a passing preflight proceeds through the existing save, audit, rollback, and autosync path
-
-### 11.7 `skill snapshot`
+### 11.6 `skill release`
 
 ```bash
-loom --json --root <root> skill snapshot <skill-id>
-```
-
-Acts on canonical source only.
-
-### 11.8 `skill release`
-
-```bash
-loom --json --root <root> skill release <skill-id> <version> [--preflight --baseline <ref>]
+loom --json --root <root> skill release <skill-id> [<version> | --anchor] [--preflight --baseline <ref>]
 ```
 
 Acts on canonical source only.
@@ -1295,8 +1266,8 @@ Examples:
 4. `skill import-observed`
 5. `skill monitor-observed`
 6. `skill project`
-7. `skill capture`
-8. `skill save`
+7. `skill commit`
+8. `skill release`
 9. `sync push`
 
 Requirements:
@@ -1312,8 +1283,8 @@ Recommended agent-safe sequence:
 loom --json --root "$ROOT" workspace binding list
 loom --json --root "$ROOT" target list
 loom --json --root "$ROOT" skill project model-onboarding --binding bind_claude_project_a
-loom --json --root "$ROOT" skill capture model-onboarding --binding bind_claude_project_a
-loom --json --root "$ROOT" skill snapshot model-onboarding
+loom --json --root "$ROOT" skill commit model-onboarding --from-projection --binding bind_claude_project_a
+loom --json --root "$ROOT" skill release model-onboarding --anchor
 ```
 
 Why this is safe:

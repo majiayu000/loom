@@ -107,8 +107,9 @@ fn skill_capture_copies_live_projection_back_into_source_and_commits() {
         root.path(),
         &[
             "skill",
-            "capture",
+            "commit",
             "model-onboarding",
+            "--from-projection",
             "--binding",
             "bind_claude_project_a",
         ],
@@ -228,8 +229,9 @@ fn skill_capture_rejects_when_source_changed_since_projection() {
         root.path(),
         &[
             "skill",
-            "capture",
+            "commit",
             "model-onboarding",
+            "--from-projection",
             "--binding",
             "bind_claude_project_a",
         ],
@@ -312,8 +314,9 @@ fn skill_capture_rolls_back_source_after_post_replace_failure() {
         &[("LOOM_FAULT_INJECT", "skill_capture_after_source_replace")],
         &[
             "skill",
-            "capture",
+            "commit",
             "model-onboarding",
+            "--from-projection",
             "--binding",
             "bind_claude_project_a",
         ],
@@ -410,8 +413,9 @@ fn skill_capture_rollback_preserves_preexisting_staged_source_changes() {
         &[("LOOM_FAULT_INJECT", "skill_capture_after_source_replace")],
         &[
             "skill",
-            "capture",
+            "commit",
             "model-onboarding",
+            "--from-projection",
             "--binding",
             "bind_claude_project_a",
         ],
@@ -443,7 +447,7 @@ fn skill_capture_rollback_preserves_preexisting_staged_source_changes() {
 #[test]
 fn skill_capture_requires_explicit_selector() {
     let root = TestDir::new("registry-capture-selector");
-    let (output, env) = run_loom(root.path(), &["skill", "capture"]);
+    let (output, env) = run_loom(root.path(), &["skill", "commit"]);
     assert!(!output.status.success(), "capture unexpectedly succeeded");
     assert_eq!(env["ok"], Value::Bool(false));
     assert_eq!(
@@ -515,8 +519,9 @@ fn skill_capture_rolls_back_operation_log_after_append_failure() {
         &[("LOOM_FAULT_INJECT", "record_v3_operation_after_append")],
         &[
             "skill",
-            "capture",
+            "commit",
             "model-onboarding",
+            "--from-projection",
             "--binding",
             "bind_claude_project_a",
         ],
@@ -606,8 +611,9 @@ fn skill_capture_reports_source_restore_rollback_failure() {
         ],
         &[
             "skill",
-            "capture",
+            "commit",
             "model-onboarding",
+            "--from-projection",
             "--binding",
             "bind_claude_project_a",
         ],

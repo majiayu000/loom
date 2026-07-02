@@ -90,7 +90,7 @@ fn skill_save_records_registry_operation_and_op_id() {
     let root = TestDir::new("registry-skill-save-op-id");
     write_skill(root.path(), "demo", "# demo\n\nv1\n");
 
-    let (output, env) = run_loom(root.path(), &["skill", "save", "demo"]);
+    let (output, env) = run_loom(root.path(), &["skill", "commit", "demo", "--from-source"]);
 
     assert!(
         output.status.success(),
@@ -115,7 +115,7 @@ fn skill_save_rolls_back_registry_operation_after_audit_failure() {
     let (output, env) = run_loom_with_env(
         root.path(),
         &[("LOOM_FAULT_INJECT", "skill_save_after_operation")],
-        &["skill", "save", "demo"],
+        &["skill", "commit", "demo", "--from-source"],
     );
 
     assert!(!output.status.success(), "save unexpectedly succeeded");
@@ -134,7 +134,7 @@ fn skill_save_rolls_back_registry_operation_after_audit_failure() {
 fn skill_save_restores_legacy_v3_layout_after_audit_failure() {
     let root = TestDir::new("registry-skill-save-legacy-v3-audit-rollback");
     write_skill(root.path(), "demo", "# demo\n\nv1\n");
-    let (initial_save, _) = run_loom(root.path(), &["skill", "save", "demo"]);
+    let (initial_save, _) = run_loom(root.path(), &["skill", "commit", "demo", "--from-source"]);
     assert!(
         initial_save.status.success(),
         "initial save failed: stderr={} stdout={}",
@@ -179,7 +179,7 @@ fn skill_save_restores_legacy_v3_layout_after_audit_failure() {
     let (output, env) = run_loom_with_env(
         root.path(),
         &[("LOOM_FAULT_INJECT", "skill_save_after_operation")],
-        &["skill", "save", "demo"],
+        &["skill", "commit", "demo", "--from-source"],
     );
 
     assert!(!output.status.success(), "save unexpectedly succeeded");
@@ -208,7 +208,7 @@ fn skill_save_restores_legacy_v3_layout_after_audit_failure() {
 fn skill_save_restores_legacy_v3_layout_after_layout_failure() {
     let root = TestDir::new("registry-skill-save-legacy-v3-layout-rollback");
     write_skill(root.path(), "demo", "# demo\n\nv1\n");
-    let (initial_save, _) = run_loom(root.path(), &["skill", "save", "demo"]);
+    let (initial_save, _) = run_loom(root.path(), &["skill", "commit", "demo", "--from-source"]);
     assert!(
         initial_save.status.success(),
         "initial save failed: stderr={} stdout={}",
@@ -245,7 +245,7 @@ fn skill_save_restores_legacy_v3_layout_after_layout_failure() {
     let head_before = git_ok(root.path(), &["rev-parse", "HEAD"]);
 
     write_skill(root.path(), "demo", "# demo\n\nv2\n");
-    let (output, env) = run_loom(root.path(), &["skill", "save", "demo"]);
+    let (output, env) = run_loom(root.path(), &["skill", "commit", "demo", "--from-source"]);
 
     assert!(!output.status.success(), "save unexpectedly succeeded");
     assert_eq!(env["ok"], Value::Bool(false));
@@ -270,13 +270,13 @@ fn skill_snapshot_without_registry_operation_does_not_return_op_id() {
     let root = TestDir::new("registry-skill-snapshot-no-fake-op-id");
     write_skill(root.path(), "demo", "# demo\n\nv1\n");
     assert!(
-        run_loom(root.path(), &["skill", "save", "demo"])
+        run_loom(root.path(), &["skill", "commit", "demo", "--from-source"])
             .0
             .status
             .success()
     );
 
-    let (output, env) = run_loom(root.path(), &["skill", "snapshot", "demo"]);
+    let (output, env) = run_loom(root.path(), &["skill", "release", "demo", "--anchor"]);
 
     assert!(
         output.status.success(),

@@ -2,11 +2,45 @@ use clap::Args;
 use serde::Serialize;
 
 #[derive(Debug, Clone, Args, Serialize)]
+pub struct SkillCommitArgs {
+    /// Registry skill name.
+    pub skill: String,
+
+    /// Git commit message for the source revision.
+    #[arg(long)]
+    pub message: Option<String>,
+
+    /// Force capture semantics from one live projection.
+    #[arg(long, conflicts_with = "from_source")]
+    pub from_projection: bool,
+
+    /// Force save semantics from the registry source tree.
+    #[arg(long, conflicts_with = "from_projection")]
+    pub from_source: bool,
+
+    /// Binding id used to disambiguate projection capture.
+    #[arg(long)]
+    pub binding: Option<String>,
+
+    /// Projection instance id used to disambiguate projection capture.
+    #[arg(long)]
+    pub instance: Option<String>,
+
+    /// Run the skill improvement preflight before committing source-side edits.
+    #[arg(long)]
+    pub preflight: bool,
+}
+
+#[derive(Debug, Clone, Args, Serialize)]
 pub struct ReleaseArgs {
     /// Registry skill name.
     pub skill: String,
-    /// Release tag or version label to create.
-    pub version: String,
+    /// Release tag or version label to create. Omit with --anchor for an unnamed anchor.
+    pub version: Option<String>,
+
+    /// Create an unnamed anchor tag instead of a versioned release tag.
+    #[arg(long, conflicts_with = "version")]
+    pub anchor: bool,
 
     /// Run the skill improvement preflight before creating the release tag.
     #[arg(long)]

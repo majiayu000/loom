@@ -47,7 +47,7 @@ fn skill_history_lists_commits_refs_diff_stats_and_operations() {
     write_skill(root.path(), "demo", "# Demo\n\nv2\n");
     assert_success(&save_skill(root.path(), "demo").0, "save v2");
     assert_success(
-        &run_loom(root.path(), &["skill", "snapshot", "demo"]).0,
+        &run_loom(root.path(), &["skill", "release", "demo", "--anchor"]).0,
         "snapshot",
     );
     assert_success(

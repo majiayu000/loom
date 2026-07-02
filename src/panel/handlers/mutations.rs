@@ -7,10 +7,9 @@ use axum::{
 };
 
 use crate::cli::{
-    AddArgs, CaptureArgs, Command, ImportObservedArgs, OrphanCleanArgs, ProjectArgs,
-    ProjectionMethod, SkillOrphanCommand, SkillTrashCommand, TargetCommand, TargetOwnership,
-    TrashAddArgs, TrashPurgeArgs, TrashRestoreArgs, UseArgs, WorkspaceBindingCommand,
-    WorkspaceCommand,
+    AddArgs, Command, ImportObservedArgs, OrphanCleanArgs, ProjectArgs, ProjectionMethod,
+    SkillOrphanCommand, SkillTrashCommand, TargetCommand, TargetOwnership, TrashAddArgs,
+    TrashPurgeArgs, TrashRestoreArgs, UseArgs, WorkspaceBindingCommand, WorkspaceCommand,
 };
 
 use super::super::auth::{ensure_mutation_authorized, error_envelope, run_panel_command};
@@ -323,17 +322,21 @@ pub(in crate::panel) async fn registry_skill_save(
     State(state): State<PanelState>,
     Json(req): Json<SkillSaveRequest>,
 ) -> (StatusCode, Json<serde_json::Value>) {
-    if let Some(response) = ensure_mutation_authorized(&state, peer, &headers, "skill.save") {
+    if let Some(response) = ensure_mutation_authorized(&state, peer, &headers, "skill.commit") {
         return response;
     }
     run_panel_command(
         &state,
-        "skill.save",
+        "skill.commit",
         StatusCode::OK,
         Command::Skill {
-            command: crate::cli::SkillCommand::Save(crate::cli::SaveArgs {
+            command: crate::cli::SkillCommand::Commit(crate::cli::SkillCommitArgs {
                 skill: skill_name,
                 message: req.message,
+                from_projection: false,
+                from_source: true,
+                binding: None,
+                instance: None,
                 preflight: false,
             }),
         },
@@ -346,16 +349,20 @@ pub(in crate::panel) async fn registry_skill_snapshot(
     headers: HeaderMap,
     State(state): State<PanelState>,
 ) -> (StatusCode, Json<serde_json::Value>) {
-    if let Some(response) = ensure_mutation_authorized(&state, peer, &headers, "skill.snapshot") {
+    if let Some(response) = ensure_mutation_authorized(&state, peer, &headers, "skill.release") {
         return response;
     }
     run_panel_command(
         &state,
-        "skill.snapshot",
+        "skill.release",
         StatusCode::OK,
         Command::Skill {
-            command: crate::cli::SkillCommand::Snapshot(crate::cli::SkillOnlyArgs {
+            command: crate::cli::SkillCommand::Release(crate::cli::ReleaseArgs {
                 skill: skill_name,
+                version: None,
+                anchor: true,
+                preflight: false,
+                baseline: None,
             }),
         },
     )
@@ -378,7 +385,8 @@ pub(in crate::panel) async fn registry_skill_release(
         Command::Skill {
             command: crate::cli::SkillCommand::Release(crate::cli::ReleaseArgs {
                 skill: skill_name,
-                version: req.version,
+                version: Some(req.version),
+                anchor: false,
                 preflight: false,
                 baseline: None,
             }),
@@ -417,20 +425,22 @@ pub(in crate::panel) async fn registry_capture(
     State(state): State<PanelState>,
     Json(req): Json<CaptureRequest>,
 ) -> (StatusCode, Json<serde_json::Value>) {
-    if let Some(response) = ensure_mutation_authorized(&state, peer, &headers, "skill.capture") {
+    if let Some(response) = ensure_mutation_authorized(&state, peer, &headers, "skill.commit") {
         return response;
     }
     run_panel_command(
         &state,
-        "skill.capture",
+        "skill.commit",
         StatusCode::OK,
         Command::Skill {
-            command: crate::cli::SkillCommand::Capture(CaptureArgs {
-                skill: req.skill,
+            command: crate::cli::SkillCommand::Commit(crate::cli::SkillCommitArgs {
+                skill: req.skill.unwrap_or_default(),
                 binding: req.binding,
                 instance: req.instance,
                 message: req.message,
-                dry_run: false,
+                from_projection: true,
+                from_source: false,
+                preflight: false,
             }),
         },
     )

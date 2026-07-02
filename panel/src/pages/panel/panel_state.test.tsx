@@ -378,15 +378,15 @@ test("BindingsPage exposes orphan cleanup from live projection data", async () =
 });
 
 test("ProjectionsPage can capture and re-project a selected projection", async () => {
-  const originalCapture = api.capture;
+  const originalCommitProjection = api.commitProjection;
   const originalProject = api.project;
   const captureCalls: Array<{ instance?: string }> = [];
   const projectCalls: Array<{ skill: string; binding: string; target?: string; method?: string }> = [];
   let mutations = 0;
 
-  api.capture = async (body) => {
+  api.commitProjection = async (body) => {
     captureCalls.push(body);
-    return { ok: true, cmd: "skill.capture", request_id: "req-capture", data: {} };
+    return { ok: true, cmd: "skill.commit", request_id: "req-capture", data: {} };
   };
   api.project = async (body) => {
     projectCalls.push(body);
@@ -420,7 +420,7 @@ test("ProjectionsPage can capture and re-project a selected projection", async (
     });
 
     await act(async () => {
-      buttonByLabel(renderer!, "Capture").props.onClick();
+      buttonByLabel(renderer!, "Commit").props.onClick();
       await Promise.resolve();
       await Promise.resolve();
     });
@@ -430,13 +430,13 @@ test("ProjectionsPage can capture and re-project a selected projection", async (
       await Promise.resolve();
     });
 
-    expect(captureCalls).toEqual([{ instance: "inst-demo" }]);
+    expect(captureCalls).toEqual([{ skill: "skill.writer", instance: "inst-demo" }]);
     expect(projectCalls).toEqual([
       { skill: "skill.writer", binding: "binding-1", target: "target-1", method: "copy" },
     ]);
     expect(mutations).toBe(2);
   } finally {
-    api.capture = originalCapture;
+    api.commitProjection = originalCommitProjection;
     api.project = originalProject;
   }
 });

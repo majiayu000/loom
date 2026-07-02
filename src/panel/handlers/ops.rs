@@ -70,11 +70,11 @@ pub(in crate::panel) async fn v1_registry_ops(
             let audited_snapshot_tags = audit_report
                 .operations
                 .iter()
-                .filter(|op| op.command == "skill.snapshot")
+                .filter(|op| op.command == "skill.release")
                 .filter_map(|op| json_string_field(&op.details, &["tag"]))
                 .collect::<BTreeSet<_>>();
             for op in &audit_report.operations {
-                if op.command == "snapshot"
+                if op.command == "release"
                     && json_string_field(&op.details, &["tag"])
                         .is_some_and(|tag| audited_snapshot_tags.contains(&tag))
                 {
@@ -175,7 +175,7 @@ fn audit_operation_activity_row(
 
 fn audit_operation_intent(op: &OpsAuditOperation) -> String {
     match op.command.as_str() {
-        "snapshot" => "skill.snapshot".to_string(),
+        "release" => "skill.release".to_string(),
         other => other.to_string(),
     }
 }

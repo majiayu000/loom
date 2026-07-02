@@ -118,6 +118,8 @@ This decision does not make the panel the primary control plane. The CLI remains
 
 The following 23 routes are the complete mutation surface for phase 1. Every row passes through `ensure_mutation_authorized` then `run_panel_command`. Adding a new POST route without a corresponding row in this table is an explicit contract break requiring a section-4 update.
 
+Command-surface budget: top-level CLI commands must stay at or below 28, and `loom skill` leaf commands must stay at or below 40. Adding a leaf requires removing one existing leaf or recording an ADR exception with the owner and sunset condition.
+
 | cmd name                 | HTTP | path                                    | CLI command                  |
 |--------------------------|------|-----------------------------------------|------------------------------|
 | workspace.init           | POST | /api/v1/workspace/init                        | Workspace::Init              |
@@ -127,9 +129,9 @@ The following 23 routes are the complete mutation surface for phase 1. Every row
 | workspace.binding.remove | POST | /api/v1/bindings/{binding_id}/remove          | Workspace::Binding::Remove   |
 | use                      | POST | /api/v1/skills/{skill_name}/use               | Use                          |
 | skill.project            | POST | /api/v1/projections/project                   | Skill::Project               |
-| skill.capture            | POST | /api/v1/projections/capture                   | Skill::Capture               |
-| skill.save               | POST | /api/v1/skills/{skill_name}/save              | Skill::Save                  |
-| skill.snapshot           | POST | /api/v1/skills/{skill_name}/snapshot          | Skill::Snapshot              |
+| skill.commit             | POST | /api/v1/projections/commit                    | Skill::Commit                |
+| skill.commit             | POST | /api/v1/skills/{skill_name}/commit            | Skill::Commit                |
+| skill.release            | POST | /api/v1/skills/{skill_name}/release-anchor    | Skill::Release --anchor      |
 | skill.release            | POST | /api/v1/skills/{skill_name}/release           | Skill::Release               |
 | skill.rollback           | POST | /api/v1/skills/{skill_name}/rollback          | Skill::Rollback              |
 | skill.trash.add          | POST | /api/v1/skills/{skill_name}/trash             | Skill::Trash::Add            |

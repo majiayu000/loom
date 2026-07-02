@@ -12,7 +12,7 @@ use walkdir::WalkDir;
 
 use crate::cli::{
     AddArgs, CaptureArgs, ImportObservedArgs, MonitorObservedArgs, ProjectArgs, SaveArgs,
-    SkillOnlyArgs,
+    SkillCommitArgs,
 };
 use crate::envelope::Meta;
 use crate::fs_util::remove_path_if_exists;
@@ -45,6 +45,7 @@ use super::provenance::{
 use super::skill_safety::enforce_skill_safety;
 use super::{App, CommandFailure};
 
+mod commit;
 mod observed;
 mod save;
 mod shared;

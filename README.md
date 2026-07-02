@@ -238,18 +238,17 @@ The chain `add → capture → save → snapshot → release → rollback` is th
 | `loom use` | Plan or apply target, binding, and projection setup in one flow | New users want to use a skill without copying target/binding IDs between commands | Source + target + registry metadata |
 | `loom plan use` / `loom apply` | Persist a guarded use plan, then execute it with idempotency | Agents need a retry-safe plan/apply protocol for higher-risk flows | Command audit + source/target/registry metadata |
 | `loom skill project` | Realize a registry skill into an agent directory | Make the skill visible to the agent (Claude/Codex/…) | Target (live directory) |
-| `loom skill capture` | Pull live edits from a projection back into the source | The user edited the skill **inside the agent directory** and you want those edits tracked | Projection → source |
-| `loom skill save` | Commit edits made directly to the registry source | You edited `skills/<name>/…` **inside the registry repo** itself | Source (in place) |
-| `loom skill snapshot` | Mark an unnamed checkpoint on source history | You want a labelable anchor before risky work, but no semver yet | Source (anchor) |
-| `loom skill release` | Tag the skill at a semantic version | You're publishing a stable revision teammates can pull (`v1.2.0`) | Source (semver tag) |
-| `loom skill rollback` | Reset the source to an earlier revision (with `recovery_ref`) | A capture or save introduced bad state — undo it without losing the recovery point | Source (history) |
+| `loom skill commit` | Commit edits from the registry source or a live projection | Loom detects source-only vs projection-only edits; use `--from-source` or `--from-projection` for conflicts | Source or projection |
+| `loom skill release --anchor` | Mark an unnamed checkpoint on source history | You want a labelable anchor before risky work, but no semver yet | Source (anchor) |
+| `loom skill release <version>` | Tag the skill at a semantic version | You're publishing a stable revision teammates can pull (`v1.2.0`) | Source (semver tag) |
+| `loom skill rollback` | Reset the source to an earlier revision (with `recovery_ref`) | A commit introduced bad state; undo it without losing the recovery point | Source (history) |
 | `loom skill diff` | Compare two revisions of a skill source | Inspect raw source changes or use `--security` for security-relevant findings only | Source (read-only) |
 | `loom skill lint` | Check portable Agent Skills metadata compliance | Validate `SKILL.md`, YAML frontmatter, portable name, and description before projection | Source (read-only) |
-| `loom skill verify` | Detect uncommitted drift in a skill source | Confirm `skills/<name>` matches the committed source tree; flag external edits that bypassed `save` | Source (read-only) |
+| `loom skill diagnose --check drift` | Detect uncommitted drift in a skill source | Confirm `skills/<name>` matches the committed source tree; flag external edits that bypassed `commit` | Source (read-only) |
 | `loom skill diagnose` | Run a read-only health report for one skill | Explain missing source, broken bindings/targets/projections, source drift, pending queue issues, and recent failures | Source + registry metadata (read-only) |
 | `loom codex reconcile` | Plan or repair Codex active-view visibility | Dry-run projection/config actions, repair safe Loom-owned symlinks, remove stale records, and optionally patch safe config disables | Target + registry metadata + Codex config |
 
-Quick decision: **edits from the agent side → `capture`; edits inside the registry repo → `improve` then `save --preflight`; anchor → `snapshot`; public version → `release --preflight --baseline <ref>`; undo → `rollback`; integrity audit → `verify`; health triage → `diagnose`; quality evidence → `eval`.**
+Quick decision: **edits from either side → `commit` (add `--from-projection` or `--from-source` only for conflicts); anchor → `release --anchor`; public version → `release --preflight --baseline <ref>`; undo → `rollback`; drift audit → `diagnose --check drift`; health triage → `diagnose`; quality evidence → `eval`.**
 
 ## Comparison
 
@@ -357,10 +356,8 @@ loom skill eval compare <skill> --from <ref> --to <ref|working-tree> --agent <ag
 loom skill improve <skill> [--agent <agent>] [--workspace <path>] [--baseline <ref>] [--real-eval] [--dry-run]
 loom skill regression <skill> [--agent <agent>] [--from <ref>] [--to <ref|working-tree>]
 loom skill project <skill> --binding <binding-id> [--target <target-id>] [--method <symlink|copy|materialize>] [--dry-run]
-loom skill capture [<skill>] [--binding <binding-id>] [--instance <instance-id>] [--message <msg>] [--dry-run]
-loom skill save <skill> [--message <msg>] [--preflight]
-loom skill snapshot <skill>
-loom skill release <skill> <version> [--preflight --baseline <ref>]
+loom skill commit <skill> [--message <msg>] [--from-projection | --from-source] [--binding <binding-id>] [--instance <instance-id>] [--preflight]
+loom skill release <skill> [<version> | --anchor] [--preflight --baseline <ref>]
 loom skill rollback <skill> [--to <ref> | --steps <n>] [--dry-run]
 loom skill diff [--security] <skill> <from> <to>
 loom skill history <skill> [--limit <n>] [--from <rev>] [--to <rev>] [--include-diff-stat] [--include-ops]
@@ -376,8 +373,7 @@ loom skill trash list
 loom skill trash restore <skill> [--trash-id <id>]
 loom skill trash purge <trash-id> [--dry-run]
 loom skill lint <skill> [--strict | --compat | --fix]
-loom skill verify <skill>
-loom skill diagnose <skill> [--agent codex]
+loom skill diagnose <skill> [--agent codex] [--check all|drift]
 loom skill watch [<skill>] [--debounce-ms <ms>] [--max-batch <n>] [--dry-run] [--once]
 loom skill import-observed [--target <target-id>]
 loom skill monitor-observed [--target <target-id>] [--once] [--interval-seconds <seconds>]

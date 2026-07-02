@@ -142,12 +142,10 @@ pub(crate) fn command_name(command: &Command) -> &'static str {
             SkillCommand::ImportObserved(_) => "skill.import_observed",
             SkillCommand::MonitorObserved(_) => "skill.monitor_observed",
             SkillCommand::Project(_) => "skill.project",
-            SkillCommand::Capture(_) => "skill.capture",
+            SkillCommand::Commit(_) => "skill.commit",
             SkillCommand::Improve(_) => "skill.improve",
             SkillCommand::Regression(_) => "skill.regression",
-            SkillCommand::Save(_) => "skill.save",
             SkillCommand::Watch(_) => "skill.watch",
-            SkillCommand::Snapshot(_) => "skill.snapshot",
             SkillCommand::Release(_) => "skill.release",
             SkillCommand::Rollback(_) => "skill.rollback",
             SkillCommand::Diff(_) => "skill.diff",
@@ -178,7 +176,6 @@ pub(crate) fn command_name(command: &Command) -> &'static str {
             SkillCommand::Trash {
                 command: SkillTrashCommand::Purge(_),
             } => "skill.trash.purge",
-            SkillCommand::Verify(_) => "skill.verify",
             SkillCommand::Orphan {
                 command: SkillOrphanCommand::List,
             } => "skill.orphan.list",

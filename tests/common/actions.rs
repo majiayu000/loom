@@ -6,7 +6,7 @@ use serde_json::Value;
 use super::run_loom;
 
 pub fn save_skill(root: &Path, skill: &str) -> (Output, Value) {
-    run_loom(root, &["skill", "save", skill])
+    run_loom(root, &["skill", "commit", skill, "--from-source"])
 }
 
 pub fn target_add(root: &Path, agent: &str, path: &Path, ownership: &str) -> (Output, Value) {

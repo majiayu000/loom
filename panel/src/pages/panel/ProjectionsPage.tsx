@@ -79,8 +79,8 @@ export function ProjectionsPage({ projections, targets, bindings, readOnly, onMu
   const capture = () => {
     if (!selected || !canCapture) return;
     action.run(
-      "capture projection",
-      () => api.capture({ instance: selected.instance_id }),
+      "commit projection",
+      () => api.commitProjection({ skill: selected.skill_id, instance: selected.instance_id }),
       onMutation,
     );
   };
@@ -330,7 +330,7 @@ function ProjectionDetail({
             disabled={!canCapture}
             title={readOnly ? "registry offline" : undefined}
           >
-            Capture
+            Commit
           </button>
           <button
             className="btn primary"

@@ -148,7 +148,7 @@ EOF
 
   printf '\n%s\n' "$marker" >> "$materialized_path/SKILL.md"
 
-  cap_json="$(run_json "$repo" skill capture demo-skill-a --instance "$instance_id" --message "e2e capture A")"
+  cap_json="$(run_json "$repo" skill commit demo-skill-a --from-projection --instance "$instance_id" --message "e2e capture A")"
   assert_ok "$cap_json" "A capture"
   grep -q "$marker" "$repo/skills/demo-skill-a/SKILL.md"
 
@@ -189,7 +189,7 @@ EOF
   materialized_path="$(json_field "$proj_json" '.data.projection.materialized_path')"
 
   printf '\n%s\n' "$marker" >> "$materialized_path/SKILL.md"
-  cap_json="$(run_json "$repo" skill capture demo-skill-b --instance "$instance_id" --message "e2e capture B")"
+  cap_json="$(run_json "$repo" skill commit demo-skill-b --from-projection --instance "$instance_id" --message "e2e capture B")"
   assert_ok "$cap_json" "B capture"
   grep -q "$marker" "$repo/skills/demo-skill-b/SKILL.md"
 
@@ -237,7 +237,7 @@ EOF
   materialized_path_2="$(json_field "$proj_json_2" '.data.projection.materialized_path')"
 
   printf '\n%s\n' "$marker" >> "$materialized_path_2/SKILL.md"
-  assert_ok "$(run_json "$repo" skill capture demo-skill-c --instance "$instance_id_2" --message "e2e capture C")" "C capture"
+  assert_ok "$(run_json "$repo" skill commit demo-skill-c --from-projection --instance "$instance_id_2" --message "e2e capture C")" "C capture"
   grep -q "$marker" "$repo/skills/demo-skill-c/SKILL.md"
 
   assert_ok "$(run_json "$repo" target show "$target_id_1")" "C target show #1"
@@ -278,7 +278,7 @@ EOF
   materialized_path="$(json_field "$proj_json" '.data.projection.materialized_path')"
 
   printf '\n%s\n' "$marker" >> "$materialized_path/SKILL.md"
-  assert_ok "$(run_json "$repo" skill capture demo-skill-d --instance "$instance_id" --message "e2e capture D")" "D capture"
+  assert_ok "$(run_json "$repo" skill commit demo-skill-d --from-projection --instance "$instance_id" --message "e2e capture D")" "D capture"
   grep -q "$marker" "$repo/skills/demo-skill-d/SKILL.md"
 
   fail_bind_json="$(run_json_expect_fail "$repo" TARGET_NOT_FOUND workspace binding add --agent codex --profile bad --matcher-kind path-prefix --matcher-value "$workspace/bad" --target missing-target-id)"

@@ -284,7 +284,10 @@ fn durable_plan_apply_rejects_stale_registry_head() {
         &root.path().join("skills/pdf-helper/SKILL.md"),
         "---\nname: pdf-helper\ndescription: changed\n---\n# changed\n",
     );
-    let (output, env) = run_loom(root.path(), &["skill", "save", "pdf-helper"]);
+    let (output, env) = run_loom(
+        root.path(),
+        &["skill", "commit", "pdf-helper", "--from-source"],
+    );
     assert!(output.status.success(), "skill save should pass: {env}");
 
     let (output, env) = run_loom(

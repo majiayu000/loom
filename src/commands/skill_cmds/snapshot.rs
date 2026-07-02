@@ -1,9 +1,10 @@
 use super::*;
+use crate::cli::ReleaseArgs;
 
 impl App {
-    pub fn cmd_snapshot(
+    pub fn cmd_release_anchor(
         &self,
-        args: &SkillOnlyArgs,
+        args: &ReleaseArgs,
         request_id: &str,
     ) -> std::result::Result<(serde_json::Value, Meta), CommandFailure> {
         validate_skill_name(&args.skill).map_err(map_arg)?;
@@ -19,8 +20,8 @@ impl App {
             .map_err(map_git)?;
         if let Err(err) = gitops::append_history_audit_event(
             &self.ctx,
-            "skill.snapshot",
-            json!({"skill": args.skill, "tag": tag.clone()}),
+            "skill.release",
+            json!({"skill": args.skill, "tag": tag.clone(), "anchor": true}),
             request_id,
         ) {
             let mut failure = map_git(err);
@@ -46,12 +47,15 @@ impl App {
         let mut meta = Meta::default();
         maybe_autosync_or_queue(
             &self.ctx,
-            "snapshot",
+            "release",
             request_id,
-            json!({"skill": args.skill, "tag": tag}),
+            json!({"skill": args.skill, "tag": tag, "anchor": true}),
             &mut meta,
         )?;
 
-        Ok((json!({"skill": args.skill, "tag": tag}), meta))
+        Ok((
+            json!({"skill": args.skill, "tag": tag, "anchor": true}),
+            meta,
+        ))
     }
 }

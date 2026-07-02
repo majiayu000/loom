@@ -95,8 +95,8 @@ export function SkillsPage({
     if (!sel || !captureBinding) return;
     const skillName = sel?.name;
     capture.run(
-      `capture ${skillName}`,
-      () => api.capture({ skill: skillName, binding: captureBinding.id }),
+      `commit ${skillName}`,
+      () => api.commitProjection({ skill: skillName, binding: captureBinding.id }),
       onMutation,
     );
   };
@@ -126,7 +126,7 @@ export function SkillsPage({
         <div className="title-block">
           <h1>Skills</h1>
           <div className="subtitle">
-            Tracked units in the registry. Each skill owns a chain of captures, releases, snapshots.
+            Tracked units in the registry. Each skill owns a chain of commits, releases, and anchors.
           </div>
         </div>
         <div className="header-actions">

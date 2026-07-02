@@ -6,7 +6,7 @@ if [[ ! -x "$bin" ]]; then
   cargo build --release --locked
 fi
 
-# Hard ceiling: 5560 KiB. The durable plan/apply protocol, offline eval
+# Hard ceiling: 5568 KiB. The durable plan/apply protocol, offline eval
 # matrix, local skill scaffolding CLI, skillset foundation, portable YAML
 # lint parser, single-skill inspect read model, single-skill activation
 # commands, and safety/trust/quarantine/security-diff command surfaces expanded
@@ -60,7 +60,9 @@ fi
 # offline eval evidence recording and freshness validation for valid artifacts.
 # User-scope `loom use` adds adapter-root target resolution, adoption safety,
 # observed-target upgrade auditing, and exact target-root command plumbing.
-max_bin_bytes=$((5560 * 1024))
+# Lifecycle convergence adds `skill commit` direction detection, release anchors,
+# and diagnose drift routing while deleting the old public lifecycle leaves.
+max_bin_bytes=$((5568 * 1024))
 bin_bytes="$(wc -c < "$bin" | tr -d ' ')"
 if (( bin_bytes > max_bin_bytes )); then
   echo "release binary is ${bin_bytes} bytes; limit is ${max_bin_bytes}" >&2

@@ -116,7 +116,7 @@ impl App {
             mode: "save_preflight",
         })?;
         if !report.mutation_allowed {
-            return Err(preflight_blocked("skill save preflight failed", report));
+            return Err(preflight_blocked("skill commit preflight failed", report));
         }
         Ok(report)
     }
@@ -529,9 +529,9 @@ fn recommendation(
     }
     if details["drift"]["changed"].as_bool().unwrap_or(false) && mode != "release_preflight" {
         return json!({
-            "action": "save",
+                "action": "commit",
             "command": format!(
-                "loom skill save {skill} --preflight --message 'improve {skill}'"
+                "loom skill commit {skill} --from-source --preflight --message 'improve {skill}'"
             ),
             "reason": "local skill changes passed preflight",
         });

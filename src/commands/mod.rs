@@ -233,13 +233,10 @@ impl App {
                 SkillCommand::MonitorObserved(args) => self.cmd_monitor_observed(args, &request_id),
                 SkillCommand::Project(args) if args.dry_run => self.cmd_project_plan(args),
                 SkillCommand::Project(args) => self.cmd_project(args, &request_id),
-                SkillCommand::Capture(args) if args.dry_run => self.cmd_capture_plan(args),
-                SkillCommand::Capture(args) => self.cmd_capture(args, &request_id),
+                SkillCommand::Commit(args) => self.cmd_commit(args, &request_id),
                 SkillCommand::Improve(args) => self.cmd_skill_improve(args),
                 SkillCommand::Regression(args) => self.cmd_skill_regression(args),
-                SkillCommand::Save(args) => self.cmd_save(args, &request_id),
                 SkillCommand::Watch(args) => self.cmd_watch(args, &request_id),
-                SkillCommand::Snapshot(args) => self.cmd_snapshot(args, &request_id),
                 SkillCommand::Release(args) => self.cmd_release(args, &request_id),
                 SkillCommand::Rollback(args) if args.dry_run => self.cmd_rollback_plan(args),
                 SkillCommand::Rollback(args) => self.cmd_rollback(args, &request_id),
@@ -283,7 +280,6 @@ impl App {
                 SkillCommand::Provenance { command } => {
                     self.cmd_skill_provenance(command, &request_id)
                 }
-                SkillCommand::Verify(args) => self.cmd_verify(args),
                 SkillCommand::Lint(args) => self.cmd_skill_lint(args),
                 SkillCommand::Policy(args) => self.cmd_skill_policy(args),
                 SkillCommand::Scan(args) => self.cmd_skill_scan(args),
@@ -629,10 +625,8 @@ fn command_requires_durable_audit(command: &Command) -> bool {
             | SkillCommand::ImportObserved(_)
             | SkillCommand::MonitorObserved(_)
             | SkillCommand::Project(_)
-            | SkillCommand::Capture(_)
-            | SkillCommand::Save(_)
+            | SkillCommand::Commit(_)
             | SkillCommand::Watch(_)
-            | SkillCommand::Snapshot(_)
             | SkillCommand::Release(_)
             | SkillCommand::Trust(_)
             | SkillCommand::Quarantine(_)
@@ -673,7 +667,6 @@ fn command_requires_durable_audit(command: &Command) -> bool {
             | SkillCommand::Lint(_)
             | SkillCommand::Policy(_)
             | SkillCommand::Scan(_)
-            | SkillCommand::Verify(_)
             | SkillCommand::Visibility(_)
             | SkillCommand::Diagnose(_)
             | SkillCommand::Eval(_)

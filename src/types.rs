@@ -21,6 +21,7 @@ pub enum ErrorCode {
     PolicyBlocked,
     EvalFailed,
     CaptureConflict,
+    CommitDirectionAmbiguous,
     AuditError,
     LockBusy,
     RemoteUnreachable,
@@ -54,6 +55,7 @@ impl ErrorCode {
             Self::PolicyBlocked => "POLICY_BLOCKED",
             Self::EvalFailed => "EVAL_FAILED",
             Self::CaptureConflict => "CAPTURE_CONFLICT",
+            Self::CommitDirectionAmbiguous => "COMMIT_DIRECTION_AMBIGUOUS",
             Self::AuditError => "AUDIT_ERROR",
             Self::LockBusy => "LOCK_BUSY",
             Self::RemoteUnreachable => "REMOTE_UNREACHABLE",
@@ -97,6 +99,7 @@ impl ErrorCode {
             Self::ProjectionMethodUnsupported => 3,
             Self::PolicyBlocked => 3,
             Self::CaptureConflict => 3,
+            Self::CommitDirectionAmbiguous => 3,
             Self::AuditError => 3,
         }
     }

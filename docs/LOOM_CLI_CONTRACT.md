@@ -1136,7 +1136,7 @@ Rules:
 ### 12.1 `use`
 
 ```bash
-loom --json --root <root> use <skill-id> --agents <agent[,agent]> [--scope project] [--workspace <path>] [--profile <id>] [--method <symlink|copy|materialize>] [--target-root <path>] [--apply]
+loom --json --root <root> use <skill-id> --agents <agent[,agent]> [--scope <user|project>] [--workspace <path>] [--profile <id>] [--method <symlink|copy|materialize>] [--target-root <path>] [--adopt] [--apply]
 ```
 
 Plan-first command. Without `--apply`, it is read-only. With `--apply`, it compiles the plan into explicit `target add`, `workspace binding add`, and `skill project` operations.
@@ -1145,17 +1145,20 @@ Rules:
 
 1. validates that `<skill-id>` is an existing registry skill before planning or applying
 2. `--agents` must include at least one supported agent
-3. default scope is `project`; project scope uses a `path_prefix` workspace matcher
-4. default workspace is the current directory; default managed target root is `<root>/targets/<scope>/<agent>/skills`
-5. plan mode returns target/binding/projection steps and an explicit next command containing `--apply`
-6. apply mode returns every target, binding, projection, and operation id created or reused by the lower-level commands
-7. apply mode returns rollback commands for removing the generated binding and then cleaning orphaned projections
-8. this command does not replace lower-level `target`, `workspace binding`, or `skill project` commands
+3. default scope is `project`; project scope uses a `path_prefix` workspace matcher and user scope uses a `name=user` matcher
+4. default workspace is the current directory for project scope; user scope does not require `--workspace`
+5. target resolution uses adapter discovery roots for the selected scope when available; fallback roots remain under `<root>/targets/<scope>/<agent>/skills`
+6. `--target-root` means the exact target skills directory and does not append `<agent>/skills`
+7. applying into an existing directory that is not already a managed Loom target requires `--adopt`; without it the command fails with `TARGET_NOT_MANAGED`
+8. plan mode returns target/binding/projection steps and an explicit next command containing `--apply`
+9. apply mode returns every target, binding, projection, and operation id created or reused by the lower-level commands
+10. apply mode returns rollback commands for removing the generated binding and then cleaning orphaned projections
+11. this command does not replace lower-level `target`, `workspace binding`, or `skill project` commands
 
 ### 12.2 Durable Agent Plan/Apply
 
 ```bash
-loom --json --root <root> plan use <skill-id> --agents <agent[,agent]> [--scope project] [--workspace <path>] [--profile <id>] [--method <symlink|copy|materialize>] [--target-root <path>]
+loom --json --root <root> plan use <skill-id> --agents <agent[,agent]> [--scope <user|project>] [--workspace <path>] [--profile <id>] [--method <symlink|copy|materialize>] [--target-root <path>]
 loom --json --root <root> apply <plan-id> --idempotency-key <key> [--approve <token[,token]>]
 ```
 

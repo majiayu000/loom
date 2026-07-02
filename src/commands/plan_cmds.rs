@@ -166,10 +166,17 @@ fn use_args_from_plan(
     args: &PlanUseArgs,
     apply: bool,
 ) -> std::result::Result<UseArgs, CommandFailure> {
-    let workspace = Some(match args.workspace.as_ref() {
-        Some(path) => absolute_path(path)?,
-        None => current_dir()?,
-    });
+    let workspace = match args.scope {
+        crate::cli::UseScope::User => args
+            .workspace
+            .as_ref()
+            .map(|path| absolute_path(path))
+            .transpose()?,
+        crate::cli::UseScope::Project => Some(match args.workspace.as_ref() {
+            Some(path) => absolute_path(path)?,
+            None => current_dir()?,
+        }),
+    };
     let target_root = args
         .target_root
         .as_ref()
@@ -183,6 +190,7 @@ fn use_args_from_plan(
         profile: args.profile.clone(),
         method: args.method,
         target_root,
+        adopt: false,
         apply,
     })
 }

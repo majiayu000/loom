@@ -30,9 +30,13 @@ pub struct UseArgs {
     #[arg(long, value_enum, default_value_t = ProjectionMethod::Symlink)]
     pub method: ProjectionMethod,
 
-    /// Base directory for managed targets. Defaults to <root>/targets/<scope>.
+    /// Target skills directory. Defaults to the adapter discovery root for the selected scope.
     #[arg(long)]
     pub target_root: Option<PathBuf>,
+
+    /// Adopt an existing agent skills directory as a managed Loom target before writing.
+    #[arg(long)]
+    pub adopt: bool,
 
     /// Apply the plan. Without this flag, `loom use` is read-only.
     #[arg(long)]
@@ -42,5 +46,6 @@ pub struct UseArgs {
 #[derive(Debug, Clone, Copy, ValueEnum, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum UseScope {
+    User,
     Project,
 }

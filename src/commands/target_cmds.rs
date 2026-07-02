@@ -227,6 +227,114 @@ impl App {
         ))
     }
 
+    pub(crate) fn cmd_target_adopt_managed(
+        &self,
+        agent: &str,
+        path: &Path,
+        request_id: &str,
+    ) -> std::result::Result<(serde_json::Value, Meta), CommandFailure> {
+        let _workspace = self.ctx.lock_workspace().map_err(map_lock)?;
+        self.ensure_write_repo_ready()?;
+        if !path.is_absolute() {
+            return Err(CommandFailure::new(
+                ErrorCode::ArgInvalid,
+                "target path must be absolute",
+            ));
+        }
+        fs::create_dir_all(path).map_err(map_io)?;
+        let normalized_target_path = path
+            .canonicalize()
+            .with_context(|| format!("failed to canonicalize target path '{}'", path.display()))
+            .map_err(map_io)?;
+        let normalized_path = normalized_target_path.to_string_lossy().into_owned();
+
+        let paths = self.ensure_registry_layout()?;
+        let mut targets = paths.load_targets().map_err(map_registry_state)?;
+        let original_targets = targets.clone();
+        let adapters = load_agent_adapters(&self.ctx)?;
+
+        let Some(index) = targets.targets.iter().position(|target| {
+            target.agent == agent && target_path_matches(&target.path, &normalized_target_path)
+        }) else {
+            drop(_workspace);
+            return self.cmd_target_add_raw(
+                agent,
+                &normalized_path,
+                TargetOwnership::Managed,
+                SOURCE_BUILT_IN,
+                request_id,
+            );
+        };
+
+        if targets.targets[index].ownership == target_ownership_as_str(TargetOwnership::Managed) {
+            let existing = targets.targets[index].clone();
+            return Ok((
+                json!({"target": decorate_target_for_output(&existing, &adapters), "noop": true}),
+                Meta::default(),
+            ));
+        }
+
+        let previous_ownership = targets.targets[index].ownership.clone();
+        targets.targets[index].ownership =
+            target_ownership_as_str(TargetOwnership::Managed).to_string();
+        targets.targets[index].capabilities = target_capabilities(TargetOwnership::Managed);
+        let target = targets.targets[index].clone();
+        paths.save_targets(&targets).map_err(map_registry_state)?;
+
+        let op_id = match record_registry_operation(
+            &paths,
+            "target.adopt",
+            json!({
+                "target_id": target.target_id,
+                "agent": target.agent,
+                "path": target.path,
+                "previous_ownership": previous_ownership,
+                "ownership": target.ownership,
+                "request_id": request_id
+            }),
+            json!({
+                "target_id": target.target_id
+            }),
+        ) {
+            Ok(op_id) => op_id,
+            Err(err) => {
+                paths
+                    .save_targets(&original_targets)
+                    .with_context(|| {
+                        format!(
+                            "failed to rollback targets after operation-log failure: {}",
+                            err
+                        )
+                    })
+                    .map_err(map_registry_state)?;
+                return Err(map_registry_state(err));
+            }
+        };
+        let commit =
+            commit_registry_state(&self.ctx, &format!("target({}): adopt", target.target_id))?;
+        let mut meta = Meta {
+            op_id: Some(op_id),
+            ..Meta::default()
+        };
+        if let Some(commit) = &commit {
+            maybe_autosync_or_queue(
+                &self.ctx,
+                "target.adopt",
+                request_id,
+                json!({"target_id": target.target_id, "commit": commit}),
+                &mut meta,
+            )?;
+        }
+        Ok((
+            json!({
+                "target": decorate_target_for_output(&target, &adapters),
+                "commit": commit,
+                "noop": false
+            }),
+            meta,
+        ))
+    }
+
     fn cmd_target_remove(
         &self,
         args: &TargetShowArgs,

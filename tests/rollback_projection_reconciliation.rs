@@ -548,6 +548,141 @@ fn rollback_reports_dangling_symlink_projection_reapply_plan() {
     assert_meta_warning_contains(&rollback_env, "live projections require reapply");
 }
 
+#[cfg(unix)]
+#[test]
+fn rollback_reports_wrong_target_symlink_projection_reapply_plan() {
+    let fixture = rollback_projection_fixture("symlink");
+    fs::remove_file(&fixture.projection_path).expect("remove symlink projection path");
+    let wrong_target = fixture.root.path().join("wrong-symlink-target");
+    fs::create_dir_all(&wrong_target).expect("create wrong target");
+    fs::write(wrong_target.join("SKILL.md"), "# wrong\n").expect("write wrong target");
+    std::os::unix::fs::symlink(&wrong_target, &fixture.projection_path)
+        .expect("create wrong-target symlink projection path");
+
+    let (rollback_output, rollback_env) = run_loom(
+        fixture.root.path(),
+        &["skill", "rollback", "model-onboarding", "--to", "HEAD~2"],
+    );
+
+    assert!(
+        rollback_output.status.success(),
+        "rollback failed: stderr={} stdout={}",
+        String::from_utf8_lossy(&rollback_output.stderr),
+        String::from_utf8_lossy(&rollback_output.stdout)
+    );
+    assert_eq!(
+        rollback_env["data"]["live_projection_reconciled"],
+        Value::Bool(false)
+    );
+    let item = &rollback_env["data"]["projection_reconciliation"]["items"][0];
+    assert_eq!(item["method"], Value::String("symlink".to_string()));
+    assert_eq!(
+        item["status"],
+        Value::String("symlink_target_mismatch".to_string())
+    );
+    assert_eq!(item["live_path_exists"], Value::Bool(true));
+    assert_eq!(item["requires_projection_reapply"], Value::Bool(true));
+    assert_eq!(
+        item["next_action"]["type"],
+        Value::String("command".to_string())
+    );
+
+    let (reproject_output, _reproject_env) = run_loom(
+        fixture.root.path(),
+        &[
+            "skill",
+            "project",
+            "model-onboarding",
+            "--binding",
+            &fixture.binding_id,
+            "--target",
+            &fixture.target_id,
+            "--method",
+            "symlink",
+        ],
+    );
+    assert!(
+        reproject_output.status.success(),
+        "reproject command failed: stderr={} stdout={}",
+        String::from_utf8_lossy(&reproject_output.stderr),
+        String::from_utf8_lossy(&reproject_output.stdout)
+    );
+    let live = fs::read_to_string(fixture.projection_path.join("SKILL.md"))
+        .expect("read reprojected symlink projection");
+    assert!(live.contains("source v1"));
+    assert!(!live.contains("wrong"));
+}
+
+#[cfg(unix)]
+#[test]
+fn rollback_reports_non_symlink_projection_path_reapply_plan() {
+    let fixture = rollback_projection_fixture("symlink");
+    fs::remove_file(&fixture.projection_path).expect("remove symlink projection path");
+    fs::create_dir_all(&fixture.projection_path).expect("replace projection with directory");
+    fs::write(
+        fixture.projection_path.join("SKILL.md"),
+        "# stale directory\n",
+    )
+    .expect("write stale directory projection");
+
+    let (rollback_output, rollback_env) = run_loom(
+        fixture.root.path(),
+        &["skill", "rollback", "model-onboarding", "--to", "HEAD~2"],
+    );
+
+    assert!(
+        rollback_output.status.success(),
+        "rollback failed: stderr={} stdout={}",
+        String::from_utf8_lossy(&rollback_output.stderr),
+        String::from_utf8_lossy(&rollback_output.stdout)
+    );
+    assert_eq!(
+        rollback_env["data"]["live_projection_reconciled"],
+        Value::Bool(false)
+    );
+    let item = &rollback_env["data"]["projection_reconciliation"]["items"][0];
+    assert_eq!(item["method"], Value::String("symlink".to_string()));
+    assert_eq!(item["status"], Value::String("not_symlink".to_string()));
+    assert_eq!(item["live_path_exists"], Value::Bool(true));
+    assert_eq!(item["requires_projection_reapply"], Value::Bool(true));
+    assert_eq!(
+        item["next_action"]["type"],
+        Value::String("command".to_string())
+    );
+
+    let (reproject_output, _reproject_env) = run_loom(
+        fixture.root.path(),
+        &[
+            "skill",
+            "project",
+            "model-onboarding",
+            "--binding",
+            &fixture.binding_id,
+            "--target",
+            &fixture.target_id,
+            "--method",
+            "symlink",
+        ],
+    );
+    assert!(
+        reproject_output.status.success(),
+        "reproject command failed: stderr={} stdout={}",
+        String::from_utf8_lossy(&reproject_output.stderr),
+        String::from_utf8_lossy(&reproject_output.stdout)
+    );
+    assert!(
+        fs::symlink_metadata(&fixture.projection_path)
+            .expect("reprojected path metadata")
+            .file_type()
+            .is_symlink(),
+        "reproject should restore symlink projection"
+    );
+    let live = fs::read_to_string(fixture.projection_path.join("SKILL.md"))
+        .expect("read reprojected symlink projection");
+    assert!(live.contains("source v1"));
+    assert!(!live.contains("stale directory"));
+}
+
 #[test]
 fn rollback_marks_symlink_projection_reconciled_without_reapply() {
     let fixture = rollback_projection_fixture("symlink");

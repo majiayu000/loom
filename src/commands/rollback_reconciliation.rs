@@ -154,14 +154,21 @@ fn rollback_projection_item(
 ) -> Value {
     let method = projection.method.as_str();
     let content_projection = method == "copy" || method == "materialize";
-    let live_path_exists = fs::metadata(&projection.materialized_path).is_ok();
-    let requires_projection_reapply = content_projection || !live_path_exists;
-    let status = if !live_path_exists {
-        "missing_projection_path"
-    } else if content_projection {
+    let status = if content_projection {
+        if fs::metadata(&projection.materialized_path).is_ok() {
+            "requires_reapply"
+        } else {
+            "missing_projection_path"
+        }
+    } else {
+        symlink_projection_status(ctx, projection)
+    };
+    let live_path_exists = status != "missing_projection_path";
+    let requires_projection_reapply = content_projection || status != "symlink_noop";
+    let status = if content_projection && live_path_exists {
         "requires_reapply"
     } else {
-        "symlink_noop"
+        status
     };
     let next_action = if requires_projection_reapply {
         projection
@@ -197,6 +204,29 @@ fn rollback_projection_item(
         "requires_projection_reapply": requires_projection_reapply,
         "next_action": next_action
     })
+}
+
+fn symlink_projection_status(
+    ctx: &crate::state::AppContext,
+    projection: &RegistryProjectionInstance,
+) -> &'static str {
+    let Ok(metadata) = fs::symlink_metadata(&projection.materialized_path) else {
+        return "missing_projection_path";
+    };
+    if !metadata.file_type().is_symlink() {
+        return "not_symlink";
+    }
+    let Ok(actual) = fs::canonicalize(&projection.materialized_path) else {
+        return "missing_projection_path";
+    };
+    let Ok(expected) = fs::canonicalize(ctx.root.join("skills").join(&projection.skill_id)) else {
+        return "missing_projection_path";
+    };
+    if actual == expected {
+        "symlink_noop"
+    } else {
+        "symlink_target_mismatch"
+    }
 }
 
 fn rollback_projection_command(

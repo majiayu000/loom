@@ -1090,10 +1090,10 @@ Rules:
 2. copy and materialize projections default to `recovery_plan_only`; rollback
    reports them as `requires_projection_reapply=true` until the user runs the
    returned recovery command
-3. existing symlink projections are reported as `symlink_noop` and require no
-   content copy because their live path follows the restored source; missing
-   symlink projection paths are reported as `missing_projection_path` with a
-   reapply command
+3. existing symlink projections are reported as `symlink_noop` only when the
+   projection path is a symlink that resolves to the restored source; missing,
+   dangling, wrong-target, or non-symlink paths are reported with a reapply
+   command
 4. `projection_reconciliation.items[]` includes `instance_id`, `skill_id`,
    `binding_id`, `target_id`, `materialized_path`, `method`, `status`,
    `live_path_exists`, `requires_projection_reapply`, and `next_action`

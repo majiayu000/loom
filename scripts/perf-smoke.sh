@@ -6,7 +6,7 @@ if [[ ! -x "$bin" ]]; then
   cargo build --release --locked
 fi
 
-# Hard ceiling: 5656 KiB. The durable plan/apply protocol, offline eval
+# Hard ceiling: 5680 KiB. The durable plan/apply protocol, offline eval
 # matrix, local skill scaffolding CLI, skillset foundation, portable YAML
 # lint parser, single-skill inspect read model, single-skill activation
 # commands, and safety/trust/quarantine/security-diff command surfaces expanded
@@ -71,8 +71,9 @@ fi
 # member eval aggregation, release/rollback guards, and partial rollback
 # recovery. Projection digest observation persistence adds registry observation
 # events, status summaries, and diagnose write-back plumbing while keeping cold
-# CLI startup guarded below.
-max_bin_bytes=$((5656 * 1024))
+# CLI startup guarded below. Skill inspect evidence surfacing adds read-only eval
+# report discovery plus policy/safety summary plumbing.
+max_bin_bytes=$((5680 * 1024))
 bin_bytes="$(wc -c < "$bin" | tr -d ' ')"
 if (( bin_bytes > max_bin_bytes )); then
   echo "release binary is ${bin_bytes} bytes; limit is ${max_bin_bytes}" >&2

@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
-use std::path::Path;
+use std::path::{Component, Path};
 
 use serde_json::{Value, json};
 
@@ -10,11 +10,13 @@ use crate::fs_util::write_atomic;
 use crate::gitops;
 use crate::sha256::{Sha256, to_hex};
 use crate::state::AppContext;
-use crate::state_model::{REGISTRY_SCHEMA_VERSION, RegistryStatePaths};
+use crate::state_model::{REGISTRY_SCHEMA_VERSION, RegistryStatePaths, RegistryWorkspaceBinding};
 use crate::types::ErrorCode;
 
 use super::helpers::map_git;
-use super::helpers::{map_io, map_registry_state, validate_non_empty, validate_skill_name};
+use super::helpers::{
+    map_io, map_registry_state, validate_non_empty, validate_policy_profile, validate_skill_name,
+};
 use super::skill_inventory::{SkillDiscoveryFilters, score_and_filter_skills, tokenize};
 use super::skill_recommend_active::{activation_plan_delta, active_view};
 use super::skill_safety::evaluate_skill_safety_with_policy;
@@ -129,6 +131,7 @@ impl App {
         } else {
             "lexical"
         };
+        let policy_context = recommendation_policy_context(&self.ctx, args)?;
         let model = build_skill_read_model(&self.ctx).map_err(map_registry_state)?;
         let mut results = score_and_filter_skills(
             &model.skills,
@@ -163,8 +166,11 @@ impl App {
                 "status": args.status,
                 "trust": args.trust,
                 "workspace": args.workspace.as_ref().map(|path| path.display().to_string()),
+                "binding": args.binding,
+                "policy_profile": args.policy_profile,
                 "active": args.active,
             },
+            "policy_context": policy_context,
             "count": results.len(),
             "results": results,
         });
@@ -197,12 +203,19 @@ impl App {
                 },
                 true,
             );
+            let policy_profile = policy_context["policy_profile"]
+                .as_str()
+                .unwrap_or("safe-capture")
+                .to_string();
+            let recommendation_context = RecommendationContext {
+                agent: args.agent.as_deref(),
+                mode,
+                policy_profile: &policy_profile,
+            };
             let recommendations = recommendation_results(
                 &self.ctx,
                 &args.query,
-                args.agent.as_deref(),
-                args.workspace.as_deref(),
-                mode,
+                recommendation_context,
                 &recommendation_skill_results,
                 &skillsets,
             )?;
@@ -212,6 +225,8 @@ impl App {
                 "filters": {
                     "agent": args.agent,
                     "workspace": args.workspace.as_ref().map(|path| path.display().to_string()),
+                    "binding": args.binding,
+                    "policy_profile": args.policy_profile,
                 },
                 "count": recommendations.len(),
                 "results": recommendations,
@@ -236,7 +251,7 @@ impl App {
         args: &SkillSearchArgs,
     ) -> std::result::Result<(Value, Meta), CommandFailure> {
         let mut args = args.clone();
-        args.for_task = true;
+        args.for_task = false;
         args.explain = true;
         self.cmd_skill_search(&args)
     }
@@ -274,12 +289,15 @@ impl App {
             true,
         );
         let skillsets = load_skillsets_value(&self.ctx)?;
+        let recommendation_context = RecommendationContext {
+            agent: None,
+            mode: "lexical",
+            policy_profile: "safe-capture",
+        };
         let recommend = recommendation_results(
             &self.ctx,
             &args.task_description,
-            None,
-            args.workspace.as_deref(),
-            "lexical",
+            recommendation_context,
             &skill_results,
             &skillsets,
         )?;
@@ -335,6 +353,128 @@ impl App {
             }),
             meta,
         ))
+    }
+}
+
+fn recommendation_policy_context(
+    ctx: &AppContext,
+    args: &SkillSearchArgs,
+) -> std::result::Result<Value, CommandFailure> {
+    if let Some(binding_id) = args.binding.as_deref() {
+        validate_non_empty("binding", binding_id.trim())?;
+    }
+    if let Some(policy_profile) = args.policy_profile.as_deref() {
+        validate_policy_profile(policy_profile)?;
+    }
+    let Some(binding_id) = args.binding.as_deref() else {
+        return Ok(json!({
+            "binding_id": Value::Null,
+            "policy_profile": args.policy_profile,
+            "source": if args.policy_profile.is_some() { "explicit" } else { "none" },
+        }));
+    };
+    let paths = RegistryStatePaths::from_app_context(ctx);
+    let snapshot = paths.maybe_load_snapshot().map_err(map_registry_state)?;
+    let binding = snapshot
+        .as_ref()
+        .and_then(|snapshot| {
+            snapshot
+                .bindings
+                .bindings
+                .iter()
+                .find(|binding| binding.binding_id == binding_id)
+        })
+        .ok_or_else(|| {
+            CommandFailure::new(
+                ErrorCode::BindingNotFound,
+                format!("binding '{binding_id}' not found"),
+            )
+        })?;
+    if let Some(agent) = args.agent.as_deref()
+        && binding.agent != agent
+    {
+        return Err(CommandFailure::new(
+            ErrorCode::ArgInvalid,
+            format!(
+                "binding '{}' is for agent '{}' not '{}'",
+                binding.binding_id, binding.agent, agent
+            ),
+        ));
+    }
+    if let Some(profile) = args.profile.as_deref()
+        && binding.profile_id != profile
+    {
+        return Err(CommandFailure::new(
+            ErrorCode::ArgInvalid,
+            format!(
+                "binding '{}' uses profile '{}' not '{}'",
+                binding.binding_id, binding.profile_id, profile
+            ),
+        ));
+    }
+    if let Some(policy_profile) = args.policy_profile.as_deref()
+        && binding.policy_profile != policy_profile
+    {
+        return Err(CommandFailure::new(
+            ErrorCode::ArgInvalid,
+            format!(
+                "binding '{}' uses policy profile '{}' not '{}'",
+                binding.binding_id, binding.policy_profile, policy_profile
+            ),
+        ));
+    }
+    if let Some(workspace) = args.workspace.as_deref() {
+        validate_recommend_workspace_path(workspace)?;
+        if !recommend_binding_matches_workspace(binding, workspace) {
+            return Err(CommandFailure::new(
+                ErrorCode::ArgInvalid,
+                format!(
+                    "binding '{}' does not match workspace '{}'",
+                    binding.binding_id,
+                    workspace.display()
+                ),
+            ));
+        }
+    }
+    Ok(json!({
+        "binding_id": binding.binding_id,
+        "agent": binding.agent,
+        "profile": binding.profile_id,
+        "policy_profile": binding.policy_profile,
+        "active": binding.active,
+        "source": "binding",
+    }))
+}
+
+fn validate_recommend_workspace_path(workspace: &Path) -> std::result::Result<(), CommandFailure> {
+    if workspace
+        .components()
+        .any(|component| matches!(component, Component::ParentDir))
+    {
+        return Err(CommandFailure::new(
+            ErrorCode::ArgInvalid,
+            format!(
+                "workspace '{}' must not contain parent directory components",
+                workspace.display()
+            ),
+        ));
+    }
+    Ok(())
+}
+
+fn recommend_binding_matches_workspace(
+    binding: &RegistryWorkspaceBinding,
+    workspace: &Path,
+) -> bool {
+    let matcher = &binding.workspace_matcher;
+    match matcher.kind.as_str() {
+        "path_prefix" => workspace.starts_with(Path::new(&matcher.value)),
+        "exact_path" => workspace == Path::new(&matcher.value),
+        "name" => workspace
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name == matcher.value),
+        _ => false,
     }
 }
 
@@ -443,27 +583,30 @@ fn workspace_index_payload(ctx: &AppContext) -> std::result::Result<Value, Comma
     Ok(json!({ "schema_version": REGISTRY_SCHEMA_VERSION, "records": records }))
 }
 
+#[derive(Clone, Copy)]
+struct RecommendationContext<'a> {
+    agent: Option<&'a str>,
+    mode: &'a str,
+    policy_profile: &'a str,
+}
+
 fn recommendation_results(
     ctx: &AppContext,
     task: &str,
-    agent: Option<&str>,
-    workspace: Option<&Path>,
-    mode: &str,
+    request: RecommendationContext<'_>,
     skill_search_results: &[Value],
     skillsets: &Value,
 ) -> std::result::Result<Vec<Value>, CommandFailure> {
     let mut results = Vec::new();
     for result in skill_search_results {
-        if let Some(recommendation) = skill_recommendation(ctx, result, agent, mode)? {
+        if let Some(recommendation) = skill_recommendation(ctx, result, request)? {
             results.push(recommendation);
         }
     }
     results.extend(skillset_recommendations(
         ctx,
         task,
-        agent,
-        workspace,
-        mode,
+        request,
         skill_search_results,
         skillsets,
     )?);
@@ -490,8 +633,7 @@ fn recommendation_results(
 fn skill_recommendation(
     ctx: &AppContext,
     result: &Value,
-    agent: Option<&str>,
-    mode: &str,
+    request: RecommendationContext<'_>,
 ) -> std::result::Result<Option<Value>, CommandFailure> {
     let skill = &result["skill"];
     let Some(skill_id) = skill["skill_id"].as_str() else {
@@ -515,28 +657,28 @@ fn skill_recommendation(
             "source {}",
             skill["source_status"].as_str().unwrap_or("unknown")
         ));
-    } else if let Some(risk) = activation_safety_risk(ctx, skill_id)? {
+    } else if let Some(risk) = activation_safety_risk(ctx, skill_id, request.policy_profile)? {
         risks.push(risk);
     }
     if !skill["warnings"].as_array().is_none_or(Vec::is_empty) {
         risks.push("inventory warnings".to_string());
     }
-    if agent.is_some() {
+    if request.agent.is_some() {
         reasons.push("agent match".to_string());
     }
-    let can_activate = risks.is_empty() && agent.is_some();
+    let can_activate = risks.is_empty() && request.agent.is_some();
     Ok(Some(json!({
         "kind": "skill",
         "id": skill_id,
         "score": result["score"],
-        "mode": mode,
+        "mode": request.mode,
         "score_inputs": result["score_inputs"],
         "reasons": reasons,
         "risks": risks,
         "warnings": warnings,
         "recommended_action": if can_activate { "activate" } else { "inspect" },
         "suggested_commands": if can_activate {
-            vec![format!("loom --json skill activate {skill_id} --agent {} --dry-run", agent.unwrap())]
+            vec![format!("loom --json skill activate {skill_id} --agent {} --dry-run", request.agent.unwrap())]
         } else {
             vec![format!("loom --json skill inspect {skill_id}")]
         },
@@ -546,9 +688,7 @@ fn skill_recommendation(
 fn skillset_recommendations(
     ctx: &AppContext,
     task: &str,
-    agent: Option<&str>,
-    _workspace: Option<&Path>,
-    mode: &str,
+    request: RecommendationContext<'_>,
     skill_results: &[Value],
     skillsets: &Value,
 ) -> std::result::Result<Vec<Value>, CommandFailure> {
@@ -616,10 +756,12 @@ fn skillset_recommendations(
                     } else if !skill["warnings"].as_array().is_none_or(Vec::is_empty) {
                         required_safe = false;
                         risks.push(format!("{member_kind} member '{skill_id}' warnings"));
-                    } else if let Some(risk) = activation_safety_risk(ctx, skill_id)? {
+                    } else if let Some(risk) =
+                        activation_safety_risk(ctx, skill_id, request.policy_profile)?
+                    {
                         required_safe = false;
                         risks.push(format!("{member_kind} member '{skill_id}' {risk}"));
-                    } else if let Some(agent) = agent {
+                    } else if let Some(agent) = request.agent {
                         member_commands.push(format!(
                             "loom --json skill activate {skill_id} --agent {agent} --dry-run"
                         ));
@@ -639,12 +781,12 @@ fn skillset_recommendations(
             reasons.push("skillset text matched".to_string());
         }
         warnings.push("skillset activation unavailable".to_string());
-        let can_activate_members = required_safe && risks.is_empty() && agent.is_some();
+        let can_activate_members = required_safe && risks.is_empty() && request.agent.is_some();
         out.push(json!({
             "kind": "skillset",
             "id": id,
             "score": score,
-            "mode": mode,
+            "mode": request.mode,
             "score_inputs": {
                 "matched_fields": ["skillset", "members"],
             },
@@ -665,9 +807,10 @@ fn skillset_recommendations(
 fn activation_safety_risk(
     ctx: &AppContext,
     skill_id: &str,
+    policy_profile: &str,
 ) -> std::result::Result<Option<String>, CommandFailure> {
     let evaluation =
-        evaluate_skill_safety_with_policy(ctx, skill_id, "activate", false, "safe-capture")?;
+        evaluate_skill_safety_with_policy(ctx, skill_id, "activate", false, policy_profile)?;
     if evaluation.report.activation_allowed {
         Ok(None)
     } else {

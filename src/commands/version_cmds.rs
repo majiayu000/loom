@@ -15,8 +15,10 @@ use super::helpers::{
     commit_registry_state, ensure_skill_exists, map_arg, map_git, map_lock, map_registry_state,
     validate_skill_name,
 };
-use super::projections::{
-    maybe_autosync_or_queue, record_registry_observation, record_registry_operation,
+use super::projections::{maybe_autosync_or_queue, record_registry_operation};
+use super::rollback_reconciliation::{
+    record_skill_projection_observations, record_skill_projection_observations_for_rollback,
+    rollback_noop_projection_reconciliation, rollback_projection_reconciliation,
 };
 use super::skill_safety::security_diff_report;
 use super::{App, CommandFailure};
@@ -210,13 +212,36 @@ impl App {
         if !changed {
             remove_backup_path_best_effort(skill_backup.as_ref());
             let _ = gitops::restore_index(&self.ctx, &previous_index);
+            let paths = RegistryStatePaths::from_app_context(&self.ctx);
+            let registry_existed_before = paths.exists() || paths.legacy_state_dir_exists();
+            let (projection_reconciliation, warnings) = if registry_existed_before {
+                rollback_projection_reconciliation(&self.ctx, &paths, &args.skill, true)
+            } else {
+                (rollback_noop_projection_reconciliation(), Vec::new())
+            };
+            let live_projection_reconciled = projection_reconciliation
+                .get("live_projection_reconciled")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
             return Ok((
-                json!({"skill": args.skill, "reference": reference, "noop": true}),
-                Meta::default(),
+                json!({
+                    "skill": args.skill,
+                    "reference": reference,
+                    "source_restored": false,
+                    "registry_restored": false,
+                    "live_projection_reconciled": live_projection_reconciled,
+                    "projection_reconciliation": projection_reconciliation,
+                    "noop": true
+                }),
+                Meta {
+                    warnings,
+                    ..Meta::default()
+                },
             ));
         }
 
         let paths = RegistryStatePaths::from_app_context(&self.ctx);
+        let registry_existed_before = paths.exists() || paths.legacy_state_dir_exists();
         let registry_layout_backup =
             backup_registry_layout(&self.ctx, &paths).map_err(map_registry_state)?;
         if let Err(err) = paths.ensure_layout() {
@@ -290,15 +315,15 @@ impl App {
                 }),
             )
             .map_err(map_registry_state)?;
-            record_skill_projection_observations(
-                &paths,
-                &args.skill,
-                "rollback",
-                Some(skill_rel.clone()),
-                Some(previous_head.clone()),
-                Some(reference.clone()),
-            )
-            .map_err(map_registry_state)?;
+            let projection_observation_warnings =
+                record_skill_projection_observations_for_rollback(
+                    &paths,
+                    &args.skill,
+                    Some(skill_rel.clone()),
+                    Some(previous_head.clone()),
+                    Some(reference.clone()),
+                )
+                .map_err(map_registry_state)?;
             let state_commit = commit_registry_state(
                 &self.ctx,
                 &format!("rollback({}): record registry operation", args.skill),
@@ -306,6 +331,7 @@ impl App {
             maybe_version_fault("skill_rollback_after_state_commit")?;
             let mut meta = Meta {
                 op_id: Some(op_id),
+                warnings: projection_observation_warnings,
                 ..Meta::default()
             };
             maybe_autosync_or_queue(
@@ -353,24 +379,15 @@ impl App {
             }
         };
 
-        if let Ok(Some(snapshot)) = paths.maybe_load_snapshot() {
-            let stale: Vec<_> = snapshot
-                .projections
-                .projections
-                .iter()
-                .filter(|p| {
-                    p.skill_id == args.skill
-                        && p.method != crate::core::vocab::ProjectionMethod::Symlink
-                })
-                .map(|p| p.instance_id.clone())
-                .collect();
-            if !stale.is_empty() {
-                meta.warnings.push(format!(
-                    "rollback does not update live projections; re-run 'loom skill project' for: {}",
-                    stale.join(", ")
-                ));
-            }
-        }
+        let (projection_reconciliation, projection_warnings) = rollback_projection_reconciliation(
+            &self.ctx,
+            &paths,
+            &args.skill,
+            registry_existed_before,
+        );
+        meta.warnings.extend(projection_warnings);
+        let live_projection_reconciled =
+            projection_reconciliation["live_projection_reconciled"].as_bool() == Some(true);
 
         Ok((
             json!({
@@ -379,6 +396,10 @@ impl App {
                 "recovery_ref": recovery_ref,
                 "commit": commit,
                 "state_commit": state_commit,
+                "source_restored": true,
+                "registry_restored": true,
+                "live_projection_reconciled": live_projection_reconciled,
+                "projection_reconciliation": projection_reconciliation,
                 "noop": false
             }),
             meta,
@@ -569,34 +590,6 @@ fn maybe_version_fault(tag: &str) -> std::result::Result<(), CommandFailure> {
             ErrorCode::InternalError,
             format!("fault injected at {}", tag),
         ));
-    }
-    Ok(())
-}
-
-fn record_skill_projection_observations(
-    paths: &RegistryStatePaths,
-    skill_id: &str,
-    kind: &str,
-    path: Option<String>,
-    from: Option<String>,
-    to: Option<String>,
-) -> anyhow::Result<()> {
-    if let Some(snapshot) = paths.maybe_load_snapshot()? {
-        for projection in snapshot
-            .projections
-            .projections
-            .iter()
-            .filter(|projection| projection.skill_id == skill_id)
-        {
-            record_registry_observation(
-                paths,
-                &projection.instance_id,
-                kind,
-                path.clone(),
-                from.clone(),
-                to.clone(),
-            )?;
-        }
     }
     Ok(())
 }

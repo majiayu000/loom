@@ -220,6 +220,10 @@ fn skill_search_and_resolve_are_deterministic_and_transparent() {
         env["data"].get("selected").is_none(),
         "recommend --for-task must not emit resolve-only selected fields: {env}"
     );
+    assert!(
+        env["data"].get("candidates").is_none(),
+        "recommend --for-task must not emit resolve-only candidate fields: {env}"
+    );
 
     let (output, env) = run_loom(
         root.path(),

@@ -10,7 +10,7 @@ use crate::fs_util::write_atomic;
 use crate::gitops;
 use crate::sha256::{Sha256, to_hex};
 use crate::state::AppContext;
-use crate::state_model::{REGISTRY_SCHEMA_VERSION, RegistryStatePaths};
+use crate::state_model::{REGISTRY_SCHEMA_VERSION, RegistryStatePaths, RegistryWorkspaceBinding};
 use crate::types::ErrorCode;
 
 use super::helpers::map_git;
@@ -129,6 +129,7 @@ impl App {
         } else {
             "lexical"
         };
+        let policy_context = recommendation_policy_context(&self.ctx, args)?;
         let model = build_skill_read_model(&self.ctx).map_err(map_registry_state)?;
         let mut results = score_and_filter_skills(
             &model.skills,
@@ -163,8 +164,11 @@ impl App {
                 "status": args.status,
                 "trust": args.trust,
                 "workspace": args.workspace.as_ref().map(|path| path.display().to_string()),
+                "binding": args.binding,
+                "policy_profile": args.policy_profile,
                 "active": args.active,
             },
+            "policy_context": policy_context,
             "count": results.len(),
             "results": results,
         });
@@ -212,6 +216,8 @@ impl App {
                 "filters": {
                     "agent": args.agent,
                     "workspace": args.workspace.as_ref().map(|path| path.display().to_string()),
+                    "binding": args.binding,
+                    "policy_profile": args.policy_profile,
                 },
                 "count": recommendations.len(),
                 "results": recommendations,
@@ -236,7 +242,6 @@ impl App {
         args: &SkillSearchArgs,
     ) -> std::result::Result<(Value, Meta), CommandFailure> {
         let mut args = args.clone();
-        args.for_task = true;
         args.explain = true;
         self.cmd_skill_search(&args)
     }
@@ -335,6 +340,99 @@ impl App {
             }),
             meta,
         ))
+    }
+}
+
+fn recommendation_policy_context(
+    ctx: &AppContext,
+    args: &SkillSearchArgs,
+) -> std::result::Result<Value, CommandFailure> {
+    if let Some(binding_id) = args.binding.as_deref() {
+        validate_non_empty("binding", binding_id.trim())?;
+    }
+    if let Some(policy_profile) = args.policy_profile.as_deref() {
+        validate_non_empty("policy_profile", policy_profile.trim())?;
+    }
+    let Some(binding_id) = args.binding.as_deref() else {
+        return Ok(json!({
+            "binding_id": Value::Null,
+            "policy_profile": args.policy_profile,
+            "source": if args.policy_profile.is_some() { "explicit" } else { "none" },
+        }));
+    };
+    let paths = RegistryStatePaths::from_app_context(ctx);
+    let snapshot = paths.maybe_load_snapshot().map_err(map_registry_state)?;
+    let binding = snapshot
+        .as_ref()
+        .and_then(|snapshot| {
+            snapshot
+                .bindings
+                .bindings
+                .iter()
+                .find(|binding| binding.binding_id == binding_id)
+        })
+        .ok_or_else(|| {
+            CommandFailure::new(
+                ErrorCode::BindingNotFound,
+                format!("binding '{binding_id}' not found"),
+            )
+        })?;
+    if let Some(agent) = args.agent.as_deref()
+        && binding.agent != agent
+    {
+        return Err(CommandFailure::new(
+            ErrorCode::ArgInvalid,
+            format!(
+                "binding '{}' is for agent '{}' not '{}'",
+                binding.binding_id, binding.agent, agent
+            ),
+        ));
+    }
+    if let Some(policy_profile) = args.policy_profile.as_deref()
+        && binding.policy_profile != policy_profile
+    {
+        return Err(CommandFailure::new(
+            ErrorCode::ArgInvalid,
+            format!(
+                "binding '{}' uses policy profile '{}' not '{}'",
+                binding.binding_id, binding.policy_profile, policy_profile
+            ),
+        ));
+    }
+    if let Some(workspace) = args.workspace.as_deref()
+        && !recommend_binding_matches_workspace(binding, workspace)
+    {
+        return Err(CommandFailure::new(
+            ErrorCode::ArgInvalid,
+            format!(
+                "binding '{}' does not match workspace '{}'",
+                binding.binding_id,
+                workspace.display()
+            ),
+        ));
+    }
+    Ok(json!({
+        "binding_id": binding.binding_id,
+        "agent": binding.agent,
+        "policy_profile": binding.policy_profile,
+        "active": binding.active,
+        "source": "binding",
+    }))
+}
+
+fn recommend_binding_matches_workspace(
+    binding: &RegistryWorkspaceBinding,
+    workspace: &Path,
+) -> bool {
+    let matcher = &binding.workspace_matcher;
+    match matcher.kind.as_str() {
+        "path_prefix" => workspace.starts_with(Path::new(&matcher.value)),
+        "exact_path" => workspace == Path::new(&matcher.value),
+        "name" => workspace
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name == matcher.value),
+        _ => false,
     }
 }
 

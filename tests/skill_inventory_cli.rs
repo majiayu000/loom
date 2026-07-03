@@ -162,6 +162,60 @@ fn skill_search_and_resolve_are_deterministic_and_transparent() {
             .any(|input| input["field"] == json!("workspace_matchers")),
         "resolve must explain workspace matcher boost: {env}"
     );
+
+    let (output, env) = run_loom(
+        root.path(),
+        &[
+            "skill",
+            "recommend",
+            "model onboarding flow",
+            "--agent",
+            "claude",
+            "--binding",
+            "bind_claude_project_a",
+            "--policy-profile",
+            "safe-capture",
+            "--workspace",
+            "/tmp/project-a/src",
+        ],
+    );
+    assert!(
+        output.status.success(),
+        "skill recommend should pass: {env}"
+    );
+    assert_eq!(env["cmd"], json!("skill.recommend"));
+    assert!(
+        env["data"].get("selected").is_none(),
+        "recommend must not emit resolve-only selected fields: {env}"
+    );
+    assert_eq!(
+        env["data"]["policy_context"]["binding_id"],
+        json!("bind_claude_project_a")
+    );
+    assert_eq!(
+        env["data"]["policy_context"]["policy_profile"],
+        json!("safe-capture")
+    );
+    assert_eq!(
+        env["data"]["recommendations"]["filters"]["binding"],
+        json!("bind_claude_project_a")
+    );
+
+    let (output, env) = run_loom(
+        root.path(),
+        &[
+            "skill",
+            "recommend",
+            "model onboarding",
+            "--binding",
+            "missing",
+        ],
+    );
+    assert!(
+        !output.status.success(),
+        "unknown binding should fail closed: {env}"
+    );
+    assert_eq!(env["error"]["code"], json!("BINDING_NOT_FOUND"));
 }
 
 #[test]
@@ -218,6 +272,10 @@ fn skill_recommend_and_resolve_semantic_fall_back_to_lexical() {
         "skill recommend should pass: {env}"
     );
     assert_eq!(env["cmd"], json!("skill.recommend"));
+    assert!(
+        env["data"].get("selected").is_none(),
+        "recommend must not emit resolve-only selected fields: {env}"
+    );
     assert_eq!(env["data"]["mode"], json!("semantic-disabled"));
     assert!(
         env["meta"]["warnings"]

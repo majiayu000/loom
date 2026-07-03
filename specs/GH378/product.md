@@ -2,7 +2,7 @@
 
 Issue: https://github.com/majiayu000/loom/issues/378
 Parent: https://github.com/majiayu000/loom/issues/376
-Status: Blocked design packet
+Status: Implemented
 Locale: zh-CN
 
 ## Goal
@@ -15,9 +15,9 @@ mode, and non-mutating by default. It should rank candidates, show evidence,
 surface risks, and provide next actions such as activation commands or dry-run
 plans, but it must never silently activate a skill.
 
-## Blocking Dependencies
+## Dependency History
 
-Production implementation is blocked by:
+The original design packet depended on these upstream read models and gates:
 
 - #366 for the single-skill status and `skill inspect` read model.
 - #367 for authoritative activation/deactivation/list state.
@@ -27,8 +27,19 @@ Production implementation is blocked by:
 - #371 for dependency and MCP readiness.
 - #377 for skillsets and grouped lifecycle data.
 
-The first implementation may extend existing deterministic `skill search` and
-`skill resolve` behavior only when it preserves read-only semantics.
+Those dependencies now provide enough local state for the read-only v1
+recommendation contract. The implementation extends existing deterministic
+discovery behavior while preserving read-only semantics.
+
+## Implementation Status
+
+The v1 implementation is complete for the read-only local recommendation
+contract. `loom index build/status`, `loom skill recommend`, `loom skill
+resolve`, and `loom active recommend` are all non-mutating command surfaces.
+`skill recommend` and `skill resolve` reuse the deterministic discovery engine
+also available through `skill search`; semantic mode remains local-provider-only
+and returns a `semantic-disabled` warning with lexical fallback when no local
+provider is configured.
 
 ## User-Facing Commands
 

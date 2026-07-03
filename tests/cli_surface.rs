@@ -292,16 +292,8 @@ fn command_surface_budget_tracks_read_surface_convergence() {
     assert!(output.status.success(), "skill help should pass");
     let stdout = String::from_utf8_lossy(&output.stdout);
     let skill = command_names_from_help(&stdout);
-    assert_eq!(skill.len(), 40, "skill command budget changed");
-    for removed in [
-        "show",
-        "resolve",
-        "recommend",
-        "capture",
-        "save",
-        "snapshot",
-        "verify",
-    ] {
+    assert_eq!(skill.len(), 42, "skill command budget changed");
+    for removed in ["show", "capture", "save", "snapshot", "verify"] {
         assert!(
             !skill.contains(&removed.to_string()),
             "removed skill command still present: {removed}"
@@ -777,6 +769,8 @@ fn skill_help_describes_every_subcommand() {
         "List registry and observed skills",
         "Inspect one skill lifecycle status without mutating state",
         "Search, resolve, and explain skills with deterministic scoring",
+        "Recommend skills and skillsets for a task without mutating active views",
+        "Resolve the best skill candidate for a task without mutating state",
         "Draft a new skill as a guarded patch artifact",
         "Extract reviewed diff context into a guarded patch artifact",
         "Rewrite one skill as a guarded patch artifact",

@@ -328,6 +328,10 @@ pub enum SkillCommand {
     },
     #[command(about = "Search, resolve, and explain skills with deterministic scoring")]
     Search(SkillSearchArgs),
+    #[command(about = "Recommend skills and skillsets for a task without mutating active views")]
+    Recommend(SkillSearchArgs),
+    #[command(about = "Resolve the best skill candidate for a task without mutating state")]
+    Resolve(SkillSearchArgs),
     #[command(about = "Draft a new skill as a guarded patch artifact")]
     Draft(SkillDraftArgs),
     #[command(about = "Extract reviewed diff context into a guarded patch artifact")]

@@ -125,7 +125,7 @@ const Sync = () => (
     <OK>✓</OK> fetched remote registry changes{"\n"}
     <W>⚠</W> pending projections may need replay <C>(skill state changed)</C>
     {"\n\n"}
-    <C># Replay pending ops against your local targets</C>
+    <C># Replay queued registry operations against your local targets</C>
     {"\n"}
     <Prompt /> loom sync replay{"\n"}
     <OK>✓</OK> replayed <E>OP_ID</E> → TARGET_ID{"\n"}

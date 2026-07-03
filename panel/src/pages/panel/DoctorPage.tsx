@@ -176,7 +176,7 @@ function nextActionPage(check: DoctorCheck): PanelPageKey {
   if (idRoot.startsWith("target_") || check.section === "targets" || typeof check.details?.target_id === "string") {
     return "targets";
   }
-  if (idRoot.includes("history") || idRoot.includes("pending")) return "history";
+  if (idRoot.includes("history") || idRoot.includes("operation_journal")) return "history";
   if (idRoot.includes("git")) return "sync";
   return "settings";
 }
@@ -278,7 +278,9 @@ function doctorCheckLabel(check: DoctorCheck): string {
     binding_target_exists: "Binding default target",
     git_fsck: "Git integrity",
     history_branch: "History branch",
-    pending_queue_warnings: "Pending queue warnings",
+    operation_journal_read: "Operation journal read",
+    operation_journal_warnings: "Operation journal warnings",
+    pending_queue_warnings: "Operation journal warnings",
     projection_path_exists: "Projection path",
     projection_source_exists: "Projection source skill",
     schema_file: "Registry schema file",

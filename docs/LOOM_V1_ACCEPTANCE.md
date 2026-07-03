@@ -18,13 +18,13 @@ implemented contract and the verification gates that keep it from regressing.
 | Snapshot/release/rollback/diff | Snapshot is queryable via V1 ops history without registry `op_id` fabrication; release/rollback write registry ops; rollback creates `recovery_ref`; diff accepts tags and refs. | `tests/reliability.rs`, `tests/project.rs`, `src/panel/skill_diff/tests.rs` |
 | Observed workflows | Import and monitor observed targets are explicit and non-destructive; disappearing observed live skills do not delete canonical source. | `tests/import_observed.rs`, `tests/monitor_observed.rs` |
 | Orphans | Binding removal marks projections orphaned; cleanup is explicit and optionally deletes live paths only when requested. | `tests/remove.rs`, `src/commands/workspace_cmds/orphan.rs` |
-| Sync/history | Push, pull, replay, pending compaction, and `loom-history` reconciliation cover offline and divergent workflows. | `tests/reliability.rs`, `scripts/e2e-agent-flow.sh` |
+| Sync/history | Push, pull, replay, operation journal maintenance, and `loom-history` reconciliation cover offline and divergent workflows. | `tests/reliability.rs`, `scripts/e2e-agent-flow.sh` |
 | Panel | Panel uses live API data for Overview, Skills, Targets, Bindings, Projections, Activity, Sync, Doctor, Settings, and first-run mode. | `panel/src/pages`, `panel/src/lib/api/usePanelData.ts`, `panel/src/pages/PanelApp.test.tsx` |
 
 ## Command Contract
 
 Read commands do not mutate registry state, Git refs, Git index, live target
-directories, or pending queue. They do append durable command audit events under
+directories, or the operation backlog. They do append durable command audit events under
 `state/events/commands.jsonl`; this is the only accepted read-path write.
 
 Registry writes return `meta.op_id` when a registry operation exists. Noop

@@ -1,8 +1,7 @@
 use std::collections::BTreeMap;
-use std::fs;
 use std::path::Path;
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Result, anyhow};
 use chrono::Utc;
 use serde_json::json;
 
@@ -11,9 +10,9 @@ use crate::types::PendingOp;
 
 use super::{
     HISTORY_BRANCH, HISTORY_BRANCH_REF, HISTORY_COMPACT_AFTER_SEGMENTS, HISTORY_RETAIN_ARCHIVES,
-    HISTORY_RETAIN_RECENT_SEGMENTS, ORIGIN_HISTORY_BRANCH_REF, ahead_behind_refs,
-    ensure_local_identity, hash_object_bytes, hash_object_file, read_blob, remote_exists,
-    remote_tracking_history_exists, repo_is_initialized,
+    HISTORY_RETAIN_RECENT_SEGMENTS, HISTORY_SEGMENTS_DIR, ORIGIN_HISTORY_BRANCH_REF,
+    ahead_behind_refs, ensure_local_identity, hash_object_bytes, hash_object_file, read_blob,
+    remote_exists, remote_tracking_history_exists, repo_is_initialized,
 };
 
 use super::history_impl::{
@@ -106,7 +105,8 @@ pub fn append_history_audit_event(
     }))? + "\n";
     let segment_blob = hash_object_bytes(ctx, raw.as_bytes())?;
     let segment_ref_path = format!(
-        "pending_ops_history/00001-{}.jsonl",
+        "{}/00001-{}.jsonl",
+        HISTORY_SEGMENTS_DIR,
         event_id.replace('-', "")
     );
 
@@ -326,38 +326,5 @@ pub fn mirror_history_segment(
     )?;
     let expected_old = base.as_ref().map(|state| state.commit.as_str());
     update_ref(ctx, HISTORY_BRANCH_REF, &commit, expected_old)?;
-    Ok(())
-}
-
-#[allow(dead_code)]
-pub fn mirror_pending_ops_history(ctx: &AppContext) -> Result<()> {
-    if !repo_is_initialized(ctx)? {
-        return Ok(());
-    }
-
-    let entries = match fs::read_dir(&ctx.pending_ops_history_dir) {
-        Ok(entries) => entries,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-        Err(err) => return Err(err).context("failed to read pending ops history dir"),
-    };
-
-    let mut segments = Vec::new();
-    for entry in entries {
-        let entry = entry.context("failed to read pending ops history entry")?;
-        if entry
-            .file_type()
-            .with_context(|| format!("failed to inspect {}", entry.path().display()))?
-            .is_file()
-        {
-            segments.push(entry.path());
-        }
-    }
-    segments.sort();
-
-    for segment_path in segments {
-        mirror_history_segment(ctx, &segment_path, &ctx.pending_ops_snapshot_file)
-            .context("failed to mirror pending ops history into git")?;
-    }
-
     Ok(())
 }

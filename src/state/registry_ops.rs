@@ -29,31 +29,11 @@ impl AppContext {
         Ok(RegistryOpsReport { ops })
     }
 
-    pub fn existing_registry_pending_count(&self) -> Result<usize> {
+    pub fn existing_registry_operation_backlog_count(&self) -> Result<usize> {
         Ok(self.read_existing_registry_ops_report()?.ops.len())
     }
 
-    pub fn registry_or_pending_count(&self) -> Result<usize> {
-        let registry = self.existing_registry_pending_count()?;
-        if registry > 0 {
-            return Ok(registry);
-        }
-        Ok(self.read_pending_report()?.ops.len())
-    }
-
-    pub fn read_registry_or_pending_ops_report(&self) -> Result<RegistryOrPendingOpsReport> {
-        let pending = self.read_pending_report()?;
-        if !pending.ops.is_empty() || !pending.warnings.is_empty() || pending.history_events > 0 {
-            return Ok(RegistryOrPendingOpsReport::Pending(pending));
-        }
-        let registry = self.read_existing_registry_ops_report()?;
-        if !registry.ops.is_empty() {
-            return Ok(RegistryOrPendingOpsReport::Registry(registry));
-        }
-        Ok(RegistryOrPendingOpsReport::Pending(pending))
-    }
-
-    pub fn registry_pending_count(&self) -> Result<usize> {
+    pub fn registry_operation_backlog_count(&self) -> Result<usize> {
         Ok(self.read_registry_ops_report()?.ops.len())
     }
 
@@ -149,12 +129,6 @@ impl AppContext {
         paths.save_checkpoint(&checkpoint)?;
         Ok(updated)
     }
-}
-
-#[derive(Debug, Clone)]
-pub enum RegistryOrPendingOpsReport {
-    Registry(RegistryOpsReport),
-    Pending(super::PendingOpsReport),
 }
 
 fn active_registry_ops(operations: Vec<RegistryOperationRecord>) -> Vec<RegistryOperationRecord> {

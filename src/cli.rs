@@ -256,7 +256,7 @@ pub enum Command {
 
 #[derive(Debug, Clone, Subcommand, Serialize)]
 pub enum WorkspaceCommand {
-    #[command(about = "Show registry status, targets, Git state, and pending ops")]
+    #[command(about = "Show registry status, targets, Git state, and operation backlog")]
     Status,
     #[command(about = "Run registry integrity, history, and projection checks")]
     Doctor,
@@ -466,9 +466,9 @@ pub struct OrphanCleanArgs {
 
 #[derive(Debug, Clone, Subcommand, Serialize)]
 pub enum OpsCommand {
-    #[command(about = "List pending operations")]
+    #[command(about = "List replayable registry operations")]
     List,
-    #[command(about = "Retry pending operations")]
+    #[command(about = "Retry replayable registry operations")]
     Retry,
     #[command(about = "Purge completed operation records")]
     Purge,
@@ -725,13 +725,13 @@ pub enum SyncCommand {
     Push(SyncPushArgs),
     #[command(about = "Pull registry state and operation history")]
     Pull,
-    #[command(about = "Replay pending operations")]
+    #[command(about = "Replay registry operations")]
     Replay,
 }
 
 #[derive(Debug, Clone, Args, Serialize)]
 pub struct SyncPushArgs {
-    /// Show the push plan without committing, pushing, or clearing pending ops.
+    /// Show the push plan without committing, pushing, or clearing the operation backlog.
     #[arg(long)]
     pub dry_run: bool,
 }

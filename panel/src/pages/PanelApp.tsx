@@ -190,7 +190,7 @@ export function PanelApp() {
   const readOnly = live.mode !== "live";
   const historyReadOnly = readOnly || live.queuedWriteCount > 0;
   const historyReadOnlyReason =
-    live.queuedWriteCount > 0 ? "pending operations must be replayed or purged first" : undefined;
+    live.queuedWriteCount > 0 ? "operation backlog must be replayed or purged first" : undefined;
   const viewModel = selectPanelViewModel(live, { page, readOnly, historyReadOnly });
   const onMutation = () => {
     setMutationVersion((cur) => cur + 1);

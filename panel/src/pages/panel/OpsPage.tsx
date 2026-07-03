@@ -86,7 +86,7 @@ export function OpsPage({ ops, onMutation, readOnly }: OpsPageProps) {
         <div className="ops-summary-grid">
           <div
             className="card"
-            title="Visible Activity rows. Queued writes come from /api/v1/ops/pending; audit rows come from /api/v1/ops."
+            title="Visible Activity rows. Replayable writes come from the registry operation backlog; audit rows come from /api/v1/ops."
           >
             <div className="card-body">
               <div style={section_label}>{COUNT_TERMS.activityRows}</div>

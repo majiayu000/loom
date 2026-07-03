@@ -226,28 +226,29 @@ These are intentionally after the core migration:
 
 ## 11. Operation Log Authority Migration
 
-Status: plan for #459 implementation review. Runtime behavior is not migrated
-by this document.
+Status: implemented by #459. Runtime sync, replay, ops maintenance, history
+repair, and Panel backlog reads use the registry operation journal as the
+single operation-log authority.
 
 ### 11.1 Target State
 
-The registry journal becomes the only operation-log write authority:
+The registry journal is the only operation-log write authority:
 
 - durable log: `state/registry/ops/operations.jsonl`
 - replay cursor: `state/registry/ops/checkpoint.json`
-- history branch mirror: `loom-history`
+- history branch mirror: `loom-history` paths `registry_ops_history/`,
+  `registry_ops_archive/`, and `registry_ops_snapshot.json`
 
-The legacy pending queue files are removed after sync and ops command families
-read and write through the registry journal:
+The legacy pending queue files are removed from runtime state layout and are no
+longer read, written, compacted, or repaired by command families:
 
 - `state/pending_ops.jsonl`
 - `state/pending_ops_snapshot.json`
 - `state/pending_ops_history/`
 
-No command may dual-write both models after the migration lands. During the
-code migration, a PR may include a temporary adapter only inside the command
-family being migrated, but that PR must delete the replaced legacy writer before
-merge.
+No command may dual-write both models. Historic `loom-history` rows in the old
+shape may still be parsed for audit compatibility, but they are not a live
+operation authority.
 
 ### 11.2 Registry Journal Semantics
 
@@ -293,23 +294,24 @@ History repair must never silently drop an operation. If the two sources
 disagree and neither side can be proven newer by commit ancestry plus operation
 timestamps, the operation becomes `blocked` and requires explicit retry or purge.
 
-### 11.4 Command Family Migration Order
+### 11.4 Command Family Migration Closure
 
-Migrate one command family per PR after this plan is reviewed:
+The #459 implementation closes the migration as one final deletion slice:
 
-1. Read-only ops views: make `ops list/history diagnose` derive from the
-   registry journal while leaving pending writers untouched.
-2. `ops retry` and `ops purge`: operate on registry operation ids and update
-   `status`, `ack`, and `last_error` in place.
-3. `sync push` and `sync pull`: replace pending snapshot reads with registry
-   journal queries and history segment import/export.
-4. `sync replay`: replay registry payloads with stale-head and idempotency
-   checks.
-5. Deletion PR: remove `pending_ops.*` files, writers, and repair code once the
-   migrated tests cover the old recorded fixtures.
+1. `ops list`, `/api/v1/ops`, and `/api/v1/ops/pending` derive from the
+   registry journal.
+2. `ops retry` and `ops purge` operate on registry operation records and update
+   journal state.
+3. `sync push`, `sync pull`, and `sync replay` query registry operations and
+   mirror operation history through the `registry_ops_*` history paths.
+4. `ops history repair` repairs the registry operation history mirror without
+   rebuilding a local pending snapshot.
+5. `state/pending_ops.*` writers, files, compaction, and snapshot repair code
+   are deleted from runtime paths.
 
-Each code PR must include equivalence tests against recorded pending-queue
-fixtures for the command family it migrates.
+Focused reliability, doctor, panel, and preflight tests cover malformed
+operation journals, history conflicts, dry-run immutability, retry/purge, and
+replay behavior.
 
 ### 11.5 Failure And Rollback Rules
 
@@ -327,18 +329,17 @@ fixtures for the command family it migrates.
 
 ### 11.6 Verification Matrix
 
-The implementation PRs must keep these checks green:
+The implementation must keep these checks green:
 
-- `cargo test --test sync --test ops`
-- `cargo test reliability`
+- `cargo check --workspace --all-targets --all-features`
+- `cargo test --test reliability`
 - `./scripts/e2e-agent-flow.sh`
-- fixtures that compare legacy pending queue inputs to registry journal
-  outcomes for push, pull, replay, retry, purge, and history repair
+- focused panel and doctor tests that exercise operation journal errors and
+  backlog read models
 
-The final deletion PR must also prove:
+The deletion slice must also prove:
 
-- `rg pending_ops src/` returns only migration notes or test fixtures, or
-  returns nothing.
+- `rg pending_ops src/` returns nothing.
 - `docs/LOOM_ARCHITECTURE_DECISIONS.md` section 1 records the registry journal
   as the single operation history authority.
 

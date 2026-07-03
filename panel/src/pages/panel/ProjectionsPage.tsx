@@ -206,7 +206,7 @@ export function ProjectionsPage({ projections, targets, bindings, readOnly, onMu
         )}
         {projections.length === 0 ? (
           <EmptyState title="No projections yet" icon={<RefreshIcon />} command="loom sync replay">
-            Create a binding that maps skills to targets, then replay or sync pending work to materialize projections.
+            Create a binding that maps skills to targets, then replay or sync queued work to materialize projections.
           </EmptyState>
         ) : filtered.length === 0 ? (
           <EmptyState

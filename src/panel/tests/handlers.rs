@@ -669,12 +669,10 @@ async fn info_surfaces_warning_when_git_remote_lookup_fails() {
 #[tokio::test]
 async fn pending_returns_non_2xx_with_structured_error_body_on_failure() {
     let (root, state) = make_test_state();
-    state
-        .ctx
-        .ensure_state_layout()
-        .expect("create pending ops layout");
-    fs::remove_file(&state.ctx.pending_ops_file).expect("remove pending ops file");
-    fs::create_dir_all(&state.ctx.pending_ops_file).expect("replace pending ops file with dir");
+    let paths = crate::state_model::RegistryStatePaths::from_app_context(&state.ctx);
+    paths.ensure_layout().expect("create registry ops layout");
+    fs::remove_file(&paths.operations_file).expect("remove operations file");
+    fs::create_dir_all(&paths.operations_file).expect("replace operations file with dir");
 
     let (status, Json(payload)) = v1_pending(State(state)).await;
 
@@ -689,16 +687,14 @@ async fn pending_returns_non_2xx_with_structured_error_body_on_failure() {
 #[tokio::test]
 async fn pending_returns_ok_with_empty_report_on_success() {
     let (root, state) = make_test_state();
-    state
-        .ctx
-        .ensure_state_layout()
-        .expect("create pending ops layout");
+    let paths = crate::state_model::RegistryStatePaths::from_app_context(&state.ctx);
+    paths.ensure_layout().expect("create registry ops layout");
 
     let (status, Json(payload)) = v1_pending(State(state)).await;
 
     assert_eq!(status, StatusCode::OK);
     assert_eq!(payload["ok"], json!(true));
-    assert_eq!(payload["cmd"], json!("pending.list"));
+    assert_eq!(payload["cmd"], json!("operation_backlog.list"));
     assert!(payload["request_id"].as_str().is_some());
     assert_eq!(payload["data"]["count"], json!(0));
     assert!(payload["data"]["ops"].as_array().is_some());

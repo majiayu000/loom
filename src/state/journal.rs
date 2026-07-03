@@ -121,7 +121,7 @@ pub(super) fn parse_journal_line(line: &str) -> Result<OpJournalEvent> {
     }
 
     let mut op = serde_json::from_str::<PendingOp>(line)
-        .context("line is neither a journal event nor a pending op")?;
+        .context("line is neither a journal event nor a legacy operation row")?;
     if op.op_id.is_none() {
         op.op_id = Some(op.stable_id());
     }

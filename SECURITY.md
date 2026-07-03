@@ -63,8 +63,8 @@ by `skill project` operations.
 
 Read commands such as `workspace status`, `workspace doctor`, `target list`,
 `target show`, `sync status`, and `skill verify` do not mutate registry state,
-Git refs, the Git index, live target directories, or the pending queue. They
-may write durable command audit events under `state/events/commands.jsonl`.
+Git refs, the Git index, live target directories, or the operation backlog.
+They may write durable command audit events under `state/events/commands.jsonl`.
 
 State-changing registry commands record a `RegistryOperationRecord` under
 `state/registry/ops/operations.jsonl` with the operation intent, payload,

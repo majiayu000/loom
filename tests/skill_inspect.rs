@@ -442,7 +442,6 @@ fn skill_inspect_is_read_only() {
     let events_before = tree_snapshot(&root.path().join("state/events"));
     let skills_before = tree_snapshot(&root.path().join("skills"));
     let live_before = tree_snapshot(&root.path().join("live"));
-    let pending_before = fs::read(root.path().join("state/pending_ops.jsonl")).ok();
 
     let (output, env) = run_loom(root.path(), &["skill", "inspect", "model-onboarding"]);
     assert!(output.status.success(), "inspect should pass: {env}");
@@ -466,11 +465,6 @@ fn skill_inspect_is_read_only() {
         tree_snapshot(&root.path().join("live")),
         live_before,
         "inspect must not mutate live target"
-    );
-    assert_eq!(
-        fs::read(root.path().join("state/pending_ops.jsonl")).ok(),
-        pending_before,
-        "inspect must not mutate pending queue"
     );
 }
 

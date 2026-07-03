@@ -321,23 +321,21 @@ pub(in crate::panel) async fn registry_ops_diagnose(
 pub(in crate::panel) async fn v1_pending(
     State(state): State<PanelState>,
 ) -> (StatusCode, Json<serde_json::Value>) {
-    match state.ctx.read_pending_report() {
+    match state.ctx.read_registry_ops_report() {
         Ok(report) => (
             StatusCode::OK,
             registry_ok(
-                "pending.list",
+                "operation_backlog.list",
                 json!({
                     "count": report.ops.len(),
                     "ops": report.ops,
-                    "journal_events": report.journal_events,
-                    "history_events": report.history_events,
-                    "warnings": report.warnings
+                    "state_model": "registry"
                 }),
             ),
         ),
         Err(err) => (
             StatusCode::INTERNAL_SERVER_ERROR,
-            registry_error("pending.list", "IO_ERROR", err.to_string()),
+            registry_error("operation_backlog.list", "IO_ERROR", err.to_string()),
         ),
     }
 }

@@ -39,7 +39,7 @@ export type RemotePayload = {
   url?: string;
   ahead?: number;
   behind?: number;
-  pending_ops?: number;
+  operation_backlog?: number;
   tracking_ref?: boolean;
   sync_state?: string;
 };

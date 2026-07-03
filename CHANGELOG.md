@@ -3,6 +3,14 @@
 All notable public release changes are tracked here. Loom also publishes release
 archives, checksums, and provenance details on GitHub Releases.
 
+## Unreleased
+
+### Changed
+
+- Registry operations journal is now the single operation-log authority for
+  sync replay, ops retry/purge, history repair, and Panel operation backlog
+  reads; legacy `state/pending_ops.*` runtime state is no longer used.
+
 ## [0.1.5] - 2026-06-27
 
 ### Added

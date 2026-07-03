@@ -144,7 +144,7 @@ Prefer a guided walkthrough? Run `./scripts/demo.sh` for a scripted end-to-end t
 <!--   3. Screenshot http://localhost:43117 (overview + skills views), save as PNG into assets/.      -->
 
 > Visual control panel for the registry. Launches on `http://localhost:43117`
-> via `loom panel`; diff projections, inspect bindings, and replay pending ops
+> via `loom panel`; diff projections, inspect bindings, and replay queued operations
 > in a single-page React app served by the same Rust binary.
 
 ## Features
@@ -245,7 +245,7 @@ The chain `add → capture → save → snapshot → release → rollback` is th
 | `loom skill diff` | Compare two revisions of a skill source | Inspect raw source changes or use `--security` for security-relevant findings only | Source (read-only) |
 | `loom skill lint` | Check portable Agent Skills metadata compliance | Validate `SKILL.md`, YAML frontmatter, portable name, and description before projection | Source (read-only) |
 | `loom skill diagnose --check drift` | Detect uncommitted drift in a skill source | Confirm `skills/<name>` matches the committed source tree; flag external edits that bypassed `commit` | Source (read-only) |
-| `loom skill diagnose` | Run a read-only health report for one skill | Explain missing source, broken bindings/targets/projections, source drift, pending queue issues, and recent failures | Source + registry metadata (read-only) |
+| `loom skill diagnose` | Run a read-only health report for one skill | Explain missing source, broken bindings/targets/projections, source drift, operation backlog issues, and recent failures | Source + registry metadata (read-only) |
 | `loom codex reconcile` | Plan or repair Codex active-view visibility | Dry-run projection/config actions, repair safe Loom-owned symlinks, remove stale records, and optionally patch safe config disables | Target + registry metadata + Codex config |
 
 Quick decision: **edits from either side → `commit` (add `--from-projection` or `--from-source` only for conflicts); anchor → `release --anchor`; public version → `release --preflight --baseline <ref>`; undo → `rollback`; drift audit → `diagnose --check drift`; health triage → `diagnose`; quality evidence → `eval`.**
@@ -276,7 +276,7 @@ Quick decision: **edits from either side → `commit` (add `--from-projection` o
 - Agent automation should use explicit `--root`, `--json`, selectors such as `binding_id` / `target_id`, and branch on `ok` + `error.code`.
 - Agents can call `loom skill search "<task>" --for-task --agent <agent> --workspace <path>` before choosing a workflow skill, then `loom agent preflight --agent <agent> --workspace <path> --skill <skill>` before writing. Add `--dry-run` to high-risk writes, or use `loom skill rollback --dry-run` to get a no-mutation rollback plan.
 - `--json` wraps both command execution errors and argument parsing failures in the same envelope. `loom panel` is the local HTTP UI server and does not return a command envelope.
-- Read commands such as `workspace status`, `workspace doctor`, `target list`, `skill list`, `skill inspect`, `skill inspect --brief`, `skill deps`, `skill search`, `skillset show`, `skillset lint`, and `sync status` do not mutate registry state, Git refs, the Git index, live target directories, or the pending queue. Durable command audit events may be recorded under `state/events/commands.jsonl` for audited surfaces.
+- Read commands such as `workspace status`, `workspace doctor`, `target list`, `skill list`, `skill inspect`, `skill inspect --brief`, `skill deps`, `skill search`, `skillset show`, `skillset lint`, and `sync status` do not mutate registry state, Git refs, the Git index, live target directories, or the operation backlog. Durable command audit events may be recorded under `state/events/commands.jsonl` for audited surfaces.
 - Registry metadata lives under `state/registry`; Loom does not use release-style labels for internal state names.
 - State-changing registry commands commit `state/registry` to Git, and `sync push` has a safety commit before pushing.
 - Hard write guard: if `--root` points to the Loom tool repo itself, write operations are rejected. Use an independent skill registry repo for mutable operations.

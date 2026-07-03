@@ -343,97 +343,41 @@ fn skill_diagnose_reports_total_drift_count_when_paths_are_truncated() {
 }
 
 #[test]
-fn skill_diagnose_reports_pending_queue_warnings() {
+fn skill_diagnose_matches_operation_backlog_by_structured_skill_fields_only() {
     let root = test_root();
     write_skill(&root, "demo");
     commit_all(&root);
-    let app = app(&root);
-    app.ctx.ensure_state_layout().expect("layout");
-    fs::write(&app.ctx.pending_ops_file, "not-json\n").expect("write malformed pending op");
+    let paths = RegistryStatePaths::from_root(&root);
+    paths.ensure_layout().expect("layout");
+    paths
+        .append_operation(&RegistryOperationRecord {
+            op_id: "op-other".to_string(),
+            intent: "skill.save demo".to_string(),
+            status: "succeeded".to_string(),
+            ack: false,
+            payload: json!({"skill": "other"}),
+            effects: json!({}),
+            last_error: None,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        })
+        .expect("append op");
 
-    let (payload, _) = app
+    let (payload, _) = app(&root)
         .cmd_skill_diagnose(&SkillOnlyArgs {
             skill: "demo".to_string(),
         })
         .expect("diagnose");
-    let pending_warning = payload["checks"]
+    let backlog = payload["checks"]
         .as_array()
         .unwrap()
         .iter()
-        .find(|check| check["id"] == "pending_queue_warnings")
-        .expect("pending warning check");
+        .find(|check| check["id"] == "recent_operation_backlog")
+        .expect("operation backlog check");
 
-    assert_eq!(pending_warning["ok"], json!(false));
-    assert_eq!(pending_warning["severity"], json!("warning"));
+    assert_eq!(backlog["ok"], json!(true));
     assert!(
-        pending_warning["details"]["warnings"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|warning| warning
-                .as_str()
-                .is_some_and(|message| message.contains("skipped malformed pending op")))
-    );
-    let _ = fs::remove_dir_all(root);
-}
-
-#[test]
-fn skill_diagnose_reports_pending_queue_read_errors() {
-    let root = test_root();
-    write_skill(&root, "demo");
-    commit_all(&root);
-    let app = app(&root);
-    app.ctx.ensure_state_layout().expect("layout");
-    fs::remove_file(&app.ctx.pending_ops_file).expect("remove pending ops file");
-    fs::create_dir_all(&app.ctx.pending_ops_file).expect("replace pending ops file with directory");
-
-    let (payload, _) = app
-        .cmd_skill_diagnose(&SkillOnlyArgs {
-            skill: "demo".to_string(),
-        })
-        .expect("diagnose");
-    let pending_read = payload["checks"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|check| check["id"] == "pending_queue_read")
-        .expect("pending read check");
-
-    assert_eq!(payload["status"], json!("blocked"));
-    assert_eq!(pending_read["ok"], json!(false));
-    assert_eq!(pending_read["severity"], json!("error"));
-    let _ = fs::remove_dir_all(root);
-}
-
-#[test]
-fn skill_diagnose_matches_pending_operations_by_structured_skill_fields_only() {
-    let root = test_root();
-    write_skill(&root, "demo");
-    commit_all(&root);
-    let app = app(&root);
-    app.ctx
-        .append_pending(
-            "skill.save demo",
-            json!({"skill": "other"}),
-            "req-1".to_string(),
-        )
-        .expect("append pending op");
-
-    let (payload, _) = app
-        .cmd_skill_diagnose(&SkillOnlyArgs {
-            skill: "demo".to_string(),
-        })
-        .expect("diagnose");
-    let pending = payload["checks"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|check| check["id"] == "recent_pending_ops")
-        .expect("pending check");
-
-    assert_eq!(pending["ok"], json!(true));
-    assert!(
-        payload["related"]["pending_operations"]
+        payload["related"]["operation_backlog"]
             .as_array()
             .unwrap()
             .is_empty()

@@ -121,6 +121,8 @@ pub(super) fn skill_source_digest(path: &Path) -> std::result::Result<String, Co
                     .to_string_lossy()
                     .as_bytes(),
             );
+            hasher.update(b"\0target-content\0");
+            hasher.update(&fs::read(&full).map_err(map_io)?);
         } else {
             hasher.update(b"file\0");
             hasher.update(&fs::read(&full).map_err(map_io)?);

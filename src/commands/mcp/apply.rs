@@ -4,7 +4,7 @@ use std::io::{ErrorKind, Write};
 use std::path::{Path, PathBuf};
 
 use serde_json::{Value, json};
-use toml_edit::{Array, DocumentMut, Item, Table, Value as TomlValue, value};
+use toml_edit::{Array, DocumentMut, Item, Table, TableLike, Value as TomlValue, value};
 
 use crate::cli::McpApplyArgs;
 use crate::commands::CommandFailure;
@@ -17,7 +17,7 @@ use crate::types::ErrorCode;
 
 use super::artifact::{load_reviewed_mcp_plan, skill_source_digest};
 use super::source_policy::{McpResolvedSource, tool_availability};
-use super::utils::{digest_json, digest_str};
+use super::utils::{digest_bytes, digest_json, digest_str};
 use super::{McpPlan, McpRequirement};
 
 const APPLY_RECORD_SCHEMA: &str = "mcp-apply-record-v1";
@@ -181,6 +181,48 @@ fn validate_sources(plan: &McpPlan) -> std::result::Result<(), CommandFailure> {
             json!({
                 "plan_id": plan.plan_id,
                 "blocked_sources": blocked,
+                "target_writes_performed": false,
+            }),
+        ));
+    }
+    for source in plan
+        .resolved_sources
+        .iter()
+        .filter(|source| source.kind == "local")
+    {
+        validate_local_source_digest(plan, source)?;
+    }
+    Ok(())
+}
+
+fn validate_local_source_digest(
+    plan: &McpPlan,
+    source: &McpResolvedSource,
+) -> std::result::Result<(), CommandFailure> {
+    let (path, digest) = local_source_path_and_digest(source)?;
+    let expected = format!("sha256:{digest}");
+    let bytes = fs::read(path).map_err(|err| {
+        policy_blocked(
+            "MCP local source could not be read during apply",
+            json!({
+                "plan_id": plan.plan_id,
+                "server": source.server,
+                "source": source.locator,
+                "error": err.to_string(),
+                "target_writes_performed": false,
+            }),
+        )
+    })?;
+    let actual = digest_bytes(&bytes);
+    if actual != expected {
+        return Err(policy_blocked(
+            "MCP local source digest changed since the reviewed plan",
+            json!({
+                "plan_id": plan.plan_id,
+                "server": source.server,
+                "source": source.locator,
+                "expected": expected,
+                "actual": actual,
                 "target_writes_performed": false,
             }),
         ));
@@ -417,11 +459,7 @@ fn render_codex_config(
     };
 
     let sources = sources_by_server(plan);
-    for req in plan
-        .requirements
-        .iter()
-        .filter(|req| should_write_server(plan, &req.server))
-    {
+    for req in &plan.requirements {
         let source = sources.get(&req.server).ok_or_else(|| {
             CommandFailure::new(
                 ErrorCode::SchemaMismatch,
@@ -429,6 +467,9 @@ fn render_codex_config(
             )
         })?;
         let rendered = rendered_server(req, source)?;
+        if server_matches_rendered(&*servers_table, &req.server, &rendered) {
+            continue;
+        }
         servers_table.insert(&req.server, Item::Table(server_table(&rendered)));
     }
 
@@ -449,16 +490,6 @@ fn sources_by_server(plan: &McpPlan) -> BTreeMap<String, McpResolvedSource> {
         .iter()
         .map(|source| (source.server.clone(), source.clone()))
         .collect()
-}
-
-fn should_write_server(plan: &McpPlan, server: &str) -> bool {
-    plan.actions
-        .iter()
-        .find(|action| action.kind == "install_server" && action.server.as_deref() == Some(server))
-        .and_then(|action| action.details.get("configured"))
-        .and_then(|configured| configured.get("status"))
-        .and_then(Value::as_str)
-        != Some("compatible")
 }
 
 fn rendered_server(
@@ -495,17 +526,7 @@ fn rendered_server(
             )
         }
         "local" => {
-            let command = source
-                .locator
-                .strip_prefix("local:")
-                .and_then(|raw| raw.split_once("@sha256:").map(|(path, _)| path))
-                .filter(|path| !path.is_empty())
-                .ok_or_else(|| {
-                    CommandFailure::new(
-                        ErrorCode::SchemaMismatch,
-                        "MCP local source is missing a digest-pinned path",
-                    )
-                })?;
+            let (command, _) = local_source_path_and_digest(source)?;
             (command.to_string(), Vec::new())
         }
         other => {
@@ -523,6 +544,80 @@ fn rendered_server(
         command,
         args,
         env_names: req.auth_env.iter().cloned().collect(),
+    })
+}
+
+fn local_source_path_and_digest(
+    source: &McpResolvedSource,
+) -> std::result::Result<(&str, &str), CommandFailure> {
+    let Some((path, digest)) = source
+        .locator
+        .strip_prefix("local:")
+        .and_then(|raw| raw.split_once("@sha256:"))
+    else {
+        return Err(CommandFailure::new(
+            ErrorCode::SchemaMismatch,
+            "MCP local source is missing a digest-pinned path",
+        ));
+    };
+    if path.is_empty() || digest.is_empty() || digest.starts_with("sha256:") {
+        return Err(CommandFailure::new(
+            ErrorCode::SchemaMismatch,
+            "MCP local source is missing a digest-pinned path",
+        ));
+    }
+    Ok((path, digest))
+}
+
+fn server_matches_rendered(
+    servers_table: &dyn TableLike,
+    server: &str,
+    rendered: &RenderedServer,
+) -> bool {
+    let Some(table) = servers_table.get(server).and_then(Item::as_table_like) else {
+        return false;
+    };
+    if table
+        .iter()
+        .any(|(key, item)| !item.is_none() && !matches!(key, "command" | "args" | "env"))
+    {
+        return false;
+    }
+    table.get("command").and_then(Item::as_str) == Some(rendered.command.as_str())
+        && args_match(table.get("args"), &rendered.args)
+        && env_matches(table.get("env"), &rendered.env_names)
+}
+
+fn args_match(item: Option<&Item>, expected: &[String]) -> bool {
+    let Some(item) = item else {
+        return expected.is_empty();
+    };
+    let Some(args) = item.as_array() else {
+        return false;
+    };
+    args.len() == expected.len()
+        && args
+            .iter()
+            .zip(expected)
+            .all(|(arg, expected)| arg.as_str() == Some(expected.as_str()))
+}
+
+fn env_matches(item: Option<&Item>, expected: &[String]) -> bool {
+    let Some(item) = item else {
+        return expected.is_empty();
+    };
+    let Some(env) = item.as_table_like() else {
+        return false;
+    };
+    if expected.is_empty() {
+        return env.is_empty();
+    }
+    if env.len() != expected.len() {
+        return false;
+    }
+    expected.iter().all(|name| {
+        let expected_value = format!("env:{name}");
+        env.get(name).and_then(Item::as_str) == Some(expected_value.as_str())
     })
 }
 

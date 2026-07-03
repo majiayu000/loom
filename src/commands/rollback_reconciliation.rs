@@ -20,11 +20,8 @@ struct CompiledProjectionRecovery {
     artifact_id: Option<String>,
     artifact_path: Option<String>,
     agent: Option<String>,
-    scope: Option<String>,
     profile: Option<String>,
-    target_id: Option<String>,
-    workspace: Option<String>,
-    reason: Option<String>,
+    reason: Option<&'static str>,
 }
 
 pub(crate) fn rollback_noop_projection_reconciliation() -> Value {
@@ -261,7 +258,7 @@ fn rollback_projection_next_action(
     compiled_recovery: Option<&CompiledProjectionRecovery>,
 ) -> Value {
     if let Some(compiled_recovery) = compiled_recovery {
-        return compiled_projection_next_action(ctx, projection, compiled_recovery);
+        return compiled_projection_next_action(projection, compiled_recovery);
     }
     projection
         .binding_id
@@ -283,23 +280,15 @@ fn rollback_projection_next_action(
 }
 
 fn compiled_projection_next_action(
-    ctx: &crate::state::AppContext,
     projection: &RegistryProjectionInstance,
     recovery: &CompiledProjectionRecovery,
 ) -> Value {
-    let mut action = json!({
+    json!({
         "type": "manual_review_required",
         "instance_id": projection.instance_id,
         "reason": "projection was produced by compiled activation; do not recover it with raw skill project materialize because that would replace the compiled artifact view with source materialization",
         "compiled": compiled_projection_recovery_value(recovery)
-    });
-    if recovery.reason.is_none() {
-        let commands = compiled_projection_recovery_commands(ctx, projection, recovery);
-        if !commands.is_empty() {
-            action["commands"] = json!(commands);
-        }
-    }
-    action
+    })
 }
 
 fn compiled_projection_recovery(
@@ -314,32 +303,30 @@ fn compiled_projection_recovery_from_operation(
     snapshot: &RegistrySnapshot,
     projection: &RegistryProjectionInstance,
 ) -> Option<CompiledProjectionRecovery> {
-    let op = snapshot
-        .operations
-        .iter()
-        .rev()
-        .find(|op| compiled_activation_op_matches_projection(op, projection))?;
+    let op = snapshot.operations.iter().rev().find(|op| {
+        op.status == "succeeded"
+            && op.effects["instance_id"].as_str() == Some(projection.instance_id.as_str())
+            && matches!(
+                op.intent.as_str(),
+                "skill.activate" | "skill.project" | "skill.capture"
+            )
+    })?;
+    if !compiled_activation_op_matches_projection(op) {
+        return None;
+    }
     let compiled = &op.payload["compiled"];
     Some(CompiledProjectionRecovery {
         metadata_source: "registry_operation",
         artifact_id: compiled["artifact_id"].as_str().map(ToString::to_string),
         artifact_path: compiled["artifact_path"].as_str().map(ToString::to_string),
         agent: op.payload["agent"].as_str().map(ToString::to_string),
-        scope: op.payload["scope"].as_str().map(ToString::to_string),
         profile: op.payload["profile"].as_str().map(ToString::to_string),
-        target_id: op.payload["target_id"].as_str().map(ToString::to_string),
-        workspace: compiled_projection_workspace(snapshot, op.payload["binding_id"].as_str()),
         reason: None,
     })
 }
 
-fn compiled_activation_op_matches_projection(
-    op: &RegistryOperationRecord,
-    projection: &RegistryProjectionInstance,
-) -> bool {
+fn compiled_activation_op_matches_projection(op: &RegistryOperationRecord) -> bool {
     op.intent == "skill.activate"
-        && op.status == "succeeded"
-        && op.effects["instance_id"].as_str() == Some(projection.instance_id.as_str())
         && op.payload["compiled"]["projection_kind"].as_str() == Some(COMPILED_PROJECTION_KIND)
 }
 
@@ -354,115 +341,38 @@ fn compiled_projection_recovery_from_live_path(
     }
     let raw = match fs::read_to_string(&metadata_path) {
         Ok(raw) => raw,
-        Err(err) => {
-            return Some(compiled_projection_manual_recovery(format!(
-                "compiled projection metadata exists but could not be read at {}: {err}",
-                metadata_path.display()
-            )));
-        }
+        Err(_err) => return Some(compiled_projection_manual_recovery("metadata_read_failed")),
     };
     let value = match serde_json::from_str::<Value>(&raw) {
         Ok(value) => value,
-        Err(err) => {
-            return Some(compiled_projection_manual_recovery(format!(
-                "compiled projection metadata exists but could not be parsed at {}: {err}",
-                metadata_path.display()
-            )));
-        }
+        Err(_err) => return Some(compiled_projection_manual_recovery("metadata_parse_failed")),
     };
     if value["schema_version"].as_u64() != Some(COMPILED_PROJECTION_SCHEMA_VERSION)
         || value["kind"].as_str() != Some(COMPILED_PROJECTION_KIND)
     {
-        return Some(compiled_projection_manual_recovery(format!(
-            "compiled projection metadata at {} is not a valid compiled activation marker",
-            metadata_path.display()
-        )));
+        return Some(compiled_projection_manual_recovery(
+            "metadata_marker_invalid",
+        ));
     }
     Some(CompiledProjectionRecovery {
         metadata_source: "live_projection_metadata",
         artifact_id: value["artifact_id"].as_str().map(ToString::to_string),
         artifact_path: value["artifact_path"].as_str().map(ToString::to_string),
         agent: value["agent"].as_str().map(ToString::to_string),
-        scope: None,
         profile: value["profile"].as_str().map(ToString::to_string),
-        target_id: None,
-        workspace: None,
         reason: None,
     })
 }
 
-fn compiled_projection_manual_recovery(reason: String) -> CompiledProjectionRecovery {
+fn compiled_projection_manual_recovery(reason: &'static str) -> CompiledProjectionRecovery {
     CompiledProjectionRecovery {
         metadata_source: "live_projection_metadata",
         artifact_id: None,
         artifact_path: None,
         agent: None,
-        scope: None,
         profile: None,
-        target_id: None,
-        workspace: None,
         reason: Some(reason),
     }
-}
-
-fn compiled_projection_workspace(
-    snapshot: &RegistrySnapshot,
-    binding_id: Option<&str>,
-) -> Option<String> {
-    let binding_id = binding_id?;
-    let binding = snapshot
-        .bindings
-        .bindings
-        .iter()
-        .find(|binding| binding.binding_id == binding_id)?;
-    match binding.workspace_matcher.kind.as_str() {
-        "path_prefix" | "exact_path" => Some(binding.workspace_matcher.value.clone()),
-        _ => None,
-    }
-}
-
-fn compiled_projection_recovery_commands(
-    ctx: &crate::state::AppContext,
-    projection: &RegistryProjectionInstance,
-    recovery: &CompiledProjectionRecovery,
-) -> Vec<String> {
-    let Some(artifact_id) = recovery.artifact_id.as_deref() else {
-        return Vec::new();
-    };
-    let verify = format!(
-        "loom --json --root {} skill compile verify {} --artifact {}",
-        shell_arg(&ctx.root),
-        shell_arg(&projection.skill_id),
-        shell_arg(artifact_id)
-    );
-    let Some(agent) = recovery.agent.as_deref() else {
-        return vec![verify];
-    };
-    let Some(scope) = recovery.scope.as_deref() else {
-        return vec![verify];
-    };
-    let Some(target_id) = recovery.target_id.as_deref() else {
-        return vec![verify];
-    };
-    if scope == "project" && recovery.workspace.is_none() {
-        return vec![verify];
-    }
-    let mut activate = format!(
-        "loom --json --root {} skill activate {} --agent {} --compiled --artifact {}",
-        shell_arg(&ctx.root),
-        shell_arg(&projection.skill_id),
-        shell_arg(agent),
-        shell_arg(artifact_id)
-    );
-    activate.push_str(&format!(" --scope {}", shell_arg(scope)));
-    if let Some(workspace) = recovery.workspace.as_deref() {
-        activate.push_str(&format!(" --workspace {}", shell_arg(workspace)));
-    }
-    if let Some(profile) = recovery.profile.as_deref() {
-        activate.push_str(&format!(" --profile {}", shell_arg(profile)));
-    }
-    activate.push_str(&format!(" --target {}", shell_arg(target_id)));
-    vec![verify, activate]
 }
 
 fn compiled_projection_recovery_value(recovery: &CompiledProjectionRecovery) -> Value {
@@ -472,10 +382,7 @@ fn compiled_projection_recovery_value(recovery: &CompiledProjectionRecovery) -> 
         "artifact_id": recovery.artifact_id,
         "artifact_path": recovery.artifact_path,
         "agent": recovery.agent,
-        "scope": recovery.scope,
         "profile": recovery.profile,
-        "target_id": recovery.target_id,
-        "workspace": recovery.workspace,
         "reason": recovery.reason
     })
 }

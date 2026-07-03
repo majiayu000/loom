@@ -212,18 +212,31 @@ impl App {
         if !changed {
             remove_backup_path_best_effort(skill_backup.as_ref());
             let _ = gitops::restore_index(&self.ctx, &previous_index);
-            let projection_reconciliation = rollback_noop_projection_reconciliation();
+            let paths = RegistryStatePaths::from_app_context(&self.ctx);
+            let registry_existed_before = paths.exists() || paths.legacy_state_dir_exists();
+            let (projection_reconciliation, warnings) = if registry_existed_before {
+                rollback_projection_reconciliation(&self.ctx, &paths, &args.skill, true)
+            } else {
+                (rollback_noop_projection_reconciliation(), Vec::new())
+            };
+            let live_projection_reconciled = projection_reconciliation
+                .get("live_projection_reconciled")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
             return Ok((
                 json!({
                     "skill": args.skill,
                     "reference": reference,
                     "source_restored": false,
                     "registry_restored": false,
-                    "live_projection_reconciled": true,
+                    "live_projection_reconciled": live_projection_reconciled,
                     "projection_reconciliation": projection_reconciliation,
                     "noop": true
                 }),
-                Meta::default(),
+                Meta {
+                    warnings,
+                    ..Meta::default()
+                },
             ));
         }
 

@@ -1111,9 +1111,11 @@ Rules:
    `projection_reconciliation.status="registry_unavailable"`, includes a
    structured `error`, sets `live_projection_reconciled=false`, and adds a
    warning to `meta.warnings`
-8. no-op rollback success returns the same reconciliation fields with
-   `projection_reconciliation.status="noop"`, `source_restored=false`, and
-   `registry_restored=false`; it does not initialize registry state
+8. no-op rollback success returns `source_restored=false` and
+   `registry_restored=false`; when registry state already exists, rollback still
+   evaluates registered live projections before setting
+   `live_projection_reconciled`, and when registry state is absent it returns
+   `projection_reconciliation.status="noop"` without initializing registry state
 9. if registry state was absent before a non-noop rollback, rollback records
    audit state but reports `projection_reconciliation.status="registry_missing"`
    and `live_projection_reconciled=false` because there was no pre-existing

@@ -14,6 +14,8 @@ struct CompiledRollbackFixture {
     home: TestDir,
     artifact_id: String,
     projection_path: PathBuf,
+    binding_id: String,
+    target_id: String,
     v1_ref: String,
 }
 
@@ -60,12 +62,22 @@ fn compiled_rollback_fixture(prefix: &str) -> CompiledRollbackFixture {
             .join(".loom/compiled/projection.json")
             .is_file()
     );
+    let binding_id = activate_env["data"]["binding"]["binding_id"]
+        .as_str()
+        .expect("binding id")
+        .to_string();
+    let target_id = activate_env["data"]["target"]["target_id"]
+        .as_str()
+        .expect("target id")
+        .to_string();
 
     CompiledRollbackFixture {
         root,
         home,
         artifact_id,
         projection_path,
+        binding_id,
+        target_id,
         v1_ref,
     }
 }
@@ -95,21 +107,7 @@ fn rollback_compiled_activation_uses_compiled_recovery_from_registry_operation()
         action["command"].is_null(),
         "must not emit raw project command"
     );
-    let commands = command_strings(action);
-    assert_eq!(commands.len(), 2, "{action}");
-    assert!(
-        commands[0].contains(" skill compile verify demo --artifact "),
-        "{commands:?}"
-    );
-    assert!(
-        commands[1].contains(" skill activate demo --agent codex --compiled --artifact "),
-        "{commands:?}"
-    );
-    assert!(
-        commands[1].contains(" --scope user ") && commands[1].contains(" --target "),
-        "{commands:?}"
-    );
-    assert_no_raw_project_command(&commands);
+    assert!(action["commands"].is_null(), "{action}");
     assert_eq!(
         rollback_env["data"]["projection_reconciliation"]["next_actions"][0],
         *action
@@ -154,13 +152,53 @@ fn rollback_compiled_activation_uses_live_metadata_when_operation_payload_is_leg
         action["command"].is_null(),
         "must not emit raw project command"
     );
-    let commands = command_strings(action);
-    assert_eq!(commands.len(), 1, "{action}");
-    assert!(
-        commands[0].contains(" skill compile verify demo --artifact "),
-        "{commands:?}"
+    assert!(action["commands"].is_null(), "{action}");
+}
+
+#[test]
+fn rollback_raw_project_after_compiled_activation_uses_raw_recovery_command() {
+    let fixture = compiled_rollback_fixture("rollback-compiled-overwritten-by-raw-project");
+    let (project_output, project_env) = run_with_home(
+        fixture.root.path(),
+        fixture.home.path(),
+        &[
+            "skill",
+            "project",
+            "demo",
+            "--binding",
+            &fixture.binding_id,
+            "--target",
+            &fixture.target_id,
+            "--method",
+            "materialize",
+        ],
     );
-    assert_no_raw_project_command(&commands);
+    assert!(
+        project_output.status.success(),
+        "raw project failed: {project_env}"
+    );
+    assert!(
+        !fixture
+            .projection_path
+            .join(".loom/compiled/projection.json")
+            .exists(),
+        "raw materialize projection should replace compiled metadata"
+    );
+
+    let rollback_env = rollback_after_source_update(&fixture);
+
+    let item = &rollback_env["data"]["projection_reconciliation"]["items"][0];
+    assert_eq!(item["method"], json!("materialize"));
+    assert!(item["compiled_activation"].is_null(), "{item}");
+    let action = &item["next_action"];
+    assert_eq!(action["type"], json!("command"));
+    let command = action["command"].as_str().expect("raw recovery command");
+    assert!(
+        command.contains(" skill project demo ")
+            && command.contains(" --method materialize")
+            && !command.contains(" skill activate "),
+        "unexpected command: {command}"
+    );
 }
 
 fn rollback_after_source_update(fixture: &CompiledRollbackFixture) -> Value {
@@ -218,24 +256,6 @@ fn scrub_compiled_payload_from_activation_operation(root: &Path) {
         lines.push(serde_json::to_string(&value).expect("serialize operation record"));
     }
     fs::write(&path, format!("{}\n", lines.join("\n"))).expect("write operations log");
-}
-
-fn command_strings(action: &Value) -> Vec<&str> {
-    action["commands"]
-        .as_array()
-        .expect("commands")
-        .iter()
-        .map(|command| command.as_str().expect("command string"))
-        .collect()
-}
-
-fn assert_no_raw_project_command(commands: &[&str]) {
-    assert!(
-        commands
-            .iter()
-            .all(|command| !command.contains(" skill project ")),
-        "compiled rollback recovery must not emit raw project command: {commands:?}"
-    );
 }
 
 fn git_output(root: &Path, args: &[&str]) -> String {

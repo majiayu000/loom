@@ -25,6 +25,7 @@ impl App {
         let _workspace = self.ctx.lock_workspace().map_err(map_lock)?;
         self.ensure_write_repo_ready()?;
         self.ensure_registry_layout()?;
+        ensure_clean_skillsets_definition(&self.ctx)?;
         let file = load_skillsets(&self.ctx)?;
         let skillset = file.find(&args.name).ok_or_else(|| {
             CommandFailure::new(
@@ -82,6 +83,15 @@ impl App {
             )
         })?;
         let mut current = load_skillsets(&self.ctx)?;
+        if current.find(&args.name).is_none() {
+            return Err(CommandFailure::new(
+                ErrorCode::SkillNotFound,
+                format!(
+                    "skillset '{}' is not defined in the current registry",
+                    args.name
+                ),
+            ));
+        }
         let before = current.clone();
         replace_skillset(&mut current, replacement.clone());
         if current == before {
@@ -140,9 +150,9 @@ fn replace_skillset(file: &mut SkillsetsFile, replacement: SkillsetRecord) {
 }
 
 fn restore_skillsets_file(ctx: &AppContext, mut before: SkillsetsFile) -> Vec<Value> {
-    match save_skillsets(ctx, &mut before) {
-        Ok(()) => Vec::new(),
-        Err(err) => vec![json!({
+    let mut errors = Vec::new();
+    if let Err(err) = save_skillsets(ctx, &mut before) {
+        errors.push(json!({
             "step": "restore_skillsets_file",
             "message": err.message.clone(),
             "error": {
@@ -151,8 +161,36 @@ fn restore_skillsets_file(ctx: &AppContext, mut before: SkillsetsFile) -> Vec<Va
                 "details": err.details,
                 "next_actions": err.next_actions,
             },
-        })],
+        }));
+        return errors;
     }
+    if let Err(err) = gitops::run_git(ctx, &["add", "--", SKILLSETS_REL]) {
+        errors.push(json!({
+            "step": "restore_skillsets_index",
+            "message": err.to_string(),
+        }));
+    }
+    errors
+}
+
+fn ensure_clean_skillsets_definition(ctx: &AppContext) -> std::result::Result<(), CommandFailure> {
+    let output =
+        gitops::run_git(ctx, &["status", "--porcelain", "--", SKILLSETS_REL]).map_err(map_git)?;
+    if output.trim().is_empty() {
+        return Ok(());
+    }
+    let mut failure = CommandFailure::new(
+        ErrorCode::PolicyBlocked,
+        "skillset release requires committed skillset definition state",
+    );
+    failure.details = json!({
+        "path": SKILLSETS_REL,
+        "status": output.lines().collect::<Vec<_>>(),
+        "next_actions": [
+            "commit or discard state/registry/skillsets.json changes before release"
+        ],
+    });
+    Err(failure)
 }
 
 fn skillset_release_tag(name: &str, version: &str) -> std::result::Result<String, CommandFailure> {

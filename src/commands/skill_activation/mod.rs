@@ -85,6 +85,9 @@ impl App {
         let plan = activation_plan(&resolved, false);
 
         let projection_changed = apply_activation_projection(&self.ctx, &resolved)?;
+        if let Some(failure) = skill_activate_projection_fault(&resolved.selection.skill) {
+            return Err(failure);
+        }
         let state_changed = activation_state_changed(&resolved) || projection_changed;
         if !state_changed {
             return Ok((json!({"plan": plan, "noop": true}), Meta::default()));
@@ -464,4 +467,15 @@ impl App {
             Meta::default(),
         ))
     }
+}
+
+fn skill_activate_projection_fault(skill: &str) -> Option<CommandFailure> {
+    let raw = std::env::var("LOOM_SKILL_ACTIVATE_FAULT_INJECT").ok()?;
+    if raw == format!("after_projection:{skill}") {
+        return Some(CommandFailure::new(
+            ErrorCode::InternalError,
+            format!("fault injected after projecting {}", skill),
+        ));
+    }
+    None
 }

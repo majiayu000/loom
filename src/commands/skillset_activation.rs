@@ -1,4 +1,6 @@
 use std::collections::BTreeSet;
+use std::fs;
+use std::path::{Path, PathBuf};
 
 use serde_json::{Value, json};
 
@@ -8,8 +10,10 @@ use crate::cli::{
 };
 use crate::envelope::Meta;
 use crate::state::AppContext;
+use crate::state_model::{RegistrySnapshot, RegistryStatePaths};
 use crate::types::ErrorCode;
 
+use super::helpers::map_registry_state;
 use super::skill_eval::build_skill_eval_offline_report;
 use super::skillset_cmds::{
     SkillsetMemberRecord, SkillsetRecord, load_skillsets, skill_inventory_by_id,
@@ -52,8 +56,9 @@ impl App {
         }
 
         let mut results = Vec::new();
-        let mut activated = Vec::new();
-        for member in &prepared.ready_members {
+        let mut rollback_members = Vec::new();
+        for prepared_member in &prepared.ready_members {
+            let member = &prepared_member.record;
             let activate_args = member_activate_args(&member.skill_id, args, false);
             match self.cmd_skill_activate(&activate_args, request_id) {
                 Ok((data, _meta)) => {
@@ -64,18 +69,31 @@ impl App {
                         "noop": noop,
                         "result": data,
                     }));
-                    if !noop {
-                        activated.push(member.skill_id.clone());
+                    if prepared_member.rollback.should_rollback() {
+                        rollback_members.push(prepared_member.rollback.clone());
                     }
                     if let Some(failure) = skillset_activation_fault(&member.skill_id) {
                         return Err(self.rollback_skillset_activation_failure(
-                            skillset, args, results, activated, failure, request_id,
+                            skillset,
+                            args,
+                            results,
+                            rollback_members,
+                            failure,
+                            request_id,
                         ));
                     }
                 }
                 Err(err) => {
+                    if prepared_member.rollback.should_rollback() {
+                        rollback_members.push(prepared_member.rollback.clone());
+                    }
                     return Err(self.rollback_skillset_activation_failure(
-                        skillset, args, results, activated, err, request_id,
+                        skillset,
+                        args,
+                        results,
+                        rollback_members,
+                        err,
+                        request_id,
                     ));
                 }
             }
@@ -225,7 +243,9 @@ impl App {
                 Ok(result) => {
                     let member_summary = result.report["summary"].clone();
                     summary.add_json_summary(&member_summary);
-                    failed += result.failed;
+                    if member.required {
+                        failed += result.failed;
+                    }
                     warnings.extend(result.warnings);
                     members.push(json!({
                         "skill": member.skill_id,
@@ -290,7 +310,7 @@ impl App {
 #[derive(Debug)]
 struct PreparedSkillsetPlan {
     plan: Vec<Value>,
-    ready_members: Vec<SkillsetMemberRecord>,
+    ready_members: Vec<PreparedSkillsetMember>,
     warnings: Vec<String>,
     summary: PreparedSkillsetSummary,
 }
@@ -302,8 +322,29 @@ impl PreparedSkillsetPlan {
             "required_ready": self.summary.required_ready,
             "optional_ready": self.summary.optional_ready,
             "blocked": self.summary.blocked,
+            "optional_blocked": self.summary.optional_blocked,
             "warnings": self.summary.warnings,
         })
+    }
+}
+
+#[derive(Debug)]
+struct PreparedSkillsetMember {
+    record: SkillsetMemberRecord,
+    rollback: ActivationRollbackMember,
+}
+
+#[derive(Debug, Clone)]
+struct ActivationRollbackMember {
+    skill_id: String,
+    deactivate: bool,
+    remove_projection: bool,
+    materialized_path: Option<String>,
+}
+
+impl ActivationRollbackMember {
+    fn should_rollback(&self) -> bool {
+        self.deactivate || self.remove_projection
     }
 }
 
@@ -313,6 +354,7 @@ struct PreparedSkillsetSummary {
     required_ready: usize,
     optional_ready: usize,
     blocked: usize,
+    optional_blocked: usize,
     warnings: usize,
 }
 
@@ -370,6 +412,7 @@ impl App {
         request_id: &str,
     ) -> std::result::Result<PreparedSkillsetPlan, CommandFailure> {
         let inventory = skill_inventory_by_id(&self.ctx)?;
+        let snapshot = optional_registry_snapshot(&self.ctx)?;
         let mut plan = Vec::new();
         let mut ready_members = Vec::new();
         let mut warnings = Vec::new();
@@ -391,7 +434,7 @@ impl App {
                     "optional member '{}' skipped because the skill is missing",
                     member.skill_id
                 ));
-                summary.blocked += 1;
+                summary.optional_blocked += 1;
                 summary.warnings += 1;
                 plan.push(json!({
                     "skill": member.skill_id,
@@ -408,19 +451,27 @@ impl App {
             let activate_args = member_activate_args(&member.skill_id, args, true);
             match self.cmd_skill_activate(&activate_args, request_id) {
                 Ok((data, _meta)) => {
+                    let member_plan = data["plan"].clone();
                     if member.required {
                         summary.required_ready += 1;
                     } else {
                         summary.optional_ready += 1;
                     }
-                    ready_members.push(member.clone());
+                    ready_members.push(PreparedSkillsetMember {
+                        record: member.clone(),
+                        rollback: activation_rollback_member(
+                            member,
+                            &member_plan,
+                            snapshot.as_ref(),
+                        ),
+                    });
                     plan.push(json!({
                         "skill": member.skill_id,
                         "role": member.role,
                         "required": member.required,
                         "action": "activate",
                         "status": "ready",
-                        "plan": data["plan"].clone(),
+                        "plan": member_plan,
                         "next_actions": [format!("loom skill activate {} --agent {}", member.skill_id, args.agent)],
                     }));
                 }
@@ -429,7 +480,7 @@ impl App {
                         "optional member '{}' skipped: {}",
                         member.skill_id, err.message
                     ));
-                    summary.blocked += 1;
+                    summary.optional_blocked += 1;
                     summary.warnings += 1;
                     plan.push(json!({
                         "skill": member.skill_id,
@@ -458,38 +509,71 @@ impl App {
         skillset: &SkillsetRecord,
         args: &SkillsetActivateArgs,
         results: Vec<Value>,
-        activated: Vec<String>,
+        rollback_members: Vec<ActivationRollbackMember>,
         failure: CommandFailure,
         request_id: &str,
     ) -> CommandFailure {
         let mut rollback = Vec::new();
         let mut rollback_errors = Vec::new();
-        let recovery_commands = activated
+        let recovery_commands = rollback_members
             .iter()
             .rev()
-            .map(|skill| skillset_deactivate_command(skill, args))
+            .map(|member| skillset_deactivate_command(&member.skill_id, args))
             .collect::<Vec<_>>();
 
-        for skill in activated.iter().rev() {
-            let deactivate_args = member_deactivate_args(skill, args, false);
-            match self.cmd_skill_deactivate(&deactivate_args, request_id) {
-                Ok((data, _meta)) => rollback.push(json!({
-                    "skill": skill,
-                    "status": "rolled_back",
-                    "result": data,
-                })),
-                Err(err) => {
-                    rollback_errors.push(json!({
-                        "skill": skill,
-                        "error": failure_json(&err),
-                        "recovery_command": skillset_deactivate_command(skill, args),
-                    }));
-                    rollback.push(json!({
-                        "skill": skill,
-                        "status": "rollback_failed",
-                        "error": failure_json(&err),
-                    }));
+        for member in rollback_members.iter().rev() {
+            let mut member_errors = Vec::new();
+            let mut deactivation_result = Value::Null;
+            if member.deactivate {
+                let deactivate_args = member_deactivate_args(&member.skill_id, args, false);
+                match self.cmd_skill_deactivate(&deactivate_args, request_id) {
+                    Ok((data, _meta)) => {
+                        deactivation_result = data;
+                    }
+                    Err(err) => {
+                        member_errors.push(json!({
+                            "step": "deactivate",
+                            "error": failure_json(&err),
+                            "recovery_command": skillset_deactivate_command(&member.skill_id, args),
+                        }));
+                    }
                 }
+            }
+
+            let mut projection_removed = false;
+            if member.remove_projection {
+                match remove_created_member_projection(&self.ctx, member) {
+                    Ok(removed) => {
+                        projection_removed = removed;
+                    }
+                    Err(err) => {
+                        member_errors.push(json!({
+                            "step": "remove_projection",
+                            "error": failure_json(&err),
+                            "recovery_command": skillset_deactivate_command(&member.skill_id, args),
+                        }));
+                    }
+                }
+            }
+
+            if member_errors.is_empty() {
+                rollback.push(json!({
+                    "skill": member.skill_id,
+                    "status": "rolled_back",
+                    "result": deactivation_result,
+                    "projection_removed": projection_removed,
+                }));
+            } else {
+                rollback_errors.push(json!({
+                    "skill": member.skill_id,
+                    "errors": member_errors,
+                    "recovery_command": skillset_deactivate_command(&member.skill_id, args),
+                }));
+                rollback.push(json!({
+                    "skill": member.skill_id,
+                    "status": "rollback_failed",
+                    "errors": rollback_errors.last().cloned().unwrap_or(Value::Null),
+                }));
             }
         }
 
@@ -510,6 +594,121 @@ impl App {
         });
         out
     }
+}
+
+fn optional_registry_snapshot(
+    ctx: &AppContext,
+) -> std::result::Result<Option<RegistrySnapshot>, CommandFailure> {
+    let paths = RegistryStatePaths::from_app_context(ctx);
+    paths.maybe_load_snapshot().map_err(map_registry_state)
+}
+
+fn activation_rollback_member(
+    member: &SkillsetMemberRecord,
+    plan: &Value,
+    snapshot: Option<&RegistrySnapshot>,
+) -> ActivationRollbackMember {
+    let binding_id = plan["binding_id"].as_str();
+    let target_id = plan["target_id"].as_str();
+    let materialized_path = plan["materialized_path"].as_str().map(str::to_string);
+    let rule_existed = match (snapshot, binding_id, target_id) {
+        (Some(snapshot), Some(binding_id), Some(target_id)) => {
+            snapshot.rules.rules.iter().any(|rule| {
+                rule.binding_id == binding_id
+                    && rule.skill_id == member.skill_id
+                    && rule.target_id == target_id
+            })
+        }
+        _ => false,
+    };
+    let projection_existed = action_status(plan, "project_skill") == Some("already_satisfied")
+        || materialized_path
+            .as_deref()
+            .is_some_and(|path| fs::symlink_metadata(path).is_ok());
+    let created_activation =
+        !rule_existed && action_status(plan, "upsert_rule") != Some("already_satisfied");
+
+    ActivationRollbackMember {
+        skill_id: member.skill_id.clone(),
+        deactivate: created_activation,
+        remove_projection: created_activation && !projection_existed,
+        materialized_path,
+    }
+}
+
+fn action_status<'a>(plan: &'a Value, action_name: &str) -> Option<&'a str> {
+    plan["actions"]
+        .as_array()?
+        .iter()
+        .find(|action| action["action"].as_str() == Some(action_name))?
+        .get("status")?
+        .as_str()
+}
+
+fn remove_created_member_projection(
+    ctx: &AppContext,
+    member: &ActivationRollbackMember,
+) -> std::result::Result<bool, CommandFailure> {
+    let Some(path) = member.materialized_path.as_deref().map(PathBuf::from) else {
+        return Ok(false);
+    };
+    match fs::symlink_metadata(&path) {
+        Ok(metadata) if metadata.file_type().is_symlink() => {
+            if !projection_path_is_safe_symlink(&path, &ctx.skill_path(&member.skill_id)) {
+                return Err(CommandFailure::new(
+                    ErrorCode::ProjectionConflict,
+                    format!(
+                        "projection path '{}' is not a safe Loom-owned symlink for '{}'",
+                        path.display(),
+                        member.skill_id
+                    ),
+                ));
+            }
+            fs::remove_file(&path).map_err(|err| {
+                CommandFailure::new(
+                    ErrorCode::IoError,
+                    format!("failed to remove projection '{}': {}", path.display(), err),
+                )
+            })?;
+            Ok(true)
+        }
+        Ok(_) => Err(CommandFailure::new(
+            ErrorCode::ProjectionConflict,
+            format!(
+                "projection path '{}' exists but is not a symlink",
+                path.display()
+            ),
+        )),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(err) => Err(CommandFailure::new(
+            ErrorCode::IoError,
+            format!("failed to inspect projection '{}': {}", path.display(), err),
+        )),
+    }
+}
+
+fn projection_path_is_safe_symlink(path: &Path, skill_src: &Path) -> bool {
+    let Ok(metadata) = fs::symlink_metadata(path) else {
+        return false;
+    };
+    if !metadata.file_type().is_symlink() {
+        return false;
+    }
+    let Ok(link_target) = fs::read_link(path) else {
+        return false;
+    };
+    let actual = if link_target.is_absolute() {
+        link_target
+    } else {
+        path.parent()
+            .unwrap_or_else(|| Path::new("."))
+            .join(link_target)
+    };
+    normalize_existing_or_raw(&actual) == normalize_existing_or_raw(skill_src)
+}
+
+fn normalize_existing_or_raw(path: &Path) -> PathBuf {
+    path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
 }
 
 fn member_activate_args(

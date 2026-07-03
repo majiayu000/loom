@@ -2,6 +2,7 @@ mod common;
 
 use std::fs;
 use std::path::Path;
+use std::process::Command;
 
 use serde_json::{Value, json};
 
@@ -19,6 +20,36 @@ fn read_skillsets(root: &TestDir) -> Value {
     let raw = fs::read_to_string(root.path().join("state/registry/skillsets.json"))
         .expect("read skillsets");
     serde_json::from_str(&raw).expect("parse skillsets")
+}
+
+fn git_stdout(root: &Path, args: &[&str]) -> String {
+    let output = Command::new("git")
+        .current_dir(root)
+        .args(args)
+        .output()
+        .expect("run git");
+    assert!(
+        output.status.success(),
+        "git {:?} failed: {}",
+        args,
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8_lossy(&output.stdout).trim().to_string()
+}
+
+fn install_failing_pre_commit_hook(root: &Path) {
+    let hook = root.join(".git/hooks/pre-commit");
+    write_file(
+        &hook,
+        "#!/bin/sh\necho skillset rollback blocked >&2\nexit 1\n",
+    );
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = fs::metadata(&hook).expect("hook metadata").permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&hook, perms).expect("make hook executable");
+    }
 }
 
 #[test]
@@ -329,9 +360,148 @@ fn skillset_activate_rolls_back_partial_member_failure() {
         "partial activation should remove the already projected member"
     );
     assert!(
-        fs::symlink_metadata(home.path().join(".codex/skills/beta-flow")).is_err(),
+        fs::symlink_metadata(home.path().join(".agents/skills/beta-flow")).is_err(),
         "member after the fault should not be projected"
     );
+}
+
+#[test]
+fn skillset_activate_rolls_back_current_member_after_inner_failure() {
+    let root = TestDir::new("skillset-activate-current-failure");
+    let home = TestDir::new("skillset-activate-current-failure-home");
+    write_fixture_skill(
+        &root,
+        "alpha-flow",
+        "Use when testing current member rollback.",
+    );
+
+    let (output, env) = run_loom(root.path(), &["skillset", "create", "bundle"]);
+    assert!(output.status.success(), "create should pass: {env}");
+    let (output, env) = run_loom(root.path(), &["skillset", "add", "bundle", "alpha-flow"]);
+    assert!(output.status.success(), "add alpha should pass: {env}");
+
+    let home_str = home.path().to_string_lossy().into_owned();
+    let (output, env) = run_loom_with_env(
+        root.path(),
+        &[
+            ("HOME", &home_str),
+            (
+                "LOOM_SKILL_ACTIVATE_FAULT_INJECT",
+                "after_projection:alpha-flow",
+            ),
+        ],
+        &["skillset", "activate", "bundle", "--agent", "codex"],
+    );
+    assert!(
+        !output.status.success(),
+        "fault-injected activation should fail: {env}"
+    );
+    assert_eq!(env["error"]["code"], json!("INTERNAL_ERROR"));
+    assert_eq!(
+        env["error"]["details"]["rollback"][0]["skill"],
+        json!("alpha-flow")
+    );
+    assert!(
+        fs::symlink_metadata(home.path().join(".agents/skills/alpha-flow")).is_err(),
+        "rollback should remove the projection created by the failing member"
+    );
+}
+
+#[test]
+fn skillset_activate_preserves_preexisting_member_repair_on_later_failure() {
+    let root = TestDir::new("skillset-activate-repair-preexisting");
+    let home = TestDir::new("skillset-activate-repair-preexisting-home");
+    write_fixture_skill(&root, "alpha-flow", "Use when testing repaired activation.");
+    write_fixture_skill(&root, "beta-flow", "Use when testing repaired activation.");
+
+    let home_str = home.path().to_string_lossy().into_owned();
+    let (output, env) = run_loom_with_env(
+        root.path(),
+        &[("HOME", &home_str)],
+        &["skill", "activate", "alpha-flow", "--agent", "codex"],
+    );
+    assert!(
+        output.status.success(),
+        "initial activate should pass: {env}"
+    );
+
+    let (output, env) = run_loom(root.path(), &["skillset", "create", "bundle"]);
+    assert!(output.status.success(), "create should pass: {env}");
+    let (output, env) = run_loom(root.path(), &["skillset", "add", "bundle", "alpha-flow"]);
+    assert!(output.status.success(), "add alpha should pass: {env}");
+    let (output, env) = run_loom(root.path(), &["skillset", "add", "bundle", "beta-flow"]);
+    assert!(output.status.success(), "add beta should pass: {env}");
+
+    let alpha_projection = home.path().join(".agents/skills/alpha-flow");
+    fs::remove_file(&alpha_projection).expect("remove alpha symlink to simulate drift");
+    let (output, env) = run_loom_with_env(
+        root.path(),
+        &[
+            ("HOME", &home_str),
+            ("LOOM_SKILLSET_ACTIVATE_FAULT_INJECT", "after:beta-flow"),
+        ],
+        &["skillset", "activate", "bundle", "--agent", "codex"],
+    );
+    assert!(
+        !output.status.success(),
+        "fault-injected activation should fail: {env}"
+    );
+    assert!(
+        fs::symlink_metadata(&alpha_projection).is_ok(),
+        "rollback should not deactivate a pre-existing member repaired during skillset activation"
+    );
+
+    let (output, env) = run_loom_with_env(
+        root.path(),
+        &[("HOME", &home_str)],
+        &["skill", "active", "list", "--agent", "codex"],
+    );
+    assert!(output.status.success(), "active list should pass: {env}");
+    assert_eq!(env["data"]["count"], json!(1));
+    assert_eq!(env["data"]["items"][0]["skill"], json!("alpha-flow"));
+    assert_eq!(env["data"]["items"][0]["status"], json!("healthy"));
+}
+
+#[test]
+fn skillset_activate_dry_run_ready_ignores_optional_missing_members() {
+    let root = TestDir::new("skillset-activate-optional-dry-run");
+    write_fixture_skill(
+        &root,
+        "required-flow",
+        "Use when testing optional readiness.",
+    );
+    write_fixture_skill(
+        &root,
+        "optional-flow",
+        "Use when testing optional readiness.",
+    );
+
+    let (output, env) = run_loom(root.path(), &["skillset", "create", "bundle"]);
+    assert!(output.status.success(), "create should pass: {env}");
+    let (output, env) = run_loom(root.path(), &["skillset", "add", "bundle", "required-flow"]);
+    assert!(output.status.success(), "add required should pass: {env}");
+    let (output, env) = run_loom(
+        root.path(),
+        &["skillset", "add", "bundle", "optional-flow", "--optional"],
+    );
+    assert!(output.status.success(), "add optional should pass: {env}");
+    fs::remove_dir_all(root.path().join("skills/optional-flow")).expect("remove optional skill");
+
+    let (output, env) = run_loom(
+        root.path(),
+        &[
+            "skillset",
+            "activate",
+            "bundle",
+            "--agent",
+            "codex",
+            "--dry-run",
+        ],
+    );
+    assert!(output.status.success(), "dry-run should pass: {env}");
+    assert_eq!(env["data"]["ready"], json!(true));
+    assert_eq!(env["data"]["summary"]["required_ready"], json!(1));
+    assert_eq!(env["data"]["summary"]["optional_blocked"], json!(1));
 }
 
 #[test]
@@ -383,6 +553,59 @@ fn skillset_eval_aggregates_member_eval_results() {
 }
 
 #[test]
+fn skillset_eval_optional_failures_do_not_fail_bundle() {
+    let root = TestDir::new("skillset-eval-optional-failure");
+    write_fixture_skill(&root, "required-flow", "Use when testing required evals.");
+    write_fixture_skill(&root, "optional-flow", "Use when testing optional evals.");
+    write_file(
+        &root.path().join("skills/required-flow/evals/tasks.jsonl"),
+        r#"{"id":"required-task","task":"Run required eval","output":"Required done","trace":["read context"],"checks":{"outcome_contains":["Required"],"process_contains":["context"]}}
+"#,
+    );
+    write_file(
+        &root.path().join("skills/optional-flow/evals/tasks.jsonl"),
+        r#"{"id":"optional-task","task":"Run optional eval","output":"Optional miss","trace":["read context"],"checks":{"outcome_contains":["Expected"],"process_contains":["context"]}}
+"#,
+    );
+
+    let (output, env) = run_loom(root.path(), &["skillset", "create", "bundle"]);
+    assert!(output.status.success(), "create should pass: {env}");
+    let (output, env) = run_loom(root.path(), &["skillset", "add", "bundle", "required-flow"]);
+    assert!(output.status.success(), "add required should pass: {env}");
+    let (output, env) = run_loom(
+        root.path(),
+        &["skillset", "add", "bundle", "optional-flow", "--optional"],
+    );
+    assert!(output.status.success(), "add optional should pass: {env}");
+
+    let (output, env) = run_loom(
+        root.path(),
+        &[
+            "skillset",
+            "eval",
+            "bundle",
+            "--agent",
+            "codex",
+            "--baseline",
+            "single-skills",
+        ],
+    );
+    assert!(
+        output.status.success(),
+        "optional eval failures should not fail the bundle: {env}"
+    );
+    assert_eq!(env["data"]["summary"]["failed"], json!(1));
+    let optional = env["data"]["members"]
+        .as_array()
+        .expect("members")
+        .iter()
+        .find(|member| member["skill"] == json!("optional-flow"))
+        .expect("optional member report");
+    assert_eq!(optional["required"], json!(false));
+    assert_eq!(optional["status"], json!("failed"));
+}
+
+#[test]
 fn skillset_release_and_rollback_restore_definition() {
     let root = TestDir::new("skillset-release-rollback");
     write_fixture_skill(&root, "fixflow", "Use when fixing tests.");
@@ -427,4 +650,114 @@ fn skillset_release_and_rollback_restore_definition() {
         "show after rollback should pass: {env}"
     );
     assert_eq!(env["data"]["skillset"]["summary"]["members"], json!(0));
+}
+
+#[test]
+fn skillset_release_rejects_dirty_definition() {
+    let root = TestDir::new("skillset-release-dirty-definition");
+
+    let (output, env) = run_loom(root.path(), &["skillset", "create", "coding-flow"]);
+    assert!(output.status.success(), "create should pass: {env}");
+
+    let mut dirty = read_skillsets(&root);
+    dirty["skillsets"][0]["description"] = json!("dirty release candidate");
+    write_file(
+        &root.path().join("state/registry/skillsets.json"),
+        &serde_json::to_string_pretty(&dirty).expect("serialize dirty skillsets"),
+    );
+
+    let (output, env) = run_loom(
+        root.path(),
+        &["skillset", "release", "coding-flow", "v1.0.0"],
+    );
+    assert!(!output.status.success(), "dirty release should fail");
+    assert_eq!(env["error"]["code"], json!("POLICY_BLOCKED"));
+    assert_eq!(
+        git_stdout(
+            root.path(),
+            &["tag", "--list", "release/skillset/coding-flow/v1.0.0"]
+        ),
+        ""
+    );
+}
+
+#[test]
+fn skillset_rollback_restores_index_after_commit_failure() {
+    let root = TestDir::new("skillset-rollback-index-restore");
+    write_fixture_skill(&root, "fixflow", "Use when fixing tests.");
+
+    let (output, env) = run_loom(root.path(), &["skillset", "create", "coding-flow"]);
+    assert!(output.status.success(), "create should pass: {env}");
+    let (output, env) = run_loom(
+        root.path(),
+        &["skillset", "release", "coding-flow", "v1.0.0"],
+    );
+    assert!(output.status.success(), "release should pass: {env}");
+    let (output, env) = run_loom(root.path(), &["skillset", "add", "coding-flow", "fixflow"]);
+    assert!(
+        output.status.success(),
+        "add after release should pass: {env}"
+    );
+
+    install_failing_pre_commit_hook(root.path());
+    let before = read_skillsets(&root);
+    let (output, env) = run_loom(
+        root.path(),
+        &["skillset", "rollback", "coding-flow", "--to", "v1.0.0"],
+    );
+    assert!(
+        !output.status.success(),
+        "rollback commit should fail: {env}"
+    );
+    assert_eq!(read_skillsets(&root), before);
+    assert_eq!(
+        git_stdout(
+            root.path(),
+            &[
+                "diff",
+                "--cached",
+                "--name-only",
+                "--",
+                "state/registry/skillsets.json",
+            ],
+        ),
+        "",
+        "failed rollback must not leave the rollback version staged"
+    );
+}
+
+#[test]
+fn skillset_rollback_rejects_missing_current_definition() {
+    let root = TestDir::new("skillset-rollback-missing-current");
+    write_fixture_skill(&root, "fixflow", "Use when fixing tests.");
+
+    let (output, env) = run_loom(root.path(), &["skillset", "create", "coding-flow"]);
+    assert!(output.status.success(), "create should pass: {env}");
+    let (output, env) = run_loom(
+        root.path(),
+        &["skillset", "release", "coding-flow", "v1.0.0"],
+    );
+    assert!(output.status.success(), "release should pass: {env}");
+    let mut current = read_skillsets(&root);
+    current["skillsets"] = json!([]);
+    write_file(
+        &root.path().join("state/registry/skillsets.json"),
+        &serde_json::to_string_pretty(&current).expect("serialize missing current skillsets"),
+    );
+    git_stdout(root.path(), &["add", "state/registry/skillsets.json"]);
+    git_stdout(
+        root.path(),
+        &["commit", "-m", "skillset(coding-flow): remove definition"],
+    );
+
+    let (output, env) = run_loom(
+        root.path(),
+        &["skillset", "rollback", "coding-flow", "--to", "v1.0.0"],
+    );
+    assert!(
+        !output.status.success(),
+        "rollback must not recreate a missing current skillset"
+    );
+    assert_eq!(env["error"]["code"], json!("SKILL_NOT_FOUND"));
+    assert_eq!(read_skillsets(&root)["skillsets"], json!([]));
 }

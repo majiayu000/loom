@@ -741,6 +741,7 @@ Rules:
 ```bash
 loom --json --root <root> skill provenance inspect <skill-id>
 loom --json --root <root> skill provenance verify <skill-id>
+loom --json --root <root> skill provenance outdated [<skill-id>] [--plan]
 loom --json --root <root> skill provenance refresh <skill-id>
 ```
 
@@ -750,10 +751,15 @@ Rules:
 
 1. `inspect` is read-only and returns the recorded `sources.json` entry plus the matching `loom.lock` entry
 2. `verify` is read-only and compares the current canonical skill digest against both recorded provenance and `loom.lock`
-3. `refresh` is a write command; it recomputes the current canonical skill digest, updates `state/registry/sources.json` and `loom.lock`, and commits only provenance artifacts
-4. `refresh` must not mutate projection state, target directories, binding rules, or live agent skill directories
-5. `loom.lock` is generated from sorted source records so repeated writes are deterministic
-6. missing skill sources return `SKILL_NOT_FOUND`; missing provenance records return `STATE_NOT_INITIALIZED`
+3. `outdated` is read-only and reports provider-backed records whose pinned refs differ from provider heads or current local provider digests
+4. `outdated` rows include `skill_id`, `provider`, `current_ref`, `current_digest`, `candidate_ref`, `candidate_digest`, `candidate_trust`, `status`, `risk`, and `next_actions`
+5. `outdated` status values are `up_to_date`, `outdated`, `unreachable`, `unpinned_candidate`, and `invalid_source`; provider failures must be reported as `unreachable`, not silently treated as clean
+6. `outdated --plan` emits a JSON re-pin plan with `mutates=false` and `apply_required=true`; it must not edit skill content, `sources.json`, `loom.lock`, projection state, target directories, binding rules, Git refs, or live agent skill directories
+7. unpinned provider heads are advisory only until resolved to immutable commit SHAs or `sha256:<digest>` refs
+8. `refresh` is a write command; it recomputes the current canonical skill digest, updates `state/registry/sources.json` and `loom.lock`, and commits only provenance artifacts
+9. `refresh` must not mutate projection state, target directories, binding rules, or live agent skill directories
+10. `loom.lock` is generated from sorted source records so repeated writes are deterministic
+11. missing skill sources return `SKILL_NOT_FOUND`; missing provenance records return `STATE_NOT_INITIALIZED`
 
 ### 11.2 `skill import-observed`
 

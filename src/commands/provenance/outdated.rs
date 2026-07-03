@@ -3,7 +3,6 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 
 use chrono::{DateTime, Utc};
-use serde::Serialize;
 use serde_json::{Value, json};
 
 use crate::cli::SkillProvenanceOutdatedArgs;
@@ -24,7 +23,22 @@ const STATUS_UNREACHABLE: &str = "unreachable";
 const STATUS_UNPINNED_CANDIDATE: &str = "unpinned_candidate";
 const STATUS_INVALID_SOURCE: &str = "invalid_source";
 
-#[derive(Debug, Clone, Serialize)]
+const RISK_NONE: &[&str] = &[];
+const RISK_NON_PROVIDER: &[&str] = &["source was not installed through a provider-backed import"];
+const RISK_INCOMPLETE_SOURCE: &[&str] =
+    &["source record has neither local path nor git repository metadata"];
+const RISK_LOCAL_SOURCE_MISSING: &[&str] = &["local provider source is missing path metadata"];
+const RISK_LOCAL_UNREADABLE: &[&str] = &["local provider source cannot be read"];
+const RISK_LOCAL_DIGEST: &[&str] = &["local provider source digest could not be computed"];
+const RISK_GIT_REMOTE: &[&str] = &["git provider source cannot be resolved to a clone URL"];
+const RISK_GIT_HEAD: &[&str] = &["git provider head could not be reached"];
+const RISK_GIT_DIGEST: &[&str] = &["git provider candidate digest could not be computed"];
+const RISK_UNPINNED_DIGEST: &[&str] = &["current provider ref is not an immutable sha256 digest"];
+const RISK_UNPINNED_COMMIT: &[&str] = &["current provider ref is not an immutable commit SHA"];
+const RISK_OUTDATED: &[&str] = &["provider candidate differs from recorded pinned provenance"];
+const RISK_REVIEW: &[&str] = &["provider candidate requires review before use"];
+
+#[derive(Debug, Clone)]
 struct ProviderOutdatedRow {
     skill_id: String,
     provider: String,
@@ -35,13 +49,33 @@ struct ProviderOutdatedRow {
     candidate_digest: Option<String>,
     candidate_trust: &'static str,
     source_locator: String,
-    risk: Vec<String>,
-    next_actions: Vec<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    risk: &'static [&'static str],
     error: Option<String>,
 }
 
-#[derive(Debug, Default, Clone, Serialize)]
+impl ProviderOutdatedRow {
+    fn to_json(&self) -> Value {
+        let mut row = json!({
+            "skill_id": self.skill_id,
+            "provider": self.provider,
+            "status": self.status,
+            "current_ref": self.current_ref,
+            "current_digest": self.current_digest,
+            "candidate_ref": self.candidate_ref,
+            "candidate_digest": self.candidate_digest,
+            "candidate_trust": self.candidate_trust,
+            "source_locator": self.source_locator,
+            "risk": self.risk,
+            "next_actions": next_actions_for_status(&self.skill_id, self.status),
+        });
+        if let Some(error) = &self.error {
+            row["error"] = json!(error);
+        }
+        row
+    }
+}
+
+#[derive(Debug, Default, Clone)]
 struct ProviderOutdatedSummary {
     up_to_date: usize,
     outdated: usize,
@@ -60,6 +94,16 @@ impl ProviderOutdatedSummary {
             STATUS_INVALID_SOURCE => self.invalid_source += 1,
             _ => {}
         }
+    }
+
+    fn to_json(&self) -> Value {
+        json!({
+            "up_to_date": self.up_to_date,
+            "outdated": self.outdated,
+            "unreachable": self.unreachable,
+            "unpinned_candidate": self.unpinned_candidate,
+            "invalid_source": self.invalid_source,
+        })
     }
 }
 
@@ -85,20 +129,21 @@ pub(super) fn cmd_provenance_outdated(
     for record in records {
         rows.push(provider_outdated_row(ctx, &record, &staging_root));
     }
-    let _ = remove_path_if_exists(&staging_root);
+    remove_path_if_exists(&staging_root).map_err(map_io)?;
 
     let mut summary = ProviderOutdatedSummary::default();
     for row in &rows {
         summary.observe(row.status);
     }
+    let row_values: Vec<Value> = rows.iter().map(ProviderOutdatedRow::to_json).collect();
     let re_pin_plan = args.plan.then(|| re_pin_plan_for_rows(&rows, generated_at));
     Ok((
         json!({
             "generated_at": generated_at,
             "plan_requested": args.plan,
             "count": rows.len(),
-            "summary": summary,
-            "rows": rows,
+            "summary": summary.to_json(),
+            "rows": row_values,
             "re_pin_plan": re_pin_plan,
             "next_actions": [
                 "review rows with status outdated or unpinned_candidate before applying any re-pin",
@@ -125,7 +170,7 @@ fn provider_outdated_row(
             None,
             None,
             "unavailable",
-            vec!["source was not installed through a provider-backed import".to_string()],
+            RISK_NON_PROVIDER,
             Some("provider outdated checks require provider-backed provenance".to_string()),
         );
     }
@@ -141,7 +186,7 @@ fn provider_outdated_row(
         None,
         None,
         "unavailable",
-        vec!["source record has neither local path nor git repository metadata".to_string()],
+        RISK_INCOMPLETE_SOURCE,
         Some("provider source metadata is incomplete".to_string()),
     )
 }
@@ -154,7 +199,7 @@ fn local_provider_outdated_row(record: &SkillSourceRecord) -> ProviderOutdatedRo
             None,
             None,
             "unavailable",
-            vec!["local provider source is missing path metadata".to_string()],
+            RISK_LOCAL_SOURCE_MISSING,
             Some("local provider source path is missing".to_string()),
         );
     };
@@ -166,7 +211,7 @@ fn local_provider_outdated_row(record: &SkillSourceRecord) -> ProviderOutdatedRo
             None,
             None,
             "unavailable",
-            vec!["local provider source cannot be read".to_string()],
+            RISK_LOCAL_UNREADABLE,
             Some(format!(
                 "local provider source '{}' is not a directory",
                 source_path.display()
@@ -182,7 +227,7 @@ fn local_provider_outdated_row(record: &SkillSourceRecord) -> ProviderOutdatedRo
                 None,
                 None,
                 "unavailable",
-                vec!["local provider source digest could not be computed".to_string()],
+                RISK_LOCAL_DIGEST,
                 Some(err.to_string()),
             );
         }
@@ -195,7 +240,7 @@ fn local_provider_outdated_row(record: &SkillSourceRecord) -> ProviderOutdatedRo
             Some(candidate_digest.clone()),
             Some(candidate_digest),
             "advisory",
-            vec!["current provider ref is not an immutable sha256 digest".to_string()],
+            RISK_UNPINNED_DIGEST,
             None,
         );
     }
@@ -229,7 +274,7 @@ fn git_provider_outdated_row(
             None,
             None,
             "unavailable",
-            vec!["git provider source cannot be resolved to a clone URL".to_string()],
+            RISK_GIT_REMOTE,
             Some("missing or unsupported git repository metadata".to_string()),
         );
     };
@@ -242,7 +287,7 @@ fn git_provider_outdated_row(
                 None,
                 None,
                 "unavailable",
-                vec!["git provider head could not be reached".to_string()],
+                RISK_GIT_HEAD,
                 Some(error),
             );
         }
@@ -257,7 +302,7 @@ fn git_provider_outdated_row(
                     Some(candidate_ref),
                     None,
                     "unavailable",
-                    vec!["git provider candidate digest could not be computed".to_string()],
+                    RISK_GIT_DIGEST,
                     Some(error),
                 );
             }
@@ -270,7 +315,7 @@ fn git_provider_outdated_row(
             Some(candidate_ref),
             Some(candidate_digest),
             "advisory",
-            vec!["current provider ref is not an immutable commit SHA".to_string()],
+            RISK_UNPINNED_COMMIT,
             None,
         );
     }
@@ -298,7 +343,7 @@ fn status_row(
     candidate_ref: Option<String>,
     candidate_digest: Option<String>,
     candidate_trust: &'static str,
-    risk: Vec<String>,
+    risk: &'static [&'static str],
     error: Option<String>,
 ) -> ProviderOutdatedRow {
     ProviderOutdatedRow {
@@ -312,7 +357,6 @@ fn status_row(
         candidate_trust,
         source_locator: record.source.locator.clone(),
         risk,
-        next_actions: next_actions_for_status(&record.skill_id, status),
         error,
     }
 }
@@ -324,13 +368,11 @@ fn current_ref_for_source(source: &SourceDescriptor) -> Option<String> {
         .or_else(|| source.requested_ref.clone())
 }
 
-fn risk_for_status(status: &str) -> Vec<String> {
+fn risk_for_status(status: &str) -> &'static [&'static str] {
     match status {
-        STATUS_OUTDATED => {
-            vec!["provider candidate differs from recorded pinned provenance".to_string()]
-        }
-        STATUS_UP_TO_DATE => Vec::new(),
-        _ => vec!["provider candidate requires review before use".to_string()],
+        STATUS_OUTDATED => RISK_OUTDATED,
+        STATUS_UP_TO_DATE => RISK_NONE,
+        _ => RISK_REVIEW,
     }
 }
 
@@ -477,7 +519,7 @@ fn re_pin_plan_for_rows(rows: &[ProviderOutdatedRow], generated_at: DateTime<Utc
                     "run catalog preview or equivalent source inspection",
                     "run skill scan after any explicit update flow",
                 ],
-                "next_actions": row.next_actions,
+                "next_actions": next_actions_for_status(&row.skill_id, row.status),
             })
         })
         .collect();

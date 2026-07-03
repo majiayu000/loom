@@ -505,6 +505,89 @@ fn skillset_activate_dry_run_ready_ignores_optional_missing_members() {
 }
 
 #[test]
+fn skillset_deactivate_preflights_non_symlink_members_before_mutating() {
+    let root = TestDir::new("skillset-deactivate-copy-preflight");
+    let home = TestDir::new("skillset-deactivate-copy-preflight-home");
+    write_fixture_skill(
+        &root,
+        "alpha-flow",
+        "Use when testing symlink deactivation.",
+    );
+    write_fixture_skill(&root, "beta-flow", "Use when testing copy deactivation.");
+
+    let home_str = home.path().to_string_lossy().into_owned();
+    let (output, env) = run_loom_with_env(
+        root.path(),
+        &[("HOME", &home_str)],
+        &["skill", "activate", "alpha-flow", "--agent", "codex"],
+    );
+    assert!(output.status.success(), "alpha activate should pass: {env}");
+    let (output, env) = run_loom_with_env(
+        root.path(),
+        &[("HOME", &home_str)],
+        &[
+            "skill",
+            "activate",
+            "beta-flow",
+            "--agent",
+            "codex",
+            "--method",
+            "copy",
+        ],
+    );
+    assert!(
+        output.status.success(),
+        "beta copy activate should pass: {env}"
+    );
+
+    let (output, env) = run_loom(root.path(), &["skillset", "create", "bundle"]);
+    assert!(output.status.success(), "create should pass: {env}");
+    let (output, env) = run_loom(root.path(), &["skillset", "add", "bundle", "alpha-flow"]);
+    assert!(output.status.success(), "add alpha should pass: {env}");
+    let (output, env) = run_loom(root.path(), &["skillset", "add", "bundle", "beta-flow"]);
+    assert!(output.status.success(), "add beta should pass: {env}");
+
+    let (dry_run_output, dry_run_env) = run_loom_with_env(
+        root.path(),
+        &[("HOME", &home_str)],
+        &[
+            "skillset",
+            "deactivate",
+            "bundle",
+            "--agent",
+            "codex",
+            "--dry-run",
+        ],
+    );
+    assert!(
+        !dry_run_output.status.success(),
+        "dry-run should fail closed on copy member: {dry_run_env}"
+    );
+    assert_eq!(dry_run_env["error"]["code"], json!("POLICY_BLOCKED"));
+
+    let (output, env) = run_loom_with_env(
+        root.path(),
+        &[("HOME", &home_str)],
+        &["skillset", "deactivate", "bundle", "--agent", "codex"],
+    );
+    assert!(
+        !output.status.success(),
+        "deactivate should fail before mutating earlier members: {env}"
+    );
+    assert_eq!(env["error"]["code"], json!("POLICY_BLOCKED"));
+    assert!(
+        fs::symlink_metadata(home.path().join(".agents/skills/alpha-flow")).is_ok(),
+        "preflight failure must not remove earlier symlink members"
+    );
+    assert!(
+        home.path()
+            .join(".agents/skills/beta-flow/SKILL.md")
+            .is_file(),
+        "failed closed deactivate must not delete copy projection"
+    );
+}
+
+#[test]
 fn skillset_eval_aggregates_member_eval_results() {
     let root = TestDir::new("skillset-eval");
     write_fixture_skill(&root, "fixflow", "Use when fixing tests.");
@@ -650,6 +733,47 @@ fn skillset_release_and_rollback_restore_definition() {
         "show after rollback should pass: {env}"
     );
     assert_eq!(env["data"]["skillset"]["summary"]["members"], json!(0));
+}
+
+#[test]
+fn skillset_rollback_output_includes_member_read_model() {
+    let root = TestDir::new("skillset-rollback-read-model");
+    write_fixture_skill(&root, "fixflow", "Use when fixing tests.");
+
+    let (output, env) = run_loom(root.path(), &["skillset", "create", "coding-flow"]);
+    assert!(output.status.success(), "create should pass: {env}");
+    let (output, env) = run_loom(root.path(), &["skillset", "add", "coding-flow", "fixflow"]);
+    assert!(
+        output.status.success(),
+        "add before release should pass: {env}"
+    );
+    let (output, env) = run_loom(
+        root.path(),
+        &["skillset", "release", "coding-flow", "v1.0.0"],
+    );
+    assert!(output.status.success(), "release should pass: {env}");
+    let (output, env) = run_loom(
+        root.path(),
+        &["skillset", "remove", "coding-flow", "fixflow"],
+    );
+    assert!(
+        output.status.success(),
+        "remove after release should pass: {env}"
+    );
+
+    let (output, env) = run_loom(
+        root.path(),
+        &["skillset", "rollback", "coding-flow", "--to", "v1.0.0"],
+    );
+    assert!(output.status.success(), "rollback should pass: {env}");
+    assert_eq!(
+        env["data"]["skillset_record"]["summary"]["missing"],
+        json!(0)
+    );
+    assert_eq!(
+        env["data"]["skillset_record"]["members"][0]["skill"]["skill_id"],
+        json!("fixflow")
+    );
 }
 
 #[test]

@@ -92,6 +92,7 @@ impl App {
                 ),
             ));
         }
+        let inventory = skill_inventory_by_id(&self.ctx)?;
         let before = current.clone();
         replace_skillset(&mut current, replacement.clone());
         if current == before {
@@ -100,7 +101,7 @@ impl App {
                     "skillset": args.name,
                     "reference": reference,
                     "noop": true,
-                    "skillset_record": render_skillset(&replacement, None),
+                    "skillset_record": render_skillset(&replacement, Some(&inventory)),
                 }),
                 Meta::default(),
             ));
@@ -124,7 +125,7 @@ impl App {
                 "reference": reference,
                 "commit": commit,
                 "noop": false,
-                "skillset_record": render_skillset(&replacement, None),
+                "skillset_record": render_skillset(&replacement, Some(&inventory)),
             }),
             Meta::default(),
         ))

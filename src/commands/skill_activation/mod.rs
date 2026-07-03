@@ -258,6 +258,9 @@ impl App {
         if args.dry_run {
             let snapshot = optional_snapshot(&self.ctx)?;
             let resolved = resolve_deactivation(&self.ctx, &snapshot, selection)?;
+            if let Some(resolved) = resolved.as_ref() {
+                ensure_symlink_deactivation_rule(resolved)?;
+            }
             return Ok((
                 json!({"plan": plan::deactivation_plan(resolved.as_ref(), true), "dry_run": true}),
                 Meta::default(),
@@ -276,25 +279,16 @@ impl App {
         };
         let plan = plan::deactivation_plan(Some(&resolved), false);
 
-        let rule = resolved.existing_rule.as_ref().ok_or_else(|| {
-            CommandFailure::new(
+        if resolved.existing_rule.is_none() {
+            return Err(CommandFailure::new(
                 ErrorCode::SkillNotFound,
                 format!(
                     "skill '{}' is not active for agent '{}'",
                     resolved.selection.skill, resolved.selection.agent
                 ),
-            )
-        })?;
-        if rule.method != crate::core::vocab::ProjectionMethod::Symlink {
-            return Err(CommandFailure::new(
-                ErrorCode::PolicyBlocked,
-                format!(
-                    "deactivate refuses to delete '{}' projection '{}'; copy/materialize cleanup requires an explicit safe cleanup flow",
-                    rule.method,
-                    resolved.materialized_path.display()
-                ),
             ));
         }
+        ensure_symlink_deactivation_rule(&resolved)?;
 
         remove_safe_symlink_projection(&self.ctx.skill_path(&resolved.selection.skill), &resolved)?;
 
@@ -467,6 +461,25 @@ impl App {
             Meta::default(),
         ))
     }
+}
+
+fn ensure_symlink_deactivation_rule(
+    resolved: &resolve::ActivationResolved,
+) -> std::result::Result<(), CommandFailure> {
+    let Some(rule) = resolved.existing_rule.as_ref() else {
+        return Ok(());
+    };
+    if rule.method == crate::core::vocab::ProjectionMethod::Symlink {
+        return Ok(());
+    }
+    Err(CommandFailure::new(
+        ErrorCode::PolicyBlocked,
+        format!(
+            "deactivate refuses to delete '{}' projection '{}'; copy/materialize cleanup requires an explicit safe cleanup flow",
+            rule.method,
+            resolved.materialized_path.display()
+        ),
+    ))
 }
 
 fn skill_activate_projection_fault(skill: &str) -> Option<CommandFailure> {

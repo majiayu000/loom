@@ -2,7 +2,7 @@
 
 Issue: https://github.com/majiayu000/loom/issues/453
 Product spec: `specs/GH453/product.md`
-Status: Draft for review
+Status: Implemented for #459 ops-log slice; broader GH453 remains tracked by its task list
 
 ## Current State (evidence at 9b920c9)
 
@@ -11,7 +11,7 @@ Status: Draft for review
   `:598-749`, plus `is_rollback_preview` `:751-758`.
 - Panel writes go through `run_panel_command`, which fabricates a `Command`
   enum to reuse CLI semantics (ADR section 4 contract).
-- Dual op logs: `state/pending_ops.jsonl` + history + snapshot
+- Historical dual op logs: `state/pending_ops.jsonl` + history + snapshot
   (`src/state/mod.rs:222-224`; writers `state/ops.rs:55,315-323`) vs
   `state/registry/ops/operations.jsonl` + `checkpoint.json`
   (`src/state_model/persistence.rs:56,209-210`).
@@ -60,17 +60,15 @@ Rules:
 
 ### 2. Single operation-log authority (#459)
 
-1. Spec the journal-backed replacements for the pending-queue semantics that
-   `sync push/pull/replay`, `ops retry/purge`, and `ops history repair`
-   rely on, including the `loom-history` branch interplay - this is the risk
-   center and gets its own review round before code.
-2. Migrate command families one at a time behind the existing CLI surface;
-   each migration PR includes an equivalence test against recorded
-   pending-queue fixtures.
-3. Delete `pending_ops.*` writers and files; one release note; no dual-write
-   period longer than one release (V1 no-back-compat policy).
-4. Update `docs/LOOM_ARCHITECTURE_DECISIONS.md` section 1 and
-   `docs/LOOM_STATE_MIGRATION_NOTES.md`.
+1. `sync push/pull/replay`, `ops retry/purge`, and `ops history repair` rely
+   on the registry operation journal and the `loom-history` `registry_ops_*`
+   mirror paths.
+2. `/api/v1/ops/pending` remains a v1 compatibility route, backed by the
+   registry operation backlog.
+3. `pending_ops.*` runtime writers, files, compaction, and repair code are
+   deleted; there is no dual-write period.
+4. `docs/LOOM_ARCHITECTURE_DECISIONS.md` section 1,
+   `docs/LOOM_STATE_MIGRATION_NOTES.md`, and `CHANGELOG.md` record the closure.
 
 ### 3. Shared vocab enums (#460)
 

@@ -4,7 +4,6 @@ mod ops;
 mod registry_ops;
 
 pub use ops::OpsAuditOperation;
-pub use registry_ops::RegistryOrPendingOpsReport;
 
 use lock::{LockMetadata, acquire_lock_coordinator, lock_file_matches_owner, try_reap_stale_lock};
 
@@ -18,10 +17,7 @@ use std::sync::{Arc, Mutex};
 use anyhow::{Context, Result};
 
 use crate::fs_util::write_atomic;
-use crate::types::PendingOp;
 
-#[allow(dead_code)]
-const OPS_COMPACTION_THRESHOLD: usize = 16;
 pub const DEFAULT_REGISTRY_DIR: &str = ".loom-registry";
 
 type InProcMap = Arc<Mutex<HashMap<String, (PathBuf, std::thread::ThreadId, usize, String)>>>;
@@ -32,19 +28,8 @@ pub struct AppContext {
     pub skills_dir: PathBuf,
     pub state_dir: PathBuf,
     pub locks_dir: PathBuf,
-    pub pending_ops_file: PathBuf,
-    pub pending_ops_history_dir: PathBuf,
-    pub pending_ops_snapshot_file: PathBuf,
     pub command_events_file: PathBuf,
     in_proc: InProcMap,
-}
-
-#[derive(Debug, Clone, Default)]
-pub struct PendingOpsReport {
-    pub ops: Vec<PendingOp>,
-    pub warnings: Vec<String>,
-    pub journal_events: usize,
-    pub history_events: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -222,9 +207,6 @@ impl AppContext {
         let skills_dir = root.join("skills");
         let state_dir = root.join("state");
         let locks_dir = state_dir.join("locks");
-        let pending_ops_file = state_dir.join("pending_ops.jsonl");
-        let pending_ops_history_dir = state_dir.join("pending_ops_history");
-        let pending_ops_snapshot_file = state_dir.join("pending_ops_snapshot.json");
         let command_events_file = state_dir.join("events/commands.jsonl");
 
         Ok(Self {
@@ -232,9 +214,6 @@ impl AppContext {
             skills_dir,
             state_dir,
             locks_dir,
-            pending_ops_file,
-            pending_ops_history_dir,
-            pending_ops_snapshot_file,
             command_events_file,
             in_proc: Arc::new(Mutex::new(HashMap::new())),
         })
@@ -243,9 +222,6 @@ impl AppContext {
     pub fn ensure_state_layout(&self) -> Result<()> {
         fs::create_dir_all(&self.skills_dir).context("failed to create skills directory")?;
         fs::create_dir_all(&self.locks_dir).context("failed to create state locks directory")?;
-        fs::create_dir_all(&self.pending_ops_history_dir)
-            .context("failed to create pending ops history directory")?;
-        ensure_file_with_contents(&self.pending_ops_file, "")?;
         Ok(())
     }
 
@@ -482,13 +458,6 @@ impl Drop for LockGuard {
             }
         }
     }
-}
-
-fn ensure_file_with_contents(path: &Path, contents: &str) -> Result<()> {
-    if path.exists() {
-        return Ok(());
-    }
-    write_atomic(path, contents).with_context(|| format!("failed to initialize {}", path.display()))
 }
 
 #[allow(dead_code)]

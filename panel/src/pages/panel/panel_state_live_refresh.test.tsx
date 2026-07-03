@@ -97,9 +97,9 @@ test("DoctorPage renders structured workspace doctor checks", async () => {
     await flush();
 
     expect(calls).toBe(1);
-    expect(markup(renderer!).includes("pending_queue_warnings")).toBe(true);
-    expect(markup(renderer!).includes("pending queue has malformed or ignored entries")).toBe(true);
-    expect(markup(renderer!).includes("inspect state/pending_ops.jsonl")).toBe(true);
+    expect(markup(renderer!).includes("operation_journal_warnings")).toBe(true);
+    expect(markup(renderer!).includes("operation journal has malformed or ignored entries")).toBe(true);
+    expect(markup(renderer!).includes("inspect state/registry/ops/operations.jsonl")).toBe(true);
     expect(markup(renderer!).includes("agent_skill_inventory")).toBe(true);
     expect(markup(renderer!).includes("/tmp/home/.claude/skills")).toBe(true);
     expect(markup(renderer!).includes("present")).toBe(true);
@@ -157,7 +157,7 @@ test("DoctorPage still fetches doctor diagnostics when registry data is degraded
 
     expect(calls).toBe(1);
     expect(markup(renderer!).includes("Doctor needs the live panel API.")).toBe(false);
-    expect(markup(renderer!).includes("pending_queue_warnings")).toBe(true);
+    expect(markup(renderer!).includes("operation_journal_warnings")).toBe(true);
   } finally {
     api.workspaceDoctor = originalDoctor;
   }

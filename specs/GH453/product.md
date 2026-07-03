@@ -2,7 +2,7 @@
 
 Issue: https://github.com/majiayu000/loom/issues/453
 Blocks: #458, #459, #460, #461
-Status: Draft for review
+Status: Implemented for #459 ops-log slice; broader GH453 remains tracked by its task list
 Locale: zh-CN
 
 ## Problem
@@ -18,9 +18,9 @@ now compounds per feature:
 2. The same `Command` tree is matched three times (dispatch, audit
    classification, durable-audit classification). Every new leaf edits three
    parallel matches; missing one silently mis-classifies audit behavior.
-3. Two operation-log authorities are both live (legacy pending queue vs
-   registry journal), a split `LOOM_ARCHITECTURE_DECISIONS.md` section 1
-   froze "for phase 1" and that keeps outliving phases.
+3. Before #459, two operation-log authorities were both live (legacy pending
+   queue vs registry journal), a split `LOOM_ARCHITECTURE_DECISIONS.md`
+   section 1 froze "for phase 1" and kept outliving phases.
 4. Persisted vocabularies (`agent`, `ownership`, `method`, `health`) are raw
    strings; the type system cannot reject invalid states the ADR says writers
    must never emit.
@@ -39,8 +39,8 @@ built-in agent.
 
 - #458 extract `src/core/` domain services; declarative per-command metadata
   replaces the triple match; panel calls services directly.
-- #459 registry operations journal becomes the single write authority;
-  legacy `pending_ops.*` deleted after migration.
+- #459 registry operations journal is the single write authority; legacy
+  `pending_ops.*` runtime writers and files are deleted.
 - #460 shared serde enums for `agent`, `ownership`, `method`, `health`,
   matcher `kind`; `state_model` stores enums, CLI re-exports them.
 - #461 real per-agent v2 metadata (claude first), `health_checks` either
@@ -57,7 +57,7 @@ built-in agent.
 ## Success Criteria
 
 1. Adding a command touches one dispatch registration plus one metadata row.
-2. `rg pending_ops src/` returns nothing outside migration notes and tests.
+2. `rg pending_ops src/` returns nothing.
 3. A typoed `health` value fails load with a typed schema error instead of
    round-tripping.
 4. Claude has discovery/visibility/reload metadata backed by tests
@@ -66,5 +66,5 @@ built-in agent.
 ## Ordering
 
 #460 and #461 are independent and can land first. #458 should land before
-the next feature epic begins. #459 requires its own migration plan and may
-trail, but it must not gain new writers in the meantime.
+the next feature epic begins. #459 is closed by the registry-journal authority
+migration and must not regain legacy pending-queue writers.

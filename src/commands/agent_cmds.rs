@@ -552,7 +552,7 @@ impl App {
     }
 
     pub fn cmd_sync_push_plan(&self) -> std::result::Result<(Value, Meta), CommandFailure> {
-        let pending_report = self.ctx.read_registry_ops_report().map_err(map_io)?;
+        let operation_report = self.ctx.read_registry_ops_report().map_err(map_io)?;
         let mut risks = Vec::new();
         let remote_configured = gitops::remote_exists(&self.ctx);
         let tracking_ref = if remote_configured {
@@ -597,7 +597,7 @@ impl App {
                 "tracking_ref": tracking_ref,
                 "ahead": ahead,
                 "behind": behind,
-                "pending_ops": pending_report.ops.len(),
+                "operation_backlog": operation_report.ops.len(),
                 "will_mutate": ["git_history", "remote", "registry_ops"],
                 "risks": risks,
             }),

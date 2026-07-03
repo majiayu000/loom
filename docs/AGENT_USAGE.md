@@ -75,9 +75,9 @@ loom --json --root "$REGISTRY_ROOT" skill monitor-observed --once
 - 优先 symlink 模式；只有环境不支持时再使用 `--method copy`。
 - `meta.warnings` 不为空时，视为“成功但有风险”，需写入运行日志。
 - `agent preflight` 和 `--dry-run` 返回 `ok=true` 不代表可以直接写入；必须同时检查 `data.safe_to_run=true`。`plan use` 返回 `ok=true` 只表示 plan 已持久化；`apply` 前仍要检查 `required_approvals`。
-- `--dry-run` 只允许写 command audit，不应改变 registry ops、pending queue、Git refs/index 或 live target 内容；`skill rollback --dry-run` 连 command audit 也不会追加。
+- `--dry-run` 只允许写 command audit，不应改变 registry ops、operation backlog、Git refs/index 或 live target 内容；`skill rollback --dry-run` 连 command audit 也不会追加。
 - `sync_state=LOCAL_ONLY` 或 `PENDING_PUSH` 时，不应宣称“远端已同步”。
-- 读命令（如 `workspace status`、`workspace doctor`、`target list`）不会修改 registry state、Git refs/index、live target 目录或 pending queue；它们会写入 durable command event。registry 写操作审计以 `meta.op_id` / `/api/v1/ops` 为准。
+- 读命令（如 `workspace status`、`workspace doctor`、`target list`）不会修改 registry state、Git refs/index、live target 目录或 operation backlog；它们会写入 durable command event。registry 写操作审计以 `meta.op_id` / `/api/v1/ops` 为准。
 
 ## 6. 常见失败码处理
 
@@ -90,7 +90,7 @@ loom --json --root "$REGISTRY_ROOT" skill monitor-observed --once
 - `REMOTE_DIVERGED`：先 `sync pull` 再处理冲突，再 `sync push`。
 - `PUSH_REJECTED`：按分歧流程处理，不要强推覆盖。
 - `REPLAY_CONFLICT`：进入人工或高阶冲突处理流程。
-- `QUEUE_BLOCKED`：远端不可写或依赖状态未解决，记录 pending op 并等待恢复。
+- `QUEUE_BLOCKED`：远端不可写或依赖状态未解决，保留 registry operation backlog 记录并等待恢复。
 - `GIT_ERROR` / `IO_ERROR`：底层 Git 或文件系统失败，保留原始 message 供排查。
 
 ## 7. 最小自动化脚本模式

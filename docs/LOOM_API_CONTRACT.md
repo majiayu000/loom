@@ -83,8 +83,9 @@ GET /api/v1/sync/status
 `/api/v1/workspace/info` exposes Panel bootstrap metadata such as registry root,
 state paths, agent directory defaults, and the redacted remote URL.
 
-`/api/v1/ops/pending` exposes the replayable pending queue read model. It remains
-separate from `/api/v1/ops`, which is the activity/audit read model.
+`/api/v1/ops/pending` is the v1 compatibility route for replayable registry
+operation backlog rows. It remains separate from `/api/v1/ops`, which is the
+activity/audit read model.
 
 ## 5. Mutation Routes
 
@@ -131,7 +132,7 @@ envelope semantics.
 
 1. Panel routes must not invent semantics absent from CLI or registry state.
 2. Reads must not mutate registry state, Git refs/index, target directories, or
-   the pending queue.
+   the operation backlog.
 3. Mutations must remain CLI-backed and must not define a second write model.
 4. Unknown enum-like values in read models must render explicitly instead of
    being silently coerced to a known value.

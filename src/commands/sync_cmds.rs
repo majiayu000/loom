@@ -1,19 +1,15 @@
 use std::collections::BTreeSet;
-use std::fs;
 
-use anyhow::Context;
 use serde_json::json;
 
 use crate::cli::{HistoryRepairStrategyArg, OpsCommand, OpsHistoryCommand, SyncCommand};
 use crate::envelope::Meta;
 use crate::gitops;
-use crate::state::journal::synthesize_snapshot_raw_from_segment_bodies;
-use crate::state::{AppContext, RegistryOrPendingOpsReport};
+use crate::state::AppContext;
 use crate::types::ErrorCode;
 
 use super::helpers::{
-    map_git, map_io, map_lock, map_push_rejected, map_queue, map_remote_unreachable,
-    map_replay_conflict,
+    map_git, map_io, map_lock, map_push_rejected, map_remote_unreachable, map_replay_conflict,
 };
 use super::projections::remote_status_payload;
 use super::{App, CommandFailure};
@@ -48,7 +44,7 @@ impl App {
                     .map_err(super::helpers::map_remote_unreachable)?
                 {
                     return Ok((
-                        json!({"result": "remote_empty", "replay": "no_pending_ops"}),
+                        json!({"result": "remote_empty", "replay": "no_operations"}),
                         Meta::default(),
                     ));
                 }
@@ -88,48 +84,36 @@ impl App {
     ) -> std::result::Result<(serde_json::Value, Meta), CommandFailure> {
         match command {
             OpsCommand::List => {
-                match self
-                    .ctx
-                    .read_registry_or_pending_ops_report()
-                    .map_err(map_io)?
-                {
-                    RegistryOrPendingOpsReport::Registry(report) => Ok((
-                        json!({
-                            "count": report.ops.len(),
-                            "ops": report.ops,
-                            "journal_events": 0,
-                            "history_events": 0,
-                            "state_model": "registry"
-                        }),
-                        Meta::default(),
-                    )),
-                    RegistryOrPendingOpsReport::Pending(report) => Ok((
-                        json!({
-                            "count": report.ops.len(),
-                            "ops": report.ops,
-                            "journal_events": report.journal_events,
-                            "history_events": report.history_events,
-                            "state_model": "pending_legacy"
-                        }),
-                        Meta {
-                            warnings: report.warnings,
-                            sync_state: None,
-                            op_id: None,
-                        },
-                    )),
-                }
+                let report = self.ctx.read_registry_ops_report().map_err(map_io)?;
+                let history = gitops::history_status(&self.ctx).unwrap_or_default();
+                Ok((
+                    json!({
+                        "count": report.ops.len(),
+                        "ops": report.ops,
+                        "journal_events": 0,
+                        "history_events": history.local_segments + history.local_archives,
+                        "state_model": "registry"
+                    }),
+                    Meta::default(),
+                ))
             }
             OpsCommand::Retry => {
                 let _workspace = self.ctx.lock_workspace().map_err(map_lock)?;
                 self.ensure_write_repo_ready()?;
-                let pending_before = self.ctx.registry_pending_count().map_err(map_io)?;
+                let queued_before = self
+                    .ctx
+                    .registry_operation_backlog_count()
+                    .map_err(map_io)?;
                 let result = sync_replay_internal(&self.ctx)?;
-                let pending_after = self.ctx.registry_pending_count().map_err(map_io)?;
+                let queued_after = self
+                    .ctx
+                    .registry_operation_backlog_count()
+                    .map_err(map_io)?;
                 Ok((
                     json!({
                         "result": result,
-                        "pending_before": pending_before,
-                        "pending_after": pending_after
+                        "queued_before": queued_before,
+                        "queued_after": queued_after
                     }),
                     Meta::default(),
                 ))
@@ -138,23 +122,16 @@ impl App {
                 let _workspace = self.ctx.lock_workspace().map_err(map_lock)?;
                 self.ensure_write_layout()?;
                 let purged = self.ctx.purge_registry_ops().map_err(map_io)?;
-                let legacy_purged = self.ctx.purge_pending().map_err(map_io)?;
-                gitops::mirror_pending_ops_history(&self.ctx).map_err(map_git)?;
                 let _purge_commit = gitops::commit_paths_if_changed(
                     &self.ctx,
                     &[
                         "state/registry/ops/operations.jsonl",
                         "state/registry/ops/checkpoint.json",
-                        "state/pending_ops.jsonl",
-                        "state/pending_ops_snapshot.json",
                     ],
                     "ops: purge operation records",
                 )
                 .map_err(map_git)?;
-                Ok((
-                    json!({"purged": purged.max(legacy_purged)}),
-                    Meta::default(),
-                ))
+                Ok((json!({"purged": purged}), Meta::default()))
             }
             OpsCommand::History { command } => self.cmd_ops_history(command),
         }
@@ -177,8 +154,6 @@ impl App {
                     HistoryRepairStrategyArg::Remote => gitops::HistoryRepairStrategy::Remote,
                 };
                 let report = gitops::repair_history_branch(&self.ctx, strategy).map_err(map_git)?;
-                let snapshot_rebuilt =
-                    rebuild_local_pending_ops_snapshot(&self.ctx).map_err(map_io)?;
                 Ok((
                     json!({
                         "result": report.result,
@@ -190,7 +165,6 @@ impl App {
                         "local_segments": report.local_segments,
                         "local_archives": report.local_archives,
                         "local_snapshot": report.local_snapshot,
-                        "local_snapshot_rebuilt": snapshot_rebuilt,
                         "conflicts": report.conflicts,
                     }),
                     Meta::default(),
@@ -198,43 +172,6 @@ impl App {
             }
         }
     }
-}
-
-fn rebuild_local_pending_ops_snapshot(ctx: &AppContext) -> anyhow::Result<bool> {
-    let bodies = gitops::history_journal_bodies(ctx)?
-        .into_iter()
-        .map(|(_, body)| body)
-        .collect::<Vec<_>>();
-    let snapshot_raw = synthesize_snapshot_raw_from_segment_bodies(&bodies)?;
-    let parent = ctx
-        .pending_ops_snapshot_file
-        .parent()
-        .context("pending ops snapshot path has no parent directory")?;
-    fs::create_dir_all(parent).with_context(|| {
-        format!(
-            "failed to create pending ops snapshot parent {}",
-            parent.display()
-        )
-    })?;
-    let tmp_path = parent.join(format!(
-        ".pending_ops_snapshot.json.repair-{}",
-        uuid::Uuid::new_v4()
-    ));
-    fs::write(&tmp_path, format!("{snapshot_raw}\n")).with_context(|| {
-        format!(
-            "failed to write temporary pending ops snapshot {}",
-            tmp_path.display()
-        )
-    })?;
-    crate::fs_util::rename_atomic(&tmp_path, &ctx.pending_ops_snapshot_file).with_context(
-        || {
-            format!(
-                "failed to replace pending ops snapshot {}",
-                ctx.pending_ops_snapshot_file.display()
-            )
-        },
-    )?;
-    Ok(true)
 }
 
 pub(crate) fn sync_push_internal(
@@ -253,18 +190,11 @@ pub(crate) fn sync_push_internal(
         "sync: commit registry state",
     )
     .map_err(map_git)?;
-    let pending_report = ctx.read_registry_ops_report().map_err(map_io)?;
-    let queued_ids = pending_report
+    let operation_report = ctx.read_registry_ops_report().map_err(map_io)?;
+    let queued_ids = operation_report
         .ops
         .iter()
         .map(|op| op.op_id.clone())
-        .collect::<BTreeSet<_>>();
-    let legacy_pending_ids = ctx
-        .read_pending_report()
-        .map_err(map_io)?
-        .ops
-        .iter()
-        .map(|op| op.stable_id())
         .collect::<BTreeSet<_>>();
     let remote_main_exists =
         gitops::fetch_origin_main_if_present(ctx).map_err(map_remote_unreachable)?;
@@ -295,18 +225,15 @@ pub(crate) fn sync_push_internal(
     )
     .map_err(map_git)?;
     gitops::push_main_with_tags(ctx).map_err(map_push_rejected)?;
-    ctx.remove_pending_ops(&legacy_pending_ids)
-        .map_err(map_queue)?;
-    gitops::mirror_pending_ops_history(ctx).map_err(map_git)?;
     Ok("pushed")
 }
 
 pub(crate) fn sync_replay_internal(
     ctx: &AppContext,
 ) -> std::result::Result<&'static str, CommandFailure> {
-    let pending = ctx.registry_pending_count().map_err(map_io)?;
-    if pending == 0 {
-        return Ok("no_pending_ops");
+    let queued = ctx.registry_operation_backlog_count().map_err(map_io)?;
+    if queued == 0 {
+        return Ok("no_operations");
     }
     sync_push_internal(ctx)?;
     Ok("replayed")

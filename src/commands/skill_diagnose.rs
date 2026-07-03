@@ -8,7 +8,7 @@ use crate::cli::{AgentKind, SkillDiagnoseArgs, SkillDiagnoseCheck, SkillOnlyArgs
 use crate::envelope::Meta;
 use crate::state::AppContext;
 use crate::state_model::{RegistryProjectionInstance, RegistrySnapshot, RegistryStatePaths};
-use crate::types::{ErrorCode, PendingOp};
+use crate::types::ErrorCode;
 
 use super::codex_visibility::build_codex_visibility_report;
 use super::helpers::{map_arg, map_registry_state, validate_skill_name};
@@ -155,7 +155,7 @@ fn build_skill_diagnosis(
     let mut targets = Vec::new();
     let mut projections = Vec::new();
     let mut recent_ops = Vec::new();
-    let mut pending_ops = Vec::new();
+    let mut operation_backlog = Vec::new();
     let lint_report = lint_skill_source(&source_path, skill, SkillLintMode::Compat);
     let dependencies = source_exists
         .then(|| skill_dependency_report(ctx, skill, dependency_agent, None))
@@ -253,6 +253,24 @@ fn build_skill_diagnosis(
             .filter(|op| !op["last_error"].is_null())
             .cloned()
             .collect::<Vec<_>>();
+        operation_backlog = snapshot
+            .operations
+            .iter()
+            .rev()
+            .filter(|op| !op.ack && op.status != "purged")
+            .filter(|op| registry_operation_mentions_skill(op, skill))
+            .take(MAX_RELATED_OPS)
+            .map(|op| {
+                json!({
+                    "op_id": op.op_id,
+                    "intent": op.intent,
+                    "status": op.status,
+                    "last_error": op.last_error,
+                    "created_at": op.created_at,
+                    "updated_at": op.updated_at
+                })
+            })
+            .collect();
         checks.push(check(
             "operations",
             "recent_failed_ops",
@@ -266,62 +284,19 @@ fn build_skill_diagnosis(
             "inspect the failed operation details before retrying",
             json!({"operations": failed_ops}),
         ));
-    }
-
-    match ctx.read_pending_report() {
-        Ok(report) => {
-            pending_ops = report
-                .ops
-                .iter()
-                .rev()
-                .filter(|op| pending_op_mentions_skill(op, skill))
-                .take(MAX_RELATED_OPS)
-                .map(|op| {
-                    json!({
-                        "op_id": op.op_id,
-                        "request_id": op.request_id,
-                        "command": op.command,
-                        "created_at": op.created_at,
-                        "details": op.details
-                    })
-                })
-                .collect();
-            checks.push(check(
-                "operations",
-                "recent_pending_ops",
-                pending_ops.is_empty(),
-                "warning",
-                if pending_ops.is_empty() {
-                    "no pending operations for this skill"
-                } else {
-                    "pending operations exist for this skill"
-                },
-                "run loom ops list and resolve or retry pending work",
-                json!({"operations": pending_ops}),
-            ));
-            checks.push(check(
-                "operations",
-                "pending_queue_warnings",
-                report.warnings.is_empty(),
-                "warning",
-                if report.warnings.is_empty() {
-                    "pending operation queue parsed cleanly"
-                } else {
-                    "pending operation queue has parse warnings"
-                },
-                "inspect state/pending_ops.jsonl and pending_ops_history for malformed entries",
-                json!({"warnings": report.warnings}),
-            ));
-        }
-        Err(err) => checks.push(check(
+        checks.push(check(
             "operations",
-            "pending_queue_read",
-            false,
-            "error",
-            "pending operation queue could not be read",
-            "inspect state/pending_ops.jsonl and pending_ops_history permissions or file shape",
-            json!({"error": err.to_string()}),
-        )),
+            "recent_operation_backlog",
+            operation_backlog.is_empty(),
+            "warning",
+            if operation_backlog.is_empty() {
+                "no queued registry operations for this skill"
+            } else {
+                "queued registry operations exist for this skill"
+            },
+            "run loom ops list and resolve or retry queued work",
+            json!({"operations": operation_backlog}),
+        ));
     }
     dependency_checks::add_dependency_checks(dependencies.as_ref(), &mut checks);
 
@@ -362,7 +337,7 @@ fn build_skill_diagnosis(
                 "targets": targets,
                 "projections": projections,
                 "recent_operations": recent_ops,
-                "pending_operations": pending_ops,
+                "operation_backlog": operation_backlog,
                 "dependencies": dependencies
             }
         }),
@@ -775,19 +750,6 @@ fn skill_is_referenced(snapshot: &RegistrySnapshot, skill: &str) -> bool {
             .operations
             .iter()
             .any(|op| registry_operation_mentions_skill(op, skill))
-}
-
-fn value_mentions_skill(value: &Value, skill: &str) -> bool {
-    value.get("skill").and_then(Value::as_str) == Some(skill)
-        || value.get("skill_id").and_then(Value::as_str) == Some(skill)
-        || value
-            .get("skills")
-            .and_then(Value::as_array)
-            .is_some_and(|items| items.iter().any(|item| item.as_str() == Some(skill)))
-}
-
-fn pending_op_mentions_skill(op: &PendingOp, skill: &str) -> bool {
-    value_mentions_skill(&op.details, skill)
 }
 
 fn checks_with_severity(checks: &[Value], severity: &str) -> usize {

@@ -9,7 +9,7 @@ use crate::gitops;
 use crate::state::{AppContext, home_dir};
 use crate::state_model::{RegistrySnapshot, RegistryStatePaths};
 
-use super::super::helpers::{map_git, map_io, map_registry_state};
+use super::super::helpers::{map_git, map_registry_state};
 use super::super::{App, CommandFailure};
 
 impl App {
@@ -17,12 +17,19 @@ impl App {
         let fsck = gitops::fsck(&self.ctx);
         let fsck_ok = fsck.is_ok();
         let fsck_output = fsck.unwrap_or_else(|e| e.to_string());
-        let pending_report = self.ctx.read_pending_report().map_err(map_io)?;
+        let operation_report = self.ctx.read_existing_registry_ops_report();
+        let (operation_backlog_count, operation_journal_ok, operation_warnings) =
+            match operation_report {
+                Ok(report) => (report.ops.len(), true, Vec::new()),
+                Err(err) => (0, false, vec![err.to_string()]),
+            };
         let registry_paths = RegistryStatePaths::from_app_context(&self.ctx);
         let registry_schema_ok = registry_paths.schema_file.exists();
-        let registry_snapshot = registry_paths
-            .maybe_load_snapshot()
-            .map_err(map_registry_state)?;
+        let registry_snapshot = match registry_paths.maybe_load_snapshot() {
+            Ok(snapshot) => snapshot,
+            Err(_err) if !operation_journal_ok => None,
+            Err(err) => return Err(map_registry_state(err)),
+        };
         let registry_snapshot_ok = registry_snapshot.is_some();
         let history = gitops::history_status(&self.ctx).map_err(map_git)?;
 
@@ -49,7 +56,8 @@ impl App {
             registry_schema_ok,
             registry_snapshot.as_ref(),
             history.conflicts.is_empty(),
-            pending_report.warnings.as_slice(),
+            operation_journal_ok,
+            operation_warnings.as_slice(),
         );
         checks_v1.push(json!({
             "section": "agents",
@@ -78,11 +86,9 @@ impl App {
                     "git_fsck": {"ok": fsck_ok, "output": fsck_output},
                     "registry_schema_file": {"ok": registry_schema_ok},
                     "registry_snapshot": {"ok": registry_snapshot_ok},
-                    "pending_queue": {
-                        "count": pending_report.ops.len(),
-                        "journal_events": pending_report.journal_events,
-                        "history_events": pending_report.history_events,
-                        "warnings": pending_report.warnings
+                    "operation_journal": {
+                        "count": operation_backlog_count,
+                        "warnings": operation_warnings
                     },
                     "history_branch": history,
                     "projection_drift": {
@@ -267,7 +273,8 @@ fn build_doctor_checks(
     registry_schema_ok: bool,
     snapshot: Option<&RegistrySnapshot>,
     history_ok: bool,
-    pending_warnings: &[String],
+    operation_journal_ok: bool,
+    operation_warnings: &[String],
 ) -> Vec<Value> {
     let mut checks = vec![
         doctor_check(
@@ -323,19 +330,19 @@ fn build_doctor_checks(
             json!({}),
         ),
         doctor_check(
-            "pending_queue",
-            "pending_queue_warnings",
-            pending_warnings.is_empty(),
-            "warning",
-            if pending_warnings.is_empty() {
-                "pending queue parsed without warnings"
+            "operations",
+            "operation_journal_read",
+            operation_journal_ok,
+            "error",
+            if operation_journal_ok {
+                "registry operation journal parsed"
             } else {
-                "pending queue has malformed or ignored entries"
+                "registry operation journal could not be read"
             },
-            "inspect state/pending_ops.jsonl and repair or purge malformed queue entries",
+            "inspect state/registry/ops/operations.jsonl and repair or purge malformed operation entries",
             json!({
-                "warning_count": pending_warnings.len(),
-                "warnings": pending_warnings
+                "warning_count": operation_warnings.len(),
+                "warnings": operation_warnings
             }),
         ),
     ];

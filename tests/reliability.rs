@@ -106,18 +106,6 @@ fn git_branch_path_count(repo: &Path, branch: &str, prefix: &str) -> usize {
         .count()
 }
 
-fn history_segment_count(root: &Path) -> usize {
-    let dir = root.join("state/pending_ops_history");
-    if !dir.exists() {
-        return 0;
-    }
-    fs::read_dir(dir)
-        .expect("read history dir")
-        .filter_map(|entry| entry.ok())
-        .filter(|entry| entry.file_type().map(|ty| ty.is_file()).unwrap_or(false))
-        .count()
-}
-
 fn make_skill_source(root: &Path, name: &str) -> PathBuf {
     let skill_dir = root.join(name);
     fs::create_dir_all(&skill_dir).expect("create skill dir");
@@ -509,24 +497,18 @@ fn target_add_pushes_registry_state_to_remote() {
 }
 
 #[test]
-fn ops_list_skips_malformed_pending_lines() {
+fn ops_list_fails_closed_on_malformed_registry_operations() {
     let root = TestDir::new("ops-list");
-    let state_dir = root.path().join("state");
-    fs::create_dir_all(&state_dir).expect("create state dir");
+    run_loom_ok(root.path(), &["workspace", "init"]);
     fs::write(
-        state_dir.join("pending_ops.jsonl"),
-        concat!(
-            "{\"request_id\":\"r1\",\"command\":\"save\",\"created_at\":\"2026-04-08T00:00:00Z\",\"details\":{\"skill\":\"demo\"}}\n",
-            "not-json\n"
-        ),
+        root.path().join("state/registry/ops/operations.jsonl"),
+        "not-json\n",
     )
-    .expect("write pending ops");
+    .expect("write malformed registry operations");
 
-    let env = run_loom_ok(root.path(), &["ops", "list"]);
-
-    assert_eq!(env["data"]["count"], 1);
-    assert_eq!(env["data"]["ops"].as_array().unwrap().len(), 1);
-    assert_eq!(env["meta"]["warnings"].as_array().unwrap().len(), 1);
+    let (output, env) = run_loom_with_env(root.path(), &[], &["ops", "list"]);
+    assert!(!output.status.success(), "malformed operations must fail");
+    assert_eq!(env["error"]["code"], "IO_ERROR");
 }
 
 #[test]
@@ -623,7 +605,7 @@ fn snapshot_pushes_annotated_tag_to_remote() {
     ]);
     let segment_path = history_files
         .lines()
-        .find(|line| line.starts_with("pending_ops_history/"))
+        .find(|line| line.starts_with("registry_ops_history/"))
         .expect("snapshot audit segment");
     let segment_raw = git_ok([
         "--git-dir",
@@ -729,7 +711,7 @@ fn sync_pull_fast_forwards_from_remote() {
 
     let env = run_loom_ok(root.path(), &["sync", "pull"]);
     assert_eq!(env["data"]["result"], "pulled");
-    assert_eq!(env["data"]["replay"], "no_pending_ops");
+    assert_eq!(env["data"]["replay"], "no_operations");
     assert_eq!(
         fs::read_to_string(root.path().join("skills/demo/SKILL.md")).expect("read pulled file"),
         "# demo\nvalue=remote\n"
@@ -811,42 +793,6 @@ fn stale_skill_lock_is_reaped_automatically() {
 }
 
 #[test]
-fn ops_journal_compacts_into_snapshot_and_history() {
-    let root = TestDir::new("ops-compact");
-    let source = make_skill_source(root.path(), "source-compact");
-
-    run_loom_ok(
-        root.path(),
-        &["skill", "add", source.to_str().unwrap(), "--name", "demo"],
-    );
-
-    for _ in 0..20 {
-        run_loom_ok(root.path(), &["skill", "release", "demo", "--anchor"]);
-    }
-
-    let purge = run_loom_ok(root.path(), &["ops", "purge"]);
-    assert!(purge["data"]["purged"].as_u64().unwrap() >= 1);
-
-    let list = run_loom_ok(root.path(), &["ops", "list"]);
-    assert_eq!(list["data"]["count"], 0);
-    assert_eq!(list["data"]["journal_events"], 0);
-    assert!(list["data"]["history_events"].as_u64().unwrap() >= 16);
-    assert!(root.path().join("state/pending_ops_snapshot.json").exists());
-    assert!(history_segment_count(root.path()) >= 1);
-    assert_eq!(
-        fs::read_to_string(root.path().join("state/pending_ops.jsonl"))
-            .expect("read compacted journal"),
-        ""
-    );
-
-    for _ in 0..20 {
-        run_loom_ok(root.path(), &["skill", "release", "demo", "--anchor"]);
-    }
-    run_loom_ok(root.path(), &["ops", "purge"]);
-    assert!(history_segment_count(root.path()) >= 2);
-}
-
-#[test]
 fn ops_compaction_mirrors_history_into_local_git_branch() {
     let root = TestDir::new("history-local");
     let remote_root = TestDir::new("history-local-remote");
@@ -877,11 +823,11 @@ fn ops_compaction_mirrors_history_into_local_git_branch() {
     assert!(
         files
             .lines()
-            .any(|line| line == "pending_ops_snapshot.json")
+            .any(|line| line == "registry_ops_snapshot.json")
     );
     let segment_paths = files
         .lines()
-        .filter(|line| line.starts_with("pending_ops_history/"))
+        .filter(|line| line.starts_with("registry_ops_history/"))
         .collect::<Vec<_>>();
     assert!(
         !segment_paths.is_empty(),
@@ -889,60 +835,25 @@ fn ops_compaction_mirrors_history_into_local_git_branch() {
     );
     let snapshot_raw = git_ok_in(
         root.path(),
-        &["show", "loom-history:pending_ops_snapshot.json"],
+        &["show", "loom-history:registry_ops_snapshot.json"],
     );
     let snapshot: Value = serde_json::from_str(&snapshot_raw).expect("parse history snapshot");
     assert!(snapshot["history_events"].as_u64().unwrap() >= 16);
-    let segment_event_count = segment_paths
-        .iter()
-        .map(|segment_path| {
+    let history_event_count = files
+        .lines()
+        .filter(|line| {
+            line.starts_with("registry_ops_history/") || line.starts_with("registry_ops_archive/")
+        })
+        .map(|history_path| {
             git_ok_in(
                 root.path(),
-                &["show", &format!("loom-history:{segment_path}")],
+                &["show", &format!("loom-history:{history_path}")],
             )
             .lines()
             .count()
         })
         .sum::<usize>();
-    assert!(segment_event_count >= 16);
-}
-
-#[test]
-fn ops_history_repair_rebuilds_corrupt_local_pending_snapshot() {
-    let root = TestDir::new("history-rebuild-local-snapshot");
-    let remote_root = TestDir::new("history-rebuild-local-snapshot-remote");
-    let remote = remote_root.path().join("origin.git");
-    let source = make_skill_source(root.path(), "source-history-rebuild-local-snapshot");
-
-    git_ok(["init", "--bare", remote.to_str().unwrap()]);
-    run_loom_ok(
-        root.path(),
-        &["workspace", "remote", "set", remote.to_str().unwrap()],
-    );
-    run_loom_ok(
-        root.path(),
-        &["skill", "add", source.to_str().unwrap(), "--name", "demo"],
-    );
-    for _ in 0..16 {
-        run_loom_ok(root.path(), &["skill", "release", "demo", "--anchor"]);
-    }
-    assert!(git_branch_exists(root.path(), "loom-history"));
-
-    let snapshot_path = root.path().join("state/pending_ops_snapshot.json");
-    fs::write(&snapshot_path, "{not-json").expect("corrupt local pending snapshot");
-    let (failed, _) = run_loom_with_env(root.path(), &[], &["ops", "list"]);
-    assert!(
-        !failed.status.success(),
-        "corrupt local snapshot must fail closed before repair"
-    );
-
-    let repair = run_loom_ok(
-        root.path(),
-        &["ops", "history", "repair", "--strategy", "local"],
-    );
-    assert_eq!(repair["data"]["local_snapshot_rebuilt"], true);
-    let pending = run_loom_ok(root.path(), &["ops", "list"]);
-    assert!(pending["data"]["history_events"].as_u64().unwrap() >= 16);
+    assert!(history_event_count >= 16);
 }
 
 #[test]
@@ -996,12 +907,12 @@ fn sync_push_propagates_history_branch_to_remote() {
     assert!(
         files
             .lines()
-            .any(|line| line == "pending_ops_snapshot.json")
+            .any(|line| line == "registry_ops_snapshot.json")
     );
     assert!(
         files
             .lines()
-            .any(|line| line.starts_with("pending_ops_history/"))
+            .any(|line| line.starts_with("registry_ops_history/"))
     );
 
     let pending = run_loom_ok(root.path(), &["ops", "list"]);
@@ -1066,12 +977,12 @@ fn sync_pull_creates_local_history_branch_from_remote() {
     assert!(
         files
             .lines()
-            .any(|line| line == "pending_ops_snapshot.json")
+            .any(|line| line == "registry_ops_snapshot.json")
     );
     assert!(
         files
             .lines()
-            .any(|line| line.starts_with("pending_ops_history/"))
+            .any(|line| line.starts_with("registry_ops_history/"))
     );
 }
 
@@ -1159,7 +1070,7 @@ fn sync_push_reconciles_divergent_history_branch_before_push() {
     assert!(
         files
             .lines()
-            .filter(|line| line.starts_with("pending_ops_history/"))
+            .filter(|line| line.starts_with("registry_ops_history/"))
             .count()
             >= 3
     );
@@ -1168,14 +1079,14 @@ fn sync_push_reconciles_divergent_history_branch_before_push() {
         "--git-dir",
         remote.to_str().unwrap(),
         "show",
-        "loom-history:pending_ops_snapshot.json",
+        "loom-history:registry_ops_snapshot.json",
     ]);
     let snapshot: Value = serde_json::from_str(&snapshot_raw).expect("parse reconciled snapshot");
     assert!(snapshot["history_events"].as_u64().unwrap() >= 48);
 }
 
 #[test]
-fn sync_pull_reconciles_divergent_history_branch_without_pending_ops() {
+fn sync_pull_reconciles_divergent_history_branch_without_operation_backlog() {
     let producer = TestDir::new("history-reconcile-pull-producer");
     let consumer = TestDir::new("history-reconcile-pull-consumer");
     let remote_root = TestDir::new("history-reconcile-pull-remote");
@@ -1235,7 +1146,7 @@ fn sync_pull_reconciles_divergent_history_branch_without_pending_ops() {
     );
     let pull = run_loom_ok(consumer.path(), &["sync", "pull"]);
     assert_eq!(pull["data"]["result"], "pulled");
-    assert_eq!(pull["data"]["replay"], "no_pending_ops");
+    assert_eq!(pull["data"]["replay"], "no_operations");
     assert!(
         pull["meta"]["warnings"]
             .as_array()
@@ -1255,70 +1166,16 @@ fn sync_pull_reconciles_divergent_history_branch_without_pending_ops() {
     assert!(
         files
             .lines()
-            .filter(|line| line.starts_with("pending_ops_history/"))
+            .filter(|line| line.starts_with("registry_ops_history/"))
             .count()
             >= 4
     );
     let snapshot_raw = git_ok_in(
         consumer.path(),
-        &["show", "loom-history:pending_ops_snapshot.json"],
+        &["show", "loom-history:registry_ops_snapshot.json"],
     );
     let snapshot: Value = serde_json::from_str(&snapshot_raw).expect("parse pulled snapshot");
-    assert!(snapshot["history_events"].as_u64().unwrap() >= 64);
-}
-
-fn assert_compaction_fault_recovers(injection_point: &str) {
-    let root = TestDir::new(&format!("fault-{}", injection_point));
-    let remote_root = TestDir::new(&format!("fault-remote-{}", injection_point));
-    let remote = remote_root.path().join("origin.git");
-    let source = make_skill_source(root.path(), "source-fault");
-
-    git_ok(["init", "--bare", remote.to_str().unwrap()]);
-    run_loom_ok(
-        root.path(),
-        &["workspace", "remote", "set", remote.to_str().unwrap()],
-    );
-    run_loom_ok(
-        root.path(),
-        &["skill", "add", source.to_str().unwrap(), "--name", "demo"],
-    );
-    let baseline = run_loom_ok(root.path(), &["ops", "list"]);
-    assert_eq!(baseline["data"]["count"], 0);
-    git_ok_in(root.path(), &["remote", "remove", "origin"]);
-
-    for _ in 0..15 {
-        run_loom_ok(root.path(), &["skill", "release", "demo", "--anchor"]);
-    }
-
-    let (output, env) = run_loom_with_env(
-        root.path(),
-        &[("LOOM_FAULT_INJECT", injection_point)],
-        &["skill", "release", "demo", "--anchor"],
-    );
-    assert!(!output.status.success(), "expected injected failure");
-    assert_eq!(env["error"]["code"], "QUEUE_BLOCKED");
-
-    let pending_before = run_loom_ok(root.path(), &["ops", "list"]);
-    assert_eq!(pending_before["data"]["count"], 16);
-
-    let purge = run_loom_ok(root.path(), &["ops", "purge"]);
-    assert_eq!(purge["data"]["purged"], 16);
-
-    let pending_after = run_loom_ok(root.path(), &["ops", "list"]);
-    assert_eq!(pending_after["data"]["count"], 0);
-    assert!(pending_after["data"]["history_events"].as_u64().unwrap() >= 16);
-    assert!(root.path().join("state/pending_ops_snapshot.json").exists());
-    assert!(history_segment_count(root.path()) >= 1);
-}
-
-#[test]
-fn compaction_recovers_after_history_fault_injection() {
-    assert_compaction_fault_recovers("ops_compact_after_history");
-}
-
-#[test]
-fn compaction_recovers_after_snapshot_fault_injection() {
-    assert_compaction_fault_recovers("ops_compact_after_snapshot");
+    assert!(snapshot["history_events"].as_u64().unwrap() >= 48);
 }
 
 #[test]
@@ -1387,7 +1244,7 @@ fn ops_history_repair_compacts_excess_segments_into_archives() {
     let files = (0..9)
         .map(|index| {
             (
-                format!("pending_ops_history/segment-{index:02}.jsonl"),
+                format!("registry_ops_history/segment-{index:02}.jsonl"),
                 history_event_line("segment", index),
             )
         })
@@ -1414,11 +1271,11 @@ fn ops_history_repair_compacts_excess_segments_into_archives() {
     assert_eq!(repair["data"]["local_snapshot"], true);
 
     assert_eq!(
-        git_branch_path_count(root.path(), "loom-history", "pending_ops_history/"),
+        git_branch_path_count(root.path(), "loom-history", "registry_ops_history/"),
         4
     );
     assert_eq!(
-        git_branch_path_count(root.path(), "loom-history", "pending_ops_archive/"),
+        git_branch_path_count(root.path(), "loom-history", "registry_ops_archive/"),
         1
     );
 }
@@ -1436,7 +1293,7 @@ fn ops_history_repair_rolls_excess_archives_forward() {
     let files = (0..5)
         .map(|index| {
             (
-                format!("pending_ops_archive/archive-{index:02}.jsonl"),
+                format!("registry_ops_archive/archive-{index:02}.jsonl"),
                 history_event_line("archive", index),
             )
         })
@@ -1458,7 +1315,7 @@ fn ops_history_repair_rolls_excess_archives_forward() {
     assert_eq!(repair["data"]["local_segments"], 0);
     assert_eq!(repair["data"]["local_archives"], 4);
     assert_eq!(
-        git_branch_path_count(root.path(), "loom-history", "pending_ops_archive/"),
+        git_branch_path_count(root.path(), "loom-history", "registry_ops_archive/"),
         4
     );
 }
@@ -1481,7 +1338,7 @@ fn ops_history_diagnose_and_repair_resolve_path_conflicts() {
     );
     run_loom_ok(root.path(), &["sync", "push"]);
 
-    let conflict_path = "pending_ops_history/conflict.jsonl".to_string();
+    let conflict_path = "registry_ops_history/conflict.jsonl".to_string();
     replace_history_branch(
         remote.as_path(),
         "loom-history",

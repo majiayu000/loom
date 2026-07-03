@@ -178,11 +178,11 @@ function installFetchMock(failingPath: string | null = null, failingResponse?: R
                 ? [
                     {
                       scope: "segment",
-                      path: "pending_ops_history/conflict.jsonl",
+                      path: "registry_ops_history/conflict.jsonl",
                       local_blob: "local",
                       remote_blob: "remote",
-                      local_rename_path: "pending_ops_history/conflict-local.jsonl",
-                      remote_rename_path: "pending_ops_history/conflict-remote.jsonl",
+                      local_rename_path: "registry_ops_history/conflict-local.jsonl",
+                      remote_rename_path: "registry_ops_history/conflict-remote.jsonl",
                     },
                   ]
                 : [],
@@ -273,7 +273,7 @@ describe("PanelApp status failure UI", () => {
       "/api/v1/sync/status",
       errorResponse(500, {
         ok: false,
-        error: { code: "IO_ERROR", message: "failed to read pending_ops.jsonl" },
+        error: { code: "IO_ERROR", message: "failed to read operations.jsonl" },
       }),
     );
 
@@ -283,7 +283,7 @@ describe("PanelApp status failure UI", () => {
       expect(screen.getByText(/registry error/i)).toBeTruthy();
     });
 
-    expect(screen.getByText(/failed to read pending_ops\.jsonl/i)).toBeTruthy();
+    expect(screen.getByText(/failed to read operations\.jsonl/i)).toBeTruthy();
   });
 
   it("shows registry error state when /api/v1/ops/pending returns a structured backend failure", async () => {
@@ -291,7 +291,7 @@ describe("PanelApp status failure UI", () => {
       "/api/v1/ops/pending",
       errorResponse(500, {
         ok: false,
-        error: { code: "IO_ERROR", message: "failed to read pending queue" },
+        error: { code: "IO_ERROR", message: "failed to read operation backlog" },
       }),
     );
 
@@ -301,13 +301,13 @@ describe("PanelApp status failure UI", () => {
       expect(screen.getByText(/registry error/i)).toBeTruthy();
     });
 
-    expect(screen.getByText(/failed to read pending queue/i)).toBeTruthy();
+    expect(screen.getByText(/failed to read operation backlog/i)).toBeTruthy();
   });
 
   it("shows backend warnings returned by panel read paths", async () => {
     installFetchMock(undefined, undefined, {
       skillsWarnings: ["skipped malformed skill metadata"],
-      pendingWarnings: ["pending queue had parse warnings"],
+      pendingWarnings: ["operation backlog had parse warnings"],
       opsWarnings: ["ignored malformed operation audit row"],
     });
 
@@ -318,7 +318,7 @@ describe("PanelApp status failure UI", () => {
     });
 
     expect(screen.getByText(/skipped malformed skill metadata/i)).toBeTruthy();
-    expect(screen.getByText(/pending queue had parse warnings/i)).toBeTruthy();
+    expect(screen.getByText(/operation backlog had parse warnings/i)).toBeTruthy();
     expect(screen.getByText(/ignored malformed operation audit row/i)).toBeTruthy();
   });
 
@@ -342,8 +342,8 @@ describe("PanelApp status failure UI", () => {
       expect(repairLocal.disabled).toBe(true);
       expect(repairRemote.disabled).toBe(true);
     });
-    expect(repairLocal.title).toBe("pending operations must be replayed or purged first");
-    expect(repairRemote.title).toBe("pending operations must be replayed or purged first");
+    expect(repairLocal.title).toBe("operation backlog must be replayed or purged first");
+    expect(repairRemote.title).toBe("operation backlog must be replayed or purged first");
   });
 
   it("shows first-run mode when workspace status reports missing registry state", async () => {

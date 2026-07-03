@@ -150,8 +150,8 @@ fn workspace_doctor_reports_missing_projection_path() {
 }
 
 #[test]
-fn workspace_doctor_marks_pending_queue_warnings_unhealthy() {
-    let root = TestDir::new("doctor-pending-warning");
+fn workspace_doctor_marks_operation_journal_read_errors_unhealthy() {
+    let root = TestDir::new("doctor-operation-journal-error");
     let target_path = root.path().join("live/claude-project-a");
     assert!(
         target_add(root.path(), "claude", &target_path, "managed")
@@ -159,22 +159,25 @@ fn workspace_doctor_marks_pending_queue_warnings_unhealthy() {
             .status
             .success()
     );
-    fs::write(root.path().join("state/pending_ops.jsonl"), "not-json\n")
-        .expect("write malformed pending queue");
+    fs::write(
+        root.path().join("state/registry/ops/operations.jsonl"),
+        "not-json\n",
+    )
+    .expect("write malformed operation journal");
 
     let (output, env) = run_loom(root.path(), &["workspace", "doctor"]);
 
     assert!(output.status.success(), "doctor should succeed");
     assert_eq!(env["data"]["healthy"], Value::Bool(false));
     assert_eq!(
-        env["data"]["checks"]["pending_queue"]["warnings"]
+        env["data"]["checks"]["operation_journal"]["warnings"]
             .as_array()
             .map(Vec::len),
         Some(1)
     );
-    let check = find_check(&env, "pending_queue_warnings");
+    let check = find_check(&env, "operation_journal_read");
     assert_eq!(check["ok"], Value::Bool(false));
-    assert_eq!(check["severity"], Value::String("warning".to_string()));
+    assert_eq!(check["severity"], Value::String("error".to_string()));
     assert_eq!(check["details"]["warning_count"], Value::from(1));
 }
 

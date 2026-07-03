@@ -25,8 +25,8 @@ This document turns [LOOM_STATE_MODEL.md](LOOM_STATE_MODEL.md) into a concrete m
 6. Every successful registry write returns an `op_id`; noop writes and
    non-registry lifecycle actions may omit it by explicit command contract.
 7. Read commands must have zero control-plane side effects. They do not mutate
-   registry state, Git refs, Git index, live targets, or pending queue; they do
-   append command-audit events.
+   registry state, Git refs, Git index, live targets, or the operation backlog;
+   they do append command-audit events.
 
 ## 3. Naming Rules
 
@@ -420,7 +420,7 @@ Rules:
 11. `skill search --explain` returns recommendation details under `recommendations`, including skillset candidates, scoring inputs, safety risks, warnings, recommended actions, and suggested commands.
 12. `--workspace` on `skill search --for-task` may boost skills whose binding matcher covers the supplied workspace path.
 13. `skill visibility --agent codex` is a read-only Codex active-view proof. It reports source, active rule, target, symlink projection, Codex `skills.config` disables, runtime entries, external entries, and restart recommendations without claiming current-session hot reload.
-14. read commands must not mutate registry state, Git refs, Git index, live targets, or pending queue.
+14. read commands must not mutate registry state, Git refs, Git index, live targets, or the operation backlog.
 15. trust metadata comes from `state/registry/trust.json`; absent metadata is `unknown`.
 16. `skill deps` is read-only and reports runtime dependency readiness for tools, MCP servers, environment variables, and network expectations without printing secret values.
 15. `skill compile --dry-run`, `skill compile list`, and `skill compile verify` are read-only; they never replace portable `SKILL.md` as the source of truth.
@@ -468,7 +468,7 @@ Rules:
 
 1. `skill activate` resolves a managed target and workspace binding from agent, scope, workspace, profile, and optional target id; callers must not need to pass binding ids for the common path.
 2. user-scoped Codex activation defaults to `$HOME/.agents/skills`; project-scoped Codex activation defaults to `<workspace>/.agents/skills`; project scope requires `--workspace`.
-3. `--dry-run` must return the same plan shape without creating registry files, Git commits, target directories, projections, pending ops, or command audit events.
+3. `--dry-run` must return the same plan shape without creating registry files, Git commits, target directories, projections, operation backlog rows, or command audit events.
 4. activation enforces the same target ownership, projection capability, filesystem symlink probe, and skill policy gates as projection.
 5. repeated activation is idempotent; a missing managed symlink projection is repaired without duplicating targets, bindings, rules, or projections.
 6. `skill deactivate` removes the desired rule and projection record, and deletes only a symlink that points back to the registry skill source.
@@ -515,7 +515,7 @@ Rules:
 1. creates `skills/<skill-id>/SKILL.md` plus `references/`, `scripts/`, `assets/`, `evals/`, and `loom.skill.toml`
 2. generated `SKILL.md` must pass current strict portable lint
 3. `loom.skill.toml` is Loom-local management metadata and is ignored by portable agent-facing lint
-4. `--dry-run` returns paths and file previews without writing files, registry state, Git refs, pending queue, or command audit state
+4. `--dry-run` returns paths and file previews without writing files, registry state, Git refs, operation backlog, or command audit state
 5. existing skill directories fail with `ARG_INVALID` and must not be overwritten
 6. invalid portable skill names fail with `ARG_INVALID` before source skill files are created
 7. generated skills are committed as registry source changes when not dry-run
@@ -593,7 +593,7 @@ Rules:
 3. unknown provider prefixes return `PROVIDER_NOT_FOUND`
 4. provider URLs with userinfo or token-like query parameters fail with `ARG_INVALID` before persistence
 5. catalog preview inspects files without executing scripts or build hooks
-6. `skill install --dry-run` writes no skill directory, provenance file, `loom.lock`, trust state, target directory, Git ref, or pending queue entry beyond normal command audit
+6. `skill install --dry-run` writes no skill directory, provenance file, `loom.lock`, trust state, target directory, Git ref, or operation backlog row beyond normal command audit
 7. unpinned refs fail closed with `POLICY_BLOCKED`; local locators are pinned only by a matching `sha256:<digest>` ref and GitHub locators by a commit SHA
 8. public installs default to `third-party-unreviewed`; `--trust reviewed` requires `--review-evidence`
 9. pinned provider-backed install apply copies without symlinks, writes `skills/<skill-id>`, `state/registry/sources.json`, deterministic `loom.lock`, `state/registry/trust.json`, and a `skill.install` registry operation, but never auto-activates the skill
@@ -607,7 +607,7 @@ loom --json --root <root> package build <plan-artifact> --output <path> --idempo
 loom --json --root <root> package verify <artifact> [--format agent-skills-archive]
 ```
 
-Package planning is read-only. Package build writes only the requested outbound artifact and records command audit, but it does not mutate registry source, target directories, active projections, provider state, or pending queues. Package verify is read-only.
+Package planning is read-only. Package build writes only the requested outbound artifact and records command audit, but it does not mutate registry source, target directories, active projections, provider state, or operation backlog. Package verify is read-only.
 
 Rules:
 
@@ -716,7 +716,7 @@ Rules:
 5. unsupported adapters or unknown instruction surfaces are reported explicitly when requested by the agent filter or classification path
 6. `doctor --skill <skill>` compares instruction signals with one registry skill and reports duplicate guidance, conflicts, shadowing risks, prompt-budget risks, and missing adapter metadata
 7. `migrate-plan` requires `--dry-run`; apply is deferred and non-dry-run migration returns `POLICY_BLOCKED`
-8. migration plans contain reviewable `would_write` entries only and must not edit instruction files, skill files, registry state, Git refs, live targets, or pending queues
+8. migration plans contain reviewable `would_write` entries only and must not edit instruction files, skill files, registry state, Git refs, live targets, or operation backlog
 9. portable skill lint remains strict: `AGENTS.md`, `CLAUDE.md`, `.mdc`, and custom instruction files are not accepted as `SKILL.md`
 
 ### 11.1.6 `skill provenance`
@@ -1133,7 +1133,7 @@ loom --json --root <root> plan use <skill-id> --agents <agent[,agent]> [--scope 
 loom --json --root <root> apply <plan-id> --idempotency-key <key> [--approve <token[,token]>]
 ```
 
-`plan use` creates a durable, audited plan for the same target/binding/projection setup that `loom use --apply` performs. Plan creation must not mutate registry state, Git refs, pending ops, or live target directories; its only durable write is the command-audit event under `state/events/commands.jsonl`.
+`plan use` creates a durable, audited plan for the same target/binding/projection setup that `loom use --apply` performs. Plan creation must not mutate registry state, Git refs, operation backlog, or live target directories; its only durable write is the command-audit event under `state/events/commands.jsonl`.
 
 The top-level `plan` command owns durable plan creation. The top-level `apply` command owns guarded plan execution.
 
@@ -1253,7 +1253,7 @@ Examples:
 Requirements:
 
 1. no registry `op_id`
-2. no registry, Git, live-target, or pending-queue write side effects
+2. no registry, Git, live-target, or operation-backlog write side effects
 3. command-event audit write is expected
 
 ### 16.2 Writes

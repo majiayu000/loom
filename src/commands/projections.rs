@@ -23,7 +23,7 @@ use super::event_store::redact_sensitive_string;
 use super::file_ops::{
     copy_dir_recursive, copy_dir_recursive_preserving_symlinks, create_symlink_dir,
 };
-use super::helpers::{map_git, map_io, map_queue};
+use super::helpers::{map_git, map_io};
 use super::sync_cmds::sync_push_internal;
 use crate::fs_util::{maybe_fault_inject, remove_path_if_exists};
 
@@ -547,20 +547,22 @@ fn list_unique_skills_from_dirs(
 pub fn remote_status_payload(
     ctx: &AppContext,
 ) -> std::result::Result<(serde_json::Value, Meta), CommandFailure> {
-    let pending = ctx.registry_or_pending_count().map_err(map_io)?;
-    remote_status_payload_with_pending(ctx, pending, Vec::new())
+    let backlog = ctx
+        .existing_registry_operation_backlog_count()
+        .map_err(map_io)?;
+    remote_status_payload_with_backlog(ctx, backlog, Vec::new())
 }
 
-pub(crate) fn remote_status_payload_with_pending(
+pub(crate) fn remote_status_payload_with_backlog(
     ctx: &AppContext,
-    pending: usize,
+    backlog: usize,
     warnings: Vec<String>,
 ) -> std::result::Result<(serde_json::Value, Meta), CommandFailure> {
     if !gitops::remote_exists(ctx) {
         return Ok((
             json!({
                 "configured": false,
-                "pending_ops": pending,
+                "operation_backlog": backlog,
                 "sync_state": SyncState::LocalOnly,
             }),
             Meta {
@@ -585,7 +587,7 @@ pub(crate) fn remote_status_payload_with_pending(
     };
 
     if !gitops::remote_tracking_main_exists(ctx).map_err(map_git)? {
-        let sync_state = if pending > 0 {
+        let sync_state = if backlog > 0 {
             SyncState::PendingPush
         } else {
             SyncState::LocalOnly
@@ -599,7 +601,7 @@ pub(crate) fn remote_status_payload_with_pending(
                 "configured": true,
                 "remote": "origin",
                 "url": redacted_url,
-                "pending_ops": pending,
+                "operation_backlog": backlog,
                 "tracking_ref": false,
                 "sync_state": sync_state,
             }),
@@ -608,7 +610,7 @@ pub(crate) fn remote_status_payload_with_pending(
     }
 
     let (ahead, behind) = gitops::ahead_behind_main(ctx).map_err(map_git)?;
-    let sync_state = if pending > 0 {
+    let sync_state = if backlog > 0 {
         SyncState::PendingPush
     } else if ahead == 0 && behind == 0 {
         SyncState::Synced
@@ -626,7 +628,7 @@ pub(crate) fn remote_status_payload_with_pending(
             "url": redacted_url,
             "ahead": ahead,
             "behind": behind,
-            "pending_ops": pending,
+            "operation_backlog": backlog,
             "tracking_ref": true,
             "sync_state": sync_state,
         }),
@@ -644,12 +646,10 @@ pub(crate) fn maybe_autosync_or_queue(
     ensure_registry_operation_recorded(ctx, command, request_id, details.clone(), meta)?;
 
     if !gitops::remote_exists(ctx) {
-        ctx.append_pending(command, details.clone(), request_id.to_string())
-            .map_err(map_queue)?;
-        gitops::mirror_pending_ops_history(ctx).map_err(map_git)?;
         meta.sync_state = Some(SyncState::PendingPush);
-        meta.warnings
-            .push("remote origin not configured, operation queued".to_string());
+        meta.warnings.push(
+            "remote origin not configured, operation retained in registry journal".to_string(),
+        );
         return Ok(());
     }
 
@@ -658,16 +658,13 @@ pub(crate) fn maybe_autosync_or_queue(
             meta.sync_state = Some(SyncState::Synced);
         }
         Err(err) => {
-            ctx.append_pending(command, details, request_id.to_string())
-                .map_err(map_queue)?;
-            gitops::mirror_pending_ops_history(ctx).map_err(map_git)?;
             meta.sync_state = Some(match err.code {
                 ErrorCode::RemoteDiverged => SyncState::Diverged,
                 ErrorCode::ReplayConflict => SyncState::Conflicted,
                 _ => SyncState::PendingPush,
             });
             meta.warnings.push(format!(
-                "auto sync failed ({}), operation queued",
+                "auto sync failed ({}), operation retained in registry journal",
                 err.code.as_str()
             ));
         }

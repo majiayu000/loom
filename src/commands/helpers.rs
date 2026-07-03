@@ -573,10 +573,6 @@ pub(crate) fn map_io<E: std::fmt::Display>(err: E) -> CommandFailure {
     CommandFailure::new(ErrorCode::IoError, err.to_string())
 }
 
-pub(crate) fn map_queue<E: std::fmt::Display>(err: E) -> CommandFailure {
-    CommandFailure::new(ErrorCode::QueueBlocked, err.to_string())
-}
-
 pub(crate) fn map_git(err: anyhow::Error) -> CommandFailure {
     CommandFailure::new(ErrorCode::GitError, err.to_string())
 }

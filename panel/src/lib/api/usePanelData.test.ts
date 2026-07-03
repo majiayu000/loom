@@ -16,7 +16,7 @@ function op(overrides: Partial<Op>): Op {
 }
 
 describe("dedupePanelOps", () => {
-  it("keeps pending queue rows first and removes matching activity rows", () => {
+  it("keeps operation backlog rows first and removes matching activity rows", () => {
     const pending = op({ id: "request-1", status: "pending" });
     const activity = op({ id: "request-1", status: "ok" });
     const other = op({ id: "request-2", kind: "skill.commit" });

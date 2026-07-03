@@ -248,7 +248,7 @@ describe("api v1 routes", () => {
         request_id: "req-1",
         data: {
           remote: { sync_state: "CLEAN" },
-          warnings: ["pending queue had parse warnings"],
+          warnings: ["operation backlog had parse warnings"],
         },
         error: null,
         meta: { warnings: ["failed to read remote tracking ref"] },
@@ -258,9 +258,9 @@ describe("api v1 routes", () => {
     await expect(api.remoteStatusWithWarnings()).resolves.toEqual({
       data: {
         remote: { sync_state: "CLEAN" },
-        warnings: ["pending queue had parse warnings"],
+        warnings: ["operation backlog had parse warnings"],
       },
-      warnings: ["failed to read remote tracking ref", "pending queue had parse warnings"],
+      warnings: ["failed to read remote tracking ref", "operation backlog had parse warnings"],
     });
   });
 

@@ -20,10 +20,6 @@ fn operations_log(root: &Path) -> String {
     read_text(&root.join("state/registry/ops/operations.jsonl"))
 }
 
-fn pending_log(root: &Path) -> String {
-    read_text(&root.join("state/pending_ops.jsonl"))
-}
-
 fn setup_binding(root: &Path, ownership: &str, workspace: &Path) -> String {
     setup_binding_with_target(root, ownership, workspace).0
 }
@@ -329,7 +325,6 @@ fn project_dry_run_reports_plan_without_touching_state_or_target() {
     let binding_id = setup_binding(root.path(), "managed", &workspace);
     let target_skill_path = root.path().join("live/claude-project-a/model-onboarding");
     let operations_before = operations_log(root.path());
-    let pending_before = pending_log(root.path());
 
     let (output, env) = run_loom(
         root.path(),
@@ -355,7 +350,6 @@ fn project_dry_run_reports_plan_without_touching_state_or_target() {
         "dry-run must not materialize projection"
     );
     assert_eq!(operations_log(root.path()), operations_before);
-    assert_eq!(pending_log(root.path()), pending_before);
 }
 
 #[test]
@@ -392,12 +386,12 @@ fn project_dry_run_reports_unsafe_observed_target() {
 }
 
 #[test]
-fn sync_push_dry_run_does_not_clear_pending_queue() {
+fn sync_push_dry_run_does_not_clear_operation_backlog() {
     let root = TestDir::new("sync-push-dry-run");
     let workspace = root.path().join("work/project-a");
     fs::create_dir_all(&workspace).expect("workspace");
     setup_binding(root.path(), "managed", &workspace);
-    let pending_before = pending_log(root.path());
+    let operations_before = operations_log(root.path());
 
     let (output, env) = run_loom(root.path(), &["sync", "push", "--dry-run"]);
 
@@ -417,5 +411,5 @@ fn sync_push_dry_run_does_not_clear_pending_queue() {
             .iter()
             .any(|risk| risk["code"] == "REMOTE_NOT_CONFIGURED")
     );
-    assert_eq!(pending_log(root.path()), pending_before);
+    assert_eq!(operations_log(root.path()), operations_before);
 }

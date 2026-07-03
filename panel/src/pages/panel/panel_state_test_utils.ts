@@ -241,12 +241,12 @@ export function doctorPayload(): DoctorPayload {
         details: {},
       },
       {
-        section: "pending_queue",
-        id: "pending_queue_warnings",
+        section: "operations",
+        id: "operation_journal_warnings",
         ok: false,
         severity: "warning",
-        message: "pending queue has malformed or ignored entries",
-        next_action: "inspect state/pending_ops.jsonl and repair or purge malformed queue entries",
+        message: "operation journal has malformed or ignored entries",
+        next_action: "inspect state/registry/ops/operations.jsonl and repair or purge malformed operation entries",
         details: { warning_count: 1 },
       },
       {

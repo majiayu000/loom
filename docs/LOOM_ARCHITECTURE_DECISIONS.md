@@ -1,38 +1,33 @@
 # Loom Registry Architecture Decisions
 
 Updated: 2026-07-03
-Status: Accepted for phase 1
+Status: Accepted
 
-This document closes the current design-debt split from issue #6. It freezes the phase-1 boundaries for operation history, registry vocabulary rules, projection removal, panel mutations, and environment-based discovery.
-
-These decisions describe the contract Loom should preserve while implementation continues. They do not imply that every future migration or cleanup is already implemented.
+This document closes the current design-debt split from issue #6. It freezes the boundaries for operation history, registry vocabulary rules, projection removal, panel mutations, and environment-based discovery.
 
 ## 1. Operation History Authority
 
-Decision: phase 1 keeps the legacy pending queue and history branch as the operational authority for sync, replay, pending queue maintenance, and history repair. The registry operation journal is the activity/audit read model. The #459 migration plan in `docs/LOOM_STATE_MIGRATION_NOTES.md` section 11 defines how the registry journal will replace the pending queue after review; this ADR still describes current runtime behavior until that implementation lands.
+Decision: the registry operation journal is the single operation-log authority for sync, replay, retry, purge, history repair, panel activity, and audit display.
 
-Authoritative for sync and replay:
-
-- `state/pending_ops.jsonl`
-- `state/pending_ops_snapshot.json`
-- `state/pending_ops_history/`
-- `loom-history`
-
-Authoritative for registry panel activity and audit display:
+Authoritative operation-log state:
 
 - `state/registry/ops/operations.jsonl`
 - `state/registry/ops/checkpoint.json`
+- `loom-history` mirror paths:
+  - `registry_ops_history/`
+  - `registry_ops_archive/`
+  - `registry_ops_snapshot.json`
 
 Rules:
 
-1. `sync push`, `sync pull`, `sync replay`, `ops retry`, `ops purge`, and `ops history repair` continue to operate on the pending/history model.
-2. `/api/v1/ops` exposes bounded summaries from the registry operation journal for activity history.
-3. `/api/v1/ops/retry` and `/api/v1/ops/purge` are pending-queue maintenance endpoints, not registry op-id endpoints.
-4. The #459 migration may make registry operations authoritative only by following the reviewed plan in `docs/LOOM_STATE_MIGRATION_NOTES.md` section 11.
+1. `sync push`, `sync pull`, `sync replay`, `ops retry`, `ops purge`, and `ops history repair` operate on the registry operation journal.
+2. `/api/v1/ops` exposes bounded activity summaries from the registry journal plus history audit rows.
+3. `/api/v1/ops/pending` remains a v1 compatibility route, but its read model is the registry operation backlog, not a separate pending queue.
+4. Runtime code must not create, read, write, compact, or repair `state/pending_ops.*` as an operation authority.
 
 Rationale:
 
-The current implementation already has working sync/replay semantics around pending ops and the `loom-history` branch. Treating registry ops as authoritative before migration would create two write authorities. Keeping registry ops as the read model avoids that split while still giving the panel a stable activity surface.
+Keeping one durable operation authority removes the legacy split between replay state and activity state. `loom-history` remains the remote reconciliation surface, but it mirrors registry operation journal segments instead of legacy pending snapshots.
 
 ## 2. Registry Vocabularies And Cardinality
 

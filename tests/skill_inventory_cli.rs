@@ -461,7 +461,6 @@ fn active_recommend_returns_dry_run_plan_without_mutation() {
     write_demo_skills(root.path());
     let registry_before = tree_snapshot(&root.path().join("state/registry"));
     let skills_before = tree_snapshot(&root.path().join("skills"));
-    let pending_before = fs::read(root.path().join("state/pending_ops.jsonl")).ok();
 
     let (output, env) = run_loom(
         root.path(),
@@ -493,11 +492,6 @@ fn active_recommend_returns_dry_run_plan_without_mutation() {
         registry_before
     );
     assert_eq!(tree_snapshot(&root.path().join("skills")), skills_before);
-    assert_eq!(
-        fs::read(root.path().join("state/pending_ops.jsonl")).ok(),
-        pending_before,
-        "active recommend must not mutate pending queue"
-    );
 }
 
 #[test]
@@ -563,7 +557,6 @@ fn inventory_read_commands_do_not_mutate_state_or_targets() {
     let registry_before = tree_snapshot(&root.path().join("state/registry"));
     let skills_before = tree_snapshot(&root.path().join("skills"));
     let live_before = tree_snapshot(live.path());
-    let pending_before = fs::read(root.path().join("state/pending_ops.jsonl")).ok();
     let git_index = root.path().join(".git/index");
 
     for args in [
@@ -590,11 +583,6 @@ fn inventory_read_commands_do_not_mutate_state_or_targets() {
         tree_snapshot(live.path()),
         live_before,
         "read commands must not mutate live targets"
-    );
-    assert_eq!(
-        fs::read(root.path().join("state/pending_ops.jsonl")).ok(),
-        pending_before,
-        "read commands must not mutate pending queue"
     );
     assert!(
         !git_index.exists(),

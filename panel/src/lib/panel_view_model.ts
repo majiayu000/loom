@@ -271,7 +271,7 @@ function statusForLiveData(live: PanelLiveData): ShellStatusViewModel {
   if (state === "PENDING_PUSH" || state === "LOCAL_ONLY" || live.queuedWriteCount > 0) {
     return {
       label: live.queuedWriteCount > 0 ? formatQueuedWrites(live.queuedWriteCount) : state.toLowerCase().replace("_", " "),
-      title: `${formatQueuedWrites(live.queuedWriteCount)} waiting in the pending queue.`,
+      title: `${formatQueuedWrites(live.queuedWriteCount)} waiting in the operation backlog.`,
       tone: "warn",
     };
   }
@@ -415,7 +415,7 @@ export function selectPanelViewModel(live: PanelLiveData, options: PanelViewMode
       options.historyReadOnly ?? options.readOnly,
       true,
       "history is read-only",
-      options.historyReadOnly && !options.readOnly ? "pending operations must be replayed or purged first" : actionReadOnlyReason,
+      options.historyReadOnly && !options.readOnly ? "operation backlog must be replayed or purged first" : actionReadOnlyReason,
     ),
     syncPull: mutationAction("syncPull", "Pull remote", options.readOnly, true, "action unavailable", actionReadOnlyReason),
     syncPush: mutationAction(

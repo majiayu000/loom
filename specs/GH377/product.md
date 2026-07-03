@@ -2,18 +2,18 @@
 
 Issue: https://github.com/majiayu000/loom/issues/377
 Parent: https://github.com/majiayu000/loom/issues/376
-Status: Draft for implementation
+Status: Implementation update for lifecycle completion PR
 Locale: zh-CN
 
 ## Goal
 
-让用户可以把多个已存在的 registry skills 组织成一个 `skillset`，并先完成可审计、可查询、可校验的基础生命周期：
+让用户可以把多个已存在的 registry skills 组织成一个 `skillset`，并完成可审计、可查询、可校验的基础生命周期与收尾生命周期：
 
 ```text
-create -> add/remove members -> show -> lint
+create -> add/remove members -> show -> lint -> activate/deactivate -> eval aggregation -> release -> rollback
 ```
 
-第一阶段不承诺 activation、eval、release、rollback 的完整行为，因为 #377 明确被 #367、#369、#370 阻塞。
+本 PR 补齐 `activate`/`deactivate`、成员 eval 聚合、skillset definition release/rollback，以及 partial activation failure 的 best-effort rollback/recovery reporting。
 
 ## Users
 
@@ -26,9 +26,8 @@ create -> add/remove members -> show -> lint
 1. 不实现 marketplace 或 catalog 依赖。
 2. 不实现 DAG workflow 编排。
 3. 不实现 semantic recommendation。
-4. 不在本 slice 中实现 `skillset activate` 的真实写入。
-5. 不在本 slice 中实现 `skillset eval`、`release`、`rollback`。
-6. 不复制 `skill inspect` / activation / trust / eval 的状态逻辑；这些必须等 #366/#367/#369/#370 后复用。
+4. 不实现 `skillsets/<name>/evals/` 的端到端 runner；当前 `skillset eval` 聚合成员 skill eval 结果，并在检测到端到端 fixtures 时返回 deferred 状态。
+5. 不复制单 skill activation / trust / eval 的状态逻辑；skillset lifecycle 必须复用现有单 skill 路径。
 
 ## Behavior Invariants
 
@@ -44,11 +43,15 @@ create -> add/remove members -> show -> lint
 10. `skillset show` 必须返回成员列表，并包含每个成员的基础 skill read-model summary。
 11. `skillset lint` 必须验证 member existence、重复成员、空集合 warning、required/optional 计数。
 12. 所有写入必须进入 registry state，并保持 Git/audit 习惯：可追踪、可回滚、不会写 agent target。
-13. 本 slice 中任何 activation/eval/release/rollback 命令如暴露，也必须清楚返回 not implemented / blocked，而不是静默执行部分行为。
+13. `skillset activate --dry-run` 必须先调用单 skill activation dry-run 形成逐成员计划，且不写 registry 或 target。
+14. `skillset activate` 必须复用单 skill activation 路径逐成员执行；required member 缺失、blocked、quarantined、lint/safety invalid 必须 typed error fail closed。
+15. partial activation failure 必须 best-effort 回滚已激活成员；如果回滚不完整，必须返回精确 recovery commands，不能静默降级。
+16. `skillset deactivate` 必须复用单 skill deactivation 路径逐成员执行。
+17. `skillset eval` 必须聚合 member eval pass/fail/case counts，并保留 baseline 标签 `no-skill` 或 `single-skills`。
+18. `skillset release` 必须创建 skillset definition tag `release/skillset/<name>/<version>`，且 invalid skillset 不可 release。
+19. `skillset rollback --to <version|ref>` 必须只恢复目标 skillset definition，不回滚 member skill source。
 
 ## User-Facing CLI
-
-Required for this slice:
 
 ```bash
 loom skillset create <name> [--description <text>]
@@ -56,16 +59,11 @@ loom skillset add <name> <skill> [--role <role>] [--required|--optional]
 loom skillset remove <name> <skill>
 loom skillset show <name> [--json]
 loom skillset lint <name> [--json]
-```
-
-Deferred:
-
-```bash
-loom skillset activate ...
-loom skillset deactivate ...
-loom skillset eval ...
-loom skillset release ...
-loom skillset rollback ...
+loom skillset activate <name> --agent <agent> [--scope user|project] [--workspace <path>] [--profile <id>] [--dry-run]
+loom skillset deactivate <name> --agent <agent> [--scope user|project] [--workspace <path>] [--profile <id>] [--dry-run]
+loom skillset eval <name> --agent <agent> [--baseline no-skill|single-skills]
+loom skillset release <name> <version>
+loom skillset rollback <name> --to <version|ref>
 ```
 
 ## JSON Output Expectations
@@ -123,10 +121,16 @@ loom skillset rollback ...
 7. `loom skillset lint coding-flow --json` reports valid status, member counts, and findings.
 8. Empty skillsets lint with warning but not fatal invalidity.
 9. Required missing members lint invalid if state drift is detected.
-10. Focused tests cover create/add/remove/show/lint, duplicate create, duplicate member, missing member, empty lint, and missing skill drift.
+10. `skillset activate --dry-run` returns a full per-member plan without projecting target files.
+11. `skillset activate` projects ready members through the single skill activation path.
+12. Required member activation failures fail closed with typed errors; partial activation failures rollback or report recovery commands.
+13. `skillset eval` aggregates member eval cases, pass/fail counts, and aggregate score.
+14. `skillset release` creates a `release/skillset/<name>/<version>` tag for the current skillset definition.
+15. `skillset rollback --to <version|ref>` restores that skillset definition without changing member skill source.
+16. Focused tests cover create/add/remove/show/lint, duplicate create, duplicate member, missing member, empty lint, missing skill drift, dry-run activation, successful activation, partial failure rollback, eval aggregation, and release/rollback.
 
 ## Open Questions
 
 1. Whether `skillset` should be a top-level CLI command forever or later alias into `loom skill set`.
-2. Whether activation defaults belong in this first state file or should wait for #367.
-3. Whether role vocabulary should remain free-form in v1 or become constrained after real workflow use.
+2. Whether role vocabulary should remain free-form in v1 or become constrained after real workflow use.
+3. Whether `skillsets/<name>/evals/` should use a dedicated end-to-end runner or be represented as a generated workflow/eval harness in a follow-up issue.

@@ -191,6 +191,11 @@ pub(crate) fn command_name(command: &Command) -> &'static str {
             SkillsetCommand::Remove(_) => "skillset.remove",
             SkillsetCommand::Show(_) => "skillset.show",
             SkillsetCommand::Lint(_) => "skillset.lint",
+            SkillsetCommand::Activate(_) => "skillset.activate",
+            SkillsetCommand::Deactivate(_) => "skillset.deactivate",
+            SkillsetCommand::Eval(_) => "skillset.eval",
+            SkillsetCommand::Release(_) => "skillset.release",
+            SkillsetCommand::Rollback(_) => "skillset.rollback",
         },
         Command::Telemetry { command } => match command {
             TelemetryCommand::Status => "telemetry.status",

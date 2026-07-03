@@ -2,29 +2,30 @@
 
 Issue: https://github.com/majiayu000/loom/issues/377
 Product spec: `specs/GH377/product.md`
-Status: Draft for implementation
+Status: Implementation update for lifecycle completion PR
 
 ## Design Summary
 
-Implement the first mergeable `skillset` slice as a registry-state feature:
+Implement `skillset` as a registry-state feature that reuses single-skill lifecycle primitives:
 
 1. Add a top-level `loom skillset` command group.
 2. Persist skillsets in `state/registry/skillsets.json`.
 3. Reuse existing skill inventory read model to validate and summarize members.
-4. Add create/add/remove/show/lint only.
-5. Defer activation/eval/release/rollback until their blocking primitives exist.
+4. Reuse single-skill activation/deactivation for member projection.
+5. Reuse single-skill offline eval reports for member eval aggregation.
+6. Release and rollback skillset definitions with Git tags/refs.
 
-This keeps #377 useful without inventing duplicate activation, eval, or trust state.
+This avoids duplicate activation, eval, trust, or skill source version state.
 
 ## Affected Areas
 
 | Area | Files |
 |---|---|
-| CLI surface | `src/cli.rs` |
-| command dispatch | `src/commands/mod.rs`, `src/commands/helpers.rs` |
-| implementation | new `src/commands/skillset_cmds.rs` |
-| tests | new `tests/skillset_cli.rs`, maybe `tests/cli_surface.rs` |
-| docs/specs | `specs/GH377/*`, maybe `docs/LOOM_CLI_CONTRACT.md` if CLI contract update is required |
+| CLI surface | `src/cli/skillset.rs`, `src/cli.rs` |
+| command dispatch | `src/commands/mod.rs`, `src/commands/helpers.rs`, `src/commands/meta.rs` |
+| implementation | `src/commands/skillset_cmds.rs` |
+| tests | `tests/skillset_cli.rs`, `tests/cli_surface.rs` |
+| docs/specs | `specs/GH377/*`, `README.md`, `docs/LOOM_CLI_CONTRACT.md` |
 
 ## Data Model
 
@@ -82,6 +83,11 @@ enum SkillsetCommand {
     Remove(SkillsetMemberArgs),
     Show(SkillsetShowArgs),
     Lint(SkillsetShowArgs),
+    Activate(SkillsetActivateArgs),
+    Deactivate(SkillsetActivateArgs),
+    Eval(SkillsetEvalArgs),
+    Release(SkillsetReleaseArgs),
+    Rollback(SkillsetRollbackArgs),
 }
 ```
 
@@ -91,6 +97,10 @@ Argument notes:
 2. `SkillsetAddArgs`: `name`, `skill`, `--role`, `--required`, `--optional`.
 3. `--required` and `--optional` conflict. Default is required.
 4. `Show` and `Lint` accept name only; global `--json` controls envelope.
+5. `Activate` and `Deactivate` accept `name`, `--agent`, `--scope`, `--workspace`, `--profile`, and `--dry-run`.
+6. `Eval` accepts `name`, `--agent`, and `--baseline no-skill|single-skills`.
+7. `Release` accepts `name` and `version`.
+8. `Rollback` accepts `name` and `--to <version|ref>`.
 
 ## Validation
 
@@ -109,6 +119,9 @@ Typed failures:
 4. duplicate member: `ARG_INVALID`.
 5. missing member on remove: `SKILL_NOT_FOUND`.
 6. malformed `skillsets.json`: `INTERNAL_ERROR` or existing parse/state error pattern.
+7. required member activation/eval failure: preserve the underlying typed error code and include member context.
+8. invalid release target: `POLICY_BLOCKED` with lint details.
+9. unsafe version/ref token: `ARG_INVALID`.
 
 ## Command Behavior
 
@@ -154,6 +167,42 @@ Typed failures:
 5. Invalid when required members are missing.
 6. Return structured findings.
 
+### activate
+
+1. Read the skillset and current inventory.
+2. For every member, call single-skill activation dry-run to enforce existence, lint/safety/trust, and target planning.
+3. Required member preflight failure aborts before mutation with the underlying typed error.
+4. Optional member preflight failure is reported as skipped with a warning.
+5. `--dry-run` returns `activation_plan` and summary only.
+6. Non-dry-run calls single-skill activation for each ready member.
+7. If a later member fails after earlier mutations, deactivate already activated non-noop members in reverse order and return rollback results plus recovery commands.
+
+### deactivate
+
+1. Read the skillset.
+2. Call single-skill deactivation dry-run or apply for each member.
+3. Required member failure aborts with typed member context; optional member failure is skipped with warning.
+
+### eval
+
+1. Run existing offline member eval for each member with the requested agent.
+2. Aggregate `case_count`, `passed`, `failed`, `skipped`, token/command counts, permissions, and aggregate score.
+3. Return `EVAL_FAILED` with the aggregate report when any required member has failing cases.
+4. `skillsets/<name>/evals/` end-to-end fixtures are detected and reported as deferred; no fake end-to-end pass/fail is produced.
+
+### release
+
+1. Validate the skillset exists and `lint` is valid.
+2. Create annotated tag `release/skillset/<name>/<version>` at current HEAD.
+3. Return the tag and released ref.
+
+### rollback
+
+1. Resolve `--to` as `release/skillset/<name>/<version>` first, then as a raw safe Git ref.
+2. Read `state/registry/skillsets.json` from that ref with `git show`.
+3. Replace only the matching skillset record in the current file.
+4. Commit registry state if changed; no member skill source files are checked out.
+
 ## Audit And Git Behavior
 
 Write commands should be durable and auditable:
@@ -161,11 +210,16 @@ Write commands should be durable and auditable:
 1. `skillset.create`
 2. `skillset.add`
 3. `skillset.remove`
+4. `skillset.activate`
+5. `skillset.deactivate`
+6. `skillset.release`
+7. `skillset.rollback`
 
 Read commands:
 
 1. `skillset.show`
 2. `skillset.lint`
+3. `skillset.eval`
 
 Follow existing `skill` command behavior:
 
@@ -188,6 +242,11 @@ Focused integration tests in `tests/skillset_cli.rs`:
 8. show includes member skill read-model summary.
 9. lint empty skillset returns warning and valid true.
 10. lint detects manually introduced missing required member.
+11. activate dry-run returns plans without target writes.
+12. activate applies members through single-skill activation.
+13. partial activation failure rolls back projected members or reports recovery.
+14. eval aggregates member eval results.
+15. release tags the skillset definition and rollback restores it.
 
 Suggested commands:
 
@@ -212,5 +271,5 @@ Rollback can remove the command group and ignore/delete the optional state file 
 ## Risks
 
 1. File-level state may become a second source of truth if later skill inspect logic is duplicated. Mitigation: use `build_skill_read_model` for summaries.
-2. Activation defaults could prematurely encode #367 decisions. Mitigation: defer activation defaults in this slice.
+2. End-to-end skillset eval fixtures are detected but not run. Mitigation: return explicit deferred status and keep closing language out of partial PRs if this remains required for #377 closure.
 3. Future role vocabulary may need constraints. Mitigation: keep role free-form and non-semantic in v1.

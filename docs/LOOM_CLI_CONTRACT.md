@@ -911,7 +911,7 @@ Rules:
 8. The size gate fails when `SKILL.md` exceeds 800 lines without a `references/` directory and warns when references exist.
 9. `skill regression --to <ref>` materializes the selected skill and security metadata into a temporary root before running checks, rather than checking out refs or reading the current working tree.
 
-### 11.3.6 `skillset create`, `skillset add`, `skillset remove`, `skillset show`, `skillset lint`
+### 11.3.6 `skillset create`, `skillset add`, `skillset remove`, `skillset show`, `skillset lint`, `skillset activate`, `skillset deactivate`, `skillset eval`, `skillset release`, `skillset rollback`
 
 ```bash
 loom --json --root <root> skillset create <skillset-id> [--description <text>]
@@ -919,9 +919,14 @@ loom --json --root <root> skillset add <skillset-id> <skill-id> [--role <role>] 
 loom --json --root <root> skillset remove <skillset-id> <skill-id>
 loom --json --root <root> skillset show <skillset-id>
 loom --json --root <root> skillset lint <skillset-id>
+loom --json --root <root> skillset activate <skillset-id> --agent <agent> [--scope user|project] [--workspace <path>] [--profile <id>] [--dry-run]
+loom --json --root <root> skillset deactivate <skillset-id> --agent <agent> [--scope user|project] [--workspace <path>] [--profile <id>] [--dry-run]
+loom --json --root <root> skillset eval <skillset-id> --agent <agent> [--baseline no-skill|single-skills]
+loom --json --root <root> skillset release <skillset-id> <version>
+loom --json --root <root> skillset rollback <skillset-id> --to <version|ref>
 ```
 
-`create`, `add`, and `remove` are write commands. `show` and `lint` are read-only commands.
+`create`, `add`, `remove`, non-dry-run `activate`, non-dry-run `deactivate`, `release`, and `rollback` are write commands. `show`, `lint`, `eval`, and dry-run activation/deactivation are read-only/preview commands.
 
 Rules:
 
@@ -933,7 +938,12 @@ Rules:
 6. members are required by default; `--optional` marks a member optional
 7. `skillset show` includes each member's current skill read-model summary when available and marks drifted missing members
 8. `skillset lint` validates member existence, duplicate members, empty skillsets, and required/optional counts
-9. this first surface does not activate, evaluate, release, or roll back skillsets; those behaviors depend on later single-skill lifecycle primitives
+9. `skillset activate --dry-run` returns a per-member activation plan without target writes
+10. `skillset activate` and `skillset deactivate` reuse the single-skill activation/deactivation path for each member
+11. required member activation failures fail closed with typed errors; partial activation failures include rollback results and recovery commands
+12. `skillset eval` aggregates member offline eval reports and reports detected `skillsets/<id>/evals/` fixtures as deferred end-to-end work
+13. `skillset release` tags the current skillset definition as `release/skillset/<id>/<version>`
+14. `skillset rollback --to <version|ref>` restores only that skillset definition from the resolved ref and does not check out member skill source files
 
 ### 11.3.7 `workflow create`, `workflow show`, `workflow plan`, `workflow preflight`, `workflow run`
 

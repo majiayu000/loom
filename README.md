@@ -237,7 +237,7 @@ The current lifecycle keeps source history on a smaller verb set: import with `a
 | `loom skill eval` | Run offline fixtures or explicit eval harnesses | Compare offline quality, trigger behavior, and mock with-skill/no-skill baselines without network calls by default | Source + eval fixtures; reports under registry state |
 | `loom skill improve` | Run a read-only single-skill preflight | Aggregate source drift, lint, safety, dependency, eval, and optional real-eval planning before saving edits | Source + local environment (read-only) |
 | `loom skill regression` | Compare one skill against a baseline gate | Fail with typed regression details when lint, safety, dependency, eval, or size gates block the candidate | Source + local environment (read-only) |
-| `loom skillset create/add/remove/show/lint` | Group existing registry skills into a named set | Organize coherent skill bundles before later activation/eval support lands | Registry skillset state |
+| `loom skillset create/add/remove/show/lint/activate/deactivate/eval/release/rollback` | Group existing registry skills into a named set | Organize coherent skill bundles, activate members together, aggregate member evals, and version skillset definitions | Registry skillset state + target projections |
 | `loom telemetry status/enable/disable/report/export/purge` | Manage local privacy-preserving telemetry | Opt in to redacted local event writes, aggregate usage/value/cost/drift/risk, export redacted events, and purge selected telemetry state with dry-run confirmation | `state/telemetry` |
 | `loom workflow create/show/plan/preflight/run` | Define and guard a multi-skill DAG workflow | Agents need an auditable plan before coordinating several skills; execution remains deferred until apply gates land | Registry workflow state + source metadata |
 | `loom use` | Plan or apply target, binding, and projection setup in one flow | New users want to use a skill without copying target/binding IDs between commands | Source + target + registry metadata |
@@ -412,6 +412,11 @@ loom skillset add <skillset-id> <skill-id> [--role <role>] [--required|--optiona
 loom skillset remove <skillset-id> <skill-id>
 loom skillset show <skillset-id>
 loom skillset lint <skillset-id>
+loom skillset activate <skillset-id> --agent <agent> [--scope user|project] [--workspace <path>] [--profile <id>] [--dry-run]
+loom skillset deactivate <skillset-id> --agent <agent> [--scope user|project] [--workspace <path>] [--profile <id>] [--dry-run]
+loom skillset eval <skillset-id> --agent <agent> [--baseline no-skill|single-skills]
+loom skillset release <skillset-id> <version>
+loom skillset rollback <skillset-id> --to <version|ref>
 
 loom workflow create <workflow-id> --file <workflow.json> [--dry-run]
 loom workflow create <workflow-id> --from-skillset <skillset-id> --dry-run

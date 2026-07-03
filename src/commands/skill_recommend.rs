@@ -231,6 +231,25 @@ impl App {
         ))
     }
 
+    pub fn cmd_skill_recommend(
+        &self,
+        args: &SkillSearchArgs,
+    ) -> std::result::Result<(Value, Meta), CommandFailure> {
+        let mut args = args.clone();
+        args.for_task = true;
+        args.explain = true;
+        self.cmd_skill_search(&args)
+    }
+
+    pub fn cmd_skill_resolve(
+        &self,
+        args: &SkillSearchArgs,
+    ) -> std::result::Result<(Value, Meta), CommandFailure> {
+        let mut args = args.clone();
+        args.for_task = true;
+        self.cmd_skill_search(&args)
+    }
+
     pub fn cmd_active_recommend(
         &self,
         args: &ActiveRecommendArgs,

@@ -270,6 +270,8 @@ impl App {
                     command: SkillActiveCommand::List(args),
                 } => self.cmd_skill_active_list(args),
                 SkillCommand::Search(args) => self.cmd_skill_search(args),
+                SkillCommand::Recommend(args) => self.cmd_skill_recommend(args),
+                SkillCommand::Resolve(args) => self.cmd_skill_resolve(args),
                 SkillCommand::Draft(args) => self.cmd_skill_draft(args),
                 SkillCommand::Extract(args) => self.cmd_skill_extract(args),
                 SkillCommand::Rewrite(args) => self.cmd_skill_rewrite(args),

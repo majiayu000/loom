@@ -137,6 +137,8 @@ pub(crate) fn command_meta(command: &Command) -> CommandMeta {
             | SkillCommand::Regression(_)
             | SkillCommand::Active { .. }
             | SkillCommand::Search(_)
+            | SkillCommand::Recommend(_)
+            | SkillCommand::Resolve(_)
             | SkillCommand::Lint(_)
             | SkillCommand::Visibility(_)
             | SkillCommand::Diagnose(_)

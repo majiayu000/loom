@@ -2,13 +2,16 @@
 
 Issue: https://github.com/majiayu000/loom/issues/378
 Product spec: `specs/GH378/product.md`
-Status: Blocked design packet
+Status: Partial implementation
 
 ## Current State
 
-`loom skill search` and `loom skill resolve` already provide deterministic
-lexical matching over the skill inventory read model. They return `score_inputs`
-and do not invoke an LLM. This is the correct base for GH378.
+`loom skill search`, `loom skill recommend`, and `loom skill resolve` provide
+deterministic lexical matching over the skill inventory read model. They return
+`score_inputs` and do not invoke an LLM. This is the correct base for GH378.
+
+Current limitation: recommendation scoring still needs full dependency
+readiness, eval evidence, and negative-trigger joins before #378 can close.
 
 Current relevant files:
 

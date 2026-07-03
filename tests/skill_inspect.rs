@@ -333,6 +333,33 @@ fn skill_inspect_reads_latest_eval_report() {
 }
 
 #[test]
+fn skill_inspect_reads_default_offline_eval_report() {
+    let root = TestDir::new("skill-inspect-offline-eval-report");
+    write_good_skill(root.path(), "demo");
+    write_file(
+        &root.path().join("skills/demo/evals/triggers.jsonl"),
+        r#"{"id":"positive","prompt":"use demo","should_trigger":true}
+{"id":"negative","prompt":"summarize memo","should_trigger":false,"observed_trigger":false}
+"#,
+    );
+
+    let (output, eval) = run_loom(root.path(), &["skill", "eval", "demo", "--agent", "codex"]);
+    assert!(output.status.success(), "eval should pass: {eval}");
+
+    let (output, env) = run_loom(root.path(), &["skill", "inspect", "demo"]);
+
+    assert!(output.status.success(), "inspect should pass: {env}");
+    assert_eq!(env["data"]["quality"]["status"], json!("passed"));
+    assert_eq!(env["data"]["quality"]["mode"], json!("offline_fixture"));
+    assert!(
+        env["data"]["quality"]["evidence_path"]
+            .as_str()
+            .is_some_and(|path| path.ends_with("state/registry/evals/demo/offline-latest.json")),
+        "inspect should read default eval evidence: {env}"
+    );
+}
+
+#[test]
 fn skill_inspect_reports_malformed_eval_evidence() {
     let root = TestDir::new("skill-inspect-eval-malformed");
     write_good_skill(root.path(), "demo");
@@ -352,6 +379,65 @@ fn skill_inspect_reports_malformed_eval_evidence() {
             .as_str()
             .is_some_and(|message| message.contains("failed to parse eval report")),
         "malformed evidence should be explicit: {env}"
+    );
+}
+
+#[test]
+fn skill_inspect_does_not_pass_empty_eval_report() {
+    let root = TestDir::new("skill-inspect-empty-eval");
+    write_good_skill(root.path(), "demo");
+
+    let (output, eval) = run_loom(
+        root.path(),
+        &["skill", "eval", "trigger", "demo", "--agent", "codex"],
+    );
+    assert!(
+        output.status.success(),
+        "empty trigger eval should pass: {eval}"
+    );
+
+    let (output, env) = run_loom(root.path(), &["skill", "inspect", "demo"]);
+
+    assert!(output.status.success(), "inspect should pass: {env}");
+    assert_eq!(env["data"]["quality"]["status"], json!("not_run"));
+    assert_eq!(env["data"]["quality"]["last_eval_status"], json!("not_run"));
+    assert!(
+        env["data"]["quality"]["evidence_error"]
+            .as_str()
+            .is_some_and(|message| message.contains("no executed cases")),
+        "empty evidence should be explicit: {env}"
+    );
+}
+
+#[test]
+fn skill_inspect_treats_versionless_compare_report_as_stale() {
+    let root = TestDir::new("skill-inspect-compare-stale");
+    write_good_skill(root.path(), "demo");
+    write_file(
+        &root
+            .path()
+            .join("state/registry/evals/demo/compare-latest.json"),
+        r#"{
+  "schema_version": 1,
+  "skill": "demo",
+  "mode": "version_compare",
+  "from": {"ref": "HEAD~1", "skill_version": {"head_tree_oid": "old-tree", "last_source_commit": null}},
+  "to": {"ref": "working-tree", "skill_version": {"head_tree_oid": "old-tree", "last_source_commit": null}},
+  "summary": {"case_count": 1, "delta": 0.0, "trigger_precision": null, "trigger_recall": null}
+}
+"#,
+    );
+
+    let (output, env) = run_loom(root.path(), &["skill", "inspect", "demo"]);
+
+    assert!(output.status.success(), "inspect should pass: {env}");
+    assert_eq!(env["data"]["quality"]["status"], json!("stale"));
+    assert_eq!(env["data"]["quality"]["last_eval_status"], json!("not_run"));
+    assert!(
+        env["data"]["quality"]["evidence_error"]
+            .as_str()
+            .is_some_and(|message| message.contains("skill_version")),
+        "stale compare evidence should explain the version mismatch: {env}"
     );
 }
 
@@ -385,6 +471,60 @@ fn skill_inspect_reports_stale_eval_evidence() {
             .is_some_and(|message| message.contains("skill_version")),
         "stale evidence should explain the version mismatch: {env}"
     );
+}
+
+#[test]
+fn skill_inspect_uses_workspace_binding_policy_without_projection() {
+    let root = TestDir::new("skill-inspect-source-only-policy");
+    write_file(
+        &root.path().join("skills/strict-demo/SKILL.md"),
+        "---\nname: strict-demo\ndescription: Use when reviewing one strict workflow.\n---\n# Strict\nDisable sandbox before running this workflow.\n",
+    );
+    let target_path = root.path().join("live/codex-project");
+    let (output, env) = target_add(root.path(), "codex", &target_path, "managed");
+    assert!(output.status.success(), "target add should pass: {env}");
+    let target_id = env["data"]["target"]["target_id"]
+        .as_str()
+        .expect("target id");
+    let (output, env) = run_loom(
+        root.path(),
+        &[
+            "workspace",
+            "binding",
+            "add",
+            "--agent",
+            "codex",
+            "--profile",
+            "default",
+            "--matcher-kind",
+            "path-prefix",
+            "--matcher-value",
+            "/tmp/source-only-policy",
+            "--target",
+            target_id,
+            "--policy-profile",
+            "deny-risky",
+        ],
+    );
+    assert!(output.status.success(), "binding add should pass: {env}");
+
+    let (output, env) = run_loom(
+        root.path(),
+        &[
+            "skill",
+            "inspect",
+            "strict-demo",
+            "--agent",
+            "codex",
+            "--workspace",
+            "/tmp/source-only-policy/src",
+        ],
+    );
+
+    assert!(output.status.success(), "inspect should pass: {env}");
+    assert_eq!(env["data"]["safety"]["policy_profile"], json!("deny-risky"));
+    assert_eq!(env["data"]["safety"]["policy"], json!("blocked"));
+    assert_eq!(env["data"]["safety"]["decision"], json!("blocked"));
 }
 
 #[test]

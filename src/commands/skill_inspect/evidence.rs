@@ -102,17 +102,37 @@ fn quality_from_report(ctx: &AppContext, skill: &str, candidate: EvalCandidate) 
     let Some(summary) = report.get("summary").filter(|value| value.is_object()) else {
         return quality_malformed(&candidate, "eval report summary is missing");
     };
-    let current_version = skill_eval_version(ctx, skill);
-    let stale = report_version_stale(report.get("skill_version"), &current_version);
-    let failed = summary["failed"].as_u64().unwrap_or(0);
-    let report_status = if failed > 0 { "failed" } else { "passed" };
-    let status = if stale { "stale" } else { report_status };
     let mut missing_metrics = Vec::new();
     for field in ["trigger_precision", "trigger_recall"] {
         if summary.get(field).and_then(Value::as_f64).is_none() {
             missing_metrics.push(field);
         }
     }
+    let current_version = skill_eval_version(ctx, skill);
+    let stale = report_version_stale(&report, &current_version);
+    let no_cases = summary.get("case_count").and_then(Value::as_u64) == Some(0);
+    let missing_pass_fail = summary.get("failed").and_then(Value::as_u64).is_none();
+    let no_trigger_metrics =
+        report["mode"].as_str() == Some("trigger_quality") && missing_metrics.len() == 2;
+    let report_status = if no_cases || missing_pass_fail || no_trigger_metrics {
+        "not_run"
+    } else if summary["failed"].as_u64().unwrap_or(0) > 0 {
+        "failed"
+    } else {
+        "passed"
+    };
+    let status = if stale { "stale" } else { report_status };
+    let evidence_error = if stale {
+        json!("eval report skill_version does not match current skill source")
+    } else if no_cases {
+        json!("eval report contains no executed cases")
+    } else if missing_pass_fail {
+        json!("eval report summary does not include pass/fail evidence")
+    } else if no_trigger_metrics {
+        json!("eval report has no trigger precision or recall evidence")
+    } else {
+        Value::Null
+    };
 
     json!({
         "status": status,
@@ -123,11 +143,7 @@ fn quality_from_report(ctx: &AppContext, skill: &str, candidate: EvalCandidate) 
         "trigger_recall": summary.get("trigger_recall").and_then(Value::as_f64),
         "baseline_delta": summary.get("delta").and_then(Value::as_f64),
         "evidence_path": candidate.path.display().to_string(),
-        "evidence_error": if stale {
-            json!("eval report skill_version does not match current skill source")
-        } else {
-            Value::Null
-        },
+        "evidence_error": evidence_error,
         "missing_metrics": missing_metrics,
     })
 }
@@ -228,9 +244,12 @@ fn safety_unavailable(trust: &SkillTrustMetadata, message: impl Into<String>) ->
     })
 }
 
-fn report_version_stale(report_version: Option<&Value>, current: &SkillEvalVersion) -> bool {
-    let Some(report_version) = report_version else {
-        return false;
+fn report_version_stale(report: &Value, current: &SkillEvalVersion) -> bool {
+    let Some(report_version) = report
+        .get("skill_version")
+        .or_else(|| report.pointer("/to/skill_version"))
+    else {
+        return report["mode"].as_str() == Some("version_compare");
     };
     version_field_stale(
         report_version.get("head_tree_oid").and_then(Value::as_str),
@@ -288,6 +307,17 @@ fn policy_profile_for_inspect(
             && let Some(binding) = binding
         {
             profiles.insert(binding.policy_profile.clone());
+        }
+    }
+    if profiles.is_empty() && (selector.workspace.is_some() || selector.profile.is_some()) {
+        for binding in &snapshot.bindings.bindings {
+            if selector
+                .agent
+                .is_none_or(|agent| binding.agent.as_str() == agent)
+                && super::binding_matches(Some(binding), &selector)
+            {
+                profiles.insert(binding.policy_profile.clone());
+            }
         }
     }
     profile_by_priority(&profiles)

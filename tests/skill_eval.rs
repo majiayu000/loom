@@ -3,7 +3,7 @@ mod common;
 use std::fs;
 use std::process::Command;
 
-use serde_json::json;
+use serde_json::{Value, json};
 
 use common::{TestDir, run_loom, run_loom_with_env, write_file, write_skill};
 
@@ -75,6 +75,22 @@ fn skill_eval_runs_offline_fixture_matrix() {
         env["data"]["security_model"]["eval_success_is_safety_guarantee"],
         json!(false)
     );
+    let report_path = root
+        .path()
+        .join("state/registry/evals/demo/offline-latest.json");
+    assert!(
+        report_path.is_file(),
+        "offline eval should persist evidence"
+    );
+    assert_eq!(
+        env["data"]["report_path"],
+        json!(report_path.display().to_string())
+    );
+    let persisted: Value =
+        serde_json::from_str(&fs::read_to_string(report_path).expect("read offline report"))
+            .expect("parse offline report");
+    assert_eq!(persisted["mode"], json!("offline_fixture"));
+    assert_eq!(persisted["summary"]["case_count"], json!(6));
 }
 
 #[test]

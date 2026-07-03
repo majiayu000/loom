@@ -11,7 +11,7 @@ use crate::cli::{
     EvalBaselineArg, EvalRunnerArg, SkillApplyPatchArgs, SkillEvalRunArgs, SkillEvalTriggerArgs,
 };
 use crate::envelope::Meta;
-use crate::fs_util::{remove_path_if_exists, write_atomic};
+use crate::fs_util::{remove_path_if_exists, write_atomic, write_atomic_bytes};
 use crate::gitops;
 use crate::state::AppContext;
 use crate::types::ErrorCode;
@@ -147,16 +147,14 @@ impl App {
         revalidate_source(&self.ctx, &artifact)?;
         let preimages = capture_preimages(&self.ctx, &changes)?;
         if let Err(err) = materialize_changes(&self.ctx, &changes) {
-            restore_preimages(&self.ctx, &preimages);
-            return Err(err);
+            return Err(err.with_rollback_errors(restore_preimages(&self.ctx, &preimages)));
         }
 
         let validation =
             match run_apply_validations(self, &artifact.skill, baseline_safety.as_ref()) {
                 Ok(report) => report,
                 Err(err) => {
-                    restore_preimages(&self.ctx, &preimages);
-                    return Err(err);
+                    return Err(err.with_rollback_errors(restore_preimages(&self.ctx, &preimages)));
                 }
             };
 
@@ -171,13 +169,13 @@ impl App {
             Ok(None) => gitops::head(&self.ctx).map_err(map_git)?,
             Err(err) => {
                 let mut failure = map_git(err);
-                restore_preimages(&self.ctx, &preimages);
+                let rollback_errors = restore_preimages(&self.ctx, &preimages);
                 if let Err(reset_err) = reset_staged_paths(&self.ctx, &commit_paths) {
                     failure.details = json!({
                         "staged_reset_error": reset_err.to_string(),
                     });
                 }
-                return Err(failure);
+                return Err(failure.with_rollback_errors(rollback_errors));
             }
         };
 
@@ -562,25 +560,43 @@ fn write_change(
     write_atomic(&path, &change.body).map_err(map_io)
 }
 
-fn restore_preimages(ctx: &AppContext, preimages: &[Preimage]) {
+fn restore_preimages(ctx: &AppContext, preimages: &[Preimage]) -> Vec<Value> {
+    let mut failures = Vec::new();
     for preimage in preimages {
         let path = ctx.root.join(&preimage.rel);
-        match &preimage.bytes {
-            Some(bytes) => {
-                if let Ok(raw) = String::from_utf8(bytes.clone()) {
-                    let _ = write_atomic(&path, &raw);
-                } else if let Some(parent) = path.parent()
-                    && fs::create_dir_all(parent).is_ok()
-                {
-                    let _ = fs::write(&path, bytes);
+        let result = match &preimage.bytes {
+            Some(bytes) => write_atomic_bytes(&path, bytes).map_err(|err| {
+                (
+                    "restore_preimage",
+                    "write_atomic",
+                    format!("failed to restore preimage: {err}"),
+                )
+            }),
+            None => remove_path_if_exists(&path).map_err(|err| {
+                (
+                    "remove_created_path",
+                    "remove_path_if_exists",
+                    format!("failed to remove created path: {err}"),
+                )
+            }),
+        };
+        match result {
+            Ok(()) => {
+                if preimage.bytes.is_none() {
+                    cleanup_empty_parents(ctx, &preimage.rel);
                 }
             }
-            None => {
-                let _ = remove_path_if_exists(&path);
-                cleanup_empty_parents(ctx, &preimage.rel);
+            Err((action, operation, error)) => {
+                failures.push(json!({
+                    "path": preimage.rel.display().to_string(),
+                    "action": action,
+                    "operation": operation,
+                    "error": error,
+                }));
             }
         }
     }
+    failures
 }
 
 fn cleanup_empty_parents(ctx: &AppContext, rel: &Path) {

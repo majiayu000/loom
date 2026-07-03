@@ -12,7 +12,7 @@ use walkdir::WalkDir;
 
 use crate::cli::{AddArgs, SkillOnlyArgs, SkillProvenanceCommand};
 use crate::envelope::Meta;
-use crate::fs_util::remove_path_if_exists;
+use crate::fs_util::{remove_path_if_exists, write_atomic};
 use crate::gitops;
 use crate::sha256::{Sha256, to_hex};
 use crate::state::AppContext;
@@ -419,7 +419,7 @@ fn write_sources(ctx: &AppContext, sources: &SkillSourcesFile) -> Result<()> {
         fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
     }
     let raw = serde_json::to_string_pretty(sources)? + "\n";
-    fs::write(&path, raw).with_context(|| format!("write {}", path.display()))
+    write_atomic(&path, &raw).with_context(|| format!("write {}", path.display()))
 }
 
 fn write_lock(ctx: &AppContext, sources: &SkillSourcesFile) -> Result<()> {
@@ -429,7 +429,8 @@ fn write_lock(ctx: &AppContext, sources: &SkillSourcesFile) -> Result<()> {
     }
     let lock = LoomLockFile { version: 1, skills };
     let raw = serde_json::to_string_pretty(&lock)? + "\n";
-    fs::write(ctx.root.join(LOCK_REL), raw).with_context(|| format!("write {}", LOCK_REL))
+    let path = ctx.root.join(LOCK_REL);
+    write_atomic(&path, &raw).with_context(|| format!("write {}", path.display()))
 }
 
 fn lock_skill_for_record(ctx: &AppContext, record: &SkillSourceRecord) -> Result<LoomLockSkill> {
@@ -503,9 +504,26 @@ fn importer_version() -> String {
     format!("loom/{}", env!("CARGO_PKG_VERSION"))
 }
 
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub(crate) enum TreeDigestSymlinkMode {
+    Preserve,
+    Follow,
+}
+
 pub(crate) fn skill_tree_digest(path: &Path) -> Result<String> {
+    tree_digest(path, TreeDigestSymlinkMode::Preserve)
+}
+
+pub(crate) fn materialized_tree_digest(path: &Path) -> Result<String> {
+    tree_digest(path, TreeDigestSymlinkMode::Follow)
+}
+
+fn tree_digest(path: &Path, symlink_mode: TreeDigestSymlinkMode) -> Result<String> {
     let mut entries = Vec::new();
-    for entry in WalkDir::new(path).follow_links(false).sort_by_file_name() {
+    for entry in WalkDir::new(path)
+        .follow_links(symlink_mode == TreeDigestSymlinkMode::Follow)
+        .sort_by_file_name()
+    {
         let entry = entry.with_context(|| format!("walk {}", path.display()))?;
         if entry.file_type().is_dir() {
             continue;
@@ -524,8 +542,11 @@ pub(crate) fn skill_tree_digest(path: &Path) -> Result<String> {
         hasher.update(b"path\0");
         hasher.update(rel.as_bytes());
         hasher.update(b"\0");
-        let metadata =
-            fs::symlink_metadata(&full).with_context(|| format!("stat {}", full.display()))?;
+        let metadata = match symlink_mode {
+            TreeDigestSymlinkMode::Preserve => fs::symlink_metadata(&full),
+            TreeDigestSymlinkMode::Follow => fs::metadata(&full),
+        }
+        .with_context(|| format!("stat {}", full.display()))?;
         if metadata.file_type().is_symlink() {
             hasher.update(b"symlink\0");
             hasher.update(fs::read_link(&full)?.to_string_lossy().as_bytes());

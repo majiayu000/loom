@@ -34,10 +34,10 @@ use super::helpers::{
     validate_projection_method, validate_skill_name,
 };
 use super::projections::{
-    RegistryAuditStateBackup, maybe_autosync_or_queue, project_skill_to_target,
-    record_registry_observation, record_registry_operation, resolve_capture_projection,
-    restore_registry_audit_state, snapshot_registry_audit_state, update_projection_after_capture,
-    upsert_projection, upsert_rule,
+    RegistryAuditStateBackup, apply_projection_observation, maybe_autosync_or_queue,
+    observe_projection, project_skill_to_target, record_registry_observation,
+    record_registry_operation, resolve_capture_projection, restore_registry_audit_state,
+    snapshot_registry_audit_state, update_projection_after_capture, upsert_projection, upsert_rule,
 };
 use super::provenance::{
     provenance_record_for_skill, resolve_add_source, save_record_and_lock, stage_provenance_paths,
@@ -263,7 +263,7 @@ impl App {
         let mut projections = original_projections.clone();
         let instance_id =
             projection_instance_id(&args.skill, &binding.binding_id, &target.target_id);
-        let projection = RegistryProjectionInstance {
+        let mut projection = RegistryProjectionInstance {
             instance_id: instance_id.clone(),
             skill_id: args.skill.clone(),
             binding_id: Some(binding.binding_id.clone()),
@@ -273,8 +273,14 @@ impl App {
             last_applied_rev: gitops::head(&self.ctx).map_err(map_git)?,
             health: crate::core::vocab::Health::Healthy,
             observed_drift: Some(false),
+            source_tree_digest: None,
+            materialized_tree_digest: None,
+            last_observed_at: None,
+            last_observed_error: None,
             updated_at: Some(Utc::now()),
         };
+        let observation = observe_projection(&self.ctx, &projection);
+        apply_projection_observation(&mut projection, &observation);
         upsert_projection(&mut projections, projection.clone());
 
         let registry_audit_backup =
@@ -494,10 +500,12 @@ impl App {
                 let current_rev = gitops::head(&self.ctx).map_err(map_git)?;
 
                 let mut projections = original_projections.clone();
+                let observation = observe_projection(&self.ctx, &projection);
                 update_projection_after_capture(
                     &mut projections,
                     &projection.instance_id,
                     &current_rev,
+                    Some(&observation),
                 )?;
                 paths
                     .save_bindings_rules_projections(

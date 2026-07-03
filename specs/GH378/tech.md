@@ -2,7 +2,7 @@
 
 Issue: https://github.com/majiayu000/loom/issues/378
 Product spec: `specs/GH378/product.md`
-Status: Partial implementation
+Status: Complete implementation
 
 ## Current State
 
@@ -10,8 +10,9 @@ Status: Partial implementation
 deterministic lexical matching over the skill inventory read model. They return
 `score_inputs` and do not invoke an LLM. This is the correct base for GH378.
 
-Current limitation: recommendation scoring still needs full dependency
-readiness, eval evidence, and negative-trigger joins before #378 can close.
+Recommendation scoring joins dependency readiness, persisted eval evidence,
+negative-trigger fixtures, safety/trust state, and skillset member readiness
+without mutating registry or active-view state.
 
 Current relevant files:
 

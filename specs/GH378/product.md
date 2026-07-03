@@ -2,7 +2,7 @@
 
 Issue: https://github.com/majiayu000/loom/issues/378
 Parent: https://github.com/majiayu000/loom/issues/376
-Status: Partial implementation
+Status: Complete implementation
 Locale: zh-CN
 
 ## Goal
@@ -28,8 +28,8 @@ The original design packet depended on these upstream read models and gates:
 - #377 for skillsets and grouped lifecycle data.
 
 Those dependencies now provide enough local state for the read-only command
-surface and deterministic lexical foundation. Full dependency/eval and
-negative-trigger ranking joins remain open before #378 can close.
+surface, deterministic lexical foundation, dependency/eval scoring, and
+negative-trigger ranking joins required for GH378 completion.
 
 ## Current Implementation Status
 
@@ -40,9 +40,9 @@ recommend` are all non-mutating command surfaces.
 also available through `skill search`; semantic mode remains local-provider-only
 and returns a `semantic-disabled` warning with lexical fallback when no local
 provider is configured.
-
-Remaining closeout work: integrate dependency readiness, real eval evidence,
-and negative trigger signals into recommendation scoring and tests.
+Recommendation scoring now joins dependency readiness, persisted eval evidence,
+trigger fixtures, trust/quarantine state, safety policy, and skillset member
+readiness with focused regression coverage.
 
 ## User-Facing Commands
 

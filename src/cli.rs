@@ -91,7 +91,9 @@ pub use skill_lint_args::SkillLintArgs;
 pub use skill_new_args::{SkillNewArgs, SkillNewTemplate};
 pub use skill_visibility_args::{SkillDiagnoseArgs, SkillDiagnoseCheck, SkillVisibilityArgs};
 pub use skillset::{
-    SkillsetAddArgs, SkillsetCommand, SkillsetCreateArgs, SkillsetMemberArgs, SkillsetShowArgs,
+    SkillsetActivateArgs, SkillsetAddArgs, SkillsetCommand, SkillsetCreateArgs, SkillsetEvalArgs,
+    SkillsetEvalBaselineArg, SkillsetMemberArgs, SkillsetReleaseArgs, SkillsetRollbackArgs,
+    SkillsetShowArgs,
 };
 pub use telemetry::{
     TelemetryCommand, TelemetryEnableArgs, TelemetryExportArgs, TelemetryExportFormat,

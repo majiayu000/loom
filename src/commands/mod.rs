@@ -45,7 +45,9 @@ mod skill_recommend_active;
 mod skill_safety;
 mod skill_safety_findings;
 mod skill_verify;
+mod skillset_activation;
 mod skillset_cmds;
+mod skillset_release;
 mod sync_cmds;
 mod target_cmds;
 mod telemetry;
@@ -309,6 +311,13 @@ impl App {
                 SkillsetCommand::Remove(args) => self.cmd_skillset_remove(args),
                 SkillsetCommand::Show(args) => self.cmd_skillset_show(args),
                 SkillsetCommand::Lint(args) => self.cmd_skillset_lint(args),
+                SkillsetCommand::Activate(args) => self.cmd_skillset_activate(args, &request_id),
+                SkillsetCommand::Deactivate(args) => {
+                    self.cmd_skillset_deactivate(args, &request_id)
+                }
+                SkillsetCommand::Eval(args) => self.cmd_skillset_eval(args),
+                SkillsetCommand::Release(args) => self.cmd_skillset_release(args, &request_id),
+                SkillsetCommand::Rollback(args) => self.cmd_skillset_rollback(args, &request_id),
             },
             Command::Telemetry { command } => self.cmd_telemetry(command),
             Command::Provider { command } => self.cmd_provider(command, &request_id),

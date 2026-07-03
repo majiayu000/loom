@@ -151,7 +151,13 @@ pub(crate) fn command_meta(command: &Command) -> CommandMeta {
             SkillsetCommand::Create(_) | SkillsetCommand::Add(_) | SkillsetCommand::Remove(_) => {
                 CommandMeta::new(true, true, false)
             }
-            SkillsetCommand::Show(_) | SkillsetCommand::Lint(_) => {
+            SkillsetCommand::Activate(args) | SkillsetCommand::Deactivate(args) => {
+                CommandMeta::new(!args.dry_run, !args.dry_run, args.dry_run)
+            }
+            SkillsetCommand::Release(_) | SkillsetCommand::Rollback(_) => {
+                CommandMeta::new(true, true, false)
+            }
+            SkillsetCommand::Show(_) | SkillsetCommand::Lint(_) | SkillsetCommand::Eval(_) => {
                 CommandMeta::new(false, false, false)
             }
         },

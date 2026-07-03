@@ -18,30 +18,30 @@ use super::helpers::{
 };
 use super::{App, CommandFailure, build_skill_read_model};
 
-const SKILLSETS_REL: &str = "state/registry/skillsets.json";
+pub(crate) const SKILLSETS_REL: &str = "state/registry/skillsets.json";
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct SkillsetsFile {
-    schema_version: u32,
-    skillsets: Vec<SkillsetRecord>,
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub(crate) struct SkillsetsFile {
+    pub(crate) schema_version: u32,
+    pub(crate) skillsets: Vec<SkillsetRecord>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct SkillsetRecord {
-    id: String,
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub(crate) struct SkillsetRecord {
+    pub(crate) id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    description: Option<String>,
-    members: Vec<SkillsetMemberRecord>,
-    created_at: DateTime<Utc>,
-    updated_at: DateTime<Utc>,
+    pub(crate) description: Option<String>,
+    pub(crate) members: Vec<SkillsetMemberRecord>,
+    pub(crate) created_at: DateTime<Utc>,
+    pub(crate) updated_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct SkillsetMemberRecord {
-    skill_id: String,
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub(crate) struct SkillsetMemberRecord {
+    pub(crate) skill_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    role: Option<String>,
-    required: bool,
+    pub(crate) role: Option<String>,
+    pub(crate) required: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -66,7 +66,7 @@ impl SkillsetsFile {
         }
     }
 
-    fn normalize(&mut self) {
+    pub(crate) fn normalize(&mut self) {
         self.skillsets.sort_by(|left, right| left.id.cmp(&right.id));
         for skillset in &mut self.skillsets {
             skillset
@@ -75,11 +75,11 @@ impl SkillsetsFile {
         }
     }
 
-    fn find(&self, name: &str) -> Option<&SkillsetRecord> {
+    pub(crate) fn find(&self, name: &str) -> Option<&SkillsetRecord> {
         self.skillsets.iter().find(|skillset| skillset.id == name)
     }
 
-    fn find_mut(&mut self, name: &str) -> Option<&mut SkillsetRecord> {
+    pub(crate) fn find_mut(&mut self, name: &str) -> Option<&mut SkillsetRecord> {
         self.skillsets
             .iter_mut()
             .find(|skillset| skillset.id == name)
@@ -285,7 +285,7 @@ impl App {
     }
 }
 
-fn validate_skillset_id(name: &str) -> std::result::Result<(), CommandFailure> {
+pub(crate) fn validate_skillset_id(name: &str) -> std::result::Result<(), CommandFailure> {
     validate_skill_name(name).map_err(map_arg)
 }
 
@@ -305,16 +305,25 @@ fn skillsets_path(ctx: &AppContext) -> PathBuf {
     ctx.root.join(SKILLSETS_REL)
 }
 
-fn load_skillsets(ctx: &AppContext) -> std::result::Result<SkillsetsFile, CommandFailure> {
+pub(crate) fn load_skillsets(
+    ctx: &AppContext,
+) -> std::result::Result<SkillsetsFile, CommandFailure> {
     let path = skillsets_path(ctx);
     if !path.exists() {
         return Ok(SkillsetsFile::empty());
     }
     let raw = fs::read_to_string(&path).map_err(map_io)?;
-    let file: SkillsetsFile = serde_json::from_str(&raw).map_err(|err| {
+    parse_skillsets_file(&raw, &path.display().to_string())
+}
+
+pub(crate) fn parse_skillsets_file(
+    raw: &str,
+    label: &str,
+) -> std::result::Result<SkillsetsFile, CommandFailure> {
+    let file: SkillsetsFile = serde_json::from_str(raw).map_err(|err| {
         CommandFailure::new(
             ErrorCode::StateCorrupt,
-            format!("failed to parse {}: {}", path.display(), err),
+            format!("failed to parse {}: {}", label, err),
         )
     })?;
     if file.schema_version != REGISTRY_SCHEMA_VERSION {
@@ -322,8 +331,7 @@ fn load_skillsets(ctx: &AppContext) -> std::result::Result<SkillsetsFile, Comman
             ErrorCode::SchemaMismatch,
             format!(
                 "{} schema_version {} is not supported",
-                path.display(),
-                file.schema_version
+                label, file.schema_version
             ),
         ));
     }
@@ -357,7 +365,7 @@ pub(crate) fn load_skillset_package_source(
     })
 }
 
-fn save_skillsets(
+pub(crate) fn save_skillsets(
     ctx: &AppContext,
     file: &mut SkillsetsFile,
 ) -> std::result::Result<(), CommandFailure> {
@@ -367,7 +375,7 @@ fn save_skillsets(
     write_atomic(&path, &raw).map_err(map_io)
 }
 
-fn skill_inventory_by_id(
+pub(crate) fn skill_inventory_by_id(
     ctx: &AppContext,
 ) -> std::result::Result<BTreeMap<String, Value>, CommandFailure> {
     let model = build_skill_read_model(ctx)
@@ -395,7 +403,7 @@ fn ensure_inventory_skill_exists(
     ))
 }
 
-fn render_skillset(
+pub(crate) fn render_skillset(
     skillset: &SkillsetRecord,
     inventory: Option<&BTreeMap<String, Value>>,
 ) -> Value {
@@ -441,7 +449,10 @@ fn render_skillset(
     })
 }
 
-fn lint_skillset(skillset: &SkillsetRecord, inventory: &BTreeMap<String, Value>) -> Value {
+pub(crate) fn lint_skillset(
+    skillset: &SkillsetRecord,
+    inventory: &BTreeMap<String, Value>,
+) -> Value {
     let mut findings = Vec::new();
     let mut seen = BTreeSet::new();
     let mut duplicates = 0usize;

@@ -302,6 +302,34 @@ fn command_surface_budget_tracks_read_surface_convergence() {
 }
 
 #[test]
+fn skillset_help_describes_lifecycle_subcommands() {
+    let output = Command::new(env!("CARGO_BIN_EXE_loom"))
+        .args(["skillset", "--help"])
+        .output()
+        .expect("run loom skillset help");
+    assert!(output.status.success(), "skillset help should pass");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let skillset = command_names_from_help(&stdout);
+    for command in [
+        "create",
+        "add",
+        "remove",
+        "show",
+        "lint",
+        "activate",
+        "deactivate",
+        "eval",
+        "release",
+        "rollback",
+    ] {
+        assert!(
+            skillset.contains(&command.to_string()),
+            "skillset help missing subcommand {command}: {stdout}"
+        );
+    }
+}
+
+#[test]
 fn use_codex_project_default_comes_from_adapter_metadata() {
     let root = TestDir::new("cli-use-codex-adapter-root");
     let workspace = TestDir::new("cli-use-codex-workspace");

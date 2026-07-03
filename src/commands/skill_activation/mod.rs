@@ -85,6 +85,9 @@ impl App {
         let plan = activation_plan(&resolved, false);
 
         let projection_changed = apply_activation_projection(&self.ctx, &resolved)?;
+        if let Some(failure) = skill_activate_projection_fault(&resolved.selection.skill) {
+            return Err(failure);
+        }
         let state_changed = activation_state_changed(&resolved) || projection_changed;
         if !state_changed {
             return Ok((json!({"plan": plan, "noop": true}), Meta::default()));
@@ -255,6 +258,9 @@ impl App {
         if args.dry_run {
             let snapshot = optional_snapshot(&self.ctx)?;
             let resolved = resolve_deactivation(&self.ctx, &snapshot, selection)?;
+            if let Some(resolved) = resolved.as_ref() {
+                ensure_symlink_deactivation_rule(resolved)?;
+            }
             return Ok((
                 json!({"plan": plan::deactivation_plan(resolved.as_ref(), true), "dry_run": true}),
                 Meta::default(),
@@ -273,25 +279,16 @@ impl App {
         };
         let plan = plan::deactivation_plan(Some(&resolved), false);
 
-        let rule = resolved.existing_rule.as_ref().ok_or_else(|| {
-            CommandFailure::new(
+        if resolved.existing_rule.is_none() {
+            return Err(CommandFailure::new(
                 ErrorCode::SkillNotFound,
                 format!(
                     "skill '{}' is not active for agent '{}'",
                     resolved.selection.skill, resolved.selection.agent
                 ),
-            )
-        })?;
-        if rule.method != crate::core::vocab::ProjectionMethod::Symlink {
-            return Err(CommandFailure::new(
-                ErrorCode::PolicyBlocked,
-                format!(
-                    "deactivate refuses to delete '{}' projection '{}'; copy/materialize cleanup requires an explicit safe cleanup flow",
-                    rule.method,
-                    resolved.materialized_path.display()
-                ),
             ));
         }
+        ensure_symlink_deactivation_rule(&resolved)?;
 
         remove_safe_symlink_projection(&self.ctx.skill_path(&resolved.selection.skill), &resolved)?;
 
@@ -464,4 +461,40 @@ impl App {
             Meta::default(),
         ))
     }
+}
+
+fn ensure_symlink_deactivation_rule(
+    resolved: &resolve::ActivationResolved,
+) -> std::result::Result<(), CommandFailure> {
+    let Some(rule) = resolved.existing_rule.as_ref() else {
+        return Ok(());
+    };
+    if rule.method == crate::core::vocab::ProjectionMethod::Symlink {
+        return Ok(());
+    }
+    Err(CommandFailure::new(
+        ErrorCode::PolicyBlocked,
+        format!(
+            "deactivate refuses to delete '{}' projection '{}'; copy/materialize cleanup requires an explicit safe cleanup flow",
+            rule.method,
+            resolved.materialized_path.display()
+        ),
+    ))
+}
+
+#[cfg(debug_assertions)]
+fn skill_activate_projection_fault(skill: &str) -> Option<CommandFailure> {
+    let raw = std::env::var("LOOM_SKILL_ACTIVATE_FAULT_INJECT").ok()?;
+    if raw == format!("after_projection:{skill}") {
+        return Some(CommandFailure::new(
+            ErrorCode::InternalError,
+            format!("fault injected after projecting {}", skill),
+        ));
+    }
+    None
+}
+
+#[cfg(not(debug_assertions))]
+fn skill_activate_projection_fault(_skill: &str) -> Option<CommandFailure> {
+    None
 }

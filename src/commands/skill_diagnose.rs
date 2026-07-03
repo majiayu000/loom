@@ -701,8 +701,9 @@ fn add_projection_checks(
         "capture or re-project the skill",
         json!({"instance_id": projection.instance_id, "observed_drift": projection.observed_drift}),
     ));
-    if projection.health != crate::core::vocab::Health::Orphaned {
-        let (observation_check, update) = projection_observation_check(ctx, projection);
+    if projection.health != crate::core::vocab::Health::Orphaned
+        && let Some((observation_check, update)) = projection_observation_check(ctx, projection)
+    {
         checks.push(observation_check);
         projection_updates.push(update);
     }

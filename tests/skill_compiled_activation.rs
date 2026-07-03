@@ -175,6 +175,76 @@ fn compiled_activation_materializes_valid_artifact_projection() {
     assert_eq!(noop_env["data"]["noop"], json!(true));
 }
 
+#[test]
+fn compiled_activation_diagnose_does_not_persist_source_digest_drift() {
+    let root = TestDir::new("skill-compiled-activation-diagnose");
+    let home = TestDir::new("skill-compiled-activation-diagnose-home");
+    write_compile_ready_skill(root.path(), "demo");
+    write_passing_eval(root.path(), "demo");
+
+    let (_compile_output, compile_env) = run_with_home(
+        root.path(),
+        home.path(),
+        &["skill", "compile", "demo", "--agent", "codex"],
+    );
+    assert_eq!(compile_env["ok"], json!(true), "{compile_env}");
+    let artifact_id = compile_env["data"]["artifact"]["artifact_id"]
+        .as_str()
+        .expect("artifact id")
+        .to_string();
+
+    let (activate_output, activate_env) = run_with_home(
+        root.path(),
+        home.path(),
+        &[
+            "skill",
+            "activate",
+            "demo",
+            "--agent",
+            "codex",
+            "--compiled",
+            "--artifact",
+            &artifact_id,
+        ],
+    );
+    assert!(
+        activate_output.status.success(),
+        "compiled activation should pass: {activate_env}"
+    );
+
+    let (_diagnose_output, diagnose_env) =
+        run_with_home(root.path(), home.path(), &["skill", "diagnose", "demo"]);
+    assert_eq!(diagnose_env["ok"], json!(true), "{diagnose_env}");
+    let checks = diagnose_env["data"]["checks"]
+        .as_array()
+        .expect("diagnose checks");
+    assert!(
+        !checks
+            .iter()
+            .any(|check| check["details"]["error"] == json!("digest_mismatch")),
+        "compiled artifact projection must not be compared to the source tree: {diagnose_env}"
+    );
+
+    let (_status_output, status_env) =
+        run_with_home(root.path(), home.path(), &["workspace", "status"]);
+    assert_eq!(status_env["ok"], json!(true), "{status_env}");
+    assert_eq!(
+        status_env["data"]["registry"]["counts"]["drifted_projections"],
+        json!(0),
+        "compiled diagnose must not persist false projection drift: {status_env}"
+    );
+    assert_eq!(
+        status_env["data"]["registry"]["projections"][0]["last_observed_error"],
+        Value::Null,
+        "compiled diagnose must not persist digest_mismatch: {status_env}"
+    );
+    assert_eq!(
+        status_env["data"]["registry"]["projections"][0]["observation_status"],
+        json!("not_observed"),
+        "compiled artifact projection should remain explicitly unobserved by source digest: {status_env}"
+    );
+}
+
 fn write_passing_eval(root: &Path, skill: &str) {
     write_file(
         &root.join("skills").join(skill).join("evals/tasks.jsonl"),

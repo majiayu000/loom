@@ -17,9 +17,9 @@ pub(crate) struct ProjectionObservation {
     pub observed_drift: bool,
     pub source_tree_digest: Option<String>,
     pub materialized_tree_digest: Option<String>,
-    pub error_code: Option<String>,
-    pub status: String,
-    pub details: Value,
+    pub error_code: Option<&'static str>,
+    pub status: &'static str,
+    pub error_message: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -40,18 +40,18 @@ pub(crate) fn observe_projection(
                 observed_drift,
                 source_tree_digest: Option<String>,
                 materialized_tree_digest: Option<String>,
-                error_code: Option<&str>,
-                status: &str,
-                details: Value| {
+                error_code: Option<&'static str>,
+                status: &'static str,
+                error_message: Option<String>| {
         ProjectionObservation {
             observed_at,
             health,
             observed_drift,
             source_tree_digest,
             materialized_tree_digest,
-            error_code: error_code.map(ToString::to_string),
-            status: status.to_string(),
-            details,
+            error_code,
+            status,
+            error_message,
         }
     };
 
@@ -63,15 +63,7 @@ pub(crate) fn observe_projection(
             None,
             Some("source_missing"),
             "missing",
-            json!({
-                "status": "missing",
-                "error": "source_missing",
-                "instance_id": projection.instance_id,
-                "skill_id": projection.skill_id,
-                "source_path": source.display().to_string(),
-                "materialized_path": projection.materialized_path,
-                "method": projection.method,
-            }),
+            None,
         );
     }
 
@@ -83,15 +75,7 @@ pub(crate) fn observe_projection(
             None,
             Some("materialized_missing"),
             "missing",
-            json!({
-                "status": "missing",
-                "error": "materialized_missing",
-                "instance_id": projection.instance_id,
-                "skill_id": projection.skill_id,
-                "target_id": projection.target_id,
-                "materialized_path": projection.materialized_path,
-                "method": projection.method,
-            }),
+            None,
         );
     }
 
@@ -100,10 +84,10 @@ pub(crate) fn observe_projection(
             observe_symlink_projection(ctx, projection, materialized, observed_at)
         }
         crate::core::vocab::ProjectionMethod::Copy => {
-            observe_tree_projection(projection, &source, materialized, false, observed_at)
+            observe_tree_projection(&source, materialized, false, observed_at)
         }
         crate::core::vocab::ProjectionMethod::Materialize => {
-            observe_tree_projection(projection, &source, materialized, true, observed_at)
+            observe_tree_projection(&source, materialized, true, observed_at)
         }
     }
 }
@@ -120,7 +104,7 @@ pub(crate) fn apply_projection_observation(
     projection.source_tree_digest = observation.source_tree_digest.clone();
     projection.materialized_tree_digest = observation.materialized_tree_digest.clone();
     projection.last_observed_at = Some(observation.observed_at);
-    projection.last_observed_error = observation.error_code.clone();
+    projection.last_observed_error = observation.error_code.map(str::to_string);
     projection.updated_at = Some(observation.observed_at);
 }
 
@@ -142,7 +126,10 @@ pub(crate) fn apply_projection_observation_updates(
 pub(crate) fn projection_observation_check(
     ctx: &AppContext,
     projection: &RegistryProjectionInstance,
-) -> (Value, ProjectionObservationUpdate) {
+) -> Option<(Value, ProjectionObservationUpdate)> {
+    if projection_is_compiled_artifact_view(projection) {
+        return None;
+    }
     let observation = observe_projection(ctx, projection);
     let ok = observation.status == "healthy";
     let severity = if ok {
@@ -176,19 +163,18 @@ pub(crate) fn projection_observation_check(
         } else {
             json!("capture or re-project the skill")
         },
-        "details": observation.details.clone()
+        "details": projection_observation_details(ctx, projection, &observation)
     });
-    (
+    Some((
         check,
         ProjectionObservationUpdate {
             instance_id: projection.instance_id.clone(),
             observation,
         },
-    )
+    ))
 }
 
 fn observe_tree_projection(
-    projection: &RegistryProjectionInstance,
     source: &Path,
     materialized: &Path,
     materialize_view: bool,
@@ -198,15 +184,11 @@ fn observe_tree_projection(
         Ok(digest) => digest,
         Err(err) => {
             return observation_failure(
-                projection,
                 observed_at,
                 crate::core::vocab::Health::Conflict,
                 "source_unreadable",
                 "unreadable",
-                json!({
-                    "source_path": source.display().to_string(),
-                    "error_message": err.to_string(),
-                }),
+                Some(err.to_string()),
             );
         }
     };
@@ -219,18 +201,9 @@ fn observe_tree_projection(
                 observed_drift: true,
                 source_tree_digest: Some(source_digest),
                 materialized_tree_digest: None,
-                error_code: Some("materialized_unreadable".to_string()),
-                status: "unreadable".to_string(),
-                details: json!({
-                    "status": "unreadable",
-                    "error": "materialized_unreadable",
-                    "instance_id": projection.instance_id,
-                    "skill_id": projection.skill_id,
-                    "target_id": projection.target_id,
-                    "materialized_path": projection.materialized_path,
-                    "method": projection.method,
-                    "error_message": err.to_string(),
-                }),
+                error_code: Some("materialized_unreadable"),
+                status: "unreadable",
+                error_message: Some(err.to_string()),
             };
         }
     };
@@ -243,21 +216,11 @@ fn observe_tree_projection(
             crate::core::vocab::Health::Drifted
         },
         observed_drift: !matches,
-        source_tree_digest: Some(source_digest.clone()),
-        materialized_tree_digest: Some(materialized_digest.clone()),
-        error_code: (!matches).then(|| "digest_mismatch".to_string()),
-        status: if matches { "healthy" } else { "drifted" }.to_string(),
-        details: json!({
-            "status": if matches { "healthy" } else { "drifted" },
-            "error": if matches { Value::Null } else { json!("digest_mismatch") },
-            "instance_id": projection.instance_id,
-            "skill_id": projection.skill_id,
-            "target_id": projection.target_id,
-            "materialized_path": projection.materialized_path,
-            "method": projection.method,
-            "source_tree_digest": source_digest,
-            "materialized_tree_digest": materialized_digest,
-        }),
+        source_tree_digest: Some(source_digest),
+        materialized_tree_digest: Some(materialized_digest),
+        error_code: (!matches).then_some("digest_mismatch"),
+        status: if matches { "healthy" } else { "drifted" },
+        error_message: None,
     }
 }
 
@@ -272,12 +235,11 @@ fn observe_symlink_projection(
         Ok(target) => target,
         Err(err) => {
             return observation_failure(
-                projection,
                 observed_at,
                 crate::core::vocab::Health::Conflict,
                 "not_symlink",
                 "unreadable",
-                json!({"error_message": err.to_string()}),
+                Some(err.to_string()),
             );
         }
     };
@@ -301,50 +263,28 @@ fn observe_symlink_projection(
         observed_drift: !matches,
         source_tree_digest: None,
         materialized_tree_digest: None,
-        error_code: (!matches).then(|| "symlink_target_mismatch".to_string()),
-        status: if matches { "healthy" } else { "drifted" }.to_string(),
-        details: json!({
-            "status": if matches { "healthy" } else { "drifted" },
-            "error": if matches { Value::Null } else { json!("symlink_target_mismatch") },
-            "instance_id": projection.instance_id,
-            "skill_id": projection.skill_id,
-            "target_id": projection.target_id,
-            "materialized_path": projection.materialized_path,
-            "method": projection.method,
-            "link_target": link_target.display().to_string(),
-            "resolved_target": resolved.display().to_string(),
-            "expected_target": expected.display().to_string(),
-        }),
+        error_code: (!matches).then_some("symlink_target_mismatch"),
+        status: if matches { "healthy" } else { "drifted" },
+        error_message: None,
     }
 }
 
 fn observation_failure(
-    projection: &RegistryProjectionInstance,
     observed_at: DateTime<Utc>,
     health: crate::core::vocab::Health,
-    error: &str,
-    status: &str,
-    extra: Value,
+    error: &'static str,
+    status: &'static str,
+    error_message: Option<String>,
 ) -> ProjectionObservation {
-    let mut details = json!({
-        "status": status,
-        "error": error,
-        "instance_id": projection.instance_id,
-        "skill_id": projection.skill_id,
-        "target_id": projection.target_id,
-        "materialized_path": projection.materialized_path,
-        "method": projection.method,
-    });
-    merge_json_object(&mut details, extra);
     ProjectionObservation {
         observed_at,
         health,
         observed_drift: true,
         source_tree_digest: None,
         materialized_tree_digest: None,
-        error_code: Some(error.to_string()),
-        status: status.to_string(),
-        details,
+        error_code: Some(error),
+        status,
+        error_message,
     }
 }
 
@@ -360,11 +300,45 @@ fn path_exists_or_symlink(path: &Path) -> bool {
     fs::symlink_metadata(path).is_ok()
 }
 
-fn merge_json_object(base: &mut Value, extra: Value) {
-    let (Some(base), Some(extra)) = (base.as_object_mut(), extra.as_object()) else {
-        return;
-    };
-    for (key, value) in extra {
-        base.insert(key.clone(), value.clone());
+fn projection_is_compiled_artifact_view(projection: &RegistryProjectionInstance) -> bool {
+    if projection.method != crate::core::vocab::ProjectionMethod::Materialize {
+        return false;
     }
+    let marker = Path::new(&projection.materialized_path)
+        .join(".loom")
+        .join("compiled")
+        .join("projection.json");
+    marker.is_file()
+}
+
+fn projection_observation_details(
+    ctx: &AppContext,
+    projection: &RegistryProjectionInstance,
+    observation: &ProjectionObservation,
+) -> Value {
+    let mut details = json!({
+        "status": observation.status,
+        "error": observation.error_code,
+        "instance_id": projection.instance_id,
+        "skill_id": projection.skill_id,
+        "target_id": projection.target_id,
+        "materialized_path": projection.materialized_path,
+        "method": projection.method,
+    });
+    if let Some(digest) = &observation.source_tree_digest {
+        details["source_tree_digest"] = json!(digest);
+    }
+    if let Some(digest) = &observation.materialized_tree_digest {
+        details["materialized_tree_digest"] = json!(digest);
+    }
+    if matches!(
+        observation.error_code,
+        Some("source_missing" | "source_unreadable")
+    ) {
+        details["source_path"] = json!(ctx.skill_path(&projection.skill_id).display().to_string());
+    }
+    if let Some(message) = &observation.error_message {
+        details["error_message"] = json!(message);
+    }
+    details
 }

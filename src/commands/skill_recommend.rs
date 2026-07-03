@@ -207,13 +207,15 @@ impl App {
                 .as_str()
                 .unwrap_or("safe-capture")
                 .to_string();
+            let recommendation_context = RecommendationContext {
+                agent: args.agent.as_deref(),
+                mode,
+                policy_profile: &policy_profile,
+            };
             let recommendations = recommendation_results(
                 &self.ctx,
                 &args.query,
-                args.agent.as_deref(),
-                args.workspace.as_deref(),
-                mode,
-                &policy_profile,
+                recommendation_context,
                 &recommendation_skill_results,
                 &skillsets,
             )?;
@@ -287,13 +289,15 @@ impl App {
             true,
         );
         let skillsets = load_skillsets_value(&self.ctx)?;
+        let recommendation_context = RecommendationContext {
+            agent: None,
+            mode: "lexical",
+            policy_profile: "safe-capture",
+        };
         let recommend = recommendation_results(
             &self.ctx,
             &args.task_description,
-            None,
-            args.workspace.as_deref(),
-            "lexical",
-            "safe-capture",
+            recommendation_context,
             &skill_results,
             &skillsets,
         )?;
@@ -579,31 +583,30 @@ fn workspace_index_payload(ctx: &AppContext) -> std::result::Result<Value, Comma
     Ok(json!({ "schema_version": REGISTRY_SCHEMA_VERSION, "records": records }))
 }
 
+#[derive(Clone, Copy)]
+struct RecommendationContext<'a> {
+    agent: Option<&'a str>,
+    mode: &'a str,
+    policy_profile: &'a str,
+}
+
 fn recommendation_results(
     ctx: &AppContext,
     task: &str,
-    agent: Option<&str>,
-    workspace: Option<&Path>,
-    mode: &str,
-    policy_profile: &str,
+    request: RecommendationContext<'_>,
     skill_search_results: &[Value],
     skillsets: &Value,
 ) -> std::result::Result<Vec<Value>, CommandFailure> {
     let mut results = Vec::new();
     for result in skill_search_results {
-        if let Some(recommendation) =
-            skill_recommendation(ctx, result, agent, mode, policy_profile)?
-        {
+        if let Some(recommendation) = skill_recommendation(ctx, result, request)? {
             results.push(recommendation);
         }
     }
     results.extend(skillset_recommendations(
         ctx,
         task,
-        agent,
-        workspace,
-        mode,
-        policy_profile,
+        request,
         skill_search_results,
         skillsets,
     )?);
@@ -630,9 +633,7 @@ fn recommendation_results(
 fn skill_recommendation(
     ctx: &AppContext,
     result: &Value,
-    agent: Option<&str>,
-    mode: &str,
-    policy_profile: &str,
+    request: RecommendationContext<'_>,
 ) -> std::result::Result<Option<Value>, CommandFailure> {
     let skill = &result["skill"];
     let Some(skill_id) = skill["skill_id"].as_str() else {
@@ -656,28 +657,28 @@ fn skill_recommendation(
             "source {}",
             skill["source_status"].as_str().unwrap_or("unknown")
         ));
-    } else if let Some(risk) = activation_safety_risk(ctx, skill_id, policy_profile)? {
+    } else if let Some(risk) = activation_safety_risk(ctx, skill_id, request.policy_profile)? {
         risks.push(risk);
     }
     if !skill["warnings"].as_array().is_none_or(Vec::is_empty) {
         risks.push("inventory warnings".to_string());
     }
-    if agent.is_some() {
+    if request.agent.is_some() {
         reasons.push("agent match".to_string());
     }
-    let can_activate = risks.is_empty() && agent.is_some();
+    let can_activate = risks.is_empty() && request.agent.is_some();
     Ok(Some(json!({
         "kind": "skill",
         "id": skill_id,
         "score": result["score"],
-        "mode": mode,
+        "mode": request.mode,
         "score_inputs": result["score_inputs"],
         "reasons": reasons,
         "risks": risks,
         "warnings": warnings,
         "recommended_action": if can_activate { "activate" } else { "inspect" },
         "suggested_commands": if can_activate {
-            vec![format!("loom --json skill activate {skill_id} --agent {} --dry-run", agent.unwrap())]
+            vec![format!("loom --json skill activate {skill_id} --agent {} --dry-run", request.agent.unwrap())]
         } else {
             vec![format!("loom --json skill inspect {skill_id}")]
         },
@@ -687,10 +688,7 @@ fn skill_recommendation(
 fn skillset_recommendations(
     ctx: &AppContext,
     task: &str,
-    agent: Option<&str>,
-    _workspace: Option<&Path>,
-    mode: &str,
-    policy_profile: &str,
+    request: RecommendationContext<'_>,
     skill_results: &[Value],
     skillsets: &Value,
 ) -> std::result::Result<Vec<Value>, CommandFailure> {
@@ -759,11 +757,11 @@ fn skillset_recommendations(
                         required_safe = false;
                         risks.push(format!("{member_kind} member '{skill_id}' warnings"));
                     } else if let Some(risk) =
-                        activation_safety_risk(ctx, skill_id, policy_profile)?
+                        activation_safety_risk(ctx, skill_id, request.policy_profile)?
                     {
                         required_safe = false;
                         risks.push(format!("{member_kind} member '{skill_id}' {risk}"));
-                    } else if let Some(agent) = agent {
+                    } else if let Some(agent) = request.agent {
                         member_commands.push(format!(
                             "loom --json skill activate {skill_id} --agent {agent} --dry-run"
                         ));
@@ -783,12 +781,12 @@ fn skillset_recommendations(
             reasons.push("skillset text matched".to_string());
         }
         warnings.push("skillset activation unavailable".to_string());
-        let can_activate_members = required_safe && risks.is_empty() && agent.is_some();
+        let can_activate_members = required_safe && risks.is_empty() && request.agent.is_some();
         out.push(json!({
             "kind": "skillset",
             "id": id,
             "score": score,
-            "mode": mode,
+            "mode": request.mode,
             "score_inputs": {
                 "matched_fields": ["skillset", "members"],
             },

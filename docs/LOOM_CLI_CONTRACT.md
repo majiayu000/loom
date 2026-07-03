@@ -1101,16 +1101,20 @@ Rules:
    `loom --json --root <root> skill project <skill-id> --binding <binding-id>
    --target <target-id> --method <method>` commands when Loom can reapply a
    projection safely, or `manual_review_required` when registry evidence is
-   missing
-6. if registry snapshot loading fails after rollback, the response keeps
+   missing or the projection was produced by compiled activation
+6. compiled activation projections are reported with `compiled_activation`
+   evidence and a `manual_review_required` action; Loom must not emit a raw
+   `skill project --method materialize` recovery command for them because that
+   would replace the compiled artifact view with source materialization
+7. if registry snapshot loading fails after rollback, the response keeps
    `ok=true` for the source rollback but sets
    `projection_reconciliation.status="registry_unavailable"`, includes a
    structured `error`, sets `live_projection_reconciled=false`, and adds a
    warning to `meta.warnings`
-7. no-op rollback success returns the same reconciliation fields with
+8. no-op rollback success returns the same reconciliation fields with
    `projection_reconciliation.status="noop"`, `source_restored=false`, and
    `registry_restored=false`; it does not initialize registry state
-8. if registry state was absent before a non-noop rollback, rollback records
+9. if registry state was absent before a non-noop rollback, rollback records
    audit state but reports `projection_reconciliation.status="registry_missing"`
    and `live_projection_reconciled=false` because there was no pre-existing
    projection evidence to verify

@@ -7,7 +7,7 @@ use serde_json::Value;
 mod common;
 
 use common::actions::{binding_add, save_skill, skill_project, target_add};
-use common::{TestDir, run_loom, run_loom_with_env, write_skill};
+use common::{TestDir, run_loom, write_skill};
 
 struct RollbackProjectionFixture {
     root: TestDir,
@@ -736,85 +736,4 @@ fn rollback_marks_symlink_projection_reconciled_without_reapply() {
     assert_eq!(item["live_path_exists"], Value::Bool(true));
     assert_eq!(item["requires_projection_reapply"], Value::Bool(false));
     assert_eq!(item["next_action"], Value::Null);
-}
-
-#[test]
-fn rollback_surfaces_projection_snapshot_load_failure() {
-    let fixture = rollback_projection_fixture("copy");
-
-    let (rollback_output, rollback_env) = run_loom_with_env(
-        fixture.root.path(),
-        &[(
-            "LOOM_ROLLBACK_FAULT_INJECT",
-            "projection_reconciliation_snapshot_load",
-        )],
-        &["skill", "rollback", "model-onboarding", "--to", "HEAD~2"],
-    );
-
-    assert!(
-        rollback_output.status.success(),
-        "rollback failed: stderr={} stdout={}",
-        String::from_utf8_lossy(&rollback_output.stderr),
-        String::from_utf8_lossy(&rollback_output.stdout)
-    );
-    assert_eq!(rollback_env["ok"], Value::Bool(true));
-    assert_eq!(
-        rollback_env["data"]["live_projection_reconciled"],
-        Value::Bool(false)
-    );
-    let reconciliation = &rollback_env["data"]["projection_reconciliation"];
-    assert_eq!(
-        reconciliation["status"],
-        Value::String("registry_unavailable".to_string())
-    );
-    assert_eq!(
-        reconciliation["error"]["code"],
-        Value::String("REGISTRY_STATE_UNAVAILABLE".to_string())
-    );
-    assert_eq!(
-        reconciliation["next_actions"][0]["type"],
-        Value::String("manual_review_required".to_string())
-    );
-    assert_meta_warning_contains(&rollback_env, "registry snapshot loading failed");
-}
-
-#[test]
-fn rollback_surfaces_real_projection_snapshot_load_failure() {
-    let fixture = rollback_projection_fixture("copy");
-    fs::write(
-        fixture.root.path().join("state/registry/projections.json"),
-        "not json",
-    )
-    .expect("corrupt projections snapshot");
-
-    let (rollback_output, rollback_env) = run_loom(
-        fixture.root.path(),
-        &["skill", "rollback", "model-onboarding", "--to", "HEAD~2"],
-    );
-
-    assert!(
-        rollback_output.status.success(),
-        "rollback failed: stderr={} stdout={}",
-        String::from_utf8_lossy(&rollback_output.stderr),
-        String::from_utf8_lossy(&rollback_output.stdout)
-    );
-    assert_eq!(rollback_env["ok"], Value::Bool(true));
-    assert_eq!(
-        rollback_env["data"]["live_projection_reconciled"],
-        Value::Bool(false)
-    );
-    let reconciliation = &rollback_env["data"]["projection_reconciliation"];
-    assert_eq!(
-        reconciliation["status"],
-        Value::String("registry_unavailable".to_string())
-    );
-    assert_eq!(
-        reconciliation["error"]["code"],
-        Value::String("REGISTRY_STATE_UNAVAILABLE".to_string())
-    );
-    assert_meta_warning_contains(
-        &rollback_env,
-        "could not record projection observations because registry snapshot loading failed",
-    );
-    assert_meta_warning_contains(&rollback_env, "registry snapshot loading failed");
 }

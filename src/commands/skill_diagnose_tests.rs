@@ -6,7 +6,7 @@ use chrono::Utc;
 use serde_json::json;
 use uuid::Uuid;
 
-use crate::cli::SkillOnlyArgs;
+use crate::cli::{SkillDiagnoseArgs, SkillDiagnoseCheck, SkillOnlyArgs};
 use crate::commands::App;
 use crate::state_model::{
     REGISTRY_SCHEMA_VERSION, RegistryBindingRule, RegistryBindingsFile, RegistryOperationRecord,
@@ -26,6 +26,14 @@ fn test_root() -> PathBuf {
 
 fn app(root: &Path) -> App {
     App::new(Some(root.to_path_buf())).expect("app")
+}
+
+fn diagnose_args(skill: &str) -> SkillDiagnoseArgs {
+    SkillDiagnoseArgs {
+        skill: skill.to_string(),
+        agent: None,
+        check: SkillDiagnoseCheck::All,
+    }
 }
 
 fn git(root: &Path, args: &[&str]) {
@@ -157,6 +165,13 @@ fn write_projection_snapshot(
         .expect("checkpoint");
 }
 
+fn read_persisted_projection(root: &Path) -> serde_json::Value {
+    let raw =
+        fs::read_to_string(root.join("state/registry/projections.json")).expect("read projections");
+    let persisted: serde_json::Value = serde_json::from_str(&raw).expect("parse projections");
+    persisted["projections"][0].clone()
+}
+
 #[test]
 fn skill_diagnose_persists_copy_projection_digest_drift() {
     let root = test_root();
@@ -185,9 +200,7 @@ fn skill_diagnose_persists_copy_projection_digest_drift() {
     .expect("drift projection");
 
     let (payload, _) = app(&root)
-        .cmd_skill_diagnose(&SkillOnlyArgs {
-            skill: "demo".to_string(),
-        })
+        .cmd_skill_diagnose(&diagnose_args("demo"))
         .expect("diagnose");
     let digest_check = payload["checks"]
         .as_array()
@@ -199,10 +212,7 @@ fn skill_diagnose_persists_copy_projection_digest_drift() {
     assert_eq!(digest_check["severity"], json!("warning"));
     assert_eq!(digest_check["details"]["status"], json!("drifted"));
 
-    let raw =
-        fs::read_to_string(root.join("state/registry/projections.json")).expect("read projections");
-    let persisted: serde_json::Value = serde_json::from_str(&raw).expect("parse projections");
-    let projection_record = &persisted["projections"][0];
+    let projection_record = read_persisted_projection(&root);
     assert_eq!(projection_record["health"], json!("drifted"));
     assert_eq!(projection_record["observed_drift"], json!(true));
     assert_eq!(
@@ -231,6 +241,108 @@ fn skill_diagnose_persists_copy_projection_digest_drift() {
     assert_eq!(
         status["registry"]["projections"][0]["observation_status"],
         json!("drifted")
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn skill_diagnose_persists_symlink_projection_target_drift() {
+    let root = test_root();
+    write_skill(&root, "demo");
+    commit_all(&root);
+
+    let target = root.join("target");
+    let wrong_target = root.join("wrong-demo");
+    fs::create_dir_all(&target).expect("target");
+    fs::create_dir_all(&wrong_target).expect("wrong target");
+    let link = target.join("demo");
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&wrong_target, &link).expect("symlink");
+    #[cfg(windows)]
+    std::os::windows::fs::symlink_dir(&wrong_target, &link).expect("symlink");
+    write_snapshot(&root, &target, &link, "demo");
+
+    let (payload, _) = app(&root)
+        .cmd_skill_diagnose(&diagnose_args("demo"))
+        .expect("diagnose");
+    let symlink_check = payload["checks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|check| check["id"] == "projection_symlink_target:inst-1")
+        .expect("symlink check");
+    assert_eq!(symlink_check["ok"], json!(false));
+    assert_eq!(symlink_check["severity"], json!("warning"));
+    assert_eq!(symlink_check["details"]["status"], json!("drifted"));
+
+    let projection_record = read_persisted_projection(&root);
+    assert_eq!(projection_record["health"], json!("drifted"));
+    assert_eq!(projection_record["observed_drift"], json!(true));
+    assert_eq!(
+        projection_record["last_observed_error"],
+        json!("symlink_target_mismatch")
+    );
+    let (status, _) = app(&root).cmd_status().expect("status");
+    assert_eq!(
+        status["registry"]["counts"]["drifted_projections"],
+        json!(1)
+    );
+    assert_eq!(
+        status["registry"]["projections"][0]["observation_status"],
+        json!("drifted")
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn skill_diagnose_persists_materialize_projection_missing_live_path() {
+    let root = test_root();
+    write_skill(&root, "demo");
+    commit_all(&root);
+
+    let target = root.join("target");
+    let projection = target.join("demo");
+    fs::create_dir_all(&target).expect("target");
+    write_projection_snapshot(
+        &root,
+        &target,
+        &projection,
+        "demo",
+        crate::core::vocab::ProjectionMethod::Materialize,
+    );
+
+    let (payload, _) = app(&root)
+        .cmd_skill_diagnose(&diagnose_args("demo"))
+        .expect("diagnose");
+    let digest_check = payload["checks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|check| check["id"] == "projection_content_digest:inst-1")
+        .expect("projection digest check");
+    assert_eq!(digest_check["ok"], json!(false));
+    assert_eq!(digest_check["severity"], json!("error"));
+    assert_eq!(digest_check["details"]["status"], json!("missing"));
+    assert_eq!(
+        digest_check["details"]["error"],
+        json!("materialized_missing")
+    );
+
+    let projection_record = read_persisted_projection(&root);
+    assert_eq!(projection_record["health"], json!("missing"));
+    assert_eq!(projection_record["observed_drift"], json!(true));
+    assert_eq!(
+        projection_record["last_observed_error"],
+        json!("materialized_missing")
+    );
+    let (status, _) = app(&root).cmd_status().expect("status");
+    assert_eq!(
+        status["registry"]["counts"]["drifted_projections"],
+        json!(1)
+    );
+    assert_eq!(
+        status["registry"]["projections"][0]["observation_status"],
+        json!("missing")
     );
     let _ = fs::remove_dir_all(root);
 }

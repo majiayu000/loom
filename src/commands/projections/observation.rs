@@ -139,7 +139,7 @@ pub(crate) fn apply_projection_observation_updates(
     }
 }
 
-pub(crate) fn projection_content_observation_check(
+pub(crate) fn projection_observation_check(
     ctx: &AppContext,
     projection: &RegistryProjectionInstance,
 ) -> (Value, ProjectionObservationUpdate) {
@@ -152,16 +152,25 @@ pub(crate) fn projection_content_observation_check(
     } else {
         "error"
     };
+    let (id, ok_message, fail_message) = match projection.method {
+        crate::core::vocab::ProjectionMethod::Symlink => (
+            format!("projection_symlink_target:{}", projection.instance_id),
+            "symlink projection points at source skill",
+            "symlink projection does not point at source skill",
+        ),
+        crate::core::vocab::ProjectionMethod::Copy
+        | crate::core::vocab::ProjectionMethod::Materialize => (
+            format!("projection_content_digest:{}", projection.instance_id),
+            "projection content matches source",
+            "projection content does not match source",
+        ),
+    };
     let check = json!({
         "section": "projection",
-        "id": format!("projection_content_digest:{}", projection.instance_id),
+        "id": id,
         "ok": ok,
         "severity": severity,
-        "message": if ok {
-            "projection content matches source"
-        } else {
-            "projection content does not match source"
-        },
+        "message": if ok { ok_message } else { fail_message },
         "next_action": if ok {
             Value::Null
         } else {

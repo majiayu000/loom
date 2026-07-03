@@ -50,7 +50,7 @@ pub(super) fn normalize_runs(runs: u32) -> std::result::Result<u32, CommandFailu
     }
 }
 
-pub(super) fn persist_report(
+pub(crate) fn persist_report(
     ctx: &AppContext,
     skill: &str,
     mode: &str,

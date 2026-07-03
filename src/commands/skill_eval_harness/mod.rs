@@ -17,9 +17,10 @@ use cases::{
     HarnessTaskCase, HarnessTriggerCase, evaluate_trigger_case, read_harness_jsonl,
     read_harness_jsonl_str, read_required_harness_jsonl, summarize_trigger_results,
 };
+pub(crate) use report::persist_report;
 use report::{
-    cleanup_to_value, ensure_runner_available, eval_failed, persist_report, require_skill,
-    resolve_cases_path, resolve_compare_version, runner_id, security_model,
+    cleanup_to_value, ensure_runner_available, eval_failed, require_skill, resolve_cases_path,
+    resolve_compare_version, runner_id, security_model,
 };
 use runner::{
     EvalPlan, EvalPlanInput, MockAgentRunner, SkillEvalRunner, run_task_baseline,

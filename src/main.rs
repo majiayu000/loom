@@ -224,16 +224,14 @@ fn print_skill_inspect_card(data: &Value) -> bool {
         print!("not checked");
     }
     println!();
-    match data["quality"]["last_eval"].as_str() {
-        Some(last_eval) => println!("Quality:  last eval {last_eval}"),
-        None => println!("Quality:  no eval evidence"),
-    }
+    print_skill_quality(&data["quality"]);
     let trust = safety["trust"].as_str().unwrap_or("unknown");
     let policy = safety["policy"].as_str().unwrap_or("unknown");
-    if trust == policy {
-        println!("Safety:   {trust}");
+    let decision = safety["decision"].as_str().unwrap_or("unknown");
+    if decision == "unknown" {
+        println!("Safety:   trust {trust}, policy {policy}");
     } else {
-        println!("Safety:   {trust}, policy {policy}");
+        println!("Safety:   trust {trust}, policy {policy}, decision {decision}");
     }
     let next = data["next_actions"]
         .as_array()
@@ -241,6 +239,26 @@ fn print_skill_inspect_card(data: &Value) -> bool {
         .unwrap_or("none");
     println!("Next:     {next}");
     true
+}
+
+fn print_skill_quality(quality: &Value) {
+    let status = quality["status"].as_str().unwrap_or("unavailable");
+    let Some(last_eval) = quality["last_eval"].as_str() else {
+        println!("Quality:  {status}");
+        return;
+    };
+    let mut metrics = Vec::new();
+    if let Some(value) = quality["trigger_precision"].as_f64() {
+        metrics.push(format!("precision {value:.2}"));
+    }
+    if let Some(value) = quality["trigger_recall"].as_f64() {
+        metrics.push(format!("recall {value:.2}"));
+    }
+    if metrics.is_empty() {
+        println!("Quality:  {status} at {last_eval}");
+    } else {
+        println!("Quality:  {status} at {last_eval}, {}", metrics.join(", "));
+    }
 }
 
 #[cfg(test)]

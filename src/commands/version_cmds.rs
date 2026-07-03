@@ -7,16 +7,18 @@ use serde_json::{Value, json};
 use crate::cli::{DiffArgs, ReleaseArgs, RollbackArgs};
 use crate::envelope::Meta;
 use crate::gitops;
-use crate::state_model::{RegistryProjectionInstance, RegistrySnapshot, RegistryStatePaths};
+use crate::state_model::RegistryStatePaths;
 use crate::types::ErrorCode;
 
 use super::file_ops::{backup_path_if_exists, restore_path_from_backup};
 use super::helpers::{
     commit_registry_state, ensure_skill_exists, map_arg, map_git, map_lock, map_registry_state,
-    shell_arg, validate_skill_name,
+    validate_skill_name,
 };
-use super::projections::{
-    maybe_autosync_or_queue, record_registry_observation, record_registry_operation,
+use super::projections::{maybe_autosync_or_queue, record_registry_operation};
+use super::rollback_reconciliation::{
+    record_skill_projection_observations, record_skill_projection_observations_for_rollback,
+    rollback_noop_projection_reconciliation, rollback_projection_reconciliation,
 };
 use super::skill_safety::security_diff_report;
 use super::{App, CommandFailure};
@@ -210,8 +212,17 @@ impl App {
         if !changed {
             remove_backup_path_best_effort(skill_backup.as_ref());
             let _ = gitops::restore_index(&self.ctx, &previous_index);
+            let projection_reconciliation = rollback_noop_projection_reconciliation();
             return Ok((
-                json!({"skill": args.skill, "reference": reference, "noop": true}),
+                json!({
+                    "skill": args.skill,
+                    "reference": reference,
+                    "source_restored": false,
+                    "registry_restored": false,
+                    "live_projection_reconciled": true,
+                    "projection_reconciliation": projection_reconciliation,
+                    "noop": true
+                }),
                 Meta::default(),
             ));
         }
@@ -290,15 +301,15 @@ impl App {
                 }),
             )
             .map_err(map_registry_state)?;
-            record_skill_projection_observations(
-                &paths,
-                &args.skill,
-                "rollback",
-                Some(skill_rel.clone()),
-                Some(previous_head.clone()),
-                Some(reference.clone()),
-            )
-            .map_err(map_registry_state)?;
+            let projection_observation_warnings =
+                record_skill_projection_observations_for_rollback(
+                    &paths,
+                    &args.skill,
+                    Some(skill_rel.clone()),
+                    Some(previous_head.clone()),
+                    Some(reference.clone()),
+                )
+                .map_err(map_registry_state)?;
             let state_commit = commit_registry_state(
                 &self.ctx,
                 &format!("rollback({}): record registry operation", args.skill),
@@ -306,6 +317,7 @@ impl App {
             maybe_version_fault("skill_rollback_after_state_commit")?;
             let mut meta = Meta {
                 op_id: Some(op_id),
+                warnings: projection_observation_warnings,
                 ..Meta::default()
             };
             maybe_autosync_or_queue(
@@ -560,218 +572,6 @@ fn maybe_version_fault(tag: &str) -> std::result::Result<(), CommandFailure> {
             ErrorCode::InternalError,
             format!("fault injected at {}", tag),
         ));
-    }
-    Ok(())
-}
-
-fn rollback_projection_reconciliation(
-    ctx: &crate::state::AppContext,
-    paths: &RegistryStatePaths,
-    skill_id: &str,
-) -> (Value, Vec<String>) {
-    if rollback_fault_active("projection_reconciliation_snapshot_load") {
-        return rollback_projection_registry_unavailable(
-            "fault injected at projection_reconciliation_snapshot_load".to_string(),
-        );
-    }
-    match paths.maybe_load_snapshot() {
-        Ok(Some(snapshot)) => {
-            rollback_projection_reconciliation_from_snapshot(ctx, skill_id, &snapshot)
-        }
-        Ok(None) => {
-            let warning = format!(
-                "rollback could not determine live projection reconciliation because registry state is not initialized under {}",
-                paths.registry_dir.display()
-            );
-            (
-                json!({
-                    "status": "registry_missing",
-                    "mode": "recovery_plan_only",
-                    "items": [],
-                    "next_actions": [{
-                        "type": "manual_review_required",
-                        "reason": "registry state is missing; inspect live agent skill directories before assuming rollback updated projected content"
-                    }],
-                    "requires_projection_reapply": false,
-                    "live_projection_reconciled": false,
-                    "error": Value::Null
-                }),
-                vec![warning],
-            )
-        }
-        Err(err) => rollback_projection_registry_unavailable(err.to_string()),
-    }
-}
-
-fn rollback_projection_registry_unavailable(message: String) -> (Value, Vec<String>) {
-    let warning = format!(
-        "rollback could not determine live projection reconciliation because registry snapshot loading failed: {message}"
-    );
-    (
-        json!({
-            "status": "registry_unavailable",
-            "mode": "recovery_plan_only",
-            "items": [],
-            "next_actions": [{
-                "type": "manual_review_required",
-                "reason": "registry snapshot could not be loaded; inspect live agent skill directories before assuming rollback updated projected content"
-            }],
-            "requires_projection_reapply": false,
-            "live_projection_reconciled": false,
-            "error": {
-                "code": "REGISTRY_STATE_UNAVAILABLE",
-                "message": message
-            }
-        }),
-        vec![warning],
-    )
-}
-
-fn rollback_projection_reconciliation_from_snapshot(
-    ctx: &crate::state::AppContext,
-    skill_id: &str,
-    snapshot: &RegistrySnapshot,
-) -> (Value, Vec<String>) {
-    let mut items = Vec::new();
-    let mut next_actions = Vec::new();
-    for projection in snapshot
-        .projections
-        .projections
-        .iter()
-        .filter(|projection| projection.skill_id == skill_id)
-    {
-        let item = rollback_projection_item(ctx, projection);
-        if let Some(action) = item["next_action"].as_object() {
-            next_actions.push(Value::Object(action.clone()));
-        }
-        items.push(item);
-    }
-
-    let reapply_ids = items
-        .iter()
-        .filter(|item| item["requires_projection_reapply"].as_bool() == Some(true))
-        .filter_map(|item| item["instance_id"].as_str().map(ToString::to_string))
-        .collect::<Vec<_>>();
-    let requires_projection_reapply = !reapply_ids.is_empty();
-    let status = if requires_projection_reapply {
-        "requires_reapply"
-    } else {
-        "verified_no_reapply_required"
-    };
-    let warnings = if requires_projection_reapply {
-        vec![format!(
-            "rollback restored source but did not update live copy/materialize projections; run projection_reconciliation.next_actions for: {}",
-            reapply_ids.join(", ")
-        )]
-    } else {
-        Vec::new()
-    };
-
-    (
-        json!({
-            "status": status,
-            "mode": "recovery_plan_only",
-            "items": items,
-            "next_actions": next_actions,
-            "requires_projection_reapply": requires_projection_reapply,
-            "live_projection_reconciled": !requires_projection_reapply,
-            "error": Value::Null
-        }),
-        warnings,
-    )
-}
-
-fn rollback_projection_item(
-    ctx: &crate::state::AppContext,
-    projection: &RegistryProjectionInstance,
-) -> Value {
-    let method = projection.method.as_str();
-    let requires_projection_reapply = method == "copy" || method == "materialize";
-    let live_path_exists = fs::symlink_metadata(&projection.materialized_path).is_ok();
-    let status = if requires_projection_reapply {
-        if live_path_exists {
-            "requires_reapply"
-        } else {
-            "missing_projection_path"
-        }
-    } else {
-        "symlink_noop"
-    };
-    let next_action = if requires_projection_reapply {
-        projection
-            .binding_id
-            .as_deref()
-            .map(|binding_id| {
-                json!({
-                    "type": "command",
-                    "instance_id": projection.instance_id,
-                    "command": rollback_projection_command(ctx, projection, binding_id)
-                })
-            })
-            .unwrap_or_else(|| {
-                json!({
-                    "type": "manual_review_required",
-                    "instance_id": projection.instance_id,
-                    "reason": "projection is orphaned and has no binding_id; inspect or clean the projection manually"
-                })
-            })
-    } else {
-        Value::Null
-    };
-
-    json!({
-        "instance_id": projection.instance_id,
-        "skill_id": projection.skill_id,
-        "binding_id": projection.binding_id,
-        "target_id": projection.target_id,
-        "materialized_path": projection.materialized_path,
-        "method": projection.method,
-        "status": status,
-        "live_path_exists": live_path_exists,
-        "requires_projection_reapply": requires_projection_reapply,
-        "next_action": next_action
-    })
-}
-
-fn rollback_projection_command(
-    ctx: &crate::state::AppContext,
-    projection: &RegistryProjectionInstance,
-    binding_id: &str,
-) -> String {
-    format!(
-        "loom --json --root {} skill project {} --binding {} --target {} --method {}",
-        shell_arg(&ctx.root),
-        shell_arg(&projection.skill_id),
-        shell_arg(binding_id),
-        shell_arg(&projection.target_id),
-        projection.method.as_str()
-    )
-}
-
-fn record_skill_projection_observations(
-    paths: &RegistryStatePaths,
-    skill_id: &str,
-    kind: &str,
-    path: Option<String>,
-    from: Option<String>,
-    to: Option<String>,
-) -> anyhow::Result<()> {
-    if let Some(snapshot) = paths.maybe_load_snapshot()? {
-        for projection in snapshot
-            .projections
-            .projections
-            .iter()
-            .filter(|projection| projection.skill_id == skill_id)
-        {
-            record_registry_observation(
-                paths,
-                &projection.instance_id,
-                kind,
-                path.clone(),
-                from.clone(),
-                to.clone(),
-            )?;
-        }
     }
     Ok(())
 }

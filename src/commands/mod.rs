@@ -22,6 +22,7 @@ mod provenance;
 #[path = "provider_cmds/model.rs"]
 mod provider_cmds;
 mod provision;
+mod rollback_reconciliation;
 mod skill_activation;
 mod skill_authoring;
 mod skill_authoring_apply;

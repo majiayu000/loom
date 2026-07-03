@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
-use std::path::Path;
+use std::path::{Component, Path};
 
 use serde_json::{Value, json};
 
@@ -203,12 +203,17 @@ impl App {
                 },
                 true,
             );
+            let policy_profile = policy_context["policy_profile"]
+                .as_str()
+                .unwrap_or("safe-capture")
+                .to_string();
             let recommendations = recommendation_results(
                 &self.ctx,
                 &args.query,
                 args.agent.as_deref(),
                 args.workspace.as_deref(),
                 mode,
+                &policy_profile,
                 &recommendation_skill_results,
                 &skillsets,
             )?;
@@ -288,6 +293,7 @@ impl App {
             None,
             args.workspace.as_deref(),
             "lexical",
+            "safe-capture",
             &skill_results,
             &skillsets,
         )?;
@@ -391,6 +397,17 @@ fn recommendation_policy_context(
             ),
         ));
     }
+    if let Some(profile) = args.profile.as_deref()
+        && binding.profile_id != profile
+    {
+        return Err(CommandFailure::new(
+            ErrorCode::ArgInvalid,
+            format!(
+                "binding '{}' uses profile '{}' not '{}'",
+                binding.binding_id, binding.profile_id, profile
+            ),
+        ));
+    }
     if let Some(policy_profile) = args.policy_profile.as_deref()
         && binding.policy_profile != policy_profile
     {
@@ -402,25 +419,43 @@ fn recommendation_policy_context(
             ),
         ));
     }
-    if let Some(workspace) = args.workspace.as_deref()
-        && !recommend_binding_matches_workspace(binding, workspace)
-    {
-        return Err(CommandFailure::new(
-            ErrorCode::ArgInvalid,
-            format!(
-                "binding '{}' does not match workspace '{}'",
-                binding.binding_id,
-                workspace.display()
-            ),
-        ));
+    if let Some(workspace) = args.workspace.as_deref() {
+        validate_recommend_workspace_path(workspace)?;
+        if !recommend_binding_matches_workspace(binding, workspace) {
+            return Err(CommandFailure::new(
+                ErrorCode::ArgInvalid,
+                format!(
+                    "binding '{}' does not match workspace '{}'",
+                    binding.binding_id,
+                    workspace.display()
+                ),
+            ));
+        }
     }
     Ok(json!({
         "binding_id": binding.binding_id,
         "agent": binding.agent,
+        "profile": binding.profile_id,
         "policy_profile": binding.policy_profile,
         "active": binding.active,
         "source": "binding",
     }))
+}
+
+fn validate_recommend_workspace_path(workspace: &Path) -> std::result::Result<(), CommandFailure> {
+    if workspace
+        .components()
+        .any(|component| matches!(component, Component::ParentDir))
+    {
+        return Err(CommandFailure::new(
+            ErrorCode::ArgInvalid,
+            format!(
+                "workspace '{}' must not contain parent directory components",
+                workspace.display()
+            ),
+        ));
+    }
+    Ok(())
 }
 
 fn recommend_binding_matches_workspace(
@@ -550,12 +585,15 @@ fn recommendation_results(
     agent: Option<&str>,
     workspace: Option<&Path>,
     mode: &str,
+    policy_profile: &str,
     skill_search_results: &[Value],
     skillsets: &Value,
 ) -> std::result::Result<Vec<Value>, CommandFailure> {
     let mut results = Vec::new();
     for result in skill_search_results {
-        if let Some(recommendation) = skill_recommendation(ctx, result, agent, mode)? {
+        if let Some(recommendation) =
+            skill_recommendation(ctx, result, agent, mode, policy_profile)?
+        {
             results.push(recommendation);
         }
     }
@@ -565,6 +603,7 @@ fn recommendation_results(
         agent,
         workspace,
         mode,
+        policy_profile,
         skill_search_results,
         skillsets,
     )?);
@@ -593,6 +632,7 @@ fn skill_recommendation(
     result: &Value,
     agent: Option<&str>,
     mode: &str,
+    policy_profile: &str,
 ) -> std::result::Result<Option<Value>, CommandFailure> {
     let skill = &result["skill"];
     let Some(skill_id) = skill["skill_id"].as_str() else {
@@ -616,7 +656,7 @@ fn skill_recommendation(
             "source {}",
             skill["source_status"].as_str().unwrap_or("unknown")
         ));
-    } else if let Some(risk) = activation_safety_risk(ctx, skill_id)? {
+    } else if let Some(risk) = activation_safety_risk(ctx, skill_id, policy_profile)? {
         risks.push(risk);
     }
     if !skill["warnings"].as_array().is_none_or(Vec::is_empty) {
@@ -650,6 +690,7 @@ fn skillset_recommendations(
     agent: Option<&str>,
     _workspace: Option<&Path>,
     mode: &str,
+    policy_profile: &str,
     skill_results: &[Value],
     skillsets: &Value,
 ) -> std::result::Result<Vec<Value>, CommandFailure> {
@@ -717,7 +758,9 @@ fn skillset_recommendations(
                     } else if !skill["warnings"].as_array().is_none_or(Vec::is_empty) {
                         required_safe = false;
                         risks.push(format!("{member_kind} member '{skill_id}' warnings"));
-                    } else if let Some(risk) = activation_safety_risk(ctx, skill_id)? {
+                    } else if let Some(risk) =
+                        activation_safety_risk(ctx, skill_id, policy_profile)?
+                    {
                         required_safe = false;
                         risks.push(format!("{member_kind} member '{skill_id}' {risk}"));
                     } else if let Some(agent) = agent {
@@ -766,9 +809,10 @@ fn skillset_recommendations(
 fn activation_safety_risk(
     ctx: &AppContext,
     skill_id: &str,
+    policy_profile: &str,
 ) -> std::result::Result<Option<String>, CommandFailure> {
     let evaluation =
-        evaluate_skill_safety_with_policy(ctx, skill_id, "activate", false, "safe-capture")?;
+        evaluate_skill_safety_with_policy(ctx, skill_id, "activate", false, policy_profile)?;
     if evaluation.report.activation_allowed {
         Ok(None)
     } else {

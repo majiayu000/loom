@@ -225,6 +225,7 @@ pub(crate) fn command_name(command: &Command) -> &'static str {
                 McpRequirementCommand::List(_) => "mcp.requirement.list",
             },
             McpCommand::Plan(_) => "mcp.plan",
+            McpCommand::Apply(_) => "mcp.apply",
             McpCommand::Doctor(_) => "mcp.doctor",
             McpCommand::Catalog { command } => match command {
                 McpCatalogCommand::Search(_) => "mcp.catalog.search",

@@ -190,6 +190,7 @@ pub(crate) fn command_meta(command: &Command) -> CommandMeta {
             | McpCommand::Plan(_)
             | McpCommand::Doctor(_)
             | McpCommand::Catalog { .. } => CommandMeta::new(false, false, false),
+            McpCommand::Apply(_) => CommandMeta::new(true, true, false),
         },
         Command::Provision { command } => match command {
             ProvisionCommand::Plan(_)

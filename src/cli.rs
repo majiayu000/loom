@@ -56,8 +56,8 @@ pub use instruction::{
     InstructionMigrationTarget, InstructionScanArgs, InstructionShowArgs,
 };
 pub use mcp::{
-    McpCatalogCommand, McpCatalogSearchArgs, McpCatalogShowArgs, McpCommand, McpDoctorArgs,
-    McpPlanArgs, McpRequirementCommand, McpRequirementListArgs,
+    McpApplyArgs, McpCatalogCommand, McpCatalogSearchArgs, McpCatalogShowArgs, McpCommand,
+    McpDoctorArgs, McpPlanArgs, McpRequirementCommand, McpRequirementListArgs,
 };
 pub use package::{
     PackageBuildArgs, PackageCommand, PackageFormatArg, PackagePlanArgs, PackageVerifyArgs,
@@ -191,7 +191,7 @@ pub enum Command {
         #[command(subcommand)]
         command: PackageCommand,
     },
-    #[command(about = "Plan MCP server requirements and provisioning without mutation")]
+    #[command(about = "Plan and apply guarded MCP server provisioning")]
     Mcp {
         #[command(subcommand)]
         command: McpCommand,

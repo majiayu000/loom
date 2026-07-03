@@ -4,7 +4,7 @@ use std::fs;
 use std::path::Path;
 
 use chrono::Utc;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use toml_edit::{DocumentMut, Item};
 use uuid::Uuid;
@@ -17,21 +17,27 @@ use crate::envelope::Meta;
 use crate::state::AppContext;
 use crate::types::ErrorCode;
 
+mod apply;
+mod artifact;
 mod config_status;
 mod source_policy;
+mod utils;
+use apply::cmd_mcp_apply;
+use artifact::{MCP_PLAN_SCHEMA, skill_source_digest, write_durable_mcp_plan};
 use config_status::{mcp_config_status, mcp_status_problem};
 use source_policy::{
     catalog_entries, catalog_entry, resolve_source, tool_availability, tool_dependency,
 };
+use utils::digest_str;
 
 use super::codex_config::codex_config_path;
-use super::helpers::{map_arg, validate_skill_name};
+use super::helpers::{map_arg, map_io, validate_skill_name};
 use super::skill_deps::skill_dependency_report;
 use super::skill_deps::support::{contains_word_token, yaml_dependency_values};
 use super::skill_lint::frontmatter::parse_skill_frontmatter;
 use super::{App, CommandFailure};
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct McpRequirement {
     server: String,
     required: bool,
@@ -42,7 +48,7 @@ struct McpRequirement {
     declared_in: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct McpEnvRequirement {
     name: String,
     present: bool,
@@ -52,7 +58,7 @@ struct McpEnvRequirement {
 
 type McpRequirements = (Vec<McpRequirement>, Vec<McpEnvRequirement>, Vec<Value>);
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct McpAction {
     kind: String,
     server: Option<String>,
@@ -68,6 +74,26 @@ struct McpAction {
     details: Value,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct McpPlan {
+    schema_version: String,
+    plan_id: String,
+    created_at: String,
+    skill: String,
+    agent: String,
+    workspace: Option<String>,
+    skill_source_digest: String,
+    requirements: Vec<McpRequirement>,
+    env: Vec<McpEnvRequirement>,
+    resolved_sources: Vec<source_policy::McpResolvedSource>,
+    tool_availability: Vec<Value>,
+    actions: Vec<McpAction>,
+    risk_summary: Value,
+    approvals_required: Vec<String>,
+    findings: Vec<Value>,
+    writes_performed: bool,
+}
+
 impl App {
     pub fn cmd_mcp(
         &self,
@@ -78,6 +104,7 @@ impl App {
                 McpRequirementCommand::List(args) => self.cmd_mcp_requirement_list(args),
             },
             McpCommand::Plan(args) => self.cmd_mcp_plan(args),
+            McpCommand::Apply(args) => cmd_mcp_apply(&self.ctx, args),
             McpCommand::Doctor(args) => self.cmd_mcp_doctor(args),
             McpCommand::Catalog { command } => match command {
                 McpCatalogCommand::Search(args) => self.cmd_mcp_catalog_search(args),
@@ -108,97 +135,35 @@ impl App {
         &self,
         args: &McpPlanArgs,
     ) -> std::result::Result<(Value, Meta), CommandFailure> {
-        let (requirements, env_requirements, mut findings) =
-            collect_mcp_requirements(&self.ctx, &args.skill, Some(&args.agent))?;
-        let mut actions = Vec::new();
-        let mut resolved_sources = Vec::new();
-        let mut approvals = BTreeSet::new();
-        let mut risk_secret_names = BTreeSet::new();
-        let mut external_package = false;
-
-        for req in &requirements {
-            let resolved = resolve_source(req);
-            if let Some(approval) = &resolved.approval_required {
-                approvals.insert(approval.clone());
-            }
-            if resolved.kind == "npm" || resolved.kind == "git" {
-                external_package = true;
-            }
-            let existing = mcp_config_status(&args.agent, req, &resolved, &mut findings)?;
-            actions.push(McpAction {
-                kind: "install_server".to_string(),
-                server: Some(req.server.clone()),
-                safe_to_apply: false,
-                source: Some(resolved.locator.clone()),
-                path: None,
-                diff: None,
-                diff_redacted: true,
-                depends_on: tool_dependency(&resolved),
-                approval_required: resolved.approval_required.clone(),
-                name: None,
-                present: None,
-                details: json!({
-                    "configured": existing,
-                    "policy": resolved.policy,
-                    "transport": req.transport,
-                }),
-            });
-            if let Some(env_name) = &req.auth_env {
-                risk_secret_names.insert(env_name.clone());
-                actions.push(require_env_action(env_name));
-            }
-            resolved_sources.push(resolved);
-        }
-        for env_req in &env_requirements {
-            risk_secret_names.insert(env_req.name.clone());
-            actions.push(require_env_action(&env_req.name));
+        let plan = build_mcp_plan(&self.ctx, args)?;
+        let durable_plan_path = write_durable_mcp_plan(&self.ctx, &plan)?;
+        if let Some(output_plan) = &args.output_plan {
+            let mut body = serde_json::to_string_pretty(&plan).map_err(map_io)?;
+            body.push('\n');
+            crate::fs_util::write_atomic(output_plan, &body).map_err(map_io)?;
         }
 
-        let config_plan_actions = config_actions(&args.agent, &requirements, &mut findings)?;
-        for action in &config_plan_actions {
-            if let Some(approval) = &action.approval_required {
-                approvals.insert(approval.clone());
-            }
+        let mut data = serde_json::to_value(&plan).map_err(map_io)?;
+        if let Some(object) = data.as_object_mut() {
+            object.insert(
+                "durable_plan".to_string(),
+                json!(durable_plan_path.display().to_string()),
+            );
+            object.insert("durable_plan_written".to_string(), json!(true));
+            object.insert(
+                "artifact_written".to_string(),
+                json!(args.output_plan.is_some()),
+            );
+            object.insert(
+                "output_plan".to_string(),
+                json!(
+                    args.output_plan
+                        .as_ref()
+                        .map(|path| path.display().to_string())
+                ),
+            );
         }
-        actions.extend(config_plan_actions);
-        let tool_availability = tool_availability(&resolved_sources);
-        let missing_tools = tool_availability
-            .iter()
-            .filter(|tool| tool["found"] == json!(false))
-            .map(|tool| tool["tool"].as_str().unwrap_or_default().to_string())
-            .collect::<Vec<_>>();
-        for tool in &missing_tools {
-            findings.push(json!({
-                "id": "mcp_tool_missing",
-                "severity": "warning",
-                "message": "MCP server launcher tool is missing",
-                "details": { "tool": tool },
-            }));
-        }
-
-        Ok((
-            json!({
-                "plan_id": format!("mcpplan_{}", Uuid::new_v4().simple()),
-                "created_at": Utc::now(),
-                "skill": args.skill,
-                "agent": args.agent,
-                "workspace": args.workspace.as_ref().map(|path| path.display().to_string()),
-                "requirements": requirements,
-                "resolved_sources": resolved_sources,
-                "tool_availability": tool_availability,
-                "actions": actions,
-                "risk_summary": {
-                    "network_access": !requirements.is_empty(),
-                    "secrets_required": risk_secret_names.into_iter().collect::<Vec<_>>(),
-                    "external_package": external_package,
-                    "config_write_deferred": true,
-                },
-                "approvals_required": approvals.into_iter().collect::<Vec<_>>(),
-                "findings": findings,
-                "writes_performed": false,
-            }),
-            Meta::default(),
-        ))
+        Ok((data, Meta::default()))
     }
 
     fn cmd_mcp_doctor(
@@ -299,6 +264,107 @@ impl App {
         })?;
         Ok((json!({ "entry": entry }), Meta::default()))
     }
+}
+
+fn build_mcp_plan(
+    ctx: &AppContext,
+    args: &McpPlanArgs,
+) -> std::result::Result<McpPlan, CommandFailure> {
+    let (requirements, env_requirements, mut findings) =
+        collect_mcp_requirements(ctx, &args.skill, Some(&args.agent))?;
+    let mut actions = Vec::new();
+    let mut resolved_sources = Vec::new();
+    let mut approvals = BTreeSet::new();
+    let mut risk_secret_names = BTreeSet::new();
+    let mut external_package = false;
+
+    for req in &requirements {
+        let resolved = resolve_source(req);
+        if let Some(approval) = &resolved.approval_required {
+            approvals.insert(approval.clone());
+        }
+        if resolved.kind == "npm" || resolved.kind == "git" {
+            external_package = true;
+        }
+        let existing = mcp_config_status(&args.agent, req, &resolved, &mut findings)?;
+        actions.push(McpAction {
+            kind: "install_server".to_string(),
+            server: Some(req.server.clone()),
+            safe_to_apply: false,
+            source: Some(resolved.locator.clone()),
+            path: None,
+            diff: None,
+            diff_redacted: true,
+            depends_on: tool_dependency(&resolved),
+            approval_required: resolved.approval_required.clone(),
+            name: None,
+            present: None,
+            details: json!({
+                "configured": existing,
+                "policy": resolved.policy,
+                "transport": req.transport,
+            }),
+        });
+        if let Some(env_name) = &req.auth_env {
+            risk_secret_names.insert(env_name.clone());
+            actions.push(require_env_action(env_name));
+        }
+        resolved_sources.push(resolved);
+    }
+    for env_req in &env_requirements {
+        risk_secret_names.insert(env_req.name.clone());
+        actions.push(require_env_action(&env_req.name));
+    }
+
+    let config_plan_actions = config_actions(&args.agent, &requirements, &mut findings)?;
+    for action in &config_plan_actions {
+        if let Some(approval) = &action.approval_required {
+            approvals.insert(approval.clone());
+        }
+    }
+    actions.extend(config_plan_actions);
+    let network_access = !requirements.is_empty();
+    let tool_availability = tool_availability(&resolved_sources);
+    let missing_tools = tool_availability
+        .iter()
+        .filter(|tool| tool["found"] == json!(false))
+        .map(|tool| tool["tool"].as_str().unwrap_or_default().to_string())
+        .collect::<Vec<_>>();
+    for tool in &missing_tools {
+        findings.push(json!({
+            "id": "mcp_tool_missing",
+            "severity": "warning",
+            "message": "MCP server launcher tool is missing",
+            "details": { "tool": tool },
+        }));
+    }
+
+    Ok(McpPlan {
+        schema_version: MCP_PLAN_SCHEMA.to_string(),
+        plan_id: format!("mcpplan_{}", Uuid::new_v4().simple()),
+        created_at: Utc::now().to_rfc3339(),
+        skill: args.skill.clone(),
+        agent: args.agent.clone(),
+        workspace: args
+            .workspace
+            .as_ref()
+            .map(|path| path.display().to_string()),
+        skill_source_digest: skill_source_digest(&ctx.skill_path(&args.skill))?,
+        requirements,
+        env: env_requirements,
+        resolved_sources,
+        tool_availability,
+        actions,
+        risk_summary: json!({
+            "network_access": network_access,
+            "secrets_required": risk_secret_names.into_iter().collect::<Vec<_>>(),
+            "external_package": external_package,
+            "config_write_deferred": true,
+        }),
+        approvals_required: approvals.into_iter().collect::<Vec<_>>(),
+        findings,
+        writes_performed: false,
+    })
 }
 
 fn collect_mcp_requirements(
@@ -636,6 +702,7 @@ fn config_actions(
             .collect());
     }
     let path = codex_config_path()?;
+    let preimage_digest = codex_config_preimage_digest(&path)?;
     let mut actions = Vec::new();
     for req in requirements {
         actions.push(McpAction {
@@ -662,7 +729,11 @@ fn config_actions(
             approval_required: Some("write-agent-mcp-config".to_string()),
             name: None,
             present: None,
-            details: json!({"agent": "codex", "config_exists": path.is_file()}),
+            details: json!({
+                "agent": "codex",
+                "config_exists": path.is_file(),
+                "preimage_digest": preimage_digest,
+            }),
         });
     }
     if requirements.is_empty() {
@@ -673,6 +744,16 @@ fn config_actions(
         }));
     }
     Ok(actions)
+}
+
+fn codex_config_preimage_digest(
+    path: &Path,
+) -> std::result::Result<Option<String>, CommandFailure> {
+    match fs::read_to_string(path) {
+        Ok(raw) => Ok(Some(digest_str(&raw))),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(err) => Err(map_io(err)),
+    }
 }
 
 fn require_env_action(name: &str) -> McpAction {

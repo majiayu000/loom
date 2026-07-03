@@ -12,6 +12,8 @@ pub enum McpCommand {
     },
     #[command(about = "Create a read-only MCP provisioning plan")]
     Plan(McpPlanArgs),
+    #[command(about = "Apply a reviewed MCP provisioning plan with explicit gates")]
+    Apply(McpApplyArgs),
     #[command(about = "Diagnose MCP provisioning readiness without mutation")]
     Doctor(McpDoctorArgs),
     #[command(about = "Search and inspect known MCP server catalog entries")]
@@ -46,6 +48,20 @@ pub struct McpPlanArgs {
 
     #[arg(long)]
     pub workspace: Option<PathBuf>,
+
+    #[arg(long)]
+    pub output_plan: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone, Args, Serialize)]
+pub struct McpApplyArgs {
+    pub plan: String,
+
+    #[arg(long)]
+    pub idempotency_key: String,
+
+    #[arg(long = "approve")]
+    pub approvals: Vec<String>,
 }
 
 #[derive(Debug, Clone, Args, Serialize)]

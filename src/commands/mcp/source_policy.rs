@@ -1,6 +1,6 @@
 use std::collections::BTreeSet;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use super::McpRequirement;
@@ -17,7 +17,7 @@ pub(super) struct McpCatalogEntry {
     pub(super) permissions: &'static [&'static str],
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct McpResolvedSource {
     pub(super) server: String,
     pub(super) locator: String,

@@ -26,7 +26,7 @@ agent config mutation without explicit apply
 - [ ] `SP386-T2` Owner: implementation | Done when: MCP requirement parser reads `loom.skill.toml`, `SKILL.md` metadata, and agent metadata without exposing secret values | Verify: `cargo test --test mcp_provisioning`
 - [ ] `SP386-T3` Owner: implementation | Done when: catalog/source policy parses scoped npm locators, rejects unpinned sources before approval unless resolved to immutable source, and approval-gates unknown pinned MCP server sources | Verify: `cargo test --test mcp_provisioning`
 - [ ] `SP386-T4` Owner: implementation | Done when: `mcp plan` returns missing and existing servers, adapter-supported config diffs or manual mode, env names, risk summary, and RBAC approval requirements without writes | Verify: `cargo test --test mcp_provisioning`
-- [ ] `SP386-T5` Owner: deferred-apply | Deferred until plan semantics are stable; done when `mcp apply` loads a durable plan event or explicit artifact, revalidates plans, requires idempotency/approvals, writes atomically, and preserves user config | Verify: `cargo test --test mcp_provisioning`
+- [ ] `SP386-T5` Owner: implementation | Done when: `mcp apply` loads a durable plan event or explicit artifact, revalidates plans, requires idempotency/approvals, writes atomically, and preserves user config | Verify: `cargo test --test mcp_provisioning`
 - [ ] `SP386-T6` Owner: implementation | Done when: `mcp doctor` and `skill diagnose` include provisioning next actions from the readiness read model | Verify: `cargo test --test mcp_provisioning`
 
 ### SP386-T1: Add CLI Surface

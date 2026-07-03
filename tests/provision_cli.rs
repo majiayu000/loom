@@ -695,7 +695,7 @@ fn provision_doctor_is_read_only_and_reports_missing_generated_files() {
 }
 
 #[test]
-fn provision_apply_requires_reviewed_artifact_path() {
+fn provision_apply_rejects_unknown_reviewed_plan_id() {
     let root = TestDir::new("provision-apply-root");
 
     let (output, env) = run_loom(
@@ -716,7 +716,7 @@ fn provision_apply_requires_reviewed_artifact_path() {
         env["error"]["message"]
             .as_str()
             .unwrap()
-            .contains("reviewed plan artifact path")
+            .contains("reviewed plan was not found")
     );
     assert_eq!(
         env["error"]["details"]["target_writes_performed"],

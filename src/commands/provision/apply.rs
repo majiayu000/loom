@@ -14,7 +14,7 @@ use crate::gitops;
 use crate::state::AppContext;
 use crate::types::ErrorCode;
 
-use super::artifact::load_provision_plan_artifact;
+use super::artifact::load_reviewed_provision_plan;
 use super::model::{ProvisionFilePlan, ProvisionPlan};
 use super::utils::{digest_bytes, digest_json, digest_str, normalize_clone_url};
 
@@ -49,7 +49,7 @@ pub(super) fn cmd_provision_apply(
     args: &ProvisionApplyArgs,
 ) -> std::result::Result<(Value, Meta), CommandFailure> {
     validate_non_empty("idempotency-key", &args.idempotency_key)?;
-    let plan = load_apply_plan(&args.plan)?;
+    let plan = load_apply_plan(ctx, &args.plan)?;
     ensure_supported_plan(&plan)?;
     validate_approvals(&plan, &args.approvals)?;
 
@@ -152,17 +152,11 @@ pub(super) fn cmd_provision_apply(
     ))
 }
 
-fn load_apply_plan(raw: &str) -> std::result::Result<ProvisionPlan, CommandFailure> {
-    if Path::new(raw).is_file() {
-        return load_provision_plan_artifact(raw);
-    }
-    Err(policy_blocked(
-        "provision apply currently requires an explicit reviewed plan artifact path",
-        json!({
-            "plan": raw,
-            "target_writes_performed": false,
-        }),
-    ))
+fn load_apply_plan(
+    ctx: &AppContext,
+    raw: &str,
+) -> std::result::Result<ProvisionPlan, CommandFailure> {
+    load_reviewed_provision_plan(ctx, raw)
 }
 
 fn ensure_supported_plan(plan: &ProvisionPlan) -> std::result::Result<(), CommandFailure> {

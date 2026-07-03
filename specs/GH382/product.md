@@ -39,6 +39,13 @@ loom provision export <plan-id|plan-artifact> --format devcontainer|shell|tar --
 loom provision import <artifact> --dry-run
 ```
 
+Closeout split: `plan-id` resolves through Loom's durable reviewed plan store,
+so apply/export/doctor can replay reviewed content without regenerating from the
+current registry state. `export --format devcontainer` remains fail-closed until
+a separate artifact contract defines whether `<path>` is a directory, archive,
+or devcontainer-feature payload; GH382 currently treats shell and tar as the
+portable export formats.
+
 ## Target Kinds
 
 Initial target kinds:
@@ -78,7 +85,7 @@ Initial target kinds:
 
 `provision apply` must:
 
-- Revalidate the reviewed plan or plan artifact; apply must not regenerate
+- Revalidate the reviewed plan id or plan artifact; apply must not regenerate
   unreviewed file content from current state.
 - Revalidate target-file preimage digests before writing so user edits after plan
   creation fail as drift instead of being overwritten.

@@ -1,11 +1,13 @@
 use std::collections::BTreeMap;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use serde_json::{Value, json};
 
 use crate::commands::CommandFailure;
 use crate::commands::helpers::map_io;
+use crate::fs_util::write_atomic;
+use crate::state::AppContext;
 use crate::types::ErrorCode;
 
 use super::model::{PROVISION_PLAN_SCHEMA, ProvisionPlan};
@@ -37,11 +39,60 @@ pub(super) struct ProvisionArtifactInspection {
     pub planned_files: Value,
 }
 
+pub(super) fn write_durable_provision_plan(
+    ctx: &AppContext,
+    plan: &ProvisionPlan,
+) -> Result<PathBuf, CommandFailure> {
+    let path = durable_plan_path(ctx, &plan.plan_id)?;
+    let mut raw = serde_json::to_string_pretty(plan).map_err(map_io)?;
+    raw.push('\n');
+    write_atomic(&path, &raw).map_err(map_io)?;
+    Ok(path)
+}
+
+pub(super) fn load_reviewed_provision_plan(
+    ctx: &AppContext,
+    plan: &str,
+) -> Result<ProvisionPlan, CommandFailure> {
+    load_reviewed_provision_plan_with_source(ctx, plan).map(|(plan, _source)| plan)
+}
+
+pub(super) fn load_reviewed_provision_plan_with_source(
+    ctx: &AppContext,
+    plan: &str,
+) -> Result<(ProvisionPlan, &'static str), CommandFailure> {
+    let path = Path::new(plan);
+    if path.is_file() {
+        return load_provision_plan_artifact(plan).map(|plan| (plan, "artifact"));
+    }
+
+    let durable_path = durable_plan_path(ctx, plan)?;
+    if !durable_path.is_file() {
+        return Err(reviewed_plan_not_found(plan));
+    }
+    let loaded = load_plan_file(&durable_path)?;
+    if loaded.plan_id != plan {
+        return Err(CommandFailure::new(
+            ErrorCode::StateCorrupt,
+            format!(
+                "durable provision plan '{}' contains mismatched plan_id '{}'",
+                durable_path.display(),
+                loaded.plan_id
+            ),
+        ));
+    }
+    Ok((loaded, "durable-plan"))
+}
+
 pub(super) fn load_provision_plan_artifact(plan: &str) -> Result<ProvisionPlan, CommandFailure> {
     let path = Path::new(plan);
     if !path.is_file() {
-        return Err(deferred_plan_id(plan));
+        return Err(reviewed_plan_not_found(plan));
     }
+    load_plan_file(path)
+}
+
+fn load_plan_file(path: &Path) -> Result<ProvisionPlan, CommandFailure> {
     let raw = fs::read_to_string(path).map_err(map_io)?;
     let plan: ProvisionPlan = serde_json::from_str(&raw)
         .map_err(|err| CommandFailure::new(ErrorCode::ArgInvalid, err.to_string()))?;
@@ -210,10 +261,34 @@ fn invalid_artifact(message: impl Into<String>) -> CommandFailure {
     CommandFailure::new(ErrorCode::ArgInvalid, message.into())
 }
 
-fn deferred_plan_id(plan: &str) -> CommandFailure {
+fn durable_plan_path(ctx: &AppContext, plan_id: &str) -> Result<PathBuf, CommandFailure> {
+    validate_plan_id(plan_id)?;
+    Ok(ctx
+        .state_dir
+        .join("provision")
+        .join("plans")
+        .join(format!("{plan_id}.json")))
+}
+
+fn validate_plan_id(plan_id: &str) -> Result<(), CommandFailure> {
+    if plan_id.is_empty()
+        || plan_id.len() > 128
+        || !plan_id
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_'))
+    {
+        return Err(CommandFailure::new(
+            ErrorCode::ArgInvalid,
+            "provision plan id must match [A-Za-z0-9_-]{1,128}",
+        ));
+    }
+    Ok(())
+}
+
+fn reviewed_plan_not_found(plan: &str) -> CommandFailure {
     let mut failure = CommandFailure::new(
         ErrorCode::PolicyBlocked,
-        "provision export currently requires an explicit reviewed plan artifact path",
+        "provision reviewed plan was not found; pass a plan artifact path or durable plan id produced by provision plan",
     );
     failure.details = json!({
         "plan": plan,

@@ -741,6 +741,7 @@ Rules:
 ```bash
 loom --json --root <root> skill provenance inspect <skill-id>
 loom --json --root <root> skill provenance verify <skill-id>
+loom --json --root <root> skill provenance outdated [<skill-id>] [--plan]
 loom --json --root <root> skill provenance refresh <skill-id>
 ```
 
@@ -750,10 +751,15 @@ Rules:
 
 1. `inspect` is read-only and returns the recorded `sources.json` entry plus the matching `loom.lock` entry
 2. `verify` is read-only and compares the current canonical skill digest against both recorded provenance and `loom.lock`
-3. `refresh` is a write command; it recomputes the current canonical skill digest, updates `state/registry/sources.json` and `loom.lock`, and commits only provenance artifacts
-4. `refresh` must not mutate projection state, target directories, binding rules, or live agent skill directories
-5. `loom.lock` is generated from sorted source records so repeated writes are deterministic
-6. missing skill sources return `SKILL_NOT_FOUND`; missing provenance records return `STATE_NOT_INITIALIZED`
+3. `outdated` is read-only and reports provider-backed records whose pinned refs differ from provider heads or current local provider digests
+4. `outdated` rows include `skill_id`, `provider`, `current_ref`, `current_digest`, `candidate_ref`, `candidate_digest`, `candidate_trust`, `status`, `risk`, and `next_actions`
+5. `outdated` status values are `up_to_date`, `outdated`, `unreachable`, `unpinned_candidate`, and `invalid_source`; provider failures must be reported as `unreachable`, not silently treated as clean
+6. `outdated --plan` emits a JSON re-pin plan with `mutates=false` and `apply_required=true`; it must not edit skill content, `sources.json`, `loom.lock`, projection state, target directories, binding rules, Git refs, or live agent skill directories
+7. unpinned provider heads are advisory only until resolved to immutable commit SHAs or `sha256:<digest>` refs
+8. `refresh` is a write command; it recomputes the current canonical skill digest, updates `state/registry/sources.json` and `loom.lock`, and commits only provenance artifacts
+9. `refresh` must not mutate projection state, target directories, binding rules, or live agent skill directories
+10. `loom.lock` is generated from sorted source records so repeated writes are deterministic
+11. missing skill sources return `SKILL_NOT_FOUND`; missing provenance records return `STATE_NOT_INITIALIZED`
 
 ### 11.2 `skill import-observed`
 
@@ -1078,6 +1084,48 @@ Success response should include:
 
 1. `recovery_ref`
 2. resulting source revision
+3. `source_restored: true`
+4. `registry_restored: true`
+5. `live_projection_reconciled`
+6. `projection_reconciliation`
+
+Rules:
+
+1. rollback restores the canonical source and records registry audit state; it
+   does not silently claim that live agent projections were updated
+2. copy and materialize projections default to `recovery_plan_only`; rollback
+   reports them as `requires_projection_reapply=true` until the user runs the
+   returned recovery command
+3. existing symlink projections are reported as `symlink_noop` only when the
+   projection path is a symlink that resolves to the restored source; missing,
+   dangling, wrong-target, or non-symlink paths are reported with a reapply
+   command
+4. `projection_reconciliation.items[]` includes `instance_id`, `skill_id`,
+   `binding_id`, `target_id`, `materialized_path`, `method`, `status`,
+   `live_path_exists`, `requires_projection_reapply`, and `next_action`
+5. `projection_reconciliation.next_actions[]` contains exact executable
+   `loom --json --root <root> skill project <skill-id> --binding <binding-id>
+   --target <target-id> --method <method>` commands when Loom can reapply a
+   projection safely, or `manual_review_required` when registry evidence is
+   missing or the projection was produced by compiled activation
+6. compiled activation projections are reported with `compiled_activation`
+   evidence and a `manual_review_required` action; Loom must not emit a raw
+   `skill project --method materialize` recovery command for them because that
+   would replace the compiled artifact view with source materialization
+7. if registry snapshot loading fails after rollback, the response keeps
+   `ok=true` for the source rollback but sets
+   `projection_reconciliation.status="registry_unavailable"`, includes a
+   structured `error`, sets `live_projection_reconciled=false`, and adds a
+   warning to `meta.warnings`
+8. no-op rollback success returns `source_restored=false` and
+   `registry_restored=false`; when registry state already exists, rollback still
+   evaluates registered live projections before setting
+   `live_projection_reconciled`, and when registry state is absent it returns
+   `projection_reconciliation.status="noop"` without initializing registry state
+9. if registry state was absent before a non-noop rollback, rollback records
+   audit state but reports `projection_reconciliation.status="registry_missing"`
+   and `live_projection_reconciled=false` because there was no pre-existing
+   projection evidence to verify
 
 ### 11.10 `skill diff`
 

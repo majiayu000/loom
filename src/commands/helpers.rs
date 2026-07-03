@@ -164,6 +164,7 @@ pub(crate) fn command_name(command: &Command) -> &'static str {
             SkillCommand::Provenance { command } => match command {
                 crate::cli::SkillProvenanceCommand::Inspect(_) => "skill.provenance.inspect",
                 crate::cli::SkillProvenanceCommand::Verify(_) => "skill.provenance.verify",
+                crate::cli::SkillProvenanceCommand::Outdated(_) => "skill.provenance.outdated",
                 crate::cli::SkillProvenanceCommand::Refresh(_) => "skill.provenance.refresh",
             },
             SkillCommand::Trash {

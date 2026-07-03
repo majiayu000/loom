@@ -170,7 +170,8 @@ impl App {
             None
         };
         let compiled = compiled_artifact_summary(&self.ctx, &args.skill)?;
-        let quality = build_quality_evidence(&self.ctx, &args.skill, source_exists);
+        let quality =
+            build_quality_evidence(&self.ctx, &args.skill, source_exists, &source.drifted_paths);
         let safety = build_safety_evidence(
             &self.ctx,
             &args.skill,

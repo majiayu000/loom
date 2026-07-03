@@ -20,12 +20,17 @@ struct EvalCandidate {
     modified: SystemTime,
 }
 
-pub(super) fn build_quality_evidence(ctx: &AppContext, skill: &str, source_exists: bool) -> Value {
+pub(super) fn build_quality_evidence(
+    ctx: &AppContext,
+    skill: &str,
+    source_exists: bool,
+    source_drifted_paths: &[String],
+) -> Value {
     if !source_exists {
         return quality_unavailable("skill source directory is missing");
     }
     match latest_eval_candidate(&ctx.state_dir.join("registry/evals").join(skill)) {
-        Ok(Some(candidate)) => quality_from_report(ctx, skill, candidate),
+        Ok(Some(candidate)) => quality_from_report(ctx, skill, candidate, source_drifted_paths),
         Ok(None) => quality_not_run(),
         Err(err) => quality_unavailable(err),
     }
@@ -80,7 +85,12 @@ pub(super) fn build_safety_evidence(
     }
 }
 
-fn quality_from_report(ctx: &AppContext, skill: &str, candidate: EvalCandidate) -> Value {
+fn quality_from_report(
+    ctx: &AppContext,
+    skill: &str,
+    candidate: EvalCandidate,
+    source_drifted_paths: &[String],
+) -> Value {
     let raw = match fs::read_to_string(&candidate.path) {
         Ok(raw) => raw,
         Err(err) => {
@@ -109,7 +119,8 @@ fn quality_from_report(ctx: &AppContext, skill: &str, candidate: EvalCandidate) 
         }
     }
     let current_version = skill_eval_version(ctx, skill);
-    let stale = report_version_stale(&report, &current_version);
+    let dirty_source_stale = !source_drifted_paths.is_empty();
+    let stale = dirty_source_stale || report_version_stale(&report, &current_version);
     let no_cases = summary.get("case_count").and_then(Value::as_u64) == Some(0);
     let missing_pass_fail = summary.get("failed").and_then(Value::as_u64).is_none();
     let no_trigger_metrics =
@@ -122,7 +133,9 @@ fn quality_from_report(ctx: &AppContext, skill: &str, candidate: EvalCandidate) 
         "passed"
     };
     let status = if stale { "stale" } else { report_status };
-    let evidence_error = if stale {
+    let evidence_error = if dirty_source_stale {
+        json!("eval report is stale because skill source has working tree drift")
+    } else if stale {
         json!("eval report skill_version does not match current skill source")
     } else if no_cases {
         json!("eval report contains no executed cases")

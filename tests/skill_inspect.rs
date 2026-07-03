@@ -119,6 +119,25 @@ fn git_init(path: &Path) {
     );
 }
 
+fn git(path: &Path, args: &[&str]) {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(path)
+        .arg("-c")
+        .arg("commit.gpgsign=false")
+        .arg("-c")
+        .arg("tag.gpgSign=false")
+        .args(args)
+        .output()
+        .expect("run git");
+    assert!(
+        output.status.success(),
+        "git {args:?} failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
 #[test]
 fn skill_inspect_missing_skill_returns_typed_error() {
     let root = TestDir::new("skill-inspect-missing");
@@ -356,6 +375,53 @@ fn skill_inspect_reads_default_offline_eval_report() {
             .as_str()
             .is_some_and(|path| path.ends_with("state/registry/evals/demo/offline-latest.json")),
         "inspect should read default eval evidence: {env}"
+    );
+}
+
+#[test]
+fn skill_inspect_marks_eval_stale_when_skill_source_dirty() {
+    let root = TestDir::new("skill-inspect-dirty-eval-stale");
+    write_good_skill(root.path(), "demo");
+    write_file(
+        &root.path().join("skills/demo/evals/triggers.jsonl"),
+        r#"{"id":"positive","prompt":"use demo","should_trigger":true}
+"#,
+    );
+    git(root.path(), &["init", "-b", "main"]);
+    git(root.path(), &["add", "skills"]);
+    git(
+        root.path(),
+        &[
+            "-c",
+            "user.name=loom",
+            "-c",
+            "user.email=loom@example.invalid",
+            "commit",
+            "-m",
+            "seed skill",
+        ],
+    );
+    let (output, eval) = run_loom(root.path(), &["skill", "eval", "demo", "--agent", "codex"]);
+    assert!(output.status.success(), "eval should pass: {eval}");
+
+    write_file(
+        &root.path().join("skills/demo/SKILL.md"),
+        "---\nname: demo\ndescription: Use when an agent needs to inspect one changed skill lifecycle status.\n---\n# Demo\nUpdated source.\n",
+    );
+    let (output, env) = run_loom(root.path(), &["skill", "inspect", "demo"]);
+
+    assert!(output.status.success(), "inspect should pass: {env}");
+    assert_eq!(
+        env["data"]["source"]["working_tree_drift"],
+        Value::Bool(true)
+    );
+    assert_eq!(env["data"]["quality"]["status"], json!("stale"));
+    assert_eq!(env["data"]["quality"]["last_eval_status"], json!("passed"));
+    assert!(
+        env["data"]["quality"]["evidence_error"]
+            .as_str()
+            .is_some_and(|message| message.contains("working tree drift")),
+        "dirty source evidence should explain the stale reason: {env}"
     );
 }
 

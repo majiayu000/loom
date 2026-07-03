@@ -123,7 +123,10 @@ pub(crate) fn command_meta(command: &Command) -> CommandMeta {
             | SkillCommand::Policy(_)
             | SkillCommand::Scan(_)
             | SkillCommand::Provenance {
-                command: SkillProvenanceCommand::Inspect(_) | SkillProvenanceCommand::Verify(_),
+                command:
+                    SkillProvenanceCommand::Inspect(_)
+                    | SkillProvenanceCommand::Verify(_)
+                    | SkillProvenanceCommand::Outdated(_),
             }
             | SkillCommand::Orphan {
                 command: SkillOrphanCommand::List,

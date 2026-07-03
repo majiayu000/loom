@@ -32,6 +32,14 @@ pub struct SkillSearchArgs {
     #[arg(long)]
     pub workspace: Option<PathBuf>,
 
+    /// Policy binding context used to disambiguate recommendation output.
+    #[arg(long)]
+    pub binding: Option<String>,
+
+    /// Policy profile context used when no binding is selected.
+    #[arg(long = "policy-profile")]
+    pub policy_profile: Option<String>,
+
     /// Restrict results to skills with an active projection record.
     #[arg(long)]
     pub active: bool,

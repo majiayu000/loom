@@ -221,6 +221,76 @@ fn provision_apply_writes_reviewed_files_and_replays_idempotently() {
 }
 
 #[test]
+fn provision_apply_loads_reviewed_plan_id_without_regenerating() {
+    let root = TestDir::new("provision-apply-plan-id-root");
+    let workspace = TestDir::new("provision-apply-plan-id-workspace");
+    write_skill(
+        root.path(),
+        "demo",
+        "---\nname: demo\ndescription: Demo.\n---\n# Demo\n",
+    );
+    write_codex_registry_state(&root, &workspace);
+    seed_git(&root);
+
+    let workspace_arg = workspace.path().to_string_lossy().to_string();
+    let (plan_output, plan_env) = run_loom(
+        root.path(),
+        &[
+            "provision",
+            "plan",
+            "--target",
+            "devcontainer",
+            "--workspace",
+            &workspace_arg,
+        ],
+    );
+    assert!(
+        plan_output.status.success(),
+        "provision plan failed: {plan_env}"
+    );
+    let plan_id = plan_env["data"]["plan"]["plan_id"]
+        .as_str()
+        .expect("plan id")
+        .to_string();
+    assert!(
+        root.path()
+            .join(format!("state/provision/plans/{plan_id}.json"))
+            .is_file(),
+        "plan command should persist a reviewed durable plan"
+    );
+
+    write_file(
+        &root.path().join("state/registry/rules.json"),
+        r#"{"schema_version":1,"rules":[]}
+"#,
+    );
+
+    let (output, env) = run_loom(
+        root.path(),
+        &[
+            "provision",
+            "apply",
+            &plan_id,
+            "--idempotency-key",
+            "key-plan-id",
+            "--approve",
+            "approval:provision-apply",
+        ],
+    );
+
+    assert!(output.status.success(), "plan-id apply failed: {env}");
+    assert_eq!(env["cmd"], json!("provision.apply"));
+    assert_eq!(env["data"]["plan_id"], json!(plan_id));
+    assert_eq!(env["data"]["target_writes_performed"], json!(true));
+    assert!(
+        fs::read_to_string(workspace.path().join(".devcontainer/loom-setup.sh"))
+            .expect("read setup")
+            .contains("$ACTIVE_VIEW/demo/SKILL.md"),
+        "apply must replay reviewed plan content instead of regenerating from changed state"
+    );
+}
+
+#[test]
 fn provision_apply_requires_reviewed_approval_token() {
     let root = TestDir::new("provision-apply-approval-root");
     let workspace = TestDir::new("provision-apply-approval-workspace");

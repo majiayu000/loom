@@ -123,6 +123,13 @@ The following 23 routes are the complete mutation surface for phase 1. Every row
 
 Command-surface budget: top-level CLI commands must stay at or below 28, and `loom skill` leaf commands must stay at or below 40. Adding a leaf requires removing one existing leaf or recording an ADR exception with the owner and sunset condition.
 
+ADR exception: GH378 adds `skill.recommend` and `skill.resolve`, bringing the
+`loom skill` leaf count to 42. Owner: GH378 capability graph/recommendation
+workstream. Sunset condition: remove this exception when the next command
+surface consolidation either retires two legacy `skill` leaves or moves
+recommendation/resolve behavior under a single grouped discovery command without
+breaking the documented GH378 compatibility surface.
+
 | cmd name                 | HTTP | path                                    | CLI command                  |
 |--------------------------|------|-----------------------------------------|------------------------------|
 | workspace.init           | POST | /api/v1/workspace/init                        | Workspace::Init              |

@@ -23,7 +23,14 @@ pub(crate) fn rollback_projection_reconciliation(
     ctx: &crate::state::AppContext,
     paths: &RegistryStatePaths,
     skill_id: &str,
+    registry_existed_before: bool,
 ) -> (Value, Vec<String>) {
+    if !registry_existed_before {
+        return rollback_projection_registry_missing(
+            paths,
+            "registry state was not initialized before rollback",
+        );
+    }
     if rollback_fault_active("projection_reconciliation_snapshot_load") {
         return rollback_projection_registry_unavailable(
             "fault injected at projection_reconciliation_snapshot_load".to_string(),
@@ -33,29 +40,34 @@ pub(crate) fn rollback_projection_reconciliation(
         Ok(Some(snapshot)) => {
             rollback_projection_reconciliation_from_snapshot(ctx, skill_id, &snapshot)
         }
-        Ok(None) => {
-            let warning = format!(
-                "rollback could not determine live projection reconciliation because registry state is not initialized under {}",
-                paths.registry_dir.display()
-            );
-            (
-                json!({
-                    "status": "registry_missing",
-                    "mode": "recovery_plan_only",
-                    "items": [],
-                    "next_actions": [{
-                        "type": "manual_review_required",
-                        "reason": "registry state is missing; inspect live agent skill directories before assuming rollback updated projected content"
-                    }],
-                    "requires_projection_reapply": false,
-                    "live_projection_reconciled": false,
-                    "error": Value::Null
-                }),
-                vec![warning],
-            )
-        }
+        Ok(None) => rollback_projection_registry_missing(paths, "registry state is missing"),
         Err(err) => rollback_projection_registry_unavailable(err.to_string()),
     }
+}
+
+fn rollback_projection_registry_missing(
+    paths: &RegistryStatePaths,
+    reason: &str,
+) -> (Value, Vec<String>) {
+    let warning = format!(
+        "rollback could not determine live projection reconciliation because {reason} under {}",
+        paths.registry_dir.display()
+    );
+    (
+        json!({
+            "status": "registry_missing",
+            "mode": "recovery_plan_only",
+            "items": [],
+            "next_actions": [{
+                "type": "manual_review_required",
+                "reason": "registry state is missing; inspect live agent skill directories before assuming rollback updated projected content"
+            }],
+            "requires_projection_reapply": false,
+            "live_projection_reconciled": false,
+            "error": Value::Null
+        }),
+        vec![warning],
+    )
 }
 
 fn rollback_projection_registry_unavailable(message: String) -> (Value, Vec<String>) {
@@ -142,7 +154,7 @@ fn rollback_projection_item(
 ) -> Value {
     let method = projection.method.as_str();
     let content_projection = method == "copy" || method == "materialize";
-    let live_path_exists = fs::symlink_metadata(&projection.materialized_path).is_ok();
+    let live_path_exists = fs::metadata(&projection.materialized_path).is_ok();
     let requires_projection_reapply = content_projection || !live_path_exists;
     let status = if !live_path_exists {
         "missing_projection_path"

@@ -1,5 +1,6 @@
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use serde_json::Value;
 
@@ -102,6 +103,142 @@ fn assert_meta_warning_contains(env: &Value, needle: &str) {
             .iter()
             .any(|warning| warning.as_str().is_some_and(|text| text.contains(needle))),
         "expected warning containing {needle:?}: {env}"
+    );
+}
+
+fn git_output(root: &Path, args: &[&str]) -> String {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .arg("-c")
+        .arg("commit.gpgsign=false")
+        .arg("-c")
+        .arg("user.name=Loom Test")
+        .arg("-c")
+        .arg("user.email=loom@example.invalid")
+        .args(args)
+        .output()
+        .expect("run git");
+    assert!(
+        output.status.success(),
+        "git {:?} failed: stderr={} stdout={}",
+        args,
+        String::from_utf8_lossy(&output.stderr),
+        String::from_utf8_lossy(&output.stdout)
+    );
+    String::from_utf8_lossy(&output.stdout).trim().to_string()
+}
+
+fn commit_skill_without_registry(root: &Path, skill: &str, body: &str, message: &str) {
+    if !root.join(".git").exists() {
+        git_output(root, &["init"]);
+    }
+    write_skill(root, skill, body);
+    let skill_rel = format!("skills/{skill}");
+    git_output(root, &["add", "--", &skill_rel]);
+    git_output(root, &["commit", "-m", message, "--", &skill_rel]);
+    assert!(
+        !root.join("state/registry").exists(),
+        "test helper should not initialize registry state"
+    );
+}
+
+#[test]
+fn rollback_noop_reports_reconciliation_shape_without_registry_init() {
+    let root = TestDir::new("registry-skill-rollback-noop-reconciliation");
+    commit_skill_without_registry(
+        root.path(),
+        "model-onboarding",
+        "# model-onboarding\n\nsource v1\n",
+        "seed skill",
+    );
+
+    let (rollback_output, rollback_env) = run_loom(
+        root.path(),
+        &["skill", "rollback", "model-onboarding", "--to", "HEAD"],
+    );
+
+    assert!(
+        rollback_output.status.success(),
+        "rollback noop failed: stderr={} stdout={}",
+        String::from_utf8_lossy(&rollback_output.stderr),
+        String::from_utf8_lossy(&rollback_output.stdout)
+    );
+    assert_eq!(rollback_env["ok"], Value::Bool(true));
+    assert_eq!(rollback_env["data"]["noop"], Value::Bool(true));
+    assert_eq!(rollback_env["data"]["source_restored"], Value::Bool(false));
+    assert_eq!(
+        rollback_env["data"]["registry_restored"],
+        Value::Bool(false)
+    );
+    assert_eq!(
+        rollback_env["data"]["live_projection_reconciled"],
+        Value::Bool(true)
+    );
+    assert_eq!(
+        rollback_env["data"]["projection_reconciliation"]["status"],
+        Value::String("noop".to_string())
+    );
+    assert!(
+        !root.path().join("state/registry").exists(),
+        "noop rollback should not initialize registry state"
+    );
+}
+
+#[test]
+fn rollback_without_existing_registry_reports_unverified_projection_reconciliation() {
+    let root = TestDir::new("registry-skill-rollback-no-registry-reconciliation");
+    commit_skill_without_registry(
+        root.path(),
+        "model-onboarding",
+        "# model-onboarding\n\nsource v1\n",
+        "seed skill",
+    );
+    commit_skill_without_registry(
+        root.path(),
+        "model-onboarding",
+        "# model-onboarding\n\nsource v2\n",
+        "update skill",
+    );
+
+    let (rollback_output, rollback_env) = run_loom(
+        root.path(),
+        &["skill", "rollback", "model-onboarding", "--to", "HEAD~1"],
+    );
+
+    assert!(
+        rollback_output.status.success(),
+        "rollback failed: stderr={} stdout={}",
+        String::from_utf8_lossy(&rollback_output.stderr),
+        String::from_utf8_lossy(&rollback_output.stdout)
+    );
+    assert_eq!(rollback_env["ok"], Value::Bool(true));
+    assert_eq!(rollback_env["data"]["noop"], Value::Bool(false));
+    assert_eq!(rollback_env["data"]["source_restored"], Value::Bool(true));
+    assert_eq!(rollback_env["data"]["registry_restored"], Value::Bool(true));
+    assert_eq!(
+        rollback_env["data"]["live_projection_reconciled"],
+        Value::Bool(false)
+    );
+    assert_eq!(
+        rollback_env["data"]["projection_reconciliation"]["status"],
+        Value::String("registry_missing".to_string())
+    );
+    assert_eq!(
+        rollback_env["data"]["projection_reconciliation"]["next_actions"][0]["type"],
+        Value::String("manual_review_required".to_string())
+    );
+    assert_meta_warning_contains(
+        &rollback_env,
+        "registry state was not initialized before rollback",
+    );
+    let source = fs::read_to_string(root.path().join("skills/model-onboarding/SKILL.md"))
+        .expect("read source skill");
+    assert!(source.contains("source v1"));
+    assert!(!source.contains("source v2"));
+    assert!(
+        root.path().join("state/registry").exists(),
+        "non-noop rollback should record registry audit state"
     );
 }
 
@@ -355,6 +492,60 @@ fn rollback_reports_missing_symlink_projection_reapply_plan() {
         .expect("read reprojected symlink projection");
     assert!(live.contains("source v1"));
     assert!(!live.contains("source v2"));
+}
+
+#[cfg(unix)]
+#[test]
+fn rollback_reports_dangling_symlink_projection_reapply_plan() {
+    let fixture = rollback_projection_fixture("symlink");
+    fs::remove_file(&fixture.projection_path).expect("remove symlink projection path");
+    std::os::unix::fs::symlink(
+        fixture.root.path().join("missing-symlink-target"),
+        &fixture.projection_path,
+    )
+    .expect("create dangling symlink projection path");
+    assert!(
+        fs::symlink_metadata(&fixture.projection_path).is_ok(),
+        "dangling symlink itself should exist"
+    );
+    assert!(
+        fs::metadata(&fixture.projection_path).is_err(),
+        "dangling symlink target should be missing"
+    );
+
+    let (rollback_output, rollback_env) = run_loom(
+        fixture.root.path(),
+        &["skill", "rollback", "model-onboarding", "--to", "HEAD~2"],
+    );
+
+    assert!(
+        rollback_output.status.success(),
+        "rollback failed: stderr={} stdout={}",
+        String::from_utf8_lossy(&rollback_output.stderr),
+        String::from_utf8_lossy(&rollback_output.stdout)
+    );
+    assert_eq!(
+        rollback_env["data"]["live_projection_reconciled"],
+        Value::Bool(false)
+    );
+    let reconciliation = &rollback_env["data"]["projection_reconciliation"];
+    assert_eq!(
+        reconciliation["status"],
+        Value::String("requires_reapply".to_string())
+    );
+    let item = &reconciliation["items"][0];
+    assert_eq!(item["method"], Value::String("symlink".to_string()));
+    assert_eq!(
+        item["status"],
+        Value::String("missing_projection_path".to_string())
+    );
+    assert_eq!(item["live_path_exists"], Value::Bool(false));
+    assert_eq!(item["requires_projection_reapply"], Value::Bool(true));
+    assert_eq!(
+        item["next_action"]["type"],
+        Value::String("command".to_string())
+    );
+    assert_meta_warning_contains(&rollback_env, "live projections require reapply");
 }
 
 #[test]

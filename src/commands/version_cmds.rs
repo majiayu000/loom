@@ -228,6 +228,7 @@ impl App {
         }
 
         let paths = RegistryStatePaths::from_app_context(&self.ctx);
+        let registry_existed_before = paths.exists() || paths.legacy_state_dir_exists();
         let registry_layout_backup =
             backup_registry_layout(&self.ctx, &paths).map_err(map_registry_state)?;
         if let Err(err) = paths.ensure_layout() {
@@ -365,8 +366,12 @@ impl App {
             }
         };
 
-        let (projection_reconciliation, projection_warnings) =
-            rollback_projection_reconciliation(&self.ctx, &paths, &args.skill);
+        let (projection_reconciliation, projection_warnings) = rollback_projection_reconciliation(
+            &self.ctx,
+            &paths,
+            &args.skill,
+            registry_existed_before,
+        );
         meta.warnings.extend(projection_warnings);
         let live_projection_reconciled =
             projection_reconciliation["live_projection_reconciled"].as_bool() == Some(true);

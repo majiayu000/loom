@@ -364,19 +364,6 @@ fn skill_rollback_noop_does_not_initialize_registry() {
     );
     assert_eq!(rollback_env["ok"], Value::Bool(true));
     assert_eq!(rollback_env["data"]["noop"], Value::Bool(true));
-    assert_eq!(rollback_env["data"]["source_restored"], Value::Bool(false));
-    assert_eq!(
-        rollback_env["data"]["registry_restored"],
-        Value::Bool(false)
-    );
-    assert_eq!(
-        rollback_env["data"]["live_projection_reconciled"],
-        Value::Bool(true)
-    );
-    assert_eq!(
-        rollback_env["data"]["projection_reconciliation"]["status"],
-        Value::String("noop".to_string())
-    );
     assert!(
         !root.path().join("state/registry").exists(),
         "noop rollback should not create registry state"

@@ -1110,6 +1110,10 @@ Rules:
 7. no-op rollback success returns the same reconciliation fields with
    `projection_reconciliation.status="noop"`, `source_restored=false`, and
    `registry_restored=false`; it does not initialize registry state
+8. if registry state was absent before a non-noop rollback, rollback records
+   audit state but reports `projection_reconciliation.status="registry_missing"`
+   and `live_projection_reconciled=false` because there was no pre-existing
+   projection evidence to verify
 
 ### 11.10 `skill diff`
 

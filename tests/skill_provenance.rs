@@ -5,7 +5,7 @@ use std::path::Path;
 use std::process::Command;
 
 use common::actions::{binding_add, skill_project, target_add};
-use common::{TestDir, operations_log, run_loom, write_file};
+use common::{TestDir, operations_log, run_loom, run_loom_with_env, write_file};
 use serde_json::{Value, json};
 
 fn read_json(path: &Path) -> Value {
@@ -237,6 +237,44 @@ fn skill_provenance_refresh_updates_lock_without_projection_mutation() {
     assert_eq!(
         verify["data"]["current_digest"],
         refresh["data"]["current_digest"]
+    );
+}
+
+#[test]
+fn skill_provenance_refresh_preserves_files_when_atomic_write_fails() {
+    let root = TestDir::new("skill-provenance-refresh-atomic-failure");
+    let source = TestDir::new("skill-provenance-refresh-atomic-failure-source");
+    write_file(&source.path().join("SKILL.md"), "# demo\n\nversion one\n");
+
+    let source_arg = source.path().to_str().expect("source path");
+    let (output, env) = run_loom(root.path(), &["skill", "add", source_arg, "--name", "demo"]);
+    assert!(output.status.success(), "skill add should pass: {env}");
+    let sources_path = root.path().join("state/registry/sources.json");
+    let lock_path = root.path().join("loom.lock");
+    let sources_before = fs::read_to_string(&sources_path).expect("read sources before");
+    let lock_before = fs::read_to_string(&lock_path).expect("read lock before");
+    write_file(
+        &root.path().join("skills/demo/SKILL.md"),
+        "# demo\n\nversion two\n",
+    );
+
+    let (output, env) = run_loom_with_env(
+        root.path(),
+        &[("LOOM_FAULT_INJECT", "write_atomic")],
+        &["skill", "provenance", "refresh", "demo"],
+    );
+
+    assert!(!output.status.success(), "refresh should fail: {env}");
+    assert_eq!(env["error"]["code"], json!("IO_ERROR"));
+    assert_eq!(
+        fs::read_to_string(&sources_path).expect("read sources after"),
+        sources_before,
+        "failed atomic sources write must preserve old file"
+    );
+    assert_eq!(
+        fs::read_to_string(&lock_path).expect("read lock after"),
+        lock_before,
+        "failed atomic lock write must preserve old file"
     );
 }
 

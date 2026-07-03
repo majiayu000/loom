@@ -191,6 +191,47 @@ fn unquarantine_unknown_trust_is_noop_without_persisting_unknown() {
 }
 
 #[test]
+fn quarantine_reports_corrupt_projection_snapshot_instead_of_empty_cleanup() {
+    let root = TestDir::new("skill-safety-cleanup-corrupt-snapshot");
+    let source = TestDir::new("skill-safety-cleanup-corrupt-snapshot-source");
+    write_harmless_source(source.path(), "demo");
+    add_skill(root.path(), source.path(), "demo");
+    let (output, env) = run_loom(root.path(), &["workspace", "init"]);
+    assert!(output.status.success(), "workspace init should pass: {env}");
+    write_file(
+        &root.path().join("state/registry/projections.json"),
+        "{not json",
+    );
+
+    let (output, env) = run_loom(root.path(), &["skill", "quarantine", "demo"]);
+
+    assert!(
+        !output.status.success(),
+        "corrupt snapshot should fail: {env}"
+    );
+    assert_eq!(env["error"]["code"], json!("STATE_CORRUPT"));
+    assert!(
+        env["error"]["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("projections.json")),
+        "error should identify corrupt snapshot file: {env}"
+    );
+    if root.path().join("state/registry/trust.json").exists() {
+        let trust_raw =
+            fs::read_to_string(root.path().join("state/registry/trust.json")).expect("trust json");
+        let trust: Value = serde_json::from_str(&trust_raw).expect("parse trust json");
+        assert!(
+            trust["skills"].as_array().is_none_or(|skills| {
+                !skills
+                    .iter()
+                    .any(|record| record["skill_id"] == json!("demo"))
+            }),
+            "failed cleanup lookup must not persist trust mutation: {trust_raw}"
+        );
+    }
+}
+
+#[test]
 fn blocked_and_quarantined_skills_fail_before_projection_or_activation_write() {
     let root = TestDir::new("skill-safety-gate");
     let source = TestDir::new("skill-safety-gate-source");

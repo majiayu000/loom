@@ -354,7 +354,7 @@ fn recommendation_policy_context(
         validate_non_empty("binding", binding_id.trim())?;
     }
     if let Some(policy_profile) = args.policy_profile.as_deref() {
-        validate_policy_profile(policy_profile.trim())?;
+        validate_policy_profile(policy_profile)?;
     }
     let Some(binding_id) = args.binding.as_deref() else {
         return Ok(json!({

@@ -145,7 +145,6 @@ fn skill_search_and_resolve_are_deterministic_and_transparent() {
             "claude",
             "--workspace",
             "/tmp/project-a/src",
-            "--for-task",
         ],
     );
     assert!(output.status.success(), "skill resolve should pass: {env}");
@@ -207,6 +206,26 @@ fn skill_search_and_resolve_are_deterministic_and_transparent() {
         &[
             "skill",
             "recommend",
+            "model onboarding flow",
+            "--agent",
+            "claude",
+            "--for-task",
+        ],
+    );
+    assert!(
+        output.status.success(),
+        "skill recommend --for-task should ignore resolve-only mode: {env}"
+    );
+    assert!(
+        env["data"].get("selected").is_none(),
+        "recommend --for-task must not emit resolve-only selected fields: {env}"
+    );
+
+    let (output, env) = run_loom(
+        root.path(),
+        &[
+            "skill",
+            "recommend",
             "model onboarding",
             "--policy-profile",
             "BAD VALUE",
@@ -215,6 +234,22 @@ fn skill_search_and_resolve_are_deterministic_and_transparent() {
     assert!(
         !output.status.success(),
         "bad policy profile should fail closed: {env}"
+    );
+    assert_eq!(env["error"]["code"], json!("ARG_INVALID"));
+
+    let (output, env) = run_loom(
+        root.path(),
+        &[
+            "skill",
+            "recommend",
+            "model onboarding",
+            "--policy-profile",
+            "safe-capture ",
+        ],
+    );
+    assert!(
+        !output.status.success(),
+        "policy profile with trailing whitespace should fail closed: {env}"
     );
     assert_eq!(env["error"]["code"], json!("ARG_INVALID"));
 

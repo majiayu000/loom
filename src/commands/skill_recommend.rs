@@ -61,8 +61,33 @@ impl App {
             });
         }
         warnings.extend(model.warnings);
-        let selected = results.first().cloned();
-        let candidates = results.clone();
+        let policy_profile = policy_context["policy_profile"]
+            .as_str()
+            .unwrap_or("safe-capture")
+            .to_string();
+        let recommendation_context = RecommendationContext {
+            agent: args.agent.as_deref(),
+            mode,
+            policy_profile: &policy_profile,
+        };
+        let adjusted_task_results = if args.for_task {
+            Some(evidence_adjusted_skill_results(
+                &self.ctx,
+                &args.query,
+                recommendation_context,
+                &results,
+            )?)
+        } else {
+            None
+        };
+        let selected = adjusted_task_results
+            .as_ref()
+            .and_then(|results| results.first().cloned())
+            .or_else(|| results.first().cloned());
+        let candidates = adjusted_task_results
+            .as_ref()
+            .cloned()
+            .unwrap_or_else(|| results.clone());
         let mut payload = json!({
             "query": args.query,
             "mode": mode,
@@ -110,15 +135,6 @@ impl App {
                 },
                 true,
             );
-            let policy_profile = policy_context["policy_profile"]
-                .as_str()
-                .unwrap_or("safe-capture")
-                .to_string();
-            let recommendation_context = RecommendationContext {
-                agent: args.agent.as_deref(),
-                mode,
-                policy_profile: &policy_profile,
-            };
             let recommendations = recommendation_results(
                 &self.ctx,
                 &args.query,
@@ -432,6 +448,45 @@ fn recommendation_results(
     Ok(results)
 }
 
+fn evidence_adjusted_skill_results(
+    ctx: &AppContext,
+    task: &str,
+    request: RecommendationContext<'_>,
+    skill_results: &[Value],
+) -> std::result::Result<Vec<Value>, CommandFailure> {
+    let mut adjusted = Vec::new();
+    for result in skill_results {
+        let skill = &result["skill"];
+        let Some(skill_id) = skill["skill_id"].as_str() else {
+            continue;
+        };
+        if skill["quarantined"].as_bool() == Some(true) {
+            continue;
+        }
+        let evidence = ranking_evidence(ctx, skill_id, skill, request.agent, Some(task))?;
+        let mut result = result.clone();
+        let score = result["score"].as_i64().unwrap_or_default() + evidence.score_delta;
+        result["score"] = json!(score.max(0));
+        if let Some(inputs) = result["score_inputs"].as_array_mut() {
+            inputs.extend(evidence.score_inputs);
+        }
+        result["recommendation_risks"] = json!(evidence.risks);
+        result["recommendation_warnings"] = json!(evidence.warnings);
+        adjusted.push(result);
+    }
+    adjusted.sort_by(|left, right| {
+        let l = left["score"].as_i64().unwrap_or_default();
+        let r = right["score"].as_i64().unwrap_or_default();
+        r.cmp(&l).then_with(|| {
+            left["skill"]["skill_id"]
+                .as_str()
+                .unwrap_or_default()
+                .cmp(right["skill"]["skill_id"].as_str().unwrap_or_default())
+        })
+    });
+    Ok(adjusted)
+}
+
 fn skill_recommendation(
     ctx: &AppContext,
     task: &str,
@@ -459,7 +514,10 @@ fn skill_recommendation(
     if skill["trust"].as_str() == Some("blocked") {
         risks.push("trust blocked".to_string());
     }
-    if skill["source_status"].as_str() != Some("present") {
+    let skill_name_valid = validate_skill_name(skill_id).is_ok();
+    if !skill_name_valid {
+        risks.push("non-portable skill id".to_string());
+    } else if skill["source_status"].as_str() != Some("present") {
         risks.push(format!(
             "source {}",
             skill["source_status"].as_str().unwrap_or("unknown")
@@ -576,6 +634,7 @@ fn skillset_recommendations(
                     {
                         if required {
                             required_safe = false;
+                            score -= 8;
                             risks.push(format!("required member '{skill_id}' {dependency_risk}"));
                         } else {
                             warnings
@@ -608,7 +667,7 @@ fn skillset_recommendations(
         out.push(json!({
             "kind": "skillset",
             "id": id,
-            "score": score,
+            "score": score.max(0),
             "mode": request.mode,
             "score_inputs": {
                 "matched_fields": ["skillset", "members"],

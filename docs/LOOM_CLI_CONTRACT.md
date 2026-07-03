@@ -277,8 +277,9 @@ Response shape:
 Requirements:
 
 1. must explain resolved bindings
-2. must explain projection health
+2. must explain projection health, including `observation_status` for each projection
 3. must not write state
+4. `drifted_projections` counts persisted drift, missing, unreadable, conflict, and orphaned states; legacy copy/materialize records with no digest observation render as `not_observed` but are not counted as drifted
 
 ### 9.2 `workspace doctor`
 
@@ -502,6 +503,21 @@ Rules:
 7. runtime entries such as `.system` and `codex-primary-runtime`, plus non-Loom external entries, are preserved.
 8. multiple active bindings sharing a Codex target are reconciled as a union of desired active skills.
 
+### 11.0.3.1 `skill diagnose`
+
+```bash
+loom --json --root <root> skill diagnose <skill-id>
+```
+
+Default skill diagnosis observes registered projections. For `copy` and `materialize` projections, it compares source and live projection content digests, writes the latest observation back to `state/registry/projections.json`, and reports a `projection_content_digest:<instance_id>` check. `skill diagnose --agent codex` remains read-only as specified above.
+
+Rules:
+
+1. healthy copy/materialize observations record matching `source_tree_digest`, `materialized_tree_digest`, `last_observed_at`, and `last_observed_error: null`
+2. digest mismatches record `health: "drifted"`, `observed_drift: true`, and `last_observed_error: "digest_mismatch"`
+3. missing source, missing live path, and unreadable source/live path are distinct machine-readable observation errors
+4. symlink projections remain path-checked; content digest fields are for copy/materialize projections
+
 ### 11.0.4 `skill new`
 
 ```bash
@@ -651,7 +667,7 @@ loom --json --root <root> provision export <plan-id|plan-artifact> --format devc
 loom --json --root <root> provision import <artifact> --dry-run
 ```
 
-Remote provisioning is plan-first. The implemented slices generate a read-only devcontainer plan and doctor report, reviewed shell/tar export artifacts, import dry-runs, and artifact-backed apply for reviewed target files. They must not copy secrets, mutate registry state outside the apply idempotency record, or deploy remote environments. `--output-plan` and `provision export --format shell|tar --output <path>` write only explicitly requested local artifacts.
+Remote provisioning is plan-first. The implemented slices generate a read-only devcontainer plan and doctor report, reviewed shell/tar export artifacts, import dry-runs, durable reviewed plan-id replay, and gated apply for reviewed target files. They must not copy secrets, mutate registry state outside the apply idempotency record, or deploy remote environments. `--output-plan` and `provision export --format shell|tar --output <path>` write only explicitly requested local artifacts.
 
 Rules:
 
@@ -660,11 +676,12 @@ Rules:
 3. `git+https://...` registry remotes normalize to cloneable `https://...`; HTTP(S) userinfo is removed from clone/display URLs and represented as a redacted secret requirement
 4. generated devcontainer setup previews use `set -euo pipefail`, require `loom`, do not print secret values, and check planned active skills without writing them
 5. `provision doctor` is read-only and reports missing/different generated files, adapter paths, dependency readiness, secrets, policy, and next actions
-6. `provision export --format shell` requires an explicit reviewed plan artifact path, writes a deterministic shell artifact with digest metadata, and must not include secret values
+6. `provision export --format shell` loads a reviewed plan id or artifact path, writes a deterministic shell artifact with digest metadata, and must not include secret values
 7. `provision export --format tar` writes a deterministic portable artifact containing the reviewed plan, generated file previews, registry skill source files, materialized active-view files, manifest metadata, and checksums without secret values
 8. `provision import <artifact> --dry-run` validates shell/tar artifact metadata/digests and reports review-only planned files without executing scripts, extracting archives, or writing target files
-9. `provision apply <plan-artifact>` requires an idempotency key and reviewed approval tokens when policy requires them; it revalidates guard digests, reviewed registry head reachability, credential-redacted registry clone URL, target preimages, target paths, and generated content digests before atomic writes, and repeated apply with the same key is idempotent
-10. `provision apply <plan-id>` still returns a typed `POLICY_BLOCKED` gate until durable plan-id lookup exists; non-dry-run `provision import` and `provision export --format devcontainer` remain deferred until their artifact validation and write gates are implemented
+9. `provision apply <plan-id|plan-artifact>` requires an idempotency key and reviewed approval tokens when policy requires them; it revalidates guard digests, reviewed registry head reachability, credential-redacted registry clone URL, target preimages, target paths, and generated content digests before atomic writes, and repeated apply with the same key is idempotent
+10. `provision plan` persists a durable reviewed plan under `state/provision/plans/<plan_id>.json`; `apply`, `export`, and `doctor --plan` load that durable plan id or an explicit reviewed artifact path without regenerating reviewed content from current registry state
+11. non-dry-run `provision import` and `provision export --format devcontainer` remain deferred until their artifact validation and write gates are implemented
 
 ### 11.1.5 `policy org`, `approval`, and `roles`
 
@@ -724,6 +741,7 @@ Rules:
 ```bash
 loom --json --root <root> skill provenance inspect <skill-id>
 loom --json --root <root> skill provenance verify <skill-id>
+loom --json --root <root> skill provenance outdated [<skill-id>] [--plan]
 loom --json --root <root> skill provenance refresh <skill-id>
 ```
 
@@ -733,10 +751,15 @@ Rules:
 
 1. `inspect` is read-only and returns the recorded `sources.json` entry plus the matching `loom.lock` entry
 2. `verify` is read-only and compares the current canonical skill digest against both recorded provenance and `loom.lock`
-3. `refresh` is a write command; it recomputes the current canonical skill digest, updates `state/registry/sources.json` and `loom.lock`, and commits only provenance artifacts
-4. `refresh` must not mutate projection state, target directories, binding rules, or live agent skill directories
-5. `loom.lock` is generated from sorted source records so repeated writes are deterministic
-6. missing skill sources return `SKILL_NOT_FOUND`; missing provenance records return `STATE_NOT_INITIALIZED`
+3. `outdated` is read-only and reports provider-backed records whose pinned refs differ from provider heads or current local provider digests
+4. `outdated` rows include `skill_id`, `provider`, `current_ref`, `current_digest`, `candidate_ref`, `candidate_digest`, `candidate_trust`, `status`, `risk`, and `next_actions`
+5. `outdated` status values are `up_to_date`, `outdated`, `unreachable`, `unpinned_candidate`, and `invalid_source`; provider failures must be reported as `unreachable`, not silently treated as clean
+6. `outdated --plan` emits a JSON re-pin plan with `mutates=false` and `apply_required=true`; it must not edit skill content, `sources.json`, `loom.lock`, projection state, target directories, binding rules, Git refs, or live agent skill directories
+7. unpinned provider heads are advisory only until resolved to immutable commit SHAs or `sha256:<digest>` refs
+8. `refresh` is a write command; it recomputes the current canonical skill digest, updates `state/registry/sources.json` and `loom.lock`, and commits only provenance artifacts
+9. `refresh` must not mutate projection state, target directories, binding rules, or live agent skill directories
+10. `loom.lock` is generated from sorted source records so repeated writes are deterministic
+11. missing skill sources return `SKILL_NOT_FOUND`; missing provenance records return `STATE_NOT_INITIALIZED`
 
 ### 11.2 `skill import-observed`
 
@@ -988,7 +1011,12 @@ Success response:
     "target_id": "target_claude_default",
     "method": "symlink",
     "materialized_path": "/Users/foo/.../skills/loom",
-    "health": "healthy"
+    "health": "healthy",
+    "observed_drift": false,
+    "source_tree_digest": null,
+    "materialized_tree_digest": null,
+    "last_observed_at": "2026-07-03T05:00:00Z",
+    "last_observed_error": null
   }
 }
 ```
@@ -1000,6 +1028,7 @@ Rules:
 3. if multiple targets are possible and no default exists, the command must fail explicitly
 4. before mutating target directories, the command evaluates unified safety using trust metadata and the binding's `policy_profile`
 5. if trust state or the selected profile blocks projection, the command fails with `POLICY_BLOCKED` and must not create or replace the live skill directory
+6. successful copy/materialize projection records initial source/live content digests and observation timestamp; successful symlink projection records path observation without content digests
 
 ### 11.5 `skill commit`
 
@@ -1055,6 +1084,48 @@ Success response should include:
 
 1. `recovery_ref`
 2. resulting source revision
+3. `source_restored: true`
+4. `registry_restored: true`
+5. `live_projection_reconciled`
+6. `projection_reconciliation`
+
+Rules:
+
+1. rollback restores the canonical source and records registry audit state; it
+   does not silently claim that live agent projections were updated
+2. copy and materialize projections default to `recovery_plan_only`; rollback
+   reports them as `requires_projection_reapply=true` until the user runs the
+   returned recovery command
+3. existing symlink projections are reported as `symlink_noop` only when the
+   projection path is a symlink that resolves to the restored source; missing,
+   dangling, wrong-target, or non-symlink paths are reported with a reapply
+   command
+4. `projection_reconciliation.items[]` includes `instance_id`, `skill_id`,
+   `binding_id`, `target_id`, `materialized_path`, `method`, `status`,
+   `live_path_exists`, `requires_projection_reapply`, and `next_action`
+5. `projection_reconciliation.next_actions[]` contains exact executable
+   `loom --json --root <root> skill project <skill-id> --binding <binding-id>
+   --target <target-id> --method <method>` commands when Loom can reapply a
+   projection safely, or `manual_review_required` when registry evidence is
+   missing or the projection was produced by compiled activation
+6. compiled activation projections are reported with `compiled_activation`
+   evidence and a `manual_review_required` action; Loom must not emit a raw
+   `skill project --method materialize` recovery command for them because that
+   would replace the compiled artifact view with source materialization
+7. if registry snapshot loading fails after rollback, the response keeps
+   `ok=true` for the source rollback but sets
+   `projection_reconciliation.status="registry_unavailable"`, includes a
+   structured `error`, sets `live_projection_reconciled=false`, and adds a
+   warning to `meta.warnings`
+8. no-op rollback success returns `source_restored=false` and
+   `registry_restored=false`; when registry state already exists, rollback still
+   evaluates registered live projections before setting
+   `live_projection_reconciled`, and when registry state is absent it returns
+   `projection_reconciliation.status="noop"` without initializing registry state
+9. if registry state was absent before a non-noop rollback, rollback records
+   audit state but reports `projection_reconciliation.status="registry_missing"`
+   and `live_projection_reconciled=false` because there was no pre-existing
+   projection evidence to verify
 
 ### 11.10 `skill diff`
 

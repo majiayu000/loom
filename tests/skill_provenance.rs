@@ -5,11 +5,15 @@ use std::path::Path;
 use std::process::Command;
 
 use common::actions::{binding_add, skill_project, target_add};
-use common::{TestDir, operations_log, run_loom, write_file};
+use common::{TestDir, operations_log, run_loom, run_loom_with_env, write_file};
 use serde_json::{Value, json};
 
 fn read_json(path: &Path) -> Value {
     serde_json::from_str(&fs::read_to_string(path).expect("read json")).expect("parse json")
+}
+
+fn first_outdated_row(env: &Value) -> &Value {
+    &env["data"]["rows"].as_array().expect("rows array")[0]
 }
 
 fn init_git_skill_repo(repo: &Path) -> (String, String) {
@@ -50,6 +54,188 @@ fn init_git_skill_repo(repo: &Path) -> (String, String) {
     git(&["commit", "-m", "skill v2"]);
     let v2 = git(&["rev-parse", "HEAD"]);
     (v1, v2)
+}
+
+#[test]
+fn skill_provenance_outdated_reports_local_digest_status_and_review_plan() {
+    let root = TestDir::new("skill-provenance-outdated-local");
+    let catalog = TestDir::new("skill-provenance-outdated-local-catalog");
+    let skill = catalog.path().join("skills/demo");
+    write_file(&skill.join("SKILL.md"), "# Demo\n\nversion one\n");
+
+    let locator = format!("local:{}//skills/demo", catalog.path().display());
+    let (output, preview) = run_loom(root.path(), &["catalog", "preview", &locator]);
+    assert!(output.status.success(), "preview should pass: {preview}");
+    let digest_v1 = preview["data"]["preview"]["provenance"]["digest"]
+        .as_str()
+        .expect("preview digest")
+        .to_string();
+    let pinned_v1 = format!("{locator}@{digest_v1}");
+    let (output, install) = run_loom(
+        root.path(),
+        &["skill", "install", &pinned_v1, "--name", "demo"],
+    );
+    assert!(output.status.success(), "install should pass: {install}");
+
+    let (output, report) = run_loom(root.path(), &["skill", "provenance", "outdated", "demo"]);
+    assert!(output.status.success(), "outdated should pass: {report}");
+    let row = first_outdated_row(&report);
+    assert_eq!(row["status"], json!("up_to_date"));
+    assert_eq!(row["provider"], json!("local"));
+    assert_eq!(row["current_ref"], json!(digest_v1));
+    assert_eq!(row["current_digest"], json!(digest_v1));
+    assert_eq!(row["candidate_ref"], json!(digest_v1));
+    assert_eq!(row["candidate_digest"], json!(digest_v1));
+
+    write_file(&skill.join("SKILL.md"), "# Demo\n\nversion two\n");
+    let sources_before =
+        fs::read_to_string(root.path().join("state/registry/sources.json")).expect("sources");
+    let lock_before = fs::read_to_string(root.path().join("loom.lock")).expect("lock");
+    let (output, plan) = run_loom(
+        root.path(),
+        &["skill", "provenance", "outdated", "demo", "--plan"],
+    );
+    assert!(output.status.success(), "outdated plan should pass: {plan}");
+    let row = first_outdated_row(&plan);
+    assert_eq!(row["status"], json!("outdated"));
+    assert_eq!(row["candidate_trust"], json!("immutable"));
+    assert_ne!(row["candidate_digest"], json!(digest_v1));
+    assert_eq!(plan["data"]["re_pin_plan"]["mutates"], json!(false));
+    assert_eq!(plan["data"]["re_pin_plan"]["apply_required"], json!(true));
+    assert_eq!(
+        plan["data"]["re_pin_plan"]["items"][0]["mutates"],
+        json!(false)
+    );
+    assert_eq!(
+        plan["data"]["re_pin_plan"]["items"][0]["candidate"]["digest"],
+        row["candidate_digest"]
+    );
+    assert_eq!(
+        fs::read_to_string(root.path().join("state/registry/sources.json")).expect("sources after"),
+        sources_before,
+        "outdated --plan must not update sources.json"
+    );
+    assert_eq!(
+        fs::read_to_string(root.path().join("loom.lock")).expect("lock after"),
+        lock_before,
+        "outdated --plan must not update loom.lock"
+    );
+}
+
+#[test]
+fn skill_provenance_outdated_distinguishes_unreachable_unpinned_and_invalid_sources() {
+    let root = TestDir::new("skill-provenance-outdated-states");
+    let catalog = TestDir::new("skill-provenance-outdated-states-catalog");
+    let skill = catalog.path().join("skills/demo");
+    write_file(&skill.join("SKILL.md"), "# Demo\n\nversion one\n");
+
+    let locator = format!("local:{}//skills/demo", catalog.path().display());
+    let (output, preview) = run_loom(root.path(), &["catalog", "preview", &locator]);
+    assert!(output.status.success(), "preview should pass: {preview}");
+    let digest = preview["data"]["preview"]["provenance"]["digest"]
+        .as_str()
+        .expect("preview digest")
+        .to_string();
+    let pinned = format!("{locator}@{digest}");
+    let (output, install) = run_loom(
+        root.path(),
+        &["skill", "install", &pinned, "--name", "demo"],
+    );
+    assert!(output.status.success(), "install should pass: {install}");
+
+    let mut sources = read_json(&root.path().join("state/registry/sources.json"));
+    sources["sources"][0]["source"]["requested_ref"] = json!("latest");
+    write_file(
+        &root.path().join("state/registry/sources.json"),
+        &(serde_json::to_string_pretty(&sources).expect("serialize sources") + "\n"),
+    );
+    let (output, unpinned) = run_loom(root.path(), &["skill", "provenance", "outdated", "demo"]);
+    assert!(
+        output.status.success(),
+        "unpinned source report should pass: {unpinned}"
+    );
+    let row = first_outdated_row(&unpinned);
+    assert_eq!(row["status"], json!("unpinned_candidate"));
+    assert_eq!(row["candidate_trust"], json!("advisory"));
+    assert_eq!(row["candidate_digest"], json!(digest));
+
+    sources["sources"][0]["source"]["requested_ref"] = json!(digest);
+    write_file(
+        &root.path().join("state/registry/sources.json"),
+        &(serde_json::to_string_pretty(&sources).expect("serialize sources") + "\n"),
+    );
+    fs::remove_dir_all(&skill).expect("remove provider skill");
+    let (output, unreachable) = run_loom(root.path(), &["skill", "provenance", "outdated", "demo"]);
+    assert!(
+        output.status.success(),
+        "unreachable source report should pass: {unreachable}"
+    );
+    let row = first_outdated_row(&unreachable);
+    assert_eq!(row["status"], json!("unreachable"));
+    assert!(
+        row["error"]
+            .as_str()
+            .expect("error")
+            .contains("not a directory")
+    );
+
+    let local_source = TestDir::new("skill-provenance-outdated-local-path");
+    write_file(
+        &local_source.path().join("SKILL.md"),
+        "# Local\n\nnot provider-backed\n",
+    );
+    let source_arg = local_source.path().to_str().expect("source path");
+    let (output, add) = run_loom(
+        root.path(),
+        &["skill", "add", source_arg, "--name", "plain-local"],
+    );
+    assert!(output.status.success(), "skill add should pass: {add}");
+    let (output, invalid) = run_loom(
+        root.path(),
+        &["skill", "provenance", "outdated", "plain-local"],
+    );
+    assert!(
+        output.status.success(),
+        "invalid source report should pass: {invalid}"
+    );
+    assert_eq!(
+        first_outdated_row(&invalid)["status"],
+        json!("invalid_source")
+    );
+}
+
+#[test]
+fn skill_provenance_outdated_resolves_github_pinned_commit_candidate_digest() {
+    let root = TestDir::new("skill-provenance-outdated-github");
+    let source = TestDir::new("skill-provenance-outdated-github-source");
+    let (v1, v2) = init_git_skill_repo(source.path());
+    let source_arg = source.path().to_str().expect("source path");
+    let (output, add) = run_loom(
+        root.path(),
+        &[
+            "skill", "add", source_arg, "--name", "demo", "--ref", &v1, "--subdir", "skill",
+        ],
+    );
+    assert!(output.status.success(), "skill add should pass: {add}");
+
+    let mut sources = read_json(&root.path().join("state/registry/sources.json"));
+    sources["sources"][0]["source"]["provider"] = json!("github");
+    sources["sources"][0]["source"]["locator"] = json!(format!("github:local/demo//skill@{v1}"));
+    sources["sources"][0]["source"]["repository"] = json!(source_arg);
+    write_file(
+        &root.path().join("state/registry/sources.json"),
+        &(serde_json::to_string_pretty(&sources).expect("serialize sources") + "\n"),
+    );
+
+    let (output, report) = run_loom(root.path(), &["skill", "provenance", "outdated", "demo"]);
+    assert!(output.status.success(), "outdated should pass: {report}");
+    let row = first_outdated_row(&report);
+    assert_eq!(row["provider"], json!("github"));
+    assert_eq!(row["status"], json!("outdated"));
+    assert_eq!(row["current_ref"], json!(v1));
+    assert_eq!(row["candidate_ref"], json!(v2));
+    assert_ne!(row["candidate_digest"], row["current_digest"]);
+    assert_eq!(row["candidate_trust"], json!("immutable"));
 }
 
 #[test]
@@ -237,6 +423,44 @@ fn skill_provenance_refresh_updates_lock_without_projection_mutation() {
     assert_eq!(
         verify["data"]["current_digest"],
         refresh["data"]["current_digest"]
+    );
+}
+
+#[test]
+fn skill_provenance_refresh_preserves_files_when_atomic_write_fails() {
+    let root = TestDir::new("skill-provenance-refresh-atomic-failure");
+    let source = TestDir::new("skill-provenance-refresh-atomic-failure-source");
+    write_file(&source.path().join("SKILL.md"), "# demo\n\nversion one\n");
+
+    let source_arg = source.path().to_str().expect("source path");
+    let (output, env) = run_loom(root.path(), &["skill", "add", source_arg, "--name", "demo"]);
+    assert!(output.status.success(), "skill add should pass: {env}");
+    let sources_path = root.path().join("state/registry/sources.json");
+    let lock_path = root.path().join("loom.lock");
+    let sources_before = fs::read_to_string(&sources_path).expect("read sources before");
+    let lock_before = fs::read_to_string(&lock_path).expect("read lock before");
+    write_file(
+        &root.path().join("skills/demo/SKILL.md"),
+        "# demo\n\nversion two\n",
+    );
+
+    let (output, env) = run_loom_with_env(
+        root.path(),
+        &[("LOOM_FAULT_INJECT", "write_atomic")],
+        &["skill", "provenance", "refresh", "demo"],
+    );
+
+    assert!(!output.status.success(), "refresh should fail: {env}");
+    assert_eq!(env["error"]["code"], json!("IO_ERROR"));
+    assert_eq!(
+        fs::read_to_string(&sources_path).expect("read sources after"),
+        sources_before,
+        "failed atomic sources write must preserve old file"
+    );
+    assert_eq!(
+        fs::read_to_string(&lock_path).expect("read lock after"),
+        lock_before,
+        "failed atomic lock write must preserve old file"
     );
 }
 

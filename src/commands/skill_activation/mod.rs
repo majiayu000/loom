@@ -17,8 +17,8 @@ use super::helpers::{
     projection_method_as_str,
 };
 use super::projections::{
-    maybe_autosync_or_queue, record_registry_observation, record_registry_operation,
-    upsert_projection, upsert_rule,
+    apply_projection_observation, maybe_autosync_or_queue, observe_projection,
+    record_registry_observation, record_registry_operation, upsert_projection, upsert_rule,
 };
 use super::skill_compile::compiled_activation_candidates;
 use super::skill_safety::enforce_skill_safety;
@@ -135,7 +135,7 @@ impl App {
             &resolved.binding.binding_id,
             &resolved.target.target_id,
         );
-        let projection = RegistryProjectionInstance {
+        let mut projection = RegistryProjectionInstance {
             instance_id: instance_id.clone(),
             skill_id: resolved.selection.skill.clone(),
             binding_id: Some(resolved.binding.binding_id.clone()),
@@ -145,8 +145,14 @@ impl App {
             last_applied_rev: head.clone(),
             health: crate::core::vocab::Health::Healthy,
             observed_drift: Some(false),
+            source_tree_digest: None,
+            materialized_tree_digest: None,
+            last_observed_at: None,
+            last_observed_error: None,
             updated_at: Some(Utc::now()),
         };
+        let observation = observe_projection(&self.ctx, &projection);
+        apply_projection_observation(&mut projection, &observation);
         upsert_projection(&mut projections, projection.clone());
 
         save_activation_state(

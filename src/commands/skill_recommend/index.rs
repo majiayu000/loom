@@ -164,8 +164,19 @@ fn capability_index_payload(
         };
         let description = skill["description"].as_str().unwrap_or_default();
         let dependency = dependency_report_for_skill(ctx, skill_id, skill, None)?;
-        let eval = latest_eval_summary(ctx, skill_id)?;
+        let eval = latest_eval_summary(ctx, skill_id, None)?;
         let triggers = trigger_fixture_prompts(ctx, skill_id)?;
+        let dependency_status = dependency
+            .as_ref()
+            .filter(|report| !report.sources.is_empty())
+            .map(|report| report.status.as_str())
+            .unwrap_or_else(|| {
+                if skill["source_status"].as_str() == Some("present") {
+                    "unknown"
+                } else {
+                    "missing-source"
+                }
+            });
         records.push(json!({
             "schema_version": REGISTRY_SCHEMA_VERSION,
             "skill_id": skill_id,
@@ -176,10 +187,7 @@ fn capability_index_payload(
             "tools": dependency_tools(dependency.as_ref()),
             "risk": "unknown",
             "trust": skill["trust"].as_str().unwrap_or("unknown"),
-            "dependency_status": dependency
-                .as_ref()
-                .map(|report| report.status.as_str())
-                .unwrap_or("missing-source"),
+            "dependency_status": dependency_status,
             "eval": {
                 "trigger_precision": eval.trigger_precision,
                 "trigger_recall": eval.trigger_recall,

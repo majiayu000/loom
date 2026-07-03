@@ -7,7 +7,7 @@ use crate::state::AppContext;
 use crate::types::ErrorCode;
 
 use super::super::CommandFailure;
-use super::super::helpers::map_io;
+use super::super::helpers::{map_io, validate_skill_name};
 use super::super::skill_deps::{SkillDependencyReport, skill_dependency_report};
 use super::super::skill_eval_harness::cases::{
     HarnessJsonlRecord, HarnessTriggerCase, read_harness_jsonl,
@@ -40,8 +40,20 @@ pub(super) fn ranking_evidence(
     task: Option<&str>,
 ) -> std::result::Result<RankingEvidence, CommandFailure> {
     let mut evidence = RankingEvidence::default();
+    if validate_skill_name(skill_id).is_err() {
+        evidence
+            .warnings
+            .push("non-portable skill id; ranking evidence unavailable".to_string());
+        return Ok(evidence);
+    }
     add_dependency_evidence(ctx, skill_id, skill, agent, &mut evidence)?;
-    add_eval_evidence(ctx, skill_id, task.unwrap_or_default(), &mut evidence)?;
+    add_eval_evidence(
+        ctx,
+        skill_id,
+        agent,
+        task.unwrap_or_default(),
+        &mut evidence,
+    )?;
     Ok(evidence)
 }
 
@@ -105,10 +117,11 @@ fn add_dependency_evidence(
 fn add_eval_evidence(
     ctx: &AppContext,
     skill_id: &str,
+    agent: Option<&str>,
     task: &str,
     evidence: &mut RankingEvidence,
 ) -> std::result::Result<(), CommandFailure> {
-    let summary = latest_eval_summary(ctx, skill_id)?;
+    let summary = latest_eval_summary(ctx, skill_id, agent)?;
     if summary.persisted {
         if summary.failed > 0 {
             evidence.score_delta -= 8;
@@ -122,20 +135,32 @@ fn add_eval_evidence(
                 "weight": -8,
             }));
         }
-        if let Some(delta) = summary.baseline_delta
-            && delta > 0.0
-        {
-            let weight = (delta * 10.0).round().clamp(1.0, 8.0) as i64;
-            evidence.score_delta += weight;
-            evidence
-                .reasons
-                .push(format!("eval baseline delta {:.2}", delta));
-            evidence.score_inputs.push(json!({
-                "field": "eval_evidence",
-                "metric": "baseline_delta",
-                "value": delta,
-                "weight": weight,
-            }));
+        if let Some(delta) = summary.baseline_delta {
+            if delta > 0.0 {
+                let weight = (delta * 10.0).round().clamp(1.0, 8.0) as i64;
+                evidence.score_delta += weight;
+                evidence
+                    .reasons
+                    .push(format!("eval baseline delta {:.2}", delta));
+                evidence.score_inputs.push(json!({
+                    "field": "eval_evidence",
+                    "metric": "baseline_delta",
+                    "value": delta,
+                    "weight": weight,
+                }));
+            } else if delta < 0.0 {
+                let weight = -((-delta * 10.0).round().clamp(1.0, 8.0) as i64);
+                evidence.score_delta += weight;
+                evidence
+                    .risks
+                    .push(format!("eval baseline delta {:.2}", delta));
+                evidence.score_inputs.push(json!({
+                    "field": "eval_evidence",
+                    "metric": "baseline_delta",
+                    "value": delta,
+                    "weight": weight,
+                }));
+            }
         }
         if let Some(recall) = summary.trigger_recall
             && recall >= 0.75
@@ -221,6 +246,9 @@ pub(super) fn dependency_report_for_skill(
     if skill["source_status"].as_str() != Some("present") {
         return Ok(None);
     }
+    if validate_skill_name(skill_id).is_err() {
+        return Ok(None);
+    }
     skill_dependency_report(ctx, skill_id, agent, None).map(Some)
 }
 
@@ -278,6 +306,7 @@ pub(super) fn trigger_fixture_prompts(
 ) -> std::result::Result<Vec<String>, CommandFailure> {
     Ok(trigger_fixture_records(ctx, skill_id)?
         .into_iter()
+        .filter(|record| record.value.expected_trigger() == Some(true))
         .filter_map(|record| record.value.prompt)
         .collect())
 }
@@ -292,6 +321,7 @@ fn trigger_fixture_records(
 pub(super) fn latest_eval_summary(
     ctx: &AppContext,
     skill_id: &str,
+    agent: Option<&str>,
 ) -> std::result::Result<EvalSummaryEvidence, CommandFailure> {
     let mut evidence = EvalSummaryEvidence::default();
     for mode in ["run", "trigger", "compare"] {
@@ -310,6 +340,9 @@ pub(super) fn latest_eval_summary(
                 format!("failed to parse {}: {}", path.display(), err),
             )
         })?;
+        if !eval_report_matches_agent(&parsed, agent) {
+            continue;
+        }
         evidence.persisted = true;
         let summary = &parsed["summary"];
         evidence.failed += summary["failed"].as_u64().unwrap_or(0);
@@ -327,6 +360,31 @@ pub(super) fn latest_eval_summary(
         );
     }
     Ok(evidence)
+}
+
+fn eval_report_matches_agent(report: &Value, agent: Option<&str>) -> bool {
+    let Some(agent) = agent else {
+        return true;
+    };
+    if report["agent"].as_str() == Some(agent) {
+        return true;
+    }
+    let has_agent_metadata = report["agent"].as_str().is_some()
+        || report["matrix"].as_array().is_some()
+        || report["runs"].as_array().is_some();
+    if report["matrix"]
+        .as_array()
+        .is_some_and(|matrix| matrix.iter().any(|value| value.as_str() == Some(agent)))
+    {
+        return true;
+    }
+    if report["runs"]
+        .as_array()
+        .is_some_and(|runs| runs.iter().any(|run| run["agent"].as_str() == Some(agent)))
+    {
+        return true;
+    }
+    !has_agent_metadata
 }
 
 fn max_option(left: Option<f64>, right: Option<f64>) -> Option<f64> {

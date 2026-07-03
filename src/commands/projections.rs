@@ -27,7 +27,12 @@ use super::helpers::{map_git, map_io};
 use super::sync_cmds::sync_push_internal;
 use crate::fs_util::{maybe_fault_inject, remove_path_if_exists};
 
+mod observation;
 mod symlink_guard;
+pub(crate) use observation::{
+    ProjectionObservation, ProjectionObservationUpdate, apply_projection_observation,
+    apply_projection_observation_updates, observe_projection, projection_observation_check,
+};
 use symlink_guard::ensure_projection_symlinks_contained;
 
 // ---------------------------------------------------------------------------
@@ -205,6 +210,7 @@ pub(crate) fn update_projection_after_capture(
     projections: &mut RegistryProjectionsFile,
     instance_id: &str,
     rev: &str,
+    observation: Option<&ProjectionObservation>,
 ) -> std::result::Result<(), CommandFailure> {
     let projection = projections
         .projections
@@ -223,6 +229,9 @@ pub(crate) fn update_projection_after_capture(
     projection.health = crate::core::vocab::Health::Healthy;
     projection.observed_drift = Some(false);
     projection.updated_at = Some(Utc::now());
+    if let Some(observation) = observation {
+        apply_projection_observation(projection, observation);
+    }
     Ok(())
 }
 

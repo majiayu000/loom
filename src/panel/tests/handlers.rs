@@ -543,6 +543,10 @@ async fn registry_orphan_clean_uses_cli_envelope_and_records_operation() {
                 last_applied_rev: "deadbeef".to_string(),
                 health: crate::core::vocab::Health::Orphaned,
                 observed_drift: Some(false),
+                source_tree_digest: None,
+                materialized_tree_digest: None,
+                last_observed_at: None,
+                last_observed_error: None,
                 updated_at: Some(Utc::now()),
             }],
         })

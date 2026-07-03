@@ -2,14 +2,14 @@
 
 Issue: https://github.com/majiayu000/loom/issues/382
 Product spec: `specs/GH382/product.md`
-Status: Blocked design packet
+Status: Implementation closeout
 
 ## Current State
 
-Loom has registry sync, remote status, target/binding/projection state, and an
-agent adapter protocol. Adapter v1 currently exposes default skill dirs; GH373
-extends this toward discovery roots, visibility, and reload semantics. GH382
-must consume adapter metadata rather than hard-coding Codex/Claude remote paths.
+Loom has registry sync, remote status, target/binding/projection state, an agent
+adapter protocol, skillsets, policy gates, dependency readiness, and provision
+plan/apply/export/import/doctor commands. GH382 consumes adapter metadata rather
+than hard-coding Codex/Claude remote paths.
 
 Relevant files:
 

@@ -173,8 +173,9 @@ impl App {
         let original = paths.load_trust().map_err(map_registry_state)?;
         let mut trust_file = original.clone();
         let record = upsert_trust_record(&mut trust_file, skill, trust, quarantined, reason);
+        let active_projection_cleanup_required =
+            active_projection_cleanup(&paths, skill).map_err(map_registry_state)?;
         paths.save_trust(&trust_file).map_err(map_registry_state)?;
-        let active_projection_cleanup_required = active_projection_cleanup(&paths, skill);
         let op_id = match record_registry_operation(
             &paths,
             intent,
@@ -448,27 +449,25 @@ pub(crate) fn upsert_trust_record(
     record
 }
 
-fn active_projection_cleanup(paths: &RegistryStatePaths, skill: &str) -> Vec<Value> {
-    paths
-        .load_snapshot()
-        .ok()
-        .map(|snapshot| {
-            snapshot
-                .projections
-                .projections
-                .into_iter()
-                .filter(|projection| projection.skill_id == skill)
-                .map(|projection| {
-                    json!({
-                        "instance_id": projection.instance_id,
-                        "target_id": projection.target_id,
-                        "materialized_path": projection.materialized_path,
-                        "cleanup": "manual_review_required"
-                    })
-                })
-                .collect()
+fn active_projection_cleanup(
+    paths: &RegistryStatePaths,
+    skill: &str,
+) -> anyhow::Result<Vec<Value>> {
+    Ok(paths
+        .load_snapshot()?
+        .projections
+        .projections
+        .into_iter()
+        .filter(|projection| projection.skill_id == skill)
+        .map(|projection| {
+            json!({
+                "instance_id": projection.instance_id,
+                "target_id": projection.target_id,
+                "materialized_path": projection.materialized_path,
+                "cleanup": "manual_review_required"
+            })
         })
-        .unwrap_or_default()
+        .collect())
 }
 
 fn record_to_metadata(record: RegistryTrustRecord) -> SkillTrustMetadata {

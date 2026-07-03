@@ -2,7 +2,7 @@
 
 Issue: https://github.com/majiayu000/loom/issues/382
 Parent: https://github.com/majiayu000/loom/issues/376
-Status: Blocked design packet
+Status: Implementation closeout
 Locale: zh-CN
 
 ## Goal
@@ -17,7 +17,7 @@ without hidden background sync or secret copying.
 
 ## Blocking Dependencies
 
-Production implementation is blocked by:
+Production implementation consumed these prerequisite slices:
 
 - #366 single-skill inspect/status.
 - #367 activation semantics.

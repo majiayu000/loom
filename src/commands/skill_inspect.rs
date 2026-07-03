@@ -1,3 +1,5 @@
+mod evidence;
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -26,6 +28,7 @@ use super::skill_verify::{
 };
 use super::telemetry::skill_telemetry_summary;
 use super::{App, CommandFailure, SkillLintMode, lint_skill_source, lint_skill_source_for_agent};
+use evidence::{build_quality_evidence, build_safety_evidence};
 
 #[derive(Debug, Serialize)]
 struct SourceStatus {
@@ -87,6 +90,7 @@ struct SourceGitStatus {
     drifted_paths: Vec<String>,
 }
 
+#[derive(Clone, Copy)]
 struct Selector<'a> {
     agent: Option<&'a str>,
     workspace: Option<&'a Path>,
@@ -166,6 +170,15 @@ impl App {
             None
         };
         let compiled = compiled_artifact_summary(&self.ctx, &args.skill)?;
+        let quality = build_quality_evidence(&self.ctx, &args.skill, source_exists);
+        let safety = build_safety_evidence(
+            &self.ctx,
+            &args.skill,
+            &trust,
+            source_exists,
+            snapshot.as_ref(),
+            selector,
+        );
 
         Ok((
             json!({
@@ -175,21 +188,8 @@ impl App {
                 "provenance": provenance,
                 "runtime": runtime,
                 "dependencies": dependencies,
-                "quality": {
-                    "last_eval": Value::Null,
-                    "trigger_precision": Value::Null,
-                    "trigger_recall": Value::Null,
-                    "baseline_delta": Value::Null,
-                },
-                "safety": {
-                    "trust": trust.trust,
-                    "policy": "unknown",
-                    "scripts_present": Value::Null,
-                    "network_requested": Value::Null,
-                    "quarantined": trust.quarantined,
-                    "reason": trust.reason,
-                    "updated_at": trust.updated_at.map(|value| value.to_rfc3339()),
-                },
+                "quality": quality,
+                "safety": safety,
                 "telemetry": telemetry,
                 "compiled": compiled,
                 "next_actions": next_actions,

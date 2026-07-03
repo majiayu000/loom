@@ -482,6 +482,7 @@ fn ensure_symlink_deactivation_rule(
     ))
 }
 
+#[cfg(debug_assertions)]
 fn skill_activate_projection_fault(skill: &str) -> Option<CommandFailure> {
     let raw = std::env::var("LOOM_SKILL_ACTIVATE_FAULT_INJECT").ok()?;
     if raw == format!("after_projection:{skill}") {
@@ -490,5 +491,10 @@ fn skill_activate_projection_fault(skill: &str) -> Option<CommandFailure> {
             format!("fault injected after projecting {}", skill),
         ));
     }
+    None
+}
+
+#[cfg(not(debug_assertions))]
+fn skill_activate_projection_fault(_skill: &str) -> Option<CommandFailure> {
     None
 }

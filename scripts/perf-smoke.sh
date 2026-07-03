@@ -6,7 +6,7 @@ if [[ ! -x "$bin" ]]; then
   cargo build --release --locked
 fi
 
-# Hard ceiling: 5568 KiB. The durable plan/apply protocol, offline eval
+# Hard ceiling: 5648 KiB. The durable plan/apply protocol, offline eval
 # matrix, local skill scaffolding CLI, skillset foundation, portable YAML
 # lint parser, single-skill inspect read model, single-skill activation
 # commands, and safety/trust/quarantine/security-diff command surfaces expanded
@@ -67,7 +67,10 @@ fi
 # enums add shared serde/CLI/TS vocab exports for typed persisted state.
 # Registry-backed sync/ops queue handling adds operation ack/purge/failure
 # mutation paths plus guarded Git merge/rebase handling for operation journals.
-max_bin_bytes=$((5602 * 1024))
+# Skillset lifecycle closeout adds grouped activation/deactivation orchestration,
+# member eval aggregation, release/rollback guards, and partial rollback
+# recovery while keeping cold CLI startup guarded below.
+max_bin_bytes=$((5648 * 1024))
 bin_bytes="$(wc -c < "$bin" | tr -d ' ')"
 if (( bin_bytes > max_bin_bytes )); then
   echo "release binary is ${bin_bytes} bytes; limit is ${max_bin_bytes}" >&2

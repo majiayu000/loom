@@ -803,6 +803,7 @@ fn skillset_deactivate_command(skill: &str, args: &SkillsetActivateArgs) -> Stri
     command
 }
 
+#[cfg(debug_assertions)]
 fn skillset_activation_fault(skill: &str) -> Option<CommandFailure> {
     let raw = std::env::var("LOOM_SKILLSET_ACTIVATE_FAULT_INJECT").ok()?;
     if raw == format!("after:{skill}") {
@@ -811,6 +812,11 @@ fn skillset_activation_fault(skill: &str) -> Option<CommandFailure> {
             format!("fault injected after activating {}", skill),
         ));
     }
+    None
+}
+
+#[cfg(not(debug_assertions))]
+fn skillset_activation_fault(_skill: &str) -> Option<CommandFailure> {
     None
 }
 

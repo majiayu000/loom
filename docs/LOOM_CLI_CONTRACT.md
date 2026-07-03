@@ -1078,6 +1078,33 @@ Success response should include:
 
 1. `recovery_ref`
 2. resulting source revision
+3. `source_restored: true`
+4. `registry_restored: true`
+5. `live_projection_reconciled`
+6. `projection_reconciliation`
+
+Rules:
+
+1. rollback restores the canonical source and records registry audit state; it
+   does not silently claim that live agent projections were updated
+2. copy and materialize projections default to `recovery_plan_only`; rollback
+   reports them as `requires_projection_reapply=true` until the user runs the
+   returned recovery command
+3. symlink projections are reported as `symlink_noop` and require no content
+   copy because their live path follows the restored source
+4. `projection_reconciliation.items[]` includes `instance_id`, `skill_id`,
+   `binding_id`, `target_id`, `materialized_path`, `method`, `status`,
+   `live_path_exists`, `requires_projection_reapply`, and `next_action`
+5. `projection_reconciliation.next_actions[]` contains exact executable
+   `loom --json --root <root> skill project <skill-id> --binding <binding-id>
+   --target <target-id> --method <method>` commands when Loom can reapply a
+   projection safely, or `manual_review_required` when registry evidence is
+   missing
+6. if registry snapshot loading fails after rollback, the response keeps
+   `ok=true` for the source rollback but sets
+   `projection_reconciliation.status="registry_unavailable"`, includes a
+   structured `error`, sets `live_projection_reconciled=false`, and adds a
+   warning to `meta.warnings`
 
 ### 11.10 `skill diff`
 

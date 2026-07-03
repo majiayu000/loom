@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Component, Path};
 
+use serde::Serialize;
 use serde_json::{Value, json};
 
 use crate::cli::{ActiveRecommendArgs, IndexArgs, SkillSearchArgs};
@@ -44,8 +45,8 @@ impl App {
         fs::create_dir_all(&index_dir).map_err(map_io)?;
         ensure_index_git_exclude(&self.ctx)?;
 
-        let lexical = lexical_index_payload(&model.skills);
-        let capabilities = capability_index_payload(&model.skills, &skillsets);
+        let lexical = lexical_index_payload(&model.skills)?;
+        let capabilities = capability_index_payload(&model.skills, &skillsets)?;
         let workspaces = workspace_index_payload(&self.ctx)?;
 
         write_index_file(&index_dir.join(LEXICAL_FILE), &lexical)?;
@@ -478,66 +479,69 @@ fn recommend_binding_matches_workspace(
     }
 }
 
-fn lexical_index_payload(skills: &[Value]) -> Value {
-    let records = skills
-        .iter()
-        .filter_map(|skill| {
-            let skill_id = skill["skill_id"].as_str()?;
-            let mut fields = BTreeMap::new();
-            fields.insert("name", tokenize(skill_id));
-            fields.insert(
-                "description",
-                tokenize(skill["description"].as_str().unwrap_or_default()),
-            );
-            fields.insert("warnings", tokenized_array(&skill["warnings"]));
-            let tokens = fields
-                .values()
-                .flatten()
-                .cloned()
-                .collect::<BTreeSet<_>>()
-                .into_iter()
-                .collect::<Vec<_>>();
-            Some(json!({
-                "schema_version": REGISTRY_SCHEMA_VERSION,
-                "skill_id": skill_id,
-                "source_digest": digest_json(skill),
-                "tokens": tokens,
-                "fields": fields,
-                "source_timestamp": skill["latest_updated_at"].clone(),
-            }))
-        })
-        .collect::<Vec<_>>();
-    json!({ "schema_version": REGISTRY_SCHEMA_VERSION, "records": records })
+fn lexical_index_payload(skills: &[Value]) -> std::result::Result<Value, CommandFailure> {
+    let mut records = Vec::new();
+    for skill in skills {
+        let Some(skill_id) = skill["skill_id"].as_str() else {
+            continue;
+        };
+        let mut fields = BTreeMap::new();
+        fields.insert("name", tokenize(skill_id));
+        fields.insert(
+            "description",
+            tokenize(skill["description"].as_str().unwrap_or_default()),
+        );
+        fields.insert("warnings", tokenized_array(&skill["warnings"]));
+        let tokens = fields
+            .values()
+            .flatten()
+            .cloned()
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>();
+        records.push(json!({
+            "schema_version": REGISTRY_SCHEMA_VERSION,
+            "skill_id": skill_id,
+            "source_digest": digest_json(skill)?,
+            "tokens": tokens,
+            "fields": fields,
+            "source_timestamp": skill["latest_updated_at"].clone(),
+        }));
+    }
+    Ok(json!({ "schema_version": REGISTRY_SCHEMA_VERSION, "records": records }))
 }
 
-fn capability_index_payload(skills: &[Value], skillsets: &Value) -> Value {
+fn capability_index_payload(
+    skills: &[Value],
+    skillsets: &Value,
+) -> std::result::Result<Value, CommandFailure> {
     let membership = skillset_membership(skillsets);
-    let records = skills
-        .iter()
-        .filter_map(|skill| {
-            let skill_id = skill["skill_id"].as_str()?;
-            let description = skill["description"].as_str().unwrap_or_default();
-            Some(json!({
-                "schema_version": REGISTRY_SCHEMA_VERSION,
-                "skill_id": skill_id,
-                "source_digest": digest_json(skill),
-                "capabilities": tokenize(description),
-                "triggers": [],
-                "domains": [],
-                "tools": [],
-                "risk": "unknown",
-                "trust": skill["trust"].as_str().unwrap_or("unknown"),
-                "dependency_status": if skill["source_status"].as_str() == Some("present") { "unknown" } else { "missing-source" },
-                "eval": {
-                    "trigger_precision": Value::Null,
-                    "trigger_recall": Value::Null,
-                    "baseline_delta": Value::Null,
-                },
-                "skillsets": membership.get(skill_id).cloned().unwrap_or_default(),
-            }))
-        })
-        .collect::<Vec<_>>();
-    json!({ "schema_version": REGISTRY_SCHEMA_VERSION, "records": records })
+    let mut records = Vec::new();
+    for skill in skills {
+        let Some(skill_id) = skill["skill_id"].as_str() else {
+            continue;
+        };
+        let description = skill["description"].as_str().unwrap_or_default();
+        records.push(json!({
+            "schema_version": REGISTRY_SCHEMA_VERSION,
+            "skill_id": skill_id,
+            "source_digest": digest_json(skill)?,
+            "capabilities": tokenize(description),
+            "triggers": [],
+            "domains": [],
+            "tools": [],
+            "risk": "unknown",
+            "trust": skill["trust"].as_str().unwrap_or("unknown"),
+            "dependency_status": if skill["source_status"].as_str() == Some("present") { "unknown" } else { "missing-source" },
+            "eval": {
+                "trigger_precision": Value::Null,
+                "trigger_recall": Value::Null,
+                "baseline_delta": Value::Null,
+            },
+            "skillsets": membership.get(skill_id).cloned().unwrap_or_default(),
+        }));
+    }
+    Ok(json!({ "schema_version": REGISTRY_SCHEMA_VERSION, "records": records }))
 }
 
 fn workspace_index_payload(ctx: &AppContext) -> std::result::Result<Value, CommandFailure> {
@@ -546,22 +550,19 @@ fn workspace_index_payload(ctx: &AppContext) -> std::result::Result<Value, Comma
     let Some(snapshot) = snapshot else {
         return Ok(json!({ "schema_version": REGISTRY_SCHEMA_VERSION, "records": [] }));
     };
-    let mut records = snapshot
-        .bindings
-        .bindings
-        .iter()
-        .map(|binding| {
-            json!({
-                "schema_version": REGISTRY_SCHEMA_VERSION,
-                "workspace": binding.workspace_matcher.value,
-                "agent": binding.agent,
-                "binding_id": binding.binding_id,
-                "policy_profile": binding.policy_profile,
-                "active": binding.active,
-                "source_digest": digest_json(&json!(binding)),
-            })
-        })
-        .collect::<Vec<_>>();
+    let mut records = Vec::new();
+    for binding in &snapshot.bindings.bindings {
+        let source = json!(binding);
+        records.push(json!({
+            "schema_version": REGISTRY_SCHEMA_VERSION,
+            "workspace": binding.workspace_matcher.value,
+            "agent": binding.agent,
+            "binding_id": binding.binding_id,
+            "policy_profile": binding.policy_profile,
+            "active": binding.active,
+            "source_digest": digest_json(&source)?,
+        }));
+    }
     records.sort_by(|left, right| {
         left["workspace"]
             .as_str()
@@ -942,9 +943,48 @@ fn count_index_records(path: &Path) -> std::result::Result<usize, CommandFailure
     Ok(parsed["records"].as_array().map_or(0, Vec::len))
 }
 
-fn digest_json(value: &Value) -> String {
-    let raw = serde_json::to_vec(value).unwrap_or_default();
+fn digest_json(value: &Value) -> std::result::Result<String, CommandFailure> {
+    digest_serialized_json(value).map_err(|err| {
+        CommandFailure::new(
+            ErrorCode::InternalError,
+            format!("failed to serialize JSON for digest: {err}"),
+        )
+    })
+}
+
+fn digest_serialized_json<T: Serialize + ?Sized>(
+    value: &T,
+) -> std::result::Result<String, serde_json::Error> {
+    let raw = serde_json::to_vec(value)?;
     let mut hasher = Sha256::new();
     hasher.update(&raw);
-    format!("sha256:{}", to_hex(&hasher.finalize()))
+    Ok(format!("sha256:{}", to_hex(&hasher.finalize())))
+}
+
+#[cfg(test)]
+mod tests {
+    use serde::Serialize;
+
+    use super::digest_serialized_json;
+
+    struct FailingSerialize;
+
+    impl Serialize for FailingSerialize {
+        fn serialize<S>(&self, _serializer: S) -> Result<S::Ok, S::Error>
+        where
+            S: serde::Serializer,
+        {
+            Err(serde::ser::Error::custom("digest source unavailable"))
+        }
+    }
+
+    #[test]
+    fn skill_inventory_cli_digest_json_propagates_serialization_failure() {
+        let err = digest_serialized_json(&FailingSerialize).expect_err("digest should fail");
+
+        assert!(
+            err.to_string().contains("digest source unavailable"),
+            "serialization error should be propagated: {err}"
+        );
+    }
 }

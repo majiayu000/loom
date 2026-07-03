@@ -12,7 +12,7 @@ use walkdir::WalkDir;
 
 use crate::cli::{AddArgs, SkillOnlyArgs, SkillProvenanceCommand};
 use crate::envelope::Meta;
-use crate::fs_util::remove_path_if_exists;
+use crate::fs_util::{remove_path_if_exists, write_atomic};
 use crate::gitops;
 use crate::sha256::{Sha256, to_hex};
 use crate::state::AppContext;
@@ -419,7 +419,7 @@ fn write_sources(ctx: &AppContext, sources: &SkillSourcesFile) -> Result<()> {
         fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
     }
     let raw = serde_json::to_string_pretty(sources)? + "\n";
-    fs::write(&path, raw).with_context(|| format!("write {}", path.display()))
+    write_atomic(&path, &raw).with_context(|| format!("write {}", path.display()))
 }
 
 fn write_lock(ctx: &AppContext, sources: &SkillSourcesFile) -> Result<()> {
@@ -429,7 +429,8 @@ fn write_lock(ctx: &AppContext, sources: &SkillSourcesFile) -> Result<()> {
     }
     let lock = LoomLockFile { version: 1, skills };
     let raw = serde_json::to_string_pretty(&lock)? + "\n";
-    fs::write(ctx.root.join(LOCK_REL), raw).with_context(|| format!("write {}", LOCK_REL))
+    let path = ctx.root.join(LOCK_REL);
+    write_atomic(&path, &raw).with_context(|| format!("write {}", path.display()))
 }
 
 fn lock_skill_for_record(ctx: &AppContext, record: &SkillSourceRecord) -> Result<LoomLockSkill> {

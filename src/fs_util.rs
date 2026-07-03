@@ -25,8 +25,14 @@ pub fn rename_atomic(src: &Path, dst: &Path) -> io::Result<()> {
     std::fs::rename(src, dst)
 }
 
-/// Write contents through a temp file and atomically replace the destination.
+/// Write UTF-8 contents through a temp file and atomically replace the destination.
 pub fn write_atomic(path: &Path, contents: &str) -> io::Result<()> {
+    write_atomic_bytes(path, contents.as_bytes())
+}
+
+/// Write bytes through a temp file and atomically replace the destination.
+pub fn write_atomic_bytes(path: &Path, contents: &[u8]) -> io::Result<()> {
+    maybe_fault_inject("write_atomic")?;
     let parent = path.parent().ok_or_else(|| {
         io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -46,7 +52,7 @@ pub fn write_atomic(path: &Path, contents: &str) -> io::Result<()> {
             .create_new(true)
             .write(true)
             .open(&tmp_path)?;
-        file.write_all(contents.as_bytes())?;
+        file.write_all(contents)?;
         file.sync_all()?;
     }
 

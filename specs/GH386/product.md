@@ -2,7 +2,7 @@
 
 Issue: https://github.com/majiayu000/loom/issues/386
 Parent: https://github.com/majiayu000/loom/issues/376
-Status: Draft for implementation
+Status: Implementation slice in review
 Locale: en-US
 
 ## Goal
@@ -21,20 +21,21 @@ packages, authenticating services, or writing secrets.
 
 ## Scope For First PR
 
-The first mergeable slice should implement the non-destructive foundation:
+The first mergeable slice should implement the guarded plan/apply foundation:
 
 - requirement listing from `loom.skill.toml`, `SKILL.md` metadata, compatibility
   text, and agent metadata;
-- `mcp plan` dry-run output with missing servers, config diffs, env
-  requirements, risk summary, and RBAC approval requirements;
+- `mcp plan` output with missing servers, config diffs, env requirements, risk
+  summary, RBAC approval requirements, and an audited durable reviewed plan
+  artifact under `state/mcp/plans`;
 - catalog source policy model for pinned package, Git, local, and team catalog
   locators;
 - `mcp doctor` next actions when dependency readiness fails;
-- `mcp apply` design guarded behind revalidation, idempotency keys, approvals,
-  atomic config writes, and secret non-storage.
+- `mcp apply` for reviewed Codex config writes, guarded behind revalidation,
+  idempotency keys, approvals, atomic config writes, and secret non-storage.
 
-Implementation may defer actual apply writes until plan semantics and adapter
-metadata are stable.
+Implementation defers direct package installation; this slice writes reviewed
+Codex MCP config only.
 
 ## Non-Goals
 
@@ -49,9 +50,10 @@ metadata are stable.
 
 ## Behavior Invariants
 
-1. `mcp requirement list` and `mcp plan` are read-only.
-2. `mcp plan` includes config diffs and risk summary but does not write agent
-   config, registry state, secrets, or package installs.
+1. `mcp requirement list`, `mcp doctor`, and `mcp catalog` are read-only.
+2. `mcp plan` writes only an audited durable plan artifact and optional
+   explicit `--output-plan`; it does not write agent config, secrets, or
+   package installs.
 3. Secret values are never printed, exported, logged, or stored.
 4. Missing secrets are represented by variable names and redacted status only.
 5. Unpinned or unknown MCP server packages are blocked or approval-required
@@ -73,13 +75,13 @@ Required first-slice commands:
 
 ```bash
 loom mcp requirement list --skill <skill> [--agent <agent>] [--json]
-loom mcp plan --skill <skill> --agent <agent> [--workspace <path>] [--json]
+loom mcp plan --skill <skill> --agent <agent> [--workspace <path>] [--output-plan <path>] [--json]
 loom mcp doctor --agent <agent> [--skill <skill>] [--workspace <path>] [--json]
 loom mcp catalog search <query> [--json]
 loom mcp catalog show <server> [--json]
 ```
 
-Deferred apply command:
+Guarded apply command:
 
 ```bash
 loom mcp apply <plan-id|plan-artifact> --idempotency-key <key> [--approve <approval-id[,approval-id]>]
@@ -168,7 +170,8 @@ secret context before they are printed, logged, or stored in a plan artifact.
    `loom.skill.toml` and supported skill metadata.
 2. `mcp plan` identifies missing servers, existing servers, redacted config
    diffs, env vars, per-server source provenance, and approval requirements.
-3. `mcp plan` is read-only and writes no agent config or package state.
+3. `mcp plan` writes only reviewed plan artifacts and writes no agent config,
+   package state, or secret values.
 4. Secret values are never printed or stored.
 5. Unpinned MCP server sources are blocked before approval unless planning first
    resolves and records an immutable version, commit, or source digest; untrusted
@@ -176,14 +179,15 @@ secret context before they are printed, logged, or stored in a plan artifact.
 6. Unsupported agents return `manual_configuration_required` with required
    server details.
 7. `mcp apply` consumes a durable plan event or explicit plan artifact,
-   revalidates plans, writes config atomically, and is idempotent once apply is
-   implemented.
+   revalidates plans, writes Codex config atomically, preserves unrelated user
+   settings, forwards auth variable names through `env_vars`, and is
+   idempotent.
 8. `skill diagnose` includes MCP provisioning next actions when readiness
    fails.
 9. Tests cover requirement parsing, missing and existing server plans,
    adapter-supported config diff generation, env secret redaction, unpinned
-   rejection, approval-required actions, malformed config, and unsupported agent
-   manual mode. Idempotent apply tests are required once apply is implemented.
+   rejection, approval-required actions, malformed config, unsupported agent
+   manual mode, and guarded/idempotent apply edge cases.
 
 ## Open Questions
 

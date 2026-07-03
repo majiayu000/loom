@@ -636,17 +636,18 @@ Rules:
 7. build output returns install and verify guidance only; package artifacts are not active-state, visibility, trust, or installed-state proof
 8. publish/submission to external package hosts is deferred and must not bypass Loom registry authority when later implemented
 
-### 11.1.3 `mcp requirement`, `mcp plan`, `mcp doctor`, and `mcp catalog`
+### 11.1.3 `mcp requirement`, `mcp plan`, `mcp apply`, `mcp doctor`, and `mcp catalog`
 
 ```bash
 loom --json --root <root> mcp requirement list --skill <skill> [--agent <agent>]
-loom --json --root <root> mcp plan --skill <skill> --agent <agent> [--workspace <path>]
+loom --json --root <root> mcp plan --skill <skill> --agent <agent> [--workspace <path>] [--output-plan <path>]
+loom --json --root <root> mcp apply <plan-id|plan-artifact> --idempotency-key <key> [--approve <approval-token>...]
 loom --json --root <root> mcp doctor --agent <agent> [--skill <skill>] [--workspace <path>]
 loom --json --root <root> mcp catalog search <query>
 loom --json --root <root> mcp catalog show <server>
 ```
 
-MCP provisioning is plan-first. The first slice is read-only and must not install packages, execute MCP servers, write agent config, write secrets, mutate registry state, or change live target directories.
+MCP provisioning is plan-first. Requirement, doctor, and catalog commands are read-only. `mcp plan` writes an audited durable reviewed plan under `state/mcp/plans/<plan_id>.json` and may also write an explicit `--output-plan` artifact, but it does not write agent config, package installs, or secret values. Apply consumes a durable reviewed plan id or explicit plan artifact, requires an idempotency key and approval tokens for risky actions, revalidates source/config preimages, writes Codex config atomically, and never stores secret values.
 
 Rules:
 
@@ -655,7 +656,8 @@ Rules:
 3. pinned npm locators split scoped package names at the rightmost `@`; unpinned package, Git, local, or unknown sources are blocked or approval-required until immutable provenance is recorded
 4. unsupported agents return `manual_configuration_required` actions instead of guessed config paths
 5. `mcp doctor` and `skill diagnose` point to `mcp plan` when MCP dependency readiness fails
-6. apply is intentionally absent until durable plan revalidation, idempotency keys, approval validation, atomic config writes, and secret non-storage are implemented
+6. `mcp apply` fails closed when approvals, env vars, launcher tools, pinned sources, skill source digest, or Codex config preimage validation fail
+7. `mcp apply` writes only reviewed Codex `mcp_servers` config, forwards environment variable names through `env_vars`, preserves unrelated server settings, and returns restart guidance when it changes config
 
 ### 11.1.4 `provision plan`, `provision doctor`, `provision apply`, `provision export`, and `provision import`
 

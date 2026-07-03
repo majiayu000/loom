@@ -1,6 +1,6 @@
 use std::collections::BTreeSet;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use super::McpRequirement;
@@ -17,7 +17,7 @@ pub(super) struct McpCatalogEntry {
     pub(super) permissions: &'static [&'static str],
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub(super) struct McpResolvedSource {
     pub(super) server: String,
     pub(super) locator: String,
@@ -72,12 +72,13 @@ pub(super) fn resolve_source(req: &McpRequirement) -> McpResolvedSource {
 }
 
 #[rustfmt::skip]
-fn parse_mcp_locator(locator: &str) -> (String, bool, Option<String>, Option<String>) {
+pub(super) fn parse_mcp_locator(locator: &str) -> (String, bool, Option<String>, Option<String>) {
     if let Some(raw) = locator.strip_prefix("npm:") {
         let Some(index) = raw.rfind('@').filter(|index| *index > 0 && *index + 1 < raw.len()) else {
             return ("npm".to_string(), false, Some(raw.trim_end_matches('@').to_string()), None);
         };
-        return ("npm".to_string(), true, Some(raw[..index].to_string()), Some(raw[index + 1..].to_string()));
+        let version = &raw[index + 1..];
+        return ("npm".to_string(), npm_version_is_immutable(version), Some(raw[..index].to_string()), Some(version.to_string()));
     }
     if let Some(raw) = locator.strip_prefix("git:") {
         return ("git".to_string(), raw.split_once('#').is_some_and(|(_, rev)| looks_like_commit(rev)), Some(raw.to_string()), raw.split_once('#').map(|(_, rev)| rev.to_string()));
@@ -93,6 +94,29 @@ fn parse_mcp_locator(locator: &str) -> (String, bool, Option<String>, Option<Str
 
 fn looks_like_commit(value: &str) -> bool {
     value.len() >= 40 && value.chars().all(|ch| ch.is_ascii_hexdigit())
+}
+
+fn npm_version_is_immutable(value: &str) -> bool {
+    if value.is_empty()
+        || value
+            .chars()
+            .any(|ch| matches!(ch, '^' | '~' | '<' | '>' | '=' | '*' | 'x' | 'X'))
+        || value.eq_ignore_ascii_case("latest")
+    {
+        return false;
+    }
+    let core = value
+        .split_once('+')
+        .map(|(core, _)| core)
+        .unwrap_or(value)
+        .split_once('-')
+        .map(|(core, _)| core)
+        .unwrap_or(value);
+    let parts = core.split('.').collect::<Vec<_>>();
+    parts.len() == 3
+        && parts
+            .iter()
+            .all(|part| !part.is_empty() && part.chars().all(|ch| ch.is_ascii_digit()))
 }
 
 pub(super) fn tool_dependency(source: &McpResolvedSource) -> Vec<String> {

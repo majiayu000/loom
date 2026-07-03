@@ -1,9 +1,12 @@
 mod common;
 
-use std::path::Path;
+use std::{fs, path::Path};
 
 use common::{TestDir, run_loom, run_loom_with_env, write_file, write_skill};
 use serde_json::{Value, json};
+
+#[path = "../src/sha256.rs"]
+mod sha256;
 
 fn item_with_field<'a>(items: &'a Value, field: &str, value: &str) -> &'a Value {
     items
@@ -27,6 +30,25 @@ fn write_manifest(root: &Path, skill: &str, body: &str) {
         &root.join("skills").join(skill).join("loom.skill.toml"),
         body,
     );
+}
+
+fn write_github_mcp_skill(root: &Path, skill: &str) {
+    write_skill(
+        root,
+        skill,
+        "---\nname: demo\ndescription: Demo.\n---\n# Demo\n",
+    );
+    write_manifest(
+        root,
+        skill,
+        "requires_mcp = [\"github\"]\n\n[mcp.github]\npackage = \"npm:@modelcontextprotocol/server-github@0.6.2\"\nauth = \"env:GITHUB_TOKEN\"\n",
+    );
+}
+
+fn digest_bytes(bytes: &[u8]) -> String {
+    let mut hasher = sha256::Sha256::new();
+    hasher.update(bytes);
+    format!("sha256:{}", sha256::to_hex(&hasher.finalize()))
 }
 
 #[test]
@@ -239,4 +261,396 @@ fn plan_reports_existing_codex_config_mismatch() {
         &mismatch["details"]["mismatches"],
         "env:GITHUB_TOKEN"
     ));
+}
+
+#[test]
+fn mcp_apply_writes_codex_config_and_replays_idempotently() {
+    let root = TestDir::new("mcp-apply-root");
+    let codex_home = TestDir::new("mcp-apply-codex-home");
+    write_github_mcp_skill(root.path(), "demo");
+
+    let codex_home_arg = codex_home.path().to_string_lossy().to_string();
+    let (plan_output, plan_env) = run_loom_with_env(
+        root.path(),
+        &[
+            ("CODEX_HOME", &codex_home_arg),
+            ("GITHUB_TOKEN", "super-secret-value"),
+        ],
+        &["mcp", "plan", "--skill", "demo", "--agent", "codex"],
+    );
+    assert!(
+        plan_output.status.success(),
+        "mcp plan should pass: {plan_env}"
+    );
+    assert_eq!(plan_env["data"]["durable_plan_written"], json!(true));
+    let plan_id = plan_env["data"]["plan_id"].as_str().expect("plan id");
+
+    let (apply_output, apply_env) = run_loom_with_env(
+        root.path(),
+        &[
+            ("CODEX_HOME", &codex_home_arg),
+            ("GITHUB_TOKEN", "super-secret-value"),
+        ],
+        &[
+            "mcp",
+            "apply",
+            plan_id,
+            "--idempotency-key",
+            "mcp-key-1",
+            "--approve",
+            "install-third-party-mcp,write-agent-mcp-config",
+        ],
+    );
+
+    assert!(
+        apply_output.status.success(),
+        "mcp apply should pass: {apply_env}"
+    );
+    assert_eq!(apply_env["cmd"], json!("mcp.apply"));
+    assert_eq!(apply_env["data"]["target_writes_performed"], json!(true));
+    assert_eq!(apply_env["data"]["idempotent_replay"], json!(false));
+    assert_eq!(apply_env["data"]["secret_values_written"], json!(false));
+    assert!(
+        apply_env["data"]["idempotency_key_digest"]
+            .as_str()
+            .expect("digest")
+            .starts_with("sha256:")
+    );
+    assert!(
+        !serde_json::to_string(&apply_env)
+            .expect("json")
+            .contains("mcp-key-1")
+    );
+
+    let config = fs::read_to_string(codex_home.path().join("config.toml")).expect("config");
+    assert!(config.contains("[mcp_servers.github]"));
+    assert!(config.contains("command = \"npx\""));
+    assert!(config.contains("@modelcontextprotocol/server-github@0.6.2"));
+    assert!(config.contains("env_vars = [\"GITHUB_TOKEN\"]"));
+    assert!(!config.contains("env:GITHUB_TOKEN"));
+    assert!(!config.contains("super-secret-value"));
+
+    let (replay_output, replay_env) = run_loom_with_env(
+        root.path(),
+        &[("CODEX_HOME", &codex_home_arg)],
+        &["mcp", "apply", plan_id, "--idempotency-key", "mcp-key-1"],
+    );
+
+    assert!(
+        replay_output.status.success(),
+        "mcp apply replay should pass: {replay_env}"
+    );
+    assert_eq!(replay_env["data"]["idempotent_replay"], json!(true));
+    assert_eq!(replay_env["data"]["target_writes_performed"], json!(false));
+}
+
+#[test]
+fn mcp_apply_requires_approvals_and_env_without_writes() {
+    let root = TestDir::new("mcp-apply-guards");
+    let codex_home = TestDir::new("mcp-apply-guards-home");
+    write_github_mcp_skill(root.path(), "demo");
+    let codex_home_arg = codex_home.path().to_string_lossy().to_string();
+
+    let (plan_output, plan_env) = run_loom_with_env(
+        root.path(),
+        &[("CODEX_HOME", &codex_home_arg)],
+        &["mcp", "plan", "--skill", "demo", "--agent", "codex"],
+    );
+    assert!(
+        plan_output.status.success(),
+        "mcp plan should pass: {plan_env}"
+    );
+    let plan_id = plan_env["data"]["plan_id"].as_str().expect("plan id");
+
+    let (approval_output, approval_env) = run_loom_with_env(
+        root.path(),
+        &[("CODEX_HOME", &codex_home_arg)],
+        &[
+            "mcp",
+            "apply",
+            plan_id,
+            "--idempotency-key",
+            "missing-approval",
+        ],
+    );
+    assert!(
+        !approval_output.status.success(),
+        "mcp apply should require approvals: {approval_env}"
+    );
+    assert_eq!(approval_env["error"]["code"], json!("POLICY_BLOCKED"));
+    assert_eq!(
+        approval_env["error"]["details"]["target_writes_performed"],
+        json!(false)
+    );
+    assert!(!codex_home.path().join("config.toml").exists());
+
+    let (env_output, env_env) = run_loom_with_env(
+        root.path(),
+        &[("CODEX_HOME", &codex_home_arg)],
+        &[
+            "mcp",
+            "apply",
+            plan_id,
+            "--idempotency-key",
+            "missing-env",
+            "--approve",
+            "install-third-party-mcp",
+            "--approve",
+            "write-agent-mcp-config",
+        ],
+    );
+    assert!(
+        !env_output.status.success(),
+        "mcp apply should require env: {env_env}"
+    );
+    assert_eq!(env_env["error"]["code"], json!("POLICY_BLOCKED"));
+    assert!(contains_string(
+        &env_env["error"]["details"]["missing_env"],
+        "GITHUB_TOKEN"
+    ));
+    assert!(!codex_home.path().join("config.toml").exists());
+}
+
+#[test]
+fn mcp_apply_rejects_stale_config_preimage() {
+    let root = TestDir::new("mcp-apply-stale");
+    let codex_home = TestDir::new("mcp-apply-stale-home");
+    write_github_mcp_skill(root.path(), "demo");
+    let codex_home_arg = codex_home.path().to_string_lossy().to_string();
+
+    let (plan_output, plan_env) = run_loom_with_env(
+        root.path(),
+        &[
+            ("CODEX_HOME", &codex_home_arg),
+            ("GITHUB_TOKEN", "super-secret-value"),
+        ],
+        &["mcp", "plan", "--skill", "demo", "--agent", "codex"],
+    );
+    assert!(
+        plan_output.status.success(),
+        "mcp plan should pass: {plan_env}"
+    );
+    let plan_id = plan_env["data"]["plan_id"].as_str().expect("plan id");
+    write_file(&codex_home.path().join("config.toml"), "# user change\n");
+
+    let (apply_output, apply_env) = run_loom_with_env(
+        root.path(),
+        &[
+            ("CODEX_HOME", &codex_home_arg),
+            ("GITHUB_TOKEN", "super-secret-value"),
+        ],
+        &[
+            "mcp",
+            "apply",
+            plan_id,
+            "--idempotency-key",
+            "stale-config",
+            "--approve",
+            "install-third-party-mcp",
+            "--approve",
+            "write-agent-mcp-config",
+        ],
+    );
+
+    assert!(
+        !apply_output.status.success(),
+        "mcp apply should reject stale config: {apply_env}"
+    );
+    assert_eq!(apply_env["error"]["code"], json!("POLICY_BLOCKED"));
+    assert_eq!(
+        fs::read_to_string(codex_home.path().join("config.toml")).expect("config"),
+        "# user change\n"
+    );
+}
+
+#[test]
+fn mcp_apply_rejects_changed_local_source_digest() {
+    let root = TestDir::new("mcp-apply-local-digest");
+    let codex_home = TestDir::new("mcp-apply-local-digest-home");
+    write_skill(
+        root.path(),
+        "demo",
+        "---\nname: demo\ndescription: Demo.\n---\n# Demo\n",
+    );
+    let server = root.path().join("bin/local-mcp");
+    let original = b"#!/bin/sh\necho original\n";
+    write_file(&server, std::str::from_utf8(original).expect("utf8"));
+    let locator = format!("local:{}@{}", server.display(), digest_bytes(original));
+    write_manifest(
+        root.path(),
+        "demo",
+        &format!("[mcp.local]\npackage = \"{locator}\"\n"),
+    );
+    let codex_home_arg = codex_home.path().to_string_lossy().to_string();
+
+    let (plan_output, plan_env) = run_loom_with_env(
+        root.path(),
+        &[("CODEX_HOME", &codex_home_arg)],
+        &["mcp", "plan", "--skill", "demo", "--agent", "codex"],
+    );
+    assert!(
+        plan_output.status.success(),
+        "mcp plan should pass: {plan_env}"
+    );
+    let plan_id = plan_env["data"]["plan_id"].as_str().expect("plan id");
+    write_file(&server, "#!/bin/sh\necho changed\n");
+
+    let (apply_output, apply_env) = run_loom_with_env(
+        root.path(),
+        &[("CODEX_HOME", &codex_home_arg)],
+        &[
+            "mcp",
+            "apply",
+            plan_id,
+            "--idempotency-key",
+            "changed-local-source",
+            "--approve",
+            "install-unknown-mcp",
+            "--approve",
+            "write-agent-mcp-config",
+        ],
+    );
+
+    assert!(
+        !apply_output.status.success(),
+        "mcp apply should reject changed local source: {apply_env}"
+    );
+    assert_eq!(apply_env["error"]["code"], json!("POLICY_BLOCKED"));
+    assert_eq!(
+        apply_env["error"]["details"]["target_writes_performed"],
+        json!(false)
+    );
+    assert!(!codex_home.path().join("config.toml").exists());
+}
+
+#[test]
+fn mcp_apply_overwrites_fuzzy_compatible_command() {
+    let root = TestDir::new("mcp-apply-fuzzy-compatible");
+    let codex_home = TestDir::new("mcp-apply-fuzzy-compatible-home");
+    write_github_mcp_skill(root.path(), "demo");
+    write_file(
+        &codex_home.path().join("config.toml"),
+        "[mcp_servers.github]\ncommand = \"evil\"\nargs = [\"@modelcontextprotocol/server-github@0.6.2\"]\n\n[mcp_servers.github.env]\nGITHUB_TOKEN = \"env:GITHUB_TOKEN\"\n",
+    );
+    let codex_home_arg = codex_home.path().to_string_lossy().to_string();
+
+    let (plan_output, plan_env) = run_loom_with_env(
+        root.path(),
+        &[
+            ("CODEX_HOME", &codex_home_arg),
+            ("GITHUB_TOKEN", "super-secret-value"),
+        ],
+        &["mcp", "plan", "--skill", "demo", "--agent", "codex"],
+    );
+    assert!(
+        plan_output.status.success(),
+        "mcp plan should pass: {plan_env}"
+    );
+    let install = item_with_field(&plan_env["data"]["actions"], "kind", "install_server");
+    assert_eq!(
+        install["details"]["configured"]["status"],
+        json!("compatible")
+    );
+    let plan_id = plan_env["data"]["plan_id"].as_str().expect("plan id");
+
+    let (apply_output, apply_env) = run_loom_with_env(
+        root.path(),
+        &[
+            ("CODEX_HOME", &codex_home_arg),
+            ("GITHUB_TOKEN", "super-secret-value"),
+        ],
+        &[
+            "mcp",
+            "apply",
+            plan_id,
+            "--idempotency-key",
+            "fuzzy-compatible-command",
+            "--approve",
+            "install-third-party-mcp",
+            "--approve",
+            "write-agent-mcp-config",
+        ],
+    );
+
+    assert!(
+        apply_output.status.success(),
+        "mcp apply should pass: {apply_env}"
+    );
+    assert_eq!(apply_env["data"]["target_writes_performed"], json!(true));
+    let config = fs::read_to_string(codex_home.path().join("config.toml")).expect("config");
+    assert!(config.contains("command = \"npx\""));
+    assert!(!config.contains("command = \"evil\""));
+    assert!(config.contains("env_vars = [\"GITHUB_TOKEN\"]"));
+    assert!(!config.contains("env:GITHUB_TOKEN"));
+}
+
+#[cfg(unix)]
+#[test]
+fn mcp_apply_rejects_stale_symlinked_skill_source() {
+    let root = TestDir::new("mcp-apply-symlink-digest");
+    let codex_home = TestDir::new("mcp-apply-symlink-digest-home");
+    write_skill(
+        root.path(),
+        "demo",
+        "---\nname: demo\ndescription: Demo.\n---\n# Demo\n",
+    );
+    let manifest_target = root.path().join("linked-manifest.toml");
+    write_file(
+        &manifest_target,
+        "requires_mcp = [\"github\"]\n\n[mcp.github]\npackage = \"npm:@modelcontextprotocol/server-github@0.6.2\"\nauth = \"env:GITHUB_TOKEN\"\n",
+    );
+    std::os::unix::fs::symlink(
+        &manifest_target,
+        root.path().join("skills/demo/loom.skill.toml"),
+    )
+    .expect("symlink manifest");
+    let codex_home_arg = codex_home.path().to_string_lossy().to_string();
+
+    let (plan_output, plan_env) = run_loom_with_env(
+        root.path(),
+        &[
+            ("CODEX_HOME", &codex_home_arg),
+            ("GITHUB_TOKEN", "super-secret-value"),
+        ],
+        &["mcp", "plan", "--skill", "demo", "--agent", "codex"],
+    );
+    assert!(
+        plan_output.status.success(),
+        "mcp plan should pass: {plan_env}"
+    );
+    let plan_id = plan_env["data"]["plan_id"].as_str().expect("plan id");
+    write_file(
+        &manifest_target,
+        "requires_mcp = [\"github\"]\n\n[mcp.github]\npackage = \"npm:@modelcontextprotocol/server-github@0.6.3\"\nauth = \"env:GITHUB_TOKEN\"\n",
+    );
+
+    let (apply_output, apply_env) = run_loom_with_env(
+        root.path(),
+        &[
+            ("CODEX_HOME", &codex_home_arg),
+            ("GITHUB_TOKEN", "super-secret-value"),
+        ],
+        &[
+            "mcp",
+            "apply",
+            plan_id,
+            "--idempotency-key",
+            "stale-symlink-source",
+            "--approve",
+            "install-third-party-mcp",
+            "--approve",
+            "write-agent-mcp-config",
+        ],
+    );
+
+    assert!(
+        !apply_output.status.success(),
+        "mcp apply should reject stale symlinked source: {apply_env}"
+    );
+    assert_eq!(apply_env["error"]["code"], json!("POLICY_BLOCKED"));
+    assert_eq!(
+        apply_env["error"]["details"]["target_writes_performed"],
+        json!(false)
+    );
+    assert!(!codex_home.path().join("config.toml").exists());
 }

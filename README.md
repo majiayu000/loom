@@ -224,7 +224,7 @@ The current lifecycle keeps source history on a smaller verb set: import with `a
 | `loom provider add/list/remove` | Manage local or GitHub catalog provider records | Configure provider ids for advisory search/preview without storing credentials | Registry provider state |
 | `loom catalog search/show/preview` | Inspect provider locators without executing source code | See metadata, scripts, license/provenance hints, lint, safety, and install dry-run guidance | Provider source (read-only) |
 | `loom package plan/build/verify` | Build deterministic outbound package artifacts from reviewed skills | Create a reviewed package plan, build a portable archive, and verify manifest/checksum/content integrity without claiming active install state | Skill source + package artifact |
-| `loom mcp requirement/plan/doctor/catalog` | Plan MCP server requirements and agent configuration without mutation | List declared MCP requirements, inspect source policy, show redacted config diffs, and point to next actions before any apply exists | Skill source + local agent config (read-only) |
+| `loom mcp requirement/plan/apply/doctor/catalog` | Plan and apply guarded MCP server configuration | List declared requirements, inspect source policy, write reviewed Codex config through idempotent apply, and point to next actions without storing secrets | Skill source + local agent config |
 | `loom provision plan/doctor/apply/export/import` | Plan devcontainer and remote active-view provisioning without target mutation | Preview generated devcontainer setup, active-view paths, dependency readiness, secret names, policy gates, reviewed shell/tar export artifacts, and import dry-runs before apply exists | Registry + target workspace (read-only for plan/doctor/import dry-run; explicit artifact output for shell/tar export) |
 | `loom skill install --dry-run` | Plan a provider-backed import without writing registry state | Check pin policy, lint, safety, provenance, lockfile, and trust defaults before mutating install apply exists | Provider source + policy (read-only except command audit) |
 | `loom policy org init/show/check` | Initialize and inspect Git-backed org policy | Review allow/deny/approval-required decisions before enforcement is wired across all mutations | Registry policy state |
@@ -397,7 +397,8 @@ loom package build <plan-artifact> --output <path> --idempotency-key <key>
 loom package verify <artifact> [--format agent-skills-archive]
 
 loom mcp requirement list --skill <skill> [--agent <agent>]
-loom mcp plan --skill <skill> --agent <agent> [--workspace <path>]
+loom mcp plan --skill <skill> --agent <agent> [--workspace <path>] [--output-plan <path>]
+loom mcp apply <plan-id|plan-artifact> --idempotency-key <key> [--approve <approval-token>...]
 loom mcp doctor --agent <agent> [--skill <skill>] [--workspace <path>]
 loom mcp catalog search <query>
 loom mcp catalog show <server>

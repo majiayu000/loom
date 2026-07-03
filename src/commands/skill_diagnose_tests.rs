@@ -348,6 +348,66 @@ fn skill_diagnose_persists_materialize_projection_missing_live_path() {
 }
 
 #[test]
+fn skill_diagnose_observes_materialize_projection_with_user_compiled_marker() {
+    let root = test_root();
+    write_skill(&root, "demo");
+    let source_marker_dir = root.join("skills/demo/.loom/compiled");
+    fs::create_dir_all(&source_marker_dir).expect("source marker dir");
+    fs::write(
+        source_marker_dir.join("projection.json"),
+        r#"{"schema_version":1,"kind":"user_content","entrypoint":"SKILL.md"}"#,
+    )
+    .expect("source marker");
+    commit_all(&root);
+
+    let target = root.join("target");
+    let projection = target.join("demo");
+    fs::create_dir_all(projection.join(".loom/compiled")).expect("projection marker dir");
+    fs::copy(
+        root.join("skills/demo/SKILL.md"),
+        projection.join("SKILL.md"),
+    )
+    .expect("seed projection");
+    fs::copy(
+        source_marker_dir.join("projection.json"),
+        projection.join(".loom/compiled/projection.json"),
+    )
+    .expect("seed marker");
+    write_projection_snapshot(
+        &root,
+        &target,
+        &projection,
+        "demo",
+        crate::core::vocab::ProjectionMethod::Materialize,
+    );
+    fs::write(
+        projection.join("SKILL.md"),
+        "---\ndescription: Demo skill\n---\nlive drift\n",
+    )
+    .expect("drift projection");
+
+    let (payload, _) = app(&root)
+        .cmd_skill_diagnose(&diagnose_args("demo"))
+        .expect("diagnose");
+    let digest_check = payload["checks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|check| check["id"] == "projection_content_digest:inst-1")
+        .expect("projection digest check");
+    assert_eq!(digest_check["ok"], json!(false));
+    assert_eq!(digest_check["details"]["error"], json!("digest_mismatch"));
+
+    let projection_record = read_persisted_projection(&root);
+    assert_eq!(projection_record["health"], json!("drifted"));
+    assert_eq!(
+        projection_record["last_observed_error"],
+        json!("digest_mismatch")
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
 fn skill_diagnose_unknown_skill_returns_not_found() {
     let root = test_root();
     let err = app(&root)

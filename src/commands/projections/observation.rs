@@ -308,7 +308,15 @@ fn projection_is_compiled_artifact_view(projection: &RegistryProjectionInstance)
         .join(".loom")
         .join("compiled")
         .join("projection.json");
-    marker.is_file()
+    let Ok(raw) = fs::read_to_string(marker) else {
+        return false;
+    };
+    let Ok(value) = serde_json::from_str::<Value>(&raw) else {
+        return false;
+    };
+    value["schema_version"] == json!(1)
+        && value["kind"] == json!("compiled_activation")
+        && value["entrypoint"] == json!("SKILL.md")
 }
 
 fn projection_observation_details(

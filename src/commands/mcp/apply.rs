@@ -2,7 +2,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, OpenOptions};
 use std::io::{ErrorKind, Write};
 use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
+use serde::Deserialize;
 use serde_json::{Value, json};
 use toml_edit::{Array, DocumentMut, Item, Table, TableLike, Value as TomlValue, value};
 
@@ -18,7 +20,7 @@ use crate::types::ErrorCode;
 use super::artifact::{load_reviewed_mcp_plan, skill_source_digest};
 use super::source_policy::{McpResolvedSource, tool_availability};
 use super::utils::{digest_bytes, digest_json, digest_str};
-use super::{McpPlan, McpRequirement};
+use super::{McpPlan, McpRequirement, current_required_mcp_plan_inputs};
 
 const APPLY_RECORD_SCHEMA: &str = "mcp-apply-record-v1";
 
@@ -34,7 +36,12 @@ struct ConfigSnapshot {
 struct RenderedServer {
     command: String,
     args: Vec<String>,
-    env_names: Vec<String>,
+    env_vars: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ApplyLockMetadata {
+    pid: u32,
 }
 
 impl Drop for ApplyRecordLock {
@@ -58,12 +65,6 @@ pub(super) fn cmd_mcp_apply(
     validate_non_empty("idempotency-key", &args.idempotency_key)?;
     let plan = load_reviewed_mcp_plan(ctx, &args.plan)?;
     ensure_supported_plan(&plan)?;
-    validate_skill_source(ctx, &plan)?;
-    validate_sources(&plan)?;
-    validate_approvals(&plan, &args.approvals)?;
-    validate_env(&plan)?;
-    validate_tools(&plan)?;
-
     let config_path = planned_codex_config_path(&plan)?;
     let plan_digest = digest_json(&plan)?;
     let key_digest = digest_str(&args.idempotency_key);
@@ -73,18 +74,96 @@ pub(super) fn cmd_mcp_apply(
         return replay_existing_apply(&plan, &config_path, &plan_digest, &key_digest, &record);
     }
 
+    let _config_lock = claim_apply_lock(
+        &config_lock_path(ctx, &config_path),
+        "MCP config apply is already in progress",
+        json!({
+            "plan_id": plan.plan_id,
+            "config_path": config_path.display().to_string(),
+            "target_writes_performed": false,
+        }),
+    )?;
+    if record_path.is_file() {
+        let record = load_apply_record(&record_path)?;
+        return replay_existing_apply(&plan, &config_path, &plan_digest, &key_digest, &record);
+    }
+
+    validate_skill_source(ctx, &plan)?;
+    validate_plan_matches_current_skill(ctx, &plan)?;
+    validate_sources(&plan)?;
+
     let snapshot = read_config_snapshot(&config_path)?;
-    validate_config_preimage(&plan, &snapshot)?;
     let rendered = render_codex_config(snapshot.raw.as_deref(), &plan)?;
     let rendered_digest = digest_str(&rendered);
+    if snapshot.digest.as_deref() == Some(rendered_digest.as_str()) {
+        let _record_lock = claim_apply_lock(
+            &record_path.with_extension("lock"),
+            "MCP apply idempotency key is already in progress",
+            json!({
+                "idempotency_key_digest": key_digest,
+                "target_writes_performed": false,
+            }),
+        )?;
+        if record_path.is_file() {
+            let record = load_apply_record(&record_path)?;
+            return replay_existing_apply(&plan, &config_path, &plan_digest, &key_digest, &record);
+        }
+        write_apply_record(
+            ctx,
+            &record_path,
+            &plan,
+            &plan_digest,
+            &key_digest,
+            &config_path,
+            &rendered_digest,
+        )?;
+        return Ok(apply_response(
+            &plan,
+            &config_path,
+            &key_digest,
+            true,
+            false,
+            &rendered_digest,
+        ));
+    }
 
-    let _record_lock = claim_apply_record_lock(&record_path, &key_digest)?;
+    validate_approvals(&plan, &args.approvals)?;
+    validate_env(&plan)?;
+    validate_tools(&plan)?;
+    validate_config_preimage(&plan, &snapshot)?;
+
+    let _record_lock = claim_apply_lock(
+        &record_path.with_extension("lock"),
+        "MCP apply idempotency key is already in progress",
+        json!({
+            "idempotency_key_digest": key_digest,
+            "target_writes_performed": false,
+        }),
+    )?;
     if record_path.is_file() {
         let record = load_apply_record(&record_path)?;
         return replay_existing_apply(&plan, &config_path, &plan_digest, &key_digest, &record);
     }
     let snapshot_after_lock = read_config_snapshot(&config_path)?;
-    if snapshot_after_lock.digest != snapshot.digest {
+    if snapshot_after_lock.digest.as_deref() == Some(rendered_digest.as_str()) {
+        write_apply_record(
+            ctx,
+            &record_path,
+            &plan,
+            &plan_digest,
+            &key_digest,
+            &config_path,
+            &rendered_digest,
+        )?;
+        return Ok(apply_response(
+            &plan,
+            &config_path,
+            &key_digest,
+            true,
+            false,
+            &rendered_digest,
+        ));
+    } else if snapshot_after_lock.digest != snapshot.digest {
         return Err(policy_blocked(
             "MCP config changed during apply; create a new MCP plan",
             json!({
@@ -154,6 +233,25 @@ fn validate_skill_source(
                 "skill": plan.skill,
                 "expected": plan.skill_source_digest,
                 "actual": current,
+                "target_writes_performed": false,
+            }),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_plan_matches_current_skill(
+    ctx: &AppContext,
+    plan: &McpPlan,
+) -> std::result::Result<(), CommandFailure> {
+    let (requirements, resolved_sources, _, _) =
+        current_required_mcp_plan_inputs(ctx, &plan.skill, &plan.agent)?;
+    if requirements != plan.requirements || resolved_sources != plan.resolved_sources {
+        return Err(policy_blocked(
+            "MCP plan reviewed sources no longer match the current skill requirements",
+            json!({
+                "plan_id": plan.plan_id,
+                "skill": plan.skill,
                 "target_writes_performed": false,
             }),
         ));
@@ -466,11 +564,17 @@ fn render_codex_config(
                 format!("MCP plan is missing resolved source for '{}'", req.server),
             )
         })?;
-        let rendered = rendered_server(req, source)?;
+        let rendered = rendered_server(plan, req, source)?;
         if server_matches_rendered(&*servers_table, &req.server, &rendered) {
             continue;
         }
-        servers_table.insert(&req.server, Item::Table(server_table(&rendered)));
+        let mut table = servers_table
+            .get(&req.server)
+            .and_then(Item::as_table)
+            .cloned()
+            .unwrap_or_else(Table::new);
+        apply_rendered_server(&mut table, &rendered);
+        servers_table.insert(&req.server, Item::Table(table));
     }
 
     let rendered = doc.to_string();
@@ -493,6 +597,7 @@ fn sources_by_server(plan: &McpPlan) -> BTreeMap<String, McpResolvedSource> {
 }
 
 fn rendered_server(
+    plan: &McpPlan,
     req: &McpRequirement,
     source: &McpResolvedSource,
 ) -> std::result::Result<RenderedServer, CommandFailure> {
@@ -520,10 +625,21 @@ fn rendered_server(
                     "MCP npm source is missing version",
                 )
             })?;
-            (
-                "npx".to_string(),
-                vec!["-y".to_string(), format!("{package}@{version}")],
-            )
+            let mut args = vec!["-y".to_string(), format!("{package}@{version}")];
+            if req.server == "filesystem" {
+                let workspace = plan.workspace.as_deref().ok_or_else(|| {
+                    policy_blocked(
+                        "MCP filesystem apply requires a reviewed workspace scope",
+                        json!({
+                            "plan_id": plan.plan_id,
+                            "server": req.server,
+                            "target_writes_performed": false,
+                        }),
+                    )
+                })?;
+                args.push(workspace.to_string());
+            }
+            ("npx".to_string(), args)
         }
         "local" => {
             let (command, _) = local_source_path_and_digest(source)?;
@@ -543,7 +659,7 @@ fn rendered_server(
     Ok(RenderedServer {
         command,
         args,
-        env_names: req.auth_env.iter().cloned().collect(),
+        env_vars: req.auth_env.iter().cloned().collect(),
     })
 }
 
@@ -560,10 +676,14 @@ fn local_source_path_and_digest(
             "MCP local source is missing a digest-pinned path",
         ));
     };
-    if path.is_empty() || digest.is_empty() || digest.starts_with("sha256:") {
+    if path.is_empty()
+        || !Path::new(path).is_absolute()
+        || digest.is_empty()
+        || digest.starts_with("sha256:")
+    {
         return Err(CommandFailure::new(
             ErrorCode::SchemaMismatch,
-            "MCP local source is missing a digest-pinned path",
+            "MCP local source is missing an absolute digest-pinned path",
         ));
     }
     Ok((path, digest))
@@ -577,15 +697,9 @@ fn server_matches_rendered(
     let Some(table) = servers_table.get(server).and_then(Item::as_table_like) else {
         return false;
     };
-    if table
-        .iter()
-        .any(|(key, item)| !item.is_none() && !matches!(key, "command" | "args" | "env"))
-    {
-        return false;
-    }
     table.get("command").and_then(Item::as_str) == Some(rendered.command.as_str())
         && args_match(table.get("args"), &rendered.args)
-        && env_matches(table.get("env"), &rendered.env_names)
+        && env_vars_match(table.get("env_vars"), &rendered.env_vars)
 }
 
 fn args_match(item: Option<&Item>, expected: &[String]) -> bool {
@@ -602,27 +716,23 @@ fn args_match(item: Option<&Item>, expected: &[String]) -> bool {
             .all(|(arg, expected)| arg.as_str() == Some(expected.as_str()))
 }
 
-fn env_matches(item: Option<&Item>, expected: &[String]) -> bool {
+fn env_vars_match(item: Option<&Item>, expected: &[String]) -> bool {
     let Some(item) = item else {
         return expected.is_empty();
     };
-    let Some(env) = item.as_table_like() else {
+    let Some(env_vars) = item.as_array() else {
         return false;
     };
-    if expected.is_empty() {
-        return env.is_empty();
-    }
-    if env.len() != expected.len() {
+    if env_vars.len() != expected.len() {
         return false;
     }
-    expected.iter().all(|name| {
-        let expected_value = format!("env:{name}");
-        env.get(name).and_then(Item::as_str) == Some(expected_value.as_str())
-    })
+    env_vars
+        .iter()
+        .zip(expected)
+        .all(|(name, expected)| name.as_str() == Some(expected.as_str()))
 }
 
-fn server_table(rendered: &RenderedServer) -> Table {
-    let mut table = Table::new();
+fn apply_rendered_server(table: &mut Table, rendered: &RenderedServer) {
     table["command"] = value(rendered.command.clone());
     if !rendered.args.is_empty() {
         let mut args = Array::default();
@@ -630,15 +740,31 @@ fn server_table(rendered: &RenderedServer) -> Table {
             args.push(arg.as_str());
         }
         table["args"] = Item::Value(TomlValue::Array(args));
+    } else {
+        table.remove("args");
     }
-    if !rendered.env_names.is_empty() {
-        let mut env_table = Table::new();
-        for env_name in &rendered.env_names {
-            env_table[env_name] = value(format!("env:{env_name}"));
+    if !rendered.env_vars.is_empty() {
+        let mut env_vars = Array::default();
+        for env_name in &rendered.env_vars {
+            env_vars.push(env_name.as_str());
         }
-        table["env"] = Item::Table(env_table);
+        table["env_vars"] = Item::Value(TomlValue::Array(env_vars));
+        remove_legacy_managed_env(table, &rendered.env_vars);
+    } else {
+        table.remove("env_vars");
     }
-    table
+}
+
+fn remove_legacy_managed_env(table: &mut Table, env_vars: &[String]) {
+    let Some(env_table) = table.get_mut("env").and_then(Item::as_table_like_mut) else {
+        return;
+    };
+    for env_name in env_vars {
+        env_table.remove(env_name);
+    }
+    if env_table.is_empty() {
+        table.remove("env");
+    }
 }
 
 fn replay_existing_apply(
@@ -693,31 +819,92 @@ fn load_apply_record(path: &Path) -> std::result::Result<Value, CommandFailure> 
         .map_err(|err| CommandFailure::new(ErrorCode::ArgInvalid, err.to_string()))
 }
 
-fn claim_apply_record_lock(
-    record_path: &Path,
-    key_digest: &str,
+fn claim_apply_lock(
+    lock_path: &Path,
+    busy_message: &str,
+    busy_details: Value,
 ) -> std::result::Result<ApplyRecordLock, CommandFailure> {
-    let lock_path = record_path.with_extension("lock");
     fs::create_dir_all(lock_path.parent().unwrap_or(Path::new("."))).map_err(map_io)?;
-    match OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&lock_path)
-    {
-        Ok(mut file) => {
-            writeln!(file, "{key_digest}").map_err(map_io)?;
-            file.sync_all().map_err(map_io)?;
-            Ok(ApplyRecordLock { path: lock_path })
+    for _ in 0..2 {
+        match OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(lock_path)
+        {
+            Ok(mut file) => {
+                let metadata = json!({
+                    "pid": std::process::id(),
+                    "created_at_unix": SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .map(|duration| duration.as_secs())
+                        .unwrap_or_default(),
+                });
+                writeln!(file, "{metadata}").map_err(map_io)?;
+                file.sync_all().map_err(map_io)?;
+                return Ok(ApplyRecordLock {
+                    path: lock_path.to_path_buf(),
+                });
+            }
+            Err(err) if err.kind() == ErrorKind::AlreadyExists => {
+                if reap_stale_apply_lock(lock_path)? {
+                    continue;
+                }
+                return Err(policy_blocked(busy_message, busy_details));
+            }
+            Err(err) => return Err(map_io(err)),
         }
-        Err(err) if err.kind() == ErrorKind::AlreadyExists => Err(policy_blocked(
-            "MCP apply idempotency key is already in progress",
-            json!({
-                "idempotency_key_digest": key_digest,
-                "target_writes_performed": false,
-            }),
-        )),
-        Err(err) => Err(map_io(err)),
     }
+    Err(policy_blocked(busy_message, busy_details))
+}
+
+fn reap_stale_apply_lock(lock_path: &Path) -> std::result::Result<bool, CommandFailure> {
+    let raw = match fs::read_to_string(lock_path) {
+        Ok(raw) => raw,
+        Err(err) if err.kind() == ErrorKind::NotFound => return Ok(true),
+        Err(err) => return Err(map_io(err)),
+    };
+    let Ok(metadata) = serde_json::from_str::<ApplyLockMetadata>(&raw) else {
+        return Ok(false);
+    };
+    if process_alive(metadata.pid) == Some(false) {
+        match fs::remove_file(lock_path) {
+            Ok(()) => return Ok(true),
+            Err(err) if err.kind() == ErrorKind::NotFound => return Ok(true),
+            Err(err) => return Err(map_io(err)),
+        }
+    }
+    Ok(false)
+}
+
+#[cfg(unix)]
+fn process_alive(pid: u32) -> Option<bool> {
+    if pid == 0 {
+        return Some(false);
+    }
+    let result = unsafe { libc::kill(pid as libc::pid_t, 0) };
+    if result == 0 {
+        Some(true)
+    } else {
+        std::io::Error::last_os_error()
+            .raw_os_error()
+            .map(|code| code != libc::ESRCH)
+    }
+}
+
+#[cfg(not(unix))]
+fn process_alive(_pid: u32) -> Option<bool> {
+    None
+}
+
+fn config_lock_path(ctx: &AppContext, config_path: &Path) -> PathBuf {
+    let digest = digest_str(&config_path.display().to_string())
+        .strip_prefix("sha256:")
+        .unwrap_or_default()
+        .replace(['/', '\\', ':'], "_");
+    ctx.state_dir
+        .join("mcp")
+        .join("locks")
+        .join(format!("config_{digest}.lock"))
 }
 
 fn write_apply_record(

@@ -123,7 +123,10 @@ pub(crate) fn command_meta(command: &Command) -> CommandMeta {
             | SkillCommand::Policy(_)
             | SkillCommand::Scan(_)
             | SkillCommand::Provenance {
-                command: SkillProvenanceCommand::Inspect(_) | SkillProvenanceCommand::Verify(_),
+                command:
+                    SkillProvenanceCommand::Inspect(_)
+                    | SkillProvenanceCommand::Verify(_)
+                    | SkillProvenanceCommand::Outdated(_),
             }
             | SkillCommand::Orphan {
                 command: SkillOrphanCommand::List,
@@ -186,10 +189,10 @@ pub(crate) fn command_meta(command: &Command) -> CommandMeta {
             }
         },
         Command::Mcp { command } => match command {
-            McpCommand::Requirement { .. }
-            | McpCommand::Plan(_)
-            | McpCommand::Doctor(_)
-            | McpCommand::Catalog { .. } => CommandMeta::new(false, false, false),
+            McpCommand::Requirement { .. } | McpCommand::Doctor(_) | McpCommand::Catalog { .. } => {
+                CommandMeta::new(false, false, false)
+            }
+            McpCommand::Plan(_) => CommandMeta::new(true, true, false),
             McpCommand::Apply(_) => CommandMeta::new(true, true, false),
         },
         Command::Provision { command } => match command {
@@ -291,6 +294,10 @@ mod tests {
         assert_eq!(
             meta(&["loom", "telemetry", "purge", "--dry-run"]),
             CommandMeta::new(false, false, true)
+        );
+        assert_eq!(
+            meta(&["loom", "mcp", "plan", "--skill", "demo", "--agent", "codex"]),
+            CommandMeta::new(true, true, false)
         );
     }
 }

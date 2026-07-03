@@ -474,39 +474,6 @@ fn skill_recommend_and_resolve_semantic_fall_back_to_lexical() {
 }
 
 #[test]
-fn skill_recommend_filters_quarantined_activation_candidates() {
-    let root = TestDir::new("skill-recommend-quarantine");
-    write_skill(
-        root.path(),
-        "risky-review",
-        "---\nname: risky-review\ndescription: Use when reviewing risky pull requests.\n---\n# Risky\n",
-    );
-    write_file(
-        &root.path().join("state/registry/trust.json"),
-        r#"{"schema_version":1,"skills":[{"skill_id":"risky-review","trust":"local-draft","quarantined":true,"reason":"blocked","updated_at":"2026-06-30T00:00:00Z","updated_by":"test"}]}
-"#,
-    );
-
-    let (output, env) = run_loom(
-        root.path(),
-        &["skill", "search", "risky review", "--explain"],
-    );
-    assert!(
-        output.status.success(),
-        "skill search --explain should pass: {env}"
-    );
-    assert_eq!(env["data"]["recommendations"]["count"], json!(0));
-    assert!(
-        env["data"]["recommendations"]["results"]
-            .as_array()
-            .expect("results")
-            .iter()
-            .all(|result| result["id"] != json!("risky-review")),
-        "quarantined skill must not be recommended: {env}"
-    );
-}
-
-#[test]
 fn skill_recommend_includes_read_only_skillset_candidates() {
     let root = TestDir::new("skill-recommend-skillset");
     write_demo_skills(root.path());

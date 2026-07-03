@@ -11,6 +11,7 @@ use crate::envelope::Meta;
 use crate::sha256::{Sha256, to_hex};
 use crate::types::ErrorCode;
 
+use super::skill_eval_harness::persist_report;
 use super::skill_verify::{head_tree_oid_for_path, last_commit_for_path};
 use super::telemetry::record_skill_eval_telemetry;
 use super::{App, CommandFailure};
@@ -53,7 +54,7 @@ impl App {
         &self,
         args: &SkillEvalOfflineArgs,
     ) -> std::result::Result<(Value, Meta), CommandFailure> {
-        let result = build_skill_eval_offline_report(&self.ctx, args)?;
+        let mut result = build_skill_eval_offline_report(&self.ctx, args)?;
         for run in &result.runs {
             record_skill_eval_telemetry(
                 &self.ctx,
@@ -65,6 +66,7 @@ impl App {
                 None,
             )?;
         }
+        persist_report(&self.ctx, &args.skill, "offline", None, &mut result.report)?;
         if result.failed > 0 {
             let mut failure = CommandFailure::new(
                 ErrorCode::EvalFailed,

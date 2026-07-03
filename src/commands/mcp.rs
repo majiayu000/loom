@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
@@ -37,7 +37,7 @@ use super::skill_deps::support::{contains_word_token, yaml_dependency_values};
 use super::skill_lint::frontmatter::parse_skill_frontmatter;
 use super::{App, CommandFailure};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 struct McpRequirement {
     server: String,
     required: bool,
@@ -48,7 +48,7 @@ struct McpRequirement {
     declared_in: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 struct McpEnvRequirement {
     name: String,
     present: bool,
@@ -57,6 +57,12 @@ struct McpEnvRequirement {
 }
 
 type McpRequirements = (Vec<McpRequirement>, Vec<McpEnvRequirement>, Vec<Value>);
+type RequiredMcpPlanInputs = (
+    Vec<McpRequirement>,
+    Vec<source_policy::McpResolvedSource>,
+    Vec<McpEnvRequirement>,
+    Vec<Value>,
+);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct McpAction {
@@ -135,6 +141,7 @@ impl App {
         &self,
         args: &McpPlanArgs,
     ) -> std::result::Result<(Value, Meta), CommandFailure> {
+        reject_output_plan_inside_skill_source(&self.ctx, args)?;
         let plan = build_mcp_plan(&self.ctx, args)?;
         let durable_plan_path = write_durable_mcp_plan(&self.ctx, &plan)?;
         if let Some(output_plan) = &args.output_plan {
@@ -270,23 +277,21 @@ fn build_mcp_plan(
     ctx: &AppContext,
     args: &McpPlanArgs,
 ) -> std::result::Result<McpPlan, CommandFailure> {
-    let (requirements, env_requirements, mut findings) =
-        collect_mcp_requirements(ctx, &args.skill, Some(&args.agent))?;
+    let (requirements, resolved_sources, env_requirements, mut findings) =
+        current_required_mcp_plan_inputs(ctx, &args.skill, &args.agent)?;
     let mut actions = Vec::new();
-    let mut resolved_sources = Vec::new();
     let mut approvals = BTreeSet::new();
     let mut risk_secret_names = BTreeSet::new();
     let mut external_package = false;
 
-    for req in &requirements {
-        let resolved = resolve_source(req);
+    for (req, resolved) in requirements.iter().zip(resolved_sources.iter()) {
         if let Some(approval) = &resolved.approval_required {
             approvals.insert(approval.clone());
         }
         if resolved.kind == "npm" || resolved.kind == "git" {
             external_package = true;
         }
-        let existing = mcp_config_status(&args.agent, req, &resolved, &mut findings)?;
+        let existing = mcp_config_status(&args.agent, req, resolved, &mut findings)?;
         actions.push(McpAction {
             kind: "install_server".to_string(),
             server: Some(req.server.clone()),
@@ -295,7 +300,7 @@ fn build_mcp_plan(
             path: None,
             diff: None,
             diff_redacted: true,
-            depends_on: tool_dependency(&resolved),
+            depends_on: tool_dependency(resolved),
             approval_required: resolved.approval_required.clone(),
             name: None,
             present: None,
@@ -309,7 +314,6 @@ fn build_mcp_plan(
             risk_secret_names.insert(env_name.clone());
             actions.push(require_env_action(env_name));
         }
-        resolved_sources.push(resolved);
     }
     for env_req in &env_requirements {
         risk_secret_names.insert(env_req.name.clone());
@@ -348,7 +352,8 @@ fn build_mcp_plan(
         workspace: args
             .workspace
             .as_ref()
-            .map(|path| path.display().to_string()),
+            .map(|path| absolutize_path(path).map(|path| path.display().to_string()))
+            .transpose()?,
         skill_source_digest: skill_source_digest(&ctx.skill_path(&args.skill))?,
         requirements,
         env: env_requirements,
@@ -359,12 +364,109 @@ fn build_mcp_plan(
             "network_access": network_access,
             "secrets_required": risk_secret_names.into_iter().collect::<Vec<_>>(),
             "external_package": external_package,
-            "config_write_deferred": true,
+            "config_write_guarded": true,
         }),
         approvals_required: approvals.into_iter().collect::<Vec<_>>(),
         findings,
         writes_performed: false,
     })
+}
+
+fn current_required_mcp_plan_inputs(
+    ctx: &AppContext,
+    skill: &str,
+    agent: &str,
+) -> std::result::Result<RequiredMcpPlanInputs, CommandFailure> {
+    let (requirements, env_requirements, findings) =
+        collect_mcp_requirements(ctx, skill, Some(agent))?;
+    let requirements = required_mcp_requirements(&requirements);
+    let skill_path = ctx.skill_path(skill);
+    let resolved_sources = requirements
+        .iter()
+        .map(|req| resolved_source_for_plan(&skill_path, req))
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    Ok((requirements, resolved_sources, env_requirements, findings))
+}
+
+fn required_mcp_requirements(requirements: &[McpRequirement]) -> Vec<McpRequirement> {
+    requirements
+        .iter()
+        .filter(|req| req.required)
+        .cloned()
+        .collect()
+}
+
+fn resolved_source_for_plan(
+    skill_path: &Path,
+    req: &McpRequirement,
+) -> std::result::Result<source_policy::McpResolvedSource, CommandFailure> {
+    let mut resolved = resolve_source(req);
+    if resolved.kind == "local" {
+        resolved.locator = absolutize_local_locator(skill_path, &resolved.locator)?;
+        let (kind, pinned, package, version) = source_policy::parse_mcp_locator(&resolved.locator);
+        resolved.kind = kind;
+        resolved.pinned = pinned;
+        resolved.package = package;
+        resolved.version = version;
+    }
+    Ok(resolved)
+}
+
+fn absolutize_local_locator(
+    skill_path: &Path,
+    locator: &str,
+) -> std::result::Result<String, CommandFailure> {
+    let Some((raw_path, digest)) = locator
+        .strip_prefix("local:")
+        .and_then(|raw| raw.split_once("@sha256:"))
+    else {
+        return Ok(locator.to_string());
+    };
+    let path = PathBuf::from(raw_path);
+    let path = if path.is_absolute() {
+        path
+    } else {
+        skill_path.join(path)
+    };
+    let path = if path.exists() {
+        fs::canonicalize(path).map_err(map_io)?
+    } else {
+        absolutize_path(&path)?
+    };
+    Ok(format!("local:{}@sha256:{digest}", path.display()))
+}
+
+fn reject_output_plan_inside_skill_source(
+    ctx: &AppContext,
+    args: &McpPlanArgs,
+) -> std::result::Result<(), CommandFailure> {
+    let Some(output_plan) = &args.output_plan else {
+        return Ok(());
+    };
+    let skill_path = absolutize_path(&ctx.skill_path(&args.skill))?;
+    let output_plan = absolutize_path(output_plan)?;
+    if output_plan.starts_with(&skill_path) {
+        let mut failure = CommandFailure::new(
+            ErrorCode::ArgInvalid,
+            "MCP plan output must not be written inside the skill source",
+        );
+        failure.details = json!({
+            "skill": args.skill,
+            "skill_path": skill_path.display().to_string(),
+            "output_plan": output_plan.display().to_string(),
+            "writes_performed": false,
+        });
+        return Err(failure);
+    }
+    Ok(())
+}
+
+fn absolutize_path(path: &Path) -> std::result::Result<PathBuf, CommandFailure> {
+    if path.is_absolute() {
+        Ok(path.to_path_buf())
+    } else {
+        Ok(env::current_dir().map_err(map_io)?.join(path))
+    }
 }
 
 fn collect_mcp_requirements(
@@ -455,10 +557,12 @@ fn read_mcp_manifest(
                     && let Some(env_name) = auth.strip_prefix("env:")
                 {
                     req.auth_env = Some(env_name.to_string());
-                    env_requirements
-                        .entry(env_name.to_string())
-                        .or_default()
-                        .insert(format!("mcp.{server}.auth"));
+                    if req.required {
+                        env_requirements
+                            .entry(env_name.to_string())
+                            .or_default()
+                            .insert(format!("mcp.{server}.auth"));
+                    }
                 }
                 if let Some(permissions) = table.get("permissions").and_then(Item::as_array) {
                     req.permissions = permissions

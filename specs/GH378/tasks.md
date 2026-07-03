@@ -3,7 +3,7 @@
 Issue: https://github.com/majiayu000/loom/issues/378
 Product spec: `specs/GH378/product.md`
 Tech spec: `specs/GH378/tech.md`
-Status: Partial implementation
+Status: Complete implementation
 
 ## Scope For First PR
 
@@ -25,9 +25,9 @@ automatic activation, network embedding services by default, DAG workflow execut
 - [x] `SP378-T002` Owner: cli-index | Done when: `loom index build` writes only rebuildable derived `state/index` data, `loom index status` is read-only, and both are deterministic over current registry data without network access | Verify: `cargo test --test skill_inventory_cli`
 - [x] `SP378-T003` Owner: recommend | Done when: `loom skill recommend` ranks skills and skillsets with transparent `kind`, `id`, `score_inputs`, `reasons`, `risks`, warnings, and suggested commands | Verify: `cargo test --test skill_inventory_cli`
 - [x] `SP378-T004` Owner: semantic | Done when: `skill recommend --semantic` and `skill resolve --semantic` both fall back to lexical with a `semantic-disabled` warning when no local provider is configured | Verify: `cargo test --test skill_inventory_cli`
-- [ ] `SP378-T005` Owner: safety-policy | Done when: blocked/quarantined skills and skillsets with unsafe required members are never recommended for activation, negative trigger matches reduce ranking or filter activation recommendations, and dependency/eval gaps are surfaced as penalties or warnings | Verify: `cargo test --test skill_policy && cargo test --test skill_eval`
+- [x] `SP378-T005` Owner: safety-policy | Done when: blocked/quarantined skills and skillsets with unsafe required members are never recommended for activation, negative trigger matches reduce ranking or filter activation recommendations, and dependency/eval gaps are surfaced as penalties or warnings | Verify: `cargo test --test skill_policy && cargo test --test skill_eval`
 - [x] `SP378-T006` Owner: active-plan | Done when: `active recommend` returns a dry-run add/keep/remove plan with suggested commands and no mutation | Verify: `cargo test --test skill_inventory_cli`
-- [ ] `SP378-T007` Owner: regression | Done when: focused and full repository checks pass | Verify: `cargo check --workspace --all-targets --all-features && cargo test`
+- [x] `SP378-T007` Owner: regression | Done when: focused and full repository checks pass | Verify: `cargo check --workspace --all-targets --all-features && cargo test`
 
 ### SP378-T1: Define Derived Index Records
 

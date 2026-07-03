@@ -60,6 +60,13 @@ fn recommendation_results(env: &Value) -> &[Value] {
         .expect("results")
 }
 
+fn recommendation<'a>(env: &'a Value, id: &str) -> &'a Value {
+    recommendation_results(env)
+        .iter()
+        .find(|result| result["id"].as_str() == Some(id))
+        .unwrap_or_else(|| panic!("missing recommendation {id}: {env}"))
+}
+
 #[test]
 fn skill_recommend_prefers_workspace_without_filtering_source_only_agent_matches() {
     let root = TestDir::new("skill-recommend-workspace");
@@ -135,6 +142,190 @@ fn skill_recommend_treats_blocked_trust_as_activation_risk() {
             .iter()
             .any(|risk| risk.as_str().is_some_and(|value| value.contains("blocked"))),
         "blocked trust should be a risk: {review}"
+    );
+}
+
+#[test]
+fn skill_recommend_filters_quarantined_activation_candidates() {
+    let root = TestDir::new("skill-recommend-quarantine");
+    write_skill(
+        root.path(),
+        "risky-review",
+        "---\nname: risky-review\ndescription: Use when reviewing risky pull requests.\n---\n# Risky\n",
+    );
+    write_file(
+        &root.path().join("state/registry/trust.json"),
+        r#"{"schema_version":1,"skills":[{"skill_id":"risky-review","trust":"local-draft","quarantined":true,"reason":"blocked","updated_at":"2026-06-30T00:00:00Z","updated_by":"test"}]}
+"#,
+    );
+
+    let (output, env) = run_loom(
+        root.path(),
+        &["skill", "search", "risky review", "--explain"],
+    );
+    assert!(
+        output.status.success(),
+        "skill search --explain should pass: {env}"
+    );
+    assert_eq!(env["data"]["recommendations"]["count"], json!(0));
+    assert!(
+        recommendation_results(&env)
+            .iter()
+            .all(|result| result["id"] != json!("risky-review")),
+        "quarantined skill must not be recommended: {env}"
+    );
+}
+
+#[test]
+fn skill_recommend_boosts_persisted_eval_evidence() {
+    let root = TestDir::new("skill-recommend-eval-boost");
+    for skill in ["a-ci-helper", "z-ci-helper"] {
+        write_skill(
+            root.path(),
+            skill,
+            "---\nname: ci-helper\ndescription: Use when fixing failing CI and test workflow failures.\n---\n# CI helper\n",
+        );
+    }
+    write_file(
+        &root
+            .path()
+            .join("state/registry/evals/z-ci-helper/run-latest.json"),
+        r#"{"schema_version":1,"skill":"z-ci-helper","summary":{"delta":0.6,"trigger_precision":1.0,"trigger_recall":1.0,"failed":0}}
+"#,
+    );
+
+    let (output, env) = run_loom(
+        root.path(),
+        &["skill", "recommend", "fix failing ci", "--agent", "codex"],
+    );
+    assert!(
+        output.status.success(),
+        "skill recommend should pass: {env}"
+    );
+
+    let boosted = recommendation(&env, "z-ci-helper");
+    let baseline = recommendation(&env, "a-ci-helper");
+    assert!(
+        boosted["score"].as_i64().unwrap() > baseline["score"].as_i64().unwrap(),
+        "persisted eval evidence should boost ranking: {env}"
+    );
+    assert!(
+        boosted["reasons"]
+            .as_array()
+            .expect("reasons")
+            .iter()
+            .any(|reason| reason
+                .as_str()
+                .is_some_and(|value| value.contains("eval baseline delta"))),
+        "boosted recommendation should explain eval evidence: {boosted}"
+    );
+    assert!(
+        baseline["warnings"]
+            .as_array()
+            .expect("warnings")
+            .iter()
+            .any(|warning| warning.as_str() == Some("no eval evidence")),
+        "unevaluated candidate should carry a warning: {baseline}"
+    );
+}
+
+#[test]
+fn skill_recommend_penalizes_negative_trigger_match() {
+    let root = TestDir::new("skill-recommend-negative-trigger");
+    for skill in ["copy-safe", "copy-risk"] {
+        write_skill(
+            root.path(),
+            skill,
+            "---\nname: copy-helper\ndescription: Use when writing product copy and launch copy.\n---\n# Copy helper\n",
+        );
+    }
+    write_file(
+        &root.path().join("skills/copy-risk/evals/triggers.jsonl"),
+        r#"{"id":"copy-non-trigger","prompt":"write product copy","expected_trigger":false}
+"#,
+    );
+
+    let (output, env) = run_loom(
+        root.path(),
+        &[
+            "skill",
+            "recommend",
+            "write product copy",
+            "--agent",
+            "codex",
+        ],
+    );
+    assert!(
+        output.status.success(),
+        "skill recommend should pass: {env}"
+    );
+    let safe = recommendation(&env, "copy-safe");
+    let risk = recommendation(&env, "copy-risk");
+    assert!(
+        risk["score"].as_i64().unwrap() < safe["score"].as_i64().unwrap(),
+        "negative trigger match should reduce ranking: {env}"
+    );
+    assert_eq!(risk["recommended_action"], json!("inspect"));
+    assert!(
+        risk["risks"]
+            .as_array()
+            .expect("risks")
+            .iter()
+            .any(|item| item
+                .as_str()
+                .is_some_and(|value| value.contains("negative trigger"))),
+        "negative trigger risk should be explicit: {risk}"
+    );
+}
+
+#[test]
+fn skill_recommend_surfaces_missing_dependency_risk() {
+    let root = TestDir::new("skill-recommend-dependency-risk");
+    for skill in ["deploy-safe", "deploy-risk"] {
+        write_skill(
+            root.path(),
+            skill,
+            "---\nname: deploy-helper\ndescription: Use when deploying release workflows.\n---\n# Deploy helper\n",
+        );
+    }
+    write_file(
+        &root.path().join("skills/deploy-risk/loom.skill.toml"),
+        r#"requires_tools = ["loom_missing_tool_378_definitely_absent"]
+"#,
+    );
+
+    let (output, env) = run_loom(
+        root.path(),
+        &["skill", "recommend", "deploy release", "--agent", "codex"],
+    );
+    assert!(
+        output.status.success(),
+        "skill recommend should pass: {env}"
+    );
+    let safe = recommendation(&env, "deploy-safe");
+    let risk = recommendation(&env, "deploy-risk");
+    assert!(
+        risk["score"].as_i64().unwrap() < safe["score"].as_i64().unwrap(),
+        "missing dependencies should reduce ranking: {env}"
+    );
+    assert_eq!(risk["recommended_action"], json!("inspect"));
+    assert!(
+        risk["risks"]
+            .as_array()
+            .expect("risks")
+            .iter()
+            .any(|item| item
+                .as_str()
+                .is_some_and(|value| value.contains("dependency"))),
+        "dependency risk should be explicit: {risk}"
+    );
+    assert!(
+        risk["suggested_commands"]
+            .as_array()
+            .expect("commands")
+            .iter()
+            .all(|command| !command.as_str().unwrap_or_default().contains("activate")),
+        "dependency-blocked recommendation must not suggest activation: {risk}"
     );
 }
 
@@ -277,6 +468,81 @@ fn skill_recommend_blocks_skillset_members_with_inventory_warnings() {
                 .unwrap_or_default()
                 .contains("bad-frontmatter")),
         "warning member must not receive activation command: {skillset}"
+    );
+}
+
+#[test]
+fn skill_recommend_degrades_dependency_unready_skillset_to_inspection() {
+    let root = TestDir::new("skill-recommend-dependency-skillset");
+    write_skill(
+        root.path(),
+        "deploy-member",
+        "---\nname: deploy-member\ndescription: Use when deploying release workflows.\n---\n# Deploy member\n",
+    );
+    write_file(
+        &root.path().join("skills/deploy-member/loom.skill.toml"),
+        r#"requires_tools = ["loom_missing_tool_378_definitely_absent"]
+"#,
+    );
+
+    let (output, env) = run_loom(
+        root.path(),
+        &[
+            "skillset",
+            "create",
+            "deploy-pack",
+            "--description",
+            "Deploy release workflow",
+        ],
+    );
+    assert!(
+        output.status.success(),
+        "skillset create should pass: {env}"
+    );
+    let (output, env) = run_loom(
+        root.path(),
+        &[
+            "skillset",
+            "add",
+            "deploy-pack",
+            "deploy-member",
+            "--role",
+            "deploy",
+        ],
+    );
+    assert!(output.status.success(), "skillset add should pass: {env}");
+
+    let (output, env) = run_loom(
+        root.path(),
+        &[
+            "skill",
+            "search",
+            "deploy release",
+            "--explain",
+            "--agent",
+            "codex",
+        ],
+    );
+    assert!(
+        output.status.success(),
+        "skill search --explain should pass: {env}"
+    );
+    let skillset = recommendation(&env, "deploy-pack");
+    assert_eq!(skillset["kind"], json!("skillset"));
+    assert_eq!(skillset["recommended_action"], json!("inspect"));
+    assert!(
+        skillset["risks"]
+            .as_array()
+            .expect("risks")
+            .iter()
+            .any(|risk| risk.as_str().is_some_and(
+                |value| value.contains("deploy-member") && value.contains("dependency")
+            )),
+        "dependency-unready member should be listed as a risk: {skillset}"
+    );
+    assert_eq!(
+        skillset["suggested_commands"],
+        json!(["loom --json skillset show deploy-pack"])
     );
 }
 

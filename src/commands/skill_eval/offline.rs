@@ -68,6 +68,7 @@ pub(crate) fn build_skill_eval_offline_report(
     let report = json!({
         "schema_version": super::EVAL_SCHEMA_VERSION,
         "skill": args.skill,
+        "mode": "offline_fixture",
         "skill_version": version,
         "eval_root": evals_dir.display().to_string(),
         "matrix": agents,

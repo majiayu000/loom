@@ -2,15 +2,16 @@
 
 Issue: https://github.com/majiayu000/loom/issues/386
 Product spec: `specs/GH386/product.md`
-Status: Draft for implementation
+Status: Implementation slice in review
 
 ## Design Summary
 
 Add MCP provisioning as a plan-first workflow. Read-only commands resolve skill
-requirements, inspect current agent configuration, check package/tool
-availability, and return a structured plan. Mutating apply is permitted only
-after revalidation, idempotency, approval, policy checks, and atomic config
-writes are in place.
+requirements, inspect current agent configuration, and check package/tool
+availability. Planning persists an audited durable reviewed plan artifact, and
+mutating apply is limited to reviewed Codex config writes after revalidation,
+idempotency, approval, policy checks, and atomic config writes. Direct package
+installation and authentication flows remain deferred.
 
 ## Dependencies And Blocks
 
@@ -145,26 +146,36 @@ findings that keep dependent config writes unsafe until resolved.
 
 ## Apply Semantics
 
-`mcp apply` should remain deferred until plan semantics are tested. When
-implemented:
+`mcp apply` is implemented for reviewed Codex MCP config writes only. It must:
 
 1. load the durable plan event or explicit plan artifact;
-2. revalidate skill source digest, every resolved MCP server source digest,
-   adapter metadata, package/tool availability, policy, and target config;
-3. require idempotency key;
-4. require approval ids issued and validated by the policy/approval backend
+2. revalidate the current skill source digest and recomputed required MCP
+   requirements/resolved sources against the reviewed plan;
+3. revalidate every resolved MCP server source digest, adapter metadata,
+   package/tool availability, policy, and target config preimage;
+4. require an idempotency key and replay a successful record before volatile
+   approval/env/tool gates;
+5. recover a missing apply record without volatile gates when target config
+   already exactly matches the reviewed rendered config;
+6. require approval ids issued and validated by the policy/approval backend
    for risky actions, or explicitly mark local-only consent when RBAC is not
    enabled;
-5. reject missing secret values without printing them;
-6. write config atomically through parse/merge/format APIs;
-7. preserve unrelated user config;
-8. record rollback metadata for config writes;
-9. return restart/new-session guidance.
+7. reject missing secret values without printing them;
+8. write config atomically through parse/merge/format APIs;
+9. preserve unrelated user config, including unknown per-server settings;
+10. forward auth variable names through Codex `env_vars` rather than writing
+    literal secret placeholders;
+11. use config-scoped locking and recover stale idempotency-key locks;
+12. scope filesystem servers to the reviewed workspace path;
+13. render only immutable pinned sources and absolute local command paths;
+14. reject `--output-plan` paths inside skill source directories;
+15. return restart/new-session guidance.
 
 Plan drift must fail with a typed result and require a new plan.
 Config writes depend on satisfied install, package/tool, env, and policy
 prerequisites. Apply must not write agent config first and hope a later install
-or env step succeeds.
+or env step succeeds. Apply must not execute direct package installs in this
+slice.
 
 ## Agent Config Support
 
@@ -199,20 +210,24 @@ Focused tests:
 5. plan detects missing and existing servers;
 6. existing server command/source/transport/env/scope mismatch is reported;
 7. package/tool availability is included in plan criteria;
-8. plan renders config diff without writing only for adapters with explicit MCP
-   config support;
+8. plan renders config diff only for adapters with explicit MCP config support
+   and writes only audited reviewed plan artifacts;
 9. env secrets are redacted by value and named only;
 10. unpinned source is blocked before approval unless the plan resolves an
    immutable source first;
 11. unsupported agent returns manual mode;
-12. apply revalidates and rejects drift once apply is implemented;
-13. apply is idempotent and atomic once apply is implemented.
+12. apply revalidates and rejects drift;
+13. apply is idempotent, atomic, and preserves unrelated config;
+14. apply recovers missing records, uses config-scoped locks, rejects mutable
+    package specs, recomputes current sources, and forwards auth names via
+    `env_vars`.
 
 Suggested commands:
 
 ```bash
 git diff --check
 cargo test --test mcp_provisioning
+cargo test --test mcp_apply_review
 cargo check --workspace --all-targets --all-features
 ```
 
@@ -220,10 +235,12 @@ Run SpecRail workflow validation for this packet when available.
 
 ## Rollback
 
-The first slice should be isolated to requirement parsing, plan models, CLI
-commands, tests, docs, and optional read-only catalog data. Rollback removes
-the MCP command group and plan model without changing skill source, existing
-agent config, registry state, or secrets.
+The first slice is isolated to requirement parsing, plan models, CLI commands,
+guarded Codex config apply, tests, docs, and optional catalog data. Rollback
+removes the MCP command group and plan/apply model; successful apply changes can
+be reverted by restoring the previous Codex config file from normal user
+backups or VCS-managed config state. No skill source, package install state, or
+secrets are written by apply.
 
 ## Risks
 

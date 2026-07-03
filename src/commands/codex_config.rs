@@ -190,12 +190,19 @@ pub(crate) fn patch_disabled_entries(
 }
 
 pub(crate) fn codex_config_path() -> std::result::Result<PathBuf, CommandFailure> {
-    if let Some(home) = std::env::var_os("CODEX_HOME") {
-        return Ok(PathBuf::from(home).join("config.toml"));
+    let path = if let Some(home) = std::env::var_os("CODEX_HOME") {
+        PathBuf::from(home).join("config.toml")
+    } else {
+        home_dir()
+            .map(|home| home.join(".codex/config.toml"))
+            .ok_or_else(|| CommandFailure::new(ErrorCode::ArgInvalid, "HOME is not set"))?
+    };
+    if path.is_absolute() {
+        return Ok(path);
     }
-    home_dir()
-        .map(|home| home.join(".codex/config.toml"))
-        .ok_or_else(|| CommandFailure::new(ErrorCode::ArgInvalid, "HOME is not set"))
+    std::env::current_dir()
+        .map(|cwd| cwd.join(path))
+        .map_err(map_io)
 }
 
 fn extract_entries(doc: &DocumentMut, config_path: &Path) -> Vec<CodexSkillConfigEntry> {

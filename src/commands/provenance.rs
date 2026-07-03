@@ -25,6 +25,8 @@ use super::{App, CommandFailure};
 const SOURCES_REL: &str = "state/registry/sources.json";
 const LOCK_REL: &str = "loom.lock";
 
+mod outdated;
+
 #[derive(Debug, Clone)]
 pub(crate) struct AddSourceResolution {
     pub copy_source: PathBuf,
@@ -108,6 +110,9 @@ impl App {
         match command {
             SkillProvenanceCommand::Inspect(args) => self.cmd_provenance_inspect(args),
             SkillProvenanceCommand::Verify(args) => self.cmd_provenance_verify(args),
+            SkillProvenanceCommand::Outdated(args) => {
+                outdated::cmd_provenance_outdated(&self.ctx, args)
+            }
             SkillProvenanceCommand::Refresh(args) => self.cmd_provenance_refresh(args, request_id),
         }
     }

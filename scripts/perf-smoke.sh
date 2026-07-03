@@ -70,11 +70,19 @@ fi
 # Skillset lifecycle closeout adds grouped activation/deactivation orchestration,
 # member eval aggregation, release/rollback guards, and partial rollback
 # recovery. Projection digest observation persistence adds registry observation
-# events, status summaries, and diagnose write-back plumbing. Guarded MCP
-# provisioning apply adds durable plan artifact loading, skill-source digest
-# revalidation, idempotency replay records, approval/env/tool/policy gates,
-# atomic Codex config writes, and secret-reference-only rendering while keeping
-# cold CLI startup guarded below.
+# events, status summaries, and diagnose write-back plumbing. Rollback
+# projection reconciliation adds structured live projection recovery plans,
+# registry snapshot failure reporting, and compiled activation recovery guards.
+# Provider provenance outdated adds read-only stale pin reporting and
+# review-only re-pin plan output. Skill inspect evidence surfacing adds
+# read-only eval report discovery, dirty-source staleness checks, and
+# policy/safety summary plumbing. Recommendation evidence hardening adds
+# agent-scoped eval scoring, invalid-id guards, negative-delta penalties, and
+# dependency-aware resolve/skillset ranking. Guarded MCP provisioning apply
+# adds durable plan artifact loading, skill-source digest revalidation,
+# idempotency replay records, approval/env/tool/policy gates, atomic Codex
+# config writes, and secret-reference-only rendering while keeping cold CLI
+# startup guarded below.
 max_bin_bytes=$((5776 * 1024))
 bin_bytes="$(wc -c < "$bin" | tr -d ' ')"
 if (( bin_bytes > max_bin_bytes )); then

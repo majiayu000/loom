@@ -14,6 +14,7 @@ use crate::types::ErrorCode;
 
 use super::helpers::{ensure_skill_exists, map_arg, map_git, map_io, validate_skill_name};
 use super::skill_deps::skill_dependency_report;
+use super::skill_eval::build_skill_eval_offline_report;
 use super::skill_lint::{SkillLintMode, lint_skill_source, lint_skill_source_for_agent};
 use super::skill_safety::evaluate_skill_safety;
 use super::{App, CommandFailure};
@@ -392,16 +393,29 @@ fn offline_eval_status(
         matrix: Vec::new(),
         model: None,
     };
-    let app = App { ctx: ctx.clone() };
-    match app.cmd_skill_eval_offline(&args) {
-        Ok((report, meta)) => {
-            let status = if meta.warnings.is_empty() {
+    match build_skill_eval_offline_report(ctx, &args) {
+        Ok(result) if result.failed == 0 => {
+            let status = if result.warnings.is_empty() {
                 "pass"
             } else {
                 "warning"
             };
-            Ok((status, json!({"report": report, "warnings": meta.warnings})))
+            Ok((
+                status,
+                json!({"report": result.report, "warnings": result.warnings}),
+            ))
         }
+        Ok(result) => Ok((
+            "fail",
+            json!({
+                "code": ErrorCode::EvalFailed.as_str(),
+                "message": format!("skill eval failed with {} failing case(s)", result.failed),
+                "details": {
+                    "failed": result.failed,
+                    "report": result.report,
+                }
+            }),
+        )),
         Err(failure) => Ok((
             "fail",
             json!({

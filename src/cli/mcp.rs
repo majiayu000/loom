@@ -10,7 +10,7 @@ pub enum McpCommand {
         #[command(subcommand)]
         command: McpRequirementCommand,
     },
-    #[command(about = "Create a read-only MCP provisioning plan")]
+    #[command(about = "Create a durable, audited MCP provisioning plan")]
     Plan(McpPlanArgs),
     #[command(about = "Apply a reviewed MCP provisioning plan with explicit gates")]
     Apply(McpApplyArgs),

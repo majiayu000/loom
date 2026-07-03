@@ -326,26 +326,14 @@ fn mcp_apply_writes_codex_config_and_replays_idempotently() {
     assert!(config.contains("[mcp_servers.github]"));
     assert!(config.contains("command = \"npx\""));
     assert!(config.contains("@modelcontextprotocol/server-github@0.6.2"));
-    assert!(config.contains("GITHUB_TOKEN = \"env:GITHUB_TOKEN\""));
+    assert!(config.contains("env_vars = [\"GITHUB_TOKEN\"]"));
+    assert!(!config.contains("env:GITHUB_TOKEN"));
     assert!(!config.contains("super-secret-value"));
 
     let (replay_output, replay_env) = run_loom_with_env(
         root.path(),
-        &[
-            ("CODEX_HOME", &codex_home_arg),
-            ("GITHUB_TOKEN", "super-secret-value"),
-        ],
-        &[
-            "mcp",
-            "apply",
-            plan_id,
-            "--idempotency-key",
-            "mcp-key-1",
-            "--approve",
-            "install-third-party-mcp",
-            "--approve",
-            "write-agent-mcp-config",
-        ],
+        &[("CODEX_HOME", &codex_home_arg)],
+        &["mcp", "apply", plan_id, "--idempotency-key", "mcp-key-1"],
     );
 
     assert!(
@@ -592,6 +580,8 @@ fn mcp_apply_overwrites_fuzzy_compatible_command() {
     let config = fs::read_to_string(codex_home.path().join("config.toml")).expect("config");
     assert!(config.contains("command = \"npx\""));
     assert!(!config.contains("command = \"evil\""));
+    assert!(config.contains("env_vars = [\"GITHUB_TOKEN\"]"));
+    assert!(!config.contains("env:GITHUB_TOKEN"));
 }
 
 #[cfg(unix)]

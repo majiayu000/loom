@@ -3,31 +3,32 @@
 Issue: https://github.com/majiayu000/loom/issues/386
 Product spec: `specs/GH386/product.md`
 Tech spec: `specs/GH386/tech.md`
-Status: Draft for implementation
+Status: Implementation slice in review
 
 ## Scope For First PR
 
-Implement only the plan-first foundation:
+Implement the guarded plan/apply foundation:
 
 ```text
-MCP requirement listing + dry-run plan + catalog/source policy + doctor next actions
+MCP requirement listing + audited durable plan + guarded Codex config apply +
+catalog/source policy + doctor next actions
 ```
 
-Do not implement in the first PR:
+Still out of scope for this PR:
 
 ```text
-silent installs, OAuth flows, secret storage, unreviewed package execution, or
-agent config mutation without explicit apply
+silent installs, direct package install execution, OAuth flows, secret storage,
+unreviewed package execution, or agent config mutation without reviewed apply
 ```
 
 ## Tasks
 
-- [ ] `SP386-T1` Owner: implementation | Done when: MCP requirement/list/plan/doctor/catalog CLI parses and command ids classify read-only behavior correctly | Verify: `cargo test --test cli_surface`
-- [ ] `SP386-T2` Owner: implementation | Done when: MCP requirement parser reads `loom.skill.toml`, `SKILL.md` metadata, and agent metadata without exposing secret values | Verify: `cargo test --test mcp_provisioning`
-- [ ] `SP386-T3` Owner: implementation | Done when: catalog/source policy parses scoped npm locators, rejects unpinned sources before approval unless resolved to immutable source, and approval-gates unknown pinned MCP server sources | Verify: `cargo test --test mcp_provisioning`
-- [ ] `SP386-T4` Owner: implementation | Done when: `mcp plan` returns missing and existing servers, adapter-supported config diffs or manual mode, env names, risk summary, and RBAC approval requirements without writes | Verify: `cargo test --test mcp_provisioning`
-- [ ] `SP386-T5` Owner: implementation | Done when: `mcp apply` loads a durable plan event or explicit artifact, revalidates plans, requires idempotency/approvals, writes atomically, and preserves user config | Verify: `cargo test --test mcp_provisioning`
-- [ ] `SP386-T6` Owner: implementation | Done when: `mcp doctor` and `skill diagnose` include provisioning next actions from the readiness read model | Verify: `cargo test --test mcp_provisioning`
+- [x] `SP386-T1` Owner: implementation | Done when: MCP requirement/list/plan/apply/doctor/catalog CLI parses and command ids classify write behavior correctly | Verify: `cargo test --test cli_surface`
+- [x] `SP386-T2` Owner: implementation | Done when: MCP requirement parser reads `loom.skill.toml`, `SKILL.md` metadata, and agent metadata without exposing secret values | Verify: `cargo test --test mcp_provisioning`
+- [x] `SP386-T3` Owner: implementation | Done when: catalog/source policy parses scoped npm locators, rejects mutable/unpinned sources before approval unless resolved to immutable source, and approval-gates unknown pinned MCP server sources | Verify: `cargo test --test mcp_provisioning`
+- [x] `SP386-T4` Owner: implementation | Done when: `mcp plan` returns missing and existing servers, adapter-supported config diffs or manual mode, env names, risk summary, RBAC approval requirements, and writes only reviewed plan artifacts | Verify: `cargo test --test mcp_provisioning`
+- [x] `SP386-T5` Owner: implementation | Done when: `mcp apply` loads a durable plan event or explicit artifact, revalidates plans, requires idempotency/approvals, writes atomically, and preserves user config | Verify: `cargo test --test mcp_provisioning --test mcp_apply_review`
+- [x] `SP386-T6` Owner: implementation | Done when: `mcp doctor` and `skill diagnose` include provisioning next actions from the readiness read model | Verify: `cargo test --test mcp_provisioning`
 
 ### SP386-T1: Add CLI Surface
 
@@ -49,8 +50,7 @@ Done when:
 - Catalog search/show JSON includes source provenance, transport, required
   package tool, trust state, and policy warnings; missing entries and malformed
   sources return typed errors.
-- `mcp apply` is absent or returns typed not-implemented until apply gates are
-  ready.
+- `mcp apply` parses and is classified as a write command.
 
 Verify:
 
@@ -104,7 +104,7 @@ Verify:
 cargo test --test mcp_provisioning
 ```
 
-### SP386-T4: Implement Dry-Run Plan
+### SP386-T4: Implement Audited Plan
 
 Owner: implementation
 Depends on: SP386-T2, SP386-T3
@@ -119,8 +119,10 @@ Done when:
   reused silently.
 - package/tool availability for `node`, `npx`, `uvx`, `docker`, or other source
   runtime tools is reported before any config write is considered safe.
-- config diffs are generated without writes only for adapters with explicit MCP
-  config path and merge support; otherwise return `manual_configuration_required`.
+- config diffs are generated only for adapters with explicit MCP config path
+  and merge support; otherwise return `manual_configuration_required`.
+- planning writes only audited reviewed plan artifacts and explicit
+  `--output-plan` artifacts.
 - config-write actions depend on satisfied install/env/tool prerequisites and
   remain unsafe to apply while any dependency is missing or mismatched.
 - risk summary includes network, secret, package, and external-system risk.
@@ -142,17 +144,28 @@ Depends on: SP386-T4
 Done when:
 
 - apply revalidates source digest, policy, adapter metadata, and target config.
+- apply recomputes current skill MCP requirements and resolved sources before
+  writing.
 - apply requires an idempotency key.
+- apply replays successful records before volatile approval/env/tool gates.
+- apply recovers a missing apply record when config already matches reviewed
+  output.
 - risky actions require policy/approval backend-issued approval ids, or explicit
   local-only consent when RBAC is not enabled.
 - config writes are atomic and preserve unrelated user config.
-- secrets are required by reference only and never written directly.
+- secrets are required by reference only, forwarded through `env_vars`, and
+  never written directly.
+- config locking is scoped to the target config path and stale key locks are
+  reaped.
+- filesystem servers are scoped to the reviewed workspace path.
+- local command sources resolve to absolute digest-pinned paths.
 - plan drift fails and asks for a new plan.
 
 Verify:
 
 ```bash
 cargo test --test mcp_provisioning
+cargo test --test mcp_apply_review
 ```
 
 ### SP386-T6: Add Doctor Integration And Final Checks
@@ -181,7 +194,9 @@ cargo test
 ## Handoff Notes
 
 - Use `Refs #386` for a first-slice PR unless requirement parsing, plan,
-  apply, doctor, catalog, and all acceptance criteria are complete.
-- Do not use `Fixes #386` until safe apply, idempotency, approval gates,
-  doctor integration, and tests are implemented.
+  guarded Codex config apply, doctor, catalog, and direct package-install
+  follow-up scope are complete.
+- Do not use `Fixes #386` until direct package installation, OAuth/secrets
+  integrations, and any remaining policy backend work are explicitly accepted
+  or split into successor issues.
 - Never print or store secret values.

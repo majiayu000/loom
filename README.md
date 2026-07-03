@@ -230,7 +230,7 @@ The current lifecycle keeps source history on a smaller verb set: import with `a
 | `loom policy org init/show/check` | Initialize and inspect Git-backed org policy | Review allow/deny/approval-required decisions before enforcement is wired across all mutations | Registry policy state |
 | `loom approval request/list/approve/reject` | Manage append-only approval events | Create and decide auditable approval requests with redacted reasons/comments and role checks | Registry approval log |
 | `loom roles list/grant/revoke` | Manage local org role grants | Bootstrap and review viewer/author/reviewer/maintainer/admin grants without hosted RBAC | Registry role state |
-| `loom skill provenance inspect/verify/refresh` | Inspect, check, or refresh recorded source provenance and `loom.lock` | Confirm a skill still matches the source digest and pinned ref metadata | Source metadata + `loom.lock` |
+| `loom skill provenance inspect/verify/outdated/refresh` | Inspect, check, report stale provider pins, or refresh recorded source provenance and `loom.lock` | Confirm a skill still matches pinned metadata, list stale provider-backed installs, and emit review-only re-pin plans | Source metadata + `loom.lock` |
 | `loom skill policy` | Report declared capabilities, content risks, provenance drift, policy decision, and embedded safety scan | Review a skill before projection or explain why a policy profile blocks it | Source metadata + source files (read-only) |
 | `loom skill scan` | Return unified safety findings, trust state, and activation decision | Review prompt-injection, script, secret, network, provenance, and trust risks before activation | Source + trust metadata (read-only) |
 | `loom skill trust/quarantine/unquarantine` | Persist registry-owned trust and quarantine metadata | Mark review state or block a skill without editing portable `SKILL.md` | Registry trust state |
@@ -347,6 +347,7 @@ loom skill new <skill> [--template <basic|coding-workflow|scripted|reference-hea
 loom skill add <path|git-url|github:owner/repo//subdir> --name <skill> [--ref <branch|tag|commit>] [--subdir <path>]
 loom skill provenance inspect <skill>
 loom skill provenance verify <skill>
+loom skill provenance outdated [<skill>] [--plan]
 loom skill provenance refresh <skill>
 loom skill policy <skill> [--policy-profile <safe-capture|audit-only|deny-risky|strict|custom>]
 loom skill scan <skill> [--mode <install|activate|release>] [--strict]

@@ -68,7 +68,7 @@ pub use policy::{
     OrgPolicyCheckArgs, OrgPolicyCommand, OrgPolicyInitArgs, PolicyCommand, RoleGrantArgs,
     RolesCommand, SkillPolicyArgs,
 };
-pub use provenance::{AddArgs, SkillProvenanceCommand};
+pub use provenance::{AddArgs, SkillProvenanceCommand, SkillProvenanceOutdatedArgs};
 pub use provider::{ProviderAddArgs, ProviderCommand, ProviderKindArg, ProviderRemoveArgs};
 pub use provision::{
     ProvisionApplyArgs, ProvisionCommand, ProvisionDoctorArgs, ProvisionExportArgs,

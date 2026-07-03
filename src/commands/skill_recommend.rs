@@ -14,7 +14,9 @@ use crate::state_model::{REGISTRY_SCHEMA_VERSION, RegistryStatePaths, RegistryWo
 use crate::types::ErrorCode;
 
 use super::helpers::map_git;
-use super::helpers::{map_io, map_registry_state, validate_non_empty, validate_skill_name};
+use super::helpers::{
+    map_io, map_registry_state, validate_non_empty, validate_policy_profile, validate_skill_name,
+};
 use super::skill_inventory::{SkillDiscoveryFilters, score_and_filter_skills, tokenize};
 use super::skill_recommend_active::{activation_plan_delta, active_view};
 use super::skill_safety::evaluate_skill_safety_with_policy;
@@ -242,6 +244,7 @@ impl App {
         args: &SkillSearchArgs,
     ) -> std::result::Result<(Value, Meta), CommandFailure> {
         let mut args = args.clone();
+        args.for_task = false;
         args.explain = true;
         self.cmd_skill_search(&args)
     }
@@ -351,7 +354,7 @@ fn recommendation_policy_context(
         validate_non_empty("binding", binding_id.trim())?;
     }
     if let Some(policy_profile) = args.policy_profile.as_deref() {
-        validate_non_empty("policy_profile", policy_profile.trim())?;
+        validate_policy_profile(policy_profile.trim())?;
     }
     let Some(binding_id) = args.binding.as_deref() else {
         return Ok(json!({

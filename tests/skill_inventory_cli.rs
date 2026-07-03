@@ -145,6 +145,7 @@ fn skill_search_and_resolve_are_deterministic_and_transparent() {
             "claude",
             "--workspace",
             "/tmp/project-a/src",
+            "--for-task",
         ],
     );
     assert!(output.status.success(), "skill resolve should pass: {env}");
@@ -200,6 +201,22 @@ fn skill_search_and_resolve_are_deterministic_and_transparent() {
         env["data"]["recommendations"]["filters"]["binding"],
         json!("bind_claude_project_a")
     );
+
+    let (output, env) = run_loom(
+        root.path(),
+        &[
+            "skill",
+            "recommend",
+            "model onboarding",
+            "--policy-profile",
+            "BAD VALUE",
+        ],
+    );
+    assert!(
+        !output.status.success(),
+        "bad policy profile should fail closed: {env}"
+    );
+    assert_eq!(env["error"]["code"], json!("ARG_INVALID"));
 
     let (output, env) = run_loom(
         root.path(),

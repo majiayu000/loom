@@ -79,6 +79,14 @@ artifact when `--output-plan` is supplied. `apply` must consume the durable plan
 or artifact that contains the reviewed file changes, not regenerate unreviewed
 content from current state.
 
+Current durable lookup contract: `provision plan` writes the reviewed plan JSON
+atomically to `state/provision/plans/<plan_id>.json` and may also write the same
+reviewed content to `--output-plan`. Commands that accept `<plan-id|artifact>`
+load an explicit artifact path when it exists; otherwise they resolve `<plan-id>`
+only from this durable store and fail closed when the id is absent or invalid.
+The loaded plan is still revalidated through the reviewed guard digests, policy,
+approval, generated-content digest, registry head, and target preimage gates.
+
 ## Devcontainer Output
 
 Generated setup script should be explicit:
@@ -196,6 +204,14 @@ Focused tests:
 8. apply is idempotent with the same key.
 9. doctor is read-only and reports missing generated files.
 10. apply rejects changed target-file preimages before writing.
+11. apply by plan id replays the durable reviewed plan without regenerating from
+    changed registry state.
+
+`provision export --format devcontainer` is intentionally split from this
+packet. A follow-up spec must define the devcontainer export artifact shape and
+output path semantics before implementation. Until then the CLI must continue to
+fail closed for that format, while shell and tar remain the supported portable
+exports.
 
 ## Verification
 

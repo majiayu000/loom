@@ -6,7 +6,6 @@ mod tar_artifact;
 mod tar_safety;
 mod utils;
 
-use std::fs;
 use std::path::Path;
 
 use serde_json::{Value, json};
@@ -23,7 +22,8 @@ use super::helpers::map_io;
 use super::{App, CommandFailure};
 use apply::cmd_provision_apply;
 use artifact::{
-    build_shell_export_artifact, inspect_provision_artifact, load_provision_plan_artifact,
+    build_shell_export_artifact, inspect_provision_artifact, load_reviewed_provision_plan,
+    load_reviewed_provision_plan_with_source, write_durable_provision_plan,
 };
 use model::ProvisionPlan;
 use planner::{build_provision_plan, provision_export_format_name, provision_target_name};
@@ -51,6 +51,7 @@ impl App {
         validate_provision_agent(&args.agent)?;
         let workspace = resolve_workspace(self, args.workspace.as_deref())?;
         let plan = build_provision_plan(&self.ctx, args.target, &workspace, &args.agent)?;
+        let durable_plan_path = write_durable_provision_plan(&self.ctx, &plan)?;
         if let Some(output_plan) = &args.output_plan {
             let mut body = serde_json::to_string_pretty(&plan).map_err(map_io)?;
             body.push('\n');
@@ -62,6 +63,8 @@ impl App {
                 "plan": plan,
                 "output_plan": args.output_plan.as_ref().map(|path| path.display().to_string()),
                 "artifact_written": args.output_plan.is_some(),
+                "durable_plan": durable_plan_path.display().to_string(),
+                "durable_plan_written": true,
                 "target_writes_performed": false,
             }),
             Meta::default(),
@@ -173,26 +176,23 @@ impl App {
     ) -> std::result::Result<(ProvisionPlan, std::path::PathBuf, &'static str), CommandFailure>
     {
         if let Some(plan_arg) = &args.plan {
-            let plan_path = Path::new(plan_arg);
-            if plan_path.is_file() {
-                let raw = fs::read_to_string(plan_path).map_err(map_io)?;
-                let plan: ProvisionPlan = serde_json::from_str(&raw).map_err(map_io)?;
-                let expected_target = provision_target_name(args.target);
-                if plan.target_kind != expected_target {
-                    return Err(CommandFailure::new(
-                        ErrorCode::ArgInvalid,
-                        format!(
-                            "plan target '{}' does not match requested target '{}'",
-                            plan.target_kind, expected_target
-                        ),
-                    ));
-                }
-                let workspace = match args.workspace.as_deref() {
-                    Some(workspace) => resolve_workspace(self, Some(workspace))?,
-                    None => Path::new(&plan.workspace).to_path_buf(),
-                };
-                return Ok((plan, workspace, "artifact"));
+            let (plan, plan_source) =
+                load_reviewed_provision_plan_with_source(&self.ctx, plan_arg)?;
+            let expected_target = provision_target_name(args.target);
+            if plan.target_kind != expected_target {
+                return Err(CommandFailure::new(
+                    ErrorCode::ArgInvalid,
+                    format!(
+                        "plan target '{}' does not match requested target '{}'",
+                        plan.target_kind, expected_target
+                    ),
+                ));
             }
+            let workspace = match args.workspace.as_deref() {
+                Some(workspace) => resolve_workspace(self, Some(workspace))?,
+                None => Path::new(&plan.workspace).to_path_buf(),
+            };
+            return Ok((plan, workspace, plan_source));
         }
 
         let workspace = resolve_workspace(self, args.workspace.as_deref())?;
@@ -206,7 +206,7 @@ impl App {
     ) -> std::result::Result<(Value, Meta), CommandFailure> {
         match args.format {
             crate::cli::ProvisionExportFormatArg::Shell => {
-                let plan = load_provision_plan_artifact(&args.plan)?;
+                let plan = load_reviewed_provision_plan(&self.ctx, &args.plan)?;
                 let artifact = build_shell_export_artifact(&plan)?;
                 write_atomic(&args.output, &artifact.body).map_err(map_io)?;
                 Ok((
@@ -225,7 +225,7 @@ impl App {
                 ))
             }
             crate::cli::ProvisionExportFormatArg::Tar => {
-                let plan = load_provision_plan_artifact(&args.plan)?;
+                let plan = load_reviewed_provision_plan(&self.ctx, &args.plan)?;
                 let artifact = build_tar_export_artifact(&self.ctx, &plan, &args.output)?;
                 Ok((
                     json!({

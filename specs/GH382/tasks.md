@@ -21,10 +21,10 @@ background daemon, direct cloud deployment without provider config, secret copyi
 
 ## Tasks
 
-- [ ] `SP382-T001` Owner: plan-model | Done when: provision plans include target kind, workspace/container paths, agents, registry source plus cloneable URL, active views, skillsets, dependency readiness, reviewed file changes, Loom CLI prerequisite, secrets required, policy, and guards | Verify: `cargo test --test provision_cli`
+- [ ] `SP382-T001` Owner: plan-model | Done when: provision plans include target kind, workspace/container paths, agents, registry source plus cloneable URL, active views, skillsets, dependency readiness, reviewed file changes, Loom CLI prerequisite, secrets required, policy, guards, and a durable reviewed plan-id replay record | Verify: `cargo test --test provision_cli`
 - [ ] `SP382-T002` Owner: adapter-paths | Done when: target paths come from adapter metadata and Codex project scope uses `.agents/skills` | Verify: `cargo test --test provision_cli`
 - [ ] `SP382-T003` Owner: devcontainer | Done when: devcontainer output is deterministic, idempotent, JSONC-aware, parameterized from reviewed paths, and fails safely on incompatible existing config | Verify: `cargo test --test provision_cli`
-- [ ] `SP382-T004` Owner: export-import | Done when: shell/tar export and import dry-run are deterministic and never include secret values | Verify: `cargo test --test provision_cli`
+- [ ] `SP382-T004` Owner: export-import | Done when: shell/tar export and import dry-run are deterministic and never include secret values; `export --format devcontainer` remains fail-closed until a follow-up artifact contract defines its output shape | Verify: `cargo test --test provision_cli`
 - [ ] `SP382-T005` Owner: apply | Done when: provision apply revalidates guards, requires idempotency key, accepts and validates approval tokens when required, writes atomically, and returns recovery commands | Verify: `cargo test --test provision_cli`
 - [ ] `SP382-T006` Owner: doctor | Done when: provision doctor is read-only and reports generated files, adapter paths, dependencies, required secrets, and policy state | Verify: `cargo test --test provision_cli`
 - [ ] `SP382-T007` Owner: regression | Done when: focused and full repository checks pass | Verify: `cargo check --workspace --all-targets --all-features && cargo test`
@@ -48,6 +48,8 @@ Done when:
 - Plan records reviewed setup script content/patch digests, normalized
   `registry_clone_url`, target workspace paths, and Loom CLI prerequisite.
 - Plan can be replayed from a durable command event or explicit plan artifact.
+- Plan id lookup loads the durable reviewed plan and never regenerates file
+  previews from current registry state during apply/export/doctor.
 - Plan stores enough guards to revalidate apply.
 
 Verify:
@@ -106,6 +108,8 @@ Done when:
 
 - Shell export is deterministic.
 - Tar export includes registry/active-view artifacts but no secret values.
+- Devcontainer export format is split into a follow-up artifact contract instead
+  of inventing output semantics in this packet.
 - Tar export materializes active-view symlinks or rewrites them relative to the
   packaged registry so extraction in another workspace cannot leave dangling
   links to the planner machine.

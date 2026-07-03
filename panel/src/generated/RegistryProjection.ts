@@ -2,4 +2,4 @@
 import type { Health } from "./Health";
 import type { ProjectionMethod } from "./ProjectionMethod";
 
-export type RegistryProjection = { instance_id: string, skill_id: string, binding_id?: string, target_id: string, materialized_path: string, method: ProjectionMethod, last_applied_rev: string, health: Health, observed_drift?: boolean, updated_at?: string, };
+export type RegistryProjection = { instance_id: string, skill_id: string, binding_id?: string, target_id: string, materialized_path: string, method: ProjectionMethod, last_applied_rev: string, health: Health, observed_drift?: boolean, source_tree_digest?: string, materialized_tree_digest?: string, last_observed_at?: string, last_observed_error?: string, updated_at?: string, };

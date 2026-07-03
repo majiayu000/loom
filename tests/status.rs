@@ -3,7 +3,7 @@ mod common;
 use std::fs;
 use std::path::Path;
 
-use serde_json::Value;
+use serde_json::{Value, json};
 
 use common::{TestDir, run_loom, run_loom_with_env, write_file, write_minimal_registry_state};
 
@@ -61,6 +61,39 @@ fn workspace_status_reports_registry_snapshot_when_present() {
     assert_eq!(
         env["data"]["registry"]["targets"][0]["agent_source"],
         Value::String("built-in".to_string())
+    );
+}
+
+#[test]
+fn workspace_status_marks_legacy_copy_projection_not_observed_without_counting_drift() {
+    let root = TestDir::new("registry-status-legacy-projection-observation");
+    write_minimal_registry_state(root.path(), 1);
+    let projections_path = root.path().join("state/registry/projections.json");
+    let mut projections: Value =
+        serde_json::from_str(&fs::read_to_string(&projections_path).expect("read projections"))
+            .expect("parse projections");
+    projections["projections"][0]["method"] = json!("copy");
+    fs::write(
+        &projections_path,
+        serde_json::to_string_pretty(&projections).expect("serialize projections"),
+    )
+    .expect("write projections");
+
+    let (output, env) = run_loom(root.path(), &["workspace", "status"]);
+    assert!(
+        output.status.success(),
+        "loom failed: stderr={} stdout={}",
+        String::from_utf8_lossy(&output.stderr),
+        String::from_utf8_lossy(&output.stdout)
+    );
+
+    assert_eq!(
+        env["data"]["registry"]["projections"][0]["observation_status"],
+        json!("not_observed")
+    );
+    assert_eq!(
+        env["data"]["registry"]["counts"]["drifted_projections"],
+        json!(0)
     );
 }
 

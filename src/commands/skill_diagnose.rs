@@ -13,6 +13,10 @@ use crate::types::ErrorCode;
 use super::codex_visibility::build_codex_visibility_report;
 use super::helpers::{map_arg, map_registry_state, validate_skill_name};
 use super::history_cmds::operation_mentions_skill as registry_operation_mentions_skill;
+use super::projections::{
+    ProjectionObservationUpdate, apply_projection_observation_updates,
+    projection_content_observation_check,
+};
 use super::skill_deps::skill_dependency_report;
 use super::skill_verify::{
     drifted_paths_under, head_tree_oid_for_path, last_commit_for_path, last_saved_commit_for_skill,
@@ -20,7 +24,6 @@ use super::skill_verify::{
 use super::{App, CommandFailure, SkillLintMode, SkillLintReport, lint_skill_source};
 
 mod dependency_checks;
-
 const MAX_DRIFTED_PATHS: usize = 100;
 const MAX_RELATED_OPS: usize = 10;
 
@@ -44,13 +47,22 @@ impl App {
             return super::skill_verify::skill_drift_report(&self.ctx, skill);
         }
         let paths = RegistryStatePaths::from_app_context(&self.ctx);
-        let snapshot = paths.maybe_load_snapshot().map_err(map_registry_state)?;
-        let (mut data, meta) = build_skill_diagnosis(
+        let mut snapshot = paths.maybe_load_snapshot().map_err(map_registry_state)?;
+        let (mut data, meta, projection_updates) = build_skill_diagnosis(
             &self.ctx,
             skill,
             dependency_checks::dependency_agent(agent),
             snapshot.as_ref(),
         )?;
+        if agent.is_none()
+            && !projection_updates.is_empty()
+            && let Some(snapshot) = snapshot.as_mut()
+        {
+            apply_projection_observation_updates(&mut snapshot.projections, &projection_updates);
+            paths
+                .save_projections(&snapshot.projections)
+                .map_err(map_registry_state)?;
+        }
         if agent == Some(AgentKind::Codex) {
             attach_codex_visibility(&self.ctx, skill, &mut data)?;
         }
@@ -91,7 +103,6 @@ impl SkillDiagnoseRequest for SkillOnlyArgs {
         SkillDiagnoseCheck::All
     }
 }
-
 fn attach_codex_visibility(
     ctx: &AppContext,
     skill: &str,
@@ -132,13 +143,12 @@ fn attach_codex_visibility(
     data["summary"]["warning_check_count"] = json!(warning_count);
     Ok(())
 }
-
 fn build_skill_diagnosis(
     ctx: &AppContext,
     skill: &str,
     dependency_agent: Option<&str>,
     snapshot: Option<&RegistrySnapshot>,
-) -> std::result::Result<(Value, Meta), CommandFailure> {
+) -> std::result::Result<(Value, Meta, Vec<ProjectionObservationUpdate>), CommandFailure> {
     let source_path = ctx.skill_path(skill);
     let source_exists = source_path.is_dir();
     let referenced = source_exists || snapshot.is_some_and(|s| skill_is_referenced(s, skill));
@@ -154,6 +164,7 @@ fn build_skill_diagnosis(
     let mut rules = Vec::new();
     let mut targets = Vec::new();
     let mut projections = Vec::new();
+    let mut projection_updates = Vec::new();
     let mut recent_ops = Vec::new();
     let mut operation_backlog = Vec::new();
     let lint_report = lint_skill_source(&source_path, skill, SkillLintMode::Compat);
@@ -206,7 +217,13 @@ fn build_skill_diagnosis(
             .filter(|projection| projection.skill_id == skill)
         {
             projections.push(json!(projection));
-            add_projection_checks(ctx, snapshot, projection, &mut checks);
+            add_projection_checks(
+                ctx,
+                snapshot,
+                projection,
+                &mut checks,
+                &mut projection_updates,
+            );
             if !rule_target_ids.contains(&projection.target_id)
                 && projection_only_target_ids.insert(projection.target_id.clone())
             {
@@ -342,9 +359,9 @@ fn build_skill_diagnosis(
             }
         }),
         Meta::default(),
+        projection_updates,
     ))
 }
-
 fn add_source_checks(
     ctx: &AppContext,
     skill: &str,
@@ -409,7 +426,6 @@ fn add_source_checks(
         ));
     }
 }
-
 fn add_git_checks(ctx: &AppContext, skill: &str, source_exists: bool, checks: &mut Vec<Value>) {
     if !source_exists {
         return;
@@ -484,7 +500,6 @@ fn add_git_checks(ctx: &AppContext, skill: &str, source_exists: bool, checks: &m
         }),
     ));
 }
-
 fn push_source_drift_error(
     checks: &mut Vec<Value>,
     last_commit: Option<String>,
@@ -503,7 +518,6 @@ fn push_source_drift_error(
         }),
     ));
 }
-
 fn add_binding_checks(
     snapshot: &RegistrySnapshot,
     binding: &crate::state_model::RegistryWorkspaceBinding,
@@ -543,7 +557,6 @@ fn add_binding_checks(
         ));
     }
 }
-
 fn add_target_checks(
     snapshot: &RegistrySnapshot,
     target_id: &str,
@@ -603,12 +616,12 @@ fn add_target_checks(
         json!({"target_id": target.target_id, "method": method}),
     ));
 }
-
 fn add_projection_checks(
     ctx: &AppContext,
     snapshot: &RegistrySnapshot,
     projection: &RegistryProjectionInstance,
     checks: &mut Vec<Value>,
+    projection_updates: &mut Vec<ProjectionObservationUpdate>,
 ) {
     let materialized = Path::new(&projection.materialized_path);
     checks.push(check(
@@ -661,6 +674,16 @@ fn add_projection_checks(
         "capture or re-project the skill",
         json!({"instance_id": projection.instance_id, "observed_drift": projection.observed_drift}),
     ));
+    if matches!(
+        projection.method,
+        crate::core::vocab::ProjectionMethod::Copy
+            | crate::core::vocab::ProjectionMethod::Materialize
+    ) && projection.health != crate::core::vocab::Health::Orphaned
+    {
+        let (check, update) = projection_content_observation_check(ctx, projection);
+        checks.push(check);
+        projection_updates.push(update);
+    }
     let binding_ok = projection
         .binding_id
         .as_deref()
@@ -686,7 +709,6 @@ fn add_projection_checks(
         checks.push(check_symlink_target(ctx, projection, materialized));
     }
 }
-
 fn check_symlink_target(
     ctx: &AppContext,
     projection: &RegistryProjectionInstance,
@@ -714,7 +736,6 @@ fn check_symlink_target(
         json!({"instance_id": projection.instance_id, "path": projection.materialized_path}),
     )
 }
-
 fn check(
     section: &str,
     id: &str,
@@ -734,7 +755,6 @@ fn check(
         "details": details
     })
 }
-
 fn skill_is_referenced(snapshot: &RegistrySnapshot, skill: &str) -> bool {
     snapshot
         .rules
@@ -751,14 +771,12 @@ fn skill_is_referenced(snapshot: &RegistrySnapshot, skill: &str) -> bool {
             .iter()
             .any(|op| registry_operation_mentions_skill(op, skill))
 }
-
 fn checks_with_severity(checks: &[Value], severity: &str) -> usize {
     checks
         .iter()
         .filter(|check| check["severity"].as_str() == Some(severity))
         .count()
 }
-
 fn drifted_path_count(checks: &[Value]) -> usize {
     checks
         .iter()

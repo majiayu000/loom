@@ -321,6 +321,10 @@ mod tests {
             last_applied_rev: "abc123".to_string(),
             health: crate::core::vocab::Health::Healthy,
             observed_drift: Some(false),
+            source_tree_digest: None,
+            materialized_tree_digest: None,
+            last_observed_at: None,
+            last_observed_error: None,
             updated_at: Some(now),
         });
         paths.save_projections(&existing).expect("save_projections");

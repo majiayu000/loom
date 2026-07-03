@@ -503,9 +503,26 @@ fn importer_version() -> String {
     format!("loom/{}", env!("CARGO_PKG_VERSION"))
 }
 
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub(crate) enum TreeDigestSymlinkMode {
+    Preserve,
+    Follow,
+}
+
 pub(crate) fn skill_tree_digest(path: &Path) -> Result<String> {
+    tree_digest(path, TreeDigestSymlinkMode::Preserve)
+}
+
+pub(crate) fn materialized_tree_digest(path: &Path) -> Result<String> {
+    tree_digest(path, TreeDigestSymlinkMode::Follow)
+}
+
+fn tree_digest(path: &Path, symlink_mode: TreeDigestSymlinkMode) -> Result<String> {
     let mut entries = Vec::new();
-    for entry in WalkDir::new(path).follow_links(false).sort_by_file_name() {
+    for entry in WalkDir::new(path)
+        .follow_links(symlink_mode == TreeDigestSymlinkMode::Follow)
+        .sort_by_file_name()
+    {
         let entry = entry.with_context(|| format!("walk {}", path.display()))?;
         if entry.file_type().is_dir() {
             continue;
@@ -524,8 +541,11 @@ pub(crate) fn skill_tree_digest(path: &Path) -> Result<String> {
         hasher.update(b"path\0");
         hasher.update(rel.as_bytes());
         hasher.update(b"\0");
-        let metadata =
-            fs::symlink_metadata(&full).with_context(|| format!("stat {}", full.display()))?;
+        let metadata = match symlink_mode {
+            TreeDigestSymlinkMode::Preserve => fs::symlink_metadata(&full),
+            TreeDigestSymlinkMode::Follow => fs::metadata(&full),
+        }
+        .with_context(|| format!("stat {}", full.display()))?;
         if metadata.file_type().is_symlink() {
             hasher.update(b"symlink\0");
             hasher.update(fs::read_link(&full)?.to_string_lossy().as_bytes());

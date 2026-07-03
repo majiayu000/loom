@@ -24,7 +24,8 @@ use super::helpers::{
     projection_instance_id,
 };
 use super::projections::{
-    maybe_autosync_or_queue, project_skill_to_target, record_registry_operation, upsert_projection,
+    apply_projection_observation, maybe_autosync_or_queue, observe_projection,
+    project_skill_to_target, record_registry_operation, upsert_projection,
 };
 use super::{App, CommandFailure};
 
@@ -263,21 +264,25 @@ fn apply_projection_repair(
     project_skill_to_target(&source, &path, ProjectionMethod::Symlink)
         .map_err(map_project_io(ProjectionMethod::Symlink))?;
     let instance_id = projection_instance_id(skill, binding_id, target_id);
-    upsert_projection(
-        projections,
-        RegistryProjectionInstance {
-            instance_id,
-            skill_id: skill.to_string(),
-            binding_id: Some(binding_id.to_string()),
-            target_id: target_id.to_string(),
-            materialized_path: path.display().to_string(),
-            method: crate::core::vocab::ProjectionMethod::Symlink,
-            last_applied_rev: head.to_string(),
-            health: crate::core::vocab::Health::Healthy,
-            observed_drift: Some(false),
-            updated_at: Some(Utc::now()),
-        },
-    );
+    let mut projection = RegistryProjectionInstance {
+        instance_id,
+        skill_id: skill.to_string(),
+        binding_id: Some(binding_id.to_string()),
+        target_id: target_id.to_string(),
+        materialized_path: path.display().to_string(),
+        method: crate::core::vocab::ProjectionMethod::Symlink,
+        last_applied_rev: head.to_string(),
+        health: crate::core::vocab::Health::Healthy,
+        observed_drift: Some(false),
+        source_tree_digest: None,
+        materialized_tree_digest: None,
+        last_observed_at: None,
+        last_observed_error: None,
+        updated_at: Some(Utc::now()),
+    };
+    let observation = observe_projection(ctx, &projection);
+    apply_projection_observation(&mut projection, &observation);
+    upsert_projection(projections, projection);
     Ok(())
 }
 

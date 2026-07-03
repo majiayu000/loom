@@ -32,8 +32,12 @@ Rollback output should include:
 1. `source_restored`
 2. `registry_restored`
 3. `projection_reconciliation.status`
-4. `projection_reconciliation.items[]`
-5. `projection_reconciliation.next_actions[]`
+4. `projection_reconciliation.items[]` with `instance_id`, `skill_id`,
+   `target_id`, `materialized_path`, `method`, `status`, and
+   `requires_projection_reapply`
+5. `projection_reconciliation.next_actions[]` with exact executable commands
+   when a CLI recovery command exists, or an explicit `manual_review_required`
+   action when no safe command exists
 
 Snapshot read failure must appear in `error.details` or `meta.warnings`.
 

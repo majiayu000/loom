@@ -546,6 +546,8 @@ fn inventory_read_commands_do_not_mutate_state_or_targets() {
         vec!["skill", "inspect", "review-helper", "--brief"],
         vec!["skill", "search", "review", "--status", "present"],
         vec!["skill", "search", "review pull requests", "--for-task"],
+        vec!["skill", "recommend", "review pull requests"],
+        vec!["skill", "resolve", "review pull requests"],
     ] {
         let (output, env) = run_loom(root.path(), &args);
         assert!(output.status.success(), "{args:?} should pass: {env}");

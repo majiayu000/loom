@@ -2,7 +2,7 @@
 
 Issue: https://github.com/majiayu000/loom/issues/378
 Parent: https://github.com/majiayu000/loom/issues/376
-Status: Implemented
+Status: Partial implementation
 Locale: zh-CN
 
 ## Goal
@@ -27,19 +27,22 @@ The original design packet depended on these upstream read models and gates:
 - #371 for dependency and MCP readiness.
 - #377 for skillsets and grouped lifecycle data.
 
-Those dependencies now provide enough local state for the read-only v1
-recommendation contract. The implementation extends existing deterministic
-discovery behavior while preserving read-only semantics.
+Those dependencies now provide enough local state for the read-only command
+surface and deterministic lexical foundation. Full dependency/eval and
+negative-trigger ranking joins remain open before #378 can close.
 
-## Implementation Status
+## Current Implementation Status
 
-The v1 implementation is complete for the read-only local recommendation
-contract. `loom index build/status`, `loom skill recommend`, `loom skill
-resolve`, and `loom active recommend` are all non-mutating command surfaces.
+The read-only local recommendation foundation is implemented. `loom index
+build/status`, `loom skill recommend`, `loom skill resolve`, and `loom active
+recommend` are all non-mutating command surfaces.
 `skill recommend` and `skill resolve` reuse the deterministic discovery engine
 also available through `skill search`; semantic mode remains local-provider-only
 and returns a `semantic-disabled` warning with lexical fallback when no local
 provider is configured.
+
+Remaining closeout work: integrate dependency readiness, real eval evidence,
+and negative trigger signals into recommendation scoring and tests.
 
 ## User-Facing Commands
 

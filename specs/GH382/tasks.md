@@ -3,7 +3,7 @@
 Issue: https://github.com/majiayu000/loom/issues/382
 Product spec: `specs/GH382/product.md`
 Tech spec: `specs/GH382/tech.md`
-Status: Blocked design packet
+Status: Implementation closeout
 
 ## Scope For First PR
 
@@ -21,13 +21,18 @@ background daemon, direct cloud deployment without provider config, secret copyi
 
 ## Tasks
 
-- [ ] `SP382-T001` Owner: plan-model | Done when: provision plans include target kind, workspace/container paths, agents, registry source plus cloneable URL, active views, skillsets, dependency readiness, reviewed file changes, Loom CLI prerequisite, secrets required, policy, guards, and a durable reviewed plan-id replay record | Verify: `cargo test --test provision_cli`
-- [ ] `SP382-T002` Owner: adapter-paths | Done when: target paths come from adapter metadata and Codex project scope uses `.agents/skills` | Verify: `cargo test --test provision_cli`
-- [ ] `SP382-T003` Owner: devcontainer | Done when: devcontainer output is deterministic, idempotent, JSONC-aware, parameterized from reviewed paths, and fails safely on incompatible existing config | Verify: `cargo test --test provision_cli`
-- [ ] `SP382-T004` Owner: export-import | Done when: shell/tar export and import dry-run are deterministic and never include secret values; `export --format devcontainer` remains fail-closed until a follow-up artifact contract defines its output shape | Verify: `cargo test --test provision_cli`
-- [ ] `SP382-T005` Owner: apply | Done when: provision apply revalidates guards, requires idempotency key, accepts and validates approval tokens when required, writes atomically, and returns recovery commands | Verify: `cargo test --test provision_cli`
-- [ ] `SP382-T006` Owner: doctor | Done when: provision doctor is read-only and reports generated files, adapter paths, dependencies, required secrets, and policy state | Verify: `cargo test --test provision_cli`
-- [ ] `SP382-T007` Owner: regression | Done when: focused and full repository checks pass | Verify: `cargo check --workspace --all-targets --all-features && cargo test`
+- [x] `SP382-T001` Owner: plan-model | Done when: provision plans include target kind, workspace/container paths, agents, registry source plus cloneable URL, active views, skillsets, dependency readiness, reviewed file changes, Loom CLI prerequisite, secrets required, policy, guards, and a durable reviewed plan-id replay record | Verify: `cargo test --test provision_cli`
+- [x] `SP382-T002` Owner: adapter-paths | Done when: target paths come from adapter metadata and Codex project scope uses `.agents/skills` | Verify: `cargo test --test provision_cli`
+- [x] `SP382-T003` Owner: devcontainer | Done when: devcontainer output is deterministic, idempotent, JSONC-aware, parameterized from reviewed paths, and fails safely on incompatible existing config | Verify: `cargo test --test provision_cli`
+- [x] `SP382-T004` Owner: export-import | Done when: shell/tar export and import dry-run are deterministic and never include secret values; `export --format devcontainer` remains fail-closed until a follow-up artifact contract defines its output shape | Verify: `cargo test --test provision_export_import`
+- [x] `SP382-T005` Owner: apply | Done when: provision apply revalidates guards, requires idempotency key, accepts and validates approval tokens when required, writes atomically, and returns recovery commands | Verify: `cargo test --test provision_apply`
+- [x] `SP382-T006` Owner: doctor | Done when: provision doctor is read-only and reports generated files, adapter paths, dependencies, required secrets, and policy state | Verify: `cargo test --test provision_cli`
+- [x] `SP382-T007` Owner: regression | Done when: focused and full repository checks pass | Verify: `cargo check --workspace --all-targets --all-features && cargo test`
+
+Implemented closeout keeps `export --format devcontainer` as the explicit split
+from this packet. Shell and tar are the supported portable export artifacts for
+GH382; a separate artifact contract must define devcontainer export output
+semantics before that deferred format is enabled.
 
 ### SP382-T1: Add Provision Plan Command
 

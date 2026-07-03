@@ -277,8 +277,9 @@ Response shape:
 Requirements:
 
 1. must explain resolved bindings
-2. must explain projection health
+2. must explain projection health, including `observation_status` for each projection
 3. must not write state
+4. `drifted_projections` counts persisted drift, missing, unreadable, conflict, and orphaned states; legacy copy/materialize records with no digest observation render as `not_observed` but are not counted as drifted
 
 ### 9.2 `workspace doctor`
 
@@ -501,6 +502,21 @@ Rules:
 6. malformed Codex config returns `SCHEMA_MISMATCH` for config repair and is never silently ignored.
 7. runtime entries such as `.system` and `codex-primary-runtime`, plus non-Loom external entries, are preserved.
 8. multiple active bindings sharing a Codex target are reconciled as a union of desired active skills.
+
+### 11.0.3.1 `skill diagnose`
+
+```bash
+loom --json --root <root> skill diagnose <skill-id>
+```
+
+Default skill diagnosis observes registered projections. For `copy` and `materialize` projections, it compares source and live projection content digests, writes the latest observation back to `state/registry/projections.json`, and reports a `projection_content_digest:<instance_id>` check. `skill diagnose --agent codex` remains read-only as specified above.
+
+Rules:
+
+1. healthy copy/materialize observations record matching `source_tree_digest`, `materialized_tree_digest`, `last_observed_at`, and `last_observed_error: null`
+2. digest mismatches record `health: "drifted"`, `observed_drift: true`, and `last_observed_error: "digest_mismatch"`
+3. missing source, missing live path, and unreadable source/live path are distinct machine-readable observation errors
+4. symlink projections remain path-checked; content digest fields are for copy/materialize projections
 
 ### 11.0.4 `skill new`
 
@@ -988,7 +1004,12 @@ Success response:
     "target_id": "target_claude_default",
     "method": "symlink",
     "materialized_path": "/Users/foo/.../skills/loom",
-    "health": "healthy"
+    "health": "healthy",
+    "observed_drift": false,
+    "source_tree_digest": null,
+    "materialized_tree_digest": null,
+    "last_observed_at": "2026-07-03T05:00:00Z",
+    "last_observed_error": null
   }
 }
 ```
@@ -1000,6 +1021,7 @@ Rules:
 3. if multiple targets are possible and no default exists, the command must fail explicitly
 4. before mutating target directories, the command evaluates unified safety using trust metadata and the binding's `policy_profile`
 5. if trust state or the selected profile blocks projection, the command fails with `POLICY_BLOCKED` and must not create or replace the live skill directory
+6. successful copy/materialize projection records initial source/live content digests and observation timestamp; successful symlink projection records path observation without content digests
 
 ### 11.5 `skill commit`
 

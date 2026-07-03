@@ -191,6 +191,18 @@ pub struct RegistryProjectionInstance {
     pub observed_drift: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional, type = "string")]
+    pub source_tree_digest: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional, type = "string")]
+    pub materialized_tree_digest: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional, type = "string")]
+    pub last_observed_at: Option<DateTime<Utc>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional, type = "string")]
+    pub last_observed_error: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional, type = "string")]
     pub updated_at: Option<DateTime<Utc>>,
 }
 
@@ -294,9 +306,7 @@ impl RegistrySnapshot {
         let mut drifted = 0;
         for projection in &self.projections.projections {
             unique_skills.insert(projection.skill_id.as_str());
-            if projection.observed_drift.unwrap_or(false)
-                || projection.health != crate::core::vocab::Health::Healthy
-            {
+            if projection_has_health_issue(projection) {
                 drifted += 1;
             }
         }
@@ -323,7 +333,12 @@ impl RegistrySnapshot {
             "targets": self.targets.targets,
             "bindings": self.bindings.bindings,
             "rules": self.rules.rules,
-            "projections": self.projections.projections,
+            "projections": self
+                .projections
+                .projections
+                .iter()
+                .map(projection_status_view)
+                .collect::<Vec<_>>(),
             "checkpoint": self.checkpoint
         })
     }
@@ -429,6 +444,48 @@ impl RegistrySnapshot {
             projections,
         }
     }
+}
+
+pub(crate) fn projection_observation_status(projection: &RegistryProjectionInstance) -> String {
+    if let Some(error) = projection.last_observed_error.as_deref() {
+        return match error {
+            "digest_mismatch" | "symlink_target_mismatch" => "drifted",
+            "materialized_missing" | "source_missing" => "missing",
+            "materialized_unreadable" | "source_unreadable" | "not_symlink" => "unreadable",
+            other => other,
+        }
+        .to_string();
+    }
+    if projection.observed_drift.unwrap_or(false) {
+        return "drifted".to_string();
+    }
+    if projection.health != crate::core::vocab::Health::Healthy {
+        return projection.health.as_str().to_string();
+    }
+    if matches!(
+        projection.method,
+        crate::core::vocab::ProjectionMethod::Copy
+            | crate::core::vocab::ProjectionMethod::Materialize
+    ) && (projection.source_tree_digest.is_none()
+        || projection.materialized_tree_digest.is_none()
+        || projection.last_observed_at.is_none())
+    {
+        return "not_observed".to_string();
+    }
+    "healthy".to_string()
+}
+
+pub(crate) fn projection_has_health_issue(projection: &RegistryProjectionInstance) -> bool {
+    !matches!(
+        projection_observation_status(projection).as_str(),
+        "healthy" | "not_observed"
+    )
+}
+
+fn projection_status_view(projection: &RegistryProjectionInstance) -> serde_json::Value {
+    let mut value = json!(projection);
+    value["observation_status"] = json!(projection_observation_status(projection));
+    value
 }
 
 #[cfg(test)]

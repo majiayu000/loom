@@ -1,5 +1,4 @@
 use std::collections::BTreeSet;
-use std::fs;
 use std::path::Path;
 
 use serde_json::{Value, json};
@@ -13,6 +12,10 @@ use crate::types::ErrorCode;
 use super::codex_visibility::build_codex_visibility_report;
 use super::helpers::{map_arg, map_registry_state, validate_skill_name};
 use super::history_cmds::operation_mentions_skill as registry_operation_mentions_skill;
+use super::projections::{
+    ProjectionObservationUpdate, apply_projection_observation,
+    apply_projection_observation_updates, projection_observation_check,
+};
 use super::skill_deps::skill_dependency_report;
 use super::skill_verify::{
     drifted_paths_under, head_tree_oid_for_path, last_commit_for_path, last_saved_commit_for_skill,
@@ -43,14 +46,25 @@ impl App {
         if args.check() == SkillDiagnoseCheck::Drift {
             return super::skill_verify::skill_drift_report(&self.ctx, skill);
         }
+        let persist_observations = args.persist_observations();
         let paths = RegistryStatePaths::from_app_context(&self.ctx);
-        let snapshot = paths.maybe_load_snapshot().map_err(map_registry_state)?;
-        let (mut data, meta) = build_skill_diagnosis(
+        let mut snapshot = paths.maybe_load_snapshot().map_err(map_registry_state)?;
+        let (mut data, meta, projection_updates) = build_skill_diagnosis(
             &self.ctx,
             skill,
             dependency_checks::dependency_agent(agent),
             snapshot.as_ref(),
         )?;
+        if persist_observations
+            && agent.is_none()
+            && !projection_updates.is_empty()
+            && let Some(snapshot) = snapshot.as_mut()
+        {
+            apply_projection_observation_updates(&mut snapshot.projections, &projection_updates);
+            paths
+                .save_projections(&snapshot.projections)
+                .map_err(map_registry_state)?;
+        }
         if agent == Some(AgentKind::Codex) {
             attach_codex_visibility(&self.ctx, skill, &mut data)?;
         }
@@ -62,6 +76,7 @@ pub trait SkillDiagnoseRequest {
     fn skill(&self) -> &str;
     fn agent(&self) -> Option<AgentKind>;
     fn check(&self) -> SkillDiagnoseCheck;
+    fn persist_observations(&self) -> bool;
 }
 
 impl SkillDiagnoseRequest for SkillDiagnoseArgs {
@@ -76,6 +91,10 @@ impl SkillDiagnoseRequest for SkillDiagnoseArgs {
     fn check(&self) -> SkillDiagnoseCheck {
         self.check
     }
+
+    fn persist_observations(&self) -> bool {
+        true
+    }
 }
 
 impl SkillDiagnoseRequest for SkillOnlyArgs {
@@ -89,6 +108,10 @@ impl SkillDiagnoseRequest for SkillOnlyArgs {
 
     fn check(&self) -> SkillDiagnoseCheck {
         SkillDiagnoseCheck::All
+    }
+
+    fn persist_observations(&self) -> bool {
+        false
     }
 }
 
@@ -138,7 +161,7 @@ fn build_skill_diagnosis(
     skill: &str,
     dependency_agent: Option<&str>,
     snapshot: Option<&RegistrySnapshot>,
-) -> std::result::Result<(Value, Meta), CommandFailure> {
+) -> std::result::Result<(Value, Meta, Vec<ProjectionObservationUpdate>), CommandFailure> {
     let source_path = ctx.skill_path(skill);
     let source_exists = source_path.is_dir();
     let referenced = source_exists || snapshot.is_some_and(|s| skill_is_referenced(s, skill));
@@ -154,6 +177,7 @@ fn build_skill_diagnosis(
     let mut rules = Vec::new();
     let mut targets = Vec::new();
     let mut projections = Vec::new();
+    let mut projection_updates = Vec::new();
     let mut recent_ops = Vec::new();
     let mut operation_backlog = Vec::new();
     let lint_report = lint_skill_source(&source_path, skill, SkillLintMode::Compat);
@@ -205,8 +229,22 @@ fn build_skill_diagnosis(
             .iter()
             .filter(|projection| projection.skill_id == skill)
         {
-            projections.push(json!(projection));
-            add_projection_checks(ctx, snapshot, projection, &mut checks);
+            let updates_before = projection_updates.len();
+            add_projection_checks(
+                ctx,
+                snapshot,
+                projection,
+                &mut checks,
+                &mut projection_updates,
+            );
+            let mut projection_for_payload = projection.clone();
+            if let Some(update) = projection_updates[updates_before..]
+                .iter()
+                .find(|update| update.instance_id == projection.instance_id)
+            {
+                apply_projection_observation(&mut projection_for_payload, &update.observation);
+            }
+            projections.push(json!(projection_for_payload));
             if !rule_target_ids.contains(&projection.target_id)
                 && projection_only_target_ids.insert(projection.target_id.clone())
             {
@@ -342,6 +380,7 @@ fn build_skill_diagnosis(
             }
         }),
         Meta::default(),
+        projection_updates,
     ))
 }
 
@@ -609,6 +648,7 @@ fn add_projection_checks(
     snapshot: &RegistrySnapshot,
     projection: &RegistryProjectionInstance,
     checks: &mut Vec<Value>,
+    projection_updates: &mut Vec<ProjectionObservationUpdate>,
 ) {
     let materialized = Path::new(&projection.materialized_path);
     checks.push(check(
@@ -661,6 +701,12 @@ fn add_projection_checks(
         "capture or re-project the skill",
         json!({"instance_id": projection.instance_id, "observed_drift": projection.observed_drift}),
     ));
+    if projection.health != crate::core::vocab::Health::Orphaned
+        && let Some((observation_check, update)) = projection_observation_check(ctx, projection)
+    {
+        checks.push(observation_check);
+        projection_updates.push(update);
+    }
     let binding_ok = projection
         .binding_id
         .as_deref()
@@ -682,37 +728,6 @@ fn add_projection_checks(
         "recreate the binding or clean orphaned projection metadata",
         json!({"instance_id": projection.instance_id, "binding_id": projection.binding_id}),
     ));
-    if projection.method == crate::core::vocab::ProjectionMethod::Symlink {
-        checks.push(check_symlink_target(ctx, projection, materialized));
-    }
-}
-
-fn check_symlink_target(
-    ctx: &AppContext,
-    projection: &RegistryProjectionInstance,
-    materialized: &Path,
-) -> Value {
-    let expected = ctx.skill_path(&projection.skill_id);
-    let result = fs::read_link(materialized).map(|target| {
-        let resolved = if target.is_absolute() {
-            target
-        } else {
-            materialized
-                .parent()
-                .map(|parent| parent.join(&target))
-                .unwrap_or(target)
-        };
-        resolved.exists() && fs::canonicalize(&resolved).ok() == fs::canonicalize(&expected).ok()
-    });
-    check(
-        "projection",
-        &format!("projection_symlink_target:{}", projection.instance_id),
-        result.unwrap_or(false),
-        "error",
-        "symlink projection points at source skill",
-        "rerun loom skill project with a supported method",
-        json!({"instance_id": projection.instance_id, "path": projection.materialized_path}),
-    )
 }
 
 fn check(

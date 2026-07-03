@@ -184,6 +184,68 @@ fn skill_project_creates_projection_rule_and_instance() {
 }
 
 #[test]
+fn skill_project_records_content_digests_for_copy_and_materialize() {
+    for method in ["copy", "materialize"] {
+        let root = TestDir::new(&format!("registry-skill-project-digest-{method}"));
+        write_example_skill(root.path(), "model-onboarding");
+
+        assert!(
+            save_skill(root.path(), "model-onboarding")
+                .0
+                .status
+                .success()
+        );
+
+        let target_path = root.path().join(format!("live/claude-{method}"));
+        let (target_output, target_env) =
+            target_add(root.path(), "claude", &target_path, "managed");
+        assert!(target_output.status.success(), "target add should pass");
+        let target_id = target_env["data"]["target"]["target_id"]
+            .as_str()
+            .expect("target id");
+        let (binding_output, binding_env) = binding_add(
+            root.path(),
+            "claude",
+            "default",
+            "path-prefix",
+            &format!("/tmp/project-{method}"),
+            target_id,
+        );
+        assert!(binding_output.status.success(), "binding add should pass");
+        let binding_id = binding_env["data"]["binding"]["binding_id"]
+            .as_str()
+            .expect("binding id");
+
+        let (project_output, project_env) =
+            skill_project(root.path(), "model-onboarding", binding_id, Some(method));
+        assert!(
+            project_output.status.success(),
+            "project failed for {method}: stderr={} stdout={}",
+            String::from_utf8_lossy(&project_output.stderr),
+            String::from_utf8_lossy(&project_output.stdout)
+        );
+        let projection = &project_env["data"]["projection"];
+        assert_eq!(projection["method"], Value::String(method.to_string()));
+        assert_eq!(projection["last_observed_error"], Value::Null);
+        assert!(
+            projection["last_observed_at"].as_str().is_some(),
+            "project should record observation timestamp for {method}"
+        );
+        let source_digest = projection["source_tree_digest"]
+            .as_str()
+            .unwrap_or_else(|| panic!("missing source digest for {method}"));
+        let live_digest = projection["materialized_tree_digest"]
+            .as_str()
+            .unwrap_or_else(|| panic!("missing live digest for {method}"));
+        assert!(
+            source_digest.starts_with("sha256:"),
+            "source digest should be sha256-prefixed for {method}: {source_digest}"
+        );
+        assert_eq!(source_digest, live_digest);
+    }
+}
+
+#[test]
 fn skill_rollback_records_operation_and_observation() {
     let root = TestDir::new("registry-skill-rollback-audit");
     write_example_skill(root.path(), "model-onboarding");

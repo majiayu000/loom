@@ -366,6 +366,10 @@ mod orphan_tests {
                 other => panic!("unsupported test health {other}"),
             },
             observed_drift: Some(false),
+            source_tree_digest: None,
+            materialized_tree_digest: None,
+            last_observed_at: None,
+            last_observed_error: None,
             updated_at: None,
         }
     }

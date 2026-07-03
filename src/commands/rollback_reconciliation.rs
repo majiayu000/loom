@@ -14,13 +14,9 @@ const COMPILED_METADATA_DIR: &str = ".loom/compiled";
 const COMPILED_PROJECTION_KIND: &str = "compiled_activation";
 const COMPILED_PROJECTION_SCHEMA_VERSION: u64 = 1;
 
-#[derive(Debug, Clone)]
 struct CompiledProjectionRecovery {
     metadata_source: &'static str,
     artifact_id: Option<String>,
-    artifact_path: Option<String>,
-    agent: Option<String>,
-    profile: Option<String>,
     reason: Option<&'static str>,
 }
 
@@ -286,7 +282,7 @@ fn compiled_projection_next_action(
     json!({
         "type": "manual_review_required",
         "instance_id": projection.instance_id,
-        "reason": "projection was produced by compiled activation; do not recover it with raw skill project materialize because that would replace the compiled artifact view with source materialization",
+        "reason": "compiled_activation_requires_manual_recovery",
         "compiled": compiled_projection_recovery_value(recovery)
     })
 }
@@ -318,9 +314,6 @@ fn compiled_projection_recovery_from_operation(
     Some(CompiledProjectionRecovery {
         metadata_source: "registry_operation",
         artifact_id: compiled["artifact_id"].as_str().map(ToString::to_string),
-        artifact_path: compiled["artifact_path"].as_str().map(ToString::to_string),
-        agent: op.payload["agent"].as_str().map(ToString::to_string),
-        profile: op.payload["profile"].as_str().map(ToString::to_string),
         reason: None,
     })
 }
@@ -357,9 +350,6 @@ fn compiled_projection_recovery_from_live_path(
     Some(CompiledProjectionRecovery {
         metadata_source: "live_projection_metadata",
         artifact_id: value["artifact_id"].as_str().map(ToString::to_string),
-        artifact_path: value["artifact_path"].as_str().map(ToString::to_string),
-        agent: value["agent"].as_str().map(ToString::to_string),
-        profile: value["profile"].as_str().map(ToString::to_string),
         reason: None,
     })
 }
@@ -368,9 +358,6 @@ fn compiled_projection_manual_recovery(reason: &'static str) -> CompiledProjecti
     CompiledProjectionRecovery {
         metadata_source: "live_projection_metadata",
         artifact_id: None,
-        artifact_path: None,
-        agent: None,
-        profile: None,
         reason: Some(reason),
     }
 }
@@ -380,9 +367,6 @@ fn compiled_projection_recovery_value(recovery: &CompiledProjectionRecovery) -> 
         "projection_kind": COMPILED_PROJECTION_KIND,
         "metadata_source": recovery.metadata_source,
         "artifact_id": recovery.artifact_id,
-        "artifact_path": recovery.artifact_path,
-        "agent": recovery.agent,
-        "profile": recovery.profile,
         "reason": recovery.reason
     })
 }

@@ -31,7 +31,7 @@ AI coding agents (Claude Code, Codex, Cursor, Windsurf, …) all read skills fro
 - **Manual**: `cp -R` or `ln -s` between `~/.claude/skills`, `~/.agents/skills`, legacy `~/.codex/skills`, repo-local `.agents/skills`, … — easy to drift, hard to roll back, impossible to audit.
 - **One-way sync apps**: install skills from a central store, but no binding logic, no per-project matching, no version history, no replay when things go wrong.
 
-**Loom treats skills like infrastructure**: a Git-backed registry (add → capture → save → snapshot → release → rollback → diff), projected onto one or many agent directories through explicit bindings (agent + profile + matcher + policy), with sync, replay, and audit trail. CLI-first for automation, Panel-assisted for visibility.
+**Loom treats skills like infrastructure**: a Git-backed registry (add → commit → release --anchor / release <version> → rollback → diff), projected onto one or many agent directories through explicit bindings (agent + profile + matcher + policy), with sync, replay, and audit trail. CLI-first for automation, Panel-assisted for visibility.
 
 Loom can import from local directories, Git URLs, and GitHub locators, but it is not a marketplace or a wrapper around `gh skill install`. Provider boundaries are documented in [Skill Provider Boundary](docs/SKILL_PROVIDER_BOUNDARY.md): upstream tools find, preview, or publish skills; Loom owns local lockfile, policy, projection, audit, rollback, and eval.
 
@@ -153,7 +153,7 @@ Prefer a guided walkthrough? Run `./scripts/demo.sh` for a scripted end-to-end t
 - **🎚️ Ownership tiers** — `managed` (Loom writes) / `observed` (read-only) / `external` (hands-off)
 - **🔗 Binding matchers** — route a skill to a target by `path-prefix`, `exact-path`, or `name`
 - **📦 Profiles** — multiple config sets per agent (e.g. work/home Claude profiles)
-- **🧬 Git-backed lifecycle** — `add → capture → save → snapshot → release → rollback → diff` ([when to use which](#skill-lifecycle-verbs))
+- **🧬 Git-backed lifecycle** — `add → commit → release --anchor → release <version> → rollback → diff` ([when to use which](#skill-lifecycle-verbs))
 - **🩺 Skill status** — `skill inspect` shows one read-only lifecycle card; `skill diagnose` drills into source, bindings, targets, projections, drift, and related operations
 - **🛡️ Skill safety state** — `skill scan`, trust levels, quarantine metadata, and security diff gate risky skills before projection
 - **🔎 Provider previews** — `provider` and `catalog` commands preview third-party/local skills safely before any install path can write registry state
@@ -177,7 +177,7 @@ Prefer a guided walkthrough? Run `./scripts/demo.sh` for a scripted end-to-end t
 │                   │         │  …                 │
 └─────────▲─────────┘         └──────────▲─────────┘
           │                              │
-          │   capture / save / snapshot  │ projection
+          │ commit / release --anchor    │ projection
           │   (Git-backed lifecycle)     │ (symlink / copy / materialize)
           │                              │
 ┌─────────┴────────┐         ┌──────────┴──────────┐
@@ -191,13 +191,13 @@ Four core concepts:
 | Concept | What it is | Example |
 |---------|-----------|---------|
 | **Target** | An agent skills directory Loom knows about | `~/.claude/skills` (agent = `claude`, ownership = `observed`) |
-| **Skill** | A tracked unit in the registry | `my-team-skill` with a chain of captures/releases |
+| **Skill** | A tracked unit in the registry | `my-team-skill` with a chain of commits/releases |
 | **Binding** | The rule mapping a skill to a target | agent=`claude`, profile=`work`, matcher `path-prefix:/Users/me/work` |
 | **Projection** | The act of realizing a skill into a target | `loom skill project my-skill --binding <id> --method symlink` |
 
 ### Skill lifecycle verbs
 
-The chain `add → capture → save → snapshot → release → rollback` is the most common point of confusion because several verbs all touch source history. Each one answers a different question:
+The current lifecycle keeps source history on a smaller verb set: import with `add`, record edits with `commit`, mark either unnamed anchors or semver releases with `release`, recover with `rollback`, and inspect changes with `diff`.
 
 | Verb | What it does | When to reach for it | Acts on |
 |------|--------------|----------------------|---------|
@@ -214,6 +214,11 @@ The chain `add → capture → save → snapshot → release → rollback` is th
 | `loom skill search` | Search, resolve, and explain skill candidates with deterministic scoring | Find likely skills by metadata; use `--for-task` for task resolution and `--explain` for recommendation details | Source + registry metadata (read-only) |
 | `loom skill draft/extract/rewrite/tune-description/generate-evals` | Create guarded authoring patch artifacts with the deterministic mock provider | Review proposed source/eval diffs without mutating `skills/<skill>`; prompt material is redacted and size-bounded | Source + `state/patches` artifact output |
 | `loom skill apply-patch` | Apply a reviewed authoring patch through validation gates | Requires an idempotency key, revalidates source digest/ref, runs staging lint/safety/eval gates, commits only after validation, and supports idempotent replay | Patch artifact state + skill source |
+| `loom skill commit` | Commit source changes from the registry or a live projection | Preserve edits after Loom detects source-only, projection-only, or ambiguous drift; use `--from-source` / `--from-projection` only when needed | Source history |
+| `loom skill release --anchor` | Mark the current source revision without a semver tag | Create a named recovery point before risky work or review, without publishing a version | Source history |
+| `loom skill release <version>` | Tag a semver release | Publish a stable revision teammates can pull and compare | Source history |
+| `loom skill rollback` | Reset the source to an earlier revision with a recovery ref | Undo a bad commit or release without losing the pre-rollback state | Source history |
+| `loom skill diff` | Compare two source revisions | Review raw source changes or security-relevant deltas before promotion | Source history (read-only) |
 | `loom instruction scan/show/classify/doctor/migrate-plan` | Inspect native instruction surfaces without importing them as skills | Inventory `AGENTS.md`, `CLAUDE.md`, Cursor, Windsurf, and Copilot instruction files; diagnose overlap; emit dry-run migration plans only | Workspace files (read-only) |
 | `loom skill new` | Create a lint-clean local skill skeleton | Start a new registry-owned skill with `SKILL.md`, references, scripts, assets, eval stubs, and `loom.skill.toml` | Source (initial create) |
 | `loom provider add/list/remove` | Manage local or GitHub catalog provider records | Configure provider ids for advisory search/preview without storing credentials | Registry provider state |
@@ -260,7 +265,7 @@ Quick decision: **edits from either side → `commit` (add `--from-projection` o
 | Ownership tiers (managed / observed / external) | ❌ | ❌ | ❌ | **✅** |
 | Binding matcher (path-prefix / exact-path / name) | ❌ | ❌ | ❌ | **✅** |
 | Profiles (multi-config per agent) | ❌ | ❌ | ❌ | **✅** |
-| Skill snapshot / rollback / diff | ❌ | ❌ | lockfile only | **✅** |
+| Skill release anchors / rollback / diff | ❌ | ❌ | lockfile only | **✅** |
 | Ops history + diagnose + repair | ❌ | ❌ | `audit` logs | **✅** |
 | Git-native sync + replay | ❌ | cloud sync | ❌ | **✅** |
 | Hard write guard | ❌ | ❌ | ❌ | **✅** |

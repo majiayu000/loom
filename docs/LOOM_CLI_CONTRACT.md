@@ -907,7 +907,7 @@ Rules:
 4. `--real-eval` does not run a real agent in this version; it marks `real_eval` as `unknown` and points callers to explicit eval compare workflows.
 5. `skill regression` compares `--from` to `--to` or the working tree without destructive checkout and fails with `POLICY_BLOCKED` when lint, high/critical safety, dependency readiness, offline eval, or size gates fail.
 6. Blocking regression failures include the full report under `error.details.report`.
-7. `source_drift` is advisory for save/release decisions; failed or unknown gates other than source drift block mutation.
+7. `source_drift` is advisory for commit/release decisions; failed or unknown gates other than source drift block mutation.
 8. The size gate fails when `SKILL.md` exceeds 800 lines without a `references/` directory and warns when references exist.
 9. `skill regression --to <ref>` materializes the selected skill and security metadata into a temporary root before running checks, rather than checking out refs or reading the current working tree.
 
@@ -1291,7 +1291,7 @@ Why this is safe:
 
 1. binding is explicit
 2. projection is explicit
-3. capture is explicit
+3. commit direction is explicit when automatic drift detection is ambiguous
 4. revision history stays on source
 
 ## 18. Rejected CLI Shapes
@@ -1311,4 +1311,4 @@ The CLI contract is acceptable only if:
 2. every projection write is binding-scoped
 3. every response needed by agents is available in `--json`
 4. no core workflow depends on path guessing
-5. projection and capture errors are structured and typed
+5. projection and commit errors are structured and typed

@@ -100,7 +100,7 @@ loom --json --root ~/loom-registry skill project my-skill --binding bind_claude_
 loom --json --root ~/loom-registry skill project my-skill --binding bind_claude_project_a --target target_claude_claude_work_skills --method copy
 
 # 编辑 live 文件后，提交投影侧修改
-loom --json --root ~/loom-registry skill commit my-skill --from-projection --instance <instance-id> --message "capture live edits"
+loom --json --root ~/loom-registry skill commit my-skill --from-projection --instance <instance-id> --message "commit live edits"
 ```
 
 ## 6. 当前命令面

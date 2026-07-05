@@ -1,6 +1,6 @@
 mod common;
 
-use std::fs;
+use std::{fs, process::Command};
 
 use serde_json::{Value, json};
 
@@ -273,7 +273,9 @@ fn workflow_run_is_deferred_without_execution() {
         ],
     );
     assert!(output.status.success(), "dry-run run should pass: {env}");
+    assert_eq!(env["data"]["status"], json!("deferred"));
     assert_eq!(env["data"]["deferred"], json!(true));
+    assert_eq!(env["data"]["hidden"], json!(true));
     assert_eq!(env["data"]["safe_to_run"], json!(false));
 
     let (output, env) = run_loom(
@@ -289,10 +291,34 @@ fn workflow_run_is_deferred_without_execution() {
         ],
     );
     assert!(!output.status.success(), "non-dry run should be blocked");
-    assert_eq!(env["error"]["code"], json!("POLICY_BLOCKED"));
+    assert_eq!(env["error"]["code"], json!("ARG_INVALID"));
+    assert_eq!(env["error"]["details"]["status"], json!("deferred"));
+    assert_eq!(env["error"]["details"]["hidden"], json!(true));
+    assert_eq!(env["error"]["details"]["safe_to_run"], json!(false));
     let workflow_after =
         fs::read_to_string(root.path().join("state/registry/workflows.json")).expect("workflow");
     assert_eq!(workflow_after, workflow_before);
+}
+
+#[test]
+fn workflow_help_hides_run_surface_until_apply_gates_exist() {
+    let output = Command::new(env!("CARGO_BIN_EXE_loom"))
+        .args(["workflow", "--help"])
+        .output()
+        .expect("workflow help");
+    assert!(
+        output.status.success(),
+        "workflow help should pass: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        !stdout
+            .lines()
+            .any(|line| line.trim_start().starts_with("run ")),
+        "workflow run should be hidden from public help: {stdout}"
+    );
 }
 
 #[test]

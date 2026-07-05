@@ -2,7 +2,7 @@ mod common;
 
 use std::fs;
 
-use serde_json::json;
+use serde_json::{Value, json};
 
 use common::{TestDir, operations_log, run_loom, run_loom_in_cwd, write_file};
 
@@ -45,6 +45,34 @@ fn plan_use(root: &TestDir, workspace: &TestDir, skill: &str) -> String {
         .to_string()
 }
 
+fn inject_legacy_rollback_token(root: &TestDir, plan_id: &str) {
+    let path = root.path().join("state/events/commands.jsonl");
+    let raw = fs::read_to_string(&path).expect("read command events");
+    let mut updated = Vec::new();
+    let mut mutated = false;
+
+    for line in raw.lines().filter(|line| !line.trim().is_empty()) {
+        let mut event: Value = serde_json::from_str(line).expect("parse command event");
+        let is_prior_apply = event["cmd"] == json!("apply")
+            && event["status"] == json!("succeeded")
+            && event["output"]["plan_id"] == json!(plan_id);
+        if is_prior_apply {
+            let recovery = event
+                .get_mut("output")
+                .and_then(Value::as_object_mut)
+                .and_then(|output| output.get_mut("recovery"))
+                .and_then(Value::as_object_mut)
+                .expect("apply recovery object");
+            recovery.insert("rollback_token".to_string(), json!("<redacted>"));
+            mutated = true;
+        }
+        updated.push(serde_json::to_string(&event).expect("serialize command event"));
+    }
+
+    assert!(mutated, "expected prior apply event for {plan_id}");
+    write_file(&path, &format!("{}\n", updated.join("\n")));
+}
+
 #[test]
 fn durable_plan_apply_succeeds_and_replays_same_idempotency_key() {
     let root = TestDir::new("durable-plan-apply");
@@ -59,7 +87,20 @@ fn durable_plan_apply_succeeds_and_replays_same_idempotency_key() {
     assert!(output.status.success(), "apply should pass: {env}");
     assert_eq!(env["cmd"], json!("apply"));
     assert_eq!(env["data"]["idempotent_replay"], json!(false));
-    assert!(env["data"]["recovery"]["rollback_token"].as_str().is_some());
+    let recovery = env["data"]["recovery"]
+        .as_object()
+        .expect("recovery object");
+    assert!(
+        !recovery.contains_key("rollback_token"),
+        "public rollback token should not be emitted: {env}"
+    );
+    let rollback_commands = env["data"]["recovery"]["rollback_commands"]
+        .as_array()
+        .expect("rollback commands");
+    assert!(
+        !rollback_commands.is_empty(),
+        "explicit rollback commands should remain available: {env}"
+    );
     let projection_path = env["data"]["applied"]["applied"][0]["projection"]["materialized_path"]
         .as_str()
         .expect("projection path");
@@ -69,6 +110,7 @@ fn durable_plan_apply_succeeds_and_replays_same_idempotency_key() {
             .contains("pdf-helper")
     );
     let operations_after_first_apply = operations_log(root.path());
+    inject_legacy_rollback_token(&root, &plan_id);
 
     let (output, replay_env) = run_loom(
         root.path(),
@@ -79,6 +121,13 @@ fn durable_plan_apply_succeeds_and_replays_same_idempotency_key() {
         "idempotent replay should pass: {replay_env}"
     );
     assert_eq!(replay_env["data"]["idempotent_replay"], json!(true));
+    let replay_recovery = replay_env["data"]["recovery"]
+        .as_object()
+        .expect("replay recovery object");
+    assert!(
+        !replay_recovery.contains_key("rollback_token"),
+        "public rollback token should not be emitted on replay: {replay_env}"
+    );
     assert_eq!(
         operations_log(root.path()),
         operations_after_first_apply,

@@ -53,7 +53,6 @@ impl App {
                 false,
                 vec!["retry with a new idempotency key".to_string()],
                 Some(conflict.cursor),
-                None,
             ));
         }
 
@@ -65,7 +64,6 @@ impl App {
                 false,
                 vec!["create a fresh plan with `loom plan use ...`".to_string()],
                 None,
-                None,
             )
         })?;
         validate_plan_guards(stored.plan, stored.cursor, &args.approvals, &self.ctx.root)?;
@@ -73,7 +71,6 @@ impl App {
         let mut use_args = plan_use_args(stored.plan)?;
         use_args.apply = true;
         let (use_data, mut meta) = self.cmd_use(&use_args, request_id)?;
-        let rollback_token = format!("rollback_{}", Uuid::new_v4().simple());
         let rollback_commands = collect_rollback_commands(&use_data);
         Ok((
             json!({
@@ -86,7 +83,6 @@ impl App {
                 "applied": use_data,
                 "recovery": {
                     "rollback_supported": true,
-                    "rollback_token": rollback_token,
                     "rollback_commands": rollback_commands,
                 },
             }),
@@ -204,7 +200,6 @@ fn plan_use_args(plan: &Value) -> std::result::Result<UseArgs, CommandFailure> {
             false,
             vec!["create a fresh plan with `loom plan use ...`".to_string()],
             None,
-            None,
         ));
     };
     serde_json::from_value::<UseArgs>(value.clone()).map_err(|err| {
@@ -214,7 +209,6 @@ fn plan_use_args(plan: &Value) -> std::result::Result<UseArgs, CommandFailure> {
             "PLAN_CORRUPT",
             false,
             vec!["create a fresh plan with `loom plan use ...`".to_string()],
-            None,
             None,
         )
     })
@@ -264,12 +258,18 @@ fn find_prior_apply(
             false,
             vec!["retry with a new idempotency key".to_string()],
             Some(row.cursor),
-            None,
         )
     })?;
+    scrub_legacy_apply_output(&mut replay);
     replay["idempotent_replay"] = json!(true);
     replay["replayed_from_event_cursor"] = json!(row.cursor);
     Ok(Some(replay))
+}
+
+fn scrub_legacy_apply_output(output: &mut Value) {
+    if let Some(recovery) = output.get_mut("recovery").and_then(Value::as_object_mut) {
+        recovery.remove("rollback_token");
+    }
 }
 
 fn find_key_conflict<'a>(
@@ -311,7 +311,6 @@ fn validate_plan_guards(
             false,
             vec!["recreate the plan under the current --root".to_string()],
             Some(cursor),
-            None,
         ));
     }
     let current_head =
@@ -325,7 +324,6 @@ fn validate_plan_guards(
             false,
             vec!["create a fresh plan before applying".to_string()],
             Some(cursor),
-            None,
         ));
     }
     let skill = guards["skill"].as_str().ok_or_else(|| {
@@ -336,7 +334,6 @@ fn validate_plan_guards(
             false,
             vec!["create a fresh plan with `loom plan use ...`".to_string()],
             Some(cursor),
-            None,
         )
     })?;
     let current_digest = skill_tree_digest(&root.join("skills").join(skill)).map_err(map_io)?;
@@ -348,7 +345,6 @@ fn validate_plan_guards(
             false,
             vec!["create a fresh plan before applying".to_string()],
             Some(cursor),
-            None,
         ));
     }
     let required = plan["required_approvals"]
@@ -383,7 +379,6 @@ fn validate_plan_guards(
                     .join(" ")
             )],
             Some(cursor),
-            None,
         ));
     }
     Ok(())
@@ -509,14 +504,12 @@ fn plan_failure(
     retryable: bool,
     suggested_actions: Vec<String>,
     event_cursor: Option<usize>,
-    rollback_token: Option<String>,
 ) -> CommandFailure {
     let mut failure = CommandFailure::new(code, message);
     failure.details = json!({
         "retryable": retryable,
         "conflict": { "code": conflict_code },
         "event_cursor": event_cursor,
-        "rollback_token": rollback_token,
         "suggested_actions": suggested_actions,
     });
     failure

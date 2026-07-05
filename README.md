@@ -239,7 +239,7 @@ The current lifecycle keeps source history on a smaller verb set: import with `a
 | `loom skill regression` | Compare one skill against a baseline gate | Fail with typed regression details when lint, safety, dependency, eval, or size gates block the candidate | Source + local environment (read-only) |
 | `loom skillset create/add/remove/show/lint/activate/deactivate/eval/release/rollback` | Group existing registry skills into a named set | Organize coherent skill bundles, activate members together, aggregate member evals, and version skillset definitions | Registry skillset state + target projections |
 | `loom telemetry status/enable/disable/report/export/purge` | Manage local privacy-preserving telemetry | Opt in to redacted local event writes, aggregate usage/value/cost/drift/risk, export redacted events, and purge selected telemetry state with dry-run confirmation | `state/telemetry` |
-| `loom workflow create/show/plan/preflight/run` | Define and guard a multi-skill DAG workflow | Agents need an auditable plan before coordinating several skills; execution remains deferred until apply gates land | Registry workflow state + source metadata |
+| `loom workflow create/show/plan/preflight` | Define and guard a multi-skill DAG workflow | Agents need an auditable plan before coordinating several skills; execution remains hidden/deferred until apply gates land | Registry workflow state + source metadata |
 | `loom use` | Plan or apply target, binding, and projection setup in one flow | New users want to use a skill without copying target/binding IDs between commands | Source + target + registry metadata |
 | `loom plan use` / `loom apply` | Persist a guarded use plan, then execute it with idempotency | Agents need a retry-safe plan/apply protocol for higher-risk flows | Command audit + source/target/registry metadata |
 | `loom skill project` | Realize a registry skill into an agent directory | Make the skill visible to the agent (Claude/Codex/…) | Target (live directory) |
@@ -425,7 +425,6 @@ loom workflow create <workflow-id> --from-skillset <skillset-id> --dry-run
 loom workflow show <workflow-id>
 loom workflow plan <workflow-id> --agent <agent> --workspace <path>
 loom workflow preflight <plan-id>
-loom workflow run <workflow-id> --agent <agent> --workspace <path> [--dry-run]
 
 loom sync status
 loom sync push [--dry-run]

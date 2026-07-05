@@ -15,7 +15,10 @@ pub enum WorkflowCommand {
     Plan(WorkflowPlanArgs),
     #[command(about = "Revalidate a stored workflow plan")]
     Preflight(WorkflowPreflightArgs),
-    #[command(about = "Deferred workflow execution surface")]
+    #[command(
+        hide = true,
+        about = "Hidden deferred workflow execution compatibility surface"
+    )]
     Run(WorkflowRunArgs),
 }
 
@@ -65,7 +68,7 @@ pub struct WorkflowPreflightArgs {
 
 #[derive(Debug, Clone, Args, Serialize)]
 pub struct WorkflowRunArgs {
-    /// Workflow id to run when execution is implemented.
+    /// Workflow id for the hidden deferred execution compatibility surface.
     pub name: String,
 
     /// Agent whose active view should be checked.

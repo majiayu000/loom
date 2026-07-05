@@ -260,9 +260,16 @@ fn find_prior_apply(
             Some(row.cursor),
         )
     })?;
+    scrub_legacy_apply_output(&mut replay);
     replay["idempotent_replay"] = json!(true);
     replay["replayed_from_event_cursor"] = json!(row.cursor);
     Ok(Some(replay))
+}
+
+fn scrub_legacy_apply_output(output: &mut Value) {
+    if let Some(recovery) = output.get_mut("recovery").and_then(Value::as_object_mut) {
+        recovery.remove("rollback_token");
+    }
 }
 
 fn find_key_conflict<'a>(

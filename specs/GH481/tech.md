@@ -3,7 +3,7 @@
 Issue: https://github.com/majiayu000/loom/issues/481
 Product spec: `specs/GH481/product.md`
 Route: `write_spec`
-Human gate: maintainer approval required before implementation
+Human gate: Route B selected for this implementation slice
 
 ## 1. Current Behavior
 
@@ -11,7 +11,9 @@ Human gate: maintainer approval required before implementation
 
 ## 2. Proposed Design
 
-There are two acceptable implementation routes. Maintainers should choose one before implementation.
+There are two acceptable implementation routes. This implementation selects
+Route B because it is the smallest safe contract correction and avoids
+implementing GH379's full workflow execution scope.
 
 ### Route A: Implement minimal executable contract
 
@@ -26,6 +28,17 @@ There are two acceptable implementation routes. Maintainers should choose one be
 2. Remove `rollback_token` from public JSON output.
 3. Keep explicit `rollback_commands` as the recovery mechanism.
 4. Update docs and tests to assert the reduced contract.
+
+Selected behavior:
+
+1. `workflow run` is hidden from the public CLI help and docs.
+2. Compatibility invocation with `--dry-run` returns explicit
+   `status = "deferred"`, `hidden = true`, and `safe_to_run = false`.
+3. Compatibility invocation without `--dry-run` returns `ARG_INVALID` with the
+   same deferred details, not `POLICY_BLOCKED`.
+4. Durable `apply` recovery output keeps `rollback_supported` and explicit
+   `rollback_commands`, but removes public `rollback_token` until a consumer
+   command exists.
 
 ## 3. Affected Areas
 

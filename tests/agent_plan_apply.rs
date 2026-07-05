@@ -59,7 +59,20 @@ fn durable_plan_apply_succeeds_and_replays_same_idempotency_key() {
     assert!(output.status.success(), "apply should pass: {env}");
     assert_eq!(env["cmd"], json!("apply"));
     assert_eq!(env["data"]["idempotent_replay"], json!(false));
-    assert!(env["data"]["recovery"]["rollback_token"].as_str().is_some());
+    let recovery = env["data"]["recovery"]
+        .as_object()
+        .expect("recovery object");
+    assert!(
+        !recovery.contains_key("rollback_token"),
+        "public rollback token should not be emitted: {env}"
+    );
+    let rollback_commands = env["data"]["recovery"]["rollback_commands"]
+        .as_array()
+        .expect("rollback commands");
+    assert!(
+        !rollback_commands.is_empty(),
+        "explicit rollback commands should remain available: {env}"
+    );
     let projection_path = env["data"]["applied"]["applied"][0]["projection"]["materialized_path"]
         .as_str()
         .expect("projection path");
@@ -79,6 +92,13 @@ fn durable_plan_apply_succeeds_and_replays_same_idempotency_key() {
         "idempotent replay should pass: {replay_env}"
     );
     assert_eq!(replay_env["data"]["idempotent_replay"], json!(true));
+    let replay_recovery = replay_env["data"]["recovery"]
+        .as_object()
+        .expect("replay recovery object");
+    assert!(
+        !replay_recovery.contains_key("rollback_token"),
+        "public rollback token should not be emitted on replay: {replay_env}"
+    );
     assert_eq!(
         operations_log(root.path()),
         operations_after_first_apply,

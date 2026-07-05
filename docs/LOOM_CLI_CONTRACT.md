@@ -970,7 +970,7 @@ Rules:
 13. `skillset release` tags the current skillset definition as `release/skillset/<id>/<version>`
 14. `skillset rollback --to <version|ref>` restores only that skillset definition from the resolved ref and does not check out member skill source files
 
-### 11.3.7 `workflow create`, `workflow show`, `workflow plan`, `workflow preflight`, `workflow run`
+### 11.3.7 `workflow create`, `workflow show`, `workflow plan`, and `workflow preflight`
 
 ```bash
 loom --json --root <root> workflow create <workflow-id> --file <workflow.json> [--dry-run]
@@ -978,10 +978,9 @@ loom --json --root <root> workflow create <workflow-id> --from-skillset <skillse
 loom --json --root <root> workflow show <workflow-id>
 loom --json --root <root> workflow plan <workflow-id> --agent <agent> --workspace <path>
 loom --json --root <root> workflow preflight <plan-id>
-loom --json --root <root> workflow run <workflow-id> --agent <agent> --workspace <path> [--dry-run]
 ```
 
-`workflow create` writes `state/registry/workflows.json` unless `--dry-run` is supplied. `workflow show`, `workflow preflight`, and `workflow run --dry-run` are read-only. `workflow plan` writes an auditable guarded plan under `state/registry/workflow_plans.json` without executing nodes.
+`workflow create` writes `state/registry/workflows.json` unless `--dry-run` is supplied. `workflow show` and `workflow preflight` are read-only. `workflow plan` writes an auditable guarded plan under `state/registry/workflow_plans.json` without executing nodes.
 
 Rules:
 
@@ -991,7 +990,7 @@ Rules:
 4. blocked or quarantined skill trust fails with `POLICY_BLOCKED`; workflow planning must not silently skip unsafe nodes
 5. plans record root, registry head, workflow digest, skill source digests, ordered node ids, activation steps, required approvals, risks, and `safe_to_run=false`
 6. `workflow preflight` rechecks stored plan guards against the current registry root, Git head, workflow digest, and skill digests
-7. `workflow run` is a deferred surface in this version; non-dry-run execution fails with `POLICY_BLOCKED` until apply gates are implemented
+7. `workflow run` is hidden from the public command surface until workflow apply gates are implemented; if invoked for compatibility, `--dry-run` returns `status=deferred`, and non-dry-run returns `ARG_INVALID` with `status=deferred`, `hidden=true`, and `safe_to_run=false`
 8. `--from-skillset` is preview-only until workflow apply semantics are implemented
 
 ### 11.4 `skill project`
@@ -1230,7 +1229,7 @@ Rules:
 4. reusing an idempotency key for a different plan returns `DEPENDENCY_CONFLICT` with `conflict.code=IDEMPOTENCY_KEY_REUSED`
 5. missing approval tokens return `POLICY_BLOCKED` with `conflict.code=APPROVAL_REQUIRED`, `retryable=true`, `event_cursor`, and suggested `--approve` actions
 6. stale plans return `DEPENDENCY_CONFLICT` with a typed conflict such as `PLAN_STALE`, `PLAN_SOURCE_DRIFT`, or `PLAN_ROOT_MISMATCH`
-7. successful apply returns the lower-level use result plus `recovery.rollback_supported=true`, a `rollback_token`, and rollback commands when available
+7. successful apply returns the lower-level use result plus `recovery.rollback_supported=true` and explicit rollback commands when available; no public rollback token is emitted until a token consumer exists
 
 ## 13. Sync Commands
 

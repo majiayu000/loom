@@ -401,21 +401,29 @@ impl App {
                     "workflow_id": args.name,
                     "agent": agent_kind_as_str(args.agent),
                     "workspace": args.workspace,
+                    "status": "deferred",
                     "deferred": true,
+                    "hidden": true,
                     "safe_to_run": false,
+                    "reason": "workflow execution is not public until workflow apply gates are implemented",
                     "next_actions": [next_action],
                 }),
                 Meta::default(),
             ));
         }
         let mut failure = CommandFailure::new(
-            ErrorCode::PolicyBlocked,
-            "workflow execution is deferred until apply gates are implemented",
+            ErrorCode::ArgInvalid,
+            "workflow run is a hidden deferred compatibility surface",
         );
         failure.details = json!({
             "workflow_id": args.name,
             "agent": agent_kind_as_str(args.agent),
             "workspace": args.workspace,
+            "status": "deferred",
+            "deferred": true,
+            "hidden": true,
+            "safe_to_run": false,
+            "reason": "workflow execution is not public until workflow apply gates are implemented",
             "next_actions": [next_action],
         });
         Err(failure)

@@ -2,7 +2,7 @@
 
 Issue: https://github.com/majiayu000/loom/issues/481
 Route: `write_spec`
-State: `triaged`
+State: `Route B implemented`
 Locale: `zh-CN`
 
 ## 1. Problem
@@ -46,4 +46,4 @@ Loom 暴露 `workflow run` 和 `rollback_token`，但 execution path 与 token c
 ## 7. Open Questions
 
 1. 最小 `workflow run` 是否只支持单节点 workflow？
-2. 是否应把 `rollback_token` 替换为显式 `rollback_commands`，直到 token store 成熟？
+2. 已选择将 `rollback_token` 替换为显式 `rollback_commands`，直到 token store 和 consumer 成熟。

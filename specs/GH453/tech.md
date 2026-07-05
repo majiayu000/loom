@@ -2,7 +2,7 @@
 
 Issue: https://github.com/majiayu000/loom/issues/453
 Product spec: `specs/GH453/product.md`
-Status: Implemented for #459 ops-log slice; broader GH453 remains tracked by its task list
+Status: Implemented by #458, #459, #460, and #461
 
 ## Current State (evidence at 9b920c9)
 

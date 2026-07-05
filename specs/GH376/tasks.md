@@ -3,7 +3,7 @@
 Issue: https://github.com/majiayu000/loom/issues/376
 Product spec: `specs/GH376/product.md`
 Tech spec: `specs/GH376/tech.md`
-Status: Blocked design umbrella
+Status: Implemented; closeout evidence recorded
 
 ## Scope For First PR
 
@@ -21,10 +21,10 @@ skillset activation, recommendations, workflows, marketplace install, RBAC, prov
 
 ## Tasks
 
-- [ ] `SP376-T001` Owner: planning | Done when: GH376 umbrella spec defines the advanced ecosystem product boundary, blockers, phases, and non-goals | Verify: `git diff --check`
-- [ ] `SP376-T002` Owner: planning | Done when: child issues #377-#386 have a shared requirement template for blockers, read models, plan/apply, safety, audit, and tests | Verify: `SPEC_RAIL_REPO=/path/to/specrail python3 "$SPEC_RAIL_REPO/checks/check_workflow.py" --repo . --spec-dir specs/GH376`
-- [ ] `SP376-T003` Owner: planning | Done when: the umbrella spec states that implementation remains blocked by #363 primitives unless a child issue is explicitly design-only or read-only | Verify: `rg -n "blocked|single-skill|dry-run|plan" specs/GH376`
-- [ ] `SP376-T004` Owner: regression | Done when: repository checks pass from this session | Verify: `cargo check --workspace --all-targets --all-features && cargo test`
+- [x] `SP376-T001` Owner: planning | Done when: GH376 umbrella spec defines the advanced ecosystem product boundary, blockers, phases, and non-goals | Verify: `git diff --check`
+- [x] `SP376-T002` Owner: planning | Done when: child issues #377-#386 have a shared requirement template for blockers, read models, plan/apply, safety, audit, and tests | Verify: child issue specs and closeout evidence
+- [x] `SP376-T003` Owner: planning | Done when: the umbrella spec states that implementation remains blocked by #363 primitives unless a child issue is explicitly design-only or read-only | Verify: `rg -n "blocked|single-skill|dry-run|plan" specs/GH376`
+- [x] `SP376-T004` Owner: regression | Done when: repository checks pass from this session | Verify: `cargo check --workspace --all-targets --all-features && cargo test`
 
 ### SP376-T1: Capture Umbrella Product Boundary
 
@@ -111,4 +111,12 @@ cargo test
 
 ## Handoff Notes
 
-Use `Refs #376`. Do not use `Fixes #376` for this umbrella spec packet.
+Closeout evidence:
+
+- #377, #378, #380, #381, #382, #383, #384, and #385 are closed.
+- #379 is implemented by PR #430 plus the GH481 Route B closeout.
+- #386 has all SpecRail tasks checked and is implemented by PR #437 plus PR
+  #491.
+- #363 now has an end-to-end lifecycle test and closeout evidence.
+- Use `Fixes #376` only from a closeout PR based on the GH481 Route B
+  correction.

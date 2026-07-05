@@ -3,7 +3,7 @@
 Issue: https://github.com/majiayu000/loom/issues/363
 Product spec: `specs/GH363/product.md`
 Tech spec: `specs/GH363/tech.md`
-Status: Draft epic coordination spec
+Status: Implemented; closeout evidence recorded
 
 ## Scope For This Packet
 
@@ -12,14 +12,14 @@ itself.
 
 ## Tasks
 
-- [ ] `SP363-T1` Owner: #364 | Done when: `skill new` and Loom-local manifest create/import one skill with durable source identity | Verify: child issue checks
-- [ ] `SP363-T2` Owner: #365 | Done when: lint reports portable, agent-specific, quality, resources, and progressive disclosure status | Verify: child issue checks
-- [ ] `SP363-T3` Owner: #366 | Done when: `skill inspect` exposes shared source/provenance/spec/runtime/quality/eval/safety/dependency/release status sections | Verify: child issue checks
-- [ ] `SP363-T4` Owner: #367/#368/#373 | Done when: activation, visibility, adapter discovery, and doctor states are separate and explainable | Verify: child issue checks
-- [ ] `SP363-T5` Owner: #369/#372 | Done when: eval and improve/regression workflows provide baseline-backed evidence before release claims | Verify: child issue checks
-- [ ] `SP363-T6` Owner: #370/#371 | Done when: safety, trust, quarantine, dependency, and MCP readiness gates are visible before activation | Verify: child issue checks
-- [ ] `SP363-T7` Owner: #374/#375 | Done when: docs and Panel render the same lifecycle state from backend/CLI read models | Verify: child issue checks
-- [ ] `SP363-T8` Owner: integration | Done when: end-to-end lifecycle test covers new/import through rollback/deactivate without hidden registry inspection | Verify: `cargo test`
+- [x] `SP363-T1` Owner: #364 | Done when: `skill new` and Loom-local manifest create/import one skill with durable source identity | Verify: child issue checks
+- [x] `SP363-T2` Owner: #365 | Done when: lint reports portable, agent-specific, quality, resources, and progressive disclosure status | Verify: child issue checks
+- [x] `SP363-T3` Owner: #366 | Done when: `skill inspect` exposes shared source/provenance/spec/runtime/quality/eval/safety/dependency/release status sections | Verify: child issue checks
+- [x] `SP363-T4` Owner: #367/#368/#373 | Done when: activation, visibility, adapter discovery, and doctor states are separate and explainable | Verify: child issue checks
+- [x] `SP363-T5` Owner: #369/#372 | Done when: eval and improve/regression workflows provide baseline-backed evidence before release claims | Verify: child issue checks
+- [x] `SP363-T6` Owner: #370/#371 | Done when: safety, trust, quarantine, dependency, and MCP readiness gates are visible before activation | Verify: child issue checks
+- [x] `SP363-T7` Owner: #374/#375 | Done when: docs and Panel render the same lifecycle state from backend/CLI read models | Verify: child issue checks
+- [x] `SP363-T8` Owner: integration | Done when: end-to-end lifecycle test covers new/import through rollback/deactivate without hidden registry inspection | Verify: `cargo test --test single_skill_lifecycle_e2e`
 
 ### SP363-T1: Source And Manifest Foundation
 
@@ -161,8 +161,11 @@ cargo test
 
 ## Handoff Notes
 
-- Use `Refs #363` for this coordination packet.
-- Do not use `Fixes #363` until child issue implementations satisfy the epic
-  acceptance criteria and end-to-end verification passes.
+- Child issues #364 through #375 are closed.
+- `tests/single_skill_lifecycle_e2e.rs` covers one complete CLI lifecycle:
+  create, lint, inspect, scan, deps, eval, improve dry-run, commit, release,
+  activate, visibility, diagnose, rollback, and deactivate.
+- Use `Fixes #363` only from a closeout PR that includes the E2E test and
+  current verification evidence.
 - Advanced ecosystem work in #376 should consume this lifecycle status model
   instead of creating parallel state.

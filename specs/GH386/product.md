@@ -2,7 +2,7 @@
 
 Issue: https://github.com/majiayu000/loom/issues/386
 Parent: https://github.com/majiayu000/loom/issues/376
-Status: Implementation slice in review
+Status: Implemented; closeout evidence recorded
 Locale: en-US
 
 ## Goal

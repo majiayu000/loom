@@ -2,7 +2,7 @@
 
 Issue: https://github.com/majiayu000/loom/issues/379
 Product spec: `specs/GH379/product.md`
-Status: Blocked design packet
+Status: Implemented; closeout evidence recorded
 
 ## Current State
 

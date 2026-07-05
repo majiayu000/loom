@@ -3,7 +3,7 @@
 Issue: https://github.com/majiayu000/loom/issues/386
 Product spec: `specs/GH386/product.md`
 Tech spec: `specs/GH386/tech.md`
-Status: Implementation slice in review
+Status: Implemented; closeout evidence recorded
 
 ## Scope For First PR
 
@@ -193,10 +193,11 @@ cargo test
 
 ## Handoff Notes
 
-- Use `Refs #386` for a first-slice PR unless requirement parsing, plan,
-  guarded Codex config apply, doctor, catalog, and direct package-install
-  follow-up scope are complete.
-- Do not use `Fixes #386` until direct package installation, OAuth/secrets
-  integrations, and any remaining policy backend work are explicitly accepted
-  or split into successor issues.
+- PR #437 implemented read-only requirement, plan, catalog, and doctor
+  foundation.
+- PR #491 implemented guarded `mcp apply` for reviewed Codex config writes.
+- Direct package installation, OAuth/browser flows, arbitrary untrusted
+  package execution, and secret storage remain explicit non-goals for this
+  issue rather than incomplete acceptance criteria.
+- Use `Fixes #386` from the closeout PR after current verification passes.
 - Never print or store secret values.

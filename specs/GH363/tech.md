@@ -126,6 +126,11 @@ cargo test
 
 Panel commands are required when #375 or Panel API files are touched.
 
+Closeout implementation adds `tests/single_skill_lifecycle_e2e.rs` as the
+epic-level lifecycle proof. It exercises the public CLI from skill creation
+through validation, activation, visibility/diagnosis, eval/improve, release,
+rollback, and deactivation.
+
 ## Rollback
 
 The epic coordination spec is documentation-only. Implementation rollback is

@@ -3,7 +3,7 @@
 Issue: https://github.com/majiayu000/loom/issues/379
 Product spec: `specs/GH379/product.md`
 Tech spec: `specs/GH379/tech.md`
-Status: Blocked design packet
+Status: Implemented; closeout evidence recorded
 
 ## Scope For First PR
 
@@ -21,13 +21,13 @@ background daemon, recursive skill invocation, automatic workflow execution, wor
 
 ## Tasks
 
-- [ ] `SP379-T001` Owner: workflow-model | Done when: deterministic workflow definition state supports named DAG nodes, edges, policy, and timestamps | Verify: `cargo test --test workflow_cli`
-- [ ] `SP379-T002` Owner: dag-validation | Done when: planner rejects duplicate nodes, missing edge targets, cycles, excessive depth, missing skills, blocked skills, and unmet dependencies | Verify: `cargo test --test workflow_cli`
-- [ ] `SP379-T003` Owner: workflow-plan | Done when: `workflow plan` creates an auditable read-only plan with ordered nodes, activation steps, risks, approvals, guards, and next actions | Verify: `cargo test --test workflow_cli`
-- [ ] `SP379-T004` Owner: workflow-preflight | Done when: `workflow preflight <plan-id>` revalidates current registry, workflow digest, skill digests, policy, dependency readiness, and active state | Verify: `cargo test --test workflow_cli`
-- [ ] `SP379-T005` Owner: workflow-apply-deferred | Done when: `workflow apply` is absent or returns typed not-implemented until plan/preflight semantics are stable; future apply requirements are documented | Verify: `cargo test --test cli_surface`
-- [ ] `SP379-T006` Owner: safety | Done when: no command silently executes workflow nodes, activates skills, writes configs, or retries failed nodes without explicit apply and approvals | Verify: `cargo test --test workflow_cli && cargo test --test agent_plan_apply`
-- [ ] `SP379-T007` Owner: regression | Done when: focused and full repository checks pass | Verify: `cargo check --workspace --all-targets --all-features && cargo test`
+- [x] `SP379-T001` Owner: workflow-model | Done when: deterministic workflow definition state supports named DAG nodes, edges, policy, and timestamps | Verify: `cargo test --test workflow_cli`
+- [x] `SP379-T002` Owner: dag-validation | Done when: planner rejects duplicate nodes, missing edge targets, cycles, excessive depth, missing skills, blocked skills, and unmet dependencies | Verify: `cargo test --test workflow_cli`
+- [x] `SP379-T003` Owner: workflow-plan | Done when: `workflow plan` creates an auditable read-only plan with ordered nodes, activation steps, risks, approvals, guards, and next actions | Verify: `cargo test --test workflow_cli`
+- [x] `SP379-T004` Owner: workflow-preflight | Done when: `workflow preflight <plan-id>` revalidates current registry, workflow digest, skill digests, policy, dependency readiness, and active state | Verify: `cargo test --test workflow_cli`
+- [x] `SP379-T005` Owner: workflow-apply-deferred | Done when: autonomous workflow execution remains hidden/deferred until plan/preflight semantics are stable; future apply requirements are documented | Verify: `cargo test --test cli_surface`
+- [x] `SP379-T006` Owner: safety | Done when: no command silently executes workflow nodes, activates skills, writes configs, or retries failed nodes without explicit apply and approvals | Verify: `cargo test --test workflow_cli && cargo test --test agent_plan_apply`
+- [x] `SP379-T007` Owner: regression | Done when: focused and full repository checks pass | Verify: `cargo check --workspace --all-targets --all-features && cargo test`
 
 ### SP379-T1: Add Workflow Definition Model
 
@@ -169,6 +169,16 @@ cargo test
 
 ## Handoff Notes
 
-Use `Refs #379` for design-only or partial planning/preflight slices. Use
-`Fixes #379` only after workflow definitions, planning, preflight, apply gates,
-and tests meet the acceptance criteria.
+Closeout evidence:
+
+- PR #430 added workflow definition, DAG validation, plan, preflight, and
+  deferred execution tests.
+- GH481 Route B hides the incomplete `workflow run` public surface, preserves a
+  dry-run compatibility response, and removes public `rollback_token` output
+  until a consumer exists.
+- Current verification includes `cargo test --test workflow_cli`,
+  `cargo test --test agent_plan_apply`,
+  `cargo check --workspace --all-targets --all-features`, and `cargo test`.
+
+Use `Fixes #379` only from a closeout PR that includes the GH481 Route B
+contract correction or is based on it.

@@ -136,3 +136,10 @@ A workflow plan must:
 6. Tests cover cycle detection, missing node skill, blocked skill,
    approval-required node, activation step generation, idempotency, and dry-run
    plan stability.
+
+Closeout evidence:
+
+- PR #430 implements the planning-first workflow foundation and tests the
+  workflow model, validation, planning, preflight, and deferred run behavior.
+- GH481 Route B removes the misleading public run/token affordances so the
+  first shipped workflow surface remains planning-first and non-autonomous.

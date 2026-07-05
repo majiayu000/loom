@@ -2,7 +2,7 @@
 
 Issue: https://github.com/majiayu000/loom/issues/376
 Product spec: `specs/GH376/product.md`
-Status: Blocked design umbrella
+Status: Implemented; closeout evidence recorded
 
 ## Current State
 

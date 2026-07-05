@@ -113,3 +113,11 @@ loom skill release fixflow v1.0.0
 This epic should close only after the child issue implementations that satisfy
 the acceptance criteria are merged and verified. A spec or planning PR for this
 epic must use `Refs #363`, not a closing keyword.
+
+Closeout evidence:
+
+- Child issues #364 through #375 are closed.
+- `tests/single_skill_lifecycle_e2e.rs` covers the end-to-end single-skill
+  lifecycle without manual registry inspection.
+- Current verification for the closeout PR includes Rust checks, the lifecycle
+  E2E test, `scripts/e2e-agent-flow.sh`, and Panel typecheck/test.

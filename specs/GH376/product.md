@@ -2,7 +2,7 @@
 
 Issue: https://github.com/majiayu000/loom/issues/376
 Parent foundation: https://github.com/majiayu000/loom/issues/363
-Status: Blocked design umbrella
+Status: Implemented; closeout evidence recorded
 Locale: zh-CN
 
 ## Goal
@@ -125,3 +125,10 @@ foundations merge.
    workflows.
 7. Child issue specs identify their blockers from #363 and state whether they
    are design-only, read-only, dry-run, or apply-capable.
+
+Closeout evidence:
+
+- Child issues #377 through #386 are implemented or ready for closure.
+- #379 and #386 retain plan-first/apply-gated semantics; no advanced workflow
+  silently mutates user or agent config.
+- The #363 lifecycle foundation has closeout evidence and an E2E test.

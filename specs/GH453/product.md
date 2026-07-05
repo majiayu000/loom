@@ -2,7 +2,7 @@
 
 Issue: https://github.com/majiayu000/loom/issues/453
 Blocks: #458, #459, #460, #461
-Status: Implemented for #459 ops-log slice; broader GH453 remains tracked by its task list
+Status: Implemented by #458, #459, #460, and #461
 Locale: zh-CN
 
 ## Problem
@@ -62,6 +62,14 @@ built-in agent.
    round-tripping.
 4. Claude has discovery/visibility/reload metadata backed by tests
    equivalent to the codex coverage.
+
+Closeout evidence:
+
+- #458, #459, #460, and #461 are closed.
+- PRs #467, #468, #469, and #472 provide the implementation evidence for this
+  umbrella.
+- Current verification for the closeout PR reruns Rust full checks,
+  `scripts/e2e-agent-flow.sh`, and Panel typecheck/test.
 
 ## Ordering
 

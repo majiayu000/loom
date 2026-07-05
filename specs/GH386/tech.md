@@ -2,7 +2,7 @@
 
 Issue: https://github.com/majiayu000/loom/issues/386
 Product spec: `specs/GH386/product.md`
-Status: Implementation slice in review
+Status: Implemented; closeout evidence recorded
 
 ## Design Summary
 

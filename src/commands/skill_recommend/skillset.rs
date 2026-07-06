@@ -6,6 +6,7 @@ use crate::state::AppContext;
 
 use super::super::helpers::map_registry_state;
 use super::super::skill_inventory::tokenize;
+use super::super::telemetry::SkillTelemetryEvidenceCache;
 use super::super::{CommandFailure, build_skill_read_model};
 use super::evidence::member_dependency_risk;
 use super::{RecommendationContext, activation_safety_risk};
@@ -16,6 +17,7 @@ pub(super) fn skillset_recommendations(
     request: RecommendationContext<'_>,
     skill_results: &[Value],
     skillsets: &Value,
+    telemetry_cache: &mut SkillTelemetryEvidenceCache,
 ) -> std::result::Result<Vec<Value>, CommandFailure> {
     let inventory = build_skill_read_model(ctx).map_err(map_registry_state)?;
     let inventory = inventory
@@ -33,22 +35,6 @@ pub(super) fn skillset_recommendations(
             Some((
                 result["id"].as_str()?.to_string(),
                 result["score"].as_i64().unwrap_or_default(),
-            ))
-        })
-        .collect::<BTreeMap<_, _>>();
-    let skill_risks = skill_results
-        .iter()
-        .filter_map(|result| {
-            let skill = result["id"].as_str()?;
-            let risks = result["risks"].as_array()?;
-            Some((
-                skill.to_string(),
-                risks
-                    .iter()
-                    .filter_map(|risk| risk.as_str())
-                    .filter(|risk| member_evidence_risk(risk))
-                    .map(str::to_string)
-                    .collect::<Vec<_>>(),
             ))
         })
         .collect::<BTreeMap<_, _>>();
@@ -73,16 +59,18 @@ pub(super) fn skillset_recommendations(
                 continue;
             };
             let required = member["required"].as_bool().unwrap_or(true);
-            let member_score = *skill_scores.get(skill_id).unwrap_or(&0);
+            let telemetry = member_telemetry(ctx, request, task, skill_id, telemetry_cache);
+            let member_score = *skill_scores.get(skill_id).unwrap_or(&0) + telemetry.score_delta;
             match inventory.get(skill_id) {
                 Some(skill) => {
                     let member_kind = if required { "required" } else { "optional" };
-                    for risk in skill_risks.get(skill_id).into_iter().flatten() {
+                    if telemetry.risky {
                         if required {
                             required_safe = false;
-                            risks.push(format!("{member_kind} member '{skill_id}' {risk}"));
+                            risks.push(format!("{member_kind} member '{skill_id}' telemetry risk"));
                         } else {
-                            warnings.push(format!("{member_kind} member '{skill_id}' {risk}"));
+                            warnings
+                                .push(format!("{member_kind} member '{skill_id}' telemetry risk"));
                         }
                     }
                     score += member_score / 2;
@@ -121,7 +109,9 @@ pub(super) fn skillset_recommendations(
                     } else if !skill["warnings"].as_array().is_none_or(Vec::is_empty) {
                         required_safe = false;
                         risks.push(format!("{member_kind} member '{skill_id}' warnings"));
-                    } else if let Some(agent) = request.agent {
+                    } else if !telemetry.risky
+                        && let Some(agent) = request.agent
+                    {
                         member_commands.push(format!(
                             "loom --json skill activate {skill_id} --agent {agent} --dry-run"
                         ));
@@ -180,6 +170,51 @@ fn lexical_score_text(value: &str, tokens: &[String]) -> i64 {
         * 4
 }
 
-fn member_evidence_risk(risk: &str) -> bool {
-    risk.starts_with("telemetry") || risk.starts_with("recommendation feedback")
+#[derive(Default)]
+struct MemberTelemetry {
+    score_delta: i64,
+    risky: bool,
+}
+
+fn member_telemetry(
+    ctx: &AppContext,
+    request: RecommendationContext<'_>,
+    task: &str,
+    skill_id: &str,
+    telemetry_cache: &mut SkillTelemetryEvidenceCache,
+) -> MemberTelemetry {
+    let Ok(telemetry) =
+        telemetry_cache.evidence_for(ctx, skill_id, request.agent, request.workspace, Some(task))
+    else {
+        return MemberTelemetry::default();
+    };
+    if !telemetry.enabled || telemetry.events == 0 {
+        return MemberTelemetry::default();
+    }
+    let mut out = MemberTelemetry::default();
+    if telemetry.invocations > 0 {
+        out.score_delta += (telemetry.invocations as i64).clamp(1, 4);
+    }
+    if telemetry.errors > 0 {
+        let attempts = telemetry.invocations + telemetry.errors;
+        let rate = telemetry.errors as f64 / attempts.max(1) as f64;
+        let count_penalty = (telemetry.errors as i64 * 2).min(6);
+        let rate_penalty = if rate >= 0.5 {
+            2
+        } else if rate >= 0.25 {
+            1
+        } else {
+            0
+        };
+        out.score_delta -= (count_penalty + rate_penalty).min(8);
+        out.risky = true;
+    }
+    if telemetry.feedback_accepted > 0 {
+        out.score_delta += (telemetry.feedback_accepted as i64 * 4).min(8);
+    }
+    if telemetry.feedback_rejected > 0 {
+        out.score_delta -= (telemetry.feedback_rejected as i64 * 4).min(8);
+        out.risky = true;
+    }
+    out
 }

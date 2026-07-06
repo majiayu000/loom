@@ -400,6 +400,75 @@ fn skill_recommend_blocks_optional_unsafe_skillset_member_activation() {
 }
 
 #[test]
+fn skill_recommend_skips_optional_telemetry_risky_skillset_member_activation() {
+    let root = TestDir::new("skill-recommend-optional-telemetry-skillset");
+    write_demo_skills(root.path());
+    write_file(
+        &root.path().join("state/registry/skillsets.json"),
+        r#"{"schema_version":1,"skillsets":[{"id":"review-pack","description":"Review pull request workflow","members":[{"skill_id":"review-helper","role":"execution","required":true},{"skill_id":"test-writer","role":"execution","required":false}],"created_at":"2026-06-30T00:00:00Z","updated_at":"2026-06-30T00:00:00Z"}]}"#,
+    );
+    let (output, env) = run_loom(root.path(), &["telemetry", "enable", "--local-only"]);
+    assert!(output.status.success(), "enable should pass: {env}");
+    let (output, env) = run_loom(
+        root.path(),
+        &[
+            "skill",
+            "used",
+            "test-writer",
+            "--agent",
+            "claude",
+            "--error",
+            "--failure-category",
+            "timeout",
+        ],
+    );
+    assert!(output.status.success(), "skill used should pass: {env}");
+    let (output, env) = run_loom(
+        root.path(),
+        &[
+            "skill",
+            "feedback",
+            "test-writer",
+            "--feedback",
+            "rejected",
+            "--agent",
+            "claude",
+            "--task",
+            "review pull request",
+        ],
+    );
+    assert!(output.status.success(), "feedback should pass: {env}");
+
+    let (output, env) = run_loom(
+        root.path(),
+        &[
+            "skill",
+            "search",
+            "review pull request",
+            "--explain",
+            "--agent",
+            "claude",
+        ],
+    );
+
+    assert!(output.status.success(), "search explain should pass: {env}");
+    let skillset = recommendation(&env, "review-pack");
+    let commands = skillset["suggested_commands"].as_array().expect("commands");
+    assert!(
+        commands.iter().any(|command| command
+            .as_str()
+            .is_some_and(|command| command.contains("review-helper"))),
+        "safe required member should still be suggested: {skillset}"
+    );
+    assert!(
+        commands
+            .iter()
+            .all(|command| !command.as_str().unwrap_or_default().contains("test-writer")),
+        "telemetry-risky optional member must not receive activation command: {skillset}"
+    );
+}
+
+#[test]
 fn skill_recommend_blocks_skillset_members_with_inventory_warnings() {
     let root = TestDir::new("skill-recommend-skillset-warning-member");
     write_demo_skills(root.path());

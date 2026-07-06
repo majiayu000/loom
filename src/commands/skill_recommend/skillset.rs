@@ -6,9 +6,8 @@ use crate::state::AppContext;
 
 use super::super::helpers::map_registry_state;
 use super::super::skill_inventory::tokenize;
-use super::super::telemetry::SkillTelemetryEvidenceCache;
 use super::super::{CommandFailure, build_skill_read_model};
-use super::evidence::{member_dependency_risk, telemetry_ranking_evidence};
+use super::evidence::member_dependency_risk;
 use super::{RecommendationContext, activation_safety_risk};
 
 pub(super) fn skillset_recommendations(
@@ -17,7 +16,6 @@ pub(super) fn skillset_recommendations(
     request: RecommendationContext<'_>,
     skill_results: &[Value],
     skillsets: &Value,
-    telemetry_cache: &mut SkillTelemetryEvidenceCache,
 ) -> std::result::Result<Vec<Value>, CommandFailure> {
     let inventory = build_skill_read_model(ctx).map_err(map_registry_state)?;
     let inventory = inventory
@@ -33,8 +31,24 @@ pub(super) fn skillset_recommendations(
         .iter()
         .filter_map(|result| {
             Some((
-                result["skill"]["skill_id"].as_str()?.to_string(),
+                result["id"].as_str()?.to_string(),
                 result["score"].as_i64().unwrap_or_default(),
+            ))
+        })
+        .collect::<BTreeMap<_, _>>();
+    let skill_risks = skill_results
+        .iter()
+        .filter_map(|result| {
+            let skill = result["id"].as_str()?;
+            let risks = result["risks"].as_array()?;
+            Some((
+                skill.to_string(),
+                risks
+                    .iter()
+                    .filter_map(|risk| risk.as_str())
+                    .filter(|risk| member_evidence_risk(risk))
+                    .map(str::to_string)
+                    .collect::<Vec<_>>(),
             ))
         })
         .collect::<BTreeMap<_, _>>();
@@ -59,26 +73,11 @@ pub(super) fn skillset_recommendations(
                 continue;
             };
             let required = member["required"].as_bool().unwrap_or(true);
-            let mut member_score = *skill_scores.get(skill_id).unwrap_or(&0);
+            let member_score = *skill_scores.get(skill_id).unwrap_or(&0);
             match inventory.get(skill_id) {
                 Some(skill) => {
                     let member_kind = if required { "required" } else { "optional" };
-                    let evidence = telemetry_ranking_evidence(
-                        ctx,
-                        skill_id,
-                        request.agent,
-                        request.workspace,
-                        Some(task),
-                        telemetry_cache,
-                    );
-                    member_score += evidence.score_delta;
-                    for reason in evidence.reasons {
-                        reasons.push(format!("member '{skill_id}' {reason}"));
-                    }
-                    for warning in evidence.warnings {
-                        warnings.push(format!("{member_kind} member '{skill_id}' {warning}"));
-                    }
-                    for risk in evidence.risks {
+                    for risk in skill_risks.get(skill_id).into_iter().flatten() {
                         if required {
                             required_safe = false;
                             risks.push(format!("{member_kind} member '{skill_id}' {risk}"));
@@ -179,4 +178,8 @@ fn lexical_score_text(value: &str, tokens: &[String]) -> i64 {
         .filter(|token| value.contains(token.as_str()))
         .count() as i64
         * 4
+}
+
+fn member_evidence_risk(risk: &str) -> bool {
+    risk.starts_with("telemetry") || risk.starts_with("recommendation feedback")
 }

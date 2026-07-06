@@ -437,14 +437,8 @@ fn recommendation_results(
             results.push(recommendation);
         }
     }
-    results.extend(skillset_recommendations(
-        ctx,
-        task,
-        request,
-        skill_search_results,
-        skillsets,
-        telemetry_cache,
-    )?);
+    let skillset_results = skillset_recommendations(ctx, task, request, &results, skillsets)?;
+    results.extend(skillset_results);
     results.sort_by(|left, right| {
         let l = left["score"].as_i64().unwrap_or_default();
         let r = right["score"].as_i64().unwrap_or_default();

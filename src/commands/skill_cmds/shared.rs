@@ -1,6 +1,6 @@
 use super::*;
 
-pub(super) fn maybe_skill_fault(tag: &str) -> std::result::Result<(), CommandFailure> {
+pub(crate) fn maybe_skill_fault(tag: &str) -> std::result::Result<(), CommandFailure> {
     if std::env::var("LOOM_FAULT_INJECT").ok().as_deref() == Some(tag) {
         return Err(CommandFailure::new(
             ErrorCode::InternalError,
@@ -10,11 +10,11 @@ pub(super) fn maybe_skill_fault(tag: &str) -> std::result::Result<(), CommandFai
     Ok(())
 }
 
-pub(super) fn rollback_fault_active(tag: &str) -> bool {
+pub(crate) fn rollback_fault_active(tag: &str) -> bool {
     std::env::var("LOOM_ROLLBACK_FAULT_INJECT").ok().as_deref() == Some(tag)
 }
 
-pub(super) fn push_rollback_error(errors: &mut Vec<Value>, step: &str, message: impl ToString) {
+pub(crate) fn push_rollback_error(errors: &mut Vec<Value>, step: &str, message: impl ToString) {
     errors.push(json!({
         "step": step,
         "message": message.to_string(),
@@ -27,39 +27,6 @@ pub(super) fn maybe_push_rollback_fault(errors: &mut Vec<Value>, step: &str) -> 
         return true;
     }
     false
-}
-
-pub(super) fn rollback_project_mutation(
-    paths: &RegistryStatePaths,
-    materialized_path: &Path,
-    backup: Option<&serde_json::Value>,
-    original_bindings: &RegistryBindingsFile,
-    original_rules: &RegistryRulesFile,
-    original_projections: &RegistryProjectionsFile,
-) -> Vec<Value> {
-    let mut errors = Vec::new();
-    if let Some(backup) = backup {
-        if !maybe_push_rollback_fault(&mut errors, "restore_projection_path")
-            && let Err(err) = restore_path_from_backup(materialized_path, backup)
-        {
-            push_rollback_error(&mut errors, "restore_projection_path", err);
-        }
-    } else {
-        if !maybe_push_rollback_fault(&mut errors, "remove_projection_path")
-            && let Err(err) = remove_path_if_exists(materialized_path)
-        {
-            push_rollback_error(&mut errors, "remove_projection_path", err);
-        }
-    }
-    if let Err(err) = rollback_registry_state(
-        paths,
-        original_bindings,
-        original_rules,
-        original_projections,
-    ) {
-        push_rollback_error(&mut errors, "restore_registry_state", err);
-    }
-    errors
 }
 
 pub(super) fn rollback_capture_mutation(
@@ -167,7 +134,7 @@ pub(super) fn git_diff_has_changes(
     }
 }
 
-pub(super) fn rollback_registry_state(
+pub(crate) fn rollback_registry_state(
     paths: &RegistryStatePaths,
     original_bindings: &RegistryBindingsFile,
     original_rules: &RegistryRulesFile,

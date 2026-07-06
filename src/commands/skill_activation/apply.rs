@@ -1,7 +1,6 @@
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
-use crate::cli::ProjectionMethod;
 use crate::state_model::{
     RegistryBindingsFile, RegistryProjectionsFile, RegistryRulesFile, RegistryStatePaths,
     RegistryTargetsFile,
@@ -9,68 +8,8 @@ use crate::state_model::{
 use crate::types::ErrorCode;
 
 use super::super::CommandFailure;
-use super::super::fs_probe::probe_symlink;
-use super::super::helpers::{map_io, map_project_io, map_registry_state, projection_method_as_str};
-use super::super::projections::project_skill_to_target;
+use super::super::helpers::{map_io, map_registry_state};
 use super::resolve::{ActivationResolved, normalize_existing_or_raw};
-
-pub(super) fn apply_activation_projection(
-    ctx: &crate::state::AppContext,
-    resolved: &ActivationResolved,
-) -> std::result::Result<bool, CommandFailure> {
-    let target_base = PathBuf::from(&resolved.target.path);
-    fs::create_dir_all(&target_base).map_err(map_io)?;
-    let skill_src = ctx.skill_path(&resolved.selection.skill);
-
-    if resolved.materialized_path.exists()
-        || fs::symlink_metadata(&resolved.materialized_path).is_ok()
-    {
-        if matches!(resolved.selection.method, ProjectionMethod::Symlink)
-            && projection_path_is_safe_symlink(&resolved.materialized_path, &skill_src)
-        {
-            return Ok(false);
-        }
-        if resolved
-            .existing_projection
-            .as_ref()
-            .is_some_and(|projection| {
-                projection.method == projection_method_as_str(resolved.selection.method)
-            })
-            && !matches!(resolved.selection.method, ProjectionMethod::Symlink)
-        {
-            return Ok(false);
-        }
-        return Err(CommandFailure::new(
-            ErrorCode::ProjectionConflict,
-            format!(
-                "projection path '{}' already exists and is not a safe Loom-owned {} projection",
-                resolved.materialized_path.display(),
-                projection_method_as_str(resolved.selection.method)
-            ),
-        ));
-    }
-
-    if matches!(resolved.selection.method, ProjectionMethod::Symlink) {
-        let probe = probe_symlink(&target_base);
-        if !probe.supported {
-            return Err(CommandFailure::new(
-                ErrorCode::ProjectionMethodUnsupported,
-                format!(
-                    "target '{}' filesystem does not support symlink projection: {}. retry with --method copy",
-                    resolved.target.target_id,
-                    probe.reason.unwrap_or_else(|| "unknown reason".to_string())
-                ),
-            ));
-        }
-    }
-    project_skill_to_target(
-        &skill_src,
-        &resolved.materialized_path,
-        resolved.selection.method,
-    )
-    .map_err(map_project_io(resolved.selection.method))?;
-    Ok(true)
-}
 
 pub(super) fn remove_safe_symlink_projection(
     skill_src: &Path,

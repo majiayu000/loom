@@ -59,9 +59,12 @@ pub(super) fn skillset_recommendations(
                 continue;
             };
             let required = member["required"].as_bool().unwrap_or(true);
-            let (telemetry_score, telemetry_risky) =
-                member_telemetry(ctx, request, task, skill_id, telemetry_cache);
-            let member_score = *skill_scores.get(skill_id).unwrap_or(&0) + telemetry_score;
+            let telemetry_risky =
+                member_telemetry_risky(ctx, request, task, skill_id, telemetry_cache);
+            let mut member_score = *skill_scores.get(skill_id).unwrap_or(&0);
+            if telemetry_risky {
+                member_score -= 8;
+            }
             match inventory.get(skill_id) {
                 Some(skill) => {
                     let member_kind = if required { "required" } else { "optional" };
@@ -169,36 +172,19 @@ fn lexical_score_text(value: &str, tokens: &[String]) -> i64 {
         * 4
 }
 
-fn member_telemetry(
+fn member_telemetry_risky(
     ctx: &AppContext,
     request: RecommendationContext<'_>,
     task: &str,
     skill_id: &str,
     telemetry_cache: &mut SkillTelemetryEvidenceCache,
-) -> (i64, bool) {
+) -> bool {
     let Ok(telemetry) =
         telemetry_cache.evidence_for(ctx, skill_id, request.agent, request.workspace, Some(task))
     else {
-        return (0, false);
+        return false;
     };
-    if !telemetry.enabled || telemetry.events == 0 {
-        return (0, false);
-    }
-    let mut score_delta = 0;
-    let mut risky = false;
-    if telemetry.invocations > 0 {
-        score_delta += (telemetry.invocations as i64).clamp(1, 4);
-    }
-    if telemetry.errors > 0 {
-        score_delta -= (telemetry.errors as i64 * 4).min(8);
-        risky = true;
-    }
-    if telemetry.feedback_accepted > 0 {
-        score_delta += (telemetry.feedback_accepted as i64 * 4).min(8);
-    }
-    if telemetry.feedback_rejected > 0 {
-        score_delta -= (telemetry.feedback_rejected as i64 * 4).min(8);
-        risky = true;
-    }
-    (score_delta, risky)
+    telemetry.enabled
+        && telemetry.events > 0
+        && (telemetry.errors > 0 || telemetry.feedback_rejected > 0)
 }

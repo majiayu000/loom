@@ -275,28 +275,21 @@ fn add_telemetry_evidence(
     }
     if telemetry.errors > 0 {
         let attempts = telemetry.invocations + telemetry.errors;
-        let error_rate = if attempts == 0 {
-            1.0
-        } else {
-            telemetry.errors as f64 / attempts as f64
-        };
         let count_penalty = (telemetry.errors as i64 * 2).min(6);
-        let rate_penalty = if error_rate >= 0.5 {
+        let rate_penalty = if telemetry.errors * 2 >= attempts {
             2
-        } else if error_rate >= 0.25 {
+        } else if telemetry.errors * 4 >= attempts {
             1
         } else {
             0
         };
         let weight = -((count_penalty + rate_penalty).min(8));
         evidence.score_delta += weight;
-        evidence
-            .risks
-            .push(format!("telemetry error rate {:.2}", error_rate));
+        evidence.risks.push("telemetry errors".to_string());
         evidence.score_inputs.push(json!({
             "field": "telemetry_error_rate",
             "metric": "recent_error_rate",
-            "value": error_rate,
+            "value": telemetry.errors,
             "errors": telemetry.errors,
             "attempts": attempts,
             "window_days": telemetry.window_days,

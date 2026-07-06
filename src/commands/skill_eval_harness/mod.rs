@@ -1,12 +1,14 @@
 pub(crate) mod cases;
+mod codex_cli;
 mod report;
 mod runner;
 
+use std::fs;
 use std::path::Path;
 
 use serde_json::json;
 
-use crate::cli::{SkillEvalCompareArgs, SkillEvalRunArgs, SkillEvalTriggerArgs};
+use crate::cli::{EvalRunnerArg, SkillEvalCompareArgs, SkillEvalRunArgs, SkillEvalTriggerArgs};
 use crate::envelope::Meta;
 use crate::gitops::run_git_allow_failure;
 use crate::state::AppContext;
@@ -14,17 +16,18 @@ use crate::state::AppContext;
 use super::telemetry::record_skill_eval_telemetry;
 use super::{App, CommandFailure};
 use cases::{
-    HarnessTaskCase, HarnessTriggerCase, evaluate_trigger_case, read_harness_jsonl,
-    read_harness_jsonl_str, read_required_harness_jsonl, summarize_trigger_results,
+    HarnessTaskCase, HarnessTriggerCase, read_harness_jsonl, read_harness_jsonl_str,
+    read_required_harness_jsonl, summarize_trigger_results,
 };
+use codex_cli::CodexCliRunner;
 pub(crate) use report::persist_report;
 use report::{
-    cleanup_to_value, ensure_runner_available, eval_failed, require_skill, resolve_cases_path,
-    resolve_compare_version, runner_id, security_model,
+    cleanup_to_value, ensure_runner_available, eval_failed, io_failure, require_skill,
+    resolve_cases_path, resolve_compare_version, runner_id, security_model,
 };
 use runner::{
-    EvalPlan, EvalPlanInput, MockAgentRunner, SkillEvalRunner, run_task_baseline,
-    summarize_mock_version,
+    EvalPlan, EvalPlanInput, EvalTriggerPlanInput, MockAgentRunner, SkillEvalRunner,
+    run_task_baseline, summarize_mock_version,
 };
 
 const EVAL_SCHEMA_VERSION: u32 = 1;
@@ -55,6 +58,7 @@ impl App {
                 workspace: args.workspace.clone(),
                 cases_path,
                 output_path: args.output.clone(),
+                skill_source: read_skill_source(&skill_path)?,
             },
         );
         let case_views = cases
@@ -80,9 +84,9 @@ impl App {
         }
 
         ensure_runner_available(args.runner)?;
-        let mut runner = MockAgentRunner;
+        let mut runner = eval_runner(args.runner);
         let env = runner.prepare(&plan)?;
-        let mut report = match run_task_baseline(&mut runner, &env, &plan, &cases, &triggers) {
+        let mut report = match run_task_baseline(runner.as_mut(), &env, &plan, &cases, &triggers) {
             Ok(report) => report,
             Err(mut failure) => {
                 let cleanup = runner.cleanup(env);
@@ -130,7 +134,6 @@ impl App {
         args: &SkillEvalTriggerArgs,
     ) -> std::result::Result<(serde_json::Value, Meta), CommandFailure> {
         let skill_path = require_skill(&self.ctx, &args.skill)?;
-        ensure_runner_available(args.runner)?;
         let cases_path =
             resolve_cases_path(&skill_path, args.cases.as_deref(), "evals/triggers.jsonl");
         let triggers = if args.cases.is_some() {
@@ -138,29 +141,48 @@ impl App {
         } else {
             read_harness_jsonl::<HarnessTriggerCase>(&cases_path)?
         };
+        ensure_runner_available(args.runner)?;
         let runs = report::normalize_runs(args.runs)?;
+        let plan = EvalPlan::trigger(
+            &self.ctx,
+            EvalTriggerPlanInput {
+                skill: args.skill.clone(),
+                agent: args.agent.clone(),
+                runner: args.runner,
+                runs,
+                cases_path: cases_path.clone(),
+                output_path: args.output.clone(),
+                skill_source: read_skill_source(&skill_path)?,
+            },
+        );
+        let mut runner = eval_runner(args.runner);
+        let env = runner.prepare(&plan)?;
         let mut results = Vec::new();
         for attempt in 1..=runs {
             for record in &triggers {
-                results.push(evaluate_trigger_case(
-                    &args.skill,
-                    &args.agent,
-                    attempt,
-                    record,
-                )?);
+                match runner.run_trigger_case(&env, &plan, attempt, record) {
+                    Ok(result) => results.push(result),
+                    Err(mut failure) => {
+                        let cleanup = runner.cleanup(env);
+                        failure.details["cleanup"] = cleanup_to_value(&cleanup);
+                        return Err(failure);
+                    }
+                }
             }
         }
+        let cleanup = runner.cleanup(env);
         let mut report = json!({
             "schema_version": EVAL_SCHEMA_VERSION,
             "skill": args.skill,
             "agent": args.agent,
-            "mode": "trigger_quality",
+            "mode": plan.mode,
             "runner": runner_id(args.runner),
             "cases_path": cases_path.display().to_string(),
             "runs": runs,
             "summary": summarize_trigger_results(&results),
             "skill_version": super::skill_eval::skill_eval_version(&self.ctx, &args.skill),
             "results": results,
+            "cleanup": cleanup_to_value(&cleanup),
             "security_model": security_model(),
         });
         persist_report(
@@ -180,7 +202,7 @@ impl App {
             None,
             None,
         )?;
-        if failed > 0 {
+        if failed > 0 || cleanup.failed() {
             return Err(eval_failed(
                 "skill trigger eval failed",
                 failed,
@@ -197,6 +219,14 @@ impl App {
     ) -> std::result::Result<(serde_json::Value, Meta), CommandFailure> {
         let skill_path = require_skill(&self.ctx, &args.skill)?;
         ensure_runner_available(args.runner)?;
+        if args.runner == EvalRunnerArg::CodexCli {
+            return Err(eval_failed(
+                "codex-cli runner is not supported for cross-ref compare yet",
+                0,
+                "runner_compare_unsupported",
+                json!({"runner": "codex-cli", "mode": "version_compare"}),
+            ));
+        }
         let cases_path =
             resolve_cases_path(&skill_path, args.cases.as_deref(), "evals/tasks.jsonl");
         let from_cases = compare_cases(
@@ -256,6 +286,22 @@ impl App {
             report["summary"]["delta"].as_f64(),
         )?;
         Ok((report, Meta::default()))
+    }
+}
+
+fn eval_runner(runner: EvalRunnerArg) -> Box<dyn SkillEvalRunner> {
+    match runner {
+        EvalRunnerArg::Mock => Box::new(MockAgentRunner),
+        EvalRunnerArg::CodexCli => Box::new(CodexCliRunner),
+    }
+}
+
+fn read_skill_source(skill_path: &Path) -> std::result::Result<Option<String>, CommandFailure> {
+    let path = skill_path.join("SKILL.md");
+    match fs::read_to_string(&path) {
+        Ok(raw) => Ok(Some(raw)),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(err) => Err(io_failure("skill_source_read", &path, err)),
     }
 }
 

@@ -48,7 +48,7 @@ impl HarnessTriggerCase {
 pub(crate) struct HarnessTaskCase {
     #[serde(default)]
     pub(crate) id: Option<String>,
-    #[serde(default, alias = "input", alias = "prompt")]
+    #[serde(default, alias = "input", alias = "prompt", alias = "task")]
     _task: Option<String>,
     #[serde(default)]
     pub(crate) workspace_fixture: Option<String>,
@@ -59,6 +59,10 @@ pub(crate) struct HarnessTaskCase {
 impl HarnessTaskCase {
     pub(crate) fn id(&self) -> String {
         self.id.clone().unwrap_or_else(|| "task".to_string())
+    }
+
+    pub(crate) fn prompt_text(&self) -> Option<&str> {
+        self._task.as_deref()
     }
 }
 

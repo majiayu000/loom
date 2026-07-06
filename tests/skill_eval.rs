@@ -5,7 +5,7 @@ use std::process::Command;
 
 use serde_json::{Value, json};
 
-use common::{TestDir, run_loom, run_loom_with_env, write_file, write_skill};
+use common::{TestDir, fake_codex_path, run_loom, run_loom_with_env, write_file, write_skill};
 
 #[test]
 fn skill_eval_runs_offline_fixture_matrix() {
@@ -316,6 +316,268 @@ fn skill_eval_codex_cli_runner_missing_executable_is_typed() {
     assert_eq!(
         env["error"]["details"]["failure_kind"],
         json!("runner_executable_missing")
+    );
+}
+
+#[test]
+fn skill_eval_codex_cli_runner_requires_authorization() {
+    let root = TestDir::new("skill-eval-codex-auth");
+    write_skill(root.path(), "demo", "# Demo\n");
+    let path = fake_codex_path(
+        root.path(),
+        r#"#!/bin/sh
+printf '%s\n' '{"type":"agent_message","content":"tests pass"}'
+"#,
+    );
+
+    let (output, env) = run_loom_with_env(
+        root.path(),
+        &[("PATH", path.as_str())],
+        &[
+            "skill",
+            "eval",
+            "run",
+            "demo",
+            "--agent",
+            "codex",
+            "--baseline",
+            "no-skill",
+            "--runner",
+            "codex-cli",
+        ],
+    );
+
+    assert!(
+        !output.status.success(),
+        "unauthorized codex runner must fail"
+    );
+    assert_eq!(env["error"]["code"], json!("EVAL_FAILED"));
+    assert_eq!(
+        env["error"]["details"]["failure_kind"],
+        json!("runner_authorization_missing")
+    );
+}
+
+#[test]
+fn skill_eval_codex_cli_runner_executes_jsonl_trace() {
+    let root = TestDir::new("skill-eval-codex-run");
+    write_skill(root.path(), "demo", "# Demo\n");
+    write_file(
+        &root.path().join("skills/demo/evals/tasks.jsonl"),
+        r#"{"id":"task-1","task":"Fix the failing test","checks":{"outcome_contains":["tests pass"],"commands_contains":["Authorization"],"files_changed":["result.txt"],"exit_code":0,"max_commands":2,"max_tokens":50}}
+"#,
+    );
+    let path = fake_codex_path(
+        root.path(),
+        r#"#!/bin/sh
+case "$*" in
+  *WITHOUT_SKILL_BASELINE*)
+    printf '%s\n' '{"type":"agent_message","content":"baseline incomplete"}'
+    exit 1
+    ;;
+  *"Fix the failing test"*)
+    : > result.txt
+    printf '%s\n' '{"type":"usage","usage":{"total_tokens":40,"input_tokens":25,"output_tokens":15}}'
+    printf '%s\n' '{"type":"exec_command","command":"Authorization: Bearer reviewtoken"}'
+    printf '%s\n' '{"type":"exec_command","command":"Authorization: Bearer reviewtoken"}'
+    printf '%s\n' '{"type":"agent_message","content":"tests pass"}'
+    exit 0
+    ;;
+  *)
+    printf '%s\n' '{"type":"agent_message","content":"missing task prompt"}'
+    exit 0
+    ;;
+esac
+"#,
+    );
+    let report_path = root.path().join("reports/codex-run.json");
+    let report_arg = report_path.to_string_lossy().to_string();
+
+    let (output, env) = run_loom_with_env(
+        root.path(),
+        &[("PATH", path.as_str()), ("LOOM_EVAL_ALLOW_CODEX_CLI", "1")],
+        &[
+            "skill",
+            "eval",
+            "run",
+            "demo",
+            "--agent",
+            "codex",
+            "--baseline",
+            "no-skill",
+            "--runner",
+            "codex-cli",
+            "--output",
+            report_arg.as_str(),
+        ],
+    );
+
+    assert!(
+        output.status.success(),
+        "codex-cli run should pass: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(env["data"]["mode"], json!("real_codex_cli"));
+    assert_eq!(env["data"]["runner"], json!("codex-cli"));
+    assert_eq!(env["data"]["summary"]["with_skill_pass_rate"], json!(1.0));
+    assert_eq!(
+        env["data"]["summary"]["without_skill_pass_rate"],
+        json!(0.0)
+    );
+    assert_eq!(
+        env["data"]["runs"]["with_skill"][0]["files_changed"],
+        json!(["result.txt"])
+    );
+    assert_eq!(
+        env["data"]["runs"]["with_skill"][0]["metrics"]["tokens"],
+        json!(40)
+    );
+    assert_eq!(
+        env["data"]["runs"]["with_skill"][0]["metrics"]["commands"],
+        json!(2)
+    );
+    assert_eq!(
+        env["data"]["runs"]["with_skill"][0]["commands"],
+        json!(["Authorization: <redacted>", "Authorization: <redacted>"])
+    );
+    let persisted: Value =
+        serde_json::from_str(&fs::read_to_string(report_path).expect("read real report"))
+            .expect("parse real report");
+    assert_eq!(persisted["mode"], json!("real_codex_cli"));
+    let raw_report = serde_json::to_string(&persisted).expect("serialize persisted report");
+    assert!(!raw_report.contains("reviewtoken"));
+}
+
+#[test]
+fn skill_eval_trigger_codex_cli_runner_scores_observed_trigger() {
+    let root = TestDir::new("skill-eval-codex-trigger");
+    write_skill(root.path(), "demo", "# Demo\n");
+    write_file(
+        &root.path().join("skills/demo/evals/triggers.jsonl"),
+        r#"{"id":"positive","prompt":"Use demo for this task","expected_trigger":true}
+"#,
+    );
+    let path = fake_codex_path(
+        root.path(),
+        r#"#!/bin/sh
+printf '%s\n' '{"type":"agent_message","content":"{\"trigger\":true}"}'
+"#,
+    );
+
+    let (output, env) = run_loom_with_env(
+        root.path(),
+        &[("PATH", path.as_str()), ("LOOM_EVAL_ALLOW_CODEX_CLI", "1")],
+        &[
+            "skill",
+            "eval",
+            "trigger",
+            "demo",
+            "--agent",
+            "codex",
+            "--runner",
+            "codex-cli",
+        ],
+    );
+
+    assert!(
+        output.status.success(),
+        "codex-cli trigger should pass: stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(env["data"]["mode"], json!("real_codex_cli"));
+    assert_eq!(env["data"]["summary"]["trigger_recall"], json!(1.0));
+    assert_eq!(env["data"]["results"][0]["observed_trigger"], json!(true));
+}
+
+#[test]
+fn skill_eval_codex_cli_runner_unparseable_trace_fails_typed() {
+    let root = TestDir::new("skill-eval-codex-bad-trace");
+    write_skill(root.path(), "demo", "# Demo\n");
+    write_file(
+        &root.path().join("skills/demo/evals/tasks.jsonl"),
+        r#"{"id":"task-1","prompt":"Fix tests","checks":{"outcome_contains":["tests pass"]}}
+"#,
+    );
+    let path = fake_codex_path(
+        root.path(),
+        r#"#!/bin/sh
+printf '%s\n' 'not-json'
+"#,
+    );
+
+    let (output, env) = run_loom_with_env(
+        root.path(),
+        &[("PATH", path.as_str()), ("LOOM_EVAL_ALLOW_CODEX_CLI", "1")],
+        &[
+            "skill",
+            "eval",
+            "run",
+            "demo",
+            "--agent",
+            "codex",
+            "--baseline",
+            "no-skill",
+            "--runner",
+            "codex-cli",
+        ],
+    );
+
+    assert!(!output.status.success(), "bad codex JSONL trace must fail");
+    assert_eq!(env["error"]["code"], json!("EVAL_FAILED"));
+    assert_eq!(
+        env["error"]["details"]["failure_kind"],
+        json!("runner_trace_unparseable")
+    );
+    assert_eq!(
+        env["error"]["details"]["cleanup"]["status"],
+        json!("passed")
+    );
+}
+
+#[test]
+fn skill_eval_codex_cli_runner_timeout_fails_typed() {
+    let root = TestDir::new("skill-eval-codex-timeout");
+    write_skill(root.path(), "demo", "# Demo\n");
+    write_file(
+        &root.path().join("skills/demo/evals/tasks.jsonl"),
+        r#"{"id":"task-1","prompt":"Fix tests","checks":{"outcome_contains":["tests pass"]}}
+"#,
+    );
+    let path = fake_codex_path(
+        root.path(),
+        r#"#!/bin/sh
+/bin/sleep 1
+printf '%s\n' '{"type":"agent_message","content":"tests pass"}'
+"#,
+    );
+
+    let (output, env) = run_loom_with_env(
+        root.path(),
+        &[
+            ("PATH", path.as_str()),
+            ("LOOM_EVAL_ALLOW_CODEX_CLI", "1"),
+            ("LOOM_EVAL_CODEX_TIMEOUT_MS", "10"),
+        ],
+        &[
+            "skill",
+            "eval",
+            "run",
+            "demo",
+            "--agent",
+            "codex",
+            "--baseline",
+            "no-skill",
+            "--runner",
+            "codex-cli",
+        ],
+    );
+
+    assert!(!output.status.success(), "codex timeout must fail");
+    assert_eq!(env["error"]["code"], json!("EVAL_FAILED"));
+    assert_eq!(
+        env["error"]["details"]["failure_kind"],
+        json!("runner_timeout")
     );
 }
 

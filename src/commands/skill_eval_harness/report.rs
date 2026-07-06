@@ -107,12 +107,7 @@ pub(super) fn ensure_runner_available(
                     json!({"runner": "codex-cli"}),
                 ));
             }
-            Err(eval_failed(
-                "codex-cli runner execution is not implemented in this safe harness slice",
-                0,
-                "runner_unsupported",
-                json!({"runner": "codex-cli"}),
-            ))
+            Ok(())
         }
     }
 }

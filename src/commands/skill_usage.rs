@@ -134,10 +134,7 @@ fn validate_failure_category(raw: &str) -> std::result::Result<(), CommandFailur
         "unknown",
     ];
     if !ALLOWED.contains(&raw) {
-        return Err(map_arg(anyhow::anyhow!(
-            "failure-category must be one of: {}",
-            ALLOWED.join(", ")
-        )));
+        return Err(map_arg(anyhow::anyhow!("unsupported failure-category")));
     }
     Ok(())
 }

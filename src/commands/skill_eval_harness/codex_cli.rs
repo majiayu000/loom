@@ -63,6 +63,12 @@ impl SkillEvalRunner for CodexCliRunner {
             &files_changed,
             metrics,
         );
+        let commands = executed
+            .trace
+            .commands
+            .iter()
+            .map(|command| redact_sensitive_string(command))
+            .collect();
         let (status, score) = case_status_score(&checks);
         Ok(EvalCaseResult {
             id: case.id(),
@@ -72,7 +78,7 @@ impl SkillEvalRunner for CodexCliRunner {
             score,
             output: redact_sensitive_string(&output),
             exit_code: executed.exit_code,
-            commands: executed.trace.commands,
+            commands,
             files_changed,
             metrics,
             checks,
@@ -192,6 +198,7 @@ fn execute_codex_jsonl(
         .arg("--cd")
         .arg(workspace)
         .arg("--skip-git-repo-check")
+        .arg("--ephemeral")
         .arg("--sandbox")
         .arg("workspace-write")
         .arg("--output-last-message")
@@ -325,8 +332,6 @@ fn parse_codex_jsonl(raw: &str) -> std::result::Result<CodexTrace, CommandFailur
             json!({"runner": "codex-cli"}),
         ));
     }
-    trace.commands.sort();
-    trace.commands.dedup();
     Ok(trace)
 }
 
@@ -372,10 +377,7 @@ fn is_output_key(key: &str) -> bool {
 }
 
 fn is_token_key(key: &str) -> bool {
-    matches!(
-        key,
-        "tokens" | "total_tokens" | "input_tokens" | "output_tokens"
-    )
+    matches!(key, "tokens" | "total_tokens")
 }
 
 fn task_prompt(plan: &EvalPlan, case: &HarnessTaskCase, variant: EvalVariant) -> String {

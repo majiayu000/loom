@@ -364,7 +364,7 @@ fn skill_eval_codex_cli_runner_executes_jsonl_trace() {
     write_skill(root.path(), "demo", "# Demo\n");
     write_file(
         &root.path().join("skills/demo/evals/tasks.jsonl"),
-        r#"{"id":"task-1","prompt":"Fix the failing test","checks":{"outcome_contains":["tests pass"],"commands_contains":["cargo test"],"files_changed":["result.txt"],"exit_code":0,"max_commands":2}}
+        r#"{"id":"task-1","task":"Fix the failing test","checks":{"outcome_contains":["tests pass"],"commands_contains":["Authorization"],"files_changed":["result.txt"],"exit_code":0,"max_commands":2,"max_tokens":50}}
 "#,
     );
     let path = fake_codex_path(
@@ -375,10 +375,16 @@ case "$*" in
     printf '%s\n' '{"type":"agent_message","content":"baseline incomplete"}'
     exit 1
     ;;
-  *)
+  *"Fix the failing test"*)
     : > result.txt
-    printf '%s\n' '{"type":"exec_command","command":"cargo test"}'
+    printf '%s\n' '{"type":"usage","usage":{"total_tokens":40,"input_tokens":25,"output_tokens":15}}'
+    printf '%s\n' '{"type":"exec_command","command":"Authorization: Bearer reviewtoken"}'
+    printf '%s\n' '{"type":"exec_command","command":"Authorization: Bearer reviewtoken"}'
     printf '%s\n' '{"type":"agent_message","content":"tests pass"}'
+    exit 0
+    ;;
+  *)
+    printf '%s\n' '{"type":"agent_message","content":"missing task prompt"}'
     exit 0
     ;;
 esac
@@ -423,10 +429,24 @@ esac
         env["data"]["runs"]["with_skill"][0]["files_changed"],
         json!(["result.txt"])
     );
+    assert_eq!(
+        env["data"]["runs"]["with_skill"][0]["metrics"]["tokens"],
+        json!(40)
+    );
+    assert_eq!(
+        env["data"]["runs"]["with_skill"][0]["metrics"]["commands"],
+        json!(2)
+    );
+    assert_eq!(
+        env["data"]["runs"]["with_skill"][0]["commands"],
+        json!(["Authorization: <redacted>", "Authorization: <redacted>"])
+    );
     let persisted: Value =
         serde_json::from_str(&fs::read_to_string(report_path).expect("read real report"))
             .expect("parse real report");
     assert_eq!(persisted["mode"], json!("real_codex_cli"));
+    let raw_report = serde_json::to_string(&persisted).expect("serialize persisted report");
+    assert!(!raw_report.contains("reviewtoken"));
 }
 
 #[test]

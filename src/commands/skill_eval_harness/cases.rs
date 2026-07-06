@@ -48,7 +48,7 @@ impl HarnessTriggerCase {
 pub(crate) struct HarnessTaskCase {
     #[serde(default)]
     pub(crate) id: Option<String>,
-    #[serde(default, alias = "input", alias = "prompt")]
+    #[serde(default, alias = "input", alias = "prompt", alias = "task")]
     _task: Option<String>,
     #[serde(default)]
     pub(crate) workspace_fixture: Option<String>,

@@ -119,6 +119,141 @@ fn use_apply_projects_local_skill_without_manual_ids() {
 }
 
 #[test]
+fn use_apply_and_skill_activate_share_project_projection_semantics() {
+    let use_root = TestDir::new("use-activate-parity-use-root");
+    let activate_root = TestDir::new("use-activate-parity-activate-root");
+    let source = TestDir::new("use-activate-parity-source");
+    let use_workspace = TestDir::new("use-activate-parity-use-workspace");
+    let activate_workspace = TestDir::new("use-activate-parity-activate-workspace");
+    let skill_body = "---\nname: pdf-helper\ndescription: Use when testing projection parity.\n---\n# PDF helper\n";
+    write_file(&source.path().join("SKILL.md"), skill_body);
+    write_skill(activate_root.path(), "pdf-helper", skill_body);
+
+    let (output, env) = run_loom(use_root.path(), &["workspace", "init"]);
+    assert!(output.status.success(), "workspace init should pass: {env}");
+    let source_arg = source.path().to_str().expect("source path");
+    let (output, env) = run_loom(
+        use_root.path(),
+        &["skill", "add", source_arg, "--name", "pdf-helper"],
+    );
+    assert!(output.status.success(), "skill add should pass: {env}");
+
+    let use_workspace_arg = use_workspace.path().to_str().expect("use workspace");
+    let (use_output, use_env) = run_loom(
+        use_root.path(),
+        &[
+            "use",
+            "pdf-helper",
+            "--agents",
+            "claude",
+            "--scope",
+            "project",
+            "--workspace",
+            use_workspace_arg,
+            "--method",
+            "copy",
+            "--apply",
+        ],
+    );
+    assert!(
+        use_output.status.success(),
+        "use apply should pass: {use_env}"
+    );
+
+    let activate_workspace_arg = activate_workspace
+        .path()
+        .to_str()
+        .expect("activate workspace");
+    let (activate_output, activate_env) = run_loom(
+        activate_root.path(),
+        &[
+            "skill",
+            "activate",
+            "pdf-helper",
+            "--agent",
+            "claude",
+            "--scope",
+            "project",
+            "--workspace",
+            activate_workspace_arg,
+            "--method",
+            "copy",
+        ],
+    );
+    assert!(
+        activate_output.status.success(),
+        "skill activate should pass: {activate_env}"
+    );
+
+    let use_applied = &use_env["data"]["applied"][0];
+    let activate_data = &activate_env["data"];
+    assert_eq!(use_applied["agent"], json!("claude"));
+    assert_eq!(activate_data["target"]["agent"], json!("claude"));
+    assert_eq!(use_applied["binding"]["profile_id"], json!("default"));
+    assert_eq!(activate_data["binding"]["profile_id"], json!("default"));
+    assert_eq!(
+        use_applied["binding"]["workspace_matcher"]["kind"],
+        json!("path_prefix")
+    );
+    assert_eq!(
+        activate_data["binding"]["workspace_matcher"]["kind"],
+        json!("path_prefix")
+    );
+    assert_eq!(use_applied["projection"]["method"], json!("copy"));
+    assert_eq!(activate_data["projection"]["method"], json!("copy"));
+    assert_eq!(use_applied["projection"]["health"], json!("healthy"));
+    assert_eq!(activate_data["projection"]["health"], json!("healthy"));
+    assert_eq!(
+        use_applied["projection"]["source_tree_digest"],
+        use_applied["projection"]["materialized_tree_digest"]
+    );
+    assert_eq!(
+        activate_data["projection"]["source_tree_digest"],
+        activate_data["projection"]["materialized_tree_digest"]
+    );
+    assert!(
+        use_applied["projection"]["source_tree_digest"]
+            .as_str()
+            .is_some_and(|digest| digest.starts_with("sha256:")),
+        "use apply should record a source digest: {use_env}"
+    );
+    assert!(
+        activate_data["projection"]["source_tree_digest"]
+            .as_str()
+            .is_some_and(|digest| digest.starts_with("sha256:")),
+        "skill activate should record a source digest: {activate_env}"
+    );
+
+    let use_projection_path = use_applied["projection"]["materialized_path"]
+        .as_str()
+        .expect("use projection path");
+    let activate_projection_path = activate_data["projection"]["materialized_path"]
+        .as_str()
+        .expect("activate projection path");
+    assert!(
+        use_projection_path.ends_with(".claude/skills/pdf-helper"),
+        "use apply target should use the claude project skill dir: {use_projection_path}"
+    );
+    assert!(
+        activate_projection_path.ends_with(".claude/skills/pdf-helper"),
+        "activation target should use the claude project skill dir: {activate_projection_path}"
+    );
+    assert!(
+        fs::read_to_string(format!("{use_projection_path}/SKILL.md"))
+            .expect("read use projection")
+            .contains("PDF helper")
+    );
+    assert!(
+        fs::read_to_string(format!("{activate_projection_path}/SKILL.md"))
+            .expect("read activation projection")
+            .contains("PDF helper")
+    );
+
+    assert!(operations_log(use_root.path()).contains("\"intent\":\"skill.project\""));
+    assert!(operations_log(activate_root.path()).contains("\"intent\":\"skill.activate\""));
+}
+
+#[test]
 fn use_user_scope_requires_adopt_before_writing_existing_agent_dirs() {
     let root = TestDir::new("use-user-adopt-required");
     let source = TestDir::new("use-user-adopt-required-source");

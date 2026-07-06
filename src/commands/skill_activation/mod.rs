@@ -1,35 +1,28 @@
 mod apply;
 mod compiled;
 mod plan;
-mod resolve;
+pub(crate) mod resolve;
 
-use chrono::Utc;
 use serde_json::{Value, json};
 
 use crate::cli::{ProjectionMethod, SkillActivateArgs, SkillActiveListArgs, SkillDeactivateArgs};
 use crate::envelope::Meta;
-use crate::gitops;
-use crate::state_model::{RegistryBindingRule, RegistryProjectionInstance};
 use crate::types::ErrorCode;
 
 use super::helpers::{
-    commit_registry_state, map_git, map_lock, map_registry_state, projection_instance_id,
+    commit_registry_state, map_lock, map_registry_state, projection_instance_id,
     projection_method_as_str,
 };
 use super::projections::{
-    apply_projection_observation, maybe_autosync_or_queue, observe_projection,
-    record_registry_observation, record_registry_operation, upsert_projection, upsert_rule,
+    maybe_autosync_or_queue, record_registry_observation, record_registry_operation,
 };
 use super::skill_compile::compiled_activation_candidates;
 use super::skill_safety::enforce_skill_safety;
 use super::telemetry::{record_skill_activation_telemetry, telemetry_warning};
 use super::{App, CommandFailure};
 
-use apply::{
-    apply_activation_projection, remove_safe_symlink_projection, restore_activation_state,
-    save_activation_state,
-};
-use plan::{activation_plan, activation_state_changed, active_status, binding_matches_scope};
+use apply::remove_safe_symlink_projection;
+use plan::{activation_plan, active_status, binding_matches_scope};
 use resolve::{
     DEFAULT_POLICY_PROFILE, activation_selection, ensure_skill_exists_without_layout,
     optional_snapshot, resolve_activation, resolve_deactivation, scope_str, workspace_for_scope,
@@ -84,144 +77,54 @@ impl App {
         let resolved = resolve_activation(&self.ctx, &snapshot, selection)?;
         let plan = activation_plan(&resolved, false);
 
-        let projection_changed = apply_activation_projection(&self.ctx, &resolved)?;
-        if let Some(failure) = skill_activate_projection_fault(&resolved.selection.skill) {
-            return Err(failure);
-        }
-        let state_changed = activation_state_changed(&resolved) || projection_changed;
-        if !state_changed {
+        let execution = super::projection_executor::execute_projection(
+            &self.ctx,
+            &paths,
+            &snapshot,
+            super::projection_executor::ProjectionExecutionInput {
+                skill: resolved.selection.skill.clone(),
+                binding: resolved.binding.clone(),
+                binding_is_new: resolved.binding_is_new,
+                target: resolved.target.clone(),
+                target_is_new: resolved.target_is_new,
+                materialized_path: resolved.materialized_path.clone(),
+                method: resolved.selection.method,
+                operation_intent: "skill.activate",
+                operation_payload: json!({
+                    "skill_id": resolved.selection.skill,
+                    "agent": resolved.selection.agent,
+                    "scope": scope_str(resolved.selection.scope),
+                    "profile": resolved.selection.profile,
+                    "binding_id": resolved.binding.binding_id,
+                    "target_id": resolved.target.target_id,
+                    "method": projection_method_as_str(resolved.selection.method),
+                    "request_id": request_id
+                }),
+                observation_kind: "activated",
+                request_id: request_id.to_string(),
+                commit_message: format!(
+                    "activate({}): record skill activation",
+                    resolved.selection.skill
+                ),
+                replace_existing: false,
+                safe_existing_noop: true,
+                after_materialize_fault: None,
+                after_state_save_fault: None,
+                after_observation_fault: None,
+                activation_after_projection_fault: true,
+            },
+        )?;
+        if execution.noop {
             return Ok((json!({"plan": plan, "noop": true}), Meta::default()));
         }
 
-        let original_targets = snapshot.targets.clone();
-        let original_bindings = snapshot.bindings.clone();
-        let original_rules = snapshot.rules.clone();
-        let original_projections = snapshot.projections.clone();
-        let mut targets = original_targets.clone();
-        let mut bindings = original_bindings.clone();
-        let mut rules = original_rules.clone();
-        let mut projections = original_projections.clone();
-
-        if resolved.target_is_new {
-            targets.targets.push(resolved.target.clone());
-            targets
-                .targets
-                .sort_by(|left, right| left.target_id.cmp(&right.target_id));
-        }
-        if resolved.binding_is_new {
-            bindings.bindings.push(resolved.binding.clone());
-            bindings
-                .bindings
-                .sort_by(|left, right| left.binding_id.cmp(&right.binding_id));
-        }
-
-        let rule = RegistryBindingRule {
-            binding_id: resolved.binding.binding_id.clone(),
-            skill_id: resolved.selection.skill.clone(),
-            target_id: resolved.target.target_id.clone(),
-            method: resolved.selection.method,
-            watch_policy: "observe_only".to_string(),
-            created_at: resolved
-                .existing_rule
-                .as_ref()
-                .and_then(|rule| rule.created_at)
-                .or_else(|| Some(Utc::now())),
-        };
-        upsert_rule(&mut rules, rule);
-
-        let head = gitops::head(&self.ctx).map_err(map_git)?;
-        let instance_id = projection_instance_id(
-            &resolved.selection.skill,
-            &resolved.binding.binding_id,
-            &resolved.target.target_id,
-        );
-        let mut projection = RegistryProjectionInstance {
-            instance_id: instance_id.clone(),
-            skill_id: resolved.selection.skill.clone(),
-            binding_id: Some(resolved.binding.binding_id.clone()),
-            target_id: resolved.target.target_id.clone(),
-            materialized_path: resolved.materialized_path.display().to_string(),
-            method: resolved.selection.method,
-            last_applied_rev: head.clone(),
-            health: crate::core::vocab::Health::Healthy,
-            observed_drift: Some(false),
-            source_tree_digest: None,
-            materialized_tree_digest: None,
-            last_observed_at: None,
-            last_observed_error: None,
-            updated_at: Some(Utc::now()),
-        };
-        let observation = observe_projection(&self.ctx, &projection);
-        apply_projection_observation(&mut projection, &observation);
-        upsert_projection(&mut projections, projection.clone());
-
-        save_activation_state(
-            &paths,
-            &targets,
-            &bindings,
-            &rules,
-            &projections,
-            &original_targets,
-        )?;
-        let op_id = match record_registry_operation(
-            &paths,
-            "skill.activate",
-            json!({
-                "skill_id": resolved.selection.skill,
-                "agent": resolved.selection.agent,
-                "scope": scope_str(resolved.selection.scope),
-                "profile": resolved.selection.profile,
-                "binding_id": resolved.binding.binding_id,
-                "target_id": resolved.target.target_id,
-                "method": projection_method_as_str(resolved.selection.method),
-                "request_id": request_id
-            }),
-            json!({"instance_id": instance_id}),
-        ) {
-            Ok(op_id) => op_id,
-            Err(err) => {
-                restore_activation_state(
-                    &paths,
-                    &original_targets,
-                    &original_bindings,
-                    &original_rules,
-                    &original_projections,
-                )?;
-                return Err(map_registry_state(err));
-            }
-        };
-        record_registry_observation(
-            &paths,
-            &instance_id,
-            "activated",
-            Some(projection.materialized_path.clone()),
-            None,
-            Some(head),
-        )
-        .map_err(map_registry_state)?;
-
-        let commit = commit_registry_state(
-            &self.ctx,
-            &format!("activate({}): record skill activation", projection.skill_id),
-        )?;
-        let mut meta = Meta {
-            op_id: Some(op_id),
-            ..Meta::default()
-        };
-        if let Some(commit) = &commit {
-            maybe_autosync_or_queue(
-                &self.ctx,
-                "skill.activate",
-                request_id,
-                json!({
-                    "skill": projection.skill_id,
-                    "binding_id": projection.binding_id,
-                    "target_id": projection.target_id,
-                    "commit": commit
-                }),
-                &mut meta,
-            )?;
-        }
+        let projection = execution.projection.ok_or_else(|| {
+            CommandFailure::new(
+                ErrorCode::InternalError,
+                "projection executor did not return a projection for skill.activate",
+            )
+        })?;
+        let mut meta = execution.meta;
         if let Err(err) = record_skill_activation_telemetry(
             &self.ctx,
             &projection.skill_id,
@@ -239,7 +142,7 @@ impl App {
                 "projection": projection,
                 "target": resolved.target,
                 "binding": resolved.binding,
-                "commit": commit,
+                "commit": execution.commit,
                 "noop": false
             }),
             meta,
@@ -486,21 +389,4 @@ fn ensure_symlink_deactivation_rule(
             resolved.materialized_path.display()
         ),
     ))
-}
-
-#[cfg(debug_assertions)]
-fn skill_activate_projection_fault(skill: &str) -> Option<CommandFailure> {
-    let raw = std::env::var("LOOM_SKILL_ACTIVATE_FAULT_INJECT").ok()?;
-    if raw == format!("after_projection:{skill}") {
-        return Some(CommandFailure::new(
-            ErrorCode::InternalError,
-            format!("fault injected after projecting {}", skill),
-        ));
-    }
-    None
-}
-
-#[cfg(not(debug_assertions))]
-fn skill_activate_projection_fault(_skill: &str) -> Option<CommandFailure> {
-    None
 }

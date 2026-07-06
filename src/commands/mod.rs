@@ -17,6 +17,7 @@ mod observed_tests;
 mod org_policy;
 mod package_export;
 mod plan_cmds;
+mod projection_executor;
 mod projections;
 mod provenance;
 #[path = "provider_cmds/model.rs"]

@@ -607,6 +607,21 @@ fn skill_deactivate_fails_closed_for_copy_projection() {
         activate_output.status.success(),
         "copy activation should succeed: {activate_env}"
     );
+    let projection = &activate_env["data"]["projection"];
+    assert_eq!(projection["method"], Value::String("copy".to_string()));
+    assert_eq!(projection["health"], Value::String("healthy".to_string()));
+    assert!(
+        projection["last_observed_at"].as_str().is_some(),
+        "copy activation should record observation timestamp: {activate_env}"
+    );
+    let source_digest = projection["source_tree_digest"]
+        .as_str()
+        .expect("copy activation source digest");
+    let live_digest = projection["materialized_tree_digest"]
+        .as_str()
+        .expect("copy activation live digest");
+    assert!(source_digest.starts_with("sha256:"));
+    assert_eq!(source_digest, live_digest);
     let projected = home.path().join(".agents/skills/demo");
     assert!(
         projected.join("SKILL.md").is_file(),

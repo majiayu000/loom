@@ -17,6 +17,7 @@ use crate::cli::{
 use crate::envelope::Meta;
 use crate::fs_util::remove_path_if_exists;
 use crate::gitops;
+#[allow(unused_imports)]
 use crate::state_model::{
     RegistryBindingRule, RegistryBindingsFile, RegistryProjectionInstance,
     RegistryProjectionTarget, RegistryProjectionsFile, RegistryRulesFile, RegistryStatePaths,
@@ -27,12 +28,15 @@ use super::file_ops::{
     backup_path_if_exists, copy_dir_recursive_without_symlinks, restore_path_from_backup,
     rollback_added_skill,
 };
+#[allow(unused_imports)]
 use super::fs_probe::probe_symlink;
+#[allow(unused_imports)]
 use super::helpers::{
     commit_registry_state, ensure_skill_exists, map_arg, map_git, map_io, map_lock, map_project_io,
     map_registry_state, projection_instance_id, projection_method_as_str,
     validate_projection_method, validate_skill_name,
 };
+#[allow(unused_imports)]
 use super::projections::{
     RegistryAuditStateBackup, apply_projection_observation, maybe_autosync_or_queue,
     observe_projection, project_skill_to_target, record_registry_observation,
@@ -42,13 +46,14 @@ use super::projections::{
 use super::provenance::{
     provenance_record_for_skill, resolve_add_source, save_record_and_lock, stage_provenance_paths,
 };
+#[allow(unused_imports)]
 use super::skill_safety::enforce_skill_safety;
 use super::{App, CommandFailure};
 
 mod commit;
 mod observed;
 mod save;
-mod shared;
+pub(crate) mod shared;
 mod snapshot;
 
 use self::shared::*;
@@ -148,7 +153,6 @@ impl App {
         validate_skill_name(&args.skill).map_err(map_arg)?;
         let _workspace = self.ctx.lock_workspace().map_err(map_lock)?;
         self.ensure_write_repo_ready()?;
-        ensure_skill_exists(&self.ctx, &args.skill)?;
 
         let paths = self.ensure_registry_layout()?;
         let snapshot = paths.load_snapshot().map_err(map_registry_state)?;
@@ -170,206 +174,54 @@ impl App {
             )
         })?;
 
-        if target.agent != binding.agent {
-            return Err(CommandFailure::new(
-                ErrorCode::TargetAgentMismatch,
-                format!(
-                    "binding '{}' is for agent '{}' but target '{}' is for agent '{}'",
-                    binding.binding_id, binding.agent, target.target_id, target.agent
-                ),
-            ));
-        }
-
-        if target.ownership != crate::core::vocab::Ownership::Managed {
-            return Err(CommandFailure::new(
-                ErrorCode::TargetNotManaged,
-                format!(
-                    "target '{}' has ownership '{}' and cannot be projected into",
-                    target.target_id, target.ownership
-                ),
-            ));
-        }
-
-        validate_projection_method(&target, args.method)?;
-
-        let skill_src = self.ctx.skill_path(&args.skill);
-        enforce_skill_safety(&self.ctx, &args.skill, &binding.policy_profile)?;
-        let target_base = PathBuf::from(&target.path);
-        fs::create_dir_all(&target_base).map_err(map_io)?;
-        let materialized_path = target_base.join(&args.skill);
-
-        // Fail-fast physical probe for symlink requests — run BEFORE any
-        // destructive operation (backup, remove) so a filesystem that cannot
-        // host symlinks (Windows without Developer Mode, FAT32, etc.) does
-        // not corrupt an existing projection. Policy allowed it via
-        // RegistryTargetCapabilities; here we verify the filesystem actually can.
-        if matches!(args.method, crate::cli::ProjectionMethod::Symlink) {
-            let probe = probe_symlink(&target_base);
-            if !probe.supported {
-                return Err(CommandFailure::new(
-                    ErrorCode::ProjectionMethodUnsupported,
-                    format!(
-                        "target '{}' filesystem does not support symlink projection: {}. \
-                         retry with --method copy",
-                        target.target_id,
-                        probe.reason.unwrap_or_else(|| "unknown reason".to_string())
-                    ),
-                ));
-            }
-        }
-
-        let replaced_projection_backup =
-            backup_path_if_exists(&self.ctx, &materialized_path, "project.replace_projection")
-                .map_err(map_io)?;
-        if let Err(err) = remove_path_if_exists(&materialized_path) {
-            let rollback_errors = rollback_project_mutation(
-                &paths,
-                &materialized_path,
-                replaced_projection_backup.as_ref(),
-                &snapshot.bindings,
-                &snapshot.rules,
-                &snapshot.projections,
-            );
-            return Err(map_io(err).with_rollback_errors(rollback_errors));
-        }
-        if let Err(err) = project_skill_to_target(&skill_src, &materialized_path, args.method) {
-            let rollback_errors = rollback_project_mutation(
-                &paths,
-                &materialized_path,
-                replaced_projection_backup.as_ref(),
-                &snapshot.bindings,
-                &snapshot.rules,
-                &snapshot.projections,
-            );
-            return Err(map_project_io(args.method)(err).with_rollback_errors(rollback_errors));
-        }
-
-        let original_bindings = snapshot.bindings.clone();
-        let original_rules = snapshot.rules.clone();
-        let original_projections = snapshot.projections.clone();
-        let mut rules = original_rules.clone();
-        upsert_rule(
-            &mut rules,
-            RegistryBindingRule {
-                binding_id: binding.binding_id.clone(),
-                skill_id: args.skill.clone(),
-                target_id: target.target_id.clone(),
+        let materialized_path = PathBuf::from(&target.path).join(&args.skill);
+        let execution = super::projection_executor::execute_projection(
+            &self.ctx,
+            &paths,
+            &snapshot,
+            super::projection_executor::ProjectionExecutionInput {
+                skill: args.skill.clone(),
+                binding,
+                binding_is_new: false,
+                target,
+                target_is_new: false,
+                materialized_path,
                 method: args.method,
-                watch_policy: "observe_only".to_string(),
-                created_at: Some(Utc::now()),
+                operation_intent: "skill.project",
+                operation_payload: json!({
+                    "skill_id": args.skill,
+                    "binding_id": args.binding,
+                    "target_id": target_id,
+                    "method": projection_method_as_str(args.method),
+                    "request_id": request_id
+                }),
+                observation_kind: "projected",
+                request_id: request_id.to_string(),
+                commit_message: format!("project({}): record projection", args.skill),
+                replace_existing: true,
+                safe_existing_noop: false,
+                after_materialize_fault: Some("skill_project_after_materialize"),
+                after_state_save_fault: Some("skill_project_after_state_save"),
+                after_observation_fault: Some("skill_project_after_observation"),
+                activation_after_projection_fault: false,
             },
-        );
+        )?;
 
-        let mut projections = original_projections.clone();
-        let instance_id =
-            projection_instance_id(&args.skill, &binding.binding_id, &target.target_id);
-        let mut projection = RegistryProjectionInstance {
-            instance_id: instance_id.clone(),
-            skill_id: args.skill.clone(),
-            binding_id: Some(binding.binding_id.clone()),
-            target_id: target.target_id.clone(),
-            materialized_path: materialized_path.display().to_string(),
-            method: args.method,
-            last_applied_rev: gitops::head(&self.ctx).map_err(map_git)?,
-            health: crate::core::vocab::Health::Healthy,
-            observed_drift: Some(false),
-            source_tree_digest: None,
-            materialized_tree_digest: None,
-            last_observed_at: None,
-            last_observed_error: None,
-            updated_at: Some(Utc::now()),
-        };
-        let observation = observe_projection(&self.ctx, &projection);
-        apply_projection_observation(&mut projection, &observation);
-        upsert_projection(&mut projections, projection.clone());
-
-        let registry_audit_backup =
-            snapshot_registry_audit_state(&paths).map_err(map_registry_state)?;
-        let post_materialize: std::result::Result<(Option<String>, Meta), CommandFailure> =
-            (|| {
-                maybe_skill_fault("skill_project_after_materialize")?;
-                paths
-                    .save_bindings_rules_projections(&original_bindings, &rules, &projections)
-                    .map_err(map_registry_state)?;
-                maybe_skill_fault("skill_project_after_state_save")?;
-                let op_id = record_registry_operation(
-                    &paths,
-                    "skill.project",
-                    json!({
-                        "skill_id": args.skill,
-                        "binding_id": binding.binding_id,
-                        "target_id": target.target_id,
-                        "method": projection_method_as_str(args.method),
-                        "request_id": request_id
-                    }),
-                    json!({
-                        "instance_id": instance_id
-                    }),
-                )
-                .map_err(map_registry_state)?;
-                record_registry_observation(
-                    &paths,
-                    &instance_id,
-                    "projected",
-                    Some(projection.materialized_path.clone()),
-                    None,
-                    Some(projection.last_applied_rev.clone()),
-                )
-                .map_err(map_registry_state)?;
-                maybe_skill_fault("skill_project_after_observation")?;
-                let commit = commit_registry_state(
-                    &self.ctx,
-                    &format!("project({}): record projection", args.skill),
-                )?;
-                let mut meta = Meta {
-                    op_id: Some(op_id),
-                    ..Meta::default()
-                };
-                if let Some(commit) = &commit {
-                    maybe_autosync_or_queue(
-                        &self.ctx,
-                        "skill.project",
-                        request_id,
-                        json!({
-                            "skill": args.skill,
-                            "binding_id": binding.binding_id,
-                            "target_id": target.target_id,
-                            "commit": commit
-                        }),
-                        &mut meta,
-                    )?;
-                }
-                Ok((commit, meta))
-            })();
-
-        let (commit, meta) = match post_materialize {
-            Ok(result) => result,
-            Err(err) => {
-                let mut rollback_errors = Vec::new();
-                if let Err(restore_err) =
-                    restore_registry_audit_state(&paths, &registry_audit_backup)
-                {
-                    push_rollback_error(
-                        &mut rollback_errors,
-                        "restore_registry_audit_state",
-                        restore_err,
-                    );
-                }
-                rollback_errors.extend(rollback_project_mutation(
-                    &paths,
-                    &materialized_path,
-                    replaced_projection_backup.as_ref(),
-                    &original_bindings,
-                    &original_rules,
-                    &original_projections,
-                ));
-                return Err(err.with_rollback_errors(rollback_errors));
-            }
-        };
+        let projection = execution.projection.ok_or_else(|| {
+            CommandFailure::new(
+                ErrorCode::InternalError,
+                "projection executor did not return a projection for skill.project",
+            )
+        })?;
 
         Ok((
-            json!({"projection": projection, "backup": replaced_projection_backup, "commit": commit, "noop": false}),
-            meta,
+            json!({
+                "projection": projection,
+                "backup": execution.backup,
+                "commit": execution.commit,
+                "noop": execution.noop
+            }),
+            execution.meta,
         ))
     }
 

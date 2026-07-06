@@ -245,7 +245,7 @@ fn find_matching_binding<'a>(
     })
 }
 
-fn find_rule<'a>(
+pub(crate) fn find_rule<'a>(
     snapshot: &'a RegistrySnapshot,
     binding: &RegistryWorkspaceBinding,
     target: &RegistryProjectionTarget,
@@ -258,7 +258,7 @@ fn find_rule<'a>(
     })
 }
 
-fn find_projection<'a>(
+pub(crate) fn find_projection<'a>(
     snapshot: &'a RegistrySnapshot,
     binding: &RegistryWorkspaceBinding,
     target: &RegistryProjectionTarget,

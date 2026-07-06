@@ -4,7 +4,7 @@ use serde_json::{Value, json};
 
 mod common;
 
-use common::{TestDir, run_loom, write_skill};
+use common::{TestDir, run_loom, write_minimal_registry_state, write_skill};
 
 #[test]
 fn skill_used_absent_telemetry_reports_not_recorded_without_state() {
@@ -41,6 +41,32 @@ fn skill_used_absent_telemetry_reports_not_recorded_without_state() {
         !root.path().join("state/telemetry").exists(),
         "absent telemetry config must remain blank"
     );
+}
+
+#[test]
+fn skill_used_accepts_registry_read_model_skill_without_source_dir() {
+    let root = TestDir::new("telemetry-skill-used-read-model");
+    write_minimal_registry_state(root.path(), 1);
+
+    let (enable_output, enable) = run_loom(root.path(), &["telemetry", "enable", "--local-only"]);
+    assert!(
+        enable_output.status.success(),
+        "enable should pass: {enable}"
+    );
+
+    let (used_output, used) = run_loom(
+        root.path(),
+        &["skill", "used", "model-onboarding", "--agent", "claude"],
+    );
+
+    assert!(
+        used_output.status.success(),
+        "read-model skill telemetry should pass without source dir: {used}"
+    );
+    assert_eq!(used["data"]["recorded"], json!(true));
+    let raw_events = fs::read_to_string(root.path().join("state/telemetry/events.jsonl"))
+        .expect("read telemetry events");
+    assert!(raw_events.contains(r#""skill_id":"model-onboarding""#));
 }
 
 #[test]

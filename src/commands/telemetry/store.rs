@@ -13,7 +13,7 @@ use super::super::helpers::{map_arg, map_io, validate_skill_name};
 use super::super::{CommandFailure, helpers};
 use super::model::{
     TELEMETRY_SCHEMA_VERSION, TelemetryConfig, TelemetryEvent, TelemetryEventDraft,
-    TelemetryPrivacy,
+    TelemetryEventType, TelemetryPrivacy, failure_category_allowed,
 };
 
 #[derive(Debug, Clone)]
@@ -334,6 +334,26 @@ fn validate_event(event: &TelemetryEvent) -> std::result::Result<(), CommandFail
         return Err(CommandFailure::new(
             ErrorCode::SchemaMismatch,
             "telemetry events must be redacted before persistence",
+        ));
+    }
+    if let Some(category) = event.metrics.failure_category.as_deref()
+        && !failure_category_allowed(category)
+    {
+        return Err(CommandFailure::new(
+            ErrorCode::SchemaMismatch,
+            "telemetry failure_category is unsupported",
+        ));
+    }
+    if event.event_type == TelemetryEventType::SkillError
+        && event
+            .metrics
+            .failure_category
+            .as_deref()
+            .is_none_or(|category| !failure_category_allowed(category))
+    {
+        return Err(CommandFailure::new(
+            ErrorCode::SchemaMismatch,
+            "skill.error telemetry requires failure_category",
         ));
     }
     Ok(())

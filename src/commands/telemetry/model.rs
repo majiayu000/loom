@@ -162,6 +162,16 @@ pub(super) enum RecommendationFeedback {
 }
 
 impl RecommendationFeedback {
+    #[inline(never)]
+    pub(super) fn from_str(value: &str) -> Option<Self> {
+        match value {
+            "accepted" => Some(Self::Accepted),
+            "rejected" => Some(Self::Rejected),
+            "ignored" => Some(Self::Ignored),
+            _ => None,
+        }
+    }
+
     pub(super) fn as_str(self) -> &'static str {
         match self {
             Self::Accepted => "accepted",
@@ -169,6 +179,30 @@ impl RecommendationFeedback {
             Self::Ignored => "ignored",
         }
     }
+}
+
+#[inline(never)]
+pub(crate) fn failure_category_allowed(value: &str) -> bool {
+    const ALLOWED: &[&str] = &[
+        "timeout",
+        "tool_error",
+        "model_error",
+        "dependency_error",
+        "permission_denied",
+        "rate_limited",
+        "invalid_input",
+        "policy_blocked",
+        "not_found",
+        "network_error",
+        "execution_error",
+        "unknown",
+    ];
+    ALLOWED.contains(&value)
+}
+
+#[inline(never)]
+pub(crate) fn feedback_allowed(value: &str) -> bool {
+    RecommendationFeedback::from_str(value).is_some()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

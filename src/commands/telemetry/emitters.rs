@@ -111,16 +111,11 @@ pub(crate) fn record_recommendation_feedback_telemetry(
     skill: &str,
     input: RecommendationFeedbackTelemetry<'_>,
 ) -> std::result::Result<TelemetryRecordResult, CommandFailure> {
-    let feedback = match input.feedback {
-        "accepted" => RecommendationFeedback::Accepted,
-        "rejected" => RecommendationFeedback::Rejected,
-        "ignored" => RecommendationFeedback::Ignored,
-        _ => {
-            return Err(CommandFailure::new(
-                ErrorCode::ArgInvalid,
-                "unsupported feedback",
-            ));
-        }
+    let Some(feedback) = RecommendationFeedback::from_str(input.feedback) else {
+        return Err(CommandFailure::new(
+            ErrorCode::ArgInvalid,
+            "unsupported feedback",
+        ));
     };
     let mut draft = TelemetryEventDraft::new(TelemetryEventType::RecommendationFeedback);
     draft.skill_id = Some(skill.to_string());

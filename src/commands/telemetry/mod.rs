@@ -33,6 +33,7 @@ use model::{
     RecommendationFeedback, TelemetryConfig, TelemetryEventDraft, TelemetryEventType,
     TelemetryMetrics,
 };
+pub(crate) use model::{failure_category_allowed, feedback_allowed};
 use store::{
     MalformedTelemetryLine, TelemetryLog, TelemetryLogEntry, config_path, events_path,
     output_path_outside_state, parse_cutoff, purge_token, read_config, read_event_log,

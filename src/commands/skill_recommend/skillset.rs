@@ -4,25 +4,24 @@ use serde_json::{Value, json};
 
 use crate::state::AppContext;
 
-use super::super::helpers::map_registry_state;
+use super::super::CommandFailure;
 use super::super::skill_inventory::tokenize;
 use super::super::telemetry::SkillTelemetryEvidenceCache;
-use super::super::{CommandFailure, build_skill_read_model};
 use super::evidence::member_dependency_risk;
 use super::{RecommendationContext, activation_safety_risk};
 
+#[inline(never)]
 pub(super) fn skillset_recommendations(
     ctx: &AppContext,
     task: &str,
     request: RecommendationContext<'_>,
     skill_results: &[Value],
+    inventory_skills: &[Value],
     skillsets: &Value,
     telemetry_cache: &mut SkillTelemetryEvidenceCache,
 ) -> std::result::Result<Vec<Value>, CommandFailure> {
-    let inventory = build_skill_read_model(ctx).map_err(map_registry_state)?;
-    let inventory = inventory
-        .skills
-        .into_iter()
+    let inventory = inventory_skills
+        .iter()
         .filter_map(|skill| {
             skill["skill_id"]
                 .as_str()
@@ -52,6 +51,7 @@ pub(super) fn skillset_recommendations(
         let mut risks = Vec::new();
         let mut warnings = Vec::new();
         let mut reasons = Vec::new();
+        let mut telemetry_risk_members = Vec::new();
         let mut required_safe = true;
         let mut member_commands = Vec::new();
         for member in skillset["members"].as_array().into_iter().flatten() {
@@ -69,6 +69,7 @@ pub(super) fn skillset_recommendations(
                 Some(skill) => {
                     let member_kind = if required { "required" } else { "optional" };
                     if telemetry_risky {
+                        telemetry_risk_members.push(skill_id.to_string());
                         if required {
                             required_safe = false;
                             risks.push(format!("{member_kind} member '{skill_id}' telemetry risk"));
@@ -148,6 +149,11 @@ pub(super) fn skillset_recommendations(
             "mode": request.mode,
             "score_inputs": {
                 "matched_fields": ["skillset", "members"],
+                "telemetry_risks": {
+                    "field": "recommendation_feedback",
+                    "members": telemetry_risk_members,
+                    "weight": -8,
+                },
             },
             "reasons": reasons,
             "risks": risks,

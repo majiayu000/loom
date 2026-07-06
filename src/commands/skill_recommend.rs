@@ -152,6 +152,7 @@ impl App {
                 &args.query,
                 recommendation_context,
                 &recommendation_skill_results,
+                &model.skills,
                 &skillsets,
                 &mut telemetry_cache,
             )?;
@@ -237,6 +238,7 @@ impl App {
             &args.task_description,
             recommendation_context,
             &skill_results,
+            &model.skills,
             &skillsets,
             &mut telemetry_cache,
         )?;
@@ -430,6 +432,7 @@ fn recommendation_results(
     task: &str,
     request: RecommendationContext<'_>,
     skill_search_results: &[Value],
+    inventory_skills: &[Value],
     skillsets: &Value,
     telemetry_cache: &mut SkillTelemetryEvidenceCache,
 ) -> std::result::Result<Vec<Value>, CommandFailure> {
@@ -441,8 +444,15 @@ fn recommendation_results(
             results.push(recommendation);
         }
     }
-    let skillset_results =
-        skillset_recommendations(ctx, task, request, &results, skillsets, telemetry_cache)?;
+    let skillset_results = skillset_recommendations(
+        ctx,
+        task,
+        request,
+        &results,
+        inventory_skills,
+        skillsets,
+        telemetry_cache,
+    )?;
     results.extend(skillset_results);
     results.sort_by(|left, right| {
         let l = left["score"].as_i64().unwrap_or_default();

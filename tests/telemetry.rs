@@ -207,17 +207,34 @@ fn telemetry_writes_redacted_eval_and_safety_events_and_reports_them() {
 fn telemetry_export_redacts_valid_events_and_quarantines_malformed_lines() {
     let root = TestDir::new("telemetry-export");
     let events_path = root.path().join("state/telemetry/events.jsonl");
+    let raw_failure_category = json!({
+        "schema_version": 1,
+        "event_id": "evt_raw_error",
+        "event_type": "skill.error",
+        "skill_id": "demo",
+        "timestamp": "2026-01-01T00:00:00Z",
+        "metrics": {
+            "success": false,
+            "failure_category": "raw stack trace secret"
+        },
+        "privacy": {
+            "raw_prompt_stored": false,
+            "raw_code_stored": false,
+            "redacted": true
+        }
+    });
     write_file(
         &events_path,
         &format!(
-            "{}\n{{\"schema_version\":1,\"event_id\":\"evt_bad\",\"event_type\":\"skill.eval\",\"raw_prompt\":\"secret\"}}\n",
+            "{}\n{}\n{{\"schema_version\":1,\"event_id\":\"evt_bad\",\"event_type\":\"skill.eval\",\"raw_prompt\":\"secret\"}}\n",
             event_line(
                 "evt_export",
                 "skill.eval",
                 "demo",
                 "2026-01-01T00:00:00Z",
                 true
-            )
+            ),
+            raw_failure_category
         ),
     );
 
@@ -239,11 +256,21 @@ fn telemetry_export_redacts_valid_events_and_quarantines_malformed_lines() {
         "jsonl export should pass: {jsonl}"
     );
     assert_eq!(jsonl["data"]["events_exported"], json!(1));
-    assert_eq!(jsonl["data"]["malformed_events_skipped"], json!(1));
-    assert_eq!(jsonl["meta"]["warnings"].as_array().unwrap().len(), 1);
+    assert_eq!(jsonl["data"]["malformed_events_skipped"], json!(2));
+    assert_eq!(jsonl["meta"]["warnings"].as_array().unwrap().len(), 2);
+    assert!(
+        jsonl["meta"]["warnings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|warning| warning
+                .as_str()
+                .is_some_and(|warning| warning.contains("failure_category")))
+    );
     let exported = fs::read_to_string(&jsonl_out).expect("read jsonl export");
     assert!(exported.contains(r#""event_id":"evt_export""#));
     assert!(!exported.contains("secret"));
+    assert!(!exported.contains("raw stack trace"));
 
     let csv_out = root.path().join("export.csv");
     let csv_out_arg = csv_out.to_string_lossy().into_owned();

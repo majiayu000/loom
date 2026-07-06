@@ -239,6 +239,7 @@ The current lifecycle keeps source history on a smaller verb set: import with `a
 | `loom skill regression` | Compare one skill against a baseline gate | Fail with typed regression details when lint, safety, dependency, eval, or size gates block the candidate | Source + local environment (read-only) |
 | `loom skillset create/add/remove/show/lint/activate/deactivate/eval/release/rollback` | Group existing registry skills into a named set | Organize coherent skill bundles, activate members together, aggregate member evals, and version skillset definitions | Registry skillset state + target projections |
 | `loom telemetry status/enable/disable/report/export/purge` | Manage local privacy-preserving telemetry | Opt in to redacted local event writes, aggregate usage/value/cost/drift/risk, export redacted events, and purge selected telemetry state with dry-run confirmation | `state/telemetry` |
+| `loom skill used/feedback` | Record redacted local production usage and recommendation feedback | Hook agent wrappers and recommendation flows into local telemetry without storing raw prompts, output, errors, env values, or file contents | `state/telemetry` |
 | `loom workflow create/show/plan/preflight` | Define and guard a multi-skill DAG workflow | Agents need an auditable plan before coordinating several skills; execution remains hidden/deferred until apply gates land | Registry workflow state + source metadata |
 | `loom use` | Plan or apply target, binding, and projection setup in one flow | New users want to use a skill without copying target/binding IDs between commands | Source + target + registry metadata |
 | `loom plan use` / `loom apply` | Persist a guarded use plan, then execute it with idempotency | Agents need a retry-safe plan/apply protocol for higher-risk flows | Command audit + source/target/registry metadata |
@@ -327,6 +328,8 @@ loom skill list
 loom skill inspect <skill> [--agent <agent>] [--workspace <path>] [--profile <profile>]
 loom skill inspect <skill> --brief
 loom skill inspect <skill> --include-telemetry
+loom skill used <skill> [--agent <agent>] [--workspace <path>] [--session-id <id>] [--tokens-in <n>] [--tokens-out <n>] [--commands <n>] [--duration-ms <n>] [--success | --error] [--failure-category <category>]
+loom skill feedback <skill> --feedback <accepted|rejected|ignored> [--agent <agent>] [--workspace <path>] [--session-id <id>] [--task <text>]
 loom skill deps <skill> [--agent <agent>] [--workspace <path>]
 loom skill compile <skill> --dry-run [--agent <agent>] [--profile <profile>]
 loom skill compile --skill <skill> --dry-run [--agent <agent>] [--profile <profile>]

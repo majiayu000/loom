@@ -133,6 +133,87 @@ fn recommend_penalizes_negative_eval_delta() {
 }
 
 #[test]
+fn recommend_uses_telemetry_usage_and_feedback_when_present() {
+    let root = TestDir::new("recommend-telemetry-evidence");
+    for skill in ["a-ci-helper", "z-ci-helper"] {
+        write_recommend_skill(
+            root.path(),
+            skill,
+            "Use when fixing failing CI and test workflow failures.",
+        );
+    }
+
+    let (baseline_output, baseline) = run_loom(
+        root.path(),
+        &["skill", "recommend", "fix failing ci", "--agent", "codex"],
+    );
+    assert!(
+        baseline_output.status.success(),
+        "baseline recommend should pass: {baseline}"
+    );
+    assert_eq!(
+        recommendation_results(&baseline)[0]["id"],
+        json!("a-ci-helper")
+    );
+
+    let (enable_output, enable) = run_loom(root.path(), &["telemetry", "enable", "--local-only"]);
+    assert!(
+        enable_output.status.success(),
+        "enable should pass: {enable}"
+    );
+    let (used_output, used) = run_loom(
+        root.path(),
+        &["skill", "used", "z-ci-helper", "--agent", "codex"],
+    );
+    assert!(
+        used_output.status.success(),
+        "skill used should pass: {used}"
+    );
+    let (feedback_output, feedback) = run_loom(
+        root.path(),
+        &[
+            "skill",
+            "feedback",
+            "z-ci-helper",
+            "--feedback",
+            "accepted",
+            "--agent",
+            "codex",
+        ],
+    );
+    assert!(
+        feedback_output.status.success(),
+        "skill feedback should pass: {feedback}"
+    );
+
+    let (output, env) = run_loom(
+        root.path(),
+        &["skill", "recommend", "fix failing ci", "--agent", "codex"],
+    );
+
+    assert!(output.status.success(), "recommend should pass: {env}");
+    assert_eq!(recommendation_results(&env)[0]["id"], json!("z-ci-helper"));
+    let boosted = recommendation(&env, "z-ci-helper");
+    assert!(
+        boosted["score_inputs"]
+            .as_array()
+            .expect("score inputs")
+            .iter()
+            .any(|input| input["field"] == json!("telemetry_usage")),
+        "usage telemetry should appear in score inputs: {boosted}"
+    );
+    assert!(
+        boosted["score_inputs"]
+            .as_array()
+            .expect("score inputs")
+            .iter()
+            .any(|input| input["field"] == json!("recommendation_feedback")
+                && input["metric"] == json!("accepted")),
+        "feedback telemetry should appear in score inputs: {boosted}"
+    );
+}
+
+#[test]
 fn index_capabilities_keep_negative_fixtures_out_of_triggers() {
     let root = TestDir::new("recommend-positive-trigger-index");
     write_recommend_skill(

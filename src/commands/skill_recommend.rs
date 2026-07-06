@@ -67,6 +67,7 @@ impl App {
             .to_string();
         let recommendation_context = RecommendationContext {
             agent: args.agent.as_deref(),
+            workspace: args.workspace.as_deref(),
             mode,
             policy_profile: &policy_profile,
         };
@@ -214,6 +215,7 @@ impl App {
         let skillsets = load_skillsets_value(&self.ctx)?;
         let recommendation_context = RecommendationContext {
             agent: None,
+            workspace: None,
             mode: "lexical",
             policy_profile: "safe-capture",
         };
@@ -404,6 +406,7 @@ fn recommend_binding_matches_workspace(
 #[derive(Clone, Copy)]
 struct RecommendationContext<'a> {
     agent: Option<&'a str>,
+    workspace: Option<&'a Path>,
     mode: &'a str,
     policy_profile: &'a str,
 }
@@ -463,7 +466,14 @@ fn evidence_adjusted_skill_results(
         if skill["quarantined"].as_bool() == Some(true) {
             continue;
         }
-        let evidence = ranking_evidence(ctx, skill_id, skill, request.agent, Some(task))?;
+        let evidence = ranking_evidence(
+            ctx,
+            skill_id,
+            skill,
+            request.agent,
+            request.workspace,
+            Some(task),
+        )?;
         let mut result = result.clone();
         let score = result["score"].as_i64().unwrap_or_default() + evidence.score_delta;
         result["score"] = json!(score.max(0));
@@ -525,7 +535,14 @@ fn skill_recommendation(
     } else if let Some(risk) = activation_safety_risk(ctx, skill_id, request.policy_profile)? {
         risks.push(risk);
     }
-    let evidence = ranking_evidence(ctx, skill_id, skill, request.agent, Some(task))?;
+    let evidence = ranking_evidence(
+        ctx,
+        skill_id,
+        skill,
+        request.agent,
+        request.workspace,
+        Some(task),
+    )?;
     score += evidence.score_delta;
     reasons.extend(evidence.reasons);
     risks.extend(evidence.risks);

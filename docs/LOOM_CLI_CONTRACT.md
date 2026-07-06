@@ -395,6 +395,8 @@ Rules:
 loom --json --root <root> skill list
 loom --json --root <root> skill inspect <skill-id> [--agent <agent>] [--workspace <path>] [--profile <profile>] [--include-telemetry]
 loom --json --root <root> skill inspect <skill-id> --brief
+loom --json --root <root> skill used <skill-id> [--agent <agent>] [--workspace <path>] [--session-id <id>] [--tokens-in <n>] [--tokens-out <n>] [--commands <n>] [--duration-ms <n>] [--success | --error] [--failure-category <category>]
+loom --json --root <root> skill feedback <skill-id> --feedback <accepted|rejected|ignored> [--agent <agent>] [--workspace <path>] [--session-id <id>] [--task <text>]
 loom --json --root <root> skill deps <skill-id> [--agent <agent>] [--workspace <path>]
 loom --json --root <root> skill compile <skill-id> --dry-run [--agent <agent>] [--profile <profile>]
 loom --json --root <root> skill compile --skill <skill-id> --dry-run [--agent <agent>] [--profile <profile>]
@@ -404,7 +406,10 @@ loom --json --root <root> skill visibility <skill-id> --agent codex [--workspace
 loom --json --root <root> skill search <query> [--agent <agent>] [--profile <profile>] [--status <status>] [--trust <trust>] [--workspace <path>] [--active] [--for-task] [--semantic] [--explain]
 ```
 
-Read-only commands.
+`skill list`, `skill inspect`, `skill deps`, `skill compile --dry-run`,
+`skill compile list`, `skill compile verify`, `skill visibility`, and
+`skill search` are read-only commands. `skill used` and `skill feedback`
+mutate only local telemetry state when telemetry is enabled.
 
 Rules:
 
@@ -426,6 +431,11 @@ Rules:
 16. `skill deps` is read-only and reports runtime dependency readiness for tools, MCP servers, environment variables, and network expectations without printing secret values.
 15. `skill compile --dry-run`, `skill compile list`, and `skill compile verify` are read-only; they never replace portable `SKILL.md` as the source of truth.
 16. `skill inspect --include-telemetry` reads the same local telemetry summary used by `telemetry report`; without the flag, `telemetry` is `null`.
+17. `skill used` records `skill.invocation` by default and records `skill.error` only with `--error --failure-category <category>`.
+18. `skill used --success` and `skill used --error` are mutually exclusive; `--error` without `--failure-category` fails before any telemetry write.
+19. `skill feedback` records explicit `recommendation.feedback` values of `accepted`, `rejected`, or `ignored`; `--task` must not be serialized as raw telemetry text.
+20. when telemetry is absent or disabled, `skill used` and `skill feedback` return `recorded=false` with a structured reason and do not initialize `state/telemetry`.
+21. `skill recommend` and `skill search --for-task --explain` may include telemetry-derived `score_inputs` only when matching local telemetry events exist; absent or disabled telemetry must leave deterministic ranking unchanged.
 
 ### 11.0.1 `skill compile`
 
@@ -1154,6 +1164,8 @@ loom --json --root <root> telemetry report [--skill <skill-id>] [--skillset <ski
 loom --json --root <root> telemetry export --format jsonl|csv --output <path> [--redacted]
 loom --json --root <root> telemetry purge [--before <date>] --dry-run
 loom --json --root <root> telemetry purge [--before <date>] --confirm <token>
+loom --json --root <root> skill used <skill-id> [--agent <agent>] [--workspace <path>] [--session-id <id>] [--tokens-in <n>] [--tokens-out <n>] [--commands <n>] [--duration-ms <n>] [--success | --error] [--failure-category <category>]
+loom --json --root <root> skill feedback <skill-id> --feedback <accepted|rejected|ignored> [--agent <agent>] [--workspace <path>] [--session-id <id>] [--task <text>]
 ```
 
 `status` and `report` are read-only. `enable`, `disable`, and confirmed
@@ -1179,9 +1191,16 @@ Rules:
 8. `telemetry purge --dry-run` returns matching event count, byte impact, and a
    confirmation token; `--confirm` must match the current dry-run token before
    atomically rewriting telemetry event state.
-9. `skill eval`, `skill scan`, `skill activate`, and `skill deactivate` append
-   redacted telemetry events only when telemetry is enabled.
-10. Panel Telemetry consumes the same backend read model at
+9. `skill eval`, `skill scan`, `skill activate`, `skill deactivate`,
+   `skill used`, and `skill feedback` append redacted telemetry events only
+   when telemetry is enabled.
+10. `telemetry report` returns an `instrumentation` map for declared event
+   families so consumers can distinguish `available`, `missing`, and
+   `not_instrumented` states from numeric zero counts.
+11. `skill used --error` persists only structured failure categories and
+   numeric metrics, never raw errors, prompts, outputs, env values, or file
+   contents.
+12. Panel Telemetry consumes the same backend read model at
     `/api/v1/telemetry/report` and preserves missing evidence as missing.
 
 ## 12. Human-Friendly Use Flow

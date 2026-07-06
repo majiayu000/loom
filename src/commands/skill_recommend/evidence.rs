@@ -1,5 +1,6 @@
 use std::collections::BTreeSet;
 use std::fs;
+use std::path::Path;
 
 use serde_json::{Value, json};
 
@@ -13,6 +14,7 @@ use super::super::skill_eval_harness::cases::{
     HarnessJsonlRecord, HarnessTriggerCase, read_harness_jsonl,
 };
 use super::super::skill_inventory::tokenize;
+use super::super::telemetry::skill_recommendation_telemetry;
 
 #[derive(Default)]
 pub(super) struct RankingEvidence {
@@ -37,6 +39,7 @@ pub(super) fn ranking_evidence(
     skill_id: &str,
     skill: &Value,
     agent: Option<&str>,
+    workspace: Option<&Path>,
     task: Option<&str>,
 ) -> std::result::Result<RankingEvidence, CommandFailure> {
     let mut evidence = RankingEvidence::default();
@@ -54,6 +57,7 @@ pub(super) fn ranking_evidence(
         task.unwrap_or_default(),
         &mut evidence,
     )?;
+    add_telemetry_evidence(ctx, skill_id, agent, workspace, &mut evidence)?;
     Ok(evidence)
 }
 
@@ -217,6 +221,83 @@ fn add_eval_evidence(
             "field": "negative_triggers",
             "matches": trigger_match.negative_matches,
             "weight": weight,
+        }));
+    }
+    Ok(())
+}
+
+fn add_telemetry_evidence(
+    ctx: &AppContext,
+    skill_id: &str,
+    agent: Option<&str>,
+    workspace: Option<&Path>,
+    evidence: &mut RankingEvidence,
+) -> std::result::Result<(), CommandFailure> {
+    let telemetry = skill_recommendation_telemetry(ctx, skill_id, agent, workspace)?;
+    if !telemetry.enabled || telemetry.events == 0 {
+        return Ok(());
+    }
+    if telemetry.invocations > 0 {
+        let weight = (telemetry.invocations as i64).clamp(1, 4);
+        evidence.score_delta += weight;
+        evidence.reasons.push(format!(
+            "telemetry usage {} invocation(s)",
+            telemetry.invocations
+        ));
+        evidence.score_inputs.push(json!({
+            "field": "telemetry_usage",
+            "metric": "invocations",
+            "value": telemetry.invocations,
+            "weight": weight,
+        }));
+    }
+    if telemetry.errors > 0 {
+        let weight = -((telemetry.errors as i64 * 3).min(8));
+        evidence.score_delta += weight;
+        evidence
+            .risks
+            .push(format!("telemetry errors {}", telemetry.errors));
+        evidence.score_inputs.push(json!({
+            "field": "telemetry_error_rate",
+            "metric": "errors",
+            "value": telemetry.errors,
+            "weight": weight,
+        }));
+    }
+    if telemetry.feedback_accepted > 0 {
+        let weight = (telemetry.feedback_accepted as i64 * 4).min(8);
+        evidence.score_delta += weight;
+        evidence.reasons.push(format!(
+            "recommendation feedback accepted {} time(s)",
+            telemetry.feedback_accepted
+        ));
+        evidence.score_inputs.push(json!({
+            "field": "recommendation_feedback",
+            "metric": "accepted",
+            "value": telemetry.feedback_accepted,
+            "weight": weight,
+        }));
+    }
+    if telemetry.feedback_rejected > 0 {
+        let weight = -((telemetry.feedback_rejected as i64 * 4).min(8));
+        evidence.score_delta += weight;
+        evidence.risks.push(format!(
+            "recommendation feedback rejected {} time(s)",
+            telemetry.feedback_rejected
+        ));
+        evidence.score_inputs.push(json!({
+            "field": "recommendation_feedback",
+            "metric": "rejected",
+            "value": telemetry.feedback_rejected,
+            "weight": weight,
+        }));
+    }
+    if telemetry.feedback_ignored > 0 {
+        evidence.score_inputs.push(json!({
+            "field": "recommendation_feedback",
+            "metric": "ignored",
+            "value": telemetry.feedback_ignored,
+            "weight": 0,
         }));
     }
     Ok(())

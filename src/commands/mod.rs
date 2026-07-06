@@ -357,6 +357,7 @@ impl App {
             Command::Ops { command } => self.cmd_ops(command),
             Command::Agent { command } => match command {
                 AgentCommand::Preflight(args) => self.cmd_agent_preflight(args),
+                AgentCommand::Reconcile(args) => self.cmd_agent_reconcile(args),
             },
             Command::Codex { command } => match command {
                 CodexCommand::Reconcile(args) => self.cmd_codex_reconcile(args, &request_id),

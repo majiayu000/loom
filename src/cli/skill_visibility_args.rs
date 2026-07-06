@@ -17,7 +17,7 @@ pub struct SkillDiagnoseArgs {
     /// Registry skill name.
     pub skill: String,
 
-    /// Include agent-specific visibility checks. Currently supports codex.
+    /// Include adapter-specific visibility checks for the selected agent.
     #[arg(long, value_enum)]
     pub agent: Option<AgentKind>,
 
@@ -31,7 +31,7 @@ pub struct SkillVisibilityArgs {
     /// Registry skill name.
     pub skill: String,
 
-    /// Agent active view to inspect. Currently supports codex.
+    /// Agent active view to inspect through adapter visibility metadata.
     #[arg(long, value_enum)]
     pub agent: AgentKind,
 

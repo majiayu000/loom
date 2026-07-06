@@ -1,9 +1,9 @@
 use crate::cli::{
-    ApprovalCommand, CodexCommand, Command, McpCommand, OpsCommand, OpsHistoryCommand,
-    OrgPolicyCommand, PackageCommand, PolicyCommand, ProvisionCommand, RemoteCommand, RolesCommand,
-    SkillCommand, SkillOrphanCommand, SkillProvenanceCommand, SkillTrashCommand, SkillsetCommand,
-    SyncCommand, TargetCommand, TelemetryCommand, WorkflowCommand, WorkspaceBindingCommand,
-    WorkspaceCommand,
+    AgentCommand, ApprovalCommand, CodexCommand, Command, McpCommand, OpsCommand,
+    OpsHistoryCommand, OrgPolicyCommand, PackageCommand, PolicyCommand, ProvisionCommand,
+    RemoteCommand, RolesCommand, SkillCommand, SkillOrphanCommand, SkillProvenanceCommand,
+    SkillTrashCommand, SkillsetCommand, SyncCommand, TargetCommand, TelemetryCommand,
+    WorkflowCommand, WorkspaceBindingCommand, WorkspaceCommand,
 };
 
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -245,7 +245,11 @@ pub(crate) fn command_meta(command: &Command) -> CommandMeta {
                 CommandMeta::new(true, durable, !durable)
             }
         },
-        Command::Agent { .. } => CommandMeta::new(true, false, false),
+        Command::Agent { command } => match command {
+            AgentCommand::Preflight(_) | AgentCommand::Reconcile(_) => {
+                CommandMeta::new(true, false, false)
+            }
+        },
         Command::Codex { command } => match command {
             CodexCommand::Reconcile(args) => CommandMeta::new(args.apply, args.apply, !args.apply),
         },

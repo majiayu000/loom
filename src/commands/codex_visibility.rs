@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use serde::Serialize;
 use serde_json::{Value, json};
 
+use crate::agent_adapters::{AgentAdapter, load_agent_adapters};
 use crate::state::AppContext;
 use crate::state_model::{
     RegistryBindingRule, RegistryProjectionTarget, RegistrySnapshot, RegistryStatePaths,
@@ -18,6 +19,8 @@ use super::helpers::{map_arg, map_registry_state, validate_skill_name};
 
 pub(crate) const CODEX_AGENT: &str = "codex";
 pub(crate) const RUNTIME_ENTRIES: &[&str] = &[".system", "codex-primary-runtime"];
+const IDENTITY_CANONICAL_SKILL_MD_PATH: &str = "canonical-skill-md-path";
+const IDENTITY_RUNTIME_SKILL_MD_PATH: &str = "runtime-skill-md-path";
 
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct CodexVisibilityReport {
@@ -70,6 +73,7 @@ pub(crate) struct CodexReconcileAction {
 
 #[derive(Debug, Clone)]
 pub(crate) struct CodexReconcileRequest {
+    pub(crate) agent: String,
     pub(crate) binding_id: Option<String>,
     pub(crate) target_id: Option<String>,
     pub(crate) allowlist_path: Option<PathBuf>,
@@ -80,6 +84,16 @@ pub(crate) struct CodexReconcileRequest {
 pub(crate) fn build_codex_visibility_report(
     ctx: &AppContext,
     skill: &str,
+    workspace: Option<&Path>,
+    profile: Option<&str>,
+) -> std::result::Result<CodexVisibilityReport, CommandFailure> {
+    build_agent_visibility_report(ctx, skill, CODEX_AGENT, workspace, profile)
+}
+
+pub(crate) fn build_agent_visibility_report(
+    ctx: &AppContext,
+    skill: &str,
+    agent: &str,
     workspace: Option<&Path>,
     profile: Option<&str>,
 ) -> std::result::Result<CodexVisibilityReport, CommandFailure> {
@@ -96,15 +110,41 @@ pub(crate) fn build_codex_visibility_report(
             format!("skill '{}' not found", skill),
         ));
     }
-    let config = load_codex_config()?;
-    Ok(build_visibility_report_from_parts(
+    let adapters = load_agent_adapters(ctx)?;
+    let Some(adapter) = adapters.adapter_for_agent(agent) else {
+        return Ok(unsupported_visibility_report(
+            skill,
+            agent,
+            format!("agent adapter '{}' is not registered", agent),
+            json!({"agent": agent}),
+        ));
+    };
+    if !adapter_has_visibility_metadata(adapter) {
+        return Ok(unsupported_visibility_report(
+            skill,
+            agent,
+            format!(
+                "agent adapter '{}' does not expose visibility metadata",
+                agent
+            ),
+            adapter_metadata_details(adapter),
+        ));
+    }
+    let config = if agent == CODEX_AGENT {
+        Some(load_codex_config()?)
+    } else {
+        None
+    };
+    Ok(build_visibility_report_from_parts(VisibilityBuildParts {
         ctx,
         skill,
-        snapshot.as_ref(),
+        agent,
+        adapter,
+        snapshot: snapshot.as_ref(),
         config,
         workspace,
         profile,
-    ))
+    }))
 }
 
 pub(crate) fn normalize_existing_or_raw(path: &Path) -> PathBuf {
@@ -135,21 +175,36 @@ pub(crate) fn path_exists_or_symlink(path: &Path) -> bool {
     path.exists() || fs::symlink_metadata(path).is_ok()
 }
 
-fn build_visibility_report_from_parts(
-    ctx: &AppContext,
-    skill: &str,
-    snapshot: Option<&RegistrySnapshot>,
-    config: CodexConfigLoad,
-    workspace: Option<&Path>,
-    profile: Option<&str>,
-) -> CodexVisibilityReport {
+struct VisibilityBuildParts<'a> {
+    ctx: &'a AppContext,
+    skill: &'a str,
+    agent: &'a str,
+    adapter: &'a AgentAdapter,
+    snapshot: Option<&'a RegistrySnapshot>,
+    config: Option<CodexConfigLoad>,
+    workspace: Option<&'a Path>,
+    profile: Option<&'a str>,
+}
+
+fn build_visibility_report_from_parts(parts: VisibilityBuildParts<'_>) -> CodexVisibilityReport {
+    let VisibilityBuildParts {
+        ctx,
+        skill,
+        agent,
+        adapter,
+        snapshot,
+        config,
+        workspace,
+        profile,
+    } = parts;
     let source_path = ctx.skill_path(skill);
     let skill_file = source_path.join("SKILL.md");
     let source_exists = source_path.is_dir();
     let skill_file_exists = skill_file.is_file();
+    let reconcile_action = reconcile_next_action(agent);
     let mut checks = vec![
         check(
-            "codex_source_exists",
+            &format!("{agent}_source_exists"),
             source_exists,
             "error",
             if source_exists {
@@ -163,7 +218,7 @@ fn build_visibility_report_from_parts(
             )),
         ),
         check(
-            "codex_skill_file_exists",
+            &format!("{agent}_skill_file_exists"),
             skill_file_exists,
             "error",
             if skill_file_exists {
@@ -179,41 +234,60 @@ fn build_visibility_report_from_parts(
     let mut rule_count = 0;
     let mut projection_ok = false;
     if let Some(snapshot) = snapshot {
-        let rules = active_codex_rules_for_skill(snapshot, skill, workspace, profile);
+        let rules = active_rules_for_skill(snapshot, skill, agent, workspace, profile);
         rule_count = rules.len();
         checks.push(check(
-            "codex_active_rule_exists",
+            &format!("{agent}_active_rule_exists"),
             !rules.is_empty(),
             "error",
             if rules.is_empty() {
-                "no active Codex rule selects this skill"
+                "no active agent rule selects this skill"
             } else {
-                "active Codex rule selects this skill"
+                "active agent rule selects this skill"
             },
-            json!({"rule_count": rules.len()}),
-            Some(format!("loom skill activate {skill} --agent codex")),
+            json!({"agent": agent, "rule_count": rules.len()}),
+            Some(format!("loom skill activate {skill} --agent {agent}")),
         ));
         for rule in rules {
-            add_rule_visibility_checks(ctx, snapshot, &rule, &mut checks, &mut projection_ok);
+            add_rule_visibility_checks(
+                ctx,
+                snapshot,
+                adapter,
+                agent,
+                &rule,
+                &mut checks,
+                &mut projection_ok,
+            );
         }
     } else {
         checks.push(check(
-            "codex_registry_snapshot_exists",
+            &format!("{agent}_registry_snapshot_exists"),
             false,
             "error",
             "registry snapshot is missing",
             json!({}),
-            Some("run loom init before Codex visibility checks".to_string()),
+            Some(format!("run loom init before {agent} visibility checks")),
         ));
     }
 
-    let disabled = add_config_checks(skill, &skill_file, config, &mut checks);
+    let disabled = if agent == CODEX_AGENT {
+        add_config_checks(skill, &skill_file, config, &mut checks)
+    } else {
+        add_adapter_config_metadata_checks(agent, adapter, &mut checks);
+        false
+    };
     checks.push(check(
-        "codex_restart_required",
+        &format!("{agent}_reload_required"),
         true,
         "warning",
-        "current Codex sessions are not claimed to hot-reload visibility changes",
-        json!({"restart_required_after_apply": true}),
+        "current agent sessions are not claimed to hot-reload visibility changes",
+        json!({
+            "agent": agent,
+            "strategy": adapter.reload.strategy,
+            "hot_reload": adapter.reload.hot_reload,
+            "notes": adapter.reload.notes,
+            "restart_required_after_apply": !adapter.reload.hot_reload
+        }),
         None,
     ));
 
@@ -236,11 +310,13 @@ fn build_visibility_report_from_parts(
     if disabled {
         next_actions.insert("loom codex reconcile --apply --fix-config".to_string());
         next_actions.insert("restart Codex or open a new session".to_string());
+    } else if !projection_ok && rule_count > 0 {
+        next_actions.insert(reconcile_action);
     }
 
     CodexVisibilityReport {
         skill: skill.to_string(),
-        agent: CODEX_AGENT.to_string(),
+        agent: agent.to_string(),
         visible,
         checks,
         next_actions: next_actions.into_iter().collect(),
@@ -251,16 +327,18 @@ fn build_visibility_report_from_parts(
 fn add_rule_visibility_checks(
     ctx: &AppContext,
     snapshot: &RegistrySnapshot,
+    adapter: &AgentAdapter,
+    agent: &str,
     rule: &RegistryBindingRule,
     checks: &mut Vec<CodexVisibilityCheck>,
     projection_ok: &mut bool,
 ) {
     let Some(target) = snapshot.target(&rule.target_id) else {
         checks.push(check(
-            &format!("codex_target_exists:{}", rule.target_id),
+            &format!("{agent}_target_exists:{}", rule.target_id),
             false,
             "error",
-            "Codex target referenced by active rule is missing",
+            "agent target referenced by active rule is missing",
             json!({"target_id": rule.target_id}),
             Some("recreate the target or remove the stale rule".to_string()),
         ));
@@ -268,20 +346,23 @@ fn add_rule_visibility_checks(
     };
     let target_path = PathBuf::from(&target.path);
     checks.push(check(
-        &format!("codex_target_path_exists:{}", target.target_id),
+        &format!("{agent}_target_path_exists:{}", target.target_id),
         target_path.is_dir(),
         "error",
         if target_path.is_dir() {
-            "Codex target path exists"
+            "agent target path exists"
         } else {
-            "Codex target path is missing"
+            "agent target path is missing"
         },
-        json!({"target_id": target.target_id, "target_path": target.path}),
-        Some("recreate the target path or run loom codex reconcile --apply".to_string()),
+        json!({"agent": agent, "target_id": target.target_id, "target_path": target.path}),
+        Some(format!(
+            "recreate the target path or run {}",
+            reconcile_next_action(agent)
+        )),
     ));
     let projection_path = target_path.join(&rule.skill_id);
     checks.push(check(
-        &format!("codex_projection_path_exists:{}", target.target_id),
+        &format!("{agent}_projection_path_exists:{}", target.target_id),
         path_exists_or_symlink(&projection_path),
         "error",
         if path_exists_or_symlink(&projection_path) {
@@ -289,14 +370,74 @@ fn add_rule_visibility_checks(
         } else {
             "projection path is missing"
         },
-        json!({"projection_path": projection_path}),
-        Some("loom codex reconcile --apply".to_string()),
+        json!({"agent": agent, "projection_path": projection_path}),
+        Some(reconcile_next_action(agent)),
     ));
+    let identity = adapter
+        .visibility
+        .identity_by_projection_method
+        .get(rule.method.as_str())
+        .map(String::as_str)
+        .unwrap_or(IDENTITY_RUNTIME_SKILL_MD_PATH);
+    checks.push(check(
+        &format!("{agent}_projection_identity_declared:{}", target.target_id),
+        matches!(
+            identity,
+            IDENTITY_CANONICAL_SKILL_MD_PATH | IDENTITY_RUNTIME_SKILL_MD_PATH
+        ),
+        "error",
+        if matches!(
+            identity,
+            IDENTITY_CANONICAL_SKILL_MD_PATH | IDENTITY_RUNTIME_SKILL_MD_PATH
+        ) {
+            "adapter declares a supported projection identity"
+        } else {
+            "adapter declares an unsupported projection identity"
+        },
+        json!({
+            "agent": agent,
+            "projection_method": rule.method,
+            "identity": identity,
+            "adapter_visibility": adapter_visibility_details(adapter),
+        }),
+        Some(
+            "update adapter visibility metadata before claiming active-view visibility".to_string(),
+        ),
+    ));
+    if identity == IDENTITY_RUNTIME_SKILL_MD_PATH {
+        let entrypoint = projection_path.join(&adapter.skill_entrypoint);
+        if entrypoint.is_file() {
+            *projection_ok = true;
+        }
+        checks.push(check(
+            &format!("{agent}_runtime_entrypoint_exists:{}", target.target_id),
+            entrypoint.is_file(),
+            "error",
+            if entrypoint.is_file() {
+                "runtime projection entrypoint exists"
+            } else {
+                "runtime projection entrypoint is missing"
+            },
+            json!({
+                "agent": agent,
+                "projection_path": projection_path,
+                "entrypoint": entrypoint,
+                "identity": identity
+            }),
+            Some(reconcile_next_action(agent)),
+        ));
+        add_entry_classification_checks(ctx, target, &rule.skill_id, agent, checks);
+        return;
+    }
+    if identity != IDENTITY_CANONICAL_SKILL_MD_PATH {
+        add_entry_classification_checks(ctx, target, &rule.skill_id, agent, checks);
+        return;
+    }
     let is_symlink = fs::symlink_metadata(&projection_path)
         .map(|metadata| metadata.file_type().is_symlink())
         .unwrap_or(false);
     checks.push(check(
-        &format!("codex_projection_is_symlink:{}", target.target_id),
+        &format!("{agent}_projection_is_symlink:{}", target.target_id),
         is_symlink,
         "error",
         if is_symlink {
@@ -304,7 +445,7 @@ fn add_rule_visibility_checks(
         } else {
             "projection is not a symlink"
         },
-        json!({"projection_path": projection_path}),
+        json!({"agent": agent, "projection_path": projection_path, "identity": identity}),
         Some("inspect the projection path before repair".to_string()),
     ));
     let points_to_source =
@@ -313,7 +454,7 @@ fn add_rule_visibility_checks(
         *projection_ok = true;
     }
     checks.push(check(
-        &format!("codex_projection_points_to_source:{}", target.target_id),
+        &format!("{agent}_projection_points_to_source:{}", target.target_id),
         points_to_source,
         "error",
         if points_to_source {
@@ -322,18 +463,21 @@ fn add_rule_visibility_checks(
             "projection symlink does not resolve to source skill"
         },
         json!({
+            "agent": agent,
             "projection_path": projection_path,
-            "source_path": ctx.skill_path(&rule.skill_id)
+            "source_path": ctx.skill_path(&rule.skill_id),
+            "identity": identity
         }),
-        Some("loom codex reconcile --apply".to_string()),
+        Some(reconcile_next_action(agent)),
     ));
-    add_entry_classification_checks(ctx, target, &rule.skill_id, checks);
+    add_entry_classification_checks(ctx, target, &rule.skill_id, agent, checks);
 }
 
 fn add_entry_classification_checks(
     ctx: &AppContext,
     target: &RegistryProjectionTarget,
     skill: &str,
+    agent: &str,
     checks: &mut Vec<CodexVisibilityCheck>,
 ) {
     let target_path = Path::new(&target.path);
@@ -342,12 +486,12 @@ fn add_entry_classification_checks(
     };
     for entry in entries.flatten() {
         let name = entry.file_name().to_string_lossy().into_owned();
-        if RUNTIME_ENTRIES.contains(&name.as_str()) {
+        if agent == CODEX_AGENT && RUNTIME_ENTRIES.contains(&name.as_str()) {
             checks.push(check(
-                &format!("codex_runtime_entry_classification:{name}"),
+                &format!("{agent}_runtime_entry_classification:{name}"),
                 true,
                 "warning",
-                "Codex runtime entry is preserved",
+                "agent runtime entry is preserved",
                 json!({"target_path": target.path, "entry": name}),
                 None,
             ));
@@ -359,15 +503,15 @@ fn add_entry_classification_checks(
         let path = entry.path();
         let loom_owned = projection_path_is_safe_symlink(&path, &ctx.skill_path(&name));
         checks.push(check(
-            &format!("codex_external_entry_classification:{name}"),
+            &format!("{agent}_external_entry_classification:{name}"),
             true,
             "warning",
             if loom_owned {
                 "inactive Loom-owned entry is reported for reconcile"
             } else {
-                "external Codex entry is preserved"
+                "external agent entry is preserved"
             },
-            json!({"target_path": target.path, "entry": name, "loom_owned_symlink": loom_owned}),
+            json!({"agent": agent, "target_path": target.path, "entry": name, "loom_owned_symlink": loom_owned}),
             None,
         ));
     }
@@ -376,9 +520,20 @@ fn add_entry_classification_checks(
 fn add_config_checks(
     skill: &str,
     skill_file: &Path,
-    config: CodexConfigLoad,
+    config: Option<CodexConfigLoad>,
     checks: &mut Vec<CodexVisibilityCheck>,
 ) -> bool {
+    let Some(config) = config else {
+        checks.push(check(
+            "codex_config_parse",
+            false,
+            "error",
+            "Codex config was not loaded",
+            json!({}),
+            Some("load Codex config before running Codex visibility checks".to_string()),
+        ));
+        return true;
+    };
     match config {
         CodexConfigLoad::Malformed(error) => {
             checks.push(check(
@@ -433,9 +588,58 @@ fn add_config_checks(
     }
 }
 
-fn active_codex_rules_for_skill(
+fn add_adapter_config_metadata_checks(
+    agent: &str,
+    adapter: &AgentAdapter,
+    checks: &mut Vec<CodexVisibilityCheck>,
+) {
+    checks.push(check(
+        &format!("{agent}_adapter_visibility_metadata"),
+        true,
+        "warning",
+        "adapter visibility metadata is available",
+        adapter_metadata_details(adapter),
+        None,
+    ));
+    if let Some(config_file) = &adapter.visibility.config_file {
+        checks.push(check(
+            &format!("{agent}_config_metadata_available"),
+            true,
+            "warning",
+            "adapter declares visibility config metadata",
+            json!({
+                "agent": agent,
+                "config_file": config_file,
+                "disable_rules": adapter.visibility.disable_rules,
+            }),
+            None,
+        ));
+    }
+    if adapter
+        .visibility
+        .disable_rules
+        .iter()
+        .any(|rule| rule == "adapter-defined")
+    {
+        checks.push(check(
+            &format!("{agent}_disable_rules_adapter_defined"),
+            true,
+            "warning",
+            "adapter-defined disable rules are reported but not auto-repaired",
+            json!({
+                "agent": agent,
+                "config_file": adapter.visibility.config_file,
+                "disable_rules": adapter.visibility.disable_rules,
+            }),
+            None,
+        ));
+    }
+}
+
+fn active_rules_for_skill(
     snapshot: &RegistrySnapshot,
     skill: &str,
+    agent: &str,
     workspace: Option<&Path>,
     profile: Option<&str>,
 ) -> Vec<RegistryBindingRule> {
@@ -447,9 +651,9 @@ fn active_codex_rules_for_skill(
         .filter_map(|rule| {
             let binding = snapshot.binding(&rule.binding_id)?;
             let target = snapshot.target(&rule.target_id)?;
-            if binding.agent == CODEX_AGENT
+            if binding.agent == agent
                 && binding.active
-                && target.agent == CODEX_AGENT
+                && target.agent == agent
                 && profile.is_none_or(|profile| binding.profile_id == profile)
                 && workspace.is_none_or(|workspace| binding_matches_workspace(binding, workspace))
             {
@@ -459,6 +663,84 @@ fn active_codex_rules_for_skill(
             }
         })
         .collect()
+}
+
+fn adapter_has_visibility_metadata(adapter: &AgentAdapter) -> bool {
+    if adapter.source == "built-in" {
+        return matches!(adapter.id.as_str(), CODEX_AGENT | "claude");
+    }
+    adapter.adapter_api == "2" && !adapter.visibility.identity_by_projection_method.is_empty()
+}
+
+fn unsupported_visibility_report(
+    skill: &str,
+    agent: &str,
+    message: String,
+    details: Value,
+) -> CodexVisibilityReport {
+    CodexVisibilityReport {
+        skill: skill.to_string(),
+        agent: agent.to_string(),
+        visible: false,
+        checks: vec![check(
+            "visibility_unsupported",
+            false,
+            "error",
+            &message,
+            details,
+            Some(format!(
+                "install or update the {agent} adapter visibility metadata"
+            )),
+        )],
+        next_actions: vec![format!(
+            "install or update the {agent} adapter visibility metadata"
+        )],
+        restart_required: false,
+    }
+}
+
+fn adapter_metadata_details(adapter: &AgentAdapter) -> Value {
+    json!({
+        "adapter_id": adapter.id,
+        "adapter_source": adapter.source,
+        "skill_entrypoint": adapter.skill_entrypoint,
+        "projection_methods": adapter.projection_methods,
+        "discovery_roots": adapter.discovery_roots.iter().map(|root| {
+            json!({
+                "scope": root.scope,
+                "path_template": root.path_template,
+                "role": root.role,
+                "source_env_var": root.source_env_var,
+                "priority": root.priority,
+                "scan_eligible": root.scan_eligible,
+                "available": root.available,
+                "unavailable_reason": root.unavailable_reason,
+            })
+        }).collect::<Vec<_>>(),
+        "visibility": adapter_visibility_details(adapter),
+        "reload": {
+            "strategy": adapter.reload.strategy,
+            "hot_reload": adapter.reload.hot_reload,
+            "notes": adapter.reload.notes,
+        },
+    })
+}
+
+fn adapter_visibility_details(adapter: &AgentAdapter) -> Value {
+    json!({
+        "follows_symlink_dirs": adapter.visibility.follows_symlink_dirs,
+        "identity_by_projection_method": adapter.visibility.identity_by_projection_method,
+        "config_file": adapter.visibility.config_file,
+        "disable_rules": adapter.visibility.disable_rules,
+    })
+}
+
+fn reconcile_next_action(agent: &str) -> String {
+    if agent == CODEX_AGENT {
+        "loom codex reconcile --apply".to_string()
+    } else {
+        format!("loom agent reconcile --agent {agent} --dry-run")
+    }
 }
 
 fn binding_matches_workspace(binding: &RegistryWorkspaceBinding, workspace: &Path) -> bool {

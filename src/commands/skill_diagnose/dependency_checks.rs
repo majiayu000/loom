@@ -5,10 +5,7 @@ use crate::cli::AgentKind;
 use super::super::skill_deps::SkillDependencyReport;
 
 pub(super) fn dependency_agent(agent: Option<AgentKind>) -> Option<&'static str> {
-    match agent {
-        Some(AgentKind::Codex) => Some("codex"),
-        _ => None,
-    }
+    agent.map(AgentKind::as_str)
 }
 
 pub(super) fn add_dependency_checks(

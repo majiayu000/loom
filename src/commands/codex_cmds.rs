@@ -16,8 +16,8 @@ use super::codex_config::{
 };
 use super::codex_reconcile_plan::plan_codex_reconcile;
 use super::codex_visibility::{
-    CODEX_AGENT, CodexReconcileAction, CodexReconcileRequest, build_codex_visibility_report,
-    path_exists_or_symlink, projection_path_is_safe_symlink,
+    CODEX_AGENT, CodexReconcileAction, CodexReconcileRequest, build_agent_visibility_report,
+    build_codex_visibility_report, path_exists_or_symlink, projection_path_is_safe_symlink,
 };
 use super::helpers::{
     commit_registry_state, map_git, map_io, map_lock, map_project_io, map_registry_state,
@@ -34,13 +34,22 @@ impl App {
         &self,
         args: &SkillVisibilityArgs,
     ) -> std::result::Result<(Value, Meta), CommandFailure> {
-        ensure_codex_agent(args.agent)?;
-        let report = build_codex_visibility_report(
-            &self.ctx,
-            &args.skill,
-            args.workspace.as_deref(),
-            args.profile.as_deref(),
-        )?;
+        let report = if args.agent == AgentKind::Codex {
+            build_codex_visibility_report(
+                &self.ctx,
+                &args.skill,
+                args.workspace.as_deref(),
+                args.profile.as_deref(),
+            )?
+        } else {
+            build_agent_visibility_report(
+                &self.ctx,
+                &args.skill,
+                args.agent.as_str(),
+                args.workspace.as_deref(),
+                args.profile.as_deref(),
+            )?
+        };
         Ok((json!(report), Meta::default()))
     }
 
@@ -197,18 +206,9 @@ impl App {
     }
 }
 
-fn ensure_codex_agent(agent: AgentKind) -> std::result::Result<(), CommandFailure> {
-    if agent == AgentKind::Codex {
-        return Ok(());
-    }
-    Err(CommandFailure::new(
-        ErrorCode::ArgInvalid,
-        "skill visibility currently supports only --agent codex",
-    ))
-}
-
 fn reconcile_request(args: &CodexReconcileArgs, dry_run: bool) -> CodexReconcileRequest {
     CodexReconcileRequest {
+        agent: CODEX_AGENT.to_string(),
         binding_id: args.binding.clone(),
         target_id: args.target.clone(),
         allowlist_path: args.allowlist.clone(),

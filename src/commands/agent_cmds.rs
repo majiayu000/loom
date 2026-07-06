@@ -4,13 +4,17 @@ mod planning_helpers;
 
 use serde_json::{Value, json};
 
+use super::codex_reconcile_plan::plan_agent_reconcile;
+use super::codex_visibility::CodexReconcileRequest;
 use super::helpers::{
     agent_kind_as_str, map_arg, map_git, map_io, projection_method_as_str, shell_arg,
     validate_skill_name,
 };
 use super::skill_safety::evaluate_skill_safety_with_policy;
 use super::{App, CommandFailure};
-use crate::cli::{AgentPreflightArgs, OrphanCleanArgs, ProjectArgs, RollbackArgs};
+use crate::cli::{
+    AgentPreflightArgs, AgentReconcileArgs, OrphanCleanArgs, ProjectArgs, RollbackArgs,
+};
 use crate::envelope::Meta;
 use crate::gitops;
 use planning_helpers::{
@@ -186,6 +190,23 @@ impl App {
             }),
             Meta::default(),
         ))
+    }
+
+    pub fn cmd_agent_reconcile(
+        &self,
+        args: &AgentReconcileArgs,
+    ) -> std::result::Result<(Value, Meta), CommandFailure> {
+        let snapshot = self.require_registry_snapshot()?;
+        let request = CodexReconcileRequest {
+            agent: agent_kind_as_str(args.agent).to_string(),
+            binding_id: args.binding.clone(),
+            target_id: args.target.clone(),
+            allowlist_path: args.allowlist.clone(),
+            dry_run: true,
+            fix_config: false,
+        };
+        let plans = plan_agent_reconcile(&self.ctx, &snapshot, &request)?;
+        Ok((json!({"dry_run": true, "plans": plans}), Meta::default()))
     }
 
     pub fn cmd_project_plan(

@@ -336,9 +336,9 @@ pub enum SkillCommand {
     Recommend(SkillSearchArgs),
     #[command(about = "Resolve the best skill candidate for a task without mutating state")]
     Resolve(SkillSearchArgs),
-    #[command(about = "Record a redacted local telemetry event for actual skill usage")]
+    #[command(about = "Record skill telemetry")]
     Used(SkillUsedArgs),
-    #[command(about = "Record explicit local telemetry feedback for a recommendation")]
+    #[command(about = "Record recommendation feedback")]
     Feedback(SkillFeedbackArgs),
     #[command(about = "Draft a new skill as a guarded patch artifact")]
     Draft(SkillDraftArgs),

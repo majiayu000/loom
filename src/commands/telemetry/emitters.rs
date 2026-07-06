@@ -18,7 +18,7 @@ pub(crate) struct TelemetryRecordResult {
     pub(crate) recorded: bool,
     pub(crate) event_id: Option<String>,
     pub(crate) enabled: bool,
-    pub(crate) mode: String,
+    pub(crate) mode: &'static str,
     pub(crate) reason: Option<&'static str>,
     pub(crate) failure_category: Option<String>,
 }
@@ -115,10 +115,10 @@ pub(crate) fn record_recommendation_feedback_telemetry(
         "accepted" => RecommendationFeedback::Accepted,
         "rejected" => RecommendationFeedback::Rejected,
         "ignored" => RecommendationFeedback::Ignored,
-        other => {
+        _ => {
             return Err(CommandFailure::new(
                 ErrorCode::ArgInvalid,
-                format!("unsupported recommendation feedback '{other}'"),
+                "unsupported feedback",
             ));
         }
     };
@@ -144,9 +144,10 @@ fn append_record_result(
 ) -> std::result::Result<TelemetryRecordResult, CommandFailure> {
     let event_type = draft.event_type.as_str();
     let config = read_config(ctx)?;
-    let effective = config
-        .clone()
-        .unwrap_or_else(TelemetryConfig::disabled_local);
+    let mode = config
+        .as_ref()
+        .map(|config| config.mode.as_str())
+        .unwrap_or_else(|| TelemetryConfig::disabled_local().mode.as_str());
     let event = append_event_if_enabled(ctx, draft)?;
     Ok(match event {
         Some(event) => TelemetryRecordResult {
@@ -154,7 +155,7 @@ fn append_record_result(
             recorded: true,
             event_id: Some(event.event_id),
             enabled: true,
-            mode: effective.mode.as_str().to_string(),
+            mode,
             reason: None,
             failure_category,
         },
@@ -163,7 +164,7 @@ fn append_record_result(
             recorded: false,
             event_id: None,
             enabled: false,
-            mode: effective.mode.as_str().to_string(),
+            mode,
             reason: Some("telemetry_disabled"),
             failure_category,
         },

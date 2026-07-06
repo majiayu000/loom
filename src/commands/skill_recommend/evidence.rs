@@ -241,26 +241,44 @@ fn add_telemetry_evidence(
         let weight = (telemetry.invocations as i64).clamp(1, 4);
         evidence.score_delta += weight;
         evidence.reasons.push(format!(
-            "telemetry usage {} invocation(s)",
-            telemetry.invocations
+            "telemetry usage {} invocation(s) in last {} day(s)",
+            telemetry.invocations, telemetry.window_days
         ));
         evidence.score_inputs.push(json!({
             "field": "telemetry_usage",
-            "metric": "invocations",
+            "metric": "recent_invocations",
             "value": telemetry.invocations,
+            "window_days": telemetry.window_days,
             "weight": weight,
         }));
     }
     if telemetry.errors > 0 {
-        let weight = -((telemetry.errors as i64 * 3).min(8));
+        let attempts = telemetry.invocations + telemetry.errors;
+        let error_rate = if attempts == 0 {
+            1.0
+        } else {
+            telemetry.errors as f64 / attempts as f64
+        };
+        let count_penalty = (telemetry.errors as i64 * 2).min(6);
+        let rate_penalty = if error_rate >= 0.5 {
+            2
+        } else if error_rate >= 0.25 {
+            1
+        } else {
+            0
+        };
+        let weight = -((count_penalty + rate_penalty).min(8));
         evidence.score_delta += weight;
         evidence
             .risks
-            .push(format!("telemetry errors {}", telemetry.errors));
+            .push(format!("telemetry error rate {:.2}", error_rate));
         evidence.score_inputs.push(json!({
             "field": "telemetry_error_rate",
-            "metric": "errors",
-            "value": telemetry.errors,
+            "metric": "recent_error_rate",
+            "value": error_rate,
+            "errors": telemetry.errors,
+            "attempts": attempts,
+            "window_days": telemetry.window_days,
             "weight": weight,
         }));
     }

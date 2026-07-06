@@ -342,6 +342,7 @@ pub(crate) fn skill_telemetry_summary(
         "usage": usage_json(&aggregate),
         "value": value_json(&aggregate),
         "cost": cost_json(&aggregate),
+        "sync": sync_json(),
         "risk": risk_json(&aggregate),
         "recommendation_feedback": feedback_json(&aggregate),
         "instrumentation": emitters::instrumentation_json(),
@@ -523,6 +524,7 @@ fn aggregate_json(aggregate: &Aggregate) -> Value {
         "usage": usage_json(aggregate),
         "value": value_json(aggregate),
         "cost": cost_json(aggregate),
+        "sync": sync_json(),
         "drift": drift_json(aggregate),
         "risk": risk_json(aggregate),
         "recommendation_feedback": feedback_json(aggregate),
@@ -559,6 +561,13 @@ fn cost_json(aggregate: &Aggregate) -> Value {
         "commands": aggregate.commands,
         "duration_ms": aggregate.duration_ms,
         "status": if aggregate.cost_seen { "available" } else { "missing" },
+    })
+}
+
+fn sync_json() -> Value {
+    json!({
+        "uploaded_events": 0,
+        "status": "not_instrumented",
     })
 }
 

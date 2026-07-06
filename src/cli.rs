@@ -90,7 +90,7 @@ pub use skill_compile_args::{
 pub use skill_inspect_args::SkillInspectArgs;
 pub use skill_lint_args::SkillLintArgs;
 pub use skill_new_args::{SkillNewArgs, SkillNewTemplate};
-pub use skill_usage_args::{SkillFeedbackArgs, SkillFeedbackValue, SkillUsedArgs};
+pub use skill_usage_args::{SkillFeedbackArgs, SkillUsedArgs};
 pub use skill_visibility_args::{SkillDiagnoseArgs, SkillDiagnoseCheck, SkillVisibilityArgs};
 pub use skillset::{
     SkillsetActivateArgs, SkillsetAddArgs, SkillsetCommand, SkillsetCreateArgs, SkillsetEvalArgs,

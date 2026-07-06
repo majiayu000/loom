@@ -119,14 +119,24 @@ fn skill_usage_response(
 }
 
 fn validate_failure_category(raw: &str) -> std::result::Result<(), CommandFailure> {
-    if raw.is_empty()
-        || raw.len() > 64
-        || !raw
-            .chars()
-            .all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || matches!(ch, '-' | '_'))
-    {
+    const ALLOWED: &[&str] = &[
+        "timeout",
+        "tool_error",
+        "model_error",
+        "dependency_error",
+        "permission_denied",
+        "rate_limited",
+        "invalid_input",
+        "policy_blocked",
+        "not_found",
+        "network_error",
+        "execution_error",
+        "unknown",
+    ];
+    if !ALLOWED.contains(&raw) {
         return Err(map_arg(anyhow::anyhow!(
-            "failure-category must match [a-z0-9_-]+ and be at most 64 characters"
+            "failure-category must be one of: {}",
+            ALLOWED.join(", ")
         )));
     }
     Ok(())

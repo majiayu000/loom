@@ -184,6 +184,7 @@ pub(crate) fn instrumentation_json() -> Value {
         ("skill.safety", &["skill.scan"][..]),
         ("skill.error", &["skill.used --error"][..]),
         ("recommendation.feedback", &["skill.feedback"][..]),
+        ("telemetry.sync", &[][..]),
     ];
     let mut out = serde_json::Map::new();
     for (event_type, emitters) in entries {

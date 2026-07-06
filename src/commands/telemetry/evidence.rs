@@ -1,5 +1,7 @@
 use std::path::Path;
 
+use chrono::{Duration, Utc};
+
 use crate::state::AppContext;
 
 use super::super::CommandFailure;
@@ -12,6 +14,7 @@ pub(crate) struct SkillTelemetryEvidence {
     pub(crate) events: usize,
     pub(crate) invocations: u64,
     pub(crate) errors: u64,
+    pub(crate) window_days: u32,
     pub(crate) feedback_accepted: u64,
     pub(crate) feedback_rejected: u64,
     pub(crate) feedback_ignored: u64,
@@ -29,10 +32,13 @@ pub(crate) fn skill_recommendation_telemetry(
     if !config.enabled {
         return Ok(SkillTelemetryEvidence::default());
     }
+    let retention_days = config.retention_days;
+    let cutoff = Utc::now() - Duration::days(i64::from(retention_days));
     let workspace_hash = workspace.map(workspace_hash_for_path);
     let log = read_event_log(ctx)?;
     let mut evidence = SkillTelemetryEvidence {
         enabled: true,
+        window_days: retention_days,
         ..SkillTelemetryEvidence::default()
     };
     for entry in log.events {
@@ -47,6 +53,9 @@ pub(crate) fn skill_recommendation_telemetry(
             .as_deref()
             .is_some_and(|workspace| event.workspace_hash.as_deref() != Some(workspace))
         {
+            continue;
+        }
+        if event.timestamp < cutoff {
             continue;
         }
         evidence.events += 1;

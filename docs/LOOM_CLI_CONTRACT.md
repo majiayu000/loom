@@ -433,9 +433,10 @@ Rules:
 16. `skill inspect --include-telemetry` reads the same local telemetry summary used by `telemetry report`; without the flag, `telemetry` is `null`.
 17. `skill used` records `skill.invocation` by default and records `skill.error` only with `--error --failure-category <category>`.
 18. `skill used --success` and `skill used --error` are mutually exclusive; `--error` without `--failure-category` fails before any telemetry write.
-19. `skill feedback` records explicit `recommendation.feedback` values of `accepted`, `rejected`, or `ignored`; `--task` must not be serialized as raw telemetry text.
-20. when telemetry is absent or disabled, `skill used` and `skill feedback` return `recorded=false` with a structured reason and do not initialize `state/telemetry`.
-21. `skill recommend` and `skill search --for-task --explain` may include telemetry-derived `score_inputs` only when matching local telemetry events exist; absent or disabled telemetry must leave deterministic ranking unchanged.
+19. `--failure-category` accepts only the controlled categories `timeout`, `tool_error`, `model_error`, `dependency_error`, `permission_denied`, `rate_limited`, `invalid_input`, `policy_blocked`, `not_found`, `network_error`, `execution_error`, and `unknown`; arbitrary raw error text or token-shaped values must be rejected.
+20. `skill feedback` records explicit `recommendation.feedback` values of `accepted`, `rejected`, or `ignored`; `--task` must not be serialized as raw telemetry text.
+21. when telemetry is absent or disabled, `skill used` and `skill feedback` return `recorded=false` with a structured reason and do not initialize `state/telemetry`.
+22. `skill recommend` and `skill search --for-task --explain` may include telemetry-derived `score_inputs` only when matching local telemetry events exist within the telemetry retention window; absent, disabled, or stale telemetry must leave deterministic ranking unchanged.
 
 ### 11.0.1 `skill compile`
 
@@ -1183,9 +1184,10 @@ Rules:
 4. disabled telemetry must not append telemetry events.
 5. existing malformed event lines are surfaced as quarantined warnings in
    status/report/export/purge responses; they are not silently dropped.
-6. `telemetry report` summarizes usage, value, cost, drift, risk, and
+6. `telemetry report` summarizes usage, value, cost, drift, risk, sync, and
    recommendation feedback. Missing upstream evidence must be reported as
-   `missing`, not zero usage.
+   `missing`, not zero usage; deferred hosted/sync evidence is
+   `not_instrumented`.
 7. `telemetry export --format jsonl|csv` emits redacted typed events only and
    skips malformed lines with warnings.
 8. `telemetry purge --dry-run` returns matching event count, byte impact, and a
@@ -1200,7 +1202,10 @@ Rules:
 11. `skill used --error` persists only structured failure categories and
    numeric metrics, never raw errors, prompts, outputs, env values, or file
    contents.
-12. Panel Telemetry consumes the same backend read model at
+12. recommendation telemetry evidence uses only events inside the configured
+   retention window and exposes both recent usage counts and recent error rate
+   in `score_inputs`.
+13. Panel Telemetry consumes the same backend read model at
     `/api/v1/telemetry/report` and preserves missing evidence as missing.
 
 ## 12. Human-Friendly Use Flow

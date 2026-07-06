@@ -27,6 +27,30 @@ fn recommendation<'a>(env: &'a Value, id: &str) -> &'a Value {
         .unwrap_or_else(|| panic!("missing recommendation {id}: {env}"))
 }
 
+fn telemetry_line(
+    id: &str,
+    event_type: &str,
+    skill: &str,
+    timestamp: &str,
+    metrics: Value,
+) -> String {
+    json!({
+        "schema_version": 1,
+        "event_id": id,
+        "event_type": event_type,
+        "skill_id": skill,
+        "agent": "codex",
+        "timestamp": timestamp,
+        "metrics": metrics,
+        "privacy": {
+            "raw_prompt_stored": false,
+            "raw_code_stored": false,
+            "redacted": true
+        }
+    })
+    .to_string()
+}
+
 #[test]
 fn invalid_skill_ids_do_not_abort_index_or_recommendations() {
     let root = TestDir::new("recommend-invalid-skill-id");
@@ -210,6 +234,186 @@ fn recommend_uses_telemetry_usage_and_feedback_when_present() {
             .any(|input| input["field"] == json!("recommendation_feedback")
                 && input["metric"] == json!("accepted")),
         "feedback telemetry should appear in score inputs: {boosted}"
+    );
+}
+
+#[test]
+fn recommend_exposes_error_rejected_and_ignored_telemetry_inputs() {
+    let root = TestDir::new("recommend-telemetry-negative-evidence");
+    for skill in ["a-ci-helper", "z-ci-helper"] {
+        write_recommend_skill(
+            root.path(),
+            skill,
+            "Use when fixing failing CI and test workflow failures.",
+        );
+    }
+
+    let (enable_output, enable) = run_loom(root.path(), &["telemetry", "enable", "--local-only"]);
+    assert!(
+        enable_output.status.success(),
+        "enable should pass: {enable}"
+    );
+    let (error_output, error) = run_loom(
+        root.path(),
+        &[
+            "skill",
+            "used",
+            "z-ci-helper",
+            "--agent",
+            "codex",
+            "--error",
+            "--failure-category",
+            "timeout",
+        ],
+    );
+    assert!(
+        error_output.status.success(),
+        "skill used --error should pass: {error}"
+    );
+    for feedback in ["rejected", "ignored"] {
+        let (feedback_output, feedback_env) = run_loom(
+            root.path(),
+            &[
+                "skill",
+                "feedback",
+                "z-ci-helper",
+                "--feedback",
+                feedback,
+                "--agent",
+                "codex",
+            ],
+        );
+        assert!(
+            feedback_output.status.success(),
+            "skill feedback {feedback} should pass: {feedback_env}"
+        );
+    }
+
+    let (output, env) = run_loom(
+        root.path(),
+        &["skill", "recommend", "fix failing ci", "--agent", "codex"],
+    );
+
+    assert!(output.status.success(), "recommend should pass: {env}");
+    assert_eq!(recommendation_results(&env)[0]["id"], json!("a-ci-helper"));
+    let penalized = recommendation(&env, "z-ci-helper");
+    let inputs = penalized["score_inputs"].as_array().expect("score inputs");
+    assert!(
+        inputs
+            .iter()
+            .any(|input| input["field"] == json!("telemetry_error_rate")
+                && input["metric"] == json!("recent_error_rate")),
+        "error telemetry should appear in score inputs: {penalized}"
+    );
+    assert!(
+        inputs
+            .iter()
+            .any(|input| input["field"] == json!("recommendation_feedback")
+                && input["metric"] == json!("rejected")),
+        "rejected feedback should appear in score inputs: {penalized}"
+    );
+    assert!(
+        inputs
+            .iter()
+            .any(|input| input["field"] == json!("recommendation_feedback")
+                && input["metric"] == json!("ignored")
+                && input["weight"] == json!(0)),
+        "ignored feedback should be neutral evidence: {penalized}"
+    );
+}
+
+#[test]
+fn recommend_ignores_disabled_and_stale_telemetry() {
+    let root = TestDir::new("recommend-disabled-stale-telemetry");
+    for skill in ["a-ci-helper", "z-ci-helper"] {
+        write_recommend_skill(
+            root.path(),
+            skill,
+            "Use when fixing failing CI and test workflow failures.",
+        );
+    }
+
+    let (baseline_output, baseline) = run_loom(
+        root.path(),
+        &["skill", "recommend", "fix failing ci", "--agent", "codex"],
+    );
+    assert!(
+        baseline_output.status.success(),
+        "baseline recommend should pass: {baseline}"
+    );
+    assert_eq!(
+        recommendation_results(&baseline)[0]["id"],
+        json!("a-ci-helper")
+    );
+
+    let (enable_output, enable) = run_loom(root.path(), &["telemetry", "enable", "--local-only"]);
+    assert!(
+        enable_output.status.success(),
+        "enable should pass: {enable}"
+    );
+    let (disable_output, disable) = run_loom(root.path(), &["telemetry", "disable"]);
+    assert!(
+        disable_output.status.success(),
+        "disable should pass: {disable}"
+    );
+    let (used_output, used) = run_loom(
+        root.path(),
+        &["skill", "used", "z-ci-helper", "--agent", "codex"],
+    );
+    assert!(
+        used_output.status.success(),
+        "disabled skill used should pass: {used}"
+    );
+    assert_eq!(used["data"]["recorded"], json!(false));
+    assert!(
+        !root.path().join("state/telemetry/events.jsonl").exists(),
+        "disabled telemetry hook must not write events"
+    );
+
+    let (reenable_output, reenable) =
+        run_loom(root.path(), &["telemetry", "enable", "--local-only"]);
+    assert!(
+        reenable_output.status.success(),
+        "reenable should pass: {reenable}"
+    );
+    write_file(
+        &root.path().join("state/telemetry/events.jsonl"),
+        &format!(
+            "{}\n{}\n",
+            telemetry_line(
+                "evt_stale_used",
+                "skill.invocation",
+                "z-ci-helper",
+                "2000-01-01T00:00:00Z",
+                json!({"success": true})
+            ),
+            telemetry_line(
+                "evt_stale_feedback",
+                "recommendation.feedback",
+                "z-ci-helper",
+                "2000-01-01T00:00:00Z",
+                json!({"feedback": "accepted"})
+            )
+        ),
+    );
+
+    let (output, env) = run_loom(
+        root.path(),
+        &["skill", "recommend", "fix failing ci", "--agent", "codex"],
+    );
+
+    assert!(output.status.success(), "recommend should pass: {env}");
+    assert_eq!(recommendation_results(&env)[0]["id"], json!("a-ci-helper"));
+    let stale = recommendation(&env, "z-ci-helper");
+    assert!(
+        !stale["score_inputs"]
+            .as_array()
+            .expect("score inputs")
+            .iter()
+            .any(|input| input["field"].as_str().is_some_and(|field| field
+                .starts_with("telemetry")
+                || field == "recommendation_feedback")),
+        "disabled or stale telemetry should not affect ranking: {stale}"
     );
 }
 

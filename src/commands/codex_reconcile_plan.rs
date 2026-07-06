@@ -22,11 +22,29 @@ pub(crate) fn plan_codex_reconcile(
     snapshot: &RegistrySnapshot,
     request: &CodexReconcileRequest,
 ) -> std::result::Result<Vec<CodexReconcilePlan>, CommandFailure> {
-    let config = load_codex_config()?;
-    let targets = select_codex_targets(snapshot, request)?;
+    plan_agent_reconcile(ctx, snapshot, request)
+}
+
+pub(crate) fn plan_agent_reconcile(
+    ctx: &AppContext,
+    snapshot: &RegistrySnapshot,
+    request: &CodexReconcileRequest,
+) -> std::result::Result<Vec<CodexReconcilePlan>, CommandFailure> {
+    let config = if request.agent == CODEX_AGENT {
+        Some(load_codex_config()?)
+    } else {
+        None
+    };
+    let targets = select_agent_targets(snapshot, request)?;
     let mut plans = Vec::with_capacity(targets.len());
     for target in targets {
-        plans.push(plan_target(ctx, snapshot, request, &target, &config));
+        plans.push(plan_target(
+            ctx,
+            snapshot,
+            request,
+            &target,
+            config.as_ref(),
+        ));
     }
     Ok(plans)
 }
@@ -36,10 +54,10 @@ fn plan_target(
     snapshot: &RegistrySnapshot,
     request: &CodexReconcileRequest,
     target: &RegistryProjectionTarget,
-    config: &CodexConfigLoad,
+    config: Option<&CodexConfigLoad>,
 ) -> CodexReconcilePlan {
     let target_path = PathBuf::from(&target.path);
-    let desired = desired_rules_for_target(snapshot, target);
+    let desired = desired_rules_for_target(snapshot, target, &request.agent);
     let desired_skills = desired.keys().cloned().collect::<BTreeSet<_>>();
     let mut actions = Vec::new();
     let mut warnings = Vec::new();
@@ -59,12 +77,16 @@ fn plan_target(
     }
 
     for (skill, rule) in &desired {
-        plan_desired_projection(ctx, snapshot, target, rule, &mut actions);
-        if let CodexConfigLoad::Parsed(view) = config {
+        plan_desired_projection(ctx, snapshot, target, rule, &request.agent, &mut actions);
+        if request.agent == CODEX_AGENT
+            && let Some(CodexConfigLoad::Parsed(view)) = config
+        {
             add_config_disable_actions(ctx, view, skill, &mut actions);
         }
     }
-    if let CodexConfigLoad::Malformed(error) = config {
+    if request.agent == CODEX_AGENT
+        && let Some(CodexConfigLoad::Malformed(error)) = config
+    {
         actions.push(action(
             "manual_review",
             None,
@@ -81,14 +103,14 @@ fn plan_target(
         for entry in entries.flatten() {
             let name = entry.file_name().to_string_lossy().into_owned();
             let path = entry.path();
-            if RUNTIME_ENTRIES.contains(&name.as_str()) {
+            if request.agent == CODEX_AGENT && RUNTIME_ENTRIES.contains(&name.as_str()) {
                 actions.push(action(
                     "preserve_runtime_entry",
                     Some(name),
                     Some(path.display().to_string()),
                     true,
                     false,
-                    "Codex runtime entry is preserved",
+                    "agent runtime entry is preserved",
                     json!({"target_id": target.target_id}),
                 ));
                 continue;
@@ -175,7 +197,7 @@ fn plan_target(
         .all(|item| item.safe && (!item.requires_fix_config || request.fix_config));
 
     CodexReconcilePlan {
-        agent: CODEX_AGENT.to_string(),
+        agent: request.agent.clone(),
         binding_id: request.binding_id.clone(),
         target_id: target.target_id.clone(),
         target_path: target.path.clone(),
@@ -192,6 +214,7 @@ fn plan_desired_projection(
     snapshot: &RegistrySnapshot,
     target: &RegistryProjectionTarget,
     rule: &RegistryBindingRule,
+    agent: &str,
     actions: &mut Vec<CodexReconcileAction>,
 ) {
     if rule.method != crate::core::vocab::ProjectionMethod::Symlink {
@@ -201,8 +224,8 @@ fn plan_desired_projection(
             None,
             false,
             false,
-            "Codex reconcile only repairs symlink active-view projections",
-            json!({"method": rule.method, "target_id": target.target_id}),
+            "agent reconcile only repairs symlink active-view projections",
+            json!({"agent": agent, "method": rule.method, "target_id": target.target_id}),
         ));
         return;
     }
@@ -230,8 +253,8 @@ fn plan_desired_projection(
             Some(expected.display().to_string()),
             true,
             false,
-            "desired active skill is missing from Codex target",
-            json!({"binding_id": rule.binding_id, "target_id": target.target_id}),
+            "desired active skill is missing from agent target",
+            json!({"agent": agent, "binding_id": rule.binding_id, "target_id": target.target_id}),
         )),
         Err(err) => actions.push(action(
             "manual_review",
@@ -240,7 +263,7 @@ fn plan_desired_projection(
             false,
             false,
             "projection path could not be inspected",
-            json!({"error": err.to_string(), "target_id": target.target_id}),
+            json!({"agent": agent, "error": err.to_string(), "target_id": target.target_id}),
         )),
         Ok(metadata) if metadata.file_type().is_symlink() => {
             if projection_path_is_safe_symlink(&expected, &source) {
@@ -256,7 +279,7 @@ fn plan_desired_projection(
                     true,
                     false,
                     "recorded Loom-owned projection symlink no longer points to source",
-                    json!({"binding_id": rule.binding_id, "target_id": target.target_id}),
+                    json!({"agent": agent, "binding_id": rule.binding_id, "target_id": target.target_id}),
                 ));
             } else {
                 actions.push(action(
@@ -313,7 +336,7 @@ fn add_config_disable_actions(
     }
 }
 
-fn select_codex_targets(
+fn select_agent_targets(
     snapshot: &RegistrySnapshot,
     request: &CodexReconcileRequest,
 ) -> std::result::Result<Vec<RegistryProjectionTarget>, CommandFailure> {
@@ -324,12 +347,12 @@ fn select_codex_targets(
                 format!("binding '{}' not found", binding_id),
             )
         })?;
-        if binding.agent != CODEX_AGENT {
+        if binding.agent != request.agent.as_str() {
             return Err(CommandFailure::new(
                 ErrorCode::TargetAgentMismatch,
                 format!(
-                    "binding '{}' is for agent '{}' not codex",
-                    binding_id, binding.agent
+                    "binding '{}' is for agent '{}' not '{}'",
+                    binding_id, binding.agent, request.agent
                 ),
             ));
         }
@@ -344,30 +367,35 @@ fn select_codex_targets(
                 ),
             ));
         }
-        return Ok(vec![codex_target(snapshot, &binding.default_target_id)?]);
+        return Ok(vec![agent_target(
+            snapshot,
+            &binding.default_target_id,
+            &request.agent,
+        )?]);
     }
     if let Some(target_id) = request.target_id.as_deref() {
-        return Ok(vec![codex_target(snapshot, target_id)?]);
+        return Ok(vec![agent_target(snapshot, target_id, &request.agent)?]);
     }
     let targets = snapshot
         .targets
         .targets
         .iter()
-        .filter(|target| target.agent == CODEX_AGENT)
+        .filter(|target| target.agent == request.agent.as_str())
         .cloned()
         .collect::<Vec<_>>();
     if targets.is_empty() {
         return Err(CommandFailure::new(
             ErrorCode::TargetNotFound,
-            "no Codex target registered",
+            format!("no {} target registered", request.agent),
         ));
     }
     Ok(targets)
 }
 
-fn codex_target(
+fn agent_target(
     snapshot: &RegistrySnapshot,
     target_id: &str,
+    agent: &str,
 ) -> std::result::Result<RegistryProjectionTarget, CommandFailure> {
     let target = snapshot.target(target_id).cloned().ok_or_else(|| {
         CommandFailure::new(
@@ -375,12 +403,12 @@ fn codex_target(
             format!("target '{}' not found", target_id),
         )
     })?;
-    if target.agent != CODEX_AGENT {
+    if target.agent != agent {
         return Err(CommandFailure::new(
             ErrorCode::TargetAgentMismatch,
             format!(
-                "target '{}' is for agent '{}' not codex",
-                target_id, target.agent
+                "target '{}' is for agent '{}' not '{}'",
+                target_id, target.agent, agent
             ),
         ));
     }
@@ -390,13 +418,14 @@ fn codex_target(
 fn desired_rules_for_target<'a>(
     snapshot: &'a RegistrySnapshot,
     target: &RegistryProjectionTarget,
+    agent: &str,
 ) -> BTreeMap<String, &'a RegistryBindingRule> {
     let active_bindings = snapshot
         .bindings
         .bindings
         .iter()
         .filter(|binding| {
-            binding.agent == CODEX_AGENT
+            binding.agent == agent
                 && binding.active
                 && binding.default_target_id == target.target_id
         })

@@ -9,7 +9,7 @@ use crate::state::AppContext;
 use crate::state_model::{RegistryProjectionInstance, RegistrySnapshot, RegistryStatePaths};
 use crate::types::ErrorCode;
 
-use super::codex_visibility::build_codex_visibility_report;
+use super::codex_visibility::{CODEX_AGENT, build_agent_visibility_report};
 use super::helpers::{map_arg, map_registry_state, validate_skill_name};
 use super::history_cmds::operation_mentions_skill as registry_operation_mentions_skill;
 use super::projections::{
@@ -35,14 +35,6 @@ impl App {
         let skill = args.skill();
         validate_skill_name(skill).map_err(map_arg)?;
         let agent = args.agent();
-        if let Some(agent) = agent
-            && agent != AgentKind::Codex
-        {
-            return Err(CommandFailure::new(
-                ErrorCode::ArgInvalid,
-                "skill diagnose --agent currently supports only codex",
-            ));
-        }
         if args.check() == SkillDiagnoseCheck::Drift {
             return super::skill_verify::skill_drift_report(&self.ctx, skill);
         }
@@ -65,8 +57,8 @@ impl App {
                 .save_projections(&snapshot.projections)
                 .map_err(map_registry_state)?;
         }
-        if agent == Some(AgentKind::Codex) {
-            attach_codex_visibility(&self.ctx, skill, &mut data)?;
+        if let Some(agent) = agent {
+            attach_agent_visibility(&self.ctx, skill, agent, &mut data)?;
         }
         Ok((data, meta))
     }
@@ -115,25 +107,32 @@ impl SkillDiagnoseRequest for SkillOnlyArgs {
     }
 }
 
-fn attach_codex_visibility(
+fn attach_agent_visibility(
     ctx: &AppContext,
     skill: &str,
+    agent: AgentKind,
     data: &mut Value,
 ) -> std::result::Result<(), CommandFailure> {
-    let report = build_codex_visibility_report(ctx, skill, None, None)?;
+    let agent_id = agent.as_str();
+    let report = build_agent_visibility_report(ctx, skill, agent_id, None, None)?;
     let report_value = json!(report);
     if let Some(checks) = data.get_mut("checks").and_then(Value::as_array_mut)
-        && let Some(codex_checks) = report_value.get("checks").and_then(Value::as_array)
+        && let Some(agent_checks) = report_value.get("checks").and_then(Value::as_array)
     {
-        for check in codex_checks {
+        for check in agent_checks {
             let mut check = check.clone();
             if let Some(object) = check.as_object_mut() {
-                object.insert("section".to_string(), Value::String("codex".to_string()));
+                object.insert("section".to_string(), Value::String(agent_id.to_string()));
             }
             checks.push(check);
         }
     }
-    data["related"]["codex_visibility"] = report_value;
+    if agent_id == CODEX_AGENT {
+        data["related"]["codex_visibility"] = report_value.clone();
+    } else {
+        data["related"][format!("{agent_id}_visibility")] = report_value.clone();
+    }
+    data["related"]["agent_visibility"] = report_value;
     let error_count = data["checks"]
         .as_array()
         .map(|checks| checks_with_severity(checks, "error"))

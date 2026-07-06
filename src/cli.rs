@@ -503,6 +503,8 @@ pub enum OpsHistoryCommand {
 pub enum AgentCommand {
     #[command(about = "Resolve selectors and risks for an agent workspace")]
     Preflight(AgentPreflightArgs),
+    #[command(about = "Plan active-view reconciliation for an agent without mutation")]
+    Reconcile(AgentReconcileArgs),
 }
 
 #[derive(Debug, Clone, Args, Serialize)]
@@ -522,6 +524,29 @@ pub struct AgentPreflightArgs {
     /// Desired projection method for a new project operation.
     #[arg(long, value_enum, default_value_t = ProjectionMethod::Symlink)]
     pub method: ProjectionMethod,
+}
+
+#[derive(Debug, Clone, Args, Serialize)]
+pub struct AgentReconcileArgs {
+    /// Agent kind to plan active-view reconciliation for.
+    #[arg(long, value_enum)]
+    pub agent: AgentKind,
+
+    /// Preview active-view repairs without mutating registry or target state.
+    #[arg(long)]
+    pub dry_run: bool,
+
+    /// Restrict planning to one workspace binding id.
+    #[arg(long)]
+    pub binding: Option<String>,
+
+    /// Restrict planning to one target id.
+    #[arg(long)]
+    pub target: Option<String>,
+
+    /// Optional allowlist for future legacy cleanup flows.
+    #[arg(long)]
+    pub allowlist: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Args, Serialize)]

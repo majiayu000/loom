@@ -296,6 +296,7 @@ pub(crate) fn command_name(command: &Command) -> &'static str {
         },
         Command::Agent { command } => match command {
             AgentCommand::Preflight(_) => "agent.preflight",
+            AgentCommand::Reconcile(_) => "agent.reconcile",
         },
         Command::Codex { command } => match command {
             CodexCommand::Reconcile(_) => "codex.reconcile",

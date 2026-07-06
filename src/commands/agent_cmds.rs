@@ -4,13 +4,18 @@ mod planning_helpers;
 
 use serde_json::{Value, json};
 
+use super::codex_reconcile_plan::plan_agent_reconcile;
+use super::codex_visibility::{CODEX_AGENT, CodexReconcileRequest};
 use super::helpers::{
     agent_kind_as_str, map_arg, map_git, map_io, projection_method_as_str, shell_arg,
     validate_skill_name,
 };
 use super::skill_safety::evaluate_skill_safety_with_policy;
 use super::{App, CommandFailure};
-use crate::cli::{AgentPreflightArgs, OrphanCleanArgs, ProjectArgs, RollbackArgs};
+use crate::agent_adapters::{AgentAdapter, built_in_adapter_for_agent, load_agent_adapters};
+use crate::cli::{
+    AgentPreflightArgs, AgentReconcileArgs, OrphanCleanArgs, ProjectArgs, RollbackArgs,
+};
 use crate::envelope::Meta;
 use crate::gitops;
 use planning_helpers::{
@@ -186,6 +191,30 @@ impl App {
             }),
             Meta::default(),
         ))
+    }
+
+    pub fn cmd_agent_reconcile(
+        &self,
+        args: &AgentReconcileArgs,
+    ) -> std::result::Result<(Value, Meta), CommandFailure> {
+        let snapshot = self.require_registry_snapshot()?;
+        let agent = agent_kind_as_str(args.agent).to_string();
+        if let Some(check) = reconcile_visibility_unsupported_check(&self.ctx, &agent)? {
+            return Ok((
+                json!({"dry_run": true, "plans": [], "checks": [check], "unsupported": true}),
+                Meta::default(),
+            ));
+        }
+        let request = CodexReconcileRequest {
+            agent,
+            binding_id: args.binding.clone(),
+            target_id: args.target.clone(),
+            allowlist_path: args.allowlist.clone(),
+            dry_run: true,
+            fix_config: false,
+        };
+        let plans = plan_agent_reconcile(&self.ctx, &snapshot, &request)?;
+        Ok((json!({"dry_run": true, "plans": plans}), Meta::default()))
     }
 
     pub fn cmd_project_plan(
@@ -604,4 +633,51 @@ impl App {
             Meta::default(),
         ))
     }
+}
+
+fn reconcile_visibility_unsupported_check(
+    ctx: &crate::state::AppContext,
+    agent: &str,
+) -> std::result::Result<Option<Value>, CommandFailure> {
+    let adapter = match built_in_adapter_for_agent(ctx, agent) {
+        Some(adapter) => Some(adapter),
+        None => {
+            let adapters = load_agent_adapters(ctx)?;
+            adapters.adapter_for_agent(agent).cloned()
+        }
+    };
+    let Some(adapter) = adapter else {
+        return Ok(Some(visibility_unsupported_check(
+            agent,
+            format!("agent adapter '{}' is not registered", agent),
+        )));
+    };
+    if reconcile_adapter_supports_visibility(&adapter) {
+        return Ok(None);
+    }
+    Ok(Some(visibility_unsupported_check(
+        agent,
+        format!(
+            "agent adapter '{}' does not expose visibility metadata",
+            agent
+        ),
+    )))
+}
+
+fn reconcile_adapter_supports_visibility(adapter: &AgentAdapter) -> bool {
+    if adapter.source == "built-in" {
+        return matches!(adapter.id.as_str(), CODEX_AGENT | "claude");
+    }
+    adapter.adapter_api == "2" && !adapter.visibility.identity_by_projection_method.is_empty()
+}
+
+fn visibility_unsupported_check(agent: &str, message: String) -> Value {
+    json!({
+        "id": "visibility_unsupported",
+        "ok": false,
+        "severity": "error",
+        "message": message,
+        "details": {"agent": agent},
+        "next_action": format!("install or update the {agent} adapter visibility metadata")
+    })
 }

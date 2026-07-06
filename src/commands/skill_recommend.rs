@@ -76,7 +76,9 @@ impl App {
             .or_else(|| policy_context["agent"].as_str());
         let recommendation_context = RecommendationContext {
             agent: recommendation_agent,
+            activation_agent: args.agent.as_deref(),
             workspace: args.workspace.as_deref(),
+            binding: args.binding.as_deref(),
             mode,
             policy_profile: &policy_profile,
         };
@@ -228,7 +230,9 @@ impl App {
         let skillsets = load_skillsets_value(&self.ctx)?;
         let recommendation_context = RecommendationContext {
             agent: Some(args.agent.trim()),
+            activation_agent: Some(args.agent.trim()),
             workspace: args.workspace.as_deref(),
+            binding: None,
             mode: "lexical",
             policy_profile: "safe-capture",
         };
@@ -420,9 +424,11 @@ fn recommend_binding_matches_workspace(
 }
 
 #[derive(Clone, Copy)]
-struct RecommendationContext<'a> {
+pub(super) struct RecommendationContext<'a> {
     agent: Option<&'a str>,
+    activation_agent: Option<&'a str>,
     workspace: Option<&'a Path>,
+    binding: Option<&'a str>,
     mode: &'a str,
     policy_profile: &'a str,
 }
@@ -581,7 +587,12 @@ fn skill_recommendation(
     if request.agent.is_some() {
         reasons.push("agent match".to_string());
     }
-    let can_activate = risks.is_empty() && request.agent.is_some();
+    let activation_command = suggested_activation_command(skill_id, request);
+    let can_activate = risks.is_empty() && activation_command.is_some();
+    let suggested_commands = match (can_activate, activation_command) {
+        (true, Some(command)) => vec![command],
+        _ => vec![format!("loom --json skill inspect {skill_id}")],
+    };
     Ok(Some(json!({
         "kind": "skill",
         "id": skill_id,
@@ -592,12 +603,23 @@ fn skill_recommendation(
         "risks": risks,
         "warnings": warnings,
         "recommended_action": if can_activate { "activate" } else { "inspect" },
-        "suggested_commands": if can_activate {
-            vec![format!("loom --json skill activate {skill_id} --agent {} --dry-run", request.agent.unwrap())]
-        } else {
-            vec![format!("loom --json skill inspect {skill_id}")]
-        },
+        "suggested_commands": suggested_commands,
     })))
+}
+
+pub(super) fn suggested_activation_command(
+    skill_id: &str,
+    request: RecommendationContext<'_>,
+) -> Option<String> {
+    if let Some(binding) = request.binding {
+        Some(format!(
+            "loom --json skill project {skill_id} --binding {binding} --dry-run"
+        ))
+    } else {
+        request
+            .activation_agent
+            .map(|agent| format!("loom --json skill activate {skill_id} --agent {agent} --dry-run"))
+    }
 }
 
 fn activation_safety_risk(

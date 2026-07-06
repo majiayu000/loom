@@ -12,8 +12,8 @@ use crate::types::ErrorCode;
 use super::super::helpers::{map_arg, map_io, validate_skill_name};
 use super::super::{CommandFailure, helpers};
 use super::model::{
-    TELEMETRY_SCHEMA_VERSION, TelemetryConfig, TelemetryEvent, TelemetryEventDraft,
-    TelemetryEventType, TelemetryPrivacy, failure_category_allowed,
+    TELEMETRY_EVENT_SCHEMA_VERSION, TELEMETRY_SCHEMA_VERSION, TelemetryConfig, TelemetryEvent,
+    TelemetryEventDraft, TelemetryEventType, TelemetryPrivacy, failure_category_allowed,
 };
 
 #[derive(Debug, Clone)]
@@ -293,7 +293,7 @@ fn redacted_event_from_draft(
         ));
     }
     Ok(TelemetryEvent {
-        schema_version: TELEMETRY_SCHEMA_VERSION,
+        schema_version: TELEMETRY_EVENT_SCHEMA_VERSION,
         event_id: format!("evt_{}", uuid::Uuid::new_v4()),
         event_type: draft.event_type,
         skill_id: draft.skill_id,
@@ -315,12 +315,12 @@ fn redacted_event_from_draft(
 }
 
 fn validate_event(event: &TelemetryEvent) -> std::result::Result<(), CommandFailure> {
-    if event.schema_version != TELEMETRY_SCHEMA_VERSION {
+    if event.schema_version == 0 || event.schema_version > TELEMETRY_EVENT_SCHEMA_VERSION {
         return Err(CommandFailure::new(
             ErrorCode::SchemaMismatch,
             format!(
                 "unsupported telemetry event schema_version {}; expected {}",
-                event.schema_version, TELEMETRY_SCHEMA_VERSION
+                event.schema_version, TELEMETRY_EVENT_SCHEMA_VERSION
             ),
         ));
     }

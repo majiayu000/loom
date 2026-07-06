@@ -4,6 +4,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 pub(super) const TELEMETRY_SCHEMA_VERSION: u32 = 1;
+pub(super) const TELEMETRY_EVENT_SCHEMA_VERSION: u32 = 2;
 pub(super) const DEFAULT_RETENTION_DAYS: u32 = 90;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

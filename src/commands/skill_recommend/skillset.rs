@@ -8,7 +8,7 @@ use super::super::CommandFailure;
 use super::super::skill_inventory::tokenize;
 use super::super::telemetry::SkillTelemetryEvidenceCache;
 use super::evidence::member_dependency_risk;
-use super::{RecommendationContext, activation_safety_risk};
+use super::{RecommendationContext, activation_safety_risk, suggested_activation_command};
 
 pub(super) fn skillset_recommendations(
     ctx: &AppContext,
@@ -107,10 +107,10 @@ pub(super) fn skillset_recommendations(
                     } else if !skill["warnings"].as_array().is_none_or(Vec::is_empty) {
                         required_safe = false;
                         risks.push(format!("{member_kind} {skill_id} warnings"));
-                    } else if !telemetry_risky && let Some(agent) = request.agent {
-                        member_commands.push(format!(
-                            "loom --json skill activate {skill_id} --agent {agent} --dry-run"
-                        ));
+                    } else if !telemetry_risky
+                        && let Some(command) = suggested_activation_command(skill_id, request)
+                    {
+                        member_commands.push(command);
                     }
                 }
                 None => {
@@ -134,7 +134,9 @@ pub(super) fn skillset_recommendations(
             reasons.push("skillset text matched".to_string());
         }
         warnings.push("activation unavailable".to_string());
-        let can_activate_members = required_safe && risks.is_empty() && request.agent.is_some();
+        let can_activate_members = required_safe
+            && risks.is_empty()
+            && (request.binding.is_some() || request.activation_agent.is_some());
         out.push(json!({
             "kind": "skillset",
             "id": id,

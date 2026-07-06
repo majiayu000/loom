@@ -238,6 +238,57 @@ fn recommend_uses_telemetry_usage_and_feedback_when_present() {
 }
 
 #[test]
+fn recommend_applies_agentless_feedback_to_agent_scoped_request() {
+    let root = TestDir::new("recommend-agentless-feedback");
+    for skill in ["a-ci-helper", "z-ci-helper"] {
+        write_recommend_skill(
+            root.path(),
+            skill,
+            "Use when fixing failing CI and test workflow failures.",
+        );
+    }
+    let (enable_output, enable) = run_loom(root.path(), &["telemetry", "enable", "--local-only"]);
+    assert!(
+        enable_output.status.success(),
+        "enable should pass: {enable}"
+    );
+    let (feedback_output, feedback) = run_loom(
+        root.path(),
+        &[
+            "skill",
+            "feedback",
+            "z-ci-helper",
+            "--feedback",
+            "accepted",
+            "--task",
+            "fix failing ci",
+        ],
+    );
+    assert!(
+        feedback_output.status.success(),
+        "agentless feedback should pass: {feedback}"
+    );
+
+    let (output, env) = run_loom(
+        root.path(),
+        &["skill", "recommend", "fix failing ci", "--agent", "codex"],
+    );
+
+    assert!(output.status.success(), "recommend should pass: {env}");
+    let boosted = recommendation(&env, "z-ci-helper");
+    assert!(
+        boosted["score_inputs"]
+            .as_array()
+            .expect("score inputs")
+            .iter()
+            .any(|input| input["field"] == json!("recommendation_feedback")
+                && input["metric"] == json!("accepted")),
+        "agentless feedback should apply as global evidence: {boosted}"
+    );
+    assert_eq!(recommendation_results(&env)[0]["id"], json!("z-ci-helper"));
+}
+
+#[test]
 fn recommend_scopes_feedback_to_requested_task() {
     let root = TestDir::new("recommend-task-scoped-feedback");
     for skill in ["a-ci-helper", "z-ci-helper"] {

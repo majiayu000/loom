@@ -58,7 +58,12 @@ impl SkillTelemetryEvidenceCache {
             if event.skill_id.as_deref() != Some(skill) {
                 continue;
             }
-            if agent.is_some_and(|agent| event.agent.as_deref() != Some(agent)) {
+            if agent.is_some_and(|agent| {
+                event
+                    .agent
+                    .as_deref()
+                    .is_some_and(|event_agent| event_agent != agent)
+            }) {
                 continue;
             }
             if workspace_hash

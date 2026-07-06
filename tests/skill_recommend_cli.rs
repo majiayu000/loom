@@ -95,6 +95,21 @@ fn skill_recommend_prefers_workspace_without_filtering_source_only_agent_matches
         .find(|result| result["kind"] == json!("skill") && result["id"] == json!("review-helper"))
         .unwrap_or_else(|| panic!("source-only compatible skill should be present: {env}"));
     assert_eq!(review["recommended_action"], json!("activate"));
+    let commands = review["suggested_commands"].as_array().expect("commands");
+    assert!(
+        commands
+            .iter()
+            .any(|command| command.as_str().is_some_and(|command| command
+                .contains("skill project review-helper --binding bind_claude_project_a"))),
+        "binding-scoped recommendation should carry the binding selector: {review}"
+    );
+    assert!(
+        commands.iter().all(|command| !command
+            .as_str()
+            .unwrap_or_default()
+            .contains("skill activate")),
+        "binding-derived agent must not emit user-scope activation: {review}"
+    );
     assert!(
         review["score_inputs"]
             .as_array()

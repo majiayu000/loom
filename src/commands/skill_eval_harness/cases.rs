@@ -60,6 +60,10 @@ impl HarnessTaskCase {
     pub(crate) fn id(&self) -> String {
         self.id.clone().unwrap_or_else(|| "task".to_string())
     }
+
+    pub(crate) fn prompt_text(&self) -> Option<&str> {
+        self._task.as_deref()
+    }
 }
 
 #[derive(Debug, Default, Deserialize)]

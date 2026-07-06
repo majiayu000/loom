@@ -33,6 +33,15 @@ pub(super) trait SkillEvalRunner {
         variant: EvalVariant,
         attempt: u32,
     ) -> std::result::Result<EvalCaseResult, CommandFailure>;
+    fn run_trigger_case(
+        &mut self,
+        _env: &EvalRunEnvironment,
+        plan: &EvalPlan,
+        attempt: u32,
+        record: &HarnessJsonlRecord<HarnessTriggerCase>,
+    ) -> std::result::Result<HarnessTriggerResult, CommandFailure> {
+        evaluate_trigger_case(&plan.skill, &plan.agent, attempt, record)
+    }
     fn cleanup(&mut self, env: EvalRunEnvironment) -> CleanupResult;
 }
 
@@ -80,14 +89,15 @@ impl SkillEvalRunner for MockAgentRunner {
 pub(super) struct EvalPlan {
     pub(super) skill: String,
     pub(super) agent: String,
-    mode: &'static str,
-    runner: EvalRunnerArg,
-    baseline: Option<EvalBaselineArg>,
-    runs: u32,
-    workspace: Option<PathBuf>,
-    cases_path: PathBuf,
-    output_path: Option<PathBuf>,
-    report_path: PathBuf,
+    pub(super) mode: &'static str,
+    pub(super) runner: EvalRunnerArg,
+    pub(super) baseline: Option<EvalBaselineArg>,
+    pub(super) runs: u32,
+    pub(super) workspace: Option<PathBuf>,
+    pub(super) cases_path: PathBuf,
+    pub(super) output_path: Option<PathBuf>,
+    pub(super) report_path: PathBuf,
+    pub(super) skill_source: Option<String>,
 }
 
 pub(super) struct EvalPlanInput {
@@ -99,6 +109,17 @@ pub(super) struct EvalPlanInput {
     pub(super) workspace: Option<PathBuf>,
     pub(super) cases_path: PathBuf,
     pub(super) output_path: Option<PathBuf>,
+    pub(super) skill_source: Option<String>,
+}
+
+pub(super) struct EvalTriggerPlanInput {
+    pub(super) skill: String,
+    pub(super) agent: String,
+    pub(super) runner: EvalRunnerArg,
+    pub(super) runs: u32,
+    pub(super) cases_path: PathBuf,
+    pub(super) output_path: Option<PathBuf>,
+    pub(super) skill_source: Option<String>,
 }
 
 impl EvalPlan {
@@ -108,13 +129,31 @@ impl EvalPlan {
             report_path: default_report_path(ctx, &skill, "run"),
             skill,
             agent: input.agent,
-            mode: "real_agent_baseline",
+            mode: mode_for_runner(input.runner, "real_agent_baseline"),
             runner: input.runner,
             baseline: Some(input.baseline),
             runs: input.runs,
             workspace: input.workspace,
             cases_path: input.cases_path,
             output_path: input.output_path,
+            skill_source: input.skill_source,
+        }
+    }
+
+    pub(super) fn trigger(ctx: &AppContext, input: EvalTriggerPlanInput) -> Self {
+        let skill = input.skill;
+        Self {
+            report_path: default_report_path(ctx, &skill, "trigger"),
+            skill,
+            agent: input.agent,
+            mode: mode_for_runner(input.runner, "trigger_quality"),
+            runner: input.runner,
+            baseline: None,
+            runs: input.runs,
+            workspace: None,
+            cases_path: input.cases_path,
+            output_path: input.output_path,
+            skill_source: input.skill_source,
         }
     }
 
@@ -130,6 +169,7 @@ impl EvalPlan {
             "cases_path": self.cases_path.display().to_string(),
             "output_path": self.output_path.as_ref().map(|path| path.display().to_string()),
             "default_report_path": self.report_path.display().to_string(),
+            "skill_source_included": self.skill_source.is_some(),
             "will_write_report": will_write_report,
             "resolved_cases": case_views,
             "actions": [
@@ -145,7 +185,7 @@ impl EvalPlan {
 
 #[derive(Debug)]
 pub(super) struct EvalRunEnvironment {
-    root: PathBuf,
+    pub(super) root: PathBuf,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -157,33 +197,33 @@ pub(super) enum EvalVariant {
 
 #[derive(Debug, Serialize)]
 pub(super) struct EvalCaseResult {
-    id: String,
-    attempt: u32,
-    variant: EvalVariant,
-    status: &'static str,
-    score: Option<f64>,
-    output: String,
-    exit_code: i32,
-    commands: Vec<String>,
-    files_changed: Vec<String>,
-    metrics: Metrics,
-    checks: Vec<MockCheckResult>,
-    workspace: String,
+    pub(super) id: String,
+    pub(super) attempt: u32,
+    pub(super) variant: EvalVariant,
+    pub(super) status: &'static str,
+    pub(super) score: Option<f64>,
+    pub(super) output: String,
+    pub(super) exit_code: i32,
+    pub(super) commands: Vec<String>,
+    pub(super) files_changed: Vec<String>,
+    pub(super) metrics: Metrics,
+    pub(super) checks: Vec<MockCheckResult>,
+    pub(super) workspace: String,
 }
 
 #[derive(Debug, Default, Clone, Copy, Serialize)]
-struct Metrics {
-    tokens: Option<u64>,
-    commands: Option<u64>,
-    duration_ms: Option<u64>,
+pub(super) struct Metrics {
+    pub(super) tokens: Option<u64>,
+    pub(super) commands: Option<u64>,
+    pub(super) duration_ms: Option<u64>,
 }
 
 #[derive(Debug, Serialize)]
-struct MockCheckResult {
-    id: &'static str,
-    status: &'static str,
-    message: String,
-    details: Value,
+pub(super) struct MockCheckResult {
+    pub(super) id: &'static str,
+    pub(super) status: &'static str,
+    pub(super) message: String,
+    pub(super) details: Value,
 }
 
 pub(super) struct CleanupResult {
@@ -192,14 +232,14 @@ pub(super) struct CleanupResult {
 }
 
 impl CleanupResult {
-    fn passed(message: &str) -> Self {
+    pub(super) fn passed(message: &str) -> Self {
         Self {
             failed: false,
             message: message.to_string(),
         }
     }
 
-    fn failure(message: &str) -> Self {
+    pub(super) fn failure(message: &str) -> Self {
         Self {
             failed: true,
             message: message.to_string(),
@@ -242,10 +282,10 @@ pub(super) fn run_task_baseline(
             )?);
         }
     }
-    let trigger_results = triggers
-        .iter()
-        .map(|record| evaluate_trigger_case(&plan.skill, &plan.agent, 1, record))
-        .collect::<std::result::Result<Vec<_>, _>>()?;
+    let mut trigger_results = Vec::new();
+    for record in triggers {
+        trigger_results.push(runner.run_trigger_case(env, plan, 1, record)?);
+    }
     let summary = summarize_baseline(&with_skill, &without_skill, &trigger_results, cases.len());
     Ok(json!({
         "schema_version": super::EVAL_SCHEMA_VERSION,
@@ -279,6 +319,7 @@ pub(super) fn summarize_mock_version(
         cases_path: PathBuf::new(),
         output_path: None,
         report_path: PathBuf::new(),
+        skill_source: None,
     };
     let results = cases
         .iter()
@@ -353,32 +394,14 @@ fn mock_case_result(
             1000
         }),
     };
-    let checks = grade_mock_result(case, &output, exit_code, &commands, &files_changed, metrics);
-    let active = checks
-        .iter()
-        .filter(|check| check.status != "skipped")
-        .count();
-    let passed = checks
-        .iter()
-        .filter(|check| check.status == "passed")
-        .count();
-    let status = if active == 0 {
-        "skipped"
-    } else if active == passed {
-        "passed"
-    } else {
-        "failed"
-    };
+    let checks = grade_eval_result(case, &output, exit_code, &commands, &files_changed, metrics);
+    let (status, score) = case_status_score(&checks);
     EvalCaseResult {
         id: case.id(),
         attempt,
         variant,
         status,
-        score: if active == 0 {
-            None
-        } else {
-            Some(passed as f64 / active as f64)
-        },
+        score,
         output: redact_sensitive_string(&output),
         exit_code,
         commands,
@@ -389,7 +412,7 @@ fn mock_case_result(
     }
 }
 
-fn grade_mock_result(
+pub(super) fn grade_eval_result(
     case: &HarnessTaskCase,
     output: &str,
     exit_code: i32,
@@ -408,6 +431,26 @@ fn grade_mock_result(
     ];
     checks.sort_by(|left, right| left.id.cmp(right.id));
     checks
+}
+
+pub(super) fn case_status_score(checks: &[MockCheckResult]) -> (&'static str, Option<f64>) {
+    let active = checks
+        .iter()
+        .filter(|check| check.status != "skipped")
+        .count();
+    let passed = checks
+        .iter()
+        .filter(|check| check.status == "passed")
+        .count();
+    let status = if active == 0 {
+        "skipped"
+    } else if active == passed {
+        "passed"
+    } else {
+        "failed"
+    };
+    let score = (active != 0).then_some(passed as f64 / active as f64);
+    (status, score)
 }
 
 fn mock_contains_check(id: &'static str, needles: &[String], haystack: &str) -> MockCheckResult {
@@ -576,7 +619,7 @@ fn metric_total(results: &[EvalCaseResult], metric: fn(Metrics) -> Option<u64>) 
     seen.then_some(total)
 }
 
-fn prepare_workspace(
+pub(super) fn prepare_workspace(
     plan: &EvalPlan,
     case: &HarnessTaskCase,
     workspace: &Path,
@@ -614,7 +657,7 @@ fn safe_fixture_path(cases_path: &Path, raw: &str) -> Option<PathBuf> {
     cases_path.parent().map(|parent| parent.join(path))
 }
 
-fn isolated_workspace(
+pub(super) fn isolated_workspace(
     env: &EvalRunEnvironment,
     case_key: &str,
     variant: EvalVariant,
@@ -627,11 +670,11 @@ fn isolated_workspace(
     env.root.join(format!("{case_key}-{variant}-{attempt}"))
 }
 
-fn case_workspace_key(line: usize, case: &HarnessTaskCase) -> String {
+pub(super) fn case_workspace_key(line: usize, case: &HarnessTaskCase) -> String {
     format!("line{}-{}", line, slug_path_component(&case.id()))
 }
 
-fn slug_path_component(raw: &str) -> String {
+pub(super) fn slug_path_component(raw: &str) -> String {
     let mut slug = String::new();
     let mut last_sep = false;
     for ch in raw.chars().take(80) {
@@ -657,5 +700,12 @@ fn slug_path_component(raw: &str) -> String {
 fn baseline_id(baseline: EvalBaselineArg) -> &'static str {
     match baseline {
         EvalBaselineArg::NoSkill => "no-skill",
+    }
+}
+
+fn mode_for_runner(runner: EvalRunnerArg, fallback: &'static str) -> &'static str {
+    match runner {
+        EvalRunnerArg::Mock => fallback,
+        EvalRunnerArg::CodexCli => "real_codex_cli",
     }
 }

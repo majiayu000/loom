@@ -3,6 +3,8 @@
 pub mod actions;
 
 use std::fs;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
@@ -77,6 +79,27 @@ pub fn write_file(path: &Path, body: &str) {
 
 pub fn write_skill(root: &Path, skill: &str, body: &str) {
     write_file(&root.join("skills").join(skill).join("SKILL.md"), body);
+}
+
+pub fn fake_codex_path(root: &Path, body: &str) -> String {
+    let bin = root.join("fake-bin");
+    let codex = bin.join("codex");
+    write_file(&codex, body);
+    #[cfg(unix)]
+    {
+        let mut permissions = fs::metadata(&codex)
+            .expect("fake codex metadata")
+            .permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&codex, permissions).expect("chmod fake codex");
+    }
+    let existing = std::env::var_os("PATH").unwrap_or_default();
+    let mut paths = vec![bin];
+    paths.extend(std::env::split_paths(&existing));
+    std::env::join_paths(paths)
+        .expect("join fake codex PATH")
+        .to_string_lossy()
+        .to_string()
 }
 
 pub fn operations_log(root: &Path) -> String {

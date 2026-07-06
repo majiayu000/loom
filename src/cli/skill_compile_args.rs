@@ -24,6 +24,10 @@ pub struct SkillCompileArgs {
     #[arg(long, default_value = "default")]
     pub profile: String,
 
+    /// Require real codex-cli eval evidence before marking eval gate pass.
+    #[arg(long)]
+    pub require_real_eval: bool,
+
     #[command(subcommand)]
     pub command: Option<SkillCompileCommand>,
 }

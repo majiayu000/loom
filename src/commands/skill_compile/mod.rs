@@ -9,8 +9,8 @@ use chrono::Utc;
 use serde_json::{Value, json};
 
 use crate::cli::{
-    SkillCompileArgs, SkillCompileCommand, SkillCompileListArgs, SkillCompileVerifyArgs,
-    SkillEvalOfflineArgs,
+    EvalBaselineArg, EvalRunnerArg, SkillCompileArgs, SkillCompileCommand, SkillCompileListArgs,
+    SkillCompileVerifyArgs, SkillEvalOfflineArgs, SkillEvalRunArgs,
 };
 use crate::envelope::Meta;
 use crate::fs_util::write_atomic;
@@ -87,13 +87,21 @@ impl App {
         validate_agent_selector("profile", &args.profile)?;
         ensure_skill_source_exists(&self.ctx, skill)?;
 
-        let plan = self.build_compile_plan(skill, &agent, &args.profile, None, true)?;
+        let plan = self.build_compile_plan(
+            skill,
+            &agent,
+            &args.profile,
+            None,
+            true,
+            args.require_real_eval,
+        )?;
         let artifact_id = plan.manifest.artifact_id.clone();
         Ok((
             json!({
                 "skill": skill,
                 "agent": agent,
                 "profile": args.profile,
+                "require_real_eval": args.require_real_eval,
                 "dry_run": true,
                 "writes_artifacts": false,
                 "no_op": plan.planned.no_op,
@@ -131,8 +139,14 @@ impl App {
         self.ensure_write_repo_ready()?;
 
         let existing_created_at = existing_created_at(&self.ctx, skill, &agent, &args.profile)?;
-        let plan =
-            self.build_compile_plan(skill, &agent, &args.profile, existing_created_at, false)?;
+        let plan = self.build_compile_plan(
+            skill,
+            &agent,
+            &args.profile,
+            existing_created_at,
+            false,
+            args.require_real_eval,
+        )?;
         write_compiled_artifact(&plan.planned, &plan.manifest)?;
 
         let root = compiled_skill_root(&self.ctx, skill);
@@ -156,6 +170,7 @@ impl App {
                 "skill": skill,
                 "agent": agent,
                 "profile": args.profile,
+                "require_real_eval": args.require_real_eval,
                 "dry_run": false,
                 "writes_artifacts": true,
                 "no_op": plan.planned.no_op,
@@ -189,12 +204,19 @@ impl App {
         profile: &str,
         created_at: Option<String>,
         dry_run: bool,
+        require_real_eval: bool,
     ) -> std::result::Result<CompilePlan, CommandFailure> {
         let source = source_digest_info(&self.ctx, skill, agent, profile)?;
         let planned = planned_artifact(&self.ctx, skill, agent, profile, &source)?;
         let mut gates = compile_gates(&self.ctx, skill, agent);
         if !dry_run {
-            self.attach_compile_eval_gate(skill, agent, &planned.content_hashes, &mut gates)?;
+            self.attach_compile_eval_gate(
+                skill,
+                agent,
+                &planned.content_hashes,
+                &mut gates,
+                require_real_eval,
+            )?;
         }
         let status = artifact_status(&gates, dry_run);
         let manifest = CompiledArtifactManifest {
@@ -235,15 +257,33 @@ impl App {
         agent: &str,
         content_hashes: &std::collections::BTreeMap<String, String>,
         gates: &mut GatePlan,
+        require_real_eval: bool,
     ) -> std::result::Result<(), CommandFailure> {
         let Some(eval_suite_digest) = eval_suite_digest(&self.ctx, skill)? else {
-            gates.manifest.eval = GateValue::Missing;
+            gates.manifest.eval = if require_real_eval {
+                GateValue::Fail
+            } else {
+                GateValue::Missing
+            };
             gates.details["eval"] = json!({
-                "status": GateValue::Missing.as_str(),
-                "reason": "no eval fixtures found for compiled artifact promotion"
+                "status": gates.manifest.eval.as_str(),
+                "reason": if require_real_eval {
+                    "real codex-cli eval evidence is required but no eval fixtures were found"
+                } else {
+                    "no eval fixtures found for compiled artifact promotion"
+                }
             });
             return Ok(());
         };
+        if require_real_eval {
+            return self.attach_compile_real_eval_gate(
+                skill,
+                agent,
+                content_hashes,
+                gates,
+                eval_suite_digest,
+            );
+        }
         let args = SkillEvalOfflineArgs {
             skill: skill.to_string(),
             agent: Some(agent.to_string()),
@@ -295,6 +335,70 @@ impl App {
                     "reason": err.message,
                     "code": err.code.as_str(),
                     "details": err.details,
+                });
+            }
+        }
+        Ok(())
+    }
+
+    fn attach_compile_real_eval_gate(
+        &self,
+        skill: &str,
+        agent: &str,
+        content_hashes: &std::collections::BTreeMap<String, String>,
+        gates: &mut GatePlan,
+        eval_suite_digest: String,
+    ) -> std::result::Result<(), CommandFailure> {
+        let report_path = self
+            .ctx
+            .state_dir
+            .join("registry/evals")
+            .join(skill)
+            .join("run-real-codex-cli-latest.json");
+        let args = SkillEvalRunArgs {
+            skill: skill.to_string(),
+            agent: agent.to_string(),
+            baseline: EvalBaselineArg::NoSkill,
+            workspace: None,
+            cases: None,
+            runs: 1,
+            runner: EvalRunnerArg::CodexCli,
+            dry_run: false,
+            output: Some(report_path),
+        };
+        match self.cmd_skill_eval_run(&args) {
+            Ok((report, _meta)) => {
+                let report_raw = stable_json(&report)?;
+                let evidence = CompileEvalEvidence {
+                    mode: "real_codex_cli".to_string(),
+                    agent: agent.to_string(),
+                    eval_suite_digest,
+                    report_digest: util::digest_bytes_prefixed(report_raw.as_bytes()),
+                    generated_content_hashes: content_hashes.clone(),
+                    summary: report["summary"].clone(),
+                };
+                gates.manifest.eval = GateValue::Pass;
+                gates.details["eval"] = json!({
+                    "status": GateValue::Pass.as_str(),
+                    "mode": evidence.mode,
+                    "agent": evidence.agent,
+                    "eval_suite_digest": evidence.eval_suite_digest,
+                    "report_digest": evidence.report_digest,
+                    "summary": evidence.summary,
+                    "runner": "codex-cli",
+                });
+                gates.eval_evidence = Some(evidence);
+            }
+            Err(err) if is_runner_infrastructure_failure(&err) => return Err(err),
+            Err(err) => {
+                gates.manifest.eval = GateValue::Fail;
+                gates.details["eval"] = json!({
+                    "status": GateValue::Fail.as_str(),
+                    "mode": "real_codex_cli",
+                    "reason": err.message,
+                    "code": err.code.as_str(),
+                    "details": err.details,
+                    "runner": "codex-cli",
                 });
             }
         }
@@ -479,6 +583,12 @@ fn compile_skill_selector(args: &SkillCompileArgs) -> std::result::Result<&str, 
             "skill compile requires <skill> or --skill <skill>",
         )),
     }
+}
+
+fn is_runner_infrastructure_failure(err: &CommandFailure) -> bool {
+    err.details["failure_kind"]
+        .as_str()
+        .is_some_and(|kind| kind.starts_with("runner_"))
 }
 
 fn normalize_compile_agent(agent: &str) -> std::result::Result<String, CommandFailure> {

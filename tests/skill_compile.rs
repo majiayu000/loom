@@ -7,7 +7,7 @@ use serde_json::{Value, json};
 mod sha256;
 
 mod common;
-use common::{TestDir, run_loom, write_file, write_skill};
+use common::{TestDir, fake_codex_path, run_loom, run_loom_with_env, write_file, write_skill};
 
 #[test]
 fn dry_run_reports_plan_and_writes_no_artifacts() {
@@ -151,6 +151,10 @@ fn compile_promotes_valid_artifact_with_eval_evidence() {
         env["data"]["manifest"]["eval_evidence"]["agent"],
         json!("codex")
     );
+    assert_eq!(
+        env["data"]["manifest"]["eval_evidence"]["mode"],
+        json!("offline_fixture")
+    );
     assert_eq!(env["data"]["verification"]["valid"], json!(true));
     let artifact_id = env["data"]["artifact"]["artifact_id"]
         .as_str()
@@ -189,6 +193,59 @@ fn compile_promotes_valid_artifact_with_eval_evidence() {
     assert_eq!(stale["ok"], json!(true), "{stale}");
     assert_eq!(stale["data"]["valid"], json!(false));
     assert_finding(&stale, "eval_evidence_stale");
+}
+
+#[test]
+fn compile_require_real_eval_records_codex_cli_evidence() {
+    let root = TestDir::new("skill-compile-real-eval");
+    write_non_blocking_compile_skill(root.path(), "demo");
+    write_passing_eval(root.path(), "demo");
+    let path = fake_codex_path(
+        root.path(),
+        r#"#!/bin/sh
+case "$*" in
+  *WITHOUT_SKILL_BASELINE*)
+    printf '%s\n' '{"type":"agent_message","content":"baseline incomplete"}'
+    exit 1
+    ;;
+  *)
+    printf '%s\n' '{"type":"usage","usage":{"total_tokens":40}}'
+    printf '%s\n' '{"type":"exec_command","command":"loom skill eval"}'
+    printf '%s\n' '{"type":"agent_message","content":"Done with concise result"}'
+    exit 0
+    ;;
+esac
+"#,
+    );
+
+    let (_output, env) = run_loom_with_env(
+        root.path(),
+        &[("PATH", path.as_str()), ("LOOM_EVAL_ALLOW_CODEX_CLI", "1")],
+        &[
+            "skill",
+            "compile",
+            "demo",
+            "--agent",
+            "codex",
+            "--require-real-eval",
+        ],
+    );
+
+    assert_eq!(env["ok"], json!(true), "{env}");
+    assert_eq!(env["data"]["require_real_eval"], json!(true));
+    assert_eq!(env["data"]["manifest"]["status"], json!("valid"));
+    assert_eq!(env["data"]["manifest"]["gates"]["eval"], json!("pass"));
+    assert_eq!(
+        env["data"]["manifest"]["eval_evidence"]["mode"],
+        json!("real_codex_cli")
+    );
+    assert_eq!(env["data"]["gates"]["eval"]["runner"], json!("codex-cli"));
+    assert!(
+        root.path()
+            .join("state/registry/evals/demo/run-real-codex-cli-latest.json")
+            .is_file(),
+        "real codex-cli eval report should be persisted"
+    );
 }
 
 #[test]

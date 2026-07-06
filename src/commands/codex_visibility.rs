@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use serde::Serialize;
 use serde_json::{Value, json};
 
-use crate::agent_adapters::{AgentAdapter, load_agent_adapters};
+use crate::agent_adapters::{AgentAdapter, built_in_adapter_for_agent, load_agent_adapters};
 use crate::state::AppContext;
 use crate::state_model::{
     RegistryBindingRule, RegistryProjectionTarget, RegistrySnapshot, RegistryStatePaths,
@@ -110,16 +110,22 @@ pub(crate) fn build_agent_visibility_report(
             format!("skill '{}' not found", skill),
         ));
     }
-    let adapters = load_agent_adapters(ctx)?;
-    let Some(adapter) = adapters.adapter_for_agent(agent) else {
-        return Ok(unsupported_visibility_report(
-            skill,
-            agent,
-            format!("agent adapter '{}' is not registered", agent),
-            json!({"agent": agent}),
-        ));
+    let adapter = match built_in_adapter_for_agent(ctx, agent) {
+        Some(adapter) => adapter,
+        None => {
+            let adapters = load_agent_adapters(ctx)?;
+            let Some(adapter) = adapters.adapter_for_agent(agent).cloned() else {
+                return Ok(unsupported_visibility_report(
+                    skill,
+                    agent,
+                    format!("agent adapter '{}' is not registered", agent),
+                    json!({"agent": agent}),
+                ));
+            };
+            adapter
+        }
     };
-    if !adapter_has_visibility_metadata(adapter) {
+    if !adapter_has_visibility_metadata(&adapter) {
         return Ok(unsupported_visibility_report(
             skill,
             agent,
@@ -127,7 +133,7 @@ pub(crate) fn build_agent_visibility_report(
                 "agent adapter '{}' does not expose visibility metadata",
                 agent
             ),
-            adapter_metadata_details(adapter),
+            adapter_metadata_details(&adapter),
         ));
     }
     let config = if agent == CODEX_AGENT {
@@ -139,7 +145,7 @@ pub(crate) fn build_agent_visibility_report(
         ctx,
         skill,
         agent,
-        adapter,
+        adapter: &adapter,
         snapshot: snapshot.as_ref(),
         config,
         workspace,
@@ -277,7 +283,7 @@ fn build_visibility_report_from_parts(parts: VisibilityBuildParts<'_>) -> CodexV
         false
     };
     checks.push(check(
-        &format!("{agent}_reload_required"),
+        &reload_check_id(agent),
         true,
         "warning",
         "current agent sessions are not claimed to hot-reload visibility changes",
@@ -740,6 +746,14 @@ fn reconcile_next_action(agent: &str) -> String {
         "loom codex reconcile --apply".to_string()
     } else {
         format!("loom agent reconcile --agent {agent} --dry-run")
+    }
+}
+
+fn reload_check_id(agent: &str) -> String {
+    if agent == CODEX_AGENT {
+        "codex_restart_required".to_string()
+    } else {
+        format!("{agent}_reload_required")
     }
 }
 

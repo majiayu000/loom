@@ -232,6 +232,13 @@ pub(crate) fn load_agent_adapters(
     build_registry(adapters, config_locations)
 }
 
+pub(crate) fn built_in_adapter_for_agent(ctx: &AppContext, agent: &str) -> Option<AgentAdapter> {
+    let home = home_dir();
+    built_in_adapters(&ctx.root, home.as_deref())
+        .into_iter()
+        .find(|adapter| adapter.id == agent)
+}
+
 impl AgentAdapterRegistry {
     pub(crate) fn adapters(&self) -> &[AgentAdapter] {
         &self.adapters

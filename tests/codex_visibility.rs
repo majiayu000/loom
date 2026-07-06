@@ -146,6 +146,17 @@ fn write_claude_visibility_state(root: &Path, home: &Path, skill: &str) -> PathB
     projection
 }
 
+fn rewrite_registry_agent(root: &Path, agent: &str) {
+    for (file, array_key) in [("targets.json", "targets"), ("bindings.json", "bindings")] {
+        let path = root.join("state/registry").join(file);
+        let mut value: Value =
+            serde_json::from_str(&fs::read_to_string(&path).expect("read registry json"))
+                .expect("parse registry json");
+        value[array_key][0]["agent"] = json!(agent);
+        write_json(&path, value);
+    }
+}
+
 fn action_categories(env: &Value) -> Vec<String> {
     env["data"]["plans"][0]["actions"]
         .as_array()
@@ -337,6 +348,32 @@ fn skill_visibility_returns_structured_unsupported_for_adapter_without_metadata(
             .iter()
             .any(|check| check["id"] == json!("visibility_unsupported")),
         "missing visibility_unsupported check: {env}"
+    );
+}
+
+#[test]
+fn agent_reconcile_returns_structured_unsupported_without_visibility_metadata() {
+    let root = TestDir::new("reconcile-unsupported");
+    let home = TestDir::new("reconcile-unsupported-home");
+    write_good_skill(root.path(), "demo");
+    write_claude_visibility_state(root.path(), home.path(), "demo");
+    rewrite_registry_agent(root.path(), "cursor");
+
+    let (output, env) = run_with_home(
+        root.path(),
+        home.path(),
+        &["agent", "reconcile", "--agent", "cursor", "--dry-run"],
+    );
+
+    assert!(
+        output.status.success(),
+        "unsupported reconcile should be structured success: {env}"
+    );
+    assert_eq!(env["data"]["plans"].as_array().map(Vec::len), Some(0));
+    assert_eq!(env["data"]["unsupported"], Value::Bool(true));
+    assert_eq!(
+        env["data"]["checks"][0]["id"],
+        json!("visibility_unsupported")
     );
 }
 

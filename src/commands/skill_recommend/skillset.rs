@@ -59,12 +59,13 @@ pub(super) fn skillset_recommendations(
                 continue;
             };
             let required = member["required"].as_bool().unwrap_or(true);
-            let telemetry = member_telemetry(ctx, request, task, skill_id, telemetry_cache);
-            let member_score = *skill_scores.get(skill_id).unwrap_or(&0) + telemetry.score_delta;
+            let (telemetry_score, telemetry_risky) =
+                member_telemetry(ctx, request, task, skill_id, telemetry_cache);
+            let member_score = *skill_scores.get(skill_id).unwrap_or(&0) + telemetry_score;
             match inventory.get(skill_id) {
                 Some(skill) => {
                     let member_kind = if required { "required" } else { "optional" };
-                    if telemetry.risky {
+                    if telemetry_risky {
                         if required {
                             required_safe = false;
                             risks.push(format!("{member_kind} member '{skill_id}' telemetry risk"));
@@ -109,9 +110,7 @@ pub(super) fn skillset_recommendations(
                     } else if !skill["warnings"].as_array().is_none_or(Vec::is_empty) {
                         required_safe = false;
                         risks.push(format!("{member_kind} member '{skill_id}' warnings"));
-                    } else if !telemetry.risky
-                        && let Some(agent) = request.agent
-                    {
+                    } else if !telemetry_risky && let Some(agent) = request.agent {
                         member_commands.push(format!(
                             "loom --json skill activate {skill_id} --agent {agent} --dry-run"
                         ));
@@ -170,51 +169,36 @@ fn lexical_score_text(value: &str, tokens: &[String]) -> i64 {
         * 4
 }
 
-#[derive(Default)]
-struct MemberTelemetry {
-    score_delta: i64,
-    risky: bool,
-}
-
 fn member_telemetry(
     ctx: &AppContext,
     request: RecommendationContext<'_>,
     task: &str,
     skill_id: &str,
     telemetry_cache: &mut SkillTelemetryEvidenceCache,
-) -> MemberTelemetry {
+) -> (i64, bool) {
     let Ok(telemetry) =
         telemetry_cache.evidence_for(ctx, skill_id, request.agent, request.workspace, Some(task))
     else {
-        return MemberTelemetry::default();
+        return (0, false);
     };
     if !telemetry.enabled || telemetry.events == 0 {
-        return MemberTelemetry::default();
+        return (0, false);
     }
-    let mut out = MemberTelemetry::default();
+    let mut score_delta = 0;
+    let mut risky = false;
     if telemetry.invocations > 0 {
-        out.score_delta += (telemetry.invocations as i64).clamp(1, 4);
+        score_delta += (telemetry.invocations as i64).clamp(1, 4);
     }
     if telemetry.errors > 0 {
-        let attempts = telemetry.invocations + telemetry.errors;
-        let rate = telemetry.errors as f64 / attempts.max(1) as f64;
-        let count_penalty = (telemetry.errors as i64 * 2).min(6);
-        let rate_penalty = if rate >= 0.5 {
-            2
-        } else if rate >= 0.25 {
-            1
-        } else {
-            0
-        };
-        out.score_delta -= (count_penalty + rate_penalty).min(8);
-        out.risky = true;
+        score_delta -= (telemetry.errors as i64 * 4).min(8);
+        risky = true;
     }
     if telemetry.feedback_accepted > 0 {
-        out.score_delta += (telemetry.feedback_accepted as i64 * 4).min(8);
+        score_delta += (telemetry.feedback_accepted as i64 * 4).min(8);
     }
     if telemetry.feedback_rejected > 0 {
-        out.score_delta -= (telemetry.feedback_rejected as i64 * 4).min(8);
-        out.risky = true;
+        score_delta -= (telemetry.feedback_rejected as i64 * 4).min(8);
+        risky = true;
     }
-    out
+    (score_delta, risky)
 }

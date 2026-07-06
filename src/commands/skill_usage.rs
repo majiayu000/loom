@@ -75,11 +75,12 @@ impl App {
         args: &SkillFeedbackArgs,
     ) -> std::result::Result<(Value, Meta), CommandFailure> {
         ensure_skill_exists(&self.ctx, &args.skill)?;
+        let feedback = validate_feedback(args.feedback.as_str())?;
         let result = record_recommendation_feedback_telemetry(
             &self.ctx,
             &args.skill,
             RecommendationFeedbackTelemetry {
-                feedback: args.feedback.telemetry_value(),
+                feedback,
                 agent: args.agent.as_deref(),
                 workspace: args.workspace.as_deref(),
                 session_id: args.session_id.as_deref(),
@@ -87,7 +88,7 @@ impl App {
         )?;
 
         Ok((
-            skill_usage_response(&args.skill, result, Some(args.feedback.telemetry_value())),
+            skill_usage_response(&args.skill, result, Some(feedback)),
             Meta::default(),
         ))
     }
@@ -137,4 +138,11 @@ fn validate_failure_category(raw: &str) -> std::result::Result<(), CommandFailur
         return Err(map_arg(anyhow::anyhow!("unsupported failure-category")));
     }
     Ok(())
+}
+
+fn validate_feedback(raw: &str) -> std::result::Result<&str, CommandFailure> {
+    match raw {
+        "accepted" | "rejected" | "ignored" => Ok(raw),
+        _ => Err(map_arg(anyhow::anyhow!("unsupported feedback"))),
+    }
 }

@@ -246,12 +246,10 @@ fn add_telemetry_evidence(
 ) {
     let telemetry = match telemetry_cache.evidence_for(ctx, skill_id, agent, workspace, task) {
         Ok(telemetry) => telemetry,
-        Err(err) => {
-            evidence.warnings.push(format!(
-                "telemetry evidence unavailable: {}: {}",
-                err.code.as_str(),
-                err.message
-            ));
+        Err(_) => {
+            evidence
+                .warnings
+                .push("telemetry evidence unavailable".to_string());
             return;
         }
     };
@@ -261,15 +259,13 @@ fn add_telemetry_evidence(
     if telemetry.invocations > 0 {
         let weight = (telemetry.invocations as i64).clamp(1, 4);
         evidence.score_delta += weight;
-        evidence.reasons.push(format!(
-            "telemetry usage {} invocation(s) in last {} day(s)",
-            telemetry.invocations, telemetry.window_days
-        ));
+        evidence
+            .reasons
+            .push(format!("telemetry usage {}", telemetry.invocations));
         evidence.score_inputs.push(json!({
             "field": "telemetry_usage",
             "metric": "recent_invocations",
             "value": telemetry.invocations,
-            "window_days": telemetry.window_days,
             "weight": weight,
         }));
     }
@@ -292,17 +288,15 @@ fn add_telemetry_evidence(
             "value": telemetry.errors,
             "errors": telemetry.errors,
             "attempts": attempts,
-            "window_days": telemetry.window_days,
             "weight": weight,
         }));
     }
     if telemetry.feedback_accepted > 0 {
         let weight = (telemetry.feedback_accepted as i64 * 4).min(8);
         evidence.score_delta += weight;
-        evidence.reasons.push(format!(
-            "recommendation feedback accepted {} time(s)",
-            telemetry.feedback_accepted
-        ));
+        evidence
+            .reasons
+            .push(format!("feedback accepted {}", telemetry.feedback_accepted));
         evidence.score_inputs.push(json!({
             "field": "recommendation_feedback",
             "metric": "accepted",
@@ -314,7 +308,7 @@ fn add_telemetry_evidence(
         let weight = -((telemetry.feedback_rejected as i64 * 4).min(8));
         evidence.score_delta += weight;
         evidence.risks.push(format!(
-            "recommendation feedback rejected {} time(s)",
+            "telemetry feedback rejected {}",
             telemetry.feedback_rejected
         ));
         evidence.score_inputs.push(json!({

@@ -336,21 +336,14 @@ fn validate_event(event: &TelemetryEvent) -> std::result::Result<(), CommandFail
             "telemetry events must be redacted before persistence",
         ));
     }
-    if let Some(category) = event.metrics.failure_category.as_deref()
-        && !failure_category_allowed(category)
-    {
+    let failure_category = event.metrics.failure_category.as_deref();
+    if failure_category.is_some_and(|category| !failure_category_allowed(category)) {
         return Err(CommandFailure::new(
             ErrorCode::SchemaMismatch,
             "telemetry failure_category is unsupported",
         ));
     }
-    if event.event_type == TelemetryEventType::SkillError
-        && event
-            .metrics
-            .failure_category
-            .as_deref()
-            .is_none_or(|category| !failure_category_allowed(category))
-    {
+    if event.event_type == TelemetryEventType::SkillError && failure_category.is_none() {
         return Err(CommandFailure::new(
             ErrorCode::SchemaMismatch,
             "skill.error telemetry requires failure_category",

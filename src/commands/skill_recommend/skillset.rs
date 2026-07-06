@@ -21,11 +21,7 @@ pub(super) fn skillset_recommendations(
 ) -> std::result::Result<Vec<Value>, CommandFailure> {
     let inventory = inventory_skills
         .iter()
-        .filter_map(|skill| {
-            skill["skill_id"]
-                .as_str()
-                .map(|id| (id.to_string(), skill.clone()))
-        })
+        .filter_map(|skill| skill["skill_id"].as_str().map(|id| (id.to_string(), skill)))
         .collect::<BTreeMap<_, _>>();
     let skill_scores = skill_results
         .iter()
@@ -71,48 +67,46 @@ pub(super) fn skillset_recommendations(
                         telemetry_risk_members.push(skill_id.to_string());
                         if required {
                             required_safe = false;
-                            risks.push(format!("{member_kind} member '{skill_id}' telemetry risk"));
+                            risks.push(format!("{member_kind} {skill_id} telemetry risk"));
                         } else {
-                            warnings
-                                .push(format!("{member_kind} member '{skill_id}' telemetry risk"));
+                            warnings.push(format!("{member_kind} {skill_id} telemetry risk"));
                         }
                     }
                     score += member_score / 2;
                     if member_score > 0 {
-                        reasons.push(format!("member '{skill_id}' matched"));
+                        reasons.push(format!("{skill_id} matched"));
                     }
                     if skill["quarantined"].as_bool() == Some(true) {
                         required_safe = false;
-                        risks.push(format!("{member_kind} member '{skill_id}' quarantined"));
+                        risks.push(format!("{member_kind} {skill_id} quarantined"));
                     } else if skill["trust"].as_str() == Some("blocked") {
                         required_safe = false;
-                        risks.push(format!("{member_kind} member '{skill_id}' trust blocked"));
+                        risks.push(format!("{member_kind} {skill_id} trust blocked"));
                     } else if skill["source_status"].as_str() != Some("present") {
                         if required {
                             required_safe = false;
-                            risks.push(format!("required member '{skill_id}' source missing"));
+                            risks.push(format!("required {skill_id} source missing"));
                         } else {
-                            warnings.push(format!("optional member '{skill_id}' source missing"));
+                            warnings.push(format!("optional {skill_id} source missing"));
                         }
                     } else if let Some(risk) =
                         activation_safety_risk(ctx, skill_id, request.policy_profile)?
                     {
                         required_safe = false;
-                        risks.push(format!("{member_kind} member '{skill_id}' {risk}"));
+                        risks.push(format!("{member_kind} {skill_id} {risk}"));
                     } else if let Some(dependency_risk) =
                         member_dependency_risk(ctx, skill_id, request.agent, skill)?
                     {
                         if required {
                             required_safe = false;
                             score -= 8;
-                            risks.push(format!("required member '{skill_id}' {dependency_risk}"));
+                            risks.push(format!("required {skill_id} {dependency_risk}"));
                         } else {
-                            warnings
-                                .push(format!("optional member '{skill_id}' {dependency_risk}"));
+                            warnings.push(format!("optional {skill_id} {dependency_risk}"));
                         }
                     } else if !skill["warnings"].as_array().is_none_or(Vec::is_empty) {
                         required_safe = false;
-                        risks.push(format!("{member_kind} member '{skill_id}' warnings"));
+                        risks.push(format!("{member_kind} {skill_id} warnings"));
                     } else if !telemetry_risky && let Some(agent) = request.agent {
                         member_commands.push(format!(
                             "loom --json skill activate {skill_id} --agent {agent} --dry-run"
@@ -122,13 +116,13 @@ pub(super) fn skillset_recommendations(
                 None => {
                     score += member_score / 2;
                     if member_score > 0 {
-                        reasons.push(format!("member '{skill_id}' matched"));
+                        reasons.push(format!("{skill_id} matched"));
                     }
                     if required {
                         required_safe = false;
-                        risks.push(format!("required member '{skill_id}' missing"));
+                        risks.push(format!("required {skill_id} missing"));
                     } else {
-                        warnings.push(format!("optional member '{skill_id}' missing"));
+                        warnings.push(format!("optional {skill_id} missing"));
                     }
                 }
             }
@@ -139,7 +133,7 @@ pub(super) fn skillset_recommendations(
         if reasons.is_empty() {
             reasons.push("skillset text matched".to_string());
         }
-        warnings.push("skillset activation unavailable".to_string());
+        warnings.push("activation unavailable".to_string());
         let can_activate_members = required_safe && risks.is_empty() && request.agent.is_some();
         out.push(json!({
             "kind": "skillset",

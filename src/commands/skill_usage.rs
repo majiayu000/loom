@@ -7,9 +7,10 @@ use crate::types::ErrorCode;
 
 use super::helpers::{map_arg, map_registry_state, validate_skill_name};
 use super::telemetry::{
-    RecommendationFeedbackTelemetry, SkillErrorTelemetry, SkillInvocationTelemetry,
-    TelemetryRecordResult, failure_category_allowed, record_recommendation_feedback_telemetry,
-    record_skill_error_telemetry, record_skill_invocation_telemetry,
+    RecommendationFeedback, RecommendationFeedbackTelemetry, SkillErrorTelemetry,
+    SkillInvocationTelemetry, TelemetryRecordResult, failure_category_allowed,
+    record_recommendation_feedback_telemetry, record_skill_error_telemetry,
+    record_skill_invocation_telemetry,
 };
 use super::{App, CommandFailure, build_skill_read_model};
 
@@ -99,7 +100,7 @@ impl App {
 fn skill_usage_response(
     skill: &str,
     result: TelemetryRecordResult,
-    feedback: Option<&str>,
+    feedback: Option<RecommendationFeedback>,
 ) -> Value {
     let mut payload = json!({
         "skill": skill,
@@ -109,11 +110,11 @@ fn skill_usage_response(
         "reason": result.reason,
         "telemetry": {
             "enabled": result.enabled,
-            "mode": result.mode,
+            "mode": "local-only",
         },
     });
     if let Some(feedback) = feedback {
-        payload["feedback"] = json!(feedback);
+        payload["feedback"] = json!(feedback.as_str());
     }
     if let Some(failure_category) = result.failure_category {
         payload["failure_category"] = json!(failure_category);
@@ -128,9 +129,11 @@ fn validate_failure_category(raw: &str) -> std::result::Result<(), CommandFailur
     Ok(())
 }
 
-fn validate_feedback(raw: &str) -> std::result::Result<&str, CommandFailure> {
+fn validate_feedback(raw: &str) -> std::result::Result<RecommendationFeedback, CommandFailure> {
     match raw {
-        "accepted" | "rejected" | "ignored" => Ok(raw),
+        "accepted" => Ok(RecommendationFeedback::Accepted),
+        "rejected" => Ok(RecommendationFeedback::Rejected),
+        "ignored" => Ok(RecommendationFeedback::Ignored),
         _ => Err(map_arg(anyhow::anyhow!("unsupported feedback"))),
     }
 }

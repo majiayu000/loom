@@ -155,14 +155,14 @@ impl TelemetryMetrics {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub(super) enum RecommendationFeedback {
+pub(crate) enum RecommendationFeedback {
     Accepted,
     Rejected,
     Ignored,
 }
 
 impl RecommendationFeedback {
-    pub(super) fn as_str(self) -> &'static str {
+    pub(crate) fn as_str(self) -> &'static str {
         match self {
             Self::Accepted => "accepted",
             Self::Rejected => "rejected",

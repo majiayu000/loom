@@ -29,11 +29,8 @@ pub(crate) use emitters::{
 };
 pub(crate) use evidence::SkillTelemetryEvidenceCache;
 use export::{export_csv, export_format_label, export_jsonl};
-pub(crate) use model::failure_category_allowed;
-use model::{
-    RecommendationFeedback, TelemetryConfig, TelemetryEventDraft, TelemetryEventType,
-    TelemetryMetrics,
-};
+pub(crate) use model::{RecommendationFeedback, failure_category_allowed};
+use model::{TelemetryConfig, TelemetryEventDraft, TelemetryEventType, TelemetryMetrics};
 use store::{
     MalformedTelemetryLine, TelemetryLog, TelemetryLogEntry, config_path, events_path,
     output_path_outside_state, parse_cutoff, purge_token, read_config, read_event_log,

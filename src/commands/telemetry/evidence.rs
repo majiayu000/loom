@@ -14,7 +14,6 @@ pub(crate) struct SkillTelemetryEvidence {
     pub(crate) events: usize,
     pub(crate) invocations: u64,
     pub(crate) errors: u64,
-    pub(crate) window_days: u32,
     pub(crate) feedback_accepted: u64,
     pub(crate) feedback_rejected: u64,
     pub(crate) feedback_ignored: u64,
@@ -27,7 +26,6 @@ pub(crate) struct SkillTelemetryEvidenceCache {
 
 struct SkillTelemetryEvidenceState {
     enabled: bool,
-    window_days: u32,
     cutoff: DateTime<Utc>,
     events: Vec<TelemetryEvent>,
 }
@@ -54,7 +52,6 @@ impl SkillTelemetryEvidenceCache {
         let task_hash = task.map(task_hash_for_text);
         let mut evidence = SkillTelemetryEvidence {
             enabled: true,
-            window_days: state.window_days,
             ..SkillTelemetryEvidence::default()
         };
         for event in &state.events {
@@ -115,11 +112,9 @@ fn load_state(
     if !config.enabled {
         return Ok(disabled_state());
     }
-    let retention_days = config.retention_days;
     let log = read_event_log(ctx)?;
     Ok(SkillTelemetryEvidenceState {
         enabled: true,
-        window_days: retention_days,
         cutoff: cutoff_for_config(&config),
         events: log.events.into_iter().map(|entry| entry.event).collect(),
     })
@@ -128,7 +123,6 @@ fn load_state(
 fn disabled_state() -> SkillTelemetryEvidenceState {
     SkillTelemetryEvidenceState {
         enabled: false,
-        window_days: 0,
         cutoff: Utc::now(),
         events: Vec::new(),
     }

@@ -1,3 +1,5 @@
+mod emitters;
+mod evidence;
 mod export;
 mod model;
 mod store;
@@ -20,11 +22,15 @@ use crate::types::ErrorCode;
 
 use super::helpers::{map_io, map_lock, validate_skill_name};
 use super::{App, CommandFailure};
-use export::{export_csv, export_format_label, export_jsonl};
-use model::{
-    RecommendationFeedback, TelemetryConfig, TelemetryEventDraft, TelemetryEventType,
-    TelemetryMetrics,
+pub(crate) use emitters::{
+    RecommendationFeedbackTelemetry, SkillErrorTelemetry, SkillInvocationTelemetry,
+    TelemetryRecordResult, record_recommendation_feedback_telemetry, record_skill_error_telemetry,
+    record_skill_invocation_telemetry,
 };
+pub(crate) use evidence::SkillTelemetryEvidenceCache;
+use export::{export_csv, export_format_label, export_jsonl};
+pub(crate) use model::{RecommendationFeedback, failure_category_allowed};
+use model::{TelemetryConfig, TelemetryEventDraft, TelemetryEventType, TelemetryMetrics};
 use store::{
     MalformedTelemetryLine, TelemetryLog, TelemetryLogEntry, config_path, events_path,
     output_path_outside_state, parse_cutoff, purge_token, read_config, read_event_log,
@@ -330,10 +336,14 @@ pub(crate) fn skill_telemetry_summary(
         "last_invoked_at": aggregate.last_invoked_at.map(|value| value.to_rfc3339()),
         "last_eval_at": aggregate.last_eval_at.map(|value| value.to_rfc3339()),
         "last_successful_eval_at": aggregate.last_success_eval_at.map(|value| value.to_rfc3339()),
+        "last_error_at": aggregate.last_error_at.map(|value| value.to_rfc3339()),
         "usage": usage_json(&aggregate),
         "value": value_json(&aggregate),
         "cost": cost_json(&aggregate),
+        "sync": sync_json(),
         "risk": risk_json(&aggregate),
+        "recommendation_feedback": feedback_json(&aggregate),
+        "instrumentation": emitters::instrumentation_json(),
     }))
 }
 
@@ -372,6 +382,7 @@ struct Aggregate {
     last_invoked_at: Option<DateTime<Utc>>,
     last_eval_at: Option<DateTime<Utc>>,
     last_success_eval_at: Option<DateTime<Utc>>,
+    last_error_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Serialize)]
@@ -439,6 +450,7 @@ fn build_report(
         "events_total": log.events.len(),
         "matched_events": entries.len(),
         "malformed_events": malformed_json(&log.malformed),
+        "instrumentation": emitters::instrumentation_json(),
         "summary": aggregate_json(&aggregate),
         "skills": skills,
         "panel_read_model": {
@@ -480,7 +492,10 @@ fn aggregate_entries(entries: &[&TelemetryLogEntry]) -> Aggregate {
                 }
             }
             TelemetryEventType::SkillSafety => aggregate.safety_events += 1,
-            TelemetryEventType::SkillError => aggregate.errors += 1,
+            TelemetryEventType::SkillError => {
+                aggregate.errors += 1;
+                max_timestamp(&mut aggregate.last_error_at, event.timestamp);
+            }
             TelemetryEventType::RecommendationFeedback => match event.metrics.feedback {
                 Some(RecommendationFeedback::Accepted) => aggregate.feedback_accepted += 1,
                 Some(RecommendationFeedback::Rejected) => aggregate.feedback_rejected += 1,
@@ -507,6 +522,7 @@ fn aggregate_json(aggregate: &Aggregate) -> Value {
         "usage": usage_json(aggregate),
         "value": value_json(aggregate),
         "cost": cost_json(aggregate),
+        "sync": sync_json(),
         "drift": drift_json(aggregate),
         "risk": risk_json(aggregate),
         "recommendation_feedback": feedback_json(aggregate),
@@ -519,6 +535,8 @@ fn usage_json(aggregate: &Aggregate) -> Value {
         "deactivations": aggregate.deactivations,
         "invocations": aggregate.invocations,
         "errors": aggregate.errors,
+        "last_invoked_at": aggregate.last_invoked_at.map(|value| value.to_rfc3339()),
+        "last_error_at": aggregate.last_error_at.map(|value| value.to_rfc3339()),
         "status": if aggregate.activations + aggregate.deactivations + aggregate.invocations + aggregate.errors > 0 { "available" } else { "missing" },
     })
 }
@@ -541,6 +559,13 @@ fn cost_json(aggregate: &Aggregate) -> Value {
         "commands": aggregate.commands,
         "duration_ms": aggregate.duration_ms,
         "status": if aggregate.cost_seen { "available" } else { "missing" },
+    })
+}
+
+fn sync_json() -> Value {
+    json!({
+        "uploaded_events": 0,
+        "status": "not_instrumented",
     })
 }
 

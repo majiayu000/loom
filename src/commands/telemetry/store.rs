@@ -12,8 +12,8 @@ use crate::types::ErrorCode;
 use super::super::helpers::{map_arg, map_io, validate_skill_name};
 use super::super::{CommandFailure, helpers};
 use super::model::{
-    TELEMETRY_SCHEMA_VERSION, TelemetryConfig, TelemetryEvent, TelemetryEventDraft,
-    TelemetryPrivacy,
+    TELEMETRY_EVENT_SCHEMA_VERSION, TELEMETRY_SCHEMA_VERSION, TelemetryConfig, TelemetryEvent,
+    TelemetryEventDraft, TelemetryEventType, TelemetryPrivacy, failure_category_allowed,
 };
 
 #[derive(Debug, Clone)]
@@ -190,6 +190,10 @@ pub(super) fn workspace_hash_for_path(path: &Path) -> String {
     hash_identity("workspace", &normalize_path_label(path))
 }
 
+pub(super) fn task_hash_for_text(task: &str) -> String {
+    hash_identity("task", task)
+}
+
 pub(super) fn purge_token(before: Option<DateTime<Utc>>, count: usize, bytes: usize) -> String {
     let mut hasher = Sha256::new();
     hasher.update(b"loom.telemetry.purge.v1\n");
@@ -289,7 +293,7 @@ fn redacted_event_from_draft(
         ));
     }
     Ok(TelemetryEvent {
-        schema_version: TELEMETRY_SCHEMA_VERSION,
+        schema_version: TELEMETRY_EVENT_SCHEMA_VERSION,
         event_id: format!("evt_{}", uuid::Uuid::new_v4()),
         event_type: draft.event_type,
         skill_id: draft.skill_id,
@@ -303,6 +307,7 @@ fn redacted_event_from_draft(
             .session_id
             .as_ref()
             .map(|session| hash_identity("session", session)),
+        task_hash: draft.task.as_ref().map(|task| task_hash_for_text(task)),
         timestamp: draft.timestamp,
         metrics: draft.metrics,
         privacy: TelemetryPrivacy::default(),
@@ -310,12 +315,12 @@ fn redacted_event_from_draft(
 }
 
 fn validate_event(event: &TelemetryEvent) -> std::result::Result<(), CommandFailure> {
-    if event.schema_version != TELEMETRY_SCHEMA_VERSION {
+    if event.schema_version == 0 || event.schema_version > TELEMETRY_EVENT_SCHEMA_VERSION {
         return Err(CommandFailure::new(
             ErrorCode::SchemaMismatch,
             format!(
                 "unsupported telemetry event schema_version {}; expected {}",
-                event.schema_version, TELEMETRY_SCHEMA_VERSION
+                event.schema_version, TELEMETRY_EVENT_SCHEMA_VERSION
             ),
         ));
     }
@@ -329,6 +334,19 @@ fn validate_event(event: &TelemetryEvent) -> std::result::Result<(), CommandFail
         return Err(CommandFailure::new(
             ErrorCode::SchemaMismatch,
             "telemetry events must be redacted before persistence",
+        ));
+    }
+    let failure_category = event.metrics.failure_category.as_deref();
+    if failure_category.is_some_and(|category| !failure_category_allowed(category)) {
+        return Err(CommandFailure::new(
+            ErrorCode::SchemaMismatch,
+            "telemetry failure_category is unsupported",
+        ));
+    }
+    if event.event_type == TelemetryEventType::SkillError && failure_category.is_none() {
+        return Err(CommandFailure::new(
+            ErrorCode::SchemaMismatch,
+            "skill.error telemetry requires failure_category",
         ));
     }
     Ok(())

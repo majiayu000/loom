@@ -13,17 +13,22 @@ use crate::types::ErrorCode;
 use super::helpers::{
     map_io, map_registry_state, validate_non_empty, validate_policy_profile, validate_skill_name,
 };
-use super::skill_inventory::{SkillDiscoveryFilters, score_and_filter_skills, tokenize};
+use super::skill_inventory::{SkillDiscoveryFilters, score_and_filter_skills};
 use super::skill_recommend_active::{activation_plan_delta, active_view};
 use super::skill_safety::evaluate_skill_safety_with_policy;
+use super::telemetry::SkillTelemetryEvidenceCache;
 use super::{App, CommandFailure, build_skill_read_model};
 
 #[path = "skill_recommend/evidence.rs"]
 mod evidence;
-use evidence::{member_dependency_risk, ranking_evidence};
+use evidence::ranking_evidence;
 
 #[path = "skill_recommend/index.rs"]
 mod index;
+
+#[path = "skill_recommend/skillset.rs"]
+mod skillset;
+use skillset::skillset_recommendations;
 
 impl App {
     pub fn cmd_skill_search(
@@ -65,17 +70,26 @@ impl App {
             .as_str()
             .unwrap_or("safe-capture")
             .to_string();
+        let recommendation_agent = args
+            .agent
+            .as_deref()
+            .or_else(|| policy_context["agent"].as_str());
         let recommendation_context = RecommendationContext {
-            agent: args.agent.as_deref(),
+            agent: recommendation_agent,
+            activation_agent: args.agent.as_deref(),
+            workspace: args.workspace.as_deref(),
+            binding: args.binding.as_deref(),
             mode,
             policy_profile: &policy_profile,
         };
+        let mut telemetry_cache = SkillTelemetryEvidenceCache::default();
         let adjusted_task_results = if args.for_task {
             Some(evidence_adjusted_skill_results(
                 &self.ctx,
                 &args.query,
                 recommendation_context,
                 &results,
+                &mut telemetry_cache,
             )?)
         } else {
             None
@@ -140,7 +154,9 @@ impl App {
                 &args.query,
                 recommendation_context,
                 &recommendation_skill_results,
+                &model.skills,
                 &skillsets,
+                &mut telemetry_cache,
             )?;
             payload["recommendations"] = json!({
                 "task_description": args.query,
@@ -213,16 +229,22 @@ impl App {
         );
         let skillsets = load_skillsets_value(&self.ctx)?;
         let recommendation_context = RecommendationContext {
-            agent: None,
+            agent: Some(args.agent.trim()),
+            activation_agent: Some(args.agent.trim()),
+            workspace: args.workspace.as_deref(),
+            binding: None,
             mode: "lexical",
             policy_profile: "safe-capture",
         };
+        let mut telemetry_cache = SkillTelemetryEvidenceCache::default();
         let recommend = recommendation_results(
             &self.ctx,
             &args.task_description,
             recommendation_context,
             &skill_results,
+            &model.skills,
             &skillsets,
+            &mut telemetry_cache,
         )?;
         let mut meta = Meta {
             warnings: model.warnings,
@@ -402,8 +424,11 @@ fn recommend_binding_matches_workspace(
 }
 
 #[derive(Clone, Copy)]
-struct RecommendationContext<'a> {
+pub(super) struct RecommendationContext<'a> {
     agent: Option<&'a str>,
+    activation_agent: Option<&'a str>,
+    workspace: Option<&'a Path>,
+    binding: Option<&'a str>,
     mode: &'a str,
     policy_profile: &'a str,
 }
@@ -413,21 +438,28 @@ fn recommendation_results(
     task: &str,
     request: RecommendationContext<'_>,
     skill_search_results: &[Value],
+    inventory_skills: &[Value],
     skillsets: &Value,
+    telemetry_cache: &mut SkillTelemetryEvidenceCache,
 ) -> std::result::Result<Vec<Value>, CommandFailure> {
     let mut results = Vec::new();
     for result in skill_search_results {
-        if let Some(recommendation) = skill_recommendation(ctx, task, result, request)? {
+        if let Some(recommendation) =
+            skill_recommendation(ctx, task, result, request, telemetry_cache)?
+        {
             results.push(recommendation);
         }
     }
-    results.extend(skillset_recommendations(
+    let skillset_results = skillset_recommendations(
         ctx,
         task,
         request,
-        skill_search_results,
+        &results,
+        inventory_skills,
         skillsets,
-    )?);
+        telemetry_cache,
+    )?;
+    results.extend(skillset_results);
     results.sort_by(|left, right| {
         let l = left["score"].as_i64().unwrap_or_default();
         let r = right["score"].as_i64().unwrap_or_default();
@@ -453,6 +485,7 @@ fn evidence_adjusted_skill_results(
     task: &str,
     request: RecommendationContext<'_>,
     skill_results: &[Value],
+    telemetry_cache: &mut SkillTelemetryEvidenceCache,
 ) -> std::result::Result<Vec<Value>, CommandFailure> {
     let mut adjusted = Vec::new();
     for result in skill_results {
@@ -463,7 +496,15 @@ fn evidence_adjusted_skill_results(
         if skill["quarantined"].as_bool() == Some(true) {
             continue;
         }
-        let evidence = ranking_evidence(ctx, skill_id, skill, request.agent, Some(task))?;
+        let evidence = ranking_evidence(
+            ctx,
+            skill_id,
+            skill,
+            request.agent,
+            request.workspace,
+            Some(task),
+            telemetry_cache,
+        )?;
         let mut result = result.clone();
         let score = result["score"].as_i64().unwrap_or_default() + evidence.score_delta;
         result["score"] = json!(score.max(0));
@@ -492,6 +533,7 @@ fn skill_recommendation(
     task: &str,
     result: &Value,
     request: RecommendationContext<'_>,
+    telemetry_cache: &mut SkillTelemetryEvidenceCache,
 ) -> std::result::Result<Option<Value>, CommandFailure> {
     let skill = &result["skill"];
     let Some(skill_id) = skill["skill_id"].as_str() else {
@@ -525,7 +567,15 @@ fn skill_recommendation(
     } else if let Some(risk) = activation_safety_risk(ctx, skill_id, request.policy_profile)? {
         risks.push(risk);
     }
-    let evidence = ranking_evidence(ctx, skill_id, skill, request.agent, Some(task))?;
+    let evidence = ranking_evidence(
+        ctx,
+        skill_id,
+        skill,
+        request.agent,
+        request.workspace,
+        Some(task),
+        telemetry_cache,
+    )?;
     score += evidence.score_delta;
     reasons.extend(evidence.reasons);
     risks.extend(evidence.risks);
@@ -537,7 +587,12 @@ fn skill_recommendation(
     if request.agent.is_some() {
         reasons.push("agent match".to_string());
     }
-    let can_activate = risks.is_empty() && request.agent.is_some();
+    let activation_command = suggested_activation_command(skill_id, request);
+    let can_activate = risks.is_empty() && activation_command.is_some();
+    let suggested_commands = match (can_activate, activation_command) {
+        (true, Some(command)) => vec![command],
+        _ => vec![format!("loom --json skill inspect {skill_id}")],
+    };
     Ok(Some(json!({
         "kind": "skill",
         "id": skill_id,
@@ -548,142 +603,23 @@ fn skill_recommendation(
         "risks": risks,
         "warnings": warnings,
         "recommended_action": if can_activate { "activate" } else { "inspect" },
-        "suggested_commands": if can_activate {
-            vec![format!("loom --json skill activate {skill_id} --agent {} --dry-run", request.agent.unwrap())]
-        } else {
-            vec![format!("loom --json skill inspect {skill_id}")]
-        },
+        "suggested_commands": suggested_commands,
     })))
 }
 
-fn skillset_recommendations(
-    ctx: &AppContext,
-    task: &str,
+pub(super) fn suggested_activation_command(
+    skill_id: &str,
     request: RecommendationContext<'_>,
-    skill_results: &[Value],
-    skillsets: &Value,
-) -> std::result::Result<Vec<Value>, CommandFailure> {
-    let inventory = build_skill_read_model(ctx).map_err(map_registry_state)?;
-    let inventory = inventory
-        .skills
-        .into_iter()
-        .filter_map(|skill| {
-            skill["skill_id"]
-                .as_str()
-                .map(|id| (id.to_string(), skill.clone()))
-        })
-        .collect::<BTreeMap<_, _>>();
-    let skill_scores = skill_results
-        .iter()
-        .filter_map(|result| {
-            Some((
-                result["skill"]["skill_id"].as_str()?.to_string(),
-                result["score"].as_i64().unwrap_or_default(),
-            ))
-        })
-        .collect::<BTreeMap<_, _>>();
-    let tokens = tokenize(task);
-    let mut out = Vec::new();
-    for skillset in skillsets["skillsets"].as_array().into_iter().flatten() {
-        let Some(id) = skillset["id"].as_str() else {
-            continue;
-        };
-        let mut score = lexical_score_text(id, &tokens)
-            + lexical_score_text(
-                skillset["description"].as_str().unwrap_or_default(),
-                &tokens,
-            );
-        let mut risks = Vec::new();
-        let mut warnings = Vec::new();
-        let mut reasons = Vec::new();
-        let mut required_safe = true;
-        let mut member_commands = Vec::new();
-        for member in skillset["members"].as_array().into_iter().flatten() {
-            let Some(skill_id) = member["skill_id"].as_str() else {
-                continue;
-            };
-            let required = member["required"].as_bool().unwrap_or(true);
-            let member_score = *skill_scores.get(skill_id).unwrap_or(&0);
-            score += member_score / 2;
-            if member_score > 0 {
-                reasons.push(format!("member '{skill_id}' matched"));
-            }
-            match inventory.get(skill_id) {
-                Some(skill) => {
-                    let member_kind = if required { "required" } else { "optional" };
-                    if skill["quarantined"].as_bool() == Some(true) {
-                        required_safe = false;
-                        risks.push(format!("{member_kind} member '{skill_id}' quarantined"));
-                    } else if skill["trust"].as_str() == Some("blocked") {
-                        required_safe = false;
-                        risks.push(format!("{member_kind} member '{skill_id}' trust blocked"));
-                    } else if skill["source_status"].as_str() != Some("present") {
-                        if required {
-                            required_safe = false;
-                            risks.push(format!("required member '{skill_id}' source missing"));
-                        } else {
-                            warnings.push(format!("optional member '{skill_id}' source missing"));
-                        }
-                    } else if let Some(risk) =
-                        activation_safety_risk(ctx, skill_id, request.policy_profile)?
-                    {
-                        required_safe = false;
-                        risks.push(format!("{member_kind} member '{skill_id}' {risk}"));
-                    } else if let Some(dependency_risk) =
-                        member_dependency_risk(ctx, skill_id, request.agent, skill)?
-                    {
-                        if required {
-                            required_safe = false;
-                            score -= 8;
-                            risks.push(format!("required member '{skill_id}' {dependency_risk}"));
-                        } else {
-                            warnings
-                                .push(format!("optional member '{skill_id}' {dependency_risk}"));
-                        }
-                    } else if !skill["warnings"].as_array().is_none_or(Vec::is_empty) {
-                        required_safe = false;
-                        risks.push(format!("{member_kind} member '{skill_id}' warnings"));
-                    } else if let Some(agent) = request.agent {
-                        member_commands.push(format!(
-                            "loom --json skill activate {skill_id} --agent {agent} --dry-run"
-                        ));
-                    }
-                }
-                None if required => {
-                    required_safe = false;
-                    risks.push(format!("required member '{skill_id}' missing"));
-                }
-                None => warnings.push(format!("optional member '{skill_id}' missing")),
-            }
-        }
-        if score == 0 {
-            continue;
-        }
-        if reasons.is_empty() {
-            reasons.push("skillset text matched".to_string());
-        }
-        warnings.push("skillset activation unavailable".to_string());
-        let can_activate_members = required_safe && risks.is_empty() && request.agent.is_some();
-        out.push(json!({
-            "kind": "skillset",
-            "id": id,
-            "score": score.max(0),
-            "mode": request.mode,
-            "score_inputs": {
-                "matched_fields": ["skillset", "members"],
-            },
-            "reasons": reasons,
-            "risks": risks,
-            "warnings": warnings,
-            "recommended_action": if can_activate_members { "activate" } else { "inspect" },
-            "suggested_commands": if can_activate_members && !member_commands.is_empty() {
-                member_commands
-            } else {
-                vec![format!("loom --json skillset show {id}")]
-            },
-        }));
+) -> Option<String> {
+    if let Some(binding) = request.binding {
+        Some(format!(
+            "loom --json skill project {skill_id} --binding {binding} --dry-run"
+        ))
+    } else {
+        request
+            .activation_agent
+            .map(|agent| format!("loom --json skill activate {skill_id} --agent {agent} --dry-run"))
     }
-    Ok(out)
 }
 
 fn activation_safety_risk(
@@ -709,15 +645,6 @@ fn validate_active_agent(agent: &str) -> std::result::Result<(), CommandFailure>
             format!("unsupported agent '{agent}'"),
         )),
     }
-}
-
-fn lexical_score_text(value: &str, tokens: &[String]) -> i64 {
-    let value = value.to_ascii_lowercase();
-    tokens
-        .iter()
-        .filter(|token| value.contains(token.as_str()))
-        .count() as i64
-        * 4
 }
 
 fn skillset_membership(skillsets: &Value) -> BTreeMap<String, Vec<String>> {

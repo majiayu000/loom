@@ -45,6 +45,7 @@ mod skill_recommend;
 mod skill_recommend_active;
 mod skill_safety;
 mod skill_safety_findings;
+mod skill_usage;
 mod skill_verify;
 mod skillset_activation;
 mod skillset_cmds;
@@ -275,6 +276,8 @@ impl App {
                 SkillCommand::Search(args) => self.cmd_skill_search(args),
                 SkillCommand::Recommend(args) => self.cmd_skill_recommend(args),
                 SkillCommand::Resolve(args) => self.cmd_skill_resolve(args),
+                SkillCommand::Used(args) => self.cmd_skill_used(args),
+                SkillCommand::Feedback(args) => self.cmd_skill_feedback(args),
                 SkillCommand::Draft(args) => self.cmd_skill_draft(args),
                 SkillCommand::Extract(args) => self.cmd_skill_extract(args),
                 SkillCommand::Rewrite(args) => self.cmd_skill_rewrite(args),

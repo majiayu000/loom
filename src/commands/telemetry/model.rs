@@ -4,6 +4,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 pub(super) const TELEMETRY_SCHEMA_VERSION: u32 = 1;
+pub(super) const TELEMETRY_EVENT_SCHEMA_VERSION: u32 = 2;
 pub(super) const DEFAULT_RETENTION_DAYS: u32 = 90;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -79,6 +80,8 @@ pub(super) struct TelemetryEvent {
     pub workspace_hash: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session_id_hash: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_hash: Option<String>,
     pub timestamp: DateTime<Utc>,
     #[serde(default)]
     pub metrics: TelemetryMetrics,
@@ -153,20 +156,38 @@ impl TelemetryMetrics {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub(super) enum RecommendationFeedback {
+pub(crate) enum RecommendationFeedback {
     Accepted,
     Rejected,
     Ignored,
 }
 
 impl RecommendationFeedback {
-    pub(super) fn as_str(self) -> &'static str {
+    pub(crate) fn as_str(self) -> &'static str {
         match self {
             Self::Accepted => "accepted",
             Self::Rejected => "rejected",
             Self::Ignored => "ignored",
         }
     }
+}
+
+pub(crate) fn failure_category_allowed(value: &str) -> bool {
+    matches!(
+        value,
+        "timeout"
+            | "tool_error"
+            | "model_error"
+            | "dependency_error"
+            | "permission_denied"
+            | "rate_limited"
+            | "invalid_input"
+            | "policy_blocked"
+            | "not_found"
+            | "network_error"
+            | "execution_error"
+            | "unknown"
+    )
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -195,6 +216,7 @@ pub(crate) struct TelemetryEventDraft {
     pub(crate) agent: Option<String>,
     pub(crate) workspace: Option<PathBuf>,
     pub(crate) session_id: Option<String>,
+    pub(crate) task: Option<String>,
     pub(crate) timestamp: DateTime<Utc>,
     pub(crate) metrics: TelemetryMetrics,
 }
@@ -208,6 +230,7 @@ impl TelemetryEventDraft {
             agent: None,
             workspace: None,
             session_id: None,
+            task: None,
             timestamp: Utc::now(),
             metrics: TelemetryMetrics::default(),
         }

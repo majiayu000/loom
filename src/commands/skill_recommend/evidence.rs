@@ -1,5 +1,6 @@
 use std::collections::BTreeSet;
 use std::fs;
+use std::path::Path;
 
 use serde_json::{Value, json};
 
@@ -13,6 +14,7 @@ use super::super::skill_eval_harness::cases::{
     HarnessJsonlRecord, HarnessTriggerCase, read_harness_jsonl,
 };
 use super::super::skill_inventory::tokenize;
+use super::super::telemetry::SkillTelemetryEvidenceCache;
 
 #[derive(Default)]
 pub(super) struct RankingEvidence {
@@ -37,7 +39,9 @@ pub(super) fn ranking_evidence(
     skill_id: &str,
     skill: &Value,
     agent: Option<&str>,
+    workspace: Option<&Path>,
     task: Option<&str>,
+    telemetry_cache: &mut SkillTelemetryEvidenceCache,
 ) -> std::result::Result<RankingEvidence, CommandFailure> {
     let mut evidence = RankingEvidence::default();
     if validate_skill_name(skill_id).is_err() {
@@ -54,6 +58,15 @@ pub(super) fn ranking_evidence(
         task.unwrap_or_default(),
         &mut evidence,
     )?;
+    add_telemetry_evidence(
+        ctx,
+        skill_id,
+        agent,
+        workspace,
+        task,
+        telemetry_cache,
+        &mut evidence,
+    );
     Ok(evidence)
 }
 
@@ -220,6 +233,99 @@ fn add_eval_evidence(
         }));
     }
     Ok(())
+}
+
+fn add_telemetry_evidence(
+    ctx: &AppContext,
+    skill_id: &str,
+    agent: Option<&str>,
+    workspace: Option<&Path>,
+    task: Option<&str>,
+    telemetry_cache: &mut SkillTelemetryEvidenceCache,
+    evidence: &mut RankingEvidence,
+) {
+    let telemetry = match telemetry_cache.evidence_for(ctx, skill_id, agent, workspace, task) {
+        Ok(telemetry) => telemetry,
+        Err(_) => {
+            evidence
+                .warnings
+                .push("telemetry evidence unavailable".to_string());
+            return;
+        }
+    };
+    if !telemetry.enabled || telemetry.events == 0 {
+        return;
+    }
+    if telemetry.invocations > 0 {
+        let weight = (telemetry.invocations as i64).clamp(1, 4);
+        evidence.score_delta += weight;
+        evidence
+            .reasons
+            .push(format!("telemetry usage {}", telemetry.invocations));
+        evidence.score_inputs.push(json!({
+            "field": "telemetry_usage",
+            "metric": "recent_invocations",
+            "value": telemetry.invocations,
+            "weight": weight,
+        }));
+    }
+    if telemetry.errors > 0 {
+        let attempts = telemetry.invocations + telemetry.errors;
+        let count_penalty = (telemetry.errors as i64 * 2).min(6);
+        let rate_penalty = if telemetry.errors * 2 >= attempts {
+            2
+        } else if telemetry.errors * 4 >= attempts {
+            1
+        } else {
+            0
+        };
+        let weight = -((count_penalty + rate_penalty).min(8));
+        evidence.score_delta += weight;
+        evidence.risks.push("telemetry errors".to_string());
+        evidence.score_inputs.push(json!({
+            "field": "telemetry_error_rate",
+            "metric": "recent_error_rate",
+            "value": telemetry.errors,
+            "errors": telemetry.errors,
+            "attempts": attempts,
+            "weight": weight,
+        }));
+    }
+    if telemetry.feedback_accepted > 0 {
+        let weight = (telemetry.feedback_accepted as i64 * 4).min(8);
+        evidence.score_delta += weight;
+        evidence
+            .reasons
+            .push(format!("feedback accepted {}", telemetry.feedback_accepted));
+        evidence.score_inputs.push(json!({
+            "field": "recommendation_feedback",
+            "metric": "accepted",
+            "value": telemetry.feedback_accepted,
+            "weight": weight,
+        }));
+    }
+    if telemetry.feedback_rejected > 0 {
+        let weight = -((telemetry.feedback_rejected as i64 * 4).min(8));
+        evidence.score_delta += weight;
+        evidence.risks.push(format!(
+            "telemetry feedback rejected {}",
+            telemetry.feedback_rejected
+        ));
+        evidence.score_inputs.push(json!({
+            "field": "recommendation_feedback",
+            "metric": "rejected",
+            "value": telemetry.feedback_rejected,
+            "weight": weight,
+        }));
+    }
+    if telemetry.feedback_ignored > 0 {
+        evidence.score_inputs.push(json!({
+            "field": "recommendation_feedback",
+            "metric": "ignored",
+            "value": telemetry.feedback_ignored,
+            "weight": 0,
+        }));
+    }
 }
 
 pub(super) fn member_dependency_risk(

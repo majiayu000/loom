@@ -29,6 +29,7 @@ mod skill_compile_args;
 mod skill_inspect_args;
 mod skill_lint_args;
 mod skill_new_args;
+mod skill_usage_args;
 mod skill_visibility_args;
 mod skillset;
 mod telemetry;
@@ -89,6 +90,7 @@ pub use skill_compile_args::{
 pub use skill_inspect_args::SkillInspectArgs;
 pub use skill_lint_args::SkillLintArgs;
 pub use skill_new_args::{SkillNewArgs, SkillNewTemplate};
+pub use skill_usage_args::{SkillFeedbackArgs, SkillUsedArgs};
 pub use skill_visibility_args::{SkillDiagnoseArgs, SkillDiagnoseCheck, SkillVisibilityArgs};
 pub use skillset::{
     SkillsetActivateArgs, SkillsetAddArgs, SkillsetCommand, SkillsetCreateArgs, SkillsetEvalArgs,
@@ -334,6 +336,10 @@ pub enum SkillCommand {
     Recommend(SkillSearchArgs),
     #[command(about = "Resolve the best skill candidate for a task without mutating state")]
     Resolve(SkillSearchArgs),
+    #[command(about = "Record skill telemetry")]
+    Used(SkillUsedArgs),
+    #[command(about = "Record recommendation feedback")]
+    Feedback(SkillFeedbackArgs),
     #[command(about = "Draft a new skill as a guarded patch artifact")]
     Draft(SkillDraftArgs),
     #[command(about = "Extract reviewed diff context into a guarded patch artifact")]

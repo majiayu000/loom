@@ -16,6 +16,7 @@ use super::helpers::{
 use super::skill_inventory::{SkillDiscoveryFilters, score_and_filter_skills, tokenize};
 use super::skill_recommend_active::{activation_plan_delta, active_view};
 use super::skill_safety::evaluate_skill_safety_with_policy;
+use super::telemetry::SkillTelemetryEvidenceCache;
 use super::{App, CommandFailure, build_skill_read_model};
 
 #[path = "skill_recommend/evidence.rs"]
@@ -71,12 +72,14 @@ impl App {
             mode,
             policy_profile: &policy_profile,
         };
+        let mut telemetry_cache = SkillTelemetryEvidenceCache::default();
         let adjusted_task_results = if args.for_task {
             Some(evidence_adjusted_skill_results(
                 &self.ctx,
                 &args.query,
                 recommendation_context,
                 &results,
+                &mut telemetry_cache,
             )?)
         } else {
             None
@@ -142,6 +145,7 @@ impl App {
                 recommendation_context,
                 &recommendation_skill_results,
                 &skillsets,
+                &mut telemetry_cache,
             )?;
             payload["recommendations"] = json!({
                 "task_description": args.query,
@@ -214,17 +218,19 @@ impl App {
         );
         let skillsets = load_skillsets_value(&self.ctx)?;
         let recommendation_context = RecommendationContext {
-            agent: None,
-            workspace: None,
+            agent: Some(args.agent.trim()),
+            workspace: args.workspace.as_deref(),
             mode: "lexical",
             policy_profile: "safe-capture",
         };
+        let mut telemetry_cache = SkillTelemetryEvidenceCache::default();
         let recommend = recommendation_results(
             &self.ctx,
             &args.task_description,
             recommendation_context,
             &skill_results,
             &skillsets,
+            &mut telemetry_cache,
         )?;
         let mut meta = Meta {
             warnings: model.warnings,
@@ -417,10 +423,13 @@ fn recommendation_results(
     request: RecommendationContext<'_>,
     skill_search_results: &[Value],
     skillsets: &Value,
+    telemetry_cache: &mut SkillTelemetryEvidenceCache,
 ) -> std::result::Result<Vec<Value>, CommandFailure> {
     let mut results = Vec::new();
     for result in skill_search_results {
-        if let Some(recommendation) = skill_recommendation(ctx, task, result, request)? {
+        if let Some(recommendation) =
+            skill_recommendation(ctx, task, result, request, telemetry_cache)?
+        {
             results.push(recommendation);
         }
     }
@@ -456,6 +465,7 @@ fn evidence_adjusted_skill_results(
     task: &str,
     request: RecommendationContext<'_>,
     skill_results: &[Value],
+    telemetry_cache: &mut SkillTelemetryEvidenceCache,
 ) -> std::result::Result<Vec<Value>, CommandFailure> {
     let mut adjusted = Vec::new();
     for result in skill_results {
@@ -473,6 +483,7 @@ fn evidence_adjusted_skill_results(
             request.agent,
             request.workspace,
             Some(task),
+            telemetry_cache,
         )?;
         let mut result = result.clone();
         let score = result["score"].as_i64().unwrap_or_default() + evidence.score_delta;
@@ -502,6 +513,7 @@ fn skill_recommendation(
     task: &str,
     result: &Value,
     request: RecommendationContext<'_>,
+    telemetry_cache: &mut SkillTelemetryEvidenceCache,
 ) -> std::result::Result<Option<Value>, CommandFailure> {
     let skill = &result["skill"];
     let Some(skill_id) = skill["skill_id"].as_str() else {
@@ -542,6 +554,7 @@ fn skill_recommendation(
         request.agent,
         request.workspace,
         Some(task),
+        telemetry_cache,
     )?;
     score += evidence.score_delta;
     reasons.extend(evidence.reasons);

@@ -418,6 +418,44 @@ fn recommend_ignores_disabled_and_stale_telemetry() {
 }
 
 #[test]
+fn recommend_skips_malformed_optional_telemetry_config() {
+    let root = TestDir::new("recommend-malformed-telemetry-config");
+    for skill in ["a-ci-helper", "z-ci-helper"] {
+        write_recommend_skill(
+            root.path(),
+            skill,
+            "Use when fixing failing CI and test workflow failures.",
+        );
+    }
+    write_file(
+        &root.path().join("state/telemetry/config.json"),
+        r#"{"schema_version":999,"enabled":true,"mode":"local-only","redaction":"default","retention_days":90}"#,
+    );
+
+    let (output, env) = run_loom(
+        root.path(),
+        &["skill", "recommend", "fix failing ci", "--agent", "codex"],
+    );
+
+    assert!(
+        output.status.success(),
+        "malformed optional telemetry config should not block recommend: {env}"
+    );
+    assert_eq!(recommendation_results(&env)[0]["id"], json!("a-ci-helper"));
+    let candidate = recommendation(&env, "a-ci-helper");
+    assert!(
+        candidate["warnings"]
+            .as_array()
+            .expect("warnings")
+            .iter()
+            .any(|warning| warning
+                .as_str()
+                .is_some_and(|warning| warning.contains("telemetry evidence unavailable"))),
+        "telemetry config problem should be downgraded to recommendation warning: {candidate}"
+    );
+}
+
+#[test]
 fn index_capabilities_keep_negative_fixtures_out_of_triggers() {
     let root = TestDir::new("recommend-positive-trigger-index");
     write_recommend_skill(

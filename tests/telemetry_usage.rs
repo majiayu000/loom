@@ -173,6 +173,24 @@ fn skill_used_and_feedback_write_redacted_events_and_reports() {
     assert!(!raw_events.contains("raw task"));
     assert!(!raw_events.contains("session-secret"));
 
+    let csv_out = root.path().join("usage-export.csv");
+    let csv_out_arg = csv_out.to_string_lossy().into_owned();
+    let (csv_output, csv) = run_loom(
+        root.path(),
+        &[
+            "telemetry",
+            "export",
+            "--format",
+            "csv",
+            "--output",
+            &csv_out_arg,
+        ],
+    );
+    assert!(csv_output.status.success(), "csv export should pass: {csv}");
+    let csv_body = fs::read_to_string(&csv_out).expect("read csv export");
+    assert!(csv_body.contains("failure_category"));
+    assert!(csv_body.contains("timeout"));
+
     let (report_output, report) =
         run_loom(root.path(), &["telemetry", "report", "--skill", "demo"]);
     assert!(

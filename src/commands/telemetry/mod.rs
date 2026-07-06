@@ -27,7 +27,7 @@ pub(crate) use emitters::{
     TelemetryRecordResult, record_recommendation_feedback_telemetry, record_skill_error_telemetry,
     record_skill_invocation_telemetry,
 };
-pub(crate) use evidence::skill_recommendation_telemetry;
+pub(crate) use evidence::SkillTelemetryEvidenceCache;
 use export::{export_csv, export_format_label, export_jsonl};
 use model::{
     RecommendationFeedback, TelemetryConfig, TelemetryEventDraft, TelemetryEventType,

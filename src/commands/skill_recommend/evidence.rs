@@ -14,7 +14,7 @@ use super::super::skill_eval_harness::cases::{
     HarnessJsonlRecord, HarnessTriggerCase, read_harness_jsonl,
 };
 use super::super::skill_inventory::tokenize;
-use super::super::telemetry::skill_recommendation_telemetry;
+use super::super::telemetry::SkillTelemetryEvidenceCache;
 
 #[derive(Default)]
 pub(super) struct RankingEvidence {
@@ -41,6 +41,7 @@ pub(super) fn ranking_evidence(
     agent: Option<&str>,
     workspace: Option<&Path>,
     task: Option<&str>,
+    telemetry_cache: &mut SkillTelemetryEvidenceCache,
 ) -> std::result::Result<RankingEvidence, CommandFailure> {
     let mut evidence = RankingEvidence::default();
     if validate_skill_name(skill_id).is_err() {
@@ -57,7 +58,14 @@ pub(super) fn ranking_evidence(
         task.unwrap_or_default(),
         &mut evidence,
     )?;
-    add_telemetry_evidence(ctx, skill_id, agent, workspace, &mut evidence)?;
+    add_telemetry_evidence(
+        ctx,
+        skill_id,
+        agent,
+        workspace,
+        telemetry_cache,
+        &mut evidence,
+    );
     Ok(evidence)
 }
 
@@ -231,11 +239,22 @@ fn add_telemetry_evidence(
     skill_id: &str,
     agent: Option<&str>,
     workspace: Option<&Path>,
+    telemetry_cache: &mut SkillTelemetryEvidenceCache,
     evidence: &mut RankingEvidence,
-) -> std::result::Result<(), CommandFailure> {
-    let telemetry = skill_recommendation_telemetry(ctx, skill_id, agent, workspace)?;
+) {
+    let telemetry = match telemetry_cache.evidence_for(ctx, skill_id, agent, workspace) {
+        Ok(telemetry) => telemetry,
+        Err(err) => {
+            evidence.warnings.push(format!(
+                "telemetry evidence unavailable: {}: {}",
+                err.code.as_str(),
+                err.message
+            ));
+            return;
+        }
+    };
     if !telemetry.enabled || telemetry.events == 0 {
-        return Ok(());
+        return;
     }
     if telemetry.invocations > 0 {
         let weight = (telemetry.invocations as i64).clamp(1, 4);
@@ -318,7 +337,6 @@ fn add_telemetry_evidence(
             "weight": 0,
         }));
     }
-    Ok(())
 }
 
 pub(super) fn member_dependency_risk(

@@ -1,14 +1,14 @@
 use std::path::Path;
 
-use chrono::{Duration, Utc};
+use chrono::{DateTime, Duration, Utc};
 
 use crate::state::AppContext;
 
 use super::super::CommandFailure;
-use super::model::{RecommendationFeedback, TelemetryEventType};
+use super::model::{RecommendationFeedback, TelemetryConfig, TelemetryEvent, TelemetryEventType};
 use super::store::{read_config, read_event_log, workspace_hash_for_path};
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(crate) struct SkillTelemetryEvidence {
     pub(crate) enabled: bool,
     pub(crate) events: usize,
@@ -20,56 +20,102 @@ pub(crate) struct SkillTelemetryEvidence {
     pub(crate) feedback_ignored: u64,
 }
 
-pub(crate) fn skill_recommendation_telemetry(
+#[derive(Default)]
+pub(crate) struct SkillTelemetryEvidenceCache {
+    state: Option<SkillTelemetryEvidenceState>,
+}
+
+struct SkillTelemetryEvidenceState {
+    enabled: bool,
+    window_days: u32,
+    cutoff: DateTime<Utc>,
+    events: Vec<TelemetryEvent>,
+}
+
+impl SkillTelemetryEvidenceCache {
+    pub(crate) fn evidence_for(
+        &mut self,
+        ctx: &AppContext,
+        skill: &str,
+        agent: Option<&str>,
+        workspace: Option<&Path>,
+    ) -> std::result::Result<SkillTelemetryEvidence, CommandFailure> {
+        if self.state.is_none() {
+            self.state = Some(load_state(ctx)?);
+        }
+        let Some(state) = self.state.as_ref() else {
+            return Ok(SkillTelemetryEvidence::default());
+        };
+        if !state.enabled {
+            return Ok(SkillTelemetryEvidence::default());
+        }
+        let workspace_hash = workspace.map(workspace_hash_for_path);
+        let mut evidence = SkillTelemetryEvidence {
+            enabled: true,
+            window_days: state.window_days,
+            ..SkillTelemetryEvidence::default()
+        };
+        for event in &state.events {
+            if event.skill_id.as_deref() != Some(skill) {
+                continue;
+            }
+            if agent.is_some_and(|agent| event.agent.as_deref() != Some(agent)) {
+                continue;
+            }
+            if workspace_hash
+                .as_deref()
+                .is_some_and(|workspace| event.workspace_hash.as_deref() != Some(workspace))
+            {
+                continue;
+            }
+            if event.timestamp < state.cutoff {
+                continue;
+            }
+            evidence.events += 1;
+            match event.event_type {
+                TelemetryEventType::SkillInvocation => evidence.invocations += 1,
+                TelemetryEventType::SkillError => evidence.errors += 1,
+                TelemetryEventType::RecommendationFeedback => match event.metrics.feedback {
+                    Some(RecommendationFeedback::Accepted) => evidence.feedback_accepted += 1,
+                    Some(RecommendationFeedback::Rejected) => evidence.feedback_rejected += 1,
+                    Some(RecommendationFeedback::Ignored) => evidence.feedback_ignored += 1,
+                    None => {}
+                },
+                _ => {}
+            }
+        }
+        Ok(evidence)
+    }
+}
+
+fn load_state(
     ctx: &AppContext,
-    skill: &str,
-    agent: Option<&str>,
-    workspace: Option<&Path>,
-) -> std::result::Result<SkillTelemetryEvidence, CommandFailure> {
+) -> std::result::Result<SkillTelemetryEvidenceState, CommandFailure> {
     let Some(config) = read_config(ctx)? else {
-        return Ok(SkillTelemetryEvidence::default());
+        return Ok(disabled_state());
     };
     if !config.enabled {
-        return Ok(SkillTelemetryEvidence::default());
+        return Ok(disabled_state());
     }
     let retention_days = config.retention_days;
-    let cutoff = Utc::now() - Duration::days(i64::from(retention_days));
-    let workspace_hash = workspace.map(workspace_hash_for_path);
     let log = read_event_log(ctx)?;
-    let mut evidence = SkillTelemetryEvidence {
+    Ok(SkillTelemetryEvidenceState {
         enabled: true,
         window_days: retention_days,
-        ..SkillTelemetryEvidence::default()
-    };
-    for entry in log.events {
-        let event = entry.event;
-        if event.skill_id.as_deref() != Some(skill) {
-            continue;
-        }
-        if agent.is_some_and(|agent| event.agent.as_deref() != Some(agent)) {
-            continue;
-        }
-        if workspace_hash
-            .as_deref()
-            .is_some_and(|workspace| event.workspace_hash.as_deref() != Some(workspace))
-        {
-            continue;
-        }
-        if event.timestamp < cutoff {
-            continue;
-        }
-        evidence.events += 1;
-        match event.event_type {
-            TelemetryEventType::SkillInvocation => evidence.invocations += 1,
-            TelemetryEventType::SkillError => evidence.errors += 1,
-            TelemetryEventType::RecommendationFeedback => match event.metrics.feedback {
-                Some(RecommendationFeedback::Accepted) => evidence.feedback_accepted += 1,
-                Some(RecommendationFeedback::Rejected) => evidence.feedback_rejected += 1,
-                Some(RecommendationFeedback::Ignored) => evidence.feedback_ignored += 1,
-                None => {}
-            },
-            _ => {}
-        }
+        cutoff: cutoff_for_config(&config),
+        events: log.events.into_iter().map(|entry| entry.event).collect(),
+    })
+}
+
+fn disabled_state() -> SkillTelemetryEvidenceState {
+    SkillTelemetryEvidenceState {
+        enabled: false,
+        window_days: 0,
+        cutoff: Utc::now(),
+        events: Vec::new(),
     }
-    Ok(evidence)
+}
+
+fn cutoff_for_config(config: &TelemetryConfig) -> DateTime<Utc> {
+    Utc::now() - Duration::days(i64::from(config.retention_days))
 }

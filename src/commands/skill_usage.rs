@@ -1,4 +1,4 @@
-use serde_json::{Map, Value, json};
+use serde_json::{Value, json};
 
 use crate::cli::{SkillFeedbackArgs, SkillUsedArgs};
 use crate::envelope::Meta;
@@ -8,9 +8,8 @@ use crate::types::ErrorCode;
 use super::helpers::{map_arg, map_registry_state, validate_skill_name};
 use super::telemetry::{
     RecommendationFeedbackTelemetry, SkillErrorTelemetry, SkillInvocationTelemetry,
-    TelemetryRecordResult, failure_category_allowed, feedback_allowed,
-    record_recommendation_feedback_telemetry, record_skill_error_telemetry,
-    record_skill_invocation_telemetry,
+    TelemetryRecordResult, failure_category_allowed, record_recommendation_feedback_telemetry,
+    record_skill_error_telemetry, record_skill_invocation_telemetry,
 };
 use super::{App, CommandFailure, build_skill_read_model};
 
@@ -97,35 +96,31 @@ impl App {
     }
 }
 
-#[inline(never)]
 fn skill_usage_response(
     skill: &str,
     result: TelemetryRecordResult,
     feedback: Option<&str>,
 ) -> Value {
-    let mut payload = Map::new();
-    payload.insert("skill".to_string(), json!(skill));
-    payload.insert("event_type".to_string(), json!(result.event_type));
-    payload.insert("recorded".to_string(), json!(result.recorded));
-    payload.insert("event_id".to_string(), json!(result.event_id));
-    payload.insert("reason".to_string(), json!(result.reason));
-    payload.insert(
-        "telemetry".to_string(),
-        json!({
+    let mut payload = json!({
+        "skill": skill,
+        "event_type": result.event_type,
+        "recorded": result.recorded,
+        "event_id": result.event_id,
+        "reason": result.reason,
+        "telemetry": {
             "enabled": result.enabled,
             "mode": result.mode,
-        }),
-    );
+        },
+    });
     if let Some(feedback) = feedback {
-        payload.insert("feedback".to_string(), json!(feedback));
+        payload["feedback"] = json!(feedback);
     }
     if let Some(failure_category) = result.failure_category {
-        payload.insert("failure_category".to_string(), json!(failure_category));
+        payload["failure_category"] = json!(failure_category);
     }
-    Value::Object(payload)
+    payload
 }
 
-#[inline(never)]
 fn validate_failure_category(raw: &str) -> std::result::Result<(), CommandFailure> {
     if !failure_category_allowed(raw) {
         return Err(map_arg(anyhow::anyhow!("unsupported failure-category")));
@@ -133,16 +128,13 @@ fn validate_failure_category(raw: &str) -> std::result::Result<(), CommandFailur
     Ok(())
 }
 
-#[inline(never)]
 fn validate_feedback(raw: &str) -> std::result::Result<&str, CommandFailure> {
-    if feedback_allowed(raw) {
-        Ok(raw)
-    } else {
-        Err(map_arg(anyhow::anyhow!("unsupported feedback")))
+    match raw {
+        "accepted" | "rejected" | "ignored" => Ok(raw),
+        _ => Err(map_arg(anyhow::anyhow!("unsupported feedback"))),
     }
 }
 
-#[inline(never)]
 fn ensure_skill_in_read_model(
     ctx: &AppContext,
     skill: &str,

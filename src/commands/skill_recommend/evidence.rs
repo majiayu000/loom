@@ -235,7 +235,6 @@ fn add_eval_evidence(
     Ok(())
 }
 
-#[inline(never)]
 fn add_telemetry_evidence(
     ctx: &AppContext,
     skill_id: &str,

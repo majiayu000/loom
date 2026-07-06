@@ -757,13 +757,11 @@ fn telemetry_risky_skillset_members_are_penalized_in_ranking() {
         "skillset member telemetry risk should be surfaced: {risky}"
     );
     assert!(
-        risky["score_inputs"]["telemetry_risks"]["members"]
+        risky["score_inputs"]["telemetry_risks"]
             .as_array()
             .expect("telemetry risks")
             .iter()
-            .any(|member| member == "risky-member")
-            && risky["score_inputs"]["telemetry_risks"]["field"]
-                == json!("recommendation_feedback"),
+            .any(|member| member == "risky-member"),
         "skillset telemetry scoring should be explained: {risky}"
     );
 }

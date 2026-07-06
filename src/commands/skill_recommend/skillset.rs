@@ -10,7 +10,6 @@ use super::super::telemetry::SkillTelemetryEvidenceCache;
 use super::evidence::member_dependency_risk;
 use super::{RecommendationContext, activation_safety_risk};
 
-#[inline(never)]
 pub(super) fn skillset_recommendations(
     ctx: &AppContext,
     task: &str,
@@ -149,11 +148,7 @@ pub(super) fn skillset_recommendations(
             "mode": request.mode,
             "score_inputs": {
                 "matched_fields": ["skillset", "members"],
-                "telemetry_risks": {
-                    "field": "recommendation_feedback",
-                    "members": telemetry_risk_members,
-                    "weight": -8,
-                },
+                "telemetry_risks": telemetry_risk_members,
             },
             "reasons": reasons,
             "risks": risks,

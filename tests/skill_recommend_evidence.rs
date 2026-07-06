@@ -651,3 +651,111 @@ fn dependency_blocked_skillsets_are_penalized_in_ranking() {
         "dependency-blocked skillset should rank below ready equivalent: {env}"
     );
 }
+
+#[test]
+fn telemetry_risky_skillset_members_are_penalized_in_ranking() {
+    let root = TestDir::new("recommend-skillset-telemetry-risk");
+    write_recommend_skill(
+        root.path(),
+        "risky-member",
+        "Use when deploying release workflows.",
+    );
+    write_recommend_skill(
+        root.path(),
+        "ready-member",
+        "Use when deploying release workflows.",
+    );
+    for (skillset, member) in [
+        ("a-deploy-pack", "risky-member"),
+        ("z-deploy-pack", "ready-member"),
+    ] {
+        let (output, env) = run_loom(
+            root.path(),
+            &[
+                "skillset",
+                "create",
+                skillset,
+                "--description",
+                "Deploy release workflow",
+            ],
+        );
+        assert!(
+            output.status.success(),
+            "skillset create should pass: {env}"
+        );
+        let (output, env) = run_loom(root.path(), &["skillset", "add", skillset, member]);
+        assert!(output.status.success(), "skillset add should pass: {env}");
+    }
+    let (enable_output, enable) = run_loom(root.path(), &["telemetry", "enable", "--local-only"]);
+    assert!(
+        enable_output.status.success(),
+        "enable should pass: {enable}"
+    );
+    let (error_output, error) = run_loom(
+        root.path(),
+        &[
+            "skill",
+            "used",
+            "risky-member",
+            "--agent",
+            "codex",
+            "--error",
+            "--failure-category",
+            "timeout",
+        ],
+    );
+    assert!(
+        error_output.status.success(),
+        "skill used --error should pass: {error}"
+    );
+    let (feedback_output, feedback) = run_loom(
+        root.path(),
+        &[
+            "skill",
+            "feedback",
+            "risky-member",
+            "--feedback",
+            "rejected",
+            "--agent",
+            "codex",
+            "--task",
+            "deploy release",
+        ],
+    );
+    assert!(
+        feedback_output.status.success(),
+        "skill feedback should pass: {feedback}"
+    );
+
+    let (output, env) = run_loom(
+        root.path(),
+        &[
+            "skill",
+            "search",
+            "deploy release",
+            "--explain",
+            "--agent",
+            "codex",
+        ],
+    );
+
+    assert!(output.status.success(), "search explain should pass: {env}");
+    let risky = recommendation(&env, "a-deploy-pack");
+    let ready = recommendation(&env, "z-deploy-pack");
+    assert_eq!(risky["recommended_action"], json!("inspect"));
+    assert!(
+        risky["score"].as_i64().unwrap() < ready["score"].as_i64().unwrap(),
+        "telemetry-risky skillset should rank below ready equivalent: {env}"
+    );
+    assert!(
+        risky["risks"]
+            .as_array()
+            .expect("risks")
+            .iter()
+            .any(
+                |risk| risk.as_str().is_some_and(|risk| risk.contains("telemetry")
+                    || risk.contains("recommendation feedback rejected"))
+            ),
+        "skillset member telemetry risk should be surfaced: {risky}"
+    );
+}

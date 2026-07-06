@@ -70,6 +70,33 @@ pub(super) fn ranking_evidence(
     Ok(evidence)
 }
 
+pub(super) fn telemetry_ranking_evidence(
+    ctx: &AppContext,
+    skill_id: &str,
+    agent: Option<&str>,
+    workspace: Option<&Path>,
+    task: Option<&str>,
+    telemetry_cache: &mut SkillTelemetryEvidenceCache,
+) -> RankingEvidence {
+    let mut evidence = RankingEvidence::default();
+    if validate_skill_name(skill_id).is_err() {
+        evidence
+            .warnings
+            .push("non-portable skill id; ranking evidence unavailable".to_string());
+        return evidence;
+    }
+    add_telemetry_evidence(
+        ctx,
+        skill_id,
+        agent,
+        workspace,
+        task,
+        telemetry_cache,
+        &mut evidence,
+    );
+    evidence
+}
+
 fn add_dependency_evidence(
     ctx: &AppContext,
     skill_id: &str,

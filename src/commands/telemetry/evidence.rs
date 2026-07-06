@@ -96,7 +96,10 @@ impl SkillTelemetryEvidenceCache {
 
 fn feedback_matches_task(event: &TelemetryEvent, task_hash: Option<&str>) -> bool {
     match task_hash {
-        Some(task_hash) => event.task_hash.as_deref() == Some(task_hash),
+        Some(task_hash) => match event.task_hash.as_deref() {
+            Some(event_task_hash) => event_task_hash == task_hash,
+            None => true,
+        },
         None => true,
     }
 }

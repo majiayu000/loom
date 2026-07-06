@@ -70,8 +70,12 @@ impl App {
             .as_str()
             .unwrap_or("safe-capture")
             .to_string();
+        let recommendation_agent = args
+            .agent
+            .as_deref()
+            .or_else(|| policy_context["agent"].as_str());
         let recommendation_context = RecommendationContext {
-            agent: args.agent.as_deref(),
+            agent: recommendation_agent,
             workspace: args.workspace.as_deref(),
             mode,
             policy_profile: &policy_profile,

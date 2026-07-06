@@ -203,8 +203,6 @@ fn recommend_uses_telemetry_usage_and_feedback_when_present() {
             "accepted",
             "--agent",
             "codex",
-            "--task",
-            "fix failing ci",
         ],
     );
     assert!(

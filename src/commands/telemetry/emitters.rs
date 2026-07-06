@@ -49,6 +49,7 @@ pub(crate) struct RecommendationFeedbackTelemetry<'a> {
     pub(crate) agent: Option<&'a str>,
     pub(crate) workspace: Option<&'a Path>,
     pub(crate) session_id: Option<&'a str>,
+    pub(crate) task: Option<&'a str>,
 }
 
 pub(crate) fn record_skill_invocation_telemetry(
@@ -131,6 +132,7 @@ pub(crate) fn record_recommendation_feedback_telemetry(
             .unwrap_or(current_workspace()?),
     );
     draft.session_id = input.session_id.map(str::to_string);
+    draft.task = input.task.map(str::to_string);
     draft.metrics.feedback = Some(feedback);
     append_record_result(ctx, draft, None)
 }

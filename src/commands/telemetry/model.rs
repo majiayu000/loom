@@ -79,6 +79,8 @@ pub(super) struct TelemetryEvent {
     pub workspace_hash: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session_id_hash: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_hash: Option<String>,
     pub timestamp: DateTime<Utc>,
     #[serde(default)]
     pub metrics: TelemetryMetrics,
@@ -195,6 +197,7 @@ pub(crate) struct TelemetryEventDraft {
     pub(crate) agent: Option<String>,
     pub(crate) workspace: Option<PathBuf>,
     pub(crate) session_id: Option<String>,
+    pub(crate) task: Option<String>,
     pub(crate) timestamp: DateTime<Utc>,
     pub(crate) metrics: TelemetryMetrics,
 }
@@ -208,6 +211,7 @@ impl TelemetryEventDraft {
             agent: None,
             workspace: None,
             session_id: None,
+            task: None,
             timestamp: Utc::now(),
             metrics: TelemetryMetrics::default(),
         }

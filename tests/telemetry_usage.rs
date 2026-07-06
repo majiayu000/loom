@@ -169,6 +169,7 @@ fn skill_used_and_feedback_write_redacted_events_and_reports() {
     assert!(raw_events.contains(r#""event_type":"recommendation.feedback""#));
     assert!(raw_events.contains(r#""failure_category":"timeout""#));
     assert!(raw_events.contains(r#""feedback":"accepted""#));
+    assert!(raw_events.contains(r#""task_hash":"sha256:"#));
     assert!(!raw_events.contains("sk_test_secret"));
     assert!(!raw_events.contains("raw task"));
     assert!(!raw_events.contains("session-secret"));
@@ -189,6 +190,7 @@ fn skill_used_and_feedback_write_redacted_events_and_reports() {
     assert!(csv_output.status.success(), "csv export should pass: {csv}");
     let csv_body = fs::read_to_string(&csv_out).expect("read csv export");
     assert!(csv_body.contains("failure_category"));
+    assert!(csv_body.contains("task_hash"));
     assert!(csv_body.contains("timeout"));
 
     let (report_output, report) =

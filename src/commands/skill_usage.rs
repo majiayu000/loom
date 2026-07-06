@@ -84,6 +84,7 @@ impl App {
                 agent: args.agent.as_deref(),
                 workspace: args.workspace.as_deref(),
                 session_id: args.session_id.as_deref(),
+                task: args.task.as_deref(),
             },
         )?;
 

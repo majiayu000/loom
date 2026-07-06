@@ -434,7 +434,7 @@ Rules:
 17. `skill used` records `skill.invocation` by default and records `skill.error` only with `--error --failure-category <category>`.
 18. `skill used --success` and `skill used --error` are mutually exclusive; `--error` without `--failure-category` fails before any telemetry write.
 19. `--failure-category` accepts only the controlled categories `timeout`, `tool_error`, `model_error`, `dependency_error`, `permission_denied`, `rate_limited`, `invalid_input`, `policy_blocked`, `not_found`, `network_error`, `execution_error`, and `unknown`; arbitrary raw error text or token-shaped values must be rejected.
-20. `skill feedback` records explicit `recommendation.feedback` values of `accepted`, `rejected`, or `ignored`; `--task` must not be serialized as raw telemetry text.
+20. `skill feedback` records explicit `recommendation.feedback` values of `accepted`, `rejected`, or `ignored`; `--task` must not be serialized as raw telemetry text and is persisted only as a redacted task hash.
 21. when telemetry is absent or disabled, `skill used` and `skill feedback` return `recorded=false` with a structured reason and do not initialize `state/telemetry`.
 22. `skill recommend` and `skill search --for-task --explain` may include telemetry-derived `score_inputs` only when matching local telemetry events exist within the telemetry retention window; absent, disabled, or stale telemetry must leave deterministic ranking unchanged.
 
@@ -1179,7 +1179,7 @@ Rules:
 2. enabled config uses `state/telemetry/config.json`; events use append-only
    `state/telemetry/events.jsonl`.
 3. telemetry events use schema version 1, typed event families, hashed
-   workspace/session identifiers, and `privacy.raw_prompt_stored=false`,
+   workspace/session/task identifiers, and `privacy.raw_prompt_stored=false`,
    `privacy.raw_code_stored=false`, `privacy.redacted=true`.
 4. disabled telemetry must not append telemetry events.
 5. existing malformed event lines are surfaced as quarantined warnings in
@@ -1203,8 +1203,8 @@ Rules:
    numeric metrics, never raw errors, prompts, outputs, env values, or file
    contents.
 12. recommendation telemetry evidence uses only events inside the configured
-   retention window and exposes both recent usage counts and recent error rate
-   in `score_inputs`.
+   retention window, matches feedback to the requested task when present, and
+   exposes both recent usage counts and recent error rate in `score_inputs`.
 13. Panel Telemetry consumes the same backend read model at
     `/api/v1/telemetry/report` and preserves missing evidence as missing.
 

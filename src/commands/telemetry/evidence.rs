@@ -6,7 +6,7 @@ use crate::state::AppContext;
 
 use super::super::CommandFailure;
 use super::model::{RecommendationFeedback, TelemetryConfig, TelemetryEvent, TelemetryEventType};
-use super::store::{read_config, read_event_log, workspace_hash_for_path};
+use super::store::{read_config, read_event_log, task_hash_for_text, workspace_hash_for_path};
 
 #[derive(Clone, Default)]
 pub(crate) struct SkillTelemetryEvidence {
@@ -39,6 +39,7 @@ impl SkillTelemetryEvidenceCache {
         skill: &str,
         agent: Option<&str>,
         workspace: Option<&Path>,
+        task: Option<&str>,
     ) -> std::result::Result<SkillTelemetryEvidence, CommandFailure> {
         if self.state.is_none() {
             self.state = Some(load_state(ctx)?);
@@ -50,6 +51,7 @@ impl SkillTelemetryEvidenceCache {
             return Ok(SkillTelemetryEvidence::default());
         }
         let workspace_hash = workspace.map(workspace_hash_for_path);
+        let task_hash = task.map(task_hash_for_text);
         let mut evidence = SkillTelemetryEvidence {
             enabled: true,
             window_days: state.window_days,
@@ -76,15 +78,26 @@ impl SkillTelemetryEvidenceCache {
                 TelemetryEventType::SkillInvocation => evidence.invocations += 1,
                 TelemetryEventType::SkillError => evidence.errors += 1,
                 TelemetryEventType::RecommendationFeedback => match event.metrics.feedback {
-                    Some(RecommendationFeedback::Accepted) => evidence.feedback_accepted += 1,
-                    Some(RecommendationFeedback::Rejected) => evidence.feedback_rejected += 1,
-                    Some(RecommendationFeedback::Ignored) => evidence.feedback_ignored += 1,
-                    None => {}
+                    Some(feedback) if feedback_matches_task(event, task_hash.as_deref()) => {
+                        match feedback {
+                            RecommendationFeedback::Accepted => evidence.feedback_accepted += 1,
+                            RecommendationFeedback::Rejected => evidence.feedback_rejected += 1,
+                            RecommendationFeedback::Ignored => evidence.feedback_ignored += 1,
+                        }
+                    }
+                    Some(_) | None => {}
                 },
                 _ => {}
             }
         }
         Ok(evidence)
+    }
+}
+
+fn feedback_matches_task(event: &TelemetryEvent, task_hash: Option<&str>) -> bool {
+    match task_hash {
+        Some(task_hash) => event.task_hash.as_deref() == Some(task_hash),
+        None => true,
     }
 }
 

@@ -63,6 +63,7 @@ pub(super) fn ranking_evidence(
         skill_id,
         agent,
         workspace,
+        task,
         telemetry_cache,
         &mut evidence,
     );
@@ -239,10 +240,11 @@ fn add_telemetry_evidence(
     skill_id: &str,
     agent: Option<&str>,
     workspace: Option<&Path>,
+    task: Option<&str>,
     telemetry_cache: &mut SkillTelemetryEvidenceCache,
     evidence: &mut RankingEvidence,
 ) {
-    let telemetry = match telemetry_cache.evidence_for(ctx, skill_id, agent, workspace) {
+    let telemetry = match telemetry_cache.evidence_for(ctx, skill_id, agent, workspace, task) {
         Ok(telemetry) => telemetry,
         Err(err) => {
             evidence.warnings.push(format!(

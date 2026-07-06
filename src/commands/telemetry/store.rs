@@ -190,6 +190,10 @@ pub(super) fn workspace_hash_for_path(path: &Path) -> String {
     hash_identity("workspace", &normalize_path_label(path))
 }
 
+pub(super) fn task_hash_for_text(task: &str) -> String {
+    hash_identity("task", task)
+}
+
 pub(super) fn purge_token(before: Option<DateTime<Utc>>, count: usize, bytes: usize) -> String {
     let mut hasher = Sha256::new();
     hasher.update(b"loom.telemetry.purge.v1\n");
@@ -303,6 +307,7 @@ fn redacted_event_from_draft(
             .session_id
             .as_ref()
             .map(|session| hash_identity("session", session)),
+        task_hash: draft.task.as_ref().map(|task| task_hash_for_text(task)),
         timestamp: draft.timestamp,
         metrics: draft.metrics,
         privacy: TelemetryPrivacy::default(),

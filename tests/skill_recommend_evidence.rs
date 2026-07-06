@@ -203,6 +203,8 @@ fn recommend_uses_telemetry_usage_and_feedback_when_present() {
             "accepted",
             "--agent",
             "codex",
+            "--task",
+            "fix failing ci",
         ],
     );
     assert!(
@@ -234,6 +236,59 @@ fn recommend_uses_telemetry_usage_and_feedback_when_present() {
             .any(|input| input["field"] == json!("recommendation_feedback")
                 && input["metric"] == json!("accepted")),
         "feedback telemetry should appear in score inputs: {boosted}"
+    );
+}
+
+#[test]
+fn recommend_scopes_feedback_to_requested_task() {
+    let root = TestDir::new("recommend-task-scoped-feedback");
+    for skill in ["a-ci-helper", "z-ci-helper"] {
+        write_recommend_skill(
+            root.path(),
+            skill,
+            "Use when fixing failing CI and test workflow failures.",
+        );
+    }
+
+    let (enable_output, enable) = run_loom(root.path(), &["telemetry", "enable", "--local-only"]);
+    assert!(
+        enable_output.status.success(),
+        "enable should pass: {enable}"
+    );
+    let (feedback_output, feedback) = run_loom(
+        root.path(),
+        &[
+            "skill",
+            "feedback",
+            "z-ci-helper",
+            "--feedback",
+            "accepted",
+            "--agent",
+            "codex",
+            "--task",
+            "write docs",
+        ],
+    );
+    assert!(
+        feedback_output.status.success(),
+        "skill feedback should pass: {feedback}"
+    );
+
+    let (output, env) = run_loom(
+        root.path(),
+        &["skill", "recommend", "fix failing ci", "--agent", "codex"],
+    );
+
+    assert!(output.status.success(), "recommend should pass: {env}");
+    assert_eq!(recommendation_results(&env)[0]["id"], json!("a-ci-helper"));
+    let mismatched = recommendation(&env, "z-ci-helper");
+    assert!(
+        !mismatched["score_inputs"]
+            .as_array()
+            .expect("score inputs")
+            .iter()
+            .any(|input| input["field"] == json!("recommendation_feedback")),
+        "feedback from another task must not affect ranking: {mismatched}"
     );
 }
 
@@ -281,6 +336,8 @@ fn recommend_exposes_error_rejected_and_ignored_telemetry_inputs() {
                 feedback,
                 "--agent",
                 "codex",
+                "--task",
+                "fix failing ci",
             ],
         );
         assert!(

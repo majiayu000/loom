@@ -92,16 +92,17 @@ pub(crate) fn record_skill_error_telemetry(
             .unwrap_or(current_workspace()?),
     );
     draft.session_id = input.session_id.map(str::to_string);
+    let failure_category = input.failure_category.to_string();
     draft.metrics = TelemetryMetrics {
         tokens_in: input.tokens_in,
         tokens_out: input.tokens_out,
         commands: input.commands,
         duration_ms: input.duration_ms,
         success: Some(false),
-        failure_category: Some(input.failure_category.to_string()),
+        failure_category: Some(failure_category.clone()),
         ..TelemetryMetrics::default()
     };
-    append_record_result(ctx, draft, Some(input.failure_category.to_string()))
+    append_record_result(ctx, draft, Some(failure_category))
 }
 
 pub(crate) fn record_recommendation_feedback_telemetry(

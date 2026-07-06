@@ -91,8 +91,10 @@ impl SkillTelemetryEvidenceCache {
 fn load_state(
     ctx: &AppContext,
 ) -> std::result::Result<SkillTelemetryEvidenceState, CommandFailure> {
-    let Some(config) = read_config(ctx)? else {
-        return Ok(disabled_state());
+    let config = match read_config(ctx) {
+        Ok(Some(config)) => config,
+        Ok(None) => return Ok(disabled_state()),
+        Err(err) => return Err(err),
     };
     if !config.enabled {
         return Ok(disabled_state());

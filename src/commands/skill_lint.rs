@@ -124,7 +124,7 @@ pub(crate) struct SkillLintFrontmatter {
     pub license: Option<String>,
     pub compatibility: Option<Value>,
     pub metadata: BTreeMap<String, String>,
-    pub allowed_tools: Option<String>,
+    pub allowed_tools: Option<Value>,
     pub agent_fields: Vec<String>,
 }
 
@@ -495,17 +495,6 @@ fn validate_frontmatter(
 
     match frontmatter.description.as_deref() {
         Some(description) => {
-            if description.split_whitespace().count() < 6 {
-                lint_or_warn(
-                    findings,
-                    mode,
-                    "description_too_short",
-                    "frontmatter description is too short to guide an agent",
-                    "describe what the skill does and when to use it",
-                    false,
-                    json!({ "description": description }),
-                );
-            }
             if description.chars().count() > 1024 {
                 lint_or_warn(
                     findings,
@@ -515,21 +504,6 @@ fn validate_frontmatter(
                     "shorten description to 1024 characters or less",
                     false,
                     json!({ "length": description.chars().count(), "limit": 1024 }),
-                );
-            }
-            let lower = description.to_ascii_lowercase();
-            if !["use", "when", "for", "trigger"]
-                .iter()
-                .any(|needle| lower.contains(needle))
-            {
-                lint_or_warn(
-                    findings,
-                    mode,
-                    "description_missing_usage_context",
-                    "frontmatter description does not explain when to use the skill",
-                    "include trigger or usage context in the description",
-                    false,
-                    json!({ "description": description }),
                 );
             }
         }

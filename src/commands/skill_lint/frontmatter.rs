@@ -78,13 +78,13 @@ pub(crate) fn parse_skill_frontmatter(entrypoint: &Path) -> Result<FrontmatterPa
             continue;
         }
         match key {
-            "name" => frontmatter.name = parse_optional_string(key, value, &mut issues),
+            "name" => frontmatter.name = parse_portable_string(key, value, &mut issues),
             "description" => {
-                frontmatter.description = parse_optional_string(key, value, &mut issues)
+                frontmatter.description = parse_portable_string(key, value, &mut issues)
             }
             "license" => frontmatter.license = parse_optional_string(key, value, &mut issues),
             "allowed-tools" => {
-                frontmatter.allowed_tools = parse_optional_string(key, value, &mut issues);
+                frontmatter.allowed_tools = Some(yaml_to_json(value));
                 frontmatter.agent_fields.push(key.to_string());
             }
             "compatibility" => frontmatter.compatibility = Some(yaml_to_json(value)),
@@ -103,6 +103,29 @@ pub(crate) fn parse_skill_frontmatter(entrypoint: &Path) -> Result<FrontmatterPa
         frontmatter,
         schema_issues: issues,
     })
+}
+
+fn parse_portable_string(
+    key: &str,
+    value: &Yaml,
+    issues: &mut Vec<FrontmatterSchemaIssue>,
+) -> Option<String> {
+    match value {
+        Yaml::Null | Yaml::BadValue => None,
+        Yaml::String(text) => {
+            let trimmed = text.trim();
+            (!trimmed.is_empty()).then(|| trimmed.to_string())
+        }
+        _ => {
+            issues.push(schema_issue(
+                "frontmatter_scalar_expected",
+                "frontmatter field must be a scalar string",
+                "replace the field value with a YAML string",
+                json!({ "field": key, "actual": yaml_summary(value) }),
+            ));
+            None
+        }
+    }
 }
 
 fn parse_optional_string(

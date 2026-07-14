@@ -20,17 +20,18 @@ Do not use this Skill for Loom.com videos, screen recording, video links, sharin
 
 ## Establish The Registry Boundary
 
-1. Obtain the intended registry root from the user or existing project context. Use a path such as `$HOME/.loom-registry` only when it is the user's established registry.
-2. Never use the Loom source-code checkout as the writable registry root.
-3. Run machine-facing commands in this form:
+1. Run `loom --version` and check `loom <command> --help` for the command surface needed by the request. Stop on an unexpected or stale binary instead of guessing flags.
+2. Obtain the intended registry root from the user or existing project context. Use a path such as `$HOME/.loom-registry` only when it is the user's established registry.
+3. Never use the Loom source-code checkout as the writable registry root.
+4. Run machine-facing commands in this form:
 
 ```bash
 loom --json --root "$REGISTRY_ROOT" workspace status
 ```
 
-4. Treat only `ok=true` as success. On failure, branch on `error.code` and retain `error.message` plus `request_id` for diagnosis.
-5. Record every `meta.warnings` entry. A successful envelope with warnings is a risky success, not a clean success.
-6. Read current state before proposing a mutation. Prefer `workspace status`, `workspace doctor`, `skill inspect`, `skill diagnose`, `skill visibility`, `target list`, `workspace binding list`, `sync status`, and `ops list` as appropriate.
+5. Treat only `ok=true` as success. On failure, branch on `error.code` and retain `error.message` plus `request_id` for diagnosis.
+6. Record every `meta.warnings` entry. A successful envelope with warnings is a risky success, not a clean success.
+7. Read current state before proposing a mutation. Prefer `workspace status`, `workspace doctor`, `skill inspect`, `skill diagnose`, `skill visibility`, `target list`, `workspace binding list`, `sync status`, and `ops list` as appropriate.
 
 ## Plan Before Mutation
 
@@ -38,20 +39,22 @@ Use `--dry-run` first for commands that support it, including projection, captur
 
 For agent-directed changes:
 
-1. Run `agent preflight` for an existing low-risk binding, or create a durable plan with `plan use`.
-2. Check `data.safe_to_run`, `required_approvals`, and any command-specific impact fields.
-3. Obtain the approvals required by the returned plan and the user's authorization before applying.
-4. Execute the same scoped change without expanding targets, agents, workspaces, or Skill names.
-5. Do not add `--force` unless the user explicitly authorizes the exact overwrite after reviewing the conflict.
-6. Re-read state after execution and report the resulting operation or commit identifier.
+1. Run `agent preflight` for an existing low-risk binding. Require `data.safe_to_run=true`; `ok=true` with `safe_to_run=false` is blocked.
+2. Use `plan use` when the change needs new targets/bindings or durable idempotency, but only after the user authorizes persisting that plan. Require `data.safe_to_apply=true`, review every effect/risk, and collect every `data.required_approvals` token before `apply`.
+3. Treat dry-run, preflight, and plan fields as command-specific. A dry-run that omits `safe_to_run`, `safe_to_apply`, or approval fields never authorizes the write by itself.
+4. Obtain the approvals required by the returned plan and the user's authorization for the exact effects before applying.
+5. Execute the same scoped change without expanding targets, agents, workspaces, or Skill names.
+6. Do not add `--force` unless the user explicitly authorizes the exact overwrite after reviewing the conflict.
+7. Re-read state after execution and report the resulting operation or commit identifier.
 
 Example activation sequence:
 
 ```bash
 loom --json --root "$REGISTRY_ROOT" skill activate "$SKILL" --agent codex --scope user --dry-run
-loom --json --root "$REGISTRY_ROOT" skill activate "$SKILL" --agent codex --scope user
-loom --json --root "$REGISTRY_ROOT" skill visibility "$SKILL" --agent codex
+loom --json --root "$REGISTRY_ROOT" agent preflight --agent codex --workspace "$WORKSPACE" --skill "$SKILL"
 ```
+
+Stop if preflight is blocked or `safe_to_run` is not true. If no matching binding exists, obtain authorization to persist a durable plan with `plan use`; review `safe_to_apply`, effects, risks, and approvals before showing or running its exact `apply` command. Do not place a real activation immediately after a dry-run.
 
 ## Manage Skill History
 

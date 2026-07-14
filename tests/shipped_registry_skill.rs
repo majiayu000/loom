@@ -46,6 +46,10 @@ fn shipped_skill_has_collision_resistant_metadata_and_trigger_boundaries() {
     assert!(skill.starts_with("---\nname: loom-registry\ndescription:"));
     assert!(skill.contains("Loom.com"));
     assert!(skill.contains("loom --json --root"));
+    assert!(skill.contains("loom --version"));
+    assert!(skill.contains("data.safe_to_apply=true"));
+    assert!(skill.contains("never authorizes the write by itself"));
+    assert!(!skill.contains("skill activate \"$SKILL\" --agent codex --scope user\n"));
     assert!(skill.contains("docs/AGENT_USAGE.md"));
     assert!(skill.contains("docs/SINGLE_SKILL_LIFECYCLE.md"));
 

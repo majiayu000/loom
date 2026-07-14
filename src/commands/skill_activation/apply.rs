@@ -1,6 +1,7 @@
 use std::fs;
 use std::path::Path;
 
+use crate::fs_util::remove_symlink;
 use crate::state_model::{
     RegistryBindingsFile, RegistryProjectionsFile, RegistryRulesFile, RegistryStatePaths,
     RegistryTargetsFile,
@@ -100,14 +101,4 @@ fn projection_path_is_safe_symlink(path: &Path, skill_src: &Path) -> bool {
             .join(link_target)
     };
     normalize_existing_or_raw(&actual) == expected
-}
-
-#[cfg(unix)]
-fn remove_symlink(path: &Path) -> std::io::Result<()> {
-    fs::remove_file(path)
-}
-
-#[cfg(windows)]
-fn remove_symlink(path: &Path) -> std::io::Result<()> {
-    fs::remove_dir(path)
 }

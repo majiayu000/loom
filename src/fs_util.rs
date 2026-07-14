@@ -119,6 +119,16 @@ pub fn remove_path_if_exists(path: &Path) -> io::Result<()> {
     }
 }
 
+#[cfg(unix)]
+pub fn remove_symlink(path: &Path) -> io::Result<()> {
+    fs::remove_file(path)
+}
+
+#[cfg(windows)]
+pub fn remove_symlink(path: &Path) -> io::Result<()> {
+    fs::remove_dir(path)
+}
+
 fn open_append_file(path: &Path) -> io::Result<File> {
     let parent = path.parent().ok_or_else(|| {
         io::Error::new(

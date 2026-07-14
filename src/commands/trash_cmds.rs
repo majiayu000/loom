@@ -16,13 +16,17 @@ use crate::types::ErrorCode;
 
 use super::file_ops::{backup_path_if_exists, restore_path_from_backup};
 use super::helpers::{
-    map_arg, map_git, map_io, map_lock, map_registry_state, slugify, validate_skill_name,
+    ensure_skill_exists, map_arg, map_git, map_io, map_lock, map_registry_state, slugify,
+    validate_skill_name,
 };
 use super::projections::{
     RegistryAuditStateBackup, maybe_autosync_or_queue, record_registry_operation,
     restore_registry_audit_state, snapshot_registry_audit_state,
 };
 use super::{App, CommandFailure};
+
+mod activation;
+mod add;
 
 const TRASH_SCHEMA_VERSION: u32 = 1;
 
@@ -48,145 +52,14 @@ impl App {
         args: &TrashAddArgs,
         request_id: &str,
     ) -> std::result::Result<(serde_json::Value, Meta), CommandFailure> {
-        validate_skill_name(&args.skill).map_err(map_arg)?;
-        let _workspace = self.ctx.lock_workspace().map_err(map_lock)?;
-        self.ensure_write_repo_ready()?;
-        let _lock = self.ctx.lock_skill(&args.skill).map_err(map_lock)?;
-
-        let skill_rel = format!("skills/{}", args.skill);
-        let skill_path = self.ctx.root.join(&skill_rel);
-        if !skill_path.exists() {
-            return Err(CommandFailure::new(
-                ErrorCode::SkillNotFound,
-                format!("skill '{}' not found", args.skill),
-            ));
-        }
-
-        let paths = RegistryStatePaths::from_app_context(&self.ctx);
-        paths.ensure_layout().map_err(map_registry_state)?;
-        let registry_backup = snapshot_registry_audit_state(&paths).map_err(map_registry_state)?;
-        let source_commit = gitops::head(&self.ctx).map_err(map_git)?;
-        let trash_id = new_trash_id(&args.skill);
-        let entry_path = self.ctx.root.join("trash").join(&trash_id);
-        let trash_skill_path = entry_path.join("skill");
-        fs::create_dir_all(&entry_path).map_err(map_io)?;
-
-        if let Err(err) = fs::rename(&skill_path, &trash_skill_path) {
-            let _ = remove_path_if_exists(&entry_path);
-            return Err(map_io(err));
-        }
-
-        let metadata = TrashMetadata {
-            schema_version: TRASH_SCHEMA_VERSION,
-            trash_id: trash_id.clone(),
-            skill: args.skill.clone(),
-            original_path: skill_rel.clone(),
-            trashed_at: Utc::now(),
-            source_commit: source_commit.clone(),
-        };
-        if let Err(err) = write_trash_metadata(&entry_path, &metadata) {
-            rollback_trash_add(&skill_path, &trash_skill_path, &entry_path);
-            return Err(map_io(err));
-        }
-
-        let op_id = match record_registry_operation(
-            &paths,
-            "skill.trash.add",
-            json!({
-                "skill": args.skill,
-                "trash_id": trash_id,
-                "request_id": request_id
-            }),
-            json!({
-                "trash_id": trash_id,
-                "trash_path": format!("trash/{}", trash_id),
-                "source_commit": source_commit
-            }),
-        ) {
-            Ok(op_id) => op_id,
-            Err(err) => {
-                rollback_trash_add(&skill_path, &trash_skill_path, &entry_path);
-                let rollback_errors =
-                    restore_registry_audit_state_best_effort(&paths, &registry_backup);
-                unstage_trash_paths(&self.ctx, &[&skill_rel, &format!("trash/{}", trash_id)]);
-                return Err(map_registry_state(err).with_rollback_errors(rollback_errors));
-            }
-        };
-
-        if let Err(err) =
-            stage_trash_commit_paths(&self.ctx, &[&skill_rel, &format!("trash/{}", trash_id)])
-        {
-            rollback_trash_add(&skill_path, &trash_skill_path, &entry_path);
-            let rollback_errors =
-                restore_registry_audit_state_best_effort(&paths, &registry_backup);
-            unstage_trash_paths(&self.ctx, &[&skill_rel, &format!("trash/{}", trash_id)]);
-            return Err(err.with_rollback_errors(rollback_errors));
-        }
-
-        let commit = match commit_trash_paths(
-            &self.ctx,
-            &[&skill_rel, &format!("trash/{}", trash_id)],
-            &format!("trash({}): move to trash", args.skill),
-        ) {
-            Ok(commit) => commit,
-            Err(err) => {
-                rollback_trash_add(&skill_path, &trash_skill_path, &entry_path);
-                let rollback_errors =
-                    restore_registry_audit_state_best_effort(&paths, &registry_backup);
-                unstage_trash_paths(&self.ctx, &[&skill_rel, &format!("trash/{}", trash_id)]);
-                return Err(map_git(err).with_rollback_errors(rollback_errors));
-            }
-        };
-
-        let mut meta = Meta {
-            op_id: Some(op_id),
-            ..Meta::default()
-        };
-        maybe_autosync_or_queue(
-            &self.ctx,
-            "trash_add",
-            request_id,
-            json!({"skill": args.skill, "trash_id": trash_id, "commit": commit}),
-            &mut meta,
-        )?;
-
-        Ok((
-            json!({
-                "skill": args.skill,
-                "trash_id": trash_id,
-                "trash_path": format!("trash/{}", trash_id),
-                "commit": commit
-            }),
-            meta,
-        ))
+        add::run(self, args, request_id)
     }
 
     pub fn cmd_skill_trash_add_plan(
         &self,
         args: &TrashAddArgs,
     ) -> std::result::Result<(serde_json::Value, Meta), CommandFailure> {
-        validate_skill_name(&args.skill).map_err(map_arg)?;
-        let skill_rel = format!("skills/{}", args.skill);
-        let skill_path = self.ctx.root.join(&skill_rel);
-        if !skill_path.exists() {
-            return Err(CommandFailure::new(
-                ErrorCode::SkillNotFound,
-                format!("skill '{}' not found", args.skill),
-            ));
-        }
-
-        Ok((
-            json!({
-                "skill": args.skill,
-                "dry_run": true,
-                "would_move": true,
-                "original_path": skill_rel,
-                "trash_path": format!("trash/{}", new_trash_id(&args.skill)),
-                "would_record_operation": true,
-                "would_commit": true
-            }),
-            Meta::default(),
-        ))
+        add::plan(self, args)
     }
 
     pub fn cmd_skill_trash_list(
@@ -691,16 +564,6 @@ fn unstage_trash_paths(ctx: &crate::state::AppContext, paths: &[&str]) {
     }
     let _ = gitops::run_git_allow_failure(ctx, &["reset", "HEAD", "--", "state/registry"]);
     let _ = gitops::run_git_allow_failure(ctx, &["reset", "HEAD", "--", "state/v3"]);
-}
-
-fn rollback_trash_add(skill_path: &Path, trash_skill_path: &Path, entry_path: &Path) {
-    if trash_skill_path.exists() {
-        if let Some(parent) = skill_path.parent() {
-            let _ = fs::create_dir_all(parent);
-        }
-        let _ = fs::rename(trash_skill_path, skill_path);
-    }
-    let _ = remove_path_if_exists(entry_path);
 }
 
 fn rollback_restore_from_backup(

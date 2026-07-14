@@ -81,14 +81,17 @@ pub(crate) fn command_meta(command: &Command) -> CommandMeta {
             | SkillCommand::Provenance {
                 command: SkillProvenanceCommand::Refresh(_),
             }
-            | SkillCommand::Trash {
-                command:
-                    SkillTrashCommand::Add(_)
-                    | SkillTrashCommand::Restore(_)
-                    | SkillTrashCommand::Purge(_),
-            }
             | SkillCommand::Orphan {
                 command: SkillOrphanCommand::Clean(_),
+            } => CommandMeta::new(true, true, false),
+            SkillCommand::Trash {
+                command: SkillTrashCommand::Add(args),
+            } => CommandMeta::new(!args.dry_run, !args.dry_run, args.dry_run),
+            SkillCommand::Trash {
+                command: SkillTrashCommand::Purge(args),
+            } => CommandMeta::new(!args.dry_run, !args.dry_run, args.dry_run),
+            SkillCommand::Trash {
+                command: SkillTrashCommand::Restore(_),
             } => CommandMeta::new(true, true, false),
             SkillCommand::Install(args) => {
                 CommandMeta::new(!args.dry_run, !args.dry_run, args.dry_run)
@@ -282,6 +285,14 @@ mod tests {
         );
         assert_eq!(
             meta(&["loom", "skill", "rollback", "demo", "--dry-run"]),
+            CommandMeta::new(false, false, true)
+        );
+        assert_eq!(
+            meta(&["loom", "skill", "trash", "add", "demo", "--dry-run"]),
+            CommandMeta::new(false, false, true)
+        );
+        assert_eq!(
+            meta(&["loom", "skill", "trash", "purge", "entry", "--dry-run"]),
             CommandMeta::new(false, false, true)
         );
         assert_eq!(

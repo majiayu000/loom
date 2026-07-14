@@ -40,6 +40,14 @@ impl RegistryStatePaths {
 
     fn from_parts(root: std::path::PathBuf, state_dir: std::path::PathBuf) -> Self {
         let registry_dir = state_dir.join("registry");
+        Self::from_registry_dir(root, state_dir, registry_dir)
+    }
+
+    fn from_registry_dir(
+        root: std::path::PathBuf,
+        state_dir: std::path::PathBuf,
+        registry_dir: std::path::PathBuf,
+    ) -> Self {
         let ops_dir = registry_dir.join("ops");
         let observations_dir = registry_dir.join("observations");
         Self {
@@ -57,6 +65,14 @@ impl RegistryStatePaths {
             checkpoint_file: ops_dir.join("checkpoint.json"),
             observations_dir,
         }
+    }
+
+    pub(crate) fn legacy_state_paths(&self) -> Self {
+        Self::from_registry_dir(
+            self.root.clone(),
+            self.state_dir.clone(),
+            self.state_dir.join("v3"),
+        )
     }
 
     pub fn exists(&self) -> bool {

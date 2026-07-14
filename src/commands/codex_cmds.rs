@@ -7,6 +7,7 @@ use serde_json::{Value, json};
 
 use crate::cli::{AgentKind, CodexReconcileArgs, ProjectionMethod, SkillVisibilityArgs};
 use crate::envelope::Meta;
+use crate::fs_util::remove_symlink;
 use crate::gitops;
 use crate::state_model::RegistryProjectionInstance;
 use crate::types::ErrorCode;
@@ -340,14 +341,4 @@ fn path_is_symlink(path: &Path) -> bool {
     fs::symlink_metadata(path)
         .map(|metadata| metadata.file_type().is_symlink())
         .unwrap_or(false)
-}
-
-#[cfg(unix)]
-fn remove_symlink(path: &Path) -> std::io::Result<()> {
-    fs::remove_file(path)
-}
-
-#[cfg(windows)]
-fn remove_symlink(path: &Path) -> std::io::Result<()> {
-    fs::remove_dir(path)
 }

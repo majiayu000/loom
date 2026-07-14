@@ -35,7 +35,7 @@ loom --json --root "$REGISTRY_ROOT" workspace status
 
 ## Plan Before Mutation
 
-Use `--dry-run` first for commands that support it, including projection, capture, activation/deactivation, rollback, trash, orphan cleanup, reconcile, and sync changes. Do not assume every command accepts `--dry-run`; check `loom <command> --help` when uncertain.
+Use `--dry-run` first for commands that support it, including projection, activation/deactivation, rollback, trash, orphan cleanup, reconcile, and sync changes. Do not assume every command accepts `--dry-run`; check `loom <command> --help` when uncertain.
 
 For agent-directed changes:
 

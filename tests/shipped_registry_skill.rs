@@ -49,6 +49,7 @@ fn shipped_skill_has_collision_resistant_metadata_and_trigger_boundaries() {
     assert!(skill.contains("loom --version"));
     assert!(skill.contains("data.safe_to_apply=true"));
     assert!(skill.contains("never authorizes the write by itself"));
+    assert!(!skill.contains("skill capture"));
     assert!(!skill.contains("skill activate \"$SKILL\" --agent codex --scope user\n"));
     assert!(skill.contains("docs/AGENT_USAGE.md"));
     assert!(skill.contains("docs/SINGLE_SKILL_LIFECYCLE.md"));
@@ -158,6 +159,7 @@ fn release_and_install_surfaces_ship_the_same_fail_closed_skill() {
     assert!(!runbook.contains("`loom` 技能"));
     assert!(!runbook.contains("skill save"));
     assert!(!runbook.contains("skill snapshot"));
+    assert!(!runbook.contains("skill capture"));
     assert!(runbook.contains("skill commit"));
     assert!(runbook.contains("skill release <skill> --anchor"));
 

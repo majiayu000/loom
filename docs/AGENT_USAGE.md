@@ -62,7 +62,7 @@ loom --json --root "$REGISTRY_ROOT" skill monitor-observed --once
 
 1. 读取状态：`loom --json --root <registry_root> workspace status`
 2. 写入前规划：低风险已有 binding 的写入可用 `agent preflight`；需要 durable plan/idempotency 的 flow 用 `loom plan use` 后再 `loom apply`
-3. 高风险写入预演：在 `skill project` / `skill capture` / `skill rollback` / `skill trash add` / `skill trash purge` / `skill orphan clean` / `sync push` 后加 `--dry-run`；`skill rollback --preview` 仅作为兼容别名保留
+3. 高风险写入预演：在 `skill project` / `skill rollback` / `skill trash add` / `skill trash purge` / `skill orphan clean` / `sync push` 后加 `--dry-run`；`skill rollback --preview` 仅作为兼容别名保留
 4. 保存 source 变更：`loom --json --root <registry_root> skill commit <skill> --from-source --message <message>`
 5. 创建恢复锚点：`loom --json --root <registry_root> skill release <skill> --anchor`
 6. 发布版本：`loom --json --root <registry_root> skill release <skill> vX.Y.Z --preflight --baseline <ref>`

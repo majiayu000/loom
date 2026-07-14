@@ -78,13 +78,13 @@ pub(crate) fn parse_skill_frontmatter(entrypoint: &Path) -> Result<FrontmatterPa
             continue;
         }
         match key {
-            "name" => frontmatter.name = parse_optional_string(key, value, &mut issues),
+            "name" => frontmatter.name = parse_portable_string(key, value, &mut issues),
             "description" => {
-                frontmatter.description = parse_optional_string(key, value, &mut issues)
+                frontmatter.description = parse_portable_string(key, value, &mut issues)
             }
             "license" => frontmatter.license = parse_optional_string(key, value, &mut issues),
             "allowed-tools" => {
-                frontmatter.allowed_tools = parse_optional_string(key, value, &mut issues);
+                frontmatter.allowed_tools = parse_allowed_tools(value, &mut issues);
                 frontmatter.agent_fields.push(key.to_string());
             }
             "compatibility" => frontmatter.compatibility = Some(yaml_to_json(value)),
@@ -103,6 +103,77 @@ pub(crate) fn parse_skill_frontmatter(entrypoint: &Path) -> Result<FrontmatterPa
         frontmatter,
         schema_issues: issues,
     })
+}
+
+fn parse_allowed_tools(value: &Yaml, issues: &mut Vec<FrontmatterSchemaIssue>) -> Option<Value> {
+    match value {
+        Yaml::String(text) => {
+            let trimmed = text.trim();
+            if trimmed.is_empty() {
+                push_allowed_tools_issue(value, issues);
+                None
+            } else {
+                Some(Value::String(trimmed.to_string()))
+            }
+        }
+        Yaml::Array(items) if items.is_empty() => {
+            push_allowed_tools_issue(value, issues);
+            None
+        }
+        Yaml::Array(items) => {
+            let tools = items
+                .iter()
+                .map(|item| match item {
+                    Yaml::String(text) if !text.trim().is_empty() => {
+                        Some(Value::String(text.trim().to_string()))
+                    }
+                    _ => None,
+                })
+                .collect::<Option<Vec<_>>>();
+            match tools {
+                Some(tools) => Some(Value::Array(tools)),
+                None => {
+                    push_allowed_tools_issue(value, issues);
+                    None
+                }
+            }
+        }
+        _ => {
+            push_allowed_tools_issue(value, issues);
+            None
+        }
+    }
+}
+
+fn push_allowed_tools_issue(value: &Yaml, issues: &mut Vec<FrontmatterSchemaIssue>) {
+    issues.push(schema_issue(
+        "frontmatter_allowed_tools_invalid",
+        "allowed-tools must be a non-empty string or a sequence of non-empty strings",
+        "use a space-separated string or an agent-supported YAML string sequence",
+        json!({ "field": "allowed-tools", "actual": yaml_summary(value) }),
+    ));
+}
+
+fn parse_portable_string(
+    key: &str,
+    value: &Yaml,
+    issues: &mut Vec<FrontmatterSchemaIssue>,
+) -> Option<String> {
+    match value {
+        Yaml::String(text) => {
+            let trimmed = text.trim();
+            (!trimmed.is_empty()).then(|| trimmed.to_string())
+        }
+        _ => {
+            issues.push(schema_issue(
+                "frontmatter_scalar_expected",
+                "frontmatter field must be a scalar string",
+                "replace the field value with a YAML string",
+                json!({ "field": key, "actual": yaml_summary(value) }),
+            ));
+            None
+        }
+    }
 }
 
 fn parse_optional_string(

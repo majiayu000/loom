@@ -30,6 +30,17 @@ fn has_finding(report: &Value, id: &str, severity: &str) -> bool {
         })
 }
 
+fn finding_count(report: &Value, id: &str, severity: &str) -> usize {
+    report["findings"]
+        .as_array()
+        .expect("findings array")
+        .iter()
+        .filter(|finding| {
+            finding["id"].as_str() == Some(id) && finding["severity"].as_str() == Some(severity)
+        })
+        .count()
+}
+
 #[test]
 fn skill_lint_accepts_valid_strict_skill() {
     let root = TestDir::new("skill-lint-valid");
@@ -212,6 +223,245 @@ fn skill_lint_portable_accepts_rich_yaml_frontmatter() {
 }
 
 #[test]
+fn skill_lint_accepts_system_and_registry_frontmatter_corpus() {
+    let root = TestDir::new("skill-lint-representative-corpus");
+    let fixtures = [
+        (
+            "system-image-fixture",
+            "---\nname: system-image-fixture\ndescription: \"Generate or edit raster images. Use when an agent needs bitmap assets rather than repository-native vectors.\"\n---\n# System image fixture\n",
+        ),
+        (
+            "system-creator-fixture",
+            "---\nname: system-creator-fixture\ndescription: Guide for creating effective skills. Use when users want to create or update a reusable skill.\nmetadata:\n  short-description: Create or update a skill\n---\n# System creator fixture\n",
+        ),
+        (
+            "registry-humanizer-fixture",
+            "---\nname: registry-humanizer-fixture\ndescription: 'Remove signs of generated writing from text. Use when editing or\n  reviewing text to make it sound natural and human-written.'\nallowed-tools:\n- Read\n- Write\n- Edit\nmetadata:\n  version: 2.2.0\n---\n# Registry humanizer fixture\n",
+        ),
+        (
+            "registry-recap-fixture",
+            "---\nname: registry-recap-fixture\ndescription: 回顾最近几天的会话数据，按主题汇总做过的工作。当用户要求活动回顾或会话总结时使用。\n---\n# Registry recap fixture\n",
+        ),
+    ];
+
+    for (skill, body) in fixtures {
+        write_skill_file(&root, skill, "SKILL.md", body);
+        let (output, env) = run_loom(root.path(), &["skill", "lint", skill, "--strict"]);
+        assert!(
+            output.status.success(),
+            "representative frontmatter fixture {skill} should pass strict lint: {env}"
+        );
+        assert_eq!(report(&env)["valid"], Value::Bool(true));
+    }
+}
+
+#[test]
+fn skill_lint_accepts_block_scalar_and_nested_metadata() {
+    let root = TestDir::new("skill-lint-block-scalar");
+    write_skill_file(
+        &root,
+        "localized-skill",
+        "SKILL.md",
+        "---\nname: localized-skill\ndescription: >\n  当用户需要检查技能元数据时，\n  使用这个技能执行严格校验。\nmetadata:\n  owner:\n    team: platform\n---\n# Localized\n",
+    );
+
+    let (output, env) = run_loom(
+        root.path(),
+        &["skill", "lint", "localized-skill", "--strict"],
+    );
+
+    assert!(
+        output.status.success(),
+        "block scalar and nested metadata should pass strict lint: {env}"
+    );
+    let report = report(&env);
+    assert_eq!(report["valid"], Value::Bool(true));
+    assert_eq!(
+        report["frontmatter"]["metadata"]["owner.team"],
+        Value::from("platform")
+    );
+}
+
+#[test]
+fn skill_lint_accepts_list_valued_agent_extension_without_portable_error() {
+    let root = TestDir::new("skill-lint-list-extension");
+    write_skill_file(
+        &root,
+        "list-extension",
+        "SKILL.md",
+        "---\nname: list-extension\ndescription: Use when an agent needs list-valued target tool metadata.\nallowed-tools:\n  - Bash\n  - Read\n---\n# Agent extension\n",
+    );
+
+    let (output, env) = run_loom(
+        root.path(),
+        &[
+            "skill",
+            "lint",
+            "list-extension",
+            "--strict",
+            "--agent",
+            "codex",
+        ],
+    );
+
+    assert!(
+        output.status.success(),
+        "agent extension shape should not fail portable strict lint: {env}"
+    );
+    let codex_report = report(&env);
+    assert_eq!(codex_report["valid"], Value::Bool(true));
+    assert_eq!(
+        codex_report["frontmatter"]["allowed_tools"],
+        serde_json::json!(["Bash", "Read"])
+    );
+    assert!(has_finding(
+        codex_report,
+        "agent_codex_unsupported_field",
+        "warning"
+    ));
+    assert_eq!(
+        codex_report["sections"]["portable_spec"]["status"],
+        Value::from("pass")
+    );
+
+    let (claude_output, claude_env) = run_loom(
+        root.path(),
+        &[
+            "skill",
+            "lint",
+            "list-extension",
+            "--strict",
+            "--agent",
+            "claude",
+        ],
+    );
+    assert!(
+        claude_output.status.success(),
+        "Claude-supported list extension should pass: {claude_env}"
+    );
+    assert_eq!(
+        report(&claude_env)["sections"]["agent_compatibility"]["claude"]["status"],
+        Value::from("pass")
+    );
+}
+
+#[test]
+fn skill_lint_rejects_unsupported_allowed_tools_shapes() {
+    let root = TestDir::new("skill-lint-allowed-tools-shapes");
+    let invalid_values = [
+        ("mapping-tools", "{ Bash: true }"),
+        ("boolean-tools", "true"),
+        ("number-tools", "7"),
+        ("null-tools", "null"),
+        ("empty-tools", "''"),
+        ("empty-list-tools", "[]"),
+        ("mixed-tools", "[Bash, { Read: true }]"),
+    ];
+
+    for (skill, allowed_tools) in invalid_values {
+        write_skill_file(
+            &root,
+            skill,
+            "SKILL.md",
+            &format!(
+                "---\nname: {skill}\ndescription: Use when testing invalid agent extension shapes.\nallowed-tools: {allowed_tools}\n---\n# Invalid extension\n"
+            ),
+        );
+        let (output, env) = run_loom(root.path(), &["skill", "lint", skill, "--strict"]);
+        assert!(
+            !output.status.success(),
+            "unsupported allowed-tools shape for {skill} must fail"
+        );
+        assert!(has_finding(
+            report(&env),
+            "frontmatter_allowed_tools_invalid",
+            "error"
+        ));
+    }
+}
+
+#[test]
+fn skill_lint_accepts_non_english_usage_description_in_strict_mode() {
+    let root = TestDir::new("skill-lint-non-english-description");
+    write_skill_file(
+        &root,
+        "chinese-skill",
+        "SKILL.md",
+        "---\nname: chinese-skill\ndescription: 当用户需要检查和修复技能元数据时使用此技能。\n---\n# 中文技能\n",
+    );
+
+    let (output, env) = run_loom(root.path(), &["skill", "lint", "chinese-skill", "--strict"]);
+
+    assert!(
+        output.status.success(),
+        "non-English usage context should pass portable strict lint: {env}"
+    );
+    let strict_report = report(&env);
+    assert_eq!(strict_report["valid"], Value::Bool(true));
+    assert!(!has_finding(
+        strict_report,
+        "description_missing_usage_context",
+        "error"
+    ));
+
+    let (quality_output, quality_env) = run_loom(
+        root.path(),
+        &["skill", "lint", "chinese-skill", "--strict", "--quality"],
+    );
+    assert!(
+        quality_output.status.success(),
+        "language-sensitive quality heuristics must remain advisory: {quality_env}"
+    );
+    assert!(has_finding(
+        report(&quality_env),
+        "quality_description_vague",
+        "warning"
+    ));
+}
+
+#[test]
+fn skill_lint_rejects_non_string_portable_fields_without_coercion() {
+    let root = TestDir::new("skill-lint-portable-types");
+    write_skill_file(
+        &root,
+        "typed-skill",
+        "SKILL.md",
+        "---\nname: 123\ndescription: true\n---\n# Typed fields\n",
+    );
+
+    let (output, env) = run_loom(root.path(), &["skill", "lint", "typed-skill", "--strict"]);
+
+    assert!(
+        !output.status.success(),
+        "non-string portable fields must fail strict lint"
+    );
+    let typed_report = report(&env);
+    assert_eq!(
+        finding_count(typed_report, "frontmatter_scalar_expected", "error"),
+        2
+    );
+    assert_eq!(typed_report["frontmatter"]["name"], Value::Null);
+    assert_eq!(typed_report["frontmatter"]["description"], Value::Null);
+
+    write_skill_file(
+        &root,
+        "null-skill",
+        "SKILL.md",
+        "---\nname: null\ndescription: null\n---\n# Null fields\n",
+    );
+    let (null_output, null_env) =
+        run_loom(root.path(), &["skill", "lint", "null-skill", "--strict"]);
+    assert!(
+        !null_output.status.success(),
+        "explicit null portable fields must fail strict lint"
+    );
+    assert_eq!(
+        finding_count(report(&null_env), "frontmatter_scalar_expected", "error"),
+        2
+    );
+}
+
+#[test]
 fn skill_lint_agent_codex_warns_for_claude_only_fields() {
     let root = TestDir::new("skill-lint-agent-codex");
     write_skill_file(
@@ -267,6 +517,10 @@ fn skill_lint_agent_claude_accepts_claude_fields() {
         Value::from("pass")
     );
     assert_eq!(report["frontmatter"]["agent_fields"][0], "allowed-tools");
+    assert_eq!(
+        report["frontmatter"]["allowed_tools"],
+        Value::from("Bash, Read")
+    );
 }
 
 #[test]

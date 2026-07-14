@@ -22,7 +22,7 @@ GH-511
 1. 保留 `yaml-rust2`，不引入第二个 YAML parser。
 2. 将 `name` / `description` 解析收紧为“YAML string 或明确 schema issue”，禁止 number/bool 到 string 的隐式转换。block scalar 由 parser 产生 string，因此自然通过。
 3. 保留当前 nested metadata flattening/string-map contract；用 regression fixture 证明 spec-valid nested scalar mapping 继续通过，不扩大 metadata API。
-4. 将 `allowed_tools` 表示为 `Option<Value>`：string 的 JSON 响应不变，sequence 等扩展值保真。portable strict 不把 agent-specific shape 当 schema error；`--agent codex` 复用现有 `agent_codex_unsupported_field` targeted warning。
+4. 将 `allowed_tools` 表示为 `Option<Value>`：trimmed non-empty string 的 JSON 响应不变，仅含 non-empty string 的 sequence 作为 agent extension 保真。其他 YAML shape 产生 `frontmatter_allowed_tools_invalid`；`--agent codex` 复用现有 `agent_codex_unsupported_field` targeted warning，Claude list 保持 pass。
 5. 从 `validate_frontmatter` 移除空格词数和英文关键词 strict errors。`--quality` 下的 `quality_description_vague` 保持 advisory warning，不影响 `valid`。
 6. `compatibility` 与其他未涉及 optional fields 保持现状，避免超出 GH-511。
 

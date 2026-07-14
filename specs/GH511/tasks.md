@@ -30,6 +30,7 @@ Done when:
 
 - 中文 usage description 的旧实现复现 strict failure，新实现通过。
 - list-valued `allowed-tools` 的旧实现复现 portable schema failure，新实现通过并保留 sequence。
+- `allowed-tools` mapping、boolean、number、null、empty string 与 mixed sequence 产生 stable schema finding。
 - block scalar 与 nested scalar metadata 继续通过。
 - number、boolean 与 explicit null 的 `name` / `description` 产生 type finding，不被静默转换或仅折叠成 missing。
 - repository-contained fixtures 覆盖 official/system 与 representative registry frontmatter shape，不读取用户主目录。
@@ -52,7 +53,7 @@ Files:
 
 Done when:
 
-- `allowed_tools` 使用 `serde_json::Value` 保留 string 或 sequence，existing string JSON shape 不变。
+- `allowed_tools` 使用 `serde_json::Value` 保留 non-empty string 或 string sequence，existing string JSON shape 不变；其他 YAML shape 明确失败。
 - `name` 与 `description` 只接受 YAML string；其他 optional field contract 保持现状。
 - 中文 description 不再因英文关键词或空格词数产生 portable strict error。
 - `--quality` 的 advisory heuristic 与 existing agent compatibility warning 保持可用。

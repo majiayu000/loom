@@ -308,21 +308,76 @@ fn skill_lint_accepts_list_valued_agent_extension_without_portable_error() {
         output.status.success(),
         "agent extension shape should not fail portable strict lint: {env}"
     );
-    let report = report(&env);
-    assert_eq!(report["valid"], Value::Bool(true));
+    let codex_report = report(&env);
+    assert_eq!(codex_report["valid"], Value::Bool(true));
     assert_eq!(
-        report["frontmatter"]["allowed_tools"],
+        codex_report["frontmatter"]["allowed_tools"],
         serde_json::json!(["Bash", "Read"])
     );
     assert!(has_finding(
-        report,
+        codex_report,
         "agent_codex_unsupported_field",
         "warning"
     ));
     assert_eq!(
-        report["sections"]["portable_spec"]["status"],
+        codex_report["sections"]["portable_spec"]["status"],
         Value::from("pass")
     );
+
+    let (claude_output, claude_env) = run_loom(
+        root.path(),
+        &[
+            "skill",
+            "lint",
+            "list-extension",
+            "--strict",
+            "--agent",
+            "claude",
+        ],
+    );
+    assert!(
+        claude_output.status.success(),
+        "Claude-supported list extension should pass: {claude_env}"
+    );
+    assert_eq!(
+        report(&claude_env)["sections"]["agent_compatibility"]["claude"]["status"],
+        Value::from("pass")
+    );
+}
+
+#[test]
+fn skill_lint_rejects_unsupported_allowed_tools_shapes() {
+    let root = TestDir::new("skill-lint-allowed-tools-shapes");
+    let invalid_values = [
+        ("mapping-tools", "{ Bash: true }"),
+        ("boolean-tools", "true"),
+        ("number-tools", "7"),
+        ("null-tools", "null"),
+        ("empty-tools", "''"),
+        ("empty-list-tools", "[]"),
+        ("mixed-tools", "[Bash, { Read: true }]"),
+    ];
+
+    for (skill, allowed_tools) in invalid_values {
+        write_skill_file(
+            &root,
+            skill,
+            "SKILL.md",
+            &format!(
+                "---\nname: {skill}\ndescription: Use when testing invalid agent extension shapes.\nallowed-tools: {allowed_tools}\n---\n# Invalid extension\n"
+            ),
+        );
+        let (output, env) = run_loom(root.path(), &["skill", "lint", skill, "--strict"]);
+        assert!(
+            !output.status.success(),
+            "unsupported allowed-tools shape for {skill} must fail"
+        );
+        assert!(has_finding(
+            report(&env),
+            "frontmatter_allowed_tools_invalid",
+            "error"
+        ));
+    }
 }
 
 #[test]
@@ -462,6 +517,10 @@ fn skill_lint_agent_claude_accepts_claude_fields() {
         Value::from("pass")
     );
     assert_eq!(report["frontmatter"]["agent_fields"][0], "allowed-tools");
+    assert_eq!(
+        report["frontmatter"]["allowed_tools"],
+        Value::from("Bash, Read")
+    );
 }
 
 #[test]

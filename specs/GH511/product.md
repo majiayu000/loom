@@ -27,7 +27,7 @@ GH-511
 1. `name` 与 `description` 必须是非空 YAML string；`name` 继续满足目录名、长度和字符约束，`description` 继续满足 1024 字符上限。
 2. 合法 YAML block scalar description 作为字符串校验，不因表示形式不同而失败。
 3. spec-valid nested `metadata` mapping 继续通过 strict lint；非 string key 或不符合当前 metadata string-map contract 的值仍产生明确 schema finding。
-4. agent-specific extension 的非 portable 值形态不产生 `frontmatter_yaml_invalid` 或 portable strict error；指定 `--agent` 时，以对应 `agent_*` warning 报告兼容风险。
+4. `allowed-tools` 接受 portable non-empty string 或 agent-extension non-empty string sequence；sequence 不产生 portable strict error，指定 `--agent` 时按目标能力报告兼容风险。mapping、boolean、number、null 或包含非 string item 的 sequence 产生稳定 schema error。
 5. description 是否包含英文 `use`、`when`、`for`、`trigger` 或空格分隔词数不再是 portable strict 通过条件；相关启发式只能作为 quality warning。
 6. 无效 YAML、缺失 frontmatter、缺失必填字段及错误 portable 字段类型继续产生稳定、可机器读取的 error finding。
 
@@ -47,6 +47,7 @@ GH-511
 - 显式 `name: null` / `description: null` 是错误字段类型，并同时保持必填字段缺失语义。
 - `metadata` 为非 mapping 或包含非 string key 时失败，不静默丢弃。
 - `allowed-tools` 的 portable 规范形态仍是 string；agent-specific sequence 仅代表兼容性扩展，不提升为 portable 标准。
+- `allowed-tools` 的 mapping、boolean、number、null、empty string 与 mixed sequence 不被猜测或静默放行。
 - 仅运行 strict lint 时不强制输出 quality finding；`--quality` 继续输出 advisory finding。
 
 ## 发布说明

@@ -64,7 +64,14 @@ pub(super) fn plan_trash_activation(
     skill_path: &Path,
     skill: &str,
 ) -> std::result::Result<TrashActivationPlan, CommandFailure> {
-    let Some(snapshot) = paths.maybe_load_snapshot().map_err(map_registry_state)? else {
+    let snapshot = if paths.registry_dir.exists() {
+        paths.load_snapshot().map_err(map_registry_state)?
+    } else if paths.legacy_state_dir_exists() {
+        paths
+            .legacy_state_paths()
+            .load_snapshot()
+            .map_err(map_registry_state)?
+    } else {
         return Ok(empty_plan());
     };
 
@@ -92,7 +99,8 @@ pub(super) fn plan_trash_activation(
         .filter(|projection| projection.skill_id == skill)
     {
         let path = PathBuf::from(&projection.materialized_path);
-        let path_string = path.display().to_string();
+        let normalized_path = normalize_projection_path(&path);
+        let path_string = normalized_path.display().to_string();
         if !seen_paths.insert(path_string.clone()) {
             continue;
         }
@@ -103,13 +111,13 @@ pub(super) fn plan_trash_activation(
             .find(|target| target.target_id == projection.target_id);
         let (action, reason) = classify_link(
             target.map(|target| (Path::new(&target.path), target.ownership)),
-            &path,
+            &normalized_path,
             skill_path,
             skill,
             projection.method,
         )?;
         if action == "delete" {
-            deletable_links.push(path.clone());
+            deletable_links.push(normalized_path);
         }
         links.push(TrashLinkImpact {
             path: path_string,
@@ -139,6 +147,16 @@ pub(super) fn plan_trash_activation(
         deletable_links,
         skill_path: skill_path.to_path_buf(),
     })
+}
+
+fn normalize_projection_path(path: &Path) -> PathBuf {
+    let Some(file_name) = path.file_name() else {
+        return normalize_existing_or_raw(path);
+    };
+    path.parent()
+        .map(normalize_existing_or_raw)
+        .unwrap_or_default()
+        .join(file_name)
 }
 
 fn classify_link(

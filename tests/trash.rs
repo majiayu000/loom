@@ -1,9 +1,11 @@
 use std::fs;
-use std::path::Path;
+use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 
 use serde_json::Value;
 
+#[path = "trash/activation_edge_cases.rs"]
+mod activation_edge_cases;
 mod common;
 
 use common::actions::save_skill;
@@ -26,6 +28,45 @@ fn write_activatable_skill(root: &Path, skill: &str) {
 
 fn read_json(path: &Path) -> Value {
     serde_json::from_slice(&fs::read(path).expect("read json file")).expect("parse json file")
+}
+
+fn write_json(path: &Path, value: &Value) {
+    let mut raw = serde_json::to_string_pretty(value).expect("serialize json");
+    raw.push('\n');
+    write_file(path, &raw);
+}
+
+fn read_optional(path: &Path) -> Option<Vec<u8>> {
+    fs::read(path).ok()
+}
+
+fn create_dir_symlink(target: &Path, link: &Path) {
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(target, link).expect("create directory symlink");
+    #[cfg(windows)]
+    std::os::windows::fs::symlink_dir(target, link).expect("create directory symlink");
+}
+
+fn relative_path(from_dir: &Path, to: &Path) -> PathBuf {
+    let from = fs::canonicalize(from_dir).expect("canonicalize relative path base");
+    let to = fs::canonicalize(to).expect("canonicalize relative path target");
+    let from_components = from.components().collect::<Vec<_>>();
+    let to_components = to.components().collect::<Vec<_>>();
+    let common = from_components
+        .iter()
+        .zip(&to_components)
+        .take_while(|(left, right)| left == right)
+        .count();
+    let mut relative = PathBuf::new();
+    for component in &from_components[common..] {
+        if matches!(component, Component::Normal(_)) {
+            relative.push("..");
+        }
+    }
+    for component in &to_components[common..] {
+        relative.push(component.as_os_str());
+    }
+    relative
 }
 
 fn assert_success(output: &std::process::Output, context: &str) {
@@ -299,6 +340,8 @@ fn skill_trash_add_dry_run_reports_plan_without_mutation() {
     let rules_before = fs::read(root.path().join("state/registry/rules.json")).expect("read rules");
     let projections_before =
         fs::read(root.path().join("state/registry/projections.json")).expect("read projections");
+    let command_events_path = root.path().join("state/events/commands.jsonl");
+    let command_events_before = read_optional(&command_events_path);
 
     let (output, env) = run_with_home(
         root.path(),
@@ -341,6 +384,7 @@ fn skill_trash_add_dry_run_reports_plan_without_mutation() {
         head_before
     );
     assert_eq!(operations_log(root.path()), operations_before);
+    assert_eq!(read_optional(&command_events_path), command_events_before);
     assert!(env["meta"]["op_id"].is_null());
 }
 
@@ -364,7 +408,7 @@ fn skill_trash_add_retains_unowned_live_path_but_removes_active_records() {
     assert_success(&other_output, &format!("other activation: {other_env}"));
     let live_path = home.path().join(".agents/skills/demo");
     fs::remove_file(&live_path).expect("remove managed symlink");
-    write_file(&live_path.join("KEEP.txt"), "user-owned replacement\n");
+    write_file(&live_path, "user-owned replacement\n");
     let bindings_before =
         fs::read(root.path().join("state/registry/bindings.json")).expect("read bindings");
     let targets_before =
@@ -373,7 +417,10 @@ fn skill_trash_add_retains_unowned_live_path_but_removes_active_records() {
     let (trash_output, trash_env) =
         run_with_home(root.path(), home.path(), &["skill", "trash", "add", "demo"]);
     assert_success(&trash_output, &format!("trash add: {trash_env}"));
-    assert!(live_path.join("KEEP.txt").is_file());
+    assert_eq!(
+        fs::read_to_string(&live_path).expect("read retained ordinary file"),
+        "user-owned replacement\n"
+    );
     assert_eq!(
         trash_env["data"]["activation_impact"]["links"][0]["action"],
         Value::String("retain".to_string())

@@ -39,10 +39,12 @@ GH-511
 - [ ] 中文 usage description 的 strict lint 通过，且不出现 `description_missing_usage_context` error。
 - [ ] 非 string `name` / `description` 产生明确 schema error，不能被静默转换成字符串。
 - [ ] 现有 invalid YAML、name、description 长度与 agent compatibility 回归测试继续通过。
+- [ ] 回归测试包含 official/system Skill 与本地 registry 常见 frontmatter 形态的仓库内 fixture，不依赖用户主目录。
 
 ## 边界情况
 
 - frontmatter root 不是 mapping、closing marker 缺失或 YAML 语法错误时仍失败。
+- 显式 `name: null` / `description: null` 是错误字段类型，并同时保持必填字段缺失语义。
 - `metadata` 为非 mapping 或包含非 string key 时失败，不静默丢弃。
 - `allowed-tools` 的 portable 规范形态仍是 string；agent-specific sequence 仅代表兼容性扩展，不提升为 portable 标准。
 - 仅运行 strict lint 时不强制输出 quality finding；`--quality` 继续输出 advisory finding。

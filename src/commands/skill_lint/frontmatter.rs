@@ -111,7 +111,6 @@ fn parse_portable_string(
     issues: &mut Vec<FrontmatterSchemaIssue>,
 ) -> Option<String> {
     match value {
-        Yaml::Null | Yaml::BadValue => None,
         Yaml::String(text) => {
             let trimmed = text.trim();
             (!trimmed.is_empty()).then(|| trimmed.to_string())

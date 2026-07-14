@@ -31,7 +31,8 @@ Done when:
 - 中文 usage description 的旧实现复现 strict failure，新实现通过。
 - list-valued `allowed-tools` 的旧实现复现 portable schema failure，新实现通过并保留 sequence。
 - block scalar 与 nested scalar metadata 继续通过。
-- non-string `name` / `description` 产生 type finding，不被静默转换。
+- number、boolean 与 explicit null 的 `name` / `description` 产生 type finding，不被静默转换或仅折叠成 missing。
+- repository-contained fixtures 覆盖 official/system 与 representative registry frontmatter shape，不读取用户主目录。
 
 Verify:
 

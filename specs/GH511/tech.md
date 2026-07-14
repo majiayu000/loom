@@ -32,9 +32,9 @@ GH-511
 | --- | --- | --- |
 | P1/P2 | `frontmatter.rs`, `skill_lint.rs` | block scalar 与 non-string portable field tests |
 | P3 | `frontmatter.rs` existing path | nested scalar mapping strict-pass assertion |
-| P4 | `frontmatter.rs`, `sections.rs` | strict portable pass + `--agent claude` targeted warning |
+| P4 | `frontmatter.rs`, `sections.rs` | strict portable pass + `--agent codex` targeted warning；Claude-supported list 不产生假 warning |
 | P5 | `skill_lint.rs`, `sections.rs` | 中文 strict pass；`--quality` 仅 warning |
-| P6 | existing error paths | existing invalid YAML/name/missing description tests |
+| P6 | existing error paths and corpus fixtures | invalid YAML/name/missing description/null tests；official/system 与 registry-shaped frontmatter snapshots |
 
 ## 数据流
 

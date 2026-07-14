@@ -223,6 +223,39 @@ fn skill_lint_portable_accepts_rich_yaml_frontmatter() {
 }
 
 #[test]
+fn skill_lint_accepts_system_and_registry_frontmatter_corpus() {
+    let root = TestDir::new("skill-lint-representative-corpus");
+    let fixtures = [
+        (
+            "system-image-fixture",
+            "---\nname: system-image-fixture\ndescription: \"Generate or edit raster images. Use when an agent needs bitmap assets rather than repository-native vectors.\"\n---\n# System image fixture\n",
+        ),
+        (
+            "system-creator-fixture",
+            "---\nname: system-creator-fixture\ndescription: Guide for creating effective skills. Use when users want to create or update a reusable skill.\nmetadata:\n  short-description: Create or update a skill\n---\n# System creator fixture\n",
+        ),
+        (
+            "registry-humanizer-fixture",
+            "---\nname: registry-humanizer-fixture\ndescription: 'Remove signs of generated writing from text. Use when editing or\n  reviewing text to make it sound natural and human-written.'\nallowed-tools:\n- Read\n- Write\n- Edit\nmetadata:\n  version: 2.2.0\n---\n# Registry humanizer fixture\n",
+        ),
+        (
+            "registry-recap-fixture",
+            "---\nname: registry-recap-fixture\ndescription: 回顾最近几天的会话数据，按主题汇总做过的工作。当用户要求活动回顾或会话总结时使用。\n---\n# Registry recap fixture\n",
+        ),
+    ];
+
+    for (skill, body) in fixtures {
+        write_skill_file(&root, skill, "SKILL.md", body);
+        let (output, env) = run_loom(root.path(), &["skill", "lint", skill, "--strict"]);
+        assert!(
+            output.status.success(),
+            "representative frontmatter fixture {skill} should pass strict lint: {env}"
+        );
+        assert_eq!(report(&env)["valid"], Value::Bool(true));
+    }
+}
+
+#[test]
 fn skill_lint_accepts_block_scalar_and_nested_metadata() {
     let root = TestDir::new("skill-lint-block-scalar");
     write_skill_file(
@@ -347,13 +380,30 @@ fn skill_lint_rejects_non_string_portable_fields_without_coercion() {
         !output.status.success(),
         "non-string portable fields must fail strict lint"
     );
-    let report = report(&env);
+    let typed_report = report(&env);
     assert_eq!(
-        finding_count(report, "frontmatter_scalar_expected", "error"),
+        finding_count(typed_report, "frontmatter_scalar_expected", "error"),
         2
     );
-    assert_eq!(report["frontmatter"]["name"], Value::Null);
-    assert_eq!(report["frontmatter"]["description"], Value::Null);
+    assert_eq!(typed_report["frontmatter"]["name"], Value::Null);
+    assert_eq!(typed_report["frontmatter"]["description"], Value::Null);
+
+    write_skill_file(
+        &root,
+        "null-skill",
+        "SKILL.md",
+        "---\nname: null\ndescription: null\n---\n# Null fields\n",
+    );
+    let (null_output, null_env) =
+        run_loom(root.path(), &["skill", "lint", "null-skill", "--strict"]);
+    assert!(
+        !null_output.status.success(),
+        "explicit null portable fields must fail strict lint"
+    );
+    assert_eq!(
+        finding_count(report(&null_env), "frontmatter_scalar_expected", "error"),
+        2
+    );
 }
 
 #[test]

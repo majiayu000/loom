@@ -25,7 +25,6 @@ fn skill_trash_add_rejects_partial_registry_without_repairing_it() {
     );
     assert!(!root.path().join("state/registry/schema.json").exists());
     assert!(!root.path().join("state/registry/targets.json").exists());
-    assert!(!root.path().join("trash").exists());
 }
 
 #[test]
@@ -331,5 +330,143 @@ fn skill_trash_add_failure_restores_exact_preexisting_registry_index() {
         status_before
     );
     assert!(root.path().join("skills/demo/SKILL.md").is_file());
+    assert!(home.path().join(".agents/skills/demo").is_symlink());
+}
+
+#[test]
+fn skill_trash_add_retains_directory_replacement() {
+    let root = TestDir::new("skill-trash-directory-replacement");
+    let home = TestDir::new("skill-trash-directory-replacement-home");
+    write_activatable_skill(root.path(), "demo");
+    let (activate_output, activate_env) = run_with_home(
+        root.path(),
+        home.path(),
+        &["skill", "activate", "demo", "--agent", "codex"],
+    );
+    assert_success(&activate_output, &format!("skill activate: {activate_env}"));
+    let live_path = home.path().join(".agents/skills/demo");
+    fs::remove_file(&live_path).expect("remove managed projection");
+    write_file(&live_path.join("KEEP.txt"), "user-owned directory\n");
+
+    let (trash_output, trash_env) =
+        run_with_home(root.path(), home.path(), &["skill", "trash", "add", "demo"]);
+
+    assert_success(&trash_output, &format!("trash add: {trash_env}"));
+    assert_eq!(
+        fs::read_to_string(live_path.join("KEEP.txt")).expect("read retained directory file"),
+        "user-owned directory\n"
+    );
+    assert_eq!(
+        trash_env["data"]["activation_impact"]["links"][0]["reason"],
+        "not_symlink"
+    );
+}
+
+#[test]
+fn skill_trash_add_rollback_preserves_registry_symlink_entries() {
+    let root = TestDir::new("skill-trash-registry-symlink-rollback");
+    let home = TestDir::new("skill-trash-registry-symlink-rollback-home");
+    let external = TestDir::new("skill-trash-registry-symlink-external");
+    write_file(&external.path().join("external.jsonl"), "external\n");
+    write_activatable_skill(root.path(), "demo");
+    let (activate_output, activate_env) = run_with_home(
+        root.path(),
+        home.path(),
+        &["skill", "activate", "demo", "--agent", "codex"],
+    );
+    assert_success(&activate_output, &format!("skill activate: {activate_env}"));
+    let linked_entry = root
+        .path()
+        .join("state/registry/observations/external-link");
+    create_dir_symlink(external.path(), &linked_entry);
+    let original_target = fs::read_link(&linked_entry).expect("read original registry symlink");
+    let home_value = home.path().to_string_lossy().to_string();
+
+    let (output, env) = run_loom_with_env(
+        root.path(),
+        &[
+            ("HOME", &home_value),
+            ("LOOM_FAULT_INJECT", "record_v3_operation_after_checkpoint"),
+        ],
+        &["skill", "trash", "add", "demo"],
+    );
+
+    assert!(
+        !output.status.success(),
+        "faulted trash add must fail: {env}"
+    );
+    assert!(linked_entry.is_symlink());
+    assert_eq!(
+        fs::read_link(&linked_entry).expect("read restored registry symlink"),
+        original_target
+    );
+    assert_eq!(
+        fs::read_to_string(external.path().join("external.jsonl")).expect("read external payload"),
+        "external\n"
+    );
+}
+
+#[test]
+fn skill_trash_add_rollback_removes_new_registry_layout() {
+    let root = TestDir::new("skill-trash-absent-registry-rollback");
+    let (init_output, init_env) = run_loom(root.path(), &["workspace", "init"]);
+    assert_success(&init_output, &format!("workspace init: {init_env}"));
+    fs::remove_dir_all(root.path().join("state/registry")).expect("remove initialized registry");
+    write_activatable_skill(root.path(), "demo");
+
+    let (output, env) = run_loom_with_env(
+        root.path(),
+        &[("LOOM_FAULT_INJECT", "record_v3_operation_after_checkpoint")],
+        &["skill", "trash", "add", "demo"],
+    );
+
+    assert!(
+        !output.status.success(),
+        "faulted trash add must fail: {env}"
+    );
+    assert!(root.path().join("skills/demo/SKILL.md").is_file());
+    assert!(!root.path().join("state/registry").exists());
+}
+
+#[test]
+fn skill_trash_add_rollback_restores_legacy_registry_layout() {
+    let root = TestDir::new("skill-trash-legacy-registry-rollback");
+    let home = TestDir::new("skill-trash-legacy-registry-rollback-home");
+    write_activatable_skill(root.path(), "demo");
+    let (activate_output, activate_env) = run_with_home(
+        root.path(),
+        home.path(),
+        &["skill", "activate", "demo", "--agent", "codex"],
+    );
+    assert_success(&activate_output, &format!("skill activate: {activate_env}"));
+    fs::rename(
+        root.path().join("state/registry"),
+        root.path().join("state/v3"),
+    )
+    .expect("move registry to legacy layout");
+    let home_value = home.path().to_string_lossy().to_string();
+
+    let (output, env) = run_loom_with_env(
+        root.path(),
+        &[
+            ("HOME", &home_value),
+            ("LOOM_FAULT_INJECT", "record_v3_operation_after_checkpoint"),
+        ],
+        &["skill", "trash", "add", "demo"],
+    );
+
+    assert!(
+        !output.status.success(),
+        "faulted trash add must fail: {env}"
+    );
+    assert!(root.path().join("skills/demo/SKILL.md").is_file());
+    assert!(!root.path().join("state/registry").exists());
+    assert!(root.path().join("state/v3/schema.json").is_file());
+    assert_eq!(
+        read_json(&root.path().join("state/v3/projections.json"))["projections"]
+            .as_array()
+            .map(Vec::len),
+        Some(1)
+    );
     assert!(home.path().join(".agents/skills/demo").is_symlink());
 }

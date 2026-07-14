@@ -55,7 +55,7 @@ pub(crate) fn restore_path_from_backup(path: &Path, backup: &serde_json::Value) 
 
     remove_path_if_exists(path)?;
     match kind {
-        "dir" => copy_dir_recursive(backup_path, path),
+        "dir" => copy_dir_recursive_preserving_symlinks(backup_path, path),
         "file" => {
             if let Some(parent) = path.parent() {
                 fs::create_dir_all(parent).with_context(|| {
@@ -111,7 +111,7 @@ pub(crate) fn backup_path_if_exists(
         backup_symlink_metadata(path, &backup_path)?;
         "symlink"
     } else if metadata.is_dir() {
-        copy_dir_recursive(path, &backup_path)?;
+        copy_dir_recursive_preserving_symlinks(path, &backup_path)?;
         "dir"
     } else {
         if let Some(parent) = backup_path.parent() {

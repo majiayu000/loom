@@ -1,0 +1,4 @@
+interface:
+  display_name: "Loom Registry"
+  short_description: "Manage local Loom Skill registries safely"
+  default_prompt: "Use $loom-registry to inspect and manage my local Loom Skill registry safely."

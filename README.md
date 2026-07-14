@@ -56,6 +56,30 @@ brew install majiayu000/tap/loom
 git clone https://github.com/majiayu000/loom.git
 cd loom && cargo install --path .
 
+# Optional: install the first-party Agent Skill for the agent(s) you use.
+# For an extracted release archive:
+SKILL_SOURCE="$PWD/skillloom-${VERSION}-${TARGET}/skills/loom-registry"
+# For Homebrew, use this source instead:
+# SKILL_SOURCE="$(brew --prefix loom)/share/loom/skills/loom-registry"
+# For a source checkout after `cd loom`, use this source instead:
+# SKILL_SOURCE="$PWD/skills/loom-registry"
+
+install_loom_registry_skill() {
+  source_dir="$1"
+  target_dir="$2"
+  if [ -e "$target_dir" ] || [ -L "$target_dir" ]; then
+    printf '%s\n' "Refusing to overwrite existing Skill: $target_dir" >&2
+    return 1
+  fi
+  test -f "$source_dir/SKILL.md"
+  mkdir -p "$(dirname "$target_dir")"
+  cp -R "$source_dir" "$target_dir"
+}
+
+# Run one or both lines, depending on the agents you use.
+install_loom_registry_skill "$SKILL_SOURCE" "$HOME/.claude/skills/loom-registry"
+install_loom_registry_skill "$SKILL_SOURCE" "$HOME/.agents/skills/loom-registry"
+
 # 2. Initialize the default registry and auto-register existing agent skill dirs
 loom init
 
@@ -68,6 +92,8 @@ loom skill activate fixflow --agent codex --scope user --dry-run
 loom skill activate fixflow --agent codex --scope user
 loom skill visibility fixflow --agent codex
 ```
+
+The Agent Skill is named `loom-registry` to avoid colliding with Loom.com video Skills. The copy commands fail closed when a same-name target already exists; inspect and resolve that target manually instead of overwriting it. Start a new Claude Code or Codex session after copying so the agent can discover the Skill. A source build can use `skills/loom-registry` from the checkout; `cargo install` installs only the CLI binary and does not install the Agent Skill.
 
 Loom defaults to `~/.loom-registry`. Pass `--root <dir>` only when you want a different registry.
 

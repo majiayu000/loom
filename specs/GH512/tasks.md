@@ -46,6 +46,7 @@ Depends on: SP512-T1
 
 Files:
 
+- `.gitignore`
 - `skills/loom-registry/SKILL.md`
 - `skills/loom-registry/agents/openai.yaml`
 - `skills/loom-registry/loom.skill.toml`
@@ -54,6 +55,7 @@ Files:
 Done when:
 
 - `skill-creator` initializes the searched-and-confirmed new directory and its validators pass.
+- Git tracking exception is scoped to `skills/loom-registry`; other tool-checkout registry content remains ignored.
 - `loom-registry` triggers only for the local Loom registry/CLI domain and explicitly excludes Loom.com/video.
 - Workflow uses explicit JSON/root, dry-run/approval checks, error/warning handling, current lifecycle commands, and links to detailed repo docs.
 - Manifest uses only existing schema fields and declares `loom` as the required tool.
@@ -75,6 +77,7 @@ Files:
 - `.github/workflows/release.yml`
 - `README.md`
 - `docs/AGENT_USAGE.md`
+- `docs/SINGLE_SKILL_LIFECYCLE.md`
 - `tests/shipped_registry_skill.rs`
 
 Done when:
@@ -82,7 +85,7 @@ Done when:
 - Every platform archive includes the full Skill and unpack smoke validates required files.
 - Generated Homebrew formula installs `skills/` under `pkgshare`; neither workflow nor docs writes user home without an explicit copy command.
 - README documents fail-closed Claude/Codex copy from archive and Homebrew plus new-session discovery.
-- Runbook names `loom-registry` and uses `skill commit` / `skill release --anchor`.
+- Runbook names `loom-registry`; runbook 和 single-Skill lifecycle 使用 `skill commit` / `skill release --anchor`。
 
 Verify:
 

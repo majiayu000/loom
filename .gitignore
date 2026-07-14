@@ -8,4 +8,8 @@ panel/node_modules/
 panel/dist/
 target/
 .omx/
-skills/
+# Ignore mutable registry content in the tool checkout, but ship the scoped
+# first-party Agent Skill used by release archives and installation docs.
+/skills/*
+!/skills/loom-registry/
+!/skills/loom-registry/**

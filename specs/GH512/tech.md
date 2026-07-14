@@ -12,22 +12,22 @@ GH-512
 
 | Area | Files | Current behavior | Why relevant |
 | --- | --- | --- | --- |
-| Agent runbook | `docs/AGENT_USAGE.md` | 引用不存在且会冲突的 `loom` Skill，并使用旧生命周期命令 | 直接复现入口 |
-| First-party assets | `skills/` | Cargo package 排除该目录，仓库没有 shipped Agent Skill | 需要单一受测 source tree |
+| Agent docs | `docs/AGENT_USAGE.md`, `docs/SINGLE_SKILL_LIFECYCLE.md` | runbook 引用不存在且会冲突的 `loom` Skill；两处仍使用旧生命周期命令 | 直接复现入口和 Skill 链接目标 |
+| First-party assets | `skills/`, `.gitignore` | mutable registry content 默认忽略、Cargo package 排除该目录，仓库没有 scoped shipped Agent Skill exception | 需要单一受测 source tree，同时保持 tool checkout 与 registry 分离 |
 | Release archive | `.github/workflows/release.yml` | 只复制 binary、README、LICENSE；Homebrew 只安装 binary | clean install 无 Skill 可发现 |
 | Install docs | `README.md` | 只安装 CLI，没有 Skill copy/discovery 说明 | acceptance 要求 Claude/Codex 可安装 |
 | Skill validation | Loom lint/eval commands and `tests/common` | 已有 portable/agent lint 与 offline fixtures，但没有第一方 shipped asset regression | 可复用现有 parser/contract，禁止另造 evaluator |
 
 ## 设计方案
 
-1. 使用 repository-wide collision search 后，由 `skill-creator` 的 `init_skill.py` 在 `skills/loom-registry/` 创建标准 Agent Skill skeleton；保留唯一 canonical name `loom-registry`，不创建 `loom` alias。
+1. 使用 repository-wide collision search 后，由 `skill-creator` 的 `init_skill.py` 在 `skills/loom-registry/` 创建标准 Agent Skill skeleton；在 `.gitignore` 中只为该 first-party 目录增加 scoped exception，其他 mutable registry content 仍忽略；保留唯一 canonical name `loom-registry`，不创建 `loom` alias。
 2. `SKILL.md` frontmatter 只使用 portable `name` / `description`，正文以 imperative workflow 描述 local registry 边界、JSON envelope、显式 `--root`、read-first、dry-run、approval、warnings、sync/history 与 lifecycle。详细 CLI 契约链接到 `docs/AGENT_USAGE.md` 和 `docs/SINGLE_SKILL_LIFECYCLE.md`，避免复制全部文档。
 3. `agents/openai.yaml` 提供 display name、短描述与显式 `$loom-registry` default prompt；`loom.skill.toml` 使用现有 `loom.skill.v1` schema 和 `requires_tools = ["loom"]`。
 4. `evals/triggers.jsonl` 使用显式 `expected_trigger` / `observed_trigger` fixtures：至少四个 local-registry positives 和三个 Loom.com/video negatives。负例文本可包含 Loom 品牌词，但 `observed_trigger=false`，防止词面命中被误当作通过。
 5. 新增 `tests/shipped_registry_skill.rs`，把 tracked Skill 复制到隔离的临时 registry，再调用真实 Loom binary 验证 strict portable lint、Claude/Codex compatibility 与 offline trigger eval；另直接断言 canonical name、正负样本数量、precision/recall 和 exclusion 文案。
 6. release archive staging 复制完整 `skills/loom-registry` 到 `skills/loom-registry`；解包 smoke 显式检查 `SKILL.md`、`agents/openai.yaml`、`loom.skill.toml` 与 trigger fixtures，避免只测试 source checkout。
 7. Homebrew formula 在 archive 根目录安装 binary 后，以 `pkgshare.install "skills"` 保存同一份 Skill。它不触碰用户 home；README 从 archive 路径或 `$(brew --prefix loom)/share/loom/skills/loom-registry` 执行 fail-closed copy。
-8. README 对 Claude Code 使用 `$HOME/.claude/skills/loom-registry`，对 Codex 使用 `$HOME/.agents/skills/loom-registry`；先检查目标不存在，再 `cp -R`，并明确新 session discovery。更新 agent runbook 到新名称和当前 lifecycle verbs。
+8. README 对 Claude Code 使用 `$HOME/.claude/skills/loom-registry`，对 Codex 使用 `$HOME/.agents/skills/loom-registry`；先检查目标不存在，再 `cp -R`，并明确新 session discovery。更新 agent runbook 和 single-Skill lifecycle 到当前 lifecycle verbs。
 
 ## Product-to-Test Mapping
 

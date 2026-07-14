@@ -6,16 +6,18 @@ import { RefreshIcon } from "../../components/icons/nav_icons";
 import { api } from "../../lib/api/client";
 import { useMutation } from "../../lib/useMutation";
 import { COUNT_TERMS, filterLabel, formatReplayableWrites, summarizeOps } from "../../lib/count_labels";
+import type { OperationCounts } from "../../types";
 
 type FilterKey = "all" | OpStatus;
 
 interface OpsPageProps {
   ops: Op[];
+  operationCounts: OperationCounts | null;
   onMutation: () => void;
   readOnly: boolean;
 }
 
-export function OpsPage({ ops, onMutation, readOnly }: OpsPageProps) {
+export function OpsPage({ ops, operationCounts, onMutation, readOnly }: OpsPageProps) {
   const [filter, setFilter] = useState<FilterKey>("all");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const retry = useMutation();
@@ -23,9 +25,10 @@ export function OpsPage({ ops, onMutation, readOnly }: OpsPageProps) {
   const filtered = prioritizeActionNeeded(filter === "all" ? ops : ops.filter((o) => o.status === filter));
   const selected = filtered.find((op) => op.id === selectedId) ?? null;
   const counts = summarizeOps(ops);
+  const actionableCount = operationCounts?.actionable_operations ?? ops.filter((op) => op.actionable || op.status !== "ok").length;
   const finalized = counts.ok + counts.err;
   const successRate = finalized > 0 ? (counts.ok / finalized) * 100 : null;
-  const oldestPending = ops.find((o) => o.status === "pending");
+  const oldestPending = ops.find((o) => o.actionable) ?? ops.find((o) => o.status !== "ok");
   const oldestPendingLabel = oldestPending
     ? `${oldestPending.kind.toLowerCase() === "project" ? "apply" : oldestPending.kind.replace(/[._-]/g, " ")} ${
         oldestPending.skill
@@ -47,26 +50,26 @@ export function OpsPage({ ops, onMutation, readOnly }: OpsPageProps) {
         <div className="header-actions">
           <button
             className="btn ghost"
-            disabled={readOnly || actionBusy || counts.pending === 0}
+            disabled={readOnly || actionBusy || actionableCount === 0}
             onClick={() => retry.run("retry pending", api.opsRetry, onMutation)}
             title={
               readOnly
                 ? "registry offline"
-                : counts.pending === 0
+                : actionableCount === 0
                 ? "no replayable writes to retry"
                 : "retry replayable writes against local targets"
             }
           >
-            <RefreshIcon /> {retry.busy ? "Retrying…" : `Retry replayable (${counts.pending})`}
+            <RefreshIcon /> {retry.busy ? "Retrying…" : `Retry replayable (${actionableCount})`}
           </button>
           <button
             className="btn ghost"
-            disabled={readOnly || actionBusy || counts.pending === 0}
+            disabled={readOnly || actionBusy || actionableCount === 0}
             onClick={() => purge.run("clear pending", api.opsPurge, onMutation)}
             title={
               readOnly
                 ? "registry offline"
-                : counts.pending === 0
+                : actionableCount === 0
                 ? "no replayable writes to clear"
                 : "remove replayable writes from the local queue"
             }
@@ -83,6 +86,12 @@ export function OpsPage({ ops, onMutation, readOnly }: OpsPageProps) {
         variant="bar"
       />
       <div className="page-body">
+        <div className="ops-summary-grid">
+          <OperationCountCard label="Actionable operations" value={operationCounts?.actionable_operations} />
+          <OperationCountCard label="Local journal events" value={operationCounts?.local_journal_events} />
+          <OperationCountCard label="Unpushed history events" value={operationCounts?.unpushed_history_events} />
+          <OperationCountCard label="Local-only history events" value={operationCounts?.local_only_history_events} />
+        </div>
         <div className="ops-summary-grid">
           <div
             className="card"
@@ -111,7 +120,7 @@ export function OpsPage({ ops, onMutation, readOnly }: OpsPageProps) {
             <div className="card-body">
               <div style={section_label}>{COUNT_TERMS.replayableWrites}</div>
               <div style={{ fontFamily: "var(--font-display)", fontSize: 24, color: "var(--pending)" }}>
-                {counts.pending}
+                {actionableCount}
               </div>
               <div style={{ fontSize: 11, color: "var(--ink-2)", marginTop: 10 }}>
                 {oldestPendingLabel}
@@ -166,6 +175,17 @@ export function OpsPage({ ops, onMutation, readOnly }: OpsPageProps) {
         {selected && <ActivityDetail op={selected} onClose={() => setSelectedId(null)} />}
       </div>
     </>
+  );
+}
+
+function OperationCountCard({ label, value }: { label: string; value: number | undefined }) {
+  return (
+    <div className="card">
+      <div className="card-body">
+        <div style={section_label}>{label}</div>
+        <div style={{ fontFamily: "var(--font-display)", fontSize: 24 }}>{value ?? "unavailable"}</div>
+      </div>
+    </div>
   );
 }
 

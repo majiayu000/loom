@@ -2,7 +2,6 @@ import type { RegistryBinding } from "../../generated/RegistryBinding";
 import type { RegistryProjection } from "../../generated/RegistryProjection";
 import type { RegistryRule } from "../../generated/RegistryRule";
 import type { RegistryTarget } from "../../generated/RegistryTarget";
-import type { PendingOp } from "../../types";
 import { normalizeAgentSlug } from "../agent_options";
 import { bucketRegistryOperation } from "../operation_labels";
 import type { AgentSlug, Binding, Op, Ownership, ProjectionMethod, Skill, Target } from "../types";
@@ -192,35 +191,12 @@ export function adaptBinding(b: RegistryBinding, rules: RegistryRule[]): Binding
   };
 }
 
-export function adaptPendingOp(op: PendingOp, index: number): Op {
-  const details = op.details ?? {};
-  const skillList = Array.isArray(details.skills)
-    ? (details.skills as unknown[]).filter((s): s is string => typeof s === "string")
-    : [];
-  const targetField = typeof details.target === "string" ? (details.target as string) : "—";
-  const methodField = typeof details.method === "string" ? toMethod(details.method as string) : "—";
-  return {
-    id: op.op_id ?? op.request_id ?? `op-${index}`,
-    status: "pending",
-    kind: op.command,
-    skill:
-      skillList.length > 0
-        ? skillList.join(", ")
-        : typeof details.skill === "string"
-        ? (details.skill as string)
-        : op.command,
-    target: targetField,
-    method: methodField,
-    time: op.created_at ? relativeTime(op.created_at) : "queued",
-    createdAt: op.created_at,
-    updatedAt: op.created_at,
-  };
-}
-
-export function adaptRegistryOperation(op: RegistryOperationRecord): Op {
+export function adaptRegistryOperation(op: RegistryOperationRecord, actionable = false): Op {
+  const status = operationStatus(op);
   return {
     id: op.op_id ?? op.audit_id ?? op.request_id ?? `${op.intent}-${op.updated_at}`,
-    status: operationStatus(op),
+    status: actionable && status === "ok" ? "pending" : status,
+    actionable,
     kind: op.intent,
     skill: op.skill ?? op.intent,
     target: op.target ?? op.binding ?? "—",

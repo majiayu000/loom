@@ -30,11 +30,18 @@ const panelData = vi.hoisted(() => ({
       skill: string;
       target: string;
       status: "ok" | "err" | "pending";
+      actionable?: boolean;
       time: string;
       reason?: string;
       method?: string;
     }>;
     projections: unknown[];
+    operationCounts: null | {
+      actionable_operations: number;
+      local_journal_events: number;
+      unpushed_history_events: number;
+      local_only_history_events: number;
+    };
     queuedWriteCount: number;
   },
   firstRun: {
@@ -56,6 +63,7 @@ const panelData = vi.hoisted(() => ({
     bindings: [],
     ops: [],
     projections: [],
+    operationCounts: null,
     queuedWriteCount: 0,
   },
   liveOps: {
@@ -91,6 +99,7 @@ const panelData = vi.hoisted(() => ({
         skill: "deploy",
         target: "claude",
         status: "pending" as const,
+        actionable: true,
         time: "2026-06-12 09:05",
         reason: "queued",
       },
@@ -100,11 +109,18 @@ const panelData = vi.hoisted(() => ({
         skill: "aiproxy-workflow-auth-debug, ask-claude, ask-gemini, code-review",
         target: "target_codex_home",
         status: "pending" as const,
+        actionable: true,
         time: "2026-06-12 09:06",
         method: "—",
       },
     ],
     projections: [],
+    operationCounts: {
+      actionable_operations: 2,
+      local_journal_events: 3,
+      unpushed_history_events: 4,
+      local_only_history_events: 5,
+    },
     queuedWriteCount: 0,
   },
 }));
@@ -220,6 +236,10 @@ describe("SkillMPanel", () => {
     expect(screen.getByText("4 个 skill")).toBeTruthy();
     expect(screen.queryByText("aiproxy-workflow-auth-debug, ask-claude, ask-gemini, code-review")).toBeNull();
     expect(screen.queryByText("skill.commit")).toBeNull();
+    expect(screen.getByText("可执行操作")).toBeTruthy();
+    expect(screen.getByText("本地 journal")).toBeTruthy();
+    expect(screen.getByText("待推送 history")).toBeTruthy();
+    expect(screen.getByText("仅本地 history")).toBeTruthy();
 
     await userEvent.click(screen.getByRole("button", { name: /审计历史/ }));
 
@@ -387,6 +407,10 @@ describe("SkillMPanel", () => {
     expect(screen.queryByText("4 个 skill")).toBeNull();
     expect(screen.queryByText("aiproxy-workflow-auth-debug, ask-claude, ask-gemini, code-review")).toBeNull();
     expect(screen.queryByText("skill.monitor_observed")).toBeNull();
+    expect(screen.getByText("可执行操作")).toBeTruthy();
+    expect(screen.getByText("本地 journal")).toBeTruthy();
+    expect(screen.getByText("待推送 history")).toBeTruthy();
+    expect(screen.getByText("仅本地 history")).toBeTruthy();
   });
 
   it("routes the footer sync control to Git sync instead of replaying immediately", async () => {
@@ -402,15 +426,29 @@ describe("SkillMPanel", () => {
     expect(syncReplay).not.toHaveBeenCalled();
   });
 
-  it("does not underreport queued operations when the API count exceeds visible rows", () => {
+  it("uses canonical actionable operations instead of a conflicting legacy alias", () => {
     panelData.current = { ...panelData.liveOps, queuedWriteCount: 5 };
     window.history.replaceState(null, "", "/?view=ops");
 
     const { container } = render(<SkillMPanel />);
-    const pendingStat = [...container.querySelectorAll(".pstat")].find((node) => node.textContent?.includes("待处理"));
+    const pendingStat = [...container.querySelectorAll(".pstat")].find((node) => node.textContent?.includes("可执行操作"));
 
-    expect(pendingStat?.textContent).toContain("5");
-    expect(screen.getByText(/5 queued/)).toBeTruthy();
+    expect(pendingStat?.textContent).toContain("2");
+    expect(screen.getByText(/2 queued/)).toBeTruthy();
+  });
+
+  it("keeps a succeeded actionable row in the canonical Ops queue", () => {
+    panelData.current = {
+      ...panelData.liveOps,
+      ops: [{ ...panelData.liveOps.ops[0], id: "op-succeeded-unacked", status: "ok", actionable: true }],
+      operationCounts: { actionable_operations: 1, local_journal_events: 0, unpushed_history_events: 0, local_only_history_events: 0 },
+    };
+    window.history.replaceState(null, "", "/?view=ops");
+
+    render(<SkillMPanel />);
+
+    expect(screen.getByText("op-succeeded-unacked")).toBeTruthy();
+    expect(screen.queryByText(/队列已清空/)).toBeNull();
   });
 
   it("makes non-wired controls read as status and gives overlays real controls", async () => {
@@ -501,7 +539,7 @@ describe("SkillMPanel", () => {
     expect(panelData.refetch).toHaveBeenCalledTimes(1);
   });
 
-  it("shows queued count and defers Ops replay until the sheet confirm action", async () => {
+  it("shows canonical actionable count and defers Ops replay until confirmation", async () => {
     panelData.current = { ...panelData.liveOps, queuedWriteCount: 5 };
     window.history.replaceState(null, "", "/?view=ops");
     const retry = vi.spyOn(api, "opsRetry").mockResolvedValue({ ok: true, cmd: "ops.retry", request_id: "req-retry" });
@@ -514,7 +552,7 @@ describe("SkillMPanel", () => {
 
     const dialog = screen.getByRole("dialog", { name: "重放 Ops 队列？" });
     expect(within(dialog).getByText("Queued count")).toBeTruthy();
-    expect(within(dialog).getByText("5")).toBeTruthy();
+    expect(within(dialog).getByText("2")).toBeTruthy();
     expect(within(dialog).getByText(/重试 pending\/failed 操作/)).toBeTruthy();
 
     await userEvent.click(within(dialog).getByRole("button", { name: "确认重放" }));

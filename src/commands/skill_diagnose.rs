@@ -10,7 +10,7 @@ use crate::state_model::{RegistryProjectionInstance, RegistrySnapshot, RegistryS
 use crate::types::ErrorCode;
 
 use super::codex_visibility::{CODEX_AGENT, build_agent_visibility_report};
-use super::helpers::{map_arg, map_registry_state, validate_skill_name};
+use super::helpers::{map_arg, map_io, map_registry_state, validate_skill_name};
 use super::history_cmds::operation_mentions_skill as registry_operation_mentions_skill;
 use super::projections::{
     ProjectionObservationUpdate, apply_projection_observation,
@@ -195,6 +195,13 @@ fn build_skill_diagnosis(
     add_git_checks(ctx, skill, source_exists, &mut checks);
 
     if let Some(snapshot) = snapshot {
+        let actionable_ids = ctx
+            .read_existing_registry_ops_report()
+            .map_err(map_io)?
+            .ops
+            .into_iter()
+            .map(|op| op.op_id)
+            .collect::<BTreeSet<_>>();
         let mut rule_target_ids = BTreeSet::new();
         let mut projection_only_target_ids = BTreeSet::new();
 
@@ -294,7 +301,7 @@ fn build_skill_diagnosis(
             .operations
             .iter()
             .rev()
-            .filter(|op| !op.ack && op.status != "purged")
+            .filter(|op| actionable_ids.contains(&op.op_id))
             .filter(|op| registry_operation_mentions_skill(op, skill))
             .take(MAX_RELATED_OPS)
             .map(|op| {

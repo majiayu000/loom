@@ -8,16 +8,18 @@ use crate::types::ErrorCode;
 
 use super::super::file_ops::read_git_field;
 use super::super::helpers::{map_io, map_registry_state};
-use super::super::projections::{collect_skill_inventory, remote_status_payload_with_backlog};
+use super::super::projections::{collect_skill_inventory, remote_status_payload_with_counts};
 use super::super::{App, CommandFailure};
 
 impl App {
     pub fn cmd_status(&self) -> std::result::Result<(serde_json::Value, Meta), CommandFailure> {
         let skill_inventory = collect_skill_inventory(&self.ctx);
-        let operation_backlog = self
+        let operation_report = self
             .ctx
-            .existing_registry_operation_backlog_count()
+            .read_existing_registry_ops_report()
             .map_err(map_io)?;
+        let operation_counts = operation_report.operation_counts;
+        let operation_backlog = operation_counts.actionable_operations;
         let target_dirs = resolve_agent_skill_dirs(&self.ctx.root);
         let adapters = load_agent_adapters(&self.ctx)?;
         let registry_paths = RegistryStatePaths::from_app_context(&self.ctx);
@@ -73,7 +75,7 @@ impl App {
         let status_short = read_git_field(&self.ctx, &["status", "--short"], &mut git_warnings);
 
         let (remote, mut meta) =
-            remote_status_payload_with_backlog(&self.ctx, operation_backlog, Vec::new())?;
+            remote_status_payload_with_counts(&self.ctx, &operation_counts, Vec::new())?;
         meta.warnings.splice(0..0, git_warnings);
         meta.warnings.extend(skill_inventory.warnings);
         let source_skill_sample = skill_inventory
@@ -131,6 +133,7 @@ impl App {
             },
             "remote": remote,
             "operation_backlog": operation_backlog,
+            "operation_counts": operation_counts,
             "registry": registry_status
         });
 

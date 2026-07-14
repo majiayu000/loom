@@ -10,7 +10,7 @@ use super::{
     EMPTY_TREE_SHA, HISTORY_ARCHIVES_DIR, HISTORY_BRANCH_REF, HISTORY_COMPACT_AFTER_SEGMENTS,
     HISTORY_RETAIN_ARCHIVES, HISTORY_RETAIN_RECENT_SEGMENTS, HISTORY_SEGMENTS_DIR,
     HISTORY_SNAPSHOT_FILE, TempFile, ensure_local_identity, hash_object_bytes, read_blob, run_git,
-    run_git_allow_failure, run_git_in_with_env,
+    run_git_in_with_env,
 };
 
 use super::history_types::{HistoryConflictReport, HistoryRepairReport, HistoryRepairStrategy};
@@ -61,12 +61,11 @@ pub(super) fn load_history_branch_state(
     ctx: &AppContext,
     reference: &str,
 ) -> Result<Option<HistoryBranchState>> {
-    let output = run_git_allow_failure(ctx, &["rev-parse", "--verify", "--quiet", reference])?;
-    if !output.status.success() {
+    if !super::ref_exists(ctx, reference)? {
         return Ok(None);
     }
 
-    let commit = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let commit = run_git(ctx, &["rev-parse", "--verify", reference])?;
     let tree_ref = format!("{}^{{tree}}", reference);
     let tree = run_git(ctx, &["rev-parse", &tree_ref])?;
     let listing = run_git(ctx, &["ls-tree", "-r", reference])?;

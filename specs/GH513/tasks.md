@@ -3,7 +3,7 @@
 Issue: https://github.com/majiayu000/loom/issues/513
 Product spec: `specs/GH513/product.md`
 Tech spec: `specs/GH513/tech.md`
-Status: Draft for implementation under current `implx auto` authorization
+Status: Implementation verified; remote merge gate pending under current `implx auto` authorization
 
 ## Scope
 
@@ -13,10 +13,10 @@ Status: Draft for implementation under current `implx auto` authorization
 
 ## Tasks
 
-- [ ] `SP513-T1` — Owner: coordinator; Done when: regressions reproduce local-only false backlog and distinguish remote/event-set cases; Verify: focused Rust/Panel tests fail on pre-fix behavior.
-- [ ] `SP513-T2` — Owner: coordinator; Done when: shared Rust journal/history classifier and CLI/doctor/API projections satisfy P1-P7; Verify: focused Rust tests.
-- [ ] `SP513-T3` — Owner: coordinator; Done when: Panel types/adapters/view model/pages and docs satisfy P5/P8; Verify: Panel tests/build and contract assertions.
-- [ ] `SP513-T4` — Owner: verification_owner; Done when: fresh deterministic checks and full suite pass; Verify: commands below.
+- [x] `SP513-T1` — Owner: coordinator; Done when: regressions reproduce local-only false backlog and distinguish remote/event-set cases; Verify: focused Rust/Panel tests fail on pre-fix behavior.
+- [x] `SP513-T2` — Owner: coordinator; Done when: shared Rust journal/history classifier and CLI/doctor/API projections satisfy P1-P7; Verify: focused Rust tests.
+- [x] `SP513-T3` — Owner: coordinator; Done when: Panel types/adapters/view model/pages and docs satisfy P5/P8; Verify: Panel tests/build and contract assertions.
+- [x] `SP513-T4` — Owner: verification_owner; Done when: fresh deterministic checks and full suite pass; Verify: commands below.
 - [ ] `SP513-T5` — Owner: gh513-merge-reviewer; Done when: independent implementation review, current-head CI, review threads and PR gate pass; Verify: current-head remote evidence.
 
 ### SP513-T1: Lock The Classification Contract

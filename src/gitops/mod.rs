@@ -137,7 +137,18 @@ pub fn ensure_repo_initialized(ctx: &AppContext) -> Result<()> {
 
 pub fn repo_is_initialized(ctx: &AppContext) -> Result<bool> {
     let repo_probe = run_git_allow_failure(ctx, &["rev-parse", "--git-dir"])?;
-    Ok(repo_probe.status.success())
+    if repo_probe.status.success() {
+        return Ok(true);
+    }
+    if ctx.root.join(".git").exists() {
+        let stderr = String::from_utf8_lossy(&repo_probe.stderr)
+            .trim()
+            .to_string();
+        return Err(anyhow!(
+            "git metadata exists but repository is not healthy: {stderr}"
+        ));
+    }
+    Ok(false)
 }
 
 pub fn has_staged_changes_for_path(ctx: &AppContext, path: &Path) -> Result<bool> {
@@ -345,13 +356,38 @@ pub fn remote_exists(ctx: &AppContext) -> bool {
     }
 }
 
+pub fn remote_is_configured(ctx: &AppContext) -> Result<bool> {
+    if !repo_is_initialized(ctx)? {
+        return Ok(false);
+    }
+    Ok(remote_url(ctx)?.is_some())
+}
+
 pub fn remote_url(ctx: &AppContext) -> Result<Option<String>> {
-    let output = run_git_allow_failure(ctx, &["remote", "get-url", "origin"])?;
-    if !output.status.success() {
+    if !repo_is_initialized(ctx)? {
         return Ok(None);
     }
+    let output = run_git_allow_failure(ctx, &["config", "--get", "remote.origin.url"])?;
+    if !output.status.success() {
+        if output.status.code() == Some(1) {
+            return Ok(None);
+        }
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(anyhow!(
+            "git config --get remote.origin.url failed: {stderr}"
+        ));
+    }
+    let effective = run_git_allow_failure(ctx, &["remote", "get-url", "origin"])?;
+    if !effective.status.success() {
+        let stderr = String::from_utf8_lossy(&effective.stderr)
+            .trim()
+            .to_string();
+        return Err(anyhow!("git remote get-url origin failed: {stderr}"));
+    }
     Ok(Some(
-        String::from_utf8_lossy(&output.stdout).trim().to_string(),
+        String::from_utf8_lossy(&effective.stdout)
+            .trim()
+            .to_string(),
     ))
 }
 
@@ -390,32 +426,26 @@ pub fn fetch_origin_history_branch_if_present(ctx: &AppContext) -> Result<bool> 
 }
 
 pub fn remote_tracking_main_exists(ctx: &AppContext) -> Result<bool> {
-    let output = run_git_allow_failure(
-        ctx,
-        &[
-            "show-ref",
-            "--verify",
-            "--quiet",
-            "refs/remotes/origin/main",
-        ],
-    )?;
-    Ok(output.status.success())
+    ref_exists(ctx, "refs/remotes/origin/main")
 }
 
 pub fn remote_tracking_history_exists(ctx: &AppContext) -> Result<bool> {
-    let output = run_git_allow_failure(
-        ctx,
-        &["show-ref", "--verify", "--quiet", ORIGIN_HISTORY_BRANCH_REF],
-    )?;
-    Ok(output.status.success())
+    ref_exists(ctx, ORIGIN_HISTORY_BRANCH_REF)
 }
 
 pub fn history_branch_exists(ctx: &AppContext) -> Result<bool> {
-    let output = run_git_allow_failure(
-        ctx,
-        &["show-ref", "--verify", "--quiet", HISTORY_BRANCH_REF],
-    )?;
-    Ok(output.status.success())
+    ref_exists(ctx, HISTORY_BRANCH_REF)
+}
+
+pub(super) fn ref_exists(ctx: &AppContext, reference: &str) -> Result<bool> {
+    let output = run_git_allow_failure(ctx, &["for-each-ref", "--format=%(refname)", reference])?;
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    if !output.status.success() || !stderr.is_empty() {
+        return Err(anyhow!("git ref lookup {reference} failed: {stderr}"));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .any(|candidate| candidate == reference))
 }
 
 pub fn ahead_behind_main(ctx: &AppContext) -> Result<(u32, u32)> {

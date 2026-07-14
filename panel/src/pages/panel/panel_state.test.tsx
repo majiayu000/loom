@@ -16,6 +16,7 @@ import { BindingAddForm } from "../../components/panel/forms/BindingAddForm";
 import { api, type BindingShowPayload, type CommandEnvelope, type DoctorPayload, type OpsPayload, type TargetShowPayload, type RegistryOperationRecord } from "../../lib/api/client";
 import type { Binding, Skill, Target } from "../../lib/types";
 import type { RegistryProjection } from "../../generated/RegistryProjection";
+import { ZERO_OPERATION_COUNTS } from "../../types";
 
 import { bindingPayload, buttonByLabel, clickableRows, doctorPayload, flush, makeBinding, makeOperation, makeOrphanProjection, makeSkill, makeTarget, markup, opsPayload, targetPayload, textOf } from "./panel_state_test_utils";
 test("HistoryPage treats succeeded operations as successful", () => {
@@ -137,6 +138,7 @@ test("OverviewPage disables add binding until a target exists", async () => {
         registryProjections={[]}
         remoteState="CLEAN"
         queuedWriteCount={0}
+        operationCounts={ZERO_OPERATION_COUNTS}
         vizMode="loom"
         setVizMode={() => {}}
         selectedSkill={null}
@@ -195,6 +197,7 @@ test("OverviewPage distinguishes observed imports from live autosave", async () 
         registryProjections={[]}
         remoteState="CLEAN"
         queuedWriteCount={0}
+        operationCounts={ZERO_OPERATION_COUNTS}
         vizMode="loom"
         setVizMode={() => {}}
         selectedSkill={null}

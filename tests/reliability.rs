@@ -230,6 +230,48 @@ fn workspace_status_records_command_audit_without_initializing_registry() {
 }
 
 #[test]
+fn ops_list_is_read_only_when_registry_and_git_are_absent() {
+    let root = TestDir::new("ops-list-read-only-empty");
+
+    let env = run_loom_ok(root.path(), &["ops", "list"]);
+
+    assert_eq!(env["data"]["count"], 0);
+    assert_eq!(
+        env["data"]["operation_counts"],
+        serde_json::json!({
+            "actionable_operations": 0,
+            "local_journal_events": 0,
+            "unpushed_history_events": 0,
+            "local_only_history_events": 0,
+        })
+    );
+    assert!(!root.path().join("state/registry").exists());
+    assert!(!root.path().join(".git").exists());
+}
+
+#[test]
+fn ops_list_fails_closed_when_git_metadata_is_broken() {
+    let root = TestDir::new("ops-list-broken-git");
+    fs::write(root.path().join(".git"), "gitdir: missing-git-dir\n").expect("write broken .git");
+
+    let (output, env) = run_loom_with_env(root.path(), &[], &["ops", "list"]);
+
+    assert!(
+        !output.status.success(),
+        "ops list unexpectedly succeeded: {env}"
+    );
+    assert_eq!(env["error"]["code"], "IO_ERROR");
+    assert!(
+        env["error"]["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("git metadata exists but repository is not healthy"),
+        "{env}"
+    );
+    assert!(!root.path().join("state/registry").exists());
+}
+
+#[test]
 fn workspace_status_surfaces_unavailable_command_audit_path_warning() {
     let root = TestDir::new("status-audit-warning");
     let events_dir = root.path().join("state/events");
@@ -644,6 +686,200 @@ fn sync_push_marks_registry_operations_acked() {
     );
     let pending = run_loom_ok(root.path(), &["ops", "list"]);
     assert_eq!(pending["data"]["count"], 0);
+}
+
+#[test]
+fn local_only_ops_report_separates_journal_and_history_facts_from_actionable_work() {
+    let root = TestDir::new("ops-counts-local-only");
+    let source = make_skill_source(root.path(), "source-ops-counts-local-only");
+
+    run_loom_ok(
+        root.path(),
+        &["skill", "add", source.to_str().unwrap(), "--name", "demo"],
+    );
+    let history = (0..400)
+        .map(|index| history_event_line("local-only", index))
+        .collect::<String>();
+    replace_history_branch(
+        root.path(),
+        "loom-history",
+        &[("registry_ops_history/local.jsonl".to_string(), history)],
+        "seed local-only history",
+    );
+
+    let ops = run_loom_ok(root.path(), &["ops", "list"]);
+    assert_eq!(ops["data"]["count"], 0, "{ops}");
+    assert_eq!(ops["data"]["ops"], serde_json::json!([]), "{ops}");
+    assert_eq!(
+        ops["data"]["operation_counts"],
+        serde_json::json!({
+            "actionable_operations": 0,
+            "local_journal_events": 1,
+            "unpushed_history_events": 0,
+            "local_only_history_events": 400,
+        }),
+        "{ops}"
+    );
+    assert_eq!(ops["data"]["journal_events"], 1, "{ops}");
+    assert_eq!(ops["data"]["history_events"], 400, "{ops}");
+
+    let status = run_loom_ok(root.path(), &["workspace", "status"]);
+    assert_eq!(status["data"]["operation_backlog"], 0, "{status}");
+    assert_eq!(
+        status["data"]["remote"]["operation_counts"], ops["data"]["operation_counts"],
+        "{status}"
+    );
+
+    let remote_root = TestDir::new("ops-counts-local-only-remote");
+    let remote = remote_root.path().join("origin.git");
+    git_ok(["init", "--bare", remote.to_str().unwrap()]);
+    git_ok_in(
+        root.path(),
+        &["remote", "add", "origin", remote.to_str().unwrap()],
+    );
+
+    let configured = run_loom_ok(root.path(), &["ops", "list"]);
+    assert_eq!(
+        configured["data"]["operation_counts"],
+        serde_json::json!({
+            "actionable_operations": 1,
+            "local_journal_events": 0,
+            "unpushed_history_events": 400,
+            "local_only_history_events": 0,
+        }),
+        "{configured}"
+    );
+}
+
+#[test]
+fn configured_remote_history_count_uses_event_id_set_difference() {
+    let root = TestDir::new("ops-counts-history-difference");
+    let remote_root = TestDir::new("ops-counts-history-difference-remote");
+    let remote = remote_root.path().join("origin.git");
+    let source = make_skill_source(root.path(), "source-ops-counts-history-difference");
+
+    run_loom_ok(
+        root.path(),
+        &["skill", "add", source.to_str().unwrap(), "--name", "demo"],
+    );
+    git_ok(["init", "--bare", remote.to_str().unwrap()]);
+    run_loom_ok(
+        root.path(),
+        &["workspace", "remote", "set", remote.to_str().unwrap()],
+    );
+
+    replace_history_branch(
+        &remote,
+        "loom-history",
+        &[
+            (
+                "registry_ops_history/shared.jsonl".to_string(),
+                history_event_line("shared", 1),
+            ),
+            (
+                "registry_ops_history/remote.jsonl".to_string(),
+                history_event_line("remote", 2),
+            ),
+        ],
+        "seed remote history",
+    );
+    replace_history_branch(
+        root.path(),
+        "loom-history",
+        &[
+            (
+                "registry_ops_archive/shared.jsonl".to_string(),
+                history_event_line("shared", 1),
+            ),
+            (
+                "registry_ops_history/shared-duplicate.jsonl".to_string(),
+                history_event_line("shared", 1),
+            ),
+            (
+                "registry_ops_history/local.jsonl".to_string(),
+                history_event_line("local", 3),
+            ),
+        ],
+        "seed local history",
+    );
+    git_ok_in(root.path(), &["fetch", "origin", "loom-history"]);
+
+    let ops = run_loom_ok(root.path(), &["ops", "list"]);
+    assert_eq!(
+        ops["data"]["operation_counts"],
+        serde_json::json!({
+            "actionable_operations": 1,
+            "local_journal_events": 0,
+            "unpushed_history_events": 1,
+            "local_only_history_events": 0,
+        }),
+        "{ops}"
+    );
+    assert_eq!(ops["data"]["journal_events"], 1, "{ops}");
+    assert_eq!(ops["data"]["history_events"], 1, "{ops}");
+}
+
+#[test]
+fn ops_list_fails_closed_on_malformed_history_event() {
+    let root = TestDir::new("ops-counts-malformed-history");
+    let source = make_skill_source(root.path(), "source-ops-counts-malformed-history");
+    run_loom_ok(
+        root.path(),
+        &["skill", "add", source.to_str().unwrap(), "--name", "demo"],
+    );
+    replace_history_branch(
+        root.path(),
+        "loom-history",
+        &[(
+            "registry_ops_history/malformed.jsonl".to_string(),
+            "not-json\n".to_string(),
+        )],
+        "seed malformed history",
+    );
+
+    let (output, env) = run_loom_with_env(root.path(), &[], &["ops", "list"]);
+    assert!(
+        !output.status.success(),
+        "ops list unexpectedly succeeded: {env}"
+    );
+    assert_eq!(env["ok"], false);
+    assert_eq!(env["error"]["code"], "IO_ERROR");
+    assert!(
+        env["error"]["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("line is neither a journal event nor a legacy operation row"),
+        "{env}"
+    );
+}
+
+#[test]
+fn ops_list_fails_closed_on_broken_history_ref() {
+    let root = TestDir::new("ops-counts-broken-history-ref");
+    let source = make_skill_source(root.path(), "source-ops-counts-broken-history-ref");
+    run_loom_ok(
+        root.path(),
+        &["skill", "add", source.to_str().unwrap(), "--name", "demo"],
+    );
+    fs::write(
+        root.path().join(".git/refs/heads/loom-history"),
+        "not-an-object-id\n",
+    )
+    .expect("break history ref");
+
+    let (output, env) = run_loom_with_env(root.path(), &[], &["ops", "list"]);
+    assert!(
+        !output.status.success(),
+        "ops list unexpectedly succeeded: {env}"
+    );
+    assert_eq!(env["error"]["code"], "IO_ERROR");
+    assert!(
+        env["error"]["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("git ref lookup refs/heads/loom-history failed"),
+        "{env}"
+    );
 }
 
 #[test]
@@ -1227,7 +1463,13 @@ fn concurrent_snapshots_keep_pending_journal_consistent() {
     assert_eq!(success + lock_busy, workers);
 
     let pending = run_loom_ok(root.path(), &["ops", "list"]);
-    assert_eq!(pending["data"]["count"].as_u64().unwrap(), success as u64);
+    assert_eq!(pending["data"]["count"], 0);
+    assert_eq!(
+        pending["data"]["operation_counts"]["local_journal_events"]
+            .as_u64()
+            .unwrap(),
+        success as u64
+    );
     assert_eq!(pending["meta"]["warnings"].as_array().unwrap().len(), 0);
 }
 

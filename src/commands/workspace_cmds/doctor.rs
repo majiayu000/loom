@@ -18,11 +18,13 @@ impl App {
         let fsck_ok = fsck.is_ok();
         let fsck_output = fsck.unwrap_or_else(|e| e.to_string());
         let operation_report = self.ctx.read_existing_registry_ops_report();
-        let (operation_backlog_count, operation_journal_ok, operation_warnings) =
-            match operation_report {
-                Ok(report) => (report.ops.len(), true, Vec::new()),
-                Err(err) => (0, false, vec![err.to_string()]),
-            };
+        let (operation_counts, operation_journal_ok, operation_warnings) = match operation_report {
+            Ok(report) => (Some(report.operation_counts), true, Vec::new()),
+            Err(err) => (None, false, vec![err.to_string()]),
+        };
+        let operation_backlog_count = operation_counts
+            .as_ref()
+            .map(|counts| counts.actionable_operations);
         let registry_paths = RegistryStatePaths::from_app_context(&self.ctx);
         let registry_schema_ok = registry_paths.schema_file.exists();
         let registry_snapshot = match registry_paths.maybe_load_snapshot() {
@@ -87,7 +89,9 @@ impl App {
                     "registry_schema_file": {"ok": registry_schema_ok},
                     "registry_snapshot": {"ok": registry_snapshot_ok},
                     "operation_journal": {
+                        "available": operation_journal_ok,
                         "count": operation_backlog_count,
+                        "operation_counts": operation_counts,
                         "warnings": operation_warnings
                     },
                     "history_branch": history,

@@ -122,6 +122,12 @@ export interface ShellViewModel {
     operations: CountViewModel;
     actionNeeded: CountViewModel;
     queuedWrites: CountViewModel;
+    operationCounts: {
+      actionable: CountViewModel;
+      localJournal: CountViewModel;
+      unpushedHistory: CountViewModel;
+      localOnlyHistory: CountViewModel;
+    };
     backend: {
       skills: CountViewModel;
       targets: CountViewModel;
@@ -268,7 +274,14 @@ function statusForLiveData(live: PanelLiveData): ShellStatusViewModel {
   if (state === "DIVERGED" || state === "CONFLICTED") {
     return { label: `remote ${state.toLowerCase()}`, title: "Remote and local history differ.", tone: "err" };
   }
-  if (state === "PENDING_PUSH" || state === "LOCAL_ONLY" || live.queuedWriteCount > 0) {
+  if (state === "LOCAL_ONLY" && live.queuedWriteCount === 0) {
+    return {
+      label: "local only",
+      title: "Registry facts are local; no actionable operations are waiting.",
+      tone: "ok",
+    };
+  }
+  if (state === "PENDING_PUSH" || live.queuedWriteCount > 0) {
     return {
       label: live.queuedWriteCount > 0 ? formatQueuedWrites(live.queuedWriteCount) : state.toLowerCase().replace("_", " "),
       title: `${formatQueuedWrites(live.queuedWriteCount)} waiting in the operation backlog.`,
@@ -328,6 +341,32 @@ export function selectPanelViewModel(live: PanelLiveData, options: PanelViewMode
     operations: arrayCount("operations", "Operations", live.ops.length),
     actionNeeded: arrayCount("actionNeeded", "Action needed", actionNeededCount),
     queuedWrites: arrayCount("queuedWrites", "Queued writes", live.queuedWriteCount),
+    operationCounts: {
+      actionable: countField(
+        "actionableOperations",
+        "Actionable operations",
+        live.operationCounts?.actionable_operations,
+        "operation counts are unavailable",
+      ),
+      localJournal: countField(
+        "localJournalEvents",
+        "Local journal events",
+        live.operationCounts?.local_journal_events,
+        "operation counts are unavailable",
+      ),
+      unpushedHistory: countField(
+        "unpushedHistoryEvents",
+        "Unpushed history events",
+        live.operationCounts?.unpushed_history_events,
+        "operation counts are unavailable",
+      ),
+      localOnlyHistory: countField(
+        "localOnlyHistoryEvents",
+        "Local-only history events",
+        live.operationCounts?.local_only_history_events,
+        "operation counts are unavailable",
+      ),
+    },
     backend: {
       skills: countField("backendSkills", "Backend skills", backendCounts.skills, "backend counts.skills is unavailable"),
       targets: countField("backendTargets", "Backend targets", backendCounts.targets, "backend counts.targets is unavailable"),

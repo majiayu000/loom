@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { RegistryRule } from "../../generated/RegistryRule";
 import type { RegistryTarget } from "../../generated/RegistryTarget";
-import { adaptBinding, adaptPendingOp, adaptRegistryOperation, adaptTarget, buildAdapterIndex } from "./adapters";
+import { adaptBinding, adaptRegistryOperation, adaptTarget, buildAdapterIndex } from "./adapters";
 import type { RegistryOperationRecord } from "./client";
 
 function operation(overrides: Partial<RegistryOperationRecord> = {}): RegistryOperationRecord {
@@ -19,6 +19,10 @@ function operation(overrides: Partial<RegistryOperationRecord> = {}): RegistryOp
 describe("adaptRegistryOperation", () => {
   it("treats succeeded registry rows as complete even before sync ack", () => {
     expect(adaptRegistryOperation(operation()).status).toBe("ok");
+  });
+
+  it("preserves pending-endpoint provenance for succeeded actionable rows", () => {
+    expect(adaptRegistryOperation(operation(), true)).toMatchObject({ status: "pending", actionable: true });
   });
 
   it("keeps queued rows pending and failed rows errored", () => {
@@ -99,17 +103,6 @@ describe("api adapters enum handling", () => {
     );
 
     expect(binding.method).toBe("unknown");
-    expect(
-      adaptPendingOp(
-        {
-          request_id: "req-1",
-          command: "project",
-          created_at: "2026-05-29T00:00:00Z",
-          details: { method: "teleport" },
-        },
-        0,
-      ).method,
-    ).toBe("unknown");
     expect(adaptRegistryOperation(operation({ method: "teleport" })).method).toBe("unknown");
   });
 

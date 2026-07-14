@@ -84,14 +84,17 @@ impl App {
     ) -> std::result::Result<(serde_json::Value, Meta), CommandFailure> {
         match command {
             OpsCommand::List => {
-                let report = self.ctx.read_registry_ops_report().map_err(map_io)?;
-                let history = gitops::history_status(&self.ctx).unwrap_or_default();
+                let report = self
+                    .ctx
+                    .read_existing_registry_ops_report()
+                    .map_err(map_io)?;
                 Ok((
                     json!({
-                        "count": report.ops.len(),
+                        "count": report.operation_counts.actionable_operations,
                         "ops": report.ops,
-                        "journal_events": 0,
-                        "history_events": history.local_segments + history.local_archives,
+                        "journal_events": report.operation_counts.journal_events(),
+                        "history_events": report.operation_counts.history_events(),
+                        "operation_counts": report.operation_counts,
                         "state_model": "registry"
                     }),
                     Meta::default(),

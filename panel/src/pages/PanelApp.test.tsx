@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { PanelApp } from "./PanelApp";
 import { errorResponse, jsonResponse } from "./test_utils";
+import { ZERO_OPERATION_COUNTS, type OperationCounts } from "../types";
+import type { RegistryOperationRecord } from "../types";
 
 const fetchMock = vi.fn<typeof fetch>();
 
@@ -11,9 +13,16 @@ interface FetchMockOptions {
   pendingWarnings?: string[];
   opsWarnings?: string[];
   diagnoseConflict?: boolean;
+  operationCounts?: OperationCounts;
+  pendingOps?: RegistryOperationRecord[];
+  omitOperationCounts?: boolean;
 }
 
 function installFetchMock(failingPath: string | null = null, failingResponse?: Response, options: FetchMockOptions = {}) {
+  const operationCounts = options.operationCounts ?? {
+    ...ZERO_OPERATION_COUNTS,
+    actionable_operations: options.pendingCount ?? 0,
+  };
   fetchMock.mockImplementation((input: RequestInfo | URL) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
     const failedResponse = url === failingPath ? failingResponse : undefined;
@@ -138,7 +147,7 @@ function installFetchMock(failingPath: string | null = null, failingResponse?: R
                 ok: true,
                 cmd: "sync.status",
                 request_id: "req-sync",
-                data: { remote: { sync_state: "CLEAN" }, warnings: [] },
+                data: { remote: { sync_state: "CLEAN", operation_counts: operationCounts }, warnings: [] },
                 error: null,
                 meta: { warnings: [] },
               }),
@@ -151,7 +160,12 @@ function installFetchMock(failingPath: string | null = null, failingResponse?: R
                 ok: true,
                 cmd: "pending.list",
                 request_id: "req-pending",
-                data: { count: options.pendingCount ?? 0, ops: [], warnings: options.pendingWarnings ?? [] },
+                data: {
+                  count: options.pendingCount ?? 0,
+                  ops: options.pendingOps ?? [],
+                  ...(!options.omitOperationCounts && { operation_counts: operationCounts }),
+                  warnings: options.pendingWarnings ?? [],
+                },
                 error: null,
                 meta: { warnings: [] },
               }),
@@ -302,6 +316,40 @@ describe("PanelApp status failure UI", () => {
     });
 
     expect(screen.getByText(/failed to read operation backlog/i)).toBeTruthy();
+  });
+
+  it("fails visibly when the pending response omits canonical operation counts", async () => {
+    installFetchMock(null, undefined, { omitOperationCounts: true });
+
+    render(<PanelApp />);
+
+    await waitFor(() => {
+      expect(screen.getByText(/registry error/i)).toBeTruthy();
+    });
+    expect(screen.getByText(/missing operation_counts/i)).toBeTruthy();
+  });
+
+  it("keeps a succeeded actionable pending row visible and replayable", async () => {
+    localStorage.setItem("loom.page", "ops");
+    installFetchMock(null, undefined, {
+      pendingCount: 1,
+      pendingOps: [{
+        op_id: "op-succeeded-unacked",
+        intent: "skill.commit",
+        status: "succeeded",
+        ack: false,
+        skill: "demo",
+        created_at: "2026-07-14T00:00:00Z",
+        updated_at: "2026-07-14T00:00:00Z",
+      }],
+    });
+
+    render(<PanelApp />);
+
+    const retry = (await screen.findByRole("button", { name: /Retry replayable \(1\)/i })) as HTMLButtonElement;
+    expect(retry.disabled).toBe(false);
+    expect(screen.getByTitle("source command: skill.commit")).toBeInTheDocument();
+    expect(screen.getAllByText(/pending/i).length).toBeGreaterThan(0);
   });
 
   it("shows backend warnings returned by panel read paths", async () => {

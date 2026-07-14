@@ -70,6 +70,7 @@ export interface Skill {
 export interface Op {
   id: string;
   status: OpStatus;
+  actionable?: boolean;
   kind: string;
   skill: string;
   target: string;

@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
@@ -113,6 +114,18 @@ pub(crate) fn summarize_history_body(raw: &str) -> Result<HistoryBodySummary> {
     }
 
     Ok(HistoryBodySummary { first_at, last_at })
+}
+
+pub(crate) fn history_event_ids(raw: &str) -> Result<BTreeSet<String>> {
+    let mut event_ids = BTreeSet::new();
+    for line in raw.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        event_ids.insert(parse_journal_line(trimmed)?.event_id().to_string());
+    }
+    Ok(event_ids)
 }
 
 pub(super) fn parse_journal_line(line: &str) -> Result<OpJournalEvent> {

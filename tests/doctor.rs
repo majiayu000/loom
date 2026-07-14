@@ -170,6 +170,18 @@ fn workspace_doctor_marks_operation_journal_read_errors_unhealthy() {
     assert!(output.status.success(), "doctor should succeed");
     assert_eq!(env["data"]["healthy"], Value::Bool(false));
     assert_eq!(
+        env["data"]["checks"]["operation_journal"]["available"],
+        Value::Bool(false)
+    );
+    assert_eq!(
+        env["data"]["checks"]["operation_journal"]["count"],
+        Value::Null
+    );
+    assert_eq!(
+        env["data"]["checks"]["operation_journal"]["operation_counts"],
+        Value::Null
+    );
+    assert_eq!(
         env["data"]["checks"]["operation_journal"]["warnings"]
             .as_array()
             .map(Vec::len),
@@ -203,6 +215,20 @@ fn workspace_doctor_reports_agent_skill_inventory() {
     );
     assert!(output.status.success(), "doctor should succeed");
     assert_eq!(env["ok"], Value::Bool(true));
+    assert_eq!(
+        env["data"]["checks"]["operation_journal"]["available"],
+        Value::Bool(true)
+    );
+    assert_eq!(env["data"]["checks"]["operation_journal"]["count"], 0);
+    assert_eq!(
+        env["data"]["checks"]["operation_journal"]["operation_counts"],
+        serde_json::json!({
+            "actionable_operations": 0,
+            "local_journal_events": 1,
+            "unpushed_history_events": 0,
+            "local_only_history_events": 0,
+        })
+    );
 
     let inventory = find_check(&env, "agent_skill_inventory");
     assert_eq!(inventory["section"], Value::String("agents".to_string()));

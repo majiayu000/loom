@@ -5,6 +5,7 @@ import type { Op } from "../../lib/types";
 import { HistoryPage } from "./HistoryPage";
 import { OpsPage } from "./OpsPage";
 import { SyncPage } from "./SyncPage";
+import { ZERO_OPERATION_COUNTS } from "../../types";
 
 function activity(status: Op["status"], id: string): Op {
   return {
@@ -78,6 +79,7 @@ describe("Ops, History, and Sync pages", () => {
     const { container } = render(
       <OpsPage
         ops={[activity("ok", "done-skill"), activity("pending", "queued-skill"), activity("err", "failed-skill")]}
+        operationCounts={ZERO_OPERATION_COUNTS}
         onMutation={() => {}}
         readOnly={false}
       />,
@@ -87,6 +89,28 @@ describe("Ops, History, and Sync pages", () => {
     expect(rows[0]).toContain("queued-skill");
     expect(rows[1]).toContain("failed-skill");
     expect(rows[2]).toContain("done-skill");
+    expect(screen.getByText("Actionable operations")).toBeInTheDocument();
+    expect(screen.getByText("Local journal events")).toBeInTheDocument();
+    expect(screen.getByText("Unpushed history events")).toBeInTheDocument();
+    expect(screen.getByText("Local-only history events")).toBeInTheDocument();
+  });
+
+  it("enables queue actions from canonical actionable counts for succeeded and failed rows", async () => {
+    const retry = vi.spyOn(api, "opsRetry").mockResolvedValue({ ok: true, cmd: "ops.retry", request_id: "req-retry" });
+    render(
+      <OpsPage
+        ops={[{ ...activity("ok", "succeeded-unacked"), actionable: true }, { ...activity("err", "failed"), actionable: true }]}
+        operationCounts={{ ...ZERO_OPERATION_COUNTS, actionable_operations: 2 }}
+        onMutation={() => {}}
+        readOnly={false}
+      />,
+    );
+
+    const retryButton = screen.getByRole("button", { name: /Retry replayable \(2\)/i }) as HTMLButtonElement;
+    expect(retryButton.disabled).toBe(false);
+    fireEvent.click(retryButton);
+    await waitFor(() => expect(retry).toHaveBeenCalledTimes(1));
+    expect((screen.getByRole("button", { name: /Clear replayable/i }) as HTMLButtonElement).disabled).toBe(false);
   });
 
   it("filters Audit History by real fields and opens raw detail", async () => {
@@ -151,8 +175,9 @@ describe("Ops, History, and Sync pages", () => {
 
     render(
       <SyncPage
-        remote={{ configured: true, url: "git@example.com:loom.git", ahead: 0, behind: 0, sync_state: "clean" }}
+        remote={{ configured: true, url: "git@example.com:loom.git", ahead: 0, behind: 0, sync_state: "clean", operation_counts: ZERO_OPERATION_COUNTS }}
         queuedWriteCount={0}
+        operationCounts={ZERO_OPERATION_COUNTS}
         registryRoot="/tmp/loom"
         readOnly={false}
         onMutation={() => {}}
@@ -162,5 +187,41 @@ describe("Ops, History, and Sync pages", () => {
     await waitFor(() => expect(diagnose).toHaveBeenCalledTimes(1));
     fireEvent.click(screen.getByRole("button", { name: "Diagnose history" }));
     await waitFor(() => expect(diagnose).toHaveBeenCalledTimes(2));
+  });
+
+  it("renders the four non-overlapping operation counters", async () => {
+    vi.spyOn(api, "opsHistoryDiagnose").mockResolvedValue(diagnosePayload());
+
+    render(
+      <SyncPage
+        remote={{
+          configured: false,
+          sync_state: "LOCAL_ONLY",
+          operation_backlog: 0,
+          operation_counts: {
+            actionable_operations: 0,
+            local_journal_events: 3,
+            unpushed_history_events: 0,
+            local_only_history_events: 400,
+          },
+        }}
+        queuedWriteCount={0}
+        operationCounts={{
+          actionable_operations: 0,
+          local_journal_events: 3,
+          unpushed_history_events: 0,
+          local_only_history_events: 400,
+        }}
+        registryRoot="/tmp/loom"
+        readOnly={false}
+        onMutation={() => {}}
+      />,
+    );
+
+    expect(await screen.findByText("Actionable operations")).toBeInTheDocument();
+    expect(screen.getByText("Local journal events")).toBeInTheDocument();
+    expect(screen.getByText("Unpushed history events")).toBeInTheDocument();
+    expect(screen.getByText("Local-only history events")).toBeInTheDocument();
+    expect(screen.getByText("400")).toBeInTheDocument();
   });
 });

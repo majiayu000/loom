@@ -37,12 +37,12 @@ Loom 当前把未确认的 registry journal rows 和 `loom-history` 中的本地
 
 ## 验收标准
 
-- [ ] local-only regression 覆盖成功 journal rows 与大量 history events，并在 CLI、doctor、Panel API/UI 中一致显示零 actionable。
-- [ ] configured-remote regression 覆盖成功未确认 row、failed row、远端共有 history 与仅本地 history，证明集合差和 bucket 互斥。
-- [ ] `sync status`、`ops list`、`workspace doctor` 与 Panel API JSON 暴露完整 `operation_counts`，兼容 aliases 保持预期值。
-- [ ] `ops list`、retry/replay/purge 与 `/api/v1/ops/pending` 不再把 local-only succeeded rows 当作 actionable。
-- [ ] malformed registry/history 或 Git read failure fail closed，不返回伪造的零计数。
-- [ ] CLI/Panel focused tests、Rust build/test、Panel type/test/build、完整仓库检查与 SpecRail gate 通过。
+- [x] local-only regression 覆盖成功 journal rows 与大量 history events，并在 CLI、doctor、Panel API/UI 中一致显示零 actionable。
+- [x] configured-remote regression 覆盖成功未确认 row、failed row、远端共有 history 与仅本地 history，证明集合差和 bucket 互斥。
+- [x] `sync status`、`ops list`、`workspace doctor` 与 Panel API JSON 暴露完整 `operation_counts`，兼容 aliases 保持预期值。
+- [x] `ops list`、retry/replay 与 `/api/v1/ops/pending` 不再把 local-only succeeded rows 当作 actionable；显式 `ops purge` 仍可清除全部未确认 journal rows。
+- [x] malformed registry/history 或 Git read failure fail closed，不返回伪造的零计数。
+- [x] CLI/Panel focused tests、Rust build/test、Panel type/test/build、完整仓库检查与 SpecRail gate 通过。
 
 ## 边界情况
 

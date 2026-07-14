@@ -25,7 +25,7 @@ GH-513
 2. 在 journal module 暴露复用现有 `parse_journal_line` 的 fail-closed event-ID collector。history module 分别读取 local 与 cached `origin/loom-history` archives/segments，合并去重集合；没有 remote 时填 `local_only_history_events`，配置 remote 时计算 local set difference 填 `unpushed_history_events`。read path 不 fetch、不更新 ref。
 3. 由一个共享 operation report 组合 journal 与 history buckets，避免 commands 自行相加。没有数据返回真实零；已存在 blob/JSON 解析失败向上传播错误。
 4. `remote_status_payload`、workspace status、doctor、ops list 与 agent sync dry-run 直接序列化共享 `operation_counts`。`operation_backlog`、`count`、doctor `operation_journal.count` 取 `actionable_operations`；`journal_events`/`history_events` 是兼容 bucket sums。禁止重新引入 `pending_ops`。
-5. retry/replay/purge/sync push 继续只使用 `report.ops`，因此 local-only succeeded rows 不会被列为可操作；配置 remote 后相同 rows 自动进入 actionable 并沿既有 ack 流程处理。failed local-only rows 会被列出，实际 replay 继续返回 remote-not-configured blocker。
+5. retry/replay/sync push 继续只使用 `report.ops`，因此 local-only succeeded rows 不会被列为可操作；配置 remote 后相同 rows 自动进入 actionable 并沿既有 ack 流程处理。显式 `ops purge` 继续清除全部未确认 rows，包括 local journal facts。failed local-only rows 会被列出，实际 replay 继续返回 remote-not-configured blocker。
 6. `/api/v1/ops/pending` 返回真实 `RegistryOperationRecord` rows 和 `operation_counts`。Panel 移除错误的 legacy pending-row adaptation，使用 registry operation adapter，并把 typed counts 放入 live data/view model。
 7. Overview、Sync 与 Ops surfaces 分别显示四个 bucket；`LOCAL_ONLY && actionable_operations == 0` 使用 info/neutral copy，actionable/failed 保持 warning/error。`SkillMPanel.tsx` 当前正好 800 行，修改时必须通过抽取或净减行数保持不超过硬上限。
 8. 更新 API/CLI/migration docs 和 changelog，说明 aliases、四 bucket 示例、cached remote 语义与 consumer migration。
@@ -63,13 +63,13 @@ registry `operations.json` + local `loom-history` + cached `origin/loom-history`
 
 ## 测试计划
 
-- [ ] Regression-first: `cargo test --test reliability --test status --test doctor`
-- [ ] Panel handler: `cargo test panel::tests::handlers`
-- [ ] Panel: `npm --prefix panel test -- --run` and `npm --prefix panel run build`
-- [ ] Static/build: `cargo fmt --all -- --check`, `cargo check --workspace --all-targets --all-features`, `git diff --check`
-- [ ] Full repository: `make check`
-- [ ] Spec packet: `python3 /Users/apple/Desktop/code/AI/tool/specrail/checks/check_workflow.py --repo /Users/apple/Desktop/code/AI/tool/specrail --spec-dir /Users/apple/Desktop/code/AI/tool/loom-worktrees/implx-GH513-operation-counts/specs/GH513`
-- [ ] Removed-field guard: `! rg -n 'pending_ops' src panel/src`
+- [x] Regression-first: `cargo test --test reliability --test status --test doctor`
+- [x] Panel handler: `cargo test panel::tests::handlers`
+- [x] Panel: `npm --prefix panel test -- --run` and `npm --prefix panel run build`
+- [x] Static/build: `cargo fmt --all -- --check`, `cargo check --workspace --all-targets --all-features`, `git diff --check`
+- [x] Full repository: `make check`
+- [x] Spec packet: `python3 /Users/apple/Desktop/code/AI/tool/specrail/checks/check_workflow.py --repo /Users/apple/Desktop/code/AI/tool/specrail --spec-dir /Users/apple/Desktop/code/AI/tool/loom-worktrees/implx-GH513-operation-counts/specs/GH513`
+- [x] Removed-field guard: `! rg -n 'pending_ops' src panel/src`
 
 ## 回滚方案
 

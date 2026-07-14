@@ -87,6 +87,36 @@ state paths, agent directory defaults, and the redacted remote URL.
 operation backlog rows. It remains separate from `/api/v1/ops`, which is the
 activity/audit read model.
 
+The pending route, `workspace/status`, `workspace/doctor`, and `sync/status`
+share this non-overlapping counter model:
+
+```json
+{
+  "operation_counts": {
+    "actionable_operations": 0,
+    "local_journal_events": 3,
+    "unpushed_history_events": 0,
+    "local_only_history_events": 400
+  }
+}
+```
+
+- `actionable_operations` is the number of rows returned by
+  `/api/v1/ops/pending.data.ops`.
+- `local_journal_events` contains succeeded, unacknowledged rows while no
+  origin is configured.
+- `unpushed_history_events` is the unique local history event-ID set minus the
+  cached `origin/loom-history` set when an origin is configured.
+- `local_only_history_events` is the unique local history event-ID count when
+  no origin is configured.
+
+Compatibility fields remain additive projections: `count` and
+`operation_backlog` equal `actionable_operations`; `journal_events` is the sum
+of the two journal buckets; `history_events` is the sum of the two history
+buckets. Read routes never fetch. Remote comparisons therefore describe the
+cached tracking ref and may be stale relative to the server. Existing malformed
+registry or history data produces a structured error instead of zero counters.
+
 ## 5. Mutation Routes
 
 The complete v1 mutation surface is:

@@ -62,6 +62,27 @@ fn workspace_status_reports_registry_snapshot_when_present() {
         env["data"]["registry"]["targets"][0]["agent_source"],
         Value::String("built-in".to_string())
     );
+    assert_eq!(env["data"]["operation_backlog"], json!(0));
+    assert_eq!(
+        env["data"]["operation_counts"],
+        json!({
+            "actionable_operations": 0,
+            "local_journal_events": 1,
+            "unpushed_history_events": 0,
+            "local_only_history_events": 0,
+        })
+    );
+
+    let (ops_output, ops) = run_loom(root.path(), &["ops", "list"]);
+    assert!(ops_output.status.success(), "ops list failed: {ops}");
+    assert_eq!(ops["data"]["count"], json!(0));
+    assert_eq!(ops["data"]["ops"], json!([]));
+    assert_eq!(ops["data"]["journal_events"], json!(1));
+    assert_eq!(ops["data"]["history_events"], json!(0));
+    assert_eq!(
+        ops["data"]["operation_counts"],
+        env["data"]["operation_counts"]
+    );
 }
 
 #[test]

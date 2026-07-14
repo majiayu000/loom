@@ -689,10 +689,24 @@ async fn pending_returns_non_2xx_with_structured_error_body_on_failure() {
 }
 
 #[tokio::test]
-async fn pending_returns_ok_with_empty_report_on_success() {
+async fn pending_separates_local_journal_events_from_actionable_operations() {
     let (root, state) = make_test_state();
     let paths = crate::state_model::RegistryStatePaths::from_app_context(&state.ctx);
     paths.ensure_layout().expect("create registry ops layout");
+    let now = Utc::now();
+    paths
+        .append_operation(&RegistryOperationRecord {
+            op_id: "op-local-fact".to_string(),
+            intent: "skill.project".to_string(),
+            status: "succeeded".to_string(),
+            ack: false,
+            payload: json!({"skill_id": "demo"}),
+            effects: json!({}),
+            last_error: None,
+            created_at: now,
+            updated_at: now,
+        })
+        .expect("append local journal fact");
 
     let (status, Json(payload)) = v1_pending(State(state)).await;
 
@@ -701,7 +715,44 @@ async fn pending_returns_ok_with_empty_report_on_success() {
     assert_eq!(payload["cmd"], json!("operation_backlog.list"));
     assert!(payload["request_id"].as_str().is_some());
     assert_eq!(payload["data"]["count"], json!(0));
-    assert!(payload["data"]["ops"].as_array().is_some());
+    assert_eq!(payload["data"]["ops"], json!([]));
+    assert_eq!(payload["data"]["journal_events"], json!(1));
+    assert_eq!(payload["data"]["history_events"], json!(0));
+    assert_eq!(
+        payload["data"]["operation_counts"],
+        json!({
+            "actionable_operations": 0,
+            "local_journal_events": 1,
+            "unpushed_history_events": 0,
+            "local_only_history_events": 0,
+        })
+    );
 
     let _ = fs::remove_dir_all(root);
+}
+
+#[tokio::test]
+async fn pending_is_read_only_when_registry_is_absent() {
+    let (root, state) = make_test_state();
+    let registry_dir = root.join("state/registry");
+
+    let (status, Json(payload)) = v1_pending(State(state)).await;
+
+    assert_eq!(status, StatusCode::OK, "{payload}");
+    assert_eq!(payload["data"]["count"], json!(0));
+    assert_eq!(
+        payload["data"]["operation_counts"],
+        json!({
+            "actionable_operations": 0,
+            "local_journal_events": 0,
+            "unpushed_history_events": 0,
+            "local_only_history_events": 0,
+        })
+    );
+    assert!(
+        !registry_dir.exists(),
+        "pending read created registry state"
+    );
+
+    cleanup_root(root);
 }

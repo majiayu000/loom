@@ -4,6 +4,7 @@ mod ops;
 mod registry_ops;
 
 pub use ops::OpsAuditOperation;
+pub use registry_ops::OperationCounts;
 
 use lock::{LockMetadata, acquire_lock_coordinator, lock_file_matches_owner, try_reap_stale_lock};
 

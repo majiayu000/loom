@@ -1,4 +1,5 @@
 import type { RegistryProjection } from "../../generated/RegistryProjection";
+import type { OperationCounts } from "../../types";
 import type { Binding, Op, ProjectionLink, Skill, Target, VizMode } from "../../lib/types";
 import { OpRow } from "../../components/panel/OpRow";
 import { ProjectionGraph } from "../../components/panel/ProjectionGraph";
@@ -17,6 +18,7 @@ interface OverviewPageProps {
   registryProjections: RegistryProjection[];
   remoteState: string | null;
   queuedWriteCount: number;
+  operationCounts: OperationCounts | null;
   vizMode: VizMode;
   setVizMode: (m: VizMode) => void;
   selectedSkill: string | null;
@@ -49,7 +51,7 @@ function syncTone(remoteState: string | null, queuedWriteCount: number): "ok" | 
   if (state === "DIVERGED" || state === "CONFLICTED" || state.includes("ERROR") || state.includes("FAILED")) {
     return "err";
   }
-  if (queuedWriteCount > 0 || remoteState === null || state === "PENDING_PUSH" || state === "LOCAL_ONLY") {
+  if (queuedWriteCount > 0 || remoteState === null || state === "PENDING_PUSH") {
     return "warn";
   }
   return "ok";
@@ -69,6 +71,7 @@ export function OverviewPage({
   registryProjections,
   remoteState,
   queuedWriteCount,
+  operationCounts,
   vizMode,
   setVizMode,
   selectedSkill,
@@ -206,6 +209,10 @@ export function OverviewPage({
   const summaryCards: KpiData[] = [
     ["Registry root", rootDisplay, registryRoot ? "workspace registry" : "root unavailable", registryRoot ? "ok" : "warn"],
     ["Sync state", syncStateLabel, queuedWriteCount > 0 ? formatQueuedWrites(queuedWriteCount) : "queue clean", syncTone(remoteState, queuedWriteCount)],
+    ["Actionable operations", operationCounts?.actionable_operations ?? "unavailable", "replayable or failed rows"],
+    ["Local journal events", operationCounts?.local_journal_events ?? "unavailable", "local facts not requiring a remote"],
+    ["Unpushed history events", operationCounts?.unpushed_history_events ?? "unavailable", "absent from cached origin history"],
+    ["Local-only history events", operationCounts?.local_only_history_events ?? "unavailable", "history retained without an origin"],
     ["Skills", skills.length, skillKpiMeta],
     ["Targets by ownership", targets.length, targetOwnershipMeta],
     ["Bindings", totalBindings, totalBindings > 0 ? "routing rows from registry status" : "no bindings"],

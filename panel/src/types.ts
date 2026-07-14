@@ -40,21 +40,48 @@ export type RemotePayload = {
   ahead?: number;
   behind?: number;
   operation_backlog?: number;
+  operation_counts: OperationCounts;
   tracking_ref?: boolean;
   sync_state?: string;
 };
 
-export type PendingOp = {
-  op_id?: string;
-  request_id: string;
-  command: string;
-  created_at: string;
-  details: Record<string, unknown>;
+export type OperationCounts = {
+  actionable_operations: number;
+  local_journal_events: number;
+  unpushed_history_events: number;
+  local_only_history_events: number;
 };
+
+export const ZERO_OPERATION_COUNTS: OperationCounts = {
+  actionable_operations: 0,
+  local_journal_events: 0,
+  unpushed_history_events: 0,
+  local_only_history_events: 0,
+};
+
+export interface RegistryOperationRecord {
+  op_id: string | null;
+  audit_id?: string | null;
+  source?: string;
+  intent: string;
+  status: string;
+  ack: boolean;
+  request_id?: string | null;
+  skill?: string | null;
+  target?: string | null;
+  binding?: string | null;
+  method?: string | null;
+  payload?: unknown;
+  effects?: unknown;
+  last_error?: { code: string; message: string };
+  created_at: string;
+  updated_at: string;
+}
 
 export type PendingPayload = {
   count: number;
-  ops: PendingOp[];
+  ops: RegistryOperationRecord[];
+  operation_counts: OperationCounts;
   journal_events?: number;
   history_events?: number;
   warnings?: string[];

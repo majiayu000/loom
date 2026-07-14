@@ -308,3 +308,37 @@ fn git_url_validation_rejects_dangerous_protocols_and_options() {
         assert!(validate_git_url(url).is_err(), "{url} should be rejected");
     }
 }
+
+#[test]
+fn origin_url_validation_uses_instead_of_expanded_effective_url() {
+    let (ctx, dir) = fresh_repo("instead-of-url");
+    git_ok(
+        &dir,
+        &[
+            "config",
+            "--local",
+            "url.git://blocked.example/.insteadOf",
+            "https://allowed.example/",
+        ],
+    );
+    git_ok(
+        &dir,
+        &[
+            "remote",
+            "add",
+            "origin",
+            "https://allowed.example/org/repo.git",
+        ],
+    );
+
+    assert_eq!(
+        remote_url(&ctx)
+            .expect("read effective remote url")
+            .as_deref(),
+        Some("git://blocked.example/org/repo.git")
+    );
+    let err = ensure_origin_remote_url_allowed(&ctx).expect_err("git protocol must be rejected");
+    assert!(err.to_string().contains("unsupported git url scheme 'git'"));
+
+    let _ = fs::remove_dir_all(&dir);
+}

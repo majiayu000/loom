@@ -556,22 +556,22 @@ fn list_unique_skills_from_dirs(
 pub fn remote_status_payload(
     ctx: &AppContext,
 ) -> std::result::Result<(serde_json::Value, Meta), CommandFailure> {
-    let backlog = ctx
-        .existing_registry_operation_backlog_count()
-        .map_err(map_io)?;
-    remote_status_payload_with_backlog(ctx, backlog, Vec::new())
+    let report = ctx.read_existing_registry_ops_report().map_err(map_io)?;
+    remote_status_payload_with_counts(ctx, &report.operation_counts, Vec::new())
 }
 
-pub(crate) fn remote_status_payload_with_backlog(
+pub(crate) fn remote_status_payload_with_counts(
     ctx: &AppContext,
-    backlog: usize,
+    operation_counts: &crate::state::OperationCounts,
     warnings: Vec<String>,
 ) -> std::result::Result<(serde_json::Value, Meta), CommandFailure> {
-    if !gitops::remote_exists(ctx) {
+    let backlog = operation_counts.actionable_operations;
+    if !gitops::remote_is_configured(ctx).map_err(map_git)? {
         return Ok((
             json!({
                 "configured": false,
                 "operation_backlog": backlog,
+                "operation_counts": operation_counts,
                 "sync_state": SyncState::LocalOnly,
             }),
             Meta {
@@ -611,6 +611,7 @@ pub(crate) fn remote_status_payload_with_backlog(
                 "remote": "origin",
                 "url": redacted_url,
                 "operation_backlog": backlog,
+                "operation_counts": operation_counts,
                 "tracking_ref": false,
                 "sync_state": sync_state,
             }),
@@ -638,6 +639,7 @@ pub(crate) fn remote_status_payload_with_backlog(
             "ahead": ahead,
             "behind": behind,
             "operation_backlog": backlog,
+            "operation_counts": operation_counts,
             "tracking_ref": true,
             "sync_state": sync_state,
         }),

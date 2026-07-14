@@ -1,4 +1,4 @@
-import type { RemotePayload } from "../../types";
+import type { OperationCounts, RemotePayload } from "../../types";
 import type { FormEvent } from "react";
 import { useEffect, useState } from "react";
 import { GitIcon, PlayIcon, RefreshIcon, SyncIcon } from "../../components/icons/nav_icons";
@@ -12,13 +12,14 @@ type DiagnoseData = NonNullable<OpsHistoryDiagnosePayload["data"]>;
 interface SyncPageProps {
   remote: RemotePayload | null;
   queuedWriteCount: number;
+  operationCounts: OperationCounts | null;
   registryRoot: string | null;
   refreshKey?: string | null;
   readOnly: boolean;
   onMutation: () => void;
 }
 
-export function SyncPage({ remote, queuedWriteCount, registryRoot, refreshKey, readOnly, onMutation }: SyncPageProps) {
+export function SyncPage({ remote, queuedWriteCount, operationCounts, registryRoot, refreshKey, readOnly, onMutation }: SyncPageProps) {
   const push = useMutation();
   const pull = useMutation();
   const replay = useMutation();
@@ -115,6 +116,12 @@ export function SyncPage({ remote, queuedWriteCount, registryRoot, refreshKey, r
             value={queuedWriteCount}
             tone={queuedWriteCount > 0 ? "pending" : undefined}
           />
+        </div>
+        <div className="kpi-row">
+          <Kpi label="Actionable operations" value={operationCounts?.actionable_operations ?? "unavailable"} />
+          <Kpi label="Local journal events" value={operationCounts?.local_journal_events ?? "unavailable"} />
+          <Kpi label="Unpushed history events" value={operationCounts?.unpushed_history_events ?? "unavailable"} />
+          <Kpi label="Local-only history events" value={operationCounts?.local_only_history_events ?? "unavailable"} />
         </div>
 
         <div className="card" style={{ marginBottom: 16 }}>

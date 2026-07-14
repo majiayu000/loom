@@ -9,6 +9,7 @@ import {
   selectTargetViewModel,
 } from "./panel_view_model";
 import type { Op, Target } from "./types";
+import { ZERO_OPERATION_COUNTS } from "../types";
 
 function liveData(overrides: Partial<PanelLiveData> = {}): PanelLiveData {
   return {
@@ -21,7 +22,7 @@ function liveData(overrides: Partial<PanelLiveData> = {}): PanelLiveData {
     lastUpdated: "2026-06-11T12:00:00Z",
     registryRoot: "/tmp/loom",
     agentDirs: [],
-    remote: { sync_state: "CLEAN" },
+    remote: { sync_state: "CLEAN", operation_counts: ZERO_OPERATION_COUNTS },
     warnings: [],
     health: { ok: true },
     counts: { skills: 1, targets: 1, bindings: 0, projections: 0, operations: 0 },
@@ -30,6 +31,7 @@ function liveData(overrides: Partial<PanelLiveData> = {}): PanelLiveData {
     bindings: [],
     ops: [],
     projections: [],
+    operationCounts: ZERO_OPERATION_COUNTS,
     queuedWriteCount: 0,
     refetch: () => {},
     ...overrides,
@@ -127,10 +129,28 @@ describe("panel view-model selectors", () => {
 
     expect(vm.shell.counts.skills).toMatchObject({ value: 0, display: "0", state: "available" });
     expect(vm.shell.counts.queuedWrites).toMatchObject({ value: 2, display: "2", state: "available" });
+    expect(vm.shell.counts.operationCounts.actionable).toMatchObject({ value: 0, display: "0", state: "available" });
+    expect(vm.shell.counts.operationCounts.localJournal).toMatchObject({ value: 0, display: "0", state: "available" });
     expect(vm.shell.counts.backend.skills).toMatchObject({
       value: null,
       display: "unavailable",
       state: "unavailable",
+    });
+  });
+
+  it("treats LOCAL_ONLY with no actionable operations as informational", () => {
+    const vm = selectPanelViewModel(
+      liveData({
+        remote: { sync_state: "LOCAL_ONLY", operation_backlog: 0, operation_counts: ZERO_OPERATION_COUNTS },
+        queuedWriteCount: 0,
+      }),
+      { page: "overview", readOnly: false },
+    );
+
+    expect(vm.shell.status).toMatchObject({
+      label: "local only",
+      tone: "ok",
+      title: "Registry facts are local; no actionable operations are waiting.",
     });
   });
 

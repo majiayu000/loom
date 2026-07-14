@@ -132,7 +132,7 @@ function operationTone(status: Op["status"]) {
 }
 
 function pendingQueueCount(live: ReturnType<typeof usePanelData>) {
-  return Math.max(live.queuedWriteCount, live.ops.filter((op) => op.status === "pending").length);
+  return live.operationCounts?.actionable_operations ?? Math.max(live.queuedWriteCount, live.ops.filter((op) => op.status === "pending").length);
 }
 
 function methodTone(method: string) {
@@ -658,10 +658,9 @@ function EmptyPanel({ text }: { text: string }) {
 }
 
 function Ops({ live, history, go, confirm }: { live: ReturnType<typeof usePanelData>; history: boolean; go: (page: SkillMPage) => void; confirm: (action: Confirm) => void }) {
-  const failed = live.ops.filter((op) => op.status === "err").length;
-  const pending = pendingQueueCount(live);
-  const queue = live.ops.filter((op) => op.status !== "ok");
-  const queueCount = Math.max(queue.length, live.queuedWriteCount);
+  const counts = live.operationCounts;
+  const queue = counts ? live.ops.filter((op) => op.actionable) : live.ops.filter((op) => op.status !== "ok");
+  const queueCount = counts?.actionable_operations ?? Math.max(queue.length, live.queuedWriteCount);
   const rows = history ? live.ops : queue;
   return (
     <div className="view view-ops">
@@ -669,7 +668,7 @@ function Ops({ live, history, go, confirm }: { live: ReturnType<typeof usePanelD
         <div><h1>Ops &amp; 审计</h1><p>每条命令都来自 live API · 可重放、可诊断、可清理</p></div>
         <div className="ops-head-actions"><button className="btn-ghost sm" onClick={() => confirm({ label: "Purge ops", action: "确认清理", title: "清理 Ops 队列？", scope: `当前本地 Ops 队列 · ${queueCount} 条待处理/失败，${live.ops.length} 条可见记录`, undo: "不可自动撤销；清理后只能依赖底层审计归档或重新执行命令恢复上下文。", impact: "将调用 Ops purge API，移除当前队列上下文并刷新面板数据。", tone: "danger", fn: api.opsPurge })}><Icon d="x" />purge</button><button className="btn-grad sm" onClick={() => confirm({ label: "Replay queued ops", action: "确认重放", title: "重放 Ops 队列？", scope: "当前本地 Ops 待处理/失败队列", count: queueCount, undo: "重放调度本身不能撤销；每条结果会继续进入操作记录。", impact: "将调用 Ops retry API，重试 pending/failed 操作，可能触发后续投影、同步或写入效果。", tone: "sync", fn: api.opsRetry })}><Icon d="sync" />replay 队列</button></div>
       </header>
-      <div className="ops-stats"><div className={`pstat ${pending ? "acc" : ""}`}><span className="pstat-l">待处理</span><span className="pstat-n">{pending}</span></div><div className={`pstat ${failed ? "warn" : ""}`}><span className="pstat-l">失败 / 漂移</span><span className="pstat-n">{failed}</span></div><div className="pstat"><span className="pstat-l">已完成</span><span className="pstat-n">{live.ops.filter((op) => op.status === "ok").length}</span></div><div className="pstat"><span className="pstat-l">审计事件</span><span className="pstat-n">{live.ops.length}</span></div></div>
+      <div className="ops-stats">{[["可执行操作", counts?.actionable_operations], ["本地 journal", counts?.local_journal_events], ["待推送 history", counts?.unpushed_history_events], ["仅本地 history", counts?.local_only_history_events]].map(([label, value]) => <div className="pstat" key={label}><span className="pstat-l">{label}</span><span className="pstat-n">{value ?? "—"}</span></div>)}</div>
       <nav className="plane-tabs">{([["ops", "待处理队列"], ["history", "审计历史"]] as const).map(([id, label]) => <button key={id} className={`det-tab ${(history ? "history" : "ops") === id ? "on" : ""}`} onClick={() => go(id)}><Icon d={id === "history" ? "clock" : "ops"} size={14} />{label}{id === "ops" && queueCount ? <span className="tab-count">{queueCount}</span> : null}</button>)}<span className="tab-flex" /></nav>
       {history ? <SkillMAuditHistory live={live.live} refreshKey={live.lastUpdated} /> : <section className="ops-table">{rows.map((op) => <OperationLogRow key={op.id} op={op} />)}{rows.length === 0 && <div className="ops-empty"><Icon d="check" size={26} /><p>队列已清空 · 没有待处理或失败的操作</p></div>}</section>}
     </div>
@@ -680,11 +679,12 @@ function Sync({ live, confirm }: { live: ReturnType<typeof usePanelData>; confir
   const remote = live.remote;
   const remoteConfigured = Boolean(remote?.configured || remote?.url || remote?.remote);
   const syncOps = live.ops.filter((op) => op.kind.startsWith("sync."));
-  const operationBacklog = remote?.operation_backlog ?? live.queuedWriteCount;
+  const operationBacklog = live.operationCounts?.actionable_operations ?? remote?.operation_backlog ?? live.queuedWriteCount;
   return (
     <div className="view view-sync">
       <header className="view-head"><div><h1>注册表同步</h1><p>Git 支撑 · push / pull / replay · remote 为空时保持 local-only</p></div><div className="ops-head-actions"><span className="soon-pill"><Icon d="dl" size={14} />pull 未接入</span><button className="btn-grad sm" onClick={() => confirm({ label: "Sync replay", action: "确认重放", title: "重放同步队列？", scope: `Git sync 队列 · ${remote?.url || remote?.remote || "local-only registry"}`, count: operationBacklog, undo: "重放调度本身不能撤销；同步结果会继续写入审计事件。", impact: "将调用 Sync replay API，重试同步队列并可能更新本地注册表同步状态。", tone: "sync", fn: api.syncReplay })}><Icon d="sync" />replay</button></div></header>
       <div className="reg-strip"><span className="rs-git"><Icon d="branch" size={14} />remote origin</span><code>{remote?.url || remote?.remote || "not configured"}</code><span className="rs-div" /><span className="rs-stat">state <b>{remote?.sync_state ?? "local_only"}</b></span><span className="rs-div" /><span className="rs-stat">backlog <b>{operationBacklog}</b></span><span className="rs-flex" /><button className="rs-panel" onClick={() => confirm({ label: "Sync replay", action: "确认重放", title: "重放同步队列？", scope: `Git sync 队列 · ${remote?.url || remote?.remote || "local-only registry"}`, count: operationBacklog, undo: "重放调度本身不能撤销；同步结果会继续写入审计事件。", impact: "将调用 Sync replay API，重试同步队列并可能更新本地注册表同步状态。", tone: "sync", fn: api.syncReplay })}><Icon d="sync" size={13} />replay</button></div>
+      <div className="ops-stats">{[["可执行操作", live.operationCounts?.actionable_operations], ["本地 journal", live.operationCounts?.local_journal_events], ["待推送 history", live.operationCounts?.unpushed_history_events], ["仅本地 history", live.operationCounts?.local_only_history_events]].map(([label, value]) => <div className="pstat" key={label}><span className="pstat-l">{label}</span><span className="pstat-n">{value ?? "—"}</span></div>)}</div>
       <div className="sync-grid">
         <section className="panel sync-topo-panel"><div className="panel-head"><h3><Icon d="sync" />注册表拓扑</h3><span className="panel-hint">{remoteConfigured ? "local -> origin" : "local only"}</span></div><svg viewBox="0 0 640 300" className="sync-topo"><path className={`beam ${remoteConfigured ? "on" : ""}`} stroke="var(--acc3)" d="M150 220 C150 112 320 132 320 86" /><circle className="topo-cloud" cx="320" cy="78" r="34" /><text x="320" y="82" textAnchor="middle" className="topo-name">origin</text><text x="320" y="104" textAnchor="middle" className="topo-sub">{remoteConfigured ? "configured" : "not configured"}</text><circle className="topo-node self" cx="150" cy="220" r="38" /><text x="150" y="218" textAnchor="middle" className="topo-name">local</text><text x="150" y="235" textAnchor="middle" className="topo-sub">{operationBacklog} queued</text></svg></section>
         <section className="panel"><div className="panel-head"><h3><Icon d="clock" />事件流</h3><span className="panel-hint">{syncOps.length} sync events</span></div><div className="ev-stream">{syncOps.slice(0, 6).map((op) => {

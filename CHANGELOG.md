@@ -11,6 +11,13 @@ archives, checksums, and provenance details on GitHub Releases.
   sync replay, ops retry/purge, history repair, and Panel operation backlog
   reads; legacy `state/pending_ops.*` runtime state is no longer used.
 
+### Fixed
+
+- Local-only registries no longer report successful journal rows and audit
+  history as pending operations. CLI, doctor, Panel API, and Panel now expose
+  the same four non-overlapping actionable, local-journal, unpushed-history,
+  and local-only-history counters while preserving compatibility aliases.
+
 ## [0.1.5] - 2026-06-27
 
 ### Added

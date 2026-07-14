@@ -623,7 +623,7 @@ fn skill_diagnose_matches_operation_backlog_by_structured_skill_fields_only() {
         .append_operation(&RegistryOperationRecord {
             op_id: "op-other".to_string(),
             intent: "skill.save demo".to_string(),
-            status: "succeeded".to_string(),
+            status: "failed".to_string(),
             ack: false,
             payload: json!({"skill": "other"}),
             effects: json!({}),
@@ -632,6 +632,19 @@ fn skill_diagnose_matches_operation_backlog_by_structured_skill_fields_only() {
             updated_at: Utc::now(),
         })
         .expect("append op");
+    paths
+        .append_operation(&RegistryOperationRecord {
+            op_id: "op-local-demo".to_string(),
+            intent: "skill.save".to_string(),
+            status: "succeeded".to_string(),
+            ack: false,
+            payload: json!({"skill": "demo"}),
+            effects: json!({}),
+            last_error: None,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        })
+        .expect("append local-only succeeded op");
 
     let (payload, _) = app(&root)
         .cmd_skill_diagnose(&SkillOnlyArgs {

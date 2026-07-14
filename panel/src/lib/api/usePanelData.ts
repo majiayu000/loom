@@ -1,10 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { RegistryProjection } from "../../generated/RegistryProjection";
-import type { HealthPayload, InfoPayload, RemotePayload, RegistryPayload } from "../../types";
+import type { HealthPayload, InfoPayload, OperationCounts, RemotePayload, RegistryPayload } from "../../types";
 import type { Binding, Op, Skill, Target } from "../types";
 import {
   adaptBinding,
-  adaptPendingOp,
   adaptRegistryOperation,
   adaptSkill,
   adaptSkillSummary,
@@ -39,6 +38,7 @@ export interface PanelLiveData {
   /** Raw Registry projections — exposed so consumers like `ProjectionGraph` can
    *  use the backend-reported `method`/`health` instead of fabricating it. */
   projections: RegistryProjection[];
+  operationCounts: OperationCounts | null;
   queuedWriteCount: number;
   refetch: () => void;
 }
@@ -68,6 +68,7 @@ const INITIAL_STATE: LiveState = {
   bindings: [],
   ops: [],
   projections: [],
+  operationCounts: null,
   queuedWriteCount: 0,
 };
 
@@ -78,6 +79,7 @@ function hasLastKnownData(state: LiveState): boolean {
     state.bindings.length > 0 ||
     state.ops.length > 0 ||
     state.projections.length > 0 ||
+    state.operationCounts !== null ||
     state.lastUpdated !== null ||
     state.registryRoot !== null ||
     state.remote !== null ||
@@ -98,6 +100,26 @@ function warningStrings(value: unknown): string[] {
 
 function uniqueWarnings(warnings: string[]): string[] {
   return Array.from(new Set(warnings));
+}
+
+function requireOperationCounts(value: unknown): OperationCounts {
+  if (!value || typeof value !== "object") {
+    throw new Error("pending operations response is missing operation_counts");
+  }
+  const counts = value as Record<string, unknown>;
+  const keys = [
+    "actionable_operations",
+    "local_journal_events",
+    "unpushed_history_events",
+    "local_only_history_events",
+  ] as const;
+  for (const key of keys) {
+    const count = counts[key];
+    if (typeof count !== "number" || !Number.isInteger(count) || count < 0) {
+      throw new Error(`pending operations response has invalid operation_counts.${key}`);
+    }
+  }
+  return counts as OperationCounts;
 }
 
 export function dedupePanelOps(pendingOps: Op[], activityOps: Op[]): Op[] {
@@ -179,6 +201,7 @@ export function usePanelData(): PanelLiveData {
             bindings: [],
             ops: [],
             projections: [],
+            operationCounts: null,
             queuedWriteCount: 0,
           }),
         );
@@ -214,8 +237,12 @@ export function usePanelData(): PanelLiveData {
       const targets = registryTargets.map((t) => adaptTarget(t, index, observedSkillCounts));
       const bindings = registryBindings.map((b) => adaptBinding(b, rules));
 
-      const pendingOps: Op[] = dedupePanelOps((pending.data.ops ?? []).map(adaptPendingOp), []);
-      const activityOps: Op[] = (activity.data.data?.operations ?? []).map(adaptRegistryOperation);
+      const pendingOps: Op[] = dedupePanelOps((pending.data.ops ?? []).map((op) => adaptRegistryOperation(op, true)), []);
+      const operationCounts = requireOperationCounts(pending.data.operation_counts);
+      if (pending.data.count !== operationCounts.actionable_operations) {
+        throw new Error("pending operations count does not match operation_counts.actionable_operations");
+      }
+      const activityOps: Op[] = (activity.data.data?.operations ?? []).map((op) => adaptRegistryOperation(op));
       const ops = dedupePanelOps(pendingOps, activityOps).slice(0, 30);
       const warnings = uniqueWarnings([
         ...baseWarnings,
@@ -247,7 +274,8 @@ export function usePanelData(): PanelLiveData {
           bindings,
           ops,
           projections,
-          queuedWriteCount: pending.data.count ?? pendingOps.length,
+          operationCounts,
+          queuedWriteCount: operationCounts.actionable_operations,
         }),
       );
     } catch (err) {

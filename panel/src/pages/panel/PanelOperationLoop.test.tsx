@@ -5,6 +5,7 @@ import { HistoryPage } from "./HistoryPage";
 import { SyncPage } from "./SyncPage";
 import { api, type OpsHistoryDiagnosePayload, type OpsPayload, type RegistryOperationRecord } from "../../lib/api/client";
 import type { Op, Target } from "../../lib/types";
+import { ZERO_OPERATION_COUNTS } from "../../types";
 
 function textOf(value: unknown): string {
   if (typeof value === "string" || typeof value === "number") return String(value);
@@ -130,6 +131,7 @@ test("OverviewPage shows actionable next steps for a partial registry", async ()
         registryProjections={[]}
         remoteState="CLEAN"
         queuedWriteCount={0}
+        operationCounts={ZERO_OPERATION_COUNTS}
         vizMode="loom"
         setVizMode={() => {}}
         selectedSkill={null}
@@ -280,8 +282,9 @@ test("SyncPage surfaces history repair actions", async () => {
     await act(async () => {
       renderer = create(
         <SyncPage
-          remote={{ configured: true, url: "git@example.com:loom.git", ahead: 0, behind: 0, sync_state: "clean" }}
+          remote={{ configured: true, url: "git@example.com:loom.git", ahead: 0, behind: 0, sync_state: "clean", operation_counts: ZERO_OPERATION_COUNTS }}
           queuedWriteCount={0}
+          operationCounts={ZERO_OPERATION_COUNTS}
           registryRoot="/tmp/loom"
           readOnly={false}
           onMutation={() => {
@@ -320,8 +323,10 @@ test("SyncPage renders local-only sync state as compact readable text", async ()
           behind: 0,
           sync_state: "LOCAL_ONLY",
           tracking_ref: false,
+          operation_counts: ZERO_OPERATION_COUNTS,
         }}
         queuedWriteCount={0}
+        operationCounts={ZERO_OPERATION_COUNTS}
         registryRoot="/tmp/loom"
         readOnly={true}
         onMutation={() => {}}
@@ -344,8 +349,10 @@ test("SyncPage renders diverged sync state with error tone", async () => {
           ahead: 1,
           behind: 1,
           sync_state: "DIVERGED",
+          operation_counts: ZERO_OPERATION_COUNTS,
         }}
         queuedWriteCount={0}
+        operationCounts={ZERO_OPERATION_COUNTS}
         registryRoot="/tmp/loom"
         readOnly={true}
         onMutation={() => {}}
@@ -375,8 +382,9 @@ test("SyncPage re-runs history diagnose when refreshed data arrives", async () =
     await act(async () => {
       renderer = create(
         <SyncPage
-          remote={{ configured: true, url: "git@example.com:loom.git", ahead: 0, behind: 0, sync_state: "clean" }}
+          remote={{ configured: true, url: "git@example.com:loom.git", ahead: 0, behind: 0, sync_state: "clean", operation_counts: ZERO_OPERATION_COUNTS }}
           queuedWriteCount={0}
+          operationCounts={ZERO_OPERATION_COUNTS}
           registryRoot="/tmp/loom"
           refreshKey="first"
           readOnly={false}
@@ -390,8 +398,9 @@ test("SyncPage re-runs history diagnose when refreshed data arrives", async () =
     await act(async () => {
       renderer!.update(
         <SyncPage
-          remote={{ configured: true, url: "git@example.com:loom.git", ahead: 0, behind: 0, sync_state: "clean" }}
+          remote={{ configured: true, url: "git@example.com:loom.git", ahead: 0, behind: 0, sync_state: "clean", operation_counts: ZERO_OPERATION_COUNTS }}
           queuedWriteCount={0}
+          operationCounts={ZERO_OPERATION_COUNTS}
           registryRoot="/tmp/loom"
           refreshKey="second"
           readOnly={false}

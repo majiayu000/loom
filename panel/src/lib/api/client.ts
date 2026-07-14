@@ -2,32 +2,15 @@ import type {
   HealthPayload,
   InfoPayload,
   PendingPayload,
+  RegistryOperationRecord,
   RemotePayload,
   RegistryPayload,
 } from "../../types";
+export type { RegistryOperationRecord } from "../../types";
 import type { RegistryBinding } from "../../generated/RegistryBinding";
 import type { RegistryProjection } from "../../generated/RegistryProjection";
 import type { RegistryRule } from "../../generated/RegistryRule";
 import type { RegistryTarget } from "../../generated/RegistryTarget";
-
-export interface RegistryOperationRecord {
-  op_id: string | null;
-  audit_id?: string | null;
-  source?: string;
-  intent: string;
-  status: string;
-  ack: boolean;
-  request_id?: string | null;
-  skill?: string | null;
-  target?: string | null;
-  binding?: string | null;
-  method?: string | null;
-  payload?: unknown;
-  effects?: unknown;
-  last_error?: { code: string; message: string };
-  created_at: string;
-  updated_at: string;
-}
 
 export interface OpsPayload {
   ok: boolean;

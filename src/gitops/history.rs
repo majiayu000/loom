@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use anyhow::{Result, anyhow};
@@ -6,6 +6,7 @@ use chrono::Utc;
 use serde_json::json;
 
 use crate::state::AppContext;
+use crate::state::journal::history_event_ids;
 use crate::types::PendingOp;
 
 use super::{
@@ -83,6 +84,40 @@ pub fn history_journal_bodies(ctx: &AppContext) -> Result<Vec<(String, String)>>
         bodies.push((path.clone(), read_blob(ctx, blob)?));
     }
     Ok(bodies)
+}
+
+pub(crate) fn history_operation_counts(
+    ctx: &AppContext,
+    remote_configured: bool,
+) -> Result<(usize, usize)> {
+    if !repo_is_initialized(ctx)? {
+        return Ok((0, 0));
+    }
+
+    let local_ids = match load_history_branch_state(ctx, HISTORY_BRANCH_REF)? {
+        Some(state) => history_event_ids_for_state(ctx, &state)?,
+        None => BTreeSet::new(),
+    };
+    if !remote_configured {
+        return Ok((0, local_ids.len()));
+    }
+
+    let remote_ids = match load_history_branch_state(ctx, ORIGIN_HISTORY_BRANCH_REF)? {
+        Some(state) => history_event_ids_for_state(ctx, &state)?,
+        None => BTreeSet::new(),
+    };
+    Ok((local_ids.difference(&remote_ids).count(), 0))
+}
+
+fn history_event_ids_for_state(
+    ctx: &AppContext,
+    state: &super::history_impl::HistoryBranchState,
+) -> Result<BTreeSet<String>> {
+    let mut event_ids = BTreeSet::new();
+    for blob in state.archives.values().chain(state.segments.values()) {
+        event_ids.extend(history_event_ids(&read_blob(ctx, blob)?)?);
+    }
+    Ok(event_ids)
 }
 
 pub fn append_history_audit_event(

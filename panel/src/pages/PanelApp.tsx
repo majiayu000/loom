@@ -290,6 +290,7 @@ export function PanelApp() {
             registryProjections={live.projections}
             remoteState={live.remote?.sync_state ?? null}
             queuedWriteCount={live.queuedWriteCount}
+            operationCounts={live.operationCounts}
             vizMode={tweaks.vizMode}
             setVizMode={setVizMode}
             selectedSkill={selectedSkill}
@@ -336,7 +337,7 @@ export function PanelApp() {
         view = <TelemetryPage apiReachable={live.apiReachable} mode={live.mode} refreshKey={live.lastUpdated} />;
         break;
       case "ops":
-        view = <OpsPage ops={ops} onMutation={onMutation} readOnly={readOnly} />;
+        view = <OpsPage ops={ops} operationCounts={live.operationCounts} onMutation={onMutation} readOnly={readOnly} />;
         break;
       case "history":
         view = (
@@ -356,6 +357,7 @@ export function PanelApp() {
           <SyncPage
             remote={live.remote}
             queuedWriteCount={live.queuedWriteCount}
+            operationCounts={live.operationCounts}
             registryRoot={live.registryRoot}
             refreshKey={live.lastUpdated}
             readOnly={readOnly}

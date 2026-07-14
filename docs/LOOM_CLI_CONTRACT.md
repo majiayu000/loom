@@ -263,7 +263,21 @@ Response shape:
   },
   "remote": {
     "configured": false,
+    "operation_backlog": 0,
+    "operation_counts": {
+      "actionable_operations": 0,
+      "local_journal_events": 3,
+      "unpushed_history_events": 0,
+      "local_only_history_events": 400
+    },
     "sync_state": "LOCAL_ONLY"
+  },
+  "operation_backlog": 0,
+  "operation_counts": {
+    "actionable_operations": 0,
+    "local_journal_events": 3,
+    "unpushed_history_events": 0,
+    "local_only_history_events": 400
   },
   "agent_dir_defaults": {
     "agent_dirs": [
@@ -1300,6 +1314,27 @@ loom --json --root <root> ops list
 ```
 
 Read-only.
+
+`data.ops` contains actionable registry operation rows only. The canonical
+`data.operation_counts` object separates:
+
+1. `actionable_operations`
+2. `local_journal_events`
+3. `unpushed_history_events`
+4. `local_only_history_events`
+
+The buckets are mutually exclusive. In a healthy local-only registry, three
+succeeded/unacknowledged journal rows and 400 unique history events report
+`0 / 3 / 0 / 400`, not 403 pending operations. Compatibility aliases are:
+
+- `count = actionable_operations`
+- `journal_events = actionable_operations + local_journal_events`
+- `history_events = unpushed_history_events + local_only_history_events`
+
+When origin is configured, history comparison uses unique event IDs from the
+local branch and cached `origin/loom-history`. This command does not fetch, so
+the tracking ref can be stale. Parse or Git read failures return a structured
+error instead of silently reporting zero.
 
 ### 14.2 `ops retry`
 

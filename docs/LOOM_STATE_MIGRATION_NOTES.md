@@ -313,7 +313,31 @@ Focused reliability, doctor, panel, and preflight tests cover malformed
 operation journals, history conflicts, dry-run immutability, retry/purge, and
 replay behavior.
 
-### 11.5 Failure And Rollback Rules
+### 11.5 Operation Count Consumer Migration
+
+Operation count consumers must migrate from one mixed backlog number to the
+additive `operation_counts` object:
+
+| Old field | Canonical replacement |
+| --- | --- |
+| `count` on `ops list` or `/api/v1/ops/pending` | `actionable_operations` |
+| `operation_backlog` | `actionable_operations` |
+| `journal_events` | `actionable_operations + local_journal_events` |
+| `history_events` | `unpushed_history_events + local_only_history_events` |
+
+The four canonical buckets are mutually exclusive. Succeeded/unacknowledged
+journal rows are local facts when origin is absent and become actionable when
+origin is configured. Failed and non-terminal active rows stay actionable in
+both modes. Explicit `ops purge` can still tombstone every unacknowledged row.
+
+History buckets count unique event IDs across archives and segments. With an
+origin, Loom computes the local set difference against cached
+`origin/loom-history`; it does not subtract aggregate totals and does not fetch
+from read commands. Consumers that require server-fresh status must run an
+explicit sync/fetch workflow first. A local-only example with three journal
+facts and 400 history facts is `0 / 3 / 0 / 400`.
+
+### 11.6 Failure And Rollback Rules
 
 1. Append failures in the registry journal are terminal for durable mutation
    commands.
@@ -327,7 +351,7 @@ replay behavior.
    legacy writers are deleted, rollback means restoring from registry journal
    plus `loom-history`, not reviving pending queue writes.
 
-### 11.6 Verification Matrix
+### 11.7 Verification Matrix
 
 The implementation must keep these checks green:
 

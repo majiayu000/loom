@@ -121,6 +121,8 @@ jobs:
           mkdir -p "$staging"
           cp "target/${{ matrix.target }}/release/loom" "$staging/loom"
           cp README.md LICENSE "$staging/"
+          mkdir -p "$staging/skills"
+          cp -R skills/loom-registry "$staging/skills/loom-registry"
           tar -C dist -czf "dist/$archive" "skillloom-${version}-${{ matrix.target }}"
           (cd dist && shasum -a 256 "$archive" > "$archive.sha256")
 
@@ -133,6 +135,11 @@ jobs:
           unpack="$(mktemp -d)"
           tar -C "$unpack" -xzf "dist/$archive"
           bin="$unpack/skillloom-${version}-${{ matrix.target }}/loom"
+          skill="$unpack/skillloom-${version}-${{ matrix.target }}/skills/loom-registry"
+          test -f "$skill/SKILL.md"
+          test -f "$skill/agents/openai.yaml"
+          test -f "$skill/loom.skill.toml"
+          test -f "$skill/evals/triggers.jsonl"
           "$bin" --version
           "$bin" --help >/dev/null
           smoke_root="$(mktemp -d)"
@@ -279,6 +286,7 @@ jobs:
 
             def install
               bin.install "loom"
+              pkgshare.install "skills"
             end
 
             test do

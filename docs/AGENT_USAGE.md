@@ -2,7 +2,7 @@
 
 本文档定义 agent 如何稳定调用 Loom，目标是可复现、可审计、可回滚。
 
-推荐先触发 `loom` 技能（`SKILL.md`），再执行本文档中的非交互命令。
+推荐先触发仓库随发行物提供的 [`loom-registry`](../skills/loom-registry/SKILL.md) Skill，再执行本文档中的非交互命令。该 Skill 只处理本地 Loom registry/CLI，不处理 Loom.com 视频请求。
 
 `loom init` 和 `loom monitor` 是保留给快速启动的顶层别名。Agent 自动化应优先使用显式的 `workspace/target/skill/sync/ops` 命令组，避免隐藏默认路径。
 
@@ -62,10 +62,10 @@ loom --json --root "$REGISTRY_ROOT" skill monitor-observed --once
 
 1. 读取状态：`loom --json --root <registry_root> workspace status`
 2. 写入前规划：低风险已有 binding 的写入可用 `agent preflight`；需要 durable plan/idempotency 的 flow 用 `loom plan use` 后再 `loom apply`
-3. 高风险写入预演：在 `skill project` / `skill capture` / `skill rollback` / `skill trash add` / `skill trash purge` / `skill orphan clean` / `sync push` 后加 `--dry-run`；`skill rollback --preview` 仅作为兼容别名保留
-4. 保存变更：`loom --json --root <registry_root> skill save <skill>`
-5. 关键节点快照：`loom --json --root <registry_root> skill snapshot <skill>`
-6. 发布版本：`loom --json --root <registry_root> skill release <skill> vX.Y.Z`
+3. 高风险写入预演：在 `skill project` / `skill rollback` / `skill trash add` / `skill trash purge` / `skill orphan clean` / `sync push` 后加 `--dry-run`；`skill rollback --preview` 仅作为兼容别名保留
+4. 保存 source 变更：`loom --json --root <registry_root> skill commit <skill> --from-source --message <message>`
+5. 创建恢复锚点：`loom --json --root <registry_root> skill release <skill> --anchor`
+6. 发布版本：`loom --json --root <registry_root> skill release <skill> vX.Y.Z --preflight --baseline <ref>`
 7. 差异检查：`loom --json --root <registry_root> skill diff <skill> <from> <to>`
 8. 远端同步：`loom --json --root <registry_root> sync push` / `sync pull`
 
@@ -100,8 +100,8 @@ loom --json --root "$REGISTRY_ROOT" skill monitor-observed --once
 loom --json --root "$ROOT" workspace init --scan-existing
 loom --json --root "$ROOT" skill monitor-observed --once
 
-# 2) 日常保存
-loom --json --root "$ROOT" skill save "$SKILL"
+# 2) 日常保存 source 变更
+loom --json --root "$ROOT" skill commit "$SKILL" --from-source --message "$MESSAGE"
 
 # 3) 写入前规划
 loom --json --root "$ROOT" agent preflight --agent codex --workspace "$PWD" --skill "$SKILL"

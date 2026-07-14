@@ -78,9 +78,9 @@ loom skill add /path/to/fixflow --name fixflow
 loom skill add github:owner/repo//skills/fixflow --name fixflow --ref v1.2.3
 ```
 
-Use `loom skill save` after editing `skills/<skill>` inside the registry source.
-Use `loom skill capture` only when the edit happened in a live projection inside
-an agent directory.
+Use `loom skill commit <skill> --from-source` after editing
+`skills/<skill>` inside the registry source. Use `--from-projection` only when
+the edit happened in a live projection and Loom requires an explicit side.
 
 ## Validate
 
@@ -144,10 +144,10 @@ may require additional environment authorization.
 
 ## Release And Roll Back
 
-Use snapshots before risky work and semantic releases for stable versions:
+Use release anchors before risky work and semantic releases for stable versions:
 
 ```bash
-loom skill snapshot fixflow
+loom skill release fixflow --anchor
 loom skill release fixflow v1.0.0 --preflight --baseline main
 loom skill diff fixflow v1.0.0 working-tree
 ```
@@ -165,8 +165,8 @@ release.
 
 ## Current Command Status
 
-Current implemented commands include `skill new`, `skill add`, `skill save`,
-`skill capture`, `skill lint`, `skill deps`, `skill scan`, `skill activate`,
+Current implemented commands include `skill new`, `skill add`, `skill commit`,
+`skill lint`, `skill deps`, `skill scan`, `skill activate`,
 `skill deactivate`, `skill active list`, `skill inspect`, `skill diagnose`,
 `skill visibility`, `skill eval`, `skill release`, `skill rollback`, `skill diff`,
 and `codex reconcile`.

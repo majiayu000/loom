@@ -1,0 +1,9 @@
+{"id":"local-registry-health","prompt":"Inspect my local Loom Skill registry and explain why workspace doctor reports drift.","expected_trigger":true,"observed_trigger":true}
+{"id":"projection-binding","prompt":"Use the loom CLI to bind this workspace and project my review skill into Codex.","expected_trigger":true,"observed_trigger":true}
+{"id":"registry-sync","prompt":"Check whether my Git-backed skill registry has pending Loom sync operations before pushing.","expected_trigger":true,"observed_trigger":true}
+{"id":"operation-history","prompt":"Diagnose the blocked operation backlog in my Loom registry and show its history.","expected_trigger":true,"observed_trigger":true}
+{"id":"skill-lifecycle","prompt":"Create a recovery anchor for a local Skill, compare revisions, and dry-run a rollback with loom.","expected_trigger":true,"observed_trigger":true}
+{"id":"loom-video-record","prompt":"Record a Loom.com video of my screen and camera for the design review.","expected_trigger":false,"observed_trigger":false}
+{"id":"loom-video-share","prompt":"Change the sharing permissions on this Loom video link and send it to the team.","expected_trigger":false,"observed_trigger":false}
+{"id":"loom-video-transcript","prompt":"Download the transcript and captions from a Loom.com video.","expected_trigger":false,"observed_trigger":false}
+{"id":"loom-video-library","prompt":"Organize my Loom video recordings into folders and show viewer analytics.","expected_trigger":false,"observed_trigger":false}

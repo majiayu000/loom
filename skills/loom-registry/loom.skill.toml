@@ -1,0 +1,9 @@
+schema = "loom.skill.v1"
+name = "loom-registry"
+template = "coding-workflow"
+trust = "first-party"
+owners = []
+requires_tools = ["loom"]
+requires_mcp = []
+risk = "filesystem-write"
+default_activation = "manual-or-model"

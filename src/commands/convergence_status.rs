@@ -59,17 +59,170 @@ pub(crate) fn collect_convergence_status(
         complete: false,
         incomplete_axes: Vec::new(),
     };
+    let recheck_observed_at = Utc::now();
+    let (registry_recheck, _, _, _) = collect_registry_transport(
+        ctx,
+        recheck_observed_at,
+        start.revision.as_deref(),
+        start.checkpoint,
+    );
+    let projections_recheck = collect_projections(ctx, request, recheck_observed_at, &start);
+    let visibility_recheck = collect_visibility(ctx, request, recheck_observed_at, &start);
     let end = capture_freshness(ctx);
     if start != end {
         status.mark_stale("registry revision or operation checkpoint changed during collection");
     } else {
-        status.refresh_completeness();
+        apply_live_evidence_recheck(
+            &mut status,
+            &registry_recheck,
+            &projections_recheck,
+            &visibility_recheck,
+        );
     }
     ConvergenceCollection {
         status,
         remote,
         sync_state,
         warnings,
+    }
+}
+
+fn apply_live_evidence_recheck(
+    status: &mut ConvergenceStatus,
+    registry_recheck: &RegistryTransportStatus,
+    projections_recheck: &ProjectionConvergenceStatus,
+    visibility_recheck: &VisibilityStatus,
+) {
+    if !same_registry_evidence(&status.registry_transport, registry_recheck) {
+        status
+            .mark_registry_transport_stale("registry transport evidence changed during collection");
+    }
+    if !same_projection_evidence(&status.projections, projections_recheck) {
+        status.mark_projections_stale("projection evidence changed during collection");
+    }
+    if !same_visibility_evidence(&status.visibility, visibility_recheck) {
+        status.mark_visibility_stale("visibility evidence changed during collection");
+    }
+    status.refresh_completeness();
+}
+
+fn same_registry_evidence(
+    first: &RegistryTransportStatus,
+    second: &RegistryTransportStatus,
+) -> bool {
+    first.state == second.state
+        && first.evidence.get("remote") == second.evidence.get("remote")
+        && first.errors == second.errors
+}
+
+fn same_projection_evidence(
+    first: &ProjectionConvergenceStatus,
+    second: &ProjectionConvergenceStatus,
+) -> bool {
+    first.state == second.state
+        && first.evidence.get("selected_count") == second.evidence.get("selected_count")
+        && first.errors == second.errors
+        && first.items.len() == second.items.len()
+        && first.items.iter().zip(&second.items).all(|(left, right)| {
+            left.instance_id == right.instance_id
+                && left.skill_id == right.skill_id
+                && left.target_id == right.target_id
+                && left.method == right.method
+                && left.state == right.state
+                && left.source_digest == right.source_digest
+                && left.materialized_digest == right.materialized_digest
+                && left.errors == right.errors
+        })
+}
+
+fn same_visibility_evidence(first: &VisibilityStatus, second: &VisibilityStatus) -> bool {
+    first.state == second.state
+        && first.agent == second.agent
+        && first.evidence.get("reason") == second.evidence.get("reason")
+        && first.evidence.get("report") == second.evidence.get("report")
+        && first.errors == second.errors
+}
+
+#[cfg(test)]
+mod tests {
+    use chrono::Utc;
+    use serde_json::json;
+
+    use super::*;
+    use crate::core::vocab::ProjectionMethod;
+
+    fn fixture() -> ConvergenceStatus {
+        let now = Utc::now();
+        ConvergenceStatus {
+            registry_transport: RegistryTransportStatus {
+                state: RegistryTransportState::Synced,
+                evidence: json!({"remote": {"ahead": 0, "behind": 0}}),
+                observed_at: now,
+                stale: false,
+                errors: Vec::new(),
+            },
+            projections: ProjectionConvergenceStatus {
+                state: ProjectionConvergenceState::Converged,
+                items: vec![ProjectionConvergenceItem {
+                    instance_id: "projection-1".into(),
+                    skill_id: "demo".into(),
+                    target_id: "codex".into(),
+                    method: ProjectionMethod::Symlink,
+                    state: ProjectionConvergenceState::Converged,
+                    source_digest: Some("source-a".into()),
+                    materialized_digest: Some("source-a".into()),
+                    observed_at: now,
+                    errors: Vec::new(),
+                }],
+                evidence: json!({"selected_count": 1}),
+                observed_at: now,
+                stale: false,
+                errors: Vec::new(),
+            },
+            visibility: VisibilityStatus {
+                state: VisibilityState::Visible,
+                agent: Some("codex".into()),
+                evidence: json!({"report": {"visible": true, "config_digest": "config-a"}}),
+                observed_at: now,
+                stale: false,
+                errors: Vec::new(),
+            },
+            observed_at: now,
+            complete: false,
+            incomplete_axes: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn live_recheck_marks_only_changed_projection_stale() {
+        let mut status = fixture();
+        let registry = status.registry_transport.clone();
+        let mut projections = status.projections.clone();
+        let visibility = status.visibility.clone();
+        projections.items[0].materialized_digest = Some("target-b".into());
+
+        apply_live_evidence_recheck(&mut status, &registry, &projections, &visibility);
+
+        assert!(!status.registry_transport.stale);
+        assert!(status.projections.stale);
+        assert!(!status.visibility.stale);
+        assert_eq!(status.incomplete_axes, vec!["projections"]);
+    }
+
+    #[test]
+    fn live_recheck_marks_only_changed_visibility_stale() {
+        let mut status = fixture();
+        let registry = status.registry_transport.clone();
+        let projections = status.projections.clone();
+        let mut visibility = status.visibility.clone();
+        visibility.evidence["report"]["config_digest"] = json!("config-b");
+
+        apply_live_evidence_recheck(&mut status, &registry, &projections, &visibility);
+
+        assert!(!status.registry_transport.stale);
+        assert!(!status.projections.stale);
+        assert!(status.visibility.stale);
+        assert_eq!(status.incomplete_axes, vec!["visibility"]);
     }
 }
 

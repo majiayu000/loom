@@ -56,8 +56,10 @@ struct ConvergenceStatus {
    `instance_id`、`method`、`source_digest`、`materialized_digest`、`observed_at`。
 3. Visibility 复用 adapter-driven visibility report；adapter 无能力时输出
    `unsupported`，读取失败输出 `error`。
-4. Join 开始时捕获 registry HEAD 与 snapshot checkpoint；结束时重新检查。发生变化则
-   将相关轴标记 `stale=true`，不保存 observation updates。
+4. Join 开始时捕获 registry HEAD 与 snapshot checkpoint；结束时重新检查，并重新读取
+   remote transport、projection digest/链接状态与 adapter 配置/visibility report。任一 live
+   evidence 在读取期间变化时，仅将对应轴标记 `stale=true`；registry HEAD/checkpoint 变化时
+   三轴均标记 stale。读路径不得保存 observation updates。
 
 ### 4. 公共表面
 
@@ -100,7 +102,7 @@ struct ConvergenceStatus {
 | B-007 | per-axis error fixtures | `cargo test --test convergence_status axis_failure_is_not_clean` |
 | B-008 | legacy field adapter | `cargo test legacy_sync_state_matches_registry_transport` |
 | B-009 | read-only mutation snapshot assertions | `cargo test --test status --test skill_inspect` |
-| B-010 | HEAD/checkpoint race fixture | `cargo test convergence_status_marks_stale_on_race` |
+| B-010 | HEAD/checkpoint 与 live projection/visibility evidence race fixtures | `cargo test convergence_status_marks_stale_on_race && cargo test live_recheck_marks_only_changed` |
 | B-011 | legacy JSON consumer fixture | `cargo test --test cli_surface legacy_sync_state_contract` |
 | B-012 | contract/Skill/Panel terminology check | `cargo test --test cli_surface --test shipped_registry_skill` |
 | B-013 | interrupted collector fixture | `cargo test convergence_status_partial_collection` |

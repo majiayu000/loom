@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { dedupePanelOps } from "./usePanelData";
+import { convergenceWithLegacyFallback, dedupePanelOps } from "./usePanelData";
+import { ZERO_OPERATION_COUNTS } from "../../types";
 import type { Op } from "../types";
 
 function op(overrides: Partial<Op>): Op {
@@ -30,5 +31,20 @@ describe("dedupePanelOps", () => {
     const changed = op({ id: "", kind: "skill.commit", skill: "docs", target: "claude", time: "10:00" });
 
     expect(dedupePanelOps([first], [duplicate, changed])).toEqual([first, changed]);
+  });
+});
+
+describe("convergenceWithLegacyFallback", () => {
+  it("uses legacy sync only for registry transport and fails closed for other axes", () => {
+    const convergence = convergenceWithLegacyFallback(undefined, {
+      sync_state: "SYNCED",
+      operation_counts: ZERO_OPERATION_COUNTS,
+    });
+
+    expect(convergence.registry_transport.state).toBe("SYNCED");
+    expect(convergence.projections.state).toBe("unknown");
+    expect(convergence.visibility.state).toBe("unknown");
+    expect(convergence.complete).toBe(false);
+    expect(convergence.incomplete_axes).toEqual(["projections", "visibility"]);
   });
 });

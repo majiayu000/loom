@@ -1,5 +1,5 @@
 import type { RegistryProjection } from "../../generated/RegistryProjection";
-import type { OperationCounts } from "../../types";
+import type { ConvergenceStatusPayload, OperationCounts } from "../../types";
 import type { Binding, Op, ProjectionLink, Skill, Target, VizMode } from "../../lib/types";
 import { OpRow } from "../../components/panel/OpRow";
 import { ProjectionGraph } from "../../components/panel/ProjectionGraph";
@@ -17,6 +17,7 @@ interface OverviewPageProps {
   projections: ProjectionLink[];
   registryProjections: RegistryProjection[];
   remoteState: string | null;
+  convergence?: ConvergenceStatusPayload | null;
   queuedWriteCount: number;
   operationCounts: OperationCounts | null;
   vizMode: VizMode;
@@ -70,6 +71,7 @@ export function OverviewPage({
   projections,
   registryProjections,
   remoteState,
+  convergence,
   queuedWriteCount,
   operationCounts,
   vizMode,
@@ -114,7 +116,12 @@ export function OverviewPage({
     return acc;
   }, {});
   const rootDisplay = registryRoot ? registryRoot.replace(/^\/Users\/[^/]+/, "~") : "not connected";
-  const syncStateLabel = remoteState ? remoteState.toLowerCase().replace("_", " ") : "unavailable";
+  const registryTransportState = convergence?.registry_transport.state ?? remoteState;
+  const registryTransportLabel = registryTransportState
+    ? registryTransportState.toLowerCase().replace(/_/g, " ")
+    : "unavailable";
+  const projectionStateLabel = convergence?.projections.state ?? "unknown";
+  const visibilityStateLabel = convergence?.visibility.state ?? "unknown";
   const writeGuardTone = readOnly ? "warn" : "ok";
   const canAddBinding = !readOnly && targets.length > 0;
   const addBindingTitle = readOnly ? "registry offline" : !canAddBinding ? "add a target first" : undefined;
@@ -208,7 +215,14 @@ export function OverviewPage({
       : { label: "Replay / sync", onClick: onOpenSync };
   const summaryCards: KpiData[] = [
     ["Registry root", rootDisplay, registryRoot ? "workspace registry" : "root unavailable", registryRoot ? "ok" : "warn"],
-    ["Sync state", syncStateLabel, queuedWriteCount > 0 ? formatQueuedWrites(queuedWriteCount) : "queue clean", syncTone(remoteState, queuedWriteCount)],
+    [
+      "Registry transport",
+      registryTransportLabel,
+      queuedWriteCount > 0 ? formatQueuedWrites(queuedWriteCount) : "registry Git transport only",
+      syncTone(registryTransportState, queuedWriteCount),
+    ],
+    ["Projection convergence", projectionStateLabel, "live projection evidence; independent of registry transport"],
+    ["Agent visibility", visibilityStateLabel, "adapter evidence; projection presence alone is insufficient"],
     ["Actionable operations", operationCounts?.actionable_operations ?? "unavailable", "replayable or failed rows"],
     ["Local journal events", operationCounts?.local_journal_events ?? "unavailable", "local facts not requiring a remote"],
     ["Unpushed history events", operationCounts?.unpushed_history_events ?? "unavailable", "absent from cached origin history"],
@@ -387,7 +401,7 @@ export function OverviewPage({
               </pre>
               <div style={{ color: "var(--ink-3)", fontSize: 11 }}>
                 {readOnly ? (
-                  "Start the panel backend to load git HEAD and sync state."
+                  "Start the panel backend to load git HEAD and registry transport state."
                 ) : observedTargetCount > 0 ? (
                   <>
                     Observed targets are read-only imports. External edits are saved only while{" "}

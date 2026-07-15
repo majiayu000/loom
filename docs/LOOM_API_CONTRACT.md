@@ -87,6 +87,19 @@ state paths, agent directory defaults, and the redacted remote URL.
 operation backlog rows. It remains separate from `/api/v1/ops`, which is the
 activity/audit read model.
 
+`GET /api/v1/workspace/status`, `GET /api/v1/overview`,
+`GET /api/v1/skills/{skill_name}/diagnose`, and the single-Skill inspect API
+consume the CLI three-axis `data.convergence` read model unchanged:
+`registry_transport`, `projections`, and `visibility`. Panel code must not infer
+projection or visibility from a registry transport state. For an older server
+that omits `convergence`, Panel may display its legacy remote state only as
+registry transport; projection convergence and agent visibility must both be
+shown as `unknown`.
+
+`GET /api/v1/sync/status` returns `data.registry_transport` and preserves
+`data.remote` as a compatibility mirror. Registry transport covers Git remote
+and operation backlog only.
+
 The pending route, `workspace/status`, `workspace/doctor`, and `sync/status`
 share this non-overlapping counter model:
 
@@ -168,6 +181,12 @@ envelope semantics.
    being silently coerced to a known value.
 5. New Panel routes must be v1 routes. Do not add unversioned compatibility
    aliases.
+6. Partial or failed convergence collection must preserve each completed axis,
+   include structured axis errors and `incomplete_axes`, and never be rendered
+   as clean convergence.
+7. `convergence.complete` means the requested evidence collection completed; it
+   does not mean the reported axes are healthy. Clients must evaluate each axis
+   state even when `complete=true`.
 
 ## 7. Telemetry Read Model
 

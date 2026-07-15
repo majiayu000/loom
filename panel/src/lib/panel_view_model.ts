@@ -270,7 +270,7 @@ function statusForLiveData(live: PanelLiveData): ShellStatusViewModel {
     };
   }
 
-  const state = (live.remote?.sync_state ?? "").toUpperCase();
+  const state = (live.convergence?.registry_transport.state ?? live.remote?.sync_state ?? "").toUpperCase();
   if (state === "DIVERGED" || state === "CONFLICTED") {
     return { label: `remote ${state.toLowerCase()}`, title: "Remote and local history differ.", tone: "err" };
   }
@@ -473,7 +473,10 @@ export function selectPanelViewModel(live: PanelLiveData, options: PanelViewMode
       pages,
       counts: shellCounts,
       registryRoot: textField(live.registryRoot, "workspace root is unavailable"),
-      remoteState: textField(live.remote?.sync_state, "remote sync state is unavailable"),
+      remoteState: textField(
+        live.convergence?.registry_transport.state ?? live.remote?.sync_state,
+        "registry transport state is unavailable",
+      ),
       readOnly: options.readOnly,
       readOnlyReason,
     },

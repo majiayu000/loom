@@ -10,11 +10,11 @@ use crate::state_model::{RegistryProjectionInstance, RegistrySnapshot, RegistryS
 use crate::types::ErrorCode;
 
 use super::codex_visibility::{CODEX_AGENT, build_agent_visibility_report};
+use super::convergence_status::{ConvergenceRequest, collect_convergence_status};
 use super::helpers::{map_arg, map_io, map_registry_state, validate_skill_name};
 use super::history_cmds::operation_mentions_skill as registry_operation_mentions_skill;
 use super::projections::{
-    ProjectionObservationUpdate, apply_projection_observation,
-    apply_projection_observation_updates, projection_observation_check,
+    ProjectionObservationUpdate, apply_projection_observation, projection_observation_check,
 };
 use super::skill_deps::skill_dependency_report;
 use super::skill_verify::{
@@ -36,30 +36,22 @@ impl App {
         validate_skill_name(skill).map_err(map_arg)?;
         let agent = args.agent();
         if args.check() == SkillDiagnoseCheck::Drift {
-            return super::skill_verify::skill_drift_report(&self.ctx, skill);
+            let (mut data, mut meta) = super::skill_verify::skill_drift_report(&self.ctx, skill)?;
+            attach_convergence(&self.ctx, skill, agent, &mut data, &mut meta);
+            return Ok((data, meta));
         }
-        let persist_observations = args.persist_observations();
         let paths = RegistryStatePaths::from_app_context(&self.ctx);
-        let mut snapshot = paths.maybe_load_snapshot().map_err(map_registry_state)?;
-        let (mut data, meta, projection_updates) = build_skill_diagnosis(
+        let snapshot = paths.maybe_load_snapshot().map_err(map_registry_state)?;
+        let (mut data, mut meta, _projection_updates) = build_skill_diagnosis(
             &self.ctx,
             skill,
             dependency_checks::dependency_agent(agent),
             snapshot.as_ref(),
         )?;
-        if persist_observations
-            && agent.is_none()
-            && !projection_updates.is_empty()
-            && let Some(snapshot) = snapshot.as_mut()
-        {
-            apply_projection_observation_updates(&mut snapshot.projections, &projection_updates);
-            paths
-                .save_projections(&snapshot.projections)
-                .map_err(map_registry_state)?;
-        }
         if let Some(agent) = agent {
             attach_agent_visibility(&self.ctx, skill, agent, &mut data)?;
         }
+        attach_convergence(&self.ctx, skill, agent, &mut data, &mut meta);
         Ok((data, meta))
     }
 }
@@ -68,7 +60,6 @@ pub trait SkillDiagnoseRequest {
     fn skill(&self) -> &str;
     fn agent(&self) -> Option<AgentKind>;
     fn check(&self) -> SkillDiagnoseCheck;
-    fn persist_observations(&self) -> bool;
 }
 
 impl SkillDiagnoseRequest for SkillDiagnoseArgs {
@@ -82,10 +73,6 @@ impl SkillDiagnoseRequest for SkillDiagnoseArgs {
 
     fn check(&self) -> SkillDiagnoseCheck {
         self.check
-    }
-
-    fn persist_observations(&self) -> bool {
-        true
     }
 }
 
@@ -101,10 +88,27 @@ impl SkillDiagnoseRequest for SkillOnlyArgs {
     fn check(&self) -> SkillDiagnoseCheck {
         SkillDiagnoseCheck::All
     }
+}
 
-    fn persist_observations(&self) -> bool {
-        false
-    }
+fn attach_convergence(
+    ctx: &AppContext,
+    skill: &str,
+    agent: Option<AgentKind>,
+    data: &mut Value,
+    meta: &mut Meta,
+) {
+    let convergence = collect_convergence_status(
+        ctx,
+        ConvergenceRequest {
+            skill: Some(skill),
+            agent: agent.map(AgentKind::as_str),
+            workspace: None,
+            profile: None,
+        },
+    );
+    data["convergence"] = json!(convergence.status);
+    meta.sync_state = convergence.sync_state;
+    meta.warnings.extend(convergence.warnings);
 }
 
 fn attach_agent_visibility(

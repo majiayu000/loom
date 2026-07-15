@@ -289,6 +289,7 @@ export function PanelApp() {
             projections={viewModel.graphLinks}
             registryProjections={live.projections}
             remoteState={live.remote?.sync_state ?? null}
+            convergence={live.convergence}
             queuedWriteCount={live.queuedWriteCount}
             operationCounts={live.operationCounts}
             vizMode={tweaks.vizMode}

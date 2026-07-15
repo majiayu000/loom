@@ -30,9 +30,23 @@ JSON envelope 关键字段：
 - `error.code`
 - `error.message`
 - `meta.warnings`
-- `meta.sync_state`
+- `meta.sync_state`（仅兼容 registry transport）
+- `data.convergence.registry_transport`
+- `data.convergence.projections`
+- `data.convergence.visibility`
 
-`meta.sync_state` 是 agent 做同步决策时应优先读取的顶层状态。部分命令也会在 `data.remote.sync_state` 中返回远端细节视图；两者同时存在时，先按 `meta.sync_state` 分支，再把 `data.remote.sync_state` 作为诊断信息记录。
+新 agent 必须优先读取 `data.convergence` 的三个独立状态轴。`meta.sync_state` 与 `data.remote.sync_state` 仅表示 registry Git transport/backlog，兼容保留到下一个 major version；它们不能证明 projection 已收敛，也不能证明当前 agent/session 已加载 Skill。
+
+判定顺序：
+
+1. `registry_transport` 判断 registry remote/backlog；
+2. `projections` 判断实时文件、method、digest/链接证据；
+3. `visibility` 判断 adapter 可见性与 `restart_required`；
+4. 任一轴为 `unknown` / `error` / `stale=true`，或出现在 `incomplete_axes` 时，不得宣称完整收敛。
+5. `complete=true` 只证明请求的状态轴证据已采集完成，不代表这些轴 healthy；仍必须逐轴判断，
+   例如 projection 为 `missing` 时必须修复 projection。
+
+合法示例：registry transport 为 `SYNCED`，同时 projection 为 `drifted`；这只表示远端同步，不是运行时完成。
 
 ## 3. 首次接管（推荐流程）
 
@@ -76,7 +90,7 @@ loom --json --root "$REGISTRY_ROOT" skill monitor-observed --once
 - `meta.warnings` 不为空时，视为“成功但有风险”，需写入运行日志。
 - `agent preflight` 和 `--dry-run` 返回 `ok=true` 不代表可以直接写入；必须同时检查 `data.safe_to_run=true`。`plan use` 返回 `ok=true` 只表示 plan 已持久化；`apply` 前仍要检查 `required_approvals`。
 - `--dry-run` 只允许写 command audit，不应改变 registry ops、operation backlog、Git refs/index 或 live target 内容；`skill rollback --dry-run` 连 command audit 也不会追加。
-- `sync_state=LOCAL_ONLY` 或 `PENDING_PUSH` 时，不应宣称“远端已同步”。
+- `registry_transport.state=LOCAL_ONLY` 或 `PENDING_PUSH` 时，不应宣称“远端已同步”。即使为 `SYNCED`，也必须独立检查 projection convergence 与 agent visibility。
 - 读命令（如 `workspace status`、`workspace doctor`、`target list`）不会修改 registry state、Git refs/index、live target 目录或 operation backlog；它们会写入 durable command event。registry 写操作审计以 `meta.op_id` / `/api/v1/ops` 为准。
 
 ## 6. 常见失败码处理

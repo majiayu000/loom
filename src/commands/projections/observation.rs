@@ -6,7 +6,7 @@ use chrono::{DateTime, Utc};
 use serde_json::{Value, json};
 
 use crate::state::AppContext;
-use crate::state_model::{RegistryProjectionInstance, RegistryProjectionsFile};
+use crate::state_model::RegistryProjectionInstance;
 
 use super::super::provenance::{materialized_tree_digest, skill_tree_digest};
 
@@ -106,21 +106,6 @@ pub(crate) fn apply_projection_observation(
     projection.last_observed_at = Some(observation.observed_at);
     projection.last_observed_error = observation.error_code.map(str::to_string);
     projection.updated_at = Some(observation.observed_at);
-}
-
-pub(crate) fn apply_projection_observation_updates(
-    projections: &mut RegistryProjectionsFile,
-    updates: &[ProjectionObservationUpdate],
-) {
-    for update in updates {
-        if let Some(projection) = projections
-            .projections
-            .iter_mut()
-            .find(|projection| projection.instance_id == update.instance_id)
-        {
-            apply_projection_observation(projection, &update.observation);
-        }
-    }
 }
 
 pub(crate) fn projection_observation_check(

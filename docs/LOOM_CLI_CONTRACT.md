@@ -159,7 +159,8 @@ Rules:
 4. `request_id` is echoed back if supplied, otherwise generated.
 5. `meta.op_id` is required for successful writes and omitted for pure reads.
 6. Successful envelopes keep `error: null` so agents can rely on a stable field shape.
-7. `meta.sync_state`, when present, is the authoritative top-level sync status for agent decisions. Command-specific fields such as `data.remote.sync_state` are detail views for diagnostics.
+7. `meta.sync_state`, when present, describes registry Git transport/backlog only. It is deprecated for new consumers, remains through the next major version, and must equal `data.convergence.registry_transport.state` when a convergence object is present. It does not prove projection convergence or agent visibility.
+8. New consumers use `data.convergence.registry_transport`, `data.convergence.projections`, and `data.convergence.visibility`. Missing axes fail closed and must not be interpreted as healthy.
 
 ## 7. Error Object
 
@@ -272,6 +273,13 @@ Response shape:
     },
     "sync_state": "LOCAL_ONLY"
   },
+  "convergence": {
+    "registry_transport": { "state": "LOCAL_ONLY", "evidence": {}, "stale": false, "errors": [] },
+    "projections": { "state": "not_applicable", "items": [], "evidence": {}, "stale": false, "errors": [] },
+    "visibility": { "state": "unsupported", "agent": null, "evidence": {}, "stale": false, "errors": [] },
+    "complete": true,
+    "incomplete_axes": []
+  },
   "operation_backlog": 0,
   "operation_counts": {
     "actionable_operations": 0,
@@ -287,6 +295,19 @@ Response shape:
   }
 }
 ```
+
+`registry_transport` describes the registry remote and operation backlog only.
+`projections` comes from live existence/method/digest or symlink evidence, while
+`visibility` requires adapter evidence. Cross-axis combinations such as
+`registry_transport.state=SYNCED` with `projections.state=drifted` are valid and
+must not be collapsed into one success state. Every axis includes an observation
+timestamp or revision/digest evidence; a revision/checkpoint race sets `stale=true`
+and lists the affected axis in `incomplete_axes`.
+
+`complete` describes evidence collection only: all requested axes were observed
+without an unknown/error/stale result. It is never a convergence-health verdict.
+Consumers must inspect every axis state; for example, `complete=true` with
+`projections.state=missing` still requires projection repair.
 
 Requirements:
 
@@ -428,7 +449,7 @@ mutate only local telemetry state when telemetry is enabled.
 Rules:
 
 1. `skill list`, `skill inspect --brief`, and `skill search` reuse the same union read model as `GET /api/v1/skills`.
-2. `skill inspect` returns the canonical single-skill status model with stable top-level keys: `skill`, `source`, `spec`, `provenance`, `runtime`, `dependencies`, `quality`, `safety`, `telemetry`, `compiled`, and `next_actions`.
+2. `skill inspect` returns the canonical single-skill status model with stable top-level keys: `skill`, `source`, `spec`, `provenance`, `runtime`, `dependencies`, `quality`, `safety`, `telemetry`, `compiled`, `convergence`, and `next_actions`.
 3. `skill inspect --brief` returns the compact inventory shape previously used by the dedicated single-skill inventory view.
 4. `skill inspect` separates registry source presence, entrypoint presence, Git drift fields, portable lint, agent compatibility lint, binding rules, projection instances, materialized path health, and unknown agent-specific visibility.
 5. `skill inspect --agent <agent>` filters runtime sections for that agent while preserving top-level source, spec, provenance, quality, safety, and next action fields.
@@ -534,12 +555,12 @@ Rules:
 loom --json --root <root> skill diagnose <skill-id>
 ```
 
-Default skill diagnosis observes registered projections. For `copy` and `materialize` projections, it compares source and live projection content digests, writes the latest observation back to `state/registry/projections.json`, and reports a `projection_content_digest:<instance_id>` check. `skill diagnose --agent codex` remains read-only as specified above.
+Default skill diagnosis observes registered projections without persisting the observation. For `copy` and `materialize` projections, it compares source and live projection content digests and reports a `projection_content_digest:<instance_id>` check plus the same `convergence` object used by inspect and visibility.
 
 Rules:
 
-1. healthy copy/materialize observations record matching `source_tree_digest`, `materialized_tree_digest`, `last_observed_at`, and `last_observed_error: null`
-2. digest mismatches record `health: "drifted"`, `observed_drift: true`, and `last_observed_error: "digest_mismatch"`
+1. healthy copy/materialize observations return matching source/materialized digests in `data.convergence.projections.items[]`
+2. digest mismatches return `projections.state: "drifted"` and a structured `digest_mismatch` item error without changing `state/registry/projections.json`
 3. missing source, missing live path, and unreadable source/live path are distinct machine-readable observation errors
 4. symlink projections remain path-checked; content digest fields are for copy/materialize projections
 
@@ -1278,6 +1299,10 @@ loom --json --root <root> sync status
 ```
 
 Read-only.
+
+The primary field is `data.registry_transport`; `data.remote` remains an exact
+compatibility mirror for the current major version. `sync status` does not
+claim projection convergence or agent visibility.
 
 ### 13.2 `sync push`
 

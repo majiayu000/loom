@@ -45,6 +45,62 @@ export type RemotePayload = {
   sync_state?: string;
 };
 
+export type RegistryTransportState =
+  | "SYNCED"
+  | "PENDING_PUSH"
+  | "DIVERGED"
+  | "CONFLICTED"
+  | "LOCAL_ONLY"
+  | "ERROR";
+
+export type ProjectionConvergenceState =
+  | "converged"
+  | "drifted"
+  | "missing"
+  | "conflict"
+  | "not_applicable"
+  | "unknown"
+  | "error";
+
+export type VisibilityState =
+  | "visible"
+  | "not_visible"
+  | "restart_required"
+  | "unsupported"
+  | "unknown"
+  | "error";
+
+export type ConvergenceAxisError = { code: string; message: string };
+
+export type ConvergenceStatusPayload = {
+  registry_transport: {
+    state: RegistryTransportState;
+    evidence?: unknown;
+    observed_at?: string;
+    stale?: boolean;
+    errors?: ConvergenceAxisError[];
+  };
+  projections: {
+    state: ProjectionConvergenceState;
+    items: unknown[];
+    evidence?: unknown;
+    observed_at?: string;
+    stale?: boolean;
+    errors?: ConvergenceAxisError[];
+  };
+  visibility: {
+    state: VisibilityState;
+    agent?: string | null;
+    evidence?: unknown;
+    observed_at?: string;
+    stale?: boolean;
+    errors?: ConvergenceAxisError[];
+  };
+  observed_at?: string;
+  complete: boolean;
+  incomplete_axes: string[];
+};
+
 export type OperationCounts = {
   actionable_operations: number;
   local_journal_events: number;

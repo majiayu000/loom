@@ -1,5 +1,6 @@
 use std::collections::BTreeSet;
 
+use chrono::Utc;
 use serde_json::json;
 
 use crate::cli::{HistoryRepairStrategyArg, OpsCommand, OpsHistoryCommand, SyncCommand};
@@ -8,6 +9,7 @@ use crate::gitops;
 use crate::state::AppContext;
 use crate::types::ErrorCode;
 
+use super::convergence_status::registry_transport_status;
 use super::helpers::{
     map_git, map_io, map_lock, map_push_rejected, map_remote_unreachable, map_replay_conflict,
 };
@@ -22,7 +24,23 @@ impl App {
         match command {
             SyncCommand::Status => {
                 let (remote, meta) = remote_status_payload(&self.ctx)?;
-                Ok((json!({"remote": remote}), meta))
+                let sync_state = meta.sync_state.as_ref().ok_or_else(|| {
+                    CommandFailure::new(
+                        ErrorCode::StateCorrupt,
+                        "registry transport status omitted meta.sync_state",
+                    )
+                })?;
+                let observed_revision = gitops::head(&self.ctx).ok();
+                let transport = registry_transport_status(
+                    &remote,
+                    sync_state,
+                    Utc::now(),
+                    observed_revision.as_deref(),
+                );
+                Ok((
+                    json!({"registry_transport": transport, "remote": remote}),
+                    meta,
+                ))
             }
             SyncCommand::Push(args) if args.dry_run => self.cmd_sync_push_plan(),
             SyncCommand::Push(_) => {

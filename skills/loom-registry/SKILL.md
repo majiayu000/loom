@@ -71,7 +71,11 @@ Use `--from-source` or `--from-projection` only when the detected drift requires
 
 ## Handle Sync And Operations
 
-- Read `meta.sync_state` before claiming remote state. `LOCAL_ONLY` and `PENDING_PUSH` do not mean remotely synchronized.
+- Read all three `data.convergence` axes before claiming runtime completion: `registry_transport`, `projections`, and `visibility`.
+- Treat `meta.sync_state` as a compatibility-only registry transport field. `LOCAL_ONLY` and `PENDING_PUSH` do not mean remotely synchronized; `SYNCED` does not mean projections converged or the current agent session loaded the Skill.
+- Accept cross-axis states as evidence, not contradictions. For example, `registry_transport=SYNCED` with `projections=drifted` requires projection repair, while `projections=converged` with `visibility=restart_required` requires a new agent session.
+- Treat `complete=true` as evidence-collection completeness only, never as a health verdict; inspect every axis state before declaring convergence.
+- Fail closed when an axis is absent, `unknown`, `error`, `stale=true`, or named in `incomplete_axes`. Never replace missing visibility evidence with filesystem presence.
 - Run `sync push --dry-run` before a real push when supported by the requested flow.
 - On `REMOTE_DIVERGED`, pull and resolve explicitly; on `PUSH_REJECTED`, do not force-push.
 - Preserve blocked or failed operation records. Use operation history and diagnosis before retry or repair.
@@ -82,7 +86,7 @@ Use `--from-source` or `--from-projection` only when the detected drift requires
 After a change:
 
 1. Re-run the narrow read-only inspection that proves the requested outcome.
-2. Surface warnings, approval decisions, operation IDs, Git commits, and sync state.
+2. Surface warnings, approval decisions, operation IDs, Git commits, registry transport, projection convergence, and agent visibility separately.
 3. State any restart or new-session requirement for agent discovery; file presence alone does not prove the current session loaded a Skill.
 4. Do not report success from a dry-run or plan response.
 

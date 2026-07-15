@@ -51,7 +51,7 @@ pub(crate) enum VisibilityState {
     Error,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Eq, PartialEq, Serialize)]
 pub(crate) struct AxisError {
     pub code: String,
     pub message: String,
@@ -147,13 +147,33 @@ impl ConvergenceStatus {
     }
 
     pub(crate) fn mark_stale(&mut self, reason: &str) {
-        let error = || AxisError::new("evidence_changed_during_read", reason);
+        self.mark_registry_transport_stale(reason);
+        self.mark_projections_stale(reason);
+        self.mark_visibility_stale(reason);
+        self.refresh_completeness();
+    }
+
+    pub(crate) fn mark_registry_transport_stale(&mut self, reason: &str) {
         self.registry_transport.stale = true;
-        self.registry_transport.errors.push(error());
+        self.registry_transport
+            .errors
+            .push(AxisError::new("evidence_changed_during_read", reason));
+        self.refresh_completeness();
+    }
+
+    pub(crate) fn mark_projections_stale(&mut self, reason: &str) {
         self.projections.stale = true;
-        self.projections.errors.push(error());
+        self.projections
+            .errors
+            .push(AxisError::new("evidence_changed_during_read", reason));
+        self.refresh_completeness();
+    }
+
+    pub(crate) fn mark_visibility_stale(&mut self, reason: &str) {
         self.visibility.stale = true;
-        self.visibility.errors.push(error());
+        self.visibility
+            .errors
+            .push(AxisError::new("evidence_changed_during_read", reason));
         self.refresh_completeness();
     }
 }

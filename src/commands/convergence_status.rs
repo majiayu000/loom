@@ -37,10 +37,32 @@ struct Freshness {
     checkpoint: Option<DateTime<Utc>>,
 }
 
+struct LiveEvidenceRecheck {
+    registry_transport: RegistryTransportStatus,
+    projections: ProjectionConvergenceStatus,
+    visibility: VisibilityStatus,
+}
+
 pub(crate) fn collect_convergence_status(
     ctx: &AppContext,
     request: ConvergenceRequest<'_>,
 ) -> ConvergenceCollection {
+    collect_convergence_status_with_recheck(ctx, request, collect_live_evidence_recheck)
+}
+
+fn collect_convergence_status_with_recheck<F>(
+    ctx: &AppContext,
+    request: ConvergenceRequest<'_>,
+    recheck: F,
+) -> ConvergenceCollection
+where
+    F: FnOnce(
+        &AppContext,
+        ConvergenceRequest<'_>,
+        DateTime<Utc>,
+        &Freshness,
+    ) -> LiveEvidenceRecheck,
+{
     let observed_at = Utc::now();
     let start = capture_freshness(ctx);
     let (registry_transport, remote, sync_state, warnings) = collect_registry_transport(
@@ -59,11 +81,17 @@ pub(crate) fn collect_convergence_status(
         complete: false,
         incomplete_axes: Vec::new(),
     };
+    let recheck = recheck(ctx, request, Utc::now(), &start);
     let end = capture_freshness(ctx);
     if start != end {
         status.mark_stale("registry revision or operation checkpoint changed during collection");
     } else {
-        status.refresh_completeness();
+        apply_live_evidence_recheck(
+            &mut status,
+            &recheck.registry_transport,
+            &recheck.projections,
+            &recheck.visibility,
+        );
     }
     ConvergenceCollection {
         status,
@@ -71,6 +99,81 @@ pub(crate) fn collect_convergence_status(
         sync_state,
         warnings,
     }
+}
+
+fn collect_live_evidence_recheck(
+    ctx: &AppContext,
+    request: ConvergenceRequest<'_>,
+    observed_at: DateTime<Utc>,
+    freshness: &Freshness,
+) -> LiveEvidenceRecheck {
+    let (registry_transport, _, _, _) = collect_registry_transport(
+        ctx,
+        observed_at,
+        freshness.revision.as_deref(),
+        freshness.checkpoint,
+    );
+    LiveEvidenceRecheck {
+        registry_transport,
+        projections: collect_projections(ctx, request, observed_at, freshness),
+        visibility: collect_visibility(ctx, request, observed_at, freshness),
+    }
+}
+
+fn apply_live_evidence_recheck(
+    status: &mut ConvergenceStatus,
+    registry_recheck: &RegistryTransportStatus,
+    projections_recheck: &ProjectionConvergenceStatus,
+    visibility_recheck: &VisibilityStatus,
+) {
+    if !same_registry_evidence(&status.registry_transport, registry_recheck) {
+        status
+            .mark_registry_transport_stale("registry transport evidence changed during collection");
+    }
+    if !same_projection_evidence(&status.projections, projections_recheck) {
+        status.mark_projections_stale("projection evidence changed during collection");
+    }
+    if !same_visibility_evidence(&status.visibility, visibility_recheck) {
+        status.mark_visibility_stale("visibility evidence changed during collection");
+    }
+    status.refresh_completeness();
+}
+
+fn same_registry_evidence(
+    first: &RegistryTransportStatus,
+    second: &RegistryTransportStatus,
+) -> bool {
+    first.state == second.state
+        && first.evidence.get("remote") == second.evidence.get("remote")
+        && first.errors == second.errors
+}
+
+fn same_projection_evidence(
+    first: &ProjectionConvergenceStatus,
+    second: &ProjectionConvergenceStatus,
+) -> bool {
+    first.state == second.state
+        && first.evidence.get("selected_count") == second.evidence.get("selected_count")
+        && first.errors == second.errors
+        && first.items.len() == second.items.len()
+        && first.items.iter().zip(&second.items).all(|(left, right)| {
+            left.instance_id == right.instance_id
+                && left.skill_id == right.skill_id
+                && left.target_id == right.target_id
+                && left.method == right.method
+                && left.state == right.state
+                && left.source_digest == right.source_digest
+                && left.materialized_digest == right.materialized_digest
+                && left.errors == right.errors
+        })
+}
+
+fn same_visibility_evidence(first: &VisibilityStatus, second: &VisibilityStatus) -> bool {
+    first.state == second.state
+        && first.agent == second.agent
+        && first.evidence.get("reason") == second.evidence.get("reason")
+        && first.evidence.get("report") == second.evidence.get("report")
+        && first.errors == second.errors
 }
 
 pub(crate) fn registry_transport_status(
@@ -435,3 +538,6 @@ fn binding_matches_workspace(
         _ => false,
     }
 }
+
+#[cfg(test)]
+mod tests;

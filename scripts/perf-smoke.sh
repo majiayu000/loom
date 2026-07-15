@@ -97,20 +97,23 @@ fi
 
 python3 - "$bin" <<'PY'
 import gzip
+import json
 import math
+import os
 import pathlib
 import subprocess
 import sys
+import tempfile
 import time
 
-bin_path = sys.argv[1]
+bin_path = str(pathlib.Path(sys.argv[1]).resolve())
 
-def measure(args, limit_ms):
-    subprocess.run(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+def measure(args, limit_ms, *, cwd=None, env=None):
+    subprocess.run(args, cwd=cwd, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
     samples = []
     for _ in range(20):
         start = time.perf_counter()
-        subprocess.run(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+        subprocess.run(args, cwd=cwd, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
         samples.append((time.perf_counter() - start) * 1000)
     samples.sort()
     p95 = samples[math.ceil(len(samples) * 0.95) - 1]
@@ -120,6 +123,64 @@ def measure(args, limit_ms):
 
 measure([bin_path, "--version"], 300)
 measure([bin_path, "--help"], 300)
+
+# Exercise the convergence collector itself so its two live-evidence passes
+# remain inside a user-visible read latency budget.
+with tempfile.TemporaryDirectory(prefix="loom-perf-convergence-") as root:
+    root_path = pathlib.Path(root)
+    skill_path = root_path / "skills" / "demo" / "SKILL.md"
+    skill_path.parent.mkdir(parents=True)
+    skill_path.write_text("---\nname: demo\ndescription: Performance fixture.\n---\n# Demo\n")
+    home_path = root_path / "home"
+    target_root = home_path / ".claude" / "skills"
+    projection_path = target_root / "demo"
+    projection_path.mkdir(parents=True)
+    (projection_path / "SKILL.md").write_text(skill_path.read_text())
+    registry = root_path / "state" / "registry"
+    (registry / "ops").mkdir(parents=True)
+
+    def write_json(name, payload):
+        (registry / name).write_text(json.dumps(payload) + "\n")
+
+    timestamp = "2026-07-15T00:00:00Z"
+    write_json("schema.json", {"schema_version": 1, "created_at": timestamp, "writer": "perf-smoke"})
+    write_json("targets.json", {"schema_version": 1, "targets": [{
+        "target_id": "target_claude_perf", "agent": "claude", "path": str(target_root),
+        "ownership": "managed", "capabilities": {"symlink": True, "copy": True, "watch": True},
+        "created_at": timestamp,
+    }]})
+    write_json("bindings.json", {"schema_version": 1, "bindings": [{
+        "binding_id": "bind_claude_perf", "agent": "claude", "profile_id": "default",
+        "workspace_matcher": {"kind": "path_prefix", "value": root},
+        "default_target_id": "target_claude_perf", "policy_profile": "safe-capture",
+        "active": True, "created_at": timestamp,
+    }]})
+    write_json("rules.json", {"schema_version": 1, "rules": [{
+        "binding_id": "bind_claude_perf", "skill_id": "demo", "target_id": "target_claude_perf",
+        "method": "copy", "watch_policy": "observe_only", "created_at": timestamp,
+    }]})
+    write_json("projections.json", {"schema_version": 1, "projections": [{
+        "instance_id": "inst_demo_claude_perf", "skill_id": "demo", "binding_id": "bind_claude_perf",
+        "target_id": "target_claude_perf", "materialized_path": str(projection_path), "method": "copy",
+        "last_applied_rev": "perf", "health": "healthy", "observed_drift": False,
+        "updated_at": timestamp,
+    }]})
+    write_json("ops/checkpoint.json", {
+        "schema_version": 1, "last_scanned_op_id": None, "last_acked_op_id": None, "updated_at": timestamp,
+    })
+    (registry / "ops" / "operations.jsonl").write_text("")
+    env = os.environ.copy()
+    env["HOME"] = str(home_path)
+    common = [bin_path, "--json", "--root", root]
+    inspect_args = common + ["skill", "inspect", "demo", "--agent", "claude"]
+    probe = subprocess.run(inspect_args, cwd=root, env=env, capture_output=True, text=True, check=True)
+    convergence = json.loads(probe.stdout)["data"]["convergence"]
+    if convergence["projections"]["state"] != "converged":
+        raise SystemExit("perf fixture did not exercise a converged projection")
+    if convergence["visibility"]["state"] != "visible":
+        raise SystemExit("perf fixture did not exercise adapter visibility")
+    measure(common + ["workspace", "status"], 1000, cwd=root, env=env)
+    measure(inspect_args, 1000, cwd=root, env=env)
 
 dist = pathlib.Path("panel/dist")
 if not dist.is_dir():

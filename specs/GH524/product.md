@@ -88,7 +88,7 @@ Complexity: large
 
 ```bash
 loom --json --root "$ROOT" skill converge "$SKILL" --dry-run
-loom --json --root "$ROOT" skill converge "$SKILL" --apply --idempotency-key "$KEY"
+loom --json --root "$ROOT" skill converge "$SKILL" --apply --plan-digest "$PLAN_DIGEST" --idempotency-key "$KEY"
 ```
 
 命令名需要维护者批准；无论最终命令形态如何，B-001..B-015 保持不变。

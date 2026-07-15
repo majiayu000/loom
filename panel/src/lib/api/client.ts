@@ -3,6 +3,7 @@ import type {
   InfoPayload,
   PendingPayload,
   RegistryOperationRecord,
+  ConvergenceStatusPayload,
   RemotePayload,
   RegistryPayload,
 } from "../../types";
@@ -103,11 +104,14 @@ export interface SkillsPayload {
 
 export interface RemoteStatusResponse {
   remote?: RemotePayload;
+  registry_transport?: ConvergenceStatusPayload["registry_transport"];
   warnings?: string[];
 }
 
 export interface WorkspaceStatusPayload {
   state_model?: string;
+  remote?: RemotePayload;
+  convergence?: ConvergenceStatusPayload;
   registry?: {
     available?: boolean;
     error?: { code?: string; message?: string };

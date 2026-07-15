@@ -1,6 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { RegistryProjection } from "../../generated/RegistryProjection";
-import type { HealthPayload, InfoPayload, OperationCounts, RemotePayload, RegistryPayload } from "../../types";
+import type {
+  ConvergenceStatusPayload,
+  HealthPayload,
+  InfoPayload,
+  OperationCounts,
+  RemotePayload,
+  RegistryPayload,
+} from "../../types";
 import type { Binding, Op, Skill, Target } from "../types";
 import {
   adaptBinding,
@@ -28,6 +35,7 @@ export interface PanelLiveData {
   registryRoot: string | null;
   agentDirs: AgentDir[];
   remote: RemotePayload | null;
+  convergence: ConvergenceStatusPayload | null;
   warnings: string[];
   health: HealthPayload | null;
   counts: RegistryCounts;
@@ -60,6 +68,7 @@ const INITIAL_STATE: LiveState = {
   registryRoot: null,
   agentDirs: [],
   remote: null,
+  convergence: null,
   warnings: [],
   health: null,
   counts: EMPTY_COUNTS,
@@ -83,6 +92,7 @@ function hasLastKnownData(state: LiveState): boolean {
     state.lastUpdated !== null ||
     state.registryRoot !== null ||
     state.remote !== null ||
+    state.convergence !== null ||
     state.health !== null
   );
 }
@@ -120,6 +130,37 @@ function requireOperationCounts(value: unknown): OperationCounts {
     }
   }
   return counts as OperationCounts;
+}
+
+export function convergenceWithLegacyFallback(
+  convergence: ConvergenceStatusPayload | undefined,
+  remote: RemotePayload | null,
+): ConvergenceStatusPayload {
+  if (convergence) return convergence;
+  const registryState = (remote?.sync_state ?? "ERROR").toUpperCase() as ConvergenceStatusPayload["registry_transport"]["state"];
+  return {
+    registry_transport: {
+      state: registryState,
+      evidence: { source: "legacy_remote_only", remote },
+      stale: false,
+      errors: remote?.sync_state ? [] : [{ code: "legacy_sync_state_missing", message: "legacy server omitted remote sync state" }],
+    },
+    projections: {
+      state: "unknown",
+      items: [],
+      evidence: { source: "legacy_remote_only" },
+      stale: false,
+      errors: [{ code: "legacy_axis_missing", message: "legacy server omitted projection convergence" }],
+    },
+    visibility: {
+      state: "unknown",
+      evidence: { source: "legacy_remote_only" },
+      stale: false,
+      errors: [{ code: "legacy_axis_missing", message: "legacy server omitted agent visibility" }],
+    },
+    complete: false,
+    incomplete_axes: ["projections", "visibility"],
+  };
 }
 
 export function dedupePanelOps(pendingOps: Op[], activityOps: Op[]): Op[] {
@@ -193,6 +234,7 @@ export function usePanelData(): PanelLiveData {
             registryRoot: info.data.root ?? null,
             agentDirs: info.data.agent_dirs ?? [],
             remote: null,
+            convergence: convergenceWithLegacyFallback(workspaceStatus.data.convergence, workspaceStatus.data.remote ?? null),
             warnings: baseWarnings,
             health,
             counts: EMPTY_COUNTS,
@@ -266,6 +308,10 @@ export function usePanelData(): PanelLiveData {
           registryRoot: info.data.root ?? null,
           agentDirs: info.data.agent_dirs ?? [],
           remote: remote.data.remote ?? null,
+          convergence: convergenceWithLegacyFallback(
+            workspaceStatus.data.convergence,
+            remote.data.remote ?? null,
+          ),
           warnings,
           health,
           counts: registryData.counts ?? EMPTY_COUNTS,

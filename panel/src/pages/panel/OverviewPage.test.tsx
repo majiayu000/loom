@@ -204,7 +204,7 @@ describe("OverviewPage observed import", () => {
       ],
     });
 
-    expect(controlCard("Sync state")).toHaveAttribute("data-tone", "err");
+    expect(controlCard("Registry transport")).toHaveAttribute("data-tone", "err");
     expect(controlCard("Projection health")).toHaveAttribute("data-tone", "warn");
   });
 
@@ -224,7 +224,7 @@ describe("OverviewPage observed import", () => {
       ],
     });
 
-    expect(controlCard("Sync state")).toHaveAttribute("data-tone", "err");
+    expect(controlCard("Registry transport")).toHaveAttribute("data-tone", "err");
     expect(controlCard("Projection health")).toHaveAttribute("data-tone", "err");
   });
 });

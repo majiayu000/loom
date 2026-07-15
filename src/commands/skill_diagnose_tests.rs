@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command as ProcessCommand;
 
 use chrono::Utc;
-use serde_json::json;
+use serde_json::{Value, json};
 use uuid::Uuid;
 
 use crate::cli::{SkillDiagnoseArgs, SkillDiagnoseCheck, SkillOnlyArgs};
@@ -173,7 +173,7 @@ fn read_persisted_projection(root: &Path) -> serde_json::Value {
 }
 
 #[test]
-fn skill_diagnose_persists_copy_projection_digest_drift() {
+fn skill_diagnose_reports_copy_projection_digest_drift_without_persisting() {
     let root = test_root();
     write_skill(&root, "demo");
     commit_all(&root);
@@ -211,42 +211,29 @@ fn skill_diagnose_persists_copy_projection_digest_drift() {
     assert_eq!(digest_check["ok"], json!(false));
     assert_eq!(digest_check["severity"], json!("warning"));
     assert_eq!(digest_check["details"]["status"], json!("drifted"));
+    assert_eq!(
+        payload["convergence"]["projections"]["state"],
+        json!("drifted")
+    );
 
     let projection_record = read_persisted_projection(&root);
-    assert_eq!(projection_record["health"], json!("drifted"));
-    assert_eq!(projection_record["observed_drift"], json!(true));
-    assert_eq!(
-        projection_record["last_observed_error"],
-        json!("digest_mismatch")
-    );
-    assert_ne!(
-        projection_record["source_tree_digest"],
-        projection_record["materialized_tree_digest"]
-    );
-    assert!(
-        projection_record["source_tree_digest"]
-            .as_str()
-            .is_some_and(|digest| digest.starts_with("sha256:"))
-    );
-    assert!(
-        projection_record["last_observed_at"].as_str().is_some(),
-        "diagnose should persist observation timestamp"
-    );
+    assert_eq!(projection_record["health"], json!("healthy"));
+    assert_eq!(projection_record["observed_drift"], json!(false));
+    assert_eq!(projection_record["last_observed_error"], Value::Null);
+    assert_eq!(projection_record["source_tree_digest"], Value::Null);
+    assert_eq!(projection_record["materialized_tree_digest"], Value::Null);
+    assert_eq!(projection_record["last_observed_at"], Value::Null);
 
     let (status, _) = app(&root).cmd_status().expect("status");
     assert_eq!(
         status["registry"]["counts"]["drifted_projections"],
-        json!(1)
-    );
-    assert_eq!(
-        status["registry"]["projections"][0]["observation_status"],
-        json!("drifted")
+        json!(0)
     );
     let _ = fs::remove_dir_all(root);
 }
 
 #[test]
-fn skill_diagnose_persists_symlink_projection_target_drift() {
+fn skill_diagnose_reports_symlink_projection_target_drift_without_persisting() {
     let root = test_root();
     write_skill(&root, "demo");
     commit_all(&root);
@@ -274,28 +261,25 @@ fn skill_diagnose_persists_symlink_projection_target_drift() {
     assert_eq!(symlink_check["ok"], json!(false));
     assert_eq!(symlink_check["severity"], json!("warning"));
     assert_eq!(symlink_check["details"]["status"], json!("drifted"));
+    assert_eq!(
+        payload["convergence"]["projections"]["state"],
+        json!("drifted")
+    );
 
     let projection_record = read_persisted_projection(&root);
-    assert_eq!(projection_record["health"], json!("drifted"));
-    assert_eq!(projection_record["observed_drift"], json!(true));
-    assert_eq!(
-        projection_record["last_observed_error"],
-        json!("symlink_target_mismatch")
-    );
+    assert_eq!(projection_record["health"], json!("healthy"));
+    assert_eq!(projection_record["observed_drift"], json!(false));
+    assert_eq!(projection_record["last_observed_error"], Value::Null);
     let (status, _) = app(&root).cmd_status().expect("status");
     assert_eq!(
         status["registry"]["counts"]["drifted_projections"],
-        json!(1)
-    );
-    assert_eq!(
-        status["registry"]["projections"][0]["observation_status"],
-        json!("drifted")
+        json!(0)
     );
     let _ = fs::remove_dir_all(root);
 }
 
 #[test]
-fn skill_diagnose_persists_materialize_projection_missing_live_path() {
+fn skill_diagnose_reports_missing_materialize_projection_without_persisting() {
     let root = test_root();
     write_skill(&root, "demo");
     commit_all(&root);
@@ -327,22 +311,19 @@ fn skill_diagnose_persists_materialize_projection_missing_live_path() {
         digest_check["details"]["error"],
         json!("materialized_missing")
     );
+    assert_eq!(
+        payload["convergence"]["projections"]["state"],
+        json!("missing")
+    );
 
     let projection_record = read_persisted_projection(&root);
-    assert_eq!(projection_record["health"], json!("missing"));
-    assert_eq!(projection_record["observed_drift"], json!(true));
-    assert_eq!(
-        projection_record["last_observed_error"],
-        json!("materialized_missing")
-    );
+    assert_eq!(projection_record["health"], json!("healthy"));
+    assert_eq!(projection_record["observed_drift"], json!(false));
+    assert_eq!(projection_record["last_observed_error"], Value::Null);
     let (status, _) = app(&root).cmd_status().expect("status");
     assert_eq!(
         status["registry"]["counts"]["drifted_projections"],
-        json!(1)
-    );
-    assert_eq!(
-        status["registry"]["projections"][0]["observation_status"],
-        json!("missing")
+        json!(0)
     );
     let _ = fs::remove_dir_all(root);
 }
@@ -397,13 +378,14 @@ fn skill_diagnose_observes_materialize_projection_with_user_compiled_marker() {
         .expect("projection digest check");
     assert_eq!(digest_check["ok"], json!(false));
     assert_eq!(digest_check["details"]["error"], json!("digest_mismatch"));
+    assert_eq!(
+        payload["convergence"]["projections"]["state"],
+        json!("drifted")
+    );
 
     let projection_record = read_persisted_projection(&root);
-    assert_eq!(projection_record["health"], json!("drifted"));
-    assert_eq!(
-        projection_record["last_observed_error"],
-        json!("digest_mismatch")
-    );
+    assert_eq!(projection_record["health"], json!("healthy"));
+    assert_eq!(projection_record["last_observed_error"], Value::Null);
     let _ = fs::remove_dir_all(root);
 }
 

@@ -20,6 +20,7 @@ use super::codex_visibility::{
     CODEX_AGENT, CodexReconcileAction, CodexReconcileRequest, build_agent_visibility_report,
     build_codex_visibility_report, path_exists_or_symlink, projection_path_is_safe_symlink,
 };
+use super::convergence_status::{ConvergenceRequest, collect_convergence_status};
 use super::helpers::{
     commit_registry_state, map_git, map_io, map_lock, map_project_io, map_registry_state,
     projection_instance_id,
@@ -51,7 +52,25 @@ impl App {
                 args.profile.as_deref(),
             )?
         };
-        Ok((json!(report), Meta::default()))
+        let convergence = collect_convergence_status(
+            &self.ctx,
+            ConvergenceRequest {
+                skill: Some(&args.skill),
+                agent: Some(args.agent.as_str()),
+                workspace: args.workspace.as_deref(),
+                profile: args.profile.as_deref(),
+            },
+        );
+        let mut data = json!(report);
+        data["convergence"] = json!(convergence.status);
+        Ok((
+            data,
+            Meta {
+                warnings: convergence.warnings,
+                sync_state: convergence.sync_state,
+                op_id: None,
+            },
+        ))
     }
 
     pub fn cmd_codex_reconcile(

@@ -206,6 +206,14 @@ enabled = false
 
     assert!(output.status.success(), "visibility should succeed: {env}");
     assert_eq!(env["data"]["visible"], Value::Bool(false));
+    assert_eq!(
+        env["data"]["convergence"]["projections"]["state"],
+        json!("converged")
+    );
+    assert_eq!(
+        env["data"]["convergence"]["visibility"]["state"],
+        json!("restart_required")
+    );
     let checks = env["data"]["checks"].as_array().expect("checks");
     for id in [
         "codex_config_not_disabled_by_path",

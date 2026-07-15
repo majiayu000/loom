@@ -1,3 +1,4 @@
+mod command;
 mod evidence;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -7,28 +8,18 @@ use std::path::{Path, PathBuf};
 use serde::Serialize;
 use serde_json::{Value, json};
 
-use crate::cli::SkillInspectArgs;
-use crate::envelope::Meta;
 use crate::gitops;
 use crate::state::AppContext;
 use crate::state_model::{
-    RegistryBindingRule, RegistryProjectionInstance, RegistrySnapshot, RegistryStatePaths,
-    RegistryWorkspaceBinding,
+    RegistryBindingRule, RegistryProjectionInstance, RegistrySnapshot, RegistryWorkspaceBinding,
 };
-use crate::types::ErrorCode;
 
-use super::helpers::{map_arg, map_git, map_io, map_registry_state, validate_skill_name};
+use super::helpers::{map_git, map_io};
 use super::provenance::{provenance_digest_status, provenance_record_status};
-use super::skill_compile::compiled_artifact_summary;
-use super::skill_deps::skill_dependency_report;
-use super::skill_inventory::skill_brief_payload;
-use super::skill_safety::trust_metadata_for_skill;
 use super::skill_verify::{
     drifted_paths_under, head_tree_oid_for_path, last_commit_for_path, last_saved_commit_for_skill,
 };
-use super::telemetry::skill_telemetry_summary;
-use super::{App, CommandFailure, SkillLintMode, lint_skill_source, lint_skill_source_for_agent};
-use evidence::{build_quality_evidence, build_safety_evidence};
+use super::{CommandFailure, SkillLintMode, lint_skill_source, lint_skill_source_for_agent};
 
 #[derive(Debug, Serialize)]
 struct SourceStatus {
@@ -95,109 +86,6 @@ struct Selector<'a> {
     agent: Option<&'a str>,
     workspace: Option<&'a Path>,
     profile: Option<&'a str>,
-}
-
-impl App {
-    pub fn cmd_skill_inspect(
-        &self,
-        args: &SkillInspectArgs,
-    ) -> std::result::Result<(Value, Meta), CommandFailure> {
-        if args.brief {
-            return skill_brief_payload(&self.ctx, &args.skill);
-        }
-        validate_skill_name(&args.skill).map_err(map_arg)?;
-        let agent = args.agent.as_ref().map(|agent| agent.to_ascii_lowercase());
-        let selector = Selector {
-            agent: agent.as_deref(),
-            workspace: args.workspace.as_deref(),
-            profile: args.profile.as_deref(),
-        };
-        let paths = RegistryStatePaths::from_app_context(&self.ctx);
-        let snapshot = paths.maybe_load_snapshot().map_err(map_registry_state)?;
-        let skill_path = self.ctx.skill_path(&args.skill);
-        let source_exists = skill_path.is_dir();
-        let referenced = snapshot
-            .as_ref()
-            .is_some_and(|snapshot| snapshot_references_skill(snapshot, &args.skill));
-
-        if !source_exists && !referenced {
-            return Err(CommandFailure::new(
-                ErrorCode::SkillNotFound,
-                format!("skill '{}' not found", args.skill),
-            ));
-        }
-
-        let source = build_source_status(&self.ctx, &args.skill, &skill_path, source_exists)?;
-        let spec = build_spec_status(&self.ctx.root, &args.skill, &skill_path, source_exists);
-        let provenance = build_provenance_status(&self.ctx, &args.skill, source_exists)?;
-        let trust = trust_metadata_for_skill(&self.ctx, &args.skill)?;
-        let dependencies = if source_exists {
-            Some(skill_dependency_report(
-                &self.ctx,
-                &args.skill,
-                selector.agent,
-                selector.workspace,
-            )?)
-        } else {
-            None
-        };
-        let runtime = build_runtime_status(
-            &args.skill,
-            &skill_path,
-            source_exists,
-            snapshot.as_ref(),
-            selector,
-        );
-        let mut next_actions = build_next_actions(&args.skill, &spec, &runtime, source_exists);
-
-        if spec.findings.iter().any(|finding| {
-            finding["severity"].as_str() == Some("error")
-                || finding["severity"].as_str() == Some("warning")
-        }) {
-            push_unique(
-                &mut next_actions,
-                format!("loom skill lint {} --portable", args.skill),
-            );
-        }
-        push_unique(&mut next_actions, format!("loom skill eval {}", args.skill));
-        push_unique(
-            &mut next_actions,
-            format!("loom skill policy {}", args.skill),
-        );
-        let telemetry = if args.include_telemetry {
-            Some(skill_telemetry_summary(&self.ctx, &args.skill)?)
-        } else {
-            None
-        };
-        let compiled = compiled_artifact_summary(&self.ctx, &args.skill)?;
-        let quality =
-            build_quality_evidence(&self.ctx, &args.skill, source_exists, &source.drifted_paths);
-        let safety = build_safety_evidence(
-            &self.ctx,
-            &args.skill,
-            &trust,
-            source_exists,
-            snapshot.as_ref(),
-            selector,
-        );
-
-        Ok((
-            json!({
-                "skill": args.skill,
-                "source": source,
-                "spec": spec,
-                "provenance": provenance,
-                "runtime": runtime,
-                "dependencies": dependencies,
-                "quality": quality,
-                "safety": safety,
-                "telemetry": telemetry,
-                "compiled": compiled,
-                "next_actions": next_actions,
-            }),
-            Meta::default(),
-        ))
-    }
 }
 
 fn snapshot_references_skill(snapshot: &RegistrySnapshot, skill: &str) -> bool {

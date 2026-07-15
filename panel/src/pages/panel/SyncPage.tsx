@@ -108,7 +108,7 @@ export function SyncPage({ remote, queuedWriteCount, operationCounts, registryRo
       />
       <div className="page-body">
         <div className="kpi-row">
-          <Kpi label="Sync state" value={formatSyncState(state)} tone={stateTone} valueKind="status" />
+          <Kpi label="Registry transport" value={formatSyncState(state)} tone={stateTone} valueKind="status" />
           <Kpi label="Ahead" value={remote?.ahead ?? 0} />
           <Kpi label="Behind" value={remote?.behind ?? 0} />
           <Kpi

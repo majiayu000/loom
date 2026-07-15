@@ -4,6 +4,7 @@ mod codex_cmds;
 mod codex_config;
 mod codex_reconcile_plan;
 mod codex_visibility;
+mod convergence_status;
 mod event_store;
 mod file_ops;
 mod fs_probe;

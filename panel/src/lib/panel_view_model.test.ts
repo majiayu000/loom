@@ -35,6 +35,7 @@ function liveData(overrides: Partial<PanelLiveData> = {}): PanelLiveData {
     queuedWriteCount: 0,
     refetch: () => {},
     ...overrides,
+    convergence: overrides.convergence ?? null,
   };
 }
 

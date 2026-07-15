@@ -6,9 +6,10 @@ use crate::state::resolve_agent_skill_dirs;
 use crate::state_model::RegistryStatePaths;
 use crate::types::ErrorCode;
 
+use super::super::convergence_status::{ConvergenceRequest, collect_convergence_status};
 use super::super::file_ops::read_git_field;
 use super::super::helpers::{map_io, map_registry_state};
-use super::super::projections::{collect_skill_inventory, remote_status_payload_with_counts};
+use super::super::projections::collect_skill_inventory;
 use super::super::{App, CommandFailure};
 
 impl App {
@@ -74,8 +75,13 @@ impl App {
         );
         let status_short = read_git_field(&self.ctx, &["status", "--short"], &mut git_warnings);
 
-        let (remote, mut meta) =
-            remote_status_payload_with_counts(&self.ctx, &operation_counts, Vec::new())?;
+        let convergence = collect_convergence_status(&self.ctx, ConvergenceRequest::default());
+        let remote = convergence.remote.unwrap_or(Value::Null);
+        let mut meta = Meta {
+            warnings: convergence.warnings,
+            sync_state: convergence.sync_state,
+            op_id: None,
+        };
         meta.warnings.splice(0..0, git_warnings);
         meta.warnings.extend(skill_inventory.warnings);
         let source_skill_sample = skill_inventory
@@ -132,6 +138,7 @@ impl App {
                 "target_ids": registered_target_ids
             },
             "remote": remote,
+            "convergence": convergence.status,
             "operation_backlog": operation_backlog,
             "operation_counts": operation_counts,
             "registry": registry_status

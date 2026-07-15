@@ -43,6 +43,8 @@ JSON envelope 关键字段：
 2. `projections` 判断实时文件、method、digest/链接证据；
 3. `visibility` 判断 adapter 可见性与 `restart_required`；
 4. 任一轴为 `unknown` / `error` / `stale=true`，或出现在 `incomplete_axes` 时，不得宣称完整收敛。
+5. `complete=true` 只证明请求的状态轴证据已采集完成，不代表这些轴 healthy；仍必须逐轴判断，
+   例如 projection 为 `missing` 时必须修复 projection。
 
 合法示例：registry transport 为 `SYNCED`，同时 projection 为 `drifted`；这只表示远端同步，不是运行时完成。
 

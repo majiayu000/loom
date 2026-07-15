@@ -74,6 +74,7 @@ Use `--from-source` or `--from-projection` only when the detected drift requires
 - Read all three `data.convergence` axes before claiming runtime completion: `registry_transport`, `projections`, and `visibility`.
 - Treat `meta.sync_state` as a compatibility-only registry transport field. `LOCAL_ONLY` and `PENDING_PUSH` do not mean remotely synchronized; `SYNCED` does not mean projections converged or the current agent session loaded the Skill.
 - Accept cross-axis states as evidence, not contradictions. For example, `registry_transport=SYNCED` with `projections=drifted` requires projection repair, while `projections=converged` with `visibility=restart_required` requires a new agent session.
+- Treat `complete=true` as evidence-collection completeness only, never as a health verdict; inspect every axis state before declaring convergence.
 - Fail closed when an axis is absent, `unknown`, `error`, `stale=true`, or named in `incomplete_axes`. Never replace missing visibility evidence with filesystem presence.
 - Run `sync push --dry-run` before a real push when supported by the requested flow.
 - On `REMOTE_DIVERGED`, pull and resolve explicitly; on `PUSH_REJECTED`, do not force-push.

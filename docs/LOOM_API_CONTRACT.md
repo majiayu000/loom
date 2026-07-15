@@ -184,6 +184,9 @@ envelope semantics.
 6. Partial or failed convergence collection must preserve each completed axis,
    include structured axis errors and `incomplete_axes`, and never be rendered
    as clean convergence.
+7. `convergence.complete` means the requested evidence collection completed; it
+   does not mean the reported axes are healthy. Clients must evaluate each axis
+   state even when `complete=true`.
 
 ## 7. Telemetry Read Model
 

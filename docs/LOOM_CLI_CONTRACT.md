@@ -304,6 +304,11 @@ must not be collapsed into one success state. Every axis includes an observation
 timestamp or revision/digest evidence; a revision/checkpoint race sets `stale=true`
 and lists the affected axis in `incomplete_axes`.
 
+`complete` describes evidence collection only: all requested axes were observed
+without an unknown/error/stale result. It is never a convergence-health verdict.
+Consumers must inspect every axis state; for example, `complete=true` with
+`projections.state=missing` still requires projection repair.
+
 Requirements:
 
 1. must explain resolved bindings

@@ -33,28 +33,32 @@ Complexity: medium
 2. **B-002** shipped `loom-registry` Skill 必须声明支持的 contract version 范围；运行时 CLI
    不在范围内时，Skill 指令必须要求 agent 停止 mutation，并给出安装匹配版本的建议。
 3. **B-003** 仓库必须维护一个明确的 agent-facing surface inventory，至少覆盖 README、
-   `AGENT_USAGE.md`、`SINGLE_SKILL_LIFECYCLE.md`、`loom-registry/SKILL.md`、公开
-   `next_actions` 与 release package smoke；新增公开表面但未登记时 CI 必须失败。
+   `AGENT_USAGE.md`、`SINGLE_SKILL_LIFECYCLE.md`、`loom-registry/SKILL.md`、Panel mutation
+   labels、公开 `next_actions`、release package smoke 与 Homebrew share；新增公开表面或
+   `next_actions` producer 但未登记时 CI 必须失败。
 4. **B-004** inventory 中标记 executable 的每个命令示例必须由当前 CLI parser 验证 command
-   与 flags；placeholder 可以替换为 fixture 值，但不得通过删除参数来使示例通过。
+   与 flags，并确认解析路径属于公开可见命令；parser 接受 hidden/deferred 命令不等于公开契约
+   有效。placeholder 可以替换为 fixture 值，但不得通过删除参数来使示例通过。
 5. **B-005** 被删除的 command/flag 出现在任一 active agent-facing surface 时 CI 必须失败；
    只检查少量 denylist 字符串不满足此不变量。
-6. **B-006** 解释性、输出展示或 legacy 示例必须显式标记类别；未分类的 shell command 默认
-   按 executable 检查，不能静默跳过。
+6. **B-006** 分类粒度必须达到单个 example/行区间，而不是整文件；解释性、输出展示或 legacy
+   示例必须显式标记类别。未分类的 fenced shell 或 inline code 中的 `loom` command 默认按
+   executable 检查，不能静默跳过。
 7. **B-007** contract check 必须是只读且确定性的：不得修改文档、Git index/refs、registry、
    live targets 或用户 home；相同 tree 与 binary 重跑得到相同结果。
 8. **B-008** parser 或文档读取失败必须导致 gate 失败，并报告文件、示例标识和解析错误；
    不得 warning 后继续发布。
 9. **B-009** release archive 中 binary、Skill metadata 和 contract inventory 必须来自同一
-   release version；混合旧 Skill + 新 CLI 或新 Skill + 旧 CLI 的负例必须被拒绝。
+   release version；manifest 必须绑定 binary、shipped Skill 内容和 inventory 的 digest。混合旧
+   Skill + 新 CLI 或新 Skill + 旧 CLI 的负例必须被拒绝。
 10. **B-010** 兼容范围变更必须是显式 reviewable diff；patch release 不得在没有 migration
     note 的情况下缩小兼容范围。
 11. **B-011** 高上下文文件只允许人类/评审过的补丁修改；检查工具发现漂移时只输出建议和失败
     证据，不得自动修复。
 12. **B-012** 并发构建或取消检查不得留下被部分更新的 generated contract artifact；发布只能
     消费已完成且校验通过的 artifact。
-13. **B-013** 缺少 CLI binary、Skill metadata、inventory 或 fixture 时，check 必须 fail closed；
-    空 inventory 与“没有需要检查的命令”不等价。
+13. **B-013** 缺少 CLI binary、Skill metadata、surface/emitter inventory、manifest 或 fixture 时，
+    check 必须 fail closed；空 inventory 与“没有需要检查的命令”不等价。
 
 ## 边界清单
 
@@ -77,8 +81,12 @@ Complexity: medium
 2. 将 release Skill 的 contract range 改为不包含 binary version 时，package smoke 失败。
 3. contract check 前后 `git status --short`、用户 home 与 registry fixture 没有变化。
 4. #524 新增公开 workflow 时，若未登记 inventory 与 compatibility，相关 PR 无法通过 gate。
+5. 新增一个未登记的 `next_actions` producer 时，CI 在 parser fixture 运行前即因 coverage 失败。
+6. 并发生成或在 publish 前注入取消时，最终 artifact 只能是完整旧版本或完整新版本。
 
 ## 开放问题
 
 1. `cli_contract_version` 是否与 crate semver 同步，还是独立递增；技术规格选择独立整数，等待
    维护者确认。
+2. 当前 crate 只有 binary target。维护者需在“抽出可复用 parser library”与“增加只读 contract
+   checker surface”之间选择；未批准前不得假设 integration test 能直接 import `Cli`。

@@ -35,10 +35,12 @@ Complexity: medium
 3. **B-003** 仓库必须维护一个明确的 agent-facing surface inventory，至少覆盖 README、
    `AGENT_USAGE.md`、`SINGLE_SKILL_LIFECYCLE.md`、`loom-registry/SKILL.md`、Panel mutation
    labels、公开 `next_actions`、release package smoke 与 Homebrew share；新增公开表面或
-   `next_actions` producer 但未登记时 CI 必须失败。
+   `next_actions` producer 但未登记时 CI 必须失败。每个 producer 的 fixture trace 必须携带可观测的
+   stable emitter id；仅输出相同 command text 不能证明对应 producer 已被覆盖。
 4. **B-004** inventory 中标记 executable 的每个命令示例必须由当前 CLI parser 验证 command
-   与 flags，并确认解析路径属于公开可见命令；parser 接受 hidden/deferred 命令不等于公开契约
-   有效。placeholder 可以替换为 fixture 值，但不得通过删除参数来使示例通过。
+   与 flags，并确认解析路径及实际使用的每个 flag/option 都属于公开可见 surface；公开 command
+   上的 hidden/deferred flag 同样不得进入公开契约。parser 接受 hidden/deferred command 或 flag
+   不等于公开契约有效。placeholder 可以替换为 fixture 值，但不得通过删除参数来使示例通过。
 5. **B-005** 被删除的 command/flag 出现在任一 active agent-facing surface 时 CI 必须失败；
    只检查少量 denylist 字符串不满足此不变量。
 6. **B-006** 分类粒度必须达到单个 example/行区间，而不是整文件；解释性、输出展示或 legacy
@@ -51,8 +53,9 @@ Complexity: medium
 9. **B-009** release archive 中 binary、Skill metadata 和 contract inventory 必须来自同一
    release version；manifest 必须绑定 binary、shipped Skill 内容和 inventory 的 digest。混合旧
    Skill + 新 CLI 或新 Skill + 旧 CLI 的负例必须被拒绝。
-10. **B-010** 兼容范围变更必须是显式 reviewable diff；patch release 不得在没有 migration
-    note 的情况下缩小兼容范围。
+10. **B-010** 兼容范围变更必须是显式 reviewable diff；range-policy gate 必须接收并校验明确的
+    base tree/SHA，缺失或不可读取时 fail closed。patch release 不得在没有 migration note 的情况下
+    缩小兼容范围。
 11. **B-011** 高上下文文件只允许人类/评审过的补丁修改；检查工具发现漂移时只输出建议和失败
     证据，不得自动修复。
 12. **B-012** 并发构建或取消检查不得留下被部分更新的 generated contract artifact；发布只能
@@ -83,6 +86,9 @@ Complexity: medium
 4. #524 新增公开 workflow 时，若未登记 inventory 与 compatibility，相关 PR 无法通过 gate。
 5. 新增一个未登记的 `next_actions` producer 时，CI 在 parser fixture 运行前即因 coverage 失败。
 6. 并发生成或在 publish 前注入取消时，最终 artifact 只能是完整旧版本或完整新版本。
+7. 在公开 command 示例中加入 hidden flag（例如 `--max-cycles`）时，public visibility gate 失败。
+8. 两个 producer 发出相同 command text 时，fixture 只运行其中一个不能覆盖另一个 emitter id。
+9. range-policy check 未获得可读取的显式 diff base 时失败，不得只验证最终 tree 后通过。
 
 ## 开放问题
 

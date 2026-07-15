@@ -11,7 +11,7 @@ contract identity → surface inventory/parser checker → Skill compatibility �
 
 ## Implementation Tasks
 
-- [ ] `SP523-T001` Owner: CLI contract | Dependencies: approved specs | Done when: 单一 `CLI_CONTRACT_VERSION` 进入 JSON envelope，breaking/additive 规则写入 CLI contract | Verify: `cargo test contract_version_is_exposed_and_declared` | Covers: B-001, B-010
+- [ ] `SP523-T001` Owner: CLI contract | Dependencies: approved specs | Done when: 单一 `CLI_CONTRACT_VERSION` 以 `cli_contract_version` 字段进入 JSON envelope，breaking/additive 规则写入 CLI contract | Verify: `cargo test cli_contract_version_is_exposed_and_declared` | Covers: B-001, B-010
 - [ ] `SP523-T002` Owner: Agent Skill | Dependencies: SP523-T001 | Done when: `loom.skill.toml` 声明 contract range，Skill 对 missing/out-of-range CLI 仅允许 read-only diagnosis 并阻止 mutation | Verify: `cargo test --test shipped_registry_skill --test agent_contract_surfaces incompatible_cli_blocks_mutation` | Covers: B-001, B-002, B-009, B-013
 - [ ] `SP523-T003` Owner: surface inventory | Dependencies: SP523-T001 | Done when: review-owned inventory 覆盖所有 active agent-facing surfaces，classification 闭集且空 inventory 失败 | Verify: `cargo test --test agent_contract_surfaces inventory_covers_public_surfaces` | Covers: B-003, B-006, B-013
 - [ ] `SP523-T004` Owner: parser checker | Dependencies: SP523-T003 | Done when: executable 示例与实际 `next_actions` 使用 Clap parser 验证，错误定位到 stable id/file/line/argv | Verify: `cargo test --test agent_contract_surfaces executable_examples_parse removed_commands_fail parse_failure_is_terminal` | Covers: B-004, B-005, B-006, B-008

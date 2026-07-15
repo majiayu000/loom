@@ -102,7 +102,7 @@ struct ConvergenceStatus {
 | B-007 | per-axis error fixtures | `cargo test --test convergence_status axis_failure_is_not_clean` |
 | B-008 | legacy field adapter | `cargo test legacy_sync_state_matches_registry_transport` |
 | B-009 | read-only mutation snapshot assertions | `cargo test --test status --test skill_inspect` |
-| B-010 | HEAD/checkpoint 与 live projection/visibility evidence race fixtures | `cargo test convergence_status_marks_stale_on_race && cargo test live_recheck_marks_only_changed` |
+| B-010 | HEAD/checkpoint 与 live registry/projection/visibility evidence race fixtures | `cargo test convergence_status_marks_stale_on_race && cargo test collector_recheck_marks_only_changed` |
 | B-011 | legacy JSON consumer fixture | `cargo test --test cli_surface legacy_sync_state_contract` |
 | B-012 | contract/Skill/Panel terminology check | `cargo test --test cli_surface --test shipped_registry_skill` |
 | B-013 | interrupted collector fixture | `cargo test convergence_status_partial_collection` |

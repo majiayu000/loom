@@ -98,19 +98,21 @@ fi
 python3 - "$bin" <<'PY'
 import gzip
 import math
+import os
 import pathlib
 import subprocess
 import sys
+import tempfile
 import time
 
-bin_path = sys.argv[1]
+bin_path = str(pathlib.Path(sys.argv[1]).resolve())
 
-def measure(args, limit_ms):
-    subprocess.run(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+def measure(args, limit_ms, *, cwd=None, env=None):
+    subprocess.run(args, cwd=cwd, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
     samples = []
     for _ in range(20):
         start = time.perf_counter()
-        subprocess.run(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+        subprocess.run(args, cwd=cwd, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
         samples.append((time.perf_counter() - start) * 1000)
     samples.sort()
     p95 = samples[math.ceil(len(samples) * 0.95) - 1]
@@ -120,6 +122,19 @@ def measure(args, limit_ms):
 
 measure([bin_path, "--version"], 300)
 measure([bin_path, "--help"], 300)
+
+# Exercise the convergence collector itself so its two live-evidence passes
+# remain inside a user-visible read latency budget.
+with tempfile.TemporaryDirectory(prefix="loom-perf-convergence-") as root:
+    root_path = pathlib.Path(root)
+    skill_path = root_path / "skills" / "demo" / "SKILL.md"
+    skill_path.parent.mkdir(parents=True)
+    skill_path.write_text("---\nname: demo\ndescription: Performance fixture.\n---\n# Demo\n")
+    env = os.environ.copy()
+    env["HOME"] = str(root_path / "home")
+    common = [bin_path, "--json", "--root", root]
+    measure(common + ["workspace", "status"], 1000, cwd=root, env=env)
+    measure(common + ["skill", "inspect", "demo"], 1000, cwd=root, env=env)
 
 dist = pathlib.Path("panel/dist")
 if not dist.is_dir():

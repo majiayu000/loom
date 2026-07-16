@@ -3,7 +3,7 @@
 Issue: https://github.com/majiayu000/loom/issues/524
 Depends on: #522 contract decision
 Related: #454, #478, #497, #498, #512, #523
-Status: Draft for maintainer review
+Status: Maintainer architecture decisions approved; Draft spec amendment
 Locale: zh-CN
 Complexity: large
 
@@ -15,7 +15,7 @@ Complexity: large
 
 ## 目标
 
-1. 提供一个 dry-run-first、幂等、scope-bounded 的 Skill convergence workflow。
+1. 提供一个 durable-plan-first、幂等、scope-bounded 的 Skill convergence workflow。
 2. 正常编辑路径以 canonical registry source 为唯一写入源，live projection edit 作为显式恢复
    输入。
 3. 在一个 convergence identity 下协调 source history、全部选定 active projections、registry
@@ -32,17 +32,19 @@ Complexity: large
 
 ## 行为不变量
 
-1. **B-001** dry-run 必须解析一个 Skill、输入方向、精确 target/binding/projection 集合、每项
+1. **B-001** durable plan 必须解析一个 Skill、输入方向、精确 target/binding/projection 集合、每项
    method、visibility/reload 检查和 remote policy；任何未解析 selector 必须阻断 apply。
 2. **B-002** 默认 source 方向只读取 canonical registry source；projection 内容只有在调用者
    显式选择 projection input 且唯一定位 instance 时才能成为 capture 输入。
 3. **B-003** source 与任一 projection 同时 dirty，或多个 projection 提供不一致 dirty 内容时，
    workflow 必须返回 conflict 与逐项 evidence；不得自动选择“最新”一方。
-4. **B-004** dry-run 必须完全只读，不创建 plan/state/audit/Git ref/index/live path；输出必须与
-   apply 使用同形 effect plan。
-5. **B-005** apply 必须要求非空 idempotency key；同一 key + 同一 plan 重试返回原结果且不重复
-   commit、projection swap、operation record 或 remote push；同一 key + 不同 plan 必须阻断。
-6. **B-006** apply 开始后必须持有 workspace/Skill 写锁，并验证 dry-run evidence 中的 source
+4. **B-004** `plan converge` 只允许持久化 immutable durable plan 与 command audit；不得修改
+   source、registry domain state、operation backlog、Git ref/index、live path 或 remote。plan 输出
+   必须与 apply 使用同形 effect plan。
+5. **B-005** apply 必须要求 `plan_id`、匹配的非空 `plan_digest` 与非空 idempotency key；同一 key +
+   同一 plan 重试返回原结果且不重复 commit、projection swap、operation record 或 remote push；
+   digest 不匹配或同一 key 用于不同 plan 必须阻断。
+6. **B-006** apply 开始后必须持有 workspace/Skill 写锁，并验证 durable plan evidence 中的 source
    HEAD、registry checkpoint 与 projection digests；任一 stale guard 使 apply 在写前失败。
 7. **B-007** symlink projection 在安全指向 canonical source 时不得无意义重建；copy projection
    必须原子替换为 source 字节；materialize projection 必须按其变换规则重建并验证 digest。
@@ -59,13 +61,18 @@ Complexity: large
     加载。
 12. **B-012** remote transport 是本地事务后的显式可选阶段。未请求 push 时返回
     `not_requested`；请求后 remote 失败不得回滚已经验证的本地 commit，而必须返回
-    `local_complete_remote_pending` 与可幂等重试的 next action。
+    `local_complete_remote_pending` 与可幂等重试的 next action。若 required runtime 同时处于未接受的
+    `restart_required`，必须保留两个 blocker，并返回
+    `local_complete_remote_pending_restart_required`；不得用单一状态覆盖另一轴。
 13. **B-013** target ownership、policy、approval 或 filesystem safety 阻断时，apply 不得绕过
     gate、降级 method 或扩大 scope；错误必须指出被阻断的 effect。
 14. **B-014** 中断发生在本地 commit 前时必须回滚 staging；发生在本地 commit 后时必须能通过
     `convergence_id` 恢复/重试，且不得产生第二个 source commit。
-15. **B-015** workflow complete 只表示本次声明的 required axes 均有成功 evidence；
-    `restart_required` 可以是可接受完成状态，但必须由 plan 明确声明，不得默认视为 visible。
+15. **B-015** workflow complete 只表示本次声明的 required axes 均有成功 evidence；默认情况下
+    `restart_required` 不满足 required runtime axis，并返回 `local_complete_restart_required` 与
+    `complete=false`。只有 durable plan 显式记录 `accept_restart_required=true` 时才可返回
+    `complete_with_restart_required` 与 `complete=true`；visibility state 始终保持
+    `restart_required`，不得改写为 `visible`。
 
 ## 边界清单
 
@@ -84,14 +91,15 @@ Complexity: large
 
 ## 用户流程
 
-默认候选表面：
+维护者批准的公共表面：
 
 ```bash
-loom --json --root "$ROOT" skill converge "$SKILL" --dry-run
-loom --json --root "$ROOT" skill converge "$SKILL" --apply --plan-digest "$PLAN_DIGEST" --idempotency-key "$KEY"
+loom --json --root "$ROOT" plan converge "$SKILL"
+loom --json --root "$ROOT" apply "$PLAN_ID" --plan-digest "$PLAN_DIGEST" --idempotency-key "$KEY"
 ```
 
-命令名需要维护者批准；无论最终命令形态如何，B-001..B-015 保持不变。
+selectors、runtime requirement、`--accept-restart-required` 与 `--push-remote` 都在 plan 阶段声明并
+进入 digest；apply 不接受扩大或改变这些 effect 的参数。
 
 ## 验收标准
 
@@ -100,9 +108,18 @@ loom --json --root "$ROOT" skill converge "$SKILL" --apply --plan-digest "$PLAN_
 3. source/projection 双 dirty、projection 间分歧、lock contention、stale plan、filesystem failure、
    remote unavailable、restart required 均有确定输出。
 4. fault injection 证明本地阶段不会留下无法解释的半完成成功。
+5. `plan converge` 只能新增 durable plan/audit evidence；前后 source、registry domain state、Git、
+   live target 与 remote snapshot 完全一致。
+6. 未接受与显式接受 `restart_required` 的 fixture 分别返回
+   `local_complete_restart_required`/`complete=false` 和
+   `complete_with_restart_required`/`complete=true`，两者 visibility state 都保持
+   `restart_required`。
+7. remote pending 与未接受 restart 同时发生时，结果包含两个稳定排序的 completion blocker、两个
+   next action 和 `local_complete_remote_pending_restart_required`；接受 restart 只移除 visibility
+   blocker，不得把 remote pending 变成 complete。
 
-## 开放问题
+## Maintainer 架构决策（2026-07-16）
 
-1. 是否接受新增 `skill converge` leaf 的 ADR 例外，或将其表达为 `plan converge`；技术规格默认
-   选择前者，因为这是新的用户意图而不是低层 projection 同义词。
-2. `restart_required` 是否默认满足 runtime required axis；默认否，plan 必须显式选择。
+1. 使用现有 durable `plan`/`apply` authority：新增 `plan converge`，不新增 `skill converge` leaf。
+2. `restart_required` 默认不满足 required runtime axis；只有 plan 显式
+   `accept_restart_required=true` 时可作为明确接受的完成状态，且绝不伪装成 `visible`。

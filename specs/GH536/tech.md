@@ -3,7 +3,7 @@
 Issue: https://github.com/majiayu000/loom/issues/536
 Product spec: `specs/GH536/product.md`
 Route: `write_spec`
-Human gate: maintainer approval required before implementation
+Human gate: maintainer decisions approved on 2026-07-16
 
 ## 1. Current Behavior
 
@@ -11,11 +11,11 @@ Human gate: maintainer approval required before implementation
 
 ## 2. Proposed Design
 
-1. Add a `fidelity` field to the adapter metadata struct (`agent_adapters.rs` schema + serialization), enum `verified` | `generic`.
+1. Add a required internal `fidelity` field to adapter metadata, enum `verified` | `generic`; `agent list/inspect --json` rows always emit it.
 2. Built-in table marks codex/claude `verified`, others `generic`.
 3. `loom agent list/inspect` envelopes include the field; doctor/diagnose messaging references it when reporting generic-tier agents.
 4. Docs: per-agent tier table in `docs/SUPPORTED_AGENTS.md` and `docs/AGENT_ADAPTERS.md`.
-5. Follow-up (separate tasks, incremental): research + implement dedicated discovery/visibility/reload for prioritized agents, flipping their tier with tests.
+5. Follow-up (separate tasks, incremental): research + implement dedicated discovery/visibility/reload in evidence order (`gemini-cli`, then `windsurf`/`cline`, then `cursor`), flipping a tier only with targeted tests.
 
 ## 3. Affected Areas
 
@@ -28,7 +28,7 @@ Human gate: maintainer approval required before implementation
 
 ## 4. Output Contract
 
-`agent list/inspect --json` rows gain `fidelity: "verified"|"generic"`. External adapter files may not claim `verified` unless schema-validated evidence rules are defined (default `generic`).
+`agent list/inspect --json` rows always include `fidelity: "verified"|"generic"`. External adapter files do not gain a self-asserted fidelity input; they resolve to `generic` until schema-validated evidence rules are defined.
 
 ## 5. Verification Plan
 

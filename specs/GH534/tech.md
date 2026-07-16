@@ -3,7 +3,7 @@
 Issue: https://github.com/majiayu000/loom/issues/534
 Product spec: `specs/GH534/product.md`
 Route: `write_spec`
-Human gate: maintainer approval required before implementation
+Human gate: maintainer decisions approved on 2026-07-16
 
 ## 1. Current Behavior
 
@@ -11,8 +11,8 @@ Human gate: maintainer approval required before implementation
 
 ## 2. Proposed Design
 
-1. Add `scripts/module-ceiling.sh`: enumerate non-test `src/**/*.rs`, compare `wc -l` against the ceiling.
-2. Allowlist file (e.g. `scripts/module-ceiling-allowlist.txt`): `path<TAB>issue-ref` entries; allowlisted files report but do not fail; a ratchet check fails if an allowlisted file grows beyond its recorded baseline.
+1. Add `scripts/module-ceiling.sh`: enumerate non-test `src/**/*.rs`, compare complete physical-file `wc -l` against the 800 hard ceiling, and warn for files above 700. Exclude test-only paths/files, but do not subtract inline `#[cfg(test)]` blocks from production files.
+2. Allowlist file (e.g. `scripts/module-ceiling-allowlist.txt`): `path<TAB>baseline_lines<TAB>issue-ref` entries. The initial entries are `src/commands/mcp/apply.rs` → #544, `src/commands/mcp.rs` → #545, and `src/commands/skillset_activation.rs` → #546. The guard fails if an allowlisted file grows beyond its baseline or an entry becomes stale.
 3. Wire into `Makefile` (own target) and CI `verify` job after lint.
 4. Refresh `docs/module-ceiling-signal-report.md` to describe the guard, current allowlist, and split queue.
 
@@ -25,11 +25,11 @@ Human gate: maintainer approval required before implementation
 
 ## 4. Output Contract
 
-Guard failure prints one line per violation: `path current_lines ceiling [allowlist-issue]`, exit non-zero on any non-allowlisted violation or stale allowlist entry.
+Guard output prints one line per warning/violation: `level path current_lines ceiling [baseline issue-ref]`; it exits non-zero on any non-allowlisted file above 800, allowlisted baseline growth, malformed entry, or stale entry.
 
 ## 5. Verification Plan
 
-1. Run guard locally on current tree: passes with the 23 files allowlisted.
+1. Run guard locally on current tree: passes with 3 files allowlisted and reports the 700–800 warning band.
 2. Negative test: temporary oversized file causes non-zero exit.
 3. Stale allowlist entry (missing file) causes non-zero exit.
 4. CI green on the wired pipeline.

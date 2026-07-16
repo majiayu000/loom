@@ -2,7 +2,7 @@
 
 Issue: https://github.com/majiayu000/loom/issues/535
 Route: `write_spec`
-State: `triaged`
+State: `ready_to_implement`
 Locale: `zh-CN`
 
 ## 1. Problem
@@ -27,11 +27,11 @@ Locale: `zh-CN`
 1. 每个现存子命令在新分组中有且只有一个归属。
 2. 被移除的旧路径进入 `tests/cli_surface.rs` 僵尸命令黑名单。
 3. `--json` envelope 的 `cmd` 字段与新 CLI 路径一致。
-4. 分组决策（顶层 `author` vs `skill author` 二级）由 maintainer 显式选定。
+4. authoring 使用二级路径 `loom skill author <cmd>`，不新增顶层 command group。
 
 ## 5. Acceptance Criteria
 
-1. `loom skill --help` 只含运维命令，authoring 命令在新分组下可用。
+1. `loom skill --help` 包含 37 个运维命令与一个 `author` 入口；7 个 authoring 命令只在 `loom skill author --help` 下可用。
 2. `tests/cli_surface.rs` 预算断言更新为新数值并通过。
 3. `docs/LOOM_CLI_CONTRACT.md` 与 README 命令表与实际 help 输出一致。
 4. 旧路径调用返回标准 clap unknown-command 错误。
@@ -42,7 +42,10 @@ Locale: `zh-CN`
 2. 脚本/skills 内部互相调用旧路径（需全库 grep 收敛）。
 3. panel 端引用的命令路径同步更新。
 
-## 7. Open Questions
+## 7. Maintainer Decisions（2026-07-16）
 
-1. 顶层 `loom author …` 还是二级 `loom skill author …`？
-2. `compile`/`eval` 类介于两种人格之间的命令归属哪组？
+1. 采用嵌套 `loom skill author <cmd>`；顶层预算保持 28。
+2. 移入 `author` 的 7 个命令：`draft`、`extract`、`rewrite`、`tune-description`、`generate-evals`、`apply-patch`、`new`。
+3. `eval`、`improve`、`regression`、`compile` 留在 operational：前三者分别运行现有 eval、只读 improvement preflight、只读 regression gate，`compile` 管理运行时派生产物。
+4. `skill` surface 从 44 变为 38（37 operational + `author`）；旧路径不保留 alias。
+5. envelope `cmd` 使用 snake_case，例如 `skill.author.tune_description`、`skill.author.generate_evals`、`skill.author.apply_patch`。

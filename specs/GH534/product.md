@@ -2,7 +2,7 @@
 
 Issue: https://github.com/majiayu000/loom/issues/534
 Route: `write_spec`
-State: `triaged`
+State: `ready_to_implement`
 Locale: `zh-CN`
 
 ## 1. Problem
@@ -18,20 +18,20 @@ Locale: `zh-CN`
 
 ## 3. Non-Goals
 
-1. 不在本 issue 内拆分现存的 23 个超标文件。
+1. 不在本 issue 内拆分现存的 3 个超过 800 行的文件；按 #544、#545、#546 执行 split-on-touch。
 2. 不改变 800 行硬上限本身的数值约定。
 3. 不覆盖 `tests/`、生成代码与 `target/`。
 
 ## 4. Behavior Invariants
 
-1. guard 对非测试 `src/**/*.rs` 生效，测试文件与 `#[cfg(test)]` 不强制。
+1. guard 对非测试 `src/**/*.rs` 的完整物理文件行数生效；`tests/` 路径和 `*_tests.rs` 等 test-only 文件排除，但生产文件内联的 `#[cfg(test)]` 代码仍计入文件总行数。
 2. allowlist 中每个文件必须带 issue 引用。
 3. guard 失败输出具体文件、当前行数与上限，可直接定位。
 4. guard 在本地（make）与 CI 行为一致。
 
 ## 5. Acceptance Criteria
 
-1. 新增一个超过上限的新文件时 CI 失败。
+1. 新增一个超过 800 行且未在 allowlist 的生产文件时 CI 失败；700–800 行文件输出 warning。
 2. allowlist 内文件不阻塞，但 guard 输出其当前行数与关联 issue。
 3. allowlist 文件行数下降后可从 allowlist 移除且 guard 通过。
 4. `docs/module-ceiling-signal-report.md` 刷新为当前真实清单或指向 guard 输出。
@@ -42,7 +42,9 @@ Locale: `zh-CN`
 2. 巨型生成文件（如 bindings）需要显式豁免类别。
 3. allowlist 条目对应文件已删除（应要求清理条目）。
 
-## 7. Open Questions
+## 7. Maintainer Decisions（2026-07-16）
 
-1. 上限取 700（当前观测线）还是 800（既有硬上限约定）？
-2. guard 放 `scripts/` shell 还是并入 `perf-smoke` 风格的既有检查链？
+1. 采用 800 行 hard-fail、700 行 warning band；800 行本身允许，超过 800 才失败。
+2. guard 放在 `scripts/module-ceiling.sh`，使用独立 Makefile target，并接入 CI `verify` job 的 lint 之后。
+3. allowlist 格式为 `path<TAB>baseline_lines<TAB>issue-ref`；初始只允许 #544、#545、#546 对应的 3 个文件。
+4. 拆分采用 split-on-touch；跟踪 issue 立即建立，代码拆分留到下一次功能修改。

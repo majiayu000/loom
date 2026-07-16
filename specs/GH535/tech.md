@@ -3,7 +3,7 @@
 Issue: https://github.com/majiayu000/loom/issues/535
 Product spec: `specs/GH535/product.md`
 Route: `write_spec`
-Human gate: maintainer approval required before implementation (breaking CLI change)
+Human gate: maintainer breaking-change decisions approved on 2026-07-16
 
 ## 1. Current Behavior
 
@@ -11,9 +11,9 @@ Human gate: maintainer approval required before implementation (breaking CLI cha
 
 ## 2. Proposed Design
 
-1. Maintainer selects taxonomy (top-level `author` group vs `skill author` nested group).
-2. Move authoring variants out of `SkillCommand` into the new group enum in `src/cli.rs`; dispatch in `src/commands/mod.rs` follows.
-3. Update envelope `cmd` strings emitted by the central dispatcher for moved commands.
+1. Add nested `SkillCommand::Author { command: SkillAuthorCommand }`; do not add a top-level command group.
+2. Move exactly 7 variants (`Draft`, `Extract`, `Rewrite`, `TuneDescription`, `GenerateEvals`, `ApplyPatch`, `New`) into `SkillAuthorCommand`; keep `Improve`, `Regression`, `Eval`, and `Compile` operational. Dispatch in `src/commands/mod.rs` follows.
+3. Update moved envelope `cmd` strings to the `skill.author.*` namespace using snake_case identifiers.
 4. Update `default_next_actions` / call-site `err_with_next_actions` strings referencing moved paths.
 5. Update `tests/cli_surface.rs` budgets, add removed old paths to the stale-command blacklist.
 6. Update `docs/LOOM_CLI_CONTRACT.md`, `README.md`, and panel references.
@@ -30,7 +30,7 @@ Human gate: maintainer approval required before implementation (breaking CLI cha
 
 ## 4. Output Contract
 
-Moved commands keep their envelope `data` schema unchanged; only `cmd` and CLI path change. Old paths produce standard clap errors (exit 2).
+Moved commands keep their envelope `data` schema unchanged; only `cmd` and CLI path change. Old paths produce standard clap errors (exit 2). `skill` budget becomes 38 and `skill author` budget becomes 7.
 
 ## 5. Verification Plan
 

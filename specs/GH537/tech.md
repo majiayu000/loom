@@ -3,7 +3,7 @@
 Issue: https://github.com/majiayu000/loom/issues/537
 Product spec: `specs/GH537/product.md`
 Route: `write_spec`
-Human gate: maintainer approval required before implementation
+Human gate: maintainer decisions approved on 2026-07-16
 
 ## 1. Current Behavior
 
@@ -11,21 +11,21 @@ Human gate: maintainer approval required before implementation
 
 ## 2. Proposed Design
 
-1. In `main.rs`, when `cli.json` is set, build `Envelope::err_with_next_actions` for init/panel/top-level failures and print via `print_envelope` before exiting; keep stderr text for human mode.
-2. Extend `default_next_actions` to cover conflict/policy/remote classes; add a table-driven test asserting every contract error code has either an action or a documented exemption list entry.
-3. Document exit-code tiers and declare `error.code` the routing key in `docs/LOOM_CLI_CONTRACT.md` (preferred over re-tiering, pending maintainer decision).
+1. Add `ErrorCode::InitError` mapped to `INIT_ERROR` / exit 3. In `main.rs`, when `cli.json` is set, emit `cmd: "app.init"` + `INIT_ERROR` for `App::new` failure; panel/top-level failures emit structured envelopes with their actual/stable command identity and appropriate existing error code. Keep stderr text for human mode.
+2. Extend `default_next_actions` only for universal no-argument actions (`REMOTE_*` → `loom sync status --json`, `LOCK_BUSY` → `loom ops list --json`). Conflict/policy call sites provide contextual actions when possible; every remaining code appears in a documented exemption table. Add a table-driven totality test.
+3. Document existing exit-code tiers without reordering and declare `error.code` the sole stable semantic routing key in `docs/LOOM_CLI_CONTRACT.md`.
 
 ## 3. Affected Areas
 
 1. `src/main.rs`
 2. `src/error_actions.rs`
-3. `src/types.rs` (only if re-tiering chosen)
+3. `src/types.rs` (`INIT_ERROR` only; no exit-code re-tiering)
 4. `docs/LOOM_CLI_CONTRACT.md`
 5. `tests/` (new coverage test; `tests/cli_surface.rs` error-code table)
 
 ## 4. Output Contract
 
-Init failure with `--json`: `{ok:false, cmd:"init-failure"|actual, error:{code,…}, …}` on stdout, non-zero exit. Human mode unchanged.
+Init failure with `--json`: `{ok:false, cmd:"app.init", error:{code:"INIT_ERROR",…}, …}` on stdout, exit 3. Human mode unchanged.
 
 ## 5. Verification Plan
 

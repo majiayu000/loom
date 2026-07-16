@@ -2,7 +2,7 @@
 
 Issue: https://github.com/majiayu000/loom/issues/536
 Route: `write_spec`
-State: `triaged`
+State: `ready_to_implement`
 Locale: `zh-CN`
 
 ## 1. Problem
@@ -41,7 +41,9 @@ Locale: `zh-CN`
 2. agent 目录存在但 env 探测不可用（available=false）时层级不变。
 3. 未来某 agent 从 generic 升级到 verified 的迁移路径。
 
-## 7. Open Questions
+## 7. Maintainer Decisions（2026-07-16）
 
-1. fidelity 字段命名与枚举值（`verified`/`generic` 还是三层）？
-2. 优先补齐哪几个 agent（按用户基数：cursor? gemini-cli?）？
+1. fidelity 采用可扩展的两层闭集：`verified`、`generic`。
+2. `agent list/inspect --json` 对每个 adapter 始终输出 fidelity；外部 adapter 在定义可验证证据规则前固定解析为 `generic`，不得自行声明 `verified`。
+3. 首轮补齐按公开证据完整度排序：`gemini-cli` → `windsurf`/`cline` → `cursor`；若后续 `skill usage` telemetry 提供真实需求证据，可调整顺序。
+4. 任何带 `legacy-default` root 的 adapter 都不得声明 `verified`，由机械测试锁定。

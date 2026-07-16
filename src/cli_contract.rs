@@ -1,5 +1,11 @@
 use std::fmt;
 
+use clap::{
+    ArgMatches, Command, CommandFactory, FromArgMatches, error::ErrorKind, parser::ValueSource,
+};
+
+use crate::cli::Cli;
+
 pub const CLI_CONTRACT_VERSION: &str = "1.0.0";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -52,4 +58,136 @@ pub fn parse_contract_version(raw: &str) -> Result<ContractVersion, ContractVers
 pub fn current_contract_version() -> ContractVersion {
     parse_contract_version(CLI_CONTRACT_VERSION)
         .expect("CLI_CONTRACT_VERSION must remain a valid release SemVer")
+}
+
+pub fn contract_version_matches(
+    requirement: &str,
+    version: &str,
+) -> Result<bool, ContractVersionError> {
+    let version = parse_contract_version(version)?;
+    if requirement.is_empty() {
+        return Err(ContractVersionError(
+            "CLI contract requirement must not be empty".to_string(),
+        ));
+    }
+    requirement.split(',').try_fold(true, |matches, raw| {
+        let comparator = raw.trim();
+        let (operator, expected) = [">=", "<=", ">", "<", "="]
+            .into_iter()
+            .find_map(|operator| {
+                comparator
+                    .strip_prefix(operator)
+                    .map(|value| (operator, value))
+            })
+            .ok_or_else(|| {
+                ContractVersionError(format!(
+                    "unsupported CLI contract comparator '{comparator}'"
+                ))
+            })?;
+        let expected = parse_contract_version(expected)?;
+        let current_matches = match operator {
+            ">=" => version >= expected,
+            "<=" => version <= expected,
+            ">" => version > expected,
+            "<" => version < expected,
+            "=" => version == expected,
+            _ => unreachable!("comparator allowlist is exhaustive"),
+        };
+        Ok(matches && current_matches)
+    })
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PublicArgv {
+    pub command_path: Vec<String>,
+    pub explicit_args: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PublicArgvError {
+    pub kind: PublicArgvErrorKind,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PublicArgvErrorKind {
+    Parse,
+    HiddenCommand,
+    HiddenArgument,
+}
+
+pub fn validate_public_argv<I, S>(argv: I) -> Result<PublicArgv, PublicArgvError>
+where
+    I: IntoIterator<Item = S>,
+    S: Into<std::ffi::OsString> + Clone,
+{
+    let command = Cli::command();
+    let matches = command
+        .clone()
+        .try_get_matches_from(argv)
+        .map_err(|error| PublicArgvError {
+            kind: PublicArgvErrorKind::Parse,
+            message: error.to_string(),
+        })?;
+    Cli::from_arg_matches(&matches).map_err(|error| PublicArgvError {
+        kind: PublicArgvErrorKind::Parse,
+        message: error.to_string(),
+    })?;
+    let mut result = PublicArgv {
+        command_path: vec!["loom".to_string()],
+        explicit_args: Vec::new(),
+    };
+    inspect_public_matches(&command, &matches, &mut result)?;
+    Ok(result)
+}
+
+pub fn parser_error_kind<I, S>(argv: I) -> Option<ErrorKind>
+where
+    I: IntoIterator<Item = S>,
+    S: Into<std::ffi::OsString> + Clone,
+{
+    Cli::command()
+        .try_get_matches_from(argv)
+        .err()
+        .map(|error| error.kind())
+}
+
+fn inspect_public_matches(
+    command: &Command,
+    matches: &ArgMatches,
+    result: &mut PublicArgv,
+) -> Result<(), PublicArgvError> {
+    for argument in command.get_arguments() {
+        if matches.value_source(argument.get_id().as_str()) != Some(ValueSource::CommandLine) {
+            continue;
+        }
+        if argument.is_hide_set() {
+            return Err(PublicArgvError {
+                kind: PublicArgvErrorKind::HiddenArgument,
+                message: format!(
+                    "hidden argument '{}' is not part of the public CLI contract",
+                    argument.get_id()
+                ),
+            });
+        }
+        result.explicit_args.push(argument.get_id().to_string());
+    }
+    let Some((name, sub_matches)) = matches.subcommand() else {
+        return Ok(());
+    };
+    let subcommand = command
+        .get_subcommands()
+        .find(|candidate| candidate.get_name() == name)
+        .ok_or_else(|| PublicArgvError {
+            kind: PublicArgvErrorKind::Parse,
+            message: format!("parsed command '{name}' is absent from the shared schema"),
+        })?;
+    if subcommand.is_hide_set() {
+        return Err(PublicArgvError {
+            kind: PublicArgvErrorKind::HiddenCommand,
+            message: format!("hidden command '{name}' is not part of the public CLI contract"),
+        });
+    }
+    result.command_path.push(name.to_string());
+    inspect_public_matches(subcommand, sub_matches, result)
 }

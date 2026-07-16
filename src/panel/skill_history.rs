@@ -247,6 +247,7 @@ fn history_ok_payload(
         "cmd": cmd,
         "request_id": uuid::Uuid::new_v4().to_string(),
         "version": env!("CARGO_PKG_VERSION"),
+        "cli_contract_version": skillloom::cli_contract::CLI_CONTRACT_VERSION,
         "data": {
             "skill": skill_name,
             "count": count,

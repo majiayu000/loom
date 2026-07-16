@@ -81,8 +81,8 @@ pub use skill_activation_args::{
     SkillDeactivateArgs,
 };
 pub use skill_authoring_args::{
-    SkillApplyPatchArgs, SkillAuthoringProviderArg, SkillDraftArgs, SkillExtractArgs,
-    SkillGenerateEvalsArgs, SkillRewriteArgs, SkillTuneDescriptionArgs,
+    SkillApplyPatchArgs, SkillAuthorCommand, SkillAuthoringProviderArg, SkillDraftArgs,
+    SkillExtractArgs, SkillGenerateEvalsArgs, SkillRewriteArgs, SkillTuneDescriptionArgs,
 };
 pub use skill_compile_args::{
     SkillCompileArgs, SkillCompileCommand, SkillCompileListArgs, SkillCompileVerifyArgs,
@@ -340,20 +340,11 @@ pub enum SkillCommand {
     Used(SkillUsedArgs),
     #[command(about = "Record recommendation feedback")]
     Feedback(SkillFeedbackArgs),
-    #[command(about = "Draft a new skill as a guarded patch artifact")]
-    Draft(SkillDraftArgs),
-    #[command(about = "Extract reviewed diff context into a guarded patch artifact")]
-    Extract(SkillExtractArgs),
-    #[command(about = "Rewrite one skill as a guarded patch artifact")]
-    Rewrite(SkillRewriteArgs),
-    #[command(about = "Tune one skill description as a guarded patch artifact")]
-    TuneDescription(SkillTuneDescriptionArgs),
-    #[command(about = "Generate reviewable eval fixture diffs as a patch artifact")]
-    GenerateEvals(SkillGenerateEvalsArgs),
-    #[command(about = "Apply a reviewed skill patch artifact through validation gates")]
-    ApplyPatch(SkillApplyPatchArgs),
-    #[command(about = "Create a lint-clean local skill skeleton")]
-    New(SkillNewArgs),
+    #[command(about = "Create and apply guarded skill authoring artifacts")]
+    Author {
+        #[command(subcommand)]
+        command: SkillAuthorCommand,
+    },
     #[command(about = "Import a skill source into the registry")]
     Add(AddArgs),
     #[command(about = "Plan a provider-backed skill install")]

@@ -333,7 +333,7 @@ fn run_authoring_command(
             "patch": generated.patch_body,
             "next_actions": [
                 format!("review {}", patch_path.display()),
-                format!("run loom skill apply-patch {} --idempotency-key <key> after validation gates land", artifact["patch_id"].as_str().unwrap_or(""))
+                format!("run loom skill author apply-patch {} --idempotency-key <key> after validation gates land", artifact["patch_id"].as_str().unwrap_or(""))
             ]
         }),
         Meta::default(),

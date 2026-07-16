@@ -84,7 +84,7 @@ install_loom_registry_skill "$SKILL_SOURCE" "$HOME/.agents/skills/loom-registry"
 loom init
 
 # 3. Manage one skill through the single-skill lifecycle
-loom skill new fixflow --template coding-workflow
+loom skill author new fixflow --template coding-workflow
 loom skill lint fixflow --portable
 loom skill lint fixflow --quality
 loom skill scan fixflow
@@ -238,15 +238,15 @@ The current lifecycle keeps source history on a smaller verb set: import with `a
 | `loom skill active list` | List desired active skills and realized projections | See active rules, projection health, missing targets, and explicit `not_checked` visibility claims | Registry metadata + target filesystem (read-only) |
 | `loom skill visibility` | Explain one skill's agent active-view visibility | For Codex, join source, active rules, projection symlink, config disables, runtime entries, external entries, and restart requirements | Source + registry metadata + target filesystem (read-only) |
 | `loom skill search` | Search, resolve, and explain skill candidates with deterministic scoring | Find likely skills by metadata; use `--for-task` for task resolution and `--explain` for recommendation details | Source + registry metadata (read-only) |
-| `loom skill draft/extract/rewrite/tune-description/generate-evals` | Create guarded authoring patch artifacts with the deterministic mock provider | Review proposed source/eval diffs without mutating `skills/<skill>`; prompt material is redacted and size-bounded | Source + `state/patches` artifact output |
-| `loom skill apply-patch` | Apply a reviewed authoring patch through validation gates | Requires an idempotency key, revalidates source digest/ref, runs staging lint/safety/eval gates, commits only after validation, and supports idempotent replay | Patch artifact state + skill source |
+| `loom skill author draft/extract/rewrite/tune-description/generate-evals` | Create guarded authoring patch artifacts with the deterministic mock provider | Review proposed source/eval diffs without mutating `skills/<skill>`; prompt material is redacted and size-bounded | Source + `state/patches` artifact output |
+| `loom skill author apply-patch` | Apply a reviewed authoring patch through validation gates | Requires an idempotency key, revalidates source digest/ref, runs staging lint/safety/eval gates, commits only after validation, and supports idempotent replay | Patch artifact state + skill source |
 | `loom skill commit` | Commit source changes from the registry or a live projection | Preserve edits after Loom detects source-only, projection-only, or ambiguous drift; use `--from-source` / `--from-projection` only when needed | Source history |
 | `loom skill release --anchor` | Mark the current source revision without a semver tag | Create a named recovery point before risky work or review, without publishing a version | Source history |
 | `loom skill release <version>` | Tag a semver release | Publish a stable revision teammates can pull and compare | Source history |
 | `loom skill rollback` | Reset the source to an earlier revision with a recovery ref | Undo a bad commit or release without losing the pre-rollback state | Source history |
 | `loom skill diff` | Compare two source revisions | Review raw source changes or security-relevant deltas before promotion | Source history (read-only) |
 | `loom instruction scan/show/classify/doctor/migrate-plan` | Inspect native instruction surfaces without importing them as skills | Inventory `AGENTS.md`, `CLAUDE.md`, Cursor, Windsurf, and Copilot instruction files; diagnose overlap; emit dry-run migration plans only | Workspace files (read-only) |
-| `loom skill new` | Create a lint-clean local skill skeleton | Start a new registry-owned skill with `SKILL.md`, references, scripts, assets, eval stubs, and `loom.skill.toml` | Source (initial create) |
+| `loom skill author new` | Create a lint-clean local skill skeleton | Start a new registry-owned skill with `SKILL.md`, references, scripts, assets, eval stubs, and `loom.skill.toml` | Source (initial create) |
 | `loom provider add/list/remove` | Manage local or GitHub catalog provider records | Configure provider ids for advisory search/preview without storing credentials | Registry provider state |
 | `loom catalog search/show/preview` | Inspect provider locators without executing source code | See metadata, scripts, license/provenance hints, lint, safety, and install dry-run guidance | Provider source (read-only) |
 | `loom package plan/build/verify` | Build deterministic outbound package artifacts from reviewed skills | Create a reviewed package plan, build a portable archive, and verify manifest/checksum/content integrity without claiming active install state | Skill source + package artifact |
@@ -366,13 +366,13 @@ loom skill deactivate <skill> --agent <agent> [--scope <user|project>] [--worksp
 loom skill active list --agent <agent> [--scope <user|project>] [--workspace <path>] [--profile <profile>]
 loom skill visibility <skill> --agent codex [--workspace <path>] [--profile <profile>]
 loom skill search <query> [--agent <agent>] [--profile <profile>] [--status <status>] [--trust <trust>] [--workspace <path>] [--active] [--for-task] [--semantic] [--explain]
-loom skill draft <skill> --from-session <path|id> [--agent <agent>] [--provider mock] [--dry-run]
-loom skill extract <skill> --from-diff <path> [--provider mock] [--dry-run]
-loom skill rewrite <skill> --instruction <text> [--provider mock] [--dry-run]
-loom skill tune-description <skill> [--description <text>] [--provider mock] [--dry-run]
-loom skill generate-evals <skill> [--task <text>] [--provider mock] [--dry-run]
-loom skill apply-patch <patch-id> --idempotency-key <key>
-loom skill new <skill> [--template <basic|coding-workflow|scripted|reference-heavy>] [--description <text>] [--agent <agent>] [--dry-run]
+loom skill author draft <skill> --from-session <path|id> [--agent <agent>] [--provider mock] [--dry-run]
+loom skill author extract <skill> --from-diff <path> [--provider mock] [--dry-run]
+loom skill author rewrite <skill> --instruction <text> [--provider mock] [--dry-run]
+loom skill author tune-description <skill> [--description <text>] [--provider mock] [--dry-run]
+loom skill author generate-evals <skill> [--task <text>] [--provider mock] [--dry-run]
+loom skill author apply-patch <patch-id> --idempotency-key <key>
+loom skill author new <skill> [--template <basic|coding-workflow|scripted|reference-heavy>] [--description <text>] [--agent <agent>] [--dry-run]
 loom skill add <path|git-url|github:owner/repo//subdir> --name <skill> [--ref <branch|tag|commit>] [--subdir <path>]
 loom skill provenance inspect <skill>
 loom skill provenance verify <skill>

@@ -35,19 +35,29 @@ telemetry 事件存储（#385/#496）只在调用方显式执行 `loom skill use
    必须计入显式 rejected 计数而非静默丢弃。
 3. **B-003** telemetry disabled 时 ingest fail closed 并返回 `loom telemetry enable` next action；
    `--dry-run` 仍可读取并报告候选项，但不得写 event 或 cursor。
-4. **B-004** 每个 event id 必须由 agent、session hash、skill/observed name、timestamp、canonical
-   source identity 的 hash、record offset 与 invocation ordinal/tool-call id 共同确定；同一文件经
-   override、symlink 或默认根等不同拼写访问时必须得到相同 identity，同 timestamp 同 skill 的多次调用不得碰撞。
-5. **B-005** cursor 只保存 canonical source identity hash 与读取位置，不保存 raw path；同一输入重复
-   ingest 必须幂等。
+4. **B-004** source continuity、record identity 与 event identity 必须分离。event id 必须由 agent、
+   session hash、skill/observed name、timestamp、canonical logical-source identity hash、parser 产出的
+   stable record key 与 invocation ordinal/tool-call id 共同确定；generation token、byte offset 与
+   raw path 不得进入 event identity。已知 fixture shape 必须定义 stable record key；无法提供稳定身份的
+   unknown shape 必须显式 rejected，禁止回退到 offset。源文件经 symlink/override/default root、rotation
+   或 copy-truncate 后，同一逻辑 record 仍产生同一 event id；同 timestamp 同 skill 的多次调用不得碰撞。
+5. **B-005** cursor 只保存 logical source key 与 `{schema_version, generation_token,
+   committed_offset, boundary_hash, covered_since}`，不保存 raw path。`committed_offset` 永远指向最后一条
+   newline-terminated record 之后；unterminated tail 是 `pending_partial`，既不是 malformed，也不得前移
+   cursor。恢复扫描前必须校验长度、generation token 与 committed boundary 前的 bounded hash；truncate、
+   replacement、same-size rewrite 或 continuity mismatch 必须从 0 reset/rescan，并依赖 B-004 去重。
 6. **B-006** `--since` 只限制本次候选窗口。cursor 必须记录 `covered_since`；后续请求更早窗口时
    从 source 起点重扫并依赖 deterministic event id 去重，不得因旧 cursor 永久跳过历史。
 7. **B-007** 日志根优先级固定为 `LOOM_CLAUDE_HOME`/`LOOM_CODEX_HOME` 显式 override →
    agent-native `CLAUDE_HOME`/`CODEX_HOME` → platform home 下的默认目录。
-8. **B-008** event 写入与 cursor 前移在同一 workspace lock 下按先 event 后 cursor 排序；取消、
-   崩溃或部分写失败不得让 cursor 越过未持久化 invocation，重试不得重复计数。
-9. **B-009** malformed、非 session JSONL 与未知 record shape 必须逐条计数并继续扫描其他记录；
-   某个已选 agent 的日志根不存在或没有匹配文件时按该 agent `scanned_files=0` 处理，以便 `--agent all`
+8. **B-008** 文件发现与扫描在 workspace lock 外执行；提交时获取 workspace lock，重读 cursor 并与扫描
+   使用的 expected checkpoint 比较，发生并发变化则丢弃该 plan 并重试。compare-and-commit 内按
+   dedupe → append/flush events → 原子写 cursor 的顺序执行，且不得通过现有会再次加锁的 public append
+   路径造成 nested lock。取消、崩溃或部分写失败不得让 cursor 越过未持久化 invocation。
+9. **B-009** newline-terminated malformed record、非 session JSONL 与未知 record shape 必须逐条计数并
+   继续扫描其他记录；unterminated tail 只计 `pending_partial`，下一次补全后恰好 ingest 一次。发生
+   continuity reset 时必须按 stable reason 计 `sources_reset`，不得回显 raw path。某个已选 agent 的日志根
+   不存在或没有匹配文件时按该 agent `scanned_files=0` 处理，以便 `--agent all`
    仍可采集其他 agent；已存在的源目录不可读、cursor schema 不兼容或 event persistence 失败则整次
    命令返回 error，不得伪装完整成功。
 10. **B-010** 事件写入必须通过现有 telemetry redaction/validation gate；新增字段与 deterministic
@@ -60,6 +70,9 @@ telemetry 事件存储（#385/#496）只在调用方显式执行 `loom skill use
 3. `--dry-run --json` 输出将要 ingest 的统计（per-agent、per-skill、unmatched），且状态目录无变化。
 4. 高水位生效：追加新日志行后再 ingest 只处理新增部分（envelope 中报告 scanned/skipped/ingested 计数）。
 5. 日志中存在损坏行时不中断，计入 `malformed` 计数继续处理（与现有 TelemetryLog.malformed 行为一致）。
+6. trailing partial record 不计 malformed 且不前移 cursor；补全换行后只 ingest 一次。
+7. truncate/regrow、rotation/replacement 与 same-size rewrite 均触发 continuity reset，从 0 重扫且不重复 event。
+8. 两个并发 ingest 使用同一 expected checkpoint 时只有一个提交；另一个检测变化并重试，不丢失或重复事件。
 
 ## 6. Edge Cases
 
@@ -69,6 +82,9 @@ telemetry 事件存储（#385/#496）只在调用方显式执行 `loom skill use
 4. skill 在 registry 中已退役但日志中有历史调用——按 ingest 时的当前读模型归为 unmatched，
    并持久化 `observed_skill_name`，不做历史 registry 考古。
 5. 时钟/时区：日志时间戳统一转 UTC 存储。
+6. source 在 cursor 后被截断、原位替换或同尺寸改写——以 generation/boundary continuity 失败处理，
+   reset 后使用 `min(previous covered_since, requested since)` 重扫。
+7. 进程在末尾 record 尚未写完时运行——保留该 fragment 到下一轮，不计 malformed/rejected。
 
 ## 7. Resolved Decisions
 
@@ -84,7 +100,7 @@ telemetry 事件存储（#385/#496）只在调用方显式执行 `loom skill use
 | Empty / missing input | covered: B-002, B-009 |
 | Error and failure paths | covered: B-003, B-009 |
 | Authorization / permission | covered: B-001, B-003 |
-| Concurrency / race / ordering | covered: B-008 |
+| Concurrency / race / ordering | covered: B-005, B-008 |
 | Retry / repetition / idempotency | covered: B-004, B-005, B-006, B-008 |
 | Illegal state transitions | covered: B-006, B-008 |
 | Compatibility / migration | covered: B-010 |

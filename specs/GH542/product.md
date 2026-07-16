@@ -37,19 +37,32 @@ registry 无法回答生命周期问题："哪些 skill 是僵尸（有绑定但
    尚未 materialize 时仍是 bound，projection 仅提供健康信息，不得用历史 `observations/*.jsonl`
    推断绑定。跨 runtime 的 `single_runtime` 始终从未过滤的 binding/usage 集计算，且仅在当前至少绑定
    两个 agent、实际只在一个 agent 使用时为 true；envelope 标记 `single_runtime_scope="all_agents"`。
+   `agent=null`/agentless telemetry 只参与未指定 `--agent` 的全局 usage/category 证据；指定
+   `--agent X` 时只匹配 `Known(X)`，agentless 不能匹配任意 agent。agentless usage 可阻止未过滤报告
+   产生假 zombie，但不得进入 `used_agents` 或 `single_runtime`，输出以 JSON `agent:null` 或明确
+   agentless aggregate 表示，禁止占用可能与真实 agent 冲突的 `"unknown"` key。
 4. **B-004** `--since` 只决定 window count/ranking；zombie 独立比较全量 eligible history 的
    `last_used` 与 injectable `now - zombie_days`。`skill.invocation` 与 `skill.error` 都表示一次实际
    尝试并参与 lifecycle `last_used`/cutoff；较早窗口中的旧调用不能让 30 天未使用的 skill 变 active。
 5. **B-005** 每个 registry skill 恰好一个 category：`active`、`zombie`、`unbound_unused` 或
    `unbound_but_used`；`single_runtime` 是 flag，不是第五种 category。
-6. **B-006** `skill_id=null` 且含合法 `observed_skill_name` 的 invocation 聚合到独立 orphan 列表；
-   malformed/invalid unmatched records 不得伪装成 registry skill。
-7. **B-007** error rate 仅在所选 window 中 invocation + error 样本数至少 5 时输出数值；不足时为
-   `null` 并给出 `error_sample_size`，failure categories 仍报告原始计数。
-8. **B-008** 排序确定：active/unbound_but_used 先按 window invocation count 降序再 skill id；
+6. **B-006** `skill_id=null` 且含合法 `observed_skill_name` 的 event，以及 `skill_id` 已不在 current
+   registry 的 event，必须从与 skills 完全相同的 `--since` + `--agent` window 派生为 orphan；
+   `window_events`、per-skill/per-agent counts、orphan counts、error samples 与 failure categories 必须
+   对同一 filtered row set 可核对。malformed/invalid unmatched records 不得伪装成 registry skill。
+7. **B-007** 明确定义 `attempt_count = invocation_count + error_count`，`error_rate =
+   error_count / attempt_count`。仅当所选 window 的 attempt_count ≥ 5 时输出 rate，否则为 `null` 并
+   给出 `error_sample_size=attempt_count`；invocation/error/attempt 三个 counter 与 failure-category
+   原始计数在 skill total、per-agent、orphan 与 agentless aggregate 上始终显式返回。lifecycle 与
+   ranking 必须一致使用 attempt_count，禁止一处按 invocation、另一处按 attempts 而未声明。
+8. **B-008** 排序确定：active/unbound_but_used 先按 window attempt_count 降序再 skill id；
    zombie 后置并按 last_used（null 最后）再 skill id；unbound_unused 最后按 skill id。相同输入重跑顺序稳定。
-9. **B-009** 空 registry、空 events、全部 malformed 或 filter 无匹配均返回结构完整的空/零数组与
-   显式计数，不虚构字段、不用 warning 代替读取错误；registry/event IO failure 必须返回 error。
+9. **B-009** 命令必须持有现有 exclusive workspace lock 完成只读 snapshot capture：读取 registry
+   snapshot、telemetry config 与 event log，并从传入 snapshot 构造 inventory；不得由 helper 隐式二次
+   reload 形成撕裂视图。释放锁后才聚合，不新增 RW-lock 机制。所有 counter/sum 使用 checked arithmetic；overflow 返回带 aggregate field name 的
+   `STATE_CORRUPT` 或 `INTERNAL_ERROR`，禁止 wrap、saturate 或 partial output。空 registry、空 events、
+   全部 malformed 或 filter 无匹配均返回结构完整的空/零数组与显式计数；registry/event IO failure
+   必须返回 error。
 
 ## 5. Acceptance Criteria
 
@@ -57,6 +70,8 @@ registry 无法回答生命周期问题："哪些 skill 是僵尸（有绑定但
 2. 无绑定且无调用的 skill 报 unbound-unused，与 zombie（有绑定无调用）可区分。
 3. `--json` envelope 字段写入 CLI contract 并有 surface 测试。
 4. `--since`/`--agent`/`--zombie-days` 过滤生效且有测试。
+5. agentless 只进入未过滤视图，orphan 与 skills 使用相同 window，所有 window totals 可核对。
+6. stats 从一个 locked snapshot 读取；人工构造 overflow 时 fail closed 且不返回 partial output。
 
 ## 6. Edge Cases
 
@@ -65,6 +80,8 @@ registry 无法回答生命周期问题："哪些 skill 是僵尸（有绑定但
 3. `--since` 晚于全部事件：window count 归零并返回 `window_events=0`，但 category 仍由独立
    zombie cutoff view 决定；近期用过的 bound skill 保持 active。
 4. orphan 名与已退役 skill 重名：报 orphan（与 GH541 Open Question 2 的保守策略一致）。
+5. `agent=null` event 与命名为 `unknown` 的真实 adapter 同时存在：分别输出，绝不合并。
+6. counter 接近整数上限：下一次累加立即结构化失败，不 wrap/saturate。
 
 ## 7. Resolved Decisions
 
@@ -79,7 +96,7 @@ registry 无法回答生命周期问题："哪些 skill 是僵尸（有绑定但
 | Empty / missing input | covered: B-009 |
 | Error and failure paths | covered: B-006, B-009 |
 | Authorization / permission | covered: B-001 |
-| Concurrency / race / ordering | read-only snapshot; covered: B-001, B-008 |
+| Concurrency / race / ordering | one locked snapshot; covered: B-001, B-009 |
 | Retry / repetition / idempotency | covered: B-001, B-008 |
 | Illegal state transitions | N/A: command owns no state transition |
 | Compatibility / migration | covered: B-002, B-006 |

@@ -228,9 +228,10 @@ fn target_path_for(
         && adapter.has_discovery_root_for_scope(scope)
     {
         if agent == "gemini-cli" && adapter.source == SOURCE_BUILT_IN {
-            if let Some(configured) =
-                configured_agent_skill_dirs(&ctx.root, "GEMINI_CLI_SKILLS_DIR")
-                    .and_then(|dirs| dirs.into_iter().next())
+            if matches!(args.scope, UseScope::User)
+                && let Some(configured) =
+                    configured_agent_skill_dirs(&ctx.root, "GEMINI_CLI_SKILLS_DIR")
+                        .and_then(|dirs| dirs.into_iter().next())
             {
                 return Ok(absolute_path(&configured));
             }

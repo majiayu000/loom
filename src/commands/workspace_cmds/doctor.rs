@@ -139,11 +139,13 @@ fn build_agent_skill_inventory(
             agents.push(json!({
                 "agent": adapter.id,
                 "agent_source": adapter.source,
+                "fidelity": adapter.fidelity.as_str(),
                 "default_path": path_str,
                 "present": present,
                 "registered_target_count": registered_target_count,
                 "registered_targets": registered_targets,
                 "adapter": {
+                    "fidelity": adapter.fidelity.as_str(),
                     "supported_scopes": adapter.supported_scopes.clone(),
                     "projection_methods": adapter.projection_methods.clone(),
                     "skill_entrypoint": adapter.skill_entrypoint.clone(),
@@ -179,10 +181,21 @@ fn build_agent_skill_inventory(
         .filter(|a| a["present"].as_bool().unwrap_or(false))
         .count();
     let total = agents.len();
+    let generic_adapter_count = adapters
+        .adapters()
+        .iter()
+        .filter(|adapter| !adapter.fidelity.is_verified())
+        .count();
+    let fidelity_suffix = format!(
+        "; {generic_adapter_count} of {} adapters use generic fidelity metadata",
+        adapters.adapters().len()
+    );
     let message = if total > 0 {
-        format!("detected {present_count} of {total} known agent skill directories")
+        format!(
+            "detected {present_count} of {total} known agent skill directories{fidelity_suffix}"
+        )
     } else {
-        "HOME not set; agent skill directory inventory unavailable".to_string()
+        format!("HOME not set; agent skill directory inventory unavailable{fidelity_suffix}")
     };
     json!({
         "agents": agents,
@@ -190,6 +203,7 @@ fn build_agent_skill_inventory(
         "present_count": present_count,
         "total": total,
         "adapter_count": adapters.adapters().len(),
+        "generic_adapter_count": generic_adapter_count,
         "adapter_config_locations": adapters.config_locations().to_vec(),
         "message": message,
     })

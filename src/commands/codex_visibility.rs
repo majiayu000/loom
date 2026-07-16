@@ -17,6 +17,13 @@ use super::CommandFailure;
 use super::codex_config::{CodexConfigLoad, load_codex_config};
 use super::helpers::{map_arg, map_registry_state, validate_skill_name};
 
+mod adapter;
+
+use adapter::{
+    adapter_has_visibility_metadata, adapter_metadata_details, adapter_visibility_details,
+    unsupported_visibility_message, unsupported_visibility_report,
+};
+
 pub(crate) const CODEX_AGENT: &str = "codex";
 pub(crate) const RUNTIME_ENTRIES: &[&str] = &[".system", "codex-primary-runtime"];
 const IDENTITY_CANONICAL_SKILL_MD_PATH: &str = "canonical-skill-md-path";
@@ -26,6 +33,8 @@ const IDENTITY_RUNTIME_SKILL_MD_PATH: &str = "runtime-skill-md-path";
 pub(crate) struct CodexVisibilityReport {
     pub(crate) skill: String,
     pub(crate) agent: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) fidelity: Option<String>,
     pub(crate) visible: bool,
     pub(crate) checks: Vec<CodexVisibilityCheck>,
     pub(crate) next_actions: Vec<String>,
@@ -118,6 +127,7 @@ pub(crate) fn build_agent_visibility_report(
                 return Ok(unsupported_visibility_report(
                     skill,
                     agent,
+                    None,
                     format!("agent adapter '{}' is not registered", agent),
                     json!({"agent": agent}),
                 ));
@@ -129,10 +139,8 @@ pub(crate) fn build_agent_visibility_report(
         return Ok(unsupported_visibility_report(
             skill,
             agent,
-            format!(
-                "agent adapter '{}' does not expose visibility metadata",
-                agent
-            ),
+            Some(adapter.fidelity.as_str()),
+            unsupported_visibility_message(&adapter),
             adapter_metadata_details(&adapter),
         ));
     }
@@ -323,6 +331,7 @@ fn build_visibility_report_from_parts(parts: VisibilityBuildParts<'_>) -> CodexV
     CodexVisibilityReport {
         skill: skill.to_string(),
         agent: agent.to_string(),
+        fidelity: Some(adapter.fidelity.as_str().to_string()),
         visible,
         checks,
         next_actions: next_actions.into_iter().collect(),
@@ -669,76 +678,6 @@ fn active_rules_for_skill(
             }
         })
         .collect()
-}
-
-fn adapter_has_visibility_metadata(adapter: &AgentAdapter) -> bool {
-    if adapter.source == "built-in" {
-        return matches!(adapter.id.as_str(), CODEX_AGENT | "claude");
-    }
-    adapter.adapter_api == "2" && !adapter.visibility.identity_by_projection_method.is_empty()
-}
-
-fn unsupported_visibility_report(
-    skill: &str,
-    agent: &str,
-    message: String,
-    details: Value,
-) -> CodexVisibilityReport {
-    CodexVisibilityReport {
-        skill: skill.to_string(),
-        agent: agent.to_string(),
-        visible: false,
-        checks: vec![check(
-            "visibility_unsupported",
-            false,
-            "error",
-            &message,
-            details,
-            Some(format!(
-                "install or update the {agent} adapter visibility metadata"
-            )),
-        )],
-        next_actions: vec![format!(
-            "install or update the {agent} adapter visibility metadata"
-        )],
-        restart_required: false,
-    }
-}
-
-fn adapter_metadata_details(adapter: &AgentAdapter) -> Value {
-    json!({
-        "adapter_id": adapter.id,
-        "adapter_source": adapter.source,
-        "skill_entrypoint": adapter.skill_entrypoint,
-        "projection_methods": adapter.projection_methods,
-        "discovery_roots": adapter.discovery_roots.iter().map(|root| {
-            json!({
-                "scope": root.scope,
-                "path_template": root.path_template,
-                "role": root.role,
-                "source_env_var": root.source_env_var,
-                "priority": root.priority,
-                "scan_eligible": root.scan_eligible,
-                "available": root.available,
-                "unavailable_reason": root.unavailable_reason,
-            })
-        }).collect::<Vec<_>>(),
-        "visibility": adapter_visibility_details(adapter),
-        "reload": {
-            "strategy": adapter.reload.strategy,
-            "hot_reload": adapter.reload.hot_reload,
-            "notes": adapter.reload.notes,
-        },
-    })
-}
-
-fn adapter_visibility_details(adapter: &AgentAdapter) -> Value {
-    json!({
-        "follows_symlink_dirs": adapter.visibility.follows_symlink_dirs,
-        "identity_by_projection_method": adapter.visibility.identity_by_projection_method,
-        "config_file": adapter.visibility.config_file,
-        "disable_rules": adapter.visibility.disable_rules,
-    })
 }
 
 fn reconcile_next_action(agent: &str) -> String {

@@ -236,6 +236,15 @@ fn workspace_doctor_reports_agent_skill_inventory() {
     assert_eq!(inventory["severity"], Value::String("info".to_string()));
     assert_eq!(inventory["details"]["home_set"], Value::Bool(true));
     assert_eq!(inventory["details"]["total"], Value::from(10));
+    assert_eq!(
+        inventory["details"]["generic_adapter_count"],
+        Value::from(7)
+    );
+    assert!(
+        inventory["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("7 of 10 adapters use generic fidelity"))
+    );
 
     let agents = inventory["details"]["agents"]
         .as_array()
@@ -247,6 +256,8 @@ fn workspace_doctor_reports_agent_skill_inventory() {
         .find(|a| a["agent"] == "claude")
         .expect("claude entry");
     assert_eq!(claude["present"], Value::Bool(true));
+    assert_eq!(claude["fidelity"], "verified");
+    assert_eq!(claude["adapter"]["fidelity"], "verified");
     assert_eq!(claude["registered_target_count"], Value::from(0));
 
     let codex = agents
@@ -260,6 +271,7 @@ fn workspace_doctor_reports_agent_skill_inventory() {
         .find(|a| a["agent"] == "cursor")
         .expect("cursor entry");
     assert_eq!(cursor["present"], Value::Bool(false));
+    assert_eq!(cursor["fidelity"], "generic");
 
     let legacy = &env["data"]["checks"]["agent_skill_dirs"]["agents"];
     assert_eq!(

@@ -16,6 +16,20 @@ Schemas:
 - `docs/schemas/agent-adapter-v1.schema.json`
 - `docs/schemas/agent-adapter-v2.schema.json`
 
+## Fidelity
+
+Every adapter row emitted by `loom workspace status --json` includes required
+output-only metadata `fidelity: "verified" | "generic"`.
+
+- `verified` means the built-in discovery, visibility, and reload metadata is
+  backed by agent-specific evidence and targeted tests.
+- `generic` means the adapter uses conservative fallback metadata. A verified
+  adapter must never contain a `legacy-default` discovery root.
+
+External v1 and v2 input schemas do not accept a fidelity assertion. External
+records always resolve to `generic` until Loom defines a separately validated
+evidence mechanism, so existing external validation behavior is unchanged.
+
 ## Record
 
 ```json
@@ -94,8 +108,10 @@ Supported visibility identities are `canonical-skill-md-path`,
 `runtime-skill-md-path`, `directory-path`, and `adapter-defined`. Supported
 disable rules are `skills.config.path` and `adapter-defined`.
 
-Supported reload strategies are `no-reload-required`,
-`new-session-recommended`, `restart-required`, and `unknown`.
+External v2 reload strategies remain `no-reload-required`,
+`new-session-recommended`, `restart-required`, and `unknown`. Built-in adapters
+may additionally report an evidence-backed strategy; Gemini CLI uses
+`in-session-command`.
 
 Built-in Codex metadata declares `~/.agents/skills` as the preferred user root,
 `${CODEX_HOME:-~/.codex}/skills` as a legacy user root, and
@@ -111,6 +127,19 @@ root, `${CLAUDE_HOME:-~/.claude}/skills` as a legacy user root, and
 by canonical `SKILL.md` path for symlink projections and adapter-defined
 disable rules. Reload is reported as `new-session-recommended`; Loom does not
 claim an existing Claude session has hot-reloaded changed skills.
+
+Built-in Gemini CLI metadata declares `~/.agents/skills` and
+`~/.gemini/skills` as user roots, plus matching project roots. Gemini CLI loads
+the `.agents` alias after `.gemini` within each tier, so Loom assigns the alias
+the higher priority. Symlink identity follows the canonical `SKILL.md`; copy
+and materialize identity use the runtime path. `~/.gemini/settings.json` and
+adapter-defined `skills.disabled` behavior are surfaced without claiming Loom
+can rewrite that setting. Reload is `in-session-command` with `/skills reload`.
+Evidence: [official discovery docs](https://geminicli.com/docs/cli/creating-skills/),
+[official command reference](https://geminicli.com/docs/reference/commands/),
+[official settings reference](https://geminicli.com/docs/reference/configuration/),
+and the official
+[discovery implementation](https://github.com/google-gemini/gemini-cli/blob/main/packages/core/src/skills/skillManager.ts).
 
 ## Source Display
 

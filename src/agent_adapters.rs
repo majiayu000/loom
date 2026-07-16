@@ -27,11 +27,31 @@ pub(crate) const SOURCE_BUILT_IN: &str = "built-in";
 pub(crate) const SOURCE_EXTERNAL: &str = "external";
 pub(crate) const SOURCE_UNKNOWN: &str = "unknown";
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum AdapterFidelity {
+    Verified,
+    Generic,
+}
+
+impl AdapterFidelity {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Verified => "verified",
+            Self::Generic => "generic",
+        }
+    }
+
+    pub(crate) fn is_verified(self) -> bool {
+        self == Self::Verified
+    }
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct AgentAdapter {
     pub adapter_api: String,
     pub id: String,
     pub source: String,
+    pub fidelity: AdapterFidelity,
     pub supported_scopes: Vec<String>,
     pub projection_methods: Vec<String>,
     pub skill_entrypoint: String,
@@ -268,6 +288,7 @@ impl AgentAdapterRegistry {
                     "declared_adapter_api": adapter.adapter_api,
                     "id": adapter.id,
                     "source": adapter.source,
+                    "fidelity": adapter.fidelity.as_str(),
                     "supported_scopes": adapter.supported_scopes,
                     "projection_methods": adapter.projection_methods,
                     "skill_entrypoint": adapter.skill_entrypoint,
@@ -370,6 +391,7 @@ fn built_in_adapters(root: &Path, home: Option<&Path>) -> Vec<AgentAdapter> {
                 adapter_api: ADAPTER_API_V2.to_string(),
                 id: id.to_string(),
                 source: SOURCE_BUILT_IN.to_string(),
+                fidelity: metadata::built_in_fidelity(id),
                 supported_scopes: vec!["user".to_string(), "project".to_string()],
                 projection_methods: vec![
                     "symlink".to_string(),
@@ -449,6 +471,7 @@ fn load_external_adapter_v1(
         adapter_api: ADAPTER_API_V1.to_string(),
         id: record.id,
         source: SOURCE_EXTERNAL.to_string(),
+        fidelity: AdapterFidelity::Generic,
         supported_scopes: record.supported_scopes,
         projection_methods: record.projection_methods,
         skill_entrypoint: record.skill_entrypoint,
@@ -483,6 +506,7 @@ fn load_external_adapter_v2(
         adapter_api: ADAPTER_API_V2.to_string(),
         id: record.id,
         source: SOURCE_EXTERNAL.to_string(),
+        fidelity: AdapterFidelity::Generic,
         supported_scopes: record.supported_scopes,
         projection_methods: record.projection_methods,
         skill_entrypoint: record.skill_entrypoint,

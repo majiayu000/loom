@@ -357,6 +357,77 @@ fn skill_visibility_returns_structured_unsupported_for_adapter_without_metadata(
             .any(|check| check["id"] == json!("visibility_unsupported")),
         "missing visibility_unsupported check: {env}"
     );
+    let unsupported = checks
+        .iter()
+        .find(|check| check["id"] == json!("visibility_unsupported"))
+        .expect("unsupported check");
+    assert!(
+        unsupported["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("generic fidelity")),
+        "generic adapters must not be presented as verified: {unsupported}"
+    );
+    assert_eq!(unsupported["details"]["fidelity"], "generic");
+}
+
+#[test]
+fn skill_diagnose_reports_generic_adapter_fidelity() {
+    let root = TestDir::new("diagnose-generic-fidelity");
+    let home = TestDir::new("diagnose-generic-fidelity-home");
+    write_good_skill(root.path(), "demo");
+
+    let (output, env) = run_with_home(
+        root.path(),
+        home.path(),
+        &["skill", "diagnose", "demo", "--agent", "cursor"],
+    );
+
+    assert!(output.status.success(), "cursor diagnose failed: {env}");
+    let checks = env["data"]["checks"].as_array().expect("checks");
+    let unsupported = checks
+        .iter()
+        .find(|check| check["id"] == json!("visibility_unsupported"))
+        .expect("generic diagnose visibility check");
+    assert!(
+        unsupported["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("generic fidelity")),
+        "diagnose must explain the generic adapter limitation: {unsupported}"
+    );
+    assert_eq!(unsupported["details"]["fidelity"], "generic");
+    assert_eq!(
+        env["data"]["related"]["agent_visibility"]["fidelity"],
+        "generic"
+    );
+}
+
+#[test]
+fn skill_visibility_gemini_cli_uses_verified_adapter_metadata() {
+    let root = TestDir::new("visibility-gemini-cli-verified");
+    let home = TestDir::new("visibility-gemini-cli-verified-home");
+    write_good_skill(root.path(), "demo");
+
+    let (output, env) = run_with_home(
+        root.path(),
+        home.path(),
+        &["skill", "visibility", "demo", "--agent", "gemini-cli"],
+    );
+
+    assert!(output.status.success(), "Gemini visibility failed: {env}");
+    assert_eq!(env["data"]["agent"], json!("gemini-cli"));
+    let checks = env["data"]["checks"].as_array().expect("checks");
+    assert!(
+        checks
+            .iter()
+            .all(|check| check["id"] != json!("visibility_unsupported")),
+        "verified Gemini metadata must drive visibility checks: {env}"
+    );
+    assert!(
+        checks
+            .iter()
+            .any(|check| { check["id"] == json!("gemini-cli_disable_rules_adapter_defined") }),
+        "Gemini settings disable semantics must remain explicit: {env}"
+    );
 }
 
 #[test]

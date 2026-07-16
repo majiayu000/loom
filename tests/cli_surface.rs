@@ -380,6 +380,43 @@ fn use_codex_project_default_comes_from_adapter_metadata() {
 }
 
 #[test]
+fn use_gemini_cli_prefers_official_agents_alias() {
+    let root = TestDir::new("cli-use-gemini-adapter-root");
+    let workspace = TestDir::new("cli-use-gemini-workspace");
+    let fake_home = TestDir::new("cli-use-gemini-home");
+    write_skill(
+        root.path(),
+        "demo",
+        "---\nname: demo\ndescription: Use when testing Gemini adapter target roots.\n---\n# Demo\n",
+    );
+
+    let home_str = fake_home.path().to_string_lossy().into_owned();
+    let workspace_str = workspace.path().to_string_lossy().into_owned();
+    let (output, env) = run_loom_with_env(
+        root.path(),
+        &[("HOME", &home_str)],
+        &[
+            "use",
+            "demo",
+            "--agents",
+            "gemini-cli",
+            "--workspace",
+            &workspace_str,
+        ],
+    );
+
+    assert!(output.status.success(), "loom use failed: {env}");
+    assert_eq!(
+        env["data"]["steps"][0]["target_path"],
+        workspace
+            .path()
+            .join(".agents/skills")
+            .display()
+            .to_string()
+    );
+}
+
+#[test]
 fn top_level_init_uses_default_registry_root_and_scans_existing_dirs() {
     let home = TestDir::new("cli-default-home");
     let codex_skill = home.path().join(".codex/skills/demo-skill");

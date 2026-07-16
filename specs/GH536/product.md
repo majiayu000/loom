@@ -31,9 +31,9 @@ Locale: `zh-CN`
 ## 5. Acceptance Criteria
 
 1. `loom agent list/inspect --json` 输出每个内置 agent 的 fidelity 层级。
-2. 8 个回落 agent 标注为 `generic`，codex/claude 标注为 `verified`。
+2. 初始分层先将 8 个回落 agent 标注为 `generic`、codex/claude 标注为 `verified`；某 agent 只有在专属 discovery/visibility/reload 与针对性测试落地后才能翻转为 `verified`，本 issue 首个翻转目标为 `gemini-cli`。
 3. reload 语义要么按 agent 差异化，要么归入 generic 层不再伪装差异。
-4. 测试断言层级字段与 codex/claude 的差异化维持。
+4. 测试断言层级字段、codex/claude 的差异化维持，以及 `gemini-cli` 翻转前后的证据门槛。
 
 ## 6. Edge Cases
 

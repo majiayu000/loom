@@ -12,7 +12,7 @@ Locale: `zh-CN`
 ## 2. Goals
 
 1. `--json` 模式下所有失败路径（含初始化失败）都产出合法 envelope。
-2. 每个错误码要么有默认 `next_action`，要么有文档化的"无动作"理由。
+2. 每个错误码要么有普适默认 `next_action`、由调用点提供上下文动作，要么有文档化的"无动作"理由。
 3. 保持现有 exit code 分层，并由契约文档声明 `error.code` 是唯一稳定的语义路由键。
 
 ## 3. Non-Goals
@@ -31,7 +31,7 @@ Locale: `zh-CN`
 ## 5. Acceptance Criteria
 
 1. `loom --json <cmd>` 在 `App::new` 失败时 stdout 输出含错误码的 envelope，退出码非 0。
-2. PROJECTION_CONFLICT / POLICY_BLOCKED / REMOTE_DIVERGED 等冲突/策略/远程类错误码有默认 next_actions 或书面豁免。
+2. PROJECTION_CONFLICT / POLICY_BLOCKED / REMOTE_DIVERGED 等冲突/策略/远程类错误码有普适默认 next_actions、调用点上下文动作或书面豁免，且三者归属由 totality 表锁定。
 3. `docs/LOOM_CLI_CONTRACT.md` 错误码表含 exit code 与 next_actions 覆盖情况。
 4. 测试锁定初始化失败的 envelope 输出与 next_actions 覆盖表。
 

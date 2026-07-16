@@ -1,4 +1,3 @@
 # path<TAB>baseline_lines<TAB>issue-ref
-src/commands/mcp/apply.rs	981	#544
 src/commands/mcp.rs	878	#545
 src/commands/skillset_activation.rs	856	#546

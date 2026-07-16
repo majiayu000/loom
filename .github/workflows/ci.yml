@@ -48,6 +48,9 @@ jobs:
       - name: Rust Lint
         run: make lint
 
+      - name: Module Ceiling
+        run: make module-ceiling module-ceiling-test
+
       - name: Rust Tests
         run: make test
 

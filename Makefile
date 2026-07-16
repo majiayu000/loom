@@ -3,7 +3,7 @@ SHELL := /usr/bin/env bash
 PANEL_DIR := panel
 PANEL_INSTALL_STAMP := $(PANEL_DIR)/node_modules/.bun-install.stamp
 
-.PHONY: fmt fmt-check test lint panel-install panel-dev panel-build panel-test panel-typecheck e2e perf-smoke check ci install-hooks
+.PHONY: fmt fmt-check test lint module-ceiling module-ceiling-test panel-install panel-dev panel-build panel-test panel-typecheck e2e perf-smoke check ci install-hooks
 
 fmt:
 	cargo fmt --all
@@ -20,6 +20,12 @@ test:
 
 lint:
 	cargo clippy --all-targets --all-features -- -D warnings
+
+module-ceiling:
+	./scripts/module-ceiling.sh
+
+module-ceiling-test:
+	./scripts/module-ceiling-test.sh
 
 $(PANEL_INSTALL_STAMP): $(PANEL_DIR)/package.json $(PANEL_DIR)/bun.lock
 	cd $(PANEL_DIR) && bun install --frozen-lockfile
@@ -47,6 +53,6 @@ perf-smoke: panel-build
 	cargo build --release --locked
 	./scripts/perf-smoke.sh
 
-check: fmt-check lint test panel-typecheck panel-test panel-build e2e perf-smoke
+check: fmt-check lint module-ceiling module-ceiling-test test panel-typecheck panel-test panel-build e2e perf-smoke
 
 ci: check

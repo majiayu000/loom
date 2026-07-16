@@ -15,7 +15,7 @@ const INVALID_CONFIG: &str = "Gemini CLI settings or trust configuration is inva
 #[derive(Debug)]
 struct GeminiSettings {
     skills_enabled: bool,
-    disabled_skills: Vec<String>,
+    skill_disabled: bool,
     folder_trust_enabled: bool,
 }
 
@@ -23,7 +23,7 @@ impl Default for GeminiSettings {
     fn default() -> Self {
         Self {
             skills_enabled: true,
-            disabled_skills: Vec::new(),
+            skill_disabled: false,
             folder_trust_enabled: true,
         }
     }
@@ -47,7 +47,7 @@ pub(super) fn add_gemini_config_checks(
     project_scope_selected: bool,
     checks: &mut Vec<CodexVisibilityCheck>,
 ) -> bool {
-    let state = match load_config(workspace) {
+    let state = match load_config(skill, workspace) {
         Ok(state) => state,
         Err(_) => {
             push_requirement(checks, "gemini-cli_config_valid", false);
@@ -60,11 +60,7 @@ pub(super) fn add_gemini_config_checks(
         "gemini-cli_skills_enabled",
         state.settings.skills_enabled,
     );
-    let skill_enabled = !state
-        .settings
-        .disabled_skills
-        .iter()
-        .any(|disabled| disabled.eq_ignore_ascii_case(skill));
+    let skill_enabled = !state.settings.skill_disabled;
     push_requirement(checks, "gemini-cli_skill_not_disabled", skill_enabled);
     push_requirement(checks, "gemini-cli_admin_policy_observable", false);
 
@@ -74,9 +70,9 @@ pub(super) fn add_gemini_config_checks(
             "gemini-cli_workspace_trusted",
             workspace_allowed,
             "error",
-            "gemini-cli_workspace_trusted",
+            "Gemini CLI project skills require a trusted workspace",
             json!({"trusted": state.workspace_trusted}),
-            None,
+            Some("run /permissions trust for this workspace".to_string()),
         ));
     }
 
@@ -84,7 +80,32 @@ pub(super) fn add_gemini_config_checks(
 }
 
 fn push_requirement(checks: &mut Vec<CodexVisibilityCheck>, id: &str, ok: bool) {
-    checks.push(check(id, ok, "error", id, Value::Null, None));
+    let (message, action) = match id {
+        "gemini-cli_config_valid" => (
+            "Gemini CLI settings and trust files must be valid",
+            "repair Gemini CLI settings or trustedFolders.json",
+        ),
+        "gemini-cli_skills_enabled" => (
+            "Gemini CLI skills must be enabled",
+            "enable skills.enabled, then run /skills reload",
+        ),
+        "gemini-cli_skill_not_disabled" => (
+            "skill must not be disabled in Gemini CLI",
+            "run /skills enable for this skill, then /skills reload",
+        ),
+        _ => (
+            "Gemini CLI remote admin policy must be confirmed",
+            "confirm the effective policy with /skills list",
+        ),
+    };
+    checks.push(check(
+        id,
+        ok,
+        "error",
+        message,
+        Value::Null,
+        Some(action.to_string()),
+    ));
 }
 
 pub(super) fn add_frontmatter_check(
@@ -106,14 +127,14 @@ pub(super) fn add_frontmatter_check(
         &format!("gemini-cli_frontmatter_valid:{target_id}"),
         valid,
         "error",
-        "gemini-cli_frontmatter_valid",
+        "projected SKILL.md requires valid Gemini name and description frontmatter",
         Value::Null,
-        None,
+        Some("add valid name and description frontmatter to SKILL.md".to_string()),
     ));
     valid
 }
 
-fn load_config(workspace: Option<&Path>) -> Result<GeminiConfigState, &'static str> {
+fn load_config(skill: &str, workspace: Option<&Path>) -> Result<GeminiConfigState, &'static str> {
     let home = gemini_cli_home().ok_or(INVALID_CONFIG)?;
     let defaults = system_path("GEMINI_CLI_SYSTEM_DEFAULTS_PATH", "system-defaults.json");
     let user = home.join(".gemini/settings.json");
@@ -121,7 +142,7 @@ fn load_config(workspace: Option<&Path>) -> Result<GeminiConfigState, &'static s
 
     let mut settings = GeminiSettings::default();
     for path in [defaults.as_deref(), Some(user.as_path()), system.as_deref()] {
-        apply_layer(&mut settings, path)?;
+        apply_layer(&mut settings, path, skill)?;
     }
     let workspace_trusted = match workspace {
         Some(path) => workspace_trust(path, &home, settings.folder_trust_enabled)?,
@@ -133,8 +154,9 @@ fn load_config(workspace: Option<&Path>) -> Result<GeminiConfigState, &'static s
         apply_layer(
             &mut settings,
             Some(&workspace.join(".gemini/settings.json")),
+            skill,
         )?;
-        apply_layer(&mut settings, system.as_deref())?;
+        apply_layer(&mut settings, system.as_deref(), skill)?;
     }
     Ok(GeminiConfigState {
         settings,
@@ -142,36 +164,52 @@ fn load_config(workspace: Option<&Path>) -> Result<GeminiConfigState, &'static s
     })
 }
 
-fn apply_layer(settings: &mut GeminiSettings, path: Option<&Path>) -> Result<(), &'static str> {
-    let Some(path) = path.filter(|path| path.exists()) else {
+fn apply_layer(
+    settings: &mut GeminiSettings,
+    path: Option<&Path>,
+    skill: &str,
+) -> Result<(), &'static str> {
+    let Some(path) = path else {
         return Ok(());
     };
-    let raw = fs::read_to_string(path).map_err(|_| INVALID_CONFIG)?;
-    let value = parse_json(&raw)?;
-    let root = value.as_object().ok_or(INVALID_CONFIG)?;
-    if let Some(value) = root.get("skills") {
-        let skills = value.as_object().ok_or(INVALID_CONFIG)?;
-        if let Some(value) = skills.get("enabled") {
-            settings.skills_enabled = value.as_bool().ok_or(INVALID_CONFIG)?;
-        }
-        if let Some(value) = skills.get("disabled") {
-            for value in value.as_array().ok_or(INVALID_CONFIG)? {
-                settings
-                    .disabled_skills
-                    .push(value.as_str().ok_or(INVALID_CONFIG)?.to_string());
-            }
+    let Some(value) = read_json(path)? else {
+        return Ok(());
+    };
+    if let Some(value) = lookup(&value, &["skills", "enabled"])? {
+        settings.skills_enabled = value.as_bool().ok_or(INVALID_CONFIG)?;
+    }
+    if let Some(value) = lookup(&value, &["skills", "disabled"])? {
+        for value in value.as_array().ok_or(INVALID_CONFIG)? {
+            settings.skill_disabled |= value
+                .as_str()
+                .ok_or(INVALID_CONFIG)?
+                .eq_ignore_ascii_case(skill);
         }
     }
-    if let Some(value) = root.get("security") {
-        let security = value.as_object().ok_or(INVALID_CONFIG)?;
-        if let Some(value) = security.get("folderTrust") {
-            let trust = value.as_object().ok_or(INVALID_CONFIG)?;
-            if let Some(value) = trust.get("enabled") {
-                settings.folder_trust_enabled = value.as_bool().ok_or(INVALID_CONFIG)?;
-            }
-        }
+    if let Some(value) = lookup(&value, &["security", "folderTrust", "enabled"])? {
+        settings.folder_trust_enabled = value.as_bool().ok_or(INVALID_CONFIG)?;
     }
     Ok(())
+}
+
+fn lookup<'a>(value: &'a Value, path: &[&str]) -> Result<Option<&'a Value>, &'static str> {
+    let mut current = value;
+    for key in path {
+        let object = current.as_object().ok_or(INVALID_CONFIG)?;
+        let Some(next) = object.get(*key) else {
+            return Ok(None);
+        };
+        current = next;
+    }
+    Ok(Some(current))
+}
+
+fn read_json(path: &Path) -> Result<Option<Value>, &'static str> {
+    if !path.exists() {
+        return Ok(None);
+    }
+    let raw = fs::read_to_string(path).map_err(|_| INVALID_CONFIG)?;
+    parse_json(&raw).map(Some)
 }
 
 fn workspace_trust(
@@ -185,23 +223,21 @@ fn workspace_trust(
     let path = env::var_os("GEMINI_CLI_TRUSTED_FOLDERS_PATH")
         .map(PathBuf::from)
         .unwrap_or_else(|| home.join(".gemini/trustedFolders.json"));
-    if !path.exists() {
+    let Some(value) = read_json(&path)? else {
         return Ok(None);
-    }
-    let raw = fs::read_to_string(path).map_err(|_| INVALID_CONFIG)?;
-    let value = parse_json(&raw)?;
+    };
     let rules = value.as_object().ok_or(INVALID_CONFIG)?;
     let workspace = normalize_existing_or_raw(workspace);
     let mut longest = None;
     for (raw_path, value) in rules {
         let level = value.as_str().ok_or(INVALID_CONFIG)?;
-        let rule = PathBuf::from(raw_path);
+        let rule = Path::new(raw_path);
         let effective = match level {
             "TRUST_FOLDER" | "DO_NOT_TRUST" => rule,
-            "TRUST_PARENT" => rule.parent().map(Path::to_path_buf).unwrap_or(rule),
+            "TRUST_PARENT" => rule.parent().unwrap_or(rule),
             _ => return Err(INVALID_CONFIG),
         };
-        if workspace.starts_with(normalize_existing_or_raw(&effective)) {
+        if workspace.starts_with(normalize_existing_or_raw(effective)) {
             let candidate = (raw_path.len(), level != "DO_NOT_TRUST");
             if longest.is_none_or(|current: (usize, bool)| candidate.0 > current.0) {
                 longest = Some(candidate);

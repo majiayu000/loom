@@ -576,11 +576,29 @@ fn skill_visibility_gemini_cli_uses_verified_adapter_metadata() {
             "missing passing Gemini check {id}: {env}"
         );
     }
+    let admin = checks
+        .iter()
+        .find(|check| check["id"] == "gemini-cli_admin_policy_observable")
+        .expect("admin policy check");
+    assert_eq!(admin["ok"], false);
     assert!(
-        checks.iter().any(|check| {
-            check["id"] == "gemini-cli_admin_policy_observable" && check["ok"] == false
-        }),
-        "remote admin state must remain fail-closed: {env}"
+        admin["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("admin policy"))
+    );
+    assert!(
+        admin["next_action"]
+            .as_str()
+            .is_some_and(|action| action.contains("/skills list"))
+    );
+    assert!(
+        env["data"]["next_actions"]
+            .as_array()
+            .expect("next actions")
+            .iter()
+            .any(|action| action
+                .as_str()
+                .is_some_and(|action| action.contains("/skills list")))
     );
     let reload = checks
         .iter()
@@ -696,6 +714,15 @@ fn skill_visibility_gemini_cli_unions_case_insensitive_disables() {
             .expect("config validity check")["ok"],
         false
     );
+    assert!(
+        env["data"]["next_actions"]
+            .as_array()
+            .expect("next actions")
+            .iter()
+            .any(|action| action
+                .as_str()
+                .is_some_and(|action| action.contains("repair Gemini CLI settings")))
+    );
 }
 
 #[test]
@@ -768,6 +795,15 @@ fn skill_visibility_gemini_cli_rejects_invalid_projected_frontmatter() {
                     && check["ok"] == false
             })
     );
+    assert!(
+        env["data"]["next_actions"]
+            .as_array()
+            .expect("next actions")
+            .iter()
+            .any(|action| action
+                .as_str()
+                .is_some_and(|action| action.contains("frontmatter")))
+    );
 }
 
 #[test]
@@ -820,6 +856,11 @@ fn skill_visibility_gemini_cli_requires_trusted_project_workspace() {
         .expect("workspace trust check");
     assert_eq!(trust_check["ok"], false);
     assert_eq!(trust_check["details"]["trusted"], false);
+    assert!(
+        trust_check["next_action"]
+            .as_str()
+            .is_some_and(|action| action.contains("/permissions trust"))
+    );
 
     write_file(
         &home.path().join(".gemini/trustedFolders.json"),

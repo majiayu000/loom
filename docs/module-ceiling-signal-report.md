@@ -1,29 +1,61 @@
-# Signal Report: QUAL-01 Module Ceiling Regression
+# Module Ceiling Signal Report
 
-## Scope
+## Contract
 
-Restore the 600-line module ceiling in the Rust codebase without changing runtime behavior.
+`make module-ceiling` runs `scripts/module-ceiling.sh` locally and in the CI
+`verify` job after Rust lint.
 
-## Evidence
+- Production Rust files above 800 lines fail.
+- Production Rust files from 701 through 800 lines emit warnings.
+- `tests/` path components, `*_tests.rs`, and generated-file patterns are excluded.
+- Inline `#[cfg(test)]` blocks inside production files still count toward the
+  complete physical-file size.
+- Allowlist entries use `path<TAB>baseline_lines<TAB>issue-ref`.
+- An allowlisted file fails if it grows above its baseline, disappears, becomes
+  excluded, or falls to 800 lines or below without its stale entry being removed.
 
-- `wc -l src/panel/skill_diff.rs src/panel/mod.rs src/state/mod.rs`
-- `rg -n "#\\[cfg\\(test\\)\\]" src/panel/mod.rs src/panel/skill_diff.rs src/state/mod.rs`
-- Direct source inspection of the three flagged modules
+The guard implementation and negative fixtures are checked by:
 
-## Confirmed Root Cause
+```bash
+make module-ceiling module-ceiling-test
+```
 
-1. `src/panel/skill_diff.rs` is 701 lines because the production diff handler and its parsing/git helper tests are co-located in one file. The embedded `#[cfg(test)]` block starts at line 410.
-2. `src/panel/mod.rs` is 853 lines because the panel bootstrap/router code and a large mixed test fixture suite are co-located. The embedded `#[cfg(test)]` block starts at line 146.
-3. `src/state/mod.rs` is 630 lines because the state/runtime helpers and their lock regression tests are co-located. The embedded `#[cfg(test)]` block starts at line 486.
+## Current Hard-Ceiling Queue
 
-The regression is structural, not behavioral: test code drifted back into top-level production modules, pushing them past the maintainability ceiling.
+Baseline: `bb9b738` (the implementation branch preserves the same three hard
+violations).
 
-## Remediation Plan
+| Path | Baseline | Split issue | Policy |
+| --- | ---: | --- | --- |
+| `src/commands/mcp/apply.rs` | 981 | #544 | split-on-touch |
+| `src/commands/mcp.rs` | 878 | #545 | split-on-touch |
+| `src/commands/skillset_activation.rs` | 856 | #546 | split-on-touch |
 
-1. Keep runtime code in the existing modules.
-2. Move each embedded `#[cfg(test)]` block into a dedicated sibling test module:
-   - `src/panel/tests.rs`
-   - `src/panel/skill_diff/tests.rs`
-   - `src/state/tests.rs`
-3. Preserve existing coverage and imports.
-4. Validate with `cargo fmt --all`, `cargo clippy --all-targets -- -D warnings`, and `cargo test`.
+## Current Warning Band
+
+The final production filter reports 18 files in the 701–800 warning band:
+
+| Path | Lines |
+| --- | ---: |
+| `src/commands/codex_visibility.rs` | 800 |
+| `src/commands/skill_deps.rs` | 799 |
+| `src/commands/skill_diagnose.rs` | 798 |
+| `src/commands/watch_cmds.rs` | 794 |
+| `src/commands/backup_cmds.rs` | 787 |
+| `src/commands/provider_cmds/locator.rs` | 785 |
+| `src/cli.rs` | 774 |
+| `src/commands/provision/apply.rs` | 770 |
+| `src/commands/skill_eval.rs` | 745 |
+| `src/commands/skill_authoring.rs` | 745 |
+| `src/commands/telemetry/mod.rs` | 741 |
+| `src/agent_adapters.rs` | 732 |
+| `src/commands/skill_cmds/observed.rs` | 724 |
+| `src/commands/provenance.rs` | 720 |
+| `src/commands/skill_authoring_apply.rs` | 717 |
+| `src/commands/projections.rs` | 713 |
+| `src/commands/skill_inventory.rs` | 712 |
+| `src/commands/skill_eval_harness/runner.rs` | 711 |
+
+The allowlist may only shrink. A new entry requires a linked split issue and
+explicit review; reducing a baseline while the file remains above 800 also
+requires explicit review.

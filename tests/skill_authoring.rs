@@ -368,6 +368,41 @@ fn apply_patch_validates_commits_and_replays_by_idempotency_key() {
         "replay after cleanup should pass: {replayed_without_artifacts}"
     );
     assert_eq!(replayed_without_artifacts["data"]["replayed"], json!(true));
+
+    let records_dir = root.path().join("state/patches/apply-records");
+    let record_path = fs::read_dir(&records_dir)
+        .expect("read apply records")
+        .next()
+        .expect("apply record entry")
+        .expect("read apply record entry")
+        .path();
+    let mut record: Value =
+        serde_json::from_str(&fs::read_to_string(&record_path).expect("read apply record"))
+            .expect("parse apply record");
+    record["patch_id"] = json!("different-patch");
+    write_file(
+        &record_path,
+        &(serde_json::to_string_pretty(&record).expect("serialize apply record") + "\n"),
+    );
+    let (output, conflict) = run_loom(
+        root.path(),
+        &[
+            "skill",
+            "apply-patch",
+            patch_id,
+            "--idempotency-key",
+            "req-apply-secret",
+        ],
+    );
+    assert!(
+        !output.status.success(),
+        "replay mismatch must fail: {conflict}"
+    );
+    assert_eq!(conflict["error"]["code"], json!("REPLAY_CONFLICT"));
+    assert_eq!(
+        conflict["error"]["next_actions"][0]["cmd"],
+        json!("loom ops list --json")
+    );
 }
 
 #[test]
@@ -409,6 +444,10 @@ fn apply_patch_rejects_source_digest_drift_without_mutation() {
     );
     assert!(!output.status.success(), "drift should fail: {drift}");
     assert_eq!(drift["error"]["code"], json!("CAPTURE_CONFLICT"));
+    assert_eq!(
+        drift["error"]["next_actions"][0]["cmd"],
+        json!("loom skill inspect 'demo' --json")
+    );
     assert!(
         !fs::read_to_string(root.path().join("skills/demo/SKILL.md"))
             .expect("read skill")

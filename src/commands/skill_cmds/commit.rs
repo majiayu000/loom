@@ -38,11 +38,11 @@ impl App {
             });
             failure.next_actions = vec![
                 NextAction {
-                    cmd: format!("loom skill commit {} --from-source", args.skill),
+                    cmd: format!("loom skill commit {} --from-source --json", args.skill),
                     reason: "commit registry source changes".to_string(),
                 },
                 NextAction {
-                    cmd: format!("loom skill commit {} --from-projection", args.skill),
+                    cmd: format!("loom skill commit {} --from-projection --json", args.skill),
                     reason: "capture live projection changes".to_string(),
                 },
             ];

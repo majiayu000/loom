@@ -7,6 +7,7 @@ use serde_json::{Value, json};
 
 use crate::cli::{ProjectionMethod, SkillActivateArgs, SkillActiveListArgs, SkillDeactivateArgs};
 use crate::envelope::Meta;
+use crate::error_actions::contextual_skill_action;
 use crate::types::ErrorCode;
 
 use super::helpers::{
@@ -381,12 +382,17 @@ fn ensure_symlink_deactivation_rule(
     if rule.method == crate::core::vocab::ProjectionMethod::Symlink {
         return Ok(());
     }
-    Err(CommandFailure::new(
+    let mut failure = CommandFailure::new(
         ErrorCode::PolicyBlocked,
         format!(
             "deactivate refuses to delete '{}' projection '{}'; copy/materialize cleanup requires an explicit safe cleanup flow",
             rule.method,
             resolved.materialized_path.display()
         ),
-    ))
+    );
+    failure.next_actions = vec![contextual_skill_action(
+        &resolved.selection.skill,
+        "inspect the skill projection before choosing a safe cleanup flow",
+    )];
+    Err(failure)
 }

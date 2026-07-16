@@ -641,9 +641,51 @@ fn skill_deactivate_fails_closed_for_copy_projection() {
         deactivate_env["error"]["code"],
         Value::String("POLICY_BLOCKED".to_string())
     );
+    assert_eq!(
+        deactivate_env["error"]["next_actions"][0]["cmd"],
+        Value::String("loom skill inspect 'demo' --json".to_string())
+    );
     assert!(
         projected.join("SKILL.md").is_file(),
         "failed closed deactivate must not delete copy projection"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn skill_deactivate_wrong_symlink_emits_contextual_projection_action() {
+    use std::os::unix::fs::symlink;
+
+    let root = TestDir::new("skill-deactivate-wrong-symlink");
+    let home = TestDir::new("skill-deactivate-wrong-symlink-home");
+    write_good_skill(root.path(), "demo");
+    let (activate_output, activate_env) = run_with_home(
+        root.path(),
+        home.path(),
+        &["skill", "activate", "demo", "--agent", "codex"],
+    );
+    assert!(
+        activate_output.status.success(),
+        "activation failed: {activate_env}"
+    );
+
+    let projected = home.path().join(".agents/skills/demo");
+    fs::remove_file(&projected).expect("remove managed projection symlink");
+    symlink(home.path(), &projected).expect("create wrong-target symlink");
+    let (output, env) = run_with_home(
+        root.path(),
+        home.path(),
+        &["skill", "deactivate", "demo", "--agent", "codex"],
+    );
+
+    assert!(!output.status.success(), "wrong symlink must fail: {env}");
+    assert_eq!(
+        env["error"]["code"],
+        Value::String("PROJECTION_CONFLICT".to_string())
+    );
+    assert_eq!(
+        env["error"]["next_actions"][0]["cmd"],
+        Value::String("loom skill inspect 'demo' --json".to_string())
     );
 }
 

@@ -129,6 +129,15 @@ fn skill_commit_reports_ambiguous_when_source_and_projection_are_dirty() {
         env["error"]["details"]["projection_dirty"],
         Value::Bool(true)
     );
+    let actions = env["error"]["next_actions"]
+        .as_array()
+        .expect("ambiguous commit next_actions");
+    assert_eq!(actions.len(), 2);
+    assert!(actions.iter().all(|action| {
+        action["cmd"]
+            .as_str()
+            .is_some_and(|cmd| cmd.starts_with("loom ") && cmd.contains("--json"))
+    }));
 }
 
 #[test]

@@ -1,6 +1,7 @@
 use std::fs;
 use std::path::Path;
 
+use crate::error_actions::contextual_skill_action;
 use crate::fs_util::remove_symlink;
 use crate::state_model::{
     RegistryBindingsFile, RegistryProjectionsFile, RegistryRulesFile, RegistryStatePaths,
@@ -19,25 +20,37 @@ pub(super) fn remove_safe_symlink_projection(
     match fs::symlink_metadata(&resolved.materialized_path) {
         Ok(metadata) if metadata.file_type().is_symlink() => {
             if !projection_path_is_safe_symlink(&resolved.materialized_path, skill_src) {
-                return Err(CommandFailure::new(
+                let mut failure = CommandFailure::new(
                     ErrorCode::ProjectionConflict,
                     format!(
                         "projection path '{}' is a symlink but does not point at registry skill '{}'",
                         resolved.materialized_path.display(),
                         resolved.selection.skill
                     ),
-                ));
+                );
+                failure.next_actions = vec![contextual_skill_action(
+                    &resolved.selection.skill,
+                    "inspect the skill projection before repairing the target path",
+                )];
+                return Err(failure);
             }
             remove_symlink(&resolved.materialized_path).map_err(map_io)?;
             Ok(())
         }
-        Ok(_) => Err(CommandFailure::new(
-            ErrorCode::PolicyBlocked,
-            format!(
-                "deactivate refuses to delete non-symlink projection '{}'",
-                resolved.materialized_path.display()
-            ),
-        )),
+        Ok(_) => {
+            let mut failure = CommandFailure::new(
+                ErrorCode::PolicyBlocked,
+                format!(
+                    "deactivate refuses to delete non-symlink projection '{}'",
+                    resolved.materialized_path.display()
+                ),
+            );
+            failure.next_actions = vec![contextual_skill_action(
+                &resolved.selection.skill,
+                "inspect the skill projection before choosing a safe cleanup flow",
+            )];
+            Err(failure)
+        }
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(err) => Err(map_io(err)),
     }

@@ -11,6 +11,7 @@ use crate::cli::{
     EvalBaselineArg, EvalRunnerArg, SkillApplyPatchArgs, SkillEvalRunArgs, SkillEvalTriggerArgs,
 };
 use crate::envelope::Meta;
+use crate::error_actions::{NextAction, contextual_skill_action};
 use crate::fs_util::{remove_path_if_exists, write_atomic, write_atomic_bytes};
 use crate::gitops;
 use crate::state::AppContext;
@@ -266,6 +267,10 @@ fn revalidate_source(
             "expected_source_digest": artifact.source_digest,
             "current_source_digest": current_digest,
         });
+        failure.next_actions = vec![contextual_skill_action(
+            &artifact.skill,
+            "inspect the current skill state before regenerating the patch",
+        )];
         return Err(failure);
     }
     if artifact.source_ref != "working-tree" {
@@ -280,6 +285,10 @@ fn revalidate_source(
                 "expected_source_ref": artifact.source_ref,
                 "current_source_ref": current_ref,
             });
+            failure.next_actions = vec![contextual_skill_action(
+                &artifact.skill,
+                "inspect the current skill state before regenerating the patch",
+            )];
             return Err(failure);
         }
     }
@@ -656,6 +665,10 @@ fn replay_apply_record(
             "idempotency_key_digest": key_digest,
             "record": record,
         });
+        failure.next_actions = vec![NextAction::new(
+            "loom ops list --json",
+            "inspect the recorded operation before choosing a new idempotency key",
+        )];
         return Err(failure);
     }
     let mut response = record["response"].clone();

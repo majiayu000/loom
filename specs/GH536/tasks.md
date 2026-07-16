@@ -7,7 +7,7 @@ Status: Maintainer decisions approved; ready for implementation
 
 ## Order
 
-Tier field design -> built-in assignments + output -> docs/contract -> prioritized per-agent upgrades.
+Tier field design -> built-in assignments + output -> prioritized `gemini-cli` upgrade -> final docs/contract.
 
 ## Tasks
 

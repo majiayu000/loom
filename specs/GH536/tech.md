@@ -22,9 +22,10 @@ Human gate: maintainer decisions approved on 2026-07-16
 1. `src/agent_adapters.rs` (schema struct)
 2. `src/agent_adapters/metadata.rs`
 3. `src/commands/workspace_cmds/status.rs` (existing metadata output)
-4. `src/commands/skill_diagnose.rs` if it consumes adapter metadata
-5. `docs/SUPPORTED_AGENTS.md`, `docs/AGENT_ADAPTERS.md`, `docs/LOOM_CLI_CONTRACT.md`
-6. adapter tests
+4. `src/commands/workspace_cmds/doctor.rs` (generic-tier diagnostics)
+5. `src/commands/skill_diagnose.rs` if it consumes adapter metadata
+6. `docs/SUPPORTED_AGENTS.md`, `docs/AGENT_ADAPTERS.md`, `docs/LOOM_CLI_CONTRACT.md`
+7. adapter tests
 
 ## 4. Output Contract
 

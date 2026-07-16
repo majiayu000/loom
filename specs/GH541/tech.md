@@ -29,7 +29,7 @@ Status: implx auto draft; independent diff review passed; PR gate still required
 3. 根目录解析顺序固定为 Loom test/explicit override → agent-native home → platform home：
    `LOOM_CLAUDE_HOME` → `CLAUDE_HOME` → `~/.claude`，以及
    `LOOM_CODEX_HOME` → `CODEX_HOME` → `~/.codex`。
-4. 匹配：invocation 名 → registry skill id，经现有 read model 与投影绑定观测；匹配成功写
+4. 匹配：invocation 名 → registry skill id，经 current `RegistrySnapshot` read model；匹配成功写
    `skill_id`。未匹配时写 `skill_id=null` 与新增的受约束 `observed_skill_name`，既通过 redaction
    gate，又让 GH542 可从持久化事件重建 orphan；不能通过名称约束的输入进入 `rejected` 计数。
 5. 幂等：deterministic event id 输入包括 `agent`、`session_id_hash`、skill/observed name、UTC
@@ -43,6 +43,9 @@ Status: implx auto draft; independent diff review passed; PR gate still required
 8. export 保持 redacted：JSONL 对 unmatched v3 event 输出 validated `observed_skill_name`；CSV 新增
    `observed_skill_name` 列，matched/v2 event 为空。export 不输出 source hash、cursor、record offset
    或 raw rejected value；v2 fixture 保持可导出。
+9. `loom telemetry report` 的 per-skill key 统一为 `skill_id.or(observed_skill_name)`；分组、selector
+   filter 与表格/JSON 输出使用同一 normalized key，使 unmatched v3 event 可按其受约束名称查询，
+   不生成无法被 filter 命中的 `unknown` 行。
 
 ## 3. Affected Areas
 
@@ -51,8 +54,9 @@ Status: implx auto draft; independent diff review passed; PR gate still required
 3. `src/commands/telemetry/model.rs` 与 `store.rs`（event schema v3、
    `observed_skill_name`、deterministic event-id override、批量幂等 append）
 4. `src/commands/telemetry/export.rs`（v2/v3 JSONL/CSV redacted export）
-5. `docs/LOOM_CLI_CONTRACT.md`（命令面 + event/export/envelope 字段）
-6. `tests/`（fixture 日志 + ingest/export 集成测试）
+5. `src/commands/telemetry/mod.rs`（report 对 matched/unmatched 使用统一分组/filter key）
+6. `docs/LOOM_CLI_CONTRACT.md`（命令面 + event/report/export/envelope 字段）
+7. `tests/`（fixture 日志 + ingest/report/export 集成测试）
 
 ## 4. Output Contract
 
@@ -91,8 +95,9 @@ Status: implx auto draft; independent diff review passed; PR gate still required
 6. `cargo test --test telemetry_ingest native_home_precedence_and_dry_run_is_read_only`：两种 native
    home 与 Loom override 顺序正确，dry-run 前后 state snapshot 相同。
 7. `cargo test --test telemetry telemetry_export_v2_v3_observed_name_is_redacted`。
-8. `cargo test --test telemetry_ingest missing_agent_root_is_empty_but_unreadable_root_fails`。
-9. `cargo check --workspace --all-targets --all-features && cargo test`。
+8. `cargo test --test telemetry_ingest telemetry_report_groups_unmatched_by_observed_name`。
+9. `cargo test --test telemetry_ingest missing_agent_root_is_empty_but_unreadable_root_fails`。
+10. `cargo check --workspace --all-targets --all-features && cargo test`。
 
 ## 6. Rollback Plan
 
@@ -105,7 +110,7 @@ Status: implx auto draft; independent diff review passed; PR gate still required
 | Behavior invariant | Implementation area | Verification |
 | --- | --- | --- |
 | B-001 | parsers + cursor serialization | `cargo test --test telemetry_ingest source_logs_and_raw_paths_are_read_only` |
-| B-002 | event model/store + unmatched/rejected envelope | `cargo test --test telemetry_ingest unmatched_events_remain_queryable && cargo test --test telemetry_ingest rejected_names_are_counted_without_raw_echo` |
+| B-002 | event model/store + unmatched/rejected envelope + report normalized key | `cargo test --test telemetry_ingest unmatched_events_remain_queryable && cargo test --test telemetry_ingest telemetry_report_groups_unmatched_by_observed_name && cargo test --test telemetry_ingest rejected_names_are_counted_without_raw_echo` |
 | B-003 | command route + dry-run plan | `cargo test --test telemetry_ingest disabled_fails_closed_and_dry_run_is_read_only` |
 | B-004 | canonical source identity + deterministic event id builder | `cargo test --test telemetry_ingest deterministic_ids_include_record_ordinal && cargo test --test telemetry_ingest source_aliases_share_event_identity` |
 | B-005, B-006 | canonical hashed cursor + covered_since recovery | `cargo test --test telemetry_ingest cursor_hashes_paths_and_backfills_older_since` |

@@ -30,7 +30,9 @@ telemetry 事件存储（#385/#496）只在调用方显式执行 `loom skill use
    raw transcript path、workspace path 或未哈希 session identity。
 2. **B-002** matched invocation 持久化 registry `skill_id`；unmatched invocation 也必须持久化为
    `skill.invocation`，使用 `skill_id=null` 与受长度/字符约束的 `observed_skill_name`，并同时进入
-   envelope 的 `unmatched` 聚合，供后续 orphan 统计；非法名称必须计入显式 rejected 计数而非静默丢弃。
+   envelope 的 `unmatched` 聚合，供后续 orphan 统计；`loom telemetry report` 必须按
+   `observed_skill_name` 分组/过滤这些事件而不是只计入总数或标成无法选择的 `unknown`；非法名称
+   必须计入显式 rejected 计数而非静默丢弃。
 3. **B-003** telemetry disabled 时 ingest fail closed 并返回 `loom telemetry enable` next action；
    `--dry-run` 仍可读取并报告候选项，但不得写 event 或 cursor。
 4. **B-004** 每个 event id 必须由 agent、session hash、skill/observed name、timestamp、canonical

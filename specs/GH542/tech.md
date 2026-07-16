@@ -9,14 +9,19 @@ Depends on: GH541
 ## 1. Current Behavior
 
 - `loom telemetry report`（`src/commands/telemetry/`）按事件流聚合，不 join registry；`loom doctor` 检查完整性/投影，不看用量。
-- skill 读模型来自 `build_skill_read_model`（`src/commands/mod.rs` 系列 helper），绑定/投影观测在 `state/registry/observations/*.jsonl`。
+- skill 读模型来自 `build_skill_read_model`；当前绑定真相是同一 `RegistrySnapshot` 中 active
+  binding/rule/target 的关联。projection 可缺失且只提供 materialization/health 信息，不改变已生效
+  rule 的 bound 状态；`state/registry/observations/*.jsonl` 是历史投影观测，不能用于 zombie、
+  unbound 或 single-runtime 的 current-binding 分类。
 - 事件存储 `state/telemetry/events.jsonl`，已有解析容错（`TelemetryLog`）。
 
 ## 2. Proposed Design
 
 1. 新增 CLI：`src/cli/` skill 命令组挂 `Stats(SkillStatsArgs)`（`--since`、`--agent`、`--zombie-days` 默认 30、全局 `--json`）。
 2. 新增 `src/commands/skill_stats.rs`：
-   - 载入 skill 读模型 + 绑定观测 → 每 skill 的 bound agents 集合。
+   - 载入 skill 读模型与同一份 current `RegistrySnapshot`；从 active binding/rule/target 关联直接
+     构造每 skill 的 bound agents 集合，即使 projection 尚未 materialize 也保持 bound；不读取历史
+     observation 作为绑定真相。
    - 单遍扫 `TelemetryLog.events`，同时维护 unfiltered lifetime/global-flag view、按 `--agent`
      过滤但不受 `--since` 影响的 lifetime/cutoff view，以及 `--since` + `--agent` window view，
      按 (skill, agent) 聚合 count/last_used/error/failure_category。
@@ -35,7 +40,8 @@ Depends on: GH541
        `skill_id` 已不在当前读模型者，聚合到独立列表。
    - 错误率：window 中 invocation+error 样本数 ≥ 5 才输出，否则 `error_rate=null`；总是返回
      `error_sample_size` 与 failure-category 原始计数。
-3. 排序：active 按窗口调用数降序 → zombie → unbound-unused；orphan 独立数组。
+3. 排序：active 与 unbound-but-used 同组，按窗口 invocation count 降序再 skill id；随后 zombie
+   按 last_used（null 最后）再 skill id，最后 unbound-unused 按 skill id；orphan 独立数组。
 4. 复用 GH537 方向的 envelope 约定，全部字段进 `docs/LOOM_CLI_CONTRACT.md`。
 
 ## 3. Affected Areas
@@ -71,7 +77,8 @@ Depends on: GH541
 
 ## 5. Verification Plan
 
-1. fixture registry（含多绑定/无绑定 skill）+ fixture events → 断言四类分类与 single-runtime 标记。
+1. fixture current snapshot（含多绑定、无绑定、binding/rule 无 projection、stale historical
+   observation skill）+ fixture events → 断言四类分类与 single-runtime 标记只跟随 current snapshot。
 2. `cargo test --test skill_stats agent_filter_scopes_bindings_but_single_runtime_is_global`：Claude-only
    binding 不成为 Codex zombie，单 agent binding 不标 single-runtime，多 agent flag 不受 window filter 误导。
 3. `cargo test --test skill_stats zombie_cutoff_is_independent_from_since`：60 天前调用在宽 `--since`
@@ -82,7 +89,8 @@ Depends on: GH541
    样本 4 返回 null、样本 5 返回 rate。
 6. `cargo test --test skill_stats error_events_count_as_recent_lifecycle_usage`：仅有近期 error event 的
    bound skill 保持 active，且 failure category 仍计数。
-7. contract surface test + `cargo check --workspace --all-targets --all-features && cargo test`。
+7. `cargo test --test skill_stats unbound_but_used_sort_is_stable`。
+8. contract surface test + `cargo check --workspace --all-targets --all-features && cargo test`。
 
 ## 6. Rollback Plan
 
@@ -94,12 +102,12 @@ Depends on: GH541
 | --- | --- | --- |
 | B-001 | read-only stats command + snapshot | `cargo test --test skill_stats command_is_read_only_and_linear` |
 | B-002 | telemetry config/log loading | `cargo test --test skill_stats disabled_with_history_is_not_empty` |
-| B-003 | filtered binding/window views + guarded global flag view | `cargo test --test skill_stats agent_filter_scopes_bindings_but_single_runtime_is_global` |
+| B-003 | current snapshot binding/window views + guarded global flag view | `cargo test --test skill_stats current_snapshot_ignores_stale_binding_observations && cargo test --test skill_stats agent_filter_scopes_bindings_but_single_runtime_is_global` |
 | B-004 | independent cutoff clock/view + error-as-usage semantics | `cargo test --test skill_stats zombie_cutoff_is_independent_from_since && cargo test --test skill_stats error_events_count_as_recent_lifecycle_usage` |
 | B-005 | table-driven classifier | `cargo test --test skill_stats lifecycle_categories_are_exhaustive` |
 | B-006 | v2/v3 event normalization + orphan aggregation | `cargo test --test skill_stats durable_unmatched_events_become_orphans` |
 | B-007 | error aggregation | `cargo test --test skill_stats error_threshold_is_five` |
-| B-008 | stable comparator | `cargo test --test skill_stats ordering_is_stable` |
+| B-008 | four-category stable comparator | `cargo test --test skill_stats ordering_is_stable && cargo test --test skill_stats unbound_but_used_sort_is_stable` |
 | B-009 | empty/malformed/error paths | `cargo test --test skill_stats empty_and_error_contracts_are_explicit` |
 
 ## 8. Planned Changes Manifest

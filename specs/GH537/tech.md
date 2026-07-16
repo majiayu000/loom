@@ -12,7 +12,7 @@ Human gate: maintainer decisions approved on 2026-07-16
 ## 2. Proposed Design
 
 1. Add `ErrorCode::InitError` mapped to `INIT_ERROR` / exit 3. In `main.rs`, when `cli.json` is set, emit `cmd: "app.init"` + `INIT_ERROR` for `App::new` failure; panel/top-level failures emit structured envelopes with their actual/stable command identity and appropriate existing error code. Keep stderr text for human mode.
-2. Extend `default_next_actions` only for universal no-argument actions (`REMOTE_*` → `loom sync status --json`, `LOCK_BUSY` → `loom ops list --json`). Conflict/policy call sites provide contextual actions when possible; every remaining code appears in a documented exemption table. Add a table-driven totality test.
+2. Extend `default_next_actions` only for universal no-argument actions (`REMOTE_*` → `loom sync status --json`, `LOCK_BUSY` → `loom ops list --json`). Conflict/policy call sites provide contextual actions when possible; every remaining code appears in a documented exemption table. Derive totality from the `ErrorCode` enum, separately assert the contract table matches the enum, and audit explicit call-site/emitted-envelope actions as well as defaults so every command is runnable and includes `--json`.
 3. Document existing exit-code tiers without reordering and declare `error.code` the sole stable semantic routing key in `docs/LOOM_CLI_CONTRACT.md`.
 
 ## 3. Affected Areas
@@ -29,10 +29,12 @@ Init failure with `--json`: `{ok:false, cmd:"app.init", error:{code:"INIT_ERROR"
 
 ## 5. Verification Plan
 
-1. Integration test: launch the binary with `HOME` and `USERPROFILE` removed, omit `--root`, pass `--json`, and assert stdout parses as an `app.init` / `INIT_ERROR` envelope. An unwritable explicit root does not trigger `App::new` and is not a valid fixture for this path.
-2. `cargo test error_actions`
-3. Contract doc test in `cli_surface`
-4. `cargo check && cargo test`
+1. App-init integration test: launch the binary with `HOME` and `USERPROFILE` removed, omit `--root`, pass `--json`, and assert stdout parses as an `app.init` / `INIT_ERROR` envelope. An unwritable explicit root does not trigger `App::new` and is not a valid fixture for this path.
+2. Panel integration test: occupy a selected localhost port, run `loom --json --root <temp> panel --port <port>`, and assert the bind/startup failure is a structured panel envelope rather than bare stderr.
+3. Top-level integration/unit fixture: deterministically inject or exercise a reachable `App::execute` top-level `Err` path and assert JSON mode emits a structured envelope; if no production path is reachable without fault injection, add a narrow test seam rather than omitting coverage.
+4. `cargo test error_actions` derives the code set from `ErrorCode`, checks contract parity, and validates both defaults and explicit emitted next_actions.
+5. Contract doc test in `cli_surface`.
+6. `cargo check && cargo test`.
 
 ## 6. Rollback Plan
 

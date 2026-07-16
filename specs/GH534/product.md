@@ -33,7 +33,7 @@ Locale: `zh-CN`
 
 1. 新增一个超过 800 行且未在 allowlist 的生产文件时 CI 失败；700–800 行文件输出 warning。
 2. allowlist 内文件不阻塞，但 guard 输出其当前行数与关联 issue。
-3. allowlist 文件行数下降后可从 allowlist 移除且 guard 通过。
+3. allowlist 文件降到 800 行或以下后可移除条目且 guard 通过；仅下降但仍超过 800 时必须保留条目，并将更低的当前值作为新 baseline 接受显式 review 后更新。
 4. `docs/module-ceiling-signal-report.md` 刷新为当前真实清单或指向 guard 输出。
 
 ## 6. Edge Cases

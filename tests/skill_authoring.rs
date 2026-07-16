@@ -446,7 +446,7 @@ fn apply_patch_rejects_source_digest_drift_without_mutation() {
     assert_eq!(drift["error"]["code"], json!("CAPTURE_CONFLICT"));
     assert_eq!(
         drift["error"]["next_actions"][0]["cmd"],
-        json!("loom skill inspect 'demo' --json")
+        json!("loom --json skill inspect -- 'demo'")
     );
     assert!(
         !fs::read_to_string(root.path().join("skills/demo/SKILL.md"))

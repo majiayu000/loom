@@ -643,7 +643,7 @@ fn skill_deactivate_fails_closed_for_copy_projection() {
     );
     assert_eq!(
         deactivate_env["error"]["next_actions"][0]["cmd"],
-        Value::String("loom skill inspect 'demo' --json".to_string())
+        Value::String("loom --json skill inspect -- 'demo'".to_string())
     );
     assert!(
         projected.join("SKILL.md").is_file(),
@@ -685,7 +685,7 @@ fn skill_deactivate_wrong_symlink_emits_contextual_projection_action() {
     );
     assert_eq!(
         env["error"]["next_actions"][0]["cmd"],
-        Value::String("loom skill inspect 'demo' --json".to_string())
+        Value::String("loom --json skill inspect -- 'demo'".to_string())
     );
 }
 

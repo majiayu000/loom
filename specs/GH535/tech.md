@@ -7,7 +7,7 @@ Human gate: maintainer approval required before implementation (breaking CLI cha
 
 ## 1. Current Behavior
 
-`src/cli.rs` `SkillCommand` holds 42 subcommands mixing operational and authoring flows; `tests/cli_surface.rs:299` pins the budget at 42. Authoring handlers live in `src/commands/skill_authoring*.rs`, operational handlers across `src/commands/skill_*.rs`.
+`src/cli.rs` `SkillCommand` holds 44 subcommands mixing operational and authoring flows; `tests/cli_surface.rs:299` pins the budget at 44 (42 at audit time — the surface is still growing). Authoring handlers live in `src/commands/skill_authoring*.rs`, operational handlers across `src/commands/skill_*.rs`.
 
 ## 2. Proposed Design
 

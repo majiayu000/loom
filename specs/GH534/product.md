@@ -7,7 +7,7 @@ Locale: `zh-CN`
 
 ## 1. Problem
 
-模块行数上限只靠人工报告维护，已经漂移：`docs/module-ceiling-signal-report.md` 只覆盖 3 个早已修复的旧文件，而当前有 23 个非测试源文件超过 700 行（最大 981 行），无任何 CI 护栏。
+模块行数上限只靠人工报告维护，已经漂移：`docs/module-ceiling-signal-report.md` 只覆盖 3 个早已修复的旧文件，而当前有 22 个非测试源文件超过 700 行（最大 981 行，`bb9b738` 复核），无任何 CI 护栏。
 
 ## 2. Goals
 

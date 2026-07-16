@@ -7,12 +7,12 @@ Locale: `zh-CN`
 
 ## 1. Problem
 
-`skill` 分组下 42 个子命令混杂运维（list/inspect/activate/diagnose）与 authoring（draft/extract/rewrite/tune-description/generate-evals/apply-patch）两种人格。对 agent 是最大的剩余人体工学成本：单次选择空间过宽且异质，预算 gate 只冻结增长不降规模。
+`skill` 分组下 44 个子命令（`bb9b738`；审计时为 42，仍在增长）混杂运维（list/inspect/activate/diagnose）与 authoring（draft/extract/rewrite/tune-description/generate-evals/apply-patch）两种人格。对 agent 是最大的剩余人体工学成本：单次选择空间过宽且异质，预算 gate 只冻结增长不降规模。
 
 ## 2. Goals
 
 1. 运维与 authoring 命令按人格分组，agent 单次选择空间显著收窄。
-2. 分组后 `skill` 子命令预算明显低于 42。
+2. 分组后 `skill` 子命令预算明显低于 44。
 3. envelope `cmd` 值与错误 `next_actions` 跟随新路径。
 4. 契约文档、README、预算测试在同一变更内更新。
 

@@ -1,5 +1,4 @@
 use std::collections::BTreeMap;
-use std::env;
 use std::path::{Path, PathBuf};
 
 use serde_json::{Value, json};
@@ -30,7 +29,7 @@ pub(super) fn built_in_default_skill_dirs(
         return configured.cloned().unwrap_or_default();
     }
     let mut dirs = configured.cloned().unwrap_or_default();
-    if let Some(home) = gemini_cli_home(home) {
+    if let Some(home) = home {
         for path in [home.join(".agents/skills"), home.join(".gemini/skills")] {
             if !dirs.contains(&path) {
                 dirs.push(path);
@@ -38,13 +37,6 @@ pub(super) fn built_in_default_skill_dirs(
         }
     }
     dirs
-}
-
-fn gemini_cli_home(home: Option<&Path>) -> Option<PathBuf> {
-    env::var_os("GEMINI_CLI_HOME")
-        .filter(|raw| !raw.is_empty())
-        .map(PathBuf::from)
-        .or_else(|| home.map(Path::to_path_buf))
 }
 
 pub(super) fn default_scan_eligible() -> bool {
@@ -530,13 +522,12 @@ fn gemini_cli_discovery_roots(
     configured: Option<&Vec<PathBuf>>,
     home: Option<&Path>,
 ) -> Vec<AdapterDiscoveryRoot> {
-    let home_available = gemini_cli_home(home).is_some();
+    let home_available = home.is_some();
     let unavailable_reason = || {
         (!home_available).then(|| "GEMINI_CLI_HOME, HOME, or USERPROFILE is not set".to_string())
     };
     let mut roots = Vec::new();
-    let official = gemini_cli_home(home)
-        .map(|home| [home.join(".agents/skills"), home.join(".gemini/skills")]);
+    let official = home.map(|home| [home.join(".agents/skills"), home.join(".gemini/skills")]);
     if let Some(configured) = configured {
         roots.extend(
             configured

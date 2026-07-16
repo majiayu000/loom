@@ -108,6 +108,17 @@ pub(crate) fn build_agent_visibility_report(
     profile: Option<&str>,
 ) -> std::result::Result<CodexVisibilityReport, CommandFailure> {
     validate_skill_name(skill).map_err(map_arg)?;
+    let default_workspace = if agent == "gemini-cli" && workspace.is_none() {
+        Some(std::env::current_dir().map_err(|error| {
+            CommandFailure::new(
+                ErrorCode::IoError,
+                format!("failed to resolve current workspace: {error}"),
+            )
+        })?)
+    } else {
+        None
+    };
+    let workspace = workspace.or(default_workspace.as_deref());
     let paths = RegistryStatePaths::from_app_context(ctx);
     let snapshot = paths.maybe_load_snapshot().map_err(map_registry_state)?;
     if !ctx.skill_path(skill).is_dir()
@@ -293,6 +304,7 @@ fn build_visibility_report_from_parts(parts: VisibilityBuildParts<'_>) -> CodexV
     let disabled = match agent {
         CODEX_AGENT => add_config_checks(skill, &skill_file, config, &mut checks),
         "gemini-cli" => gemini::add_gemini_config_checks(
+            &ctx.root,
             skill,
             workspace,
             project_projection_ok && !trusted_independent_projection_ok,

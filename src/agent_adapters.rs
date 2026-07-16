@@ -6,11 +6,17 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::commands::CommandFailure;
-use crate::state::{AppContext, home_dir, resolve_agent_skill_dir_list, resolve_agent_skill_dirs};
+use crate::state::{
+    AppContext, effective_gemini_cli_home, home_dir, resolve_agent_skill_dir_list,
+    resolve_agent_skill_dirs,
+};
 use crate::state_model::RegistryProjectionTarget;
 use crate::types::ErrorCode;
 
+mod gemini_projection;
 mod metadata;
+
+pub(crate) use gemini_projection::built_in_projection_root;
 
 use metadata::{
     adapter_json_invalid, built_in_default_skill_dirs, built_in_discovery_roots, built_in_reload,
@@ -378,6 +384,7 @@ fn build_registry(
 }
 
 fn built_in_adapters(root: &Path, home: Option<&Path>) -> Vec<AgentAdapter> {
+    let gemini_home = effective_gemini_cli_home(root);
     let mut dirs_by_agent = if home.is_some() {
         resolve_agent_skill_dirs(root)
             .all
@@ -395,6 +402,11 @@ fn built_in_adapters(root: &Path, home: Option<&Path>) -> Vec<AgentAdapter> {
         .into_iter()
         .map(|id| {
             let reload = built_in_reload(id);
+            let adapter_home = if id == "gemini-cli" {
+                gemini_home.as_deref()
+            } else {
+                home
+            };
             AgentAdapter {
                 adapter_api: ADAPTER_API_V2.to_string(),
                 id: id.to_string(),
@@ -408,8 +420,12 @@ fn built_in_adapters(root: &Path, home: Option<&Path>) -> Vec<AgentAdapter> {
                 ],
                 skill_entrypoint: "SKILL.md".to_string(),
                 capabilities: capabilities_from_reload(&reload),
-                default_skill_dirs: built_in_default_skill_dirs(id, dirs_by_agent.get(id), home),
-                discovery_roots: built_in_discovery_roots(id, dirs_by_agent.get(id), home),
+                default_skill_dirs: built_in_default_skill_dirs(
+                    id,
+                    dirs_by_agent.get(id),
+                    adapter_home,
+                ),
+                discovery_roots: built_in_discovery_roots(id, dirs_by_agent.get(id), adapter_home),
                 visibility: built_in_visibility(id),
                 reload,
                 config_path: None,

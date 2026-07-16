@@ -2,14 +2,16 @@ use std::path::{Path, PathBuf};
 
 use serde_json::{Value, json};
 
-use crate::agent_adapters::{SOURCE_BUILT_IN, load_agent_adapters, preferred_discovery_root};
+use crate::agent_adapters::{
+    SOURCE_BUILT_IN, built_in_projection_root, load_agent_adapters, preferred_discovery_root,
+};
 use crate::cli::{
     BindingAddArgs, ProjectArgs, TargetAddArgs, TargetCommand, TargetOwnership, UseArgs, UseScope,
     WorkspaceBindingCommand, WorkspaceMatcherKind,
 };
 use crate::envelope::Meta;
 use crate::error_actions::NextAction;
-use crate::state::{AppContext, configured_agent_skill_dirs, home_dir};
+use crate::state::AppContext;
 use crate::state_model::RegistryStatePaths;
 use crate::types::ErrorCode;
 
@@ -227,25 +229,8 @@ fn target_path_for(
     if let Some(adapter) = adapters.adapter_for_agent(agent)
         && adapter.has_discovery_root_for_scope(scope)
     {
-        if agent == "gemini-cli" && adapter.source == SOURCE_BUILT_IN {
-            if matches!(args.scope, UseScope::User)
-                && let Some(configured) =
-                    configured_agent_skill_dirs(&ctx.root, "GEMINI_CLI_SKILLS_DIR")
-                        .and_then(|dirs| dirs.into_iter().next())
-            {
-                return Ok(absolute_path(&configured));
-            }
-            let native_root = match args.scope {
-                UseScope::User => std::env::var_os("GEMINI_CLI_HOME")
-                    .filter(|raw| !raw.is_empty())
-                    .map(PathBuf::from)
-                    .or_else(home_dir)
-                    .map(|home| home.join(".gemini/skills")),
-                UseScope::Project => Some(workspace.join(".gemini/skills")),
-            };
-            if let Some(root) = native_root {
-                return Ok(absolute_path(&root));
-            }
+        if let Some(root) = built_in_projection_root(ctx, adapter, scope, workspace, &args.skill)? {
+            return Ok(absolute_path(&root));
         }
         match preferred_discovery_root(adapter, scope, workspace) {
             Ok(root) => return Ok(absolute_path(&root.path)),

@@ -6,7 +6,7 @@ use serde_json::{Value, json};
 
 use crate::agent_adapters::AgentAdapter;
 use crate::commands::skill_lint::frontmatter::parse_skill_frontmatter;
-use crate::state::home_dir;
+use crate::state::effective_gemini_cli_home;
 
 use super::{CodexVisibilityCheck, check, normalize_existing_or_raw};
 
@@ -42,12 +42,13 @@ pub(super) fn target_requires_workspace_trust(adapter: &AgentAdapter, target: &P
 }
 
 pub(super) fn add_gemini_config_checks(
+    root: &Path,
     skill: &str,
     workspace: Option<&Path>,
     project_scope_selected: bool,
     checks: &mut Vec<CodexVisibilityCheck>,
 ) -> bool {
-    let state = match load_config(skill, workspace) {
+    let state = match load_config(root, skill, workspace) {
         Ok(state) => state,
         Err(_) => {
             push_requirement(checks, "gemini-cli_config_valid", false);
@@ -114,7 +115,7 @@ pub(super) fn add_frontmatter_check(
     target_id: &str,
     checks: &mut Vec<CodexVisibilityCheck>,
 ) -> bool {
-    let valid = parse_skill_frontmatter(entrypoint).is_ok_and(|parsed| {
+    let strict_valid = parse_skill_frontmatter(entrypoint).is_ok_and(|parsed| {
         parsed.schema_issues.is_empty()
             && parsed.frontmatter.name.as_deref() == Some(skill)
             && parsed
@@ -123,6 +124,7 @@ pub(super) fn add_frontmatter_check(
                 .as_deref()
                 .is_some_and(|description| !description.is_empty())
     });
+    let valid = strict_valid || simple_frontmatter_valid(entrypoint, skill);
     checks.push(check(
         &format!("gemini-cli_frontmatter_valid:{target_id}"),
         valid,
@@ -134,8 +136,12 @@ pub(super) fn add_frontmatter_check(
     valid
 }
 
-fn load_config(skill: &str, workspace: Option<&Path>) -> Result<GeminiConfigState, &'static str> {
-    let home = gemini_cli_home().ok_or(INVALID_CONFIG)?;
+fn load_config(
+    root: &Path,
+    skill: &str,
+    workspace: Option<&Path>,
+) -> Result<GeminiConfigState, &'static str> {
+    let home = effective_gemini_cli_home(root).ok_or(INVALID_CONFIG)?;
     let defaults = system_path("GEMINI_CLI_SYSTEM_DEFAULTS_PATH", "system-defaults.json");
     let user = home.join(".gemini/settings.json");
     let system = system_path("GEMINI_CLI_SYSTEM_SETTINGS_PATH", "settings.json");
@@ -293,11 +299,38 @@ fn strip_comments(raw: &str) -> String {
     output
 }
 
-fn gemini_cli_home() -> Option<PathBuf> {
-    env::var_os("GEMINI_CLI_HOME")
-        .filter(|raw| !raw.is_empty())
-        .map(PathBuf::from)
-        .or_else(home_dir)
+fn simple_frontmatter_valid(entrypoint: &Path, skill: &str) -> bool {
+    let Ok(raw) = fs::read_to_string(entrypoint) else {
+        return false;
+    };
+    let mut lines = raw.lines();
+    if lines.next().map(str::trim) != Some("---") {
+        return false;
+    }
+    let mut name = None;
+    let mut description = None::<String>;
+    let mut closed = false;
+    for raw_line in lines {
+        let line = raw_line.trim();
+        if line == "---" {
+            closed = true;
+            break;
+        }
+        if let Some(value) = line.strip_prefix("name:") {
+            name = Some(value.trim());
+        } else if let Some(value) = line.strip_prefix("description:") {
+            description = Some(value.trim().to_string());
+        } else if raw_line.starts_with([' ', '\t'])
+            && let Some(description) = description.as_mut()
+            && !line.is_empty()
+        {
+            if !description.is_empty() {
+                description.push(' ');
+            }
+            description.push_str(line);
+        }
+    }
+    closed && name == Some(skill) && description.is_some_and(|value| !value.is_empty())
 }
 
 fn system_path(env_var: &str, name: &str) -> Option<PathBuf> {

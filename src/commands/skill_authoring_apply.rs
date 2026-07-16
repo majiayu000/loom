@@ -68,7 +68,7 @@ impl App {
         let Some(idempotency_key) = args.idempotency_key.as_deref() else {
             return Err(CommandFailure::new(
                 ErrorCode::ArgInvalid,
-                "--idempotency-key is required for skill apply-patch",
+                "--idempotency-key is required for skill author apply-patch",
             ));
         };
         validate_non_empty("idempotency-key", idempotency_key)?;
@@ -195,7 +195,7 @@ impl App {
         let mut meta = Meta::default();
         maybe_autosync_or_queue(
             &self.ctx,
-            "skill.apply_patch",
+            "skill.author.apply_patch",
             request_id,
             json!({"skill": artifact.skill, "patch_id": artifact.patch_id, "commit": commit}),
             &mut meta,

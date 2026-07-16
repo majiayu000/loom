@@ -151,7 +151,7 @@ impl App {
         if let Some(commit) = commit.as_deref()
             && let Err(err) = maybe_autosync_or_queue(
                 &self.ctx,
-                "skill.new",
+                "skill.author.new",
                 request_id,
                 json!({"skill": plan.skill, "commit": commit}),
                 &mut meta,

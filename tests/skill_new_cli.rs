@@ -19,6 +19,7 @@ fn skill_new_creates_lint_clean_skill_skeleton() {
         root.path(),
         &[
             "skill",
+            "author",
             "new",
             "fixflow",
             "--template",
@@ -32,11 +33,11 @@ fn skill_new_creates_lint_clean_skill_skeleton() {
 
     assert!(
         output.status.success(),
-        "skill new failed: stdout={} stderr={}",
+        "skill author new failed: stdout={} stderr={}",
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    assert_eq!(env["cmd"], json!("skill.new"));
+    assert_eq!(env["cmd"], json!("skill.author.new"));
     assert_eq!(env["data"]["skill"], json!("fixflow"));
     assert_eq!(env["data"]["template"], json!("coding-workflow"));
     assert_eq!(env["data"]["agent"], json!("codex"));
@@ -83,6 +84,7 @@ fn skill_new_dry_run_does_not_write_files_or_state() {
         root.path(),
         &[
             "skill",
+            "author",
             "new",
             "draft-skill",
             "--template",
@@ -114,7 +116,7 @@ fn skill_new_dry_run_does_not_write_files_or_state() {
 fn skill_new_rejects_invalid_portable_name_without_source_writes() {
     let root = TestDir::new("skill-new-invalid");
 
-    let (output, env) = run_loom(root.path(), &["skill", "new", "Bad_Name"]);
+    let (output, env) = run_loom(root.path(), &["skill", "author", "new", "Bad_Name"]);
 
     assert!(!output.status.success(), "invalid name should fail");
     assert_eq!(env["error"]["code"], json!("ARG_INVALID"));
@@ -133,7 +135,7 @@ fn skill_new_rejects_existing_skill_without_overwrite() {
     );
     let before = read_file(&root, "skills/existing/SKILL.md");
 
-    let (output, env) = run_loom(root.path(), &["skill", "new", "existing"]);
+    let (output, env) = run_loom(root.path(), &["skill", "author", "new", "existing"]);
 
     assert!(!output.status.success(), "existing skill should fail");
     assert_eq!(env["error"]["code"], json!("ARG_INVALID"));

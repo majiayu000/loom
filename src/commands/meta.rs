@@ -1,9 +1,9 @@
 use crate::cli::{
     AgentCommand, ApprovalCommand, CodexCommand, Command, McpCommand, OpsCommand,
     OpsHistoryCommand, OrgPolicyCommand, PackageCommand, PolicyCommand, ProvisionCommand,
-    RemoteCommand, RolesCommand, SkillCommand, SkillOrphanCommand, SkillProvenanceCommand,
-    SkillTrashCommand, SkillsetCommand, SyncCommand, TargetCommand, TelemetryCommand,
-    WorkflowCommand, WorkspaceBindingCommand, WorkspaceCommand,
+    RemoteCommand, RolesCommand, SkillAuthorCommand, SkillCommand, SkillOrphanCommand,
+    SkillProvenanceCommand, SkillTrashCommand, SkillsetCommand, SyncCommand, TargetCommand,
+    TelemetryCommand, WorkflowCommand, WorkspaceBindingCommand, WorkspaceCommand,
 };
 
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -96,22 +96,24 @@ pub(crate) fn command_meta(command: &Command) -> CommandMeta {
             SkillCommand::Install(args) => {
                 CommandMeta::new(!args.dry_run, !args.dry_run, args.dry_run)
             }
-            SkillCommand::New(args) => CommandMeta::new(!args.dry_run, !args.dry_run, args.dry_run),
-            SkillCommand::Draft(args) => {
-                CommandMeta::new(!args.dry_run, !args.dry_run, args.dry_run)
-            }
-            SkillCommand::Extract(args) => {
-                CommandMeta::new(!args.dry_run, !args.dry_run, args.dry_run)
-            }
-            SkillCommand::Rewrite(args) => {
-                CommandMeta::new(!args.dry_run, !args.dry_run, args.dry_run)
-            }
-            SkillCommand::TuneDescription(args) => {
-                CommandMeta::new(!args.dry_run, !args.dry_run, args.dry_run)
-            }
-            SkillCommand::GenerateEvals(args) => {
-                CommandMeta::new(!args.dry_run, !args.dry_run, args.dry_run)
-            }
+            SkillCommand::Author {
+                command: SkillAuthorCommand::New(args),
+            } => CommandMeta::new(!args.dry_run, !args.dry_run, args.dry_run),
+            SkillCommand::Author {
+                command: SkillAuthorCommand::Draft(args),
+            } => CommandMeta::new(!args.dry_run, !args.dry_run, args.dry_run),
+            SkillCommand::Author {
+                command: SkillAuthorCommand::Extract(args),
+            } => CommandMeta::new(!args.dry_run, !args.dry_run, args.dry_run),
+            SkillCommand::Author {
+                command: SkillAuthorCommand::Rewrite(args),
+            } => CommandMeta::new(!args.dry_run, !args.dry_run, args.dry_run),
+            SkillCommand::Author {
+                command: SkillAuthorCommand::TuneDescription(args),
+            } => CommandMeta::new(!args.dry_run, !args.dry_run, args.dry_run),
+            SkillCommand::Author {
+                command: SkillAuthorCommand::GenerateEvals(args),
+            } => CommandMeta::new(!args.dry_run, !args.dry_run, args.dry_run),
             SkillCommand::Activate(args) => {
                 CommandMeta::new(!args.dry_run, !args.dry_run, args.dry_run)
             }
@@ -121,7 +123,9 @@ pub(crate) fn command_meta(command: &Command) -> CommandMeta {
             SkillCommand::Rollback(args) => {
                 CommandMeta::new(!args.dry_run, !args.dry_run, args.dry_run)
             }
-            SkillCommand::ApplyPatch(_) => CommandMeta::new(true, true, false),
+            SkillCommand::Author {
+                command: SkillAuthorCommand::ApplyPatch(_),
+            } => CommandMeta::new(true, true, false),
             SkillCommand::Diff(_)
             | SkillCommand::Policy(_)
             | SkillCommand::Scan(_)

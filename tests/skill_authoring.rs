@@ -38,6 +38,7 @@ fn draft_writes_redacted_patch_artifact_without_source_mutation() {
         &[("SECRET_TOKEN", "env-super-secret")],
         &[
             "skill",
+            "author",
             "draft",
             "draft-skill",
             "--from-session",
@@ -46,6 +47,7 @@ fn draft_writes_redacted_patch_artifact_without_source_mutation() {
     );
 
     assert!(output.status.success(), "draft should pass: {env}");
+    assert_eq!(env["cmd"], json!("skill.author.draft"));
     assert_eq!(env["data"]["artifact_written"], json!(true));
     assert_eq!(env["data"]["provider"], json!("mock"));
     assert!(
@@ -93,6 +95,36 @@ fn draft_writes_redacted_patch_artifact_without_source_mutation() {
 }
 
 #[test]
+fn extract_uses_the_nested_author_command_and_envelope() {
+    let root = TestDir::new("authoring-extract");
+    write_skill(
+        root.path(),
+        "demo",
+        "---\nname: demo\ndescription: Demo skill.\n---\n# Demo\n",
+    );
+    let diff = root.path().join("reviewed.diff");
+    write_file(
+        &diff,
+        "--- a/skills/demo/SKILL.md\n+++ b/skills/demo/SKILL.md\n@@ -5 +5 @@\n-old\n+new\n",
+    );
+
+    let (output, env) = run_loom(
+        root.path(),
+        &[
+            "skill",
+            "author",
+            "extract",
+            "demo",
+            "--from-diff",
+            diff.to_str().expect("diff path"),
+        ],
+    );
+
+    assert!(output.status.success(), "extract should pass: {env}");
+    assert_eq!(env["cmd"], json!("skill.author.extract"));
+}
+
+#[test]
 fn rewrite_writes_reviewable_patch_without_mutating_skill() {
     let root = TestDir::new("authoring-rewrite");
     write_skill(
@@ -107,6 +139,7 @@ fn rewrite_writes_reviewable_patch_without_mutating_skill() {
         root.path(),
         &[
             "skill",
+            "author",
             "rewrite",
             "demo",
             "--instruction",
@@ -115,6 +148,7 @@ fn rewrite_writes_reviewable_patch_without_mutating_skill() {
     );
 
     assert!(output.status.success(), "rewrite should pass: {env}");
+    assert_eq!(env["cmd"], json!("skill.author.rewrite"));
     assert_eq!(env["data"]["action"], json!("rewrite"));
     assert_eq!(
         fs::read_to_string(root.path().join("skills/demo/SKILL.md")).expect("read source after"),
@@ -161,6 +195,7 @@ fn tune_description_and_generate_evals_emit_reviewable_diffs() {
         root.path(),
         &[
             "skill",
+            "author",
             "tune-description",
             "demo",
             "--description",
@@ -171,6 +206,7 @@ fn tune_description_and_generate_evals_emit_reviewable_diffs() {
         output.status.success(),
         "tune-description should pass: {tuned}"
     );
+    assert_eq!(tuned["cmd"], json!("skill.author.tune_description"));
     let patch = tuned["data"]["patch"].as_str().expect("tune patch");
     assert!(patch.contains("+description: \"Use when testing safer trigger routing.\""));
     assert!(patch.contains("skills/demo/evals/triggers.jsonl"));
@@ -181,6 +217,7 @@ fn tune_description_and_generate_evals_emit_reviewable_diffs() {
         root.path(),
         &[
             "skill",
+            "author",
             "generate-evals",
             "demo",
             "--task",
@@ -191,6 +228,7 @@ fn tune_description_and_generate_evals_emit_reviewable_diffs() {
         output.status.success(),
         "generate-evals should pass: {evals}"
     );
+    assert_eq!(evals["cmd"], json!("skill.author.generate_evals"));
     let patch = evals["data"]["patch"].as_str().expect("eval patch");
     assert!(patch.contains("skills/demo/evals/triggers.jsonl"));
     assert!(patch.contains("\"should_trigger\":false"));
@@ -220,6 +258,7 @@ fn tune_description_inserts_missing_frontmatter_key() {
         root.path(),
         &[
             "skill",
+            "author",
             "tune-description",
             "demo",
             "--description",
@@ -253,6 +292,7 @@ fn apply_patch_validates_commits_and_replays_by_idempotency_key() {
         root.path(),
         &[
             "skill",
+            "author",
             "rewrite",
             "demo",
             "--instruction",
@@ -262,7 +302,8 @@ fn apply_patch_validates_commits_and_replays_by_idempotency_key() {
     assert!(output.status.success(), "rewrite should pass: {generated}");
     let patch_id = generated["data"]["patch_id"].as_str().expect("patch id");
 
-    let (output, missing_key) = run_loom(root.path(), &["skill", "apply-patch", patch_id]);
+    let (output, missing_key) =
+        run_loom(root.path(), &["skill", "author", "apply-patch", patch_id]);
     assert!(
         !output.status.success(),
         "missing idempotency key should fail"
@@ -279,6 +320,7 @@ fn apply_patch_validates_commits_and_replays_by_idempotency_key() {
         root.path(),
         &[
             "skill",
+            "author",
             "apply-patch",
             patch_id,
             "--idempotency-key",
@@ -286,6 +328,7 @@ fn apply_patch_validates_commits_and_replays_by_idempotency_key() {
         ],
     );
     assert!(output.status.success(), "apply should pass: {applied}");
+    assert_eq!(applied["cmd"], json!("skill.author.apply_patch"));
     assert_eq!(applied["data"]["applied"], json!(true));
     assert_eq!(applied["data"]["replayed"], json!(false));
     assert!(
@@ -317,6 +360,7 @@ fn apply_patch_validates_commits_and_replays_by_idempotency_key() {
         root.path(),
         &[
             "skill",
+            "author",
             "apply-patch",
             patch_id,
             "--idempotency-key",
@@ -357,6 +401,7 @@ fn apply_patch_validates_commits_and_replays_by_idempotency_key() {
         root.path(),
         &[
             "skill",
+            "author",
             "apply-patch",
             patch_id,
             "--idempotency-key",
@@ -388,6 +433,7 @@ fn apply_patch_validates_commits_and_replays_by_idempotency_key() {
         root.path(),
         &[
             "skill",
+            "author",
             "apply-patch",
             patch_id,
             "--idempotency-key",
@@ -419,6 +465,7 @@ fn apply_patch_rejects_source_digest_drift_without_mutation() {
         root.path(),
         &[
             "skill",
+            "author",
             "rewrite",
             "demo",
             "--instruction",
@@ -436,6 +483,7 @@ fn apply_patch_rejects_source_digest_drift_without_mutation() {
         root.path(),
         &[
             "skill",
+            "author",
             "apply-patch",
             patch_id,
             "--idempotency-key",
@@ -469,6 +517,7 @@ fn apply_patch_applies_contextual_hunks_without_truncating_source() {
         root.path(),
         &[
             "skill",
+            "author",
             "rewrite",
             "demo",
             "--instruction",
@@ -489,6 +538,7 @@ fn apply_patch_applies_contextual_hunks_without_truncating_source() {
         root.path(),
         &[
             "skill",
+            "author",
             "apply-patch",
             patch_id,
             "--idempotency-key",
@@ -519,6 +569,7 @@ fn apply_patch_preserves_change_semantics_and_commits_only_reviewed_files() {
         root.path(),
         &[
             "skill",
+            "author",
             "rewrite",
             "demo",
             "--instruction",
@@ -532,6 +583,7 @@ fn apply_patch_preserves_change_semantics_and_commits_only_reviewed_files() {
         root.path(),
         &[
             "skill",
+            "author",
             "apply-patch",
             patch_id,
             "--idempotency-key",
@@ -571,6 +623,7 @@ fn apply_patch_rejects_add_over_existing_file_without_mutation() {
         root.path(),
         &[
             "skill",
+            "author",
             "rewrite",
             "demo",
             "--instruction",
@@ -596,6 +649,7 @@ fn apply_patch_rejects_add_over_existing_file_without_mutation() {
         root.path(),
         &[
             "skill",
+            "author",
             "apply-patch",
             patch_id,
             "--idempotency-key",
@@ -628,6 +682,7 @@ fn apply_patch_allows_description_update_with_existing_script_finding() {
         root.path(),
         &[
             "skill",
+            "author",
             "tune-description",
             "demo",
             "--description",
@@ -644,6 +699,7 @@ fn apply_patch_allows_description_update_with_existing_script_finding() {
         root.path(),
         &[
             "skill",
+            "author",
             "apply-patch",
             patch_id,
             "--idempotency-key",
@@ -660,207 +716,5 @@ fn apply_patch_allows_description_update_with_existing_script_finding() {
     );
 }
 
-#[cfg(unix)]
-#[test]
-fn apply_patch_resets_index_when_commit_hook_rejects_commit() {
-    let root = TestDir::new("authoring-apply-hook-reset");
-    write_skill(
-        root.path(),
-        "demo",
-        "---\nname: demo\ndescription: Use when agents need demo workflow checks for focused local tasks.\n---\n# Demo\n",
-    );
-    let (output, saved) = run_loom(root.path(), &["skill", "commit", "demo", "--from-source"]);
-    assert!(output.status.success(), "seed save should pass: {saved}");
-
-    let (output, generated) = run_loom(
-        root.path(),
-        &[
-            "skill",
-            "rewrite",
-            "demo",
-            "--instruction",
-            "tighten trigger precision",
-        ],
-    );
-    assert!(output.status.success(), "rewrite should pass: {generated}");
-    let patch_id = generated["data"]["patch_id"].as_str().expect("patch id");
-
-    let hook = root.path().join(".git/hooks/pre-commit");
-    fs::create_dir_all(hook.parent().expect("hook parent")).expect("create hooks dir");
-    fs::write(&hook, "#!/bin/sh\nexit 1\n").expect("write pre-commit hook");
-    #[allow(clippy::permissions_set_readonly_false)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mut perms = fs::metadata(&hook).expect("hook metadata").permissions();
-        perms.set_mode(0o755);
-        fs::set_permissions(&hook, perms).expect("set hook executable");
-    }
-
-    let (output, blocked) = run_loom(
-        root.path(),
-        &[
-            "skill",
-            "apply-patch",
-            patch_id,
-            "--idempotency-key",
-            "req-hook-reset",
-        ],
-    );
-    assert!(!output.status.success(), "commit hook should fail");
-    assert_eq!(blocked["error"]["code"], json!("GIT_ERROR"));
-    let source = fs::read_to_string(root.path().join("skills/demo/SKILL.md")).expect("read skill");
-    assert!(
-        !source.contains("Requested rewrite"),
-        "commit failure must restore worktree"
-    );
-    let diff = Command::new("git")
-        .current_dir(root.path())
-        .args([
-            "diff",
-            "--cached",
-            "--name-only",
-            "--",
-            "skills/demo/SKILL.md",
-        ])
-        .output()
-        .expect("git diff cached");
-    assert!(
-        diff.status.success(),
-        "git diff cached failed: {}",
-        String::from_utf8_lossy(&diff.stderr)
-    );
-    assert!(
-        String::from_utf8_lossy(&diff.stdout).trim().is_empty(),
-        "commit failure must reset staged reviewed files"
-    );
-}
-
-#[cfg(unix)]
-#[test]
-fn apply_patch_reports_preimage_restore_failures_with_path_details() {
-    let root = TestDir::new("authoring-apply-restore-failure");
-    write_skill(
-        root.path(),
-        "demo",
-        "---\nname: demo\ndescription: Use when agents need demo workflow checks for focused local tasks.\n---\n# Demo\n",
-    );
-    let (output, saved) = run_loom(root.path(), &["skill", "commit", "demo", "--from-source"]);
-    assert!(output.status.success(), "seed save should pass: {saved}");
-
-    let (output, generated) = run_loom(
-        root.path(),
-        &[
-            "skill",
-            "rewrite",
-            "demo",
-            "--instruction",
-            "tighten trigger precision",
-        ],
-    );
-    assert!(output.status.success(), "rewrite should pass: {generated}");
-    let patch_id = generated["data"]["patch_id"].as_str().expect("patch id");
-
-    let hook = root.path().join(".git/hooks/pre-commit");
-    fs::create_dir_all(hook.parent().expect("hook parent")).expect("create hooks dir");
-    fs::write(
-        &hook,
-        "#!/bin/sh\nrm -f skills/demo/SKILL.md\nmkdir -p skills/demo/SKILL.md\nexit 1\n",
-    )
-    .expect("write pre-commit hook");
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mut perms = fs::metadata(&hook).expect("hook metadata").permissions();
-        perms.set_mode(0o755);
-        fs::set_permissions(&hook, perms).expect("set hook executable");
-    }
-
-    let (output, blocked) = run_loom(
-        root.path(),
-        &[
-            "skill",
-            "apply-patch",
-            patch_id,
-            "--idempotency-key",
-            "req-restore-failure",
-        ],
-    );
-
-    assert!(!output.status.success(), "commit hook should fail");
-    assert_eq!(blocked["error"]["code"], json!("GIT_ERROR"));
-    let rollback_errors = blocked["error"]["details"]["rollback_errors"]
-        .as_array()
-        .expect("rollback_errors");
-    assert!(
-        rollback_errors.iter().any(|error| {
-            error["path"] == json!("skills/demo/SKILL.md")
-                && error["action"] == json!("restore_preimage")
-                && error["operation"] == json!("write_atomic")
-        }),
-        "rollback errors should identify failed restore path: {blocked}"
-    );
-    assert_eq!(
-        blocked["error"]["details"]["original_error"]["code"],
-        json!("GIT_ERROR")
-    );
-}
-
-#[test]
-fn apply_patch_blocks_high_risk_generated_scripts_without_mutation() {
-    let root = TestDir::new("authoring-apply-risky");
-    write_skill(
-        root.path(),
-        "demo",
-        "---\nname: demo\ndescription: Use when agents need demo workflow checks for focused local tasks.\n---\n# Demo\n",
-    );
-    write_eval_fixtures(root.path(), "demo");
-
-    let (output, generated) = run_loom(
-        root.path(),
-        &[
-            "skill",
-            "rewrite",
-            "demo",
-            "--instruction",
-            "tighten trigger precision",
-        ],
-    );
-    assert!(output.status.success(), "rewrite should pass: {generated}");
-    let patch_id = generated["data"]["patch_id"].as_str().expect("patch id");
-    let artifact_path = root
-        .path()
-        .join("state/patches")
-        .join(format!("{patch_id}.json"));
-    let patch_path = root
-        .path()
-        .join("state/patches")
-        .join(format!("{patch_id}.patch"));
-    let mut artifact: Value =
-        serde_json::from_str(&fs::read_to_string(&artifact_path).expect("read artifact"))
-            .expect("parse artifact");
-    artifact["files"] = json!([{"path":"skills/demo/scripts/install.sh","change":"add"}]);
-    write_file(
-        &artifact_path,
-        &(serde_json::to_string_pretty(&artifact).expect("artifact json") + "\n"),
-    );
-    write_file(
-        &patch_path,
-        "diff --git a/skills/demo/scripts/install.sh b/skills/demo/scripts/install.sh\nnew file mode 100644\n--- /dev/null\n+++ b/skills/demo/scripts/install.sh\n@@ -0,0 +1 @@\n+rm -rf /tmp/loom-risky\n",
-    );
-
-    let (output, blocked) = run_loom(
-        root.path(),
-        &[
-            "skill",
-            "apply-patch",
-            patch_id,
-            "--idempotency-key",
-            "req-risky",
-        ],
-    );
-    assert!(!output.status.success(), "risky patch should fail");
-    assert_eq!(blocked["error"]["code"], json!("POLICY_BLOCKED"));
-    assert!(
-        !root.path().join("skills/demo/scripts/install.sh").exists(),
-        "blocked patch must not materialize risky script"
-    );
-}
+#[path = "skill_authoring/apply_failures.rs"]
+mod apply_failures;

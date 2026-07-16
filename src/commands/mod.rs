@@ -67,8 +67,9 @@ use serde_json::json;
 use uuid::Uuid;
 
 use crate::cli::{
-    AgentCommand, Cli, CodexCommand, Command, PolicyCommand, SkillActiveCommand, SkillCommand,
-    SkillOrphanCommand, SkillTrashCommand, SkillsetCommand, WorkspaceCommand, WorkspaceInitArgs,
+    AgentCommand, Cli, CodexCommand, Command, PolicyCommand, SkillActiveCommand,
+    SkillAuthorCommand, SkillCommand, SkillOrphanCommand, SkillTrashCommand, SkillsetCommand,
+    WorkspaceCommand, WorkspaceInitArgs,
 };
 use crate::envelope::{Envelope, Meta};
 use crate::state::{AppContext, home_dir};
@@ -281,13 +282,27 @@ impl App {
                 SkillCommand::Resolve(args) => self.cmd_skill_resolve(args),
                 SkillCommand::Used(args) => self.cmd_skill_used(args),
                 SkillCommand::Feedback(args) => self.cmd_skill_feedback(args),
-                SkillCommand::Draft(args) => self.cmd_skill_draft(args),
-                SkillCommand::Extract(args) => self.cmd_skill_extract(args),
-                SkillCommand::Rewrite(args) => self.cmd_skill_rewrite(args),
-                SkillCommand::TuneDescription(args) => self.cmd_skill_tune_description(args),
-                SkillCommand::GenerateEvals(args) => self.cmd_skill_generate_evals(args),
-                SkillCommand::ApplyPatch(args) => self.cmd_skill_apply_patch(args, &request_id),
-                SkillCommand::New(args) => self.cmd_skill_new(args, &request_id),
+                SkillCommand::Author {
+                    command: SkillAuthorCommand::Draft(args),
+                } => self.cmd_skill_draft(args),
+                SkillCommand::Author {
+                    command: SkillAuthorCommand::Extract(args),
+                } => self.cmd_skill_extract(args),
+                SkillCommand::Author {
+                    command: SkillAuthorCommand::Rewrite(args),
+                } => self.cmd_skill_rewrite(args),
+                SkillCommand::Author {
+                    command: SkillAuthorCommand::TuneDescription(args),
+                } => self.cmd_skill_tune_description(args),
+                SkillCommand::Author {
+                    command: SkillAuthorCommand::GenerateEvals(args),
+                } => self.cmd_skill_generate_evals(args),
+                SkillCommand::Author {
+                    command: SkillAuthorCommand::ApplyPatch(args),
+                } => self.cmd_skill_apply_patch(args, &request_id),
+                SkillCommand::Author {
+                    command: SkillAuthorCommand::New(args),
+                } => self.cmd_skill_new(args, &request_id),
                 SkillCommand::Provenance { command } => {
                     self.cmd_skill_provenance(command, &request_id)
                 }

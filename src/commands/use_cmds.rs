@@ -228,10 +228,21 @@ fn target_path_for(
     if let Some(adapter) = adapters.adapter_for_agent(agent)
         && adapter.has_discovery_root_for_scope(scope)
     {
-        if agent == "gemini-cli"
-            && adapter.source == SOURCE_BUILT_IN
-            && std::env::var_os("GEMINI_CLI_SKILLS_DIR").is_none_or(|raw| raw.is_empty())
-        {
+        if agent == "gemini-cli" && adapter.source == SOURCE_BUILT_IN {
+            let gemini_home = std::env::var_os("GEMINI_CLI_HOME")
+                .filter(|raw| !raw.is_empty())
+                .map(PathBuf::from)
+                .or_else(home_dir);
+            let official_roots = gemini_home
+                .as_ref()
+                .map(|home| [home.join(".agents/skills"), home.join(".gemini/skills")]);
+            if let Some(configured) = adapter.default_skill_dirs.iter().find(|path| {
+                official_roots
+                    .as_ref()
+                    .is_none_or(|official| !official.contains(path))
+            }) {
+                return Ok(absolute_path(configured));
+            }
             let native_root = match args.scope {
                 UseScope::User => std::env::var_os("GEMINI_CLI_HOME")
                     .filter(|raw| !raw.is_empty())

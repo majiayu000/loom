@@ -4,7 +4,9 @@ use std::process::Command;
 
 mod common;
 
-use common::{TestDir, run_loom, run_loom_with_env, write_minimal_registry_state, write_skill};
+use common::{
+    TestDir, run_loom, run_loom_with_env, write_file, write_minimal_registry_state, write_skill,
+};
 
 fn command_names_from_help(stdout: &str) -> Vec<String> {
     let mut in_commands = false;
@@ -413,6 +415,48 @@ fn use_gemini_cli_uses_native_managed_root_to_avoid_codex_collision() {
             .join(".gemini/skills")
             .display()
             .to_string()
+    );
+}
+
+#[test]
+fn use_gemini_cli_respects_dotenv_multi_root_override() {
+    let root = TestDir::new("cli-use-gemini-dotenv-root");
+    let workspace = TestDir::new("cli-use-gemini-dotenv-workspace");
+    let fake_home = TestDir::new("cli-use-gemini-dotenv-home");
+    let first = root.path().join("gemini-one");
+    let second = root.path().join("gemini-two");
+    write_skill(
+        root.path(),
+        "demo",
+        "---\nname: demo\ndescription: Use when testing configured Gemini roots.\n---\n# Demo\n",
+    );
+    write_file(
+        &root.path().join(".env"),
+        &format!(
+            "GEMINI_CLI_SKILLS_DIR={},{}\n",
+            first.display(),
+            second.display()
+        ),
+    );
+
+    let home_str = fake_home.path().display().to_string();
+    let workspace_str = workspace.path().display().to_string();
+    let (output, env) = run_loom_with_env(
+        root.path(),
+        &[("HOME", &home_str)],
+        &[
+            "use",
+            "demo",
+            "--agents",
+            "gemini-cli",
+            "--workspace",
+            &workspace_str,
+        ],
+    );
+    assert!(output.status.success(), "loom use failed: {env}");
+    assert_eq!(
+        env["data"]["steps"][0]["target_path"],
+        first.display().to_string()
     );
 }
 

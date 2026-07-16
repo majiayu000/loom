@@ -126,6 +126,32 @@ pub fn resolve_agent_skill_source_dirs(root: &Path) -> Vec<PathBuf> {
     dedupe_paths_keep_order(dirs)
 }
 
+pub(crate) fn resolve_agent_skill_dir_list(root: &Path, agent: &str) -> Vec<PathBuf> {
+    let Some((_, env_var, default_suffix)) = DEFAULT_AGENT_SKILL_DIRS
+        .iter()
+        .find(|(candidate, _, _)| *candidate == agent)
+    else {
+        return Vec::new();
+    };
+    let home = home_dir()
+        .map(|home| home.display().to_string())
+        .unwrap_or_else(|| "~".to_string());
+    let home = if agent == "gemini-cli" {
+        gemini_cli_home(&home)
+    } else {
+        home
+    };
+    let dotenv = load_dotenv_map(root);
+    let configured = env_or_dotenv(env_var, &dotenv)
+        .map(|raw| parse_dir_list_env(&raw))
+        .unwrap_or_default();
+    if configured.is_empty() {
+        vec![default_agent_skill_dir(&home, default_suffix)]
+    } else {
+        configured
+    }
+}
+
 fn gemini_cli_home(default_home: &str) -> String {
     env::var_os("GEMINI_CLI_HOME")
         .filter(|raw| !raw.is_empty())

@@ -148,6 +148,62 @@ fn workspace_init_scan_existing_imports_both_gemini_cli_user_roots() {
 }
 
 #[test]
+fn workspace_init_scan_existing_uses_dotenv_gemini_multi_roots() {
+    let root = TestDir::new("ws-init-scan-gemini-dotenv");
+    let fake_home = TestDir::new("ws-init-scan-gemini-dotenv-home");
+    let first = root.path().join("gemini-one");
+    let second = root.path().join("gemini-two");
+    fs::create_dir_all(&first).expect("create first Gemini root");
+    fs::create_dir_all(&second).expect("create second Gemini root");
+    write_file(
+        &root.path().join(".env"),
+        &format!(
+            "GEMINI_CLI_SKILLS_DIR={},{}\n",
+            first.display(),
+            second.display()
+        ),
+    );
+
+    let home_str = fake_home.path().display().to_string();
+    let (output, env) = run_loom_with_env(
+        root.path(),
+        &[("HOME", &home_str)],
+        &["workspace", "init", "--scan-existing"],
+    );
+    assert!(output.status.success(), "Gemini dotenv scan failed: {env}");
+    let imported = env["data"]["imported"].as_array().expect("imported");
+    for expected in [&first, &second] {
+        let expected = fs::canonicalize(expected).expect("canonical custom root");
+        assert!(imported.iter().any(|entry| {
+            entry["target"]["agent"] == "gemini-cli"
+                && entry["target"]["path"].as_str() == expected.to_str()
+        }));
+    }
+
+    let (status, status_env) = run_loom_with_env(
+        root.path(),
+        &[("HOME", &home_str)],
+        &["workspace", "status"],
+    );
+    assert!(
+        status.status.success(),
+        "Gemini status failed: {status_env}"
+    );
+    let adapter = adapter_by_id(&status_env, "gemini-cli");
+    for expected in [&first, &second] {
+        let expected = expected.display().to_string();
+        assert!(array_contains(&adapter["default_skill_dirs"], &expected));
+        assert!(
+            adapter["discovery_roots"]
+                .as_array()
+                .expect("discovery roots")
+                .iter()
+                .any(|root| root["path_template"] == expected)
+        );
+    }
+}
+
+#[test]
 fn workspace_init_scan_existing_loads_external_adapter_fixture() {
     let root = TestDir::new("ws-init-external-adapter");
     let fake_home = TestDir::new("ws-init-external-adapter-home");

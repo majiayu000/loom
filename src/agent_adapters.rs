@@ -6,7 +6,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::commands::CommandFailure;
-use crate::state::{AppContext, home_dir, resolve_agent_skill_dirs};
+use crate::state::{AppContext, home_dir, resolve_agent_skill_dir_list, resolve_agent_skill_dirs};
 use crate::state_model::RegistryProjectionTarget;
 use crate::types::ErrorCode;
 
@@ -378,7 +378,7 @@ fn build_registry(
 }
 
 fn built_in_adapters(root: &Path, home: Option<&Path>) -> Vec<AgentAdapter> {
-    let dirs_by_agent = if home.is_some() {
+    let mut dirs_by_agent = if home.is_some() {
         resolve_agent_skill_dirs(root)
             .all
             .into_iter()
@@ -387,6 +387,10 @@ fn built_in_adapters(root: &Path, home: Option<&Path>) -> Vec<AgentAdapter> {
     } else {
         BTreeMap::new()
     };
+    let gemini_dirs = resolve_agent_skill_dir_list(root, "gemini-cli");
+    if !gemini_dirs.is_empty() {
+        dirs_by_agent.insert("gemini-cli".to_string(), gemini_dirs);
+    }
     built_in_agent_specs()
         .into_iter()
         .map(|id| {

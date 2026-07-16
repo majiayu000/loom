@@ -10,6 +10,8 @@ use crate::state::home_dir;
 
 use super::{CodexVisibilityCheck, check, normalize_existing_or_raw};
 
+const INVALID_CONFIG: &str = "Gemini CLI settings or trust configuration is invalid";
+
 #[derive(Debug)]
 struct GeminiSettings {
     skills_enabled: bool,
@@ -27,17 +29,16 @@ impl Default for GeminiSettings {
     }
 }
 
-#[derive(Debug)]
 struct GeminiConfigState {
     settings: GeminiSettings,
     workspace_trusted: Option<bool>,
 }
 
-pub(super) fn target_requires_workspace_trust(adapter: &AgentAdapter, target_path: &Path) -> bool {
+pub(super) fn target_requires_workspace_trust(adapter: &AgentAdapter, target: &Path) -> bool {
     !adapter
         .default_skill_dirs
         .iter()
-        .any(|root| normalize_existing_or_raw(root) == normalize_existing_or_raw(target_path))
+        .any(|root| normalize_existing_or_raw(root) == normalize_existing_or_raw(target))
 }
 
 pub(super) fn add_gemini_config_checks(
@@ -46,24 +47,20 @@ pub(super) fn add_gemini_config_checks(
     project_scope_selected: bool,
     checks: &mut Vec<CodexVisibilityCheck>,
 ) -> bool {
-    let state = match load_gemini_config(workspace) {
+    let state = match load_config(workspace) {
         Ok(state) => state,
         Err(error) => {
             checks.push(check(
                 "gemini-cli_config_valid",
                 false,
                 "error",
-                "Gemini CLI settings or trust configuration is invalid",
+                INVALID_CONFIG,
                 json!({"error": error}),
-                Some(
-                    "repair Gemini CLI settings or trustedFolders.json before checking visibility"
-                        .to_string(),
-                ),
+                Some("repair Gemini CLI settings or trustedFolders.json".to_string()),
             ));
             return true;
         }
     };
-
     checks.push(check(
         "gemini-cli_config_valid",
         true,
@@ -79,10 +76,10 @@ pub(super) fn add_gemini_config_checks(
         if state.settings.skills_enabled {
             "Gemini CLI skills are enabled"
         } else {
-            "Gemini CLI skills are disabled by skills.enabled"
+            "Gemini CLI skills are disabled"
         },
         Value::Null,
-        Some("enable skills.enabled in Gemini CLI settings, then run /skills reload".to_string()),
+        Some("enable skills.enabled, then run /skills reload".to_string()),
     ));
     let skill_enabled = !state
         .settings
@@ -99,18 +96,15 @@ pub(super) fn add_gemini_config_checks(
             "skill is disabled in Gemini CLI settings"
         },
         Value::Null,
-        Some(format!(
-            "run /skills enable {skill} in Gemini CLI, then run /skills reload"
-        )),
+        Some(format!("run /skills enable {skill}, then /skills reload")),
     ));
-    let admin_policy_observable = false;
     checks.push(check(
         "gemini-cli_admin_policy_observable",
-        admin_policy_observable,
+        false,
         "error",
-        "Gemini CLI remote admin skill policy is not observable from local settings",
+        "Gemini CLI remote admin skill policy is not locally observable",
         Value::Null,
-        Some("confirm the effective enterprise policy in Gemini CLI with /skills list".to_string()),
+        Some("confirm the effective policy with /skills list".to_string()),
     ));
 
     let workspace_allowed = !project_scope_selected || state.workspace_trusted == Some(true);
@@ -120,19 +114,16 @@ pub(super) fn add_gemini_config_checks(
             workspace_allowed,
             "error",
             if workspace_allowed {
-                "Gemini CLI workspace is trusted for project skill discovery"
+                "Gemini CLI workspace is trusted"
             } else {
-                "Gemini CLI workspace trust is absent or denied; project skills are not loaded"
+                "Gemini CLI workspace is not trusted"
             },
-            json!({"workspace": workspace, "trusted": state.workspace_trusted}),
-            Some("run /permissions trust in Gemini CLI for this workspace".to_string()),
+            json!({"trusted": state.workspace_trusted}),
+            Some("run /permissions trust for this workspace".to_string()),
         ));
     }
 
-    !state.settings.skills_enabled
-        || !skill_enabled
-        || !admin_policy_observable
-        || !workspace_allowed
+    true
 }
 
 pub(super) fn add_frontmatter_check(
@@ -155,241 +146,157 @@ pub(super) fn add_frontmatter_check(
         valid,
         "error",
         if valid {
-            "projected SKILL.md has Gemini-compatible name and description frontmatter"
+            "projected SKILL.md has valid Gemini frontmatter"
         } else {
-            "projected SKILL.md lacks Gemini-compatible name and description frontmatter"
+            "projected SKILL.md lacks valid Gemini frontmatter"
         },
         Value::Null,
-        Some("add valid name and description frontmatter to the projected SKILL.md".to_string()),
+        Some("add valid name and description frontmatter to SKILL.md".to_string()),
     ));
     valid
 }
 
-fn load_gemini_config(workspace: Option<&Path>) -> Result<GeminiConfigState, String> {
-    let gemini_home = gemini_cli_home()
-        .ok_or_else(|| "HOME, USERPROFILE, or GEMINI_CLI_HOME is not set".to_string())?;
-    let system_defaults = system_defaults_path();
-    let user_settings = gemini_home.join(".gemini/settings.json");
-    let system_settings = system_settings_path();
+fn load_config(workspace: Option<&Path>) -> Result<GeminiConfigState, &'static str> {
+    let home = gemini_cli_home().ok_or(INVALID_CONFIG)?;
+    let defaults = system_path("GEMINI_CLI_SYSTEM_DEFAULTS_PATH", "system-defaults.json");
+    let user = home.join(".gemini/settings.json");
+    let system = system_path("GEMINI_CLI_SYSTEM_SETTINGS_PATH", "settings.json");
 
     let mut trust_settings = GeminiSettings::default();
-    apply_optional_layer(&mut trust_settings, system_defaults.as_deref())?;
-    apply_optional_layer(&mut trust_settings, Some(&user_settings))?;
-    apply_optional_layer(&mut trust_settings, system_settings.as_deref())?;
-
-    let workspace_trust = workspace
-        .map(|workspace| {
-            workspace_trust(workspace, &gemini_home, trust_settings.folder_trust_enabled)
-        })
+    for path in [defaults.as_deref(), Some(user.as_path()), system.as_deref()] {
+        apply_layer(&mut trust_settings, path)?;
+    }
+    let workspace_trusted = workspace
+        .map(|path| workspace_trust(path, &home, trust_settings.folder_trust_enabled))
         .transpose()?
         .flatten();
 
     let mut settings = GeminiSettings::default();
-    apply_optional_layer(&mut settings, system_defaults.as_deref())?;
-    apply_optional_layer(&mut settings, Some(&user_settings))?;
-    if workspace_trust == Some(true)
+    for path in [defaults.as_deref(), Some(user.as_path())] {
+        apply_layer(&mut settings, path)?;
+    }
+    if workspace_trusted == Some(true)
         && let Some(workspace) = workspace
     {
-        apply_optional_layer(
+        apply_layer(
             &mut settings,
             Some(&workspace.join(".gemini/settings.json")),
         )?;
     }
-    apply_optional_layer(&mut settings, system_settings.as_deref())?;
-
+    apply_layer(&mut settings, system.as_deref())?;
     Ok(GeminiConfigState {
         settings,
-        workspace_trusted: workspace_trust,
+        workspace_trusted,
     })
 }
 
-fn apply_optional_layer(settings: &mut GeminiSettings, path: Option<&Path>) -> Result<(), String> {
-    let Some(path) = path else {
+fn apply_layer(settings: &mut GeminiSettings, path: Option<&Path>) -> Result<(), &'static str> {
+    let Some(path) = path.filter(|path| path.exists()) else {
         return Ok(());
     };
-    if !path.exists() {
-        return Ok(());
-    }
-    let raw = fs::read_to_string(path)
-        .map_err(|error| format!("failed to read '{}': {error}", path.display()))?;
-    let value = parse_json_with_comments(&raw)
-        .map_err(|error| format!("invalid JSON in '{}': {error}", path.display()))?;
-    apply_settings_value(settings, path, &value)?;
-    Ok(())
-}
-
-fn apply_settings_value(
-    settings: &mut GeminiSettings,
-    path: &Path,
-    value: &Value,
-) -> Result<(), String> {
-    let root = value
-        .as_object()
-        .ok_or_else(|| format!("'{}' must contain a JSON object", path.display()))?;
-    if let Some(skills) = root.get("skills") {
-        let skills = skills
-            .as_object()
-            .ok_or_else(|| format!("skills in '{}' must be an object", path.display()))?;
-        if let Some(enabled) = skills.get("enabled") {
-            settings.skills_enabled = enabled.as_bool().ok_or_else(|| {
-                format!("skills.enabled in '{}' must be a boolean", path.display())
-            })?;
+    let raw = fs::read_to_string(path).map_err(|_| INVALID_CONFIG)?;
+    let value = parse_json(&raw)?;
+    let root = value.as_object().ok_or(INVALID_CONFIG)?;
+    if let Some(value) = root.get("skills") {
+        let skills = value.as_object().ok_or(INVALID_CONFIG)?;
+        if let Some(value) = skills.get("enabled") {
+            settings.skills_enabled = value.as_bool().ok_or(INVALID_CONFIG)?;
         }
-        if let Some(disabled) = skills.get("disabled") {
-            for name in string_array(disabled, path, "skills.disabled")? {
+        if let Some(value) = skills.get("disabled") {
+            for value in value.as_array().ok_or(INVALID_CONFIG)? {
+                let name = value.as_str().ok_or(INVALID_CONFIG)?;
                 if !settings
                     .disabled_skills
                     .iter()
-                    .any(|existing| existing.eq_ignore_ascii_case(&name))
+                    .any(|existing| existing.eq_ignore_ascii_case(name))
                 {
-                    settings.disabled_skills.push(name);
+                    settings.disabled_skills.push(name.to_string());
                 }
             }
         }
     }
-    if let Some(security) = root.get("security") {
-        let security = security
-            .as_object()
-            .ok_or_else(|| format!("security in '{}' must be an object", path.display()))?;
-        if let Some(folder_trust) = security.get("folderTrust") {
-            let folder_trust = folder_trust.as_object().ok_or_else(|| {
-                format!(
-                    "security.folderTrust in '{}' must be an object",
-                    path.display()
-                )
-            })?;
-            if let Some(enabled) = folder_trust.get("enabled") {
-                settings.folder_trust_enabled = enabled.as_bool().ok_or_else(|| {
-                    format!(
-                        "security.folderTrust.enabled in '{}' must be a boolean",
-                        path.display()
-                    )
-                })?;
+    if let Some(value) = root.get("security") {
+        let security = value.as_object().ok_or(INVALID_CONFIG)?;
+        if let Some(value) = security.get("folderTrust") {
+            let trust = value.as_object().ok_or(INVALID_CONFIG)?;
+            if let Some(value) = trust.get("enabled") {
+                settings.folder_trust_enabled = value.as_bool().ok_or(INVALID_CONFIG)?;
             }
         }
     }
     Ok(())
 }
 
-fn string_array(value: &Value, path: &Path, field: &str) -> Result<Vec<String>, String> {
-    value
-        .as_array()
-        .ok_or_else(|| format!("{field} in '{}' must be an array", path.display()))?
-        .iter()
-        .map(|item| {
-            item.as_str()
-                .map(str::to_string)
-                .ok_or_else(|| format!("{field} in '{}' must contain strings", path.display()))
-        })
-        .collect()
-}
-
 fn workspace_trust(
     workspace: &Path,
-    gemini_home: &Path,
+    home: &Path,
     folder_trust_enabled: bool,
-) -> Result<Option<bool>, String> {
-    if env::var("GEMINI_CLI_TRUST_WORKSPACE").as_deref() == Ok("true") {
-        return Ok(Some(true));
-    }
-    if !folder_trust_enabled {
+) -> Result<Option<bool>, &'static str> {
+    if env::var("GEMINI_CLI_TRUST_WORKSPACE").as_deref() == Ok("true") || !folder_trust_enabled {
         return Ok(Some(true));
     }
     let path = env::var_os("GEMINI_CLI_TRUSTED_FOLDERS_PATH")
         .map(PathBuf::from)
-        .unwrap_or_else(|| gemini_home.join(".gemini/trustedFolders.json"));
+        .unwrap_or_else(|| home.join(".gemini/trustedFolders.json"));
     if !path.exists() {
         return Ok(None);
     }
-    let raw = fs::read_to_string(&path)
-        .map_err(|error| format!("failed to read '{}': {error}", path.display()))?;
-    let value = parse_json_with_comments(&raw)
-        .map_err(|error| format!("invalid JSON in '{}': {error}", path.display()))?;
-    let rules = value
-        .as_object()
-        .ok_or_else(|| format!("'{}' must contain a JSON object", path.display()))?;
+    let raw = fs::read_to_string(path).map_err(|_| INVALID_CONFIG)?;
+    let value = parse_json(&raw)?;
+    let rules = value.as_object().ok_or(INVALID_CONFIG)?;
     let workspace = normalize_existing_or_raw(workspace);
-    let mut longest: Option<(usize, bool)> = None;
-    for (raw_path, level) in rules {
-        let level = level.as_str().ok_or_else(|| {
-            format!(
-                "trust level for '{raw_path}' in '{}' must be a string",
-                path.display()
-            )
-        })?;
-        let rule_path = PathBuf::from(raw_path);
+    let mut longest = None;
+    for (raw_path, value) in rules {
+        let level = value.as_str().ok_or(INVALID_CONFIG)?;
+        let rule = PathBuf::from(raw_path);
         let effective = match level {
-            "TRUST_FOLDER" => rule_path.clone(),
-            "TRUST_PARENT" => rule_path
-                .parent()
-                .map(Path::to_path_buf)
-                .unwrap_or(rule_path.clone()),
-            "DO_NOT_TRUST" => rule_path.clone(),
-            _ => {
-                return Err(format!(
-                    "invalid trust level '{level}' for '{raw_path}' in '{}'",
-                    path.display()
-                ));
-            }
+            "TRUST_FOLDER" | "DO_NOT_TRUST" => rule,
+            "TRUST_PARENT" => rule.parent().map(Path::to_path_buf).unwrap_or(rule),
+            _ => return Err(INVALID_CONFIG),
         };
-        let effective = normalize_existing_or_raw(&effective);
-        if workspace.starts_with(&effective) {
+        if workspace.starts_with(normalize_existing_or_raw(&effective)) {
             let candidate = (raw_path.len(), level != "DO_NOT_TRUST");
-            if longest.is_none_or(|current| candidate.0 > current.0) {
+            if longest.is_none_or(|current: (usize, bool)| candidate.0 > current.0) {
                 longest = Some(candidate);
             }
         }
     }
-    let trusted = longest.map(|(_, trusted)| trusted);
-    Ok(trusted)
+    Ok(longest.map(|(_, trusted)| trusted))
 }
 
-fn gemini_cli_home() -> Option<PathBuf> {
-    env::var_os("GEMINI_CLI_HOME")
-        .map(PathBuf::from)
-        .or_else(home_dir)
+fn parse_json(raw: &str) -> Result<Value, &'static str> {
+    serde_json::from_str(&strip_comments(raw)).map_err(|_| INVALID_CONFIG)
 }
 
-fn parse_json_with_comments(raw: &str) -> Result<Value, serde_json::Error> {
-    serde_json::from_str(&strip_json_comments(raw))
-}
-
-fn strip_json_comments(raw: &str) -> String {
-    let mut stripped = String::with_capacity(raw.len());
+fn strip_comments(raw: &str) -> String {
+    let mut output = String::with_capacity(raw.len());
     let mut chars = raw.chars().peekable();
-    let mut in_string = false;
+    let mut string = false;
     let mut escaped = false;
-
     while let Some(ch) = chars.next() {
-        if in_string {
-            stripped.push(ch);
+        if string {
+            output.push(ch);
             if escaped {
                 escaped = false;
             } else if ch == '\\' {
                 escaped = true;
             } else if ch == '"' {
-                in_string = false;
+                string = false;
             }
-            continue;
-        }
-
-        if ch == '"' {
-            in_string = true;
-            stripped.push(ch);
+        } else if ch == '"' {
+            string = true;
+            output.push(ch);
         } else if ch == '/' && chars.peek() == Some(&'/') {
             chars.next();
-            for comment in chars.by_ref() {
-                if comment == '\n' {
-                    stripped.push('\n');
-                    break;
-                }
+            if chars.by_ref().any(|comment| comment == '\n') {
+                output.push('\n');
             }
         } else if ch == '/' && chars.peek() == Some(&'*') {
             chars.next();
             let mut previous = '\0';
             for comment in chars.by_ref() {
                 if comment == '\n' {
-                    stripped.push('\n');
+                    output.push('\n');
                 }
                 if previous == '*' && comment == '/' {
                     break;
@@ -397,45 +304,41 @@ fn strip_json_comments(raw: &str) -> String {
                 previous = comment;
             }
         } else {
-            stripped.push(ch);
+            output.push(ch);
         }
     }
-
-    stripped
+    output
 }
 
-fn system_defaults_path() -> Option<PathBuf> {
-    system_config_path("GEMINI_CLI_SYSTEM_DEFAULTS_PATH", "system-defaults.json")
+fn gemini_cli_home() -> Option<PathBuf> {
+    env::var_os("GEMINI_CLI_HOME")
+        .filter(|raw| !raw.is_empty())
+        .map(PathBuf::from)
+        .or_else(home_dir)
 }
 
-fn system_settings_path() -> Option<PathBuf> {
-    system_config_path("GEMINI_CLI_SYSTEM_SETTINGS_PATH", "settings.json")
-}
-
-fn system_config_path(env_var: &str, file_name: &str) -> Option<PathBuf> {
+fn system_path(env_var: &str, name: &str) -> Option<PathBuf> {
     env::var_os(env_var)
         .map(PathBuf::from)
-        .or_else(|| default_system_config_dir().map(|path| path.join(file_name)))
+        .or_else(|| system_dir().map(|path| path.join(name)))
 }
 
 #[cfg(target_os = "linux")]
-fn default_system_config_dir() -> Option<PathBuf> {
+fn system_dir() -> Option<PathBuf> {
     Some(PathBuf::from("/etc/gemini-cli"))
 }
 
 #[cfg(target_os = "macos")]
-fn default_system_config_dir() -> Option<PathBuf> {
+fn system_dir() -> Option<PathBuf> {
     Some(PathBuf::from("/Library/Application Support/GeminiCli"))
 }
 
 #[cfg(target_os = "windows")]
-fn default_system_config_dir() -> Option<PathBuf> {
-    env::var_os("ProgramData")
-        .map(PathBuf::from)
-        .map(|path| path.join("gemini-cli"))
+fn system_dir() -> Option<PathBuf> {
+    env::var_os("ProgramData").map(|path| PathBuf::from(path).join("gemini-cli"))
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
-fn default_system_config_dir() -> Option<PathBuf> {
+fn system_dir() -> Option<PathBuf> {
     None
 }

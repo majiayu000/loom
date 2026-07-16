@@ -15,7 +15,7 @@ Taxonomy decision -> ownership map -> enum/dispatch move -> contract/docs/tests 
 - [x] `SP535-T002` Owner: cli | Dependencies: `SP535-T001` | Done when: every current skill subcommand mapped to exactly one group in the table below | Verify: table assigns 44/44 commands at `bb9b738`
 - [ ] `SP535-T003` Owner: cli | Dependencies: `SP535-T002` | Done when: enums and dispatch moved, envelope `cmd` values updated, no aliases kept | Verify: `cargo check`
 - [ ] `SP535-T004` Owner: contract | Dependencies: `SP535-T003` | Done when: `cli_surface` budgets updated, old paths blacklisted, docs/README synced | Verify: `cargo test --test cli_surface`
-- [ ] `SP535-T005` Owner: verification | Dependencies: all prior | Done when: full suite passes and repo grep shows no live old-path references | Verify: `cargo test`
+- [ ] `SP535-T005` Owner: verification | Dependencies: all prior | Done when: full suite passes and repo grep shows old paths only in explicit blacklist tests and migration/CHANGELOG/spec history, never in live callers | Verify: `cargo test`
 
 ## Ownership Map
 

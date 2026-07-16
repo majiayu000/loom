@@ -7,7 +7,7 @@ Human gate: maintainer decisions approved on 2026-07-16
 
 ## 1. Current Behavior
 
-`src/main.rs:60-64/68-71/82-85` print bare `eprintln!` and `exit(3)` for app-init, panel, and top-level errors — no envelope even with `--json`. `src/error_actions.rs:18-42` covers 5 codes, wildcard returns empty. `src/types.rs:73-105` maps ~18 codes to exit 3.
+`src/main.rs:60-64/68-71/82-85` print bare `eprintln!` and `exit(3)` for app-init, panel, and top-level errors — no envelope even with `--json`. `src/error_actions.rs:18-42` covers 5 of 29 codes, wildcard returns empty. `src/types.rs:73-105` maps 20 codes to exit 3; adding `INIT_ERROR` makes the totals 30 codes / 21 at exit 3 without re-tiering existing codes.
 
 ## 2. Proposed Design
 
@@ -29,7 +29,7 @@ Init failure with `--json`: `{ok:false, cmd:"app.init", error:{code:"INIT_ERROR"
 
 ## 5. Verification Plan
 
-1. Integration test: run binary with unwritable/broken root + `--json`, assert stdout parses as envelope with expected code.
+1. Integration test: launch the binary with `HOME` and `USERPROFILE` removed, omit `--root`, pass `--json`, and assert stdout parses as an `app.init` / `INIT_ERROR` envelope. An unwritable explicit root does not trigger `App::new` and is not a valid fixture for this path.
 2. `cargo test error_actions`
 3. Contract doc test in `cli_surface`
 4. `cargo check && cargo test`

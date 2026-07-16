@@ -7,7 +7,7 @@ Human gate: maintainer decisions approved on 2026-07-16
 
 ## 1. Current Behavior
 
-`docs/module-ceiling-signal-report.md` manually tracks a 600-line ceiling for 3 files fixed in PR #59. No line-count check exists in `build.rs`, `Makefile`, `scripts/`, or `.github/workflows/`. 22 non-test files exceed 700 lines at `bb9b738`.
+`docs/module-ceiling-signal-report.md` manually tracks a 600-line ceiling for 3 files fixed in PR #59. No line-count check exists in `build.rs`, `Makefile`, `scripts/`, or `.github/workflows/`. With `tests/` paths and `*_tests.rs` excluded, 21 production files exceed 700 lines at `bb9b738`: 3 above 800 and 18 in the warning band.
 
 ## 2. Proposed Design
 

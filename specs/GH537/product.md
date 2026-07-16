@@ -7,7 +7,7 @@ Locale: `zh-CN`
 
 ## 1. Problem
 
-三处削弱 agent 错误契约：启动/顶层失败绕过 envelope（裸 `eprintln!+exit(3)`，`--json` 下也无结构化输出）；仅 5/~27 个错误码有默认 `next_actions`；exit code 3 被 ~18 个语义不同的错误码复用，exit code 几乎无路由信号。
+三处削弱 agent 错误契约：启动/顶层失败绕过 envelope（裸 `eprintln!+exit(3)`，`--json` 下也无结构化输出）；当前仅 5/29 个错误码有默认 `next_actions`；exit code 3 被 20 个语义不同的错误码复用，exit code 几乎无路由信号。新增 `INIT_ERROR` 后总数将为 30，其中 21 个映射 exit 3。
 
 ## 2. Goals
 

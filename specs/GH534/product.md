@@ -7,7 +7,7 @@ Locale: `zh-CN`
 
 ## 1. Problem
 
-模块行数上限只靠人工报告维护，已经漂移：`docs/module-ceiling-signal-report.md` 只覆盖 3 个早已修复的旧文件，而当前有 22 个非测试源文件超过 700 行（最大 981 行，`bb9b738` 复核），无任何 CI 护栏。
+模块行数上限只靠人工报告维护，已经漂移：`docs/module-ceiling-signal-report.md` 只覆盖 3 个早已修复的旧文件。按最终 guard 规则排除 `tests/` 路径与 `*_tests.rs` 后，当前有 21 个生产源文件超过 700 行（最大 981 行，`bb9b738` 复核），无任何 CI 护栏。
 
 ## 2. Goals
 
@@ -44,7 +44,7 @@ Locale: `zh-CN`
 
 ## 7. Maintainer Decisions（2026-07-16）
 
-1. 采用 800 行 hard-fail、700 行 warning band；800 行本身允许，超过 800 才失败。
+1. 采用 800 行 hard-fail、700 行 warning band；800 行本身允许，超过 800 才失败。`bb9b738` 下为 3 个 hard violation + 18 个 warning。
 2. guard 放在 `scripts/module-ceiling.sh`，使用独立 Makefile target，并接入 CI `verify` job 的 lint 之后。
 3. allowlist 格式为 `path<TAB>baseline_lines<TAB>issue-ref`；初始只允许 #544、#545、#546 对应的 3 个文件。
 4. 拆分采用 split-on-touch；跟踪 issue 立即建立，代码拆分留到下一次功能修改。

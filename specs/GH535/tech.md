@@ -36,7 +36,7 @@ Moved commands keep their envelope `data` schema unchanged; only `cmd` and CLI p
 
 1. `cargo test --test cli_surface`
 2. Full `cargo test`
-3. Repo-wide grep for old command strings returns only CHANGELOG/spec history
+3. Repo-wide grep for old command strings returns only the explicit stale-command blacklist tests and migration/CHANGELOG/spec history
 4. `docs/LOOM_CLI_CONTRACT.md` contract test passes
 
 ## 6. Rollback Plan

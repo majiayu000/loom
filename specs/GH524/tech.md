@@ -50,14 +50,15 @@ struct SkillConvergencePlan {
     source: SourceGuard,
     projections: Vec<ProjectionEffectPlan>,
     visibility: Vec<VisibilityRequirement>,
+    accept_restart_required: bool,
     remote: RemotePolicy,
     required_axes: BTreeSet<ConvergenceAxis>,
 }
 ```
 
 plan digest 覆盖 normalized selectors、source HEAD/tree digest、registry checkpoint、每个
-projection instance/method/digest、policy/ownership decision 与 remote policy。输出采用 #522 的
-三轴词汇。
+projection instance/method/digest、policy/ownership decision、`accept_restart_required` 与 remote
+policy。输出采用 #522 的三轴词汇。
 
 ### 3. Planning
 
@@ -129,8 +130,8 @@ idempotency 原文始终 redacted，只持久化 digest。
   "plan_id": "plan_...",
   "plan_digest": "sha256:...",
   "local_state": "complete",
-  "outcome": "local_complete_restart_required",
-  "completion_blockers": ["visibility.restart_required"],
+  "outcome": "local_complete_remote_pending_restart_required",
+  "completion_blockers": ["registry.remote_pending", "visibility.restart_required"],
   "source": {"commit": "...", "direction": "source"},
   "convergence": {
     "registry_transport": {"state": "PENDING_PUSH"},
@@ -138,7 +139,16 @@ idempotency 原文始终 redacted，只持久化 digest。
     "visibility": {"state": "restart_required"}
   },
   "complete": false,
-  "next_actions": []
+  "next_actions": [
+    {
+      "cmd": "loom --json --root \"$ROOT\" apply \"$PLAN_ID\" --plan-digest \"$PLAN_DIGEST\" --idempotency-key \"$KEY\"",
+      "reason": "retry the pending registry transport with the same immutable plan and idempotency key"
+    },
+    {
+      "cmd": "loom --json --root \"$ROOT\" skill inspect \"$SKILL\" --agent \"$AGENT\"",
+      "reason": "restart the affected agent runtime first, then recheck visibility"
+    }
+  ]
 }
 ```
 

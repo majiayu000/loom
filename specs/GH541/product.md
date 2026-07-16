@@ -33,9 +33,11 @@ telemetry 事件存储（#385/#496）只在调用方显式执行 `loom skill use
    envelope 的 `unmatched` 聚合，供后续 orphan 统计；非法名称必须计入显式 rejected 计数而非静默丢弃。
 3. **B-003** telemetry disabled 时 ingest fail closed 并返回 `loom telemetry enable` next action；
    `--dry-run` 仍可读取并报告候选项，但不得写 event 或 cursor。
-4. **B-004** 每个 event id 必须由 agent、session hash、skill/observed name、timestamp、source hash、
-   record offset 与 invocation ordinal/tool-call id 共同确定；同 timestamp 同 skill 的多次调用不得碰撞。
-5. **B-005** cursor 只保存 source hash 与读取位置，不保存 raw path；同一输入重复 ingest 必须幂等。
+4. **B-004** 每个 event id 必须由 agent、session hash、skill/observed name、timestamp、canonical
+   source identity 的 hash、record offset 与 invocation ordinal/tool-call id 共同确定；同一文件经
+   override、symlink 或默认根等不同拼写访问时必须得到相同 identity，同 timestamp 同 skill 的多次调用不得碰撞。
+5. **B-005** cursor 只保存 canonical source identity hash 与读取位置，不保存 raw path；同一输入重复
+   ingest 必须幂等。
 6. **B-006** `--since` 只限制本次候选窗口。cursor 必须记录 `covered_since`；后续请求更早窗口时
    从 source 起点重扫并依赖 deterministic event id 去重，不得因旧 cursor 永久跳过历史。
 7. **B-007** 日志根优先级固定为 `LOOM_CLAUDE_HOME`/`LOOM_CODEX_HOME` 显式 override →
@@ -43,7 +45,9 @@ telemetry 事件存储（#385/#496）只在调用方显式执行 `loom skill use
 8. **B-008** event 写入与 cursor 前移在同一 workspace lock 下按先 event 后 cursor 排序；取消、
    崩溃或部分写失败不得让 cursor 越过未持久化 invocation，重试不得重复计数。
 9. **B-009** malformed、非 session JSONL 与未知 record shape 必须逐条计数并继续扫描其他记录；
-   源目录不可读、cursor schema 不兼容或 event persistence 失败则整次命令返回 error，不得伪装完整成功。
+   某个已选 agent 的日志根不存在或没有匹配文件时按该 agent `scanned_files=0` 处理，以便 `--agent all`
+   仍可采集其他 agent；已存在的源目录不可读、cursor schema 不兼容或 event persistence 失败则整次
+   命令返回 error，不得伪装完整成功。
 10. **B-010** 事件写入必须通过现有 telemetry redaction/validation gate；新增字段与 deterministic
     event id 属于显式 schema 版本变更，旧 event 仍可读取。
 

@@ -3,23 +3,29 @@
 Issue: https://github.com/majiayu000/loom/issues/541
 Product spec: `specs/GH541/product.md`
 Route: `write_spec`
-Status: implx auto draft; independent diff review pending; PR gate still required
+Status: implx auto draft; independent diff review passed; PR gate still required
 
 ## 1. Current Behavior
 
 - 事件唯一写入路径是 `loom skill used` / `loom skill feedback`（`src/commands/skill_usage.rs`）经 `record_skill_invocation_telemetry` 等 emitter（`src/commands/telemetry/emitters.rs`）落到 `state/telemetry/events.jsonl`（`src/commands/telemetry/store.rs:48`）。
 - store 已有 malformed-line 容忍（`TelemetryLog.malformed`）与 redaction 校验门（store.rs:336）。
-- 没有任何代码读取 `~/.claude` / `~/.codex`（全仓 grep 无命中），日志解析目前只存在于 registry 内的 Python skill `skill-usage-stats`（`scripts/skill_usage_report.py`），其锚点逻辑可作为解析参考实现。
+- 没有任何 tracked 代码读取 `~/.claude` / `~/.codex`（全仓 grep 无命中），仓库也没有可复现的
+  既有 parser anchor 实现；实现阶段提交的脱敏 Claude/Codex fixture 集是 record shape 与 invocation
+  anchor 的唯一真相，不能依赖仓外脚本或本机 skill。
 
 ## 2. Proposed Design
 
 1. 新增 CLI：`src/cli/telemetry.rs` 增加 `Ingest(TelemetryIngestArgs)` 子命令（`--agent`、`--since`、`--dry-run`、复用全局 `--json`）。
 2. 新增模块 `src/commands/telemetry/ingest/`：
    - `mod.rs` — 命令入口、envelope 组装（scanned/ingested/skipped/unmatched/malformed 计数）。
-   - `claude.rs` — 扫描 `~/.claude/projects/*/*.jsonl`，按行解析，识别 skill 调用锚点（Skill tool_use 块 / `<command-name>` 块；最终锚点集合在 T001 用真实样本核定，参考 `skill_usage_report.py` 已验证的锚点）。
+   - `claude.rs` — 扫描 `~/.claude/projects/*/*.jsonl`，按行解析，识别 fixture 固化的 Skill
+     tool_use 块 / `<command-name>` skill command；fixture 必须包含正例、相似自由文本反例与未知 shape。
    - `codex.rs` — 解析 `~/.codex/history.jsonl`（session_id/ts/text）+ 按需关联 `~/.codex/sessions/**`（mtime ≥ since 才打开，规避 13GB 全扫）。
    - `cursor.rs` — 高水位读写 `state/telemetry/ingest_cursor.json`；key 是 source path 的
-     `sha256`，value 为 `{mtime, byte_offset, covered_since}`，不得落 raw path。
+     `sha256`，value 为 `{mtime, byte_offset, covered_since}`，不得落 raw path。source identity 在
+     hash 前先 canonicalize；同一现存文件经 symlink、override 或默认根访问必须映射到同一 key。
+   - 每个 agent scanner 将不存在的日志根或空 glob 作为 `scanned_files=0`；路径存在但不可读时
+     返回 error。`--agent all` 汇总 per-agent 结果，不能因未安装另一 agent 而丢弃可用日志。
 3. 根目录解析顺序固定为 Loom test/explicit override → agent-native home → platform home：
    `LOOM_CLAUDE_HOME` → `CLAUDE_HOME` → `~/.claude`，以及
    `LOOM_CODEX_HOME` → `CODEX_HOME` → `~/.codex`。
@@ -27,7 +33,8 @@ Status: implx auto draft; independent diff review pending; PR gate still require
    `skill_id`。未匹配时写 `skill_id=null` 与新增的受约束 `observed_skill_name`，既通过 redaction
    gate，又让 GH542 可从持久化事件重建 orphan；不能通过名称约束的输入进入 `rejected` 计数。
 5. 幂等：deterministic event id 输入包括 `agent`、`session_id_hash`、skill/observed name、UTC
-   timestamp、source hash、byte/line offset、record 内 invocation ordinal 或 tool-call id。为
+   timestamp、canonical source identity hash、byte/line offset、record 内 invocation ordinal 或
+   tool-call id。为
    `TelemetryEventDraft` 增加受控 event-id override，store 仍统一验证 `evt_` prefix 与 privacy。
 6. `covered_since` 表示 cursor 已覆盖的最早请求边界。新请求早于它时，从 source 起点重扫；
    deterministic event id 去重，避免既漏数又重复。正常增量从 byte offset 继续。
@@ -54,6 +61,7 @@ Status: implx auto draft; independent diff review pending; PR gate still require
 ```json
 {
   "agents": ["claude", "codex"],
+  "by_agent": {"claude": {"scanned_files": 0}, "codex": {"scanned_files": 42}},
   "since": "2026-06-01T00:00:00Z",
   "dry_run": false,
   "scanned_files": 42,
@@ -70,10 +78,12 @@ Status: implx auto draft; independent diff review pending; PR gate still require
 ## 5. Verification Plan
 
 1. fixture Claude/Codex 日志 → 断言归属、计数、unmatched（集成测试，env 覆盖日志根目录）。
+   fixture 是 parser anchor 的唯一真相，并覆盖结构化正例、自由文本反例与未知 shape。
 2. `cargo test --test telemetry_ingest deterministic_ids_include_record_ordinal`：同 timestamp 同 skill
    的两次 invocation 产生两个 event，重跑仍不增加计数。
 3. `cargo test --test telemetry_ingest cursor_hashes_paths_and_backfills_older_since`：cursor 不含 home/
-   workspace path，先 recent `--since` 后 older `--since` 不漏历史。
+   workspace path，先 recent `--since` 后 older `--since` 不漏历史；同一 source 经 symlink/override/
+   默认根访问时 event id 与 cursor key 保持一致。
 4. `cargo test --test telemetry_ingest unmatched_events_remain_queryable`：unmatched 持久化且可被
    GH542 orphan 聚合消费。
 5. `cargo test --test telemetry_ingest rejected_names_are_counted_without_raw_echo`：非法 observed name
@@ -81,7 +91,8 @@ Status: implx auto draft; independent diff review pending; PR gate still require
 6. `cargo test --test telemetry_ingest native_home_precedence_and_dry_run_is_read_only`：两种 native
    home 与 Loom override 顺序正确，dry-run 前后 state snapshot 相同。
 7. `cargo test --test telemetry telemetry_export_v2_v3_observed_name_is_redacted`。
-8. `cargo check --workspace --all-targets --all-features && cargo test`。
+8. `cargo test --test telemetry_ingest missing_agent_root_is_empty_but_unreadable_root_fails`。
+9. `cargo check --workspace --all-targets --all-features && cargo test`。
 
 ## 6. Rollback Plan
 
@@ -96,11 +107,11 @@ Status: implx auto draft; independent diff review pending; PR gate still require
 | B-001 | parsers + cursor serialization | `cargo test --test telemetry_ingest source_logs_and_raw_paths_are_read_only` |
 | B-002 | event model/store + unmatched/rejected envelope | `cargo test --test telemetry_ingest unmatched_events_remain_queryable && cargo test --test telemetry_ingest rejected_names_are_counted_without_raw_echo` |
 | B-003 | command route + dry-run plan | `cargo test --test telemetry_ingest disabled_fails_closed_and_dry_run_is_read_only` |
-| B-004 | deterministic event id builder | `cargo test --test telemetry_ingest deterministic_ids_include_record_ordinal` |
-| B-005, B-006 | hashed cursor + covered_since recovery | `cargo test --test telemetry_ingest cursor_hashes_paths_and_backfills_older_since` |
+| B-004 | canonical source identity + deterministic event id builder | `cargo test --test telemetry_ingest deterministic_ids_include_record_ordinal && cargo test --test telemetry_ingest source_aliases_share_event_identity` |
+| B-005, B-006 | canonical hashed cursor + covered_since recovery | `cargo test --test telemetry_ingest cursor_hashes_paths_and_backfills_older_since` |
 | B-007 | home resolver | `cargo test --test telemetry_ingest native_home_precedence` |
 | B-008 | workspace lock + event/cursor commit order | `cargo test --test telemetry_ingest interrupted_append_does_not_advance_cursor` |
-| B-009 | parser/error accounting | `cargo test --test telemetry_ingest malformed_records_are_counted_and_io_errors_fail` |
+| B-009 | parser/missing-root/error accounting | `cargo test --test telemetry_ingest malformed_records_are_counted_and_io_errors_fail && cargo test --test telemetry_ingest missing_agent_root_is_empty_but_unreadable_root_fails` |
 | B-010 | schema/redaction validation + export | `cargo test telemetry_event_v3_is_redacted_and_v2_remains_readable && cargo test --test telemetry telemetry_export_v2_v3_observed_name_is_redacted` |
 
 ## 8. Planned Changes Manifest

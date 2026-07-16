@@ -3,7 +3,7 @@
 Issue: https://github.com/majiayu000/loom/issues/542
 Product spec: `specs/GH542/product.md`
 Route: `write_spec`
-Status: implx auto draft; independent diff review pending; PR gate still required
+Status: implx auto draft; independent diff review passed; PR gate still required
 Depends on: GH541
 
 ## 1. Current Behavior
@@ -25,8 +25,11 @@ Depends on: GH541
      - registry skill：filtered bindings、window usage 与独立 zombie cutoff view → active / zombie /
        unbound-unused / unbound-but-used。
      - zombie 使用 agent-scoped lifetime/cutoff view 的 last_used 与 injectable clock 的
-       `now-zombie_days` 比较，不复用 `--since` window，也不读取其他 agent usage。
-     - single-runtime flag 从 unfiltered bound_agents/used_agents 计算；envelope 声明
+       `now-zombie_days` 比较，不复用 `--since` window，也不读取其他 agent usage；invocation 与
+       error event 都更新 lifecycle `last_used`，因为当前 `loom skill used --error` 只发 error event。
+     - single-runtime flag 从 unfiltered bound_agents/used_agents 计算（invocation/error 均计入
+       used_agents），且要求
+       `bound_agents.len() >= 2 && used_agents.len() == 1`；envelope 声明
        `single_runtime_scope: "all_agents"`。
      - orphan：GH541 v3 event 中 `skill_id=null` 的 `observed_skill_name`，以及现有 event 的
        `skill_id` 已不在当前读模型者，聚合到独立列表。
@@ -70,14 +73,16 @@ Depends on: GH541
 
 1. fixture registry（含多绑定/无绑定 skill）+ fixture events → 断言四类分类与 single-runtime 标记。
 2. `cargo test --test skill_stats agent_filter_scopes_bindings_but_single_runtime_is_global`：Claude-only
-   binding 不成为 Codex zombie，多 agent flag 不受 window filter 误导。
+   binding 不成为 Codex zombie，单 agent binding 不标 single-runtime，多 agent flag 不受 window filter 误导。
 3. `cargo test --test skill_stats zombie_cutoff_is_independent_from_since`：60 天前调用在宽 `--since`
    window 有 count，但 `zombie_days=30` 仍为 zombie；测试 clock 可注入。
 4. `cargo test --test skill_stats disabled_with_history_is_not_empty`：disabled config 仍读取 persisted
    events，分别返回 enablement 与 emptiness。
 5. `cargo test --test skill_stats orphan_and_error_threshold_contract`：durable unmatched 进入 orphan，
    样本 4 返回 null、样本 5 返回 rate。
-6. contract surface test + `cargo check --workspace --all-targets --all-features && cargo test`。
+6. `cargo test --test skill_stats error_events_count_as_recent_lifecycle_usage`：仅有近期 error event 的
+   bound skill 保持 active，且 failure category 仍计数。
+7. contract surface test + `cargo check --workspace --all-targets --all-features && cargo test`。
 
 ## 6. Rollback Plan
 
@@ -89,8 +94,8 @@ Depends on: GH541
 | --- | --- | --- |
 | B-001 | read-only stats command + snapshot | `cargo test --test skill_stats command_is_read_only_and_linear` |
 | B-002 | telemetry config/log loading | `cargo test --test skill_stats disabled_with_history_is_not_empty` |
-| B-003 | filtered binding/window views + global flag view | `cargo test --test skill_stats agent_filter_scopes_bindings_but_single_runtime_is_global` |
-| B-004 | independent cutoff clock/view | `cargo test --test skill_stats zombie_cutoff_is_independent_from_since` |
+| B-003 | filtered binding/window views + guarded global flag view | `cargo test --test skill_stats agent_filter_scopes_bindings_but_single_runtime_is_global` |
+| B-004 | independent cutoff clock/view + error-as-usage semantics | `cargo test --test skill_stats zombie_cutoff_is_independent_from_since && cargo test --test skill_stats error_events_count_as_recent_lifecycle_usage` |
 | B-005 | table-driven classifier | `cargo test --test skill_stats lifecycle_categories_are_exhaustive` |
 | B-006 | v2/v3 event normalization + orphan aggregation | `cargo test --test skill_stats durable_unmatched_events_become_orphans` |
 | B-007 | error aggregation | `cargo test --test skill_stats error_threshold_is_five` |

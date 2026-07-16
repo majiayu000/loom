@@ -33,9 +33,11 @@ registry 无法回答生命周期问题："哪些 skill 是僵尸（有绑定但
    disabled 但有历史 event 时仍必须聚合，不能生成假 zombie。
 3. **B-003** `--agent` 同时限制分类使用的 binding set 与 window usage set；分类不得把仅绑定其他
    agent 的 skill 误报为所选 agent 的 zombie。跨 runtime 的 `single_runtime` 始终从未过滤的
-   binding/usage 集计算，并在 envelope 标记 `single_runtime_scope="all_agents"`。
+   binding/usage 集计算，且仅在当前至少绑定两个 agent、实际只在一个 agent 使用时为 true；
+   envelope 标记 `single_runtime_scope="all_agents"`。
 4. **B-004** `--since` 只决定 window count/ranking；zombie 独立比较全量 eligible history 的
-   `last_used` 与 injectable `now - zombie_days`。较早窗口中的旧调用不能让 30 天未使用的 skill 变 active。
+   `last_used` 与 injectable `now - zombie_days`。`skill.invocation` 与 `skill.error` 都表示一次实际
+   尝试并参与 lifecycle `last_used`/cutoff；较早窗口中的旧调用不能让 30 天未使用的 skill 变 active。
 5. **B-005** 每个 registry skill 恰好一个 category：`active`、`zombie`、`unbound_unused` 或
    `unbound_but_used`；`single_runtime` 是 flag，不是第五种 category。
 6. **B-006** `skill_id=null` 且含合法 `observed_skill_name` 的 invocation 聚合到独立 orphan 列表；

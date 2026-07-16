@@ -6,6 +6,15 @@ use clap::{
 
 use crate::cli::Cli;
 
+mod inventory;
+mod surface_check;
+
+pub use inventory::{
+    ExampleClassification, InventoryError, SurfaceExample, SurfaceInventory, SurfaceSpec,
+    load_surface_inventory,
+};
+pub use surface_check::{SurfaceCheckReport, check_surface_inventory};
+
 pub const CLI_CONTRACT_VERSION: &str = "1.0.0";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -122,13 +131,26 @@ where
     S: Into<std::ffi::OsString> + Clone,
 {
     let command = Cli::command();
-    let matches = command
-        .clone()
-        .try_get_matches_from(argv)
-        .map_err(|error| PublicArgvError {
-            kind: PublicArgvErrorKind::Parse,
-            message: error.to_string(),
-        })?;
+    let matches = match command.clone().try_get_matches_from(argv) {
+        Ok(matches) => matches,
+        Err(error)
+            if matches!(
+                error.kind(),
+                ErrorKind::DisplayHelp | ErrorKind::DisplayVersion
+            ) =>
+        {
+            return Ok(PublicArgv {
+                command_path: vec!["loom".to_string()],
+                explicit_args: Vec::new(),
+            });
+        }
+        Err(error) => {
+            return Err(PublicArgvError {
+                kind: PublicArgvErrorKind::Parse,
+                message: error.to_string(),
+            });
+        }
+    };
     Cli::from_arg_matches(&matches).map_err(|error| PublicArgvError {
         kind: PublicArgvErrorKind::Parse,
         message: error.to_string(),

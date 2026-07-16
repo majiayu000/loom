@@ -2,10 +2,10 @@ use serde_json::json;
 
 mod common;
 
-use common::{TestDir, run_loom};
+use common::{TestDir, run_loom, write_file};
 use skillloom::cli_contract::{
-    CLI_CONTRACT_VERSION, PublicArgvErrorKind, contract_version_matches, current_contract_version,
-    parse_contract_version, validate_public_argv,
+    CLI_CONTRACT_VERSION, PublicArgvErrorKind, check_surface_inventory, contract_version_matches,
+    current_contract_version, parse_contract_version, validate_public_argv,
 };
 
 #[test]
@@ -62,6 +62,69 @@ fn executable_examples_parse() {
             .iter()
             .any(|argument| argument == "agent")
     );
+}
+
+#[test]
+fn inventory_covers_public_surfaces() {
+    let report = check_surface_inventory(std::path::Path::new(".")).expect("surface inventory");
+    assert!(report.surface_count >= 6);
+    assert!(report.example_count >= report.surface_count);
+    assert!(report.command_count > 100);
+}
+
+#[test]
+fn unclassified_command_fails() {
+    let root = TestDir::new("unclassified-contract-command");
+    write_file(&root.path().join("README.md"), "loom skill list\n");
+    write_file(
+        &root.path().join("docs/agent-command-surfaces.toml"),
+        r#"[[surface]]
+id = "readme"
+path = "README.md"
+
+[[example]]
+id = "readme.command"
+surface = "readme"
+start_line = 1
+end_line = 1
+classification = "unknown"
+"#,
+    );
+    let error = check_surface_inventory(root.path()).expect_err("classification must fail");
+    assert!(error.to_string().contains("closed classification set"));
+}
+
+#[test]
+fn parse_failure_is_terminal() {
+    let root = TestDir::new("invalid-contract-command");
+    write_file(&root.path().join("README.md"), "loom skill save demo\n");
+    write_file(
+        &root.path().join("docs/agent-command-surfaces.toml"),
+        r#"[[surface]]
+id = "readme"
+path = "README.md"
+
+[[example]]
+id = "readme.command"
+surface = "readme"
+start_line = 1
+end_line = 1
+classification = "executable"
+"#,
+    );
+    let error = check_surface_inventory(root.path()).expect_err("removed command must fail");
+    assert!(error.to_string().contains("README.md:1"));
+    assert!(error.to_string().contains("readme.command"));
+}
+
+#[test]
+fn checker_is_read_only_and_repeatable() {
+    let before = std::fs::read("docs/agent-command-surfaces.toml").expect("inventory bytes");
+    let first = check_surface_inventory(std::path::Path::new(".")).expect("first check");
+    let second = check_surface_inventory(std::path::Path::new(".")).expect("second check");
+    let after = std::fs::read("docs/agent-command-surfaces.toml").expect("inventory bytes");
+    assert_eq!(first, second);
+    assert_eq!(before, after);
 }
 
 #[test]

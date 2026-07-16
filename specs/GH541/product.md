@@ -4,6 +4,7 @@ Issue: https://github.com/majiayu000/loom/issues/541
 Route: `write_spec`
 State: `triaged`
 Locale: `zh-CN`
+Complexity: medium
 
 ## 1. Problem
 
@@ -25,11 +26,26 @@ telemetry 事件存储（#385/#496）只在调用方显式执行 `loom skill use
 
 ## 4. Behavior Invariants
 
-1. ingest 是只读采集：绝不修改、移动、删除 agent 侧日志文件。
-2. 无法匹配到 registry skill 的调用名出现在命令 envelope 的 `unmatched` 列表中，不静默丢弃。
-3. telemetry 关闭（disabled）时 ingest 拒绝执行并给出 next_action（`loom telemetry enable`）。
-4. `--dry-run` 不写任何状态（不写事件、不推高水位）。
-5. 事件写入沿用现有 redaction 校验路径（store.rs 的 "must be redacted before persistence" 门）。
+1. **B-001** ingest 只读 agent 日志；不得修改、移动或删除源文件，也不得保存 prompt、代码、
+   raw transcript path、workspace path 或未哈希 session identity。
+2. **B-002** matched invocation 持久化 registry `skill_id`；unmatched invocation 也必须持久化为
+   `skill.invocation`，使用 `skill_id=null` 与受长度/字符约束的 `observed_skill_name`，并同时进入
+   envelope 的 `unmatched` 聚合，供后续 orphan 统计；非法名称必须计入显式 rejected 计数而非静默丢弃。
+3. **B-003** telemetry disabled 时 ingest fail closed 并返回 `loom telemetry enable` next action；
+   `--dry-run` 仍可读取并报告候选项，但不得写 event 或 cursor。
+4. **B-004** 每个 event id 必须由 agent、session hash、skill/observed name、timestamp、source hash、
+   record offset 与 invocation ordinal/tool-call id 共同确定；同 timestamp 同 skill 的多次调用不得碰撞。
+5. **B-005** cursor 只保存 source hash 与读取位置，不保存 raw path；同一输入重复 ingest 必须幂等。
+6. **B-006** `--since` 只限制本次候选窗口。cursor 必须记录 `covered_since`；后续请求更早窗口时
+   从 source 起点重扫并依赖 deterministic event id 去重，不得因旧 cursor 永久跳过历史。
+7. **B-007** 日志根优先级固定为 `LOOM_CLAUDE_HOME`/`LOOM_CODEX_HOME` 显式 override →
+   agent-native `CLAUDE_HOME`/`CODEX_HOME` → platform home 下的默认目录。
+8. **B-008** event 写入与 cursor 前移在同一 workspace lock 下按先 event 后 cursor 排序；取消、
+   崩溃或部分写失败不得让 cursor 越过未持久化 invocation，重试不得重复计数。
+9. **B-009** malformed、非 session JSONL 与未知 record shape 必须逐条计数并继续扫描其他记录；
+   源目录不可读、cursor schema 不兼容或 event persistence 失败则整次命令返回 error，不得伪装完整成功。
+10. **B-010** 事件写入必须通过现有 telemetry redaction/validation gate；新增字段与 deterministic
+    event id 属于显式 schema 版本变更，旧 event 仍可读取。
 
 ## 5. Acceptance Criteria
 
@@ -44,11 +60,28 @@ telemetry 事件存储（#385/#496）只在调用方显式执行 `loom skill use
 1. Claude 项目目录含非会话 jsonl（如 memory/工具产物）——按解析失败跳过而非报错。
 2. Codex `sessions/` 体量大（观测值 13GB）——必须支持只扫 `history.jsonl` 或按 mtime/since 剪枝，避免全量扫描。
 3. 同一 skill 名在多个 agent 目录都有投影绑定——按事件的 agent 字段区分，不合并。
-4. skill 在 registry 中已退役但日志中有历史调用——归为 unmatched 还是历史归属？（Open Question 2）
+4. skill 在 registry 中已退役但日志中有历史调用——按 ingest 时的当前读模型归为 unmatched，
+   并持久化 `observed_skill_name`，不做历史 registry 考古。
 5. 时钟/时区：日志时间戳统一转 UTC 存储。
 
-## 7. Open Questions
+## 7. Resolved Decisions
 
-1. 高水位存储位置：`state/telemetry/ingest_cursor.json` 还是并入 TelemetryConfig？（倾向独立文件，避免 config schema 演进）
-2. 已退役/已删除 skill 的历史调用如何归属：建议按 ingest 时点的 registry 读模型匹配，匹配不到即 unmatched（保守，不做历史考古）。
-3. Claude transcript 中 skill 调用的识别锚点（Skill tool call vs command-name block）需要在 tech spec 中用真实样本确认一种最稳定的锚点集合。
+1. cursor 使用独立的 `state/telemetry/ingest_cursor.json`，避免 telemetry enablement config 与采集进度耦合。
+2. 已退役/已删除 skill 按 ingest 时当前读模型归为 unmatched。
+3. Claude 接受结构化 Skill tool call 与明确 `<command-name>` skill command；Codex 接受 session record
+   中结构化 skill/command activation。自由文本提及不算 invocation；确切 record fixtures 在实现中固化。
+
+## 8. Boundary Checklist
+
+| Boundary | Verdict |
+| --- | --- |
+| Empty / missing input | covered: B-002, B-009 |
+| Error and failure paths | covered: B-003, B-009 |
+| Authorization / permission | covered: B-001, B-003 |
+| Concurrency / race / ordering | covered: B-008 |
+| Retry / repetition / idempotency | covered: B-004, B-005, B-006, B-008 |
+| Illegal state transitions | covered: B-006, B-008 |
+| Compatibility / migration | covered: B-010 |
+| Degradation / fallback | covered: B-002, B-009 |
+| Evidence and audit integrity | covered: B-001, B-002, B-004, B-005 |
+| Cancellation / interruption | covered: B-008 |

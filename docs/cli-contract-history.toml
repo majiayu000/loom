@@ -1,0 +1,7 @@
+schema_version = 1
+
+[[contract]]
+version = "1.0.0"
+skill_range = ">=1.0.0,<2.0.0"
+change = "initial versioned agent-facing CLI contract"
+migration_note = "Install the Loom binary and shipped loom-registry Skill from the same release archive."

@@ -7,3 +7,6 @@ requires_tools = ["loom"]
 requires_mcp = []
 risk = "filesystem-write"
 default_activation = "manual-or-model"
+
+[compatibility]
+cli_contract = ">=1.0.0,<2.0.0"

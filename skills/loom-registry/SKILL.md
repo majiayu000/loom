@@ -20,7 +20,7 @@ Do not use this Skill for Loom.com videos, screen recording, video links, sharin
 
 ## Establish The Registry Boundary
 
-1. Run `loom --version` and check `loom <command> --help` for the command surface needed by the request. Stop on an unexpected or stale binary instead of guessing flags.
+1. Run a read-only JSON command and require a valid `cli_contract_version` in the range declared by `loom.skill.toml` (`>=1.0.0,<2.0.0`). If the field is missing, invalid, or outside that range, stop all mutations; use only `loom --version`/`--help` for diagnosis and install the matching Loom release and shipped `loom-registry` Skill together. Check `loom <command> --help` for the command surface needed by the request. Never guess flags.
 2. Obtain the intended registry root from the user or existing project context. Use a path such as `$HOME/.loom-registry` only when it is the user's established registry.
 3. Never use the Loom source-code checkout as the writable registry root.
 4. Run machine-facing commands in this form:

@@ -3,6 +3,12 @@
 Updated: 2026-07-03
 Status: Accepted
 
+## Agent-facing CLI contract version
+
+Decision: Loom exposes an independent SemVer `cli_contract_version`. It is not the crate or package version. Additive commands, flags, fields, or capabilities used by shipped agent instructions require a minor bump; breaking shape or semantic changes require a major bump; non-capability corrections require a patch bump. The shipped Skill declares a reviewed compatible range and must fail closed for a missing, invalid, or incompatible version.
+
+The package-internal `skillloom::cli_contract` facade owns the version and shared parser validation surface. `docs/agent-command-surfaces.toml` is the review-owned inventory; validation may report drift but never rewrite it or other high-context files.
+
 This document closes the current design-debt split from issue #6. It freezes the boundaries for operation history, registry vocabulary rules, projection removal, panel mutations, and environment-based discovery.
 
 ## 1. Operation History Authority

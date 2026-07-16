@@ -1,5 +1,4 @@
 mod agent_adapters;
-mod cli;
 mod commands;
 mod core;
 mod envelope;
@@ -11,6 +10,8 @@ mod sha256;
 mod state;
 mod state_model;
 mod types;
+
+pub(crate) use skillloom::cli;
 
 use std::ffi::OsString;
 

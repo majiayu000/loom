@@ -18,7 +18,7 @@ use clap::{Parser, error::ErrorKind};
 use serde_json::{Value, json};
 
 use crate::cli::{Cli, Command};
-use crate::commands::App;
+use crate::commands::{App, command_name};
 use crate::envelope::Envelope;
 use crate::types::ErrorCode;
 
@@ -59,15 +59,39 @@ async fn main() {
     let app = match App::new(cli.root.clone()) {
         Ok(app) => app,
         Err(err) => {
-            eprintln!("failed to initialize app: {}", err);
-            std::process::exit(3);
+            let code = ErrorCode::InitError;
+            if cli.json {
+                let env = failure_envelope(
+                    &cli,
+                    "app.init",
+                    code,
+                    format!("failed to initialize app: {err}"),
+                    json!({ "stage": "app.init" }),
+                );
+                print_envelope(&env, true, cli.pretty);
+            } else {
+                eprintln!("failed to initialize app: {}", err);
+            }
+            std::process::exit(code.exit_code());
         }
     };
 
     if let Command::Panel(args) = &cli.command {
         if let Err(err) = panel::run_panel(app.ctx.clone(), args.port).await {
-            eprintln!("panel failed: {}", err);
-            std::process::exit(3);
+            let code = ErrorCode::IoError;
+            if cli.json {
+                let env = failure_envelope(
+                    &cli,
+                    "panel",
+                    code,
+                    format!("panel failed: {err}"),
+                    json!({ "stage": "panel.serve", "port": args.port }),
+                );
+                print_envelope(&env, true, cli.pretty);
+            } else {
+                eprintln!("panel failed: {}", err);
+            }
+            std::process::exit(code.exit_code());
         }
         return;
     }
@@ -80,10 +104,40 @@ async fn main() {
             }
         }
         Err(err) => {
-            eprintln!("command failed: {}", err);
-            std::process::exit(3);
+            let code = ErrorCode::InternalError;
+            if cli.json {
+                let env = top_level_failure_envelope(&cli, err.to_string());
+                print_envelope(&env, true, cli.pretty);
+            } else {
+                eprintln!("command failed: {}", err);
+            }
+            std::process::exit(code.exit_code());
         }
     }
+}
+
+fn failure_envelope(
+    cli: &Cli,
+    cmd: &str,
+    code: ErrorCode,
+    message: String,
+    details: Value,
+) -> Envelope {
+    let request_id = cli
+        .request_id
+        .clone()
+        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+    Envelope::err(cmd, request_id, code, message, details)
+}
+
+fn top_level_failure_envelope(cli: &Cli, message: String) -> Envelope {
+    failure_envelope(
+        cli,
+        command_name(&cli.command),
+        ErrorCode::InternalError,
+        format!("command failed: {message}"),
+        json!({ "stage": "app.execute" }),
+    )
 }
 
 fn print_envelope(env: &Envelope, force_json: bool, pretty: bool) {
@@ -263,7 +317,10 @@ fn print_skill_quality(quality: &Value) {
 
 #[cfg(test)]
 mod tests {
-    use super::pretty_json_or_empty_object;
+    use clap::Parser;
+
+    use super::{pretty_json_or_empty_object, top_level_failure_envelope};
+    use crate::cli::Cli;
     use serde_json::{Value, json};
 
     #[test]
@@ -278,5 +335,26 @@ mod tests {
             pretty_json_or_empty_object(&Value::Object(Default::default())),
             "{}"
         );
+    }
+
+    #[test]
+    fn top_level_error_seam_builds_structured_json_envelope() {
+        let cli = Cli::try_parse_from([
+            "loom",
+            "--json",
+            "--request-id",
+            "req-top-level",
+            "workspace",
+            "status",
+        ])
+        .expect("parse fixture CLI");
+        let env = top_level_failure_envelope(&cli, "injected top-level failure".to_string());
+        let value = serde_json::to_value(env).expect("serialize fixture envelope");
+
+        assert_eq!(value["ok"], json!(false));
+        assert_eq!(value["cmd"], json!("workspace.status"));
+        assert_eq!(value["request_id"], json!("req-top-level"));
+        assert_eq!(value["error"]["code"], json!("INTERNAL_ERROR"));
+        assert_eq!(value["error"]["details"]["stage"], json!("app.execute"));
     }
 }

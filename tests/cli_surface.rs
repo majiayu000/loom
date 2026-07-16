@@ -1,4 +1,5 @@
 use std::fs;
+use std::net::TcpListener;
 use std::process::Command;
 
 mod common;
@@ -128,6 +129,7 @@ fn cli_contract_docs_track_current_surface() {
 
     for code in [
         "ARG_INVALID",
+        "INIT_ERROR",
         "DEPENDENCY_CONFLICT",
         "SCHEMA_MISMATCH",
         "STATE_CORRUPT",
@@ -144,6 +146,7 @@ fn cli_contract_docs_track_current_surface() {
         "POLICY_BLOCKED",
         "EVAL_FAILED",
         "CAPTURE_CONFLICT",
+        "COMMIT_DIRECTION_AMBIGUOUS",
         "AUDIT_ERROR",
         "LOCK_BUSY",
         "REMOTE_UNREACHABLE",
@@ -151,6 +154,7 @@ fn cli_contract_docs_track_current_surface() {
         "PUSH_REJECTED",
         "REPLAY_CONFLICT",
         "QUEUE_BLOCKED",
+        "ADAPTER_INVALID",
         "GIT_ERROR",
         "IO_ERROR",
         "INTERNAL_ERROR",
@@ -500,6 +504,89 @@ fn state_not_initialized_error_includes_next_action() {
         env["error"]["next_actions"][0]["cmd"],
         serde_json::json!("loom workspace init --json"),
         "{env}"
+    );
+}
+
+#[test]
+fn app_init_failure_is_a_structured_json_envelope() {
+    let output = Command::new(env!("CARGO_BIN_EXE_loom"))
+        .arg("--json")
+        .arg("--request-id")
+        .arg("req-init-failure")
+        .args(["workspace", "status"])
+        .env_remove("HOME")
+        .env_remove("USERPROFILE")
+        .output()
+        .expect("run loom without a home directory");
+
+    assert_eq!(output.status.code(), Some(3));
+    let env: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("parse app init failure envelope");
+    assert_eq!(env["ok"], serde_json::json!(false));
+    assert_eq!(env["cmd"], serde_json::json!("app.init"));
+    assert_eq!(env["request_id"], serde_json::json!("req-init-failure"));
+    assert_eq!(env["error"]["code"], serde_json::json!("INIT_ERROR"));
+    assert_eq!(
+        env["error"]["details"]["stage"],
+        serde_json::json!("app.init")
+    );
+}
+
+#[test]
+fn panel_bind_failure_is_a_structured_json_envelope() {
+    let listener = TcpListener::bind(("127.0.0.1", 0)).expect("reserve panel port");
+    let port = listener.local_addr().expect("reserved address").port();
+    let root = TestDir::new("cli-panel-bind-failure");
+    let output = Command::new(env!("CARGO_BIN_EXE_loom"))
+        .arg("--json")
+        .arg("--request-id")
+        .arg("req-panel-failure")
+        .arg("--root")
+        .arg(root.path())
+        .args(["panel", "--port", &port.to_string()])
+        .output()
+        .expect("run panel on occupied port");
+
+    assert_eq!(output.status.code(), Some(5));
+    let env: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("parse panel failure envelope");
+    assert_eq!(env["ok"], serde_json::json!(false));
+    assert_eq!(env["cmd"], serde_json::json!("panel"));
+    assert_eq!(env["request_id"], serde_json::json!("req-panel-failure"));
+    assert_eq!(env["error"]["code"], serde_json::json!("IO_ERROR"));
+    assert_eq!(
+        env["error"]["details"]["stage"],
+        serde_json::json!("panel.serve")
+    );
+    assert_eq!(env["error"]["details"]["port"], serde_json::json!(port));
+    assert!(
+        output.stderr.is_empty(),
+        "JSON panel startup failure must not emit human stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn option_like_skill_name_is_routable_after_argument_separator() {
+    let root = TestDir::new("cli-option-like-skill");
+    let output = Command::new(env!("CARGO_BIN_EXE_loom"))
+        .arg("--json")
+        .arg("--root")
+        .arg(root.path())
+        .args(["skill", "inspect", "--", "-demo"])
+        .output()
+        .expect("inspect option-like skill name");
+
+    assert_eq!(output.status.code(), Some(3));
+    let env: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("parse skill failure envelope");
+    assert_eq!(env["cmd"], serde_json::json!("skill.inspect"));
+    assert_eq!(env["error"]["code"], serde_json::json!("SKILL_NOT_FOUND"));
+    assert!(
+        env["error"]["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("'-demo'")),
+        "separator must preserve the option-like positional: {env}"
     );
 }
 

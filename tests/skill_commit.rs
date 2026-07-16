@@ -16,28 +16,35 @@ fn assert_success(output: &std::process::Output, context: &str) {
 }
 
 fn project_copy(root: &TestDir, skill: &str) -> std::path::PathBuf {
-    let target_path = root.path().join("live/claude-project-a");
-    assert_success(
-        &target_add(root.path(), "claude", &target_path, "managed").0,
-        "target add",
+    project_copy_named(root, skill, "project-a").0
+}
+
+fn project_copy_named(root: &TestDir, skill: &str, suffix: &str) -> (std::path::PathBuf, String) {
+    let target_path = root.path().join(format!("live/claude-{suffix}"));
+    let (target_output, target_env) = target_add(root.path(), "claude", &target_path, "managed");
+    assert_success(&target_output, "target add");
+    let target_id = target_env["data"]["target"]["target_id"]
+        .as_str()
+        .expect("target id");
+    let (binding_output, binding_env) = binding_add(
+        root.path(),
+        "claude",
+        "default",
+        "path-prefix",
+        &format!("/tmp/{suffix}"),
+        target_id,
     );
-    assert_success(
-        &binding_add(
-            root.path(),
-            "claude",
-            "default",
-            "path-prefix",
-            "/tmp/project-a",
-            "target_claude_claude_project_a",
-        )
-        .0,
-        "binding add",
-    );
-    assert_success(
-        &skill_project(root.path(), skill, "bind_claude_project_a", Some("copy")).0,
-        "skill project",
-    );
-    target_path.join(skill)
+    assert_success(&binding_output, "binding add");
+    let binding_id = binding_env["data"]["binding"]["binding_id"]
+        .as_str()
+        .expect("binding id");
+    let (project_output, project_env) = skill_project(root.path(), skill, binding_id, Some("copy"));
+    assert_success(&project_output, "skill project");
+    let instance_id = project_env["data"]["projection"]["instance_id"]
+        .as_str()
+        .expect("instance id")
+        .to_string();
+    (target_path.join(skill), instance_id)
 }
 
 #[test]
@@ -128,6 +135,90 @@ fn skill_commit_reports_ambiguous_when_source_and_projection_are_dirty() {
     assert_eq!(
         env["error"]["details"]["projection_dirty"],
         Value::Bool(true)
+    );
+    let actions = env["error"]["next_actions"]
+        .as_array()
+        .expect("ambiguous commit next_actions");
+    assert_eq!(actions.len(), 2);
+    assert!(actions.iter().all(|action| {
+        action["cmd"]
+            .as_str()
+            .is_some_and(|cmd| cmd.starts_with("loom ") && cmd.contains("--json"))
+    }));
+}
+
+#[test]
+fn skill_commit_ambiguous_actions_select_each_dirty_projection() {
+    let root = TestDir::new("skill-commit-ambiguous-multiple-projections");
+    write_skill(
+        root.path(),
+        "model-onboarding",
+        "# model-onboarding\n\nsource v1\n",
+    );
+    assert_success(
+        &save_skill(root.path(), "model-onboarding").0,
+        "initial source commit",
+    );
+    let (first_live_dir, first_instance) =
+        project_copy_named(&root, "model-onboarding", "project-a");
+    let (second_live_dir, second_instance) =
+        project_copy_named(&root, "model-onboarding", "project-b");
+    write_skill(
+        root.path(),
+        "model-onboarding",
+        "# model-onboarding\n\nsource v2\n",
+    );
+    fs::write(
+        first_live_dir.join("SKILL.md"),
+        "# model-onboarding\n\nprojection a v2\n",
+    )
+    .expect("edit first projection");
+    fs::write(
+        second_live_dir.join("SKILL.md"),
+        "# model-onboarding\n\nprojection b v2\n",
+    )
+    .expect("edit second projection");
+
+    let (output, env) = run_loom(root.path(), &["skill", "commit", "model-onboarding"]);
+
+    assert!(!output.status.success(), "ambiguous commit should fail");
+    assert_eq!(
+        env["error"]["code"],
+        Value::String("COMMIT_DIRECTION_AMBIGUOUS".to_string())
+    );
+    let actions = env["error"]["next_actions"]
+        .as_array()
+        .expect("ambiguous commit next_actions");
+    assert_eq!(actions.len(), 3);
+    for instance in [&first_instance, &second_instance] {
+        let expected = format!(
+            "loom skill commit model-onboarding --from-projection --instance {instance} --json"
+        );
+        assert!(
+            actions.iter().any(|action| action["cmd"] == expected),
+            "missing directly runnable action for {instance}: {actions:?}"
+        );
+    }
+
+    let (selected_output, selected_env) = run_loom(
+        root.path(),
+        &[
+            "skill",
+            "commit",
+            "model-onboarding",
+            "--from-projection",
+            "--instance",
+            &first_instance,
+        ],
+    );
+    assert!(
+        !selected_output.status.success(),
+        "source drift should still protect the selected projection capture"
+    );
+    assert_eq!(
+        selected_env["error"]["code"],
+        Value::String("CAPTURE_CONFLICT".to_string()),
+        "the action must select the projection instead of failing for a missing selector"
     );
 }
 

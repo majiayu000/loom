@@ -1,10 +1,11 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum ErrorCode {
     ArgInvalid,
+    InitError,
     DependencyConflict,
     SchemaMismatch,
     StateCorrupt,
@@ -36,9 +37,44 @@ pub enum ErrorCode {
 }
 
 impl ErrorCode {
+    #[cfg(test)]
+    pub const ALL: [Self; 30] = [
+        Self::ArgInvalid,
+        Self::InitError,
+        Self::DependencyConflict,
+        Self::SchemaMismatch,
+        Self::StateCorrupt,
+        Self::StateNotInitialized,
+        Self::ProviderNotFound,
+        Self::SkillNotFound,
+        Self::BindingNotFound,
+        Self::TargetNotFound,
+        Self::TrashEntryNotFound,
+        Self::TargetNotManaged,
+        Self::TargetAgentMismatch,
+        Self::ProjectionConflict,
+        Self::ProjectionMethodUnsupported,
+        Self::PolicyBlocked,
+        Self::EvalFailed,
+        Self::CaptureConflict,
+        Self::CommitDirectionAmbiguous,
+        Self::AuditError,
+        Self::LockBusy,
+        Self::RemoteUnreachable,
+        Self::RemoteDiverged,
+        Self::PushRejected,
+        Self::ReplayConflict,
+        Self::QueueBlocked,
+        Self::AdapterInvalid,
+        Self::GitError,
+        Self::IoError,
+        Self::InternalError,
+    ];
+
     pub fn as_str(self) -> &'static str {
         match self {
             Self::ArgInvalid => "ARG_INVALID",
+            Self::InitError => "INIT_ERROR",
             Self::DependencyConflict => "DEPENDENCY_CONFLICT",
             Self::SchemaMismatch => "SCHEMA_MISMATCH",
             Self::StateCorrupt => "STATE_CORRUPT",
@@ -73,6 +109,7 @@ impl ErrorCode {
     pub fn exit_code(self) -> i32 {
         match self {
             Self::ArgInvalid => 2,
+            Self::InitError => 3,
             Self::DependencyConflict => 3,
             Self::SchemaMismatch => 3,
             Self::StateCorrupt => 3,

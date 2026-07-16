@@ -33,7 +33,7 @@ use super::fs_probe::probe_symlink;
 #[allow(unused_imports)]
 use super::helpers::{
     commit_registry_state, ensure_skill_exists, map_arg, map_git, map_io, map_lock, map_project_io,
-    map_registry_state, projection_instance_id, projection_method_as_str,
+    map_registry_state, projection_instance_id, projection_method_as_str, shell_arg,
     validate_projection_method, validate_skill_name,
 };
 #[allow(unused_imports)]

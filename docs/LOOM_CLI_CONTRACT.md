@@ -201,38 +201,58 @@ Default recovery hints:
 3. `SKILL_NOT_FOUND` -> `loom skill list --json`
 4. `STATE_NOT_INITIALIZED` -> `loom workspace init --json`
 5. `TARGET_NOT_MANAGED` -> `loom target list --json`
+6. `LOCK_BUSY` -> `loom ops list --json`
+7. `REMOTE_UNREACHABLE`, `REMOTE_DIVERGED`, and `PUSH_REJECTED` -> `loom sync status --json`
 
 ## 8. Error Codes
 
-Base error codes:
+`error.code` is the sole stable semantic routing key. Process exit codes are
+coarse failure tiers only and must not be used to distinguish individual error
+semantics: 2 is argument parsing, 3 is domain/state/policy/internal failure, 4
+is lock contention, 5 is Git/I/O failure, and 10 is remote/sync failure. The
+table contains 30 codes; 21 currently map to the coarse exit-3 tier.
 
-1. `ARG_INVALID`
-2. `DEPENDENCY_CONFLICT`
-3. `SCHEMA_MISMATCH`
-4. `STATE_CORRUPT`
-5. `STATE_NOT_INITIALIZED`
-6. `PROVIDER_NOT_FOUND`
-7. `SKILL_NOT_FOUND`
-8. `BINDING_NOT_FOUND`
-9. `TARGET_NOT_FOUND`
-10. `TRASH_ENTRY_NOT_FOUND`
-11. `TARGET_NOT_MANAGED`
-12. `TARGET_AGENT_MISMATCH`
-13. `PROJECTION_CONFLICT`
-14. `PROJECTION_METHOD_UNSUPPORTED`
-15. `POLICY_BLOCKED`
-16. `EVAL_FAILED`
-17. `CAPTURE_CONFLICT`
-18. `AUDIT_ERROR`
-19. `LOCK_BUSY`
-20. `REMOTE_UNREACHABLE`
-21. `REMOTE_DIVERGED`
-22. `PUSH_REJECTED`
-23. `REPLAY_CONFLICT`
-24. `QUEUE_BLOCKED`
-25. `GIT_ERROR`
-26. `IO_ERROR`
-27. `INTERNAL_ERROR`
+Action coverage has three forms: `default` is a universal no-argument recovery
+command, `contextual` is emitted only when the call site has every required
+skill/target/ref value, and `exempt` intentionally has no command because Loom
+cannot prescribe a safe recovery action from the error code alone. Every
+emitted action is a concrete `loom ... --json` command; placeholders are not
+part of the envelope contract.
+
+<!-- error-code-table-start -->
+| Error code | Exit | Action coverage | Action or rationale |
+| --- | ---: | --- | --- |
+| `ARG_INVALID` | 2 | `exempt` | Correct syntax depends on the rejected command and argument. |
+| `INIT_ERROR` | 3 | `exempt` | Process initialization failed before a safe recovery command was available. |
+| `DEPENDENCY_CONFLICT` | 3 | `contextual` | A dependency-specific inspect or install command requires the affected skill/tool. |
+| `SCHEMA_MISMATCH` | 3 | `exempt` | State/schema repair requires diagnosis; automatic mutation is unsafe. |
+| `STATE_CORRUPT` | 3 | `exempt` | Corrupt state requires diagnosis or restore rather than a generic command. |
+| `STATE_NOT_INITIALIZED` | 3 | `default` | `loom workspace init --json` |
+| `PROVIDER_NOT_FOUND` | 3 | `contextual` | Provider recovery requires the missing provider identifier. |
+| `SKILL_NOT_FOUND` | 3 | `default` | `loom skill list --json` |
+| `BINDING_NOT_FOUND` | 3 | `default` | `loom workspace binding list --json` |
+| `TARGET_NOT_FOUND` | 3 | `default` | `loom target list --json` |
+| `TRASH_ENTRY_NOT_FOUND` | 3 | `contextual` | Trash inspection requires the affected skill or entry identifier. |
+| `TARGET_NOT_MANAGED` | 3 | `default` | `loom target list --json` |
+| `TARGET_AGENT_MISMATCH` | 3 | `contextual` | Inspection requires the selected target and agent context. |
+| `PROJECTION_CONFLICT` | 3 | `contextual` | The call site may emit a concrete skill inspection command. |
+| `PROJECTION_METHOD_UNSUPPORTED` | 3 | `contextual` | Recovery depends on the requested agent, target, and projection method. |
+| `POLICY_BLOCKED` | 3 | `contextual` | The call site may emit a concrete skill inspection or policy command. |
+| `EVAL_FAILED` | 3 | `contextual` | Rerunning evaluation requires the affected skill and evaluation mode. |
+| `CAPTURE_CONFLICT` | 3 | `contextual` | Patch/capture call sites emit a concrete affected-skill inspection command. |
+| `COMMIT_DIRECTION_AMBIGUOUS` | 3 | `contextual` | The envelope emits concrete source and projection commit alternatives. |
+| `AUDIT_ERROR` | 3 | `exempt` | Audit persistence failure must preserve the original operation context. |
+| `LOCK_BUSY` | 4 | `default` | `loom ops list --json` |
+| `REMOTE_UNREACHABLE` | 10 | `default` | `loom sync status --json` |
+| `REMOTE_DIVERGED` | 10 | `default` | `loom sync status --json` |
+| `PUSH_REJECTED` | 10 | `default` | `loom sync status --json` |
+| `REPLAY_CONFLICT` | 10 | `contextual` | Replay call sites may emit a concrete operation-inspection command. |
+| `QUEUE_BLOCKED` | 10 | `contextual` | Queue recovery depends on the blocked operation and prerequisite. |
+| `ADAPTER_INVALID` | 3 | `contextual` | Adapter diagnosis requires the selected adapter and source path. |
+| `GIT_ERROR` | 5 | `exempt` | Repository diagnosis is required; a generic mutating Git command is unsafe. |
+| `IO_ERROR` | 5 | `exempt` | Filesystem/transport diagnosis depends on the failed path or resource. |
+| `INTERNAL_ERROR` | 3 | `exempt` | No safe user action can be inferred from an internal fault. |
+<!-- error-code-table-end -->
 
 Semantics:
 

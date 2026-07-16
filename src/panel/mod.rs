@@ -170,9 +170,8 @@ pub async fn run_panel(ctx: AppContext, port: u16) -> Result<()> {
 
     let app = panel_router(state);
 
-    eprintln!("panel listening on http://{}", addr);
-
     let listener = tokio::net::TcpListener::bind(addr).await?;
+    eprintln!("panel listening on http://{}", addr);
     axum::serve(
         listener,
         app.into_make_service_with_connect_info::<SocketAddr>(),

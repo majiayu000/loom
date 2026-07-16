@@ -298,7 +298,7 @@ fn use_user_scope_requires_adopt_before_writing_existing_agent_dirs() {
     assert!(
         env["error"]["next_actions"][0]["cmd"]
             .as_str()
-            .is_some_and(|cmd| cmd.contains("--adopt --apply")),
+            .is_some_and(|cmd| cmd.contains("--json") && cmd.contains("--adopt --apply")),
         "error should include the runnable adopt retry: {env}"
     );
     assert!(

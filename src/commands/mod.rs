@@ -85,7 +85,8 @@ use event_store::{
     append_command_audit_failure, append_command_finished, append_command_started,
     command_event_input, prepare_command_event_store,
 };
-use helpers::{command_name, ensure_initial_commit, map_git, map_io};
+pub(crate) use helpers::command_name;
+use helpers::{ensure_initial_commit, map_git, map_io};
 use meta::command_meta;
 
 use crate::error_actions::{NextAction, default_next_actions};

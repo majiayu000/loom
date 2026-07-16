@@ -36,16 +36,21 @@ impl App {
                 "projection_dirty": true,
                 "dirty_projections": dirty_projections.iter().map(projection_summary).collect::<Vec<_>>(),
             });
-            failure.next_actions = vec![
-                NextAction {
-                    cmd: format!("loom skill commit {} --from-source --json", args.skill),
-                    reason: "commit registry source changes".to_string(),
-                },
-                NextAction {
-                    cmd: format!("loom skill commit {} --from-projection --json", args.skill),
-                    reason: "capture live projection changes".to_string(),
-                },
-            ];
+            let mut next_actions = vec![NextAction {
+                cmd: format!("loom skill commit {} --from-source --json", args.skill),
+                reason: "commit registry source changes".to_string(),
+            }];
+            next_actions.extend(dirty_projections.iter().map(|projection| NextAction {
+                cmd: format!(
+                    "loom skill commit {} --from-projection --instance {} --json",
+                    args.skill, projection.instance_id
+                ),
+                reason: format!(
+                    "capture live projection changes from instance {}",
+                    projection.instance_id
+                ),
+            }));
+            failure.next_actions = next_actions;
             return Err(failure);
         }
         if source_dirty {

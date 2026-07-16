@@ -37,14 +37,14 @@ impl App {
                 "dirty_projections": dirty_projections.iter().map(projection_summary).collect::<Vec<_>>(),
             });
             let mut next_actions = vec![NextAction {
-                cmd: format!("loom skill commit {} --from-source --json", args.skill),
+                cmd: format!(
+                    "loom skill commit {} --from-source --json",
+                    shell_arg(&args.skill)
+                ),
                 reason: "commit registry source changes".to_string(),
             }];
             next_actions.extend(dirty_projections.iter().map(|projection| NextAction {
-                cmd: format!(
-                    "loom skill commit {} --from-projection --instance {} --json",
-                    args.skill, projection.instance_id
-                ),
+                cmd: projection_commit_command(&args.skill, &projection.instance_id),
                 reason: format!(
                     "capture live projection changes from instance {}",
                     projection.instance_id
@@ -303,4 +303,25 @@ fn projection_summary(projection: &RegistryProjectionInstance) -> Value {
         "method": projection.method,
         "materialized_path": projection.materialized_path,
     })
+}
+
+fn projection_commit_command(skill: &str, instance_id: &str) -> String {
+    format!(
+        "loom skill commit {} --from-projection --instance {} --json",
+        shell_arg(skill),
+        shell_arg(instance_id)
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::projection_commit_command;
+
+    #[test]
+    fn projection_commit_action_quotes_untrusted_instance_id() {
+        assert_eq!(
+            projection_commit_command("model-onboarding", "inst; touch /tmp/owned"),
+            "loom skill commit model-onboarding --from-projection --instance 'inst; touch /tmp/owned' --json"
+        );
+    }
 }

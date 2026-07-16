@@ -235,7 +235,7 @@ fn workspace_doctor_reports_agent_skill_inventory() {
     assert_eq!(inventory["ok"], Value::Bool(true));
     assert_eq!(inventory["severity"], Value::String("info".to_string()));
     assert_eq!(inventory["details"]["home_set"], Value::Bool(true));
-    assert_eq!(inventory["details"]["total"], Value::from(10));
+    assert_eq!(inventory["details"]["total"], Value::from(11));
     assert_eq!(
         inventory["details"]["generic_adapter_count"],
         Value::from(7)
@@ -249,7 +249,7 @@ fn workspace_doctor_reports_agent_skill_inventory() {
     let agents = inventory["details"]["agents"]
         .as_array()
         .expect("agents array");
-    assert_eq!(agents.len(), 10, "all known agents must be reported");
+    assert_eq!(agents.len(), 11, "all known agent roots must be reported");
 
     let claude = agents
         .iter()
@@ -273,10 +273,27 @@ fn workspace_doctor_reports_agent_skill_inventory() {
     assert_eq!(cursor["present"], Value::Bool(false));
     assert_eq!(cursor["fidelity"], "generic");
 
+    let gemini_paths = agents
+        .iter()
+        .filter(|a| a["agent"] == "gemini-cli")
+        .map(|a| a["default_path"].as_str().expect("Gemini path"))
+        .collect::<Vec<_>>();
+    assert_eq!(gemini_paths.len(), 2);
+    assert!(
+        gemini_paths
+            .iter()
+            .any(|path| path.ends_with(".agents/skills"))
+    );
+    assert!(
+        gemini_paths
+            .iter()
+            .any(|path| path.ends_with(".gemini/skills"))
+    );
+
     let legacy = &env["data"]["checks"]["agent_skill_dirs"]["agents"];
     assert_eq!(
         legacy.as_array().map(Vec::len),
-        Some(10),
+        Some(11),
         "checks.agent_skill_dirs must mirror inventory"
     );
 }

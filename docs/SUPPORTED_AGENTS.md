@@ -30,10 +30,14 @@ project `.agents/skills` search chain, config disables, and restart guidance.
 Gemini CLI is verified against its official skill discovery and command
 contracts. Its `.agents/skills` alias overrides the matching `.gemini/skills`
 entry within the same user or project tier, disabled names are persisted under
-`skills.disabled`, and `/skills reload` refreshes the current session. See the
+`skills.disabled`, global and admin skill toggles are enforced, untrusted
+workspaces cannot satisfy project visibility, and `/skills reload` refreshes
+the current session. `workspace init --scan-existing` and `workspace doctor`
+inspect both user roots. See the
 [Gemini CLI skill docs](https://geminicli.com/docs/cli/creating-skills/),
 [command reference](https://geminicli.com/docs/reference/commands/), and
-[settings reference](https://geminicli.com/docs/reference/configuration/).
+[settings reference](https://geminicli.com/docs/reference/configuration/), plus
+the [trusted-folders reference](https://geminicli.com/docs/cli/trusted-folders/).
 
 `generic` means Loom exposes a conservative fallback path without claiming
 that discovery precedence, visibility disables, or reload behavior has been

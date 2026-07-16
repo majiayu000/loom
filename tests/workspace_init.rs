@@ -74,7 +74,7 @@ fn workspace_init_scan_existing_imports_present_dirs() {
         "expected present default dirs imported: {:?}",
         env["data"]
     );
-    assert_eq!(env["data"]["skipped"].as_array().map(|a| a.len()), Some(7));
+    assert_eq!(env["data"]["skipped"].as_array().map(|a| a.len()), Some(8));
 
     // Confirm the targets are actually persisted.
     let (list_output, list_env) = run_loom(root.path(), &["target", "list"]);
@@ -104,10 +104,46 @@ fn workspace_init_scan_existing_skips_absent_dirs() {
         String::from_utf8_lossy(&output.stdout)
     );
     assert_eq!(env["data"]["imported"].as_array().map(|a| a.len()), Some(1));
-    assert_eq!(env["data"]["skipped"].as_array().map(|a| a.len()), Some(9));
+    assert_eq!(env["data"]["skipped"].as_array().map(|a| a.len()), Some(10));
     assert_eq!(
         env["data"]["skipped"][0]["reason"],
         Value::String("does-not-exist".to_string())
+    );
+}
+
+#[test]
+fn workspace_init_scan_existing_imports_both_gemini_cli_user_roots() {
+    let root = TestDir::new("ws-init-scan-gemini-roots");
+    let fake_home = TestDir::new("ws-init-scan-gemini-roots-home");
+    let agents_root = fake_home.path().join(".agents/skills");
+    let gemini_root = fake_home.path().join(".gemini/skills");
+    fs::create_dir_all(&agents_root).expect("create .agents/skills");
+    fs::create_dir_all(&gemini_root).expect("create .gemini/skills");
+
+    let home_str = fake_home.path().to_string_lossy().into_owned();
+    let (output, env) = run_loom_with_env(
+        root.path(),
+        &[("HOME", &home_str)],
+        &["workspace", "init", "--scan-existing"],
+    );
+
+    assert!(output.status.success(), "Gemini root scan failed: {env}");
+    let imported = env["data"]["imported"].as_array().expect("imported");
+    let gemini_paths = imported
+        .iter()
+        .filter(|entry| entry["target"]["agent"] == "gemini-cli")
+        .filter_map(|entry| entry["target"]["path"].as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(gemini_paths.len(), 2, "both official user roots: {env}");
+    let agents_root = fs::canonicalize(&agents_root).expect("canonical agents root");
+    let gemini_root = fs::canonicalize(&gemini_root).expect("canonical gemini root");
+    assert!(
+        gemini_paths.contains(&agents_root.to_str().expect("agents path")),
+        "preferred Gemini root missing: {gemini_paths:?}"
+    );
+    assert!(
+        gemini_paths.contains(&gemini_root.to_str().expect("gemini path")),
+        "native Gemini root missing: {gemini_paths:?}"
     );
 }
 
@@ -365,6 +401,26 @@ fn workspace_status_reports_gemini_cli_verified_metadata() {
     assert!(output.status.success(), "workspace status failed: {env}");
     let adapter = adapter_by_id(&env, "gemini-cli");
     assert_eq!(adapter["fidelity"], "verified");
+    assert_eq!(
+        adapter["default_skill_dirs"].as_array().map(Vec::len),
+        Some(2)
+    );
+    assert!(array_contains(
+        &adapter["default_skill_dirs"],
+        &fake_home
+            .path()
+            .join(".agents/skills")
+            .display()
+            .to_string()
+    ));
+    assert!(array_contains(
+        &adapter["default_skill_dirs"],
+        &fake_home
+            .path()
+            .join(".gemini/skills")
+            .display()
+            .to_string()
+    ));
     assert_eq!(adapter["discovery_roots"].as_array().map(Vec::len), Some(4));
     for (scope, path, priority) in [
         ("user", "~/.agents/skills", 0),
@@ -639,7 +695,7 @@ fn workspace_init_scan_existing_uses_userprofile_when_home_is_missing() {
     assert_eq!(env["ok"], Value::Bool(true));
     assert_eq!(env["data"]["scanned"], Value::Bool(true));
     assert_eq!(env["data"]["imported"].as_array().map(|a| a.len()), Some(2));
-    assert_eq!(env["data"]["skipped"].as_array().map(|a| a.len()), Some(8));
+    assert_eq!(env["data"]["skipped"].as_array().map(|a| a.len()), Some(9));
 }
 
 // Two processes race to `workspace init --scan-existing` on the same root.

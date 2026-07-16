@@ -20,6 +20,26 @@ pub(super) fn built_in_fidelity(id: &str) -> AdapterFidelity {
     }
 }
 
+pub(super) fn built_in_default_skill_dirs(
+    id: &str,
+    configured: Option<&Vec<PathBuf>>,
+    home: Option<&Path>,
+) -> Vec<PathBuf> {
+    if id != "gemini-cli" {
+        return configured.cloned().unwrap_or_default();
+    }
+    let Some(home) = home else {
+        return Vec::new();
+    };
+    let mut dirs = vec![home.join(".agents/skills"), home.join(".gemini/skills")];
+    for path in configured.into_iter().flatten() {
+        if !dirs.contains(path) {
+            dirs.push(path.clone());
+        }
+    }
+    dirs
+}
+
 pub(super) fn default_scan_eligible() -> bool {
     true
 }

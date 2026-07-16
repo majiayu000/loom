@@ -101,7 +101,7 @@ Resolution order for skill directories is:
 | `COPILOT_SKILLS_DIR` | `$HOME/.github/copilot/skills` | `src/state/mod.rs` default agent map |
 | `AIDER_SKILLS_DIR` | `$HOME/.aider/skills` | `src/state/mod.rs` default agent map |
 | `OPENCODE_SKILLS_DIR` | `$HOME/.opencode/skills` | `src/state/mod.rs` default agent map |
-| `GEMINI_CLI_SKILLS_DIR` | `$HOME/.gemini/skills` | `src/state/mod.rs` default agent map |
+| `GEMINI_CLI_SKILLS_DIR` | `$HOME/.agents/skills` | `src/state/mod.rs` default agent map; adapter scan metadata also includes `$HOME/.gemini/skills` |
 | `GOOSE_SKILLS_DIR` | `$HOME/.config/goose/skills` | `src/state/mod.rs` default agent map |
 
 For Codex activation and visibility, adapter metadata prefers

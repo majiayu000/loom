@@ -13,10 +13,10 @@ use crate::types::ErrorCode;
 mod metadata;
 
 use metadata::{
-    adapter_json_invalid, built_in_discovery_roots, built_in_reload, built_in_visibility,
-    capabilities_from_reload, default_scan_eligible, default_visibility, discovery_root_json,
-    external_discovery_root, external_visibility, reload_from_capability, reload_json,
-    resolve_root_template, role_rank, v1_discovery_roots, validate_discovery_root,
+    adapter_json_invalid, built_in_default_skill_dirs, built_in_discovery_roots, built_in_reload,
+    built_in_visibility, capabilities_from_reload, default_scan_eligible, default_visibility,
+    discovery_root_json, external_discovery_root, external_visibility, reload_from_capability,
+    reload_json, resolve_root_template, role_rank, v1_discovery_roots, validate_discovery_root,
     validate_visibility, visibility_json,
 };
 
@@ -66,6 +66,10 @@ pub(crate) struct AgentAdapter {
 impl AgentAdapter {
     pub(crate) fn has_discovery_root_for_scope(&self, scope: &str) -> bool {
         self.discovery_roots.iter().any(|root| root.scope == scope)
+    }
+
+    pub(crate) fn has_verified_visibility_metadata(&self) -> bool {
+        self.fidelity.is_verified() && !self.visibility.identity_by_projection_method.is_empty()
     }
 }
 
@@ -400,7 +404,7 @@ fn built_in_adapters(root: &Path, home: Option<&Path>) -> Vec<AgentAdapter> {
                 ],
                 skill_entrypoint: "SKILL.md".to_string(),
                 capabilities: capabilities_from_reload(&reload),
-                default_skill_dirs: dirs_by_agent.get(id).cloned().unwrap_or_default(),
+                default_skill_dirs: built_in_default_skill_dirs(id, dirs_by_agent.get(id), home),
                 discovery_roots: built_in_discovery_roots(id, dirs_by_agent.get(id), home),
                 visibility: built_in_visibility(id),
                 reload,

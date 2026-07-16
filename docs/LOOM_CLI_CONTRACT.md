@@ -330,6 +330,13 @@ the field and is reported as `generic`. A `verified` row cannot contain a
 only and must not be treated as verified visibility evidence by doctor or
 skill-diagnose consumers.
 
+Gemini CLI verified visibility reads the documented settings precedence,
+including `skills.enabled`, `skills.disabled`, and `admin.skills.enabled`;
+project roots additionally require affirmative workspace trust. Missing trust,
+explicit denial, malformed settings, or malformed trust state cannot yield
+`visible=true`. The reload check names `/skills reload` and does not require a
+new session.
+
 `registry_transport` describes the registry remote and operation backlog only.
 `projections` comes from live existence/method/digest or symlink evidence, while
 `visibility` requires adapter evidence. Cross-axis combinations such as

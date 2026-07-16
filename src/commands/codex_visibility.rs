@@ -18,10 +18,11 @@ use super::codex_config::{CodexConfigLoad, load_codex_config};
 use super::helpers::{map_arg, map_registry_state, validate_skill_name};
 
 mod adapter;
+mod gemini;
 
 use adapter::{
     adapter_has_visibility_metadata, adapter_metadata_details, adapter_visibility_details,
-    unsupported_visibility_message, unsupported_visibility_report,
+    reload_check_message, unsupported_visibility_message, unsupported_visibility_report,
 };
 
 pub(crate) const CODEX_AGENT: &str = "codex";
@@ -247,6 +248,7 @@ fn build_visibility_report_from_parts(parts: VisibilityBuildParts<'_>) -> CodexV
 
     let mut rule_count = 0;
     let mut projection_ok = false;
+    let mut project_scope_selected = false;
     if let Some(snapshot) = snapshot {
         let rules = active_rules_for_skill(snapshot, skill, agent, workspace, profile);
         rule_count = rules.len();
@@ -263,6 +265,12 @@ fn build_visibility_report_from_parts(parts: VisibilityBuildParts<'_>) -> CodexV
             Some(format!("loom skill activate {skill} --agent {agent}")),
         ));
         for rule in rules {
+            if agent == "gemini-cli"
+                && let Some(target) = snapshot.target(&rule.target_id)
+            {
+                project_scope_selected |=
+                    gemini::target_requires_workspace_trust(adapter, Path::new(&target.path));
+            }
             add_rule_visibility_checks(
                 ctx,
                 snapshot,
@@ -284,17 +292,21 @@ fn build_visibility_report_from_parts(parts: VisibilityBuildParts<'_>) -> CodexV
         ));
     }
 
-    let disabled = if agent == CODEX_AGENT {
-        add_config_checks(skill, &skill_file, config, &mut checks)
-    } else {
-        add_adapter_config_metadata_checks(agent, adapter, &mut checks);
-        false
+    let disabled = match agent {
+        CODEX_AGENT => add_config_checks(skill, &skill_file, config, &mut checks),
+        "gemini-cli" => {
+            gemini::add_gemini_config_checks(skill, workspace, project_scope_selected, &mut checks)
+        }
+        _ => {
+            add_adapter_config_metadata_checks(agent, adapter, &mut checks);
+            false
+        }
     };
     checks.push(check(
         &reload_check_id(agent),
         true,
         "warning",
-        "current agent sessions are not claimed to hot-reload visibility changes",
+        &reload_check_message(adapter),
         json!({
             "agent": agent,
             "strategy": adapter.reload.strategy,
@@ -321,7 +333,7 @@ fn build_visibility_report_from_parts(parts: VisibilityBuildParts<'_>) -> CodexV
             next_actions.insert(next.clone());
         }
     }
-    if disabled {
+    if disabled && agent == CODEX_AGENT {
         next_actions.insert("loom codex reconcile --apply --fix-config".to_string());
         next_actions.insert("restart Codex or open a new session".to_string());
     } else if !projection_ok && rule_count > 0 {

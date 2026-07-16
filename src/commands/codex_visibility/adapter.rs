@@ -5,10 +5,7 @@ use crate::agent_adapters::AgentAdapter;
 use super::{CodexVisibilityReport, check};
 
 pub(super) fn adapter_has_visibility_metadata(adapter: &AgentAdapter) -> bool {
-    if adapter.source == "built-in" {
-        return adapter.fidelity.is_verified();
-    }
-    adapter.adapter_api == "2" && !adapter.visibility.identity_by_projection_method.is_empty()
+    adapter.has_verified_visibility_metadata()
 }
 
 pub(super) fn unsupported_visibility_message(adapter: &AgentAdapter) -> String {
@@ -89,4 +86,17 @@ pub(super) fn adapter_visibility_details(adapter: &AgentAdapter) -> Value {
         "config_file": adapter.visibility.config_file,
         "disable_rules": adapter.visibility.disable_rules,
     })
+}
+
+pub(super) fn reload_check_message(adapter: &AgentAdapter) -> String {
+    match adapter.reload.strategy.as_str() {
+        "in-session-command" => {
+            adapter.reload.notes.clone().unwrap_or_else(|| {
+                "run the adapter reload command in the current session".to_string()
+            })
+        }
+        "no-reload-required" => "agent visibility changes do not require a reload".to_string(),
+        "restart-required" => "restart the agent after applying visibility changes".to_string(),
+        _ => "current agent sessions are not claimed to hot-reload visibility changes".to_string(),
+    }
 }

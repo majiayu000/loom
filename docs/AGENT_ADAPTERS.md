@@ -132,12 +132,19 @@ Built-in Gemini CLI metadata declares `~/.agents/skills` and
 `~/.gemini/skills` as user roots, plus matching project roots. Gemini CLI loads
 the `.agents` alias after `.gemini` within each tier, so Loom assigns the alias
 the higher priority. Symlink identity follows the canonical `SKILL.md`; copy
-and materialize identity use the runtime path. `~/.gemini/settings.json` and
-adapter-defined `skills.disabled` behavior are surfaced without claiming Loom
-can rewrite that setting. Reload is `in-session-command` with `/skills reload`.
+and materialize identity use the runtime path. `skills.enabled`,
+`skills.disabled`, and `admin.skills.enabled` are evaluated across the official
+system-default, user, trusted-project, and system-override settings layers.
+Project visibility also evaluates `trustedFolders.json` (or the documented
+trust environment override) and fails closed when the workspace is untrusted,
+undecided, or the settings/trust files are malformed. Loom reports these
+settings without rewriting them. Reload is `in-session-command` with `/skills reload`.
+Both official user roots are included in scan/doctor output,
+with `.agents/skills` first.
 Evidence: [official discovery docs](https://geminicli.com/docs/cli/creating-skills/),
 [official command reference](https://geminicli.com/docs/reference/commands/),
 [official settings reference](https://geminicli.com/docs/reference/configuration/),
+[official trusted-folders reference](https://geminicli.com/docs/cli/trusted-folders/),
 and the official
 [discovery implementation](https://github.com/google-gemini/gemini-cli/blob/main/packages/core/src/skills/skillManager.ts).
 

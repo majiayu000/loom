@@ -56,7 +56,7 @@ const DEFAULT_AGENT_SKILL_DIRS: [(&str, &str, &str); 10] = [
     ("copilot", "COPILOT_SKILLS_DIR", ".github/copilot/skills"),
     ("aider", "AIDER_SKILLS_DIR", ".aider/skills"),
     ("opencode", "OPENCODE_SKILLS_DIR", ".opencode/skills"),
-    ("gemini-cli", "GEMINI_CLI_SKILLS_DIR", ".gemini/skills"),
+    ("gemini-cli", "GEMINI_CLI_SKILLS_DIR", ".agents/skills"),
     ("goose", "GOOSE_SKILLS_DIR", ".config/goose/skills"),
 ];
 
@@ -103,6 +103,7 @@ pub fn resolve_agent_skill_source_dirs(root: &Path) -> Vec<PathBuf> {
             dirs.push(default_agent_skill_dir(&home, default_suffix));
         }
     }
+    dirs.push(default_agent_skill_dir(&home, ".gemini/skills"));
 
     dedupe_paths_keep_order(dirs)
 }

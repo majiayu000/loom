@@ -676,10 +676,7 @@ fn reconcile_visibility_unsupported_check(
 }
 
 fn reconcile_adapter_supports_visibility(adapter: &AgentAdapter) -> bool {
-    if adapter.source == "built-in" {
-        return adapter.fidelity.is_verified();
-    }
-    adapter.adapter_api == "2" && !adapter.visibility.identity_by_projection_method.is_empty()
+    adapter.has_verified_visibility_metadata()
 }
 
 fn visibility_unsupported_check(agent: &str, message: String) -> Value {

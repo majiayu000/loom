@@ -3,8 +3,8 @@ use std::{collections::BTreeMap, fs, path::Path};
 use walkdir::WalkDir;
 
 use super::{
-    ExampleClassification, InventoryError, SurfaceExample, load_surface_inventory,
-    validate_public_argv,
+    ExampleClassification, InventoryError, SurfaceExample, check_panel_mutations,
+    load_surface_inventory, validate_public_argv,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -12,11 +12,14 @@ pub struct SurfaceCheckReport {
     pub surface_count: usize,
     pub example_count: usize,
     pub command_count: usize,
+    pub next_action_emitter_count: usize,
+    pub panel_mutation_count: usize,
 }
 
 pub fn check_surface_inventory(repo_root: &Path) -> Result<SurfaceCheckReport, InventoryError> {
     let inventory = load_surface_inventory(repo_root)?;
     validate_public_surface_coverage(repo_root, &inventory.surfaces)?;
+    let panel_mutation_count = check_panel_mutations(repo_root, &inventory.panel_mutations)?;
     let examples_by_surface = inventory.examples.iter().fold(
         BTreeMap::<&str, Vec<&SurfaceExample>>::new(),
         |mut grouped, example| {
@@ -100,6 +103,8 @@ pub fn check_surface_inventory(repo_root: &Path) -> Result<SurfaceCheckReport, I
         surface_count: inventory.surfaces.len(),
         example_count: inventory.examples.len(),
         command_count,
+        next_action_emitter_count: inventory.next_action_emitters.len(),
+        panel_mutation_count,
     })
 }
 

@@ -7,12 +7,14 @@ use clap::{
 use crate::cli::Cli;
 
 mod inventory;
+mod panel_check;
 mod surface_check;
 
 pub use inventory::{
-    ExampleClassification, InventoryError, SurfaceExample, SurfaceInventory, SurfaceSpec,
-    load_surface_inventory,
+    ExampleClassification, InventoryError, NextActionEmitter, NextActionShape, PanelBinding,
+    PanelMutation, SurfaceExample, SurfaceInventory, SurfaceSpec, load_surface_inventory,
 };
+pub use panel_check::check_panel_mutations;
 pub use surface_check::{SurfaceCheckReport, check_surface_inventory};
 
 pub const CLI_CONTRACT_VERSION: &str = "1.0.0";

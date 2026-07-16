@@ -70,6 +70,14 @@ fn inventory_covers_public_surfaces() {
     assert!(report.surface_count >= 6);
     assert!(report.example_count >= report.surface_count);
     assert!(report.command_count > 100);
+    assert_eq!(report.next_action_emitter_count, 57);
+    assert_eq!(report.panel_mutation_count, 25);
+}
+
+#[test]
+fn panel_mutations_are_mapped() {
+    let report = check_surface_inventory(std::path::Path::new(".")).expect("surface inventory");
+    assert_eq!(report.panel_mutation_count, 25);
 }
 
 #[test]
@@ -85,8 +93,7 @@ path = "README.md"
 [[example]]
 id = "readme.command"
 surface = "readme"
-start_line = 1
-end_line = 1
+line_range = [1, 1]
 classification = "unknown"
 "#,
     );
@@ -107,14 +114,49 @@ path = "README.md"
 [[example]]
 id = "readme.command"
 surface = "readme"
-start_line = 1
-end_line = 1
+line_range = [1, 1]
 classification = "executable"
+[[next_action_emitter]]
+id = "fixture.emitter"
+source = "src/fixture.rs#next_actions"
+shape = "string"
+fixture_ids = ["fixture.emitter.output"]
+[[panel_mutation]]
+id = "panel.fixture"
+label_path = "panel/src/lib/operation_labels.ts"
+action_id = "fixture.write"
+backend_route = "POST /api/v1/write"
+handler = "write"
+binding = "cli_equivalent"
+cli_argv = ["loom", "workspace", "status"]
 "#,
     );
+    write_minimal_panel_contract(root.path());
     let error = check_surface_inventory(root.path()).expect_err("removed command must fail");
-    assert!(error.to_string().contains("README.md:1"));
-    assert!(error.to_string().contains("readme.command"));
+    assert!(error.to_string().contains("README.md:1"), "{error}");
+    assert!(error.to_string().contains("readme.command"), "{error}");
+}
+
+fn write_minimal_panel_contract(root: &std::path::Path) {
+    write_file(
+        &root.join("src/panel/mod.rs"),
+        "Router::new().route(\"/api/v1/write\", post(write))\n",
+    );
+    write_file(
+        &root.join("src/panel/handlers/write.rs"),
+        r#"fn write() {
+    ensure_mutation_authorized(&state, peer, &headers, "fixture.write");
+}
+"#,
+    );
+    write_file(
+        &root.join("panel/src/lib/api/client.ts"),
+        "export const api = {\n  write: () => postJson(\"/api/v1/write\", {}),\n}\n",
+    );
+    write_file(
+        &root.join("panel/src/lib/operation_labels.ts"),
+        "const ACTION_LABELS = { \"fixture.write\": \"Write\" };\n",
+    );
 }
 
 #[test]

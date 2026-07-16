@@ -1,428 +1,794 @@
 schema_version = 1
-
 [[surface]]
 id = "readme"
 path = "README.md"
-
 [[surface]]
 id = "agent_usage"
 path = "docs/AGENT_USAGE.md"
-
 [[surface]]
 id = "single_skill_lifecycle"
 path = "docs/SINGLE_SKILL_LIFECYCLE.md"
-
 [[surface]]
 id = "registry_skill"
 path = "skills/loom-registry/SKILL.md"
-
 [[surface]]
 id = "releasing"
 path = "docs/RELEASING.md"
-
 [[surface]]
 id = "release_workflow"
 path = ".github/workflows/release.yml"
-
 [[surface]]
 id = "codex_skill_visibility"
 path = "docs/CODEX_SKILL_VISIBILITY.md"
-
 [[surface]]
 id = "api_contract"
 path = "docs/LOOM_API_CONTRACT.md"
-
 [[surface]]
 id = "cli_contract"
 path = "docs/LOOM_CLI_CONTRACT.md"
-
 [[surface]]
 id = "cli_contract_operations"
 path = "docs/LOOM_CLI_CONTRACT_OPERATIONS.md"
-
 [[surface]]
 id = "complete_guide_zh"
 path = "docs/LOOM_COMPLETE_GUIDE_ZH.md"
-
 [[surface]]
 id = "migration_active_view"
 path = "docs/MIGRATING_TO_ACTIVE_VIEW.md"
-
 [[surface]]
 id = "skill_provider_boundary"
 path = "docs/SKILL_PROVIDER_BOUNDARY.md"
-
 [[surface]]
 id = "supported_agents"
 path = "docs/SUPPORTED_AGENTS.md"
-
 [[surface]]
 id = "architecture_decisions"
 path = "docs/LOOM_ARCHITECTURE_DECISIONS.md"
-
 [[surface]]
 id = "legacy_prd"
 path = "docs/LOOM_LEGACY_PRD.md"
-
 [[surface]]
 id = "legacy_state_schema"
 path = "docs/LOOM_LEGACY_STATE_SCHEMA.md"
-
 [[surface]]
 id = "state_migration_notes"
 path = "docs/LOOM_STATE_MIGRATION_NOTES.md"
-
 [[surface]]
 id = "state_model"
 path = "docs/LOOM_STATE_MODEL.md"
-
 [[surface]]
 id = "v1_acceptance"
 path = "docs/LOOM_V1_ACCEPTANCE.md"
-
 [[surface]]
 id = "v1_core_spec"
 path = "docs/LOOM_V1_CORE_SPEC.md"
-
 [[example]]
 id = "readme.install_and_first_lifecycle"
 surface = "readme"
-start_line = 40
-end_line = 100
+line_range = [40, 100]
 classification = "executable"
-
+[[panel_mutation]]
+id = "panel.workspace.init"
+label_path = "panel/src/lib/operation_labels.ts"
+action_id = "workspace.init"
+backend_route = "POST /api/v1/workspace/init"
+handler = "v1_workspace_init"
+binding = "cli_equivalent"
+cli_argv = ["loom", "workspace", "init", "--scan-existing"]
+[[panel_mutation]]
+id = "panel.workspace.remote_set"
+label_path = "panel/src/lib/operation_labels.ts"
+action_id = "workspace.remote.set"
+backend_route = "POST /api/v1/workspace/remote"
+handler = "remote_set"
+binding = "cli_equivalent"
+cli_argv = ["loom", "workspace", "remote", "set", "<url>"]
+[[panel_mutation]]
+id = "panel.target.add"
+label_path = "panel/src/lib/operation_labels.ts"
+action_id = "target.add"
+backend_route = "POST /api/v1/targets"
+handler = "registry_target_add"
+binding = "cli_equivalent"
+cli_argv = ["loom", "target", "add", "--agent", "claude", "--path", "<path>", "--ownership", "observed"]
+[[panel_mutation]]
+id = "panel.target.remove"
+label_path = "panel/src/lib/operation_labels.ts"
+action_id = "target.remove"
+backend_route = "POST /api/v1/targets/{target_id}/remove"
+handler = "registry_target_remove"
+binding = "cli_equivalent"
+cli_argv = ["loom", "target", "remove", "<target_id>"]
+[[panel_mutation]]
+id = "panel.workspace.binding_add"
+label_path = "panel/src/lib/operation_labels.ts"
+action_id = "workspace.binding.add"
+backend_route = "POST /api/v1/bindings"
+handler = "registry_binding_add"
+binding = "cli_equivalent"
+cli_argv = ["loom", "workspace", "binding", "add", "--agent", "claude", "--profile", "home", "--matcher-kind", "path-prefix", "--matcher-value", "<workspace>", "--target", "<target_id>", "--policy-profile", "safe-capture"]
+[[panel_mutation]]
+id = "panel.workspace.binding_remove"
+label_path = "panel/src/lib/operation_labels.ts"
+action_id = "workspace.binding.remove"
+backend_route = "POST /api/v1/bindings/{binding_id}/remove"
+handler = "registry_binding_remove"
+binding = "cli_equivalent"
+cli_argv = ["loom", "workspace", "binding", "remove", "<binding_id>"]
+[[panel_mutation]]
+id = "panel.skill.add"
+label_path = "panel/src/lib/operation_labels.ts"
+action_id = "skill.add"
+backend_route = "POST /api/v1/skills"
+handler = "registry_skill_add"
+binding = "cli_equivalent"
+cli_argv = ["loom", "skill", "add", "<source>", "--name", "contract-fixture"]
+[[panel_mutation]]
+id = "panel.skill.import_observed"
+label_path = "panel/src/lib/operation_labels.ts"
+action_id = "skill.import_observed"
+backend_route = "POST /api/v1/skills/import-observed"
+handler = "registry_skill_import_observed"
+binding = "cli_equivalent"
+cli_argv = ["loom", "skill", "import-observed", "--target", "<target_id>"]
+[[panel_mutation]]
+id = "panel.skill.use_apply"
+label_path = "panel/src/lib/operation_labels.ts"
+action_id = "use"
+backend_route = "POST /api/v1/skills/{skill_name}/use"
+handler = "registry_skill_use"
+binding = "cli_equivalent"
+cli_argv = ["loom", "use", "<skill>", "--agents", "claude", "--scope", "project", "--profile", "default", "--method", "symlink", "--apply"]
+[[panel_mutation]]
+id = "panel.skill.trash_add"
+label_path = "panel/src/lib/operation_labels.ts"
+action_id = "skill.trash.add"
+backend_route = "POST /api/v1/skills/{skill_name}/trash"
+handler = "registry_skill_trash_add"
+binding = "cli_equivalent"
+cli_argv = ["loom", "skill", "trash", "add", "<skill>"]
+[[panel_mutation]]
+id = "panel.skill.trash_restore"
+label_path = "panel/src/lib/operation_labels.ts"
+action_id = "skill.trash.restore"
+backend_route = "POST /api/v1/skills/trash/{trash_id}/restore"
+handler = "registry_skill_trash_restore"
+binding = "cli_equivalent"
+cli_argv = ["loom", "skill", "trash", "restore", "<skill>", "--trash-id", "<trash_id>"]
+[[panel_mutation]]
+id = "panel.skill.trash_purge"
+label_path = "panel/src/lib/operation_labels.ts"
+action_id = "skill.trash.purge"
+backend_route = "POST /api/v1/skills/trash/{trash_id}/purge"
+handler = "registry_skill_trash_purge"
+binding = "cli_equivalent"
+cli_argv = ["loom", "skill", "trash", "purge", "<trash_id>"]
+[[panel_mutation]]
+id = "panel.skill.commit_source"
+label_path = "panel/src/lib/operation_labels.ts"
+action_id = "skill.commit"
+backend_route = "POST /api/v1/skills/{skill_name}/commit"
+handler = "registry_skill_save"
+binding = "cli_equivalent"
+cli_argv = ["loom", "skill", "commit", "<skill>", "--from-source"]
+[[panel_mutation]]
+id = "panel.skill.release_anchor"
+label_path = "panel/src/lib/operation_labels.ts"
+action_id = "skill.release"
+backend_route = "POST /api/v1/skills/{skill_name}/release-anchor"
+handler = "registry_skill_snapshot"
+binding = "cli_equivalent"
+cli_argv = ["loom", "skill", "release", "<skill>", "--anchor"]
+[[panel_mutation]]
+id = "panel.skill.release_version"
+label_path = "panel/src/lib/operation_labels.ts"
+action_id = "skill.release"
+backend_route = "POST /api/v1/skills/{skill_name}/release"
+handler = "registry_skill_release"
+binding = "cli_equivalent"
+cli_argv = ["loom", "skill", "release", "<skill>", "<version>"]
+[[panel_mutation]]
+id = "panel.skill.rollback"
+label_path = "panel/src/lib/operation_labels.ts"
+action_id = "skill.rollback"
+backend_route = "POST /api/v1/skills/{skill_name}/rollback"
+handler = "registry_skill_rollback"
+binding = "cli_equivalent"
+cli_argv = ["loom", "skill", "rollback", "<skill>", "--to", "<ref>"]
+[[panel_mutation]]
+id = "panel.skill.project"
+label_path = "panel/src/lib/operation_labels.ts"
+action_id = "skill.project"
+backend_route = "POST /api/v1/projections/project"
+handler = "registry_project"
+binding = "cli_equivalent"
+cli_argv = ["loom", "skill", "project", "<skill>", "--binding", "<binding_id>", "--target", "<target_id>", "--method", "symlink"]
+[[panel_mutation]]
+id = "panel.skill.commit_projection"
+label_path = "panel/src/lib/operation_labels.ts"
+action_id = "skill.commit"
+backend_route = "POST /api/v1/projections/commit"
+handler = "registry_capture"
+binding = "cli_equivalent"
+cli_argv = ["loom", "skill", "commit", "<skill>", "--from-projection", "--instance", "<instance_id>"]
+[[panel_mutation]]
+id = "panel.skill.orphan_clean"
+label_path = "panel/src/lib/operation_labels.ts"
+action_id = "skill.orphan.clean"
+backend_route = "POST /api/v1/orphans/clean"
+handler = "registry_orphan_clean"
+binding = "cli_equivalent"
+cli_argv = ["loom", "skill", "orphan", "clean", "--delete-live-paths"]
+[[panel_mutation]]
+id = "panel.ops.retry"
+label_path = "panel/src/lib/operation_labels.ts"
+action_id = "ops.retry"
+backend_route = "POST /api/v1/ops/retry"
+handler = "ops_retry"
+binding = "cli_equivalent"
+cli_argv = ["loom", "ops", "retry"]
+[[panel_mutation]]
+id = "panel.ops.purge"
+label_path = "panel/src/lib/operation_labels.ts"
+action_id = "ops.purge"
+backend_route = "POST /api/v1/ops/purge"
+handler = "ops_purge"
+binding = "cli_equivalent"
+cli_argv = ["loom", "ops", "purge"]
+[[panel_mutation]]
+id = "panel.ops.history_repair"
+label_path = "panel/src/lib/operation_labels.ts"
+action_id = "ops.history.repair"
+backend_route = "POST /api/v1/ops/history/repair"
+handler = "ops_history_repair"
+binding = "cli_equivalent"
+cli_argv = ["loom", "ops", "history", "repair", "--strategy", "local"]
+[[panel_mutation]]
+id = "panel.sync.push"
+label_path = "panel/src/lib/operation_labels.ts"
+action_id = "sync.push"
+backend_route = "POST /api/v1/sync/push"
+handler = "sync_push"
+binding = "cli_equivalent"
+cli_argv = ["loom", "sync", "push"]
+[[panel_mutation]]
+id = "panel.sync.pull"
+label_path = "panel/src/lib/operation_labels.ts"
+action_id = "sync.pull"
+backend_route = "POST /api/v1/sync/pull"
+handler = "sync_pull"
+binding = "cli_equivalent"
+cli_argv = ["loom", "sync", "pull"]
+[[panel_mutation]]
+id = "panel.sync.replay"
+label_path = "panel/src/lib/operation_labels.ts"
+action_id = "sync.replay"
+backend_route = "POST /api/v1/sync/replay"
+handler = "sync_replay"
+binding = "cli_equivalent"
+cli_argv = ["loom", "sync", "replay"]
 [[example]]
 id = "readme.monitor"
 surface = "readme"
-start_line = 104
-end_line = 107
+line_range = [104, 107]
 classification = "executable"
-
 [[example]]
 id = "readme.agent_quickstart"
 surface = "readme"
-start_line = 117
-end_line = 173
+line_range = [117, 173]
 classification = "executable"
-
 [[example]]
 id = "readme.command_matrix"
 surface = "readme"
-start_line = 222
-end_line = 281
+line_range = [222, 281]
 classification = "output_example"
-
 [[example]]
 id = "readme.agent_guidance"
 surface = "readme"
-start_line = 309
-end_line = 310
+line_range = [309, 310]
 classification = "output_example"
-
 [[example]]
 id = "readme.command_reference"
 surface = "readme"
-start_line = 326
-end_line = 470
+line_range = [326, 470]
 classification = "executable"
-
 [[example]]
 id = "readme.observed_targets"
 surface = "readme"
-start_line = 480
-end_line = 484
+line_range = [480, 484]
 classification = "executable"
-
 [[example]]
 id = "readme.monitor_reference"
 surface = "readme"
-start_line = 491
-end_line = 496
+line_range = [491, 496]
 classification = "executable"
-
 [[example]]
 id = "agent_usage.boundary"
 surface = "agent_usage"
-start_line = 5
-end_line = 11
+line_range = [5, 11]
 classification = "executable"
-
 [[example]]
 id = "agent_usage.bootstrap"
 surface = "agent_usage"
-start_line = 55
-end_line = 60
+line_range = [55, 60]
 classification = "executable"
-
 [[example]]
 id = "agent_usage.status"
 surface = "agent_usage"
-start_line = 77
-end_line = 77
+line_range = [77, 77]
 classification = "executable"
-
 [[example]]
 id = "agent_usage.plan_apply_names"
 surface = "agent_usage"
-start_line = 78
-end_line = 78
+line_range = [78, 78]
 classification = "output_example"
-
 [[example]]
 id = "agent_usage.protocol"
 surface = "agent_usage"
-start_line = 79
-end_line = 100
+line_range = [79, 100]
 classification = "executable"
-
 [[example]]
 id = "agent_usage.full_example"
 surface = "agent_usage"
-start_line = 112
-end_line = 135
+line_range = [112, 135]
 classification = "executable"
-
 [[example]]
 id = "single_skill.quickstart"
 surface = "single_skill_lifecycle"
-start_line = 37
-end_line = 60
+line_range = [37, 60]
 classification = "executable"
-
 [[example]]
 id = "single_skill.author_or_add"
 surface = "single_skill_lifecycle"
-start_line = 67
-end_line = 73
+line_range = [67, 73]
 classification = "executable"
-
 [[example]]
 id = "single_skill.add_name"
 surface = "single_skill_lifecycle"
-start_line = 74
-end_line = 74
+line_range = [74, 74]
 classification = "output_example"
-
 [[example]]
 id = "single_skill.add_examples"
 surface = "single_skill_lifecycle"
-start_line = 75
-end_line = 81
+line_range = [75, 81]
 classification = "executable"
-
 [[example]]
 id = "single_skill.validate"
 surface = "single_skill_lifecycle"
-start_line = 89
-end_line = 94
+line_range = [89, 94]
 classification = "executable"
-
 [[example]]
 id = "single_skill.activate_and_inspect"
 surface = "single_skill_lifecycle"
-start_line = 105
-end_line = 124
+line_range = [105, 124]
 classification = "executable"
-
 [[example]]
 id = "single_skill.evaluate_and_release"
 surface = "single_skill_lifecycle"
-start_line = 136
-end_line = 161
+line_range = [136, 161]
 classification = "executable"
-
 [[example]]
 id = "registry_skill.compatibility"
 surface = "registry_skill"
-start_line = 23
-end_line = 24
+line_range = [23, 24]
 classification = "executable"
-
 [[example]]
 id = "registry_skill.read_status"
 surface = "registry_skill"
-start_line = 28
-end_line = 30
+line_range = [28, 30]
 classification = "executable"
-
 [[example]]
 id = "registry_skill.dry_run_policy"
 surface = "registry_skill"
-start_line = 38
-end_line = 38
+line_range = [38, 38]
 classification = "executable"
-
 [[example]]
 id = "registry_skill.mutation_preflight"
 surface = "registry_skill"
-start_line = 52
-end_line = 55
+line_range = [52, 55]
 classification = "executable"
-
 [[example]]
 id = "registry_skill.lifecycle"
 surface = "registry_skill"
-start_line = 63
-end_line = 68
+line_range = [63, 68]
 classification = "executable"
-
 [[example]]
 id = "releasing.archive_smoke"
 surface = "releasing"
-start_line = 86
-end_line = 90
+line_range = [86, 90]
 classification = "executable"
-
 [[example]]
 id = "release_workflow.homebrew_formula"
 surface = "release_workflow"
-start_line = 1
-end_line = 318
+line_range = [1, 318]
 classification = "output_example"
-
 [[example]]
 id = "codex_visibility.current_commands"
 surface = "codex_skill_visibility"
-start_line = 1
-end_line = 124
+line_range = [1, 124]
 classification = "executable"
-
 [[example]]
 id = "api_contract.current_commands"
 surface = "api_contract"
-start_line = 1
-end_line = 198
+line_range = [1, 198]
 classification = "executable"
-
 [[example]]
 id = "cli_contract.current_commands"
 surface = "cli_contract"
-start_line = 1
-end_line = 220
+line_range = [1, 220]
 classification = "executable"
-
 [[example]]
 id = "cli_contract.generic_action_shape"
 surface = "cli_contract"
-start_line = 221
-end_line = 221
+line_range = [221, 221]
 classification = "output_example"
-
 [[example]]
 id = "cli_contract.current_commands_after_action_shape"
 surface = "cli_contract"
-start_line = 222
-end_line = 788
+line_range = [222, 788]
 classification = "executable"
-
 [[example]]
 id = "cli_contract_operations.current_commands"
 surface = "cli_contract_operations"
-start_line = 1
-end_line = 519
+line_range = [1, 519]
 classification = "executable"
-
 [[example]]
 id = "cli_contract_operations.use_apply_name"
 surface = "cli_contract_operations"
-start_line = 520
-end_line = 520
+line_range = [520, 520]
 classification = "output_example"
-
 [[example]]
 id = "cli_contract_operations.current_commands_after_use"
 surface = "cli_contract_operations"
-start_line = 521
-end_line = 709
+line_range = [521, 709]
 classification = "executable"
-
 [[example]]
 id = "cli_contract_operations.rejected_shapes"
 surface = "cli_contract_operations"
-start_line = 710
-end_line = 711
+line_range = [710, 711]
 classification = "legacy"
-
 [[example]]
 id = "cli_contract_operations.acceptance"
 surface = "cli_contract_operations"
-start_line = 712
-end_line = 723
+line_range = [712, 723]
 classification = "executable"
-
 [[example]]
 id = "complete_guide.current_commands"
 surface = "complete_guide_zh"
-start_line = 1
-end_line = 221
+line_range = [1, 221]
 classification = "legacy"
-
 [[example]]
 id = "migration_active_view.current_commands"
 surface = "migration_active_view"
-start_line = 1
-end_line = 138
+line_range = [1, 138]
 classification = "executable"
-
 [[example]]
 id = "skill_provider_boundary.current_commands"
 surface = "skill_provider_boundary"
-start_line = 1
-end_line = 139
+line_range = [1, 139]
 classification = "output_example"
-
 [[example]]
 id = "supported_agents.current_commands"
 surface = "supported_agents"
-start_line = 1
-end_line = 82
+line_range = [1, 82]
 classification = "executable"
-
 [[example]]
 id = "architecture_decisions.historical_commands"
 surface = "architecture_decisions"
-start_line = 1
-end_line = 290
+line_range = [1, 290]
 classification = "legacy"
-
 [[example]]
 id = "legacy_prd.historical_commands"
 surface = "legacy_prd"
-start_line = 1
-end_line = 213
+line_range = [1, 213]
 classification = "legacy"
-
 [[example]]
 id = "legacy_state_schema.historical_commands"
 surface = "legacy_state_schema"
-start_line = 1
-end_line = 214
+line_range = [1, 214]
 classification = "legacy"
-
 [[example]]
 id = "state_migration_notes.historical_commands"
 surface = "state_migration_notes"
-start_line = 1
-end_line = 392
+line_range = [1, 392]
 classification = "legacy"
-
 [[example]]
 id = "state_model.historical_commands"
 surface = "state_model"
-start_line = 1
-end_line = 483
+line_range = [1, 483]
 classification = "legacy"
-
 [[example]]
 id = "v1_acceptance.historical_commands"
 surface = "v1_acceptance"
-start_line = 1
-end_line = 61
+line_range = [1, 61]
 classification = "legacy"
-
 [[example]]
 id = "v1_core_spec.historical_commands"
 surface = "v1_core_spec"
-start_line = 1
-end_line = 791
+line_range = [1, 791]
 classification = "legacy"
+[[next_action_emitter]]
+id = "error.binding_not_found"
+source = "src/error_actions.rs#default_next_actions.BINDING_NOT_FOUND"
+shape = "object"
+fixture_ids = ["fixture.error.binding_not_found"]
+[[next_action_emitter]]
+id = "error.target_not_found"
+source = "src/error_actions.rs#default_next_actions.TARGET_NOT_FOUND"
+shape = "object"
+fixture_ids = ["fixture.error.target_not_found"]
+[[next_action_emitter]]
+id = "error.skill_not_found"
+source = "src/error_actions.rs#default_next_actions.SKILL_NOT_FOUND"
+shape = "object"
+fixture_ids = ["fixture.error.skill_not_found"]
+[[next_action_emitter]]
+id = "error.state_not_initialized"
+source = "src/error_actions.rs#default_next_actions.STATE_NOT_INITIALIZED"
+shape = "object"
+fixture_ids = ["fixture.error.state_not_initialized"]
+[[next_action_emitter]]
+id = "error.target_not_managed"
+source = "src/error_actions.rs#default_next_actions.TARGET_NOT_MANAGED"
+shape = "object"
+fixture_ids = ["fixture.error.target_not_managed"]
+[[next_action_emitter]]
+id = "error.lock_busy"
+source = "src/error_actions.rs#default_next_actions.LOCK_BUSY"
+shape = "object"
+fixture_ids = ["fixture.error.lock_busy"]
+[[next_action_emitter]]
+id = "error.remote_sync"
+source = "src/error_actions.rs#default_next_actions.REMOTE_SYNC"
+shape = "object"
+fixture_ids = ["fixture.error.remote_sync"]
+[[next_action_emitter]]
+id = "codex.visibility.report"
+source = "src/commands/codex_visibility.rs#evaluate_codex_visibility.next_actions"
+shape = "string"
+fixture_ids = ["fixture.codex.visibility.report"]
+[[next_action_emitter]]
+id = "codex.visibility.unsupported"
+source = "src/commands/codex_visibility.rs#unsupported_agent_visibility.next_actions"
+shape = "string"
+fixture_ids = ["fixture.codex.visibility.unsupported"]
+[[next_action_emitter]]
+id = "mcp.doctor.manual"
+source = "src/commands/mcp.rs#McpDoctorCommand.missing_skill.next_actions"
+shape = "string"
+fixture_ids = ["fixture.mcp.doctor.manual"]
+[[next_action_emitter]]
+id = "mcp.doctor.report"
+source = "src/commands/mcp.rs#McpDoctorCommand.report.next_actions"
+shape = "string"
+fixture_ids = ["fixture.mcp.doctor.report"]
+[[next_action_emitter]]
+id = "mcp.apply.response"
+source = "src/commands/mcp/apply/record.rs#record_apply_result.next_actions"
+shape = "string"
+fixture_ids = ["fixture.mcp.apply.response"]
+[[next_action_emitter]]
+id = "plan.use.response"
+source = "src/commands/plan_cmds.rs#UsePlanCommand.execute.next_actions"
+shape = "string"
+fixture_ids = ["fixture.plan.use.response"]
+[[next_action_emitter]]
+id = "provenance.outdated.row"
+source = "src/commands/provenance/outdated.rs#OutdatedRow.into_json.next_actions"
+shape = "string"
+fixture_ids = ["fixture.provenance.outdated.row"]
+[[next_action_emitter]]
+id = "provenance.outdated.summary"
+source = "src/commands/provenance/outdated.rs#OutdatedCommand.summary.next_actions"
+shape = "string"
+fixture_ids = ["fixture.provenance.outdated.summary"]
+[[next_action_emitter]]
+id = "provenance.outdated.repin_item"
+source = "src/commands/provenance/outdated.rs#RepinCommand.item.next_actions"
+shape = "string"
+fixture_ids = ["fixture.provenance.outdated.repin_item"]
+[[next_action_emitter]]
+id = "provider.install.applied"
+source = "src/commands/provider_cmds/install.rs#ProviderInstallCommand.applied.next_actions"
+shape = "string"
+fixture_ids = ["fixture.provider.install.applied"]
+[[next_action_emitter]]
+id = "provider.install.plan"
+source = "src/commands/provider_cmds/locator.rs#provider_install_plan.next_actions"
+shape = "string"
+fixture_ids = ["fixture.provider.install.plan"]
+[[next_action_emitter]]
+id = "provision.doctor"
+source = "src/commands/provision/mod.rs#ProvisionCommand.doctor.next_actions"
+shape = "string"
+fixture_ids = ["fixture.provision.doctor"]
+[[next_action_emitter]]
+id = "provision.dependency.missing"
+source = "src/commands/provision/planner.rs#dependency_report.missing.next_actions"
+shape = "string"
+fixture_ids = ["fixture.provision.dependency.missing"]
+[[next_action_emitter]]
+id = "skill.deps.report"
+source = "src/commands/skill_deps.rs#DependencyReport.next_actions"
+shape = "string"
+fixture_ids = ["fixture.skill.deps.report"]
+[[next_action_emitter]]
+id = "rollback.reconciliation.noop"
+source = "src/commands/rollback_reconciliation.rs#not_requested.next_actions"
+shape = "string"
+fixture_ids = ["fixture.rollback.reconciliation.noop"]
+[[next_action_emitter]]
+id = "rollback.reconciliation.registry_missing"
+source = "src/commands/rollback_reconciliation.rs#registry_missing.next_actions"
+shape = "object"
+fixture_ids = ["fixture.rollback.reconciliation.registry_missing"]
+[[next_action_emitter]]
+id = "rollback.reconciliation.registry_unavailable"
+source = "src/commands/rollback_reconciliation.rs#registry_unavailable.next_actions"
+shape = "object"
+fixture_ids = ["fixture.rollback.reconciliation.registry_unavailable"]
+[[next_action_emitter]]
+id = "rollback.reconciliation.snapshot"
+source = "src/commands/rollback_reconciliation.rs#reconcile_snapshot.next_actions"
+shape = "object"
+fixture_ids = ["fixture.rollback.reconciliation.snapshot"]
+[[next_action_emitter]]
+id = "skill.activate.remove.non_directory"
+source = "src/commands/skill_activation/apply.rs#remove.non_directory.next_actions"
+shape = "object"
+fixture_ids = ["fixture.skill.activate.remove.non_directory"]
+[[next_action_emitter]]
+id = "skill.activate.remove.unsafe_path"
+source = "src/commands/skill_activation/apply.rs#remove.unsafe_path.next_actions"
+shape = "object"
+fixture_ids = ["fixture.skill.activate.remove.unsafe_path"]
+[[next_action_emitter]]
+id = "skill.activate.compiled_failure"
+source = "src/commands/skill_activation/compiled.rs#compiled_failure.next_actions"
+shape = "string"
+fixture_ids = ["fixture.skill.activate.compiled_failure"]
+[[next_action_emitter]]
+id = "skill.deactivate.unsafe_path"
+source = "src/commands/skill_activation/mod.rs#deactivate.unsafe_path.next_actions"
+shape = "object"
+fixture_ids = ["fixture.skill.deactivate.unsafe_path"]
+[[next_action_emitter]]
+id = "skill.author.patch"
+source = "src/commands/skill_authoring.rs#author_patch.next_actions"
+shape = "string"
+fixture_ids = ["fixture.skill.author.patch"]
+[[next_action_emitter]]
+id = "skill.author.apply.source_digest_changed"
+source = "src/commands/skill_authoring_apply.rs#source_digest_changed.next_actions"
+shape = "object"
+fixture_ids = ["fixture.skill.author.apply.source_digest_changed"]
+[[next_action_emitter]]
+id = "skill.author.apply.source_ref_changed"
+source = "src/commands/skill_authoring_apply.rs#source_ref_changed.next_actions"
+shape = "object"
+fixture_ids = ["fixture.skill.author.apply.source_ref_changed"]
+[[next_action_emitter]]
+id = "skill.author.apply.replay_conflict"
+source = "src/commands/skill_authoring_apply.rs#replay_conflict.next_actions"
+shape = "object"
+fixture_ids = ["fixture.skill.author.apply.replay_conflict"]
+[[next_action_emitter]]
+id = "skill.commit.direction_ambiguous"
+source = "src/commands/skill_cmds/commit.rs#direction_ambiguous.next_actions"
+shape = "object"
+fixture_ids = ["fixture.skill.commit.direction_ambiguous"]
+[[next_action_emitter]]
+id = "skill.compile.plan"
+source = "src/commands/skill_compile/mod.rs#compile_plan.next_actions"
+shape = "string"
+fixture_ids = ["fixture.skill.compile.plan"]
+[[next_action_emitter]]
+id = "skill.compile.applied"
+source = "src/commands/skill_compile/mod.rs#compile_applied.next_actions"
+shape = "string"
+fixture_ids = ["fixture.skill.compile.applied"]
+[[next_action_emitter]]
+id = "skill.diagnose.dependencies"
+source = "src/commands/skill_diagnose/dependency_checks.rs#dependency_summary.next_actions"
+shape = "string"
+fixture_ids = ["fixture.skill.diagnose.dependencies"]
+[[next_action_emitter]]
+id = "skill.inspect.response"
+source = "src/commands/skill_inspect/command.rs#inspect_response.next_actions"
+shape = "string"
+fixture_ids = ["fixture.skill.inspect.response"]
+[[next_action_emitter]]
+id = "skill.inventory.row"
+source = "src/commands/skill_inventory.rs#inventory_row.next_actions"
+shape = "string"
+fixture_ids = ["fixture.skill.inventory.row"]
+[[next_action_emitter]]
+id = "skill.new.applied"
+source = "src/commands/skill_new.rs#new_applied.next_actions"
+shape = "string"
+fixture_ids = ["fixture.skill.new.applied"]
+[[next_action_emitter]]
+id = "skill.new.plan"
+source = "src/commands/skill_new.rs#new_plan.next_actions"
+shape = "string"
+fixture_ids = ["fixture.skill.new.plan"]
+[[next_action_emitter]]
+id = "index.status"
+source = "src/commands/skill_recommend/index.rs#index_status.next_actions"
+shape = "string"
+fixture_ids = ["fixture.index.status"]
+[[next_action_emitter]]
+id = "skillset.activate.optional_missing"
+source = "src/commands/skillset_activation.rs#optional_missing.next_actions"
+shape = "string"
+fixture_ids = ["fixture.skillset.activate.optional_missing"]
+[[next_action_emitter]]
+id = "skillset.activate.member_ready"
+source = "src/commands/skillset_activation.rs#member_ready.next_actions"
+shape = "string"
+fixture_ids = ["fixture.skillset.activate.member_ready"]
+[[next_action_emitter]]
+id = "skillset.activate.optional_failed"
+source = "src/commands/skillset_activation.rs#optional_failed.next_actions"
+shape = "string"
+fixture_ids = ["fixture.skillset.activate.optional_failed"]
+[[next_action_emitter]]
+id = "skillset.eval.deferred"
+source = "src/commands/skillset_activation/eval.rs#eval_deferred.next_actions"
+shape = "string"
+fixture_ids = ["fixture.skillset.eval.deferred"]
+[[next_action_emitter]]
+id = "skillset.create.applied"
+source = "src/commands/skillset_cmds.rs#create_applied.next_actions"
+shape = "string"
+fixture_ids = ["fixture.skillset.create.applied"]
+[[next_action_emitter]]
+id = "skillset.release.dirty_definition"
+source = "src/commands/skillset_release.rs#dirty_definition.next_actions"
+shape = "string"
+fixture_ids = ["fixture.skillset.release.dirty_definition"]
+[[next_action_emitter]]
+id = "use.plan"
+source = "src/commands/use_cmds.rs#use_plan.next_actions"
+shape = "string"
+fixture_ids = ["fixture.use.plan"]
+[[next_action_emitter]]
+id = "use.applied"
+source = "src/commands/use_cmds.rs#use_applied.next_actions"
+shape = "string"
+fixture_ids = ["fixture.use.applied"]
+[[next_action_emitter]]
+id = "use.adopt_required"
+source = "src/commands/use_cmds.rs#adopt_required.next_actions"
+shape = "object"
+fixture_ids = ["fixture.use.adopt_required"]
+[[next_action_emitter]]
+id = "workflow.create.plan"
+source = "src/commands/workflow_cmds/mod.rs#create_plan.next_actions"
+shape = "string"
+fixture_ids = ["fixture.workflow.create.plan"]
+[[next_action_emitter]]
+id = "workflow.create.applied"
+source = "src/commands/workflow_cmds/mod.rs#create_applied.next_actions"
+shape = "string"
+fixture_ids = ["fixture.workflow.create.applied"]
+[[next_action_emitter]]
+id = "workflow.plan"
+source = "src/commands/workflow_cmds/mod.rs#workflow_plan.next_actions"
+shape = "string"
+fixture_ids = ["fixture.workflow.plan"]
+[[next_action_emitter]]
+id = "workflow.preflight"
+source = "src/commands/workflow_cmds/mod.rs#workflow_preflight.next_actions"
+shape = "string"
+fixture_ids = ["fixture.workflow.preflight"]
+[[next_action_emitter]]
+id = "workflow.run.dry_deferred"
+source = "src/commands/workflow_cmds/mod.rs#run_dry_deferred.next_actions"
+shape = "string"
+fixture_ids = ["fixture.workflow.run.dry_deferred"]
+[[next_action_emitter]]
+id = "workflow.run.error_deferred"
+source = "src/commands/workflow_cmds/mod.rs#run_error_deferred.next_actions"
+shape = "string"
+fixture_ids = ["fixture.workflow.run.error_deferred"]

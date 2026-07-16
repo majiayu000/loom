@@ -11,7 +11,7 @@ Human gate: maintainer decisions approved on 2026-07-16
 
 ## 2. Proposed Design
 
-1. Add `scripts/module-ceiling.sh`: enumerate non-test `src/**/*.rs`, use `awk` record count so an unterminated final line is included, compare the complete physical-file size against the 800 hard ceiling, and warn for files above 700. Exclude test-only paths/files, but do not subtract inline `#[cfg(test)]` blocks from production files. Reject Rust-file and production source-directory symlinks rather than silently omitting them.
+1. Add `scripts/module-ceiling.sh`: enumerate non-test `src/**/*.rs`, use `awk` record count so an unterminated final line is included, compare the complete physical-file size against the 800 hard ceiling, and warn for files above 700. Exclude `tests/` paths, cfg-test-only sibling `tests.rs`, and `*_tests.rs` files, but do not subtract inline `#[cfg(test)]` blocks from production files. Reject Rust-file and production source-directory symlinks rather than silently omitting them.
 2. Allowlist file (e.g. `scripts/module-ceiling-allowlist.txt`): `path<TAB>baseline_lines<TAB>issue-ref` entries. The initial entries are `src/commands/mcp/apply.rs` → #544, `src/commands/mcp.rs` → #545, and `src/commands/skillset_activation.rs` → #546. While a file remains above 800, its current size must exactly equal the reviewed baseline; both increases and decreases fail until the baseline is explicitly reviewed and updated. Entries at 800 or below are stale and must be removed.
 3. Wire into `Makefile` (own target) and CI `verify` job after lint.
 4. Refresh `docs/module-ceiling-signal-report.md` to describe the guard, current allowlist, and split queue.

@@ -57,7 +57,7 @@ error() {
 
 is_test_or_generated() {
   case "$1" in
-    */tests|*/tests/*|*_tests.rs|*/generated|*/generated/*|*_generated.rs|*/generated.rs)
+    */tests|*/tests/*|*/tests.rs|*_tests.rs|*/generated|*/generated/*|*_generated.rs|*/generated.rs)
       return 0
       ;;
     *)

@@ -37,6 +37,7 @@ write_lines "$fixture/src/ok.rs" 700
 write_lines "$fixture/src/warning.rs" 701
 write_lines "$fixture/src/allowed.rs" 801
 write_lines "$fixture/src/tests/ignored.rs" 900
+write_lines "$fixture/src/feature/tests.rs" 900
 write_lines "$fixture/src/ignored_tests.rs" 900
 write_lines "$fixture/src/generated/bindings.rs" 900
 printf 'src/allowed.rs\t801\t#999\n' > "$allowlist"

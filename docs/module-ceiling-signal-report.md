@@ -7,7 +7,8 @@
 
 - Production Rust files above 800 lines fail.
 - Production Rust files from 701 through 800 lines emit warnings.
-- `tests/` path components, `*_tests.rs`, and generated-file patterns are excluded.
+- `tests/` path components, sibling `tests.rs` modules, `*_tests.rs`, and
+  generated-file patterns are excluded.
 - Inline `#[cfg(test)]` blocks inside production files still count toward the
   complete physical-file size.
 - Allowlist entries use `path<TAB>baseline_lines<TAB>issue-ref`.

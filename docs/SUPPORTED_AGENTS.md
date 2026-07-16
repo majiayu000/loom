@@ -16,7 +16,7 @@ and the `workspace doctor` agent inventory check probe under `$HOME`.
 | `Copilot` | `copilot` | `generic` | `$HOME/.github/copilot/skills` |
 | `Aider` | `aider` | `generic` | `$HOME/.aider/skills` |
 | `Opencode` | `opencode` | `generic` | `$HOME/.opencode/skills` |
-| `GeminiCli` | `gemini-cli` | `verified` | `$HOME/.agents/skills` preferred over `$HOME/.gemini/skills`; project aliases are `.agents/skills` and `.gemini/skills` |
+| `GeminiCli` | `gemini-cli` | `verified` | `$GEMINI_CLI_HOME` (fallback `$HOME`) supplies `.agents/skills` then `.gemini/skills`; project aliases match |
 | `Goose` | `goose` | `generic` | `$HOME/.config/goose/skills` |
 
 The built-in source of truth is `src/cli.rs` (the `AgentKind` enum) plus
@@ -30,10 +30,13 @@ project `.agents/skills` search chain, config disables, and restart guidance.
 Gemini CLI is verified against its official skill discovery and command
 contracts. Its `.agents/skills` alias overrides the matching `.gemini/skills`
 entry within the same user or project tier, disabled names are persisted under
-`skills.disabled`, global and admin skill toggles are enforced, untrusted
-workspaces cannot satisfy project visibility, and `/skills reload` refreshes
-the current session. `workspace init --scan-existing` and `workspace doctor`
-inspect both user roots. See the
+`skills.disabled` with case-insensitive union semantics, and untrusted
+workspaces cannot satisfy project-only visibility. Remote enterprise admin
+policy is not represented by local settings, so Loom reports it as
+unobservable instead of claiming visibility. `/skills reload` refreshes the
+current session. `workspace init --scan-existing` and `workspace doctor`
+inspect both user roots; Loom-managed `use` writes to the native `.gemini`
+root to avoid sharing Codex's managed target. See the
 [Gemini CLI skill docs](https://geminicli.com/docs/cli/creating-skills/),
 [command reference](https://geminicli.com/docs/reference/commands/), and
 [settings reference](https://geminicli.com/docs/reference/configuration/), plus

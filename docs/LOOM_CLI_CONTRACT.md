@@ -331,11 +331,13 @@ only and must not be treated as verified visibility evidence by doctor or
 skill-diagnose consumers.
 
 Gemini CLI verified visibility reads the documented settings precedence,
-including `skills.enabled`, `skills.disabled`, and `admin.skills.enabled`;
-project roots additionally require affirmative workspace trust. Missing trust,
-explicit denial, malformed settings, or malformed trust state cannot yield
-`visible=true`. The reload check names `/skills reload` and does not require a
-new session.
+including `skills.enabled` and the case-insensitive union semantics of
+`skills.disabled`; projected `SKILL.md` files must have loadable `name` and
+`description` frontmatter. Project roots additionally require affirmative
+workspace trust unless a valid user projection independently satisfies
+discovery. Missing trust, explicit denial, malformed settings/trust state, or
+unobservable remote `admin.skills.enabled` policy cannot yield `visible=true`.
+The reload check names `/skills reload` and does not require a new session.
 
 `registry_transport` describes the registry remote and operation backlog only.
 `projections` comes from live existence/method/digest or symlink evidence, while

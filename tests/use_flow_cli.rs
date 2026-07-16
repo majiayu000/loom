@@ -119,6 +119,45 @@ fn use_apply_projects_local_skill_without_manual_ids() {
 }
 
 #[test]
+fn use_apply_keeps_codex_and_gemini_cli_managed_roots_distinct() {
+    let root = TestDir::new("use-codex-gemini");
+    let home = TestDir::new("use-codex-gemini-home");
+    let workspace = TestDir::new("use-codex-gemini-workspace");
+    write_skill(
+        root.path(),
+        "demo",
+        "---\nname: demo\ndescription: Use when testing shared agent roots.\n---\n# Demo\n",
+    );
+    let home_str = home.path().display().to_string();
+    let workspace_str = workspace.path().display().to_string();
+    let (output, env) = run_loom_with_env(
+        root.path(),
+        &[("HOME", &home_str)],
+        &[
+            "use",
+            "demo",
+            "--agents",
+            "codex,gemini-cli",
+            "--scope",
+            "project",
+            "--workspace",
+            &workspace_str,
+            "--apply",
+        ],
+    );
+    assert!(output.status.success(), "multi-agent use failed: {env}");
+    let applied = env["data"]["applied"].as_array().expect("applied");
+    assert_eq!(applied.len(), 2);
+    let paths = applied
+        .iter()
+        .map(|row| row["target"]["path"].as_str().expect("target path"))
+        .collect::<Vec<_>>();
+    assert!(paths.iter().any(|path| path.ends_with(".agents/skills")));
+    assert!(paths.iter().any(|path| path.ends_with(".gemini/skills")));
+    assert_ne!(paths[0], paths[1]);
+}
+
+#[test]
 fn use_apply_and_skill_activate_share_project_projection_semantics() {
     let use_root = TestDir::new("use-activate-parity-use-root");
     let activate_root = TestDir::new("use-activate-parity-activate-root");

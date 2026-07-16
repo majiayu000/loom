@@ -248,7 +248,8 @@ fn build_visibility_report_from_parts(parts: VisibilityBuildParts<'_>) -> CodexV
 
     let mut rule_count = 0;
     let mut projection_ok = false;
-    let mut project_scope_selected = false;
+    let mut trusted_independent_projection_ok = false;
+    let mut project_projection_ok = false;
     if let Some(snapshot) = snapshot {
         let rules = active_rules_for_skill(snapshot, skill, agent, workspace, profile);
         rule_count = rules.len();
@@ -265,21 +266,18 @@ fn build_visibility_report_from_parts(parts: VisibilityBuildParts<'_>) -> CodexV
             Some(format!("loom skill activate {skill} --agent {agent}")),
         ));
         for rule in rules {
-            if agent == "gemini-cli"
-                && let Some(target) = snapshot.target(&rule.target_id)
-            {
-                project_scope_selected |=
-                    gemini::target_requires_workspace_trust(adapter, Path::new(&target.path));
+            let requires_workspace_trust = agent == "gemini-cli"
+                && snapshot.target(&rule.target_id).is_some_and(|target| {
+                    gemini::target_requires_workspace_trust(adapter, Path::new(&target.path))
+                });
+            let rule_projection_ok =
+                add_rule_visibility_checks(ctx, snapshot, adapter, agent, &rule, &mut checks);
+            projection_ok |= rule_projection_ok;
+            if requires_workspace_trust {
+                project_projection_ok |= rule_projection_ok;
+            } else {
+                trusted_independent_projection_ok |= rule_projection_ok;
             }
-            add_rule_visibility_checks(
-                ctx,
-                snapshot,
-                adapter,
-                agent,
-                &rule,
-                &mut checks,
-                &mut projection_ok,
-            );
         }
     } else {
         checks.push(check(
@@ -294,9 +292,12 @@ fn build_visibility_report_from_parts(parts: VisibilityBuildParts<'_>) -> CodexV
 
     let disabled = match agent {
         CODEX_AGENT => add_config_checks(skill, &skill_file, config, &mut checks),
-        "gemini-cli" => {
-            gemini::add_gemini_config_checks(skill, workspace, project_scope_selected, &mut checks)
-        }
+        "gemini-cli" => gemini::add_gemini_config_checks(
+            skill,
+            workspace,
+            project_projection_ok && !trusted_independent_projection_ok,
+            &mut checks,
+        ),
         _ => {
             add_adapter_config_metadata_checks(agent, adapter, &mut checks);
             false
@@ -358,8 +359,7 @@ fn add_rule_visibility_checks(
     agent: &str,
     rule: &RegistryBindingRule,
     checks: &mut Vec<CodexVisibilityCheck>,
-    projection_ok: &mut bool,
-) {
+) -> bool {
     let Some(target) = snapshot.target(&rule.target_id) else {
         checks.push(check(
             &format!("{agent}_target_exists:{}", rule.target_id),
@@ -369,7 +369,7 @@ fn add_rule_visibility_checks(
             json!({"target_id": rule.target_id}),
             Some("recreate the target or remove the stale rule".to_string()),
         ));
-        return;
+        return false;
     };
     let target_path = PathBuf::from(&target.path);
     checks.push(check(
@@ -433,14 +433,12 @@ fn add_rule_visibility_checks(
     ));
     if identity == IDENTITY_RUNTIME_SKILL_MD_PATH {
         let entrypoint = projection_path.join(&adapter.skill_entrypoint);
-        if entrypoint.is_file() {
-            *projection_ok = true;
-        }
+        let entrypoint_exists = entrypoint.is_file();
         checks.push(check(
             &format!("{agent}_runtime_entrypoint_exists:{}", target.target_id),
-            entrypoint.is_file(),
+            entrypoint_exists,
             "error",
-            if entrypoint.is_file() {
+            if entrypoint_exists {
                 "runtime projection entrypoint exists"
             } else {
                 "runtime projection entrypoint is missing"
@@ -453,12 +451,20 @@ fn add_rule_visibility_checks(
             }),
             Some(reconcile_next_action(agent)),
         ));
+        let runtime_valid = entrypoint_exists
+            && (agent != "gemini-cli"
+                || gemini::add_frontmatter_check(
+                    &entrypoint,
+                    &rule.skill_id,
+                    &target.target_id,
+                    checks,
+                ));
         add_entry_classification_checks(ctx, target, &rule.skill_id, agent, checks);
-        return;
+        return runtime_valid;
     }
     if identity != IDENTITY_CANONICAL_SKILL_MD_PATH {
         add_entry_classification_checks(ctx, target, &rule.skill_id, agent, checks);
-        return;
+        return false;
     }
     let is_symlink = fs::symlink_metadata(&projection_path)
         .map(|metadata| metadata.file_type().is_symlink())
@@ -477,9 +483,6 @@ fn add_rule_visibility_checks(
     ));
     let points_to_source =
         projection_path_is_safe_symlink(&projection_path, &ctx.skill_path(&rule.skill_id));
-    if points_to_source {
-        *projection_ok = true;
-    }
     checks.push(check(
         &format!("{agent}_projection_points_to_source:{}", target.target_id),
         points_to_source,
@@ -497,7 +500,17 @@ fn add_rule_visibility_checks(
         }),
         Some(reconcile_next_action(agent)),
     ));
+    let source_valid = points_to_source
+        && (agent != "gemini-cli"
+            || gemini::add_frontmatter_check(
+                &ctx.skill_path(&rule.skill_id)
+                    .join(&adapter.skill_entrypoint),
+                &rule.skill_id,
+                &target.target_id,
+                checks,
+            ));
     add_entry_classification_checks(ctx, target, &rule.skill_id, agent, checks);
+    source_valid
 }
 
 fn add_entry_classification_checks(

@@ -380,7 +380,7 @@ fn use_codex_project_default_comes_from_adapter_metadata() {
 }
 
 #[test]
-fn use_gemini_cli_prefers_official_agents_alias() {
+fn use_gemini_cli_uses_native_managed_root_to_avoid_codex_collision() {
     let root = TestDir::new("cli-use-gemini-adapter-root");
     let workspace = TestDir::new("cli-use-gemini-workspace");
     let fake_home = TestDir::new("cli-use-gemini-home");
@@ -410,7 +410,7 @@ fn use_gemini_cli_prefers_official_agents_alias() {
         env["data"]["steps"][0]["target_path"],
         workspace
             .path()
-            .join(".agents/skills")
+            .join(".gemini/skills")
             .display()
             .to_string()
     );

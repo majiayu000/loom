@@ -64,6 +64,7 @@ pub fn resolve_agent_skill_dirs(root: &Path) -> AgentSkillDirs {
     let home = home_dir()
         .map(|home| home.display().to_string())
         .unwrap_or_else(|| "~".to_string());
+    let gemini_home = gemini_cli_home(&home);
     let dotenv = load_dotenv_map(root);
 
     let all = DEFAULT_AGENT_SKILL_DIRS
@@ -71,7 +72,16 @@ pub fn resolve_agent_skill_dirs(root: &Path) -> AgentSkillDirs {
         .map(|(agent, env_var, default_suffix)| AgentSkillDir {
             agent,
             env_var,
-            path: first_agent_skill_dir(env_var, default_suffix, &home, &dotenv),
+            path: first_agent_skill_dir(
+                env_var,
+                default_suffix,
+                if *agent == "gemini-cli" {
+                    &gemini_home
+                } else {
+                    &home
+                },
+                &dotenv,
+            ),
         })
         .collect::<Vec<_>>();
 
@@ -93,19 +103,34 @@ pub fn resolve_agent_skill_source_dirs(root: &Path) -> Vec<PathBuf> {
     let home = home_dir()
         .map(|home| home.display().to_string())
         .unwrap_or_else(|| "~".to_string());
+    let gemini_home = gemini_cli_home(&home);
     let dotenv = load_dotenv_map(root);
     let mut dirs = Vec::new();
 
-    for (_, env_var, default_suffix) in DEFAULT_AGENT_SKILL_DIRS {
+    for (agent, env_var, default_suffix) in DEFAULT_AGENT_SKILL_DIRS {
         if let Some(raw) = env_or_dotenv(env_var, &dotenv) {
             dirs.extend(parse_dir_list_env(&raw));
         } else {
-            dirs.push(default_agent_skill_dir(&home, default_suffix));
+            dirs.push(default_agent_skill_dir(
+                if agent == "gemini-cli" {
+                    &gemini_home
+                } else {
+                    &home
+                },
+                default_suffix,
+            ));
         }
     }
-    dirs.push(default_agent_skill_dir(&home, ".gemini/skills"));
+    dirs.push(default_agent_skill_dir(&gemini_home, ".gemini/skills"));
 
     dedupe_paths_keep_order(dirs)
+}
+
+fn gemini_cli_home(default_home: &str) -> String {
+    env::var_os("GEMINI_CLI_HOME")
+        .filter(|raw| !raw.is_empty())
+        .map(|raw| PathBuf::from(raw).display().to_string())
+        .unwrap_or_else(|| default_home.to_string())
 }
 
 fn first_agent_skill_dir(

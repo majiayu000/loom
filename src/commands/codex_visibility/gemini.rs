@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use serde_json::{Value, json};
 
 use crate::agent_adapters::AgentAdapter;
+use crate::commands::skill_lint::frontmatter::parse_skill_frontmatter;
 use crate::state::home_dir;
 
 use super::{CodexVisibilityCheck, check, normalize_existing_or_raw};
@@ -13,9 +14,7 @@ use super::{CodexVisibilityCheck, check, normalize_existing_or_raw};
 struct GeminiSettings {
     skills_enabled: bool,
     disabled_skills: Vec<String>,
-    admin_skills_enabled: bool,
     folder_trust_enabled: bool,
-    loaded_paths: Vec<String>,
 }
 
 impl Default for GeminiSettings {
@@ -23,9 +22,7 @@ impl Default for GeminiSettings {
         Self {
             skills_enabled: true,
             disabled_skills: Vec::new(),
-            admin_skills_enabled: true,
             folder_trust_enabled: true,
-            loaded_paths: Vec::new(),
         }
     }
 }
@@ -34,15 +31,6 @@ impl Default for GeminiSettings {
 struct GeminiConfigState {
     settings: GeminiSettings,
     workspace_trusted: Option<bool>,
-    trust_source: Option<&'static str>,
-    trusted_folders_path: Option<PathBuf>,
-}
-
-#[derive(Debug, Default)]
-struct WorkspaceTrust {
-    trusted: Option<bool>,
-    source: Option<&'static str>,
-    path: Option<PathBuf>,
 }
 
 pub(super) fn target_requires_workspace_trust(adapter: &AgentAdapter, target_path: &Path) -> bool {
@@ -81,7 +69,7 @@ pub(super) fn add_gemini_config_checks(
         true,
         "warning",
         "Gemini CLI visibility settings loaded",
-        json!({"settings_paths": state.settings.loaded_paths}),
+        Value::Null,
         None,
     ));
     checks.push(check(
@@ -93,14 +81,14 @@ pub(super) fn add_gemini_config_checks(
         } else {
             "Gemini CLI skills are disabled by skills.enabled"
         },
-        json!({"skills_enabled": state.settings.skills_enabled}),
+        Value::Null,
         Some("enable skills.enabled in Gemini CLI settings, then run /skills reload".to_string()),
     ));
     let skill_enabled = !state
         .settings
         .disabled_skills
         .iter()
-        .any(|disabled| disabled == skill);
+        .any(|disabled| disabled.eq_ignore_ascii_case(skill));
     checks.push(check(
         "gemini-cli_skill_not_disabled",
         skill_enabled,
@@ -110,22 +98,19 @@ pub(super) fn add_gemini_config_checks(
         } else {
             "skill is disabled in Gemini CLI settings"
         },
-        json!({"skill": skill, "disabled_skills": state.settings.disabled_skills}),
+        Value::Null,
         Some(format!(
             "run /skills enable {skill} in Gemini CLI, then run /skills reload"
         )),
     ));
+    let admin_policy_observable = false;
     checks.push(check(
-        "gemini-cli_admin_skills_enabled",
-        state.settings.admin_skills_enabled,
+        "gemini-cli_admin_policy_observable",
+        admin_policy_observable,
         "error",
-        if state.settings.admin_skills_enabled {
-            "Gemini CLI admin policy allows skills"
-        } else {
-            "Gemini CLI admin policy disables skills"
-        },
-        json!({"admin_skills_enabled": state.settings.admin_skills_enabled}),
-        Some("ask the Gemini CLI administrator to enable admin.skills.enabled".to_string()),
+        "Gemini CLI remote admin skill policy is not observable from local settings",
+        Value::Null,
+        Some("confirm the effective enterprise policy in Gemini CLI with /skills list".to_string()),
     ));
 
     let workspace_allowed = !project_scope_selected || state.workspace_trusted == Some(true);
@@ -139,21 +124,45 @@ pub(super) fn add_gemini_config_checks(
             } else {
                 "Gemini CLI workspace trust is absent or denied; project skills are not loaded"
             },
-            json!({
-                "workspace": workspace,
-                "folder_trust_enabled": state.settings.folder_trust_enabled,
-                "workspace_trusted": state.workspace_trusted,
-                "trust_source": state.trust_source,
-                "trusted_folders_path": state.trusted_folders_path,
-            }),
+            json!({"workspace": workspace, "trusted": state.workspace_trusted}),
             Some("run /permissions trust in Gemini CLI for this workspace".to_string()),
         ));
     }
 
     !state.settings.skills_enabled
         || !skill_enabled
-        || !state.settings.admin_skills_enabled
+        || !admin_policy_observable
         || !workspace_allowed
+}
+
+pub(super) fn add_frontmatter_check(
+    entrypoint: &Path,
+    skill: &str,
+    target_id: &str,
+    checks: &mut Vec<CodexVisibilityCheck>,
+) -> bool {
+    let valid = parse_skill_frontmatter(entrypoint).is_ok_and(|parsed| {
+        parsed.schema_issues.is_empty()
+            && parsed.frontmatter.name.as_deref() == Some(skill)
+            && parsed
+                .frontmatter
+                .description
+                .as_deref()
+                .is_some_and(|description| !description.is_empty())
+    });
+    checks.push(check(
+        &format!("gemini-cli_frontmatter_valid:{target_id}"),
+        valid,
+        "error",
+        if valid {
+            "projected SKILL.md has Gemini-compatible name and description frontmatter"
+        } else {
+            "projected SKILL.md lacks Gemini-compatible name and description frontmatter"
+        },
+        Value::Null,
+        Some("add valid name and description frontmatter to the projected SKILL.md".to_string()),
+    ));
+    valid
 }
 
 fn load_gemini_config(workspace: Option<&Path>) -> Result<GeminiConfigState, String> {
@@ -173,12 +182,12 @@ fn load_gemini_config(workspace: Option<&Path>) -> Result<GeminiConfigState, Str
             workspace_trust(workspace, &gemini_home, trust_settings.folder_trust_enabled)
         })
         .transpose()?
-        .unwrap_or_default();
+        .flatten();
 
     let mut settings = GeminiSettings::default();
     apply_optional_layer(&mut settings, system_defaults.as_deref())?;
     apply_optional_layer(&mut settings, Some(&user_settings))?;
-    if workspace_trust.trusted == Some(true)
+    if workspace_trust == Some(true)
         && let Some(workspace) = workspace
     {
         apply_optional_layer(
@@ -190,9 +199,7 @@ fn load_gemini_config(workspace: Option<&Path>) -> Result<GeminiConfigState, Str
 
     Ok(GeminiConfigState {
         settings,
-        workspace_trusted: workspace_trust.trusted,
-        trust_source: workspace_trust.source,
-        trusted_folders_path: workspace_trust.path,
+        workspace_trusted: workspace_trust,
     })
 }
 
@@ -208,7 +215,6 @@ fn apply_optional_layer(settings: &mut GeminiSettings, path: Option<&Path>) -> R
     let value = parse_json_with_comments(&raw)
         .map_err(|error| format!("invalid JSON in '{}': {error}", path.display()))?;
     apply_settings_value(settings, path, &value)?;
-    settings.loaded_paths.push(path.display().to_string());
     Ok(())
 }
 
@@ -230,24 +236,14 @@ fn apply_settings_value(
             })?;
         }
         if let Some(disabled) = skills.get("disabled") {
-            settings.disabled_skills = string_array(disabled, path, "skills.disabled")?;
-        }
-    }
-    if let Some(admin) = root.get("admin") {
-        let admin = admin
-            .as_object()
-            .ok_or_else(|| format!("admin in '{}' must be an object", path.display()))?;
-        if let Some(skills) = admin.get("skills") {
-            let skills = skills
-                .as_object()
-                .ok_or_else(|| format!("admin.skills in '{}' must be an object", path.display()))?;
-            if let Some(enabled) = skills.get("enabled") {
-                settings.admin_skills_enabled = enabled.as_bool().ok_or_else(|| {
-                    format!(
-                        "admin.skills.enabled in '{}' must be a boolean",
-                        path.display()
-                    )
-                })?;
+            for name in string_array(disabled, path, "skills.disabled")? {
+                if !settings
+                    .disabled_skills
+                    .iter()
+                    .any(|existing| existing.eq_ignore_ascii_case(&name))
+                {
+                    settings.disabled_skills.push(name);
+                }
             }
         }
     }
@@ -292,30 +288,18 @@ fn workspace_trust(
     workspace: &Path,
     gemini_home: &Path,
     folder_trust_enabled: bool,
-) -> Result<WorkspaceTrust, String> {
+) -> Result<Option<bool>, String> {
     if env::var("GEMINI_CLI_TRUST_WORKSPACE").as_deref() == Ok("true") {
-        return Ok(WorkspaceTrust {
-            trusted: Some(true),
-            source: Some("env"),
-            path: None,
-        });
+        return Ok(Some(true));
     }
     if !folder_trust_enabled {
-        return Ok(WorkspaceTrust {
-            trusted: Some(true),
-            source: Some("disabled"),
-            path: None,
-        });
+        return Ok(Some(true));
     }
     let path = env::var_os("GEMINI_CLI_TRUSTED_FOLDERS_PATH")
         .map(PathBuf::from)
         .unwrap_or_else(|| gemini_home.join(".gemini/trustedFolders.json"));
     if !path.exists() {
-        return Ok(WorkspaceTrust {
-            trusted: None,
-            source: None,
-            path: Some(path),
-        });
+        return Ok(None);
     }
     let raw = fs::read_to_string(&path)
         .map_err(|error| format!("failed to read '{}': {error}", path.display()))?;
@@ -357,12 +341,7 @@ fn workspace_trust(
         }
     }
     let trusted = longest.map(|(_, trusted)| trusted);
-    let source = trusted.map(|_| "file");
-    Ok(WorkspaceTrust {
-        trusted,
-        source,
-        path: Some(path),
-    })
+    Ok(trusted)
 }
 
 fn gemini_cli_home() -> Option<PathBuf> {

@@ -198,6 +198,86 @@ fn write_agent_visibility_state(
     projection
 }
 
+fn append_agent_visibility_state(
+    root: &Path,
+    target_dir: &Path,
+    skill: &str,
+    agent: &str,
+    suffix: &str,
+    workspace_matcher: Value,
+) -> PathBuf {
+    fs::create_dir_all(target_dir).expect("create agent target");
+    let projection = target_dir.join(skill);
+    symlink_skill(&root.join("skills").join(skill), &projection);
+    let target_id = format!("target_{agent}_{suffix}");
+    let binding_id = format!("bind_{agent}_{suffix}");
+    let registry = root.join("state/registry");
+    for (file, key, row) in [
+        (
+            "targets.json",
+            "targets",
+            json!({
+                "target_id": target_id,
+                "agent": agent,
+                "path": target_dir,
+                "ownership": "managed",
+                "capabilities": {"symlink": true, "copy": true, "watch": true},
+                "created_at": "2026-07-06T00:00:00Z"
+            }),
+        ),
+        (
+            "bindings.json",
+            "bindings",
+            json!({
+                "binding_id": binding_id,
+                "agent": agent,
+                "profile_id": "default",
+                "workspace_matcher": workspace_matcher,
+                "default_target_id": target_id,
+                "policy_profile": "safe-capture",
+                "active": true,
+                "created_at": "2026-07-06T00:00:00Z"
+            }),
+        ),
+        (
+            "rules.json",
+            "rules",
+            json!({
+                "binding_id": binding_id,
+                "skill_id": skill,
+                "target_id": target_id,
+                "method": "symlink",
+                "watch_policy": "observe_only",
+                "created_at": "2026-07-06T00:00:00Z"
+            }),
+        ),
+        (
+            "projections.json",
+            "projections",
+            json!({
+                "instance_id": format!("inst_{skill}_{agent}_{suffix}"),
+                "skill_id": skill,
+                "binding_id": binding_id,
+                "target_id": target_id,
+                "materialized_path": projection,
+                "method": "symlink",
+                "last_applied_rev": "abc123",
+                "health": "healthy",
+                "observed_drift": false,
+                "updated_at": "2026-07-06T00:00:00Z"
+            }),
+        ),
+    ] {
+        let path = registry.join(file);
+        let mut value: Value =
+            serde_json::from_str(&fs::read_to_string(&path).expect("read state"))
+                .expect("parse state");
+        value[key].as_array_mut().expect("state rows").push(row);
+        write_json(&path, value);
+    }
+    projection
+}
+
 fn rewrite_registry_agent(root: &Path, agent: &str) {
     for (file, array_key) in [("targets.json", "targets"), ("bindings.json", "bindings")] {
         let path = root.join("state/registry").join(file);
@@ -475,7 +555,7 @@ fn skill_visibility_gemini_cli_uses_verified_adapter_metadata() {
 
     assert!(output.status.success(), "Gemini visibility failed: {env}");
     assert_eq!(env["data"]["agent"], json!("gemini-cli"));
-    assert_eq!(env["data"]["visible"], Value::Bool(true));
+    assert_eq!(env["data"]["visible"], Value::Bool(false));
     let checks = env["data"]["checks"].as_array().expect("checks");
     assert!(
         checks
@@ -487,7 +567,7 @@ fn skill_visibility_gemini_cli_uses_verified_adapter_metadata() {
         "gemini-cli_config_valid",
         "gemini-cli_skills_enabled",
         "gemini-cli_skill_not_disabled",
-        "gemini-cli_admin_skills_enabled",
+        "gemini-cli_frontmatter_valid:target_gemini-cli_user",
     ] {
         assert!(
             checks
@@ -496,6 +576,12 @@ fn skill_visibility_gemini_cli_uses_verified_adapter_metadata() {
             "missing passing Gemini check {id}: {env}"
         );
     }
+    assert!(
+        checks.iter().any(|check| {
+            check["id"] == "gemini-cli_admin_policy_observable" && check["ok"] == false
+        }),
+        "remote admin state must remain fail-closed: {env}"
+    );
     let reload = checks
         .iter()
         .find(|check| check["id"] == "gemini-cli_reload_required")
@@ -510,7 +596,7 @@ fn skill_visibility_gemini_cli_uses_verified_adapter_metadata() {
 }
 
 #[test]
-fn skill_visibility_gemini_cli_fails_closed_for_user_and_admin_disables() {
+fn skill_visibility_gemini_cli_unions_case_insensitive_disables() {
     let root = TestDir::new("visibility-gemini-cli-disabled");
     let home = TestDir::new("visibility-gemini-cli-disabled-home");
     write_good_skill(root.path(), "demo");
@@ -522,14 +608,18 @@ fn skill_visibility_gemini_cli_fails_closed_for_user_and_admin_disables() {
         "user",
         json!({"kind": "name", "value": "default"}),
     );
+    let system_defaults = root.path().join("gemini-system-defaults.json");
+    write_json(&system_defaults, json!({"skills": {"disabled": ["Demo"]}}));
     write_json(
         &home.path().join(".gemini/settings.json"),
-        json!({"skills": {"disabled": ["demo"]}}),
+        json!({"skills": {"disabled": []}}),
     );
+    let system_defaults_str = system_defaults.display().to_string();
 
-    let (output, env) = run_with_home(
+    let (output, env) = run_with_home_and_env(
         root.path(),
         home.path(),
+        &[("GEMINI_CLI_SYSTEM_DEFAULTS_PATH", &system_defaults_str)],
         &["skill", "visibility", "demo", "--agent", "gemini-cli"],
     );
     assert!(output.status.success(), "Gemini visibility failed: {env}");
@@ -557,7 +647,7 @@ fn skill_visibility_gemini_cli_fails_closed_for_user_and_admin_disables() {
 
     write_json(
         &home.path().join(".gemini/settings.json"),
-        json!({"skills": {"disabled": []}}),
+        json!({"admin": {"skills": {"enabled": false}}}),
     );
     let system_settings = root.path().join("gemini-system-settings.json");
     write_json(
@@ -573,7 +663,7 @@ fn skill_visibility_gemini_cli_fails_closed_for_user_and_admin_disables() {
     );
     assert!(
         output.status.success(),
-        "Gemini admin visibility failed: {env}"
+        "Gemini local-admin report failed: {env}"
     );
     assert_eq!(env["data"]["visible"], false);
     assert_eq!(
@@ -581,7 +671,7 @@ fn skill_visibility_gemini_cli_fails_closed_for_user_and_admin_disables() {
             .as_array()
             .expect("checks")
             .iter()
-            .find(|check| check["id"] == "gemini-cli_admin_skills_enabled")
+            .find(|check| check["id"] == "gemini-cli_admin_policy_observable")
             .expect("admin check")["ok"],
         false
     );
@@ -632,7 +722,7 @@ fn skill_visibility_gemini_cli_accepts_comments_in_official_json_files() {
         &["skill", "visibility", "demo", "--agent", "gemini-cli"],
     );
     assert!(output.status.success(), "commented settings failed: {env}");
-    assert_eq!(env["data"]["visible"], true);
+    assert_eq!(env["data"]["visible"], false);
     assert_eq!(
         env["data"]["checks"]
             .as_array()
@@ -641,6 +731,42 @@ fn skill_visibility_gemini_cli_accepts_comments_in_official_json_files() {
             .find(|check| check["id"] == "gemini-cli_config_valid")
             .expect("config validity check")["ok"],
         true
+    );
+}
+
+#[test]
+fn skill_visibility_gemini_cli_rejects_invalid_projected_frontmatter() {
+    let root = TestDir::new("visibility-gemini-cli-frontmatter");
+    let home = TestDir::new("visibility-gemini-cli-frontmatter-home");
+    write_good_skill(root.path(), "demo");
+    write_agent_visibility_state(
+        root.path(),
+        &home.path().join(".agents/skills"),
+        "demo",
+        "gemini-cli",
+        "user",
+        json!({"kind": "name", "value": "default"}),
+    );
+    write_file(
+        &root.path().join("skills/demo/SKILL.md"),
+        "# missing frontmatter\n",
+    );
+    let (output, env) = run_with_home(
+        root.path(),
+        home.path(),
+        &["skill", "visibility", "demo", "--agent", "gemini-cli"],
+    );
+    assert!(output.status.success(), "frontmatter report failed: {env}");
+    assert_eq!(env["data"]["visible"], false);
+    assert!(
+        env["data"]["checks"]
+            .as_array()
+            .expect("checks")
+            .iter()
+            .any(|check| {
+                check["id"] == "gemini-cli_frontmatter_valid:target_gemini-cli_user"
+                    && check["ok"] == false
+            })
     );
 }
 
@@ -693,7 +819,7 @@ fn skill_visibility_gemini_cli_requires_trusted_project_workspace() {
         .find(|check| check["id"] == "gemini-cli_workspace_trusted")
         .expect("workspace trust check");
     assert_eq!(trust_check["ok"], false);
-    assert_eq!(trust_check["details"]["trust_source"], "file");
+    assert_eq!(trust_check["details"]["trusted"], false);
 
     write_file(
         &home.path().join(".gemini/trustedFolders.json"),
@@ -748,7 +874,94 @@ fn skill_visibility_gemini_cli_requires_trusted_project_workspace() {
         ],
     );
     assert!(output.status.success(), "trusted visibility failed: {env}");
-    assert_eq!(env["data"]["visible"], true);
+    let checks = env["data"]["checks"].as_array().expect("checks");
+    assert!(
+        checks
+            .iter()
+            .any(|check| { check["id"] == "gemini-cli_workspace_trusted" && check["ok"] == true })
+    );
+    assert_eq!(env["data"]["visible"], false);
+}
+
+#[test]
+fn skill_visibility_gemini_cli_keeps_valid_user_projection_independent_of_project_trust() {
+    let root = TestDir::new("visibility-gemini-cli-user-project");
+    let home = TestDir::new("visibility-gemini-cli-user-project-home");
+    let workspace = TestDir::new("visibility-gemini-cli-user-project-workspace");
+    write_good_skill(root.path(), "demo");
+    write_agent_visibility_state(
+        root.path(),
+        &workspace.path().join(".agents/skills"),
+        "demo",
+        "gemini-cli",
+        "project",
+        json!({"kind": "path_prefix", "value": workspace.path()}),
+    );
+    append_agent_visibility_state(
+        root.path(),
+        &home.path().join(".agents/skills"),
+        "demo",
+        "gemini-cli",
+        "user",
+        json!({"kind": "name", "value": "default"}),
+    );
+    write_json(
+        &home.path().join(".gemini/trustedFolders.json"),
+        json!({workspace.path().display().to_string(): "DO_NOT_TRUST"}),
+    );
+    let (output, env) = run_with_home(
+        root.path(),
+        home.path(),
+        &[
+            "skill",
+            "visibility",
+            "demo",
+            "--agent",
+            "gemini-cli",
+            "--workspace",
+            workspace.path().to_str().expect("workspace"),
+        ],
+    );
+    assert!(output.status.success(), "mixed-scope report failed: {env}");
+    assert!(
+        env["data"]["checks"]
+            .as_array()
+            .expect("checks")
+            .iter()
+            .all(|check| check["id"] != "gemini-cli_workspace_trusted")
+    );
+}
+
+#[test]
+fn agent_reconcile_gemini_cli_reports_in_session_reload() {
+    let root = TestDir::new("reconcile-gemini-reload");
+    let home = TestDir::new("reconcile-gemini-reload-home");
+    write_good_skill(root.path(), "demo");
+    let projection = write_agent_visibility_state(
+        root.path(),
+        &home.path().join(".agents/skills"),
+        "demo",
+        "gemini-cli",
+        "user",
+        json!({"kind": "name", "value": "default"}),
+    );
+    fs::remove_file(projection).expect("remove projection");
+    let (output, env) = run_with_home(
+        root.path(),
+        home.path(),
+        &["agent", "reconcile", "--agent", "gemini-cli", "--dry-run"],
+    );
+    assert!(output.status.success(), "Gemini reconcile failed: {env}");
+    assert_eq!(env["data"]["plans"][0]["restart_required"], false);
+    assert!(
+        env["data"]["plans"][0]["warnings"]
+            .as_array()
+            .expect("warnings")
+            .iter()
+            .any(|warning| warning
+                .as_str()
+                .is_some_and(|warning| warning.contains("/skills reload")))
+    );
 }
 
 #[test]

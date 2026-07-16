@@ -423,8 +423,8 @@ fn workspace_status_reports_gemini_cli_verified_metadata() {
     ));
     assert_eq!(adapter["discovery_roots"].as_array().map(Vec::len), Some(4));
     for (scope, path, priority) in [
-        ("user", "~/.agents/skills", 0),
-        ("user", "~/.gemini/skills", 1),
+        ("user", "${GEMINI_CLI_HOME:-~}/.agents/skills", 0),
+        ("user", "${GEMINI_CLI_HOME:-~}/.gemini/skills", 1),
         ("project", "<workspace>/.agents/skills", 0),
         ("project", "<workspace>/.gemini/skills", 1),
     ] {
@@ -443,12 +443,44 @@ fn workspace_status_reports_gemini_cli_verified_metadata() {
     assert_eq!(adapter["reload"]["hot_reload"], Value::Bool(true));
     assert_eq!(
         adapter["visibility"]["config_file"],
-        "~/.gemini/settings.json"
+        "${GEMINI_CLI_HOME:-~}/.gemini/settings.json"
     );
     assert!(array_contains(
         &adapter["visibility"]["disable_rules"],
         "adapter-defined"
     ));
+}
+
+#[test]
+fn workspace_status_gemini_cli_roots_honor_gemini_cli_home() {
+    let root = TestDir::new("ws-status-gemini-cli-home");
+    let fake_home = TestDir::new("ws-status-gemini-cli-home-os");
+    let gemini_home = TestDir::new("ws-status-gemini-cli-home-override");
+    let home_str = fake_home.path().display().to_string();
+    let gemini_home_str = gemini_home.path().display().to_string();
+    let (output, env) = run_loom_with_env(
+        root.path(),
+        &[("HOME", &home_str), ("GEMINI_CLI_HOME", &gemini_home_str)],
+        &["workspace", "status"],
+    );
+    assert!(output.status.success(), "workspace status failed: {env}");
+    let adapter = adapter_by_id(&env, "gemini-cli");
+    for suffix in [".agents/skills", ".gemini/skills"] {
+        assert!(array_contains(
+            &adapter["default_skill_dirs"],
+            &gemini_home.path().join(suffix).display().to_string()
+        ));
+    }
+    assert!(
+        adapter["default_skill_dirs"]
+            .as_array()
+            .expect("default dirs")
+            .iter()
+            .all(|path| !path
+                .as_str()
+                .expect("path")
+                .starts_with(fake_home.path().to_str().expect("home")))
+    );
 }
 
 #[test]

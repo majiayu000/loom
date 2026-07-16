@@ -461,6 +461,50 @@ fn use_gemini_cli_respects_dotenv_multi_root_override() {
 }
 
 #[test]
+fn use_gemini_cli_preserves_explicit_official_root_override() {
+    let root = TestDir::new("cli-use-gemini-explicit-official-root");
+    let workspace = TestDir::new("cli-use-gemini-explicit-official-workspace");
+    let fake_home = TestDir::new("cli-use-gemini-explicit-official-home");
+    let agents_root = fake_home.path().join(".agents/skills");
+    let second = root.path().join("gemini-two");
+    write_skill(
+        root.path(),
+        "demo",
+        "---\nname: demo\ndescription: Use when testing an explicit official Gemini root.\n---\n# Demo\n",
+    );
+    write_file(
+        &root.path().join(".env"),
+        &format!(
+            "GEMINI_CLI_SKILLS_DIR={},{}\n",
+            agents_root.display(),
+            second.display()
+        ),
+    );
+
+    let home_str = fake_home.path().display().to_string();
+    let workspace_str = workspace.path().display().to_string();
+    let (output, env) = run_loom_with_env(
+        root.path(),
+        &[("HOME", &home_str)],
+        &[
+            "use",
+            "demo",
+            "--agents",
+            "gemini-cli",
+            "--scope",
+            "user",
+            "--workspace",
+            &workspace_str,
+        ],
+    );
+    assert!(output.status.success(), "loom use failed: {env}");
+    assert_eq!(
+        env["data"]["steps"][0]["target_path"],
+        agents_root.display().to_string()
+    );
+}
+
+#[test]
 fn top_level_init_uses_default_registry_root_and_scans_existing_dirs() {
     let home = TestDir::new("cli-default-home");
     let codex_skill = home.path().join(".codex/skills/demo-skill");

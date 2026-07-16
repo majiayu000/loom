@@ -9,8 +9,7 @@ use crate::cli::{
 };
 use crate::envelope::Meta;
 use crate::error_actions::NextAction;
-use crate::state::AppContext;
-use crate::state::home_dir;
+use crate::state::{AppContext, configured_agent_skill_dirs, home_dir};
 use crate::state_model::RegistryStatePaths;
 use crate::types::ErrorCode;
 
@@ -229,19 +228,11 @@ fn target_path_for(
         && adapter.has_discovery_root_for_scope(scope)
     {
         if agent == "gemini-cli" && adapter.source == SOURCE_BUILT_IN {
-            let gemini_home = std::env::var_os("GEMINI_CLI_HOME")
-                .filter(|raw| !raw.is_empty())
-                .map(PathBuf::from)
-                .or_else(home_dir);
-            let official_roots = gemini_home
-                .as_ref()
-                .map(|home| [home.join(".agents/skills"), home.join(".gemini/skills")]);
-            if let Some(configured) = adapter.default_skill_dirs.iter().find(|path| {
-                official_roots
-                    .as_ref()
-                    .is_none_or(|official| !official.contains(path))
-            }) {
-                return Ok(absolute_path(configured));
+            if let Some(configured) =
+                configured_agent_skill_dirs(&ctx.root, "GEMINI_CLI_SKILLS_DIR")
+                    .and_then(|dirs| dirs.into_iter().next())
+            {
+                return Ok(absolute_path(&configured));
             }
             let native_root = match args.scope {
                 UseScope::User => std::env::var_os("GEMINI_CLI_HOME")

@@ -153,7 +153,9 @@ idempotency 原文始终 redacted，只持久化 digest。
 ```
 
 `complete` 按 plan required axes 和显式 acceptance policy 计算；warning 不影响计算，也不能覆盖失败
-evidence。接受 restart 时 `outcome` 改为 `complete_with_restart_required`，但 visibility state 不变。
+evidence。仅在不存在其他 completion blocker 时，接受 restart 后 `outcome` 为
+`complete_with_restart_required`；若仍有 remote pending，则 `outcome` 为
+`local_complete_remote_pending`、`complete=false`。visibility state 始终不变。
 
 ### 8. Compatibility and rollout
 

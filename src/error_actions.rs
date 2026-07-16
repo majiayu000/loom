@@ -51,7 +51,7 @@ pub(crate) fn default_next_actions(code: &str) -> Vec<NextAction> {
 
 pub(crate) fn contextual_skill_action(skill: &str, reason: &str) -> NextAction {
     NextAction::new(
-        &format!("loom skill inspect {} --json", shell_arg(skill)),
+        &format!("loom --json skill inspect -- {}", shell_arg(skill)),
         reason,
     )
 }
@@ -224,8 +224,11 @@ mod tests {
     #[test]
     fn contextual_actions_are_concrete_json_commands() {
         let action = contextual_skill_action("demo skill", "inspect the affected skill");
-        assert_eq!(action.cmd, "loom skill inspect 'demo skill' --json");
+        assert_eq!(action.cmd, "loom --json skill inspect -- 'demo skill'");
         assert!(!action.cmd.contains('<'));
         assert!(!action.cmd.contains('>'));
+
+        let option_like = contextual_skill_action("-demo", "inspect the affected skill");
+        assert_eq!(option_like.cmd, "loom --json skill inspect -- '-demo'");
     }
 }

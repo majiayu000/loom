@@ -559,6 +559,35 @@ fn panel_bind_failure_is_a_structured_json_envelope() {
         serde_json::json!("panel.serve")
     );
     assert_eq!(env["error"]["details"]["port"], serde_json::json!(port));
+    assert!(
+        output.stderr.is_empty(),
+        "JSON panel startup failure must not emit human stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn option_like_skill_name_is_routable_after_argument_separator() {
+    let root = TestDir::new("cli-option-like-skill");
+    let output = Command::new(env!("CARGO_BIN_EXE_loom"))
+        .arg("--json")
+        .arg("--root")
+        .arg(root.path())
+        .args(["skill", "inspect", "--", "-demo"])
+        .output()
+        .expect("inspect option-like skill name");
+
+    assert_eq!(output.status.code(), Some(3));
+    let env: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("parse skill failure envelope");
+    assert_eq!(env["cmd"], serde_json::json!("skill.inspect"));
+    assert_eq!(env["error"]["code"], serde_json::json!("SKILL_NOT_FOUND"));
+    assert!(
+        env["error"]["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("'-demo'")),
+        "separator must preserve the option-like positional: {env}"
+    );
 }
 
 #[test]

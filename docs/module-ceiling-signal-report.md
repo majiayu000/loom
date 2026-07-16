@@ -11,8 +11,12 @@
 - Inline `#[cfg(test)]` blocks inside production files still count toward the
   complete physical-file size.
 - Allowlist entries use `path<TAB>baseline_lines<TAB>issue-ref`.
-- An allowlisted file fails if it grows above its baseline, disappears, becomes
-  excluded, or falls to 800 lines or below without its stale entry being removed.
+- An allowlisted file above 800 lines must exactly match its reviewed baseline;
+  any increase or decrease fails until the entry is explicitly reviewed and
+  updated. It also fails if it disappears, becomes excluded, or falls to 800
+  lines or below without its stale entry being removed.
+- Rust-file and source-directory symlinks are rejected instead of being silently
+  skipped.
 
 The guard implementation and negative fixtures are checked by:
 

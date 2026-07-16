@@ -57,7 +57,7 @@ error() {
 
 is_test_or_generated() {
   case "$1" in
-    */tests/*|*_tests.rs|*/generated/*|*_generated.rs|*/generated.rs)
+    */tests|*/tests/*|*_tests.rs|*/generated|*/generated/*|*_generated.rs|*/generated.rs)
       return 0
       ;;
     *)
@@ -131,11 +131,19 @@ done < "$allowlist_file"
 if [[ ! -d "$repo_root/src" ]]; then
   error "source directory is missing: $repo_root/src"
 else
+  while IFS= read -r link; do
+    relative_path="${link#"$repo_root/"}"
+    is_test_or_generated "$relative_path" && continue
+    if [[ "$relative_path" == *.rs || -d "$link" ]]; then
+      error "$relative_path symlink-source-path-unsupported"
+    fi
+  done < <(find "$repo_root/src" -type l -print | LC_ALL=C sort)
+
   while IFS= read -r file; do
     relative_path="${file#"$repo_root/"}"
     is_test_or_generated "$relative_path" && continue
 
-    lines="$(wc -l < "$file" | tr -d ' ')"
+    lines="$(awk 'END { print NR }' "$file")"
     allow_index=""
     if allow_index="$(find_allow_index "$relative_path")"; then
       allow_seen[$allow_index]=1
@@ -145,6 +153,8 @@ else
         error "$relative_path $lines $hard_limit stale-allowlist baseline=$baseline issue=$issue_ref"
       elif (( lines > baseline )); then
         error "$relative_path $lines $hard_limit baseline-growth=$baseline issue=$issue_ref"
+      elif (( lines < baseline )); then
+        error "$relative_path $lines $hard_limit baseline-decrease=$baseline update-required issue=$issue_ref"
       else
         echo "ALLOWLIST $relative_path $lines $hard_limit baseline=$baseline issue=$issue_ref"
         allowlisted=$((allowlisted + 1))

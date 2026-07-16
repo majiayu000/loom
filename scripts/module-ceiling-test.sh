@@ -53,8 +53,29 @@ rm "$fixture/src/unallowlisted.rs"
 write_lines "$fixture/src/allowed.rs" 802
 expect_failure "src/allowed.rs 802 800 baseline-growth=801 issue=#999"
 
+write_lines "$fixture/src/allowed.rs" 850
+printf 'src/allowed.rs\t981\t#999\n' > "$allowlist"
+expect_failure "src/allowed.rs 850 800 baseline-decrease=981 update-required issue=#999"
+
+printf 'src/allowed.rs\t850\t#999\n' > "$allowlist"
+run_guard >"$fixture/output.log" 2>&1
+grep -F "ALLOWLIST src/allowed.rs 850 800 baseline=850 issue=#999" "$fixture/output.log" >/dev/null
+
+write_lines "$fixture/src/allowed.rs" 851
+expect_failure "src/allowed.rs 851 800 baseline-growth=850 issue=#999"
+
 write_lines "$fixture/src/allowed.rs" 800
-expect_failure "src/allowed.rs 800 800 stale-allowlist baseline=801 issue=#999"
+expect_failure "src/allowed.rs 800 800 stale-allowlist baseline=850 issue=#999"
+
+write_lines "$fixture/src/allowed.rs" 850
+awk 'BEGIN { for (i = 1; i <= 800; i++) print "// fixture line " i; printf "// fixture line 801" }' > "$fixture/src/no_final_newline.rs"
+expect_failure "src/no_final_newline.rs 801 800 not-allowlisted"
+rm "$fixture/src/no_final_newline.rs"
+
+write_lines "$fixture/external.rs" 900
+ln -s ../external.rs "$fixture/src/symlinked.rs"
+expect_failure "src/symlinked.rs symlink-source-path-unsupported"
+rm "$fixture/src/symlinked.rs" "$fixture/external.rs"
 
 write_lines "$fixture/src/allowed.rs" 801
 printf 'src/missing.rs\t801\t#1000\n' > "$allowlist"

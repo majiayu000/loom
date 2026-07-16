@@ -24,7 +24,7 @@ Locale: `zh-CN`
 
 ## 4. Behavior Invariants
 
-1. guard 对非测试 `src/**/*.rs` 的完整物理文件行数生效；`tests/` 路径和 `*_tests.rs` 等 test-only 文件排除，但生产文件内联的 `#[cfg(test)]` 代码仍计入文件总行数。
+1. guard 对非测试 `src/**/*.rs` 的完整物理文件行数生效，包括没有结尾换行符的最后一行；`tests/` 路径和 `*_tests.rs` 等 test-only 文件排除，但生产文件内联的 `#[cfg(test)]` 代码仍计入文件总行数。Rust 文件和生产源码目录的 symlink 必须 fail closed，不能被枚举器静默跳过。
 2. allowlist 中每个文件必须带 issue 引用。
 3. guard 失败输出具体文件、当前行数与上限，可直接定位。
 4. guard 在本地（make）与 CI 行为一致。
@@ -41,6 +41,7 @@ Locale: `zh-CN`
 1. 文件被重命名/移动后 allowlist 条目失配（应报错而非静默放行）。
 2. 巨型生成文件（如 bindings）需要显式豁免类别。
 3. allowlist 条目对应文件已删除（应要求清理条目）。
+4. Rust 文件或生产源码目录是 symlink（应显式失败而非漏检其内容）。
 
 ## 7. Maintainer Decisions（2026-07-16）
 

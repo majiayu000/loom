@@ -1,7 +1,7 @@
 # GH523 Product Spec: 防止 CLI、Agent Skill 与生命周期文档契约漂移
 
 Issue: https://github.com/majiayu000/loom/issues/523
-Status: Draft for maintainer review
+Status: Maintainer architecture decisions approved; follow-up spec amendment
 Locale: zh-CN
 Complexity: medium
 
@@ -28,8 +28,9 @@ Complexity: medium
 
 ## 行为不变量
 
-1. **B-001** 每个发行版必须暴露稳定的 `cli_contract_version`，并在 JSON envelope 与 shipped
-   `loom-registry` Skill metadata 中可比较；缺失或空值视为不兼容。
+1. **B-001** 每个发行版必须暴露独立于 crate/package semver 的 SemVer
+   `cli_contract_version`，并在 JSON envelope 与 shipped `loom-registry` Skill metadata 中可比较；
+   缺失、为空或不是合法 SemVer 时视为不兼容。
 2. **B-002** shipped `loom-registry` Skill 必须声明支持的 contract version 范围；运行时 CLI
    不在范围内时，Skill 指令必须要求 agent 停止 mutation，并给出安装匹配版本的建议。
 3. **B-003** 仓库必须维护一个明确的 agent-facing surface inventory，至少覆盖 README、
@@ -53,9 +54,10 @@ Complexity: medium
 9. **B-009** release archive 中 binary、Skill metadata 和 contract inventory 必须来自同一
    release version；manifest 必须绑定 binary、shipped Skill 内容和 inventory 的 digest。混合旧
    Skill + 新 CLI 或新 Skill + 旧 CLI 的负例必须被拒绝。
-10. **B-010** 兼容范围变更必须是显式 reviewable diff；range-policy gate 必须接收并校验明确的
-    base tree/SHA，缺失或不可读取时 fail closed。patch release 不得在没有 migration note 的情况下
-    缩小兼容范围。
+10. **B-010** 兼容范围或 contract capability 变更必须是显式 reviewable diff；新增可被 shipped
+    Skill 依赖的 agent-facing command/flag/field 时至少递增 contract minor，breaking shape/semantics
+    变更递增 major，非能力修正才可递增 patch。range-policy gate 必须接收并校验明确的 base
+    tree/SHA，缺失或不可读取时 fail closed；任何兼容范围缩小都必须携带 migration note。
 11. **B-011** 高上下文文件只允许人类/评审过的补丁修改；检查工具发现漂移时只输出建议和失败
     证据，不得自动修复。
 12. **B-012** 并发构建或取消检查不得留下被部分更新的 generated contract artifact；发布只能
@@ -89,10 +91,12 @@ Complexity: medium
 7. 在公开 command 示例中加入 hidden flag（例如 `--max-cycles`）时，public visibility gate 失败。
 8. 两个 producer 发出相同 command text 时，fixture 只运行其中一个不能覆盖另一个 emitter id。
 9. range-policy check 未获得可读取的显式 diff base 时失败，不得只验证最终 tree 后通过。
+10. 新 shipped Skill 开始使用 additive command、但 CLI contract minor 未递增时，compatibility gate
+    失败；递增后“新 Skill + 旧 CLI”必须 fail closed，而同 major 的旧 Skill + 新 CLI 仍可按范围兼容。
 
-## 开放问题
+## Maintainer 架构决策（2026-07-16）
 
-1. `cli_contract_version` 是否与 crate semver 同步，还是独立递增；技术规格选择独立整数，等待
-   维护者确认。
-2. 当前 crate 只有 binary target。维护者需在“抽出可复用 parser library”与“增加只读 contract
-   checker surface”之间选择；未批准前不得假设 integration test 能直接 import `Cli`。
+1. `cli_contract_version` 使用独立 SemVer，不与 crate/package semver 同步。
+2. parser/checker 使用 package 内最小共享 library facade；不新增 public checker command/leaf。
+3. `docs/agent-command-surfaces.toml` 是 review-owned source of truth；scanner 与 release manifest
+   只能消费和验证，不得自动改写它。

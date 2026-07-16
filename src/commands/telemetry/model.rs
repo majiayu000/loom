@@ -4,7 +4,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 pub(super) const TELEMETRY_SCHEMA_VERSION: u32 = 1;
-pub(super) const TELEMETRY_EVENT_SCHEMA_VERSION: u32 = 2;
+pub(super) const TELEMETRY_EVENT_SCHEMA_VERSION: u32 = 3;
 pub(super) const DEFAULT_RETENTION_DAYS: u32 = 90;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -72,6 +72,8 @@ pub(super) struct TelemetryEvent {
     pub event_type: TelemetryEventType,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub skill_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub observed_skill_name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub skillset_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -212,6 +214,7 @@ impl Default for TelemetryPrivacy {
 pub(crate) struct TelemetryEventDraft {
     pub(crate) event_type: TelemetryEventType,
     pub(crate) skill_id: Option<String>,
+    pub(crate) observed_skill_name: Option<String>,
     pub(crate) skillset_id: Option<String>,
     pub(crate) agent: Option<String>,
     pub(crate) workspace: Option<PathBuf>,
@@ -219,6 +222,7 @@ pub(crate) struct TelemetryEventDraft {
     pub(crate) task: Option<String>,
     pub(crate) timestamp: DateTime<Utc>,
     pub(crate) metrics: TelemetryMetrics,
+    pub(crate) event_id_override: Option<String>,
 }
 
 impl TelemetryEventDraft {
@@ -226,6 +230,7 @@ impl TelemetryEventDraft {
         Self {
             event_type,
             skill_id: None,
+            observed_skill_name: None,
             skillset_id: None,
             agent: None,
             workspace: None,
@@ -233,6 +238,7 @@ impl TelemetryEventDraft {
             task: None,
             timestamp: Utc::now(),
             metrics: TelemetryMetrics::default(),
+            event_id_override: None,
         }
     }
 }

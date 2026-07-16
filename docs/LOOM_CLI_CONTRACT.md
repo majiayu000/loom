@@ -42,7 +42,7 @@ Top-level command groups:
 8. `target`
 9. `skill`
 10. `skillset`
-11. `telemetry`
+11. `telemetry` (including read-only/durable agent-log ingest)
 12. `provider`
 13. `catalog`
 14. `package`

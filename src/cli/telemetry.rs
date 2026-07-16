@@ -11,12 +11,37 @@ pub enum TelemetryCommand {
     Enable(TelemetryEnableArgs),
     #[command(about = "Disable local telemetry writes")]
     Disable,
+    #[command(about = "Ingest redacted skill invocations from supported agent session logs")]
+    Ingest(TelemetryIngestArgs),
     #[command(about = "Aggregate local telemetry events into a privacy-preserving report")]
     Report(TelemetryReportArgs),
     #[command(about = "Export redacted telemetry events to JSONL or CSV")]
     Export(TelemetryExportArgs),
     #[command(about = "Preview or confirm deletion of selected telemetry events")]
     Purge(TelemetryPurgeArgs),
+}
+
+#[derive(Debug, Clone, Args, Serialize)]
+pub struct TelemetryIngestArgs {
+    /// Agent session logs to scan.
+    #[arg(long, value_enum)]
+    pub agent: TelemetryIngestAgent,
+
+    /// Include invocations at or after this date or RFC3339 timestamp.
+    #[arg(long)]
+    pub since: Option<String>,
+
+    /// Scan and report candidates without writing events or cursor state.
+    #[arg(long)]
+    pub dry_run: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TelemetryIngestAgent {
+    Claude,
+    Codex,
+    All,
 }
 
 #[derive(Debug, Clone, Args, Serialize)]

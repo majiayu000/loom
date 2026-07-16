@@ -1,0 +1,3 @@
+{"id":"codex-session-1","session_id":"codex-session","timestamp":"2026-07-01T10:05:00Z","type":"skill_activation","skill":"retired-skill","tool_call_id":"call-1"}
+{"id":"codex-session-2","session_id":"codex-session","timestamp":"2026-07-01T10:06:00Z","type":"command_activation","command":"demo","tool_call_id":"call-2"}
+{"id":"codex-session-3","session_id":"codex-session","timestamp":"2026-07-01T10:07:00Z","type":"command_activation","command":"bad/name","tool_call_id":"call-3"}

@@ -1,0 +1,673 @@
+mod claude;
+mod codex;
+mod cursor;
+
+use std::collections::{BTreeMap, BTreeSet};
+use std::env;
+use std::fs;
+use std::fs::File;
+use std::io::Read;
+use std::path::{Path, PathBuf};
+use std::time::Duration;
+
+use chrono::{DateTime, Utc};
+use serde::Serialize;
+use serde_json::{Value, json};
+use walkdir::WalkDir;
+
+use crate::cli::{TelemetryIngestAgent, TelemetryIngestArgs};
+use crate::envelope::Meta;
+use crate::error_actions::NextAction;
+use crate::state::{AppContext, home_dir};
+use crate::types::ErrorCode;
+
+use super::super::helpers::{map_io, map_lock, map_registry_state};
+use super::super::{App, CommandFailure, build_skill_read_model};
+use super::model::{TelemetryEventDraft, TelemetryEventType};
+use super::store::{
+    append_events_deduped_locked, observed_skill_name_allowed, parse_cutoff, read_config,
+    read_event_log, session_hash_for_text,
+};
+use cursor::{IngestCursor, SourceCheckpoint};
+
+const MAX_CAS_ATTEMPTS: usize = 50;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum Agent {
+    Claude,
+    Codex,
+}
+
+impl Agent {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Claude => "claude",
+            Self::Codex => "codex",
+        }
+    }
+}
+
+#[derive(Debug)]
+pub(super) struct ImportedInvocation {
+    name: String,
+    identity: String,
+    ordinal: usize,
+}
+
+#[derive(Debug)]
+pub(super) struct ImportedRecord {
+    stable_record_key: String,
+    session_id: String,
+    timestamp: DateTime<Utc>,
+    invocations: Vec<ImportedInvocation>,
+}
+
+struct EventIdentityInput<'a> {
+    agent: Agent,
+    session_hash: &'a str,
+    skill_name: &'a str,
+    timestamp: DateTime<Utc>,
+    logical_source_key: &'a str,
+    stable_record_key: &'a str,
+    invocation_identity: &'a str,
+    ordinal: usize,
+}
+
+#[derive(Debug)]
+pub(super) enum ParseOutcome {
+    Ignored,
+    Rejected(&'static str),
+    Record(ImportedRecord),
+}
+
+#[derive(Debug, Clone, Default, Serialize)]
+struct AgentStats {
+    scanned_files: usize,
+    scanned_events: usize,
+    ingested: usize,
+    duplicates_skipped: usize,
+    window_skipped: usize,
+    malformed: usize,
+    pending_partial: usize,
+    rejected: usize,
+}
+
+struct SourcePlan {
+    agent: Agent,
+    source_key: String,
+    expected: Option<SourceCheckpoint>,
+    checkpoint: SourceCheckpoint,
+    drafts: Vec<TelemetryEventDraft>,
+}
+
+struct ScanPlan {
+    agents: Vec<Agent>,
+    stats: BTreeMap<Agent, AgentStats>,
+    sources: Vec<SourcePlan>,
+    reset_reasons: BTreeMap<String, usize>,
+    rejected_reasons: BTreeMap<String, usize>,
+    unmatched: BTreeMap<(String, String), usize>,
+    since: Option<DateTime<Utc>>,
+}
+
+enum CommitOutcome {
+    Retry,
+    Committed {
+        appended_by_agent: BTreeMap<Agent, usize>,
+        duplicates_by_agent: BTreeMap<Agent, usize>,
+        cursor_advanced: bool,
+    },
+}
+
+impl App {
+    pub(super) fn cmd_telemetry_ingest(
+        &self,
+        args: &TelemetryIngestArgs,
+    ) -> std::result::Result<(Value, Meta), CommandFailure> {
+        let since = parse_cutoff("--since", args.since.as_deref())?;
+        let agents = selected_agents(args.agent);
+        if !args.dry_run {
+            ensure_ingest_enabled(&self.ctx)?;
+        }
+        for _attempt in 0..MAX_CAS_ATTEMPTS {
+            let mut plan = scan_all(&self.ctx, &agents, since)?;
+            if args.dry_run {
+                preview_dedupe(&self.ctx, &mut plan)?;
+                return Ok((plan_json(&plan, true, false)?, Meta::default()));
+            }
+            match commit_plan(&self.ctx, &plan)? {
+                CommitOutcome::Retry => {
+                    std::thread::sleep(Duration::from_millis(20));
+                    continue;
+                }
+                CommitOutcome::Committed {
+                    appended_by_agent,
+                    duplicates_by_agent,
+                    cursor_advanced,
+                } => {
+                    for agent in &agents {
+                        let stats = plan.stats.entry(*agent).or_default();
+                        stats.ingested = appended_by_agent.get(agent).copied().unwrap_or_default();
+                        stats.duplicates_skipped =
+                            duplicates_by_agent.get(agent).copied().unwrap_or_default();
+                    }
+                    return Ok((plan_json(&plan, false, cursor_advanced)?, Meta::default()));
+                }
+            }
+        }
+        Err(CommandFailure::new(
+            ErrorCode::LockBusy,
+            "telemetry ingest cursor changed during all compare-and-commit retries",
+        ))
+    }
+}
+
+fn selected_agents(selected: TelemetryIngestAgent) -> Vec<Agent> {
+    match selected {
+        TelemetryIngestAgent::Claude => vec![Agent::Claude],
+        TelemetryIngestAgent::Codex => vec![Agent::Codex],
+        TelemetryIngestAgent::All => vec![Agent::Claude, Agent::Codex],
+    }
+}
+
+fn ensure_ingest_enabled(ctx: &AppContext) -> std::result::Result<(), CommandFailure> {
+    if read_config(ctx)?.is_some_and(|config| config.enabled) {
+        return Ok(());
+    }
+    let mut failure = CommandFailure::new(
+        ErrorCode::PolicyBlocked,
+        "telemetry ingest requires local telemetry to be enabled",
+    );
+    failure.next_actions.push(NextAction::new(
+        "loom telemetry enable --local-only --json",
+        "enable the redacted local telemetry store before ingesting agent logs",
+    ));
+    Err(failure)
+}
+
+fn scan_all(
+    ctx: &AppContext,
+    agents: &[Agent],
+    since: Option<DateTime<Utc>>,
+) -> std::result::Result<ScanPlan, CommandFailure> {
+    let inventory = build_skill_read_model(ctx).map_err(map_registry_state)?;
+    let registered = inventory
+        .skills
+        .iter()
+        .filter(|skill| skill["source_status"].as_str() == Some("present"))
+        .filter_map(|skill| skill["skill_id"].as_str().map(str::to_string))
+        .collect::<BTreeSet<_>>();
+    let cursor = cursor::read_cursor(ctx)?;
+    let mut plan = ScanPlan {
+        agents: agents.to_vec(),
+        stats: BTreeMap::new(),
+        sources: Vec::new(),
+        reset_reasons: BTreeMap::new(),
+        rejected_reasons: BTreeMap::new(),
+        unmatched: BTreeMap::new(),
+        since,
+    };
+    for agent in agents {
+        scan_agent(ctx, *agent, since, &registered, &cursor, &mut plan)?;
+    }
+    Ok(plan)
+}
+
+fn scan_agent(
+    _ctx: &AppContext,
+    agent: Agent,
+    since: Option<DateTime<Utc>>,
+    registered: &BTreeSet<String>,
+    ingest_cursor: &IngestCursor,
+    plan: &mut ScanPlan,
+) -> std::result::Result<(), CommandFailure> {
+    let home = resolve_agent_home(agent)?;
+    let sources = discover_sources(agent, &home, since)?;
+    plan.stats.entry(agent).or_default().scanned_files = sources.len();
+    for source in sources {
+        scan_source(
+            agent,
+            &home,
+            &source,
+            since,
+            registered,
+            ingest_cursor,
+            plan,
+        )?;
+    }
+    Ok(())
+}
+
+fn scan_source(
+    agent: Agent,
+    home: &Path,
+    source: &Path,
+    since: Option<DateTime<Utc>>,
+    registered: &BTreeSet<String>,
+    ingest_cursor: &IngestCursor,
+    plan: &mut ScanPlan,
+) -> std::result::Result<(), CommandFailure> {
+    let mut file = File::open(source).map_err(map_io)?;
+    let generation_identity = cursor::source_generation_identity(&file.metadata().map_err(map_io)?);
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes).map_err(map_io)?;
+    let source_identity = canonical_source_identity(agent, home, source, &bytes)?;
+    let source_key = cursor::logical_source_key(agent.as_str(), &source_identity);
+    let expected = ingest_cursor.sources.get(&source_key).cloned();
+    let window = cursor::scan_window(&bytes, &generation_identity, expected.as_ref(), since)?;
+    if let Some(reason) = window.reset_reason {
+        checked_increment(&mut plan.reset_reasons, reason.as_str().to_string())?;
+    }
+    let mut drafts = Vec::new();
+    for raw in bytes[window.start..window.complete_end].split(|byte| *byte == b'\n') {
+        if raw.is_empty() {
+            continue;
+        }
+        checked_field_add(
+            &mut plan.stats.entry(agent).or_default().scanned_events,
+            1,
+            "scanned_events",
+        )?;
+        let value: Value = match serde_json::from_slice(raw) {
+            Ok(value) => value,
+            Err(_) => {
+                checked_field_add(
+                    &mut plan.stats.entry(agent).or_default().malformed,
+                    1,
+                    "malformed",
+                )?;
+                continue;
+            }
+        };
+        match parse_agent_record(agent, &value) {
+            ParseOutcome::Ignored => {}
+            ParseOutcome::Rejected(reason) => reject(plan, agent, reason)?,
+            ParseOutcome::Record(record) => {
+                if since.is_some_and(|cutoff| record.timestamp < cutoff) {
+                    checked_field_add(
+                        &mut plan.stats.entry(agent).or_default().window_skipped,
+                        record.invocations.len(),
+                        "window_skipped",
+                    )?;
+                    continue;
+                }
+                for invocation in record.invocations {
+                    if !observed_skill_name_allowed(&invocation.name) {
+                        reject(plan, agent, "invalid_observed_skill_name")?;
+                        continue;
+                    }
+                    let session_hash = session_hash_for_text(&record.session_id);
+                    let matched = registered.contains(&invocation.name);
+                    if !matched {
+                        checked_increment(
+                            &mut plan.unmatched,
+                            (invocation.name.clone(), agent.as_str().to_string()),
+                        )?;
+                    }
+                    let mut draft = TelemetryEventDraft::new(TelemetryEventType::SkillInvocation);
+                    draft.skill_id = matched.then(|| invocation.name.clone());
+                    draft.observed_skill_name = (!matched).then(|| invocation.name.clone());
+                    draft.agent = Some(agent.as_str().to_string());
+                    draft.session_id = Some(record.session_id.clone());
+                    draft.timestamp = record.timestamp;
+                    draft.event_id_override = Some(deterministic_event_id(EventIdentityInput {
+                        agent,
+                        session_hash: &session_hash,
+                        skill_name: &invocation.name,
+                        timestamp: record.timestamp,
+                        logical_source_key: &source_key,
+                        stable_record_key: &record.stable_record_key,
+                        invocation_identity: &invocation.identity,
+                        ordinal: invocation.ordinal,
+                    }));
+                    drafts.push(draft);
+                }
+            }
+        }
+    }
+    if window.pending_partial {
+        checked_field_add(
+            &mut plan.stats.entry(agent).or_default().pending_partial,
+            1,
+            "pending_partial",
+        )?;
+    }
+    plan.sources.push(SourcePlan {
+        agent,
+        source_key,
+        expected,
+        checkpoint: cursor::checkpoint_for(
+            &bytes,
+            &generation_identity,
+            window.complete_end,
+            window.covered_since,
+        )?,
+        drafts,
+    });
+    Ok(())
+}
+
+fn parse_agent_record(agent: Agent, value: &Value) -> ParseOutcome {
+    match agent {
+        Agent::Claude => claude::parse_record(value),
+        Agent::Codex => codex::parse_record(value),
+    }
+}
+
+fn canonical_source_identity(
+    agent: Agent,
+    home: &Path,
+    source: &Path,
+    bytes: &[u8],
+) -> std::result::Result<String, CommandFailure> {
+    let canonical_home = fs::canonicalize(home).map_err(map_io)?;
+    let canonical_source = fs::canonicalize(source).map_err(map_io)?;
+    let relative = canonical_source
+        .strip_prefix(&canonical_home)
+        .map_err(|_| {
+            CommandFailure::new(
+                ErrorCode::PolicyBlocked,
+                "telemetry source must resolve below the selected agent home",
+            )
+        })?
+        .to_string_lossy()
+        .replace('\\', "/");
+    if agent == Agent::Codex && relative == "history.jsonl" {
+        return Ok("history".to_string());
+    }
+    for raw in bytes.split(|byte| *byte == b'\n') {
+        let Ok(value) = serde_json::from_slice::<Value>(raw) else {
+            continue;
+        };
+        if let ParseOutcome::Record(record) = parse_agent_record(agent, &value) {
+            return Ok(format!(
+                "session:{}",
+                session_hash_for_text(&record.session_id)
+            ));
+        }
+    }
+    Ok(format!("path:{relative}"))
+}
+
+fn resolve_agent_home(agent: Agent) -> std::result::Result<PathBuf, CommandFailure> {
+    let (loom_key, native_key, suffix) = match agent {
+        Agent::Claude => ("LOOM_CLAUDE_HOME", "CLAUDE_HOME", ".claude"),
+        Agent::Codex => ("LOOM_CODEX_HOME", "CODEX_HOME", ".codex"),
+    };
+    env_path(loom_key)
+        .or_else(|| env_path(native_key))
+        .or_else(|| home_dir().map(|home| home.join(suffix)))
+        .ok_or_else(|| {
+            CommandFailure::new(
+                ErrorCode::ArgInvalid,
+                format!("cannot resolve {} log home", agent.as_str()),
+            )
+        })
+}
+
+fn env_path(key: &str) -> Option<PathBuf> {
+    env::var_os(key)
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+}
+
+fn discover_sources(
+    agent: Agent,
+    home: &Path,
+    since: Option<DateTime<Utc>>,
+) -> std::result::Result<Vec<PathBuf>, CommandFailure> {
+    if !home.exists() {
+        return Ok(Vec::new());
+    }
+    let mut sources = Vec::new();
+    match agent {
+        Agent::Claude => collect_jsonl(&home.join("projects"), None, &mut sources)?,
+        Agent::Codex => {
+            let history = home.join("history.jsonl");
+            if history.is_file() {
+                sources.push(history);
+            }
+            collect_jsonl(&home.join("sessions"), since, &mut sources)?;
+        }
+    }
+    sources.sort();
+    sources.dedup();
+    Ok(sources)
+}
+
+fn collect_jsonl(
+    root: &Path,
+    modified_since: Option<DateTime<Utc>>,
+    out: &mut Vec<PathBuf>,
+) -> std::result::Result<(), CommandFailure> {
+    if !root.exists() {
+        return Ok(());
+    }
+    for entry in WalkDir::new(root).follow_links(false) {
+        let entry = entry.map_err(|err| map_io(std::io::Error::other(err)))?;
+        if !entry.file_type().is_file()
+            || entry.path().extension().and_then(|value| value.to_str()) != Some("jsonl")
+        {
+            continue;
+        }
+        if let Some(cutoff) = modified_since {
+            let modified = entry
+                .metadata()
+                .map_err(|err| map_io(std::io::Error::other(err)))?
+                .modified();
+            if let Ok(modified) = modified {
+                let modified: DateTime<Utc> = modified.into();
+                if modified < cutoff {
+                    continue;
+                }
+            }
+        }
+        out.push(entry.into_path());
+    }
+    Ok(())
+}
+
+fn commit_plan(
+    ctx: &AppContext,
+    plan: &ScanPlan,
+) -> std::result::Result<CommitOutcome, CommandFailure> {
+    let _workspace = match ctx.lock_workspace() {
+        Ok(workspace) => workspace,
+        Err(err) if err.to_string().contains("LOCK_BUSY") => return Ok(CommitOutcome::Retry),
+        Err(err) => return Err(map_lock(err)),
+    };
+    ensure_ingest_enabled(ctx)?;
+    let mut current = cursor::read_cursor(ctx)?;
+    if plan
+        .sources
+        .iter()
+        .any(|source| current.sources.get(&source.source_key).cloned() != source.expected)
+    {
+        return Ok(CommitOutcome::Retry);
+    }
+    let mut draft_agents = BTreeMap::<String, Agent>::new();
+    let mut drafts = Vec::new();
+    for source in &plan.sources {
+        for draft in &source.drafts {
+            if let Some(event_id) = draft.event_id_override.as_ref() {
+                draft_agents.insert(event_id.clone(), source.agent);
+            }
+            drafts.push(draft.clone());
+        }
+    }
+    let result = append_events_deduped_locked(ctx, drafts)?;
+    let mut appended_by_agent = BTreeMap::new();
+    for event in &result.appended {
+        if let Some(agent) = draft_agents.get(&event.event_id) {
+            checked_increment(&mut appended_by_agent, *agent)?;
+        }
+    }
+    let mut candidates_by_agent = BTreeMap::new();
+    for source in &plan.sources {
+        checked_field_add(
+            candidates_by_agent.entry(source.agent).or_default(),
+            source.drafts.len(),
+            "candidate events",
+        )?;
+    }
+    let mut duplicates_by_agent = BTreeMap::new();
+    for agent in &plan.agents {
+        let candidates = candidates_by_agent.get(agent).copied().unwrap_or_default();
+        let appended = appended_by_agent.get(agent).copied().unwrap_or_default();
+        duplicates_by_agent.insert(*agent, candidates.saturating_sub(appended));
+    }
+    debug_assert_eq!(
+        checked_map_sum(duplicates_by_agent.values().copied(), "duplicates")?,
+        result.duplicates
+    );
+    let mut cursor_advanced = false;
+    for source in &plan.sources {
+        if current.sources.get(&source.source_key) != Some(&source.checkpoint) {
+            cursor_advanced = true;
+        }
+        current
+            .sources
+            .insert(source.source_key.clone(), source.checkpoint.clone());
+    }
+    cursor::write_cursor_locked(ctx, &current)?;
+    Ok(CommitOutcome::Committed {
+        appended_by_agent,
+        duplicates_by_agent,
+        cursor_advanced,
+    })
+}
+
+fn preview_dedupe(
+    ctx: &AppContext,
+    plan: &mut ScanPlan,
+) -> std::result::Result<(), CommandFailure> {
+    let mut ids = read_event_log(ctx)?
+        .events
+        .into_iter()
+        .map(|entry| entry.event.event_id)
+        .collect::<BTreeSet<_>>();
+    for source in &plan.sources {
+        for draft in &source.drafts {
+            let Some(event_id) = draft.event_id_override.as_ref() else {
+                continue;
+            };
+            let stats = plan.stats.entry(source.agent).or_default();
+            if ids.insert(event_id.clone()) {
+                checked_field_add(&mut stats.ingested, 1, "ingested")?;
+            } else {
+                checked_field_add(&mut stats.duplicates_skipped, 1, "duplicates_skipped")?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn deterministic_event_id(input: EventIdentityInput<'_>) -> String {
+    let ordinal = input.ordinal.to_string();
+    let timestamp = input.timestamp.to_rfc3339();
+    let digest = cursor::hash_fields(
+        "loom.telemetry.import-event.v1",
+        &[
+            input.agent.as_str(),
+            input.session_hash,
+            input.skill_name,
+            &timestamp,
+            input.logical_source_key,
+            input.stable_record_key,
+            input.invocation_identity,
+            &ordinal,
+        ],
+    );
+    format!("evt_{}", digest.trim_start_matches("sha256:"))
+}
+
+fn plan_json(
+    plan: &ScanPlan,
+    dry_run: bool,
+    cursor_advanced: bool,
+) -> std::result::Result<Value, CommandFailure> {
+    let by_agent = plan
+        .agents
+        .iter()
+        .map(|agent| {
+            (
+                agent.as_str().to_string(),
+                serde_json::to_value(plan.stats.get(agent).cloned().unwrap_or_default())
+                    .expect("agent stats serialize"),
+            )
+        })
+        .collect::<serde_json::Map<_, _>>();
+    let sum = |field: fn(&AgentStats) -> usize, label: &str| {
+        checked_map_sum(plan.stats.values().map(field), label)
+    };
+    let unmatched = plan
+        .unmatched
+        .iter()
+        .map(|((name, agent), count)| json!({"name": name, "agent": agent, "count": count}))
+        .collect::<Vec<_>>();
+    Ok(json!({
+        "agents": plan.agents.iter().map(|agent| agent.as_str()).collect::<Vec<_>>(),
+        "by_agent": by_agent,
+        "since": plan.since.map(|value| value.to_rfc3339()),
+        "dry_run": dry_run,
+        "scanned_files": sum(|stats| stats.scanned_files, "scanned_files")?,
+        "scanned_events": sum(|stats| stats.scanned_events, "scanned_events")?,
+        "ingested": sum(|stats| stats.ingested, "ingested")?,
+        "duplicates_skipped": sum(|stats| stats.duplicates_skipped, "duplicates_skipped")?,
+        "window_skipped": sum(|stats| stats.window_skipped, "window_skipped")?,
+        "malformed": sum(|stats| stats.malformed, "malformed")?,
+        "pending_partial": sum(|stats| stats.pending_partial, "pending_partial")?,
+        "sources_reset": {"count": checked_map_sum(plan.reset_reasons.values().copied(), "sources_reset")?, "reasons": plan.reset_reasons},
+        "rejected": {"count": checked_map_sum(plan.rejected_reasons.values().copied(), "rejected")?, "reasons": plan.rejected_reasons},
+        "unmatched": unmatched,
+        "cursor_advanced": cursor_advanced,
+    }))
+}
+
+fn checked_map_sum(
+    mut values: impl Iterator<Item = usize>,
+    field: &str,
+) -> std::result::Result<usize, CommandFailure> {
+    values.try_fold(0usize, |total, value| {
+        total.checked_add(value).ok_or_else(|| {
+            CommandFailure::new(
+                ErrorCode::InternalError,
+                format!("telemetry ingest {field} overflow"),
+            )
+        })
+    })
+}
+
+fn reject(
+    plan: &mut ScanPlan,
+    agent: Agent,
+    reason: &'static str,
+) -> std::result::Result<(), CommandFailure> {
+    checked_field_add(
+        &mut plan.stats.entry(agent).or_default().rejected,
+        1,
+        "rejected",
+    )?;
+    checked_increment(&mut plan.rejected_reasons, reason.to_string())
+}
+
+fn checked_increment<K: Ord + Clone>(
+    counts: &mut BTreeMap<K, usize>,
+    key: K,
+) -> std::result::Result<(), CommandFailure> {
+    checked_field_add(counts.entry(key).or_default(), 1, "counter")
+}
+
+fn checked_field_add(
+    slot: &mut usize,
+    value: usize,
+    field: &str,
+) -> std::result::Result<(), CommandFailure> {
+    *slot = slot.checked_add(value).ok_or_else(|| {
+        CommandFailure::new(
+            ErrorCode::InternalError,
+            format!("telemetry ingest {field} overflow"),
+        )
+    })?;
+    Ok(())
+}

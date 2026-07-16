@@ -1,7 +1,9 @@
 mod emitters;
 mod evidence;
 mod export;
+mod ingest;
 mod model;
+mod query;
 mod store;
 
 use std::collections::BTreeMap;
@@ -31,6 +33,10 @@ pub(crate) use evidence::SkillTelemetryEvidenceCache;
 use export::{export_csv, export_format_label, export_jsonl};
 pub(crate) use model::{RecommendationFeedback, failure_category_allowed};
 use model::{TelemetryConfig, TelemetryEventDraft, TelemetryEventType, TelemetryMetrics};
+use query::{
+    NormalizedTelemetryDataset, NormalizedTelemetryRow, TelemetryFilters, filtered_rows,
+    load_dataset,
+};
 use store::{
     MalformedTelemetryLine, TelemetryLog, TelemetryLogEntry, config_path, events_path,
     output_path_outside_state, parse_cutoff, purge_token, read_config, read_event_log,
@@ -46,6 +52,7 @@ impl App {
             TelemetryCommand::Status => self.cmd_telemetry_status(),
             TelemetryCommand::Enable(args) => self.cmd_telemetry_enable(args),
             TelemetryCommand::Disable => self.cmd_telemetry_disable(),
+            TelemetryCommand::Ingest(args) => self.cmd_telemetry_ingest(args),
             TelemetryCommand::Report(args) => self.cmd_telemetry_report(args),
             TelemetryCommand::Export(args) => self.cmd_telemetry_export(args),
             TelemetryCommand::Purge(args) => self.cmd_telemetry_purge(args),
@@ -124,13 +131,12 @@ impl App {
         args: &TelemetryReportArgs,
     ) -> std::result::Result<(Value, Meta), CommandFailure> {
         let filters = filters_from_args(args)?;
-        let config = read_config(&self.ctx)?;
-        let log = read_event_log(&self.ctx)?;
-        let report = build_report(&self.ctx, config.as_ref(), &log, &filters)?;
+        let dataset = load_dataset(&self.ctx)?;
+        let report = build_report(&self.ctx, &dataset, &filters)?;
         Ok((
             report,
             Meta {
-                warnings: malformed_warnings(&log.malformed),
+                warnings: malformed_warnings(&dataset.malformed),
                 ..Meta::default()
             },
         ))
@@ -322,16 +328,16 @@ pub(crate) fn skill_telemetry_summary(
         skill: Some(skill.to_string()),
         ..TelemetryFilters::default()
     };
-    let config = read_config(ctx)?;
-    let log = read_event_log(ctx)?;
-    let entries = filtered_events(&log.events, &filters);
-    let aggregate = aggregate_entries(&entries);
+    let dataset = load_dataset(ctx)?;
+    let entries = filtered_rows(&dataset, &filters);
+    let aggregate = aggregate_entries(&entries)?;
+    let config = dataset.config.as_ref();
     Ok(json!({
-        "enabled": config.as_ref().is_some_and(|config| config.enabled),
+        "enabled": dataset.telemetry_enabled,
         "configured": config.is_some(),
-        "status": if config.as_ref().is_some_and(|config| config.enabled) { "enabled" } else { "disabled" },
+        "status": if dataset.telemetry_enabled { "enabled" } else { "disabled" },
         "events": aggregate.events,
-        "malformed_events": log.malformed.len(),
+        "malformed_events": dataset.malformed_event_count,
         "last_event_at": aggregate.last_event_at.map(|value| value.to_rfc3339()),
         "last_invoked_at": aggregate.last_invoked_at.map(|value| value.to_rfc3339()),
         "last_eval_at": aggregate.last_eval_at.map(|value| value.to_rfc3339()),
@@ -345,15 +351,6 @@ pub(crate) fn skill_telemetry_summary(
         "recommendation_feedback": feedback_json(&aggregate),
         "instrumentation": emitters::instrumentation_json(),
     }))
-}
-
-#[derive(Default)]
-struct TelemetryFilters {
-    skill: Option<String>,
-    skillset: Option<String>,
-    agent: Option<String>,
-    workspace_hash: Option<String>,
-    since: Option<DateTime<Utc>>,
 }
 
 #[derive(Default)]
@@ -371,7 +368,8 @@ struct Aggregate {
     commands: u64,
     duration_ms: u64,
     cost_seen: bool,
-    baseline_deltas: Vec<f64>,
+    baseline_delta_sum: f64,
+    baseline_delta_count: u64,
     safety_events: u64,
     safety_findings: u64,
     dependency_findings: u64,
@@ -416,40 +414,37 @@ fn filters_from_args(
 
 fn build_report(
     ctx: &AppContext,
-    config: Option<&TelemetryConfig>,
-    log: &TelemetryLog,
+    dataset: &NormalizedTelemetryDataset,
     filters: &TelemetryFilters,
 ) -> std::result::Result<Value, CommandFailure> {
-    let effective = config
+    let effective = dataset
+        .config
+        .as_ref()
         .cloned()
         .unwrap_or_else(TelemetryConfig::disabled_local);
-    let entries = filtered_events(&log.events, filters);
-    let aggregate = aggregate_entries(&entries);
-    let mut skills: BTreeMap<String, Value> = BTreeMap::new();
+    let entries = filtered_rows(dataset, filters);
+    let aggregate = aggregate_entries(&entries)?;
+    let mut grouped = BTreeMap::<String, Vec<&NormalizedTelemetryRow>>::new();
     for entry in &entries {
-        let skill = entry
-            .event
-            .skill_id
-            .clone()
-            .unwrap_or_else(|| "unknown".to_string());
-        let skill_entries = entries
-            .iter()
-            .copied()
-            .filter(|candidate| candidate.event.skill_id.as_deref() == Some(&skill))
-            .collect::<Vec<_>>();
-        skills.insert(skill, aggregate_json(&aggregate_entries(&skill_entries)));
+        if let Some(skill) = entry.skill_ref.label() {
+            grouped.entry(skill.to_string()).or_default().push(entry);
+        }
+    }
+    let mut skills = BTreeMap::<String, Value>::new();
+    for (skill, rows) in grouped {
+        skills.insert(skill, aggregate_json(&aggregate_entries(&rows)?));
     }
     Ok(json!({
         "schema_version": model::TELEMETRY_SCHEMA_VERSION,
-        "enabled": effective.enabled,
+        "enabled": dataset.telemetry_enabled,
         "mode": effective.mode.as_str(),
         "retention_days": effective.retention_days,
         "storage": storage_json(ctx),
         "privacy": privacy_json(effective.redaction.as_str()),
         "filters": filters_json(filters),
-        "events_total": log.events.len(),
+        "events_total": dataset.persisted_event_count,
         "matched_events": entries.len(),
-        "malformed_events": malformed_json(&log.malformed),
+        "malformed_events": malformed_json(&dataset.malformed),
         "instrumentation": emitters::instrumentation_json(),
         "summary": aggregate_json(&aggregate),
         "skills": skills,
@@ -461,7 +456,9 @@ fn build_report(
     }))
 }
 
-fn aggregate_entries(entries: &[&TelemetryLogEntry]) -> Aggregate {
+fn aggregate_entries(
+    entries: &[&NormalizedTelemetryRow],
+) -> std::result::Result<Aggregate, CommandFailure> {
     let mut aggregate = Aggregate {
         events: entries.len(),
         ..Aggregate::default()
@@ -470,50 +467,94 @@ fn aggregate_entries(entries: &[&TelemetryLogEntry]) -> Aggregate {
         let event = &entry.event;
         max_timestamp(&mut aggregate.last_event_at, event.timestamp);
         match event.event_type {
-            TelemetryEventType::SkillActivation => aggregate.activations += 1,
-            TelemetryEventType::SkillDeactivation => aggregate.deactivations += 1,
+            TelemetryEventType::SkillActivation => checked_add(&mut aggregate.activations, 1)?,
+            TelemetryEventType::SkillDeactivation => checked_add(&mut aggregate.deactivations, 1)?,
             TelemetryEventType::SkillInvocation => {
-                aggregate.invocations += 1;
+                checked_add(&mut aggregate.invocations, 1)?;
                 max_timestamp(&mut aggregate.last_invoked_at, event.timestamp);
             }
             TelemetryEventType::SkillEval => {
-                aggregate.eval_runs += 1;
+                checked_add(&mut aggregate.eval_runs, 1)?;
                 max_timestamp(&mut aggregate.last_eval_at, event.timestamp);
                 match event.metrics.success {
                     Some(true) => {
-                        aggregate.eval_passed += 1;
+                        checked_add(&mut aggregate.eval_passed, 1)?;
                         max_timestamp(&mut aggregate.last_success_eval_at, event.timestamp);
                     }
-                    Some(false) => aggregate.eval_failed += 1,
+                    Some(false) => checked_add(&mut aggregate.eval_failed, 1)?,
                     None => {}
                 }
                 if let Some(delta) = event.metrics.baseline_delta {
-                    aggregate.baseline_deltas.push(delta);
+                    checked_float_add(&mut aggregate.baseline_delta_sum, delta)?;
+                    checked_add(&mut aggregate.baseline_delta_count, 1)?;
                 }
             }
-            TelemetryEventType::SkillSafety => aggregate.safety_events += 1,
+            TelemetryEventType::SkillSafety => checked_add(&mut aggregate.safety_events, 1)?,
             TelemetryEventType::SkillError => {
-                aggregate.errors += 1;
+                checked_add(&mut aggregate.errors, 1)?;
                 max_timestamp(&mut aggregate.last_error_at, event.timestamp);
             }
             TelemetryEventType::RecommendationFeedback => match event.metrics.feedback {
-                Some(RecommendationFeedback::Accepted) => aggregate.feedback_accepted += 1,
-                Some(RecommendationFeedback::Rejected) => aggregate.feedback_rejected += 1,
-                Some(RecommendationFeedback::Ignored) => aggregate.feedback_ignored += 1,
+                Some(RecommendationFeedback::Accepted) => {
+                    checked_add(&mut aggregate.feedback_accepted, 1)?
+                }
+                Some(RecommendationFeedback::Rejected) => {
+                    checked_add(&mut aggregate.feedback_rejected, 1)?
+                }
+                Some(RecommendationFeedback::Ignored) => {
+                    checked_add(&mut aggregate.feedback_ignored, 1)?
+                }
                 None => {}
             },
         }
         if event.metrics.has_cost() {
             aggregate.cost_seen = true;
         }
-        aggregate.tokens_in += event.metrics.tokens_in.unwrap_or(0);
-        aggregate.tokens_out += event.metrics.tokens_out.unwrap_or(0);
-        aggregate.commands += event.metrics.commands.unwrap_or(0);
-        aggregate.duration_ms += event.metrics.duration_ms.unwrap_or(0);
-        aggregate.safety_findings += event.metrics.safety_findings.unwrap_or(0);
-        aggregate.dependency_findings += event.metrics.dependency_findings.unwrap_or(0);
+        checked_add(
+            &mut aggregate.tokens_in,
+            event.metrics.tokens_in.unwrap_or(0),
+        )?;
+        checked_add(
+            &mut aggregate.tokens_out,
+            event.metrics.tokens_out.unwrap_or(0),
+        )?;
+        checked_add(&mut aggregate.commands, event.metrics.commands.unwrap_or(0))?;
+        checked_add(
+            &mut aggregate.duration_ms,
+            event.metrics.duration_ms.unwrap_or(0),
+        )?;
+        checked_add(
+            &mut aggregate.safety_findings,
+            event.metrics.safety_findings.unwrap_or(0),
+        )?;
+        checked_add(
+            &mut aggregate.dependency_findings,
+            event.metrics.dependency_findings.unwrap_or(0),
+        )?;
     }
-    aggregate
+    Ok(aggregate)
+}
+
+fn checked_add(slot: &mut u64, value: u64) -> std::result::Result<(), CommandFailure> {
+    *slot = slot.checked_add(value).ok_or_else(|| {
+        CommandFailure::new(
+            ErrorCode::InternalError,
+            "telemetry report numeric aggregation overflow",
+        )
+    })?;
+    Ok(())
+}
+
+fn checked_float_add(slot: &mut f64, value: f64) -> std::result::Result<(), CommandFailure> {
+    let sum = *slot + value;
+    if !value.is_finite() || !sum.is_finite() {
+        return Err(CommandFailure::new(
+            ErrorCode::InternalError,
+            "telemetry report numeric aggregation overflow",
+        ));
+    }
+    *slot = sum;
+    Ok(())
 }
 
 fn aggregate_json(aggregate: &Aggregate) -> Value {
@@ -547,7 +588,7 @@ fn value_json(aggregate: &Aggregate) -> Value {
         "passed": aggregate.eval_passed,
         "failed": aggregate.eval_failed,
         "pass_rate": ratio(aggregate.eval_passed, aggregate.eval_runs),
-        "baseline_delta_avg": mean(&aggregate.baseline_deltas),
+        "baseline_delta_avg": mean(aggregate.baseline_delta_sum, aggregate.baseline_delta_count),
         "status": if aggregate.eval_runs > 0 { "available" } else { "missing" },
     })
 }
@@ -601,35 +642,6 @@ fn feedback_json(aggregate: &Aggregate) -> Value {
         "ignored": aggregate.feedback_ignored,
         "status": if total > 0 { "available" } else { "missing" },
     })
-}
-
-fn filtered_events<'a>(
-    entries: &'a [TelemetryLogEntry],
-    filters: &TelemetryFilters,
-) -> Vec<&'a TelemetryLogEntry> {
-    entries
-        .iter()
-        .filter(|entry| {
-            filters
-                .skill
-                .as_deref()
-                .is_none_or(|skill| entry.event.skill_id.as_deref() == Some(skill))
-                && filters
-                    .skillset
-                    .as_deref()
-                    .is_none_or(|skillset| entry.event.skillset_id.as_deref() == Some(skillset))
-                && filters
-                    .agent
-                    .as_deref()
-                    .is_none_or(|agent| entry.event.agent.as_deref() == Some(agent))
-                && filters.workspace_hash.as_deref().is_none_or(|workspace| {
-                    entry.event.workspace_hash.as_deref() == Some(workspace)
-                })
-                && filters
-                    .since
-                    .is_none_or(|since| entry.event.timestamp >= since)
-        })
-        .collect()
 }
 
 fn filters_json(filters: &TelemetryFilters) -> Value {
@@ -728,11 +740,11 @@ fn ratio(numerator: u64, denominator: u64) -> Option<f64> {
     }
 }
 
-fn mean(values: &[f64]) -> Option<f64> {
-    if values.is_empty() {
+fn mean(sum: f64, count: u64) -> Option<f64> {
+    if count == 0 {
         None
     } else {
-        Some(values.iter().sum::<f64>() / values.len() as f64)
+        Some(sum / count as f64)
     }
 }
 

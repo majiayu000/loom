@@ -1,0 +1,3 @@
+{"id":"codex-history-1","session_id":"codex-session","ts":1782900000,"activation":{"kind":"skill","name":"demo","id":"activation-1"}}
+{"id":"codex-history-2","session_id":"codex-session","ts":1782900001,"text":"Free text that mentions demo is not an activation."}
+{"session_id":"codex-session","ts":1782900002,"activation":{"kind":"skill","name":"demo","id":"activation-unknown"}}

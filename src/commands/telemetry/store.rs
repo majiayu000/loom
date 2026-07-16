@@ -1,10 +1,11 @@
+use std::collections::BTreeSet;
 use std::ffi::OsString;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
 use chrono::{DateTime, NaiveDate, TimeZone, Utc};
 
-use crate::fs_util::{append_jsonl_raw, write_atomic};
+use crate::fs_util::{append_jsonl_raw, append_lines, write_atomic};
 use crate::sha256::{Sha256, to_hex};
 use crate::state::AppContext;
 use crate::types::ErrorCode;
@@ -119,6 +120,111 @@ pub(crate) fn append_event_if_enabled(
     Ok(Some(event))
 }
 
+pub(super) struct AppendBatchResult {
+    pub(super) appended: Vec<TelemetryEvent>,
+    pub(super) duplicates: usize,
+}
+
+/// Append a validated batch while the caller holds the workspace lock.
+///
+/// The ingest compare-and-commit path owns locking so it can update its cursor
+/// in the same critical section without entering the public locking writer.
+pub(super) fn append_events_deduped_locked(
+    ctx: &AppContext,
+    drafts: Vec<TelemetryEventDraft>,
+) -> std::result::Result<AppendBatchResult, CommandFailure> {
+    ensure_event_log_append_boundary(ctx)?;
+    let mut ids = read_event_log(ctx)?
+        .events
+        .into_iter()
+        .map(|entry| entry.event.event_id)
+        .collect::<BTreeSet<_>>();
+    let prepared = drafts
+        .into_iter()
+        .map(|draft| {
+            let event = redacted_event_from_draft(draft)?;
+            validate_event(&event)?;
+            let raw = serde_json::to_string(&event).map_err(|err| {
+                CommandFailure::new(
+                    ErrorCode::InternalError,
+                    format!("failed to encode telemetry event: {err}"),
+                )
+            })?;
+            Ok((event, raw))
+        })
+        .collect::<std::result::Result<Vec<_>, CommandFailure>>()?;
+    let mut appended = Vec::new();
+    let mut serialized = Vec::new();
+    let mut duplicates = 0usize;
+    for (event, raw) in prepared {
+        if !ids.insert(event.event_id.clone()) {
+            duplicates = duplicates.checked_add(1).ok_or_else(|| {
+                CommandFailure::new(ErrorCode::InternalError, "duplicates counter overflow")
+            })?;
+            continue;
+        }
+        serialized.push(raw);
+        appended.push(event);
+    }
+    append_lines_recovering(ctx, &serialized)?;
+    Ok(AppendBatchResult {
+        appended,
+        duplicates,
+    })
+}
+
+fn ensure_event_log_append_boundary(ctx: &AppContext) -> std::result::Result<(), CommandFailure> {
+    let path = events_path(ctx);
+    let bytes = match fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(err) => return Err(map_io(err)),
+    };
+    if !bytes.is_empty() && bytes.last() != Some(&b'\n') {
+        return Err(CommandFailure::new(
+            ErrorCode::StateCorrupt,
+            "telemetry event log has an unterminated tail; refusing ingest cursor advance",
+        ));
+    }
+    Ok(())
+}
+
+fn append_lines_recovering(
+    ctx: &AppContext,
+    lines: &[String],
+) -> std::result::Result<(), CommandFailure> {
+    if lines.is_empty() {
+        return Ok(());
+    }
+    let path = events_path(ctx);
+    let original_len = match fs::metadata(&path) {
+        Ok(meta) => meta.len(),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => 0,
+        Err(err) => return Err(map_io(err)),
+    };
+    if let Err(append_error) = append_lines(&path, lines) {
+        let rollback = fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(false)
+            .open(&path)
+            .and_then(|file| {
+                file.set_len(original_len)?;
+                file.sync_all()
+            });
+        return match rollback {
+            Ok(()) => Err(map_io(append_error)),
+            Err(rollback_error) => Err(CommandFailure::new(
+                ErrorCode::StateCorrupt,
+                format!(
+                    "telemetry event append failed and rollback failed: append={append_error}; rollback={rollback_error}"
+                ),
+            )),
+        };
+    }
+    Ok(())
+}
+
 pub(super) fn read_event_log(
     ctx: &AppContext,
 ) -> std::result::Result<TelemetryLog, CommandFailure> {
@@ -192,6 +298,10 @@ pub(super) fn workspace_hash_for_path(path: &Path) -> String {
 
 pub(super) fn task_hash_for_text(task: &str) -> String {
     hash_identity("task", task)
+}
+
+pub(super) fn session_hash_for_text(session: &str) -> String {
+    hash_identity("session", session)
 }
 
 pub(super) fn purge_token(before: Option<DateTime<Utc>>, count: usize, bytes: usize) -> String {
@@ -279,6 +389,20 @@ fn redacted_event_from_draft(
     if let Some(skill) = draft.skill_id.as_deref() {
         validate_skill_name(skill).map_err(map_arg)?;
     }
+    if let Some(observed) = draft.observed_skill_name.as_deref()
+        && !observed_skill_name_allowed(observed)
+    {
+        return Err(CommandFailure::new(
+            ErrorCode::ArgInvalid,
+            "observed skill name must be 1..=128 characters matching [A-Za-z0-9._-]",
+        ));
+    }
+    if draft.skill_id.is_some() && draft.observed_skill_name.is_some() {
+        return Err(CommandFailure::new(
+            ErrorCode::ArgInvalid,
+            "telemetry event cannot contain both skill_id and observed_skill_name",
+        ));
+    }
     if let Some(skillset) = draft.skillset_id.as_deref() {
         validate_skill_name(skillset).map_err(map_arg)?;
     }
@@ -294,9 +418,12 @@ fn redacted_event_from_draft(
     }
     Ok(TelemetryEvent {
         schema_version: TELEMETRY_EVENT_SCHEMA_VERSION,
-        event_id: format!("evt_{}", uuid::Uuid::new_v4()),
+        event_id: draft
+            .event_id_override
+            .unwrap_or_else(|| format!("evt_{}", uuid::Uuid::new_v4())),
         event_type: draft.event_type,
         skill_id: draft.skill_id,
+        observed_skill_name: draft.observed_skill_name,
         skillset_id: draft.skillset_id,
         agent: draft.agent,
         workspace_hash: draft
@@ -330,6 +457,36 @@ fn validate_event(event: &TelemetryEvent) -> std::result::Result<(), CommandFail
             "telemetry event_id must start with 'evt_'",
         ));
     }
+    if event.observed_skill_name.is_some() && event.schema_version < 3 {
+        return Err(CommandFailure::new(
+            ErrorCode::SchemaMismatch,
+            "observed_skill_name requires telemetry event schema_version 3",
+        ));
+    }
+    if event.observed_skill_name.is_some()
+        && event.event_type != TelemetryEventType::SkillInvocation
+    {
+        return Err(CommandFailure::new(
+            ErrorCode::SchemaMismatch,
+            "observed_skill_name is only valid for skill.invocation telemetry",
+        ));
+    }
+    if event.skill_id.is_some() && event.observed_skill_name.is_some() {
+        return Err(CommandFailure::new(
+            ErrorCode::SchemaMismatch,
+            "telemetry event cannot contain both skill_id and observed_skill_name",
+        ));
+    }
+    if event
+        .observed_skill_name
+        .as_deref()
+        .is_some_and(|name| !observed_skill_name_allowed(name))
+    {
+        return Err(CommandFailure::new(
+            ErrorCode::SchemaMismatch,
+            "telemetry observed_skill_name is invalid",
+        ));
+    }
     if event.privacy.raw_prompt_stored || event.privacy.raw_code_stored || !event.privacy.redacted {
         return Err(CommandFailure::new(
             ErrorCode::SchemaMismatch,
@@ -350,6 +507,14 @@ fn validate_event(event: &TelemetryEvent) -> std::result::Result<(), CommandFail
         ));
     }
     Ok(())
+}
+
+pub(super) fn observed_skill_name_allowed(value: &str) -> bool {
+    !matches!(value, "" | "." | "..")
+        && value.len() <= 128
+        && value
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.'))
 }
 
 fn hash_identity(kind: &str, value: &str) -> String {

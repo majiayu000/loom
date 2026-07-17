@@ -7,6 +7,7 @@ use serde_json::{Value, json};
 
 use crate::envelope::Meta;
 use crate::gitops;
+use crate::next_action_trace::observe_next_actions;
 use crate::state::AppContext;
 use crate::state_model::{
     RegistryProjectionTarget, RegistrySnapshot, RegistryStatePaths, RegistryTrustFile,
@@ -492,7 +493,7 @@ fn skill_row_to_json(row: SkillReadRow) -> Value {
         "binding_ids": binding_ids,
         "workspace_matchers": row.workspace_matchers.into_values().collect::<Vec<_>>(),
         "warnings": warnings,
-        "next_actions": next_actions,
+        "next_actions": observe_next_actions("skill.inventory.row", next_actions),
         "projection_summary": {
             "count": row.projection_count,
             "target_ids": target_ids,

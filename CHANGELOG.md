@@ -7,6 +7,12 @@ archives, checksums, and provenance details on GitHub Releases.
 
 ### Changed
 
+- Agent-facing CLI compatibility is now independently versioned, inventoried,
+  and paired with the shipped Skill through a verified release manifest.
+- Release archives and Homebrew installs now carry the same binary, Skill,
+  command inventory, canonical digests, and CLI contract compatibility range.
+- CLI contract 1.1 inventories every public error code and the `cmd` and
+  `reason` fields of structured error next actions.
 - Registry operations journal is now the single operation-log authority for
   sync replay, ops retry/purge, history repair, and Panel operation backlog
   reads; legacy `state/pending_ops.*` runtime state is no longer used.

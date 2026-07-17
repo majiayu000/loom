@@ -13,6 +13,7 @@ use crate::cli::{
     McpPlanArgs, McpRequirementCommand, McpRequirementListArgs,
 };
 use crate::envelope::Meta;
+use crate::next_action_trace::observe_next_actions;
 use crate::state::AppContext;
 use crate::types::ErrorCode;
 
@@ -182,7 +183,10 @@ impl App {
                     "agent": args.agent,
                     "status": "manual_configuration_required",
                     "healthy": false,
-                    "next_actions": ["run loom mcp doctor --skill <skill> --agent <agent>"],
+                    "next_actions": observe_next_actions(
+                        "mcp.doctor.manual",
+                        ["run loom mcp doctor --skill <skill> --agent <agent>"],
+                    ),
                     "writes_performed": false,
                 }),
                 Meta::default(),
@@ -232,7 +236,7 @@ impl App {
                 "mcp_requirements": requirements,
                 "mcp_env": env_requirements,
                 "mcp_findings": mcp_findings,
-                "next_actions": next_actions,
+                "next_actions": observe_next_actions("mcp.doctor.report", next_actions),
                 "writes_performed": false,
             }),
             Meta::default(),

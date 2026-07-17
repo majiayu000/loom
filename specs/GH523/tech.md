@@ -2,7 +2,7 @@
 
 Issue: https://github.com/majiayu000/loom/issues/523
 Product spec: `specs/GH523/product.md`
-Status: Maintainer architecture decisions approved; follow-up spec amendment
+Status: Implementation complete; independent follow-up review PASS; repository verification PASS; exact-head CI pending
 
 ## Codebase Context
 

@@ -8,6 +8,7 @@ use serde_json::{Value, json};
 use crate::cli::{ProjectionMethod, SkillActivateArgs, SkillActiveListArgs, SkillDeactivateArgs};
 use crate::envelope::Meta;
 use crate::error_actions::contextual_skill_action;
+use crate::next_action_trace::observe_next_actions;
 use crate::types::ErrorCode;
 
 use super::helpers::{
@@ -390,9 +391,12 @@ fn ensure_symlink_deactivation_rule(
             resolved.materialized_path.display()
         ),
     );
-    failure.next_actions = vec![contextual_skill_action(
-        &resolved.selection.skill,
-        "inspect the skill projection before choosing a safe cleanup flow",
-    )];
+    failure.next_actions = observe_next_actions(
+        "skill.deactivate.unsafe_path",
+        vec![contextual_skill_action(
+            &resolved.selection.skill,
+            "inspect the skill projection before choosing a safe cleanup flow",
+        )],
+    );
     Err(failure)
 }

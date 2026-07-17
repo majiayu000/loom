@@ -6,6 +6,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
+use crate::next_action_trace::observe_next_actions;
+
 use crate::commands::CommandFailure;
 use crate::commands::helpers::map_io;
 use crate::commands::mcp::utils::digest_str;
@@ -237,11 +239,14 @@ pub(super) fn apply_response(
             "target_writes_performed": target_writes_performed,
             "servers": plan.requirements.iter().map(|req| req.server.clone()).collect::<Vec<_>>(),
             "restart_required": target_writes_performed,
-            "next_actions": if target_writes_performed {
-                vec!["restart codex or start a new Codex session".to_string()]
-            } else {
-                Vec::new()
-            },
+            "next_actions": observe_next_actions(
+                "mcp.apply.response",
+                if target_writes_performed {
+                    vec!["restart codex or start a new Codex session".to_string()]
+                } else {
+                    Vec::new()
+                },
+            ),
             "secret_values_written": false,
         }),
         Meta::default(),

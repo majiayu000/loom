@@ -2,6 +2,7 @@ use serde_json::json;
 
 use crate::cli::SkillInspectArgs;
 use crate::envelope::Meta;
+use crate::next_action_trace::observe_next_actions;
 use crate::state_model::RegistryStatePaths;
 use crate::types::ErrorCode;
 
@@ -137,7 +138,7 @@ impl App {
                 "telemetry": telemetry,
                 "compiled": compiled,
                 "convergence": convergence.status,
-                "next_actions": next_actions,
+                "next_actions": observe_next_actions("skill.inspect.response", next_actions),
             }),
             Meta {
                 warnings: convergence.warnings,

@@ -16,6 +16,7 @@ use crate::cli::{
 };
 use crate::envelope::Meta;
 use crate::gitops;
+use crate::next_action_trace::observe_next_actions;
 use crate::sha256::{Sha256, to_hex};
 use crate::state::AppContext;
 use crate::state_model::{RegistrySnapshot, RegistryStatePaths};
@@ -88,9 +89,10 @@ impl App {
                     "workflow": render_workflow(&workflow, &order),
                     "dry_run": true,
                     "writes": [],
-                    "next_actions": [
-                        format!("loom workflow create {} --file <workflow.json>", shell_arg(&args.name))
-                    ],
+                    "next_actions": observe_next_actions(
+                        "workflow.create.plan",
+                        [format!("loom workflow create {} --file <workflow.json>", shell_arg(&args.name))],
+                    ),
                 }),
                 Meta::default(),
             ));
@@ -121,10 +123,13 @@ impl App {
                 "workflow": render_workflow(workflow, &order),
                 "path": paths.registry_dir.join("workflows.json"),
                 "commit": commit,
-                "next_actions": [
-                    format!("loom workflow plan {} --agent <agent> --workspace <path>", shell_arg(&args.name)),
-                    "loom workflow preflight <plan-id>".to_string()
-                ],
+                "next_actions": observe_next_actions(
+                    "workflow.create.applied",
+                    [
+                        format!("loom workflow plan {} --agent <agent> --workspace <path>", shell_arg(&args.name)),
+                        "loom workflow preflight <plan-id>".to_string()
+                    ],
+                ),
             }),
             Meta::default(),
         ))
@@ -285,10 +290,13 @@ impl App {
                 "skill_digests": skill_digests,
                 "no_autonomous_execution": true,
             },
-            "next_actions": [
-                format!("loom workflow preflight {}", shell_arg(&plan_id)),
-                "execution remains agent-driven until workflow apply gates are implemented".to_string()
-            ],
+            "next_actions": observe_next_actions(
+                "workflow.plan",
+                [
+                    format!("loom workflow preflight {}", shell_arg(&plan_id)),
+                    "execution remains agent-driven until workflow apply gates are implemented".to_string()
+                ],
+            ),
         });
         let stored = StoredWorkflowPlan {
             plan_id: plan_id.clone(),
@@ -374,11 +382,14 @@ impl App {
                 "ready": plan.ready && valid,
                 "safe_to_run": false,
                 "checks": checks,
-                "next_actions": if valid {
-                    vec!["manual execution remains deferred until workflow apply gates are implemented".to_string()]
-                } else {
-                    vec![format!("rerun loom workflow plan {}", shell_arg(&plan.workflow_id))]
-                },
+                "next_actions": observe_next_actions(
+                    "workflow.preflight",
+                    if valid {
+                        vec!["manual execution remains deferred until workflow apply gates are implemented".to_string()]
+                    } else {
+                        vec![format!("rerun loom workflow plan {}", shell_arg(&plan.workflow_id))]
+                    },
+                ),
             }),
             Meta::default(),
         ))
@@ -406,7 +417,10 @@ impl App {
                     "hidden": true,
                     "safe_to_run": false,
                     "reason": "workflow execution is not public until workflow apply gates are implemented",
-                    "next_actions": [next_action],
+                    "next_actions": observe_next_actions(
+                        "workflow.run.dry_deferred",
+                        [next_action],
+                    ),
                 }),
                 Meta::default(),
             ));
@@ -424,7 +438,10 @@ impl App {
             "hidden": true,
             "safe_to_run": false,
             "reason": "workflow execution is not public until workflow apply gates are implemented",
-            "next_actions": [next_action],
+            "next_actions": observe_next_actions(
+                "workflow.run.error_deferred",
+                [next_action],
+            ),
         });
         Err(failure)
     }

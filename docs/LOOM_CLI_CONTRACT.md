@@ -3,6 +3,8 @@
 Updated: 2026-07-16
 Status: Implemented
 
+Every JSON envelope includes independent SemVer field `cli_contract_version`. The current contract is `1.1.0`; compatibility history and shipped-Skill ranges live in `docs/cli-contract-history.toml` and `skills/loom-registry/loom.skill.toml`.
+
 ## 1. Purpose
 
 This document defines the command contract for Loom registry model.

@@ -9,6 +9,7 @@ use crate::cli::{AgentKind, SkillNewArgs, SkillNewTemplate};
 use crate::envelope::Meta;
 use crate::fs_util::remove_path_if_exists;
 use crate::gitops;
+use crate::next_action_trace::observe_next_actions;
 use crate::state::AppContext;
 use crate::types::ErrorCode;
 
@@ -178,7 +179,10 @@ impl App {
                     "warning_count": lint.summary.warning_count
                 },
                 "commit": commit,
-                "next_actions": skill_new_next_actions(&plan.skill)
+                "next_actions": observe_next_actions(
+                    "skill.new.applied",
+                    skill_new_next_actions(&plan.skill),
+                )
             }),
             meta,
         ))
@@ -363,7 +367,10 @@ fn render_skill_new_plan(plan: &SkillNewPlan) -> Value {
                 "content": file.body
             })
         }).collect::<Vec<_>>(),
-        "next_actions": skill_new_next_actions(&plan.skill)
+        "next_actions": observe_next_actions(
+            "skill.new.plan",
+            skill_new_next_actions(&plan.skill),
+        )
     })
 }
 

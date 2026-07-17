@@ -8,6 +8,7 @@ use crate::cli::IndexArgs;
 use crate::envelope::Meta;
 use crate::fs_util::write_atomic;
 use crate::gitops;
+use crate::next_action_trace::observe_next_actions;
 use crate::sha256::{Sha256, to_hex};
 use crate::state::AppContext;
 use crate::state_model::{REGISTRY_SCHEMA_VERSION, RegistryStatePaths};
@@ -112,7 +113,14 @@ impl App {
                 "ready": ready,
                 "derived": true,
                 "files": status,
-                "next_actions": if ready { Vec::<String>::new() } else { vec!["loom index build --no-embeddings".to_string()] },
+                "next_actions": observe_next_actions(
+                    "index.status",
+                    if ready {
+                        Vec::<String>::new()
+                    } else {
+                        vec!["loom index build --no-embeddings".to_string()]
+                    },
+                ),
             }),
             Meta::default(),
         ))

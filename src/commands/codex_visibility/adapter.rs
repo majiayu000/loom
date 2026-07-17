@@ -1,6 +1,7 @@
 use serde_json::{Value, json};
 
 use crate::agent_adapters::AgentAdapter;
+use crate::next_action_trace::observe_next_actions;
 
 use super::{CodexVisibilityReport, check};
 
@@ -44,9 +45,12 @@ pub(super) fn unsupported_visibility_report(
                 "install or update the {agent} adapter visibility metadata"
             )),
         )],
-        next_actions: vec![format!(
-            "install or update the {agent} adapter visibility metadata"
-        )],
+        next_actions: observe_next_actions(
+            "codex.visibility.unsupported",
+            vec![format!(
+                "install or update the {agent} adapter visibility metadata"
+            )],
+        ),
         restart_required: false,
     }
 }

@@ -17,6 +17,19 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Resolve contract diff base
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          set -euo pipefail
+          test -n "$BASE_SHA"
+          test "$BASE_SHA" != "0000000000000000000000000000000000000000"
+          git fetch --no-tags origin "$BASE_SHA"
+          git cat-file -e "${BASE_SHA}^{tree}"
+          echo "LOOM_CONTRACT_DIFF_BASE=$BASE_SHA" >> "$GITHUB_ENV"
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable

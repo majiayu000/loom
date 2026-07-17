@@ -150,6 +150,13 @@ fn release_and_install_surfaces_ship_the_same_fail_closed_skill() {
     assert!(workflow.contains("skills/loom-registry"));
     assert!(workflow.contains("agents/openai.yaml"));
     assert!(workflow.contains("pkgshare.install \"skills\""));
+    assert!(workflow.contains("pkgshare.install \"loom\""));
+    assert!(workflow.contains("bin.install_symlink pkgshare/\"loom\""));
+    assert!(workflow.contains("--contract-version \"$contract_version\""));
+    assert!(workflow.contains("git fetch origin"));
+    assert!(workflow.contains("git restore -- Formula/loom.rb"));
+    assert!(workflow.contains("gh pr list"));
+    assert!(!workflow.contains("--force"));
 
     let readme = fs::read_to_string(repo_path("README.md")).expect("read README");
     assert!(readme.contains("$HOME/.claude/skills/loom-registry"));

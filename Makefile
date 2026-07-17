@@ -2,8 +2,9 @@ SHELL := /usr/bin/env bash
 
 PANEL_DIR := panel
 PANEL_INSTALL_STAMP := $(PANEL_DIR)/node_modules/.bun-install.stamp
+LOOM_CONTRACT_DIFF_BASE ?= $(shell git merge-base HEAD origin/main 2>/dev/null)
 
-.PHONY: fmt fmt-check test lint module-ceiling module-ceiling-test panel-install panel-dev panel-build panel-test panel-typecheck e2e perf-smoke check ci install-hooks
+.PHONY: fmt fmt-check test contract-policy lint module-ceiling module-ceiling-test panel-install panel-dev panel-build panel-test panel-typecheck e2e perf-smoke check ci install-hooks
 
 fmt:
 	cargo fmt --all
@@ -16,7 +17,12 @@ install-hooks:
 	@echo "pre-commit hook installed (core.hooksPath=.githooks). Disable with 'git config --unset core.hooksPath'."
 
 test:
-	cargo nextest run --no-fail-fast
+	./scripts/test-with-contract-trace.sh
+
+contract-policy:
+	test -n "$(LOOM_CONTRACT_DIFF_BASE)"
+	git cat-file -e "$(LOOM_CONTRACT_DIFF_BASE)^{tree}"
+	LOOM_CONTRACT_DIFF_BASE="$(LOOM_CONTRACT_DIFF_BASE)" cargo test --test agent_contract_surfaces contract_range_policy_current_diff -- --exact
 
 lint:
 	cargo clippy --all-targets --all-features -- -D warnings
@@ -53,6 +59,6 @@ perf-smoke: panel-build
 	cargo build --release --locked
 	./scripts/perf-smoke.sh
 
-check: fmt-check lint module-ceiling module-ceiling-test test panel-typecheck panel-test panel-build e2e perf-smoke
+check: fmt-check lint module-ceiling module-ceiling-test test contract-policy panel-typecheck panel-test panel-build e2e perf-smoke
 
 ci: check

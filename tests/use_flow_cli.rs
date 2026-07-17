@@ -98,6 +98,16 @@ fn use_apply_projects_local_skill_without_manual_ids() {
     assert!(applied["operation_ids"]["target"].as_str().is_some());
     assert!(applied["operation_ids"]["binding"].as_str().is_some());
     assert!(applied["operation_ids"]["projection"].as_str().is_some());
+    let preflight = env["data"]["next_actions"]
+        .as_array()
+        .expect("next actions")
+        .iter()
+        .filter_map(Value::as_str)
+        .find(|action| action.contains("agent preflight"))
+        .expect("complete preflight command");
+    assert!(preflight.contains("--agent claude"), "{preflight}");
+    assert!(preflight.contains("--workspace"), "{preflight}");
+    assert!(preflight.contains("--skill pdf-helper"), "{preflight}");
 
     let projection_path = applied["projection"]["materialized_path"]
         .as_str()

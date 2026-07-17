@@ -6,6 +6,7 @@ use serde_json::json;
 use crate::commands::{CommandFailure, projection_path_is_safe_symlink};
 use crate::error_actions::NextAction;
 use crate::gemini_cli;
+use crate::next_action_trace::observe_next_actions;
 use crate::state::AppContext;
 use crate::types::ErrorCode;
 
@@ -70,10 +71,13 @@ fn alias_shadow_failure(scope: &str, skill: &str, alias: PathBuf, base: &Path) -
         "shadowing_path": alias,
         "native_path": native,
     });
-    failure.next_actions = vec![NextAction {
-        cmd: format!("loom skill visibility {skill} --agent gemini-cli"),
-        reason: "inspect and remove or rename the higher-priority alias before retrying"
-            .to_string(),
-    }];
+    failure.next_actions = observe_next_actions(
+        "gemini.projection.alias_shadow",
+        vec![NextAction {
+            cmd: format!("loom skill visibility {skill} --agent gemini-cli"),
+            reason: "inspect and remove or rename the higher-priority alias before retrying"
+                .to_string(),
+        }],
+    );
     failure
 }

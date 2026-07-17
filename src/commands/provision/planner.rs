@@ -8,6 +8,7 @@ use uuid::Uuid;
 
 use crate::cli::{ProvisionExportFormatArg, ProvisionTargetArg};
 use crate::gitops;
+use crate::next_action_trace::observe_next_actions;
 use crate::state::AppContext;
 use crate::state_model::{RegistryProjectionTarget, RegistrySnapshot, RegistryStatePaths};
 use crate::types::ErrorCode;
@@ -317,10 +318,13 @@ fn collect_dependency_readiness(
                     skill: skill.clone(),
                     status: "missing".to_string(),
                     ready: false,
-                    next_actions: vec![format!(
-                        "restore skill '{}' in the Loom registry before provisioning",
-                        skill
-                    )],
+                    next_actions: observe_next_actions(
+                        "provision.dependency.missing",
+                        vec![format!(
+                            "restore skill '{}' in the Loom registry before provisioning",
+                            skill
+                        )],
+                    ),
                     findings: vec![json!({
                         "id": "active_skill_missing",
                         "severity": "error",

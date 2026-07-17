@@ -61,13 +61,13 @@ struct MaterializedTarget {
 
 impl Drop for MaterializedTarget {
     fn drop(&mut self) {
-        if let Some(root) = self.root.take() {
-            if let Err(err) = fs::remove_dir_all(&root) {
-                eprintln!(
-                    "failed to clean temporary preflight context '{}': {err}",
-                    root.display()
-                );
-            }
+        if let Some(root) = self.root.take()
+            && let Err(err) = fs::remove_dir_all(&root)
+        {
+            eprintln!(
+                "failed to clean temporary preflight context '{}': {err}",
+                root.display()
+            );
         }
     }
 }

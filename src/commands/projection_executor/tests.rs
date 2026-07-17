@@ -310,3 +310,35 @@ fn convergence_staging_failure_preserves_existing_projection() {
         0
     );
 }
+
+#[test]
+fn standalone_replacement_retains_portable_persistent_backup_path() {
+    let fixture = convergence_projection_fixture();
+    let projection_path = fixture.root.join("live/copy/demo");
+    fs::create_dir_all(&projection_path).expect("create live projection");
+    fs::write(projection_path.join("keep.txt"), "keep\n").expect("write live data");
+    let mut input = execution_input(&fixture, ProjectionMethod::Copy, projection_path.clone());
+    input.context = ProjectionExecutionContext::Standalone;
+    input.replace_existing = true;
+
+    let output = materialize_projection(&fixture.ctx, &input, None)
+        .expect("standalone replacement remains portable");
+    let backup = output.backup.expect("persistent standalone backup");
+
+    assert_eq!(backup["kind"], "dir");
+    assert!(
+        PathBuf::from(backup["backup_path"].as_str().expect("backup path"))
+            .starts_with(fixture.ctx.state_dir.join("backups"))
+    );
+    assert!(!projection_path.join("keep.txt").exists());
+    assert!(projection_path.join("details.txt").exists());
+    assert!(
+        fs::read_dir(projection_path.parent().expect("projection parent"))
+            .expect("target entries")
+            .all(|entry| !entry
+                .expect("target entry")
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".loom-projection-stage-"))
+    );
+}

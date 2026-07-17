@@ -264,7 +264,7 @@ The current lifecycle keeps source history on a smaller verb set: import with `a
 | `loom skill improve` | Run a read-only single-skill preflight | Aggregate source drift, lint, safety, dependency, eval, and optional real-eval planning before saving edits | Source + local environment (read-only) |
 | `loom skill regression` | Compare one skill against a baseline gate | Fail with typed regression details when lint, safety, dependency, eval, or size gates block the candidate | Source + local environment (read-only) |
 | `loom skillset create/add/remove/show/lint/activate/deactivate/eval/release/rollback` | Group existing registry skills into a named set | Organize coherent skill bundles, activate members together, aggregate member evals, and version skillset definitions | Registry skillset state + target projections |
-| `loom telemetry status/enable/disable/report/export/purge` | Manage local privacy-preserving telemetry | Opt in to redacted local event writes, aggregate usage/value/cost/drift/risk, export redacted events, and purge selected telemetry state with dry-run confirmation | `state/telemetry` |
+| `loom telemetry status/enable/disable/ingest/report/export/purge` | Manage local privacy-preserving telemetry | Opt in to redacted local event writes, ingest structured Claude/Codex invocation evidence, aggregate usage/value/cost/drift/risk, export redacted events, and purge selected telemetry state with dry-run confirmation | `state/telemetry` |
 | `loom skill used/feedback` | Record redacted local production usage and recommendation feedback | Hook agent wrappers and recommendation flows into local telemetry without storing raw prompts, output, errors, env values, or file contents | `state/telemetry` |
 | `loom workflow create/show/plan/preflight` | Define and guard a multi-skill DAG workflow | Agents need an auditable plan before coordinating several skills; execution remains hidden/deferred until apply gates land | Registry workflow state + source metadata |
 | `loom use` | Plan or apply target, binding, and projection setup in one flow | New users want to use a skill without copying target/binding IDs between commands | Source + target + registry metadata |
@@ -399,6 +399,7 @@ loom skill history <skill> [--limit <n>] [--from <rev>] [--to <rev>] [--include-
 loom telemetry status
 loom telemetry enable [--local-only]
 loom telemetry disable
+loom telemetry ingest --agent claude|codex|all [--since <date>] [--dry-run]
 loom telemetry report [--skill <skill>] [--skillset <skillset>] [--agent <agent>] [--workspace <path>] [--since <date>]
 loom telemetry export --format jsonl|csv --output <path> [--redacted]
 loom telemetry purge [--before <date>] --dry-run

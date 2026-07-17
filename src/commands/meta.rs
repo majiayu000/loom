@@ -182,6 +182,9 @@ pub(crate) fn command_meta(command: &Command) -> CommandMeta {
                 args.confirm.is_some(),
                 args.confirm.is_none(),
             ),
+            TelemetryCommand::Ingest(args) => {
+                CommandMeta::new(!args.dry_run, !args.dry_run, args.dry_run)
+            }
             TelemetryCommand::Status
             | TelemetryCommand::Report(_)
             | TelemetryCommand::Export(_) => CommandMeta::new(false, false, false),
@@ -315,6 +318,14 @@ mod tests {
         assert_eq!(
             meta(&["loom", "telemetry", "purge", "--dry-run"]),
             CommandMeta::new(false, false, true)
+        );
+        assert_eq!(
+            meta(&["loom", "telemetry", "ingest", "--agent", "all", "--dry-run",]),
+            CommandMeta::new(false, false, true)
+        );
+        assert_eq!(
+            meta(&["loom", "telemetry", "ingest", "--agent", "all"]),
+            CommandMeta::new(true, true, false)
         );
         assert_eq!(
             meta(&["loom", "mcp", "plan", "--skill", "demo", "--agent", "codex"]),

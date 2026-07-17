@@ -3,7 +3,7 @@
 Updated: 2026-07-18
 Status: Implemented
 
-Every JSON envelope includes independent SemVer field `cli_contract_version`. The current contract is `1.4.0`; compatibility history and shipped-Skill ranges live in `docs/cli-contract-history.toml` and `skills/loom-registry/loom.skill.toml`.
+Every JSON envelope includes independent SemVer field `cli_contract_version`. The current contract is `1.5.0`; compatibility history and shipped-Skill ranges live in `docs/cli-contract-history.toml` and `skills/loom-registry/loom.skill.toml`.
 
 ## 1. Purpose
 
@@ -44,7 +44,7 @@ Top-level command groups:
 8. `target`
 9. `skill`
 10. `skillset`
-11. `telemetry`
+11. `telemetry` (including read-only/durable agent-log ingest)
 12. `provider`
 13. `catalog`
 14. `package`

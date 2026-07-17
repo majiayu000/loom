@@ -207,6 +207,7 @@ pub(crate) fn command_name(command: &Command) -> &'static str {
             TelemetryCommand::Status => "telemetry.status",
             TelemetryCommand::Enable(_) => "telemetry.enable",
             TelemetryCommand::Disable => "telemetry.disable",
+            TelemetryCommand::Ingest(_) => "telemetry.ingest",
             TelemetryCommand::Report(_) => "telemetry.report",
             TelemetryCommand::Export(_) => "telemetry.export",
             TelemetryCommand::Purge(_) => "telemetry.purge",

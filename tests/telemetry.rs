@@ -3,6 +3,8 @@ use std::fs;
 use serde_json::{Value, json};
 
 mod common;
+#[path = "telemetry/overflow.rs"]
+mod telemetry_overflow;
 
 use common::{TestDir, run_loom, run_loom_in_cwd, write_file, write_skill};
 
@@ -30,6 +32,138 @@ fn event_line(id: &str, event_type: &str, skill: &str, timestamp: &str, success:
         }
     })
     .to_string()
+}
+
+#[test]
+fn telemetry_export_reads_v2_and_redacts_v3_observed_name() {
+    let root = TestDir::new("telemetry-export-v2-v3");
+    let events_path = root.path().join("state/telemetry/events.jsonl");
+    let v2 = json!({
+        "schema_version": 2,
+        "event_id": "evt_v2",
+        "event_type": "skill.invocation",
+        "skill_id": "demo",
+        "timestamp": "2026-07-01T00:00:00Z",
+        "metrics": {},
+        "privacy": {"raw_prompt_stored": false, "raw_code_stored": false, "redacted": true}
+    });
+    let v3 = json!({
+        "schema_version": 3,
+        "event_id": "evt_v3",
+        "event_type": "skill.invocation",
+        "observed_skill_name": "retired-skill",
+        "timestamp": "2026-07-01T00:01:00Z",
+        "metrics": {},
+        "privacy": {"raw_prompt_stored": false, "raw_code_stored": false, "redacted": true}
+    });
+    write_file(&events_path, &format!("{v2}\n{v3}\n"));
+    let output_path = root.path().join("events.csv");
+    let output_arg = output_path.to_string_lossy().into_owned();
+    let (output, envelope) = run_loom(
+        root.path(),
+        &[
+            "telemetry",
+            "export",
+            "--format",
+            "csv",
+            "--output",
+            &output_arg,
+        ],
+    );
+    assert!(output.status.success(), "export failed: {envelope}");
+    assert_eq!(envelope["data"]["events_exported"], json!(2));
+    let csv = fs::read_to_string(output_path).unwrap();
+    assert!(csv.lines().next().unwrap().contains("observed_skill_name"));
+    assert!(csv.contains("retired-skill"));
+}
+
+#[test]
+fn normalized_query_preserves_non_usage_metrics_and_skillset_agent_filters() {
+    let root = TestDir::new("telemetry-normalized-query");
+    let events_path = root.path().join("state/telemetry/events.jsonl");
+    let base = |id: &str, event_type: &str, skillset: &str, agent: Option<&str>, metrics: Value| {
+        let mut event = json!({
+            "schema_version": 2,
+            "event_id": id,
+            "event_type": event_type,
+            "skill_id": "demo",
+            "skillset_id": skillset,
+            "workspace_hash": "sha256:workspace",
+            "timestamp": "2026-07-01T00:00:00Z",
+            "metrics": metrics,
+            "privacy": {
+                "raw_prompt_stored": false,
+                "raw_code_stored": false,
+                "redacted": true
+            }
+        });
+        if let Some(agent) = agent {
+            event["agent"] = json!(agent);
+        }
+        event
+    };
+    let activation = base(
+        "evt_activation",
+        "skill.activation",
+        "pack",
+        None,
+        json!({"tokens_in": 5}),
+    );
+    let eval = base(
+        "evt_eval",
+        "skill.eval",
+        "pack",
+        Some("codex"),
+        json!({"tokens_in": 7, "success": true, "baseline_delta": 0.5}),
+    );
+    let feedback = base(
+        "evt_feedback",
+        "recommendation.feedback",
+        "other",
+        Some("codex"),
+        json!({"feedback": "accepted"}),
+    );
+    write_file(&events_path, &format!("{activation}\n{eval}\n{feedback}\n"));
+    let (output, report) = run_loom(
+        root.path(),
+        &[
+            "telemetry",
+            "report",
+            "--skill",
+            "demo",
+            "--skillset",
+            "pack",
+        ],
+    );
+    assert!(output.status.success(), "report failed: {report}");
+    assert_eq!(report["data"]["matched_events"], json!(2));
+    assert_eq!(report["data"]["summary"]["usage"]["activations"], json!(1));
+    assert_eq!(report["data"]["summary"]["value"]["eval_runs"], json!(1));
+    assert_eq!(report["data"]["summary"]["cost"]["tokens_in"], json!(12));
+    assert_eq!(
+        report["data"]["summary"]["recommendation_feedback"]["status"],
+        json!("missing")
+    );
+    let (agent_output, agent_report) = run_loom(
+        root.path(),
+        &[
+            "telemetry",
+            "report",
+            "--skillset",
+            "pack",
+            "--agent",
+            "codex",
+        ],
+    );
+    assert!(
+        agent_output.status.success(),
+        "agent report failed: {agent_report}"
+    );
+    assert_eq!(agent_report["data"]["matched_events"], json!(1));
+    assert_eq!(
+        agent_report["data"]["summary"]["usage"]["activations"],
+        json!(0)
+    );
 }
 
 #[test]

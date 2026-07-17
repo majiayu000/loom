@@ -144,7 +144,12 @@ fn filesystem_snapshot(root: &Path) -> BTreeMap<String, Vec<u8>> {
     files
 }
 
-#[cfg(unix)]
+#[cfg(any(
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "linux",
+    target_os = "android"
+))]
 #[test]
 fn symlink_copy_materialize_convergence_mode_has_no_child_persistence() {
     let fixture = convergence_projection_fixture();
@@ -153,6 +158,7 @@ fn symlink_copy_materialize_convergence_mode_has_no_child_persistence() {
     let operations_before = fs::read(&fixture.paths.operations_file).expect("operations before");
     let durable_state_before = filesystem_snapshot(&fixture.ctx.state_dir);
 
+    let mut prepared_outputs = Vec::new();
     for method in [
         ProjectionMethod::Symlink,
         ProjectionMethod::Copy,
@@ -171,21 +177,37 @@ fn symlink_copy_materialize_convergence_mode_has_no_child_persistence() {
         )
         .expect("execute convergence projection");
         let projection = output.projection.expect("projection delta");
+        let prepared = output.prepared.expect("validated staging artifact");
 
         assert_eq!(projection.health, Health::Healthy);
         assert_eq!(projection.observed_drift, Some(false));
-        let backup = output.backup.expect("transaction rollback artifact");
-        assert_eq!(backup["kind"], json!("atomic_exchange"));
-        let backup_path = PathBuf::from(backup["backup_path"].as_str().expect("backup path"));
-        assert_eq!(backup_path.parent(), projection_path.parent());
-        assert!(backup_path.join("stale.txt").is_file());
-        assert!(!backup_path.starts_with(&fixture.ctx.state_dir));
+        assert!(output.backup.is_none(), "prepare must not expose a backup");
+        assert!(projection_path.join("stale.txt").is_file());
         assert!(output.commit.is_none(), "convergence child must not commit");
         assert!(
             output.meta.op_id.is_none(),
             "convergence child must not record op"
         );
         assert!(!output.noop, "stale target must be rebuilt");
+        prepared_outputs.push((method, target, projection_path, projection, prepared));
+    }
+
+    assert!(
+        prepared_outputs
+            .iter()
+            .all(|(_, _, path, _, _)| path.join("stale.txt").is_file()),
+        "every projection must remain live until all staging is validated"
+    );
+
+    for (method, target, projection_path, projection, prepared) in prepared_outputs {
+        let activated = activate_prepared_projection(&fixture.ctx, projection, prepared)
+            .expect("activate validated convergence projection");
+        let backup = activated.backup.expect("transaction rollback artifact");
+        assert_eq!(backup["kind"], json!("atomic_exchange"));
+        let backup_path = PathBuf::from(backup["backup_path"].as_str().expect("backup path"));
+        assert_eq!(backup_path.parent(), projection_path.parent());
+        assert!(backup_path.join("stale.txt").is_file());
+        assert!(!backup_path.starts_with(&fixture.ctx.state_dir));
         assert!(!projection_path.join("stale.txt").exists());
 
         match method {
@@ -240,20 +262,34 @@ fn symlink_copy_materialize_convergence_mode_has_no_child_persistence() {
     );
 }
 
-#[cfg(unix)]
+#[cfg(any(
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "linux",
+    target_os = "android"
+))]
 #[test]
-fn convergence_observation_failure_atomically_restores_live_projection() {
+fn convergence_post_activation_failure_atomically_restores_live_projection() {
     let fixture = convergence_projection_fixture();
     let projection_path = fixture.root.join("live/copy/demo");
     fs::create_dir_all(&projection_path).expect("create live projection");
     fs::write(projection_path.join("keep.txt"), "keep\n").expect("write live data");
     let state_before = filesystem_snapshot(&fixture.ctx.state_dir);
     let head_before = gitops::head(&fixture.ctx).expect("head before");
-    let mut input = execution_input(&fixture, ProjectionMethod::Copy, projection_path.clone());
-    input.after_materialize_fault = Some("test_convergence_observation_mismatch");
+    let output = execute_projection(
+        &fixture.ctx,
+        &fixture.paths,
+        &fixture.snapshot,
+        execution_input(&fixture, ProjectionMethod::Copy, projection_path.clone()),
+    )
+    .expect("prepare convergence projection");
+    let projection = output.projection.expect("projection delta");
+    let prepared = output.prepared.expect("staging artifact");
+    fs::write(prepared.staging_path.join("details.txt"), "tampered\n")
+        .expect("tamper validated staging before activation");
 
-    let error = match execute_projection(&fixture.ctx, &fixture.paths, &fixture.snapshot, input) {
-        Ok(_) => panic!("post-materialization digest mismatch must fail closed"),
+    let error = match activate_prepared_projection(&fixture.ctx, projection, prepared) {
+        Ok(_) => panic!("post-activation digest mismatch must fail closed"),
         Err(error) => error,
     };
 
@@ -279,7 +315,7 @@ fn convergence_observation_failure_atomically_restores_live_projection() {
 
 #[cfg(unix)]
 #[test]
-fn convergence_staging_failure_preserves_existing_projection() {
+fn convergence_source_staging_failure_preserves_existing_projection() {
     let fixture = convergence_projection_fixture();
     let outside = fixture.root.join("outside.txt");
     fs::write(&outside, "outside\n").expect("write outside file");
@@ -290,7 +326,7 @@ fn convergence_staging_failure_preserves_existing_projection() {
     fs::write(projection_path.join("keep.txt"), "keep\n").expect("write live data");
 
     let input = execution_input(&fixture, ProjectionMethod::Copy, projection_path.clone());
-    let error = match materialize_projection(&fixture.ctx, &input, None) {
+    let error = match execute_projection(&fixture.ctx, &fixture.paths, &fixture.snapshot, input) {
         Ok(_) => panic!("escaping source symlink must fail closed before replacement"),
         Err(error) => error,
     };
@@ -312,6 +348,149 @@ fn convergence_staging_failure_preserves_existing_projection() {
 }
 
 #[test]
+fn convergence_staging_validation_rejects_bytes_before_live_swap() {
+    let fixture = convergence_projection_fixture();
+    let projection_path = fixture.root.join("live/copy/demo");
+    fs::create_dir_all(&projection_path).expect("create live projection");
+    fs::write(projection_path.join("keep.txt"), "keep\n").expect("write live data");
+    let mut input = execution_input(&fixture, ProjectionMethod::Copy, projection_path.clone());
+    input.after_materialize_fault = Some("test_convergence_staging_mismatch");
+
+    let error = match execute_projection(&fixture.ctx, &fixture.paths, &fixture.snapshot, input) {
+        Ok(_) => panic!("invalid staging must fail before publication"),
+        Err(error) => error,
+    };
+
+    assert_eq!(error.code, ErrorCode::ProjectionConflict);
+    assert_eq!(
+        fs::read_to_string(projection_path.join("keep.txt")).unwrap(),
+        "keep\n"
+    );
+    assert!(
+        fs::read_dir(projection_path.parent().unwrap())
+            .unwrap()
+            .all(|entry| !entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".loom-projection-stage-"))
+    );
+}
+
+#[test]
+fn convergence_head_failure_happens_before_staging_or_live_mutation() {
+    let fixture = convergence_projection_fixture();
+    let projection_path = fixture.root.join("live/copy/demo");
+    fs::create_dir_all(&projection_path).expect("create live projection");
+    fs::write(projection_path.join("keep.txt"), "keep\n").expect("write live data");
+    let git_head = fixture.root.join(".git/HEAD");
+    let original_head = fs::read(&git_head).expect("read HEAD");
+    fs::write(&git_head, "broken-head\n").expect("break HEAD");
+
+    let result = execute_projection(
+        &fixture.ctx,
+        &fixture.paths,
+        &fixture.snapshot,
+        execution_input(&fixture, ProjectionMethod::Copy, projection_path.clone()),
+    );
+    fs::write(&git_head, original_head).expect("restore HEAD");
+
+    assert!(result.is_err(), "broken HEAD must fail closed");
+    assert_eq!(
+        fs::read_to_string(projection_path.join("keep.txt")).unwrap(),
+        "keep\n"
+    );
+    assert_eq!(
+        fs::read_dir(projection_path.parent().unwrap())
+            .unwrap()
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn convergence_safe_existing_flag_cannot_skip_copy_rebuild() {
+    let fixture = convergence_projection_fixture();
+    let projection_path = fixture.root.join("live/copy/demo");
+    fs::create_dir_all(&projection_path).expect("create live projection");
+    fs::write(projection_path.join("stale.txt"), "stale\n").expect("write stale data");
+    let mut input = execution_input(&fixture, ProjectionMethod::Copy, projection_path.clone());
+    input.safe_existing_noop = true;
+
+    let output = execute_projection(&fixture.ctx, &fixture.paths, &fixture.snapshot, input)
+        .expect("prepare copy rebuild");
+
+    assert!(output.prepared.is_some(), "copy must still be rebuilt");
+    assert!(projection_path.join("stale.txt").is_file());
+    discard_prepared_projection(output.prepared.expect("prepared copy")).expect("discard staging");
+}
+
+#[cfg(unix)]
+#[test]
+fn convergence_canonical_symlink_noop_does_not_require_writable_parent() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let fixture = convergence_projection_fixture();
+    let target = fixture.root.join("live/symlink");
+    let projection_path = target.join("demo");
+    fs::create_dir_all(&target).expect("create target");
+    std::os::unix::fs::symlink(fixture.ctx.skill_path("demo"), &projection_path)
+        .expect("create canonical symlink");
+    fs::set_permissions(&target, fs::Permissions::from_mode(0o555)).expect("lock target");
+
+    let result = execute_projection(
+        &fixture.ctx,
+        &fixture.paths,
+        &fixture.snapshot,
+        execution_input(&fixture, ProjectionMethod::Symlink, projection_path),
+    );
+    fs::set_permissions(&target, fs::Permissions::from_mode(0o755)).expect("unlock target");
+
+    let output = result.expect("canonical symlink validation must be read-only");
+    assert!(output.prepared.is_none());
+    assert_eq!(
+        output.projection.expect("projection").health,
+        Health::Healthy
+    );
+}
+
+#[cfg(not(any(
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "linux",
+    target_os = "android"
+)))]
+#[test]
+fn convergence_existing_path_fails_closed_without_atomic_exchange() {
+    let fixture = convergence_projection_fixture();
+    let projection_path = fixture.root.join("live/copy/demo");
+    fs::create_dir_all(&projection_path).expect("create live projection");
+    fs::write(projection_path.join("keep.txt"), "keep\n").expect("write live data");
+    let output = execute_projection(
+        &fixture.ctx,
+        &fixture.paths,
+        &fixture.snapshot,
+        execution_input(&fixture, ProjectionMethod::Copy, projection_path.clone()),
+    )
+    .expect("prepare projection");
+
+    let error = match activate_prepared_projection(
+        &fixture.ctx,
+        output.projection.expect("projection"),
+        output.prepared.expect("staging"),
+    ) {
+        Ok(_) => panic!("unsupported exchange must fail closed"),
+        Err(error) => error,
+    };
+
+    assert_eq!(error.code, ErrorCode::ProjectionMethodUnsupported);
+    assert_eq!(
+        fs::read_to_string(projection_path.join("keep.txt")).unwrap(),
+        "keep\n"
+    );
+}
+
+#[test]
 fn standalone_replacement_retains_portable_persistent_backup_path() {
     let fixture = convergence_projection_fixture();
     let projection_path = fixture.root.join("live/copy/demo");
@@ -321,7 +500,7 @@ fn standalone_replacement_retains_portable_persistent_backup_path() {
     input.context = ProjectionExecutionContext::Standalone;
     input.replace_existing = true;
 
-    let output = materialize_projection(&fixture.ctx, &input, None)
+    let output = execute_projection(&fixture.ctx, &fixture.paths, &fixture.snapshot, input)
         .expect("standalone replacement remains portable");
     let backup = output.backup.expect("persistent standalone backup");
 

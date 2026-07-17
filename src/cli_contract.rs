@@ -27,7 +27,7 @@ pub use panel_check::check_panel_mutations;
 pub use surface_check::{SurfaceCheckReport, check_surface_inventory};
 pub use trace_check::{NextActionTraceReport, check_next_action_trace};
 
-pub const CLI_CONTRACT_VERSION: &str = "1.0.0";
+pub const CLI_CONTRACT_VERSION: &str = "1.1.0";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct ContractVersion {
@@ -453,6 +453,7 @@ fn inspect_requested_visibility(
 ) -> Result<PublicArgv, PublicArgvError> {
     let mut current = command;
     let mut options_terminated = false;
+    let mut pending_option_values: Option<PendingOptionValues> = None;
     let mut result = PublicArgv {
         command_path: vec!["loom".to_string()],
         explicit_args: Vec::new(),
@@ -465,7 +466,17 @@ fn inspect_requested_visibility(
             options_terminated = true;
             continue;
         }
+        if let Some(mut pending) = pending_option_values.take()
+            && pending.should_consume(token, current)
+        {
+            pending.consume_one();
+            if pending.remaining > 0 {
+                pending_option_values = Some(pending);
+            }
+            continue;
+        }
         if !options_terminated && let Some(long) = token.strip_prefix("--") {
+            let has_inline_value = long.contains('=');
             let name = long.split('=').next().unwrap_or(long);
             let argument = current.get_arguments().find(|argument| {
                 argument.get_long() == Some(name)
@@ -480,12 +491,17 @@ fn inspect_requested_visibility(
             {
                 return Err(hidden_argument_error(argument));
             }
+            if let Some(argument) = argument
+                && !has_inline_value
+            {
+                pending_option_values = following_option_values(argument, has_inline_value);
+            }
             continue;
         }
         if !options_terminated
             && let Some(shorts) = token.strip_prefix('-').filter(|shorts| !shorts.is_empty())
         {
-            for short in shorts.chars() {
+            for (offset, short) in shorts.char_indices() {
                 let argument = current.get_arguments().find(|argument| {
                     argument.get_short() == Some(short)
                         || argument
@@ -508,6 +524,11 @@ fn inspect_requested_visibility(
                     return Err(hidden_argument_error(argument));
                 }
                 if argument.get_action().takes_values() {
+                    let has_attached_value = offset + short.len_utf8() < shorts.len();
+                    if !has_attached_value {
+                        pending_option_values =
+                            following_option_values(argument, has_attached_value);
+                    }
                     break;
                 }
             }
@@ -531,6 +552,54 @@ fn inspect_requested_visibility(
         current = subcommand;
     }
     Ok(result)
+}
+
+#[derive(Clone, Copy)]
+struct PendingOptionValues {
+    remaining: usize,
+    allow_hyphen_values: bool,
+}
+
+impl PendingOptionValues {
+    fn should_consume(&self, token: &str, command: &Command) -> bool {
+        let subcommand_takes_precedence = command.is_subcommand_precedence_over_arg_set()
+            && command.get_subcommands().any(|candidate| {
+                candidate.get_name() == token
+                    || candidate.get_all_aliases().any(|alias| alias == token)
+            });
+        if subcommand_takes_precedence {
+            return false;
+        }
+        self.allow_hyphen_values || (token != "--" && !token.starts_with('-'))
+    }
+
+    fn consume_one(&mut self) {
+        if self.remaining != usize::MAX {
+            self.remaining -= 1;
+        }
+    }
+}
+
+fn following_option_values(
+    argument: &Arg,
+    has_attached_value: bool,
+) -> Option<PendingOptionValues> {
+    if !argument.get_action().takes_values() {
+        return None;
+    }
+    let maximum = argument
+        .get_num_args()
+        .map(|range| range.max_values())
+        .unwrap_or(1);
+    let remaining = if maximum == usize::MAX {
+        usize::MAX
+    } else {
+        maximum.saturating_sub(usize::from(has_attached_value))
+    };
+    (remaining > 0).then_some(PendingOptionValues {
+        remaining,
+        allow_hyphen_values: argument.is_allow_hyphen_values_set(),
+    })
 }
 
 fn inspect_display_matches(

@@ -196,6 +196,43 @@ fn hidden_aliases_are_not_public_cli_spellings() {
 }
 
 #[test]
+fn option_values_that_match_hidden_commands_remain_values() {
+    let command = Command::new("loom")
+        .arg(Arg::new("request_id").long("request-id").global(true))
+        .subcommand(Command::new("workflow").subcommand(Command::new("run").hide(true)));
+    let parsed = validate_fixture_argv(
+        command,
+        &["loom", "workflow", "--request-id", "run", "--help"],
+    )
+    .expect("hidden command spelling used as an option value must remain public");
+    assert_eq!(parsed.command_path, ["loom", "workflow"]);
+}
+
+#[test]
+fn unbounded_option_values_follow_clap_subcommand_precedence() {
+    let command = || {
+        Command::new("loom")
+            .arg(Arg::new("values").long("values").short('v').num_args(1..))
+            .subcommand(Command::new("run").hide(true))
+    };
+    for argv in [
+        ["loom", "--values", "safe", "run", "--help"],
+        ["loom", "-v", "safe", "run", "--help"],
+    ] {
+        let parsed = validate_fixture_argv(command(), &argv)
+            .expect("greedy option values must not be mistaken for a hidden subcommand");
+        assert_eq!(parsed.command_path, ["loom"]);
+    }
+
+    let error = validate_fixture_argv(
+        command().subcommand_precedence_over_arg(true),
+        &["loom", "--values", "safe", "run", "--help"],
+    )
+    .expect_err("subcommand precedence must still reject a hidden subcommand");
+    assert_eq!(error.kind, PublicArgvErrorKind::HiddenCommand);
+}
+
+#[test]
 fn hidden_possible_values_fail_with_and_without_help() {
     let command = || {
         Command::new("loom").arg(Arg::new("mode").long("mode").value_parser([

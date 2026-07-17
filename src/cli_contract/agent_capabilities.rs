@@ -6,7 +6,10 @@ use std::{
 
 use serde_json::{Value, json};
 
-use super::InventoryError;
+use super::{
+    CLI_CONTRACT_VERSION, InventoryError,
+    contract_policy::{contract_range, ensure_contract_range_contains_version},
+};
 use crate::{
     envelope::{Envelope, Meta},
     error_actions::NextAction,
@@ -62,6 +65,11 @@ pub(super) fn public_agent_capabilities(
         let kind = capability_kind(&path, &kinds, sample_count, serialized.len())?;
         capabilities.insert(format!("field:{path}:{kind}"));
     }
+    capabilities.extend(
+        ErrorCode::ALL
+            .into_iter()
+            .map(|code| format!("value:envelope.error.code:{}", code.as_str())),
+    );
     capabilities.extend(semantic_capabilities(repo_root, &serialized)?);
     Ok(capabilities)
 }
@@ -76,6 +84,8 @@ fn semantic_capabilities(
     let metadata_path = repo_root.join("skills/loom-registry/loom.skill.toml");
     let metadata = fs::read_to_string(&metadata_path)
         .map_err(|error| InventoryError::new(format!("{}: {error}", metadata_path.display())))?;
+    let declared_range = contract_range(&metadata, &metadata_path.display().to_string())?;
+    ensure_contract_range_contains_version(&declared_range, CLI_CONTRACT_VERSION)?;
     let mut semantics = BTreeSet::new();
     if samples.first().and_then(|value| value.get("ok")) == Some(&Value::Bool(true))
         && samples.last().and_then(|value| value.get("ok")) == Some(&Value::Bool(false))
@@ -89,9 +99,7 @@ fn semantic_capabilities(
     if skill.contains("Require `data.safe_to_apply=true`") {
         semantics.insert("semantic:durable_plan_requires_safe_to_apply".to_string());
     }
-    if skill.contains("stop all mutations")
-        && metadata.contains("cli_contract = \">=1.0.0,<2.0.0\"")
-    {
+    if skill.contains("stop all mutations") {
         semantics.insert("semantic:mutation_requires_compatible_contract".to_string());
     }
     Ok(semantics)
@@ -113,6 +121,12 @@ fn collect_shapes(
         entry.1 += 1;
         if value.is_object() && path != "envelope.error.details" {
             collect_shapes(&path, value, shapes);
+        } else if let Value::Array(values) = value
+            && values.iter().all(Value::is_object)
+        {
+            for value in values {
+                collect_shapes(&format!("{path}[]"), value, shapes);
+            }
         }
     }
 }
@@ -171,5 +185,24 @@ fn capability_kind(
         Ok(format!("optional-{kind}"))
     } else {
         Ok(kind)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use super::public_agent_capabilities;
+    use crate::types::ErrorCode;
+
+    #[test]
+    fn agent_capabilities_track_error_codes_and_next_action_fields() {
+        let capabilities = public_agent_capabilities(Path::new(env!("CARGO_MANIFEST_DIR")))
+            .expect("repository agent capability snapshot");
+        for code in ErrorCode::ALL {
+            assert!(capabilities.contains(&format!("value:envelope.error.code:{}", code.as_str())));
+        }
+        assert!(capabilities.contains("field:envelope.error.next_actions[].cmd:string"));
+        assert!(capabilities.contains("field:envelope.error.next_actions[].reason:string"));
     }
 }

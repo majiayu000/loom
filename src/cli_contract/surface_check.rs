@@ -286,7 +286,7 @@ pub(super) fn extract_loom_commands(line: &str) -> Vec<String> {
             push_commands(inline, &mut commands);
         }
     }
-    for marker in ["$(loom ", "\"loom ", "run: loom "] {
+    for marker in ["$(loom ", "\"loom ", "run: loom ", "run loom "] {
         if let Some(index) = line.find(marker) {
             push_commands(&line[index + marker.len() - 5..], &mut commands);
         }
@@ -699,5 +699,15 @@ mod tests {
         let commands = extract_surface_commands(&lines);
         assert_eq!(commands[0].1, ["loom skill save demo"]);
         assert_eq!(commands[1].1, ["loom workspace status"]);
+    }
+
+    #[test]
+    fn prose_extracts_run_loom_next_actions() {
+        let lines = ["If the check fails, run loom mcp doctor --skill demo --agent codex."];
+        let commands = extract_surface_commands(&lines);
+        assert_eq!(
+            commands[0].1,
+            ["loom mcp doctor --skill demo --agent codex"]
+        );
     }
 }

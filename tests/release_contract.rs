@@ -234,6 +234,42 @@ fn homebrew_share_contract_matches() {
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn homebrew_tap_first_release_removes_untracked_formula_before_checkout() {
+    let fixture = TestDir::new("release-contract-homebrew-first-formula");
+    let tap = fixture.path().join("tap");
+    let tap_text = tap.to_str().expect("tap path");
+    git(fixture.path(), &["init", "-q", tap_text]);
+    git(&tap, &["config", "user.email", "release@example.invalid"]);
+    git(&tap, &["config", "user.name", "Release Fixture"]);
+    write_file(&tap.join("README.md"), "tap fixture\n");
+    git(&tap, &["add", "README.md"]);
+    git(&tap, &["commit", "-qm", "initialize tap"]);
+    write_file(&tap.join("Formula/loom.rb"), "version \"first-release\"\n");
+
+    let workflow = include_str!("../.github/workflows/release.yml");
+    let guard_start = workflow
+        .find("if git ls-files --error-unmatch -- Formula/loom.rb")
+        .expect("workflow must detect whether the generated formula is tracked");
+    let guard_end = workflow[guard_start..]
+        .find("if git ls-remote --exit-code --heads origin")
+        .map(|offset| guard_start + offset)
+        .expect("formula cleanup must precede release-branch lookup");
+    let cleanup_guard = &workflow[guard_start..guard_end];
+
+    let status = Command::new("bash")
+        .args(["-c", &format!("set -euo pipefail\n{cleanup_guard}")])
+        .current_dir(&tap)
+        .status()
+        .expect("run first-release formula cleanup guard");
+    assert!(status.success());
+    assert!(
+        !tap.join("Formula/loom.rb").exists(),
+        "an untracked generated formula must be removed before branch checkout"
+    );
+}
+
 #[test]
 fn homebrew_tap_rerun_fast_forwards_existing_branch() {
     let fixture = TestDir::new("release-contract-homebrew-rerun");
@@ -289,6 +325,17 @@ fn homebrew_tap_rerun_fast_forwards_existing_branch() {
     assert!(git(&tap, &["status", "--porcelain"]).is_empty());
 
     let workflow = include_str!("../.github/workflows/release.yml");
+    let tracked_formula_guard = workflow
+        .find("git ls-files --error-unmatch -- Formula/loom.rb")
+        .expect("workflow must distinguish tracked and first-release formulas");
+    let tracked_formula_restore = workflow
+        .find("git restore -- Formula/loom.rb")
+        .expect("workflow must restore a tracked formula before switching branches");
+    let untracked_formula_remove = workflow
+        .find("rm -f Formula/loom.rb")
+        .expect("workflow must remove an untracked first-release formula");
+    assert!(tracked_formula_guard < tracked_formula_restore);
+    assert!(tracked_formula_guard < untracked_formula_remove);
     let no_op_guard = workflow
         .find("git diff --quiet \"origin/main\" -- Formula/loom.rb")
         .expect("workflow must compare Formula with tap main");

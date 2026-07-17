@@ -136,7 +136,7 @@ fn changelog_diff_has_contract_note(repo_root: &Path, base: &str) -> Result<bool
     }))
 }
 
-fn ensure_contract_range_contains_version(
+pub(super) fn ensure_contract_range_contains_version(
     contract_range: &str,
     contract_version: &str,
 ) -> Result<(), InventoryError> {
@@ -304,7 +304,7 @@ fn enforce_capability_version(
     Ok(())
 }
 
-fn contract_range(raw: &str, location: &str) -> Result<String, InventoryError> {
+pub(super) fn contract_range(raw: &str, location: &str) -> Result<String, InventoryError> {
     contract_range_optional(raw, location)?.ok_or_else(|| {
         InventoryError::new(format!("{location}: missing compatibility.cli_contract"))
     })

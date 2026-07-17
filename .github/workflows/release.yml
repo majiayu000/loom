@@ -345,7 +345,11 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           formula="$(mktemp)"
           cp Formula/loom.rb "$formula"
-          git restore -- Formula/loom.rb
+          if git ls-files --error-unmatch -- Formula/loom.rb >/dev/null 2>&1; then
+            git restore -- Formula/loom.rb
+          else
+            rm -f Formula/loom.rb
+          fi
           if git ls-remote --exit-code --heads origin "$branch" >/dev/null; then
             git fetch origin "refs/heads/$branch:refs/remotes/origin/$branch"
             git checkout -B "$branch" "origin/$branch"

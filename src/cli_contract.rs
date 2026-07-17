@@ -1,7 +1,7 @@
 use std::{collections::BTreeSet, fmt};
 
 use clap::{
-    ArgMatches, Command, CommandFactory, FromArgMatches, error::ErrorKind, parser::ValueSource,
+    Arg, ArgMatches, Command, CommandFactory, FromArgMatches, error::ErrorKind, parser::ValueSource,
 };
 
 use crate::{
@@ -420,6 +420,7 @@ fn inspect_requested_visibility(
     argv: &[std::ffi::OsString],
 ) -> Result<PublicArgv, PublicArgvError> {
     let mut current = command;
+    let mut pending_value = None;
     let mut result = PublicArgv {
         command_path: vec!["loom".to_string()],
         explicit_args: Vec::new(),
@@ -428,24 +429,32 @@ fn inspect_requested_visibility(
         let Some(token) = raw.to_str() else {
             continue;
         };
+        if let Some(argument) = pending_value.take() {
+            reject_hidden_possible_value(argument, token)?;
+            continue;
+        }
         if let Some(long) = token.strip_prefix("--") {
-            let name = long.split('=').next().unwrap_or(long);
-            if let Some(argument) = current.get_arguments().find(|argument| {
+            let (name, inline_value) = long
+                .split_once('=')
+                .map_or((long, None), |(name, value)| (name, Some(value)));
+            let argument = current.get_arguments().find(|argument| {
                 argument.get_long() == Some(name)
                     || argument
                         .get_all_aliases()
                         .unwrap_or_default()
                         .contains(&name)
-            }) && (argument.is_hide_set()
-                || argument.get_aliases().unwrap_or_default().contains(&name))
-            {
-                return Err(PublicArgvError {
-                    kind: PublicArgvErrorKind::HiddenArgument,
-                    message: format!(
-                        "hidden argument '{}' is not part of the public CLI contract",
-                        argument.get_id()
-                    ),
-                });
+            });
+            if let Some(argument) = argument {
+                if argument.is_hide_set()
+                    || argument.get_aliases().unwrap_or_default().contains(&name)
+                {
+                    return Err(hidden_argument_error(argument));
+                }
+                if let Some(value) = inline_value {
+                    reject_hidden_possible_value(argument, value)?;
+                } else if argument.get_action().takes_values() {
+                    pending_value = Some(argument);
+                }
             }
             continue;
         }
@@ -467,13 +476,14 @@ fn inspect_requested_visibility(
                         .unwrap_or_default()
                         .contains(&short)))
             {
-                return Err(PublicArgvError {
-                    kind: PublicArgvErrorKind::HiddenArgument,
-                    message: format!(
-                        "hidden argument '{}' is not part of the public CLI contract",
-                        argument.get_id()
-                    ),
-                });
+                return Err(hidden_argument_error(argument));
+            }
+            if let Some(argument) = current
+                .get_arguments()
+                .find(|argument| argument.get_short() == Some(short))
+                && argument.get_action().takes_values()
+            {
+                pending_value = Some(argument);
             }
             continue;
         }
@@ -492,6 +502,31 @@ fn inspect_requested_visibility(
         current = subcommand;
     }
     Ok(result)
+}
+
+fn hidden_argument_error(argument: &Arg) -> PublicArgvError {
+    PublicArgvError {
+        kind: PublicArgvErrorKind::HiddenArgument,
+        message: format!(
+            "hidden argument '{}' is not part of the public CLI contract",
+            argument.get_id()
+        ),
+    }
+}
+
+fn reject_hidden_possible_value(argument: &Arg, raw: &str) -> Result<(), PublicArgvError> {
+    let hidden = argument.get_possible_values().iter().any(|possible| {
+        let canonical_hidden = possible.is_hide_set() && possible.get_name() == raw;
+        let hidden_alias = possible
+            .get_name_and_aliases()
+            .skip(1)
+            .any(|alias| alias == raw);
+        canonical_hidden || hidden_alias
+    });
+    if hidden {
+        return Err(hidden_argument_error(argument));
+    }
+    Ok(())
 }
 
 pub fn parser_error_kind<I, S>(argv: I) -> Option<ErrorKind>
@@ -525,20 +560,7 @@ fn inspect_public_matches(
         }
         if let Some(values) = matches.get_raw(argument.get_id().as_str()) {
             for value in values.filter_map(|value| value.to_str()) {
-                if argument.get_possible_values().iter().any(|possible| {
-                    possible
-                        .get_name_and_aliases()
-                        .skip(1)
-                        .any(|alias| alias == value)
-                }) {
-                    return Err(PublicArgvError {
-                        kind: PublicArgvErrorKind::HiddenArgument,
-                        message: format!(
-                            "hidden value alias for '{}' is not part of the public CLI contract",
-                            argument.get_id()
-                        ),
-                    });
-                }
+                reject_hidden_possible_value(argument, value)?;
             }
         }
         result.explicit_args.push(argument.get_id().to_string());
@@ -567,7 +589,7 @@ fn inspect_public_matches(
 mod tests {
     use std::ffi::OsString;
 
-    use clap::{Arg, ArgAction, Command, builder::PossibleValue};
+    use clap::{Arg, ArgAction, Command, builder::PossibleValue, error::ErrorKind};
 
     use super::{
         PublicArgv, PublicArgvError, PublicArgvErrorKind, command_schema_capabilities,
@@ -588,11 +610,12 @@ mod tests {
     ) -> Result<PublicArgv, PublicArgvError> {
         command.build();
         let argv = argv.iter().map(OsString::from).collect::<Vec<_>>();
-        inspect_requested_visibility(&command, &argv)?;
-        let matches = command
-            .clone()
-            .try_get_matches_from(&argv)
-            .expect("fixture must remain valid Clap input");
+        let help_result = inspect_requested_visibility(&command, &argv)?;
+        let matches = match command.clone().try_get_matches_from(&argv) {
+            Ok(matches) => matches,
+            Err(error) if error.kind() == ErrorKind::DisplayHelp => return Ok(help_result),
+            Err(error) => panic!("fixture must remain valid Clap input: {error}"),
+        };
         let mut result = PublicArgv {
             command_path: vec!["loom".to_string()],
             explicit_args: Vec::new(),
@@ -709,15 +732,23 @@ mod tests {
     }
 
     #[test]
-    fn hidden_possible_value_aliases_are_not_public_cli_spellings() {
-        let command = Command::new("loom").arg(
-            Arg::new("mode")
-                .long("mode")
-                .value_parser([PossibleValue::new("safe").alias("secret-safe")]),
-        );
-        let error = validate_fixture_argv(command, &["loom", "--mode", "secret-safe"])
-            .expect_err("hidden possible-value alias must fail closed");
-        assert_eq!(error.kind, PublicArgvErrorKind::HiddenArgument);
+    fn hidden_possible_values_fail_with_and_without_help() {
+        let command = || {
+            Command::new("loom").arg(Arg::new("mode").long("mode").value_parser([
+                PossibleValue::new("safe").alias("secret-safe"),
+                PossibleValue::new("classified").hide(true),
+            ]))
+        };
+        for value in ["secret-safe", "classified"] {
+            for argv in [
+                vec!["loom", "--mode", value],
+                vec!["loom", "--mode", value, "--help"],
+            ] {
+                let error = validate_fixture_argv(command(), &argv)
+                    .expect_err("hidden possible value must fail closed");
+                assert_eq!(error.kind, PublicArgvErrorKind::HiddenArgument);
+            }
+        }
     }
 
     #[test]

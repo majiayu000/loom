@@ -395,12 +395,12 @@ classification = "executable"
 [[example]]
 id = "releasing.archive_smoke"
 surface = "releasing"
-line_range = [86, 90]
+line_range = [92, 96]
 classification = "executable"
 [[example]]
 id = "release_workflow.homebrew_formula"
 surface = "release_workflow"
-line_range = [1, 318]
+line_range = [1, 344]
 classification = "output_example"
 [[example]]
 id = "codex_visibility.current_commands"

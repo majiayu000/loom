@@ -6,12 +6,14 @@ use clap::{
 
 use crate::cli::Cli;
 
+mod contract_policy;
 mod emitter_check;
 mod inventory;
 mod panel_check;
 mod surface_check;
 mod trace_check;
 
+pub use contract_policy::check_contract_range_policy;
 pub use emitter_check::check_next_action_emitters;
 pub use inventory::{
     ExampleClassification, InventoryError, NextActionEmitter, NextActionShape, PanelBinding,

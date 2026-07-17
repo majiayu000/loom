@@ -4,9 +4,9 @@ mod common;
 
 use common::{TestDir, run_loom, run_loom_with_env, write_file, write_skill};
 use skillloom::cli_contract::{
-    CLI_CONTRACT_VERSION, PublicArgvErrorKind, check_next_action_trace, check_surface_inventory,
-    contract_version_matches, current_contract_version, parse_contract_version,
-    validate_public_argv,
+    CLI_CONTRACT_VERSION, PublicArgvErrorKind, check_contract_range_policy,
+    check_next_action_trace, check_surface_inventory, contract_version_matches,
+    current_contract_version, parse_contract_version, validate_public_argv,
 };
 
 #[test]
@@ -338,4 +338,25 @@ fn contract_additive_capability_requires_minor_bump() {
         std::fs::read_to_string("docs/cli-contract-history.toml").expect("read contract history");
     assert!(history.contains("version = \"1.0.0\""));
     assert!(history.contains("migration_note ="));
+}
+
+#[test]
+fn contract_range_requires_migration_note_with_explicit_base() {
+    let base = std::env::var("LOOM_CONTRACT_DIFF_BASE").unwrap_or_else(|_| "HEAD~1".to_string());
+    check_contract_range_policy(std::path::Path::new("."), Some(&base))
+        .expect("explicit-base contract policy");
+}
+
+#[test]
+fn contract_range_missing_diff_base_fails() {
+    let error = check_contract_range_policy(std::path::Path::new("."), None)
+        .expect_err("missing diff base must fail closed");
+    assert!(error.to_string().contains("LOOM_CONTRACT_DIFF_BASE"));
+}
+
+#[test]
+fn contract_range_policy_current_diff() {
+    let base = std::env::var("LOOM_CONTRACT_DIFF_BASE").unwrap_or_else(|_| "HEAD~1".to_string());
+    check_contract_range_policy(std::path::Path::new("."), Some(&base))
+        .expect("current contract policy");
 }

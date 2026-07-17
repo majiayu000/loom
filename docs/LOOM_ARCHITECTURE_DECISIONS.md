@@ -288,3 +288,10 @@ The full provider contract is in
 - #41 is closed by section 4.
 - #42 is closed by section 5.
 - #347 is closed by section 7.
+# Agent-facing CLI contract versioning
+
+The CLI contract has an independent SemVer from the crate release. Additive agent-facing
+capabilities require a minor bump, breaking command/flag/field or semantic changes require
+a major bump, and non-capability corrections may use a patch bump. The append-only history,
+shipped Skill range, migration note, and release manifest are reviewed as one change; CI
+compares them against an explicit reachable `LOOM_CONTRACT_DIFF_BASE` and fails closed.

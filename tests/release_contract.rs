@@ -94,6 +94,24 @@ fn manifest(path: &Path) -> Value {
     serde_json::from_str(&fs::read_to_string(path).expect("read manifest")).expect("parse manifest")
 }
 
+fn git(repo: &Path, args: &[&str]) -> String {
+    let output = Command::new("git")
+        .current_dir(repo)
+        .args(args)
+        .output()
+        .expect("run git fixture command");
+    assert!(
+        output.status.success(),
+        "git {args:?}: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8(output.stdout)
+        .expect("git fixture output must be UTF-8")
+        .trim()
+        .to_string()
+}
+
 #[test]
 fn packaged_contract_mismatch_fails() {
     let fixture = Fixture::new("release-contract-mismatch");
@@ -162,6 +180,61 @@ fn homebrew_share_contract_matches() {
             .join("contracts/agent-command-surfaces.toml")
             .is_file()
     );
+}
+
+#[test]
+fn homebrew_tap_rerun_fast_forwards_existing_branch() {
+    let fixture = TestDir::new("release-contract-homebrew-rerun");
+    let remote = fixture.path().join("tap.git");
+    let tap = fixture.path().join("tap");
+    let remote_text = remote.to_str().expect("remote path");
+    let tap_text = tap.to_str().expect("tap path");
+
+    git(fixture.path(), &["init", "-q", "--bare", remote_text]);
+    git(fixture.path(), &["init", "-q", tap_text]);
+    git(&tap, &["config", "user.email", "release@example.invalid"]);
+    git(&tap, &["config", "user.name", "Release Fixture"]);
+    git(&tap, &["branch", "-M", "main"]);
+    write_file(&tap.join("Formula/loom.rb"), "version \"main\"\n");
+    git(&tap, &["add", "Formula/loom.rb"]);
+    git(&tap, &["commit", "-qm", "main formula"]);
+    git(&tap, &["remote", "add", "origin", remote_text]);
+    git(&tap, &["push", "-u", "origin", "main"]);
+
+    let branch = "loom-v0.1.5";
+    git(&tap, &["checkout", "-qb", branch]);
+    write_file(&tap.join("Formula/loom.rb"), "version \"old-release\"\n");
+    git(&tap, &["add", "Formula/loom.rb"]);
+    git(&tap, &["commit", "-qm", "old release formula"]);
+    git(&tap, &["push", "-u", "origin", branch]);
+    let old_head = git(&tap, &["rev-parse", "HEAD"]);
+
+    git(&tap, &["checkout", "-q", "main"]);
+    write_file(&tap.join("Formula/loom.rb"), "version \"new-release\"\n");
+    let saved_formula = fixture.path().join("generated-loom.rb");
+    fs::copy(tap.join("Formula/loom.rb"), &saved_formula).expect("save generated formula");
+    git(&tap, &["restore", "--", "Formula/loom.rb"]);
+    git(
+        &tap,
+        &[
+            "fetch",
+            "origin",
+            "refs/heads/loom-v0.1.5:refs/remotes/origin/loom-v0.1.5",
+        ],
+    );
+    git(&tap, &["checkout", "-qB", branch, "origin/loom-v0.1.5"]);
+    fs::copy(&saved_formula, tap.join("Formula/loom.rb")).expect("restore generated formula");
+    git(&tap, &["add", "Formula/loom.rb"]);
+    git(&tap, &["commit", "-qm", "updated release formula"]);
+    git(&tap, &["push", "origin", "HEAD:refs/heads/loom-v0.1.5"]);
+
+    let new_head = git(&tap, &["rev-parse", "HEAD"]);
+    git(&tap, &["merge-base", "--is-ancestor", &old_head, &new_head]);
+    assert_eq!(
+        fs::read_to_string(tap.join("Formula/loom.rb")).expect("read updated formula"),
+        "version \"new-release\"\n"
+    );
+    assert!(git(&tap, &["status", "--porcelain"]).is_empty());
 }
 
 #[test]

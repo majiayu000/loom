@@ -374,7 +374,7 @@ classification = "executable"
 [[example]]
 id = "release_workflow.homebrew_formula"
 surface = "release_workflow"
-line_range = [337, 344]
+line_range = [355, 366]
 classification = "output_example"
 [[example]]
 id = "codex_visibility.inspect"

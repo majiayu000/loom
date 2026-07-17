@@ -6,7 +6,7 @@ use std::process::Command;
 use toml_edit::DocumentMut;
 
 use super::inventory::{INVENTORY_PATH, parse_surface_inventory};
-use super::{ContractVersion, InventoryError, parse_contract_version};
+use super::{ContractVersion, InventoryError, contract_version_matches, parse_contract_version};
 
 const SKILL_METADATA: &str = "skills/loom-registry/loom.skill.toml";
 const HISTORY: &str = "docs/cli-contract-history.toml";
@@ -54,6 +54,7 @@ pub fn check_contract_range_policy(
         "{}.{}.{}",
         current_version.major, current_version.minor, current_version.patch
     );
+    ensure_contract_range_contains_version(&current_range, &current_version_text)?;
     if !current_records.iter().any(|(version, range, note)| {
         version == &current_version_text && range == &current_range && !note.trim().is_empty()
     }) {
@@ -98,6 +99,23 @@ pub fn check_contract_range_policy(
                 "Skill range changes require a CHANGELOG CLI contract note",
             ));
         }
+    }
+    Ok(())
+}
+
+fn ensure_contract_range_contains_version(
+    contract_range: &str,
+    contract_version: &str,
+) -> Result<(), InventoryError> {
+    let matches = contract_version_matches(contract_range, contract_version).map_err(|error| {
+        InventoryError::new(format!(
+            "{SKILL_METADATA}: invalid compatibility.cli_contract: {error}"
+        ))
+    })?;
+    if !matches {
+        return Err(InventoryError::new(format!(
+            "Skill CLI contract range '{contract_range}' does not contain current CLI contract version '{contract_version}'"
+        )));
     }
     Ok(())
 }
@@ -289,7 +307,9 @@ fn read_current(repo_root: &Path, path: &str) -> Result<String, InventoryError> 
 mod tests {
     use std::collections::BTreeSet;
 
-    use super::{ContractVersion, enforce_capability_version};
+    use super::{
+        ContractVersion, enforce_capability_version, ensure_contract_range_contains_version,
+    };
 
     fn version(major: u64, minor: u64, patch: u64) -> ContractVersion {
         ContractVersion {
@@ -322,5 +342,14 @@ mod tests {
         assert!(error.to_string().contains("major bump"), "{error}");
         enforce_capability_version(version(1, 0, 0), version(2, 0, 0), &base, &current)
             .expect("major bump admits changed field semantics");
+    }
+
+    #[test]
+    fn shipped_skill_range_must_contain_current_contract_version() {
+        ensure_contract_range_contains_version(">=1.0.0,<2.0.0", "1.5.0")
+            .expect("compatible range");
+        let error = ensure_contract_range_contains_version(">=1.0.0,<2.0.0", "2.0.0")
+            .expect_err("incompatible shipped Skill range must fail");
+        assert!(error.to_string().contains("does not contain"), "{error}");
     }
 }

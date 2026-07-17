@@ -127,13 +127,20 @@ jobs:
           version="${GITHUB_REF_NAME#v}"
           archive="skillloom-${version}-${{ matrix.target }}.tar.gz"
           staging="dist/skillloom-${version}-${{ matrix.target }}"
+          contract_root="$(mktemp -d)"
+          trap 'rm -rf "$contract_root"' EXIT
+          contract_version="$(
+            "target/${{ matrix.target }}/release/loom" \
+              --json --root "$contract_root" workspace status \
+              | python3 -c 'import json, sys; value = json.load(sys.stdin).get("cli_contract_version"); isinstance(value, str) and value or sys.exit("binary returned no CLI contract version"); print(value)'
+          )"
           python3 scripts/release-contract.py publish \
             --binary "target/${{ matrix.target }}/release/loom" \
             --skill-dir skills/loom-registry \
             --inventory docs/agent-command-surfaces.toml \
             --output-dir "$staging" \
             --release-version "$version" \
-            --contract-version 1.0.0 \
+            --contract-version "$contract_version" \
             --target "${{ matrix.target }}" \
             --extra README.md \
             --extra LICENSE
@@ -309,10 +316,11 @@ jobs:
             end
 
             def install
-              bin.install "loom"
+              pkgshare.install "loom"
               pkgshare.install "skills"
               pkgshare.install "contracts"
               pkgshare.install "contract-manifest.json"
+              bin.install_symlink pkgshare/"loom"
             end
 
             test do
@@ -332,13 +340,28 @@ jobs:
           branch="loom-${GITHUB_REF_NAME}"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git checkout -B "$branch"
+          formula="$(mktemp)"
+          cp Formula/loom.rb "$formula"
+          git restore -- Formula/loom.rb
+          if git ls-remote --exit-code --heads origin "$branch" >/dev/null; then
+            git fetch origin "refs/heads/$branch:refs/remotes/origin/$branch"
+            git checkout -B "$branch" "origin/$branch"
+          else
+            git checkout -B "$branch"
+          fi
+          install -m 0644 "$formula" Formula/loom.rb
+          rm -f "$formula"
           git add Formula/loom.rb
-          git commit -m "Update loom to ${GITHUB_REF_NAME}" || exit 0
-          git push origin "HEAD:refs/heads/$branch"
-          gh pr create \
-            --repo "$TAP_REPO" \
-            --head "$branch" \
-            --base main \
-            --title "Update loom to ${GITHUB_REF_NAME}" \
-            --body "Updates the loom formula for ${GITHUB_REF_NAME}."
+          if ! git diff --cached --quiet; then
+            git commit -m "Update loom to ${GITHUB_REF_NAME}"
+            git push origin "HEAD:refs/heads/$branch"
+          fi
+          pr_number="$(gh pr list --repo "$TAP_REPO" --head "$branch" --base main --state open --json number --jq '.[0].number')"
+          if [[ -z "$pr_number" ]]; then
+            gh pr create \
+              --repo "$TAP_REPO" \
+              --head "$branch" \
+              --base main \
+              --title "Update loom to ${GITHUB_REF_NAME}" \
+              --body "Updates the loom formula for ${GITHUB_REF_NAME}."
+          fi

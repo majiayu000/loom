@@ -18,12 +18,12 @@
   ],
   "properties": {
     "protocol_version": { "const": "1.0" },
-    "schema_version": { "const": "1.0" },
+    "schema_version": { "enum": ["1.0", "1.1"] },
     "plan_id": {
       "type": "string",
       "pattern": "^plan_[A-Za-z0-9_]+$"
     },
-    "operation": { "enum": ["use"] },
+    "operation": { "enum": ["use", "converge"] },
     "safe_to_apply": { "type": "boolean" },
     "effects": { "type": "array" },
     "conflicts": { "type": "array" },
@@ -68,10 +68,60 @@
       "additionalProperties": true
     },
     "use_args": { "type": "object" },
+    "plan_digest": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "selectors": { "type": "object" },
+    "source": { "type": "object" },
+    "registry": { "type": "object" },
+    "projections": { "type": "array" },
+    "visibility": { "type": "array" },
+    "required_axes": {
+      "type": "array",
+      "items": { "type": "string" },
+      "uniqueItems": true
+    },
+    "requires_digest_confirmation": { "type": "boolean" },
+    "execution_enabled": { "type": "boolean" },
     "next_actions": {
       "type": "array",
       "items": { "type": "string" }
     }
   },
+  "allOf": [
+    {
+      "if": {
+        "properties": { "schema_version": { "const": "1.0" } },
+        "required": ["schema_version"]
+      },
+      "then": { "properties": { "operation": { "const": "use" } } }
+    },
+    {
+      "if": {
+        "properties": { "operation": { "const": "converge" } },
+        "required": ["operation"]
+      },
+      "then": {
+        "properties": {
+          "schema_version": { "const": "1.1" },
+          "requires_digest_confirmation": { "const": true },
+          "execution_enabled": { "const": false },
+          "safe_to_apply": { "const": false }
+        },
+        "required": [
+          "plan_digest",
+          "selectors",
+          "source",
+          "registry",
+          "projections",
+          "visibility",
+          "required_axes",
+          "requires_digest_confirmation",
+          "execution_enabled"
+        ]
+      }
+    }
+  ],
   "additionalProperties": true
 }

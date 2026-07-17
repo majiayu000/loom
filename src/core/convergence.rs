@@ -105,6 +105,11 @@ struct SkillConvergenceDigestPayload<'a> {
 
 impl SkillConvergencePlan {
     pub(crate) fn seal(&mut self) -> Result<(), serde_json::Error> {
+        self.plan_digest = self.canonical_digest()?;
+        Ok(())
+    }
+
+    pub(crate) fn canonical_digest(&self) -> Result<String, serde_json::Error> {
         let payload = SkillConvergenceDigestPayload {
             skill: &self.skill,
             selectors: &self.selectors,
@@ -120,7 +125,6 @@ impl SkillConvergencePlan {
         let bytes = serde_json::to_vec(&payload)?;
         let mut hasher = Sha256::new();
         hasher.update(&bytes);
-        self.plan_digest = format!("sha256:{}", to_hex(&hasher.finalize()));
-        Ok(())
+        Ok(format!("sha256:{}", to_hex(&hasher.finalize())))
     }
 }

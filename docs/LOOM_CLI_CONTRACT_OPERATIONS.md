@@ -527,7 +527,7 @@ Convergence plans require the exact non-empty `--plan-digest` returned by planni
 
 The top-level `plan` command owns durable plan creation. The top-level `apply` command owns guarded plan execution.
 
-The plan JSON schema is versioned separately from the binary package version at `docs/schemas/agent-plan-v1.schema.json`. Current plans use `protocol_version: "1.0"` and `schema_version: "1.0"`.
+The plan JSON schema is versioned separately from the binary package version at `docs/schemas/agent-plan-v1.schema.json`. Current plans use `protocol_version: "1.0"`; `plan use` uses `schema_version: "1.0"`, while the additive typed `plan converge` shape uses `schema_version: "1.1"`.
 
 Rules:
 

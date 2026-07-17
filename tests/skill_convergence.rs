@@ -121,6 +121,8 @@ fn exact_effect_plan() {
     assert!(output.status.success(), "second plan failed: {second}");
 
     assert_eq!(first["cmd"], json!("plan.converge"));
+    assert_eq!(first["data"]["protocol_version"], json!("1.0"));
+    assert_eq!(first["data"]["schema_version"], json!("1.1"));
     assert_eq!(first["data"]["operation"], json!("converge"));
     assert_eq!(first["data"]["safe_to_apply"], json!(false));
     assert_eq!(first["data"]["execution_enabled"], json!(false));
@@ -141,6 +143,22 @@ fn exact_effect_plan() {
     assert_eq!(effects[0]["method"], json!("copy"));
     assert_eq!(effects[0]["ownership"], json!("managed"));
     assert_eq!(first["data"]["required_axes"], json!(["projections"]));
+
+    let schema: Value =
+        serde_json::from_str(include_str!("../docs/schemas/agent-plan-v1.schema.json"))
+            .expect("agent plan schema JSON");
+    assert!(
+        schema["properties"]["schema_version"]["enum"]
+            .as_array()
+            .is_some_and(|versions| versions.contains(&json!("1.1"))),
+        "authoritative schema must declare convergence schema 1.1"
+    );
+    assert!(
+        schema["properties"]["operation"]["enum"]
+            .as_array()
+            .is_some_and(|operations| operations.contains(&json!("converge"))),
+        "authoritative schema must declare plan converge"
+    );
 }
 
 #[test]
@@ -255,6 +273,44 @@ fn apply_requires_reviewed_plan_digest() {
     assert_eq!(
         git(fixture.root.path(), &["rev-parse", "HEAD"]),
         head_before
+    );
+
+    let audit_path = fixture.root.path().join("state/events/commands.jsonl");
+    let raw = fs::read_to_string(&audit_path).expect("read convergence audit");
+    let mut tampered = false;
+    let rows = raw
+        .lines()
+        .map(|line| {
+            let mut event: Value = serde_json::from_str(line).expect("parse command event");
+            if event["cmd"] == json!("plan.converge")
+                && event["status"] == json!("succeeded")
+                && event["output"]["plan_id"] == json!(plan_id)
+            {
+                event["output"]["selectors"]["profile"] = json!("tampered");
+                tampered = true;
+            }
+            serde_json::to_string(&event).expect("serialize command event")
+        })
+        .collect::<Vec<_>>();
+    assert!(tampered, "expected stored convergence plan event");
+    fs::write(&audit_path, format!("{}\n", rows.join("\n"))).expect("tamper stored plan");
+
+    let (output, corrupt) = run_loom(
+        fixture.root.path(),
+        &[
+            "apply",
+            plan_id,
+            "--plan-digest",
+            digest,
+            "--idempotency-key",
+            "conv-corrupt",
+        ],
+    );
+    assert!(!output.status.success(), "corrupt plan passed: {corrupt}");
+    assert_eq!(corrupt["error"]["code"], json!("STATE_CORRUPT"));
+    assert_eq!(
+        corrupt["error"]["details"]["conflict"]["code"],
+        json!("PLAN_DIGEST_INVALID")
     );
 }
 

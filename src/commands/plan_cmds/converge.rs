@@ -24,9 +24,9 @@ use super::super::helpers::{
 use super::super::provenance::{materialized_tree_digest, skill_tree_digest};
 use super::super::skill_policy::evaluate_skill_policy;
 use super::super::{App, CommandFailure};
-use super::{
-    PLAN_PROTOCOL_VERSION, PLAN_SCHEMA_VERSION, canonical_root, policy_risks, required_approvals,
-};
+use super::{PLAN_PROTOCOL_VERSION, canonical_root, policy_risks, required_approvals};
+
+const CONVERGENCE_PLAN_SCHEMA_VERSION: &str = "1.1";
 
 impl App {
     pub(super) fn cmd_plan_converge(
@@ -132,7 +132,10 @@ impl App {
             )
         })?;
         object.insert("protocol_version".to_string(), json!(PLAN_PROTOCOL_VERSION));
-        object.insert("schema_version".to_string(), json!(PLAN_SCHEMA_VERSION));
+        object.insert(
+            "schema_version".to_string(),
+            json!(CONVERGENCE_PLAN_SCHEMA_VERSION),
+        );
         object.insert("operation".to_string(), json!("converge"));
         object.insert("requires_digest_confirmation".to_string(), json!(true));
         object.insert("execution_enabled".to_string(), json!(false));

@@ -50,12 +50,18 @@ pub(super) fn canonical_identity(
     if agent == Agent::Codex && relative == "history.jsonl" {
         return Ok("history".to_string());
     }
-    if let Some(value) = native_session_record(agent, file, None)?
+    if let Some(value) = native_session_record(agent, file, None, SessionRecordSelection::First)?
         && let Some(session_id) = native_session_id(agent, &value)
     {
         return Ok(format!("session:{}", session_hash_for_text(session_id)));
     }
     Ok(format!("path:{relative}"))
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SessionRecordSelection {
+    First,
+    Latest,
 }
 
 fn native_session_id(agent: Agent, value: &Value) -> Option<&str> {
@@ -70,15 +76,24 @@ fn native_session_id(agent: Agent, value: &Value) -> Option<&str> {
     session_id.filter(|session_id| !session_id.is_empty())
 }
 
+fn is_native_session_boundary(agent: Agent, value: &Value) -> bool {
+    match agent {
+        Agent::Claude => native_session_id(agent, value).is_some(),
+        Agent::Codex => value.get("type").and_then(Value::as_str) == Some("session_meta"),
+    }
+}
+
 fn native_session_record(
     agent: Agent,
     file: &mut File,
     scan_end: Option<u64>,
+    selection: SessionRecordSelection,
 ) -> std::result::Result<Option<Value>, CommandFailure> {
     file.seek(SeekFrom::Start(0)).map_err(map_io)?;
     let mut reader = BufReader::new(file);
     let mut raw = Vec::new();
     let mut offset = 0u64;
+    let mut selected = None;
     loop {
         if scan_end.is_some_and(|end| offset >= end) {
             break;
@@ -97,14 +112,20 @@ fn native_session_record(
         if scan_end.is_some_and(|end| offset > end) {
             break;
         }
-        if complete
-            && let Ok(value) = serde_json::from_slice::<Value>(&raw)
-            && native_session_id(agent, &value).is_some()
-        {
-            return Ok(Some(value));
+        if complete && let Ok(value) = serde_json::from_slice::<Value>(&raw) {
+            if selection == SessionRecordSelection::First
+                && native_session_id(agent, &value).is_some()
+            {
+                return Ok(Some(value));
+            }
+            if selection == SessionRecordSelection::Latest
+                && is_native_session_boundary(agent, &value)
+            {
+                selected = Some(value);
+            }
         }
     }
-    Ok(None)
+    Ok(selected)
 }
 
 pub(super) fn parser_state_before(
@@ -124,7 +145,12 @@ pub(super) fn parser_state_before(
         ));
     }
     if context_offset > 0
-        && let Some(value) = native_session_record(agent, file, Some(context_offset))?
+        && let Some(value) = native_session_record(
+            agent,
+            file,
+            Some(context_offset),
+            SessionRecordSelection::Latest,
+        )?
     {
         let _ = parse_agent_record(agent, &value, &mut state);
     }

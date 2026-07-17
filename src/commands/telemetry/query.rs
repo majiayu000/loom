@@ -7,7 +7,7 @@ use super::model::{TelemetryConfig, TelemetryEvent, TelemetryEventType};
 use super::store::{MalformedTelemetryLine, read_config, read_event_log};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) enum SkillRef {
+pub(crate) enum SkillRef {
     Registered(String),
     Observed(String),
     Unattributed,
@@ -23,7 +23,7 @@ impl SkillRef {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) enum AgentRef {
+pub(crate) enum AgentRef {
     Known(String),
     Unknown,
 }
@@ -35,10 +35,10 @@ pub(super) struct NormalizedTelemetryRow {
     pub(super) agent_ref: AgentRef,
 }
 
-pub(super) struct NormalizedTelemetryDataset {
-    pub(super) telemetry_enabled: bool,
-    pub(super) persisted_event_count: usize,
-    pub(super) malformed_event_count: usize,
+pub(crate) struct NormalizedTelemetryDataset {
+    pub(crate) telemetry_enabled: bool,
+    pub(crate) persisted_event_count: usize,
+    pub(crate) malformed_event_count: usize,
     pub(super) config: Option<TelemetryConfig>,
     pub(super) rows: Vec<NormalizedTelemetryRow>,
     pub(super) malformed: Vec<MalformedTelemetryLine>,
@@ -53,7 +53,7 @@ pub(super) struct TelemetryFilters {
     pub(super) since: Option<DateTime<Utc>>,
 }
 
-pub(super) fn load_dataset(
+pub(crate) fn load_dataset(
     ctx: &AppContext,
 ) -> std::result::Result<NormalizedTelemetryDataset, CommandFailure> {
     let config = read_config(ctx)?;
@@ -122,14 +122,36 @@ pub(super) fn filtered_rows<'a>(
         .collect()
 }
 
-#[allow(dead_code)]
-pub(super) fn usage_rows(
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum UsageKind {
+    Invocation,
+    Error,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct UsageRow {
+    pub(crate) skill_ref: SkillRef,
+    pub(crate) agent_ref: AgentRef,
+    pub(crate) kind: UsageKind,
+    pub(crate) timestamp: DateTime<Utc>,
+    pub(crate) failure_category: Option<String>,
+}
+
+pub(crate) fn usage_rows(
     dataset: &NormalizedTelemetryDataset,
-) -> impl Iterator<Item = &NormalizedTelemetryRow> {
-    dataset.rows.iter().filter(|row| {
-        matches!(
-            row.event.event_type,
-            TelemetryEventType::SkillInvocation | TelemetryEventType::SkillError
-        )
+) -> impl Iterator<Item = UsageRow> + '_ {
+    dataset.rows.iter().filter_map(|row| {
+        let kind = match row.event.event_type {
+            TelemetryEventType::SkillInvocation => UsageKind::Invocation,
+            TelemetryEventType::SkillError => UsageKind::Error,
+            _ => return None,
+        };
+        Some(UsageRow {
+            skill_ref: row.skill_ref.clone(),
+            agent_ref: row.agent_ref.clone(),
+            kind,
+            timestamp: row.event.timestamp,
+            failure_category: row.event.metrics.failure_category.clone(),
+        })
     })
 }

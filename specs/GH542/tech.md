@@ -21,7 +21,7 @@ Depends on: GH541
 
 ## 2. Proposed Design
 
-1. 新增 CLI：`src/cli/` skill 命令组挂 `Stats(SkillStatsArgs)`（`--since`、`--agent`、`--zombie-days` 默认 30、全局 `--json`）。
+1. 新增 CLI：`src/cli/` skill 命令组挂 `Stats(SkillStatsArgs)`（`--since`、`--agent`、`--zombie-days` 默认 30、全局 `--json`）。按现有 command-surface budget 记录 GH542 例外：owner 为 GH542 telemetry governance workstream；当 operational skill inventory reads 收敛为一个不破坏 1.x contract 的 grouped read surface 时 sunset。
 2. 新增 `src/commands/telemetry/query.rs`，暴露完整 redacted `NormalizedTelemetryDataset`（保留
    activation/deactivation/invocation/eval/safety/error/feedback、hashed identifiers 与全部现有 metrics）
    供 `telemetry report` 使用；同时从 full rows 派生最小 `UsageRow {skill_ref:

@@ -57,3 +57,18 @@ pub struct SkillFeedbackArgs {
     #[arg(long)]
     pub task: Option<String>,
 }
+
+#[derive(Debug, Clone, Args, Serialize)]
+pub struct SkillStatsArgs {
+    /// Include usage attempts at or after this date or RFC3339 timestamp.
+    #[arg(long)]
+    pub since: Option<String>,
+
+    /// Scope lifecycle bindings and usage to one agent.
+    #[arg(long)]
+    pub agent: Option<String>,
+
+    /// Classify bound skills with no recent attempts as zombies.
+    #[arg(long, default_value_t = 30)]
+    pub zombie_days: u64,
+}

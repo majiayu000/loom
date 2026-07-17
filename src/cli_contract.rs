@@ -27,7 +27,7 @@ pub use panel_check::check_panel_mutations;
 pub use surface_check::{SurfaceCheckReport, check_surface_inventory};
 pub use trace_check::{NextActionTraceReport, check_next_action_trace};
 
-pub const CLI_CONTRACT_VERSION: &str = "1.5.0";
+pub const CLI_CONTRACT_VERSION: &str = "1.6.0";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct ContractVersion {

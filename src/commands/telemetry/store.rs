@@ -268,7 +268,7 @@ pub(super) fn read_event_log(
     Ok(log)
 }
 
-pub(super) fn parse_cutoff(
+pub(crate) fn parse_cutoff(
     label: &str,
     raw: Option<&str>,
 ) -> std::result::Result<Option<DateTime<Utc>>, CommandFailure> {

@@ -455,30 +455,22 @@ fn materialize_projection(
         None
     };
     let backup = if path_exists {
-        if let Err(err) = exchange_paths_atomic(&staging_path, &input.materialized_path) {
-            let mut cleanup_errors = Vec::new();
-            cleanup_projection_staging(&staging_path, &mut cleanup_errors);
-            return Err(map_io(err).with_rollback_errors(cleanup_errors));
-        }
         if input.context == ProjectionExecutionContext::Convergence {
+            if let Err(err) = exchange_paths_atomic(&staging_path, &input.materialized_path) {
+                let mut cleanup_errors = Vec::new();
+                cleanup_projection_staging(&staging_path, &mut cleanup_errors);
+                return Err(map_io(err).with_rollback_errors(cleanup_errors));
+            }
             Some(atomic_exchange_backup(
                 &input.materialized_path,
                 &staging_path,
             ))
         } else {
-            let mut cleanup_errors = Vec::new();
-            cleanup_projection_staging(&staging_path, &mut cleanup_errors);
-            if !cleanup_errors.is_empty() {
-                let mut rollback_errors =
-                    rollback_atomic_exchange(&input.materialized_path, &staging_path);
-                rollback_errors.extend(cleanup_errors);
-                return Err(CommandFailure::new(
-                    ErrorCode::IoError,
-                    "failed to remove replaced projection after atomic exchange",
-                )
-                .with_rollback_errors(rollback_errors));
-            }
-            persistent_backup
+            replace_standalone_projection(
+                &staging_path,
+                &input.materialized_path,
+                persistent_backup,
+            )?
         }
     } else {
         if let Err(err) = rename_atomic(&staging_path, &input.materialized_path) {
@@ -493,6 +485,24 @@ fn materialize_projection(
         changed: true,
         backup,
     })
+}
+
+fn replace_standalone_projection(
+    staging_path: &Path,
+    materialized_path: &Path,
+    backup: Option<Value>,
+) -> Result<Option<Value>, CommandFailure> {
+    if let Err(err) = remove_path_if_exists(materialized_path) {
+        let mut rollback_errors = rollback_live_projection_path(materialized_path, backup.as_ref());
+        cleanup_projection_staging(staging_path, &mut rollback_errors);
+        return Err(map_io(err).with_rollback_errors(rollback_errors));
+    }
+    if let Err(err) = rename_atomic(staging_path, materialized_path) {
+        let mut rollback_errors = rollback_live_projection_path(materialized_path, backup.as_ref());
+        cleanup_projection_staging(staging_path, &mut rollback_errors);
+        return Err(map_io(err).with_rollback_errors(rollback_errors));
+    }
+    Ok(backup)
 }
 
 fn cleanup_projection_staging(path: &Path, errors: &mut Vec<Value>) {

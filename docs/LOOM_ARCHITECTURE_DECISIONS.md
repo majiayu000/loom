@@ -288,6 +288,15 @@ The full provider contract is in
 - #41 is closed by section 4.
 - #42 is closed by section 5.
 - #347 is closed by section 7.
+
+## GH542 command-surface budget exception
+
+GH542 adds the read-only `skill.stats` lifecycle governance report to the
+existing skill command group. Owner: GH542 telemetry governance workstream.
+Sunset condition: remove this exception when operational skill inventory reads
+(`list`, `inspect`, `active`, and `stats`) are consolidated under one grouped
+read surface without breaking the documented 1.x CLI contract.
+
 # Agent-facing CLI contract versioning
 
 The CLI contract has an independent SemVer from the crate release. Additive agent-facing

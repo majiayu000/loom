@@ -60,11 +60,7 @@ pub fn check_panel_mutations(
         check_action_label(repo_root, mutation)?;
         match mutation.binding {
             PanelBinding::CliEquivalent => {
-                let argv = mutation
-                    .cli_argv
-                    .iter()
-                    .map(|value| fixture_value(value))
-                    .collect::<Vec<_>>();
+                let argv = panel_fixture_argv(mutation);
                 validate_public_argv(argv.iter().map(String::as_str)).map_err(|error| {
                     InventoryError::new(format!(
                         "{}: panel CLI equivalent {:?} is not public: {}",
@@ -76,6 +72,14 @@ pub fn check_panel_mutations(
         }
     }
     Ok(mutations.len())
+}
+
+pub(super) fn panel_fixture_argv(mutation: &PanelMutation) -> Vec<String> {
+    mutation
+        .cli_argv
+        .iter()
+        .map(|value| fixture_value(value))
+        .collect()
 }
 
 fn read(repo_root: &Path, relative: &str) -> Result<String, InventoryError> {

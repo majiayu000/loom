@@ -8,8 +8,9 @@ use walkdir::WalkDir;
 
 use super::agent_capabilities::public_agent_capabilities;
 use super::{
-    ExampleClassification, InventoryError, SurfaceExample, check_next_action_emitters,
-    check_panel_mutations, load_surface_inventory, public_command_schema_capabilities,
+    ExampleClassification, InventoryError, PanelBinding, SurfaceExample,
+    check_next_action_emitters, check_panel_mutations, load_surface_inventory,
+    panel_check::panel_fixture_argv, public_command_schema_capabilities,
     public_command_tree_capabilities, validate_public_argv,
 };
 
@@ -20,6 +21,7 @@ pub struct SurfaceCheckReport {
     pub command_count: usize,
     pub next_action_emitter_count: usize,
     pub panel_mutation_count: usize,
+    pub parser_argv: Vec<Vec<String>>,
 }
 
 pub fn check_surface_inventory(repo_root: &Path) -> Result<SurfaceCheckReport, InventoryError> {
@@ -30,7 +32,7 @@ pub fn check_surface_inventory(repo_root: &Path) -> Result<SurfaceCheckReport, I
         ));
     }
     if repo_root.join("src/envelope.rs").is_file() {
-        let expected = public_agent_capabilities()?;
+        let expected = public_agent_capabilities(repo_root)?;
         let declared = inventory
             .agent_capabilities
             .iter()
@@ -59,6 +61,7 @@ pub fn check_surface_inventory(repo_root: &Path) -> Result<SurfaceCheckReport, I
         },
     );
     let mut command_count = 0;
+    let mut parser_argv = Vec::new();
     let mut command_capabilities = BTreeSet::new();
     let mut validation_errors = Vec::new();
     for surface in &inventory.surfaces {
@@ -104,6 +107,7 @@ pub fn check_surface_inventory(repo_root: &Path) -> Result<SurfaceCheckReport, I
             }
             for command in commands {
                 for argv in command_variants(&command, example.classification) {
+                    parser_argv.push(argv.clone());
                     match validate_public_argv(&argv) {
                         Ok(parsed) => {
                             match public_command_schema_capabilities(&parsed.command_path) {
@@ -135,6 +139,15 @@ pub fn check_surface_inventory(repo_root: &Path) -> Result<SurfaceCheckReport, I
             "surface inventory produced no executable commands",
         ));
     }
+    parser_argv.extend(
+        inventory
+            .panel_mutations
+            .iter()
+            .filter(|mutation| mutation.binding == PanelBinding::CliEquivalent)
+            .map(panel_fixture_argv),
+    );
+    parser_argv.sort();
+    parser_argv.dedup();
     command_capabilities.extend(
         public_command_tree_capabilities().map_err(|error| InventoryError::new(error.message))?,
     );
@@ -162,6 +175,7 @@ pub fn check_surface_inventory(repo_root: &Path) -> Result<SurfaceCheckReport, I
         command_count,
         next_action_emitter_count,
         panel_mutation_count,
+        parser_argv,
     })
 }
 
@@ -325,7 +339,6 @@ fn fence_marker(line: &str) -> Option<char> {
 fn is_shell_fence(line: &str, marker: char) -> bool {
     let language = line
         .trim_start_matches(marker)
-        .trim()
         .split_whitespace()
         .next()
         .unwrap_or_default()
@@ -439,6 +452,29 @@ fn normalize_command_variants(command: &str) -> Vec<Vec<String>> {
             matches!(character, '"' | '\'' | '(' | ')' | ',' | '\\' | '[' | ']')
         });
         if !token.is_empty() {
+            let compact_flag_alternatives = token.split('|').collect::<Vec<_>>();
+            if in_optional
+                && compact_flag_alternatives.len() > 1
+                && compact_flag_alternatives
+                    .iter()
+                    .all(|alternative| alternative.starts_with("--"))
+            {
+                let prefix = optional.pop().unwrap_or_default();
+                optional.extend(
+                    compact_flag_alternatives
+                        .into_iter()
+                        .filter_map(|alternative| {
+                            let normalized = normalize_token(alternative);
+                            if normalized.is_empty() {
+                                return None;
+                            }
+                            let mut branch = prefix.clone();
+                            branch.push(normalized);
+                            Some(branch)
+                        }),
+                );
+                continue;
+            }
             let token = normalize_token(token);
             if token.is_empty() {
                 continue;
@@ -626,6 +662,24 @@ mod tests {
             "--max-cycles".to_string(),
             "1".to_string(),
         ]));
+    }
+
+    #[test]
+    fn compact_optional_alternatives_keep_every_flag() {
+        let variants = command_variants(
+            "loom skill project demo [--dry-run|--force]",
+            ExampleClassification::Executable,
+        );
+        assert!(
+            variants
+                .iter()
+                .any(|argv| argv.contains(&"--dry-run".to_string()))
+        );
+        assert!(
+            variants
+                .iter()
+                .any(|argv| argv.contains(&"--force".to_string()))
+        );
     }
 
     #[test]

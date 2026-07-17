@@ -135,7 +135,22 @@ fn packaged_surface_fixture_matrix() {
         .expect("read packaged Skill metadata");
     assert!(metadata.contains("cli_contract = \">=1.0.0,<2.0.0\""));
     assert!(contract_version_matches(">=1.0.0,<2.0.0", CLI_CONTRACT_VERSION).unwrap());
-    check_surface_inventory(Path::new(".")).expect("run the complete parser-backed fixture matrix");
+    let report = check_surface_inventory(Path::new("."))
+        .expect("run the complete parser-backed fixture matrix");
+
+    for argv in report.parser_argv {
+        let mut args = argv.into_iter().skip(1).collect::<Vec<_>>();
+        args.push("--help".to_string());
+        let parsed = Command::new(&binary)
+            .args(&args)
+            .output()
+            .expect("run packaged binary parser fixture");
+        assert!(
+            parsed.status.success(),
+            "packaged binary rejected parser fixture {args:?}: {}",
+            String::from_utf8_lossy(&parsed.stderr)
+        );
+    }
 
     let root = TestDir::new("packaged-contract-native-binary");
     let output = Command::new(binary)

@@ -33,6 +33,7 @@ fn single_skill_lifecycle_e2e_covers_create_validate_activate_release_rollback_d
         root.path(),
         &[
             "skill",
+            "author",
             "new",
             skill,
             "--template",
@@ -43,7 +44,7 @@ fn single_skill_lifecycle_e2e_covers_create_validate_activate_release_rollback_d
             "codex",
         ],
     );
-    assert_ok(&output, &env, "skill new");
+    assert_ok(&output, &env, "skill author new");
     assert_eq!(env["data"]["created"], json!(true));
 
     for (context, args) in [

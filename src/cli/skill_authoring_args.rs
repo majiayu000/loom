@@ -1,9 +1,28 @@
 use std::path::PathBuf;
 
-use clap::{Args, ValueEnum};
+use clap::{Args, Subcommand, ValueEnum};
 use serde::Serialize;
 
 use super::AgentKind;
+use super::skill_new_args::SkillNewArgs;
+
+#[derive(Debug, Clone, Subcommand, Serialize)]
+pub enum SkillAuthorCommand {
+    #[command(about = "Draft a new skill as a guarded patch artifact")]
+    Draft(SkillDraftArgs),
+    #[command(about = "Extract reviewed diff context into a guarded patch artifact")]
+    Extract(SkillExtractArgs),
+    #[command(about = "Rewrite one skill as a guarded patch artifact")]
+    Rewrite(SkillRewriteArgs),
+    #[command(about = "Tune one skill description as a guarded patch artifact")]
+    TuneDescription(SkillTuneDescriptionArgs),
+    #[command(about = "Generate reviewable eval fixture diffs as a patch artifact")]
+    GenerateEvals(SkillGenerateEvalsArgs),
+    #[command(about = "Apply a reviewed skill patch artifact through validation gates")]
+    ApplyPatch(SkillApplyPatchArgs),
+    #[command(about = "Create a lint-clean local skill skeleton")]
+    New(SkillNewArgs),
+}
 
 #[derive(Debug, Clone, Copy, ValueEnum, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]

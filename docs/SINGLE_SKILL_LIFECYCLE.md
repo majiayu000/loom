@@ -36,7 +36,7 @@ Human-facing flow:
 
 ```bash
 loom init
-loom skill new fixflow --template coding-workflow
+loom skill author new fixflow --template coding-workflow
 loom skill lint fixflow --portable
 loom skill lint fixflow --quality
 loom skill scan fixflow
@@ -52,7 +52,7 @@ Automation should keep the registry root explicit and parse only JSON envelopes:
 ```bash
 ROOT="$HOME/.loom-registry"
 loom --json --root "$ROOT" workspace init --scan-existing
-loom --json --root "$ROOT" skill new fixflow --template coding-workflow
+loom --json --root "$ROOT" skill author new fixflow --template coding-workflow
 loom --json --root "$ROOT" skill lint fixflow --portable
 loom --json --root "$ROOT" skill lint fixflow --quality
 loom --json --root "$ROOT" skill activate fixflow --agent codex --scope user --dry-run
@@ -64,11 +64,11 @@ the `request_id` in logs.
 
 ## Create Or Import
 
-Use `loom skill new <name>` when Loom should create a registry-owned skill
+Use `loom skill author new <name>` when Loom should create a registry-owned skill
 source. Templates are lint-clean starting points:
 
 ```bash
-loom skill new fixflow --template coding-workflow
+loom skill author new fixflow --template coding-workflow
 ```
 
 Use `loom skill add` when the source already exists locally or in Git:
@@ -165,7 +165,7 @@ release.
 
 ## Current Command Status
 
-Current implemented commands include `skill new`, `skill add`, `skill commit`,
+Current implemented commands include `skill author new`, `skill add`, `skill commit`,
 `skill lint`, `skill deps`, `skill scan`, `skill activate`,
 `skill deactivate`, `skill active list`, `skill inspect`, `skill diagnose`,
 `skill visibility`, `skill eval`, `skill release`, `skill rollback`, `skill diff`,

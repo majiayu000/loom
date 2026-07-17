@@ -39,6 +39,55 @@ pub fn rename_atomic(src: &Path, dst: &Path) -> io::Result<()> {
     std::fs::rename(src, dst)
 }
 
+/// Atomically move `src` to `dst` only when `dst` does not exist.
+#[cfg(any(
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "linux",
+    target_os = "android"
+))]
+pub fn rename_no_replace_atomic(src: &Path, dst: &Path) -> io::Result<()> {
+    let src = path_to_c_string(src)?;
+    let dst = path_to_c_string(dst)?;
+
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    let result = unsafe { libc::renamex_np(src.as_ptr(), dst.as_ptr(), libc::RENAME_EXCL) };
+
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    let result = unsafe {
+        libc::renameat2(
+            libc::AT_FDCWD,
+            src.as_ptr(),
+            libc::AT_FDCWD,
+            dst.as_ptr(),
+            libc::RENAME_NOREPLACE,
+        )
+    };
+
+    if result == 0 {
+        Ok(())
+    } else {
+        Err(io::Error::last_os_error())
+    }
+}
+
+#[cfg(not(any(
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "linux",
+    target_os = "android"
+)))]
+pub fn rename_no_replace_atomic(src: &Path, dst: &Path) -> io::Result<()> {
+    #[cfg(windows)]
+    return std::fs::rename(src, dst);
+
+    #[cfg(not(windows))]
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "atomic no-replace rename is unavailable on this platform",
+    ))
+}
+
 /// Atomically exchange two existing directory entries on the same filesystem.
 ///
 /// Callers use the entry left at `src` as their rollback artifact. Platforms or

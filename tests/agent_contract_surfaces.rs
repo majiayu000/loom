@@ -285,6 +285,7 @@ fn active_command_guidance_is_parser_checked() {
     write_file(
         &root.path().join("docs/agent-command-surfaces.toml"),
         r#"agent_capabilities = ["field:fixture.ok:boolean"]
+command_capabilities = ["command:fixture.status"]
 [[surface]]
 id = "readme"
 path = "README.md"
@@ -317,6 +318,14 @@ cli_argv = ["loom", "workspace", "status"]
         .expect_err("removed command in output/reference guidance must fail");
     assert!(error.to_string().contains("README.md:1"), "{error}");
     assert!(error.to_string().contains("readme.guidance"), "{error}");
+    write_file(
+        &root.path().join("README.md"),
+        "agent guidance: `loom retired status`\n",
+    );
+    let error = check_surface_inventory(root.path())
+        .expect_err("removed top-level command in active guidance must fail");
+    assert!(error.to_string().contains("README.md:1"), "{error}");
+    assert!(error.to_string().contains("retired"), "{error}");
 }
 
 #[test]
@@ -596,6 +605,7 @@ fn contract_additive_capability_requires_minor_bump() {
     write_file(
         &root.path().join("docs/agent-command-surfaces.toml"),
         r#"agent_capabilities = ["field:fixture.ok:boolean"]
+command_capabilities = ["command:fixture.status"]
 [[surface]]
 id = "readme"
 path = "README.md"
@@ -656,7 +666,11 @@ cli_argv = ["loom", "workspace", "status"]
         "loom workspace status\nloom workspace doctor\n",
     );
     let inventory = std::fs::read_to_string(root.path().join("docs/agent-command-surfaces.toml"))
-        .expect("read fixture inventory");
+        .expect("read fixture inventory")
+        .replace(
+            "command_capabilities = [\"command:fixture.status\"]",
+            "command_capabilities = [\"command:fixture.status\", \"command:fixture.doctor\"]",
+        );
     write_file(
         &root.path().join("docs/agent-command-surfaces.toml"),
         &(inventory

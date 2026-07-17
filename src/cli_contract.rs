@@ -1,10 +1,13 @@
-use std::fmt;
+use std::{collections::BTreeSet, fmt};
 
 use clap::{
     ArgMatches, Command, CommandFactory, FromArgMatches, error::ErrorKind, parser::ValueSource,
 };
 
-use crate::cli::Cli;
+use crate::{
+    cli::Cli,
+    sha256::{Sha256, to_hex},
+};
 
 mod contract_policy;
 mod emitter_check;
@@ -170,17 +173,25 @@ where
     Ok(result)
 }
 
-pub(crate) fn public_command_schema_signature(
+pub(crate) fn public_command_schema_capabilities(
     command_path: &[String],
-) -> Result<Vec<String>, PublicArgvError> {
+) -> Result<BTreeSet<String>, PublicArgvError> {
     if command_path.first().map(String::as_str) != Some("loom") {
         return Err(PublicArgvError {
             kind: PublicArgvErrorKind::Parse,
             message: "public command path must start with 'loom'".to_string(),
         });
     }
-    let root = Cli::command();
-    let mut command = &root;
+    let mut root = Cli::command();
+    root.build();
+    command_schema_capabilities(&root, command_path)
+}
+
+fn command_schema_capabilities(
+    root: &Command,
+    command_path: &[String],
+) -> Result<BTreeSet<String>, PublicArgvError> {
+    let mut command = root;
     for name in command_path.iter().skip(1) {
         command = command
             .get_subcommands()
@@ -196,44 +207,213 @@ pub(crate) fn public_command_schema_signature(
             });
         }
     }
-    let mut signature = command
-        .get_arguments()
-        .filter(|argument| !argument.is_hide_set())
-        .map(|argument| {
+    let path = command_path.join("/");
+    let mut capabilities = BTreeSet::from([format!("command:{path}")]);
+    capabilities.extend(
+        command
+            .get_all_aliases()
+            .map(|alias| format!("command-alias:{path}:{alias}")),
+    );
+    capabilities.extend(
+        command
+            .get_subcommands()
+            .filter(|subcommand| !subcommand.is_hide_set())
+            .map(|subcommand| format!("subcommand:{path}/{}", subcommand.get_name())),
+    );
+    capabilities.insert(format!(
+        "command-core:{path}:{}",
+        schema_digest(&[
             format!(
-                "id={};long={};short={};index={};required={};arity={};action={:?}",
-                argument.get_id(),
-                argument.get_long().unwrap_or(""),
-                argument
-                    .get_short()
-                    .map(|value| value.to_string())
-                    .unwrap_or_default(),
+                "allow_external_subcommands={}",
+                command.is_allow_external_subcommands_set()
+            ),
+            format!(
+                "allow_missing_positional={}",
+                command.is_allow_missing_positional_set()
+            ),
+            format!(
+                "arg_required_else_help={}",
+                command.is_arg_required_else_help_set()
+            ),
+            format!(
+                "dont_delimit_trailing_values={}",
+                command.is_dont_delimit_trailing_values_set()
+            ),
+            format!(
+                "subcommand_required={}",
+                command.is_subcommand_required_set()
+            ),
+            format!("trailing_var_arg={}", command.is_trailing_var_arg_set()),
+        ])
+    ));
+    let public_arguments = command
+        .get_arguments()
+        .filter(|argument| {
+            !argument.is_hide_set()
+                && !matches!(argument.get_id().as_str(), "help" | "version")
+                && (command_path.len() == 1 || !argument.is_global_set())
+        })
+        .collect::<Vec<_>>();
+    let mut required = public_arguments
+        .iter()
+        .filter(|argument| argument.is_required_set())
+        .map(|argument| argument.get_id().to_string())
+        .collect::<Vec<_>>();
+    required.sort();
+    capabilities.insert(format!("required-arguments:{path}:{}", required.join(",")));
+    for argument in public_arguments {
+        let id = argument.get_id();
+        let mut conflicts = command
+            .get_arg_conflicts_with(argument)
+            .into_iter()
+            .map(|conflict| conflict.get_id().to_string())
+            .collect::<Vec<_>>();
+        conflicts.sort();
+        let mut aliases = argument
+            .get_all_aliases()
+            .unwrap_or_default()
+            .into_iter()
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+        aliases.sort();
+        let mut short_aliases = argument.get_all_short_aliases().unwrap_or_default();
+        short_aliases.sort();
+        let mut defaults = argument
+            .get_default_values()
+            .iter()
+            .map(|value| value.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        defaults.sort();
+        let core = [
+            format!("action={:?}", argument.get_action()),
+            format!(
+                "allow_hyphen_values={}",
+                argument.is_allow_hyphen_values_set()
+            ),
+            format!(
+                "allow_negative_numbers={}",
+                argument.is_allow_negative_numbers_set()
+            ),
+            format!("conflicts={}", conflicts.join(",")),
+            format!("defaults={}", defaults.join(",")),
+            format!("exclusive={}", argument.is_exclusive_set()),
+            format!("global={}", argument.is_global_set()),
+            format!("ignore_case={}", argument.is_ignore_case_set()),
+            format!(
+                "index={}",
                 argument
                     .get_index()
                     .map(|value| value.to_string())
-                    .unwrap_or_default(),
-                argument.is_required_set(),
+                    .unwrap_or_default()
+            ),
+            format!("last={}", argument.is_last_set()),
+            format!("long={}", argument.get_long().unwrap_or("")),
+            format!(
+                "arity={}",
                 argument
                     .get_num_args()
                     .map(|value| value.to_string())
-                    .unwrap_or_default(),
-                argument.get_action()
-            )
-        })
-        .collect::<Vec<_>>();
-    signature.sort();
-    if signature.is_empty() {
-        signature.push("no-args".to_string());
+                    .unwrap_or_default()
+            ),
+            format!(
+                "parser={}",
+                if argument.get_possible_values().is_empty() {
+                    format!("{:?}", argument.get_value_parser())
+                } else {
+                    "enumerated".to_string()
+                }
+            ),
+            format!("require_equals={}", argument.is_require_equals_set()),
+            format!(
+                "short={}",
+                argument
+                    .get_short()
+                    .map(|value| value.to_string())
+                    .unwrap_or_default()
+            ),
+            format!("trailing_var_arg={}", argument.is_trailing_var_arg_set()),
+            format!(
+                "value_delimiter={}",
+                argument
+                    .get_value_delimiter()
+                    .map(|value| value.to_string())
+                    .unwrap_or_default()
+            ),
+            format!("value_hint={:?}", argument.get_value_hint()),
+            format!(
+                "value_names={}",
+                argument
+                    .get_value_names()
+                    .unwrap_or_default()
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join(",")
+            ),
+            format!(
+                "value_terminator={}",
+                argument
+                    .get_value_terminator()
+                    .map(ToString::to_string)
+                    .unwrap_or_default()
+            ),
+        ];
+        capabilities.insert(format!(
+            "argument-core:{path}:{id}:{}",
+            schema_digest(&core)
+        ));
+        capabilities.extend(
+            aliases
+                .into_iter()
+                .map(|alias| format!("argument-alias:{path}:{id}:{alias}")),
+        );
+        capabilities.extend(
+            short_aliases
+                .into_iter()
+                .map(|alias| format!("argument-short-alias:{path}:{id}:{alias}")),
+        );
+        for possible in argument.get_possible_values() {
+            if possible.is_hide_set() {
+                continue;
+            }
+            capabilities.extend(
+                possible
+                    .get_name_and_aliases()
+                    .map(|value| format!("argument-value:{path}:{id}:{value}")),
+            );
+        }
     }
-    Ok(signature)
+    for group in command.get_groups() {
+        let mut group = group.clone();
+        let group_id = group.get_id().to_string();
+        let required = group.is_required_set();
+        let multiple = group.is_multiple();
+        let mut arguments = group
+            .get_args()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+        arguments.sort();
+        capabilities.insert(format!(
+            "argument-group:{path}:{}:{}",
+            group_id,
+            schema_digest(&[
+                format!("arguments={}", arguments.join(",")),
+                format!("multiple={multiple}"),
+                format!("required={required}"),
+            ])
+        ));
+    }
+    Ok(capabilities)
 }
 
-pub(crate) fn is_public_command_candidate(argv: &[String]) -> bool {
-    let root = Cli::command();
-    argv.iter().skip(1).any(|token| {
-        root.get_subcommands()
-            .any(|command| !command.is_hide_set() && command.get_name() == token)
-    })
+fn schema_digest(fields: &[String]) -> String {
+    let mut hasher = Sha256::new();
+    for field in fields {
+        hasher.update(field.len().to_string().as_bytes());
+        hasher.update(b":");
+        hasher.update(field.as_bytes());
+    }
+    format!("sha256:{}", to_hex(&hasher.finalize()))
 }
 
 fn inspect_requested_visibility(
@@ -350,4 +530,123 @@ fn inspect_public_matches(
     }
     result.command_path.push(name.to_string());
     inspect_public_matches(subcommand, sub_matches, result)
+}
+
+#[cfg(test)]
+mod tests {
+    use clap::{Arg, ArgAction, Command};
+
+    use super::{
+        command_schema_capabilities, public_command_schema_capabilities, validate_public_argv,
+    };
+
+    fn fixture_capabilities(command: Command) -> std::collections::BTreeSet<String> {
+        let mut command = command;
+        command.build();
+        command_schema_capabilities(&command, &["loom".to_string(), "demo".to_string()])
+            .expect("fixture schema")
+    }
+
+    #[test]
+    fn command_schema_ignores_fixture_values() {
+        let alpha = validate_public_argv(["loom", "skill", "inspect", "alpha"])
+            .expect("first public command");
+        let beta = validate_public_argv(["loom", "skill", "inspect", "beta"])
+            .expect("second public command");
+        assert_eq!(alpha.command_path, beta.command_path);
+        assert_eq!(
+            public_command_schema_capabilities(&alpha.command_path).expect("alpha schema"),
+            public_command_schema_capabilities(&beta.command_path).expect("beta schema")
+        );
+    }
+
+    #[test]
+    fn command_schema_optional_additions_are_additive() {
+        let base = fixture_capabilities(Command::new("loom").subcommand(Command::new("demo")));
+        let with_flag = fixture_capabilities(
+            Command::new("loom").subcommand(
+                Command::new("demo").arg(
+                    Arg::new("fixture_flag")
+                        .long("fixture-flag")
+                        .action(ArgAction::SetTrue),
+                ),
+            ),
+        );
+        assert!(base.is_subset(&with_flag));
+        assert!(with_flag.len() > base.len());
+    }
+
+    #[test]
+    fn command_schema_tracks_enum_alias_default_conflict_and_delimiter_semantics() {
+        let base_command = || {
+            Command::new("loom").subcommand(
+                Command::new("demo")
+                    .arg(
+                        Arg::new("mode")
+                            .long("mode")
+                            .value_parser(["safe"])
+                            .default_value("safe")
+                            .value_delimiter(','),
+                    )
+                    .arg(Arg::new("other").long("other")),
+            )
+        };
+        let base = fixture_capabilities(base_command());
+        let additive = fixture_capabilities(
+            Command::new("loom").subcommand(
+                Command::new("demo")
+                    .arg(
+                        Arg::new("mode")
+                            .long("mode")
+                            .alias("mode-alias")
+                            .value_parser(["safe", "fast"])
+                            .default_value("safe")
+                            .value_delimiter(','),
+                    )
+                    .arg(Arg::new("other").long("other")),
+            ),
+        );
+        assert!(base.is_subset(&additive));
+        let breaking = fixture_capabilities(
+            Command::new("loom").subcommand(
+                Command::new("demo")
+                    .arg(
+                        Arg::new("mode")
+                            .long("mode")
+                            .value_parser(["safe"])
+                            .default_value("fast")
+                            .value_delimiter(';')
+                            .conflicts_with("other"),
+                    )
+                    .arg(Arg::new("other").long("other")),
+            ),
+        );
+        assert!(!base.is_subset(&breaking));
+        assert!(!breaking.is_subset(&base));
+    }
+
+    #[test]
+    fn command_schema_contains_public_leaf_arguments() {
+        let path = vec![
+            "loom".to_string(),
+            "skill".to_string(),
+            "inspect".to_string(),
+        ];
+        let capabilities = public_command_schema_capabilities(&path).expect("inspect schema");
+        assert!(
+            capabilities
+                .iter()
+                .any(|value| value.starts_with("argument-core:loom/skill/inspect:skill:"))
+        );
+        assert!(
+            capabilities
+                .iter()
+                .any(|value| value.starts_with("argument-core:loom/skill/inspect:brief:"))
+        );
+        assert!(
+            capabilities
+                .iter()
+                .any(|value| value.starts_with("argument-core:loom/skill/inspect:agent:"))
+        );
+    }
 }

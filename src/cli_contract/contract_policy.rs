@@ -6,11 +6,7 @@ use std::process::Command;
 use toml_edit::DocumentMut;
 
 use super::inventory::{INVENTORY_PATH, parse_surface_inventory};
-use super::surface_check::{command_variants, extract_loom_commands, join_continuation_lines};
-use super::{
-    ContractVersion, ExampleClassification, InventoryError, PublicArgv, parse_contract_version,
-    public_command_schema_signature, validate_public_argv,
-};
+use super::{ContractVersion, InventoryError, parse_contract_version};
 
 const SKILL_METADATA: &str = "skills/loom-registry/loom.skill.toml";
 const HISTORY: &str = "docs/cli-contract-history.toml";
@@ -75,16 +71,9 @@ pub fn check_contract_range_policy(
             declared_contract_version(&base_source, &format!("{base}:{CONTRACT_SOURCE}"))?;
         let current_inventory_raw = read_current(repo_root, INVENTORY_PATH)?;
         let compare_agent_capabilities = inventory_has_agent_capabilities(&base_inventory_raw)?;
-        let base_capabilities =
-            capability_set(&base_inventory_raw, compare_agent_capabilities, |path| {
-                git_show(repo_root, base, path)?.ok_or_else(|| {
-                    InventoryError::new(format!("{base}:{path}: inventoried surface is missing"))
-                })
-            })?;
+        let base_capabilities = capability_set(&base_inventory_raw, compare_agent_capabilities)?;
         let current_capabilities =
-            capability_set(&current_inventory_raw, compare_agent_capabilities, |path| {
-                read_current(repo_root, path)
-            })?;
+            capability_set(&current_inventory_raw, compare_agent_capabilities)?;
         if compare_agent_capabilities {
             enforce_capability_version(
                 base_version,
@@ -127,62 +116,29 @@ fn declared_contract_version(
         .map_err(|error| InventoryError::new(format!("{location}: {error}")))
 }
 
-fn capability_set<F>(
+fn capability_set(
     inventory_raw: &str,
     include_agent_capabilities: bool,
-    mut read_surface: F,
-) -> Result<BTreeSet<String>, InventoryError>
-where
-    F: FnMut(&str) -> Result<String, InventoryError>,
-{
+) -> Result<BTreeSet<String>, InventoryError> {
     let inventory = parse_surface_inventory(inventory_raw, INVENTORY_PATH)?;
-    let surfaces = inventory
-        .surfaces
-        .iter()
-        .map(|surface| (surface.id.as_str(), surface.path.as_str()))
-        .collect::<std::collections::BTreeMap<_, _>>();
     let mut capabilities = BTreeSet::new();
-    for example in inventory.examples.iter().filter(|example| {
-        matches!(
-            example.classification,
-            ExampleClassification::Executable | ExampleClassification::OutputExample
-        )
-    }) {
-        let path = surfaces.get(example.surface.as_str()).ok_or_else(|| {
-            InventoryError::new(format!(
-                "{INVENTORY_PATH}: example '{}' references missing surface '{}'",
-                example.id, example.surface
-            ))
-        })?;
-        let source = read_surface(path)?;
-        let lines = source.lines().collect::<Vec<_>>();
-        if example.end_line > lines.len() {
-            return Err(InventoryError::new(format!(
-                "{path}: example '{}' exceeds surface length",
-                example.id
-            )));
-        }
-        for offset in example.start_line - 1..example.end_line {
-            let logical_line = join_continuation_lines(&lines, offset, lines[offset]);
-            for command in extract_loom_commands(&logical_line) {
-                for argv in command_variants(&command, example.classification) {
-                    let parsed = validate_public_argv(&argv).map_err(|error| {
-                        InventoryError::new(format!(
-                            "{path}: example '{}' has invalid public command {argv:?}: {}",
-                            example.id, error.message
-                        ))
-                    })?;
-                    capabilities.insert(public_command_capability(parsed)?);
-                }
-            }
-        }
-    }
     if include_agent_capabilities {
+        if inventory.command_capabilities.is_empty() {
+            return Err(InventoryError::new(
+                "command capability snapshot must not be empty",
+            ));
+        }
         capabilities.extend(
             inventory
                 .agent_capabilities
                 .iter()
                 .map(|capability| format!("agent:{capability}")),
+        );
+        capabilities.extend(
+            inventory
+                .command_capabilities
+                .iter()
+                .map(|capability| format!("cli:{capability}")),
         );
     }
     for emitter in &inventory.next_action_emitters {
@@ -202,20 +158,6 @@ where
         return Err(InventoryError::new("CLI contract capability set is empty"));
     }
     Ok(capabilities)
-}
-
-fn public_command_capability(parsed: PublicArgv) -> Result<String, InventoryError> {
-    let schema = public_command_schema_signature(&parsed.command_path).map_err(|error| {
-        InventoryError::new(format!(
-            "failed to fingerprint public command {:?}: {}",
-            parsed.command_path, error.message
-        ))
-    })?;
-    Ok(format!(
-        "command:{}:args={}",
-        parsed.command_path.join("/"),
-        schema.join(",")
-    ))
 }
 
 fn inventory_has_agent_capabilities(raw: &str) -> Result<bool, InventoryError> {
@@ -347,10 +289,7 @@ fn read_current(repo_root: &Path, path: &str) -> Result<String, InventoryError> 
 mod tests {
     use std::collections::BTreeSet;
 
-    use super::{
-        ContractVersion, enforce_capability_version, public_command_capability,
-        validate_public_argv,
-    };
+    use super::{ContractVersion, enforce_capability_version};
 
     fn version(major: u64, minor: u64, patch: u64) -> ContractVersion {
         ContractVersion {
@@ -383,27 +322,5 @@ mod tests {
         assert!(error.to_string().contains("major bump"), "{error}");
         enforce_capability_version(version(1, 0, 0), version(2, 0, 0), &base, &current)
             .expect("major bump admits changed field semantics");
-    }
-
-    #[test]
-    fn command_capability_ignores_fixture_values() {
-        let first = validate_public_argv(["loom", "skill", "inspect", "alpha"])
-            .expect("first public command");
-        let second = validate_public_argv(["loom", "skill", "inspect", "beta"])
-            .expect("second public command");
-        assert_eq!(
-            public_command_capability(first).expect("first capability"),
-            public_command_capability(second).expect("second capability")
-        );
-    }
-
-    #[test]
-    fn command_capability_includes_public_schema_arguments() {
-        let parsed =
-            validate_public_argv(["loom", "skill", "inspect", "fixture"]).expect("public command");
-        let capability = public_command_capability(parsed).expect("command capability");
-        assert!(capability.contains("id=skill"), "{capability}");
-        assert!(capability.contains("long=brief"), "{capability}");
-        assert!(capability.contains("long=agent"), "{capability}");
     }
 }

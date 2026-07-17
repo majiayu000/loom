@@ -1,10 +1,14 @@
-use std::{collections::BTreeMap, fs, path::Path};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fs,
+    path::Path,
+};
 
 use walkdir::WalkDir;
 
 use super::{
     ExampleClassification, InventoryError, SurfaceExample, check_next_action_emitters,
-    check_panel_mutations, is_public_command_candidate, load_surface_inventory,
+    check_panel_mutations, load_surface_inventory, public_command_schema_capabilities,
     validate_public_argv,
 };
 
@@ -39,6 +43,7 @@ pub fn check_surface_inventory(repo_root: &Path) -> Result<SurfaceCheckReport, I
         },
     );
     let mut command_count = 0;
+    let mut command_capabilities = BTreeSet::new();
     let mut validation_errors = Vec::new();
     for surface in &inventory.surfaces {
         let path = repo_root.join(&surface.path);
@@ -89,11 +94,20 @@ pub fn check_surface_inventory(repo_root: &Path) -> Result<SurfaceCheckReport, I
             }
             for command in commands {
                 for argv in command_variants(&command, example.classification) {
-                    if let Err(error) = validate_public_argv(&argv) {
-                        validation_errors.push(format!(
+                    match validate_public_argv(&argv) {
+                        Ok(parsed) => {
+                            match public_command_schema_capabilities(&parsed.command_path) {
+                                Ok(capabilities) => command_capabilities.extend(capabilities),
+                                Err(error) => validation_errors.push(format!(
+                                    "{}:{line_number}: example '{}': {}: {:?}",
+                                    surface.path, example.id, error.message, argv
+                                )),
+                            }
+                        }
+                        Err(error) => validation_errors.push(format!(
                             "{}:{line_number}: example '{}': {}: {:?}",
                             surface.path, example.id, error.message, argv
-                        ));
+                        )),
                     }
                     command_count += 1;
                 }
@@ -110,6 +124,24 @@ pub fn check_surface_inventory(repo_root: &Path) -> Result<SurfaceCheckReport, I
         return Err(InventoryError::new(
             "surface inventory produced no executable commands",
         ));
+    }
+    let declared = inventory
+        .command_capabilities
+        .iter()
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    if declared != command_capabilities {
+        let missing = command_capabilities
+            .difference(&declared)
+            .cloned()
+            .collect::<Vec<_>>();
+        let stale = declared
+            .difference(&command_capabilities)
+            .cloned()
+            .collect::<Vec<_>>();
+        return Err(InventoryError::new(format!(
+            "command capability snapshot differs from the public Clap schema; missing={missing:?}; stale={stale:?}"
+        )));
     }
     Ok(SurfaceCheckReport {
         surface_count: inventory.surfaces.len(),
@@ -219,15 +251,17 @@ fn validate_ranges(
 
 pub(super) fn extract_loom_commands(line: &str) -> Vec<String> {
     let mut commands = Vec::new();
-    if line.contains("loom ") {
-        push_commands(line, &mut commands);
+    let trimmed = line.trim_start();
+    let shell_line = trimmed.strip_prefix("$ ").unwrap_or(trimmed);
+    if shell_line.starts_with("loom ") {
+        push_commands(shell_line, &mut commands);
     }
     for (index, inline) in line.split('`').enumerate() {
         if index % 2 == 1 && inline.contains("loom ") {
             push_commands(inline, &mut commands);
         }
     }
-    for marker in ["$(loom ", "\"loom "] {
+    for marker in ["$(loom ", "\"loom ", "run: loom "] {
         if let Some(index) = line.find(marker) {
             push_commands(&line[index + marker.len() - 5..], &mut commands);
         }
@@ -306,7 +340,7 @@ pub(super) fn command_variants(
     if classification != ExampleClassification::OutputExample {
         return variants;
     }
-    if !is_public_command_candidate(&variants[0]) {
+    if variants[0].get(1).is_none_or(String::is_empty) {
         return Vec::new();
     }
     for index in 0..variants[0].len() {

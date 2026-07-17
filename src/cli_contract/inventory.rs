@@ -100,6 +100,7 @@ pub struct PanelMutation {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SurfaceInventory {
     pub agent_capabilities: Vec<String>,
+    pub command_capabilities: Vec<String>,
     pub surfaces: Vec<SurfaceSpec>,
     pub examples: Vec<SurfaceExample>,
     pub next_action_emitters: Vec<NextActionEmitter>,
@@ -162,6 +163,7 @@ pub(crate) fn parse_surface_inventory(
         })
         .transpose()?
         .unwrap_or_default();
+    let command_capabilities = parse_string_array(&document, "command_capabilities", location)?;
     let surfaces = parse_surfaces(required_tables(&document, "surface")?)?;
     let mut examples = parse_examples(required_tables(&document, "example")?)?;
     if let Some(values) = document.get("examples").and_then(Item::as_array) {
@@ -198,11 +200,40 @@ pub(crate) fn parse_surface_inventory(
     )?;
     Ok(SurfaceInventory {
         agent_capabilities,
+        command_capabilities,
         surfaces,
         examples,
         next_action_emitters,
         panel_mutations,
     })
+}
+
+fn parse_string_array(
+    document: &DocumentMut,
+    key: &str,
+    location: &str,
+) -> Result<Vec<String>, InventoryError> {
+    document
+        .get(key)
+        .and_then(Item::as_array)
+        .map(|values| {
+            values
+                .iter()
+                .map(|value| {
+                    value
+                        .as_str()
+                        .filter(|value| !value.is_empty())
+                        .map(str::to_string)
+                        .ok_or_else(|| {
+                            InventoryError::new(format!(
+                                "{location}: {key} items must be non-empty strings"
+                            ))
+                        })
+                })
+                .collect::<Result<Vec<_>, _>>()
+        })
+        .transpose()
+        .map(Option::unwrap_or_default)
 }
 
 fn required_tables<'a>(

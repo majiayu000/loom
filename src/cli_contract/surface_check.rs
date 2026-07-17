@@ -453,12 +453,12 @@ fn normalize_command_variants(command: &str) -> Vec<Vec<String>> {
         });
         if !token.is_empty() {
             let compact_flag_alternatives = token.split('|').collect::<Vec<_>>();
-            if in_optional
+            let handled_compact_alternatives = in_optional
                 && compact_flag_alternatives.len() > 1
                 && compact_flag_alternatives
                     .iter()
-                    .all(|alternative| alternative.starts_with("--"))
-            {
+                    .all(|alternative| alternative.starts_with("--"));
+            if handled_compact_alternatives {
                 let prefix = optional.pop().unwrap_or_default();
                 optional.extend(
                     compact_flag_alternatives
@@ -473,19 +473,20 @@ fn normalize_command_variants(command: &str) -> Vec<Vec<String>> {
                             Some(branch)
                         }),
                 );
-                continue;
             }
-            let token = normalize_token(token);
-            if token.is_empty() {
-                continue;
-            } else if in_optional {
-                match optional.last_mut() {
-                    Some(tokens) => tokens.push(token),
-                    None => optional.push(vec![token]),
-                }
-            } else {
-                for variant in &mut variants {
-                    variant.push(token.clone());
+            if !handled_compact_alternatives {
+                let token = normalize_token(token);
+                if token.is_empty() {
+                    continue;
+                } else if in_optional {
+                    match optional.last_mut() {
+                        Some(tokens) => tokens.push(token),
+                        None => optional.push(vec![token]),
+                    }
+                } else {
+                    for variant in &mut variants {
+                        variant.push(token.clone());
+                    }
                 }
             }
         }
@@ -667,13 +668,18 @@ mod tests {
     #[test]
     fn compact_optional_alternatives_keep_every_flag() {
         let variants = command_variants(
-            "loom skill project demo [--dry-run|--force]",
+            "loom skill project demo [--dry-run|--force] required-target",
             ExampleClassification::Executable,
         );
         assert!(
             variants
                 .iter()
                 .any(|argv| argv.contains(&"--dry-run".to_string()))
+        );
+        assert!(
+            variants
+                .iter()
+                .all(|argv| argv.contains(&"required-target".to_string()))
         );
         assert!(
             variants

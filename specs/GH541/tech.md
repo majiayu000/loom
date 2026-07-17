@@ -109,6 +109,7 @@ Status: implx auto follow-up review remediation complete; independent review and
 {
   "agents": ["claude", "codex"],
   "by_agent": {"claude": {"scanned_files": 0}, "codex": {"scanned_files": 42}},
+  "by_skill": [{"name": "demo", "agent": "codex", "count": 12}],
   "since": "2026-06-01T00:00:00Z",
   "dry_run": false,
   "scanned_files": 42,

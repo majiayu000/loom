@@ -134,6 +134,14 @@ fn disabled_fails_closed_and_dry_run_is_read_only() {
     assert!(dry_output.status.success(), "dry-run failed: {dry}");
     assert_eq!(dry["data"]["dry_run"], Value::Bool(true));
     assert_eq!(dry["data"]["ingested"], json!(3));
+    assert_eq!(
+        dry["data"]["by_skill"],
+        json!([{"name": "demo", "agent": "claude", "count": 2}])
+    );
+    assert_eq!(
+        dry["data"]["unmatched"],
+        json!([{"name": "retired-skill", "agent": "claude", "count": 1}])
+    );
     assert!(!root.path().join("state/telemetry").exists());
     let after = fs::read_dir(root.path())
         .unwrap()

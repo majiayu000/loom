@@ -14,7 +14,7 @@ use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use serde::Serialize;
-use serde_json::{Value, json};
+use serde_json::Value;
 use walkdir::WalkDir;
 
 use crate::cli::{TelemetryIngestAgent, TelemetryIngestArgs};
@@ -28,11 +28,12 @@ use super::super::{App, CommandFailure, build_skill_read_model};
 use super::model::{TelemetryEventDraft, TelemetryEventType};
 use super::store::{
     append_events_deduped_locked, observed_skill_name_allowed, parse_cutoff, read_config,
-    read_event_log, session_hash_for_text,
+    session_hash_for_text,
 };
 use cursor::{IngestCursor, SourceCheckpoint};
 
 const MAX_CAS_ATTEMPTS: usize = 50;
+type SkillSummary = BTreeMap<(String, String), usize>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum Agent {
@@ -136,7 +137,8 @@ struct ScanPlan {
     sources: Vec<SourcePlan>,
     reset_reasons: BTreeMap<String, usize>,
     rejected_reasons: BTreeMap<String, usize>,
-    unmatched: BTreeMap<(String, String), usize>,
+    matched: SkillSummary,
+    unmatched: SkillSummary,
     since: Option<DateTime<Utc>>,
 }
 
@@ -145,6 +147,8 @@ enum CommitOutcome {
     Committed {
         appended_by_agent: BTreeMap<Agent, usize>,
         duplicates_by_agent: BTreeMap<Agent, usize>,
+        matched: SkillSummary,
+        unmatched: SkillSummary,
         cursor_advanced: bool,
     },
 }
@@ -162,8 +166,8 @@ impl App {
         for _attempt in 0..MAX_CAS_ATTEMPTS {
             let mut plan = scan_all(&self.ctx, &agents, since)?;
             if args.dry_run {
-                preview_dedupe(&self.ctx, &mut plan)?;
-                return Ok((plan_json(&plan, true, false)?, Meta::default()));
+                plan::preview_dedupe(&self.ctx, &mut plan)?;
+                return Ok((plan::plan_json(&plan, true, false)?, Meta::default()));
             }
             #[cfg(debug_assertions)]
             debug_pause("LOOM_TEST_INGEST_COMMIT_PAUSE_MS");
@@ -175,15 +179,22 @@ impl App {
                 CommitOutcome::Committed {
                     appended_by_agent,
                     duplicates_by_agent,
+                    matched,
+                    unmatched,
                     cursor_advanced,
                 } => {
+                    plan.matched = matched;
+                    plan.unmatched = unmatched;
                     for agent in &agents {
                         let stats = plan.stats.entry(*agent).or_default();
                         stats.ingested = appended_by_agent.get(agent).copied().unwrap_or_default();
                         stats.duplicates_skipped =
                             duplicates_by_agent.get(agent).copied().unwrap_or_default();
                     }
-                    return Ok((plan_json(&plan, false, cursor_advanced)?, Meta::default()));
+                    return Ok((
+                        plan::plan_json(&plan, false, cursor_advanced)?,
+                        Meta::default(),
+                    ));
                 }
             }
         }
@@ -236,6 +247,7 @@ fn scan_all(
         sources: Vec::new(),
         reset_reasons: BTreeMap::new(),
         rejected_reasons: BTreeMap::new(),
+        matched: BTreeMap::new(),
         unmatched: BTreeMap::new(),
         since,
     };
@@ -627,6 +639,7 @@ fn commit_plan(
         checked_map_sum(duplicates_by_agent.values().copied(), "duplicates")?,
         result.duplicates
     );
+    let (matched, unmatched) = plan::summarize_events(&result.appended)?;
     let mut cursor_advanced = false;
     for source in &plan.sources {
         if current.sources.get(&source.source_key) != Some(&source.checkpoint) {
@@ -640,33 +653,10 @@ fn commit_plan(
     Ok(CommitOutcome::Committed {
         appended_by_agent,
         duplicates_by_agent,
+        matched,
+        unmatched,
         cursor_advanced,
     })
-}
-
-fn preview_dedupe(
-    ctx: &AppContext,
-    plan: &mut ScanPlan,
-) -> std::result::Result<(), CommandFailure> {
-    let mut ids = read_event_log(ctx)?
-        .events
-        .into_iter()
-        .map(|entry| entry.event.event_id)
-        .collect::<BTreeSet<_>>();
-    for source in &plan.sources {
-        for draft in &source.drafts {
-            let Some(event_id) = draft.event_id_override.as_ref() else {
-                continue;
-            };
-            let stats = plan.stats.entry(source.agent).or_default();
-            if ids.insert(event_id.clone()) {
-                checked_field_add(&mut stats.ingested, 1, "ingested")?;
-            } else {
-                checked_field_add(&mut stats.duplicates_skipped, 1, "duplicates_skipped")?;
-            }
-        }
-    }
-    Ok(())
 }
 
 fn deterministic_event_id(input: EventIdentityInput<'_>) -> String {
@@ -686,49 +676,6 @@ fn deterministic_event_id(input: EventIdentityInput<'_>) -> String {
         ],
     );
     format!("evt_{}", digest.trim_start_matches("sha256:"))
-}
-
-fn plan_json(
-    plan: &ScanPlan,
-    dry_run: bool,
-    cursor_advanced: bool,
-) -> std::result::Result<Value, CommandFailure> {
-    let by_agent = plan
-        .agents
-        .iter()
-        .map(|agent| {
-            (
-                agent.as_str().to_string(),
-                serde_json::to_value(plan.stats.get(agent).cloned().unwrap_or_default())
-                    .expect("agent stats serialize"),
-            )
-        })
-        .collect::<serde_json::Map<_, _>>();
-    let sum = |field: fn(&AgentStats) -> usize, label: &str| {
-        checked_map_sum(plan.stats.values().map(field), label)
-    };
-    let unmatched = plan
-        .unmatched
-        .iter()
-        .map(|((name, agent), count)| json!({"name": name, "agent": agent, "count": count}))
-        .collect::<Vec<_>>();
-    Ok(json!({
-        "agents": plan.agents.iter().map(|agent| agent.as_str()).collect::<Vec<_>>(),
-        "by_agent": by_agent,
-        "since": plan.since.map(|value| value.to_rfc3339()),
-        "dry_run": dry_run,
-        "scanned_files": sum(|stats| stats.scanned_files, "scanned_files")?,
-        "scanned_events": sum(|stats| stats.scanned_events, "scanned_events")?,
-        "ingested": sum(|stats| stats.ingested, "ingested")?,
-        "duplicates_skipped": sum(|stats| stats.duplicates_skipped, "duplicates_skipped")?,
-        "window_skipped": sum(|stats| stats.window_skipped, "window_skipped")?,
-        "malformed": sum(|stats| stats.malformed, "malformed")?,
-        "pending_partial": sum(|stats| stats.pending_partial, "pending_partial")?,
-        "sources_reset": {"count": checked_map_sum(plan.reset_reasons.values().copied(), "sources_reset")?, "reasons": plan.reset_reasons},
-        "rejected": {"count": checked_map_sum(plan.rejected_reasons.values().copied(), "rejected")?, "reasons": plan.rejected_reasons},
-        "unmatched": unmatched,
-        "cursor_advanced": cursor_advanced,
-    }))
 }
 
 fn checked_map_sum(

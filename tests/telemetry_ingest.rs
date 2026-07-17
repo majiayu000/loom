@@ -57,9 +57,9 @@ fn parser_fixtures_and_repeated_ingest_are_deterministic() {
     );
     assert!(output.status.success(), "ingest failed: {envelope}");
     assert_eq!(envelope["cmd"], json!("telemetry.ingest"));
-    assert_eq!(envelope["data"]["ingested"], json!(6));
+    assert_eq!(envelope["data"]["ingested"], json!(6), "{envelope}");
     assert_eq!(envelope["data"]["malformed"], json!(1));
-    assert_eq!(envelope["data"]["rejected"]["count"], json!(4));
+    assert_eq!(envelope["data"]["rejected"]["count"], json!(3));
     assert_eq!(envelope["data"]["unmatched"].as_array().unwrap().len(), 2);
     assert!(!envelope.to_string().contains("bad/name"));
 
@@ -79,7 +79,11 @@ fn parser_fixtures_and_repeated_ingest_are_deterministic() {
     assert_eq!(ids.len(), 6, "same-time invocations need distinct ids");
     assert!(!first.contains(&claude));
     assert!(!first.contains(&codex));
+    assert!(!first.contains("/workspace/"));
     assert!(!first.contains("bad/name"));
+    assert!(events.iter().all(|line| {
+        serde_json::from_str::<Value>(line).unwrap()["workspace_hash"].is_string()
+    }));
     let cursor = fs::read_to_string(root.path().join("state/telemetry/ingest_cursor.json"))
         .expect("read ingest cursor");
     assert!(!cursor.contains(&claude));
@@ -157,7 +161,7 @@ fn trailing_partial_record_is_committed_only_after_newline() {
     let source = home.path().join("projects/demo/session.jsonl");
     let record = json!({
         "uuid": "partial-record",
-        "session_id": "partial-session",
+        "sessionId": "partial-session",
         "timestamp": "2026-07-01T00:00:00Z",
         "type": "assistant",
         "message": {"content": [{
@@ -216,7 +220,7 @@ fn older_since_backfills_and_same_size_rewrite_resets() {
     let source = home.path().join("projects/demo/session.jsonl");
     let old = json!({
         "uuid": "old-record",
-        "session_id": "backfill-session",
+        "sessionId": "backfill-session",
         "timestamp": "2026-06-01T00:00:00Z",
         "type": "assistant",
         "message": {"content": [{
@@ -227,7 +231,7 @@ fn older_since_backfills_and_same_size_rewrite_resets() {
     .to_string();
     let recent = json!({
         "uuid": "new-record",
-        "session_id": "backfill-session",
+        "sessionId": "backfill-session",
         "timestamp": "2026-07-02T00:00:00Z",
         "type": "assistant",
         "message": {"content": [{
@@ -299,7 +303,7 @@ fn concurrent_ingest_retries_cursor_compare_and_commit() {
         body.push_str(
             &json!({
                 "uuid": format!("concurrent-record-{index}"),
-                "session_id": "concurrent-session",
+                "sessionId": "concurrent-session",
                 "timestamp": "2026-07-01T00:00:00Z",
                 "type": "assistant",
                 "message": {"content": [{
@@ -363,7 +367,7 @@ fn interrupted_cursor_write_retries_without_duplicate_events() {
     let source = home.path().join("projects/demo/session.jsonl");
     let record = json!({
         "uuid": "interrupted-record",
-        "session_id": "interrupted-session",
+        "sessionId": "interrupted-session",
         "timestamp": "2026-07-01T00:00:00Z",
         "type": "assistant",
         "message": {"content": [{
@@ -421,7 +425,7 @@ fn loom_home_override_precedes_native_home_and_missing_root_is_empty() {
     let record = |id: &str, skill: &str| {
         json!({
             "uuid": id,
-            "session_id": "home-session",
+            "sessionId": "home-session",
             "timestamp": "2026-07-01T00:00:00Z",
             "type": "assistant",
             "message": {"content": [{
@@ -494,7 +498,7 @@ fn trust_only_skill_is_unmatched_and_dot_name_is_rejected() {
     let source = home.path().join("projects/demo/session.jsonl");
     let trusted_only = json!({
         "uuid": "trust-only-record",
-        "session_id": "trust-only-session",
+        "sessionId": "trust-only-session",
         "timestamp": "2026-07-01T00:00:00Z",
         "type": "assistant",
         "message": {"content": [{
@@ -504,7 +508,7 @@ fn trust_only_skill_is_unmatched_and_dot_name_is_rejected() {
     });
     let dot = json!({
         "uuid": "dot-record",
-        "session_id": "trust-only-session",
+        "sessionId": "trust-only-session",
         "timestamp": "2026-07-01T00:01:00Z",
         "type": "user",
         "message": {"content": "<command-name>/.</command-name>"}
@@ -552,7 +556,7 @@ fn unterminated_event_log_tail_fails_without_cursor_advance() {
     let source = home.path().join("projects/demo/session.jsonl");
     let record = json!({
         "uuid": "tail-record",
-        "session_id": "tail-session",
+        "sessionId": "tail-session",
         "timestamp": "2026-07-01T00:00:00Z",
         "type": "assistant",
         "message": {"content": [{
@@ -605,7 +609,7 @@ fn source_alias_and_rotated_copy_share_cursor_and_event_identity() {
     let source = real.join("projects/demo/session.jsonl");
     let record = json!({
         "uuid": "alias-record",
-        "session_id": "alias-session",
+        "sessionId": "alias-session",
         "timestamp": "2026-07-01T00:00:00Z",
         "type": "assistant",
         "message": {"content": [{

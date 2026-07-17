@@ -1,6 +1,8 @@
 use std::collections::BTreeMap;
 use std::fs;
+use std::fs::File;
 use std::fs::Metadata;
+use std::io::{Read, Seek, SeekFrom};
 use std::path::PathBuf;
 
 use chrono::{DateTime, Utc};
@@ -54,12 +56,34 @@ impl ResetReason {
     }
 }
 
+#[cfg(test)]
 pub(super) struct ScanWindow {
     pub(super) start: usize,
     pub(super) complete_end: usize,
     pub(super) pending_partial: bool,
     pub(super) reset_reason: Option<ResetReason>,
     pub(super) covered_since: Option<DateTime<Utc>>,
+}
+
+pub(super) struct FileScanWindow {
+    pub(super) start: u64,
+    pub(super) parser_context_offset: u64,
+    pub(super) reset_reason: Option<ResetReason>,
+    pub(super) covered_since: Option<DateTime<Utc>>,
+    pub(super) snapshot: SourceSnapshot,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct SourceSnapshot {
+    identity_hash: String,
+    file_len: u64,
+    modified_nanos: u128,
+    change_stamp: String,
+}
+
+struct ParsedGenerationToken {
+    snapshot: SourceSnapshot,
+    parser_context_offset: u64,
 }
 
 pub(super) fn cursor_path(ctx: &AppContext) -> PathBuf {
@@ -118,6 +142,7 @@ pub(super) fn logical_source_key(agent: &str, canonical_identity: &str) -> Strin
     )
 }
 
+#[cfg(test)]
 pub(super) fn scan_window(
     bytes: &[u8],
     current_generation_identity: &str,
@@ -152,6 +177,9 @@ pub(super) fn scan_window(
             start = offset;
         }
     }
+    if reset_reason.is_some() {
+        covered_since = requested_since;
+    }
     let tail = &bytes[start..];
     let complete_end = tail
         .iter()
@@ -166,6 +194,7 @@ pub(super) fn scan_window(
     })
 }
 
+#[cfg(test)]
 pub(super) fn checkpoint_for(
     bytes: &[u8],
     generation_identity: &str,
@@ -185,6 +214,121 @@ pub(super) fn checkpoint_for(
         boundary_hash: boundary_hash(bytes, committed_offset as usize),
         covered_since,
     })
+}
+
+pub(super) fn scan_file_window(
+    file: &mut File,
+    current_generation_identity: &str,
+    checkpoint: Option<&SourceCheckpoint>,
+    requested_since: Option<DateTime<Utc>>,
+) -> std::result::Result<FileScanWindow, CommandFailure> {
+    let snapshot = source_snapshot(file, current_generation_identity)?;
+    let mut start = 0u64;
+    let mut parser_context_offset = 0u64;
+    let mut reset_reason = None;
+    let mut covered_since = requested_since;
+    if let Some(checkpoint) = checkpoint {
+        covered_since = min_since(checkpoint.covered_since, requested_since);
+        let offset = checkpoint.committed_offset;
+        let earlier_backfill = match (requested_since, checkpoint.covered_since) {
+            (None, Some(_)) => true,
+            (Some(requested), Some(covered)) => requested < covered,
+            _ => false,
+        };
+        if offset > snapshot.file_len {
+            reset_reason = Some(ResetReason::Truncated);
+        } else if let Some(previous) = parse_generation_token(&checkpoint.generation_token) {
+            if previous.snapshot.identity_hash != snapshot.identity_hash {
+                reset_reason = Some(ResetReason::GenerationChanged);
+            } else if snapshot.file_len < previous.snapshot.file_len {
+                reset_reason = Some(ResetReason::Truncated);
+            } else if snapshot.file_len == previous.snapshot.file_len
+                && (snapshot.modified_nanos != previous.snapshot.modified_nanos
+                    || snapshot.change_stamp != previous.snapshot.change_stamp)
+            {
+                reset_reason = Some(ResetReason::GenerationChanged);
+            } else {
+                parser_context_offset = previous.parser_context_offset;
+            }
+        } else {
+            reset_reason = Some(ResetReason::GenerationChanged);
+        }
+        if reset_reason.is_none() && checkpoint.boundary_hash != boundary_hash_file(file, offset)? {
+            reset_reason = Some(ResetReason::BoundaryMismatch);
+        } else if reset_reason.is_none() && !earlier_backfill {
+            start = offset;
+        }
+    }
+    if reset_reason.is_some() {
+        covered_since = requested_since;
+        parser_context_offset = 0;
+    } else if start == 0 {
+        parser_context_offset = 0;
+    }
+    Ok(FileScanWindow {
+        start,
+        parser_context_offset,
+        reset_reason,
+        covered_since,
+        snapshot,
+    })
+}
+
+pub(super) fn checkpoint_for_snapshot(
+    file: &mut File,
+    snapshot: &SourceSnapshot,
+    committed_offset: u64,
+    parser_context_offset: u64,
+    covered_since: Option<DateTime<Utc>>,
+) -> std::result::Result<SourceCheckpoint, CommandFailure> {
+    Ok(SourceCheckpoint {
+        schema_version: CHECKPOINT_SCHEMA_VERSION,
+        generation_token: generation_token_for_snapshot(snapshot, parser_context_offset),
+        committed_offset,
+        boundary_hash: boundary_hash_file(file, committed_offset)?,
+        covered_since,
+    })
+}
+
+pub(super) fn source_snapshot(
+    file: &File,
+    generation_identity: &str,
+) -> std::result::Result<SourceSnapshot, CommandFailure> {
+    let metadata = file.metadata().map_err(map_io)?;
+    let modified_nanos = metadata
+        .modified()
+        .map_err(map_io)?
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|err| map_io(std::io::Error::other(err)))?
+        .as_nanos();
+    Ok(SourceSnapshot {
+        identity_hash: hash_fields(
+            "loom.telemetry.source-generation-identity.v3",
+            &[generation_identity],
+        ),
+        file_len: metadata.len(),
+        modified_nanos,
+        change_stamp: source_change_stamp(&metadata),
+    })
+}
+
+#[cfg(unix)]
+fn source_change_stamp(metadata: &Metadata) -> String {
+    use std::os::unix::fs::MetadataExt;
+
+    format!("{}:{}", metadata.ctime(), metadata.ctime_nsec())
+}
+
+#[cfg(not(unix))]
+fn source_change_stamp(metadata: &Metadata) -> String {
+    metadata
+        .modified()
+        .ok()
+        .and_then(|value| value.duration_since(std::time::UNIX_EPOCH).ok())
+        .map_or_else(
+            || "unknown".to_string(),
+            |value| value.as_nanos().to_string(),
+        )
 }
 
 #[cfg(unix)]
@@ -227,6 +371,7 @@ pub(super) fn source_generation_identity(metadata: &Metadata) -> String {
     hash_fields("loom.telemetry.source-generation.v2", &[&created])
 }
 
+#[cfg(test)]
 fn generation_token(identity: &str, bytes: &[u8], committed_offset: usize) -> String {
     hash_fields(
         "loom.telemetry.source-generation.v2",
@@ -240,9 +385,55 @@ fn generation_token(identity: &str, bytes: &[u8], committed_offset: usize) -> St
     )
 }
 
+fn generation_token_for_snapshot(snapshot: &SourceSnapshot, parser_context_offset: u64) -> String {
+    format!(
+        "v4|{}|{}|{}|{}|{}",
+        snapshot.identity_hash,
+        snapshot.file_len,
+        snapshot.modified_nanos,
+        snapshot.change_stamp,
+        parser_context_offset
+    )
+}
+
+fn parse_generation_token(raw: &str) -> Option<ParsedGenerationToken> {
+    let mut fields = raw.split('|');
+    (fields.next()? == "v4").then_some(())?;
+    let identity_hash = fields.next()?.to_string();
+    let file_len = fields.next()?.parse().ok()?;
+    let modified_nanos = fields.next()?.parse().ok()?;
+    let change_stamp = fields.next()?.to_string();
+    let parser_context_offset = fields.next()?.parse().ok()?;
+    fields.next().is_none().then_some(ParsedGenerationToken {
+        snapshot: SourceSnapshot {
+            identity_hash,
+            file_len,
+            modified_nanos,
+            change_stamp,
+        },
+        parser_context_offset,
+    })
+}
+
+#[cfg(test)]
 fn boundary_hash(bytes: &[u8], offset: usize) -> String {
     let start = offset.saturating_sub(BOUNDARY_BYTES);
     hash_bytes("loom.telemetry.source-boundary.v1", &bytes[start..offset])
+}
+
+fn boundary_hash_file(file: &mut File, offset: u64) -> std::result::Result<String, CommandFailure> {
+    let boundary = u64::try_from(BOUNDARY_BYTES).expect("boundary size fits u64");
+    let start = offset.saturating_sub(boundary);
+    file.seek(SeekFrom::Start(start)).map_err(map_io)?;
+    let len = usize::try_from(offset - start).map_err(|_| {
+        CommandFailure::new(
+            ErrorCode::InternalError,
+            "telemetry ingest boundary length exceeds platform size",
+        )
+    })?;
+    let mut buffer = vec![0u8; len];
+    file.read_exact(&mut buffer).map_err(map_io)?;
+    Ok(hash_bytes("loom.telemetry.source-boundary.v1", &buffer))
 }
 
 fn min_since(
@@ -345,5 +536,22 @@ mod tests {
             scan_window(b"one\n", "generation-a", Some(&checkpoint), None).expect("scan window");
         assert_eq!(window.reset_reason, Some(ResetReason::Truncated));
         assert_eq!(window.start, 0);
+    }
+
+    #[test]
+    fn reset_coverage_comes_only_from_the_current_request() {
+        let old = Utc.with_ymd_and_hms(2026, 6, 1, 0, 0, 0).unwrap();
+        let recent = Utc.with_ymd_and_hms(2026, 7, 1, 0, 0, 0).unwrap();
+        let checkpoint =
+            checkpoint_for(b"old\n", "generation-a", 4, Some(old)).expect("checkpoint");
+        let window = scan_window(
+            b"replacement\n",
+            "generation-b",
+            Some(&checkpoint),
+            Some(recent),
+        )
+        .expect("scan window");
+        assert_eq!(window.reset_reason, Some(ResetReason::GenerationChanged));
+        assert_eq!(window.covered_since, Some(recent));
     }
 }

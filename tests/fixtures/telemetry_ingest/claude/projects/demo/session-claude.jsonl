@@ -1,6 +1,6 @@
-{"uuid":"claude-record-1","session_id":"claude-session","timestamp":"2026-07-01T10:00:00Z","type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_1","name":"Skill","input":{"skill":"demo"}},{"type":"tool_use","id":"toolu_2","name":"Skill","input":{"skill":"demo"}}]}}
-{"uuid":"claude-record-2","session_id":"claude-session","timestamp":"2026-07-01T10:01:00Z","type":"user","message":{"content":"<command-name>/retired-skill</command-name>"}}
-{"uuid":"claude-record-3","session_id":"claude-session","timestamp":"2026-07-01T10:02:00Z","type":"user","message":{"content":"Please mention /demo in free text, but do not invoke it."}}
-{"session_id":"claude-session","timestamp":"2026-07-01T10:03:00Z","type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_unknown","name":"Skill","input":{"skill":"demo"}}]}}
-{"uuid":"claude-record-4","session_id":"claude-session","timestamp":"2026-07-01T10:04:00Z","type":"user","message":{"content":"<command-name>/bad/name</command-name>"}}
+{"uuid":"claude-record-1","sessionId":"claude-session","cwd":"/workspace/claude","timestamp":"2026-07-01T10:00:00Z","type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_1","name":"Skill","input":{"skill":"demo"}},{"type":"tool_use","id":"toolu_2","name":"Skill","input":{"skill":"demo"}}]}}
+{"uuid":"claude-record-2","sessionId":"claude-session","cwd":"/workspace/claude","timestamp":"2026-07-01T10:01:00Z","type":"user","message":{"content":"<command-message>retired-skill args</command-message><command-name>/retired-skill</command-name><command-args>args</command-args>"}}
+{"uuid":"claude-record-3","sessionId":"claude-session","cwd":"/workspace/claude","timestamp":"2026-07-01T10:02:00Z","type":"user","message":{"content":"Please mention /demo in free text, but do not invoke it."}}
+{"sessionId":"claude-session","cwd":"/workspace/claude","timestamp":"2026-07-01T10:03:00Z","type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_unknown","name":"Skill","input":{"skill":"demo"}}]}}
+{"uuid":"claude-record-4","sessionId":"claude-session","cwd":"/workspace/claude","timestamp":"2026-07-01T10:04:00Z","type":"user","message":{"content":"<command-name>/bad/name</command-name>"}}
 {"malformed":

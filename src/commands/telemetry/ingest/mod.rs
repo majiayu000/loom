@@ -1,12 +1,14 @@
 mod claude;
 mod codex;
 mod cursor;
+mod plan;
+mod source_file;
+mod stream;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
-use std::fs;
 use std::fs::File;
-use std::io::Read;
+use std::io::{BufReader, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -58,6 +60,7 @@ pub(super) struct ImportedInvocation {
 pub(super) struct ImportedRecord {
     stable_record_key: String,
     session_id: String,
+    workspace: Option<PathBuf>,
     timestamp: DateTime<Utc>,
     invocations: Vec<ImportedInvocation>,
 }
@@ -80,6 +83,11 @@ pub(super) enum ParseOutcome {
     Record(ImportedRecord),
 }
 
+#[derive(Default)]
+struct ParserState {
+    codex: codex::Context,
+}
+
 #[derive(Debug, Clone, Default, Serialize)]
 struct AgentStats {
     scanned_files: usize,
@@ -95,9 +103,26 @@ struct AgentStats {
 struct SourcePlan {
     agent: Agent,
     source_key: String,
+    source_guards: Vec<SourceGuard>,
     expected: Option<SourceCheckpoint>,
     checkpoint: SourceCheckpoint,
     drafts: Vec<TelemetryEventDraft>,
+    authority: SourceAuthority,
+    reset_reason: Option<cursor::ResetReason>,
+    stats: AgentStats,
+    rejected_reasons: BTreeMap<String, usize>,
+}
+
+struct SourceGuard {
+    source_path: PathBuf,
+    snapshot: cursor::SourceSnapshot,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct SourceAuthority {
+    len: u64,
+    modified_nanos: u128,
+    path_rank: String,
 }
 
 struct ScanPlan {
@@ -135,6 +160,8 @@ impl App {
                 preview_dedupe(&self.ctx, &mut plan)?;
                 return Ok((plan_json(&plan, true, false)?, Meta::default()));
             }
+            #[cfg(debug_assertions)]
+            debug_pause("LOOM_TEST_INGEST_COMMIT_PAUSE_MS");
             match commit_plan(&self.ctx, &plan)? {
                 CommitOutcome::Retry => {
                     std::thread::sleep(Duration::from_millis(20));
@@ -210,6 +237,7 @@ fn scan_all(
     for agent in agents {
         scan_agent(ctx, *agent, since, &registered, &cursor, &mut plan)?;
     }
+    plan::coalesce_sources(&mut plan)?;
     Ok(plan)
 }
 
@@ -247,45 +275,100 @@ fn scan_source(
     ingest_cursor: &IngestCursor,
     plan: &mut ScanPlan,
 ) -> std::result::Result<(), CommandFailure> {
+    for _attempt in 0..3 {
+        if let Some(source_plan) =
+            scan_source_once(agent, home, source, since, registered, ingest_cursor)?
+        {
+            plan.sources.push(source_plan);
+            return Ok(());
+        }
+    }
+    Err(CommandFailure::new(
+        ErrorCode::LockBusy,
+        "telemetry source changed during all snapshot retries",
+    ))
+}
+
+fn scan_source_once(
+    agent: Agent,
+    home: &Path,
+    source: &Path,
+    since: Option<DateTime<Utc>>,
+    registered: &BTreeSet<String>,
+    ingest_cursor: &IngestCursor,
+) -> std::result::Result<Option<SourcePlan>, CommandFailure> {
     let mut file = File::open(source).map_err(map_io)?;
-    let generation_identity = cursor::source_generation_identity(&file.metadata().map_err(map_io)?);
-    let mut bytes = Vec::new();
-    file.read_to_end(&mut bytes).map_err(map_io)?;
-    let source_identity = canonical_source_identity(agent, home, source, &bytes)?;
+    let metadata = file.metadata().map_err(map_io)?;
+    let generation_identity = cursor::source_generation_identity(&metadata);
+    let authority = source_file::authority(source, &metadata)?;
+    let source_identity = source_file::canonical_identity(agent, home, source)?;
     let source_key = cursor::logical_source_key(agent.as_str(), &source_identity);
     let expected = ingest_cursor.sources.get(&source_key).cloned();
-    let window = cursor::scan_window(&bytes, &generation_identity, expected.as_ref(), since)?;
-    if let Some(reason) = window.reset_reason {
-        checked_increment(&mut plan.reset_reasons, reason.as_str().to_string())?;
-    }
+    let window =
+        cursor::scan_file_window(&mut file, &generation_identity, expected.as_ref(), since)?;
     let mut drafts = Vec::new();
-    for raw in bytes[window.start..window.complete_end].split(|byte| *byte == b'\n') {
+    let mut stats = AgentStats::default();
+    let mut rejected_reasons = BTreeMap::new();
+    let mut parser_state = source_file::parser_state_before(
+        agent,
+        source,
+        window.parser_context_offset,
+        window.start,
+    )?;
+    file.seek(SeekFrom::Start(window.start)).map_err(map_io)?;
+    let mut reader = BufReader::new(file);
+    let mut raw = Vec::new();
+    let mut committed_offset = window.start;
+    let mut parser_context_offset = window.parser_context_offset;
+    let mut pending_partial = false;
+    loop {
+        let (consumed, oversized) = match stream::read_record(&mut reader, &mut raw)? {
+            stream::RecordStatus::Complete { consumed } => (consumed, false),
+            stream::RecordStatus::Oversized { consumed } => (consumed, true),
+            stream::RecordStatus::Partial { consumed } => {
+                debug_assert!(consumed > 0);
+                pending_partial = true;
+                break;
+            }
+            stream::RecordStatus::Eof => break,
+        };
+        let record_start = committed_offset;
+        committed_offset = committed_offset.checked_add(consumed).ok_or_else(|| {
+            CommandFailure::new(
+                ErrorCode::InternalError,
+                "telemetry ingest committed offset overflow",
+            )
+        })?;
+        if oversized {
+            checked_field_add(&mut stats.scanned_events, 1, "scanned_events")?;
+            checked_field_add(&mut stats.malformed, 1, "malformed")?;
+            continue;
+        }
         if raw.is_empty() {
             continue;
         }
-        checked_field_add(
-            &mut plan.stats.entry(agent).or_default().scanned_events,
-            1,
-            "scanned_events",
-        )?;
-        let value: Value = match serde_json::from_slice(raw) {
+        checked_field_add(&mut stats.scanned_events, 1, "scanned_events")?;
+        let value: Value = match serde_json::from_slice(&raw) {
             Ok(value) => value,
             Err(_) => {
-                checked_field_add(
-                    &mut plan.stats.entry(agent).or_default().malformed,
-                    1,
-                    "malformed",
-                )?;
+                checked_field_add(&mut stats.malformed, 1, "malformed")?;
                 continue;
             }
         };
-        match parse_agent_record(agent, &value) {
+        if agent == Agent::Codex
+            && value.get("type").and_then(Value::as_str) == Some("turn_context")
+        {
+            parser_context_offset = record_start;
+        }
+        match parse_agent_record(agent, &value, &mut parser_state) {
             ParseOutcome::Ignored => {}
-            ParseOutcome::Rejected(reason) => reject(plan, agent, reason)?,
+            ParseOutcome::Rejected(reason) => {
+                reject_source(&mut stats, &mut rejected_reasons, reason)?
+            }
             ParseOutcome::Record(record) => {
                 if since.is_some_and(|cutoff| record.timestamp < cutoff) {
                     checked_field_add(
-                        &mut plan.stats.entry(agent).or_default().window_skipped,
+                        &mut stats.window_skipped,
                         record.invocations.len(),
                         "window_skipped",
                     )?;
@@ -293,21 +376,20 @@ fn scan_source(
                 }
                 for invocation in record.invocations {
                     if !observed_skill_name_allowed(&invocation.name) {
-                        reject(plan, agent, "invalid_observed_skill_name")?;
+                        reject_source(
+                            &mut stats,
+                            &mut rejected_reasons,
+                            "invalid_observed_skill_name",
+                        )?;
                         continue;
                     }
                     let session_hash = session_hash_for_text(&record.session_id);
                     let matched = registered.contains(&invocation.name);
-                    if !matched {
-                        checked_increment(
-                            &mut plan.unmatched,
-                            (invocation.name.clone(), agent.as_str().to_string()),
-                        )?;
-                    }
                     let mut draft = TelemetryEventDraft::new(TelemetryEventType::SkillInvocation);
                     draft.skill_id = matched.then(|| invocation.name.clone());
                     draft.observed_skill_name = (!matched).then(|| invocation.name.clone());
                     draft.agent = Some(agent.as_str().to_string());
+                    draft.workspace = record.workspace.clone();
                     draft.session_id = Some(record.session_id.clone());
                     draft.timestamp = record.timestamp;
                     draft.event_id_override = Some(deterministic_event_id(EventIdentityInput {
@@ -325,68 +407,47 @@ fn scan_source(
             }
         }
     }
-    if window.pending_partial {
-        checked_field_add(
-            &mut plan.stats.entry(agent).or_default().pending_partial,
-            1,
-            "pending_partial",
-        )?;
+    if pending_partial {
+        checked_field_add(&mut stats.pending_partial, 1, "pending_partial")?;
     }
-    plan.sources.push(SourcePlan {
+    #[cfg(debug_assertions)]
+    debug_pause("LOOM_TEST_INGEST_SCAN_PAUSE_MS");
+    let snapshot = cursor::source_snapshot(reader.get_ref(), &generation_identity)?;
+    if snapshot != window.snapshot {
+        return Ok(None);
+    }
+    let checkpoint = cursor::checkpoint_for_snapshot(
+        reader.get_mut(),
+        &snapshot,
+        committed_offset,
+        parser_context_offset,
+        window.covered_since,
+    )?;
+    if cursor::source_snapshot(reader.get_ref(), &generation_identity)? != snapshot {
+        return Ok(None);
+    }
+    Ok(Some(SourcePlan {
         agent,
         source_key,
+        source_guards: vec![SourceGuard {
+            source_path: source.to_path_buf(),
+            snapshot: snapshot.clone(),
+        }],
         expected,
-        checkpoint: cursor::checkpoint_for(
-            &bytes,
-            &generation_identity,
-            window.complete_end,
-            window.covered_since,
-        )?,
+        checkpoint,
         drafts,
-    });
-    Ok(())
+        authority,
+        reset_reason: window.reset_reason,
+        stats,
+        rejected_reasons,
+    }))
 }
 
-fn parse_agent_record(agent: Agent, value: &Value) -> ParseOutcome {
+fn parse_agent_record(agent: Agent, value: &Value, state: &mut ParserState) -> ParseOutcome {
     match agent {
         Agent::Claude => claude::parse_record(value),
-        Agent::Codex => codex::parse_record(value),
+        Agent::Codex => codex::parse_record(value, &mut state.codex),
     }
-}
-
-fn canonical_source_identity(
-    agent: Agent,
-    home: &Path,
-    source: &Path,
-    bytes: &[u8],
-) -> std::result::Result<String, CommandFailure> {
-    let canonical_home = fs::canonicalize(home).map_err(map_io)?;
-    let canonical_source = fs::canonicalize(source).map_err(map_io)?;
-    let relative = canonical_source
-        .strip_prefix(&canonical_home)
-        .map_err(|_| {
-            CommandFailure::new(
-                ErrorCode::PolicyBlocked,
-                "telemetry source must resolve below the selected agent home",
-            )
-        })?
-        .to_string_lossy()
-        .replace('\\', "/");
-    if agent == Agent::Codex && relative == "history.jsonl" {
-        return Ok("history".to_string());
-    }
-    for raw in bytes.split(|byte| *byte == b'\n') {
-        let Ok(value) = serde_json::from_slice::<Value>(raw) else {
-            continue;
-        };
-        if let ParseOutcome::Record(record) = parse_agent_record(agent, &value) {
-            return Ok(format!(
-                "session:{}",
-                session_hash_for_text(&record.session_id)
-            ));
-        }
-    }
-    Ok(format!("path:{relative}"))
 }
 
 fn resolve_agent_home(agent: Agent) -> std::result::Result<PathBuf, CommandFailure> {
@@ -484,6 +545,22 @@ fn commit_plan(
         .any(|source| current.sources.get(&source.source_key).cloned() != source.expected)
     {
         return Ok(CommitOutcome::Retry);
+    }
+    for source in &plan.sources {
+        for guard in &source.source_guards {
+            let file = match File::open(&guard.source_path) {
+                Ok(file) => file,
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                    return Ok(CommitOutcome::Retry);
+                }
+                Err(err) => return Err(map_io(err)),
+            };
+            let metadata = file.metadata().map_err(map_io)?;
+            let generation_identity = cursor::source_generation_identity(&metadata);
+            if cursor::source_snapshot(&file, &generation_identity)? != guard.snapshot {
+                return Ok(CommitOutcome::Retry);
+            }
+        }
     }
     let mut draft_agents = BTreeMap::<String, Agent>::new();
     let mut drafts = Vec::new();
@@ -638,17 +715,13 @@ fn checked_map_sum(
     })
 }
 
-fn reject(
-    plan: &mut ScanPlan,
-    agent: Agent,
+fn reject_source(
+    stats: &mut AgentStats,
+    rejected_reasons: &mut BTreeMap<String, usize>,
     reason: &'static str,
 ) -> std::result::Result<(), CommandFailure> {
-    checked_field_add(
-        &mut plan.stats.entry(agent).or_default().rejected,
-        1,
-        "rejected",
-    )?;
-    checked_increment(&mut plan.rejected_reasons, reason.to_string())
+    checked_field_add(&mut stats.rejected, 1, "rejected")?;
+    checked_increment(rejected_reasons, reason.to_string())
 }
 
 fn checked_increment<K: Ord + Clone>(
@@ -656,6 +729,15 @@ fn checked_increment<K: Ord + Clone>(
     key: K,
 ) -> std::result::Result<(), CommandFailure> {
     checked_field_add(counts.entry(key).or_default(), 1, "counter")
+}
+
+#[cfg(debug_assertions)]
+fn debug_pause(key: &str) {
+    if let Ok(raw) = env::var(key)
+        && let Ok(milliseconds) = raw.parse::<u64>()
+    {
+        std::thread::sleep(Duration::from_millis(milliseconds.min(2_000)));
+    }
 }
 
 fn checked_field_add(

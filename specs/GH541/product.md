@@ -51,11 +51,13 @@ telemetry 事件存储（#385/#496）只在调用方显式执行 `loom skill use
 7. **B-007** 日志根优先级固定为 `LOOM_CLAUDE_HOME`/`LOOM_CODEX_HOME` 显式 override →
    agent-native `CLAUDE_HOME`/`CODEX_HOME` → platform home 下的默认目录。
 8. **B-008** 文件发现与扫描在 workspace lock 外执行；提交时获取 workspace lock，重读 cursor 并与扫描
-   使用的 expected checkpoint 比较，发生并发变化则丢弃该 plan 并重试。compare-and-commit 内按
+   使用的 expected checkpoint 比较，并在 append 前复验 source snapshot；发生 cursor 或 source 并发变化
+   则丢弃该 plan 并重试。compare-and-commit 内按
    dedupe → append/flush events → 原子写 cursor 的顺序执行，且不得通过现有会再次加锁的 public append
    路径造成 nested lock。取消、崩溃或部分写失败不得让 cursor 越过未持久化 invocation。
-9. **B-009** newline-terminated malformed record、非 session JSONL 与未知 record shape 必须逐条计数并
-   继续扫描其他记录；unterminated tail 只计 `pending_partial`，下一次补全后恰好 ingest 一次。发生
+9. **B-009** newline-terminated malformed/oversized record、非 session JSONL 与未知 record shape 必须
+   以有界内存逐条计数并继续扫描其他记录；unterminated tail 只计 `pending_partial`，下一次补全后恰好
+   ingest 一次。发生
    continuity reset 时必须按 stable reason 计 `sources_reset`，不得回显 raw path。某个已选 agent 的日志根
    不存在或没有匹配文件时按该 agent `scanned_files=0` 处理，以便 `--agent all`
    仍可采集其他 agent；已存在的源目录不可读、cursor schema 不兼容或 event persistence 失败则整次
@@ -83,15 +85,18 @@ telemetry 事件存储（#385/#496）只在调用方显式执行 `loom skill use
    并持久化 `observed_skill_name`，不做历史 registry 考古。
 5. 时钟/时区：日志时间戳统一转 UTC 存储。
 6. source 在 cursor 后被截断、原位替换或同尺寸改写——以 generation/boundary continuity 失败处理，
-   reset 后使用 `min(previous covered_since, requested since)` 重扫。
+   reset 后把旧 generation 的 coverage 作废，以本次 `requested since` 作为新 coverage 并从头重扫。
 7. 进程在末尾 record 尚未写完时运行——保留该 fragment 到下一轮，不计 malformed/rejected。
 
 ## 7. Resolved Decisions
 
 1. cursor 使用独立的 `state/telemetry/ingest_cursor.json`，避免 telemetry enablement config 与采集进度耦合。
 2. 已退役/已删除 skill 按 ingest 时当前读模型归为 unmatched。
-3. Claude 接受结构化 Skill tool call 与明确 `<command-name>` skill command；Codex 接受 session record
-   中结构化 skill/command activation。自由文本提及不算 invocation；确切 record fixtures 在实现中固化。
+3. Claude 接受原生 `sessionId` 记录中的结构化 Skill tool call 与明确 `<command-name>` skill command；
+   Codex 接受 rollout `session_meta`/`turn_context` 上下文及 `response_item` 中 Codex 注入的结构化
+   `<skill><name>...</name>...</skill>` message，且该注入必须与同一 turn 中此前的显式 `$skill-name`
+   marker 对应。Claude 内置 slash command 与孤立/用户粘贴的 Codex `<skill>` XML 均不算 invocation；
+   自由文本提及不算 invocation；确切 record fixtures 在实现中固化。
 
 ## 8. Boundary Checklist
 

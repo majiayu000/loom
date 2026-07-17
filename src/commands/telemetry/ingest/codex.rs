@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use chrono::{DateTime, Utc};
@@ -11,7 +11,7 @@ pub(super) struct Context {
     session_id: Option<String>,
     workspace: Option<PathBuf>,
     turn_id: Option<String>,
-    mentioned_skills: BTreeSet<String>,
+    mentioned_skills: BTreeMap<String, usize>,
     next_skill_ordinal: usize,
 }
 
@@ -74,10 +74,15 @@ fn parse_response_item(value: &Value, context: &mut Context) -> ParseOutcome {
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
-    let Some(name) = texts.iter().find_map(|text| structured_skill_name(text)) else {
-        for text in texts {
-            collect_skill_mentions(text, &mut context.mentioned_skills);
+    let mut name = None;
+    for text in texts {
+        if let Some(structured_name) = structured_skill_name(text) {
+            name = Some(structured_name);
+            break;
         }
+        collect_skill_mentions(text, &mut context.mentioned_skills);
+    }
+    let Some(name) = name else {
         return ParseOutcome::Ignored;
     };
     if !take_mentioned_skill(&mut context.mentioned_skills, name) {
@@ -110,8 +115,22 @@ fn parse_response_item(value: &Value, context: &mut Context) -> ParseOutcome {
     })
 }
 
-fn take_mentioned_skill(names: &mut BTreeSet<String>, name: &str) -> bool {
-    names.remove(name) || names.remove(&format!("{name}."))
+fn take_mentioned_skill(names: &mut BTreeMap<String, usize>, name: &str) -> bool {
+    take_exact_mention(names, name) || take_exact_mention(names, &format!("{name}."))
+}
+
+fn take_exact_mention(names: &mut BTreeMap<String, usize>, name: &str) -> bool {
+    let remove = match names.get_mut(name) {
+        Some(count) => {
+            *count -= 1;
+            *count == 0
+        }
+        None => return false,
+    };
+    if remove {
+        names.remove(name);
+    }
+    true
 }
 
 fn update_workspace(context: &mut Context, payload: &Value) {
@@ -128,7 +147,7 @@ fn structured_skill_name(text: &str) -> Option<&str> {
     (!name.is_empty() && !name.contains('<')).then_some(name)
 }
 
-fn collect_skill_mentions(text: &str, names: &mut BTreeSet<String>) {
+fn collect_skill_mentions(text: &str, names: &mut BTreeMap<String, usize>) {
     let bytes = text.as_bytes();
     let mut index = 0usize;
     while index < bytes.len() {
@@ -146,7 +165,8 @@ fn collect_skill_mentions(text: &str, names: &mut BTreeSet<String>) {
         if end > start
             && let Some(name) = text.get(start..end)
         {
-            names.insert(name.to_string());
+            let count = names.entry(name.to_string()).or_default();
+            *count = count.saturating_add(1);
         }
         index = end.max(start);
     }
@@ -242,6 +262,82 @@ mod tests {
             panic!("dotted skill injection must parse");
         };
         assert_eq!(record.invocations[0].name, "team.skill");
+    }
+
+    #[test]
+    fn repeated_mentions_are_consumed_once_per_injection() {
+        let mut context = Context::default();
+        for value in [
+            json!({"type":"session_meta","payload":{"id":"session"}}),
+            json!({"type":"turn_context","payload":{"turn_id":"turn-1"}}),
+            json!({
+                "type":"response_item",
+                "payload":{"type":"message","role":"user","content":[{
+                    "type":"input_text","text":"use $demo and then $demo"
+                }]}
+            }),
+        ] {
+            assert!(matches!(
+                parse_record(&value, &mut context),
+                ParseOutcome::Ignored
+            ));
+        }
+        let injection = json!({
+            "timestamp":"2026-07-01T00:00:00Z",
+            "type":"response_item",
+            "payload":{"type":"message","role":"user","content":[{
+                "type":"input_text","text":"<skill><name>demo</name>body</skill>"
+            }]}
+        });
+        for expected_ordinal in [0, 1] {
+            let ParseOutcome::Record(record) = parse_record(&injection, &mut context) else {
+                panic!("each mention must admit one structured injection");
+            };
+            assert_eq!(record.invocations[0].ordinal, expected_ordinal);
+        }
+        assert!(matches!(
+            parse_record(&injection, &mut context),
+            ParseOutcome::Ignored
+        ));
+    }
+
+    #[test]
+    fn same_item_mentions_only_match_later_injections() {
+        let mut context = Context::default();
+        for value in [
+            json!({"type":"session_meta","payload":{"id":"session"}}),
+            json!({"type":"turn_context","payload":{"turn_id":"turn-1"}}),
+        ] {
+            assert!(matches!(
+                parse_record(&value, &mut context),
+                ParseOutcome::Ignored
+            ));
+        }
+        let marker_before = json!({
+            "timestamp":"2026-07-01T00:00:00Z",
+            "type":"response_item",
+            "payload":{"type":"message","role":"user","content":[
+                {"type":"input_text","text":"please use $demo"},
+                {"type":"input_text","text":"<skill><name>demo</name>body</skill>"}
+            ]}
+        });
+        assert!(matches!(
+            parse_record(&marker_before, &mut context),
+            ParseOutcome::Record(_)
+        ));
+
+        let marker_after = json!({
+            "timestamp":"2026-07-01T00:00:01Z",
+            "type":"response_item",
+            "payload":{"type":"message","role":"user","content":[
+                {"type":"input_text","text":"<skill><name>other</name>body</skill>"},
+                {"type":"input_text","text":"please use $other"}
+            ]}
+        });
+        assert!(matches!(
+            parse_record(&marker_after, &mut context),
+            ParseOutcome::Ignored
+        ));
     }
 
     #[test]

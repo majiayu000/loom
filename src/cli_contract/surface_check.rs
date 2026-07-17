@@ -353,6 +353,7 @@ fn push_commands(value: &str, commands: &mut Vec<String>) {
     let mut remaining = value;
     while let Some(index) = find_command_start(remaining) {
         let candidate = &remaining[index..];
+        let comment_end = candidate.find('#');
         let end = ['`', ';', '#']
             .into_iter()
             .filter_map(|delimiter| candidate.find(delimiter))
@@ -370,6 +371,9 @@ fn push_commands(value: &str, commands: &mut Vec<String>) {
             .to_string();
         if command != "loom" {
             commands.push(command);
+        }
+        if comment_end == Some(end) {
+            break;
         }
         remaining = &candidate[end.min(candidate.len())..];
         if end == candidate.len() {
@@ -699,6 +703,17 @@ mod tests {
         let commands = extract_surface_commands(&lines);
         assert_eq!(commands[0].1, ["loom skill save demo"]);
         assert_eq!(commands[1].1, ["loom workspace status"]);
+    }
+
+    #[test]
+    fn shell_comments_hide_later_loom_commands() {
+        let lines = [
+            "```bash",
+            "loom workspace status # old: loom skill save demo",
+            "```",
+        ];
+        let commands = extract_surface_commands(&lines);
+        assert_eq!(commands[0].1, ["loom workspace status"]);
     }
 
     #[test]

@@ -211,17 +211,24 @@ fn use_and_activate_share_native_gemini_root_and_reject_alias_shadow() {
 }
 
 #[test]
-fn dotenv_gemini_home_drives_activation_status_and_config() {
-    let root = TestDir::new("gemini-dotenv-home-root");
-    let os_home = TestDir::new("gemini-dotenv-home-os");
-    let gemini_home = TestDir::new("gemini-dotenv-home-effective");
+fn trusted_runtime_dotenv_home_drives_roots_but_not_bootstrap_config() {
+    let root = TestDir::new("gemini-trusted-dotenv-root");
+    let os_home = TestDir::new("gemini-trusted-dotenv-os-home");
+    let gemini_home = TestDir::new("gemini-trusted-dotenv-runtime-home");
     write_good_skill(root.path());
+    write_file(
+        &os_home.path().join(".gemini/trustedFolders.json"),
+        &format!(
+            "{{{:?}:\"TRUST_FOLDER\"}}\n",
+            root.path().display().to_string()
+        ),
+    );
     write_file(
         &root.path().join(".env"),
         &format!("GEMINI_CLI_HOME={}\n", gemini_home.path().display()),
     );
     write_file(
-        &gemini_home.path().join(".gemini/settings.json"),
+        &os_home.path().join(".gemini/settings.json"),
         "{\"skills\":{\"disabled\":[\"demo\"]}}\n",
     );
 
@@ -234,7 +241,7 @@ fn dotenv_gemini_home_drives_activation_status_and_config() {
     );
     assert!(
         activate_output.status.success(),
-        "dotenv-home activation failed: {activate_envelope}"
+        "trusted runtime activation failed: {activate_envelope}"
     );
     assert_eq!(
         activate_envelope["data"]["target"]["path"],
@@ -267,7 +274,7 @@ fn dotenv_gemini_home_drives_activation_status_and_config() {
                 .expect("default dirs")
                 .iter()
                 .any(|path| path == &json!(gemini_home.path().join(suffix))),
-            "dotenv Gemini home missing from status: {adapter}"
+            "trusted runtime home missing from status: {adapter}"
         );
     }
 
@@ -285,7 +292,7 @@ fn dotenv_gemini_home_drives_activation_status_and_config() {
     assert_eq!(
         visibility_check(&visibility_envelope, "gemini-cli_skill_not_disabled")["ok"],
         false,
-        "visibility must read settings from dotenv Gemini home"
+        "user settings must remain anchored to the bootstrap home"
     );
 
     let process_root = TestDir::new("gemini-process-home-root");
@@ -315,37 +322,105 @@ fn dotenv_gemini_home_drives_activation_status_and_config() {
 }
 
 #[test]
-fn gemini_home_dotenv_precedes_explicit_root_when_cwd_is_outside_home() {
-    let root = TestDir::new("gemini-home-fallback-root");
-    let home = TestDir::new("gemini-home-fallback-home");
-    let current_dir = TestDir::new("gemini-home-fallback-cwd");
-    let home_effective = TestDir::new("gemini-home-fallback-effective");
-    let root_effective = TestDir::new("gemini-root-fallback-effective");
+fn untrusted_dotenv_home_cannot_redirect_roots_settings_or_trust() {
+    let root = TestDir::new("gemini-untrusted-dotenv-root");
+    let home = TestDir::new("gemini-untrusted-dotenv-home");
+    let attacker_home = TestDir::new("gemini-untrusted-dotenv-attacker");
     write_good_skill(root.path());
     write_file(
-        &home.path().join(".env"),
-        &format!("GEMINI_CLI_HOME={}\n", home_effective.path().display()),
+        &root.path().join(".env"),
+        &format!("GEMINI_CLI_HOME={}\n", attacker_home.path().display()),
     );
     write_file(
-        &root.path().join(".env"),
-        &format!("GEMINI_CLI_HOME={}\n", root_effective.path().display()),
+        &attacker_home.path().join(".gemini/settings.json"),
+        "{\"skills\":{\"disabled\":[\"demo\"]}}\n",
+    );
+    write_file(
+        &attacker_home.path().join(".gemini/trustedFolders.json"),
+        &format!(
+            "{{{:?}:\"TRUST_FOLDER\"}}\n",
+            root.path().display().to_string()
+        ),
     );
 
     let (output, envelope) = run(
         root.path(),
         home.path(),
-        current_dir.path(),
+        root.path(),
         &[],
         &["skill", "activate", "demo", "--agent", "gemini-cli"],
     );
     assert!(
         output.status.success(),
-        "HOME dotenv activation failed: {envelope}"
+        "untrusted activation failed: {envelope}"
     );
     assert_eq!(
         envelope["data"]["target"]["path"],
-        json!(home_effective.path().join(".gemini/skills")),
-        "HOME dotenv must precede the explicit root fallback"
+        json!(home.path().join(".gemini/skills")),
+        "untrusted dotenv must not redirect the user root"
+    );
+
+    let project_root = TestDir::new("gemini-untrusted-project-root");
+    write_good_skill(project_root.path());
+    write_file(
+        &project_root.path().join(".env"),
+        &format!("GEMINI_CLI_HOME={}\n", attacker_home.path().display()),
+    );
+    write_file(
+        &attacker_home.path().join(".gemini/trustedFolders.json"),
+        &format!(
+            "{{{:?}:\"TRUST_FOLDER\"}}\n",
+            project_root.path().display().to_string()
+        ),
+    );
+    let workspace_arg = project_root.path().display().to_string();
+    let (project_output, project_envelope) = run(
+        project_root.path(),
+        home.path(),
+        project_root.path(),
+        &[],
+        &[
+            "skill",
+            "activate",
+            "demo",
+            "--agent",
+            "gemini-cli",
+            "--scope",
+            "project",
+            "--workspace",
+            &workspace_arg,
+        ],
+    );
+    assert!(
+        project_output.status.success(),
+        "project activation failed: {project_envelope}"
+    );
+    let (visibility_output, visibility_envelope) = run(
+        project_root.path(),
+        home.path(),
+        project_root.path(),
+        &[],
+        &[
+            "skill",
+            "visibility",
+            "demo",
+            "--agent",
+            "gemini-cli",
+            "--workspace",
+            &workspace_arg,
+        ],
+    );
+    assert!(
+        visibility_output.status.success(),
+        "visibility failed: {visibility_envelope}"
+    );
+    assert_eq!(
+        visibility_check(&visibility_envelope, "gemini-cli_skill_not_disabled")["ok"],
+        true
+    );
+    assert_eq!(
+        visibility_check(&visibility_envelope, "gemini-cli_workspace_trusted")["ok"],
+        false
     );
 }
 
@@ -487,4 +562,49 @@ fn visibility_uses_cwd_secure_trust_bootstrap_and_gemini_frontmatter_fallback() 
                 && candidate["ok"] == false),
         "unclosed frontmatter must not pass Gemini fallback"
     );
+}
+
+#[test]
+fn visibility_sanitizes_every_gemini_frontmatter_filename_character() {
+    for character in [':', '\\', '/', '<', '>', '*', '?', '"', '|'] {
+        let root = TestDir::new("gemini-frontmatter-sanitize-root");
+        let home = TestDir::new("gemini-frontmatter-sanitize-home");
+        write_skill(
+            root.path(),
+            "de-mo",
+            &format!(
+                "---\nname: 'de{character}mo'\ndescription: Gemini sanitization fixture.\n---\n# Demo\n"
+            ),
+        );
+        let (activate_output, activate_envelope) = run(
+            root.path(),
+            home.path(),
+            root.path(),
+            &[],
+            &["skill", "activate", "de-mo", "--agent", "gemini-cli"],
+        );
+        assert!(
+            activate_output.status.success(),
+            "activation failed for {character:?}: {activate_envelope}"
+        );
+        let (output, envelope) = run(
+            root.path(),
+            home.path(),
+            root.path(),
+            &[],
+            &["skill", "visibility", "de-mo", "--agent", "gemini-cli"],
+        );
+        assert!(output.status.success(), "visibility failed: {envelope}");
+        assert!(
+            envelope["data"]["checks"]
+                .as_array()
+                .expect("checks")
+                .iter()
+                .any(|check| check["id"]
+                    .as_str()
+                    .is_some_and(|id| id.starts_with("gemini-cli_frontmatter_valid:"))
+                    && check["ok"] == true),
+            "Gemini character {character:?} was not sanitized: {envelope}"
+        );
+    }
 }

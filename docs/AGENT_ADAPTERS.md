@@ -137,6 +137,12 @@ select the native `.gemini/skills` root so Codex and Gemini do not claim the
 same managed `.agents/skills` target. `skills.enabled` and the case-insensitive
 union of `skills.disabled` are evaluated across the official system-default,
 user, trusted-project, and system-override settings layers.
+The process environment selects the bootstrap home used for user settings and
+`trustedFolders.json`. Only after that trust decision succeeds may Gemini load
+the first runtime `.env` in its workspace-to-root search; a trusted runtime
+`GEMINI_CLI_HOME` can then select user skill roots, but cannot retroactively
+relocate bootstrap settings or trust. Loom mirrors that ordering and ignores
+`GEMINI_CLI_SKILLS_DIR`, which is not part of Gemini CLI discovery.
 Project visibility also evaluates `trustedFolders.json` (or the documented
 trust environment override) and fails closed when the workspace is untrusted,
 undecided, or the settings/trust files are malformed. Loom reports these

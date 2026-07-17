@@ -524,7 +524,7 @@ fn use_gemini_cli_keeps_configured_user_roots_out_of_project_scope() {
 }
 
 #[test]
-fn use_gemini_cli_respects_dotenv_multi_root_override() {
+fn use_gemini_cli_ignores_unofficial_dotenv_skill_roots() {
     let root = TestDir::new("cli-use-gemini-dotenv-root");
     let workspace = TestDir::new("cli-use-gemini-dotenv-workspace");
     let fake_home = TestDir::new("cli-use-gemini-dotenv-home");
@@ -563,12 +563,16 @@ fn use_gemini_cli_respects_dotenv_multi_root_override() {
     assert!(output.status.success(), "loom use failed: {env}");
     assert_eq!(
         env["data"]["steps"][0]["target_path"],
-        first.display().to_string()
+        fake_home
+            .path()
+            .join(".gemini/skills")
+            .display()
+            .to_string()
     );
 }
 
 #[test]
-fn use_gemini_cli_preserves_explicit_official_root_override() {
+fn use_gemini_cli_does_not_treat_skills_dir_as_an_official_override() {
     let root = TestDir::new("cli-use-gemini-explicit-official-root");
     let workspace = TestDir::new("cli-use-gemini-explicit-official-workspace");
     let fake_home = TestDir::new("cli-use-gemini-explicit-official-home");
@@ -607,7 +611,11 @@ fn use_gemini_cli_preserves_explicit_official_root_override() {
     assert!(output.status.success(), "loom use failed: {env}");
     assert_eq!(
         env["data"]["steps"][0]["target_path"],
-        agents_root.display().to_string()
+        fake_home
+            .path()
+            .join(".gemini/skills")
+            .display()
+            .to_string()
     );
 }
 

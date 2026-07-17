@@ -5,7 +5,8 @@ use serde_json::json;
 
 use crate::commands::{CommandFailure, projection_path_is_safe_symlink};
 use crate::error_actions::NextAction;
-use crate::state::{AppContext, configured_agent_skill_dirs, effective_gemini_cli_home};
+use crate::gemini_cli;
+use crate::state::AppContext;
 use crate::types::ErrorCode;
 
 use super::{AgentAdapter, SOURCE_BUILT_IN};
@@ -20,14 +21,12 @@ pub(crate) fn built_in_projection_root(
     if adapter.id != "gemini-cli" || adapter.source != SOURCE_BUILT_IN {
         return Ok(None);
     }
-    if scope == "user"
-        && let Some(configured) = configured_agent_skill_dirs(&ctx.root, "GEMINI_CLI_SKILLS_DIR")
-            .and_then(|dirs| dirs.into_iter().next())
-    {
-        return Ok(Some(configured));
-    }
     let base = match scope {
-        "user" => match effective_gemini_cli_home(&ctx.root) {
+        "user" => match std::env::current_dir()
+            .ok()
+            .as_deref()
+            .and_then(gemini_cli::runtime_home)
+        {
             Some(home) => home,
             None => return Ok(None),
         },

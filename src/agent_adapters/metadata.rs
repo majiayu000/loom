@@ -28,15 +28,8 @@ pub(super) fn built_in_default_skill_dirs(
     if id != "gemini-cli" {
         return configured.cloned().unwrap_or_default();
     }
-    let mut dirs = configured.cloned().unwrap_or_default();
-    if let Some(home) = home {
-        for path in [home.join(".agents/skills"), home.join(".gemini/skills")] {
-            if !dirs.contains(&path) {
-                dirs.push(path);
-            }
-        }
-    }
-    dirs
+    home.map(|home| vec![home.join(".agents/skills"), home.join(".gemini/skills")])
+        .unwrap_or_default()
 }
 
 pub(super) fn default_scan_eligible() -> bool {
@@ -116,7 +109,7 @@ pub(super) fn built_in_discovery_roots(
         return claude_discovery_roots(home);
     }
     if id == "gemini-cli" {
-        return gemini_cli_discovery_roots(default_dirs, home);
+        return gemini_cli_discovery_roots(home);
     }
     default_dirs
         .into_iter()
@@ -518,42 +511,18 @@ fn claude_discovery_roots(home: Option<&Path>) -> Vec<AdapterDiscoveryRoot> {
     ]
 }
 
-fn gemini_cli_discovery_roots(
-    configured: Option<&Vec<PathBuf>>,
-    home: Option<&Path>,
-) -> Vec<AdapterDiscoveryRoot> {
+fn gemini_cli_discovery_roots(home: Option<&Path>) -> Vec<AdapterDiscoveryRoot> {
     let home_available = home.is_some();
     let unavailable_reason = || {
         (!home_available).then(|| "GEMINI_CLI_HOME, HOME, or USERPROFILE is not set".to_string())
     };
-    let mut roots = Vec::new();
-    let official = home.map(|home| [home.join(".agents/skills"), home.join(".gemini/skills")]);
-    if let Some(configured) = configured {
-        roots.extend(
-            configured
-                .iter()
-                .filter(|path| official.as_ref().is_none_or(|roots| !roots.contains(path)))
-                .enumerate()
-                .map(|(index, path)| AdapterDiscoveryRoot {
-                    scope: "user".to_string(),
-                    path_template: path.display().to_string(),
-                    role: "env-override".to_string(),
-                    source_env_var: Some("GEMINI_CLI_SKILLS_DIR".to_string()),
-                    priority: Some(index as u32),
-                    scan_eligible: true,
-                    available: true,
-                    unavailable_reason: None,
-                }),
-        );
-    }
-    let offset = roots.len() as u32;
-    roots.extend([
+    vec![
         AdapterDiscoveryRoot {
             scope: "user".to_string(),
             path_template: "${GEMINI_CLI_HOME:-~}/.agents/skills".to_string(),
             role: "preferred-cross-client".to_string(),
             source_env_var: Some("GEMINI_CLI_HOME".to_string()),
-            priority: Some(offset),
+            priority: Some(0),
             scan_eligible: true,
             available: home_available,
             unavailable_reason: unavailable_reason(),
@@ -563,7 +532,7 @@ fn gemini_cli_discovery_roots(
             path_template: "${GEMINI_CLI_HOME:-~}/.gemini/skills".to_string(),
             role: "preferred-cross-client".to_string(),
             source_env_var: Some("GEMINI_CLI_HOME".to_string()),
-            priority: Some(offset + 1),
+            priority: Some(1),
             scan_eligible: true,
             available: home_available,
             unavailable_reason: unavailable_reason(),
@@ -588,8 +557,7 @@ fn gemini_cli_discovery_roots(
             available: true,
             unavailable_reason: None,
         },
-    ]);
-    roots
+    ]
 }
 
 fn validate_allowed(

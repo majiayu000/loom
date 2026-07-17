@@ -16,7 +16,7 @@ and the `workspace doctor` agent inventory check probe under `$HOME`.
 | `Copilot` | `copilot` | `generic` | `$HOME/.github/copilot/skills` |
 | `Aider` | `aider` | `generic` | `$HOME/.aider/skills` |
 | `Opencode` | `opencode` | `generic` | `$HOME/.opencode/skills` |
-| `GeminiCli` | `gemini-cli` | `verified` | `$GEMINI_CLI_HOME` (fallback `$HOME`) supplies `.agents/skills` then `.gemini/skills`; project aliases match |
+| `GeminiCli` | `gemini-cli` | `verified` | `$GEMINI_CLI_HOME` (fallback `$HOME`) supplies `.agents/skills` then `.gemini/skills`; project aliases match; no custom skills-dir override |
 | `Goose` | `goose` | `generic` | `$HOME/.config/goose/skills` |
 
 The built-in source of truth is `src/cli.rs` (the `AgentKind` enum) plus
@@ -41,6 +41,9 @@ root to avoid sharing Codex's managed target. See the
 [command reference](https://geminicli.com/docs/reference/commands/), and
 [settings reference](https://geminicli.com/docs/reference/configuration/), plus
 the [trusted-folders reference](https://geminicli.com/docs/cli/trusted-folders/).
+The process environment fixes bootstrap user settings and trust locations;
+only a workspace already trusted by that state may load a runtime dotenv
+`GEMINI_CLI_HOME` for subsequent user-root discovery.
 
 `generic` means Loom exposes a conservative fallback path without claiming
 that discovery precedence, visibility disables, or reload behavior has been

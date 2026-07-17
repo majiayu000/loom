@@ -18,6 +18,7 @@ use std::sync::{Arc, Mutex};
 use anyhow::{Context, Result};
 
 use crate::fs_util::write_atomic;
+use crate::gemini_cli;
 
 pub const DEFAULT_REGISTRY_DIR: &str = ".loom-registry";
 
@@ -56,7 +57,7 @@ const DEFAULT_AGENT_SKILL_DIRS: [(&str, &str, &str); 10] = [
     ("copilot", "COPILOT_SKILLS_DIR", ".github/copilot/skills"),
     ("aider", "AIDER_SKILLS_DIR", ".aider/skills"),
     ("opencode", "OPENCODE_SKILLS_DIR", ".opencode/skills"),
-    ("gemini-cli", "GEMINI_CLI_SKILLS_DIR", ".agents/skills"),
+    ("gemini-cli", "GEMINI_CLI_HOME", ".agents/skills"),
     ("goose", "GOOSE_SKILLS_DIR", ".config/goose/skills"),
 ];
 
@@ -74,16 +75,11 @@ pub fn resolve_agent_skill_dirs(root: &Path) -> AgentSkillDirs {
         .map(|(agent, env_var, default_suffix)| AgentSkillDir {
             agent,
             env_var,
-            path: first_agent_skill_dir(
-                env_var,
-                default_suffix,
-                if *agent == "gemini-cli" {
-                    &gemini_home
-                } else {
-                    &home
-                },
-                &dotenv,
-            ),
+            path: if *agent == "gemini-cli" {
+                default_agent_skill_dir(&gemini_home, default_suffix)
+            } else {
+                first_agent_skill_dir(env_var, default_suffix, &home, &dotenv)
+            },
         })
         .collect::<Vec<_>>();
 
@@ -112,20 +108,15 @@ pub fn resolve_agent_skill_source_dirs(root: &Path) -> Vec<PathBuf> {
     let mut dirs = Vec::new();
 
     for (agent, env_var, default_suffix) in DEFAULT_AGENT_SKILL_DIRS {
-        if let Some(raw) = env_or_dotenv(env_var, &dotenv) {
+        if agent == "gemini-cli" {
+            dirs.push(default_agent_skill_dir(&gemini_home, ".agents/skills"));
+            dirs.push(default_agent_skill_dir(&gemini_home, ".gemini/skills"));
+        } else if let Some(raw) = env_or_dotenv(env_var, &dotenv) {
             dirs.extend(parse_dir_list_env(&raw));
         } else {
-            dirs.push(default_agent_skill_dir(
-                if agent == "gemini-cli" {
-                    &gemini_home
-                } else {
-                    &home
-                },
-                default_suffix,
-            ));
+            dirs.push(default_agent_skill_dir(&home, default_suffix));
         }
     }
-    dirs.push(default_agent_skill_dir(&gemini_home, ".gemini/skills"));
 
     dedupe_paths_keep_order(dirs)
 }
@@ -137,13 +128,13 @@ pub(crate) fn resolve_agent_skill_dir_list(root: &Path, agent: &str) -> Vec<Path
     else {
         return Vec::new();
     };
-    if let Some(configured) = configured_agent_skill_dirs(root, env_var) {
-        return configured;
-    }
     if agent == "gemini-cli" {
         return effective_gemini_cli_home(root)
             .map(|home| vec![home.join(".agents/skills"), home.join(".gemini/skills")])
             .unwrap_or_default();
+    }
+    if let Some(configured) = configured_agent_skill_dirs(root, env_var) {
+        return configured;
     }
     let home = home_dir();
     home.map(|home| vec![home.join(default_suffix)])
@@ -194,9 +185,8 @@ pub(crate) fn resolve_env_or_dotenv(root: &Path, key: &str) -> Option<String> {
 }
 
 pub(crate) fn effective_gemini_cli_home(root: &Path) -> Option<PathBuf> {
-    resolve_env_or_dotenv(root, "GEMINI_CLI_HOME")
-        .map(PathBuf::from)
-        .or_else(home_dir)
+    let workspace = env::current_dir().unwrap_or_else(|_| root.to_path_buf());
+    gemini_cli::runtime_home(&workspace)
 }
 
 fn first_agent_skill_dir(
@@ -219,7 +209,10 @@ fn env_or_dotenv(key: &str, dotenv: &BTreeMap<String, String>) -> Option<String>
 }
 
 fn load_dotenv_map(root: &Path) -> BTreeMap<String, String> {
-    let path = root.join(".env");
+    load_dotenv_file(&root.join(".env"))
+}
+
+pub(crate) fn load_dotenv_file(path: &Path) -> BTreeMap<String, String> {
     let raw = match fs::read_to_string(path) {
         Ok(raw) => raw,
         Err(_) => return BTreeMap::new(),

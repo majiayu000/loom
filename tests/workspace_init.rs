@@ -148,13 +148,17 @@ fn workspace_init_scan_existing_imports_both_gemini_cli_user_roots() {
 }
 
 #[test]
-fn workspace_init_scan_existing_uses_dotenv_gemini_multi_roots() {
+fn workspace_init_scan_existing_ignores_unofficial_gemini_multi_roots() {
     let root = TestDir::new("ws-init-scan-gemini-dotenv");
     let fake_home = TestDir::new("ws-init-scan-gemini-dotenv-home");
     let first = root.path().join("gemini-one");
     let second = root.path().join("gemini-two");
     fs::create_dir_all(&first).expect("create first Gemini root");
     fs::create_dir_all(&second).expect("create second Gemini root");
+    let agents_root = fake_home.path().join(".agents/skills");
+    let gemini_root = fake_home.path().join(".gemini/skills");
+    fs::create_dir_all(&agents_root).expect("create official agent root");
+    fs::create_dir_all(&gemini_root).expect("create official native root");
     write_file(
         &root.path().join(".env"),
         &format!(
@@ -172,12 +176,15 @@ fn workspace_init_scan_existing_uses_dotenv_gemini_multi_roots() {
     );
     assert!(output.status.success(), "Gemini dotenv scan failed: {env}");
     let imported = env["data"]["imported"].as_array().expect("imported");
-    for expected in [&first, &second] {
-        let expected = fs::canonicalize(expected).expect("canonical custom root");
-        assert!(imported.iter().any(|entry| {
-            entry["target"]["agent"] == "gemini-cli"
-                && entry["target"]["path"].as_str() == expected.to_str()
-        }));
+    for unexpected in [&first, &second] {
+        let unexpected = fs::canonicalize(unexpected).expect("canonical custom root");
+        assert!(
+            !imported.iter().any(|entry| {
+                entry["target"]["agent"] == "gemini-cli"
+                    && entry["target"]["path"].as_str() == unexpected.to_str()
+            }),
+            "unofficial GEMINI_CLI_SKILLS_DIR root was scanned: {env}"
+        );
     }
 
     let (status, status_env) = run_loom_with_env(
@@ -190,16 +197,22 @@ fn workspace_init_scan_existing_uses_dotenv_gemini_multi_roots() {
         "Gemini status failed: {status_env}"
     );
     let adapter = adapter_by_id(&status_env, "gemini-cli");
-    for expected in [&first, &second] {
+    for expected in [&agents_root, &gemini_root] {
         let expected = expected.display().to_string();
         assert!(array_contains(&adapter["default_skill_dirs"], &expected));
-        assert!(
-            adapter["discovery_roots"]
-                .as_array()
-                .expect("discovery roots")
-                .iter()
-                .any(|root| root["path_template"] == expected)
-        );
+    }
+    assert!(
+        adapter["discovery_roots"]
+            .as_array()
+            .expect("discovery roots")
+            .iter()
+            .all(|root| root["source_env_var"] != "GEMINI_CLI_SKILLS_DIR")
+    );
+    for unexpected in [&first, &second] {
+        assert!(!array_contains(
+            &adapter["default_skill_dirs"],
+            &unexpected.display().to_string()
+        ));
     }
 }
 

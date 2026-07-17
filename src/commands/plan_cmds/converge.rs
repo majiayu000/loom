@@ -101,6 +101,7 @@ impl App {
                 || projection_evidence
                     .iter()
                     .find(|item| item.instance_id == args.instance.as_deref().unwrap_or_default())
+                    .filter(|item| item.state != ProjectionInputState::BaselineUnavailable)
                     .and_then(|item| item.baseline_revision.as_deref())
                     .map(|revision| source_changed_since_revision(&self.ctx, &args.skill, revision))
                     .transpose()?
@@ -371,10 +372,21 @@ fn resolve_input_conflicts(
             evidence: json!({ "dirty_projections": dirty }),
         });
     }
-    if dirty.len() > 1 && selected_instance.is_none() {
+    let selected_dirty = *direction == ConvergenceInputDirection::Projection
+        && selected_instance.is_some_and(|instance| {
+            dirty
+                .iter()
+                .any(|projection| projection.instance_id == instance)
+        });
+    if !dirty.is_empty() && !selected_dirty {
         conflicts.push(ConvergenceInputConflict {
-            code: "MULTIPLE_DIRTY_PROJECTION_INPUTS".to_string(),
-            message: "multiple dirty projections require an explicit instance selection"
+            code: if dirty.len() > 1 {
+                "MULTIPLE_DIRTY_PROJECTION_INPUTS"
+            } else {
+                "DIRTY_PROJECTION_INPUT_REQUIRES_SELECTION"
+            }
+            .to_string(),
+            message: "dirty projection input requires explicit direction and instance selection"
                 .to_string(),
             evidence: json!({ "dirty_projections": dirty }),
         });

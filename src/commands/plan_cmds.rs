@@ -6,7 +6,7 @@ use serde_json::{Value, json};
 use uuid::Uuid;
 
 use crate::cli::{ApplyArgs, PlanCommand, PlanUseArgs, UseArgs};
-use crate::core::convergence::SkillConvergencePlan;
+use crate::core::convergence::stored_plan_digest;
 use crate::envelope::Meta;
 use crate::gitops;
 use crate::next_action_trace::observe_next_actions;
@@ -326,26 +326,27 @@ fn validate_confirmed_plan_digest(
             Some(cursor),
         )
     })?;
-    let typed = serde_json::from_value::<SkillConvergencePlan>(plan.clone()).map_err(|err| {
-        plan_failure(
-            ErrorCode::StateCorrupt,
-            format!("stored convergence plan payload is invalid: {err}"),
-            "PLAN_CORRUPT",
-            false,
-            vec!["create a fresh convergence plan".to_string()],
-            Some(cursor),
-        )
-    })?;
-    let recomputed = typed.canonical_digest().map_err(|err| {
-        plan_failure(
-            ErrorCode::StateCorrupt,
-            format!("stored convergence plan digest could not be recomputed: {err}"),
-            "PLAN_CORRUPT",
-            false,
-            vec!["create a fresh convergence plan".to_string()],
-            Some(cursor),
-        )
-    })?;
+    let recomputed = stored_plan_digest(plan)
+        .ok_or_else(|| {
+            plan_failure(
+                ErrorCode::StateCorrupt,
+                "stored convergence plan is missing digest-covered fields",
+                "PLAN_CORRUPT",
+                false,
+                vec!["create a fresh convergence plan".to_string()],
+                Some(cursor),
+            )
+        })?
+        .map_err(|err| {
+            plan_failure(
+                ErrorCode::StateCorrupt,
+                format!("stored convergence plan digest could not be recomputed: {err}"),
+                "PLAN_CORRUPT",
+                false,
+                vec!["create a fresh convergence plan".to_string()],
+                Some(cursor),
+            )
+        })?;
     if expected != recomputed {
         return Err(plan_failure(
             ErrorCode::StateCorrupt,

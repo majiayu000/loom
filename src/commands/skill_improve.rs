@@ -625,8 +625,12 @@ pub(crate) fn prepare_convergence_skill_input(
         .unwrap_or(ctx);
     if let Some(method) = candidate_method {
         let snapshot_digest = match method {
-            "copy" => provenance::skill_tree_digest(&policy_ctx.skill_path(skill)),
-            "materialize" => provenance::materialized_tree_digest(&policy_ctx.skill_path(skill)),
+            "copy" => {
+                provenance::convergence_input_tree_digest(&policy_ctx.skill_path(skill), false)
+            }
+            "materialize" => {
+                provenance::convergence_input_tree_digest(&policy_ctx.skill_path(skill), true)
+            }
             _ => unreachable!("projection input method was validated before materialization"),
         }
         .map_err(map_io)?;

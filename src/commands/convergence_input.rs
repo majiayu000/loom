@@ -13,7 +13,7 @@ use crate::state_model::RegistryProjectionInstance;
 use super::CommandFailure;
 use super::codex_visibility::projection_path_is_safe_symlink;
 use super::helpers::{map_git, map_io};
-use super::provenance::{materialized_tree_digest, skill_tree_digest};
+use super::provenance::convergence_input_tree_digest;
 
 pub(crate) fn source_dirty_paths(
     ctx: &AppContext,
@@ -140,10 +140,7 @@ pub(crate) fn projection_input_evidence(
 }
 
 fn digest_for_method(path: &Path, method: ProjectionMethod) -> anyhow::Result<String> {
-    match method {
-        ProjectionMethod::Materialize => materialized_tree_digest(path),
-        ProjectionMethod::Copy | ProjectionMethod::Symlink => skill_tree_digest(path),
-    }
+    convergence_input_tree_digest(path, method == ProjectionMethod::Materialize)
 }
 
 fn baseline_tree_digest(

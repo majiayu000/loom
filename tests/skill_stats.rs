@@ -258,6 +258,48 @@ fn stats_reads_one_locked_snapshot() {
 }
 
 #[test]
+fn missing_registry_fails_instead_of_reporting_source_only_lifecycle() {
+    let root = TestDir::new("skill-stats-missing-registry");
+    write_skill(
+        root.path(),
+        "source-only",
+        "---\nname: source-only\ndescription: Use when testing missing registry state.\n---\n",
+    );
+    let (output, envelope) = run_loom(root.path(), &["skill", "stats"]);
+    assert!(!output.status.success());
+    assert_eq!(envelope["error"]["code"], "STATE_NOT_INITIALIZED");
+}
+
+#[test]
+fn rule_referencing_missing_binding_fails_closed() {
+    let root = TestDir::new("skill-stats-missing-binding");
+    setup_registry(&root);
+    write_file(
+        &root.path().join("state/registry/rules.json"),
+        &json!({
+            "schema_version": 1,
+            "rules": [{
+                "binding_id": "missing",
+                "skill_id": "active",
+                "target_id": "target_codex",
+                "method": "symlink",
+                "watch_policy": "observe_only",
+                "created_at": "2026-04-09T10:00:00Z"
+            }]
+        })
+        .to_string(),
+    );
+    let (output, envelope) = run_loom(root.path(), &["skill", "stats"]);
+    assert!(!output.status.success());
+    assert_eq!(envelope["error"]["code"], "STATE_CORRUPT");
+    assert!(
+        envelope["error"]["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("missing binding"))
+    );
+}
+
+#[test]
 fn lifecycle_categories_are_exhaustive() {
     let root = TestDir::new("skill-stats-categories");
     setup_registry(&root);
@@ -359,6 +401,60 @@ fn durable_unmatched_events_become_orphans() {
         .collect::<Vec<_>>();
     assert!(names.contains(&"retired"));
     assert!(names.contains(&"deleted"));
+}
+
+#[test]
+fn metadata_only_deleted_skill_remains_an_orphan() {
+    let root = TestDir::new("skill-stats-metadata-only-orphan");
+    setup_registry(&root);
+    write_file(
+        &root.path().join("state/registry/trust.json"),
+        r#"{"schema_version":1,"skills":[{"skill_id":"deleted","trust":"local-draft","quarantined":false,"updated_at":"2026-07-01T00:00:00Z","updated_by":"test"}]}
+"#,
+    );
+    write_file(
+        &root.path().join("state/telemetry/events.jsonl"),
+        &(event(
+            "evt_deleted_metadata",
+            "skill.invocation",
+            Some("deleted"),
+            None,
+            Some("codex"),
+            1,
+            None,
+        ) + "\n"),
+    );
+    let data = report(&root, &[]);
+    assert!(
+        data["skills"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|row| row["skill"] != "deleted")
+    );
+    assert_eq!(data["orphans"][0]["name"], "deleted");
+}
+
+#[test]
+fn invalid_telemetry_skill_id_is_unattributed_and_not_exposed() {
+    let root = TestDir::new("skill-stats-invalid-telemetry-skill");
+    setup_registry(&root);
+    write_file(
+        &root.path().join("state/telemetry/events.jsonl"),
+        &(event(
+            "evt_invalid_skill",
+            "skill.invocation",
+            Some("../escape"),
+            None,
+            Some("codex"),
+            1,
+            None,
+        ) + "\n"),
+    );
+    let data = report(&root, &[]);
+    assert_eq!(data["unattributed_window_events"], 1);
+    assert!(data["orphans"].as_array().unwrap().is_empty());
+    assert!(!data.to_string().contains("../escape"));
 }
 
 #[test]

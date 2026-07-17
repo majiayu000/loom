@@ -9,7 +9,7 @@ use crate::envelope::Meta;
 use crate::state_model::{RegistrySnapshot, RegistryStatePaths};
 use crate::types::ErrorCode;
 
-use super::helpers::{map_lock, map_registry_state};
+use super::helpers::{map_lock, map_registry_state, validate_skill_name};
 use super::skill_inventory::build_skill_read_model_from_snapshot;
 use super::telemetry::{
     AgentRef, SkillRef, UsageKind, UsageRow, load_dataset, parse_cutoff, usage_rows,
@@ -162,22 +162,41 @@ impl App {
                 )
             })?;
 
-        let (inventory, snapshot, dataset, bound_agents) = {
+        let (inventory, dataset, bound_agents) = {
             let _workspace = self.ctx.lock_workspace().map_err(map_lock)?;
             let paths = RegistryStatePaths::from_app_context(&self.ctx);
-            let snapshot = paths.maybe_load_snapshot().map_err(map_registry_state)?;
-            let inventory = build_skill_read_model_from_snapshot(&self.ctx, snapshot.as_ref())
+            let snapshot = paths
+                .maybe_load_snapshot()
+                .map_err(map_registry_state)?
+                .ok_or_else(|| {
+                    CommandFailure::new(
+                        ErrorCode::StateNotInitialized,
+                        format!(
+                            "registry state not initialized under {}",
+                            paths.registry_dir.display()
+                        ),
+                    )
+                })?;
+            let inventory = build_skill_read_model_from_snapshot(&self.ctx, Some(&snapshot))
                 .map_err(map_registry_state)?;
-            let bound_agents = current_bound_agents(snapshot.as_ref())?;
+            let bound_agents = current_bound_agents(&snapshot)?;
             let dataset = load_dataset(&self.ctx)?;
-            (inventory, snapshot, dataset, bound_agents)
+            (inventory, dataset, bound_agents)
         };
-        let _snapshot_kept_with_capture = snapshot;
 
         let skill_ids = inventory
             .skills
             .iter()
-            .filter_map(|skill| skill["skill_id"].as_str().map(str::to_string))
+            .filter(|skill| {
+                skill["sources"].as_array().is_some_and(|sources| {
+                    sources.iter().any(|source| {
+                        matches!(source.as_str(), Some("source" | "rule" | "projection"))
+                    })
+                })
+            })
+            .filter_map(|skill| skill["skill_id"].as_str())
+            .filter(|skill| validate_skill_name(skill).is_ok())
+            .map(str::to_string)
             .collect::<BTreeSet<_>>();
         let report = aggregate_stats(
             &skill_ids,
@@ -206,16 +225,12 @@ impl App {
 }
 
 fn current_bound_agents(
-    snapshot: Option<&RegistrySnapshot>,
+    snapshot: &RegistrySnapshot,
 ) -> Result<BTreeMap<String, BTreeSet<String>>, CommandFailure> {
-    let Some(snapshot) = snapshot else {
-        return Ok(BTreeMap::new());
-    };
     let bindings = snapshot
         .bindings
         .bindings
         .iter()
-        .filter(|binding| binding.active)
         .map(|binding| (binding.binding_id.as_str(), binding))
         .collect::<BTreeMap<_, _>>();
     let targets = snapshot
@@ -226,9 +241,15 @@ fn current_bound_agents(
         .collect::<BTreeMap<_, _>>();
     let mut result = BTreeMap::<String, BTreeSet<String>>::new();
     for rule in &snapshot.rules.rules {
-        let Some(binding) = bindings.get(rule.binding_id.as_str()) else {
+        let binding = bindings.get(rule.binding_id.as_str()).ok_or_else(|| {
+            corrupt(format!(
+                "skill_stats.bindings: rule for '{}' references missing binding '{}'",
+                rule.skill_id, rule.binding_id
+            ))
+        })?;
+        if !binding.active {
             continue;
-        };
+        }
         let Some(target) = targets.get(rule.target_id.as_str()) else {
             return Err(corrupt(format!(
                 "skill_stats.bindings: rule for '{}' references missing target '{}'",
@@ -307,7 +328,9 @@ fn aggregate_stats(
                     .or_default()
                     .record(&row, &format!("skills.{skill}"))?;
             }
-            SkillRef::Registered(skill) | SkillRef::Observed(skill) => {
+            SkillRef::Registered(skill) | SkillRef::Observed(skill)
+                if validate_skill_name(skill).is_ok() =>
+            {
                 let agent = match &row.agent_ref {
                     AgentRef::Known(agent) => Some(agent.clone()),
                     AgentRef::Unknown => None,
@@ -317,7 +340,7 @@ fn aggregate_stats(
                     .or_default()
                     .record(&row, &format!("orphans.{skill}"))?;
             }
-            SkillRef::Unattributed => {
+            SkillRef::Registered(_) | SkillRef::Observed(_) | SkillRef::Unattributed => {
                 unattributed.record(&row, "unattributed")?;
             }
         }

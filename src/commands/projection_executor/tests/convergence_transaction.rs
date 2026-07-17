@@ -81,6 +81,127 @@ fn created_rollback_preserves_concurrent_live_change_and_is_retryable() {
     assert!(!projection_path.exists());
 }
 
+#[test]
+fn created_rollback_preserves_concurrent_empty_directory_and_is_retryable() {
+    let fixture = convergence_projection_fixture();
+    let projection_path = fixture.root.join("live/copy/demo");
+    let output = execute_projection(
+        &fixture.ctx,
+        &fixture.paths,
+        &fixture.snapshot,
+        execution_input(&fixture, ProjectionMethod::Copy, projection_path.clone()),
+    )
+    .expect("prepare new projection");
+    let mut activated =
+        activate_prepared_projection(&fixture.ctx, output.prepared.expect("staging artifact"))
+            .expect("activate new projection");
+    let concurrent_dir = projection_path.join("concurrent-empty");
+    fs::create_dir(&concurrent_dir).expect("create concurrent empty directory");
+
+    let error = activated
+        .rollback()
+        .expect_err("rollback must preserve a concurrent empty directory");
+
+    assert_eq!(error.code, ErrorCode::ProjectionConflict);
+    assert_eq!(error.details["recovery_required"], true);
+    assert!(concurrent_dir.is_dir());
+
+    fs::remove_dir(&concurrent_dir).expect("resolve empty directory conflict");
+    activated.rollback().expect("retry created rollback");
+    assert!(!projection_path.exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn created_rollback_preserves_concurrent_mode_change_and_is_retryable() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let fixture = convergence_projection_fixture();
+    let projection_path = fixture.root.join("live/copy/demo");
+    let output = execute_projection(
+        &fixture.ctx,
+        &fixture.paths,
+        &fixture.snapshot,
+        execution_input(&fixture, ProjectionMethod::Copy, projection_path.clone()),
+    )
+    .expect("prepare new projection");
+    let mut activated =
+        activate_prepared_projection(&fixture.ctx, output.prepared.expect("staging artifact"))
+            .expect("activate new projection");
+    let details_path = projection_path.join("details.txt");
+    let original_mode = fs::symlink_metadata(&details_path)
+        .expect("read original mode")
+        .permissions()
+        .mode();
+    fs::set_permissions(
+        &details_path,
+        fs::Permissions::from_mode(original_mode ^ 0o100),
+    )
+    .expect("change projected file mode");
+
+    let error = activated
+        .rollback()
+        .expect_err("rollback must preserve a concurrent mode change");
+
+    assert_eq!(error.code, ErrorCode::ProjectionConflict);
+    assert_eq!(error.details["recovery_required"], true);
+    assert_eq!(
+        fs::symlink_metadata(&details_path)
+            .expect("read changed mode")
+            .permissions()
+            .mode(),
+        original_mode ^ 0o100
+    );
+
+    fs::set_permissions(&details_path, fs::Permissions::from_mode(original_mode))
+        .expect("resolve mode conflict");
+    activated.rollback().expect("retry created rollback");
+    assert!(!projection_path.exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn created_rollback_preserves_concurrent_xattr_change_and_is_retryable() {
+    let fixture = convergence_projection_fixture();
+    let projection_path = fixture.root.join("live/copy/demo");
+    let output = execute_projection(
+        &fixture.ctx,
+        &fixture.paths,
+        &fixture.snapshot,
+        execution_input(&fixture, ProjectionMethod::Copy, projection_path.clone()),
+    )
+    .expect("prepare new projection");
+    let mut activated =
+        activate_prepared_projection(&fixture.ctx, output.prepared.expect("staging artifact"))
+            .expect("activate new projection");
+    let details_path = projection_path.join("details.txt");
+    let attribute = if cfg!(target_os = "macos") {
+        "com.loom.concurrent-test"
+    } else {
+        "user.loom.concurrent-test"
+    };
+    match xattr::set(&details_path, attribute, b"concurrent") {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::Unsupported => return,
+        Err(error) => panic!("set concurrent xattr: {error}"),
+    }
+
+    let error = activated
+        .rollback()
+        .expect_err("rollback must preserve a concurrent xattr change");
+
+    assert_eq!(error.code, ErrorCode::ProjectionConflict);
+    assert_eq!(error.details["recovery_required"], true);
+    assert_eq!(
+        xattr::get(&details_path, attribute).expect("read changed xattr"),
+        Some(b"concurrent".to_vec())
+    );
+
+    xattr::remove(&details_path, attribute).expect("resolve xattr conflict");
+    activated.rollback().expect("retry created rollback");
+    assert!(!projection_path.exists());
+}
+
 #[cfg(any(
     target_os = "macos",
     target_os = "ios",

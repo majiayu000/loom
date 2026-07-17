@@ -30,7 +30,6 @@ use super::projections::{
     project_skill_to_target, record_registry_observation, record_registry_operation,
     restore_registry_audit_state, snapshot_registry_audit_state, upsert_projection, upsert_rule,
 };
-use super::provenance::materialized_tree_digest;
 use super::skill_activation::resolve::{find_projection, find_rule};
 use super::skill_cmds::shared::{
     maybe_skill_fault, push_rollback_error, rollback_fault_active, rollback_registry_state,
@@ -46,6 +45,7 @@ pub(crate) enum ProjectionExecutionContext {
 mod convergence;
 #[cfg(test)]
 mod tests;
+use convergence::projection_ownership_fingerprint;
 #[allow(unused_imports)]
 pub(crate) use convergence::{
     PreparedProjection, ProjectionActivationOutput, activate_prepared_projection,
@@ -425,7 +425,7 @@ fn materialize_projection(
     let existing_digest = if input.context == ProjectionExecutionContext::Convergence && path_exists
     {
         Some(
-            materialized_tree_digest(&input.materialized_path).map_err(|err| {
+            projection_ownership_fingerprint(&input.materialized_path).map_err(|err| {
                 CommandFailure::new(
                     ErrorCode::ProjectionConflict,
                     format!(
@@ -474,7 +474,7 @@ fn materialize_projection(
         }
         let mut prepared_projection = projection.clone();
         apply_projection_observation(&mut prepared_projection, &observation);
-        let staging_digest = materialized_tree_digest(&staging_path).map_err(|err| {
+        let staging_digest = projection_ownership_fingerprint(&staging_path).map_err(|err| {
             let mut cleanup_errors = Vec::new();
             cleanup_projection_staging(&staging_path, &mut cleanup_errors);
             CommandFailure::new(

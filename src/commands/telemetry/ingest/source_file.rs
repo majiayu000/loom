@@ -76,6 +76,13 @@ fn native_session_id(agent: Agent, value: &Value) -> Option<&str> {
     session_id.filter(|session_id| !session_id.is_empty())
 }
 
+fn is_native_session_boundary(agent: Agent, value: &Value) -> bool {
+    match agent {
+        Agent::Claude => native_session_id(agent, value).is_some(),
+        Agent::Codex => value.get("type").and_then(Value::as_str) == Some("session_meta"),
+    }
+}
+
 fn native_session_record(
     agent: Agent,
     file: &mut File,
@@ -105,14 +112,17 @@ fn native_session_record(
         if scan_end.is_some_and(|end| offset > end) {
             break;
         }
-        if complete
-            && let Ok(value) = serde_json::from_slice::<Value>(&raw)
-            && native_session_id(agent, &value).is_some()
-        {
-            if selection == SessionRecordSelection::First {
+        if complete && let Ok(value) = serde_json::from_slice::<Value>(&raw) {
+            if selection == SessionRecordSelection::First
+                && native_session_id(agent, &value).is_some()
+            {
                 return Ok(Some(value));
             }
-            selected = Some(value);
+            if selection == SessionRecordSelection::Latest
+                && is_native_session_boundary(agent, &value)
+            {
+                selected = Some(value);
+            }
         }
     }
     Ok(selected)

@@ -475,6 +475,65 @@ fn codex_resume_uses_latest_session_boundary_before_saved_turn() {
 }
 
 #[test]
+fn codex_resume_replays_invalid_session_boundary_that_cleared_state() {
+    let root = TestDir::new("telemetry-ingest-review-codex-invalid-boundary");
+    let home = TestDir::new("telemetry-ingest-review-codex-invalid-boundary-home");
+    let source = home.path().join("sessions/2026/07/invalid-boundary.jsonl");
+    let workspace = home.path().join("workspace").to_string_lossy().into_owned();
+    let invalid_boundary = json!({
+        "timestamp": "2026-07-01T00:01:00Z",
+        "type": "session_meta",
+        "payload": {"id": ""}
+    })
+    .to_string()
+        + "\n";
+    let initial = format!(
+        "{}{}{}{}",
+        codex_session_boundary("session-one", &workspace, "2026-07-01T00:00:00Z"),
+        codex_turn("turn-1", "demo", "2026-07-01T00:00:01Z"),
+        invalid_boundary,
+        codex_turn("turn-2", "demo", "2026-07-01T00:01:01Z"),
+    );
+    write_file(&source, &initial);
+    write_skill(
+        root.path(),
+        "demo",
+        "---\nname: demo\ndescription: Fixture skill.\n---\n# Demo\n",
+    );
+    let home_arg = home.path().to_string_lossy().into_owned();
+    enable(&root, &home_arg);
+
+    let (first_output, first) = run_loom_with_env(
+        root.path(),
+        &[("LOOM_CODEX_HOME", &home_arg)],
+        &["telemetry", "ingest", "--agent", "codex"],
+    );
+    assert!(
+        first_output.status.success(),
+        "initial ingest failed: {first}"
+    );
+    assert_eq!(first["data"]["ingested"], json!(1));
+
+    fs::OpenOptions::new()
+        .append(true)
+        .open(&source)
+        .unwrap()
+        .write_all(codex_turn("turn-3", "demo", "2026-07-01T00:02:00Z").as_bytes())
+        .unwrap();
+    let (resume_output, resumed) = run_loom_with_env(
+        root.path(),
+        &[("LOOM_CODEX_HOME", &home_arg)],
+        &["telemetry", "ingest", "--agent", "codex"],
+    );
+    assert!(resume_output.status.success(), "resume failed: {resumed}");
+    assert_eq!(resumed["data"]["ingested"], json!(0));
+    assert_eq!(resumed["data"]["sources_reset"]["count"], json!(0));
+
+    let events = fs::read_to_string(root.path().join("state/telemetry/events.jsonl")).unwrap();
+    assert_eq!(events.lines().count(), 1);
+}
+
+#[test]
 fn codex_since_uses_record_time_and_accepts_dotted_skills() {
     let root = TestDir::new("telemetry-ingest-review-codex-mtime");
     let home = TestDir::new("telemetry-ingest-review-codex-mtime-home");

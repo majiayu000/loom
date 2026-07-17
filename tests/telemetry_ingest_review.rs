@@ -50,6 +50,30 @@ fn restore_modified(path: &std::path::Path, modified: SystemTime) {
         .unwrap();
 }
 
+fn codex_session(skill: &str, timestamp: &str) -> String {
+    [
+        json!({"timestamp":timestamp,"type":"session_meta","payload":{"id":"codex-review"}}),
+        json!({"timestamp":timestamp,"type":"turn_context","payload":{"turn_id":"turn-1"}}),
+        json!({
+            "timestamp":timestamp,
+            "type":"response_item",
+            "payload":{"type":"message","role":"user","content":[{
+                "type":"input_text","text":format!("please use ${skill}")
+            }]}
+        }),
+        json!({
+            "timestamp":timestamp,
+            "type":"response_item",
+            "payload":{"type":"message","role":"user","content":[{
+                "type":"input_text","text":format!("<skill><name>{skill}</name>body</skill>")
+            }]}
+        }),
+    ]
+    .into_iter()
+    .map(|value| value.to_string() + "\n")
+    .collect()
+}
+
 #[test]
 fn imported_workspace_is_hashed_and_report_filterable() {
     let root = TestDir::new("telemetry-ingest-review-workspace");
@@ -222,6 +246,77 @@ fn scanner_is_streamed_and_oversized_records_are_counted() {
     );
     assert!(output.status.success(), "oversized scan failed: {envelope}");
     assert_eq!(envelope["data"]["malformed"], json!(1));
+    assert_eq!(envelope["data"]["ingested"], json!(1));
+}
+
+#[test]
+fn codex_since_uses_record_time_and_accepts_dotted_skills() {
+    let root = TestDir::new("telemetry-ingest-review-codex-mtime");
+    let home = TestDir::new("telemetry-ingest-review-codex-mtime-home");
+    let source = home.path().join("sessions/2026/07/session.jsonl");
+    write_file(
+        &source,
+        &codex_session("team.skill", "2026-07-02T00:00:00Z"),
+    );
+    restore_modified(&source, SystemTime::UNIX_EPOCH);
+    write_skill(
+        root.path(),
+        "team.skill",
+        "---\nname: team.skill\ndescription: Dotted fixture skill.\n---\n# Dotted\n",
+    );
+    let home_arg = home.path().to_string_lossy().into_owned();
+    enable(&root, &home_arg);
+    let (output, envelope) = run_loom_with_env(
+        root.path(),
+        &[("LOOM_CODEX_HOME", &home_arg)],
+        &[
+            "telemetry",
+            "ingest",
+            "--agent",
+            "codex",
+            "--since",
+            "2026-07-01T00:00:00Z",
+        ],
+    );
+    assert!(output.status.success(), "Codex ingest failed: {envelope}");
+    assert_eq!(envelope["data"]["ingested"], json!(1));
+}
+
+#[test]
+fn source_rotated_after_discovery_is_rediscovered() {
+    let root = TestDir::new("telemetry-ingest-review-rotation");
+    let home = TestDir::new("telemetry-ingest-review-rotation-home");
+    let source = home.path().join("projects/demo/session.jsonl");
+    write_file(
+        &source,
+        &claude_record(
+            "rotation-record",
+            "rotation-call",
+            "2026-07-01T00:00:00Z",
+            "/workspace",
+        ),
+    );
+    let home_arg = home.path().to_string_lossy().into_owned();
+    enable(&root, &home_arg);
+    let child = Command::new(env!("CARGO_BIN_EXE_loom"))
+        .arg("--json")
+        .arg("--root")
+        .arg(root.path())
+        .args(["telemetry", "ingest", "--agent", "claude"])
+        .env("LOOM_CLAUDE_HOME", &home_arg)
+        .env("LOOM_TEST_INGEST_OPEN_PAUSE_MS", "1000")
+        .stdout(Stdio::piped())
+        .spawn()
+        .expect("spawn discovery-paused ingest");
+    thread::sleep(Duration::from_millis(300));
+    let rotated = home.path().join("projects/demo/rotated.jsonl");
+    fs::rename(&source, &rotated).expect("rotate source after discovery");
+    let output = child.wait_with_output().expect("wait for ingest");
+    let envelope: Value = serde_json::from_slice(&output.stdout).expect("parse ingest envelope");
+    assert!(
+        output.status.success(),
+        "rotation ingest failed: {envelope}"
+    );
     assert_eq!(envelope["data"]["ingested"], json!(1));
 }
 

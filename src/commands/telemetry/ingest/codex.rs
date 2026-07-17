@@ -78,7 +78,7 @@ fn parse_response_item(value: &Value, context: &mut Context) -> ParseOutcome {
         }
         return ParseOutcome::Ignored;
     };
-    if !context.mentioned_skills.remove(name) {
+    if !take_mentioned_skill(&mut context.mentioned_skills, name) {
         return ParseOutcome::Ignored;
     }
     let Some(stable_record_key) = context.turn_id.as_deref() else {
@@ -108,6 +108,10 @@ fn parse_response_item(value: &Value, context: &mut Context) -> ParseOutcome {
     })
 }
 
+fn take_mentioned_skill(names: &mut BTreeSet<String>, name: &str) -> bool {
+    names.remove(name) || names.remove(&format!("{name}."))
+}
+
 fn update_workspace(context: &mut Context, payload: &Value) {
     if let Some(cwd) = payload.get("cwd").and_then(Value::as_str) {
         context.workspace = Some(PathBuf::from(cwd));
@@ -133,7 +137,7 @@ fn collect_skill_mentions(text: &str, names: &mut BTreeSet<String>) {
         let start = index + 1;
         let mut end = start;
         while end < bytes.len()
-            && (bytes[end].is_ascii_alphanumeric() || matches!(bytes[end], b'-' | b'_'))
+            && (bytes[end].is_ascii_alphanumeric() || matches!(bytes[end], b'-' | b'_' | b'.'))
         {
             end += 1;
         }
@@ -204,6 +208,38 @@ mod tests {
         };
         assert_eq!(record.session_id, "session");
         assert_eq!(record.invocations[0].name, "demo");
+    }
+
+    #[test]
+    fn dotted_skill_mentions_match_structured_injections() {
+        let mut context = Context::default();
+        for value in [
+            json!({"type":"session_meta","payload":{"id":"session"}}),
+            json!({"type":"turn_context","payload":{"turn_id":"turn-1"}}),
+            json!({
+                "timestamp":"2026-07-01T00:00:00Z",
+                "type":"response_item",
+                "payload":{"type":"message","role":"user","content":[{
+                    "type":"input_text","text":"please use $team.skill."
+                }]}
+            }),
+        ] {
+            assert!(matches!(
+                parse_record(&value, &mut context),
+                ParseOutcome::Ignored
+            ));
+        }
+        let injection = json!({
+            "timestamp":"2026-07-01T00:00:01Z",
+            "type":"response_item",
+            "payload":{"type":"message","role":"user","content":[{
+                "type":"input_text","text":"<skill><name>team.skill</name>body</skill>"
+            }]}
+        });
+        let ParseOutcome::Record(record) = parse_record(&injection, &mut context) else {
+            panic!("dotted skill injection must parse");
+        };
+        assert_eq!(record.invocations[0].name, "team.skill");
     }
 
     #[test]

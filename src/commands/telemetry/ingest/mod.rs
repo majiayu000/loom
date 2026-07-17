@@ -7,7 +7,7 @@ mod stream;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
-use std::fs::File;
+use std::fs::{self, File, Metadata};
 use std::io::{BufReader, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -111,6 +111,11 @@ struct SourcePlan {
     reset_reason: Option<cursor::ResetReason>,
     stats: AgentStats,
     rejected_reasons: BTreeMap<String, usize>,
+}
+
+enum ScanSourceOutcome {
+    Planned(Box<SourcePlan>),
+    Rediscover,
 }
 
 struct SourceGuard {
@@ -250,20 +255,30 @@ fn scan_agent(
     plan: &mut ScanPlan,
 ) -> std::result::Result<(), CommandFailure> {
     let home = resolve_agent_home(agent)?;
-    let sources = discover_sources(agent, &home, since)?;
-    plan.stats.entry(agent).or_default().scanned_files = sources.len();
-    for source in sources {
-        scan_source(
-            agent,
-            &home,
-            &source,
-            since,
-            registered,
-            ingest_cursor,
-            plan,
-        )?;
+    for _attempt in 0..3 {
+        let sources = discover_sources(agent, &home)?;
+        let mut staged = Vec::new();
+        let mut rediscover = false;
+        for source in &sources {
+            match scan_source(agent, &home, source, since, registered, ingest_cursor)? {
+                ScanSourceOutcome::Planned(source_plan) => staged.push(*source_plan),
+                ScanSourceOutcome::Rediscover => {
+                    rediscover = true;
+                    break;
+                }
+            }
+        }
+        if rediscover {
+            continue;
+        }
+        plan.stats.entry(agent).or_default().scanned_files = sources.len();
+        plan.sources.extend(staged);
+        return Ok(());
     }
-    Ok(())
+    Err(CommandFailure::new(
+        ErrorCode::LockBusy,
+        "telemetry sources changed during all discovery retries",
+    ))
 }
 
 fn scan_source(
@@ -273,14 +288,14 @@ fn scan_source(
     since: Option<DateTime<Utc>>,
     registered: &BTreeSet<String>,
     ingest_cursor: &IngestCursor,
-    plan: &mut ScanPlan,
-) -> std::result::Result<(), CommandFailure> {
+) -> std::result::Result<ScanSourceOutcome, CommandFailure> {
     for _attempt in 0..3 {
-        if let Some(source_plan) =
-            scan_source_once(agent, home, source, since, registered, ingest_cursor)?
-        {
-            plan.sources.push(source_plan);
-            return Ok(());
+        match scan_source_once(agent, home, source, since, registered, ingest_cursor)? {
+            Some(source_plan) => return Ok(ScanSourceOutcome::Planned(Box::new(source_plan))),
+            None if !source.try_exists().map_err(map_io)? => {
+                return Ok(ScanSourceOutcome::Rediscover);
+            }
+            None => {}
         }
     }
     Err(CommandFailure::new(
@@ -297,11 +312,23 @@ fn scan_source_once(
     registered: &BTreeSet<String>,
     ingest_cursor: &IngestCursor,
 ) -> std::result::Result<Option<SourcePlan>, CommandFailure> {
-    let mut file = File::open(source).map_err(map_io)?;
+    let canonical_source = match fs::canonicalize(source) {
+        Ok(path) => path,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(map_io(error)),
+    };
+    let mut file = match File::open(&canonical_source) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(map_io(error)),
+    };
+    #[cfg(debug_assertions)]
+    debug_pause("LOOM_TEST_INGEST_OPEN_PAUSE_MS");
     let metadata = file.metadata().map_err(map_io)?;
     let generation_identity = cursor::source_generation_identity(&metadata);
     let authority = source_file::authority(source, &metadata)?;
-    let source_identity = source_file::canonical_identity(agent, home, source)?;
+    let source_identity =
+        source_file::canonical_identity(agent, home, &canonical_source, &mut file)?;
     let source_key = cursor::logical_source_key(agent.as_str(), &source_identity);
     let expected = ingest_cursor.sources.get(&source_key).cloned();
     let window =
@@ -311,7 +338,7 @@ fn scan_source_once(
     let mut rejected_reasons = BTreeMap::new();
     let mut parser_state = source_file::parser_state_before(
         agent,
-        source,
+        &mut file,
         window.parser_context_offset,
         window.start,
     )?;
@@ -475,20 +502,25 @@ fn env_path(key: &str) -> Option<PathBuf> {
 fn discover_sources(
     agent: Agent,
     home: &Path,
-    since: Option<DateTime<Utc>>,
 ) -> std::result::Result<Vec<PathBuf>, CommandFailure> {
-    if !home.exists() {
+    let Some(home_metadata) = metadata_if_exists(home)? else {
         return Ok(Vec::new());
+    };
+    if !home_metadata.is_dir() {
+        return Err(map_io(std::io::Error::new(
+            std::io::ErrorKind::NotADirectory,
+            "telemetry agent home is not a directory",
+        )));
     }
     let mut sources = Vec::new();
     match agent {
-        Agent::Claude => collect_jsonl(&home.join("projects"), None, &mut sources)?,
+        Agent::Claude => collect_jsonl(&home.join("projects"), &mut sources)?,
         Agent::Codex => {
             let history = home.join("history.jsonl");
-            if history.is_file() {
+            if metadata_if_exists(&history)?.is_some_and(|metadata| metadata.is_file()) {
                 sources.push(history);
             }
-            collect_jsonl(&home.join("sessions"), since, &mut sources)?;
+            collect_jsonl(&home.join("sessions"), &mut sources)?;
         }
     }
     sources.sort();
@@ -496,13 +528,15 @@ fn discover_sources(
     Ok(sources)
 }
 
-fn collect_jsonl(
-    root: &Path,
-    modified_since: Option<DateTime<Utc>>,
-    out: &mut Vec<PathBuf>,
-) -> std::result::Result<(), CommandFailure> {
-    if !root.exists() {
+fn collect_jsonl(root: &Path, out: &mut Vec<PathBuf>) -> std::result::Result<(), CommandFailure> {
+    let Some(root_metadata) = metadata_if_exists(root)? else {
         return Ok(());
+    };
+    if !root_metadata.is_dir() {
+        return Err(map_io(std::io::Error::new(
+            std::io::ErrorKind::NotADirectory,
+            "telemetry log root is not a directory",
+        )));
     }
     for entry in WalkDir::new(root).follow_links(false) {
         let entry = entry.map_err(|err| map_io(std::io::Error::other(err)))?;
@@ -511,21 +545,17 @@ fn collect_jsonl(
         {
             continue;
         }
-        if let Some(cutoff) = modified_since {
-            let modified = entry
-                .metadata()
-                .map_err(|err| map_io(std::io::Error::other(err)))?
-                .modified();
-            if let Ok(modified) = modified {
-                let modified: DateTime<Utc> = modified.into();
-                if modified < cutoff {
-                    continue;
-                }
-            }
-        }
         out.push(entry.into_path());
     }
     Ok(())
+}
+
+fn metadata_if_exists(path: &Path) -> std::result::Result<Option<Metadata>, CommandFailure> {
+    match fs::metadata(path) {
+        Ok(metadata) => Ok(Some(metadata)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(map_io(error)),
+    }
 }
 
 fn commit_plan(

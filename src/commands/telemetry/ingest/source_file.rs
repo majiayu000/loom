@@ -33,10 +33,10 @@ pub(super) fn authority(
 pub(super) fn canonical_identity(
     agent: Agent,
     home: &Path,
-    source: &Path,
+    canonical_source: &Path,
+    file: &mut File,
 ) -> std::result::Result<String, CommandFailure> {
     let canonical_home = fs::canonicalize(home).map_err(map_io)?;
-    let canonical_source = fs::canonicalize(source).map_err(map_io)?;
     let relative = canonical_source
         .strip_prefix(&canonical_home)
         .map_err(|_| {
@@ -50,7 +50,8 @@ pub(super) fn canonical_identity(
     if agent == Agent::Codex && relative == "history.jsonl" {
         return Ok("history".to_string());
     }
-    let mut reader = BufReader::new(File::open(source).map_err(map_io)?);
+    file.seek(SeekFrom::Start(0)).map_err(map_io)?;
+    let mut reader = BufReader::new(file);
     let mut raw = Vec::new();
     if matches!(
         stream::read_record(&mut reader, &mut raw)?,
@@ -76,7 +77,7 @@ fn native_session_id(agent: Agent, value: &Value) -> Option<&str> {
 
 pub(super) fn parser_state_before(
     agent: Agent,
-    source: &Path,
+    file: &mut File,
     context_offset: u64,
     target_offset: u64,
 ) -> std::result::Result<ParserState, CommandFailure> {
@@ -90,7 +91,8 @@ pub(super) fn parser_state_before(
             "telemetry ingest parser context exceeds committed offset",
         ));
     }
-    let mut reader = BufReader::new(File::open(source).map_err(map_io)?);
+    file.seek(SeekFrom::Start(0)).map_err(map_io)?;
+    let mut reader = BufReader::new(file);
     let mut raw = Vec::new();
     let mut offset = context_offset;
     if context_offset > 0 {

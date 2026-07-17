@@ -3,7 +3,7 @@
 Issue: https://github.com/majiayu000/loom/issues/541
 Product spec: `specs/GH541/product.md`
 Route: `write_spec`
-Status: implx auto review findings remediated; independent review passed; fresh CI and PR gate required
+Status: implx auto follow-up review remediation complete; independent review and repository verification PASS; exact-head CI and PR gate pending
 
 ## 1. Current Behavior
 
@@ -25,8 +25,9 @@ Status: implx auto review findings remediated; independent review passed; fresh 
      native 反例、alias canonicalization、相似自由文本反例与未知 shape。
    - `codex.rs` — 读取 `~/.codex/history.jsonl`（自由文本不算 invocation）并有状态解析
      `~/.codex/sessions/**` 的 `session_meta`、`turn_context` 与 `response_item` payload；仅 Codex 注入的
-     结构化 `<skill>` message 且同一 turn 已出现对应 `$skill-name` marker 时才算 invocation；mtime ≥
-     since 才发现 session 文件。
+     结构化 `<skill>` message 且同一 turn 已出现对应 `$skill-name` marker 时才算 invocation；marker
+     字符集与 Loom skill name 一致并允许 dot。session discovery 不按 mtime 预过滤，`--since` 只使用
+     record timestamp；正常增量由 cursor offset/context 保证。
    - `cursor.rs` — 高水位读写 `state/telemetry/ingest_cursor.json`。`LogicalSourceKey =
      hash(agent + canonical_source_identity)`；value 为 `SourceCheckpoint {schema_version,
      generation_token, committed_offset, boundary_hash, covered_since}`，不得落 raw path。
@@ -43,8 +44,9 @@ Status: implx auto review findings remediated; independent review passed; fresh 
      session/path/workspace；同长度改写即使恢复 mtime 也会 reset。
    - `plan.rs` — 同一 logical source 的 rotation/copy 在写 cursor 前合并；权威 checkpoint 按
      continuity → 完整长度 → mtime → path 排序，事件按 deterministic id 去重，统计只计权威源。
-   - 每个 agent scanner 将不存在的日志根或空 glob 作为 `scanned_files=0`；路径存在但不可读时
-     返回 error。`--agent all` 汇总 per-agent 结果，不能因未安装另一 agent 而丢弃可用日志。
+   - 每个 agent scanner 使用显式 metadata 区分不存在与不可读：不存在的日志根或空 glob 作为
+     `scanned_files=0`，路径存在但不可读时返回 error。discovery 后 source 因 rotation 消失时丢弃该轮
+     临时 plan 并重新 discovery；`--agent all` 不能因未安装另一 agent 而丢弃可用日志。
 3. 根目录解析顺序固定为 Loom test/explicit override → agent-native home → platform home：
    `LOOM_CLAUDE_HOME` → `CLAUDE_HOME` → `~/.claude`，以及
    `LOOM_CODEX_HOME` → `CODEX_HOME` → `~/.codex`。
@@ -149,7 +151,8 @@ Status: implx auto review findings remediated; independent review passed; fresh 
 14. `cargo check --workspace --all-targets --all-features && cargo test`。
 15. `cargo test --test telemetry_ingest_review`：覆盖 workspace hash、同 logical source 副本权威选择、
     oversized record 有界跳过、扫描期间恢复 mtime 的中部同尺寸改写，以及非权威副本在 commit 前改写时
-    每个贡献 source guard 都必须触发重试。
+    每个贡献 source guard 都必须触发重试；同时覆盖 record timestamp 不受旧 mtime 过滤、dotted skill
+    marker 与 discovery 后 rotation rediscovery。
 
 ## 6. Rollback Plan
 

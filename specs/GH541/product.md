@@ -61,7 +61,8 @@ telemetry 事件存储（#385/#496）只在调用方显式执行 `loom skill use
    continuity reset 时必须按 stable reason 计 `sources_reset`，不得回显 raw path。某个已选 agent 的日志根
    不存在或没有匹配文件时按该 agent `scanned_files=0` 处理，以便 `--agent all`
    仍可采集其他 agent；已存在的源目录不可读、cursor schema 不兼容或 event persistence 失败则整次
-   命令返回 error，不得伪装完整成功。
+   命令返回 error，不得伪装完整成功。文件在 discovery 后因 rotation 消失时必须重新 discovery，不能让
+   陈旧路径中止其余 source 或漏掉 replacement。
 10. **B-010** 事件写入必须通过现有 telemetry redaction/validation gate；新增字段与 deterministic
     event id 属于显式 schema 版本变更，旧 event 仍可读取。
 
@@ -79,7 +80,8 @@ telemetry 事件存储（#385/#496）只在调用方显式执行 `loom skill use
 ## 6. Edge Cases
 
 1. Claude 项目目录含非会话 jsonl（如 memory/工具产物）——按解析失败跳过而非报错。
-2. Codex `sessions/` 体量大（观测值 13GB）——必须支持只扫 `history.jsonl` 或按 mtime/since 剪枝，避免全量扫描。
+2. Codex `sessions/` 体量大（观测值 13GB）——使用 per-source cursor、committed offset 与 parser context
+   做增量读取；mtime 只服务 continuity/authority，不能在读取 record timestamp 前作为 `--since` 过滤器。
 3. 同一 skill 名在多个 agent 目录都有投影绑定——按事件的 agent 字段区分，不合并。
 4. skill 在 registry 中已退役但日志中有历史调用——按 ingest 时的当前读模型归为 unmatched，
    并持久化 `observed_skill_name`，不做历史 registry 考古。
@@ -95,7 +97,8 @@ telemetry 事件存储（#385/#496）只在调用方显式执行 `loom skill use
 3. Claude 接受原生 `sessionId` 记录中的结构化 Skill tool call 与明确 `<command-name>` skill command；
    Codex 接受 rollout `session_meta`/`turn_context` 上下文及 `response_item` 中 Codex 注入的结构化
    `<skill><name>...</name>...</skill>` message，且该注入必须与同一 turn 中此前的显式 `$skill-name`
-   marker 对应。Claude 内置 slash command 与孤立/用户粘贴的 Codex `<skill>` XML 均不算 invocation；
+   marker 对应，marker 允许 Loom skill name 的 `[A-Za-z0-9._-]` 字符集。Claude 内置 slash command 与
+   孤立/用户粘贴的 Codex `<skill>` XML 均不算 invocation；
    自由文本提及不算 invocation；确切 record fixtures 在实现中固化。
 
 ## 8. Boundary Checklist

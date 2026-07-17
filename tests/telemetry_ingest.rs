@@ -677,20 +677,22 @@ fn unreadable_existing_agent_root_fails_instead_of_reporting_empty() {
 
     let root = TestDir::new("telemetry-ingest-unreadable-root");
     let home = TestDir::new("telemetry-ingest-unreadable-home");
-    let projects = home.path().join("projects");
+    let denied_parent = home.path().join("denied");
+    let agent_home = denied_parent.join("agent-home");
+    let projects = agent_home.join("projects");
     fs::create_dir_all(&projects).expect("create projects root");
-    let mut permissions = fs::metadata(&projects).unwrap().permissions();
+    let mut permissions = fs::metadata(&denied_parent).unwrap().permissions();
     permissions.set_mode(0o000);
-    fs::set_permissions(&projects, permissions).expect("make projects unreadable");
-    let home_arg = home.path().to_string_lossy().into_owned();
+    fs::set_permissions(&denied_parent, permissions).expect("make parent unreadable");
+    let home_arg = agent_home.to_string_lossy().into_owned();
     let (output, envelope) = run_loom_with_env(
         root.path(),
         &[("LOOM_CLAUDE_HOME", &home_arg)],
         &["telemetry", "ingest", "--agent", "claude", "--dry-run"],
     );
-    let mut restore = fs::metadata(&projects).unwrap().permissions();
+    let mut restore = fs::metadata(&denied_parent).unwrap().permissions();
     restore.set_mode(0o700);
-    fs::set_permissions(&projects, restore).expect("restore projects permissions");
+    fs::set_permissions(&denied_parent, restore).expect("restore parent permissions");
     assert!(
         !output.status.success(),
         "unreadable root passed: {envelope}"

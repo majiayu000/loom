@@ -3,7 +3,7 @@
 Issue: https://github.com/majiayu000/loom/issues/541
 Product spec: `specs/GH541/product.md`
 Tech spec: `specs/GH541/tech.md`
-Status: implementation and repository verification complete locally; fresh CI/PR gates still required
+Status: Follow-up review remediation complete; independent review PASS; repository verification PASS; exact-head CI pending
 
 ## Order
 

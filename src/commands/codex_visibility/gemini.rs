@@ -90,8 +90,9 @@ pub(super) fn add_frontmatter_check(
     target_id: &str,
     checks: &mut Vec<CodexVisibilityCheck>,
 ) -> bool {
-    let valid = match parse_skill_frontmatter(entrypoint) {
-        Ok(parsed) => {
+    let strict_valid = parse_skill_frontmatter(entrypoint)
+        .ok()
+        .is_some_and(|parsed| {
             parsed
                 .frontmatter
                 .name
@@ -102,9 +103,8 @@ pub(super) fn add_frontmatter_check(
                     .description
                     .as_deref()
                     .is_some_and(|description| !description.is_empty())
-        }
-        Err(_) => simple_frontmatter_valid(entrypoint, skill),
-    };
+        });
+    let valid = strict_valid || simple_frontmatter_valid(entrypoint, skill);
     checks.push(check(
         &format!("gemini-cli_frontmatter_valid:{target_id}"),
         valid,
@@ -147,9 +147,7 @@ fn simple_frontmatter_valid(entrypoint: &Path, skill: &str) -> bool {
             description.push_str(line);
         }
     }
-    closed
-        && name.is_some_and(|name| name.eq_ignore_ascii_case(skill))
-        && description.is_some_and(|value| !value.is_empty())
+    closed && name.is_some_and(|name| name.eq_ignore_ascii_case(skill)) && description.is_some()
 }
 
 fn sanitize_name(name: &str) -> String {

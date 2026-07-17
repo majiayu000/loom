@@ -299,7 +299,16 @@ fn default_target_path(
         ActivationScope::User => "user",
         ActivationScope::Project => "project",
     };
-    let workspace = selection.workspace.as_deref().unwrap_or(&ctx.root);
+    let implicit_workspace = selection
+        .workspace
+        .is_none()
+        .then(|| std::env::current_dir().map_err(map_io))
+        .transpose()?;
+    let workspace = selection
+        .workspace
+        .as_deref()
+        .or(implicit_workspace.as_deref())
+        .ok_or_else(|| CommandFailure::new(ErrorCode::IoError, "workspace is unavailable"))?;
     let adapters = load_agent_adapters(ctx)?;
     if let Some(adapter) = adapters.adapter_for_agent(&selection.agent)
         && adapter.has_discovery_root_for_scope(scope)

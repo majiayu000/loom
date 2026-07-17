@@ -715,14 +715,19 @@ fn visibility_uses_cwd_secure_trust_bootstrap_and_valid_gemini_frontmatter() {
             true,
         ),
         (
-            "parsed empty descriptions do not use the fallback",
+            "parsed empty descriptions use Gemini's text fallback",
             "---\nname: demo\ndescription:\n---\n# Demo\n",
-            false,
+            true,
         ),
         (
-            "parsed non-string descriptions do not use the fallback",
+            "parsed non-string descriptions use Gemini's text fallback",
             "---\nname: demo\ndescription: [reviewing, code]\n---\n# Demo\n",
-            false,
+            true,
+        ),
+        (
+            "parsed mapping descriptions use Gemini's text fallback",
+            "---\nname: demo\ndescription:\n  Use when: reviewing code\n---\n# Demo\n",
+            true,
         ),
         (
             "unclosed frontmatter does not pass the fallback",

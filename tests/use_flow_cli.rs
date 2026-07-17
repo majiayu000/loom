@@ -4,7 +4,10 @@ use std::fs;
 
 use serde_json::{Value, json};
 
-use common::{TestDir, operations_log, run_loom, run_loom_with_env, write_file, write_skill};
+use common::{
+    TestDir, operations_log, run_loom, run_loom_with_env, run_loom_with_env_and_cwd, write_file,
+    write_skill,
+};
 
 #[test]
 fn use_plan_is_read_only_before_apply() {
@@ -168,7 +171,7 @@ fn use_apply_keeps_codex_and_gemini_cli_managed_roots_distinct() {
 }
 
 #[test]
-fn use_user_scope_gemini_root_uses_the_explicit_workspace_environment() {
+fn gemini_user_root_uses_explicit_or_process_workspace_environment() {
     let root = TestDir::new("use-gemini-user-workspace-root");
     let home = TestDir::new("use-gemini-user-workspace-home");
     let workspace = TestDir::new("use-gemini-user-workspace");
@@ -201,6 +204,40 @@ fn use_user_scope_gemini_root_uses_the_explicit_workspace_environment() {
     assert!(output.status.success(), "Gemini use plan failed: {env}");
     assert_eq!(
         env["data"]["steps"][0]["target_path"],
+        json!(redirected_home.path().join(".gemini/skills"))
+    );
+
+    let envs = [
+        ("HOME", home_arg.as_str()),
+        ("GEMINI_CLI_TRUST_WORKSPACE", "true"),
+    ];
+    let (implicit_output, implicit_env) = run_loom_with_env_and_cwd(
+        root.path(),
+        workspace.path(),
+        &envs,
+        &["use", "demo", "--agents", "gemini-cli", "--scope", "user"],
+    );
+    assert!(
+        implicit_output.status.success(),
+        "implicit-workspace Gemini use plan failed: {implicit_env}"
+    );
+    assert_eq!(
+        implicit_env["data"]["steps"][0]["target_path"],
+        json!(redirected_home.path().join(".gemini/skills"))
+    );
+
+    let (activate_output, activate_env) = run_loom_with_env_and_cwd(
+        root.path(),
+        workspace.path(),
+        &envs,
+        &["skill", "activate", "demo", "--agent", "gemini-cli"],
+    );
+    assert!(
+        activate_output.status.success(),
+        "implicit-workspace Gemini activation failed: {activate_env}"
+    );
+    assert_eq!(
+        activate_env["data"]["target"]["path"],
         json!(redirected_home.path().join(".gemini/skills"))
     );
 }

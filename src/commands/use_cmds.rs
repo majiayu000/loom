@@ -223,15 +223,30 @@ fn target_path_for(
         return Ok(absolute_path(&target_root));
     }
     let scope = use_scope_as_str(args.scope);
-    let workspace = workspace.unwrap_or(&ctx.root);
+    let implicit_workspace = workspace
+        .is_none()
+        .then(|| {
+            std::env::current_dir().map_err(|error| {
+                CommandFailure::new(
+                    ErrorCode::IoError,
+                    format!("failed to resolve current workspace: {error}"),
+                )
+            })
+        })
+        .transpose()?;
+    let adapter_workspace = workspace
+        .or(implicit_workspace.as_deref())
+        .ok_or_else(|| CommandFailure::new(ErrorCode::IoError, "workspace is unavailable"))?;
     let adapters = load_agent_adapters(ctx)?;
     if let Some(adapter) = adapters.adapter_for_agent(agent)
         && adapter.has_discovery_root_for_scope(scope)
     {
-        if let Some(root) = built_in_projection_root(ctx, adapter, scope, workspace, &args.skill)? {
+        if let Some(root) =
+            built_in_projection_root(ctx, adapter, scope, adapter_workspace, &args.skill)?
+        {
             return Ok(absolute_path(&root));
         }
-        match preferred_discovery_root(adapter, scope, workspace) {
+        match preferred_discovery_root(adapter, scope, adapter_workspace) {
             Ok(root) => return Ok(absolute_path(&root.path)),
             Err(_err) if adapter.source == SOURCE_BUILT_IN => {}
             Err(err) => return Err(err),

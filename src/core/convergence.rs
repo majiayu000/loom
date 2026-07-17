@@ -1,18 +1,18 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use serde_json::Value;
 
 use crate::sha256::{Sha256, to_hex};
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum ConvergenceInputDirection {
     Source,
     Projection,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq, PartialOrd, Ord)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum ConvergenceAxis {
     Projections,
@@ -20,7 +20,7 @@ pub(crate) enum ConvergenceAxis {
     Visibility,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub(crate) struct ConvergenceSelectors {
     pub agent: Option<String>,
     pub workspace: Option<String>,
@@ -28,7 +28,7 @@ pub(crate) struct ConvergenceSelectors {
     pub input_instance: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub(crate) struct SourceGuard {
     pub direction: ConvergenceInputDirection,
     pub registry_head: String,
@@ -36,7 +36,7 @@ pub(crate) struct SourceGuard {
     pub input_instance: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum ProjectionInputState {
     Clean,
@@ -70,7 +70,7 @@ impl ProjectionInputState {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub(crate) struct ProjectionInputEvidence {
     pub instance_id: String,
     pub method: String,
@@ -82,7 +82,7 @@ pub(crate) struct ProjectionInputEvidence {
     pub issue: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub(crate) struct ConvergenceInputEvidence {
     pub source_dirty_paths: Vec<String>,
     pub projections: Vec<ProjectionInputEvidence>,
@@ -90,7 +90,7 @@ pub(crate) struct ConvergenceInputEvidence {
     pub selected_input_tree_digest: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub(crate) struct ConvergencePreflightEvidence {
     pub input_direction: ConvergenceInputDirection,
     pub input_tree_digest: String,
@@ -99,21 +99,21 @@ pub(crate) struct ConvergencePreflightEvidence {
     pub mutation_allowed: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub(crate) struct ConvergenceInputConflict {
     pub code: String,
     pub message: String,
     pub evidence: Value,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub(crate) struct RegistryGuard {
     pub initialized: bool,
     pub checkpoint_digest: Option<String>,
     pub checkpoint_updated_at: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub(crate) struct ProjectionEffectPlan {
     pub instance_id: String,
     pub binding_id: String,
@@ -128,7 +128,7 @@ pub(crate) struct ProjectionEffectPlan {
     pub effect: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub(crate) struct VisibilityRequirement {
     pub agent: String,
     pub binding_id: String,
@@ -137,14 +137,14 @@ pub(crate) struct VisibilityRequirement {
     pub required: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum RemotePolicy {
     NotRequested,
     Push,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub(crate) struct SkillConvergencePlan {
     pub plan_id: String,
     pub plan_digest: String,
@@ -202,9 +202,38 @@ impl SkillConvergencePlan {
             required_axes: &self.required_axes,
             required_approvals: &self.required_approvals,
         };
-        let bytes = serde_json::to_vec(&payload)?;
-        let mut hasher = Sha256::new();
-        hasher.update(&bytes);
-        Ok(format!("sha256:{}", to_hex(&hasher.finalize())))
+        digest_value(&serde_json::to_value(payload)?)
     }
+}
+
+const DIGEST_FIELDS: [&str; 13] = [
+    "skill",
+    "selectors",
+    "source",
+    "input",
+    "preflight",
+    "input_conflicts",
+    "registry",
+    "projections",
+    "visibility",
+    "accept_restart_required",
+    "remote",
+    "required_axes",
+    "required_approvals",
+];
+
+pub(crate) fn stored_plan_digest(plan: &Value) -> Option<Result<String, serde_json::Error>> {
+    let plan = plan.as_object()?;
+    let mut payload = serde_json::Map::new();
+    for field in DIGEST_FIELDS {
+        payload.insert(field.to_string(), plan.get(field)?.clone());
+    }
+    Some(digest_value(&Value::Object(payload)))
+}
+
+fn digest_value(value: &Value) -> Result<String, serde_json::Error> {
+    let bytes = serde_json::to_vec(value)?;
+    let mut hasher = Sha256::new();
+    hasher.update(&bytes);
+    Ok(format!("sha256:{}", to_hex(&hasher.finalize())))
 }

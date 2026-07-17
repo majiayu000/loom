@@ -200,6 +200,33 @@ pub fn snapshot_index(ctx: &AppContext) -> Result<IndexSnapshot> {
     snapshot_index_with_env(ctx, &[])
 }
 
+pub fn snapshot_index_to(ctx: &AppContext, backup_path: &Path) -> Result<()> {
+    let index_path = resolve_git_index_path(ctx, &[])?;
+    if !index_path.exists() {
+        return Err(anyhow!(
+            "git index missing at {}; cannot snapshot",
+            index_path.display()
+        ));
+    }
+    if backup_path.exists() {
+        return Err(anyhow!(
+            "refusing to overwrite index snapshot {}",
+            backup_path.display()
+        ));
+    }
+    if let Some(parent) = backup_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::copy(&index_path, backup_path).with_context(|| {
+        format!(
+            "back up git index from {} to {}",
+            index_path.display(),
+            backup_path.display()
+        )
+    })?;
+    Ok(())
+}
+
 fn snapshot_index_with_env(ctx: &AppContext, envs: &[(&str, &str)]) -> Result<IndexSnapshot> {
     let index_path = resolve_git_index_path(ctx, envs)?;
     if !index_path.exists() {

@@ -121,12 +121,48 @@ pub(crate) fn execute_projection(
 ) -> std::result::Result<ProjectionExecutionOutput, CommandFailure> {
     match input.context {
         ProjectionExecutionContext::Standalone => {
-            execute_projection_mode::<false>(ctx, paths, snapshot, input)
+            execute_projection_mode::<false>(ctx, paths, snapshot, input, None)
         }
         ProjectionExecutionContext::Convergence => {
-            execute_projection_mode::<true>(ctx, paths, snapshot, input)
+            execute_projection_mode::<true>(ctx, paths, snapshot, input, None)
         }
     }
+}
+
+pub(crate) fn prepare_convergence_projection(
+    ctx: &AppContext,
+    input: &ProjectionExecutionInput,
+    source: &Path,
+    staging_path: &Path,
+) -> std::result::Result<(), CommandFailure> {
+    validate_execution_input(ctx, input)?;
+    if input.context != ProjectionExecutionContext::Convergence {
+        return Err(CommandFailure::new(
+            ErrorCode::InternalError,
+            "projection preparation requires convergence context",
+        ));
+    }
+    if fs::symlink_metadata(staging_path).is_ok() {
+        return Err(CommandFailure::new(
+            ErrorCode::StateCorrupt,
+            format!(
+                "declared projection staging path already exists: {}",
+                staging_path.display()
+            ),
+        ));
+    }
+    project_skill_to_target(source, staging_path, input.method)
+        .map_err(map_project_io(input.method))
+}
+
+pub(crate) fn execute_prepared_convergence_projection(
+    ctx: &AppContext,
+    paths: &RegistryStatePaths,
+    snapshot: &RegistrySnapshot,
+    input: ProjectionExecutionInput,
+    staging_path: PathBuf,
+) -> std::result::Result<ProjectionExecutionOutput, CommandFailure> {
+    execute_projection_mode::<true>(ctx, paths, snapshot, input, Some(staging_path))
 }
 
 fn execute_projection_mode<const CONVERGENCE: bool>(
@@ -134,6 +170,7 @@ fn execute_projection_mode<const CONVERGENCE: bool>(
     paths: &RegistryStatePaths,
     snapshot: &RegistrySnapshot,
     input: ProjectionExecutionInput,
+    prepared_staging: Option<PathBuf>,
 ) -> std::result::Result<ProjectionExecutionOutput, CommandFailure> {
     validate_execution_input(ctx, &input)?;
 
@@ -171,6 +208,7 @@ fn execute_projection_mode<const CONVERGENCE: bool>(
         &input,
         existing_projection.as_ref(),
         &projection,
+        prepared_staging,
     )?;
 
     let state_changed = input.target_is_new
@@ -369,7 +407,7 @@ pub(crate) fn execute_standalone_projection(
     snapshot: &RegistrySnapshot,
     input: ProjectionExecutionInput,
 ) -> std::result::Result<ProjectionExecutionOutput, CommandFailure> {
-    execute_projection_mode::<false>(ctx, paths, snapshot, input)
+    execute_projection_mode::<false>(ctx, paths, snapshot, input, None)
 }
 
 fn validate_execution_input(
@@ -408,6 +446,7 @@ fn materialize_projection<const CONVERGENCE: bool>(
     input: &ProjectionExecutionInput,
     existing_projection: Option<&RegistryProjectionInstance>,
     projection: &RegistryProjectionInstance,
+    prepared_staging: Option<PathBuf>,
 ) -> std::result::Result<MaterializationResult, CommandFailure> {
     let target_base = PathBuf::from(&input.target.path);
     fs::create_dir_all(&target_base).map_err(map_io)?;
@@ -477,11 +516,16 @@ fn materialize_projection<const CONVERGENCE: bool>(
         None
     };
 
-    let staging_path = target_base.join(format!(
-        ".loom-projection-stage-{}",
-        uuid::Uuid::new_v4().simple()
-    ));
-    if let Err(err) = project_skill_to_target(&skill_src, &staging_path, input.method) {
+    let staging_path = prepared_staging.unwrap_or_else(|| {
+        target_base.join(format!(
+            ".loom-projection-stage-{}",
+            uuid::Uuid::new_v4().simple()
+        ))
+    });
+    if !staging_path.exists()
+        && fs::symlink_metadata(&staging_path).is_err()
+        && let Err(err) = project_skill_to_target(&skill_src, &staging_path, input.method)
+    {
         let mut cleanup_errors = Vec::new();
         cleanup_projection_staging(&staging_path, &mut cleanup_errors);
         return Err(map_project_io(input.method)(err).with_rollback_errors(cleanup_errors));

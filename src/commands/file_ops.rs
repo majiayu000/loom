@@ -136,6 +136,36 @@ pub(crate) fn backup_path_if_exists(
     })))
 }
 
+pub(crate) fn create_declared_path_backup(path: &Path, backup: &serde_json::Value) -> Result<()> {
+    let backup_path = backup
+        .get("backup_path")
+        .and_then(serde_json::Value::as_str)
+        .map(Path::new)
+        .ok_or_else(|| anyhow!("backup record missing backup_path"))?;
+    let kind = backup
+        .get("kind")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| anyhow!("backup record missing kind"))?;
+    if fs::symlink_metadata(backup_path).is_ok() {
+        return Err(anyhow!(
+            "refusing to overwrite declared backup {}",
+            backup_path.display()
+        ));
+    }
+    match kind {
+        "dir" => copy_dir_recursive_preserving_symlinks(path, backup_path),
+        "file" => {
+            if let Some(parent) = backup_path.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            fs::copy(path, backup_path)?;
+            Ok(())
+        }
+        "symlink" => backup_symlink_metadata(path, backup_path),
+        other => Err(anyhow!("unsupported backup kind '{}'", other)),
+    }
+}
+
 fn backup_symlink_metadata(src: &Path, dst: &Path) -> Result<()> {
     fs::create_dir_all(dst)
         .with_context(|| format!("failed to create symlink backup dir {}", dst.display()))?;

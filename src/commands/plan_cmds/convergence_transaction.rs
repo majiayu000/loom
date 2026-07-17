@@ -13,17 +13,21 @@ use crate::gitops;
 use crate::state_model::{RegistryProjectionsFile, RegistryStatePaths};
 use crate::types::ErrorCode;
 
-use super::super::file_ops::{backup_path_if_exists, restore_path_from_backup};
+use super::super::codex_visibility::projection_path_is_safe_symlink;
+use super::super::file_ops::{create_declared_path_backup, restore_path_from_backup};
 use super::super::helpers::{commit_registry_state, map_git, map_io, map_lock, map_registry_state};
 use super::super::projection_executor::{
-    ProjectionExecutionContext, ProjectionExecutionInput, execute_projection,
-    finish_convergence_projection, rollback_convergence_projection,
+    ProjectionExecutionContext, ProjectionExecutionInput, execute_prepared_convergence_projection,
+    finish_convergence_projection, prepare_convergence_projection, rollback_convergence_projection,
 };
 use super::super::projections::{project_skill_to_target, upsert_projection};
 use super::super::provenance::skill_tree_digest;
 use super::super::skill_cmds::shared::{maybe_skill_fault, push_rollback_error};
 use super::super::{App, CommandFailure};
 use super::{PLAN_PROTOCOL_VERSION, plan_failure};
+
+mod recovery_support;
+use recovery_support::*;
 
 const SCHEMA_VERSION: &str = "1.2";
 
@@ -37,6 +41,8 @@ struct TransactionJournal {
     source_staging: Option<String>,
     projections: Vec<ProjectionBackup>,
     original_projections: RegistryProjectionsFile,
+    source_commit: Option<String>,
+    result: Option<Value>,
     phase: String,
 }
 
@@ -44,6 +50,7 @@ struct TransactionJournal {
 struct ProjectionBackup {
     materialized_path: String,
     backup: Option<Value>,
+    staging_path: String,
 }
 
 pub(super) fn apply_convergence(
@@ -63,31 +70,41 @@ pub(super) fn apply_convergence(
             Some(cursor),
         )
     })?;
+    if stored["safe_to_apply"] != json!(true) || !plan.required_approvals.is_empty() {
+        return Err(plan_failure(
+            ErrorCode::PolicyBlocked,
+            "convergence policy approvals are not executable in this tranche",
+            "CONVERGENCE_POLICY_WORKFLOW_REQUIRED",
+            false,
+            vec!["wait for the reviewed policy execution workflow".to_string()],
+            Some(cursor),
+        ));
+    }
     let _workspace_lock = app.ctx.lock_workspace().map_err(map_lock)?;
     let _skill_lock = app.ctx.lock_skill(&plan.skill).map_err(map_lock)?;
     let journal_path = journal_path(app, &plan.skill);
-    if journal_path.exists() {
-        recover_journal(app, &journal_path)?;
+    if journal_path.exists()
+        && let Some(output) = recover_journal(app, &journal_path, &plan, request_id)?
+    {
+        return Ok(apply_output(&plan, cursor, idempotency_key_digest, output));
     }
     validate_guards(app, &plan, cursor)?;
 
     let paths = RegistryStatePaths::from_app_context(&app.ctx);
     let snapshot = paths.load_snapshot().map_err(map_registry_state)?;
-    let previous_index = gitops::snapshot_index(&app.ctx).map_err(map_git)?;
     let tx_dir = journal_path.parent().expect("journal has parent");
     fs::create_dir_all(tx_dir).map_err(map_io)?;
     let durable_index = tx_dir.join(format!("{}-index", plan.plan_id));
-    fs::copy(previous_index.backup_path(), &durable_index).map_err(map_io)?;
-    let source_backup = if plan.source.direction == ConvergenceInputDirection::Projection {
-        backup_path_if_exists(
-            &app.ctx,
-            &app.ctx.skill_path(&plan.skill),
-            "convergence.source",
-        )
-        .map_err(map_io)?
-    } else {
-        None
-    };
+    let artifact_dir = tx_dir.join(format!("{}-artifacts", plan.plan_id));
+    let source_backup = (plan.source.direction == ConvergenceInputDirection::Projection)
+        .then(|| {
+            declared_backup(
+                &app.ctx.skill_path(&plan.skill),
+                &artifact_dir.join("source"),
+            )
+        })
+        .transpose()?
+        .flatten();
     let source_staging =
         (plan.source.direction == ConvergenceInputDirection::Projection).then(|| {
             app.ctx
@@ -102,15 +119,22 @@ pub(super) fn apply_convergence(
     let projection_backups = plan
         .projections
         .iter()
-        .map(|effect| {
+        .enumerate()
+        .map(|(index, effect)| {
+            let materialized = Path::new(&effect.materialized_path);
+            let parent = materialized.parent().ok_or_else(|| {
+                CommandFailure::new(ErrorCode::StateCorrupt, "projection path has no parent")
+            })?;
             Ok(ProjectionBackup {
                 materialized_path: effect.materialized_path.clone(),
-                backup: backup_path_if_exists(
-                    &app.ctx,
-                    Path::new(&effect.materialized_path),
-                    "convergence.projection",
-                )
-                .map_err(map_io)?,
+                backup: declared_backup(
+                    materialized,
+                    &artifact_dir.join(format!("projection-{index}")),
+                )?,
+                staging_path: parent
+                    .join(format!(".loom-projection-stage-{}-{index}", plan.plan_id))
+                    .display()
+                    .to_string(),
             })
         })
         .collect::<std::result::Result<Vec<_>, CommandFailure>>()?;
@@ -123,8 +147,17 @@ pub(super) fn apply_convergence(
         source_staging,
         projections: projection_backups,
         original_projections: snapshot.projections.clone(),
-        phase: "snapshotted".to_string(),
+        source_commit: None,
+        result: None,
+        phase: "preparing".to_string(),
     };
+    save_journal(&journal_path, &journal)?;
+
+    if let Err(err) = prepare_transaction_artifacts(app, &plan, &journal) {
+        let cleanup_errors = cleanup_declared_artifacts(&journal_path, &journal);
+        return Err(err.with_rollback_errors(cleanup_errors));
+    }
+    journal.phase = "prepared".to_string();
     save_journal(&journal_path, &journal)?;
 
     let result = execute_local_transaction(
@@ -138,36 +171,33 @@ pub(super) fn apply_convergence(
     );
     let output = match result {
         Ok(output) => output,
-        Err(err) if interruption_fault_active() => return Err(err),
+        Err(err) if interruption_fault_active() => {
+            return Err(err);
+        }
         Err(err) => {
-            let rollback_errors = rollback_journal(app, &paths, &journal);
+            let mut rollback_errors = rollback_journal(app, &paths, &journal);
+            if rollback_errors.is_empty() {
+                rollback_errors.extend(finish_transaction(&journal));
+            }
             if rollback_errors.is_empty() {
                 cleanup_journal(&journal_path, &journal).map_err(map_io)?;
             }
             return Err(err.with_rollback_errors(rollback_errors));
         }
     };
+    journal.result = Some(output.clone());
+    journal.phase = "committed_cleanup_pending".to_string();
+    save_journal(&journal_path, &journal)?;
     let cleanup_errors = finish_transaction(&journal);
     if !cleanup_errors.is_empty() {
-        let mut rollback_errors = cleanup_errors;
-        rollback_errors.extend(rollback_journal(app, &paths, &journal));
         return Err(CommandFailure::new(
             ErrorCode::IoError,
             "convergence transaction backup cleanup failed",
         )
-        .with_rollback_errors(rollback_errors));
+        .with_rollback_errors(cleanup_errors));
     }
     cleanup_journal(&journal_path, &journal).map_err(map_io)?;
-    Ok(json!({
-        "protocol_version": PLAN_PROTOCOL_VERSION,
-        "schema_version": SCHEMA_VERSION,
-        "plan_id": plan.plan_id,
-        "idempotency_key_digest": idempotency_key_digest,
-        "idempotent_replay": false,
-        "plan_event_cursor": cursor,
-        "applied": output,
-        "recovery": { "rollback_supported": true },
-    }))
+    Ok(apply_output(&plan, cursor, idempotency_key_digest, output))
 }
 
 fn execute_local_transaction(
@@ -179,59 +209,47 @@ fn execute_local_transaction(
     journal_path: &Path,
     journal: &mut TransactionJournal,
 ) -> std::result::Result<Value, CommandFailure> {
-    if plan.source.direction == ConvergenceInputDirection::Projection {
+    if journal.source_commit.is_none()
+        && plan.source.direction == ConvergenceInputDirection::Projection
+    {
+        journal.phase = "replacing_source".to_string();
+        save_journal(journal_path, journal)?;
         replace_source_from_projection(app, plan, journal)?;
         journal.phase = "source_replaced".to_string();
         save_journal(journal_path, journal)?;
     }
-    let source_commit = gitops::commit_paths_if_changed(
-        &app.ctx,
-        &[&format!("skills/{}", plan.skill)],
-        &format!("skill({}): converge source", plan.skill),
-    )
-    .map_err(map_git)?;
-    journal.phase = "source_committed".to_string();
-    save_journal(journal_path, journal)?;
-    maybe_skill_fault("convergence_interrupt_after_source_commit")?;
-    maybe_skill_fault("convergence_after_source_commit")?;
+    let source_commit = if let Some(commit) = journal.source_commit.clone() {
+        Some(commit)
+    } else {
+        journal.phase = "committing_source".to_string();
+        save_journal(journal_path, journal)?;
+        let commit = gitops::commit_paths_if_changed(
+            &app.ctx,
+            &[&format!("skills/{}", plan.skill)],
+            &format!("skill({}): converge source", plan.skill),
+        )
+        .map_err(map_git)?;
+        journal.source_commit = commit
+            .clone()
+            .or(Some(gitops::head(&app.ctx).map_err(map_git)?));
+        journal.phase = "source_committed".to_string();
+        save_journal(journal_path, journal)?;
+        maybe_skill_fault("convergence_interrupt_after_source_commit")?;
+        maybe_skill_fault("convergence_after_source_commit")?;
+        commit
+    };
 
     let mut projections = snapshot.projections.clone();
     let mut applied = Vec::new();
-    for effect in &plan.projections {
-        let binding = snapshot
-            .binding(&effect.binding_id)
-            .cloned()
-            .ok_or_else(|| stale("planned binding no longer exists", "PLAN_BINDING_DRIFT"))?;
-        let target = snapshot
-            .target(&effect.target_id)
-            .cloned()
-            .ok_or_else(|| stale("planned target no longer exists", "PLAN_TARGET_DRIFT"))?;
-        let method = parse_method(&effect.method)?;
-        let output = execute_projection(
+    journal.phase = "installing_projections".to_string();
+    save_journal(journal_path, journal)?;
+    for (effect, artifact) in plan.projections.iter().zip(&journal.projections) {
+        let output = execute_prepared_convergence_projection(
             &app.ctx,
             paths,
             snapshot,
-            ProjectionExecutionInput {
-                context: ProjectionExecutionContext::Convergence,
-                skill: plan.skill.clone(),
-                binding,
-                binding_is_new: false,
-                target,
-                target_is_new: false,
-                materialized_path: PathBuf::from(&effect.materialized_path),
-                method,
-                operation_intent: "converge",
-                operation_payload: json!({}),
-                observation_kind: "converge",
-                request_id: request_id.to_string(),
-                commit_message: String::new(),
-                replace_existing: true,
-                safe_existing_noop: false,
-                after_materialize_fault: None,
-                after_state_save_fault: None,
-                after_observation_fault: None,
-                activation_after_projection_fault: false,
-            },
+            projection_input(snapshot, plan, effect, request_id)?,
+            PathBuf::from(&artifact.staging_path),
         )?;
         let projection = output.projection.ok_or_else(|| {
             CommandFailure::new(ErrorCode::StateCorrupt, "executor omitted projection state")
@@ -254,12 +272,12 @@ fn execute_local_transaction(
         .save_projections(&projections)
         .map_err(map_registry_state)?;
     maybe_skill_fault("convergence_after_registry_save")?;
+    journal.phase = "committing_registry".to_string();
+    save_journal(journal_path, journal)?;
     let registry_commit = commit_registry_state(
         &app.ctx,
         &format!("skill({}): record convergence projections", plan.skill),
     )?;
-    journal.phase = "registry_committed".to_string();
-    save_journal(journal_path, journal)?;
     Ok(json!({
         "skill": plan.skill,
         "source_commit": source_commit,
@@ -343,13 +361,7 @@ fn validate_guards(
                     "PLAN_PROJECTION_DRIFT",
                 ));
             }
-            let live = skill_tree_digest(Path::new(&effect.materialized_path)).map_err(map_io)?;
-            if effect.materialized_tree_digest.as_deref() != Some(live.as_str()) {
-                return Err(stale(
-                    "projection bytes changed after planning",
-                    "PLAN_PROJECTION_DRIFT",
-                ));
-            }
+            validate_projection_guard(app, plan, effect)?;
         }
     }
     Ok(())
@@ -360,22 +372,6 @@ fn replace_source_from_projection(
     plan: &SkillConvergencePlan,
     journal: &mut TransactionJournal,
 ) -> std::result::Result<(), CommandFailure> {
-    let instance = plan.source.input_instance.as_deref().ok_or_else(|| {
-        CommandFailure::new(
-            ErrorCode::StateCorrupt,
-            "projection input has no instance id",
-        )
-    })?;
-    let effect = plan
-        .projections
-        .iter()
-        .find(|effect| effect.instance_id == instance)
-        .ok_or_else(|| {
-            CommandFailure::new(
-                ErrorCode::StateCorrupt,
-                "projection input is absent from effects",
-            )
-        })?;
     let source = app.ctx.skill_path(&plan.skill);
     let staging = journal
         .source_staging
@@ -384,17 +380,16 @@ fn replace_source_from_projection(
         .ok_or_else(|| {
             CommandFailure::new(ErrorCode::StateCorrupt, "source staging path is absent")
         })?;
-    project_skill_to_target(
-        Path::new(&effect.materialized_path),
-        &staging,
-        ProjectionMethod::Copy,
-    )
-    .map_err(map_io)?;
     exchange_paths_atomic(&staging, &source).map_err(map_io)?;
     Ok(())
 }
 
-fn recover_journal(app: &App, journal_path: &Path) -> std::result::Result<(), CommandFailure> {
+fn recover_journal(
+    app: &App,
+    journal_path: &Path,
+    plan: &SkillConvergencePlan,
+    request_id: &str,
+) -> std::result::Result<Option<Value>, CommandFailure> {
     let raw = fs::read_to_string(journal_path).map_err(map_io)?;
     let journal: TransactionJournal = serde_json::from_str(&raw).map_err(|err| {
         CommandFailure::new(
@@ -402,7 +397,74 @@ fn recover_journal(app: &App, journal_path: &Path) -> std::result::Result<(), Co
             format!("invalid convergence journal: {err}"),
         )
     })?;
+    if journal.plan_id != plan.plan_id {
+        return Err(CommandFailure::new(
+            ErrorCode::StateCorrupt,
+            "active convergence journal belongs to a different plan",
+        ));
+    }
+    if journal.phase == "committed_cleanup_pending" {
+        let result = journal.result.clone().ok_or_else(|| {
+            CommandFailure::new(
+                ErrorCode::StateCorrupt,
+                "committed journal is missing result",
+            )
+        })?;
+        finish_committed_cleanup(journal_path, &journal)?;
+        return Ok(Some(result));
+    }
     let paths = RegistryStatePaths::from_app_context(&app.ctx);
+    let mut journal = journal;
+    if journal.phase == "committing_source"
+        && gitops::head(&app.ctx).map_err(map_git)? != journal.previous_head
+    {
+        journal.source_commit = Some(gitops::head(&app.ctx).map_err(map_git)?);
+        journal.phase = "source_committed".to_string();
+        save_journal(journal_path, &journal)?;
+    }
+    if source_is_committed(&journal) {
+        if journal.phase == "committing_registry"
+            && gitops::head(&app.ctx).map_err(map_git)?
+                != journal.source_commit.as_deref().unwrap_or_default()
+        {
+            let result = committed_result(app, plan, &journal)?;
+            journal.result = Some(result.clone());
+            journal.phase = "committed_cleanup_pending".to_string();
+            save_journal(journal_path, &journal)?;
+            finish_committed_cleanup(journal_path, &journal)?;
+            return Ok(Some(result));
+        }
+        restore_projections_for_resume(&paths, &journal)?;
+        prepare_projection_stages(app, plan, request_id, &journal)?;
+        journal.phase = "source_committed".to_string();
+        save_journal(journal_path, &journal)?;
+        let snapshot = paths.load_snapshot().map_err(map_registry_state)?;
+        let result = execute_local_transaction(
+            app,
+            &paths,
+            &snapshot,
+            plan,
+            request_id,
+            journal_path,
+            &mut journal,
+        )?;
+        journal.result = Some(result.clone());
+        journal.phase = "committed_cleanup_pending".to_string();
+        save_journal(journal_path, &journal)?;
+        finish_committed_cleanup(journal_path, &journal)?;
+        return Ok(Some(result));
+    }
+    if journal.phase == "preparing" {
+        let errors = cleanup_declared_artifacts(journal_path, &journal);
+        if errors.is_empty() {
+            return Ok(None);
+        }
+        return Err(CommandFailure::new(
+            ErrorCode::StateCorrupt,
+            "interrupted preparation cleanup failed",
+        )
+        .with_rollback_errors(errors));
+    }
     let errors = rollback_journal(app, &paths, &journal);
     if !errors.is_empty() {
         return Err(CommandFailure::new(
@@ -411,7 +473,8 @@ fn recover_journal(app: &App, journal_path: &Path) -> std::result::Result<(), Co
         )
         .with_rollback_errors(errors));
     }
-    cleanup_journal(journal_path, &journal).map_err(map_io)
+    cleanup_journal(journal_path, &journal).map_err(map_io)?;
+    Ok(None)
 }
 
 fn rollback_journal(
@@ -457,8 +520,22 @@ fn rollback_journal(
 
 fn finish_transaction(journal: &TransactionJournal) -> Vec<Value> {
     let mut errors = Vec::new();
-    for projection in &journal.projections {
+    for (index, projection) in journal.projections.iter().enumerate() {
         cleanup_persistent_backup(projection.backup.as_ref(), &mut errors);
+        if index == 0
+            && std::env::var("LOOM_FAULT_INJECT").ok().as_deref()
+                == Some("convergence_interrupt_during_cleanup")
+        {
+            push_rollback_error(
+                &mut errors,
+                "cleanup_transaction_backups",
+                "fault injected during committed cleanup",
+            );
+            return errors;
+        }
+        if let Err(err) = remove_path_if_exists(Path::new(&projection.staging_path)) {
+            push_rollback_error(&mut errors, "remove_projection_staging", err);
+        }
     }
     cleanup_persistent_backup(journal.source_backup.as_ref(), &mut errors);
     if let Some(path) = journal.source_staging.as_deref()
@@ -488,14 +565,169 @@ fn save_journal(
 }
 
 fn cleanup_journal(path: &Path, journal: &TransactionJournal) -> std::io::Result<()> {
-    let errors = finish_transaction(journal);
-    if !errors.is_empty() {
-        return Err(std::io::Error::other(
-            serde_json::to_string(&errors).unwrap_or_else(|_| "backup cleanup failed".to_string()),
-        ));
-    }
     remove_path_if_exists(Path::new(&journal.index_backup))?;
     remove_path_if_exists(path)
+}
+
+fn finish_committed_cleanup(
+    journal_path: &Path,
+    journal: &TransactionJournal,
+) -> std::result::Result<(), CommandFailure> {
+    let errors = finish_transaction(journal);
+    if !errors.is_empty() {
+        return Err(CommandFailure::new(
+            ErrorCode::IoError,
+            "committed convergence cleanup is incomplete",
+        )
+        .with_rollback_errors(errors));
+    }
+    cleanup_journal(journal_path, journal).map_err(map_io)
+}
+
+fn declared_backup(
+    path: &Path,
+    backup_path: &Path,
+) -> std::result::Result<Option<Value>, CommandFailure> {
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => return Err(map_io(err)),
+    };
+    let kind = if metadata.file_type().is_symlink() {
+        "symlink"
+    } else if metadata.is_dir() {
+        "dir"
+    } else {
+        "file"
+    };
+    Ok(Some(json!({
+        "kind": kind,
+        "original_path": path.display().to_string(),
+        "backup_path": backup_path.display().to_string(),
+    })))
+}
+
+fn prepare_transaction_artifacts(
+    app: &App,
+    plan: &SkillConvergencePlan,
+    journal: &TransactionJournal,
+) -> std::result::Result<(), CommandFailure> {
+    gitops::snapshot_index_to(&app.ctx, Path::new(&journal.index_backup)).map_err(map_git)?;
+    if let Some(backup) = journal.source_backup.as_ref() {
+        create_declared_path_backup(&app.ctx.skill_path(&plan.skill), backup).map_err(map_io)?;
+    }
+    for projection in &journal.projections {
+        if let Some(backup) = projection.backup.as_ref() {
+            create_declared_path_backup(Path::new(&projection.materialized_path), backup)
+                .map_err(map_io)?;
+        }
+    }
+    maybe_skill_fault("convergence_during_backup_preparation")?;
+    let selected_source = selected_source_path(app, plan)?;
+    if let Some(staging) = journal.source_staging.as_deref() {
+        if fs::symlink_metadata(staging).is_ok() {
+            return Err(CommandFailure::new(
+                ErrorCode::StateCorrupt,
+                "declared source staging path already exists",
+            ));
+        }
+        project_skill_to_target(&selected_source, Path::new(staging), ProjectionMethod::Copy)
+            .map_err(map_io)?;
+    }
+    prepare_projection_stages_from(app, plan, "", journal, &selected_source)
+}
+
+fn prepare_projection_stages(
+    app: &App,
+    plan: &SkillConvergencePlan,
+    request_id: &str,
+    journal: &TransactionJournal,
+) -> std::result::Result<(), CommandFailure> {
+    prepare_projection_stages_from(
+        app,
+        plan,
+        request_id,
+        journal,
+        &app.ctx.skill_path(&plan.skill),
+    )
+}
+
+fn prepare_projection_stages_from(
+    app: &App,
+    plan: &SkillConvergencePlan,
+    request_id: &str,
+    journal: &TransactionJournal,
+    source: &Path,
+) -> std::result::Result<(), CommandFailure> {
+    let paths = RegistryStatePaths::from_app_context(&app.ctx);
+    let snapshot = paths.load_snapshot().map_err(map_registry_state)?;
+    for (effect, artifact) in plan.projections.iter().zip(&journal.projections) {
+        let input = projection_input(&snapshot, plan, effect, request_id)?;
+        prepare_convergence_projection(
+            &app.ctx,
+            &input,
+            source,
+            Path::new(&artifact.staging_path),
+        )?;
+    }
+    Ok(())
+}
+
+fn projection_input(
+    snapshot: &crate::state_model::RegistrySnapshot,
+    plan: &SkillConvergencePlan,
+    effect: &crate::core::convergence::ProjectionEffectPlan,
+    request_id: &str,
+) -> std::result::Result<ProjectionExecutionInput, CommandFailure> {
+    let binding = snapshot
+        .binding(&effect.binding_id)
+        .cloned()
+        .ok_or_else(|| stale("planned binding no longer exists", "PLAN_BINDING_DRIFT"))?;
+    let target = snapshot
+        .target(&effect.target_id)
+        .cloned()
+        .ok_or_else(|| stale("planned target no longer exists", "PLAN_TARGET_DRIFT"))?;
+    Ok(ProjectionExecutionInput {
+        context: ProjectionExecutionContext::Convergence,
+        skill: plan.skill.clone(),
+        binding,
+        binding_is_new: false,
+        target,
+        target_is_new: false,
+        materialized_path: PathBuf::from(&effect.materialized_path),
+        method: parse_method(&effect.method)?,
+        operation_intent: "converge",
+        operation_payload: json!({}),
+        observation_kind: "converge",
+        request_id: request_id.to_string(),
+        commit_message: String::new(),
+        replace_existing: true,
+        safe_existing_noop: false,
+        after_materialize_fault: None,
+        after_state_save_fault: None,
+        after_observation_fault: None,
+        activation_after_projection_fault: false,
+    })
+}
+
+fn selected_source_path(
+    app: &App,
+    plan: &SkillConvergencePlan,
+) -> std::result::Result<PathBuf, CommandFailure> {
+    if plan.source.direction == ConvergenceInputDirection::Source {
+        return Ok(app.ctx.skill_path(&plan.skill));
+    }
+    let instance = plan.source.input_instance.as_deref().ok_or_else(|| {
+        CommandFailure::new(
+            ErrorCode::StateCorrupt,
+            "projection input has no instance id",
+        )
+    })?;
+    plan.projections
+        .iter()
+        .find(|effect| effect.instance_id == instance)
+        .map(|effect| PathBuf::from(&effect.materialized_path))
+        .ok_or_else(|| CommandFailure::new(ErrorCode::StateCorrupt, "projection input is absent"))
 }
 
 fn journal_path(app: &App, skill: &str) -> PathBuf {

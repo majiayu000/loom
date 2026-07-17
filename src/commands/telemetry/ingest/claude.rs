@@ -6,16 +6,27 @@ use super::{ImportedInvocation, ImportedRecord, ParseOutcome};
 
 pub(super) fn parse_record(value: &Value) -> ParseOutcome {
     let mut invocations = Vec::new();
+    let mut rejected_reasons = Vec::new();
     if let Some(content) = value.pointer("/message/content").and_then(Value::as_array) {
         for (ordinal, block) in content.iter().enumerate() {
             if block.get("type").and_then(Value::as_str) == Some("tool_use")
                 && block.get("name").and_then(Value::as_str) == Some("Skill")
             {
-                let Some(name) = block.pointer("/input/skill").and_then(Value::as_str) else {
-                    return ParseOutcome::Rejected("missing_skill_name");
+                let Some(name) = block
+                    .pointer("/input/skill")
+                    .and_then(Value::as_str)
+                    .filter(|name| !name.is_empty())
+                else {
+                    rejected_reasons.push("missing_skill_name");
+                    continue;
                 };
-                let Some(identity) = block.get("id").and_then(Value::as_str) else {
-                    return ParseOutcome::Rejected("missing_invocation_identity");
+                let Some(identity) = block
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .filter(|identity| !identity.is_empty())
+                else {
+                    rejected_reasons.push("missing_invocation_identity");
+                    continue;
                 };
                 invocations.push(ImportedInvocation {
                     name: name.to_string(),
@@ -34,17 +45,28 @@ pub(super) fn parse_record(value: &Value) -> ParseOutcome {
             ordinal: 0,
         });
     }
-    finish_record(value, invocations)
+    finish_record(value, invocations, rejected_reasons)
 }
 
-fn finish_record(value: &Value, invocations: Vec<ImportedInvocation>) -> ParseOutcome {
+fn finish_record(
+    value: &Value,
+    invocations: Vec<ImportedInvocation>,
+    rejected_reasons: Vec<&'static str>,
+) -> ParseOutcome {
     if invocations.is_empty() {
-        return ParseOutcome::Ignored;
+        return rejected_reasons
+            .first()
+            .copied()
+            .map_or(ParseOutcome::Ignored, ParseOutcome::Rejected);
     }
     let Some(stable_record_key) = value.get("uuid").and_then(Value::as_str) else {
         return ParseOutcome::Rejected("missing_stable_record_key");
     };
-    let Some(session_id) = value.get("sessionId").and_then(Value::as_str) else {
+    let Some(session_id) = value
+        .get("sessionId")
+        .and_then(Value::as_str)
+        .filter(|session_id| !session_id.is_empty())
+    else {
         return ParseOutcome::Rejected("missing_session_identity");
     };
     let Some(timestamp) = value
@@ -61,6 +83,7 @@ fn finish_record(value: &Value, invocations: Vec<ImportedInvocation>) -> ParseOu
         workspace: value.get("cwd").and_then(Value::as_str).map(PathBuf::from),
         timestamp,
         invocations,
+        rejected_reasons,
     })
 }
 
@@ -292,5 +315,48 @@ mod tests {
             };
             assert_eq!(record.invocations[0].name, canonical);
         }
+    }
+
+    #[test]
+    fn empty_session_identity_is_rejected() {
+        let value = json!({
+            "uuid": "record",
+            "sessionId": "",
+            "timestamp": "2026-07-01T00:00:00Z",
+            "message": {"content": [{
+                "type": "tool_use",
+                "name": "Skill",
+                "id": "call",
+                "input": {"skill": "demo"}
+            }]}
+        });
+        assert!(matches!(
+            parse_record(&value),
+            ParseOutcome::Rejected("missing_session_identity")
+        ));
+    }
+
+    #[test]
+    fn malformed_skill_block_does_not_hide_valid_sibling() {
+        let value = json!({
+            "uuid": "record",
+            "sessionId": "session",
+            "timestamp": "2026-07-01T00:00:00Z",
+            "message": {"content": [
+                {"type": "tool_use", "name": "Skill", "id": "broken", "input": {}},
+                {
+                    "type": "tool_use",
+                    "name": "Skill",
+                    "id": "valid",
+                    "input": {"skill": "demo"}
+                }
+            ]}
+        });
+        let ParseOutcome::Record(record) = parse_record(&value) else {
+            panic!("valid sibling must remain importable");
+        };
+        assert_eq!(record.invocations.len(), 1);
+        assert_eq!(record.invocations[0].name, "demo");
+        assert_eq!(record.rejected_reasons, vec!["missing_skill_name"]);
     }
 }

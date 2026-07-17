@@ -64,6 +64,7 @@ pub(super) struct ImportedRecord {
     workspace: Option<PathBuf>,
     timestamp: DateTime<Utc>,
     invocations: Vec<ImportedInvocation>,
+    rejected_reasons: Vec<&'static str>,
 }
 
 struct EventIdentityInput<'a> {
@@ -405,6 +406,9 @@ fn scan_source_once(
                 reject_source(&mut stats, &mut rejected_reasons, reason)?
             }
             ParseOutcome::Record(record) => {
+                for reason in record.rejected_reasons {
+                    reject_source(&mut stats, &mut rejected_reasons, reason)?;
+                }
                 if since.is_some_and(|cutoff| record.timestamp < cutoff) {
                     checked_field_add(
                         &mut stats.window_skipped,

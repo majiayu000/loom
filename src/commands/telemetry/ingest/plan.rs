@@ -22,6 +22,14 @@ pub(super) fn coalesce_sources(plan: &mut ScanPlan) -> std::result::Result<(), C
             debug_assert_eq!(existing.expected, source.expected);
             existing.source_guards.extend(source.source_guards);
             existing.drafts.extend(source.drafts);
+            merge_source_stats(&mut existing.stats, source.stats)?;
+            for (reason, count) in source.rejected_reasons {
+                checked_field_add(
+                    existing.rejected_reasons.entry(reason).or_default(),
+                    count,
+                    "rejected",
+                )?;
+            }
             let source_continuous = source.expected.is_some() && source.reset_reason.is_none();
             let existing_continuous =
                 existing.expected.is_some() && existing.reset_reason.is_none();
@@ -29,8 +37,6 @@ pub(super) fn coalesce_sources(plan: &mut ScanPlan) -> std::result::Result<(), C
                 existing.checkpoint = source.checkpoint;
                 existing.authority = source.authority;
                 existing.reset_reason = source.reset_reason;
-                existing.stats = source.stats;
-                existing.rejected_reasons = source.rejected_reasons;
             }
         } else {
             grouped.insert(key, source);
@@ -75,6 +81,29 @@ pub(super) fn coalesce_sources(plan: &mut ScanPlan) -> std::result::Result<(), C
     }
     plan.sources = grouped.into_values().collect();
     Ok(())
+}
+
+fn merge_source_stats(
+    target: &mut AgentStats,
+    source: AgentStats,
+) -> std::result::Result<(), CommandFailure> {
+    checked_field_add(
+        &mut target.scanned_events,
+        source.scanned_events,
+        "scanned_events",
+    )?;
+    checked_field_add(
+        &mut target.window_skipped,
+        source.window_skipped,
+        "window_skipped",
+    )?;
+    checked_field_add(&mut target.malformed, source.malformed, "malformed")?;
+    checked_field_add(
+        &mut target.pending_partial,
+        source.pending_partial,
+        "pending_partial",
+    )?;
+    checked_field_add(&mut target.rejected, source.rejected, "rejected")
 }
 
 pub(super) fn preview_dedupe(

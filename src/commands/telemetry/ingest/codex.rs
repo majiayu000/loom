@@ -121,6 +121,7 @@ fn parse_response_item(value: &Value, context: &mut Context) -> ParseOutcome {
         session_id: session_id.to_string(),
         workspace: context.workspace.clone(),
         timestamp,
+        rejected_reasons: Vec::new(),
         invocations: names
             .into_iter()
             .enumerate()

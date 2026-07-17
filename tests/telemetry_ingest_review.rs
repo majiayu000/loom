@@ -98,6 +98,50 @@ fn codex_turn(turn_id: &str, skill: &str, timestamp: &str) -> String {
 }
 
 #[test]
+fn malformed_claude_sibling_is_counted_without_hiding_valid_invocation() {
+    let root = TestDir::new("telemetry-ingest-review-claude-siblings");
+    let home = TestDir::new("telemetry-ingest-review-claude-siblings-home");
+    let source = home.path().join("projects/demo/session.jsonl");
+    let record = json!({
+        "uuid": "mixed-record",
+        "sessionId": "review-session",
+        "timestamp": "2026-07-01T00:00:00Z",
+        "type": "assistant",
+        "message": {"content": [
+            {"type": "tool_use", "name": "Skill", "id": "broken", "input": {}},
+            {
+                "type": "tool_use",
+                "name": "Skill",
+                "id": "valid",
+                "input": {"skill": "demo"}
+            }
+        ]}
+    })
+    .to_string()
+        + "\n";
+    write_file(&source, &record);
+    write_skill(
+        root.path(),
+        "demo",
+        "---\nname: demo\ndescription: Fixture skill.\n---\n# Demo\n",
+    );
+    let home_arg = home.path().to_string_lossy().into_owned();
+    enable(&root, &home_arg);
+    let (output, envelope) = run_loom_with_env(
+        root.path(),
+        &[("LOOM_CLAUDE_HOME", &home_arg)],
+        &["telemetry", "ingest", "--agent", "claude"],
+    );
+    assert!(output.status.success(), "ingest failed: {envelope}");
+    assert_eq!(envelope["data"]["ingested"], json!(1));
+    assert_eq!(envelope["data"]["rejected"]["count"], json!(1));
+    assert_eq!(
+        envelope["data"]["rejected"]["reasons"]["missing_skill_name"],
+        json!(1)
+    );
+}
+
+#[test]
 fn imported_workspace_is_hashed_and_report_filterable() {
     let root = TestDir::new("telemetry-ingest-review-workspace");
     let home = TestDir::new("telemetry-ingest-review-workspace-home");
@@ -501,7 +545,7 @@ fn coalesced_source_drafts_keep_every_physical_snapshot_guard() {
         &workspace,
     );
     let rotated_a = format!(
-        "{common}{}",
+        "{common}{}not-json\n",
         claude_record(
             "coalesced-rotated-a",
             "coalesced-rotated-call-a",
@@ -559,6 +603,8 @@ fn coalesced_source_drafts_keep_every_physical_snapshot_guard() {
     let first: Value = serde_json::from_slice(&output.stdout).expect("parse first ingest");
     assert!(output.status.success(), "first ingest failed: {first}");
     assert_eq!(first["data"]["ingested"], json!(4));
+    assert_eq!(first["data"]["scanned_events"], json!(6));
+    assert_eq!(first["data"]["malformed"], json!(1));
 
     write_file(&rotated, &rotated_a);
     let (second_output, second) = run_loom_with_env(

@@ -1,8 +1,12 @@
 use std::env;
 use std::fs;
+use std::fs::File;
+use std::io;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::SystemTime;
+
+use flate2::{Compression, GzBuilder};
 
 const FRONTEND_INPUT_FILES: &[&str] = &[
     "package.json",
@@ -39,10 +43,10 @@ fn main() {
     fs::create_dir_all(&embedded_dist).expect("create embedded panel dir");
 
     if panel_dist_is_fresh(&panel_dir, &source_dist) {
-        copy_dir_recursive(&source_dist, &embedded_dist);
+        compress_dir_recursive(&source_dist, &embedded_dist);
         println!("cargo:rustc-env=LOOM_PANEL_EMBED_STATUS=ready");
     } else if let Some(built_dist) = maybe_build_panel_in_out_dir(&panel_dir, &out_dir) {
-        copy_dir_recursive(&built_dist, &embedded_dist);
+        compress_dir_recursive(&built_dist, &embedded_dist);
         println!("cargo:rustc-env=LOOM_PANEL_EMBED_STATUS=ready");
     } else {
         println!(
@@ -165,15 +169,55 @@ fn path_mtime(path: &Path) -> Option<SystemTime> {
     fs::symlink_metadata(path).ok()?.modified().ok()
 }
 
-fn copy_dir_recursive(source: &Path, destination: &Path) {
-    copy_dir_recursive_result(source, destination).unwrap_or_else(|err| {
+fn compress_dir_recursive(source: &Path, destination: &Path) {
+    compress_dir_recursive_result(source, destination).unwrap_or_else(|err| {
         panic!(
-            "copy '{}' -> '{}' failed: {}",
+            "compress '{}' -> '{}' failed: {}",
             display_path(source),
             display_path(destination),
             err
         )
     });
+}
+
+fn compress_dir_recursive_result(source: &Path, destination: &Path) -> io::Result<()> {
+    let entries = fs::read_dir(source)?;
+    for entry in entries {
+        let entry = entry?;
+        let source_path = entry.path();
+        let file_type = entry.file_type()?;
+        if file_type.is_symlink() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "refusing to embed symlinked panel asset '{}'",
+                    display_path(&source_path)
+                ),
+            ));
+        }
+        if file_type.is_dir() {
+            let destination_dir = destination.join(entry.file_name());
+            fs::create_dir_all(&destination_dir)?;
+            compress_dir_recursive_result(&source_path, &destination_dir)?;
+            continue;
+        }
+        if file_type.is_file() {
+            let mut compressed_name = entry.file_name();
+            compressed_name.push(".gz");
+            let destination_path = destination.join(compressed_name);
+            compress_file(&source_path, &destination_path)?;
+        }
+    }
+    Ok(())
+}
+
+fn compress_file(source: &Path, destination: &Path) -> io::Result<()> {
+    let mut input = File::open(source)?;
+    let output = File::create(destination)?;
+    let mut encoder = GzBuilder::new().mtime(0).write(output, Compression::best());
+    io::copy(&mut input, &mut encoder)?;
+    encoder.finish()?;
+    Ok(())
 }
 
 fn copy_dir_recursive_result(source: &Path, destination: &Path) -> std::io::Result<()> {

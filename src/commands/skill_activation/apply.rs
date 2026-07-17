@@ -3,6 +3,7 @@ use std::path::Path;
 
 use crate::error_actions::contextual_skill_action;
 use crate::fs_util::remove_symlink;
+use crate::next_action_trace::observe_next_actions;
 use crate::state_model::{
     RegistryBindingsFile, RegistryProjectionsFile, RegistryRulesFile, RegistryStatePaths,
     RegistryTargetsFile,
@@ -28,10 +29,13 @@ pub(super) fn remove_safe_symlink_projection(
                         resolved.selection.skill
                     ),
                 );
-                failure.next_actions = vec![contextual_skill_action(
-                    &resolved.selection.skill,
-                    "inspect the skill projection before repairing the target path",
-                )];
+                failure.next_actions = observe_next_actions(
+                    "skill.activate.remove.non_directory",
+                    vec![contextual_skill_action(
+                        &resolved.selection.skill,
+                        "inspect the skill projection before repairing the target path",
+                    )],
+                );
                 return Err(failure);
             }
             remove_symlink(&resolved.materialized_path).map_err(map_io)?;
@@ -45,10 +49,13 @@ pub(super) fn remove_safe_symlink_projection(
                     resolved.materialized_path.display()
                 ),
             );
-            failure.next_actions = vec![contextual_skill_action(
-                &resolved.selection.skill,
-                "inspect the skill projection before choosing a safe cleanup flow",
-            )];
+            failure.next_actions = observe_next_actions(
+                "skill.activate.remove.unsafe_path",
+                vec![contextual_skill_action(
+                    &resolved.selection.skill,
+                    "inspect the skill projection before choosing a safe cleanup flow",
+                )],
+            );
             Err(failure)
         }
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),

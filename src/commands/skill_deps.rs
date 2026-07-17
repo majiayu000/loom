@@ -9,6 +9,7 @@ use walkdir::WalkDir;
 
 use crate::cli::SkillDepsArgs;
 use crate::envelope::Meta;
+use crate::next_action_trace::observe_next_actions;
 use crate::state::AppContext;
 use crate::types::ErrorCode;
 
@@ -185,7 +186,7 @@ pub(crate) fn skill_dependency_report(
         },
         ready,
         status: status.to_string(),
-        next_actions,
+        next_actions: observe_next_actions("skill.deps.report", next_actions),
         findings,
         sources: declarations.sources.into_iter().collect(),
     })

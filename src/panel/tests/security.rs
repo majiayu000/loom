@@ -184,6 +184,7 @@ fn error_envelope_uses_expected_shape() {
             "cmd": "skill.commit",
             "request_id": "req-1",
             "version": env!("CARGO_PKG_VERSION"),
+            "cli_contract_version": skillloom::cli_contract::CLI_CONTRACT_VERSION,
             "data": {},
             "error": {
                 "code": "INTERNAL_ERROR",

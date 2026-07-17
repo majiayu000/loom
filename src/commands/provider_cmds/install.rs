@@ -8,6 +8,7 @@ use crate::cli::SkillInstallArgs;
 use crate::envelope::Meta;
 use crate::fs_util::remove_path_if_exists;
 use crate::gitops;
+use crate::next_action_trace::observe_next_actions;
 use crate::state::AppContext;
 use crate::state_model::{RegistryStatePaths, RegistryTrustRecord};
 use crate::types::ErrorCode;
@@ -141,11 +142,17 @@ impl App {
                 "provenance": applied.provenance,
                 "trust": applied.trust,
                 "commit": applied.commit,
-                "next_actions": [
-                    format!("loom skill provenance verify {}", args.name),
-                    format!("loom skill scan {}", args.name),
-                    format!("loom skill activate {} --dry-run", args.name),
-                ],
+                "next_actions": observe_next_actions(
+                    "provider.install.applied",
+                    [
+                        format!("loom skill provenance verify {}", args.name),
+                        format!("loom skill scan {}", args.name),
+                        format!(
+                            "loom skill activate {} --agent <agent> --dry-run",
+                            args.name
+                        ),
+                    ],
+                ),
             }),
             meta,
         ))

@@ -11,6 +11,7 @@ use crate::cli::{
 use crate::envelope::Meta;
 use crate::fs_util::write_atomic;
 use crate::gitops;
+use crate::next_action_trace::observe_next_actions;
 use crate::sha256::{Sha256, to_hex};
 use crate::state::AppContext;
 use crate::types::ErrorCode;
@@ -331,10 +332,13 @@ fn run_authoring_command(
             "patch_path": path_display_string(&patch_path),
             "artifact": artifact,
             "patch": generated.patch_body,
-            "next_actions": [
-                format!("review {}", patch_path.display()),
-                format!("run loom skill author apply-patch {} --idempotency-key <key> after validation gates land", artifact["patch_id"].as_str().unwrap_or(""))
-            ]
+            "next_actions": observe_next_actions(
+                "skill.author.patch",
+                [
+                    format!("review {}", patch_path.display()),
+                    format!("loom skill author apply-patch {} --idempotency-key <key>", artifact["patch_id"].as_str().unwrap_or(""))
+                ],
+            )
         }),
         Meta::default(),
     ))

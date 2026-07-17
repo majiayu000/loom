@@ -598,6 +598,17 @@ fn mcp_catalog_source_policy_and_manual_agent_mode_are_explicit() {
     );
     assert_eq!(manual["server"], json!("custom"));
     assert!(manual["path"].is_null());
+
+    let (output, env) = run_loom(root.path(), &["mcp", "doctor", "--agent", "openai"]);
+    assert!(output.status.success(), "manual doctor should pass: {env}");
+    assert_eq!(
+        env["data"]["status"],
+        json!("manual_configuration_required")
+    );
+    assert_eq!(
+        env["data"]["next_actions"][0],
+        json!("run loom mcp doctor --skill <skill> --agent <agent>")
+    );
 }
 
 #[test]

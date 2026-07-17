@@ -5,6 +5,7 @@ mod envelope;
 mod error_actions;
 mod fs_util;
 mod gitops;
+mod next_action_trace;
 mod panel;
 mod sha256;
 mod state;

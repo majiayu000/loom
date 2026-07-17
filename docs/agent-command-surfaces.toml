@@ -549,7 +549,7 @@ shape = "string"
 fixture_ids = ["fixture.codex.visibility.report"]
 [[next_action_emitter]]
 id = "codex.visibility.unsupported"
-source = "src/commands/codex_visibility.rs#unsupported_agent_visibility.next_actions"
+source = "src/commands/codex_visibility/report_support.rs#unsupported_agent_visibility.next_actions"
 shape = "string"
 fixture_ids = ["fixture.codex.visibility.unsupported"]
 [[next_action_emitter]]

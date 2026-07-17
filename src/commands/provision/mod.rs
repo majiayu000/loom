@@ -16,6 +16,7 @@ use crate::cli::{
 };
 use crate::envelope::Meta;
 use crate::fs_util::write_atomic;
+use crate::next_action_trace::observe_next_actions;
 use crate::types::ErrorCode;
 
 use super::helpers::map_io;
@@ -159,10 +160,13 @@ impl App {
                     },
                 },
                 "findings": plan.findings,
-                "next_actions": provision_next_actions(
-                    provision_target_name(args.target),
-                    &workspace,
-                    &args.agent,
+                "next_actions": observe_next_actions(
+                    "provision.doctor",
+                    provision_next_actions(
+                        provision_target_name(args.target),
+                        &workspace,
+                        &args.agent,
+                    ),
                 ),
                 "target_writes_performed": false,
             }),

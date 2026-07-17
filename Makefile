@@ -16,7 +16,7 @@ install-hooks:
 	@echo "pre-commit hook installed (core.hooksPath=.githooks). Disable with 'git config --unset core.hooksPath'."
 
 test:
-	cargo nextest run --no-fail-fast
+	./scripts/test-with-contract-trace.sh
 
 lint:
 	cargo clippy --all-targets --all-features -- -D warnings

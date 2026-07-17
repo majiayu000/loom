@@ -2,10 +2,11 @@ use serde_json::json;
 
 mod common;
 
-use common::{TestDir, run_loom, write_file};
+use common::{TestDir, run_loom, run_loom_with_env, write_file, write_skill};
 use skillloom::cli_contract::{
-    CLI_CONTRACT_VERSION, PublicArgvErrorKind, check_surface_inventory, contract_version_matches,
-    current_contract_version, parse_contract_version, validate_public_argv,
+    CLI_CONTRACT_VERSION, PublicArgvErrorKind, check_next_action_trace, check_surface_inventory,
+    contract_version_matches, current_contract_version, parse_contract_version,
+    validate_public_argv,
 };
 
 #[test]
@@ -75,6 +76,126 @@ fn inventory_covers_public_surfaces() {
 }
 
 #[test]
+fn emitter_inventory_is_complete() {
+    let report = check_surface_inventory(std::path::Path::new(".")).expect("surface inventory");
+    assert_eq!(report.next_action_emitter_count, 57);
+}
+
+#[test]
+fn emitter_fixture_identity_is_observable() {
+    let root = TestDir::new("emitter-identity");
+    let home = TestDir::new("emitter-identity-home");
+    let trace = root.path().join("next-actions.jsonl");
+    write_file(&trace, "");
+    write_skill(
+        root.path(),
+        "demo",
+        "---\nname: demo\ndescription: Use when checking emitter identity.\n---\n# Demo\n",
+    );
+    let trace_arg = trace.to_string_lossy().into_owned();
+    let home_arg = home.path().to_string_lossy().into_owned();
+    let envs = [
+        ("LOOM_TEST_NEXT_ACTION_TRACE", trace_arg.as_str()),
+        ("HOME", home_arg.as_str()),
+    ];
+    let observed_path = home.path().join("observed/skills");
+    std::fs::create_dir_all(&observed_path).expect("create observed target");
+    let observed_arg = observed_path.to_string_lossy().into_owned();
+    let (output, target) = run_loom_with_env(
+        root.path(),
+        &envs,
+        &[
+            "target",
+            "add",
+            "--agent",
+            "codex",
+            "--path",
+            &observed_arg,
+            "--ownership",
+            "observed",
+        ],
+    );
+    assert!(output.status.success(), "target add should pass: {target}");
+    let target_id = target["data"]["target"]["target_id"]
+        .as_str()
+        .expect("target id");
+
+    let (output, missing) =
+        run_loom_with_env(root.path(), &envs, &["target", "show", "missing-target"]);
+    assert!(
+        !output.status.success(),
+        "missing target should fail: {missing}"
+    );
+    let (output, unmanaged) = run_loom_with_env(
+        root.path(),
+        &envs,
+        &[
+            "skill", "activate", "demo", "--agent", "codex", "--target", target_id,
+        ],
+    );
+    assert!(
+        !output.status.success(),
+        "observed target activation should fail: {unmanaged}"
+    );
+
+    let records = std::fs::read_to_string(&trace)
+        .expect("read trace")
+        .lines()
+        .map(|line| serde_json::from_str::<serde_json::Value>(line).expect("trace JSON"))
+        .collect::<Vec<_>>();
+    let payload = |emitter_id: &str| {
+        records
+            .iter()
+            .find(|record| record["emitter_id"] == emitter_id)
+            .unwrap_or_else(|| panic!("missing trace for {emitter_id}: {records:?}"))["payload"]
+            .clone()
+    };
+    let not_found = payload("error.target_not_found");
+    let not_managed = payload("error.target_not_managed");
+    assert_eq!(not_found[0]["cmd"], json!("loom target list --json"));
+    assert_eq!(not_managed[0]["cmd"], json!("loom target list --json"));
+    assert_ne!(
+        records
+            .iter()
+            .position(|record| record["emitter_id"] == "error.target_not_found"),
+        records
+            .iter()
+            .position(|record| record["emitter_id"] == "error.target_not_managed")
+    );
+}
+
+#[test]
+fn emitter_trace_payloads_parse() {
+    let fallback = TestDir::new("emitter-trace-payloads");
+    let path = if let Some(path) = std::env::var_os("LOOM_CONTRACT_TRACE_INPUT") {
+        std::path::PathBuf::from(path)
+    } else {
+        let path = fallback.path().join("next-actions.jsonl");
+        write_file(
+            &path,
+            r#"{"emitter_id":"fixture.target_not_found","payload":[{"cmd":"loom target list --json","reason":"inspect targets"}]}
+"#,
+        );
+        path
+    };
+    let report = check_next_action_trace(&path).expect("next-action trace payloads");
+    assert!(report.record_count >= 1);
+    assert!(report.command_count >= 1);
+    if let Ok(expected) = std::env::var("LOOM_CONTRACT_TRACE_EXPECTED_EMITTERS") {
+        assert_eq!(
+            report.emitter_count,
+            expected.parse::<usize>().expect("expected emitter count")
+        );
+    }
+}
+
+#[test]
+fn panel_cli_equivalents_parse() {
+    let report = check_surface_inventory(std::path::Path::new(".")).expect("surface inventory");
+    assert_eq!(report.panel_mutation_count, 25);
+}
+
+#[test]
 fn panel_mutations_are_mapped() {
     let report = check_surface_inventory(std::path::Path::new(".")).expect("surface inventory");
     assert_eq!(report.panel_mutation_count, 25);
@@ -132,6 +253,10 @@ cli_argv = ["loom", "workspace", "status"]
 "#,
     );
     write_minimal_panel_contract(root.path());
+    write_file(
+        &root.path().join("src/fixture.rs"),
+        "fn fixture() { observe_next_actions(\"fixture.emitter\", Vec::<String>::new()); }\n",
+    );
     let error = check_surface_inventory(root.path()).expect_err("removed command must fail");
     assert!(error.to_string().contains("README.md:1"), "{error}");
     assert!(error.to_string().contains("readme.command"), "{error}");
@@ -166,6 +291,14 @@ fn checker_is_read_only_and_repeatable() {
     let second = check_surface_inventory(std::path::Path::new(".")).expect("second check");
     let after = std::fs::read("docs/agent-command-surfaces.toml").expect("inventory bytes");
     assert_eq!(first, second);
+    assert_eq!(before, after);
+}
+
+#[test]
+fn checker_never_rewrites_sources() {
+    let before = std::fs::read("docs/agent-command-surfaces.toml").expect("inventory bytes");
+    check_surface_inventory(std::path::Path::new(".")).expect("surface inventory");
+    let after = std::fs::read("docs/agent-command-surfaces.toml").expect("inventory bytes");
     assert_eq!(before, after);
 }
 

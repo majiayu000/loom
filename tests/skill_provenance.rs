@@ -621,6 +621,15 @@ fn provider_catalog_preview_and_install_dry_run_are_safe() {
     assert!(!root.path().join("state/registry/sources.json").exists());
     assert!(!root.path().join("loom.lock").exists());
     assert!(!root.path().join("state/registry/trust.json").exists());
+    assert!(
+        dry_run["data"]["next_actions"]
+            .as_array()
+            .expect("next actions")
+            .iter()
+            .filter_map(Value::as_str)
+            .any(|action| action.contains("--agent <agent> --dry-run")),
+        "install plan must provide a complete activation template: {dry_run}"
+    );
 
     let (output, blocked) = run_loom(
         root.path(),
@@ -680,6 +689,15 @@ fn provider_install_apply_imports_pinned_local_skill_with_provenance_lock_and_tr
         "provider install must not execute scripts"
     );
     assert!(root.path().join("skills/demo/SKILL.md").exists());
+    assert!(
+        env["data"]["next_actions"]
+            .as_array()
+            .expect("next actions")
+            .iter()
+            .filter_map(Value::as_str)
+            .any(|action| action.contains("--agent <agent> --dry-run")),
+        "install result must provide a complete activation template: {env}"
+    );
 
     let sources = read_json(&root.path().join("state/registry/sources.json"));
     let record = &sources["sources"][0];

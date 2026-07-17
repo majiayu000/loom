@@ -15,6 +15,7 @@ use crate::cli::{
 use crate::envelope::Meta;
 use crate::fs_util::write_atomic;
 use crate::gitops;
+use crate::next_action_trace::observe_next_actions;
 use crate::state::AppContext;
 use crate::types::ErrorCode;
 
@@ -118,9 +119,10 @@ impl App {
                 "gates": plan.gates.details,
                 "manifest": plan.manifest,
                 "planned_content": plan.planned.content,
-                "next_actions": [
-                    format!("loom skill compile verify {skill} --artifact {artifact_id}")
-                ],
+                "next_actions": observe_next_actions(
+                    "skill.compile.plan",
+                    [format!("loom skill compile verify {skill} --artifact {artifact_id}")],
+                ),
             }),
             Meta::default(),
         ))
@@ -188,10 +190,13 @@ impl App {
                 "manifest": plan.manifest,
                 "verification": verification,
                 "commit": commit,
-                "next_actions": [
-                    format!("loom skill compile verify {skill} --artifact {artifact_id}"),
-                    format!("loom skill inspect {skill}")
-                ],
+                "next_actions": observe_next_actions(
+                    "skill.compile.applied",
+                    [
+                        format!("loom skill compile verify {skill} --artifact {artifact_id}"),
+                        format!("loom skill inspect {skill}")
+                    ],
+                ),
             }),
             Meta::default(),
         ))

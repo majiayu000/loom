@@ -657,11 +657,10 @@ fn build_next_actions(
             );
         }
         if !status.active_rule_present && !status.projected_to_target {
+            push_unique(&mut actions, "loom workspace binding list".to_string());
             push_unique(
                 &mut actions,
-                format!(
-                    "loom workspace binding list && loom skill project {skill} --binding <binding-id>"
-                ),
+                format!("loom skill project {skill} --binding <binding-id>"),
             );
         }
         if status.visible_to_agent == "unknown" {

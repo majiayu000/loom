@@ -9,6 +9,7 @@ use crate::cli::{ProjectionMethod, SkillActivateArgs};
 use crate::envelope::Meta;
 use crate::fs_util::{remove_path_if_exists, rename_atomic, write_atomic};
 use crate::gitops;
+use crate::next_action_trace::observe_next_actions;
 use crate::state_model::{RegistryBindingRule, RegistryProjectionInstance};
 use crate::types::ErrorCode;
 
@@ -344,11 +345,14 @@ pub(super) fn compiled_activation_failure(
         "profile": selection.profile,
         "artifact": artifact,
         "reports": reports,
-        "next_actions": [
-            compile_write_action(selection),
-            verify_action(selection, artifact),
-            activation_fallback_action(selection),
-        ],
+        "next_actions": observe_next_actions(
+            "skill.activate.compiled_failure",
+            [
+                compile_write_action(selection),
+                verify_action(selection, artifact),
+                activation_fallback_action(selection),
+            ],
+        ),
     });
     failure
 }

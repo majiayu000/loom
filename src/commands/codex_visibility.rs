@@ -6,6 +6,7 @@ use serde::Serialize;
 use serde_json::{Value, json};
 
 use crate::agent_adapters::{AgentAdapter, built_in_adapter_for_agent, load_agent_adapters};
+use crate::next_action_trace::observe_next_actions;
 use crate::state::AppContext;
 use crate::state_model::{
     RegistryBindingRule, RegistryProjectionTarget, RegistrySnapshot, RegistryStatePaths,
@@ -278,7 +279,7 @@ fn build_visibility_report_from_parts(parts: VisibilityBuildParts<'_>) -> CodexV
             "error",
             "registry snapshot is missing",
             json!({}),
-            Some(format!("run loom init before {agent} visibility checks")),
+            Some("loom workspace init".to_string()),
         ));
     }
 
@@ -331,7 +332,10 @@ fn build_visibility_report_from_parts(parts: VisibilityBuildParts<'_>) -> CodexV
         agent: agent.to_string(),
         visible,
         checks,
-        next_actions: next_actions.into_iter().collect(),
+        next_actions: observe_next_actions(
+            "codex.visibility.report",
+            next_actions.into_iter().collect(),
+        ),
         restart_required: false,
     }
 }
@@ -581,7 +585,7 @@ fn add_config_checks(
                     "canonical SKILL.md is disabled in Codex config"
                 },
                 json!({"config_path": view.path, "entry_indices": path_disabled}),
-                Some("loom codex reconcile --apply --fix-config, then restart Codex".to_string()),
+                Some("loom codex reconcile --apply --fix-config".to_string()),
             ));
             checks.push(check(
                 "codex_config_not_disabled_by_name",
@@ -593,7 +597,7 @@ fn add_config_checks(
                     "skill name is disabled in Codex config"
                 },
                 json!({"config_path": view.path, "entry_indices": name_disabled}),
-                Some("loom codex reconcile --apply --fix-config, then restart Codex".to_string()),
+                Some("loom codex reconcile --apply --fix-config".to_string()),
             ));
             !path_disabled.is_empty() || !name_disabled.is_empty()
         }

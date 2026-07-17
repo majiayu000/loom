@@ -6,16 +6,20 @@ use clap::{
 
 use crate::cli::Cli;
 
+mod emitter_check;
 mod inventory;
 mod panel_check;
 mod surface_check;
+mod trace_check;
 
+pub use emitter_check::check_next_action_emitters;
 pub use inventory::{
     ExampleClassification, InventoryError, NextActionEmitter, NextActionShape, PanelBinding,
     PanelMutation, SurfaceExample, SurfaceInventory, SurfaceSpec, load_surface_inventory,
 };
 pub use panel_check::check_panel_mutations;
 pub use surface_check::{SurfaceCheckReport, check_surface_inventory};
+pub use trace_check::{NextActionTraceReport, check_next_action_trace};
 
 pub const CLI_CONTRACT_VERSION: &str = "1.0.0";
 

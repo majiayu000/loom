@@ -3,8 +3,8 @@ use std::{collections::BTreeMap, fs, path::Path};
 use walkdir::WalkDir;
 
 use super::{
-    ExampleClassification, InventoryError, SurfaceExample, check_panel_mutations,
-    load_surface_inventory, validate_public_argv,
+    ExampleClassification, InventoryError, SurfaceExample, check_next_action_emitters,
+    check_panel_mutations, load_surface_inventory, validate_public_argv,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -19,6 +19,8 @@ pub struct SurfaceCheckReport {
 pub fn check_surface_inventory(repo_root: &Path) -> Result<SurfaceCheckReport, InventoryError> {
     let inventory = load_surface_inventory(repo_root)?;
     validate_public_surface_coverage(repo_root, &inventory.surfaces)?;
+    let next_action_emitter_count =
+        check_next_action_emitters(repo_root, &inventory.next_action_emitters)?;
     let panel_mutation_count = check_panel_mutations(repo_root, &inventory.panel_mutations)?;
     let examples_by_surface = inventory.examples.iter().fold(
         BTreeMap::<&str, Vec<&SurfaceExample>>::new(),
@@ -103,7 +105,7 @@ pub fn check_surface_inventory(repo_root: &Path) -> Result<SurfaceCheckReport, I
         surface_count: inventory.surfaces.len(),
         example_count: inventory.examples.len(),
         command_count,
-        next_action_emitter_count: inventory.next_action_emitters.len(),
+        next_action_emitter_count,
         panel_mutation_count,
     })
 }
@@ -202,11 +204,10 @@ fn validate_ranges(
     Ok(())
 }
 
-fn extract_loom_commands(line: &str) -> Vec<String> {
+pub(super) fn extract_loom_commands(line: &str) -> Vec<String> {
     let mut commands = Vec::new();
-    let trimmed = line.trim_start();
-    if trimmed.starts_with("loom ") {
-        push_commands(trimmed, &mut commands);
+    if line.contains("loom ") {
+        push_commands(line, &mut commands);
     }
     for (index, inline) in line.split('`').enumerate() {
         if index % 2 == 1 && inline.contains("loom ") {
@@ -225,12 +226,16 @@ fn extract_loom_commands(line: &str) -> Vec<String> {
 
 fn push_commands(value: &str, commands: &mut Vec<String>) {
     let mut remaining = value;
-    while let Some(index) = remaining.find("loom ") {
+    while let Some(index) = find_command_start(remaining) {
         let candidate = &remaining[index..];
         let end = ['`', ';', '#']
             .into_iter()
             .filter_map(|delimiter| candidate.find(delimiter))
-            .chain(candidate.find(" | "))
+            .chain(
+                [" | ", " && ", " || "]
+                    .into_iter()
+                    .filter_map(|delimiter| candidate.find(delimiter)),
+            )
             .min()
             .unwrap_or(candidate.len());
         let command = candidate[..end]
@@ -238,7 +243,7 @@ fn push_commands(value: &str, commands: &mut Vec<String>) {
                 character.is_whitespace() || matches!(character, ')' | ',' | '.')
             })
             .to_string();
-        if !command.is_empty() {
+        if command != "loom" {
             commands.push(command);
         }
         remaining = &candidate[end.min(candidate.len())..];
@@ -249,7 +254,17 @@ fn push_commands(value: &str, commands: &mut Vec<String>) {
     }
 }
 
-fn normalize_command(command: &str) -> Vec<String> {
+fn find_command_start(value: &str) -> Option<usize> {
+    value.match_indices("loom ").find_map(|(index, _)| {
+        let preceding = value[..index].chars().next_back();
+        let embedded = preceding.is_some_and(|character| {
+            character.is_ascii_alphanumeric() || matches!(character, '_' | '-' | '/' | '.')
+        });
+        (!embedded).then_some(index)
+    })
+}
+
+pub(super) fn normalize_command(command: &str) -> Vec<String> {
     let mut argv = Vec::new();
     let mut optional_group = false;
     for raw in shell_tokens(command) {

@@ -7,6 +7,7 @@ use crate::cli::{
     ActivationScope, ProjectionMethod, SkillActivateArgs, SkillDeactivateArgs, SkillsetActivateArgs,
 };
 use crate::envelope::Meta;
+use crate::next_action_trace::observe_next_actions;
 use crate::state::AppContext;
 use crate::state_model::{RegistrySnapshot, RegistryStatePaths};
 use crate::types::ErrorCode;
@@ -305,7 +306,10 @@ impl App {
                     "action": "activate",
                     "status": "skipped",
                     "error": failure_json(&err),
-                    "next_actions": [format!("loom skill inspect {}", member.skill_id)],
+                    "next_actions": observe_next_actions(
+                        "skillset.activate.optional_missing",
+                        [format!("loom skill inspect {}", member.skill_id)],
+                    ),
                 }));
                 continue;
             }
@@ -334,7 +338,10 @@ impl App {
                         "action": "activate",
                         "status": "ready",
                         "plan": member_plan,
-                        "next_actions": [format!("loom skill activate {} --agent {}", member.skill_id, args.agent)],
+                        "next_actions": observe_next_actions(
+                            "skillset.activate.member_ready",
+                            [format!("loom skill activate {} --agent {}", member.skill_id, args.agent)],
+                        ),
                     }));
                 }
                 Err(err) if !member.required => {
@@ -351,7 +358,10 @@ impl App {
                         "action": "activate",
                         "status": "skipped",
                         "error": failure_json(&err),
-                        "next_actions": [format!("loom skill inspect {}", member.skill_id)],
+                        "next_actions": observe_next_actions(
+                            "skillset.activate.optional_failed",
+                            [format!("loom skill inspect {}", member.skill_id)],
+                        ),
                     }));
                 }
                 Err(err) => return Err(member_required_failure("activation", member, err)),

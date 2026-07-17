@@ -181,6 +181,7 @@ impl App {
             &paths,
             &snapshot,
             super::projection_executor::ProjectionExecutionInput {
+                context: super::projection_executor::ProjectionExecutionContext::Standalone,
                 skill: args.skill.clone(),
                 binding,
                 binding_is_new: false,

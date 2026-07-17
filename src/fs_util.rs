@@ -8,8 +8,22 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
 use std::path::Path;
 
+#[cfg(any(
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "linux",
+    target_os = "android"
+))]
+use std::ffi::CString;
 #[cfg(unix)]
 use std::os::fd::AsRawFd;
+#[cfg(any(
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "linux",
+    target_os = "android"
+))]
+use std::os::unix::ffi::OsStrExt;
 
 /// Atomically replace `dst` with `src`.
 ///
@@ -23,6 +37,82 @@ pub fn rename_atomic(src: &Path, dst: &Path) -> io::Result<()> {
 
     #[cfg(not(windows))]
     std::fs::rename(src, dst)
+}
+
+/// Atomically exchange two existing directory entries on the same filesystem.
+///
+/// Callers use the entry left at `src` as their rollback artifact. Platforms or
+/// filesystems without a native exchange primitive fail closed instead of
+/// emulating the swap with a remove/rename sequence.
+#[cfg(any(
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "linux",
+    target_os = "android"
+))]
+pub fn exchange_paths_atomic(src: &Path, dst: &Path) -> io::Result<()> {
+    let src = path_to_c_string(src)?;
+    let dst = path_to_c_string(dst)?;
+
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    {
+        // SAFETY: both C strings are NUL-terminated and remain alive for the
+        // duration of the call. `RENAME_SWAP` performs one filesystem op.
+        let result = unsafe { libc::renamex_np(src.as_ptr(), dst.as_ptr(), libc::RENAME_SWAP) };
+        if result == 0 {
+            Ok(())
+        } else {
+            Err(io::Error::last_os_error())
+        }
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    {
+        // SAFETY: both C strings are valid for the call and AT_FDCWD anchors
+        // their absolute or process-relative paths exactly as rename(2) does.
+        let result = unsafe {
+            libc::renameat2(
+                libc::AT_FDCWD,
+                src.as_ptr(),
+                libc::AT_FDCWD,
+                dst.as_ptr(),
+                libc::RENAME_EXCHANGE,
+            )
+        };
+        if result == 0 {
+            Ok(())
+        } else {
+            Err(io::Error::last_os_error())
+        }
+    }
+}
+
+#[cfg(any(
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "linux",
+    target_os = "android"
+))]
+fn path_to_c_string(path: &Path) -> io::Result<CString> {
+    CString::new(path.as_os_str().as_bytes()).map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("path contains an interior NUL byte: {}", path.display()),
+        )
+    })
+}
+
+#[cfg(not(any(
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "linux",
+    target_os = "android"
+)))]
+pub fn exchange_paths_atomic(_src: &Path, _dst: &Path) -> io::Result<()> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "atomic path exchange is unavailable on this platform",
+    ))
 }
 
 /// Write UTF-8 contents through a temp file and atomically replace the destination.
@@ -258,6 +348,30 @@ mod tests {
         assert!(!src.exists());
         assert_eq!(fs::read(&dst).unwrap(), b"hello");
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(any(
+        target_os = "macos",
+        target_os = "ios",
+        target_os = "linux",
+        target_os = "android"
+    ))]
+    #[test]
+    fn exchange_paths_atomic_swaps_nonempty_directories_without_missing_entry() -> io::Result<()> {
+        let dir = temp_dir("exchange-directories");
+        let src = dir.join("staged");
+        let dst = dir.join("live");
+        fs::create_dir_all(&src)?;
+        fs::create_dir_all(&dst)?;
+        fs::write(src.join("new.txt"), "new")?;
+        fs::write(dst.join("old.txt"), "old")?;
+
+        exchange_paths_atomic(&src, &dst)?;
+
+        assert_eq!(fs::read_to_string(dst.join("new.txt"))?, "new");
+        assert_eq!(fs::read_to_string(src.join("old.txt"))?, "old");
+        assert!(src.is_dir() && dst.is_dir());
+        fs::remove_dir_all(dir)
     }
 
     #[test]

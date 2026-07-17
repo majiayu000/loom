@@ -84,6 +84,7 @@ impl App {
             &paths,
             &snapshot,
             super::projection_executor::ProjectionExecutionInput {
+                context: super::projection_executor::ProjectionExecutionContext::Standalone,
                 skill: resolved.selection.skill.clone(),
                 binding: resolved.binding.clone(),
                 binding_is_new: resolved.binding_is_new,

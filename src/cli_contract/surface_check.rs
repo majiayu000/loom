@@ -382,9 +382,7 @@ fn placeholder_value(token: &str) -> String {
         "reviewed".to_string()
     } else if lower.contains("format") {
         "jsonl".to_string()
-    } else if lower == "to" {
-        "skill".to_string()
-    } else if lower.contains("command") {
+    } else if lower == "to" || lower.contains("command") {
         "skill".to_string()
     } else {
         "fixture".to_string()

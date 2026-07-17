@@ -322,22 +322,7 @@ fn source_change_stamp(
     Ok(format!("{}:{}", metadata.ctime(), metadata.ctime_nsec()))
 }
 
-#[cfg(windows)]
-fn source_change_stamp(
-    _file: &File,
-    metadata: &Metadata,
-) -> std::result::Result<String, CommandFailure> {
-    Ok(metadata
-        .modified()
-        .ok()
-        .and_then(|value| value.duration_since(std::time::UNIX_EPOCH).ok())
-        .map_or_else(
-            || "unknown".to_string(),
-            |value| value.as_nanos().to_string(),
-        ))
-}
-
-#[cfg(not(any(unix, windows)))]
+#[cfg(not(unix))]
 fn source_change_stamp(
     file: &File,
     _metadata: &Metadata,
@@ -350,7 +335,7 @@ fn source_change_stamp(
     Ok(stamp)
 }
 
-#[cfg(any(test, not(any(unix, windows))))]
+#[cfg(any(test, not(unix)))]
 fn content_change_stamp(reader: &mut impl Read) -> std::result::Result<String, CommandFailure> {
     let mut hasher = Sha256::new();
     hasher.update(b"loom.telemetry.source-generation-content.v2\n");
@@ -613,7 +598,7 @@ mod tests {
     }
 
     #[test]
-    fn fallback_content_stamp_detects_same_size_rewrite_with_restored_mtime() {
+    fn non_unix_content_stamp_detects_same_size_rewrite_with_restored_mtime() {
         let before =
             content_change_stamp(&mut Cursor::new(b"same-size-a")).expect("before content stamp");
         let after =

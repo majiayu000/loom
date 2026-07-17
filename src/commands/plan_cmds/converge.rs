@@ -1,5 +1,4 @@
 use std::collections::{BTreeMap, BTreeSet};
-use std::fs;
 use std::path::{Path, PathBuf};
 
 use serde::Serialize;
@@ -14,14 +13,16 @@ use crate::core::convergence::{
 use crate::envelope::Meta;
 use crate::gitops;
 use crate::sha256::{Sha256, to_hex};
-use crate::state_model::{RegistrySnapshot, RegistryStatePaths};
+use crate::state::AppContext;
+use crate::state_model::{RegistryProjectionInstance, RegistrySnapshot, RegistryStatePaths};
 use crate::types::ErrorCode;
 
 use super::super::agent_cmds::planning_helpers::{normalize_path, workspace_matches};
 use super::super::helpers::{
     map_arg, map_git, map_io, map_registry_state, projection_instance_id, validate_skill_name,
 };
-use super::super::provenance::{materialized_tree_digest, skill_tree_digest};
+use super::super::projections::observe_projection;
+use super::super::provenance::skill_tree_digest;
 use super::super::skill_policy::evaluate_skill_policy;
 use super::super::{App, CommandFailure};
 use super::{PLAN_PROTOCOL_VERSION, canonical_root, policy_risks, required_approvals};
@@ -49,6 +50,7 @@ impl App {
         let policy = evaluate_skill_policy(&self.ctx, &args.skill, "safe-capture")?;
         let approvals = required_approvals(&policy);
         let projections = resolve_projection_effects(
+            &self.ctx,
             snapshot.as_ref(),
             args,
             workspace.as_deref(),
@@ -167,6 +169,7 @@ impl App {
 }
 
 fn resolve_projection_effects(
+    ctx: &AppContext,
     snapshot: Option<&RegistrySnapshot>,
     args: &PlanConvergeArgs,
     workspace: Option<&Path>,
@@ -225,20 +228,25 @@ fn resolve_projection_effects(
                 && projection.binding_id.as_deref() == Some(binding.binding_id.as_str())
         });
         let materialized_path = PathBuf::from(&target.path).join(&args.skill);
-        let materialized_digest = match fs::symlink_metadata(&materialized_path) {
-            Ok(_) => Some(materialized_tree_digest(&materialized_path).map_err(map_io)?),
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => None,
-            Err(err) => {
-                return Err(CommandFailure::new(
-                    ErrorCode::IoError,
-                    format!(
-                        "failed to inspect projection path '{}': {}",
-                        materialized_path.display(),
-                        err
-                    ),
-                ));
-            }
-        };
+        let observed_projection = existing
+            .cloned()
+            .unwrap_or_else(|| RegistryProjectionInstance {
+                instance_id: instance_id.clone(),
+                skill_id: args.skill.clone(),
+                binding_id: Some(binding.binding_id.clone()),
+                target_id: target.target_id.clone(),
+                materialized_path: materialized_path.display().to_string(),
+                method: rule.method,
+                last_applied_rev: String::new(),
+                health: crate::core::vocab::Health::Missing,
+                observed_drift: None,
+                source_tree_digest: None,
+                materialized_tree_digest: None,
+                last_observed_at: None,
+                last_observed_error: None,
+                updated_at: None,
+            });
+        let observation = observe_projection(ctx, &observed_projection);
         let effect = ProjectionEffectPlan {
             instance_id: instance_id.clone(),
             binding_id: binding.binding_id.clone(),
@@ -249,7 +257,7 @@ fn resolve_projection_effects(
             ownership: target.ownership.as_str().to_string(),
             materialized_path: materialized_path.display().to_string(),
             source_tree_digest: source_digest.to_string(),
-            materialized_tree_digest: materialized_digest,
+            materialized_tree_digest: observation.materialized_tree_digest,
             effect: if existing.is_some() {
                 "refresh".to_string()
             } else {
@@ -274,8 +282,17 @@ fn validate_projection_input(
             "--from-projection requires exactly one --instance",
         )
     })?;
-    if effects.iter().any(|effect| effect.instance_id == instance) {
-        return Ok(());
+    if let Some(effect) = effects.iter().find(|effect| effect.instance_id == instance) {
+        if effect.materialized_tree_digest.is_some() {
+            return Ok(());
+        }
+        return Err(CommandFailure::new(
+            ErrorCode::ProjectionConflict,
+            format!(
+                "projection input instance '{}' has no readable materialized bytes",
+                instance
+            ),
+        ));
     }
     Err(CommandFailure::new(
         ErrorCode::ProjectionConflict,

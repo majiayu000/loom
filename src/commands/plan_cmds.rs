@@ -56,23 +56,13 @@ impl App {
                 None,
             )
         })?;
-        if stored.plan["requires_digest_confirmation"] == json!(true) {
+        validate_stored_plan_metadata(&stored)?;
+        if stored.kind == StoredPlanKind::Converge {
             validate_confirmed_plan_digest(
                 stored.plan,
                 stored.cursor,
                 args.plan_digest.as_deref(),
             )?;
-            return Err(plan_failure(
-                ErrorCode::PolicyBlocked,
-                "convergence apply is not enabled in this planning-only implementation tranche",
-                "CONVERGENCE_EXECUTOR_UNAVAILABLE",
-                false,
-                vec![
-                    "retain the immutable plan until convergence execution is available"
-                        .to_string(),
-                ],
-                Some(stored.cursor),
-            ));
         }
 
         let idempotency_key_digest = idempotency_key_digest(&args.idempotency_key);
@@ -87,6 +77,19 @@ impl App {
                 false,
                 vec!["retry with a new idempotency key".to_string()],
                 Some(conflict.cursor),
+            ));
+        }
+        if stored.kind == StoredPlanKind::Converge {
+            return Err(plan_failure(
+                ErrorCode::PolicyBlocked,
+                "convergence apply is not enabled in this planning-only implementation tranche",
+                "CONVERGENCE_EXECUTOR_UNAVAILABLE",
+                false,
+                vec![
+                    "retain the immutable plan until convergence execution is available"
+                        .to_string(),
+                ],
+                Some(stored.cursor),
             ));
         }
 
@@ -181,6 +184,13 @@ impl App {
 struct StoredPlan<'a> {
     cursor: usize,
     plan: &'a Value,
+    kind: StoredPlanKind,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum StoredPlanKind {
+    Use,
+    Converge,
 }
 
 fn use_args_from_plan(
@@ -241,17 +251,51 @@ fn plan_use_args(plan: &Value) -> std::result::Result<UseArgs, CommandFailure> {
 
 fn find_plan<'a>(events: &'a [CommandEventRow], plan_id: &str) -> Option<StoredPlan<'a>> {
     events.iter().rev().find_map(|row| {
-        if !matches!(row.event.cmd.as_str(), "plan.use" | "plan.converge")
-            || row.event.status != "succeeded"
-        {
+        let kind = match row.event.cmd.as_str() {
+            "plan.use" => StoredPlanKind::Use,
+            "plan.converge" => StoredPlanKind::Converge,
+            _ => return None,
+        };
+        if row.event.status != "succeeded" {
             return None;
         }
         let plan = row.event.output.as_ref()?;
         (plan["plan_id"].as_str() == Some(plan_id)).then_some(StoredPlan {
             cursor: row.cursor,
             plan,
+            kind,
         })
     })
+}
+
+fn validate_stored_plan_metadata(
+    stored: &StoredPlan<'_>,
+) -> std::result::Result<(), CommandFailure> {
+    let valid = match stored.kind {
+        StoredPlanKind::Use => {
+            stored.plan["operation"] == json!("use")
+                && stored.plan["schema_version"] == json!(PLAN_SCHEMA_VERSION)
+                && stored.plan["requires_digest_confirmation"] != json!(true)
+        }
+        StoredPlanKind::Converge => {
+            stored.plan["operation"] == json!("converge")
+                && stored.plan["schema_version"] == json!("1.1")
+                && stored.plan["requires_digest_confirmation"] == json!(true)
+                && stored.plan["execution_enabled"] == json!(false)
+                && stored.plan["safe_to_apply"] == json!(false)
+        }
+    };
+    if valid {
+        return Ok(());
+    }
+    Err(plan_failure(
+        ErrorCode::StateCorrupt,
+        "stored plan metadata does not match its command event kind",
+        "PLAN_CORRUPT",
+        false,
+        vec!["discard the corrupted plan and create a fresh durable plan".to_string()],
+        Some(stored.cursor),
+    ))
 }
 
 fn validate_confirmed_plan_digest(

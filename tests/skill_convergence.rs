@@ -17,6 +17,10 @@ struct Fixture {
 }
 
 fn projected_fixture() -> Fixture {
+    projected_fixture_with_method("copy")
+}
+
+fn projected_fixture_with_method(method: &str) -> Fixture {
     let root = TestDir::new("convergence-plan-root");
     let workspace = TestDir::new("convergence-plan-workspace");
     let target = TestDir::new("convergence-plan-target");
@@ -46,13 +50,35 @@ fn projected_fixture() -> Fixture {
     let binding_id = env["data"]["binding"]["binding_id"]
         .as_str()
         .expect("binding id");
-    let (output, env) = skill_project(root.path(), "demo", binding_id, Some("copy"));
+    let (output, env) = skill_project(root.path(), "demo", binding_id, Some(method));
     assert!(output.status.success(), "project failed: {env}");
     Fixture {
         root,
         workspace,
         target,
     }
+}
+
+fn mutate_plan_event(root: &Path, plan_id: &str, mut mutate: impl FnMut(&mut Value)) {
+    let audit_path = root.join("state/events/commands.jsonl");
+    let raw = fs::read_to_string(&audit_path).expect("read command events");
+    let mut changed = false;
+    let rows = raw
+        .lines()
+        .map(|line| {
+            let mut event: Value = serde_json::from_str(line).expect("parse command event");
+            if event["cmd"] == json!("plan.converge")
+                && event["status"] == json!("succeeded")
+                && event["output"]["plan_id"] == json!(plan_id)
+            {
+                mutate(&mut event["output"]);
+                changed = true;
+            }
+            serde_json::to_string(&event).expect("serialize command event")
+        })
+        .collect::<Vec<_>>();
+    assert!(changed, "expected stored convergence plan event");
+    fs::write(&audit_path, format!("{}\n", rows.join("\n"))).expect("rewrite stored plan");
 }
 
 fn plan_converge(fixture: &Fixture, extra: &[&str]) -> (std::process::Output, Value) {
@@ -275,25 +301,9 @@ fn apply_requires_reviewed_plan_digest() {
         head_before
     );
 
-    let audit_path = fixture.root.path().join("state/events/commands.jsonl");
-    let raw = fs::read_to_string(&audit_path).expect("read convergence audit");
-    let mut tampered = false;
-    let rows = raw
-        .lines()
-        .map(|line| {
-            let mut event: Value = serde_json::from_str(line).expect("parse command event");
-            if event["cmd"] == json!("plan.converge")
-                && event["status"] == json!("succeeded")
-                && event["output"]["plan_id"] == json!(plan_id)
-            {
-                event["output"]["selectors"]["profile"] = json!("tampered");
-                tampered = true;
-            }
-            serde_json::to_string(&event).expect("serialize command event")
-        })
-        .collect::<Vec<_>>();
-    assert!(tampered, "expected stored convergence plan event");
-    fs::write(&audit_path, format!("{}\n", rows.join("\n"))).expect("tamper stored plan");
+    mutate_plan_event(fixture.root.path(), plan_id, |stored| {
+        stored["selectors"]["profile"] = json!("tampered");
+    });
 
     let (output, corrupt) = run_loom(
         fixture.root.path(),
@@ -312,6 +322,151 @@ fn apply_requires_reviewed_plan_digest() {
         corrupt["error"]["details"]["conflict"]["code"],
         json!("PLAN_DIGEST_INVALID")
     );
+}
+
+#[test]
+fn convergence_event_kind_cannot_bypass_digest_confirmation() {
+    let fixture = projected_fixture();
+    let workspace = fixture.workspace.path().to_str().expect("workspace path");
+    let (output, use_plan) = run_loom(
+        fixture.root.path(),
+        &[
+            "plan",
+            "use",
+            "demo",
+            "--agents",
+            "claude",
+            "--workspace",
+            workspace,
+            "--method",
+            "copy",
+        ],
+    );
+    assert!(output.status.success(), "use plan failed: {use_plan}");
+
+    let (output, convergence) = plan_converge(&fixture, &[]);
+    assert!(
+        output.status.success(),
+        "convergence plan failed: {convergence}"
+    );
+    let plan_id = convergence["data"]["plan_id"].as_str().expect("plan id");
+    let digest = convergence["data"]["plan_digest"]
+        .as_str()
+        .expect("plan digest");
+    mutate_plan_event(fixture.root.path(), plan_id, |stored| {
+        stored["requires_digest_confirmation"] = json!(false);
+        stored["use_args"] = use_plan["data"]["use_args"].clone();
+        stored["guards"] = use_plan["data"]["guards"].clone();
+    });
+
+    let target_before = snapshot_tree(fixture.target.path());
+    let (output, corrupt) = run_loom(
+        fixture.root.path(),
+        &[
+            "apply",
+            plan_id,
+            "--plan-digest",
+            digest,
+            "--idempotency-key",
+            "conv-kind-bypass",
+        ],
+    );
+    assert!(!output.status.success(), "kind bypass passed: {corrupt}");
+    assert_eq!(corrupt["error"]["code"], json!("STATE_CORRUPT"));
+    assert_eq!(
+        corrupt["error"]["details"]["conflict"]["code"],
+        json!("PLAN_CORRUPT")
+    );
+    assert_eq!(snapshot_tree(fixture.target.path()), target_before);
+}
+
+#[test]
+fn convergence_apply_reports_idempotency_key_conflict_before_executor_block() {
+    let fixture = projected_fixture();
+    let workspace = fixture.workspace.path().to_str().expect("workspace path");
+    let (output, use_plan) = run_loom(
+        fixture.root.path(),
+        &[
+            "plan",
+            "use",
+            "demo",
+            "--agents",
+            "claude",
+            "--workspace",
+            workspace,
+            "--method",
+            "copy",
+        ],
+    );
+    assert!(output.status.success(), "use plan failed: {use_plan}");
+    let use_id = use_plan["data"]["plan_id"].as_str().expect("use plan id");
+    let (output, applied) = run_loom(
+        fixture.root.path(),
+        &["apply", use_id, "--idempotency-key", "shared-key"],
+    );
+    assert!(output.status.success(), "use apply failed: {applied}");
+
+    let (output, convergence) = plan_converge(&fixture, &[]);
+    assert!(
+        output.status.success(),
+        "convergence plan failed: {convergence}"
+    );
+    let plan_id = convergence["data"]["plan_id"].as_str().expect("plan id");
+    let digest = convergence["data"]["plan_digest"]
+        .as_str()
+        .expect("plan digest");
+    let (output, conflict) = run_loom(
+        fixture.root.path(),
+        &[
+            "apply",
+            plan_id,
+            "--plan-digest",
+            digest,
+            "--idempotency-key",
+            "shared-key",
+        ],
+    );
+    assert!(!output.status.success(), "key conflict passed: {conflict}");
+    assert_eq!(conflict["error"]["code"], json!("DEPENDENCY_CONFLICT"));
+    assert_eq!(
+        conflict["error"]["details"]["conflict"]["code"],
+        json!("IDEMPOTENCY_KEY_REUSED")
+    );
+}
+
+#[test]
+fn projection_input_requires_observable_method_aware_bytes() {
+    let fixture = projected_fixture();
+    let (output, plan) = plan_converge(&fixture, &[]);
+    assert!(output.status.success(), "copy plan failed: {plan}");
+    let instance = plan["data"]["effects"][0]["instance_id"]
+        .as_str()
+        .expect("instance id");
+    fs::remove_dir_all(fixture.target.path().join("demo")).expect("remove copy projection");
+    let (output, missing) = plan_converge(&fixture, &["--from-projection", "--instance", instance]);
+    assert!(
+        !output.status.success(),
+        "missing projection passed: {missing}"
+    );
+    assert_eq!(missing["error"]["code"], json!("PROJECTION_CONFLICT"));
+
+    let symlink = projected_fixture_with_method("symlink");
+    let (output, plan) = plan_converge(&symlink, &[]);
+    assert!(output.status.success(), "symlink plan failed: {plan}");
+    assert!(
+        plan["data"]["effects"][0]["materialized_tree_digest"].is_null(),
+        "symlink observation must not hash followed source bytes: {plan}"
+    );
+    let instance = plan["data"]["effects"][0]["instance_id"]
+        .as_str()
+        .expect("instance id");
+    let (output, rejected) =
+        plan_converge(&symlink, &["--from-projection", "--instance", instance]);
+    assert!(
+        !output.status.success(),
+        "symlink projection input passed: {rejected}"
+    );
+    assert_eq!(rejected["error"]["code"], json!("PROJECTION_CONFLICT"));
 }
 
 #[test]

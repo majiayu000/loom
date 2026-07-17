@@ -78,7 +78,7 @@ fn telemetry_export_reads_v2_and_redacts_v3_observed_name() {
 }
 
 #[test]
-fn normalized_query_preserves_non_usage_metrics_and_skillset_agent_filters() {
+fn normalized_query_preserves_report_metrics_and_filters() {
     let root = TestDir::new("telemetry-normalized-query");
     let events_path = root.path().join("state/telemetry/events.jsonl");
     let base = |id: &str, event_type: &str, skillset: &str, agent: Option<&str>, metrics: Value| {

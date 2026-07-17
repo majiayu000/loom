@@ -1,6 +1,16 @@
 use super::*;
 
 #[test]
+fn effective_gemini_home_uses_registry_root_as_runtime_workspace() {
+    let root = PathBuf::from("/selected/registry-root");
+    let resolution =
+        effective_gemini_cli_home_with(&root, |workspace| Ok(workspace.join("runtime-home")));
+
+    assert_eq!(resolution.home, Some(root.join("runtime-home")));
+    assert_eq!(resolution.unavailable_reason, None);
+}
+
+#[test]
 fn reentrant_lock_succeeds() {
     let dir =
         std::env::temp_dir().join(format!("loom-reentrant-{}", uuid::Uuid::new_v4().simple()));

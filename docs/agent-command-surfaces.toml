@@ -93,7 +93,8 @@ next_action_emitters = [
   { id = "error.lock_busy", source = "src/error_actions.rs#default_next_actions.LOCK_BUSY", shape = "object", fixture_ids = ["backup_export_refuses_when_workspace_lock_is_held"] },
   { id = "error.remote_sync", source = "src/error_actions.rs#default_next_actions.REMOTE_SYNC", shape = "object", fixture_ids = ["error_actions::tests::default_next_actions_cover_top_guidance_errors"] },
   { id = "codex.visibility.report", source = "src/commands/codex_visibility.rs#evaluate_codex_visibility.next_actions", shape = "string", fixture_ids = ["compiled_activation_materializes_valid_artifact_projection"] },
-  { id = "codex.visibility.unsupported", source = "src/commands/codex_visibility/report_support.rs#unsupported_agent_visibility.next_actions", shape = "string", fixture_ids = ["skill_visibility_returns_structured_unsupported_for_adapter_without_metadata"] },
+  { id = "codex.visibility.unsupported", source = "src/commands/codex_visibility/adapter.rs#unsupported_visibility_report.next_actions", shape = "string", fixture_ids = ["skill_visibility_returns_structured_unsupported_for_adapter_without_metadata"] },
+  { id = "gemini.projection.alias_shadow", source = "src/agent_adapters/gemini_projection.rs#alias_shadow_failure.next_actions", shape = "object", fixture_ids = ["use_and_activate_share_native_gemini_root_and_reject_alias_shadow"] },
   { id = "mcp.doctor.manual", source = "src/commands/mcp.rs#McpDoctorCommand.missing_skill.next_actions", shape = "string", fixture_ids = ["mcp_catalog_source_policy_and_manual_agent_mode_are_explicit"] },
   { id = "mcp.doctor.report", source = "src/commands/mcp.rs#McpDoctorCommand.report.next_actions", shape = "string", fixture_ids = ["doctor_uses_table_only_mcp_requirements_without_non_mcp_plan_noise"] },
   { id = "mcp.apply.response", source = "src/commands/mcp/apply/record.rs#record_apply_result.next_actions", shape = "string", fixture_ids = ["mcp_apply_overwrites_fuzzy_compatible_command"] },
@@ -160,27 +161,27 @@ examples = [
   { id = "cli_contract.default_actions", surface = "cli_contract", line_range = [201, 207], classification = "executable" },
   { id = "cli_contract.error_action_table", surface = "cli_contract", line_range = [232, 250], classification = "executable" },
   { id = "cli_contract.workspace_status", surface = "cli_contract", line_range = [271, 271], classification = "executable" },
-  { id = "cli_contract.workspace_doctor", surface = "cli_contract", line_range = [344, 344], classification = "executable" },
-  { id = "cli_contract.binding_add", surface = "cli_contract", line_range = [352, 352], classification = "executable" },
-  { id = "cli_contract.binding_list", surface = "cli_contract", line_range = [382, 382], classification = "executable" },
-  { id = "cli_contract.binding_remove", surface = "cli_contract", line_range = [390, 390], classification = "executable" },
-  { id = "cli_contract.target_add", surface = "cli_contract", line_range = [405, 405], classification = "executable" },
-  { id = "cli_contract.target_list", surface = "cli_contract", line_range = [421, 421], classification = "executable" },
-  { id = "cli_contract.target_show", surface = "cli_contract", line_range = [429, 429], classification = "executable" },
-  { id = "cli_contract.target_remove", surface = "cli_contract", line_range = [437, 437], classification = "executable" },
-  { id = "cli_contract.skill_reads", surface = "cli_contract", line_range = [452, 463], classification = "executable" },
-  { id = "cli_contract.skill_compile", surface = "cli_contract", line_range = [501, 505], classification = "executable" },
-  { id = "cli_contract.skill_activation", surface = "cli_contract", line_range = [529, 531], classification = "executable" },
-  { id = "cli_contract.codex_visibility", surface = "cli_contract", line_range = [554, 558], classification = "executable" },
-  { id = "cli_contract.skill_diagnose", surface = "cli_contract", line_range = [577, 577], classification = "executable" },
-  { id = "cli_contract.skill_author_new", surface = "cli_contract", line_range = [592, 592], classification = "executable" },
-  { id = "cli_contract.skill_author", surface = "cli_contract", line_range = [610, 615], classification = "executable" },
-  { id = "cli_contract.skill_add", surface = "cli_contract", line_range = [642, 642], classification = "executable" },
-  { id = "cli_contract.providers", surface = "cli_contract", line_range = [662, 668], classification = "executable" },
-  { id = "cli_contract.package", surface = "cli_contract", line_range = [689, 691], classification = "executable" },
-  { id = "cli_contract.mcp", surface = "cli_contract", line_range = [710, 715], classification = "executable" },
-  { id = "cli_contract.provision", surface = "cli_contract", line_range = [733, 737], classification = "executable" },
-  { id = "cli_contract.policy", surface = "cli_contract", line_range = [759, 768], classification = "executable" },
+  { id = "cli_contract.workspace_doctor", surface = "cli_contract", line_range = [369, 369], classification = "executable" },
+  { id = "cli_contract.binding_add", surface = "cli_contract", line_range = [377, 377], classification = "executable" },
+  { id = "cli_contract.binding_list", surface = "cli_contract", line_range = [407, 407], classification = "executable" },
+  { id = "cli_contract.binding_remove", surface = "cli_contract", line_range = [415, 415], classification = "executable" },
+  { id = "cli_contract.target_add", surface = "cli_contract", line_range = [430, 430], classification = "executable" },
+  { id = "cli_contract.target_list", surface = "cli_contract", line_range = [446, 446], classification = "executable" },
+  { id = "cli_contract.target_show", surface = "cli_contract", line_range = [454, 454], classification = "executable" },
+  { id = "cli_contract.target_remove", surface = "cli_contract", line_range = [462, 462], classification = "executable" },
+  { id = "cli_contract.skill_reads", surface = "cli_contract", line_range = [477, 488], classification = "executable" },
+  { id = "cli_contract.skill_compile", surface = "cli_contract", line_range = [526, 530], classification = "executable" },
+  { id = "cli_contract.skill_activation", surface = "cli_contract", line_range = [554, 556], classification = "executable" },
+  { id = "cli_contract.codex_visibility", surface = "cli_contract", line_range = [579, 583], classification = "executable" },
+  { id = "cli_contract.skill_diagnose", surface = "cli_contract", line_range = [602, 602], classification = "executable" },
+  { id = "cli_contract.skill_author_new", surface = "cli_contract", line_range = [617, 617], classification = "executable" },
+  { id = "cli_contract.skill_author", surface = "cli_contract", line_range = [635, 640], classification = "executable" },
+  { id = "cli_contract.skill_add", surface = "cli_contract", line_range = [667, 667], classification = "executable" },
+  { id = "cli_contract.providers", surface = "cli_contract", line_range = [687, 693], classification = "executable" },
+  { id = "cli_contract.package", surface = "cli_contract", line_range = [714, 716], classification = "executable" },
+  { id = "cli_contract.mcp", surface = "cli_contract", line_range = [735, 740], classification = "executable" },
+  { id = "cli_contract.provision", surface = "cli_contract", line_range = [758, 762], classification = "executable" },
+  { id = "cli_contract.policy", surface = "cli_contract", line_range = [784, 793], classification = "executable" },
   { id = "cli_contract_operations.instructions", surface = "cli_contract_operations", line_range = [9, 13], classification = "executable" },
   { id = "cli_contract_operations.provenance", surface = "cli_contract_operations", line_range = [33, 36], classification = "executable" },
   { id = "cli_contract_operations.import", surface = "cli_contract_operations", line_range = [58, 58], classification = "executable" },
@@ -255,6 +256,9 @@ path = "docs/SKILL_PROVIDER_BOUNDARY.md"
 [[surface]]
 id = "supported_agents"
 path = "docs/SUPPORTED_AGENTS.md"
+[[surface]]
+id = "agent_adapters"
+path = "docs/AGENT_ADAPTERS.md"
 [[surface]]
 id = "architecture_decisions"
 path = "docs/LOOM_ARCHITECTURE_DECISIONS.md"
@@ -570,17 +574,22 @@ classification = "executable"
 [[example]]
 id = "supported_agents.scan_detail"
 surface = "supported_agents"
-line_range = [32, 32]
+line_range = [58, 58]
 classification = "executable"
 [[example]]
 id = "supported_agents.doctor"
 surface = "supported_agents"
-line_range = [40, 40]
+line_range = [66, 66]
 classification = "executable"
 [[example]]
 id = "supported_agents.target_add"
 surface = "supported_agents"
-line_range = [61, 61]
+line_range = [87, 87]
+classification = "executable"
+[[example]]
+id = "agent_adapters.workspace_status"
+surface = "agent_adapters"
+line_range = [21, 21]
 classification = "executable"
 [[example]]
 id = "architecture_decisions.orphans"

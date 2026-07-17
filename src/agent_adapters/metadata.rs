@@ -7,10 +7,30 @@ use crate::commands::CommandFailure;
 use crate::state::home_dir;
 
 use super::{
-    AdapterCapabilities, AdapterDiscoveryRoot, AdapterReload, AdapterVisibility,
+    AdapterCapabilities, AdapterDiscoveryRoot, AdapterFidelity, AdapterReload, AdapterVisibility,
     ExternalAdapterV1Record, ExternalDiscoveryRootRecord, ExternalVisibilityRecord,
     adapter_failure,
 };
+
+pub(super) fn built_in_fidelity(id: &str) -> AdapterFidelity {
+    if matches!(id, "claude" | "codex" | "gemini-cli") {
+        AdapterFidelity::Verified
+    } else {
+        AdapterFidelity::Generic
+    }
+}
+
+pub(super) fn built_in_default_skill_dirs(
+    id: &str,
+    configured: Option<&Vec<PathBuf>>,
+    home: Option<&Path>,
+) -> Vec<PathBuf> {
+    if id != "gemini-cli" {
+        return configured.cloned().unwrap_or_default();
+    }
+    home.map(|home| vec![home.join(".agents/skills"), home.join(".gemini/skills")])
+        .unwrap_or_default()
+}
 
 pub(super) fn default_scan_eligible() -> bool {
     true
@@ -81,12 +101,16 @@ pub(super) fn built_in_discovery_roots(
     id: &str,
     default_dirs: Option<&Vec<PathBuf>>,
     home: Option<&Path>,
+    unavailable_reason: Option<&str>,
 ) -> Vec<AdapterDiscoveryRoot> {
     if id == "codex" {
         return codex_discovery_roots(home);
     }
     if id == "claude" {
         return claude_discovery_roots(home);
+    }
+    if id == "gemini-cli" {
+        return gemini_cli_discovery_roots(home, unavailable_reason);
     }
     default_dirs
         .into_iter()
@@ -135,6 +159,21 @@ pub(super) fn built_in_visibility(id: &str) -> AdapterVisibility {
             disable_rules: vec!["adapter-defined".to_string()],
         };
     }
+    if id == "gemini-cli" {
+        return AdapterVisibility {
+            follows_symlink_dirs: true,
+            identity_by_projection_method: BTreeMap::from([
+                ("symlink".to_string(), "canonical-skill-md-path".to_string()),
+                ("copy".to_string(), "runtime-skill-md-path".to_string()),
+                (
+                    "materialize".to_string(),
+                    "runtime-skill-md-path".to_string(),
+                ),
+            ]),
+            config_file: Some("${GEMINI_CLI_HOME:-~}/.gemini/settings.json".to_string()),
+            disable_rules: vec!["adapter-defined".to_string()],
+        };
+    }
     default_visibility()
 }
 
@@ -151,6 +190,16 @@ pub(super) fn built_in_reload(id: &str) -> AdapterReload {
             strategy: "new-session-recommended".to_string(),
             hot_reload: false,
             notes: Some("Codex skill visibility is session-scoped".to_string()),
+        };
+    }
+    if id == "gemini-cli" {
+        return AdapterReload {
+            strategy: "in-session-command".to_string(),
+            hot_reload: true,
+            notes: Some(
+                "Run /skills reload to refresh skills in the current Gemini CLI session"
+                    .to_string(),
+            ),
         };
     }
     reload_from_capability(false)
@@ -456,6 +505,62 @@ fn claude_discovery_roots(home: Option<&Path>) -> Vec<AdapterDiscoveryRoot> {
             role: "project-cross-client".to_string(),
             source_env_var: None,
             priority: Some(0),
+            scan_eligible: false,
+            available: true,
+            unavailable_reason: None,
+        },
+    ]
+}
+
+fn gemini_cli_discovery_roots(
+    home: Option<&Path>,
+    configured_unavailable_reason: Option<&str>,
+) -> Vec<AdapterDiscoveryRoot> {
+    let home_available = home.is_some();
+    let unavailable_reason = || {
+        (!home_available).then(|| {
+            configured_unavailable_reason
+                .unwrap_or("GEMINI_CLI_HOME, HOME, or USERPROFILE is not set")
+                .to_string()
+        })
+    };
+    vec![
+        AdapterDiscoveryRoot {
+            scope: "user".to_string(),
+            path_template: "${GEMINI_CLI_HOME:-~}/.agents/skills".to_string(),
+            role: "preferred-cross-client".to_string(),
+            source_env_var: Some("GEMINI_CLI_HOME".to_string()),
+            priority: Some(0),
+            scan_eligible: true,
+            available: home_available,
+            unavailable_reason: unavailable_reason(),
+        },
+        AdapterDiscoveryRoot {
+            scope: "user".to_string(),
+            path_template: "${GEMINI_CLI_HOME:-~}/.gemini/skills".to_string(),
+            role: "preferred-cross-client".to_string(),
+            source_env_var: Some("GEMINI_CLI_HOME".to_string()),
+            priority: Some(1),
+            scan_eligible: true,
+            available: home_available,
+            unavailable_reason: unavailable_reason(),
+        },
+        AdapterDiscoveryRoot {
+            scope: "project".to_string(),
+            path_template: "<workspace>/.agents/skills".to_string(),
+            role: "project-cross-client".to_string(),
+            source_env_var: None,
+            priority: Some(0),
+            scan_eligible: false,
+            available: true,
+            unavailable_reason: None,
+        },
+        AdapterDiscoveryRoot {
+            scope: "project".to_string(),
+            path_template: "<workspace>/.gemini/skills".to_string(),
+            role: "project-cross-client".to_string(),
+            source_env_var: None,
+            priority: Some(1),
             scan_eligible: false,
             available: true,
             unavailable_reason: None,

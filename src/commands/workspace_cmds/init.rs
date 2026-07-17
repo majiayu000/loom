@@ -36,10 +36,23 @@ impl App {
 
         let mut imported: Vec<serde_json::Value> = Vec::new();
         let mut skipped: Vec<serde_json::Value> = Vec::new();
+        let mut scan_warnings = Vec::new();
 
         if let Some(adapters) = adapters.as_ref() {
             for adapter in adapters.adapters() {
                 if !adapter.capabilities.automatic_discovery {
+                    continue;
+                }
+                if let Some(reason) = adapter.scan_unavailable_reason() {
+                    let warning = format!("agent '{}' scan unavailable: {reason}", adapter.id);
+                    scan_warnings.push(warning);
+                    skipped.push(json!({
+                        "agent": adapter.id,
+                        "agent_source": adapter.source,
+                        "path": serde_json::Value::Null,
+                        "reason": "adapter-unavailable",
+                        "unavailable_reason": reason,
+                    }));
                     continue;
                 }
                 for path in &adapter.default_skill_dirs {
@@ -77,6 +90,7 @@ impl App {
 
         let commit = commit_registry_state(&self.ctx, "workspace: initialize registry state")?;
         let mut meta = Meta::default();
+        meta.warnings.extend(scan_warnings);
         if let Some(commit) = &commit {
             maybe_autosync_or_queue(
                 &self.ctx,

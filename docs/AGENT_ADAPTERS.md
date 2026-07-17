@@ -16,6 +16,20 @@ Schemas:
 - `docs/schemas/agent-adapter-v1.schema.json`
 - `docs/schemas/agent-adapter-v2.schema.json`
 
+## Fidelity
+
+Every adapter row emitted by `loom workspace status --json` includes required
+output-only metadata `fidelity: "verified" | "generic"`.
+
+- `verified` means the built-in discovery, visibility, and reload metadata is
+  backed by agent-specific evidence and targeted tests.
+- `generic` means the adapter uses conservative fallback metadata. A verified
+  adapter must never contain a `legacy-default` discovery root.
+
+External v1 and v2 input schemas do not accept a fidelity assertion. External
+records always resolve to `generic` until Loom defines a separately validated
+evidence mechanism, so existing external validation behavior is unchanged.
+
 ## Record
 
 ```json
@@ -94,8 +108,10 @@ Supported visibility identities are `canonical-skill-md-path`,
 `runtime-skill-md-path`, `directory-path`, and `adapter-defined`. Supported
 disable rules are `skills.config.path` and `adapter-defined`.
 
-Supported reload strategies are `no-reload-required`,
-`new-session-recommended`, `restart-required`, and `unknown`.
+External v2 reload strategies remain `no-reload-required`,
+`new-session-recommended`, `restart-required`, and `unknown`. Built-in adapters
+may additionally report an evidence-backed strategy; Gemini CLI uses
+`in-session-command`.
 
 Built-in Codex metadata declares `~/.agents/skills` as the preferred user root,
 `${CODEX_HOME:-~/.codex}/skills` as a legacy user root, and
@@ -111,6 +127,44 @@ root, `${CLAUDE_HOME:-~/.claude}/skills` as a legacy user root, and
 by canonical `SKILL.md` path for symlink projections and adapter-defined
 disable rules. Reload is reported as `new-session-recommended`; Loom does not
 claim an existing Claude session has hot-reloaded changed skills.
+
+Built-in Gemini CLI metadata declares `$GEMINI_CLI_HOME/.agents/skills` and
+`$GEMINI_CLI_HOME/.gemini/skills` (falling back to `HOME`), plus matching project roots. Gemini CLI loads
+the `.agents` alias after `.gemini` within each tier, so Loom assigns the alias
+the higher priority. Symlink identity follows the canonical `SKILL.md`; copy
+and materialize identity use the runtime path. Loom-managed `use` projections
+select the native `.gemini/skills` root so Codex and Gemini do not claim the
+same managed `.agents/skills` target. `skills.enabled` and the case-insensitive
+union of `skills.disabled` are evaluated across the official system-default,
+user, trusted-project, and system-override settings layers.
+The process environment selects the bootstrap home used for user settings and
+`trustedFolders.json`. Only after that trust decision succeeds may Gemini load
+the first runtime `.env` in its workspace-to-root search; a trusted runtime
+`GEMINI_CLI_HOME` can then select user skill roots, but cannot retroactively
+relocate bootstrap settings or trust. Loom mirrors that ordering and ignores
+`GEMINI_CLI_SKILLS_DIR`, which is not part of Gemini CLI discovery.
+Trusted dotenv selection uses the effective system-default, user,
+trusted-project, and system-override values for `advanced.ignoreLocalEnv` and
+the union of `advanced.excludedEnvVars`. Because Loom cannot observe a future
+Gemini `--ignore-env` invocation, a generic project dotenv may redirect
+`GEMINI_CLI_HOME` only when the selected dotenv is invariant to that flag;
+Gemini-specific `.gemini/.env` files remain eligible. Invalid settings or trust
+make user roots explicitly unavailable and block default user-root writes.
+Project visibility also evaluates `trustedFolders.json` (or the documented
+trust environment override) and fails closed when the workspace is untrusted,
+undecided, or the settings/trust files are malformed. Loom reports these
+settings without rewriting them. Gemini's remote enterprise
+`admin.skills.enabled` state has no local file contract, so it is reported as
+unobservable and blocks a positive visibility claim. Reload is
+`in-session-command` with `/skills reload`.
+Both official user roots are included in scan/doctor output,
+with `.agents/skills` first.
+Evidence: [official discovery docs](https://geminicli.com/docs/cli/creating-skills/),
+[official command reference](https://geminicli.com/docs/reference/commands/),
+[official settings reference](https://geminicli.com/docs/reference/configuration/),
+[official trusted-folders reference](https://geminicli.com/docs/cli/trusted-folders/),
+and the official
+[discovery implementation](https://github.com/google-gemini/gemini-cli/blob/main/packages/core/src/skills/skillManager.ts).
 
 ## Source Display
 

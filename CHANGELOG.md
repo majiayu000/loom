@@ -13,6 +13,8 @@ archives, checksums, and provenance details on GitHub Releases.
   command inventory, canonical digests, and CLI contract compatibility range.
 - CLI contract 1.1 inventories every public error code and the `cmd` and
   `reason` fields of structured error next actions.
+- CLI contract 1.2 adds observable Gemini projection recovery guidance to the
+  agent-facing capability inventory.
 - Registry operations journal is now the single operation-log authority for
   sync replay, ops retry/purge, history repair, and Panel operation backlog
   reads; legacy `state/pending_ops.*` runtime state is no longer used.

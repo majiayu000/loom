@@ -1,9 +1,9 @@
 # Loom registry model CLI Contract
 
-Updated: 2026-06-11
+Updated: 2026-07-16
 Status: Implemented
 
-Every JSON envelope includes independent SemVer field `cli_contract_version`. The current contract is `1.2.0`; compatibility history and shipped-Skill ranges live in `docs/cli-contract-history.toml` and `skills/loom-registry/loom.skill.toml`.
+Every JSON envelope includes independent SemVer field `cli_contract_version`. The current contract is `1.3.0`; compatibility history and shipped-Skill ranges live in `docs/cli-contract-history.toml` and `skills/loom-registry/loom.skill.toml`.
 
 ## 1. Purpose
 
@@ -314,9 +314,34 @@ Response shape:
       { "agent": "claude", "env_var": "CLAUDE_SKILLS_DIR", "path": "/home/me/.claude/skills" },
       { "agent": "codex", "env_var": "CODEX_SKILLS_DIR", "path": "/home/me/.codex/skills" }
     ]
+  },
+  "agent_adapters": {
+    "adapter_api": "2",
+    "adapters": [
+      { "id": "claude", "source": "built-in", "fidelity": "verified" },
+      { "id": "cursor", "source": "built-in", "fidelity": "generic" }
+    ]
   }
 }
 ```
+
+Every `agent_adapters.adapters` row always includes `fidelity`, whose closed
+values are `verified` and `generic`. External adapter input cannot self-assert
+the field and is reported as `generic`. A `verified` row cannot contain a
+`discovery_roots[].role` of `legacy-default`. Generic metadata is diagnostic
+only and must not be treated as verified visibility evidence by doctor or
+skill-diagnose consumers.
+
+Gemini CLI verified visibility reads the documented settings precedence,
+including `skills.enabled` and the case-insensitive union semantics of
+`skills.disabled`; projected `SKILL.md` files must have loadable `name` and
+`description` frontmatter. Loom applies Gemini's `[:\\/<>*?"|]` to `-`
+frontmatter-name sanitization before comparing the directory name. Project
+roots additionally require affirmative workspace trust unless a valid user
+projection independently satisfies discovery. Missing trust, explicit denial,
+malformed settings/trust state, or
+unobservable remote `admin.skills.enabled` policy cannot yield `visible=true`.
+The reload check names `/skills reload` and does not require a new session.
 
 `registry_transport` describes the registry remote and operation backlog only.
 `projections` comes from live existence/method/digest or symlink evidence, while
@@ -482,7 +507,7 @@ Rules:
 10. `skill search --for-task` returns deterministic task-resolution fields: `strategy`, `selected`, and `candidates`; it must not invoke an LLM.
 11. `skill search --explain` returns recommendation details under `recommendations`, including skillset candidates, scoring inputs, safety risks, warnings, recommended actions, and suggested commands.
 12. `--workspace` on `skill search --for-task` may boost skills whose binding matcher covers the supplied workspace path.
-13. `skill visibility --agent codex` is a read-only Codex active-view proof. It reports source, active rule, target, symlink projection, Codex `skills.config` disables, runtime entries, external entries, and restart recommendations without claiming current-session hot reload.
+13. `skill visibility --agent <agent>` is a read-only active-view proof for registered adapters. Its report includes the adapter `fidelity` when an adapter is registered; generic adapters return a structured unsupported check instead of verified visibility claims. The Codex report covers source, active rule, target, symlink projection, Codex `skills.config` disables, runtime entries, external entries, and restart recommendations without claiming current-session hot reload.
 14. read commands must not mutate registry state, Git refs, Git index, live targets, or the operation backlog.
 15. trust metadata comes from `state/registry/trust.json`; absent metadata is `unknown`.
 16. `skill deps` is read-only and reports runtime dependency readiness for tools, MCP servers, environment variables, and network expectations without printing secret values.

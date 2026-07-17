@@ -6,17 +6,20 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::commands::CommandFailure;
-use crate::state::{AppContext, home_dir, resolve_agent_skill_dirs};
+use crate::state::{AppContext, effective_gemini_cli_home, home_dir, resolve_agent_skill_dirs};
 use crate::state_model::RegistryProjectionTarget;
 use crate::types::ErrorCode;
 
+mod gemini_projection;
 mod metadata;
 
+pub(crate) use gemini_projection::{built_in_managed_projection_root, built_in_projection_root};
+
 use metadata::{
-    adapter_json_invalid, built_in_discovery_roots, built_in_reload, built_in_visibility,
-    capabilities_from_reload, default_scan_eligible, default_visibility, discovery_root_json,
-    external_discovery_root, external_visibility, reload_from_capability, reload_json,
-    resolve_root_template, role_rank, v1_discovery_roots, validate_discovery_root,
+    adapter_json_invalid, built_in_default_skill_dirs, built_in_discovery_roots, built_in_reload,
+    built_in_visibility, capabilities_from_reload, default_scan_eligible, default_visibility,
+    discovery_root_json, external_discovery_root, external_visibility, reload_from_capability,
+    reload_json, resolve_root_template, role_rank, v1_discovery_roots, validate_discovery_root,
     validate_visibility, visibility_json,
 };
 
@@ -27,11 +30,31 @@ pub(crate) const SOURCE_BUILT_IN: &str = "built-in";
 pub(crate) const SOURCE_EXTERNAL: &str = "external";
 pub(crate) const SOURCE_UNKNOWN: &str = "unknown";
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum AdapterFidelity {
+    Verified,
+    Generic,
+}
+
+impl AdapterFidelity {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Verified => "verified",
+            Self::Generic => "generic",
+        }
+    }
+
+    pub(crate) fn is_verified(self) -> bool {
+        self == Self::Verified
+    }
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct AgentAdapter {
     pub adapter_api: String,
     pub id: String,
     pub source: String,
+    pub fidelity: AdapterFidelity,
     pub supported_scopes: Vec<String>,
     pub projection_methods: Vec<String>,
     pub skill_entrypoint: String,
@@ -46,6 +69,20 @@ pub(crate) struct AgentAdapter {
 impl AgentAdapter {
     pub(crate) fn has_discovery_root_for_scope(&self, scope: &str) -> bool {
         self.discovery_roots.iter().any(|root| root.scope == scope)
+    }
+
+    pub(crate) fn has_verified_visibility_metadata(&self) -> bool {
+        self.fidelity.is_verified() && !self.visibility.identity_by_projection_method.is_empty()
+    }
+
+    pub(crate) fn scan_unavailable_reason(&self) -> Option<&str> {
+        if !self.capabilities.automatic_discovery || !self.default_skill_dirs.is_empty() {
+            return None;
+        }
+        self.discovery_roots
+            .iter()
+            .filter(|root| root.scan_eligible && !root.available)
+            .find_map(|root| root.unavailable_reason.as_deref())
     }
 }
 
@@ -268,6 +305,7 @@ impl AgentAdapterRegistry {
                     "declared_adapter_api": adapter.adapter_api,
                     "id": adapter.id,
                     "source": adapter.source,
+                    "fidelity": adapter.fidelity.as_str(),
                     "supported_scopes": adapter.supported_scopes,
                     "projection_methods": adapter.projection_methods,
                     "skill_entrypoint": adapter.skill_entrypoint,
@@ -353,6 +391,7 @@ fn build_registry(
 }
 
 fn built_in_adapters(root: &Path, home: Option<&Path>) -> Vec<AgentAdapter> {
+    let gemini_home = effective_gemini_cli_home(root);
     let dirs_by_agent = if home.is_some() {
         resolve_agent_skill_dirs(root)
             .all
@@ -366,10 +405,16 @@ fn built_in_adapters(root: &Path, home: Option<&Path>) -> Vec<AgentAdapter> {
         .into_iter()
         .map(|id| {
             let reload = built_in_reload(id);
+            let adapter_home = if id == "gemini-cli" {
+                gemini_home.home.as_deref()
+            } else {
+                home
+            };
             AgentAdapter {
                 adapter_api: ADAPTER_API_V2.to_string(),
                 id: id.to_string(),
                 source: SOURCE_BUILT_IN.to_string(),
+                fidelity: metadata::built_in_fidelity(id),
                 supported_scopes: vec!["user".to_string(), "project".to_string()],
                 projection_methods: vec![
                     "symlink".to_string(),
@@ -378,8 +423,19 @@ fn built_in_adapters(root: &Path, home: Option<&Path>) -> Vec<AgentAdapter> {
                 ],
                 skill_entrypoint: "SKILL.md".to_string(),
                 capabilities: capabilities_from_reload(&reload),
-                default_skill_dirs: dirs_by_agent.get(id).cloned().unwrap_or_default(),
-                discovery_roots: built_in_discovery_roots(id, dirs_by_agent.get(id), home),
+                default_skill_dirs: built_in_default_skill_dirs(
+                    id,
+                    dirs_by_agent.get(id),
+                    adapter_home,
+                ),
+                discovery_roots: built_in_discovery_roots(
+                    id,
+                    dirs_by_agent.get(id),
+                    adapter_home,
+                    (id == "gemini-cli")
+                        .then_some(gemini_home.unavailable_reason.as_deref())
+                        .flatten(),
+                ),
                 visibility: built_in_visibility(id),
                 reload,
                 config_path: None,
@@ -449,6 +505,7 @@ fn load_external_adapter_v1(
         adapter_api: ADAPTER_API_V1.to_string(),
         id: record.id,
         source: SOURCE_EXTERNAL.to_string(),
+        fidelity: AdapterFidelity::Generic,
         supported_scopes: record.supported_scopes,
         projection_methods: record.projection_methods,
         skill_entrypoint: record.skill_entrypoint,
@@ -483,6 +540,7 @@ fn load_external_adapter_v2(
         adapter_api: ADAPTER_API_V2.to_string(),
         id: record.id,
         source: SOURCE_EXTERNAL.to_string(),
+        fidelity: AdapterFidelity::Generic,
         supported_scopes: record.supported_scopes,
         projection_methods: record.projection_methods,
         skill_entrypoint: record.skill_entrypoint,

@@ -183,6 +183,42 @@ fn provision_plan_devcontainer_is_read_only_and_uses_codex_project_path() {
 }
 
 #[test]
+fn provision_plan_uses_the_native_gemini_project_root_without_registry_state() {
+    let root = TestDir::new("provision-gemini-root");
+    let workspace = TestDir::new("provision-gemini-workspace");
+    write_skill(
+        root.path(),
+        "demo",
+        "---\nname: demo\ndescription: Gemini provision fixture.\n---\n# Demo\n",
+    );
+    let workspace_arg = workspace.path().display().to_string();
+    let (output, env) = run_loom(
+        root.path(),
+        &[
+            "provision",
+            "plan",
+            "--target",
+            "devcontainer",
+            "--agent",
+            "gemini-cli",
+            "--workspace",
+            &workspace_arg,
+        ],
+    );
+    assert!(
+        output.status.success(),
+        "Gemini provision plan failed: {env}"
+    );
+    assert_eq!(
+        env["data"]["plan"]["active_views"][0]["path"],
+        json!(format!(
+            "/workspaces/{}/.gemini/skills",
+            workspace.path().file_name().unwrap().to_string_lossy()
+        ))
+    );
+}
+
+#[test]
 fn provision_plan_resolves_relative_workspace_from_caller_cwd() {
     let root = TestDir::new("provision-relative-root");
     let parent = TestDir::new("provision-relative-parent");

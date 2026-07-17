@@ -6,18 +6,18 @@ and the `workspace doctor` agent inventory check probe under `$HOME`.
 
 ## Built-in agent kinds
 
-| Agent kind (`AgentKind`) | CLI value (`--agent`) | Default skill directory |
-|---|---|---|
-| `Claude` | `claude` | `$HOME/.claude/skills` |
-| `Codex` | `codex` | `$HOME/.agents/skills` preferred; `${CODEX_HOME:-$HOME/.codex}/skills` legacy |
-| `Cursor` | `cursor` | `$HOME/.cursor/skills` |
-| `Windsurf` | `windsurf` | `$HOME/.windsurf/skills` |
-| `Cline` | `cline` | `$HOME/.cline/skills` |
-| `Copilot` | `copilot` | `$HOME/.github/copilot/skills` |
-| `Aider` | `aider` | `$HOME/.aider/skills` |
-| `Opencode` | `opencode` | `$HOME/.opencode/skills` |
-| `GeminiCli` | `gemini-cli` | `$HOME/.gemini/skills` |
-| `Goose` | `goose` | `$HOME/.config/goose/skills` |
+| Agent kind (`AgentKind`) | CLI value (`--agent`) | Fidelity | Default skill directory |
+|---|---|---|---|
+| `Claude` | `claude` | `verified` | `$HOME/.claude/skills` |
+| `Codex` | `codex` | `verified` | `$HOME/.agents/skills` preferred; `${CODEX_HOME:-$HOME/.codex}/skills` legacy |
+| `Cursor` | `cursor` | `generic` | `$HOME/.cursor/skills` |
+| `Windsurf` | `windsurf` | `generic` | `$HOME/.windsurf/skills` |
+| `Cline` | `cline` | `generic` | `$HOME/.cline/skills` |
+| `Copilot` | `copilot` | `generic` | `$HOME/.github/copilot/skills` |
+| `Aider` | `aider` | `generic` | `$HOME/.aider/skills` |
+| `Opencode` | `opencode` | `generic` | `$HOME/.opencode/skills` |
+| `GeminiCli` | `gemini-cli` | `verified` | `$GEMINI_CLI_HOME` (fallback `$HOME`) supplies `.agents/skills` then `.gemini/skills`; project aliases match; no custom skills-dir override |
+| `Goose` | `goose` | `generic` | `$HOME/.config/goose/skills` |
 
 The built-in source of truth is `src/cli.rs` (the `AgentKind` enum) plus
 `src/agent_adapters.rs`. External adapters use the protocol in
@@ -26,6 +26,32 @@ The built-in source of truth is `src/cli.rs` (the `AgentKind` enum) plus
 Codex has active-view semantics beyond a single default path. See
 `docs/CODEX_SKILL_VISIBILITY.md` for the preferred user root, legacy root,
 project `.agents/skills` search chain, config disables, and restart guidance.
+
+Gemini CLI is verified against its official skill discovery and command
+contracts. Its `.agents/skills` alias overrides the matching `.gemini/skills`
+entry within the same user or project tier, disabled names are persisted under
+`skills.disabled` with case-insensitive union semantics, and untrusted
+workspaces cannot satisfy project-only visibility. Remote enterprise admin
+policy is not represented by local settings, so Loom reports it as
+unobservable instead of claiming visibility. `/skills reload` refreshes the
+current session. `workspace init --scan-existing` and `workspace doctor`
+inspect both user roots; Loom-managed `use` writes to the native `.gemini`
+root to avoid sharing Codex's managed target. See the
+[Gemini CLI skill docs](https://geminicli.com/docs/cli/creating-skills/),
+[command reference](https://geminicli.com/docs/reference/commands/), and
+[settings reference](https://geminicli.com/docs/reference/configuration/), plus
+the [trusted-folders reference](https://geminicli.com/docs/cli/trusted-folders/).
+The process environment fixes bootstrap user settings and trust locations;
+only a workspace already trusted by that state may load a runtime dotenv
+`GEMINI_CLI_HOME` for subsequent user-root discovery. Runtime dotenv loading
+also honors effective `advanced.ignoreLocalEnv` and `advanced.excludedEnvVars`;
+generic project dotenv redirects are rejected when `--ignore-env` could change
+the selected file.
+
+`generic` means Loom exposes a conservative fallback path without claiming
+that discovery precedence, visibility disables, or reload behavior has been
+verified against that agent. Generic adapters are not used as verified
+visibility evidence.
 
 ## How `--scan-existing` uses this list
 

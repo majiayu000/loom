@@ -5,6 +5,7 @@ mod codex_config;
 mod codex_reconcile_plan;
 mod codex_visibility;
 pub(crate) use codex_visibility::projection_path_is_safe_symlink;
+mod convergence_input;
 mod convergence_status;
 mod event_store;
 mod file_ops;

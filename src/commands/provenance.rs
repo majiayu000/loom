@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
+use std::ffi::OsStr;
 use std::fs;
 use std::io::Read;
 use std::path::{Component, Path, PathBuf};
@@ -516,18 +517,38 @@ pub(crate) enum TreeDigestSymlinkMode {
 }
 
 pub(crate) fn skill_tree_digest(path: &Path) -> Result<String> {
-    tree_digest(path, TreeDigestSymlinkMode::Preserve)
+    tree_digest(path, TreeDigestSymlinkMode::Preserve, false)
 }
 
 pub(crate) fn materialized_tree_digest(path: &Path) -> Result<String> {
-    tree_digest(path, TreeDigestSymlinkMode::Follow)
+    tree_digest(path, TreeDigestSymlinkMode::Follow, false)
 }
 
-fn tree_digest(path: &Path, symlink_mode: TreeDigestSymlinkMode) -> Result<String> {
+pub(crate) fn convergence_input_tree_digest(path: &Path, materialize: bool) -> Result<String> {
+    tree_digest(
+        path,
+        if materialize {
+            TreeDigestSymlinkMode::Follow
+        } else {
+            TreeDigestSymlinkMode::Preserve
+        },
+        true,
+    )
+}
+
+fn tree_digest(
+    path: &Path,
+    symlink_mode: TreeDigestSymlinkMode,
+    exclude_git: bool,
+) -> Result<String> {
     let mut entries = Vec::new();
     for entry in WalkDir::new(path)
         .follow_links(symlink_mode == TreeDigestSymlinkMode::Follow)
         .sort_by_file_name()
+        .into_iter()
+        .filter_entry(|entry| {
+            !exclude_git || entry.path() == path || entry.file_name() != OsStr::new(".git")
+        })
     {
         let entry = entry.with_context(|| format!("walk {}", path.display()))?;
         if entry.file_type().is_dir() {

@@ -33,7 +33,7 @@ pub(crate) use observation::{
     ProjectionObservation, ProjectionObservationUpdate, apply_projection_observation,
     observe_projection, projection_observation_check,
 };
-use symlink_guard::ensure_projection_symlinks_contained;
+pub(crate) use symlink_guard::ensure_projection_symlinks_contained;
 
 // ---------------------------------------------------------------------------
 // Registry state mutators

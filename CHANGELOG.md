@@ -17,7 +17,8 @@ archives, checksums, and provenance details on GitHub Releases.
   agent-facing capability inventory.
 - CLI contract 1.3 adds immutable Skill convergence planning and reviewed plan
   digest confirmation; CLI contract 1.4 adds local Claude and Codex telemetry
-  ingest planning and durable import surfaces.
+  ingest planning and durable import surfaces; CLI contract 1.5 adds typed,
+  digest-covered convergence input, dirty-side, and preflight evidence.
 - Registry operations journal is now the single operation-log authority for
   sync replay, ops retry/purge, history repair, and Panel operation backlog
   reads; legacy `state/pending_ops.*` runtime state is no longer used.

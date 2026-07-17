@@ -59,6 +59,44 @@ fn projected_fixture_with_method(method: &str) -> Fixture {
     }
 }
 
+fn add_copy_projection(fixture: &Fixture, suffix: &str) -> (std::path::PathBuf, String) {
+    let target_path = fixture.root.path().join(format!("live/{suffix}"));
+    let (output, target) = target_add(fixture.root.path(), "claude", &target_path, "managed");
+    assert!(output.status.success(), "target add failed: {target}");
+    let target_id = target["data"]["target"]["target_id"]
+        .as_str()
+        .expect("target id");
+    let workspace = fixture.workspace.path().to_str().expect("workspace path");
+    let (output, binding) = binding_add(
+        fixture.root.path(),
+        "claude",
+        "default",
+        "exact-path",
+        workspace,
+        target_id,
+    );
+    assert!(output.status.success(), "binding add failed: {binding}");
+    let binding_id = binding["data"]["binding"]["binding_id"]
+        .as_str()
+        .expect("binding id");
+    let (output, projection) = skill_project(fixture.root.path(), "demo", binding_id, Some("copy"));
+    assert!(output.status.success(), "project failed: {projection}");
+    let instance_id = projection["data"]["projection"]["instance_id"]
+        .as_str()
+        .expect("instance id")
+        .to_string();
+    (target_path.join("demo"), instance_id)
+}
+
+fn conflict_codes(plan: &Value) -> Vec<&str> {
+    plan["data"]["conflicts"]
+        .as_array()
+        .expect("conflicts")
+        .iter()
+        .filter_map(|conflict| conflict["code"].as_str())
+        .collect()
+}
+
 fn mutate_plan_event(root: &Path, plan_id: &str, mut mutate: impl FnMut(&mut Value)) {
     let audit_path = root.join("state/events/commands.jsonl");
     let raw = fs::read_to_string(&audit_path).expect("read command events");
@@ -148,7 +186,7 @@ fn exact_effect_plan() {
 
     assert_eq!(first["cmd"], json!("plan.converge"));
     assert_eq!(first["data"]["protocol_version"], json!("1.0"));
-    assert_eq!(first["data"]["schema_version"], json!("1.1"));
+    assert_eq!(first["data"]["schema_version"], json!("1.2"));
     assert_eq!(first["data"]["operation"], json!("converge"));
     assert_eq!(first["data"]["safe_to_apply"], json!(false));
     assert_eq!(first["data"]["execution_enabled"], json!(false));
@@ -176,8 +214,8 @@ fn exact_effect_plan() {
     assert!(
         schema["properties"]["schema_version"]["enum"]
             .as_array()
-            .is_some_and(|versions| versions.contains(&json!("1.1"))),
-        "authoritative schema must declare convergence schema 1.1"
+            .is_some_and(|versions| versions.contains(&json!("1.2"))),
+        "authoritative schema must declare convergence schema 1.2"
     );
     assert!(
         schema["properties"]["operation"]["enum"]
@@ -435,20 +473,98 @@ fn convergence_apply_reports_idempotency_key_conflict_before_executor_block() {
 }
 
 #[test]
-fn projection_input_requires_observable_method_aware_bytes() {
+fn projection_input_requires_instance() {
     let fixture = projected_fixture();
     let (output, plan) = plan_converge(&fixture, &[]);
     assert!(output.status.success(), "copy plan failed: {plan}");
     let instance = plan["data"]["effects"][0]["instance_id"]
         .as_str()
-        .expect("instance id");
+        .expect("instance id")
+        .to_string();
+    assert_eq!(plan["data"]["source"]["direction"], json!("source"));
+
+    let (output, missing_selector) = plan_converge(&fixture, &["--from-projection"]);
+    assert!(
+        !output.status.success(),
+        "projection direction without instance passed: {missing_selector}"
+    );
+
+    let (output, unknown) = plan_converge(
+        &fixture,
+        &["--from-projection", "--instance", "inst_unknown"],
+    );
+    assert!(
+        !output.status.success(),
+        "unknown instance passed: {unknown}"
+    );
+    assert_eq!(unknown["error"]["code"], json!("PROJECTION_CONFLICT"));
+
+    let (output, selected) =
+        plan_converge(&fixture, &["--from-projection", "--instance", &instance]);
+    assert!(output.status.success(), "selected input failed: {selected}");
+    assert_eq!(selected["data"]["source"]["direction"], json!("projection"));
+    assert_eq!(
+        selected["data"]["input"]["selected_projection_instance"],
+        json!(instance)
+    );
+    assert_eq!(
+        selected["data"]["input"]["selected_input_tree_digest"],
+        selected["data"]["preflight"]["input_tree_digest"]
+    );
+
+    fs::write(
+        fixture.target.path().join("demo/SKILL.md"),
+        "---\nname: wrong-name\n---\n# invalid projection input\n",
+    )
+    .expect("write invalid projection input");
+    let (output, blocked) =
+        plan_converge(&fixture, &["--from-projection", "--instance", &instance]);
+    assert!(
+        output.status.success(),
+        "blocked input must remain reviewable: {blocked}"
+    );
+    assert_eq!(
+        blocked["data"]["preflight"]["input_direction"],
+        json!("projection")
+    );
+    assert!(
+        !blocked["data"]["preflight"]["mutation_allowed"]
+            .as_bool()
+            .expect("mutation_allowed")
+    );
+    assert!(conflict_codes(&blocked).contains(&"SOURCE_PREFLIGHT_BLOCKED"));
+
+    let (output, source_default) = plan_converge(&fixture, &[]);
+    assert!(
+        output.status.success(),
+        "source default failed: {source_default}"
+    );
+    assert_eq!(
+        source_default["data"]["source"]["direction"],
+        json!("source")
+    );
+    assert_eq!(
+        source_default["data"]["preflight"]["input_direction"],
+        json!("source")
+    );
+
     fs::remove_dir_all(fixture.target.path().join("demo")).expect("remove copy projection");
-    let (output, missing) = plan_converge(&fixture, &["--from-projection", "--instance", instance]);
+    let (output, missing) =
+        plan_converge(&fixture, &["--from-projection", "--instance", &instance]);
     assert!(
         !output.status.success(),
         "missing projection passed: {missing}"
     );
     assert_eq!(missing["error"]["code"], json!("PROJECTION_CONFLICT"));
+    fs::write(fixture.target.path().join("demo"), "not a directory")
+        .expect("replace projection with file");
+    let (output, not_directory) =
+        plan_converge(&fixture, &["--from-projection", "--instance", &instance]);
+    assert!(
+        !output.status.success(),
+        "non-directory projection passed: {not_directory}"
+    );
+    assert_eq!(not_directory["error"]["code"], json!("PROJECTION_CONFLICT"));
 
     let symlink = projected_fixture_with_method("symlink");
     let (output, plan) = plan_converge(&symlink, &[]);
@@ -467,6 +583,175 @@ fn projection_input_requires_observable_method_aware_bytes() {
         "symlink projection input passed: {rejected}"
     );
     assert_eq!(rejected["error"]["code"], json!("PROJECTION_CONFLICT"));
+
+    let materialize = projected_fixture_with_method("materialize");
+    let (output, plan) = plan_converge(&materialize, &[]);
+    assert!(output.status.success(), "materialize plan failed: {plan}");
+    let instance = plan["data"]["effects"][0]["instance_id"]
+        .as_str()
+        .expect("materialize instance");
+    let (output, selected) =
+        plan_converge(&materialize, &["--from-projection", "--instance", instance]);
+    assert!(
+        output.status.success(),
+        "materialize input failed: {selected}"
+    );
+    assert_eq!(
+        selected["data"]["input"]["projections"][0]["method"],
+        json!("materialize")
+    );
+}
+
+#[test]
+fn dirty_side_conflicts() {
+    let fixture = projected_fixture();
+    let (first_path, first_instance) = {
+        let (output, plan) = plan_converge(&fixture, &[]);
+        assert!(output.status.success(), "initial plan failed: {plan}");
+        (
+            fixture.target.path().join("demo"),
+            plan["data"]["effects"][0]["instance_id"]
+                .as_str()
+                .expect("first instance")
+                .to_string(),
+        )
+    };
+    let (second_path, second_instance) = add_copy_projection(&fixture, "second-copy");
+    write_skill(
+        fixture.root.path(),
+        "demo",
+        "---\nname: demo\ndescription: Use when testing dirty source convergence.\n---\n# source v2\n",
+    );
+    fs::write(
+        first_path.join("SKILL.md"),
+        "---\nname: demo\ndescription: Use when testing first dirty projection.\n---\n# projection a\n",
+    )
+    .expect("edit first projection");
+    fs::write(
+        second_path.join("SKILL.md"),
+        "---\nname: demo\ndescription: Use when testing second dirty projection.\n---\n# projection b\n",
+    )
+    .expect("edit second projection");
+
+    let (output, conflicted) = plan_converge(&fixture, &[]);
+    assert!(
+        output.status.success(),
+        "dirty conflict plan failed: {conflicted}"
+    );
+    assert_eq!(
+        conflict_codes(&conflicted),
+        vec![
+            "SOURCE_PROJECTION_DIRTY_CONFLICT",
+            "DIVERGENT_PROJECTION_INPUTS",
+            "MULTIPLE_DIRTY_PROJECTION_INPUTS"
+        ]
+    );
+    let items = conflicted["data"]["input"]["projections"]
+        .as_array()
+        .expect("projection evidence");
+    assert_eq!(items.len(), 2);
+    assert!(
+        items
+            .windows(2)
+            .all(|pair| { pair[0]["instance_id"].as_str() < pair[1]["instance_id"].as_str() })
+    );
+    assert!(items.iter().all(|item| {
+        item["state"] == json!("dirty")
+            && item["baseline_tree_digest"].as_str().is_some()
+            && item["live_tree_digest"].as_str().is_some()
+    }));
+    let first_digest = conflicted["data"]["plan_digest"].clone();
+    fs::write(
+        second_path.join("SKILL.md"),
+        "---\nname: demo\ndescription: Use when testing changed evidence.\n---\n# projection c\n",
+    )
+    .expect("change second projection again");
+    let (output, changed) = plan_converge(&fixture, &[]);
+    assert!(
+        output.status.success(),
+        "changed evidence plan failed: {changed}"
+    );
+    assert_ne!(changed["data"]["plan_digest"], first_digest);
+
+    let same = projected_fixture();
+    let (output, initial) = plan_converge(&same, &[]);
+    assert!(
+        output.status.success(),
+        "same initial plan failed: {initial}"
+    );
+    let selected = initial["data"]["effects"][0]["instance_id"]
+        .as_str()
+        .expect("selected instance")
+        .to_string();
+    let first = same.target.path().join("demo/SKILL.md");
+    let (second, _) = add_copy_projection(&same, "same-copy");
+    let body = "---\nname: demo\ndescription: Use when testing identical dirty projections.\n---\n# same dirty bytes\n";
+    fs::write(first, body).expect("edit same first");
+    fs::write(second.join("SKILL.md"), body).expect("edit same second");
+    let (output, selected_plan) =
+        plan_converge(&same, &["--from-projection", "--instance", &selected]);
+    assert!(
+        output.status.success(),
+        "explicit identical input failed: {selected_plan}"
+    );
+    assert!(!conflict_codes(&selected_plan).contains(&"DIVERGENT_PROJECTION_INPUTS"));
+    assert_eq!(
+        selected_plan["data"]["input"]["selected_projection_instance"],
+        json!(selected)
+    );
+    let (output, ambiguous) = plan_converge(&same, &[]);
+    assert!(
+        output.status.success(),
+        "identical dirty plan failed: {ambiguous}"
+    );
+    assert!(conflict_codes(&ambiguous).contains(&"MULTIPLE_DIRTY_PROJECTION_INPUTS"));
+
+    let projections_path = same.root.path().join("state/registry/projections.json");
+    let mut projections: Value =
+        serde_json::from_slice(&fs::read(&projections_path).expect("read projections state"))
+            .expect("parse projections state");
+    projections["projections"][0]["last_applied_rev"] = json!("missing-baseline-ref");
+    fs::write(
+        &projections_path,
+        serde_json::to_vec_pretty(&projections).expect("serialize projections state"),
+    )
+    .expect("write projections state");
+    let (output, unavailable) = plan_converge(&same, &[]);
+    assert!(
+        output.status.success(),
+        "baseline conflict plan failed: {unavailable}"
+    );
+    assert!(conflict_codes(&unavailable).contains(&"PROJECTION_EVIDENCE_UNAVAILABLE"));
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        let unreadable_path = same.target.path().join("demo/SKILL.md");
+        let original_mode = fs::metadata(&unreadable_path)
+            .expect("unreadable fixture metadata")
+            .permissions()
+            .mode();
+        fs::set_permissions(&unreadable_path, fs::Permissions::from_mode(0o000))
+            .expect("make projection unreadable");
+        let (output, unreadable) = plan_converge(&same, &[]);
+        fs::set_permissions(&unreadable_path, fs::Permissions::from_mode(original_mode))
+            .expect("restore projection permissions");
+        assert!(
+            output.status.success(),
+            "unreadable conflict plan failed: {unreadable}"
+        );
+        assert!(conflict_codes(&unreadable).contains(&"PROJECTION_EVIDENCE_UNAVAILABLE"));
+        assert!(
+            unreadable["data"]["input"]["projections"]
+                .as_array()
+                .expect("unreadable evidence")
+                .iter()
+                .any(|item| item["state"] == json!("unreadable"))
+        );
+    }
+
+    assert_ne!(first_instance, second_instance);
 }
 
 #[test]

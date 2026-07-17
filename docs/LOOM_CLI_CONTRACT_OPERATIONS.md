@@ -549,13 +549,13 @@ loom --json --root <root> apply <convergence-plan-id> --plan-digest <digest> --i
 
 `plan use` creates a durable, audited plan for the same target/binding/projection setup that `loom use --apply` performs. Plan creation must not mutate registry state, Git refs, operation backlog, or live target directories; its only durable write is the command-audit event under `state/events/commands.jsonl`.
 
-`plan converge` creates a typed immutable plan for one Skill change. It resolves only existing active bindings and rules selected by agent, workspace, and profile; records source, registry checkpoint, projection, visibility, required-axis, acceptance, and remote-policy evidence; and returns a canonical `plan_digest`. The digest excludes the random `plan_id`, so identical evidence and selectors produce the same digest. Planning writes only command audit and reports `execution_enabled=false` and `safe_to_apply=false` in this rollout tranche. It emits no apply next action.
+`plan converge` creates a typed immutable plan for one Skill change. It resolves only existing active bindings and rules selected by agent, workspace, and profile; records source, registry checkpoint, projection, visibility, required-axis, acceptance, and remote-policy evidence; and returns a canonical `plan_digest`. Schema 1.2 also records the exact selected input digest, method-aware dirty evidence for every selected projection, strict preflight results for the actual source or projection input bytes, and fail-closed input conflicts. The digest excludes the random `plan_id`, so identical evidence and selectors produce the same digest. Planning writes only command audit and reports `execution_enabled=false` and `safe_to_apply=false` in this rollout tranche. It emits no apply next action.
 
 Convergence plans require the exact non-empty `--plan-digest` returned by planning. Missing or mismatched confirmation fails before any domain write. Even with a matching digest, apply currently fails closed with `POLICY_BLOCKED` / `CONVERGENCE_EXECUTOR_UNAVAILABLE`; clients must not retry it as an enabled mutation. Existing `plan use` records remain compatible and do not require `--plan-digest`.
 
 The top-level `plan` command owns durable plan creation. The top-level `apply` command owns guarded plan execution.
 
-The plan JSON schema is versioned separately from the binary package version at `docs/schemas/agent-plan-v1.schema.json`. Current plans use `protocol_version: "1.0"`; `plan use` uses `schema_version: "1.0"`, while the additive typed `plan converge` shape uses `schema_version: "1.1"`.
+The plan JSON schema is versioned separately from the binary package version at `docs/schemas/agent-plan-v1.schema.json`. Current plans use `protocol_version: "1.0"`; `plan use` uses `schema_version: "1.0"`, while the additive typed `plan converge` shape uses `schema_version: "1.2"`.
 
 Rules:
 

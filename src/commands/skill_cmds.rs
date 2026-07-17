@@ -24,6 +24,7 @@ use crate::state_model::{
 };
 use crate::types::ErrorCode;
 
+use super::convergence_input::{projection_input_evidence, source_dirty_paths};
 use super::file_ops::{
     backup_path_if_exists, copy_dir_recursive_without_symlinks, restore_path_from_backup,
     rollback_added_skill,

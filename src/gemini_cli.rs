@@ -51,7 +51,7 @@ pub(crate) fn load_config(
     skill: &str,
     workspace: Option<&Path>,
 ) -> Result<GeminiConfigState, &'static str> {
-    let bootstrap_home = bootstrap_home().ok_or(INVALID_CONFIG)?;
+    let bootstrap_home = resolve_runtime_home(bootstrap_home().ok_or(INVALID_CONFIG)?, workspace);
     let defaults = system_defaults_path();
     let user = bootstrap_home.join(".gemini/settings.json");
     let system = system_path("GEMINI_CLI_SYSTEM_SETTINGS_PATH", "settings.json");
@@ -96,7 +96,7 @@ fn runtime_home_after_trust(
     if let Ok(value) = env::var("GEMINI_CLI_HOME")
         && !value.is_empty()
     {
-        return PathBuf::from(value);
+        return resolve_runtime_home(PathBuf::from(value), workspace);
     }
     if !trusted {
         return bootstrap_home.to_path_buf();
@@ -113,7 +113,18 @@ fn runtime_home_after_trust(
         .and_then(|path| load_dotenv_file(&path).get("GEMINI_CLI_HOME").cloned())
         .filter(|value| !value.is_empty())
         .map(PathBuf::from)
+        .map(|home| resolve_runtime_home(home, workspace))
         .unwrap_or_else(|| bootstrap_home.to_path_buf())
+}
+
+fn resolve_runtime_home(home: PathBuf, workspace: Option<&Path>) -> PathBuf {
+    if home.is_absolute() {
+        home
+    } else if let Some(workspace) = workspace {
+        workspace.join(home)
+    } else {
+        home
+    }
 }
 
 fn stable_env_file(workspace: &Path, home: &Path, ignore_local_env: bool) -> Option<PathBuf> {
@@ -339,8 +350,26 @@ fn system_dir() -> Option<PathBuf> {
 
 #[cfg(test)]
 mod tests {
-    use super::resolve_system_defaults_path;
-    use std::path::PathBuf;
+    use super::{resolve_runtime_home, resolve_system_defaults_path};
+    use std::path::{Path, PathBuf};
+
+    #[test]
+    fn relative_runtime_home_is_anchored_to_selected_workspace() {
+        assert_eq!(
+            resolve_runtime_home(
+                PathBuf::from("runtime-home"),
+                Some(Path::new("/selected/workspace")),
+            ),
+            PathBuf::from("/selected/workspace/runtime-home")
+        );
+        assert_eq!(
+            resolve_runtime_home(
+                PathBuf::from("/absolute/runtime-home"),
+                Some(Path::new("/selected/workspace")),
+            ),
+            PathBuf::from("/absolute/runtime-home")
+        );
+    }
 
     #[test]
     fn custom_system_settings_select_sibling_defaults_unless_explicitly_overridden() {

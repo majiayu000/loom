@@ -148,18 +148,14 @@ pub fn resolve_agent_skill_source_dirs(root: &Path) -> AgentSkillSourceDirs {
 }
 
 pub(crate) fn effective_gemini_cli_home(root: &Path) -> GeminiHomeResolution {
-    let workspace = match env::current_dir() {
-        Ok(workspace) => workspace,
-        Err(error) => {
-            return GeminiHomeResolution {
-                home: None,
-                unavailable_reason: Some(format!(
-                    "Gemini CLI runtime home unavailable: failed to resolve current workspace: {error}"
-                )),
-            };
-        }
-    };
-    match gemini_cli::runtime_home(&workspace) {
+    effective_gemini_cli_home_with(root, gemini_cli::runtime_home)
+}
+
+fn effective_gemini_cli_home_with(
+    root: &Path,
+    resolve: impl FnOnce(&Path) -> Result<PathBuf, &'static str>,
+) -> GeminiHomeResolution {
+    match resolve(root) {
         Ok(home) => GeminiHomeResolution {
             home: Some(home),
             unavailable_reason: None,

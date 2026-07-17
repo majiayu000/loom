@@ -193,7 +193,7 @@ fn skill_used_and_feedback_write_redacted_events_and_reports() {
     assert!(raw_events.contains(r#""event_type":"skill.invocation""#));
     assert!(raw_events.contains(r#""event_type":"skill.error""#));
     assert!(raw_events.contains(r#""event_type":"recommendation.feedback""#));
-    assert!(raw_events.contains(r#""schema_version":2"#));
+    assert!(raw_events.contains(r#""schema_version":3"#));
     assert!(raw_events.contains(r#""failure_category":"timeout""#));
     assert!(raw_events.contains(r#""feedback":"accepted""#));
     assert!(raw_events.contains(r#""task_hash":"sha256:"#));

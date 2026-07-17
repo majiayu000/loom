@@ -23,3 +23,15 @@ version = "1.3.0"
 skill_range = ">=1.0.0,<2.0.0"
 change = "add immutable Skill convergence planning and reviewed plan digest confirmation"
 migration_note = "Clients may create plan converge records, but must treat execution_enabled=false as a hard apply blocker until a later contract enables the convergence executor."
+
+[[contract]]
+version = "1.3.0"
+skill_range = ">=1.0.0,<2.0.0"
+change = "add local Claude and Codex telemetry ingest planning and durable import surfaces"
+migration_note = "Clients may invoke telemetry ingest after enabling telemetry; existing telemetry commands and shipped Skill compatibility remain unchanged."
+
+[[contract]]
+version = "1.4.0"
+skill_range = ">=1.0.0,<2.0.0"
+change = "reconcile concurrent additive convergence planning and telemetry ingest contracts"
+migration_note = "Clients may use both convergence planning and telemetry ingest; all earlier 1.x surfaces remain compatible."

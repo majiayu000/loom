@@ -235,6 +235,7 @@ fn cli_contract_docs_track_current_surface() {
         "loom skill watch",
         "loom telemetry status",
         "loom telemetry enable",
+        "loom telemetry ingest",
         "loom telemetry report",
         "loom telemetry export",
         "loom telemetry purge",
@@ -277,6 +278,7 @@ fn cli_contract_docs_track_current_surface() {
         "instruction scan",
         "instruction migrate-plan",
         "telemetry report",
+        "telemetry ingest --agent claude|codex|all",
         "telemetry export --format jsonl|csv",
         "telemetry purge",
     ] {

@@ -3,15 +3,15 @@
 Issue: https://github.com/majiayu000/loom/issues/541
 Product spec: `specs/GH541/product.md`
 Route: `write_spec`
-Status: implx auto architecture rewrite; independent diff review passed; PR gate still required
+Status: implx auto follow-up review remediation complete; independent review and repository verification PASS; exact-head CI and PR gate pending
 
 ## 1. Current Behavior
 
 - 事件唯一写入路径是 `loom skill used` / `loom skill feedback`（`src/commands/skill_usage.rs`）经 `record_skill_invocation_telemetry` 等 emitter（`src/commands/telemetry/emitters.rs`）落到 `state/telemetry/events.jsonl`（`src/commands/telemetry/store.rs:48`）。
 - store 已有 malformed-line 容忍（`TelemetryLog.malformed`）与 redaction 校验门（store.rs:336）。
 - 没有任何 tracked 代码读取 `~/.claude` / `~/.codex`（全仓 grep 无命中），仓库也没有可复现的
-  既有 parser anchor 实现；实现阶段提交的脱敏 Claude/Codex fixture 集是 record shape 与 invocation
-  anchor 的唯一真相，不能依赖仓外脚本或本机 skill。
+  既有 parser anchor 实现；实现阶段提交的脱敏 fixture 固化 Claude 原生 camelCase session boundary
+  与 Codex 官方 `RolloutItem` envelope，并作为本仓支持的 record/invocation anchor，不能依赖本机日志。
 
 ## 2. Proposed Design
 
@@ -19,16 +19,34 @@ Status: implx auto architecture rewrite; independent diff review passed; PR gate
 2. 新增模块 `src/commands/telemetry/ingest/`：
    - `mod.rs` — 命令入口、envelope 组装（scanned/ingested/skipped/unmatched/malformed 计数）。
    - `claude.rs` — 扫描 `~/.claude/projects/*/*.jsonl`，按行解析，识别 fixture 固化的 Skill
-     tool_use 块 / `<command-name>` skill command；fixture 必须包含正例、相似自由文本反例与未知 shape。
-   - `codex.rs` — 解析 `~/.codex/history.jsonl`（session_id/ts/text）+ 按需关联 `~/.codex/sessions/**`（mtime ≥ since 才打开，规避 13GB 全扫）。
+     tool_use 块 / `<command-name>` skill command；command classifier 显式区分 official native ignore、
+     bundled Skill/Workflow（alias canonicalize 到 primary name）与 unknown custom skill fallback，禁止用 flat
+     denylist 混淆 `/checkup`、`/proactive`、`/ultrareview` 等 bundled skill aliases；fixture 必须包含正例、
+     native 反例、alias canonicalization、相似自由文本反例与未知 shape。
+   - `codex.rs` — 读取 `~/.codex/history.jsonl`（自由文本不算 invocation）并有状态解析
+     `~/.codex/sessions/**` 的 `session_meta`、`turn_context` 与 `response_item` payload；仅 Codex 注入的
+     结构化 `<skill>` message 且同一 turn 已出现对应 `$skill-name` marker 时才算 invocation；marker
+     字符集与 Loom skill name 一致并允许 dot。session discovery 不按 mtime 预过滤，`--since` 只使用
+     record timestamp；正常增量由 cursor offset/context 保证。
    - `cursor.rs` — 高水位读写 `state/telemetry/ingest_cursor.json`。`LogicalSourceKey =
      hash(agent + canonical_source_identity)`；value 为 `SourceCheckpoint {schema_version,
      generation_token, committed_offset, boundary_hash, covered_since}`，不得落 raw path。
      `committed_offset` 只越过 newline-terminated records。resume 前校验 file length、generation token 与
      committed boundary 前的 bounded hash；truncate、replacement、same-size rewrite 或 continuity
-     mismatch 统一 reset 到 0，并用 `min(previous covered_since, requested since)` 重扫。
-   - 每个 agent scanner 将不存在的日志根或空 glob 作为 `scanned_files=0`；路径存在但不可读时
-     返回 error。`--agent all` 汇总 per-agent 结果，不能因未安装另一 agent 而丢弃可用日志。
+     mismatch 统一 reset 到 0；旧 generation 的 `covered_since` 不得继承，新 coverage 仅取本次
+     `requested since`。continuity 有效时，更早请求才使用 `min(previous covered_since, requested since)`
+     从头 backfill。
+   - `stream.rs` — 使用有界 record buffer 流式读取；超过上限的完整行计 malformed 后丢弃到 newline，
+     继续处理后续记录，partial tail 不提交。
+   - `source_file.rs` — 从原生首条 session metadata 派生 canonical logical identity，并仅从 cursor 保存的
+     最近 `turn_context` 偏移重建 Codex parser state，避免每轮重读 13GB 前缀。generation token 仅编码
+     generation identity hash、长度、mtime、Unix inode change stamp 与 context offset，不含 raw
+     session/path/workspace；同长度改写即使恢复 mtime 也会 reset。
+   - `plan.rs` — 同一 logical source 的 rotation/copy 在写 cursor 前合并；权威 checkpoint 按
+     continuity → 完整长度 → mtime → path 排序，事件按 deterministic id 去重，统计只计权威源。
+   - 每个 agent scanner 使用显式 metadata 区分不存在与不可读：不存在的日志根或空 glob 作为
+     `scanned_files=0`，路径存在但不可读时返回 error。discovery 后 source 因 rotation 消失时丢弃该轮
+     临时 plan 并重新 discovery；`--agent all` 不能因未安装另一 agent 而丢弃可用日志。
 3. 根目录解析顺序固定为 Loom test/explicit override → agent-native home → platform home：
    `LOOM_CLAUDE_HOME` → `CLAUDE_HOME` → `~/.claude`，以及
    `LOOM_CODEX_HOME` → `CODEX_HOME` → `~/.codex`。
@@ -46,8 +64,10 @@ Status: implx auto architecture rewrite; independent diff review passed; PR gate
    `RegistrySnapshot` read model；匹配成功写
    `skill_id`。未匹配时写 `skill_id=null` 与新增的受约束 `observed_skill_name`，既通过 redaction
    gate，又让 GH542 可从持久化事件重建 orphan；不能通过名称约束的输入进入 `rejected` 计数。
-5. parser 对每个受支持 fixture shape 产出 `ImportedRecord {stable_record_key, record_end_offset,
-   invocations}`。deterministic event id 输入包括 `agent`、`session_id_hash`、skill/observed name、UTC
+5. parser 对每个受支持 fixture shape 产出 `ImportedRecord {stable_record_key, session_id, workspace,
+   timestamp, invocations}`。Claude stable key 使用 native record UUID/tool-call id；Codex 使用
+   `turn_context.turn_id` 与该 turn 内注入 ordinal，不依赖不存在的 message id。deterministic event id
+   输入包括 `agent`、`session_id_hash`、skill/observed name、UTC
    timestamp、logical source key、stable record key、record 内 invocation ordinal 或 tool-call id；
    generation token 与 byte/line offset 只服务 continuity，禁止进入 event id。无法从 unknown shape
    提取稳定 record key 时显式 rejected，不得以 offset fallback。为
@@ -55,8 +75,9 @@ Status: implx auto architecture rewrite; independent diff review passed; PR gate
 6. `covered_since` 表示 cursor 已覆盖的最早请求边界。新请求早于它或 continuity reset 时，从 source
    起点重扫；deterministic event id 去重。正常增量从 `committed_offset` 继续；unterminated tail 返回
    `pending_partial` 并把 checkpoint 留在 fragment 之前，补全后只 ingest 一次。
-7. scanner 在 workspace lock 外生成带 expected checkpoint 的 immutable plan。commit 获取 workspace
-   lock 后重读 cursor；expected/current 不同则释放 lock 并重试扫描。匹配时在同一锁内执行 dedupe、
+7. scanner 在 workspace lock 外生成带 expected checkpoint 和 source snapshot 的 immutable plan；扫描前后
+   snapshot 不同则最多重试三次。commit 获取 workspace lock 后重读 cursor 并复验 source snapshot；
+   expected/current 或 source snapshot 不同则释放 lock 并重试扫描。匹配时在同一锁内执行 dedupe、
    append/flush events、原子写 checkpoint，避免调用会再次获取 workspace lock 的 public append API。
    所有 counter/offset 加法使用 checked arithmetic，overflow 返回含字段名的结构化 error，且不得输出
    partial result 或前移 cursor。`--dry-run` 不获取写锁、不写 event/cursor，只返回同构 plan 计数。
@@ -78,7 +99,7 @@ Status: implx auto architecture rewrite; independent diff review passed; PR gate
 4. `src/commands/telemetry/export.rs`（v2/v3 JSONL/CSV redacted export）
 5. `src/commands/telemetry/mod.rs`（report 对 matched/unmatched 使用统一分组/filter key）
 6. `docs/LOOM_CLI_CONTRACT.md`（命令面 + event/report/export/envelope 字段）
-7. `tests/`（fixture 日志 + ingest/report/export 集成测试）
+7. `tests/`（fixture 日志 + ingest/report/export/竞态与逻辑源副本集成测试）
 
 ## 4. Output Contract
 
@@ -88,6 +109,7 @@ Status: implx auto architecture rewrite; independent diff review passed; PR gate
 {
   "agents": ["claude", "codex"],
   "by_agent": {"claude": {"scanned_files": 0}, "codex": {"scanned_files": 42}},
+  "by_skill": [{"name": "demo", "agent": "codex", "count": 12}],
   "since": "2026-06-01T00:00:00Z",
   "dry_run": false,
   "scanned_files": 42,
@@ -128,6 +150,10 @@ Status: implx auto architecture rewrite; independent diff review passed; PR gate
 13. `cargo test --test telemetry normalized_query_overflow_fails_without_partial_output`：以两个合法的大值
     persisted metric fixture 触发 checked sum overflow，不返回 partial report。
 14. `cargo check --workspace --all-targets --all-features && cargo test`。
+15. `cargo test --test telemetry_ingest_review`：覆盖 workspace hash、同 logical source 副本权威选择、
+    oversized record 有界跳过、扫描期间恢复 mtime 的中部同尺寸改写，以及非权威副本在 commit 前改写时
+    每个贡献 source guard 都必须触发重试；同时覆盖 record timestamp 不受旧 mtime 过滤、dotted skill
+    marker 与 discovery 后 rotation rediscovery。
 
 ## 6. Rollback Plan
 
@@ -152,5 +178,5 @@ Status: implx auto architecture rewrite; independent diff review passed; PR gate
 ## 8. Planned Changes Manifest
 
 ```specrail-planned-changes
-{"issue":541,"complete":true,"paths":["src/cli/telemetry.rs","src/commands/telemetry/mod.rs","src/commands/telemetry/query.rs","src/commands/telemetry/ingest/mod.rs","src/commands/telemetry/ingest/claude.rs","src/commands/telemetry/ingest/codex.rs","src/commands/telemetry/ingest/cursor.rs","src/commands/telemetry/model.rs","src/commands/telemetry/store.rs","src/commands/telemetry/export.rs","docs/LOOM_CLI_CONTRACT.md","tests/telemetry.rs","tests/telemetry_ingest.rs","tests/fixtures/telemetry_ingest/"],"spec_refs":["specs/GH541/product.md#4-behavior-invariants","specs/GH541/tech.md#5-verification-plan"]}
+{"issue":541,"complete":true,"paths":["src/cli/telemetry.rs","src/commands/telemetry/mod.rs","src/commands/telemetry/query.rs","src/commands/telemetry/ingest/mod.rs","src/commands/telemetry/ingest/claude.rs","src/commands/telemetry/ingest/codex.rs","src/commands/telemetry/ingest/cursor.rs","src/commands/telemetry/ingest/plan.rs","src/commands/telemetry/ingest/source_file.rs","src/commands/telemetry/ingest/stream.rs","src/commands/telemetry/model.rs","src/commands/telemetry/store.rs","src/commands/telemetry/export.rs","docs/LOOM_CLI_CONTRACT.md","tests/telemetry.rs","tests/telemetry_ingest.rs","tests/telemetry_ingest_review.rs","tests/fixtures/telemetry_ingest/"],"spec_refs":["specs/GH541/product.md#4-behavior-invariants","specs/GH541/tech.md#5-verification-plan"]}
 ```

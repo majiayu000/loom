@@ -23,7 +23,7 @@ pub(super) fn export_jsonl(
 
 pub(super) fn export_csv(entries: &[TelemetryLogEntry]) -> String {
     let mut body = String::from(
-        "schema_version,event_id,event_type,skill_id,skillset_id,agent,workspace_hash,session_id_hash,task_hash,timestamp,tokens_in,tokens_out,commands,duration_ms,success,baseline_delta,feedback,safety_findings,dependency_findings,failure_category,raw_prompt_stored,raw_code_stored,redacted\n",
+        "schema_version,event_id,event_type,skill_id,observed_skill_name,skillset_id,agent,workspace_hash,session_id_hash,task_hash,timestamp,tokens_in,tokens_out,commands,duration_ms,success,baseline_delta,feedback,safety_findings,dependency_findings,failure_category,raw_prompt_stored,raw_code_stored,redacted\n",
     );
     for entry in entries {
         let event = &entry.event;
@@ -32,6 +32,7 @@ pub(super) fn export_csv(entries: &[TelemetryLogEntry]) -> String {
             event.event_id.clone(),
             event.event_type.as_str().to_string(),
             event.skill_id.clone().unwrap_or_default(),
+            event.observed_skill_name.clone().unwrap_or_default(),
             event.skillset_id.clone().unwrap_or_default(),
             event.agent.clone().unwrap_or_default(),
             event.workspace_hash.clone().unwrap_or_default(),

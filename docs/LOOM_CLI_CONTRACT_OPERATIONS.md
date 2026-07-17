@@ -439,6 +439,7 @@ Rules:
 loom --json --root <root> telemetry status
 loom --json --root <root> telemetry enable [--local-only]
 loom --json --root <root> telemetry disable
+loom --json --root <root> telemetry ingest --agent claude|codex|all [--since <date>] [--dry-run]
 loom --json --root <root> telemetry report [--skill <skill-id>] [--skillset <skillset-id>] [--agent <agent>] [--workspace <path>] [--since <date>]
 loom --json --root <root> telemetry export --format jsonl|csv --output <path> [--redacted]
 loom --json --root <root> telemetry purge [--before <date>] --dry-run
@@ -447,18 +448,21 @@ loom --json --root <root> skill used <skill-id> [--agent <agent>] [--workspace <
 loom --json --root <root> skill feedback <skill-id> --feedback <accepted|rejected|ignored> [--agent <agent>] [--workspace <path>] [--session-id <id>] [--task <text>]
 ```
 
-`status` and `report` are read-only. `enable`, `disable`, and confirmed
-`purge` mutate only `state/telemetry`. `export` writes only the explicit output
-path and must reject output under registry state.
+`status`, `report`, and `ingest --dry-run` are read-only. Durable `ingest`,
+`enable`, `disable`, and confirmed `purge` mutate only `state/telemetry`.
+`export` writes only the explicit output path and must reject output under
+registry state.
 
 Rules:
 
 1. telemetry is local-first and opt-in; absent config reports `enabled=false`.
 2. enabled config uses `state/telemetry/config.json`; events use append-only
    `state/telemetry/events.jsonl`.
-3. telemetry events use schema version 1, typed event families, hashed
-   workspace/session/task identifiers, and `privacy.raw_prompt_stored=false`,
-   `privacy.raw_code_stored=false`, `privacy.redacted=true`.
+3. telemetry readers accept event schema versions 1 through 3. New writers use
+   version 3, typed event families, hashed workspace/session/task identifiers,
+   and `privacy.raw_prompt_stored=false`, `privacy.raw_code_stored=false`,
+   `privacy.redacted=true`. Version 3 adds validated `observed_skill_name` for
+   unmatched invocations; it never stores raw transcript or source paths.
 4. disabled telemetry must not append telemetry events.
 5. existing malformed event lines are surfaced as quarantined warnings in
    status/report/export/purge responses; they are not silently dropped.
@@ -485,6 +489,30 @@ Rules:
    exposes both recent usage counts and recent error rate in `score_inputs`.
 13. Panel Telemetry consumes the same backend read model at
     `/api/v1/telemetry/report` and preserves missing evidence as missing.
+14. `telemetry ingest` accepts only tracked structured Claude/Codex invocation
+    anchors. Free-text mentions are not invocations; unknown identity-less
+    shapes and invalid observed names are counted under stable rejected reasons
+    without echoing raw values.
+15. Durable ingest requires enabled telemetry. It scans source logs outside the
+    workspace lock, then compare-and-commits deterministic event IDs and
+    `state/telemetry/ingest_cursor.json` under the lock. Events are flushed
+    before the cursor is atomically replaced; a concurrent cursor change causes
+    a bounded rescan.
+16. Cursor source keys and event identities are domain-separated hashes. The
+    cursor stores only generation, committed newline offset, boundary hash, and
+    earliest covered `--since`; it never stores raw paths. Partial trailing
+    records do not advance the committed offset or count as malformed.
+17. Cursor continuity is deliberately bounded so normal append scans do not
+    reread a potentially multi-gigabyte committed prefix. Loom guarantees reset
+    for truncation, source replacement or generation change, same-size rewrite,
+    and edits intersecting the bounded hash immediately before the committed
+    offset. An arbitrary earlier-prefix rewrite combined with file growth is not
+    guaranteed detectable; producers that rewrite logs non-append-only must
+    delete `state/telemetry/ingest_cursor.json` to force a full rescan.
+18. `telemetry report --skill <name>` filters and groups both registered
+    `skill_id` and validated unmatched `observed_skill_name` through one
+    normalized redacted query model. Agentless events match only an unfiltered
+    agent query.
 
 ## 12. Human-Friendly Use Flow
 

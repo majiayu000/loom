@@ -175,6 +175,9 @@ jobs:
           manifest = json.load(open(os.environ["MANIFEST"], encoding="utf-8"))
           assert status["cli_contract_version"] == manifest["cli_contract_version"]
           PY
+          LOOM_PACKAGED_CONTRACT_BUNDLE="$bundle" \
+            LOOM_PACKAGED_BINARY="$bin" \
+            cargo test --test release_contract packaged_surface_fixture_matrix -- --ignored --exact
           "$bin" --root "$smoke_root" panel --port 0 >/tmp/loom-panel-smoke.log 2>&1 &
           panel_pid="$!"
           sleep 1

@@ -8,6 +8,9 @@ use std::process::{Command, Output};
 
 use common::{TestDir, write_file};
 use serde_json::Value;
+use skillloom::cli_contract::{
+    CLI_CONTRACT_VERSION, check_surface_inventory, contract_version_matches,
+};
 
 struct Fixture {
     root: TestDir,
@@ -110,6 +113,40 @@ fn git(repo: &Path, args: &[&str]) -> String {
         .expect("git fixture output must be UTF-8")
         .trim()
         .to_string()
+}
+
+#[test]
+#[ignore = "release workflow supplies an unpacked, verified native bundle"]
+fn packaged_surface_fixture_matrix() {
+    let bundle = PathBuf::from(
+        std::env::var("LOOM_PACKAGED_CONTRACT_BUNDLE")
+            .expect("release workflow must provide LOOM_PACKAGED_CONTRACT_BUNDLE"),
+    );
+    let binary = PathBuf::from(
+        std::env::var("LOOM_PACKAGED_BINARY")
+            .expect("release workflow must provide LOOM_PACKAGED_BINARY"),
+    );
+    assert_eq!(
+        fs::read(bundle.join("contracts/agent-command-surfaces.toml"))
+            .expect("read packaged surface inventory"),
+        fs::read("docs/agent-command-surfaces.toml").expect("read source surface inventory")
+    );
+    let metadata = fs::read_to_string(bundle.join("skills/loom-registry/loom.skill.toml"))
+        .expect("read packaged Skill metadata");
+    assert!(metadata.contains("cli_contract = \">=1.0.0,<2.0.0\""));
+    assert!(contract_version_matches(">=1.0.0,<2.0.0", CLI_CONTRACT_VERSION).unwrap());
+    check_surface_inventory(Path::new(".")).expect("run the complete parser-backed fixture matrix");
+
+    let root = TestDir::new("packaged-contract-native-binary");
+    let output = Command::new(binary)
+        .args(["--json", "--root"])
+        .arg(root.path())
+        .args(["workspace", "status"])
+        .output()
+        .expect("run packaged native binary");
+    assert!(output.status.success(), "packaged binary status failed");
+    let envelope: Value = serde_json::from_slice(&output.stdout).expect("parse packaged envelope");
+    assert_eq!(envelope["cli_contract_version"], CLI_CONTRACT_VERSION);
 }
 
 #[test]

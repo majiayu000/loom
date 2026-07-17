@@ -9,6 +9,7 @@ use crate::{
     sha256::{Sha256, to_hex},
 };
 
+mod agent_capabilities;
 mod contract_policy;
 mod emitter_check;
 mod inventory;

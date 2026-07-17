@@ -6,6 +6,7 @@ use std::{
 
 use walkdir::WalkDir;
 
+use super::agent_capabilities::public_agent_capabilities;
 use super::{
     ExampleClassification, InventoryError, SurfaceExample, check_next_action_emitters,
     check_panel_mutations, load_surface_inventory, public_command_schema_capabilities,
@@ -27,6 +28,21 @@ pub fn check_surface_inventory(repo_root: &Path) -> Result<SurfaceCheckReport, I
         return Err(InventoryError::new(
             "agent capability inventory must not be empty",
         ));
+    }
+    if repo_root.join("src/envelope.rs").is_file() {
+        let expected = public_agent_capabilities()?;
+        let declared = inventory
+            .agent_capabilities
+            .iter()
+            .cloned()
+            .collect::<BTreeSet<_>>();
+        if declared != expected {
+            let missing = expected.difference(&declared).cloned().collect::<Vec<_>>();
+            let stale = declared.difference(&expected).cloned().collect::<Vec<_>>();
+            return Err(InventoryError::new(format!(
+                "agent capability snapshot differs from the serialized envelope and code-owned semantics; missing={missing:?}; stale={stale:?}"
+            )));
+        }
     }
     validate_public_surface_coverage(repo_root, &inventory.surfaces)?;
     let next_action_emitter_count =
@@ -60,13 +76,7 @@ pub fn check_surface_inventory(repo_root: &Path) -> Result<SurfaceCheckReport, I
                 ))
             })?;
         validate_ranges(&surface.path, lines.len(), examples)?;
-        for (offset, line) in lines.iter().enumerate() {
-            let line_number = offset + 1;
-            let logical_line = join_continuation_lines(&lines, offset, line);
-            let commands = extract_loom_commands(&logical_line);
-            if commands.is_empty() {
-                continue;
-            }
+        for (line_number, commands) in extract_surface_commands(&lines) {
             let covering = examples
                 .iter()
                 .filter(|example| (example.start_line..=example.end_line).contains(&line_number))
@@ -193,10 +203,8 @@ fn validate_public_surface_coverage(
             let source = fs::read_to_string(entry.path()).map_err(|error| {
                 InventoryError::new(format!("{}: {error}", entry.path().display()))
             })?;
-            if !source
-                .lines()
-                .any(|line| !extract_loom_commands(line).is_empty())
-            {
+            let lines = source.lines().collect::<Vec<_>>();
+            if extract_surface_commands(&lines).is_empty() {
                 continue;
             }
             let relative = entry.path().strip_prefix(repo_root).map_err(|error| {
@@ -274,6 +282,60 @@ pub(super) fn extract_loom_commands(line: &str) -> Vec<String> {
     commands
 }
 
+fn extract_surface_commands(lines: &[&str]) -> Vec<(usize, Vec<String>)> {
+    let mut commands = Vec::new();
+    let mut fence: Option<(char, bool)> = None;
+    for (offset, line) in lines.iter().enumerate() {
+        let trimmed = line.trim_start();
+        if let Some(marker) = fence_marker(trimmed) {
+            match fence {
+                Some((active, _)) if active == marker => fence = None,
+                None => fence = Some((marker, is_shell_fence(trimmed, marker))),
+                _ => {}
+            }
+            continue;
+        }
+        let logical_line = join_continuation_lines(lines, offset, line);
+        let extracted = if fence.is_some_and(|(_, is_shell)| is_shell) {
+            let mut extracted = Vec::new();
+            push_commands(&logical_line, &mut extracted);
+            extracted.sort();
+            extracted.dedup();
+            extracted
+        } else {
+            extract_loom_commands(&logical_line)
+        };
+        if !extracted.is_empty() {
+            commands.push((offset + 1, extracted));
+        }
+    }
+    commands
+}
+
+fn fence_marker(line: &str) -> Option<char> {
+    if line.starts_with("```") {
+        Some('`')
+    } else if line.starts_with("~~~") {
+        Some('~')
+    } else {
+        None
+    }
+}
+
+fn is_shell_fence(line: &str, marker: char) -> bool {
+    let language = line
+        .trim_start_matches(marker)
+        .trim()
+        .split_whitespace()
+        .next()
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    matches!(
+        language.as_str(),
+        "" | "sh" | "bash" | "shell" | "zsh" | "console"
+    )
+}
+
 fn push_commands(value: &str, commands: &mut Vec<String>) {
     let mut remaining = value;
     while let Some(index) = find_command_start(remaining) {
@@ -315,31 +377,17 @@ fn find_command_start(value: &str) -> Option<usize> {
 }
 
 pub(super) fn normalize_command(command: &str) -> Vec<String> {
-    let mut argv = Vec::new();
-    let mut optional_group = false;
-    for raw in shell_tokens(command) {
-        if raw.starts_with('[') {
-            optional_group = true;
-        }
-        if !optional_group {
-            let token = raw
-                .trim_matches(|character| matches!(character, '"' | '\'' | '(' | ')' | ',' | '\\'));
-            if !token.is_empty() {
-                argv.push(normalize_token(token));
-            }
-        }
-        if raw.ends_with(']') {
-            optional_group = false;
-        }
-    }
-    argv
+    normalize_command_variants(command)
+        .into_iter()
+        .next()
+        .unwrap_or_default()
 }
 
 pub(super) fn command_variants(
     command: &str,
     classification: ExampleClassification,
 ) -> Vec<Vec<String>> {
-    let mut variants = vec![normalize_command(command)];
+    let mut variants = normalize_command_variants(command);
     if classification != ExampleClassification::OutputExample {
         return variants;
     }
@@ -370,6 +418,78 @@ pub(super) fn command_variants(
             variant.push("--help".to_string());
         }
     }
+    variants
+}
+
+fn normalize_command_variants(command: &str) -> Vec<Vec<String>> {
+    let mut variants = vec![Vec::new()];
+    let mut optional = vec![Vec::new()];
+    let mut in_optional = false;
+    for raw in shell_tokens(command) {
+        let starts_optional = raw.starts_with('[');
+        let ends_optional = raw.ends_with(']');
+        if starts_optional {
+            in_optional = true;
+        }
+        if in_optional && raw == "|" {
+            optional.push(Vec::new());
+            continue;
+        }
+        let token = raw.trim_matches(|character| {
+            matches!(character, '"' | '\'' | '(' | ')' | ',' | '\\' | '[' | ']')
+        });
+        if !token.is_empty() {
+            let token = normalize_token(token);
+            if token.is_empty() {
+                continue;
+            } else if in_optional {
+                match optional.last_mut() {
+                    Some(tokens) => tokens.push(token),
+                    None => optional.push(vec![token]),
+                }
+            } else {
+                for variant in &mut variants {
+                    variant.push(token.clone());
+                }
+            }
+        }
+        if ends_optional && in_optional {
+            let included = variants
+                .iter()
+                .flat_map(|variant| {
+                    optional
+                        .iter()
+                        .filter(|tokens| !tokens.is_empty())
+                        .map(move |tokens| {
+                            let mut included = variant.clone();
+                            included.extend(tokens.iter().cloned());
+                            included
+                        })
+                })
+                .collect::<Vec<_>>();
+            variants.extend(included);
+            optional = vec![Vec::new()];
+            in_optional = false;
+        }
+    }
+    if in_optional && optional.iter().any(|tokens| !tokens.is_empty()) {
+        let included = variants
+            .iter()
+            .flat_map(|variant| {
+                optional
+                    .iter()
+                    .filter(|tokens| !tokens.is_empty())
+                    .map(move |tokens| {
+                        let mut included = variant.clone();
+                        included.extend(tokens.iter().cloned());
+                        included
+                    })
+            })
+            .collect::<Vec<_>>();
+        variants.extend(included);
+    }
+    variants.sort();
+    variants.dedup();
     variants
 }
 
@@ -469,6 +589,7 @@ fn placeholder_value(token: &str) -> String {
     } else if lower.contains("strategy") {
         "local".to_string()
     } else if lower == "n"
+        || lower == "ms"
         || lower.contains("count")
         || lower.contains("seconds")
         || lower.ends_with("-ms")
@@ -484,5 +605,39 @@ fn placeholder_value(token: &str) -> String {
         "skill".to_string()
     } else {
         "fixture".to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ExampleClassification, command_variants, extract_surface_commands};
+
+    #[test]
+    fn optional_groups_keep_included_flag_variants() {
+        let variants = command_variants(
+            "loom skill watch demo [--max-cycles 1]",
+            ExampleClassification::Executable,
+        );
+        assert!(variants.contains(&vec![
+            "loom".to_string(),
+            "skill".to_string(),
+            "watch".to_string(),
+            "demo".to_string(),
+            "--max-cycles".to_string(),
+            "1".to_string(),
+        ]));
+    }
+
+    #[test]
+    fn shell_fences_scan_commands_after_assignments_and_env() {
+        let lines = [
+            "```bash",
+            "LOOM_ROOT=/tmp/demo loom skill save demo",
+            "env FOO=1 loom workspace status",
+            "```",
+        ];
+        let commands = extract_surface_commands(&lines);
+        assert_eq!(commands[0].1, ["loom skill save demo"]);
+        assert_eq!(commands[1].1, ["loom workspace status"]);
     }
 }

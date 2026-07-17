@@ -185,13 +185,10 @@ impl App {
                 "message": "--require-runtime resolved no active projection",
             }));
         }
-        let mut risks = policy_risks(policy);
-        risks.push(json!({
-            "code": "CONVERGENCE_EXECUTOR_UNAVAILABLE",
-            "risk_level": "error",
-            "blocks_apply": true,
-            "details": "this tranche persists reviewed convergence plans but does not execute them",
-        }));
+        let risks = policy_risks(policy);
+        let safe_to_apply = conflicts.is_empty()
+            && plan.required_approvals.is_empty()
+            && !risks.iter().any(|risk| risk["blocks_apply"] == json!(true));
 
         let mut output = serde_json::to_value(&plan).map_err(map_io)?;
         let object = output.as_object_mut().ok_or_else(|| {
@@ -207,8 +204,8 @@ impl App {
         );
         object.insert("operation".to_string(), json!("converge"));
         object.insert("requires_digest_confirmation".to_string(), json!(true));
-        object.insert("execution_enabled".to_string(), json!(false));
-        object.insert("safe_to_apply".to_string(), json!(false));
+        object.insert("execution_enabled".to_string(), json!(true));
+        object.insert("safe_to_apply".to_string(), json!(safe_to_apply));
         object.insert("effects".to_string(), json!(plan.projections));
         object.insert(
             "projection_state".to_string(),
@@ -220,7 +217,7 @@ impl App {
         );
         object.insert("conflicts".to_string(), json!(conflicts));
         object.insert("risks".to_string(), json!(risks));
-        object.insert("recovery".to_string(), json!({"rollback_supported": false}));
+        object.insert("recovery".to_string(), json!({"rollback_supported": true}));
         object.insert(
             "guards".to_string(),
             json!({

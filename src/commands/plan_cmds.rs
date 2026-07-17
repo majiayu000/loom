@@ -23,6 +23,7 @@ use super::skill_policy::evaluate_skill_policy;
 use super::{App, CommandFailure};
 
 mod converge;
+mod convergence_transaction;
 
 const PLAN_PROTOCOL_VERSION: &str = "1.0";
 const PLAN_SCHEMA_VERSION: &str = "1.0";
@@ -80,17 +81,14 @@ impl App {
             ));
         }
         if stored.kind == StoredPlanKind::Converge {
-            return Err(plan_failure(
-                ErrorCode::PolicyBlocked,
-                "convergence apply is not enabled in this planning-only implementation tranche",
-                "CONVERGENCE_EXECUTOR_UNAVAILABLE",
-                false,
-                vec![
-                    "retain the immutable plan until convergence execution is available"
-                        .to_string(),
-                ],
-                Some(stored.cursor),
-            ));
+            let output = convergence_transaction::apply_convergence(
+                self,
+                stored.plan,
+                stored.cursor,
+                &idempotency_key_digest,
+                request_id,
+            )?;
+            return Ok((output, Meta::default()));
         }
 
         validate_plan_guards(stored.plan, stored.cursor, &args.approvals, &self.ctx.root)?;
@@ -294,8 +292,7 @@ fn validate_stored_plan_metadata(
             stored.plan["operation"] == json!("converge")
                 && stored.plan["schema_version"] == json!("1.2")
                 && stored.plan["requires_digest_confirmation"] == json!(true)
-                && stored.plan["execution_enabled"] == json!(false)
-                && stored.plan["safe_to_apply"] == json!(false)
+                && stored.plan["execution_enabled"] == json!(true)
         }
     };
     if valid {

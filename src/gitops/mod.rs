@@ -226,6 +226,15 @@ pub fn restore_index(ctx: &AppContext, snapshot: &IndexSnapshot) -> Result<()> {
     restore_index_with_env(ctx, snapshot, &[])
 }
 
+pub fn restore_index_from_backup(ctx: &AppContext, backup_path: &Path) -> Result<()> {
+    let snapshot = IndexSnapshot {
+        backup_path: backup_path.to_path_buf(),
+    };
+    let result = restore_index_with_env(ctx, &snapshot, &[]);
+    std::mem::forget(snapshot);
+    result
+}
+
 fn restore_index_with_env(
     ctx: &AppContext,
     snapshot: &IndexSnapshot,

@@ -502,7 +502,14 @@ Rules:
     cursor stores only generation, committed newline offset, boundary hash, and
     earliest covered `--since`; it never stores raw paths. Partial trailing
     records do not advance the committed offset or count as malformed.
-17. `telemetry report --skill <name>` filters and groups both registered
+17. Cursor continuity is deliberately bounded so normal append scans do not
+    reread a potentially multi-gigabyte committed prefix. Loom guarantees reset
+    for truncation, source replacement or generation change, same-size rewrite,
+    and edits intersecting the bounded hash immediately before the committed
+    offset. An arbitrary earlier-prefix rewrite combined with file growth is not
+    guaranteed detectable; producers that rewrite logs non-append-only must
+    delete `state/telemetry/ingest_cursor.json` to force a full rescan.
+18. `telemetry report --skill <name>` filters and groups both registered
     `skill_id` and validated unmatched `observed_skill_name` through one
     normalized redacted query model. Agentless events match only an unfiltered
     agent query.
@@ -535,14 +542,20 @@ Rules:
 
 ```bash
 loom --json --root <root> plan use <skill-id> --agents <agent[,agent]> [--scope <user|project>] [--workspace <path>] [--profile <id>] [--method <symlink|copy|materialize>] [--target-root <path>]
+loom --json --root <root> plan converge <skill-id> [--from-source | --from-projection --instance <id>] [--agent <agent>] [--workspace <path>] [--profile <id>] [--require-runtime] [--accept-restart-required] [--push-remote]
 loom --json --root <root> apply <plan-id> --idempotency-key <key> [--approve <token[,token]>]
+loom --json --root <root> apply <convergence-plan-id> --plan-digest <digest> --idempotency-key <key>
 ```
 
 `plan use` creates a durable, audited plan for the same target/binding/projection setup that `loom use --apply` performs. Plan creation must not mutate registry state, Git refs, operation backlog, or live target directories; its only durable write is the command-audit event under `state/events/commands.jsonl`.
 
+`plan converge` creates a typed immutable plan for one Skill change. It resolves only existing active bindings and rules selected by agent, workspace, and profile; records source, registry checkpoint, projection, visibility, required-axis, acceptance, and remote-policy evidence; and returns a canonical `plan_digest`. The digest excludes the random `plan_id`, so identical evidence and selectors produce the same digest. Planning writes only command audit and reports `execution_enabled=false` and `safe_to_apply=false` in this rollout tranche. It emits no apply next action.
+
+Convergence plans require the exact non-empty `--plan-digest` returned by planning. Missing or mismatched confirmation fails before any domain write. Even with a matching digest, apply currently fails closed with `POLICY_BLOCKED` / `CONVERGENCE_EXECUTOR_UNAVAILABLE`; clients must not retry it as an enabled mutation. Existing `plan use` records remain compatible and do not require `--plan-digest`.
+
 The top-level `plan` command owns durable plan creation. The top-level `apply` command owns guarded plan execution.
 
-The plan JSON schema is versioned separately from the binary package version at `docs/schemas/agent-plan-v1.schema.json`. Current plans use `protocol_version: "1.0"` and `schema_version: "1.0"`.
+The plan JSON schema is versioned separately from the binary package version at `docs/schemas/agent-plan-v1.schema.json`. Current plans use `protocol_version: "1.0"`; `plan use` uses `schema_version: "1.0"`, while the additive typed `plan converge` shape uses `schema_version: "1.1"`.
 
 Rules:
 

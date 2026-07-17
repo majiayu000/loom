@@ -6,6 +6,7 @@ use serde_json::{Value, json};
 use uuid::Uuid;
 
 use crate::cli::{ApplyArgs, PlanCommand, PlanUseArgs, UseArgs};
+use crate::core::convergence::SkillConvergencePlan;
 use crate::envelope::Meta;
 use crate::gitops;
 use crate::next_action_trace::observe_next_actions;
@@ -21,6 +22,8 @@ use super::provenance::skill_tree_digest;
 use super::skill_policy::evaluate_skill_policy;
 use super::{App, CommandFailure};
 
+mod converge;
+
 const PLAN_PROTOCOL_VERSION: &str = "1.0";
 const PLAN_SCHEMA_VERSION: &str = "1.0";
 
@@ -30,6 +33,7 @@ impl App {
         command: &PlanCommand,
     ) -> std::result::Result<(Value, Meta), CommandFailure> {
         match command {
+            PlanCommand::Converge(args) => self.cmd_plan_converge(args),
             PlanCommand::Use(args) => self.cmd_plan_use(args),
         }
     }
@@ -41,8 +45,27 @@ impl App {
     ) -> std::result::Result<(Value, Meta), CommandFailure> {
         validate_plan_id(&args.plan_id)?;
         validate_idempotency_key(&args.idempotency_key)?;
-        let idempotency_key_digest = idempotency_key_digest(&args.idempotency_key);
         let events = read_command_events(&self.ctx).map_err(map_io)?;
+        let stored = find_plan(&events, &args.plan_id).ok_or_else(|| {
+            plan_failure(
+                ErrorCode::ArgInvalid,
+                format!("plan '{}' not found", args.plan_id),
+                "PLAN_NOT_FOUND",
+                false,
+                vec!["create a fresh durable plan".to_string()],
+                None,
+            )
+        })?;
+        validate_stored_plan_metadata(&stored)?;
+        if stored.kind == StoredPlanKind::Converge {
+            validate_confirmed_plan_digest(
+                stored.plan,
+                stored.cursor,
+                args.plan_digest.as_deref(),
+            )?;
+        }
+
+        let idempotency_key_digest = idempotency_key_digest(&args.idempotency_key);
         if let Some(replay) = find_prior_apply(&events, &args.plan_id, &idempotency_key_digest)? {
             return Ok((replay, Meta::default()));
         }
@@ -56,17 +79,20 @@ impl App {
                 Some(conflict.cursor),
             ));
         }
-
-        let stored = find_plan(&events, &args.plan_id).ok_or_else(|| {
-            plan_failure(
-                ErrorCode::ArgInvalid,
-                format!("plan '{}' not found", args.plan_id),
-                "PLAN_NOT_FOUND",
+        if stored.kind == StoredPlanKind::Converge {
+            return Err(plan_failure(
+                ErrorCode::PolicyBlocked,
+                "convergence apply is not enabled in this planning-only implementation tranche",
+                "CONVERGENCE_EXECUTOR_UNAVAILABLE",
                 false,
-                vec!["create a fresh plan with `loom plan use ...`".to_string()],
-                None,
-            )
-        })?;
+                vec![
+                    "retain the immutable plan until convergence execution is available"
+                        .to_string(),
+                ],
+                Some(stored.cursor),
+            ));
+        }
+
         validate_plan_guards(stored.plan, stored.cursor, &args.approvals, &self.ctx.root)?;
 
         let mut use_args = plan_use_args(stored.plan)?;
@@ -158,6 +184,13 @@ impl App {
 struct StoredPlan<'a> {
     cursor: usize,
     plan: &'a Value,
+    kind: StoredPlanKind,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum StoredPlanKind {
+    Use,
+    Converge,
 }
 
 fn use_args_from_plan(
@@ -218,15 +251,119 @@ fn plan_use_args(plan: &Value) -> std::result::Result<UseArgs, CommandFailure> {
 
 fn find_plan<'a>(events: &'a [CommandEventRow], plan_id: &str) -> Option<StoredPlan<'a>> {
     events.iter().rev().find_map(|row| {
-        if row.event.cmd != "plan.use" || row.event.status != "succeeded" {
+        let kind = match row.event.cmd.as_str() {
+            "plan.use" => StoredPlanKind::Use,
+            "plan.converge" => StoredPlanKind::Converge,
+            _ => return None,
+        };
+        if row.event.status != "succeeded" {
             return None;
         }
         let plan = row.event.output.as_ref()?;
         (plan["plan_id"].as_str() == Some(plan_id)).then_some(StoredPlan {
             cursor: row.cursor,
             plan,
+            kind,
         })
     })
+}
+
+fn validate_stored_plan_metadata(
+    stored: &StoredPlan<'_>,
+) -> std::result::Result<(), CommandFailure> {
+    let valid = match stored.kind {
+        StoredPlanKind::Use => {
+            stored.plan["operation"] == json!("use")
+                && stored.plan["schema_version"] == json!(PLAN_SCHEMA_VERSION)
+                && stored.plan["requires_digest_confirmation"] != json!(true)
+        }
+        StoredPlanKind::Converge => {
+            stored.plan["operation"] == json!("converge")
+                && stored.plan["schema_version"] == json!("1.1")
+                && stored.plan["requires_digest_confirmation"] == json!(true)
+                && stored.plan["execution_enabled"] == json!(false)
+                && stored.plan["safe_to_apply"] == json!(false)
+        }
+    };
+    if valid {
+        return Ok(());
+    }
+    Err(plan_failure(
+        ErrorCode::StateCorrupt,
+        "stored plan metadata does not match its command event kind",
+        "PLAN_CORRUPT",
+        false,
+        vec!["discard the corrupted plan and create a fresh durable plan".to_string()],
+        Some(stored.cursor),
+    ))
+}
+
+fn validate_confirmed_plan_digest(
+    plan: &Value,
+    cursor: usize,
+    confirmed: Option<&str>,
+) -> std::result::Result<(), CommandFailure> {
+    let expected = plan["plan_digest"].as_str().ok_or_else(|| {
+        plan_failure(
+            ErrorCode::StateCorrupt,
+            "stored convergence plan is missing plan_digest",
+            "PLAN_CORRUPT",
+            false,
+            vec!["create a fresh convergence plan".to_string()],
+            Some(cursor),
+        )
+    })?;
+    let typed = serde_json::from_value::<SkillConvergencePlan>(plan.clone()).map_err(|err| {
+        plan_failure(
+            ErrorCode::StateCorrupt,
+            format!("stored convergence plan payload is invalid: {err}"),
+            "PLAN_CORRUPT",
+            false,
+            vec!["create a fresh convergence plan".to_string()],
+            Some(cursor),
+        )
+    })?;
+    let recomputed = typed.canonical_digest().map_err(|err| {
+        plan_failure(
+            ErrorCode::StateCorrupt,
+            format!("stored convergence plan digest could not be recomputed: {err}"),
+            "PLAN_CORRUPT",
+            false,
+            vec!["create a fresh convergence plan".to_string()],
+            Some(cursor),
+        )
+    })?;
+    if expected != recomputed {
+        return Err(plan_failure(
+            ErrorCode::StateCorrupt,
+            "stored convergence plan payload does not match its plan_digest",
+            "PLAN_DIGEST_INVALID",
+            false,
+            vec!["discard the corrupted plan and create a fresh convergence plan".to_string()],
+            Some(cursor),
+        ));
+    }
+    let Some(confirmed) = confirmed.filter(|value| !value.trim().is_empty()) else {
+        return Err(plan_failure(
+            ErrorCode::ArgInvalid,
+            "--plan-digest is required for convergence plans",
+            "PLAN_DIGEST_REQUIRED",
+            true,
+            vec!["rerun apply with the exact plan_digest returned by plan converge".to_string()],
+            Some(cursor),
+        ));
+    };
+    if confirmed != expected {
+        return Err(plan_failure(
+            ErrorCode::DependencyConflict,
+            "confirmed plan digest does not match the stored convergence plan",
+            "PLAN_DIGEST_MISMATCH",
+            false,
+            vec!["review the stored plan and use its exact plan_digest".to_string()],
+            Some(cursor),
+        ));
+    }
+    Ok(())
 }
 
 fn find_prior_apply(

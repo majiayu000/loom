@@ -19,6 +19,12 @@ pub(super) struct Context {
 pub(super) fn parse_record(value: &Value, context: &mut Context) -> ParseOutcome {
     match value.get("type").and_then(Value::as_str) {
         Some("session_meta") => {
+            context.session_id = None;
+            context.session_workspace = None;
+            context.workspace = None;
+            context.turn_id = None;
+            context.mentioned_skills.clear();
+            context.next_skill_ordinal = 0;
             let Some(payload) = value.get("payload") else {
                 return ParseOutcome::Rejected("missing_session_metadata");
             };
@@ -26,6 +32,7 @@ pub(super) fn parse_record(value: &Value, context: &mut Context) -> ParseOutcome
                 .get("session_id")
                 .or_else(|| payload.get("id"))
                 .and_then(Value::as_str)
+                .filter(|session_id| !session_id.is_empty())
             else {
                 return ParseOutcome::Rejected("missing_session_identity");
             };
@@ -79,17 +86,19 @@ fn parse_response_item(value: &Value, context: &mut Context) -> ParseOutcome {
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
+    let mut mentioned_skills = context.mentioned_skills.clone();
     let mut names = Vec::new();
     for text in texts {
         if let Some(structured_name) = structured_skill_name(text) {
-            if take_mentioned_skill(&mut context.mentioned_skills, structured_name) {
+            if take_mentioned_skill(&mut mentioned_skills, structured_name) {
                 names.push(structured_name);
             }
             continue;
         }
-        collect_skill_mentions(text, &mut context.mentioned_skills);
+        collect_skill_mentions(text, &mut mentioned_skills);
     }
     if names.is_empty() {
+        context.mentioned_skills = mentioned_skills;
         return ParseOutcome::Ignored;
     }
     let Some(stable_record_key) = context.turn_id.as_deref() else {
@@ -105,6 +114,7 @@ fn parse_response_item(value: &Value, context: &mut Context) -> ParseOutcome {
     let Some(next_skill_ordinal) = context.next_skill_ordinal.checked_add(names.len()) else {
         return ParseOutcome::Rejected("invocation_ordinal_overflow");
     };
+    context.mentioned_skills = mentioned_skills;
     context.next_skill_ordinal = next_skill_ordinal;
     ParseOutcome::Record(ImportedRecord {
         stable_record_key: stable_record_key.to_string(),
@@ -505,5 +515,88 @@ mod tests {
         assert_eq!(record.stable_record_key, "turn-2");
         assert_eq!(record.workspace, Some(PathBuf::from("/session")));
         assert_eq!(record.invocations[0].ordinal, 0);
+    }
+
+    #[test]
+    fn rejected_injection_preserves_mention_for_a_valid_retry() {
+        let mut context = Context::default();
+        for value in [
+            json!({"type":"session_meta","payload":{"id":"session"}}),
+            json!({"type":"turn_context","payload":{"turn_id":"turn-1"}}),
+            json!({
+                "type":"response_item",
+                "payload":{"type":"message","role":"user","content":[{
+                    "type":"input_text","text":"please use $demo"
+                }]}
+            }),
+        ] {
+            assert!(matches!(
+                parse_record(&value, &mut context),
+                ParseOutcome::Ignored
+            ));
+        }
+        let missing_timestamp = json!({
+            "type":"response_item",
+            "payload":{"type":"message","role":"user","content":[{
+                "type":"input_text","text":"<skill><name>demo</name>body</skill>"
+            }]}
+        });
+        assert!(matches!(
+            parse_record(&missing_timestamp, &mut context),
+            ParseOutcome::Rejected("invalid_timestamp")
+        ));
+        let mut valid = missing_timestamp;
+        valid["timestamp"] = json!("2026-07-01T00:00:00Z");
+        assert!(matches!(
+            parse_record(&valid, &mut context),
+            ParseOutcome::Record(_)
+        ));
+    }
+
+    #[test]
+    fn empty_session_identity_is_rejected() {
+        let mut context = Context::default();
+        assert!(matches!(
+            parse_record(
+                &json!({"type":"session_meta","payload":{"id":""}}),
+                &mut context,
+            ),
+            ParseOutcome::Rejected("missing_session_identity")
+        ));
+    }
+
+    #[test]
+    fn malformed_session_boundary_clears_previous_turn_state() {
+        let mut context = Context::default();
+        for value in [
+            json!({"type":"session_meta","payload":{"id":"session"}}),
+            json!({"type":"turn_context","payload":{"turn_id":"turn-1"}}),
+            json!({
+                "type":"response_item",
+                "payload":{"type":"message","role":"user","content":[{
+                    "type":"input_text","text":"please use $demo"
+                }]}
+            }),
+        ] {
+            assert!(matches!(
+                parse_record(&value, &mut context),
+                ParseOutcome::Ignored
+            ));
+        }
+        assert!(matches!(
+            parse_record(&json!({"type":"session_meta"}), &mut context),
+            ParseOutcome::Rejected("missing_session_metadata")
+        ));
+        let stale_injection = json!({
+            "timestamp":"2026-07-01T00:00:00Z",
+            "type":"response_item",
+            "payload":{"type":"message","role":"user","content":[{
+                "type":"input_text","text":"<skill><name>demo</name>body</skill>"
+            }]}
+        });
+        assert!(matches!(
+            parse_record(&stale_injection, &mut context),
+            ParseOutcome::Ignored
+        ));
     }
 }

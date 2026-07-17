@@ -285,7 +285,9 @@ fn enforce_capability_version(
             "CLI contract version must not move backwards",
         ));
     }
-    let removed = base.difference(current).next().is_some();
+    let removed = base
+        .difference(current)
+        .any(|capability| !replaced_aggregate_fingerprint(capability, current));
     let added = current.difference(base).next().is_some();
     if removed && current_version.major <= base_version.major {
         return Err(InventoryError::new(
@@ -302,6 +304,21 @@ fn enforce_capability_version(
         ));
     }
     Ok(())
+}
+
+fn replaced_aggregate_fingerprint(capability: &str, current: &BTreeSet<String>) -> bool {
+    let kind = capability.strip_prefix("cli:").unwrap_or(capability);
+    if !kind.starts_with("argument-group:") {
+        return false;
+    }
+    let Some((identity, _)) = capability.rsplit_once(":sha256:") else {
+        return false;
+    };
+    current.iter().any(|candidate| {
+        candidate
+            .rsplit_once(":sha256:")
+            .is_some_and(|(candidate_identity, _)| candidate_identity == identity)
+    })
 }
 
 pub(super) fn contract_range(raw: &str, location: &str) -> Result<String, InventoryError> {
@@ -455,6 +472,32 @@ mod tests {
         assert!(error.to_string().contains("major bump"), "{error}");
         enforce_capability_version(version(1, 0, 0), version(2, 0, 0), &base, &removed)
             .expect("major bump admits removal of a public command");
+    }
+
+    #[test]
+    fn additive_argument_group_fingerprint_replacement_requires_only_minor_bump() {
+        let base = BTreeSet::from([
+            "argument-core:loom/apply:plan_id:sha256:stable".to_string(),
+            "argument-group:loom/apply:ApplyArgs:sha256:old".to_string(),
+        ]);
+        let additive = BTreeSet::from([
+            "argument-core:loom/apply:plan_digest:sha256:new".to_string(),
+            "argument-core:loom/apply:plan_id:sha256:stable".to_string(),
+            "argument-group:loom/apply:ApplyArgs:sha256:new".to_string(),
+        ]);
+        let error =
+            enforce_capability_version(version(1, 1, 0), version(1, 1, 1), &base, &additive)
+                .expect_err("patch bump must not admit an additive optional flag");
+        assert!(error.to_string().contains("minor bump"), "{error}");
+        enforce_capability_version(version(1, 1, 0), version(1, 2, 0), &base, &additive)
+            .expect("minor bump admits an additive optional flag and replacement fingerprint");
+
+        let removed_group =
+            BTreeSet::from(["argument-core:loom/apply:plan_id:sha256:stable".to_string()]);
+        let error =
+            enforce_capability_version(version(1, 1, 0), version(1, 2, 0), &base, &removed_group)
+                .expect_err("removing an aggregate group without replacement remains breaking");
+        assert!(error.to_string().contains("major bump"), "{error}");
     }
 
     #[test]

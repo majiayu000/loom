@@ -93,6 +93,7 @@ pub(crate) fn command_name(command: &Command) -> &'static str {
         Command::Monitor(_) => "monitor",
         Command::Use(_) => "use",
         Command::Plan { command } => match command {
+            PlanCommand::Converge(_) => "plan.converge",
             PlanCommand::Use(_) => "plan.use",
         },
         Command::Apply(_) => "apply",

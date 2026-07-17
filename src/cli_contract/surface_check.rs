@@ -351,9 +351,14 @@ fn is_shell_fence(line: &str, marker: char) -> bool {
 
 fn push_commands(value: &str, commands: &mut Vec<String>) {
     let mut remaining = value;
-    while let Some(index) = find_command_start(remaining) {
-        let candidate = &remaining[index..];
-        let end = ['`', ';', '#']
+    loop {
+        let searchable_end = shell_comment_start(remaining).unwrap_or(remaining.len());
+        let searchable = &remaining[..searchable_end];
+        let Some(index) = find_command_start(searchable) else {
+            break;
+        };
+        let candidate = &searchable[index..];
+        let end = ['`', ';']
             .into_iter()
             .filter_map(|delimiter| candidate.find(delimiter))
             .chain(
@@ -377,6 +382,44 @@ fn push_commands(value: &str, commands: &mut Vec<String>) {
         }
         remaining = &remaining[1..];
     }
+}
+
+fn shell_comment_start(value: &str) -> Option<usize> {
+    let mut in_single_quotes = false;
+    let mut in_double_quotes = false;
+    let mut escaped = false;
+    let mut at_word_start = true;
+    for (index, character) in value.char_indices() {
+        if escaped {
+            escaped = false;
+            at_word_start = false;
+            continue;
+        }
+        if character == '\\' && !in_single_quotes {
+            escaped = true;
+            continue;
+        }
+        if character == '\'' && !in_double_quotes {
+            in_single_quotes = !in_single_quotes;
+            at_word_start = false;
+            continue;
+        }
+        if character == '"' && !in_single_quotes {
+            in_double_quotes = !in_double_quotes;
+            at_word_start = false;
+            continue;
+        }
+        if in_single_quotes || in_double_quotes {
+            at_word_start = false;
+            continue;
+        }
+        if character == '#' && at_word_start {
+            return Some(index);
+        }
+        at_word_start =
+            character.is_whitespace() || matches!(character, ';' | '|' | '&' | '(' | ')' | '`');
+    }
+    None
 }
 
 fn find_command_start(value: &str) -> Option<usize> {
@@ -699,6 +742,50 @@ mod tests {
         let commands = extract_surface_commands(&lines);
         assert_eq!(commands[0].1, ["loom skill save demo"]);
         assert_eq!(commands[1].1, ["loom workspace status"]);
+    }
+
+    #[test]
+    fn shell_comments_hide_later_loom_commands() {
+        let lines = [
+            "```bash",
+            "# old: loom skill save demo",
+            "loom workspace status # old: loom skill save demo",
+            "loom workspace status; # old: loom skill save demo",
+            "loom workspace status && # old: loom skill save demo",
+            "`loom workspace status` # old: loom skill save demo",
+            "```",
+        ];
+        let commands = extract_surface_commands(&lines);
+        assert_eq!(commands[0].1, ["loom workspace status"]);
+        assert_eq!(commands[1].1, ["loom workspace status"]);
+        assert_eq!(commands[2].1, ["loom workspace status"]);
+        assert_eq!(commands[3].1, ["loom workspace status"]);
+        assert_eq!(commands.len(), 4);
+    }
+
+    #[test]
+    fn shell_hashes_inside_words_quotes_and_escapes_are_not_comments() {
+        let lines = [
+            "```bash",
+            "echo foo#bar; loom workspace status",
+            "printf '# old'; loom workspace status",
+            "printf \"# old\"; loom workspace status",
+            "printf \\#; loom workspace status",
+            "echo foo\\ #bar; loom workspace status",
+            "echo foo\\;#bar; loom workspace status",
+            "echo foo\\|#bar; loom workspace status",
+            "echo foo\\&#bar; loom workspace status",
+            "echo foo\\(#bar; loom workspace status",
+            "echo foo\\`#bar; loom workspace status",
+            "```",
+        ];
+        let commands = extract_surface_commands(&lines);
+        assert_eq!(commands.len(), 10);
+        assert!(
+            commands
+                .iter()
+                .all(|(_, commands)| commands == &["loom workspace status"])
+        );
     }
 
     #[test]

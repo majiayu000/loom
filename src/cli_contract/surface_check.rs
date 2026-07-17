@@ -388,9 +388,11 @@ fn shell_comment_start(value: &str) -> Option<usize> {
     let mut in_single_quotes = false;
     let mut in_double_quotes = false;
     let mut escaped = false;
+    let mut at_word_start = true;
     for (index, character) in value.char_indices() {
         if escaped {
             escaped = false;
+            at_word_start = false;
             continue;
         }
         if character == '\\' && !in_single_quotes {
@@ -399,21 +401,23 @@ fn shell_comment_start(value: &str) -> Option<usize> {
         }
         if character == '\'' && !in_double_quotes {
             in_single_quotes = !in_single_quotes;
+            at_word_start = false;
             continue;
         }
         if character == '"' && !in_single_quotes {
             in_double_quotes = !in_double_quotes;
+            at_word_start = false;
             continue;
         }
-        if character != '#' || in_single_quotes || in_double_quotes {
+        if in_single_quotes || in_double_quotes {
+            at_word_start = false;
             continue;
         }
-        let previous = value[..index].chars().next_back();
-        if previous.is_none_or(|character| {
-            character.is_whitespace() || matches!(character, ';' | '|' | '&' | '(' | ')' | '`')
-        }) {
+        if character == '#' && at_word_start {
             return Some(index);
         }
+        at_word_start =
+            character.is_whitespace() || matches!(character, ';' | '|' | '&' | '(' | ')' | '`');
     }
     None
 }
@@ -767,10 +771,16 @@ mod tests {
             "printf '# old'; loom workspace status",
             "printf \"# old\"; loom workspace status",
             "printf \\#; loom workspace status",
+            "echo foo\\ #bar; loom workspace status",
+            "echo foo\\;#bar; loom workspace status",
+            "echo foo\\|#bar; loom workspace status",
+            "echo foo\\&#bar; loom workspace status",
+            "echo foo\\(#bar; loom workspace status",
+            "echo foo\\`#bar; loom workspace status",
             "```",
         ];
         let commands = extract_surface_commands(&lines);
-        assert_eq!(commands.len(), 4);
+        assert_eq!(commands.len(), 10);
         assert!(
             commands
                 .iter()

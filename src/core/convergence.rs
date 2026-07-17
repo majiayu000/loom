@@ -224,11 +224,199 @@ const DIGEST_FIELDS: [&str; 13] = [
 
 pub(crate) fn stored_plan_digest(plan: &Value) -> Option<Result<String, serde_json::Error>> {
     let plan = plan.as_object()?;
+    if !stored_plan_shape_is_valid(plan) {
+        return None;
+    }
     let mut payload = serde_json::Map::new();
     for field in DIGEST_FIELDS {
         payload.insert(field.to_string(), plan.get(field)?.clone());
     }
     Some(digest_value(&Value::Object(payload)))
+}
+
+fn stored_plan_shape_is_valid(plan: &serde_json::Map<String, Value>) -> bool {
+    field_is_string(plan, "plan_id")
+        && field_is_string(plan, "plan_digest")
+        && field_is_string(plan, "skill")
+        && field_object_matches(plan, "selectors", selectors_are_valid)
+        && field_object_matches(plan, "source", source_is_valid)
+        && field_object_matches(plan, "input", input_is_valid)
+        && field_object_matches(plan, "preflight", preflight_is_valid)
+        && field_object_array_matches(plan, "input_conflicts", input_conflict_is_valid)
+        && field_object_matches(plan, "registry", registry_is_valid)
+        && field_object_array_matches(plan, "projections", projection_effect_is_valid)
+        && field_object_array_matches(plan, "visibility", visibility_is_valid)
+        && field_is_bool(plan, "accept_restart_required")
+        && field_is_one_of(plan, "remote", &["not_requested", "push"])
+        && required_axes_are_valid(plan.get("required_axes"))
+        && field_is_string_array(plan, "required_approvals")
+}
+
+fn selectors_are_valid(value: &serde_json::Map<String, Value>) -> bool {
+    ["agent", "workspace", "profile", "input_instance"]
+        .into_iter()
+        .all(|field| field_is_optional_string(value, field))
+}
+
+fn source_is_valid(value: &serde_json::Map<String, Value>) -> bool {
+    field_is_one_of(value, "direction", &["source", "projection"])
+        && field_is_string(value, "registry_head")
+        && field_is_string(value, "tree_digest")
+        && field_is_optional_string(value, "input_instance")
+}
+
+fn input_is_valid(value: &serde_json::Map<String, Value>) -> bool {
+    field_is_string_array(value, "source_dirty_paths")
+        && field_object_array_matches(value, "projections", projection_input_is_valid)
+        && field_is_optional_string(value, "selected_projection_instance")
+        && field_is_string(value, "selected_input_tree_digest")
+}
+
+fn projection_input_is_valid(value: &serde_json::Map<String, Value>) -> bool {
+    field_is_string(value, "instance_id")
+        && field_is_string(value, "method")
+        && field_is_string(value, "materialized_path")
+        && field_is_optional_string(value, "baseline_revision")
+        && field_is_optional_string(value, "baseline_tree_digest")
+        && field_is_optional_string(value, "live_tree_digest")
+        && field_is_one_of(
+            value,
+            "state",
+            &[
+                "clean",
+                "dirty",
+                "source_linked",
+                "missing",
+                "not_directory",
+                "unreadable",
+                "baseline_unavailable",
+                "untracked",
+                "metadata_mismatch",
+            ],
+        )
+        && field_is_optional_string(value, "issue")
+}
+
+fn preflight_is_valid(value: &serde_json::Map<String, Value>) -> bool {
+    field_is_one_of(value, "input_direction", &["source", "projection"])
+        && field_is_string(value, "input_tree_digest")
+        && value
+            .get("checks")
+            .and_then(Value::as_object)
+            .is_some_and(|checks| checks.values().all(Value::is_string))
+        && field_is_string_array(value, "regression_ids")
+        && field_is_bool(value, "mutation_allowed")
+}
+
+fn input_conflict_is_valid(value: &serde_json::Map<String, Value>) -> bool {
+    field_is_string(value, "code")
+        && field_is_string(value, "message")
+        && value.contains_key("evidence")
+}
+
+fn registry_is_valid(value: &serde_json::Map<String, Value>) -> bool {
+    field_is_bool(value, "initialized")
+        && field_is_optional_string(value, "checkpoint_digest")
+        && field_is_optional_string(value, "checkpoint_updated_at")
+}
+
+fn projection_effect_is_valid(value: &serde_json::Map<String, Value>) -> bool {
+    [
+        "instance_id",
+        "binding_id",
+        "target_id",
+        "agent",
+        "profile",
+        "method",
+        "ownership",
+        "materialized_path",
+        "source_tree_digest",
+        "effect",
+    ]
+    .into_iter()
+    .all(|field| field_is_string(value, field))
+        && field_is_optional_string(value, "materialized_tree_digest")
+}
+
+fn visibility_is_valid(value: &serde_json::Map<String, Value>) -> bool {
+    ["agent", "binding_id", "target_id", "check"]
+        .into_iter()
+        .all(|field| field_is_string(value, field))
+        && field_is_bool(value, "required")
+}
+
+fn required_axes_are_valid(value: Option<&Value>) -> bool {
+    let Some(values) = value.and_then(Value::as_array) else {
+        return false;
+    };
+    let mut previous = None;
+    for value in values {
+        let rank = match value.as_str() {
+            Some("projections") => 0,
+            Some("registry_transport") => 1,
+            Some("visibility") => 2,
+            _ => return false,
+        };
+        if previous.is_some_and(|previous| previous >= rank) {
+            return false;
+        }
+        previous = Some(rank);
+    }
+    true
+}
+
+fn field_object_matches(
+    value: &serde_json::Map<String, Value>,
+    field: &str,
+    validate: fn(&serde_json::Map<String, Value>) -> bool,
+) -> bool {
+    value
+        .get(field)
+        .and_then(Value::as_object)
+        .is_some_and(validate)
+}
+
+fn field_object_array_matches(
+    value: &serde_json::Map<String, Value>,
+    field: &str,
+    validate: fn(&serde_json::Map<String, Value>) -> bool,
+) -> bool {
+    value
+        .get(field)
+        .and_then(Value::as_array)
+        .is_some_and(|items| {
+            items
+                .iter()
+                .all(|item| item.as_object().is_some_and(validate))
+        })
+}
+
+fn field_is_string(value: &serde_json::Map<String, Value>, field: &str) -> bool {
+    value.get(field).is_some_and(Value::is_string)
+}
+
+fn field_is_bool(value: &serde_json::Map<String, Value>, field: &str) -> bool {
+    value.get(field).is_some_and(Value::is_boolean)
+}
+
+fn field_is_optional_string(value: &serde_json::Map<String, Value>, field: &str) -> bool {
+    value
+        .get(field)
+        .is_some_and(|value| value.is_null() || value.is_string())
+}
+
+fn field_is_string_array(value: &serde_json::Map<String, Value>, field: &str) -> bool {
+    value
+        .get(field)
+        .and_then(Value::as_array)
+        .is_some_and(|items| items.iter().all(Value::is_string))
+}
+
+fn field_is_one_of(value: &serde_json::Map<String, Value>, field: &str, allowed: &[&str]) -> bool {
+    value
+        .get(field)
+        .and_then(Value::as_str)
+        .is_some_and(|value| allowed.contains(&value))
 }
 
 fn digest_value(value: &Value) -> Result<String, serde_json::Error> {

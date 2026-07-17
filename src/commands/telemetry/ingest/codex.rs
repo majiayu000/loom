@@ -33,14 +33,16 @@ pub(super) fn parse_record(value: &Value, context: &mut Context) -> ParseOutcome
             ParseOutcome::Ignored
         }
         Some("turn_context") => {
+            context.workspace = None;
+            context.turn_id = None;
+            context.mentioned_skills.clear();
+            context.next_skill_ordinal = 0;
             if let Some(payload) = value.get("payload") {
                 update_workspace(context, payload);
                 context.turn_id = payload
                     .get("turn_id")
                     .and_then(Value::as_str)
                     .map(str::to_string);
-                context.mentioned_skills.clear();
-                context.next_skill_ordinal = 0;
             }
             ParseOutcome::Ignored
         }
@@ -285,5 +287,63 @@ mod tests {
             parse_record(&value, &mut context),
             ParseOutcome::Ignored
         ));
+    }
+
+    #[test]
+    fn malformed_turn_context_clears_the_previous_turn() {
+        let mut context = Context::default();
+        for value in [
+            json!({"type":"session_meta","payload":{"id":"session","cwd":"/old"}}),
+            json!({"type":"turn_context","payload":{"turn_id":"turn-1","cwd":"/old"}}),
+            json!({
+                "type":"response_item",
+                "payload":{"type":"message","role":"user","content":[{
+                    "type":"input_text","text":"please use $demo"
+                }]}
+            }),
+            json!({"type":"turn_context"}),
+        ] {
+            assert!(matches!(
+                parse_record(&value, &mut context),
+                ParseOutcome::Ignored
+            ));
+        }
+        let stale_injection = json!({
+            "timestamp":"2026-07-01T00:00:00Z",
+            "type":"response_item",
+            "payload":{"type":"message","role":"user","content":[{
+                "type":"input_text","text":"<skill><name>demo</name>body</skill>"
+            }]}
+        });
+        assert!(matches!(
+            parse_record(&stale_injection, &mut context),
+            ParseOutcome::Ignored
+        ));
+
+        assert!(matches!(
+            parse_record(
+                &json!({"type":"turn_context","payload":{"turn_id":"turn-2"}}),
+                &mut context,
+            ),
+            ParseOutcome::Ignored
+        ));
+        assert!(matches!(
+            parse_record(
+                &json!({
+                    "type":"response_item",
+                    "payload":{"type":"message","role":"user","content":[{
+                        "type":"input_text","text":"please use $demo"
+                    }]}
+                }),
+                &mut context,
+            ),
+            ParseOutcome::Ignored
+        ));
+        let ParseOutcome::Record(record) = parse_record(&stale_injection, &mut context) else {
+            panic!("new turn must accept a fresh mention");
+        };
+        assert_eq!(record.stable_record_key, "turn-2");
+        assert_eq!(record.workspace, None);
+        assert_eq!(record.invocations[0].ordinal, 0);
     }
 }

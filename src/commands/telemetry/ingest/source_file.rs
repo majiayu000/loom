@@ -13,6 +13,9 @@ use super::{
     Agent, ParserState, SourceAuthority, parse_agent_record, session_hash_for_text, stream,
 };
 
+const MAX_SESSION_PREAMBLE_RECORDS: usize = 64;
+const MAX_SESSION_PREAMBLE_BYTES: u64 = 8 * stream::MAX_RECORD_BYTES as u64;
+
 pub(super) fn authority(
     path: &Path,
     metadata: &Metadata,
@@ -50,13 +53,7 @@ pub(super) fn canonical_identity(
     if agent == Agent::Codex && relative == "history.jsonl" {
         return Ok("history".to_string());
     }
-    file.seek(SeekFrom::Start(0)).map_err(map_io)?;
-    let mut reader = BufReader::new(file);
-    let mut raw = Vec::new();
-    if matches!(
-        stream::read_record(&mut reader, &mut raw)?,
-        stream::RecordStatus::Complete { .. }
-    ) && let Ok(value) = serde_json::from_slice::<Value>(&raw)
+    if let Some(value) = native_session_record(agent, file, None)?
         && let Some(session_id) = native_session_id(agent, &value)
     {
         return Ok(format!("session:{}", session_hash_for_text(session_id)));
@@ -65,14 +62,52 @@ pub(super) fn canonical_identity(
 }
 
 fn native_session_id(agent: Agent, value: &Value) -> Option<&str> {
-    match agent {
+    let session_id = match agent {
         Agent::Claude => value.get("sessionId").and_then(Value::as_str),
         Agent::Codex => (value.get("type").and_then(Value::as_str) == Some("session_meta"))
             .then(|| value.get("payload"))
             .flatten()
             .and_then(|payload| payload.get("session_id").or_else(|| payload.get("id")))
             .and_then(Value::as_str),
+    };
+    session_id.filter(|session_id| !session_id.is_empty())
+}
+
+fn native_session_record(
+    agent: Agent,
+    file: &mut File,
+    scan_end: Option<u64>,
+) -> std::result::Result<Option<Value>, CommandFailure> {
+    file.seek(SeekFrom::Start(0)).map_err(map_io)?;
+    let mut reader = BufReader::new(file);
+    let mut raw = Vec::new();
+    let mut offset = 0u64;
+    for _ in 0..MAX_SESSION_PREAMBLE_RECORDS {
+        if offset >= MAX_SESSION_PREAMBLE_BYTES || scan_end.is_some_and(|end| offset >= end) {
+            break;
+        }
+        let (consumed, complete) = match stream::read_record(&mut reader, &mut raw)? {
+            stream::RecordStatus::Complete { consumed } => (consumed, true),
+            stream::RecordStatus::Oversized { consumed } => (consumed, false),
+            stream::RecordStatus::Partial { .. } | stream::RecordStatus::Eof => break,
+        };
+        offset = offset.checked_add(consumed).ok_or_else(|| {
+            CommandFailure::new(
+                ErrorCode::InternalError,
+                "telemetry session preamble offset overflow",
+            )
+        })?;
+        if scan_end.is_some_and(|end| offset > end) {
+            break;
+        }
+        if complete
+            && let Ok(value) = serde_json::from_slice::<Value>(&raw)
+            && native_session_id(agent, &value).is_some()
+        {
+            return Ok(Some(value));
+        }
     }
+    Ok(None)
 }
 
 pub(super) fn parser_state_before(
@@ -91,22 +126,15 @@ pub(super) fn parser_state_before(
             "telemetry ingest parser context exceeds committed offset",
         ));
     }
-    file.seek(SeekFrom::Start(0)).map_err(map_io)?;
+    if context_offset > 0 {
+        if let Some(value) = native_session_record(agent, file, Some(context_offset))? {
+            let _ = parse_agent_record(agent, &value, &mut state);
+        }
+    }
+    file.seek(SeekFrom::Start(context_offset)).map_err(map_io)?;
     let mut reader = BufReader::new(file);
     let mut raw = Vec::new();
     let mut offset = context_offset;
-    if context_offset > 0 {
-        if matches!(
-            stream::read_record(&mut reader, &mut raw)?,
-            stream::RecordStatus::Complete { .. }
-        ) && let Ok(value) = serde_json::from_slice::<Value>(&raw)
-        {
-            let _ = parse_agent_record(agent, &value, &mut state);
-        }
-        reader
-            .seek(SeekFrom::Start(context_offset))
-            .map_err(map_io)?;
-    }
     while offset < target_offset {
         let consumed = match stream::read_record(&mut reader, &mut raw)? {
             stream::RecordStatus::Complete { consumed } => consumed,

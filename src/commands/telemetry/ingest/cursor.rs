@@ -308,27 +308,61 @@ pub(super) fn source_snapshot(
         ),
         file_len: metadata.len(),
         modified_nanos,
-        change_stamp: source_change_stamp(&metadata),
+        change_stamp: source_change_stamp(file, &metadata)?,
     })
 }
 
 #[cfg(unix)]
-fn source_change_stamp(metadata: &Metadata) -> String {
+fn source_change_stamp(
+    _file: &File,
+    metadata: &Metadata,
+) -> std::result::Result<String, CommandFailure> {
     use std::os::unix::fs::MetadataExt;
 
-    format!("{}:{}", metadata.ctime(), metadata.ctime_nsec())
+    Ok(format!("{}:{}", metadata.ctime(), metadata.ctime_nsec()))
 }
 
-#[cfg(not(unix))]
-fn source_change_stamp(metadata: &Metadata) -> String {
-    metadata
+#[cfg(windows)]
+fn source_change_stamp(
+    _file: &File,
+    metadata: &Metadata,
+) -> std::result::Result<String, CommandFailure> {
+    Ok(metadata
         .modified()
         .ok()
         .and_then(|value| value.duration_since(std::time::UNIX_EPOCH).ok())
         .map_or_else(
             || "unknown".to_string(),
             |value| value.as_nanos().to_string(),
-        )
+        ))
+}
+
+#[cfg(not(any(unix, windows)))]
+fn source_change_stamp(
+    file: &File,
+    _metadata: &Metadata,
+) -> std::result::Result<String, CommandFailure> {
+    let mut reader = file.try_clone().map_err(map_io)?;
+    let position = reader.stream_position().map_err(map_io)?;
+    reader.seek(SeekFrom::Start(0)).map_err(map_io)?;
+    let stamp = content_change_stamp(&mut reader)?;
+    reader.seek(SeekFrom::Start(position)).map_err(map_io)?;
+    Ok(stamp)
+}
+
+#[cfg(any(test, not(any(unix, windows))))]
+fn content_change_stamp(reader: &mut impl Read) -> std::result::Result<String, CommandFailure> {
+    let mut hasher = Sha256::new();
+    hasher.update(b"loom.telemetry.source-generation-content.v2\n");
+    let mut buffer = [0u8; 16 * 1024];
+    loop {
+        let read = reader.read(&mut buffer).map_err(map_io)?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+    }
+    Ok(format!("sha256:{}", to_hex(&hasher.finalize())))
 }
 
 #[cfg(unix)]
@@ -443,8 +477,7 @@ fn min_since(
     match (current, requested) {
         (Some(current), Some(requested)) => Some(current.min(requested)),
         (Some(_), None) => None,
-        (None, Some(requested)) => Some(requested),
-        (None, None) => None,
+        (None, _) => None,
     }
 }
 
@@ -476,9 +509,11 @@ fn hash_bytes(domain: &str, bytes: &[u8]) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::io::Cursor;
+
     use chrono::{TimeZone, Utc};
 
-    use super::{ResetReason, checkpoint_for, scan_window};
+    use super::{ResetReason, checkpoint_for, content_change_stamp, scan_window};
 
     #[test]
     fn partial_tail_does_not_advance_checkpoint() {
@@ -553,5 +588,37 @@ mod tests {
         .expect("scan window");
         assert_eq!(window.reset_reason, Some(ResetReason::GenerationChanged));
         assert_eq!(window.covered_since, Some(recent));
+    }
+
+    #[test]
+    fn full_coverage_remains_absorbing_across_narrow_and_full_requests() {
+        let bytes = b"one\ntwo\n";
+        let narrow = Utc.with_ymd_and_hms(2026, 7, 1, 0, 0, 0).unwrap();
+        let full = checkpoint_for(bytes, "generation-a", bytes.len(), None).expect("checkpoint");
+        let narrow_window =
+            scan_window(bytes, "generation-a", Some(&full), Some(narrow)).expect("narrow scan");
+        assert_eq!(narrow_window.start, bytes.len());
+        assert_eq!(narrow_window.covered_since, None);
+        let after_narrow = checkpoint_for(
+            bytes,
+            "generation-a",
+            bytes.len(),
+            narrow_window.covered_since,
+        )
+        .expect("narrow checkpoint");
+        let full_again =
+            scan_window(bytes, "generation-a", Some(&after_narrow), None).expect("full scan");
+        assert_eq!(full_again.start, bytes.len());
+        assert_eq!(full_again.covered_since, None);
+    }
+
+    #[test]
+    fn fallback_content_stamp_detects_same_size_rewrite_with_restored_mtime() {
+        let before =
+            content_change_stamp(&mut Cursor::new(b"same-size-a")).expect("before content stamp");
+        let after =
+            content_change_stamp(&mut Cursor::new(b"same-size-b")).expect("after content stamp");
+        assert_eq!(b"same-size-a".len(), b"same-size-b".len());
+        assert_ne!(before, after);
     }
 }

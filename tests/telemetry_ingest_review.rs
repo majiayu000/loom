@@ -74,6 +74,29 @@ fn codex_session(skill: &str, timestamp: &str) -> String {
     .collect()
 }
 
+fn codex_turn(turn_id: &str, skill: &str, timestamp: &str) -> String {
+    [
+        json!({"timestamp":timestamp,"type":"turn_context","payload":{"turn_id":turn_id}}),
+        json!({
+            "timestamp":timestamp,
+            "type":"response_item",
+            "payload":{"type":"message","role":"user","content":[{
+                "type":"input_text","text":format!("please use ${skill}")
+            }]}
+        }),
+        json!({
+            "timestamp":timestamp,
+            "type":"response_item",
+            "payload":{"type":"message","role":"user","content":[{
+                "type":"input_text","text":format!("<skill><name>{skill}</name>body</skill>")
+            }]}
+        }),
+    ]
+    .into_iter()
+    .map(|value| value.to_string() + "\n")
+    .collect()
+}
+
 #[test]
 fn imported_workspace_is_hashed_and_report_filterable() {
     let root = TestDir::new("telemetry-ingest-review-workspace");
@@ -247,6 +270,81 @@ fn scanner_is_streamed_and_oversized_records_are_counted() {
     assert!(output.status.success(), "oversized scan failed: {envelope}");
     assert_eq!(envelope["data"]["malformed"], json!(1));
     assert_eq!(envelope["data"]["ingested"], json!(1));
+}
+
+#[test]
+fn codex_preamble_identity_survives_append_resume_and_rotation() {
+    let root = TestDir::new("telemetry-ingest-review-codex-preamble");
+    let home = TestDir::new("telemetry-ingest-review-codex-preamble-home");
+    let source = home.path().join("sessions/2026/07/session.jsonl");
+    let oversized = "x".repeat(1024 * 1024 + 1);
+    let preamble = format!("not-json\n{oversized}\n{{\"type\":\"unrelated\"}}\n");
+    let first = format!(
+        "{preamble}{}",
+        codex_session("demo", "2026-07-01T00:00:00Z")
+    );
+    write_file(&source, &first);
+    write_skill(
+        root.path(),
+        "demo",
+        "---\nname: demo\ndescription: Fixture skill.\n---\n# Demo\n",
+    );
+    let home_arg = home.path().to_string_lossy().into_owned();
+    enable(&root, &home_arg);
+
+    let (first_output, first_envelope) = run_loom_with_env(
+        root.path(),
+        &[("LOOM_CODEX_HOME", &home_arg)],
+        &["telemetry", "ingest", "--agent", "codex"],
+    );
+    assert!(
+        first_output.status.success(),
+        "initial ingest failed: {first_envelope}"
+    );
+    assert_eq!(first_envelope["data"]["ingested"], json!(1));
+    assert_eq!(first_envelope["data"]["malformed"], json!(2));
+
+    let second_turn = codex_turn("turn-2", "demo", "2026-07-01T00:01:00Z");
+    fs::OpenOptions::new()
+        .append(true)
+        .open(&source)
+        .unwrap()
+        .write_all(second_turn.as_bytes())
+        .unwrap();
+    let (resume_output, resumed) = run_loom_with_env(
+        root.path(),
+        &[("LOOM_CODEX_HOME", &home_arg)],
+        &["telemetry", "ingest", "--agent", "codex"],
+    );
+    assert!(resume_output.status.success(), "resume failed: {resumed}");
+    assert_eq!(resumed["data"]["ingested"], json!(1));
+    assert_eq!(resumed["data"]["sources_reset"]["count"], json!(0));
+
+    let rotated = home.path().join("sessions/2026/07/rotated.jsonl");
+    fs::copy(&source, &rotated).expect("copy rotated Codex log");
+    fs::remove_file(&source).expect("remove original Codex log");
+    let (rotation_output, rotation) = run_loom_with_env(
+        root.path(),
+        &[("LOOM_CODEX_HOME", &home_arg)],
+        &["telemetry", "ingest", "--agent", "codex"],
+    );
+    assert!(
+        rotation_output.status.success(),
+        "rotation failed: {rotation}"
+    );
+    assert_eq!(rotation["data"]["ingested"], json!(0));
+    assert_eq!(rotation["data"]["sources_reset"]["count"], json!(1));
+    assert_eq!(
+        rotation["data"]["sources_reset"]["reasons"]["generation_changed"],
+        json!(1)
+    );
+    let cursor: Value = serde_json::from_str(
+        &fs::read_to_string(root.path().join("state/telemetry/ingest_cursor.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(cursor["sources"].as_object().unwrap().len(), 1);
+    let events = fs::read_to_string(root.path().join("state/telemetry/events.jsonl")).unwrap();
+    assert_eq!(events.lines().count(), 2);
 }
 
 #[test]

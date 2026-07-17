@@ -9,7 +9,7 @@ use walkdir::WalkDir;
 use super::{
     ExampleClassification, InventoryError, SurfaceExample, check_next_action_emitters,
     check_panel_mutations, load_surface_inventory, public_command_schema_capabilities,
-    validate_public_argv,
+    public_command_tree_capabilities, validate_public_argv,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -125,6 +125,9 @@ pub fn check_surface_inventory(repo_root: &Path) -> Result<SurfaceCheckReport, I
             "surface inventory produced no executable commands",
         ));
     }
+    command_capabilities.extend(
+        public_command_tree_capabilities().map_err(|error| InventoryError::new(error.message))?,
+    );
     let declared = inventory
         .command_capabilities
         .iter()

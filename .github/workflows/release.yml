@@ -356,6 +356,15 @@ jobs:
             git commit -m "Update loom to ${GITHUB_REF_NAME}"
             git push origin "HEAD:refs/heads/$branch"
           fi
+          git fetch origin "refs/heads/main:refs/remotes/origin/main"
+          if git diff --quiet "origin/main" -- Formula/loom.rb; then
+            exit 0
+          else
+            formula_diff_status=$?
+            if [[ "$formula_diff_status" -ne 1 ]]; then
+              exit "$formula_diff_status"
+            fi
+          fi
           pr_number="$(gh pr list --repo "$TAP_REPO" --head "$branch" --base main --state open --json number --jq '.[0].number')"
           if [[ -z "$pr_number" ]]; then
             gh pr create \

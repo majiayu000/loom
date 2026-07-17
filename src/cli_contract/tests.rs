@@ -4,8 +4,8 @@ use clap::{Arg, ArgAction, Command, builder::PossibleValue, error::ErrorKind};
 
 use super::{
     PublicArgv, PublicArgvError, PublicArgvErrorKind, command_schema_capabilities,
-    inspect_display_matches, inspect_public_matches, inspect_requested_visibility,
-    public_command_schema_capabilities, validate_public_argv,
+    command_tree_capabilities, inspect_display_matches, inspect_public_matches,
+    inspect_requested_visibility, public_command_schema_capabilities, validate_public_argv,
 };
 
 fn fixture_capabilities(command: Command) -> std::collections::BTreeSet<String> {
@@ -65,6 +65,35 @@ fn command_schema_optional_additions_are_additive() {
     );
     assert!(base.is_subset(&with_flag));
     assert!(with_flag.len() > base.len());
+}
+
+#[test]
+fn command_tree_tracks_unexampled_visible_commands_but_not_hidden_subtrees() {
+    let mut base = Command::new("loom").subcommand(Command::new("documented"));
+    base.build();
+    let base_capabilities = command_tree_capabilities(&base).expect("base command tree");
+    let mut extended = Command::new("loom")
+        .subcommand(Command::new("documented"))
+        .subcommand(Command::new("unexampled").subcommand(Command::new("nested")))
+        .subcommand(
+            Command::new("internal")
+                .hide(true)
+                .subcommand(Command::new("hidden-nested")),
+        );
+    extended.build();
+    let extended_capabilities =
+        command_tree_capabilities(&extended).expect("extended command tree");
+    assert!(base_capabilities.is_subset(&extended_capabilities));
+    assert!(extended_capabilities.len() > base_capabilities.len());
+
+    let mut without_hidden = Command::new("loom")
+        .subcommand(Command::new("documented"))
+        .subcommand(Command::new("unexampled").subcommand(Command::new("nested")));
+    without_hidden.build();
+    assert_eq!(
+        extended_capabilities,
+        command_tree_capabilities(&without_hidden).expect("tree without hidden commands")
+    );
 }
 
 #[test]

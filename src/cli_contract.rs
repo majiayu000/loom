@@ -188,6 +188,36 @@ pub(crate) fn public_command_schema_capabilities(
     command_schema_capabilities(&root, command_path)
 }
 
+pub(crate) fn public_command_tree_capabilities() -> Result<BTreeSet<String>, PublicArgvError> {
+    let mut root = Cli::command();
+    root.build();
+    command_tree_capabilities(&root)
+}
+
+fn command_tree_capabilities(root: &Command) -> Result<BTreeSet<String>, PublicArgvError> {
+    fn visit(
+        root: &Command,
+        command: &Command,
+        path: &mut Vec<String>,
+        capabilities: &mut BTreeSet<String>,
+    ) -> Result<(), PublicArgvError> {
+        capabilities.extend(command_schema_capabilities(root, path)?);
+        for subcommand in command
+            .get_subcommands()
+            .filter(|subcommand| !subcommand.is_hide_set() && subcommand.get_name() != "help")
+        {
+            path.push(subcommand.get_name().to_string());
+            visit(root, subcommand, path, capabilities)?;
+            path.pop();
+        }
+        Ok(())
+    }
+
+    let mut capabilities = BTreeSet::new();
+    visit(root, root, &mut vec!["loom".to_string()], &mut capabilities)?;
+    Ok(capabilities)
+}
+
 fn command_schema_capabilities(
     root: &Command,
     command_path: &[String],

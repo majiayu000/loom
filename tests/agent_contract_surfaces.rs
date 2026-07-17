@@ -693,6 +693,36 @@ cli_argv = ["loom", "workspace", "status"]
     );
     check_contract_range_policy(root.path(), Some(&base))
         .expect("minor bump must admit additive capability");
+
+    write_file(
+        &root.path().join("skills/loom-registry/loom.skill.toml"),
+        "[compatibility]\ncli_contract = \">=1.1.0,<2.0.0\"\n",
+    );
+    let history = std::fs::read_to_string(root.path().join("docs/cli-contract-history.toml"))
+        .expect("read updated fixture history");
+    write_file(
+        &root.path().join("docs/cli-contract-history.toml"),
+        &(history
+            + "[[contract]]\nversion = \"1.1.0\"\nskill_range = \">=1.1.0,<2.0.0\"\nmigration_note = \"narrow compatibility\"\n"),
+    );
+    let error = check_contract_range_policy(root.path(), Some(&base))
+        .expect_err("historical changelog note must not satisfy a new range change");
+    assert!(error.to_string().contains("CHANGELOG"), "{error}");
+    write_file(
+        &root.path().join("CHANGELOG.md"),
+        "CLI contract bootstrap\nCLI compatibility now requires 1.1 or newer.\n",
+    );
+    check_contract_range_policy(root.path(), Some(&base))
+        .expect("fresh changelog note must admit the range change");
+}
+
+#[test]
+fn make_contract_policy_has_a_local_merge_base_fallback() {
+    let makefile = include_str!("../Makefile");
+    assert!(makefile.contains(
+        "LOOM_CONTRACT_DIFF_BASE ?= $(shell git merge-base HEAD origin/main 2>/dev/null)"
+    ));
+    assert!(makefile.contains("git cat-file -e \"$(LOOM_CONTRACT_DIFF_BASE)^{tree}\""));
 }
 
 #[test]

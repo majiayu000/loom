@@ -2,6 +2,7 @@ SHELL := /usr/bin/env bash
 
 PANEL_DIR := panel
 PANEL_INSTALL_STAMP := $(PANEL_DIR)/node_modules/.bun-install.stamp
+LOOM_CONTRACT_DIFF_BASE ?= $(shell git merge-base HEAD origin/main 2>/dev/null)
 
 .PHONY: fmt fmt-check test contract-policy lint module-ceiling module-ceiling-test panel-install panel-dev panel-build panel-test panel-typecheck e2e perf-smoke check ci install-hooks
 
@@ -20,7 +21,8 @@ test:
 
 contract-policy:
 	test -n "$(LOOM_CONTRACT_DIFF_BASE)"
-	cargo test --test agent_contract_surfaces contract_range_policy_current_diff -- --exact
+	git cat-file -e "$(LOOM_CONTRACT_DIFF_BASE)^{tree}"
+	LOOM_CONTRACT_DIFF_BASE="$(LOOM_CONTRACT_DIFF_BASE)" cargo test --test agent_contract_surfaces contract_range_policy_current_diff -- --exact
 
 lint:
 	cargo clippy --all-targets --all-features -- -D warnings

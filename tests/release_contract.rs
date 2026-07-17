@@ -235,6 +235,85 @@ fn homebrew_tap_rerun_fast_forwards_existing_branch() {
         "version \"new-release\"\n"
     );
     assert!(git(&tap, &["status", "--porcelain"]).is_empty());
+
+    let workflow = include_str!("../.github/workflows/release.yml");
+    let no_op_guard = workflow
+        .find("git diff --quiet \"origin/main\" -- Formula/loom.rb")
+        .expect("workflow must compare Formula with tap main");
+    let pr_lookup = workflow
+        .find("pr_number=\"$(gh pr list")
+        .expect("workflow must look up the tap PR");
+    assert!(
+        no_op_guard < pr_lookup,
+        "no-op guard must precede PR creation"
+    );
+
+    git(&tap, &["checkout", "-q", "main"]);
+    write_file(&tap.join("Formula/loom.rb"), "version \"new-release\"\n");
+    git(&tap, &["add", "Formula/loom.rb"]);
+    git(&tap, &["commit", "-qm", "main catches up"]);
+    git(&tap, &["push", "origin", "main"]);
+    git(&tap, &["checkout", "-q", branch]);
+    git(
+        &tap,
+        &[
+            "fetch",
+            "origin",
+            "refs/heads/main:refs/remotes/origin/main",
+        ],
+    );
+    git(
+        &tap,
+        &["diff", "--quiet", "origin/main", "--", "Formula/loom.rb"],
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn homebrew_tap_diff_error_fails_before_pr_lookup() {
+    let fixture = TestDir::new("release-contract-homebrew-diff-error");
+    let bin = fixture.path().join("bin");
+    let gh_called = fixture.path().join("gh-called");
+    write_file(
+        &bin.join("git"),
+        "#!/bin/sh\ncase \"$1\" in\n  fetch) exit 0 ;;\n  diff) exit 2 ;;\n  *) exit 0 ;;\nesac\n",
+    );
+    write_file(&bin.join("gh"), "#!/bin/sh\ntouch \"$GH_CALLED\"\nexit 0\n");
+    for executable in [bin.join("git"), bin.join("gh")] {
+        let mut permissions = fs::metadata(&executable)
+            .expect("fake command metadata")
+            .permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(executable, permissions).expect("make fake command executable");
+    }
+
+    let workflow = include_str!("../.github/workflows/release.yml");
+    let guard_start = workflow
+        .find("git fetch origin \"refs/heads/main:refs/remotes/origin/main\"")
+        .expect("workflow must fetch tap main");
+    let guard_end = workflow[guard_start..]
+        .find("pr_number=\"$(gh pr list")
+        .map(|offset| guard_start + offset)
+        .expect("workflow must look up the tap PR after the guard");
+    let guard = &workflow[guard_start..guard_end];
+    assert!(guard.contains("formula_diff_status=$?"));
+    assert!(guard.contains("[[ \"$formula_diff_status\" -ne 1 ]]"));
+
+    let path = std::env::join_paths(std::iter::once(bin.clone()).chain(std::env::split_paths(
+        &std::env::var_os("PATH").unwrap_or_default(),
+    )))
+    .expect("fake command PATH");
+    let status = Command::new("bash")
+        .args(["-c", &format!("set -euo pipefail\n{guard}\ngh pr list")])
+        .env("PATH", path)
+        .env("GH_CALLED", &gh_called)
+        .status()
+        .expect("run Homebrew no-op guard");
+    assert_eq!(status.code(), Some(2));
+    assert!(
+        !gh_called.exists(),
+        "a git diff error must stop before any GitHub action"
+    );
 }
 
 #[test]

@@ -190,8 +190,8 @@ fn exact_effect_plan() {
     assert_eq!(first["data"]["protocol_version"], json!("1.0"));
     assert_eq!(first["data"]["schema_version"], json!("1.2"));
     assert_eq!(first["data"]["operation"], json!("converge"));
-    assert_eq!(first["data"]["safe_to_apply"], json!(false));
-    assert_eq!(first["data"]["execution_enabled"], json!(false));
+    assert_eq!(first["data"]["safe_to_apply"], json!(true));
+    assert_eq!(first["data"]["execution_enabled"], json!(true));
     assert_eq!(first["data"]["requires_digest_confirmation"], json!(true));
     assert!(first["data"]["next_actions"].is_null());
     assert_ne!(first["data"]["plan_id"], second["data"]["plan_id"]);
@@ -311,7 +311,7 @@ fn apply_requires_reviewed_plan_digest() {
         json!("PLAN_DIGEST_MISMATCH")
     );
 
-    let (output, disabled) = run_loom(
+    let (output, applied) = run_loom(
         fixture.root.path(),
         &[
             "apply",
@@ -322,23 +322,16 @@ fn apply_requires_reviewed_plan_digest() {
             "conv-reviewed",
         ],
     );
-    assert!(
-        !output.status.success(),
-        "planning tranche executed: {disabled}"
-    );
-    assert_eq!(disabled["error"]["code"], json!("POLICY_BLOCKED"));
-    assert_eq!(
-        disabled["error"]["details"]["conflict"]["code"],
-        json!("CONVERGENCE_EXECUTOR_UNAVAILABLE")
-    );
-    assert_eq!(
+    assert!(output.status.success(), "reviewed plan failed: {applied}");
+    assert_ne!(
         snapshot_tree(&fixture.root.path().join("state/registry")),
         domain_before
     );
     assert_eq!(snapshot_tree(fixture.target.path()), target_before);
-    assert_eq!(
+    assert_ne!(
         git(fixture.root.path(), &["rev-parse", "HEAD"]),
-        head_before
+        head_before,
+        "successful convergence must commit updated projection registry state"
     );
 
     mutate_plan_event(fixture.root.path(), plan_id, |stored| {

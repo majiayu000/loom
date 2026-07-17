@@ -680,6 +680,24 @@ fn rollback_live_projection_path(materialized_path: &Path, backup: Option<&Value
     errors
 }
 
+pub(crate) fn rollback_convergence_projection(
+    materialized_path: &Path,
+    backup: Option<&Value>,
+) -> Vec<Value> {
+    rollback_live_projection_path(materialized_path, backup)
+}
+
+pub(crate) fn finish_convergence_projection(backup: Option<&Value>) -> Vec<Value> {
+    let mut errors = Vec::new();
+    if let Some(path) = backup
+        .and_then(|value| value.get("backup_path"))
+        .and_then(Value::as_str)
+    {
+        cleanup_projection_staging(Path::new(path), &mut errors);
+    }
+    errors
+}
+
 fn maybe_activation_projection_fault(skill: &str) -> std::result::Result<(), CommandFailure> {
     if let Ok(raw) = std::env::var("LOOM_SKILL_ACTIVATE_FAULT_INJECT")
         && raw == format!("after_projection:{skill}")

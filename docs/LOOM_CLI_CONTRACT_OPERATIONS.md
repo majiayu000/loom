@@ -514,10 +514,16 @@ Rules:
 
 ```bash
 loom --json --root <root> plan use <skill-id> --agents <agent[,agent]> [--scope <user|project>] [--workspace <path>] [--profile <id>] [--method <symlink|copy|materialize>] [--target-root <path>]
+loom --json --root <root> plan converge <skill-id> [--from-source | --from-projection --instance <id>] [--agent <agent>] [--workspace <path>] [--profile <id>] [--require-runtime] [--accept-restart-required] [--push-remote]
 loom --json --root <root> apply <plan-id> --idempotency-key <key> [--approve <token[,token]>]
+loom --json --root <root> apply <convergence-plan-id> --plan-digest <digest> --idempotency-key <key>
 ```
 
 `plan use` creates a durable, audited plan for the same target/binding/projection setup that `loom use --apply` performs. Plan creation must not mutate registry state, Git refs, operation backlog, or live target directories; its only durable write is the command-audit event under `state/events/commands.jsonl`.
+
+`plan converge` creates a typed immutable plan for one Skill change. It resolves only existing active bindings and rules selected by agent, workspace, and profile; records source, registry checkpoint, projection, visibility, required-axis, acceptance, and remote-policy evidence; and returns a canonical `plan_digest`. The digest excludes the random `plan_id`, so identical evidence and selectors produce the same digest. Planning writes only command audit and reports `execution_enabled=false` and `safe_to_apply=false` in this rollout tranche. It emits no apply next action.
+
+Convergence plans require the exact non-empty `--plan-digest` returned by planning. Missing or mismatched confirmation fails before any domain write. Even with a matching digest, apply currently fails closed with `POLICY_BLOCKED` / `CONVERGENCE_EXECUTOR_UNAVAILABLE`; clients must not retry it as an enabled mutation. Existing `plan use` records remain compatible and do not require `--plan-digest`.
 
 The top-level `plan` command owns durable plan creation. The top-level `apply` command owns guarded plan execution.
 

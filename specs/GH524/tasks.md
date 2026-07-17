@@ -12,7 +12,7 @@ idempotency/recovery → visibility/remote → Agent Skill/Panel → full verifi
 
 ## Implementation Tasks
 
-- [ ] `SP524-T001` Owner: CLI/planner | Dependencies: approved GH524 specs, implemented #522 contract, #523 contract gate | Done when: `PlanCommand::Converge` 与 typed durable plan 落地，不新增 `skill converge`；selectors、required axes、plan id/digest 稳定，planning 只写 immutable plan/audit，且 apply 强制携带并验证该 plan id/digest | Verify: `cargo test --test skill_convergence exact_effect_plan plan_only_writes_plan_and_audit apply_requires_reviewed_plan_digest` | Covers: B-001, B-004, B-006, B-010, B-015
+- [x] `SP524-T001` Owner: CLI/planner | Dependencies: approved GH524 specs, implemented #522 contract, #523 contract gate | Done when: `PlanCommand::Converge` 与 typed durable plan 落地，不新增 `skill converge`；selectors、required axes、plan id/digest 稳定，planning 只写 immutable plan/audit，且 apply 强制携带并验证该 plan id/digest | Verify: `cargo test --test skill_convergence exact_effect_plan plan_only_writes_plan_and_audit apply_requires_reviewed_plan_digest` | Covers: B-001, B-004, B-006, B-010, B-015
 - [ ] `SP524-T002` Owner: direction/source | Dependencies: SP524-T001 | Done when: canonical source 默认路径、projection instance 显式输入、双侧/多 projection dirty conflict 与 source preflight gates 完整 | Verify: `cargo test --test skill_convergence projection_input_requires_instance dirty_side_conflicts` | Covers: B-002, B-003, B-013
 - [ ] `SP524-T003` Owner: projection executor | Dependencies: SP524-T001 | Done when: #497 executor 支持 Standalone/Convergence 内部模式，symlink 验证、copy 原子替换、materialize 重建均不产生 child commit/autosync | Verify: `cargo test --test skill_convergence symlink_copy_materialize` | Covers: B-007, B-008, B-009
 - [ ] `SP524-T004` Owner: transaction/recovery | Dependencies: SP524-T002, SP524-T003 | Done when: workspace/Skill locks、HEAD/checkpoint/digest guards、staging、snapshot、逆序恢复与 interruption journal 落地 | Verify: `cargo test --test skill_convergence stale_plan_and_lock_contention local_faults_restore_all_surfaces interrupted_recovery_is_single_commit` | Covers: B-006, B-008, B-014
@@ -32,4 +32,5 @@ idempotency/recovery → visibility/remote → Agent Skill/Panel → full verifi
 - Task coverage union: `B-001..B-015`。
 - Maintainer architecture gates resolved on 2026-07-16: `plan converge` + `apply` public workflow，
   explicit `restart_required` acceptance policy。
-- Remaining gates: #523 contract implementation、当前 spec amendment 合并、实现 PR review/merge。
+- Completed implementation tranche: SP524-T001 typed planning and digest-confirmation boundary.
+- Remaining gates: SP524-T002..T010 implementation and implementation PR review/merge.

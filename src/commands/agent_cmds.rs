@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-mod planning_helpers;
+pub(crate) mod planning_helpers;
 
 use serde_json::{Value, json};
 

@@ -1,14 +1,64 @@
 use std::path::PathBuf;
 
-use clap::{Args, Subcommand};
+use clap::{ArgGroup, Args, Subcommand};
 use serde::Serialize;
 
 use super::{AgentKind, ProjectionMethod, UseScope};
 
 #[derive(Debug, Clone, Subcommand, Serialize)]
 pub enum PlanCommand {
+    #[command(about = "Create a durable plan for converging one skill change")]
+    Converge(PlanConvergeArgs),
+
     #[command(about = "Create a durable plan for the skill use flow")]
     Use(PlanUseArgs),
+}
+
+#[derive(Debug, Clone, Args, Serialize)]
+#[command(group(
+    ArgGroup::new("direction")
+        .args(["from_source", "from_projection"])
+        .multiple(false)
+))]
+pub struct PlanConvergeArgs {
+    /// Registry skill id to converge.
+    pub skill: String,
+
+    /// Use the canonical registry source as the change input (the default).
+    #[arg(long)]
+    pub from_source: bool,
+
+    /// Capture the change from one explicitly selected projection instance.
+    #[arg(long, requires = "instance")]
+    pub from_projection: bool,
+
+    /// Projection instance used as input with --from-projection.
+    #[arg(long, requires = "from_projection")]
+    pub instance: Option<String>,
+
+    /// Restrict active bindings to one agent.
+    #[arg(long, value_enum)]
+    pub agent: Option<AgentKind>,
+
+    /// Restrict active bindings to a matching workspace.
+    #[arg(long)]
+    pub workspace: Option<PathBuf>,
+
+    /// Restrict active bindings to one profile.
+    #[arg(long)]
+    pub profile: Option<String>,
+
+    /// Require at least one selected active runtime projection.
+    #[arg(long)]
+    pub require_runtime: bool,
+
+    /// Treat a post-apply restart requirement as accepted evidence.
+    #[arg(long, requires = "require_runtime")]
+    pub accept_restart_required: bool,
+
+    /// Request registry remote push after the future local transaction.
+    #[arg(long)]
+    pub push_remote: bool,
 }
 
 #[derive(Debug, Clone, Args, Serialize)]
@@ -45,6 +95,10 @@ pub struct PlanUseArgs {
 pub struct ApplyArgs {
     /// Durable plan id returned by `loom plan`.
     pub plan_id: String,
+
+    /// Reviewed digest required by convergence plans.
+    #[arg(long)]
+    pub plan_digest: Option<String>,
 
     /// Caller-provided idempotency key for safe retries.
     #[arg(long)]

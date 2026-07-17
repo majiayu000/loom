@@ -175,6 +175,7 @@ fn cli_contract_docs_track_current_surface() {
         "loom workspace doctor",
         "loom use",
         "loom plan use",
+        "loom plan converge",
         "loom apply",
         "loom skill list",
         "loom skill inspect",

@@ -43,7 +43,10 @@ root to avoid sharing Codex's managed target. See the
 the [trusted-folders reference](https://geminicli.com/docs/cli/trusted-folders/).
 The process environment fixes bootstrap user settings and trust locations;
 only a workspace already trusted by that state may load a runtime dotenv
-`GEMINI_CLI_HOME` for subsequent user-root discovery.
+`GEMINI_CLI_HOME` for subsequent user-root discovery. Runtime dotenv loading
+also honors effective `advanced.ignoreLocalEnv` and `advanced.excludedEnvVars`;
+generic project dotenv redirects are rejected when `--ignore-env` could change
+the selected file.
 
 `generic` means Loom exposes a conservative fallback path without claiming
 that discovery precedence, visibility disables, or reload behavior has been

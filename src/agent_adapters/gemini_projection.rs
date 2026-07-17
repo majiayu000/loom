@@ -22,14 +22,15 @@ pub(crate) fn built_in_projection_root(
         return Ok(None);
     }
     let base = match scope {
-        "user" => match std::env::current_dir()
-            .ok()
-            .as_deref()
-            .and_then(gemini_cli::runtime_home)
-        {
-            Some(home) => home,
-            None => return Ok(None),
-        },
+        "user" => {
+            let workspace = std::env::current_dir().map_err(|error| {
+                CommandFailure::new(
+                    ErrorCode::IoError,
+                    format!("failed to resolve current workspace: {error}"),
+                )
+            })?;
+            gemini_cli::runtime_home(&workspace).map_err(gemini_config_failure)?
+        }
         "project" => workspace.to_path_buf(),
         _ => return Ok(None),
     };
@@ -40,6 +41,15 @@ pub(crate) fn built_in_projection_root(
         return Err(alias_shadow_failure(scope, skill, alias, &base));
     }
     Ok(Some(base.join(".gemini/skills")))
+}
+
+fn gemini_config_failure(message: &'static str) -> CommandFailure {
+    let mut failure = CommandFailure::new(ErrorCode::AdapterInvalid, message);
+    failure.details = json!({
+        "reason": "gemini_cli_config_invalid",
+        "agent": "gemini-cli",
+    });
+    failure
 }
 
 fn alias_shadow_failure(scope: &str, skill: &str, alias: PathBuf, base: &Path) -> CommandFailure {

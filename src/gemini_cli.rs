@@ -13,6 +13,8 @@ pub(crate) struct GeminiSettings {
     pub(crate) skills_enabled: bool,
     pub(crate) skill_disabled: bool,
     folder_trust_enabled: bool,
+    ignore_local_env: bool,
+    excluded_env_vars: Vec<String>,
 }
 
 impl Default for GeminiSettings {
@@ -21,6 +23,8 @@ impl Default for GeminiSettings {
             skills_enabled: true,
             skill_disabled: false,
             folder_trust_enabled: true,
+            ignore_local_env: false,
+            excluded_env_vars: vec!["DEBUG".to_string(), "DEBUG_MODE".to_string()],
         }
     }
 }
@@ -39,11 +43,8 @@ pub(crate) fn bootstrap_home() -> Option<PathBuf> {
         .or_else(home_dir)
 }
 
-pub(crate) fn runtime_home(workspace: &Path) -> Option<PathBuf> {
-    load_config("", Some(workspace))
-        .ok()
-        .map(|state| state.runtime_home)
-        .or_else(bootstrap_home)
+pub(crate) fn runtime_home(workspace: &Path) -> Result<PathBuf, &'static str> {
+    load_config("", Some(workspace)).map(|state| state.runtime_home)
 }
 
 pub(crate) fn load_config(
@@ -63,8 +64,6 @@ pub(crate) fn load_config(
         Some(path) => workspace_trust(path, &bootstrap_home, settings.folder_trust_enabled)?,
         None => None,
     };
-    let runtime_home =
-        runtime_home_after_trust(workspace, &bootstrap_home, workspace_trusted == Some(true));
     if workspace_trusted == Some(true)
         && let Some(workspace) = workspace
     {
@@ -75,6 +74,12 @@ pub(crate) fn load_config(
         )?;
         apply_layer(&mut settings, system.as_deref(), skill)?;
     }
+    let runtime_home = runtime_home_after_trust(
+        workspace,
+        &bootstrap_home,
+        workspace_trusted == Some(true),
+        &settings,
+    );
     Ok(GeminiConfigState {
         settings,
         workspace_trusted,
@@ -86,6 +91,7 @@ fn runtime_home_after_trust(
     workspace: Option<&Path>,
     bootstrap_home: &Path,
     trusted: bool,
+    settings: &GeminiSettings,
 ) -> PathBuf {
     if let Ok(value) = env::var("GEMINI_CLI_HOME")
         && !value.is_empty()
@@ -96,19 +102,35 @@ fn runtime_home_after_trust(
         return bootstrap_home.to_path_buf();
     }
     workspace
-        .and_then(|workspace| find_env_file(workspace, bootstrap_home))
+        .and_then(|workspace| stable_env_file(workspace, bootstrap_home, settings.ignore_local_env))
+        .filter(|path| {
+            is_gemini_env(path)
+                || !settings
+                    .excluded_env_vars
+                    .iter()
+                    .any(|key| key == "GEMINI_CLI_HOME")
+        })
         .and_then(|path| load_dotenv_file(&path).get("GEMINI_CLI_HOME").cloned())
         .filter(|value| !value.is_empty())
         .map(PathBuf::from)
         .unwrap_or_else(|| bootstrap_home.to_path_buf())
 }
 
-fn find_env_file(workspace: &Path, home: &Path) -> Option<PathBuf> {
+fn stable_env_file(workspace: &Path, home: &Path, ignore_local_env: bool) -> Option<PathBuf> {
+    let configured = find_env_file(workspace, home, ignore_local_env);
+    let cli_ignored = find_env_file(workspace, home, true);
+    (configured == cli_ignored).then_some(configured).flatten()
+}
+
+fn find_env_file(workspace: &Path, home: &Path, ignore_local_env: bool) -> Option<PathBuf> {
     for directory in workspace.ancestors() {
-        for candidate in [directory.join(".gemini/.env"), directory.join(".env")] {
-            if candidate.is_file() {
-                return Some(candidate);
-            }
+        let gemini = directory.join(".gemini/.env");
+        if gemini.is_file() {
+            return Some(gemini);
+        }
+        let generic = directory.join(".env");
+        if generic.is_file() && (!ignore_local_env || directory == home) {
+            return Some(generic);
         }
     }
     for candidate in [home.join(".gemini/.env"), home.join(".env")] {
@@ -117,6 +139,10 @@ fn find_env_file(workspace: &Path, home: &Path) -> Option<PathBuf> {
         }
     }
     None
+}
+
+fn is_gemini_env(path: &Path) -> bool {
+    path.parent().and_then(Path::file_name) == Some(std::ffi::OsStr::new(".gemini"))
 }
 
 fn apply_layer(
@@ -143,6 +169,21 @@ fn apply_layer(
     }
     if let Some(value) = lookup(&value, &["security", "folderTrust", "enabled"])? {
         settings.folder_trust_enabled = value.as_bool().ok_or(INVALID_CONFIG)?;
+    }
+    if let Some(value) = lookup(&value, &["advanced", "ignoreLocalEnv"])? {
+        settings.ignore_local_env = value.as_bool().ok_or(INVALID_CONFIG)?;
+    }
+    if let Some(value) = lookup(&value, &["advanced", "excludedEnvVars"])? {
+        for value in value.as_array().ok_or(INVALID_CONFIG)? {
+            let key = value.as_str().ok_or(INVALID_CONFIG)?;
+            if !settings
+                .excluded_env_vars
+                .iter()
+                .any(|existing| existing == key)
+            {
+                settings.excluded_env_vars.push(key.to_string());
+            }
+        }
     }
     Ok(())
 }

@@ -101,6 +101,7 @@ pub(super) fn built_in_discovery_roots(
     id: &str,
     default_dirs: Option<&Vec<PathBuf>>,
     home: Option<&Path>,
+    unavailable_reason: Option<&str>,
 ) -> Vec<AdapterDiscoveryRoot> {
     if id == "codex" {
         return codex_discovery_roots(home);
@@ -109,7 +110,7 @@ pub(super) fn built_in_discovery_roots(
         return claude_discovery_roots(home);
     }
     if id == "gemini-cli" {
-        return gemini_cli_discovery_roots(home);
+        return gemini_cli_discovery_roots(home, unavailable_reason);
     }
     default_dirs
         .into_iter()
@@ -511,10 +512,17 @@ fn claude_discovery_roots(home: Option<&Path>) -> Vec<AdapterDiscoveryRoot> {
     ]
 }
 
-fn gemini_cli_discovery_roots(home: Option<&Path>) -> Vec<AdapterDiscoveryRoot> {
+fn gemini_cli_discovery_roots(
+    home: Option<&Path>,
+    configured_unavailable_reason: Option<&str>,
+) -> Vec<AdapterDiscoveryRoot> {
     let home_available = home.is_some();
     let unavailable_reason = || {
-        (!home_available).then(|| "GEMINI_CLI_HOME, HOME, or USERPROFILE is not set".to_string())
+        (!home_available).then(|| {
+            configured_unavailable_reason
+                .unwrap_or("GEMINI_CLI_HOME, HOME, or USERPROFILE is not set")
+                .to_string()
+        })
     };
     vec![
         AdapterDiscoveryRoot {

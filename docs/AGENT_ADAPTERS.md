@@ -143,6 +143,13 @@ the first runtime `.env` in its workspace-to-root search; a trusted runtime
 `GEMINI_CLI_HOME` can then select user skill roots, but cannot retroactively
 relocate bootstrap settings or trust. Loom mirrors that ordering and ignores
 `GEMINI_CLI_SKILLS_DIR`, which is not part of Gemini CLI discovery.
+Trusted dotenv selection uses the effective system-default, user,
+trusted-project, and system-override values for `advanced.ignoreLocalEnv` and
+the union of `advanced.excludedEnvVars`. Because Loom cannot observe a future
+Gemini `--ignore-env` invocation, a generic project dotenv may redirect
+`GEMINI_CLI_HOME` only when the selected dotenv is invariant to that flag;
+Gemini-specific `.gemini/.env` files remain eligible. Invalid settings or trust
+make user roots explicitly unavailable and block default user-root writes.
 Project visibility also evaluates `trustedFolders.json` (or the documented
 trust environment override) and fails closed when the workspace is untrusted,
 undecided, or the settings/trust files are malformed. Loom reports these

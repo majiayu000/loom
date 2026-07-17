@@ -15,6 +15,16 @@ fn write_good_skill(root: &Path) {
     );
 }
 
+fn trust_workspace(home: &Path, workspace: &Path) {
+    write_file(
+        &home.join(".gemini/trustedFolders.json"),
+        &format!(
+            "{{{:?}:\"TRUST_FOLDER\"}}\n",
+            workspace.display().to_string()
+        ),
+    );
+}
+
 fn symlink_dir(source: &Path, destination: &Path) {
     fs::create_dir_all(destination.parent().expect("symlink parent"))
         .expect("create symlink parent");
@@ -224,12 +234,12 @@ fn trusted_runtime_dotenv_home_drives_roots_but_not_bootstrap_config() {
         ),
     );
     write_file(
-        &root.path().join(".env"),
+        &root.path().join(".gemini/.env"),
         &format!("GEMINI_CLI_HOME={}\n", gemini_home.path().display()),
     );
     write_file(
         &os_home.path().join(".gemini/settings.json"),
-        "{\"skills\":{\"disabled\":[\"demo\"]}}\n",
+        "{\"skills\":{\"disabled\":[\"demo\"]},\"advanced\":{\"ignoreLocalEnv\":true,\"excludedEnvVars\":[\"GEMINI_CLI_HOME\"]}}\n",
     );
 
     let (activate_output, activate_envelope) = run(
@@ -319,6 +329,181 @@ fn trusted_runtime_dotenv_home_drives_roots_but_not_bootstrap_config() {
         json!(process_home.path().join(".gemini/skills")),
         "process environment must take precedence over repo dotenv"
     );
+}
+
+#[test]
+fn generic_dotenv_redirect_requires_effective_settings_invariant_to_cli_ignore_env() {
+    let root = TestDir::new("gemini-unknown-cli-root");
+    let home = TestDir::new("gemini-unknown-cli-home");
+    let attacker = TestDir::new("gemini-unknown-cli-attacker");
+    write_good_skill(root.path());
+    trust_workspace(home.path(), root.path());
+    write_file(
+        &root.path().join(".env"),
+        &format!("GEMINI_CLI_HOME={}\n", attacker.path().display()),
+    );
+    let (output, envelope) = run(
+        root.path(),
+        home.path(),
+        root.path(),
+        &[],
+        &["skill", "activate", "demo", "--agent", "gemini-cli"],
+    );
+    assert!(output.status.success(), "activation failed: {envelope}");
+    assert_eq!(
+        envelope["data"]["target"]["path"],
+        json!(home.path().join(".gemini/skills")),
+        "generic project dotenv differs under Gemini --ignore-env and must not redirect"
+    );
+
+    for scope in ["user", "workspace", "system"] {
+        let root = TestDir::new("gemini-ignore-local-root");
+        let home = TestDir::new("gemini-ignore-local-home");
+        let local = TestDir::new("gemini-ignore-local-attacker");
+        let stable = TestDir::new("gemini-ignore-local-stable");
+        write_good_skill(root.path());
+        trust_workspace(home.path(), root.path());
+        write_file(
+            &root.path().join(".env"),
+            &format!("GEMINI_CLI_HOME={}\n", local.path().display()),
+        );
+        write_file(
+            &home.path().join(".env"),
+            &format!("GEMINI_CLI_HOME={}\n", stable.path().display()),
+        );
+        let settings = "{\"advanced\":{\"ignoreLocalEnv\":true}}\n";
+        let system_path = root.path().join("system-settings.json");
+        match scope {
+            "user" => write_file(&home.path().join(".gemini/settings.json"), settings),
+            "workspace" => write_file(&root.path().join(".gemini/settings.json"), settings),
+            "system" => write_file(&system_path, settings),
+            _ => unreachable!(),
+        }
+        let system_path_arg = system_path.display().to_string();
+        let envs = (scope == "system")
+            .then_some(("GEMINI_CLI_SYSTEM_SETTINGS_PATH", system_path_arg.as_str()))
+            .into_iter()
+            .collect::<Vec<_>>();
+        let (output, envelope) = run(
+            root.path(),
+            home.path(),
+            root.path(),
+            &envs,
+            &["skill", "activate", "demo", "--agent", "gemini-cli"],
+        );
+        assert!(
+            output.status.success(),
+            "{scope} activation failed: {envelope}"
+        );
+        assert_eq!(
+            envelope["data"]["target"]["path"],
+            json!(stable.path().join(".gemini/skills")),
+            "{scope} ignoreLocalEnv was not effective"
+        );
+    }
+}
+
+#[test]
+fn excluded_env_vars_union_blocks_home_dotenv_redirect_in_every_settings_layer() {
+    for scope in ["user", "workspace", "system"] {
+        let root = TestDir::new("gemini-excluded-root");
+        let home = TestDir::new("gemini-excluded-home");
+        let attacker = TestDir::new("gemini-excluded-attacker");
+        write_good_skill(root.path());
+        trust_workspace(home.path(), root.path());
+        write_file(
+            &home.path().join(".env"),
+            &format!("GEMINI_CLI_HOME={}\n", attacker.path().display()),
+        );
+        let settings = "{\"advanced\":{\"excludedEnvVars\":[\"GEMINI_CLI_HOME\"]}}\n";
+        let system_path = root.path().join("system-settings.json");
+        match scope {
+            "user" => write_file(&home.path().join(".gemini/settings.json"), settings),
+            "workspace" => write_file(&root.path().join(".gemini/settings.json"), settings),
+            "system" => write_file(&system_path, settings),
+            _ => unreachable!(),
+        }
+        let system_path_arg = system_path.display().to_string();
+        let envs = (scope == "system")
+            .then_some(("GEMINI_CLI_SYSTEM_SETTINGS_PATH", system_path_arg.as_str()))
+            .into_iter()
+            .collect::<Vec<_>>();
+        let (output, envelope) = run(
+            root.path(),
+            home.path(),
+            root.path(),
+            &envs,
+            &["skill", "activate", "demo", "--agent", "gemini-cli"],
+        );
+        assert!(
+            output.status.success(),
+            "{scope} activation failed: {envelope}"
+        );
+        assert_eq!(
+            envelope["data"]["target"]["path"],
+            json!(home.path().join(".gemini/skills")),
+            "{scope} excludedEnvVars union did not block GEMINI_CLI_HOME"
+        );
+    }
+}
+
+#[test]
+fn malformed_bootstrap_settings_or_trust_blocks_activation_and_marks_diagnostics_unavailable() {
+    for malformed in ["settings", "trust"] {
+        let root = TestDir::new("gemini-malformed-root");
+        let home = TestDir::new("gemini-malformed-home");
+        write_good_skill(root.path());
+        let path = match malformed {
+            "settings" => home.path().join(".gemini/settings.json"),
+            "trust" => home.path().join(".gemini/trustedFolders.json"),
+            _ => unreachable!(),
+        };
+        write_file(&path, "{ malformed\n");
+        let (output, envelope) = run(
+            root.path(),
+            home.path(),
+            root.path(),
+            &[],
+            &["skill", "activate", "demo", "--agent", "gemini-cli"],
+        );
+        assert!(
+            !output.status.success(),
+            "{malformed} must fail: {envelope}"
+        );
+        assert_eq!(envelope["error"]["code"], "ADAPTER_INVALID");
+        assert!(!home.path().join(".gemini/skills/demo").exists());
+
+        let (status, status_envelope) = run(
+            root.path(),
+            home.path(),
+            root.path(),
+            &[],
+            &["workspace", "status"],
+        );
+        assert!(status.status.success(), "status failed: {status_envelope}");
+        let adapter = status_envelope["data"]["agent_adapters"]["adapters"]
+            .as_array()
+            .expect("adapters")
+            .iter()
+            .find(|adapter| adapter["id"] == "gemini-cli")
+            .expect("Gemini adapter");
+        assert!(
+            adapter["default_skill_dirs"]
+                .as_array()
+                .is_some_and(Vec::is_empty)
+        );
+        assert!(
+            adapter["discovery_roots"]
+                .as_array()
+                .expect("roots")
+                .iter()
+                .filter(|root| root["scope"] == "user")
+                .all(|root| root["available"] == false
+                    && root["unavailable_reason"]
+                        .as_str()
+                        .is_some_and(|reason| reason.contains("runtime home unavailable")))
+        );
+    }
 }
 
 #[test]

@@ -46,6 +46,19 @@ pub struct AgentSkillDirs {
     pub claude: PathBuf,
     pub codex: PathBuf,
     pub all: Vec<AgentSkillDir>,
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct AgentSkillSourceDirs {
+    pub dirs: Vec<PathBuf>,
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct GeminiHomeResolution {
+    pub(crate) home: Option<PathBuf>,
+    pub(crate) unavailable_reason: Option<String>,
 }
 
 const DEFAULT_AGENT_SKILL_DIRS: [(&str, &str, &str); 10] = [
@@ -65,21 +78,25 @@ pub fn resolve_agent_skill_dirs(root: &Path) -> AgentSkillDirs {
     let home = home_dir()
         .map(|home| home.display().to_string())
         .unwrap_or_else(|| "~".to_string());
-    let gemini_home = effective_gemini_cli_home(root)
-        .map(|path| path.display().to_string())
-        .unwrap_or_else(|| home.clone());
+    let gemini = effective_gemini_cli_home(root);
+    let gemini_home = gemini.home.as_ref().map(|path| path.display().to_string());
     let dotenv = load_dotenv_map(root);
 
     let all = DEFAULT_AGENT_SKILL_DIRS
         .iter()
-        .map(|(agent, env_var, default_suffix)| AgentSkillDir {
-            agent,
-            env_var,
-            path: if *agent == "gemini-cli" {
-                default_agent_skill_dir(&gemini_home, default_suffix)
+        .filter_map(|(agent, env_var, default_suffix)| {
+            let path = if *agent == "gemini-cli" {
+                gemini_home
+                    .as_deref()
+                    .map(|home| default_agent_skill_dir(home, default_suffix))?
             } else {
                 first_agent_skill_dir(env_var, default_suffix, &home, &dotenv)
-            },
+            };
+            Some(AgentSkillDir {
+                agent,
+                env_var,
+                path,
+            })
         })
         .collect::<Vec<_>>();
 
@@ -94,23 +111,29 @@ pub fn resolve_agent_skill_dirs(root: &Path) -> AgentSkillDirs {
         .map(|dir| dir.path.clone())
         .unwrap_or_else(|| PathBuf::from(format!("{}/.codex/skills", home)));
 
-    AgentSkillDirs { claude, codex, all }
+    AgentSkillDirs {
+        claude,
+        codex,
+        all,
+        warnings: gemini.unavailable_reason.into_iter().collect(),
+    }
 }
 
-pub fn resolve_agent_skill_source_dirs(root: &Path) -> Vec<PathBuf> {
+pub fn resolve_agent_skill_source_dirs(root: &Path) -> AgentSkillSourceDirs {
     let home = home_dir()
         .map(|home| home.display().to_string())
         .unwrap_or_else(|| "~".to_string());
-    let gemini_home = effective_gemini_cli_home(root)
-        .map(|path| path.display().to_string())
-        .unwrap_or_else(|| home.clone());
+    let gemini = effective_gemini_cli_home(root);
+    let gemini_home = gemini.home.as_ref().map(|path| path.display().to_string());
     let dotenv = load_dotenv_map(root);
     let mut dirs = Vec::new();
 
     for (agent, env_var, default_suffix) in DEFAULT_AGENT_SKILL_DIRS {
         if agent == "gemini-cli" {
-            dirs.push(default_agent_skill_dir(&gemini_home, ".agents/skills"));
-            dirs.push(default_agent_skill_dir(&gemini_home, ".gemini/skills"));
+            if let Some(home) = gemini_home.as_deref() {
+                dirs.push(default_agent_skill_dir(home, ".agents/skills"));
+                dirs.push(default_agent_skill_dir(home, ".gemini/skills"));
+            }
         } else if let Some(raw) = env_or_dotenv(env_var, &dotenv) {
             dirs.extend(parse_dir_list_env(&raw));
         } else {
@@ -118,75 +141,37 @@ pub fn resolve_agent_skill_source_dirs(root: &Path) -> Vec<PathBuf> {
         }
     }
 
-    dedupe_paths_keep_order(dirs)
+    AgentSkillSourceDirs {
+        dirs: dedupe_paths_keep_order(dirs),
+        warnings: gemini.unavailable_reason.into_iter().collect(),
+    }
 }
 
-pub(crate) fn resolve_agent_skill_dir_list(root: &Path, agent: &str) -> Vec<PathBuf> {
-    let Some((_, env_var, default_suffix)) = DEFAULT_AGENT_SKILL_DIRS
-        .iter()
-        .find(|(candidate, _, _)| *candidate == agent)
-    else {
-        return Vec::new();
-    };
-    if agent == "gemini-cli" {
-        return effective_gemini_cli_home(root)
-            .map(|home| vec![home.join(".agents/skills"), home.join(".gemini/skills")])
-            .unwrap_or_default();
-    }
-    if let Some(configured) = configured_agent_skill_dirs(root, env_var) {
-        return configured;
-    }
-    let home = home_dir();
-    home.map(|home| vec![home.join(default_suffix)])
-        .unwrap_or_default()
-}
-
-pub(crate) fn configured_agent_skill_dirs(root: &Path, env_var: &str) -> Option<Vec<PathBuf>> {
-    let configured = resolve_env_or_dotenv(root, env_var).map(|raw| parse_dir_list_env(&raw))?;
-    (!configured.is_empty()).then_some(configured)
-}
-
-pub(crate) fn resolve_env_or_dotenv(root: &Path, key: &str) -> Option<String> {
-    if let Ok(value) = env::var(key)
-        && !value.is_empty()
-    {
-        return Some(value);
-    }
-    let mut root_seen = false;
-    let mut home_seen = false;
-    let home = home_dir();
-    if let Ok(current_dir) = env::current_dir() {
-        for ancestor in current_dir.ancestors() {
-            root_seen |= ancestor == root;
-            home_seen |= home.as_deref() == Some(ancestor);
-            if let Some(value) = load_dotenv_map(ancestor)
-                .get(key)
-                .filter(|value| !value.is_empty())
-            {
-                return Some(value.clone());
-            }
-            if home_seen {
-                break;
-            }
+pub(crate) fn effective_gemini_cli_home(root: &Path) -> GeminiHomeResolution {
+    let workspace = match env::current_dir() {
+        Ok(workspace) => workspace,
+        Err(error) => {
+            return GeminiHomeResolution {
+                home: None,
+                unavailable_reason: Some(format!(
+                    "Gemini CLI runtime home unavailable: failed to resolve current workspace: {error}"
+                )),
+            };
         }
+    };
+    match gemini_cli::runtime_home(&workspace) {
+        Ok(home) => GeminiHomeResolution {
+            home: Some(home),
+            unavailable_reason: None,
+        },
+        Err(error) => GeminiHomeResolution {
+            home: None,
+            unavailable_reason: Some(format!(
+                "Gemini CLI runtime home unavailable for {}: {error}",
+                root.display()
+            )),
+        },
     }
-    if !home_seen
-        && let Some(value) = home
-            .as_deref()
-            .and_then(|home| load_dotenv_map(home).get(key).cloned())
-            .filter(|value| !value.is_empty())
-    {
-        return Some(value);
-    }
-    (!root_seen)
-        .then(|| load_dotenv_map(root).get(key).cloned())
-        .flatten()
-        .filter(|value| !value.is_empty())
-}
-
-pub(crate) fn effective_gemini_cli_home(root: &Path) -> Option<PathBuf> {
-    let workspace = env::current_dir().unwrap_or_else(|_| root.to_path_buf());
-    gemini_cli::runtime_home(&workspace)
 }
 
 fn first_agent_skill_dir(

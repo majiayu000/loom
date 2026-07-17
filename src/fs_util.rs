@@ -66,7 +66,7 @@ pub fn rename_no_replace_atomic(src: &Path, dst: &Path) -> io::Result<()> {
         if result == 0 {
             Ok(())
         } else {
-            Err(io::Error::last_os_error())
+            Err(atomic_rename_os_error())
         }
     }
 
@@ -87,7 +87,7 @@ pub fn rename_no_replace_atomic(src: &Path, dst: &Path) -> io::Result<()> {
         if result == 0 {
             Ok(())
         } else {
-            Err(io::Error::last_os_error())
+            Err(atomic_rename_os_error())
         }
     }
 }
@@ -134,7 +134,7 @@ pub fn exchange_paths_atomic(src: &Path, dst: &Path) -> io::Result<()> {
         if result == 0 {
             Ok(())
         } else {
-            Err(io::Error::last_os_error())
+            Err(atomic_rename_os_error())
         }
     }
 
@@ -154,8 +154,41 @@ pub fn exchange_paths_atomic(src: &Path, dst: &Path) -> io::Result<()> {
         if result == 0 {
             Ok(())
         } else {
-            Err(io::Error::last_os_error())
+            Err(atomic_rename_os_error())
         }
+    }
+}
+
+#[cfg(any(
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "linux",
+    target_os = "android"
+))]
+fn atomic_rename_os_error() -> io::Error {
+    normalize_atomic_rename_error(io::Error::last_os_error())
+}
+
+#[cfg(any(
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "linux",
+    target_os = "android"
+))]
+fn normalize_atomic_rename_error(err: io::Error) -> io::Error {
+    let unsupported = match err.raw_os_error() {
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        Some(code) if code == libc::EINVAL || code == libc::ENOSYS || code == libc::EOPNOTSUPP => {
+            true
+        }
+        #[cfg(any(target_os = "macos", target_os = "ios"))]
+        Some(code) if code == libc::EINVAL || code == libc::ENOTSUP => true,
+        _ => false,
+    };
+    if unsupported {
+        io::Error::new(io::ErrorKind::Unsupported, err)
+    } else {
+        err
     }
 }
 
@@ -470,6 +503,18 @@ mod tests {
         assert_eq!(fs::read(&src).unwrap(), b"staged content");
         assert_eq!(fs::read(&dst).unwrap(), b"concurrent content");
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(any(
+        target_os = "macos",
+        target_os = "ios",
+        target_os = "linux",
+        target_os = "android"
+    ))]
+    #[test]
+    fn atomic_rename_invalid_argument_is_typed_unsupported() {
+        let error = normalize_atomic_rename_error(io::Error::from_raw_os_error(libc::EINVAL));
+        assert_eq!(error.kind(), io::ErrorKind::Unsupported);
     }
 
     #[cfg(not(any(

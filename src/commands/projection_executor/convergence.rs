@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde_json::{Value, json};
 
@@ -10,14 +10,21 @@ use crate::types::ErrorCode;
 use super::super::CommandFailure;
 use super::super::helpers::map_io;
 use super::super::projections::{apply_projection_observation, observe_projection};
+use super::super::provenance::materialized_tree_digest;
 use super::super::skill_cmds::shared::push_rollback_error;
+
+struct PreparedProjectionParts {
+    projection: RegistryProjectionInstance,
+    staging_path: PathBuf,
+    materialized_path: PathBuf,
+    path_exists: bool,
+    staging_digest: String,
+    existing_digest: Option<String>,
+}
 
 #[must_use = "a prepared projection must be activated or explicitly discarded"]
 pub(crate) struct PreparedProjection {
-    projection: Option<RegistryProjectionInstance>,
-    staging_path: Option<PathBuf>,
-    materialized_path: Option<PathBuf>,
-    pub(super) path_exists: bool,
+    parts: Option<PreparedProjectionParts>,
 }
 
 impl PreparedProjection {
@@ -26,59 +33,83 @@ impl PreparedProjection {
         staging_path: PathBuf,
         materialized_path: PathBuf,
         path_exists: bool,
+        staging_digest: String,
+        existing_digest: Option<String>,
     ) -> Self {
         Self {
-            projection: Some(projection),
-            staging_path: Some(staging_path),
-            materialized_path: Some(materialized_path),
-            path_exists,
+            parts: Some(PreparedProjectionParts {
+                projection,
+                staging_path,
+                materialized_path,
+                path_exists,
+                staging_digest,
+                existing_digest,
+            }),
         }
     }
 
     #[cfg(test)]
-    pub(super) fn staging_path(&self) -> &std::path::Path {
-        self.staging_path
-            .as_deref()
-            .expect("prepared projection must own a staging path")
+    pub(super) fn staging_path(&self) -> &Path {
+        &self
+            .parts
+            .as_ref()
+            .expect("prepared projection must own its transaction state")
+            .staging_path
     }
 
-    fn take_parts(&mut self) -> (RegistryProjectionInstance, PathBuf, PathBuf, bool) {
-        (
-            self.projection
-                .take()
-                .expect("prepared projection must own its projection identity"),
-            self.staging_path
-                .take()
-                .expect("prepared projection must own a staging path"),
-            self.materialized_path
-                .take()
-                .expect("prepared projection must own a materialized path"),
-            self.path_exists,
-        )
+    fn take_parts(&mut self) -> PreparedProjectionParts {
+        self.parts
+            .take()
+            .expect("prepared projection must own its transaction state")
     }
 }
 
 impl Drop for PreparedProjection {
     fn drop(&mut self) {
-        if let Some(staging_path) = self.staging_path.take()
-            && let Err(err) = remove_path_if_exists(&staging_path)
+        if let Some(parts) = self.parts.take()
+            && let Err(err) = remove_path_if_exists(&parts.staging_path)
         {
             eprintln!(
                 "loom: failed to clean abandoned prepared projection '{}': {err}",
-                staging_path.display()
+                parts.staging_path.display()
             );
         }
     }
 }
 
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum PendingCleanupReason {
+    RollbackExchanged,
+    RollbackCreated,
+}
+
+impl PendingCleanupReason {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::RollbackExchanged => "rollback_exchanged",
+            Self::RollbackCreated => "rollback_created",
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum ProjectionRollbackArtifact {
     Exchanged {
         materialized_path: PathBuf,
         backup_path: PathBuf,
+        activated_digest: String,
+        original_digest: String,
     },
     Created {
         materialized_path: PathBuf,
+        rollback_path: PathBuf,
+        activated_digest: String,
+    },
+    PendingCleanup {
+        materialized_path: PathBuf,
+        artifact_path: PathBuf,
+        expected_digest: String,
+        reason: PendingCleanupReason,
     },
 }
 
@@ -92,49 +123,138 @@ impl ProjectionRollbackArtifact {
             Self::Exchanged {
                 materialized_path,
                 backup_path,
+                activated_digest,
+                original_digest,
             } => json!({
                 "reason": "convergence.atomic_exchange",
                 "kind": "atomic_exchange",
                 "original_path": materialized_path.display().to_string(),
                 "backup_path": backup_path.display().to_string(),
+                "activated_digest": activated_digest,
+                "original_digest": original_digest,
             }),
-            Self::Created { materialized_path } => json!({
+            Self::Created {
+                materialized_path,
+                rollback_path,
+                activated_digest,
+            } => json!({
                 "reason": "convergence.atomic_create",
                 "kind": "atomic_create",
                 "original_path": materialized_path.display().to_string(),
+                "rollback_path": rollback_path.display().to_string(),
+                "activated_digest": activated_digest,
+            }),
+            Self::PendingCleanup {
+                materialized_path,
+                artifact_path,
+                expected_digest,
+                reason,
+            } => json!({
+                "reason": reason.as_str(),
+                "kind": "pending_cleanup",
+                "original_path": materialized_path.display().to_string(),
+                "artifact_path": artifact_path.display().to_string(),
+                "expected_digest": expected_digest,
             }),
         }
     }
 
-    fn rollback(self) -> Vec<Value> {
-        let mut errors = Vec::new();
-        match self {
+    fn rollback(&mut self) -> std::result::Result<(), CommandFailure> {
+        match self.clone() {
             Self::Exchanged {
                 materialized_path,
                 backup_path,
+                activated_digest,
+                ..
             } => {
-                if let Err(err) = exchange_paths_atomic(&backup_path, &materialized_path) {
-                    push_rollback_error(&mut errors, "restore_projection_atomic_exchange", err);
-                    return errors;
-                }
-                if let Err(err) = remove_path_if_exists(&backup_path) {
-                    push_rollback_error(&mut errors, "remove_projection_staging", err);
-                }
+                validate_owned_digest(
+                    &materialized_path,
+                    &activated_digest,
+                    "rollback live projection",
+                    self,
+                )?;
+                exchange_paths_atomic(&backup_path, &materialized_path)
+                    .map_err(map_atomic_exchange_error)
+                    .map_err(|err| with_recovery_details(err, self))?;
+                *self = Self::PendingCleanup {
+                    materialized_path,
+                    artifact_path: backup_path,
+                    expected_digest: activated_digest,
+                    reason: PendingCleanupReason::RollbackExchanged,
+                };
+                self.cleanup_pending()
             }
-            Self::Created { materialized_path } => {
-                if let Err(err) = remove_path_if_exists(&materialized_path) {
-                    push_rollback_error(&mut errors, "remove_projection_path", err);
-                }
+            Self::Created {
+                materialized_path,
+                rollback_path,
+                activated_digest,
+            } => {
+                validate_owned_digest(
+                    &materialized_path,
+                    &activated_digest,
+                    "rollback created projection",
+                    self,
+                )?;
+                rename_no_replace_atomic(&materialized_path, &rollback_path)
+                    .map_err(|err| map_atomic_operation_error(err, &rollback_path))
+                    .map_err(|err| with_recovery_details(err, self))?;
+                *self = Self::PendingCleanup {
+                    materialized_path,
+                    artifact_path: rollback_path,
+                    expected_digest: activated_digest,
+                    reason: PendingCleanupReason::RollbackCreated,
+                };
+                self.cleanup_pending()
             }
+            Self::PendingCleanup { .. } => self.cleanup_pending(),
         }
-        errors
     }
 
-    fn finalize(self) -> std::result::Result<(), CommandFailure> {
-        if let Self::Exchanged { backup_path, .. } = self {
-            remove_path_if_exists(&backup_path).map_err(map_io)?;
+    fn finalize(&mut self) -> std::result::Result<(), CommandFailure> {
+        match self.clone() {
+            Self::Exchanged {
+                backup_path,
+                original_digest,
+                ..
+            } => {
+                validate_owned_digest(
+                    &backup_path,
+                    &original_digest,
+                    "finalize projection backup",
+                    self,
+                )?;
+                remove_path_if_exists(&backup_path)
+                    .map_err(map_io)
+                    .map_err(|err| with_recovery_details(err, self))
+            }
+            Self::Created { .. } => Ok(()),
+            Self::PendingCleanup { .. } => self.cleanup_pending(),
         }
-        Ok(())
+    }
+
+    fn cleanup_pending(&mut self) -> std::result::Result<(), CommandFailure> {
+        let (artifact_path, expected_digest) = match self {
+            Self::PendingCleanup {
+                artifact_path,
+                expected_digest,
+                ..
+            } => (artifact_path.clone(), expected_digest.clone()),
+            _ => {
+                return Err(CommandFailure::new(
+                    ErrorCode::InternalError,
+                    "projection rollback artifact is not pending cleanup",
+                ));
+            }
+        };
+        validate_owned_digest(
+            &artifact_path,
+            &expected_digest,
+            "clean projection rollback artifact",
+            self,
+        )?;
+        remove_path_if_exists(&artifact_path)
+            .map_err(map_io)
+            .map_err(|err| with_recovery_details(err, self))
     }
 }
 
@@ -164,28 +284,15 @@ impl ProjectionActivationOutput {
         dead_code,
         reason = "consumed by the SP524-T004 convergence transaction"
     )]
-    pub(crate) fn rollback(mut self) -> std::result::Result<(), CommandFailure> {
-        let projection = self
-            .projection
-            .take()
-            .expect("activated projection must own its projection identity");
-        let errors = self
+    pub(crate) fn rollback(&mut self) -> std::result::Result<(), CommandFailure> {
+        let artifact = self
             .rollback_artifact
-            .take()
-            .expect("activated projection must own a rollback artifact")
-            .rollback();
-        if errors.is_empty() {
-            Ok(())
-        } else {
-            Err(CommandFailure::new(
-                ErrorCode::InternalError,
-                format!(
-                    "failed to rollback convergence projection '{}'",
-                    projection.instance_id
-                ),
-            )
-            .with_rollback_errors(errors))
-        }
+            .as_mut()
+            .expect("activated projection must own a rollback artifact");
+        artifact.rollback()?;
+        self.rollback_artifact = None;
+        self.projection = None;
+        Ok(())
     }
 
     #[allow(
@@ -193,12 +300,14 @@ impl ProjectionActivationOutput {
         reason = "consumed by the SP524-T004 convergence transaction"
     )]
     pub(crate) fn finalize(
-        mut self,
+        &mut self,
     ) -> std::result::Result<RegistryProjectionInstance, CommandFailure> {
-        self.rollback_artifact
-            .take()
-            .expect("activated projection must own a rollback artifact")
-            .finalize()?;
+        let artifact = self
+            .rollback_artifact
+            .as_mut()
+            .expect("activated projection must own a rollback artifact");
+        artifact.finalize()?;
+        self.rollback_artifact = None;
         Ok(self
             .projection
             .take()
@@ -208,10 +317,13 @@ impl ProjectionActivationOutput {
 
 impl Drop for ProjectionActivationOutput {
     fn drop(&mut self) {
-        if let Some(artifact) = self.rollback_artifact.take() {
-            for error in artifact.rollback() {
-                eprintln!("loom: failed to rollback abandoned projection activation: {error}");
-            }
+        if let Some(artifact) = self.rollback_artifact.as_mut()
+            && let Err(err) = artifact.rollback()
+        {
+            eprintln!(
+                "loom: abandoned projection activation requires recovery: {}; details={}",
+                err.message, err.details
+            );
         }
     }
 }
@@ -225,32 +337,51 @@ pub(crate) fn activate_prepared_projection(
     prepared: PreparedProjection,
 ) -> std::result::Result<ProjectionActivationOutput, CommandFailure> {
     let mut prepared = prepared;
-    let (mut projection, staging_path, materialized_path, path_exists) = prepared.take_parts();
+    let parts = prepared.take_parts();
+    validate_before_activation(&parts).map_err(|err| cleanup_prepare_failure(err, &parts))?;
 
-    let rollback_artifact = if path_exists {
-        if let Err(err) = exchange_paths_atomic(&staging_path, &materialized_path) {
-            let mut cleanup_errors = Vec::new();
-            cleanup_staging(&staging_path, &mut cleanup_errors);
-            return Err(map_atomic_operation_error(err, &materialized_path)
-                .with_rollback_errors(cleanup_errors));
+    let mut rollback_artifact = if parts.path_exists {
+        if let Err(err) = exchange_paths_atomic(&parts.staging_path, &parts.materialized_path) {
+            return Err(cleanup_prepare_failure(
+                map_atomic_exchange_error(err),
+                &parts,
+            ));
         }
         ProjectionRollbackArtifact::Exchanged {
-            materialized_path,
-            backup_path: staging_path,
+            materialized_path: parts.materialized_path,
+            backup_path: parts.staging_path,
+            activated_digest: parts.staging_digest,
+            original_digest: parts
+                .existing_digest
+                .expect("existing convergence path must have a prepared digest"),
         }
     } else {
-        if let Err(err) = rename_no_replace_atomic(&staging_path, &materialized_path) {
-            let mut cleanup_errors = Vec::new();
-            cleanup_staging(&staging_path, &mut cleanup_errors);
-            return Err(map_atomic_operation_error(err, &materialized_path)
-                .with_rollback_errors(cleanup_errors));
+        if let Err(err) = rename_no_replace_atomic(&parts.staging_path, &parts.materialized_path) {
+            return Err(cleanup_prepare_failure(
+                map_atomic_operation_error(err, &parts.materialized_path),
+                &parts,
+            ));
         }
-        ProjectionRollbackArtifact::Created { materialized_path }
+        ProjectionRollbackArtifact::Created {
+            materialized_path: parts.materialized_path,
+            rollback_path: parts.staging_path,
+            activated_digest: parts.staging_digest,
+        }
     };
 
+    let mut projection = parts.projection;
     let observation = observe_projection(ctx, &projection);
     if observation.status != "healthy" {
-        let rollback_errors = rollback_artifact.rollback();
+        let mut rollback_errors = Vec::new();
+        if let Err(err) = rollback_artifact.rollback() {
+            rollback_errors.push(json!({
+                "step": "rollback_projection_activation",
+                "code": err.code.as_str(),
+                "message": err.message,
+                "details": err.details,
+                "artifact": rollback_artifact.evidence(),
+            }));
+        }
         return Err(CommandFailure::new(
             ErrorCode::ProjectionConflict,
             format!(
@@ -277,25 +408,134 @@ pub(crate) fn activate_prepared_projection(
 pub(crate) fn discard_prepared_projection(
     mut prepared: PreparedProjection,
 ) -> std::result::Result<(), CommandFailure> {
-    let staging_path = prepared
-        .staging_path
-        .take()
-        .expect("prepared projection must own a staging path");
-    remove_path_if_exists(&staging_path).map_err(map_io)
+    let parts = prepared.take_parts();
+    remove_path_if_exists(&parts.staging_path).map_err(map_io)
 }
 
-fn cleanup_staging(path: &std::path::Path, errors: &mut Vec<Value>) {
-    if let Err(err) = remove_path_if_exists(path) {
-        push_rollback_error(errors, "remove_projection_staging", err);
+fn validate_before_activation(
+    parts: &PreparedProjectionParts,
+) -> std::result::Result<(), CommandFailure> {
+    validate_prepared_digest(
+        &parts.staging_path,
+        &parts.staging_digest,
+        "staging projection",
+    )?;
+    if let Some(existing_digest) = &parts.existing_digest {
+        validate_prepared_digest(
+            &parts.materialized_path,
+            existing_digest,
+            "existing live projection",
+        )?;
+    }
+    Ok(())
+}
+
+fn validate_prepared_digest(
+    path: &Path,
+    expected_digest: &str,
+    label: &str,
+) -> std::result::Result<(), CommandFailure> {
+    let actual_digest = materialized_tree_digest(path).map_err(|err| {
+        CommandFailure::new(
+            ErrorCode::ProjectionConflict,
+            format!("failed to validate {label} '{}': {err}", path.display()),
+        )
+    })?;
+    if actual_digest == expected_digest {
+        return Ok(());
+    }
+    let mut failure = CommandFailure::new(
+        ErrorCode::ProjectionConflict,
+        format!("{label} '{}' changed after preparation", path.display()),
+    );
+    failure.details = json!({
+        "path": path.display().to_string(),
+        "expected_digest": expected_digest,
+        "actual_digest": actual_digest,
+    });
+    Err(failure)
+}
+
+fn validate_owned_digest(
+    path: &Path,
+    expected_digest: &str,
+    operation: &str,
+    artifact: &ProjectionRollbackArtifact,
+) -> std::result::Result<(), CommandFailure> {
+    let actual_digest = materialized_tree_digest(path).map_err(|err| {
+        with_recovery_details(
+            CommandFailure::new(
+                ErrorCode::ProjectionConflict,
+                format!(
+                    "cannot {operation} because '{}' is unavailable or unreadable: {err}",
+                    path.display()
+                ),
+            ),
+            artifact,
+        )
+    })?;
+    if actual_digest == expected_digest {
+        return Ok(());
+    }
+    let mut failure = CommandFailure::new(
+        ErrorCode::ProjectionConflict,
+        format!(
+            "cannot {operation} because '{}' changed after activation; concurrent data was preserved",
+            path.display()
+        ),
+    );
+    failure.details = json!({
+        "path": path.display().to_string(),
+        "expected_digest": expected_digest,
+        "actual_digest": actual_digest,
+    });
+    Err(with_recovery_details(failure, artifact))
+}
+
+fn cleanup_prepare_failure(err: CommandFailure, parts: &PreparedProjectionParts) -> CommandFailure {
+    let mut cleanup_errors = Vec::new();
+    if let Err(cleanup_err) = remove_path_if_exists(&parts.staging_path) {
+        push_rollback_error(
+            &mut cleanup_errors,
+            "remove_projection_staging",
+            cleanup_err,
+        );
+    }
+    err.with_rollback_errors(cleanup_errors)
+}
+
+fn with_recovery_details(
+    mut failure: CommandFailure,
+    artifact: &ProjectionRollbackArtifact,
+) -> CommandFailure {
+    let cause_details = std::mem::replace(&mut failure.details, json!({}));
+    failure.details = json!({
+        "recovery_required": true,
+        "artifact": artifact.evidence(),
+        "cause_details": cause_details,
+    });
+    failure
+}
+
+fn map_atomic_exchange_error(err: std::io::Error) -> CommandFailure {
+    if err.kind() == std::io::ErrorKind::Unsupported {
+        CommandFailure::new(
+            ErrorCode::ProjectionMethodUnsupported,
+            format!(
+                "atomic projection exchange is unavailable on this platform or filesystem: {err}"
+            ),
+        )
+    } else {
+        map_io(err)
     }
 }
 
-fn map_atomic_operation_error(err: std::io::Error, path: &std::path::Path) -> CommandFailure {
+fn map_atomic_operation_error(err: std::io::Error, path: &Path) -> CommandFailure {
     match err.kind() {
         std::io::ErrorKind::AlreadyExists => CommandFailure::new(
             ErrorCode::ProjectionConflict,
             format!(
-                "projection path '{}' appeared after convergence preparation; concurrent entry was preserved",
+                "projection path '{}' appeared during atomic activation; concurrent entry was preserved",
                 path.display()
             ),
         ),

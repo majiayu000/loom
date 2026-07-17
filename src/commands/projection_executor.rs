@@ -30,6 +30,7 @@ use super::projections::{
     project_skill_to_target, record_registry_observation, record_registry_operation,
     restore_registry_audit_state, snapshot_registry_audit_state, upsert_projection, upsert_rule,
 };
+use super::provenance::materialized_tree_digest;
 use super::skill_activation::resolve::{find_projection, find_rule};
 use super::skill_cmds::shared::{
     maybe_skill_fault, push_rollback_error, rollback_fault_active, rollback_registry_state,
@@ -421,6 +422,23 @@ fn materialize_projection(
         }
     }
 
+    let existing_digest = if input.context == ProjectionExecutionContext::Convergence && path_exists
+    {
+        Some(
+            materialized_tree_digest(&input.materialized_path).map_err(|err| {
+                CommandFailure::new(
+                    ErrorCode::ProjectionConflict,
+                    format!(
+                        "failed to fingerprint existing projection '{}': {err}",
+                        input.materialized_path.display()
+                    ),
+                )
+            })?,
+        )
+    } else {
+        None
+    };
+
     let staging_path = target_base.join(format!(
         ".loom-projection-stage-{}",
         uuid::Uuid::new_v4().simple()
@@ -456,6 +474,18 @@ fn materialize_projection(
         }
         let mut prepared_projection = projection.clone();
         apply_projection_observation(&mut prepared_projection, &observation);
+        let staging_digest = materialized_tree_digest(&staging_path).map_err(|err| {
+            let mut cleanup_errors = Vec::new();
+            cleanup_projection_staging(&staging_path, &mut cleanup_errors);
+            CommandFailure::new(
+                ErrorCode::ProjectionConflict,
+                format!(
+                    "failed to fingerprint convergence staging projection '{}': {err}",
+                    projection.instance_id
+                ),
+            )
+            .with_rollback_errors(cleanup_errors)
+        })?;
         return Ok(MaterializationResult {
             changed: true,
             backup: None,
@@ -464,6 +494,8 @@ fn materialize_projection(
                 staging_path,
                 input.materialized_path.clone(),
                 path_exists,
+                staging_digest,
+                existing_digest,
             )),
             observation: Some(observation),
         });

@@ -8,6 +8,8 @@ use serde_json::{Value, json};
 use uuid::Uuid;
 
 use super::*;
+
+mod convergence_transaction;
 use crate::core::vocab::{Health, MatcherKind, Ownership};
 use crate::state_model::{RegistryTargetCapabilities, RegistryWorkspaceMatcher};
 
@@ -200,7 +202,7 @@ fn symlink_copy_materialize_convergence_mode_has_no_child_persistence() {
     );
 
     for (method, target, projection_path, _projection, prepared) in prepared_outputs {
-        let activated = activate_prepared_projection(&fixture.ctx, prepared)
+        let mut activated = activate_prepared_projection(&fixture.ctx, prepared)
             .expect("activate validated convergence projection");
         let backup = activated.rollback_evidence();
         assert_eq!(backup["kind"], json!("atomic_exchange"));
@@ -401,7 +403,7 @@ fn convergence_prepared_projection_owns_activation_identity() {
     let mut detached_projection = output.projection.take().expect("projection delta");
     detached_projection.materialized_path = fixture.root.join("wrong/demo").display().to_string();
 
-    let activated = activate_prepared_projection(
+    let mut activated = activate_prepared_projection(
         &fixture.ctx,
         output.prepared.expect("identity-bound staging artifact"),
     )
@@ -434,7 +436,7 @@ fn convergence_activation_rollback_restores_typed_artifact() {
         execution_input(&fixture, ProjectionMethod::Copy, projection_path.clone()),
     )
     .expect("prepare replacement");
-    let activated =
+    let mut activated =
         activate_prepared_projection(&fixture.ctx, output.prepared.expect("staging artifact"))
             .expect("activate replacement");
     assert!(projection_path.join("details.txt").is_file());

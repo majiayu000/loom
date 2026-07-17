@@ -273,12 +273,17 @@ fn scanner_is_streamed_and_oversized_records_are_counted() {
 }
 
 #[test]
-fn codex_preamble_identity_survives_append_resume_and_rotation() {
+fn codex_large_preamble_identity_survives_append_resume_and_rotation() {
     let root = TestDir::new("telemetry-ingest-review-codex-preamble");
     let home = TestDir::new("telemetry-ingest-review-codex-preamble-home");
     let source = home.path().join("sessions/2026/07/session.jsonl");
-    let oversized = "x".repeat(1024 * 1024 + 1);
-    let preamble = format!("not-json\n{oversized}\n{{\"type\":\"unrelated\"}}\n");
+    let oversized = "x".repeat(8 * 1024 * 1024 + 1);
+    let non_session = (0..65)
+        .map(|index| format!("{{\"type\":\"unrelated\",\"index\":{index}}}\n"))
+        .collect::<String>();
+    assert!(oversized.len() > 8 * 1024 * 1024);
+    assert_eq!(non_session.lines().count(), 65);
+    let preamble = format!("not-json\n{oversized}\n{non_session}");
     let first = format!(
         "{preamble}{}",
         codex_session("demo", "2026-07-01T00:00:00Z")

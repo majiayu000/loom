@@ -322,49 +322,93 @@ fn source_change_stamp(
     Ok(format!("{}:{}", metadata.ctime(), metadata.ctime_nsec()))
 }
 
-#[cfg(not(unix))]
+#[cfg(windows)]
 fn source_change_stamp(
     file: &File,
     _metadata: &Metadata,
 ) -> std::result::Result<String, CommandFailure> {
-    let mut reader = file.try_clone().map_err(map_io)?;
-    let position = reader.stream_position().map_err(map_io)?;
-    reader.seek(SeekFrom::Start(0)).map_err(map_io)?;
-    let stamp = content_change_stamp(&mut reader)?;
-    reader.seek(SeekFrom::Start(position)).map_err(map_io)?;
-    Ok(stamp)
-}
+    use std::mem::{size_of, size_of_val};
+    use std::os::windows::io::AsRawHandle;
 
-#[cfg(any(test, not(unix)))]
-fn content_change_stamp(reader: &mut impl Read) -> std::result::Result<String, CommandFailure> {
-    let mut hasher = Sha256::new();
-    hasher.update(b"loom.telemetry.source-generation-content.v2\n");
-    let mut buffer = [0u8; 16 * 1024];
-    loop {
-        let read = reader.read(&mut buffer).map_err(map_io)?;
-        if read == 0 {
-            break;
-        }
-        hasher.update(&buffer[..read]);
+    use windows_sys::Win32::Storage::FileSystem::{
+        FILE_BASIC_INFO, FileBasicInfo, GetFileInformationByHandleEx,
+    };
+
+    let mut info = FILE_BASIC_INFO::default();
+    let size = u32::try_from(size_of::<FILE_BASIC_INFO>()).map_err(|_| {
+        CommandFailure::new(
+            ErrorCode::InternalError,
+            "Windows file continuity metadata size overflow",
+        )
+    })?;
+    // SAFETY: `file` owns a live handle for the duration of the call, `info`
+    // is a writable FILE_BASIC_INFO buffer, and `size` is its exact byte size.
+    let succeeded = unsafe {
+        GetFileInformationByHandleEx(
+            file.as_raw_handle(),
+            FileBasicInfo,
+            (&raw mut info).cast(),
+            size,
+        )
+    };
+    debug_assert_eq!(usize::try_from(size).ok(), Some(size_of_val(&info)));
+    if succeeded == 0 {
+        return Err(map_io(std::io::Error::last_os_error()));
     }
-    Ok(format!("sha256:{}", to_hex(&hasher.finalize())))
+    let stamp = change_time_stamp(info.ChangeTime);
+    debug_assert_eq!(stamp.content_bytes_read, 0);
+    Ok(stamp.value)
 }
 
-#[cfg(unix)]
-pub(super) fn source_generation_identity(metadata: &Metadata) -> String {
-    use std::os::unix::fs::MetadataExt;
+#[cfg(not(any(unix, windows)))]
+fn source_change_stamp(
+    _file: &File,
+    _metadata: &Metadata,
+) -> std::result::Result<String, CommandFailure> {
+    Err(unsupported_continuity_platform())
+}
 
-    hash_fields(
-        "loom.telemetry.source-generation.v2",
-        &[&metadata.dev().to_string(), &metadata.ino().to_string()],
+#[cfg(any(test, windows))]
+struct MetadataChangeStamp {
+    value: String,
+    content_bytes_read: u64,
+}
+
+#[cfg(any(test, windows))]
+fn change_time_stamp(change_time: i64) -> MetadataChangeStamp {
+    MetadataChangeStamp {
+        value: change_time.to_string(),
+        content_bytes_read: 0,
+    }
+}
+
+#[cfg(any(test, not(any(unix, windows))))]
+fn unsupported_continuity_platform() -> CommandFailure {
+    CommandFailure::new(
+        ErrorCode::PolicyBlocked,
+        "telemetry source continuity is unsupported on this platform",
     )
 }
 
+#[cfg(unix)]
+pub(super) fn source_generation_identity(
+    metadata: &Metadata,
+) -> std::result::Result<String, CommandFailure> {
+    use std::os::unix::fs::MetadataExt;
+
+    Ok(hash_fields(
+        "loom.telemetry.source-generation.v2",
+        &[&metadata.dev().to_string(), &metadata.ino().to_string()],
+    ))
+}
+
 #[cfg(windows)]
-pub(super) fn source_generation_identity(metadata: &Metadata) -> String {
+pub(super) fn source_generation_identity(
+    metadata: &Metadata,
+) -> std::result::Result<String, CommandFailure> {
     use std::os::windows::fs::MetadataExt;
 
-    hash_fields(
+    Ok(hash_fields(
         "loom.telemetry.source-generation.v2",
         &[
             &metadata
@@ -374,20 +418,14 @@ pub(super) fn source_generation_identity(metadata: &Metadata) -> String {
             &metadata.file_index().unwrap_or_default().to_string(),
             &metadata.creation_time().to_string(),
         ],
-    )
+    ))
 }
 
 #[cfg(not(any(unix, windows)))]
-pub(super) fn source_generation_identity(metadata: &Metadata) -> String {
-    let created = metadata
-        .created()
-        .ok()
-        .and_then(|value| value.duration_since(std::time::UNIX_EPOCH).ok())
-        .map_or_else(
-            || "unknown".to_string(),
-            |value| value.as_nanos().to_string(),
-        );
-    hash_fields("loom.telemetry.source-generation.v2", &[&created])
+pub(super) fn source_generation_identity(
+    _metadata: &Metadata,
+) -> std::result::Result<String, CommandFailure> {
+    Err(unsupported_continuity_platform())
 }
 
 #[cfg(test)]
@@ -494,11 +532,12 @@ fn hash_bytes(domain: &str, bytes: &[u8]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use std::io::Cursor;
-
     use chrono::{TimeZone, Utc};
 
-    use super::{ResetReason, checkpoint_for, content_change_stamp, scan_window};
+    use super::{
+        ErrorCode, ResetReason, change_time_stamp, checkpoint_for, scan_window,
+        unsupported_continuity_platform,
+    };
 
     #[test]
     fn partial_tail_does_not_advance_checkpoint() {
@@ -598,12 +637,28 @@ mod tests {
     }
 
     #[test]
-    fn non_unix_content_stamp_detects_same_size_rewrite_with_restored_mtime() {
-        let before =
-            content_change_stamp(&mut Cursor::new(b"same-size-a")).expect("before content stamp");
-        let after =
-            content_change_stamp(&mut Cursor::new(b"same-size-b")).expect("after content stamp");
-        assert_eq!(b"same-size-a".len(), b"same-size-b".len());
-        assert_ne!(before, after);
+    fn windows_change_time_detects_rewrite_without_content_reads() {
+        use windows_sys::Win32::Storage::FileSystem::FILE_BASIC_INFO;
+
+        let before = FILE_BASIC_INFO {
+            ChangeTime: 123_456_789,
+            ..FILE_BASIC_INFO::default()
+        };
+        let after = FILE_BASIC_INFO {
+            ChangeTime: before.ChangeTime + 1,
+            ..before
+        };
+        let before_stamp = change_time_stamp(before.ChangeTime);
+        let after_stamp = change_time_stamp(after.ChangeTime);
+        assert_ne!(before_stamp.value, after_stamp.value);
+        assert_eq!(before_stamp.content_bytes_read, 0);
+        assert_eq!(after_stamp.content_bytes_read, 0);
+        assert!(std::mem::size_of_val(&after) >= std::mem::size_of::<i64>() * 4);
+    }
+
+    #[test]
+    fn unsupported_platform_continuity_fails_explicitly() {
+        let failure = unsupported_continuity_platform();
+        assert_eq!(failure.code, ErrorCode::PolicyBlocked);
     }
 }

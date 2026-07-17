@@ -708,6 +708,7 @@ dependencies = [
  "ts-rs",
  "uuid",
  "walkdir",
+ "windows-sys",
  "yaml-rust2",
 ]
 

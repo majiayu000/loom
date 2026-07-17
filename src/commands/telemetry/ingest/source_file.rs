@@ -13,9 +13,6 @@ use super::{
     Agent, ParserState, SourceAuthority, parse_agent_record, session_hash_for_text, stream,
 };
 
-const MAX_SESSION_PREAMBLE_RECORDS: usize = 64;
-const MAX_SESSION_PREAMBLE_BYTES: u64 = 8 * stream::MAX_RECORD_BYTES as u64;
-
 pub(super) fn authority(
     path: &Path,
     metadata: &Metadata,
@@ -82,8 +79,8 @@ fn native_session_record(
     let mut reader = BufReader::new(file);
     let mut raw = Vec::new();
     let mut offset = 0u64;
-    for _ in 0..MAX_SESSION_PREAMBLE_RECORDS {
-        if offset >= MAX_SESSION_PREAMBLE_BYTES || scan_end.is_some_and(|end| offset >= end) {
+    loop {
+        if scan_end.is_some_and(|end| offset >= end) {
             break;
         }
         let (consumed, complete) = match stream::read_record(&mut reader, &mut raw)? {

@@ -325,7 +325,7 @@ fn scan_source_once(
     #[cfg(debug_assertions)]
     debug_pause("LOOM_TEST_INGEST_OPEN_PAUSE_MS");
     let metadata = file.metadata().map_err(map_io)?;
-    let generation_identity = cursor::source_generation_identity(&metadata);
+    let generation_identity = cursor::source_generation_identity(&metadata)?;
     let authority = source_file::authority(source, &metadata)?;
     let source_identity =
         source_file::canonical_identity(agent, home, &canonical_source, &mut file)?;
@@ -586,7 +586,7 @@ fn commit_plan(
                 Err(err) => return Err(map_io(err)),
             };
             let metadata = file.metadata().map_err(map_io)?;
-            let generation_identity = cursor::source_generation_identity(&metadata);
+            let generation_identity = cursor::source_generation_identity(&metadata)?;
             if cursor::source_snapshot(&file, &generation_identity)? != guard.snapshot {
                 return Ok(CommitOutcome::Retry);
             }

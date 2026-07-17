@@ -336,8 +336,7 @@ fn validate_guards(
                 || binding.profile_id != effect.profile
                 || target.agent.as_str() != effect.agent
                 || target.ownership.as_str() != effect.ownership
-                || Path::new(&target.path).join(&plan.skill)
-                    != PathBuf::from(&effect.materialized_path)
+                || Path::new(&target.path).join(&plan.skill) != Path::new(&effect.materialized_path)
             {
                 return Err(stale(
                     "projection routing changed after planning",
@@ -430,10 +429,10 @@ fn rollback_journal(
             projection.backup.as_ref(),
         ));
     }
-    if let Some(backup) = journal.source_backup.as_ref() {
-        if let Err(err) = restore_path_from_backup(&app.ctx.skill_path(&journal.skill), backup) {
-            push_rollback_error(&mut errors, "restore_source_path", err);
-        }
+    if let Some(backup) = journal.source_backup.as_ref()
+        && let Err(err) = restore_path_from_backup(&app.ctx.skill_path(&journal.skill), backup)
+    {
+        push_rollback_error(&mut errors, "restore_source_path", err);
     }
     if let Some(staging) = journal.source_staging.as_deref()
         && let Err(err) = remove_path_if_exists(Path::new(staging))

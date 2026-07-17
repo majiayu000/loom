@@ -11,3 +11,9 @@ version = "1.1.0"
 skill_range = ">=1.0.0,<2.0.0"
 change = "snapshot structured error-code values and next-action item fields"
 migration_note = "Clients can now inspect the complete public error-code set and next-action cmd/reason fields from the capability inventory."
+
+[[contract]]
+version = "1.2.0"
+skill_range = ">=1.0.0,<2.0.0"
+change = "add observable Gemini projection recovery guidance to the agent-facing capability inventory"
+migration_note = "Clients may now observe the structured recovery action emitted when a Gemini alias shadows Loom's native projection; existing 1.x clients remain compatible."

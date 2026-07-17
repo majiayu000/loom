@@ -1,6 +1,7 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use crate::sha256::{Sha256, to_hex};
 
@@ -33,6 +34,73 @@ pub(crate) struct SourceGuard {
     pub registry_head: String,
     pub tree_digest: String,
     pub input_instance: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum ProjectionInputState {
+    Clean,
+    Dirty,
+    SourceLinked,
+    Missing,
+    NotDirectory,
+    Unreadable,
+    BaselineUnavailable,
+    Untracked,
+    MetadataMismatch,
+}
+
+impl ProjectionInputState {
+    pub(crate) fn is_dirty(&self) -> bool {
+        matches!(self, Self::Dirty)
+    }
+
+    pub(crate) fn is_usable_input(&self) -> bool {
+        matches!(self, Self::Clean | Self::Dirty)
+    }
+
+    pub(crate) fn is_fail_closed(&self) -> bool {
+        matches!(
+            self,
+            Self::Unreadable | Self::BaselineUnavailable | Self::MetadataMismatch
+        )
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub(crate) struct ProjectionInputEvidence {
+    pub instance_id: String,
+    pub method: String,
+    pub materialized_path: String,
+    pub baseline_revision: Option<String>,
+    pub baseline_tree_digest: Option<String>,
+    pub live_tree_digest: Option<String>,
+    pub state: ProjectionInputState,
+    pub issue: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub(crate) struct ConvergenceInputEvidence {
+    pub source_dirty_paths: Vec<String>,
+    pub projections: Vec<ProjectionInputEvidence>,
+    pub selected_projection_instance: Option<String>,
+    pub selected_input_tree_digest: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub(crate) struct ConvergencePreflightEvidence {
+    pub input_direction: ConvergenceInputDirection,
+    pub input_tree_digest: String,
+    pub checks: BTreeMap<String, String>,
+    pub regression_ids: Vec<String>,
+    pub mutation_allowed: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub(crate) struct ConvergenceInputConflict {
+    pub code: String,
+    pub message: String,
+    pub evidence: Value,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -80,6 +148,9 @@ pub(crate) struct SkillConvergencePlan {
     pub skill: String,
     pub selectors: ConvergenceSelectors,
     pub source: SourceGuard,
+    pub input: ConvergenceInputEvidence,
+    pub preflight: ConvergencePreflightEvidence,
+    pub input_conflicts: Vec<ConvergenceInputConflict>,
     pub registry: RegistryGuard,
     pub projections: Vec<ProjectionEffectPlan>,
     pub visibility: Vec<VisibilityRequirement>,
@@ -94,6 +165,9 @@ struct SkillConvergenceDigestPayload<'a> {
     skill: &'a str,
     selectors: &'a ConvergenceSelectors,
     source: &'a SourceGuard,
+    input: &'a ConvergenceInputEvidence,
+    preflight: &'a ConvergencePreflightEvidence,
+    input_conflicts: &'a [ConvergenceInputConflict],
     registry: &'a RegistryGuard,
     projections: &'a [ProjectionEffectPlan],
     visibility: &'a [VisibilityRequirement],
@@ -114,6 +188,9 @@ impl SkillConvergencePlan {
             skill: &self.skill,
             selectors: &self.selectors,
             source: &self.source,
+            input: &self.input,
+            preflight: &self.preflight,
+            input_conflicts: &self.input_conflicts,
             registry: &self.registry,
             projections: &self.projections,
             visibility: &self.visibility,

@@ -7,11 +7,13 @@ use tar::Archive;
 use uuid::Uuid;
 
 use crate::cli::{ReleaseArgs, SkillEvalOfflineArgs, SkillImproveArgs, SkillRegressionArgs};
+use crate::core::convergence::{ConvergenceInputDirection, ConvergencePreflightEvidence};
 use crate::envelope::Meta;
 use crate::gitops;
 use crate::state::AppContext;
 use crate::types::ErrorCode;
 
+use super::file_ops::copy_dir_recursive_without_symlinks;
 use super::helpers::{ensure_skill_exists, map_arg, map_git, map_io, validate_skill_name};
 use super::skill_deps::skill_dependency_report;
 use super::skill_eval::build_skill_eval_offline_report;
@@ -43,6 +45,7 @@ struct PreflightRequest<'a> {
     target: &'a str,
     real_eval: bool,
     mode: &'a str,
+    candidate_path: Option<&'a Path>,
 }
 
 impl SkillPreflightReport {
@@ -53,12 +56,28 @@ impl SkillPreflightReport {
 
 struct MaterializedTarget {
     ctx: AppContext,
-    root: PathBuf,
+    root: Option<PathBuf>,
 }
 
 impl Drop for MaterializedTarget {
     fn drop(&mut self) {
-        drop(fs::remove_dir_all(&self.root));
+        if let Some(root) = self.root.take() {
+            if let Err(err) = fs::remove_dir_all(&root) {
+                eprintln!(
+                    "failed to clean temporary preflight context '{}': {err}",
+                    root.display()
+                );
+            }
+        }
+    }
+}
+
+impl MaterializedTarget {
+    fn cleanup(mut self) -> std::result::Result<(), CommandFailure> {
+        let Some(root) = self.root.take() else {
+            return Ok(());
+        };
+        fs::remove_dir_all(root).map_err(map_io)
     }
 }
 
@@ -76,6 +95,7 @@ impl App {
             target: "working-tree",
             real_eval: args.real_eval,
             mode: "improve",
+            candidate_path: None,
         })?;
         Ok((report.into_value(), Meta::default()))
     }
@@ -93,6 +113,7 @@ impl App {
             target: &args.to_ref,
             real_eval: false,
             mode: "regression",
+            candidate_path: None,
         })?;
         if report.has_regressions {
             return Err(preflight_blocked(
@@ -115,6 +136,7 @@ impl App {
             target: "working-tree",
             real_eval: false,
             mode: "save_preflight",
+            candidate_path: None,
         })?;
         if !report.mutation_allowed {
             return Err(preflight_blocked("skill commit preflight failed", report));
@@ -148,11 +170,50 @@ impl App {
             target: "HEAD",
             real_eval: false,
             mode: "release_preflight",
+            candidate_path: None,
         })?;
         if !report.mutation_allowed || report.has_regressions {
             return Err(preflight_blocked("skill release preflight failed", report));
         }
         Ok(report)
+    }
+
+    pub(crate) fn convergence_preflight_evidence(
+        &self,
+        skill: &str,
+        direction: ConvergenceInputDirection,
+        input_tree_digest: &str,
+        candidate_path: Option<&Path>,
+    ) -> std::result::Result<ConvergencePreflightEvidence, CommandFailure> {
+        let report = self.skill_preflight_report(PreflightRequest {
+            skill,
+            agent: None,
+            workspace: None,
+            baseline: "HEAD",
+            target: "working-tree",
+            real_eval: false,
+            mode: "convergence_plan",
+            candidate_path,
+        })?;
+        let checks =
+            serde_json::from_value::<BTreeMap<String, String>>(report.value["checks"].clone())
+                .map_err(map_io)?;
+        let mut regression_ids = report.value["regressions"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|regression| regression["id"].as_str())
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+        regression_ids.sort();
+        regression_ids.dedup();
+        Ok(ConvergencePreflightEvidence {
+            input_direction: direction,
+            input_tree_digest: input_tree_digest.to_string(),
+            checks,
+            regression_ids,
+            mutation_allowed: report.mutation_allowed,
+        })
     }
 
     fn skill_preflight_report(
@@ -172,7 +233,15 @@ impl App {
 
         let skill_rel = format!("skills/{}", request.skill);
         let pathspec = Path::new(&skill_rel);
-        let materialized = materialize_target_context(&self.ctx, request.skill, request.target)?;
+        let materialized = if let Some(candidate_path) = request.candidate_path {
+            Some(materialize_candidate_context(
+                &self.ctx,
+                request.skill,
+                candidate_path,
+            )?)
+        } else {
+            materialize_target_context(&self.ctx, request.skill, request.target)?
+        };
         let check_ctx = materialized
             .as_ref()
             .map(|target| &target.ctx)
@@ -182,7 +251,15 @@ impl App {
         let mut regressions = Vec::new();
         let mut details = json!({});
 
-        let drift = drift_report(&self.ctx, request.baseline, request.target, pathspec)?;
+        let drift = if request.candidate_path.is_some() {
+            json!({
+                "changed": true,
+                "baseline": request.baseline,
+                "target": "projection-input",
+            })
+        } else {
+            drift_report(&self.ctx, request.baseline, request.target, pathspec)?
+        };
         checks.insert(
             "source_drift".to_string(),
             if drift["changed"].as_bool().unwrap_or(false) {
@@ -333,7 +410,7 @@ impl App {
         let recommendation = recommendation(request.skill, request.mode, &checks, &details);
 
         let has_regressions = !regressions.is_empty();
-        Ok(SkillPreflightReport {
+        let report = SkillPreflightReport {
             value: json!({
                 "schema_version": PREFLIGHT_SCHEMA_VERSION,
                 "skill": request.skill,
@@ -348,7 +425,11 @@ impl App {
             }),
             mutation_allowed,
             has_regressions,
-        })
+        };
+        if let Some(materialized) = materialized {
+            materialized.cleanup()?;
+        }
+        Ok(report)
     }
 }
 
@@ -444,8 +525,57 @@ fn materialize_target_context(
     let target_ctx = AppContext::new(Some(root.clone())).map_err(map_io)?;
     Ok(Some(MaterializedTarget {
         ctx: target_ctx,
-        root,
+        root: Some(root),
     }))
+}
+
+fn materialize_candidate_context(
+    ctx: &AppContext,
+    skill: &str,
+    candidate_path: &Path,
+) -> std::result::Result<MaterializedTarget, CommandFailure> {
+    let root = std::env::temp_dir().join(format!(
+        "loom-preflight-candidate-{}",
+        Uuid::new_v4().simple()
+    ));
+    fs::create_dir_all(root.join("skills")).map_err(map_io)?;
+    let prepared = (|| {
+        copy_dir_recursive_without_symlinks(candidate_path, &root.join("skills").join(skill))
+            .map_err(map_io)?;
+        for rel in [
+            "state/registry/trust.json",
+            "state/registry/sources.json",
+            "loom.lock",
+        ] {
+            let source = ctx.root.join(rel);
+            if !source.is_file() {
+                continue;
+            }
+            let target = root.join(rel);
+            if let Some(parent) = target.parent() {
+                fs::create_dir_all(parent).map_err(map_io)?;
+            }
+            fs::copy(&source, &target).map_err(map_io)?;
+        }
+        AppContext::new(Some(root.clone())).map_err(map_io)
+    })();
+    let candidate_ctx = match prepared {
+        Ok(candidate_ctx) => candidate_ctx,
+        Err(failure) => {
+            if let Err(cleanup) = fs::remove_dir_all(&root) {
+                return Err(failure.with_rollback_errors(vec![json!({
+                    "step": "cleanup_preflight_candidate",
+                    "path": root.display().to_string(),
+                    "error": cleanup.to_string(),
+                })]));
+            }
+            return Err(failure);
+        }
+    };
+    Ok(MaterializedTarget {
+        ctx: candidate_ctx,
+        root: Some(root),
+    })
 }
 
 fn materialize_target_paths(

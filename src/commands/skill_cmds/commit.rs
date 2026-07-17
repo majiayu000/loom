@@ -1,9 +1,6 @@
-use tar::Archive;
-
 use crate::error_actions::NextAction;
 use crate::next_action_trace::observe_next_actions;
 
-use super::shared::*;
 use super::*;
 
 impl App {
@@ -127,54 +124,6 @@ impl App {
     }
 }
 
-fn source_dirty_paths(
-    ctx: &crate::state::AppContext,
-    skill: &str,
-) -> std::result::Result<Vec<String>, CommandFailure> {
-    let prefix = format!("skills/{skill}");
-    let mut paths = Vec::new();
-    if git_head_exists(ctx)? {
-        collect_git_paths(
-            ctx,
-            &["diff", "--name-only", "HEAD", "--", &prefix],
-            &mut paths,
-        )?;
-        collect_git_paths(
-            ctx,
-            &["diff", "--name-only", "--cached", "--", &prefix],
-            &mut paths,
-        )?;
-    }
-    collect_git_paths(
-        ctx,
-        &["ls-files", "--others", "--exclude-standard", "--", &prefix],
-        &mut paths,
-    )?;
-    paths.sort();
-    Ok(paths)
-}
-
-fn collect_git_paths(
-    ctx: &crate::state::AppContext,
-    args: &[&str],
-    paths: &mut Vec<String>,
-) -> std::result::Result<(), CommandFailure> {
-    let stdout = gitops::run_git(ctx, args).map_err(map_git)?;
-    for line in stdout.lines() {
-        let path = line.trim();
-        if !path.is_empty() && !paths.iter().any(|existing| existing == path) {
-            paths.push(path.to_string());
-        }
-    }
-    Ok(())
-}
-
-fn git_head_exists(ctx: &crate::state::AppContext) -> std::result::Result<bool, CommandFailure> {
-    let output =
-        gitops::run_git_allow_failure(ctx, &["rev-parse", "--verify", "HEAD"]).map_err(map_git)?;
-    Ok(output.status.success())
-}
-
 fn matching_projection_candidates(
     ctx: &crate::state::AppContext,
     args: &SkillCommitArgs,
@@ -207,66 +156,33 @@ fn dirty_projection_candidates(
 ) -> std::result::Result<Vec<RegistryProjectionInstance>, CommandFailure> {
     let mut dirty = Vec::new();
     for projection in matching_projection_candidates(ctx, args)? {
-        if projection.method == crate::core::vocab::ProjectionMethod::Symlink {
-            continue;
-        }
-        let live_path = PathBuf::from(&projection.materialized_path);
-        if !live_path.is_dir() {
-            continue;
-        }
-        if projection_differs_from_applied(ctx, &projection, &live_path)? {
-            dirty.push(projection);
+        let evidence = projection_input_evidence(ctx, &projection)?;
+        match evidence.state {
+            crate::core::convergence::ProjectionInputState::Dirty => dirty.push(projection),
+            crate::core::convergence::ProjectionInputState::BaselineUnavailable => {
+                return Err(CommandFailure::new(
+                    ErrorCode::GitError,
+                    format!(
+                        "projection '{}' baseline '{}' is unavailable",
+                        projection.instance_id, projection.last_applied_rev
+                    ),
+                ));
+            }
+            crate::core::convergence::ProjectionInputState::Unreadable
+            | crate::core::convergence::ProjectionInputState::MetadataMismatch => {
+                return Err(CommandFailure::new(
+                    ErrorCode::IoError,
+                    format!(
+                        "projection '{}' cannot be inspected: {}",
+                        projection.instance_id,
+                        evidence.issue.as_deref().unwrap_or("unknown")
+                    ),
+                ));
+            }
+            _ => {}
         }
     }
     Ok(dirty)
-}
-
-fn projection_differs_from_applied(
-    ctx: &crate::state::AppContext,
-    projection: &RegistryProjectionInstance,
-    live_path: &Path,
-) -> std::result::Result<bool, CommandFailure> {
-    let temp_root = std::env::temp_dir().join(format!("loom-commit-projection-{}", Uuid::new_v4()));
-    fs::create_dir_all(&temp_root).map_err(map_io)?;
-    let result = (|| {
-        materialize_skill_at_ref(
-            ctx,
-            &projection.skill_id,
-            &projection.last_applied_rev,
-            &temp_root,
-        )?;
-        materialized_dirs_equal(
-            &temp_root.join("skills").join(&projection.skill_id),
-            live_path,
-        )
-        .map(|equal| !equal)
-        .map_err(map_io)
-    })();
-    let _ = fs::remove_dir_all(&temp_root);
-    result
-}
-
-fn materialize_skill_at_ref(
-    ctx: &crate::state::AppContext,
-    skill: &str,
-    reference: &str,
-    root: &Path,
-) -> std::result::Result<(), CommandFailure> {
-    let skill_rel = format!("skills/{skill}");
-    let output = gitops::run_git_allow_failure(
-        ctx,
-        &["archive", "--format=tar", reference, "--", &skill_rel],
-    )
-    .map_err(map_git)?;
-    if !output.status.success() {
-        return Err(map_git(anyhow::anyhow!(
-            "git archive failed: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
-        )));
-    }
-    Archive::new(&output.stdout[..])
-        .unpack(root)
-        .map_err(map_io)
 }
 
 fn select_projection(

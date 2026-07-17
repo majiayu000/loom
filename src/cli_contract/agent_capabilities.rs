@@ -35,6 +35,16 @@ pub(super) fn public_agent_capabilities(
         json!({"safe_to_apply": true, "required_approvals": ["approval-fixture"]}),
         Meta::default(),
     );
+    let convergence_plan = Envelope::ok(
+        "plan.converge",
+        "req-convergence-plan".to_string(),
+        json!({
+            "input": {},
+            "preflight": {},
+            "input_conflicts": [{}],
+        }),
+        Meta::default(),
+    );
     let failure = Envelope::err_with_next_actions(
         "fixture.failure",
         "req-failure".to_string(),
@@ -46,6 +56,7 @@ pub(super) fn public_agent_capabilities(
     let samples = [
         serde_json::to_value(preflight),
         serde_json::to_value(durable_plan),
+        serde_json::to_value(convergence_plan),
         serde_json::to_value(failure),
     ];
     let mut shapes = BTreeMap::<String, (BTreeSet<String>, usize)>::new();

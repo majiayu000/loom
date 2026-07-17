@@ -50,6 +50,7 @@ mod skill_safety;
 mod skill_safety_findings;
 mod skill_usage;
 mod skill_verify;
+mod skill_yaml;
 mod skillset_activation;
 mod skillset_cmds;
 mod skillset_release;

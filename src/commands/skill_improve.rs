@@ -18,6 +18,7 @@ use super::helpers::{ensure_skill_exists, map_arg, map_git, map_io, validate_ski
 use super::skill_deps::skill_dependency_report;
 use super::skill_eval::build_skill_eval_offline_report;
 use super::skill_lint::{SkillLintMode, lint_skill_source, lint_skill_source_for_agent};
+use super::skill_policy::{SkillPolicyReport, evaluate_skill_policy};
 use super::skill_safety::evaluate_skill_safety;
 use super::{App, CommandFailure};
 
@@ -575,6 +576,42 @@ fn materialize_candidate_context(
     Ok(MaterializedTarget {
         ctx: candidate_ctx,
         root: Some(root),
+    })
+}
+
+pub(crate) struct PreparedConvergenceInput {
+    policy: SkillPolicyReport,
+    materialized: Option<MaterializedTarget>,
+}
+
+impl PreparedConvergenceInput {
+    pub(crate) fn policy(&self) -> &SkillPolicyReport {
+        &self.policy
+    }
+
+    pub(crate) fn candidate_path(&self, skill: &str) -> Option<PathBuf> {
+        self.materialized
+            .as_ref()
+            .map(|target| target.ctx.skill_path(skill))
+    }
+}
+
+pub(crate) fn prepare_convergence_skill_input(
+    ctx: &AppContext,
+    skill: &str,
+    candidate_path: Option<&Path>,
+) -> std::result::Result<PreparedConvergenceInput, CommandFailure> {
+    let materialized = candidate_path
+        .map(|path| materialize_candidate_context(ctx, skill, path))
+        .transpose()?;
+    let policy_ctx = materialized
+        .as_ref()
+        .map(|target| &target.ctx)
+        .unwrap_or(ctx);
+    let policy = evaluate_skill_policy(policy_ctx, skill, "safe-capture")?;
+    Ok(PreparedConvergenceInput {
+        policy,
+        materialized,
     })
 }
 

@@ -25,7 +25,7 @@ use super::super::helpers::{
 };
 use super::super::projections::observe_projection;
 use super::super::provenance::skill_tree_digest;
-use super::super::skill_policy::evaluate_skill_policy;
+use super::super::skill_improve::prepare_convergence_skill_input;
 use super::super::{App, CommandFailure};
 use super::{PLAN_PROTOCOL_VERSION, canonical_root, policy_risks, required_approvals};
 
@@ -49,8 +49,6 @@ impl App {
         let snapshot = paths.maybe_load_snapshot().map_err(map_registry_state)?;
         let source_digest = skill_tree_digest(&self.ctx.skill_path(&args.skill)).map_err(map_io)?;
         let registry_head = gitops::head(&self.ctx).map_err(map_git)?;
-        let policy = evaluate_skill_policy(&self.ctx, &args.skill, "safe-capture")?;
-        let approvals = required_approvals(&policy);
         let projections = resolve_projection_effects(
             &self.ctx,
             snapshot.as_ref(),
@@ -69,11 +67,16 @@ impl App {
         };
         let (selected_input_tree_digest, candidate_path) =
             selected_input(args, &projection_evidence, &source_digest)?;
+        let prepared_input =
+            prepare_convergence_skill_input(&self.ctx, &args.skill, candidate_path.as_deref())?;
+        let policy = prepared_input.policy();
+        let approvals = required_approvals(policy);
+        let preflight_candidate = prepared_input.candidate_path(&args.skill);
         let preflight = self.convergence_preflight_evidence(
             &args.skill,
             direction.clone(),
             &selected_input_tree_digest,
-            candidate_path.as_deref(),
+            preflight_candidate.as_deref(),
         )?;
         let input_conflicts =
             resolve_input_conflicts(&source_dirty_paths, &projection_evidence, &preflight);
@@ -145,7 +148,7 @@ impl App {
                 "message": "--require-runtime resolved no active projection",
             }));
         }
-        let mut risks = policy_risks(&policy);
+        let mut risks = policy_risks(policy);
         risks.push(json!({
             "code": "CONVERGENCE_EXECUTOR_UNAVAILABLE",
             "risk_level": "error",

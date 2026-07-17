@@ -3,7 +3,10 @@ use std::path::{Component, Path, PathBuf};
 
 use serde::Serialize;
 
-use crate::agent_adapters::{SOURCE_BUILT_IN, load_agent_adapters, preferred_discovery_root};
+use crate::agent_adapters::{
+    SOURCE_BUILT_IN, built_in_managed_projection_root, load_agent_adapters,
+    preferred_discovery_root,
+};
 use crate::sha256::{Sha256, to_hex};
 use crate::state::AppContext;
 use crate::types::ErrorCode;
@@ -84,22 +87,11 @@ pub(super) fn target_skill_path_relative(
     if let Some(adapter) = adapters.adapter_for_agent(agent)
         && adapter.has_discovery_root_for_scope("project")
     {
+        if let Some(root) = built_in_managed_projection_root(adapter, "project", &workspace)? {
+            return project_root_relative(agent, &workspace, &root);
+        }
         match preferred_discovery_root(adapter, "project", &workspace) {
-            Ok(root) => {
-                let root = normalize_path(&root.path);
-                let relative = root.strip_prefix(&workspace).map_err(|_| {
-                    CommandFailure::new(
-                        ErrorCode::AdapterInvalid,
-                        format!(
-                            "adapter '{}' project discovery root '{}' is outside workspace '{}'",
-                            agent,
-                            root.display(),
-                            workspace.display()
-                        ),
-                    )
-                })?;
-                return Ok(path_to_slash(relative));
-            }
+            Ok(root) => return project_root_relative(agent, &workspace, &root.path),
             Err(_err) if adapter.source == SOURCE_BUILT_IN => {}
             Err(err) => return Err(err),
         }
@@ -108,6 +100,26 @@ pub(super) fn target_skill_path_relative(
         "codex" => ".agents/skills".to_string(),
         other => format!(".{other}/skills"),
     })
+}
+
+fn project_root_relative(
+    agent: &str,
+    workspace: &Path,
+    root: &Path,
+) -> std::result::Result<String, CommandFailure> {
+    let root = normalize_path(root);
+    let relative = root.strip_prefix(workspace).map_err(|_| {
+        CommandFailure::new(
+            ErrorCode::AdapterInvalid,
+            format!(
+                "adapter '{}' project discovery root '{}' is outside workspace '{}'",
+                agent,
+                root.display(),
+                workspace.display()
+            ),
+        )
+    })?;
+    Ok(path_to_slash(relative))
 }
 
 pub(super) fn path_to_slash(path: &Path) -> String {

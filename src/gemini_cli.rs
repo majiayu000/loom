@@ -52,7 +52,7 @@ pub(crate) fn load_config(
     workspace: Option<&Path>,
 ) -> Result<GeminiConfigState, &'static str> {
     let bootstrap_home = bootstrap_home().ok_or(INVALID_CONFIG)?;
-    let defaults = system_path("GEMINI_CLI_SYSTEM_DEFAULTS_PATH", "system-defaults.json");
+    let defaults = system_defaults_path();
     let user = bootstrap_home.join(".gemini/settings.json");
     let system = system_path("GEMINI_CLI_SYSTEM_SETTINGS_PATH", "settings.json");
 
@@ -294,6 +294,29 @@ fn system_path(env_var: &str, name: &str) -> Option<PathBuf> {
         .or_else(|| system_dir().map(|path| path.join(name)))
 }
 
+fn system_defaults_path() -> Option<PathBuf> {
+    resolve_system_defaults_path(
+        env::var_os("GEMINI_CLI_SYSTEM_DEFAULTS_PATH").map(PathBuf::from),
+        env::var_os("GEMINI_CLI_SYSTEM_SETTINGS_PATH").map(PathBuf::from),
+        system_dir(),
+    )
+}
+
+fn resolve_system_defaults_path(
+    explicit_defaults: Option<PathBuf>,
+    explicit_settings: Option<PathBuf>,
+    platform_dir: Option<PathBuf>,
+) -> Option<PathBuf> {
+    explicit_defaults
+        .or_else(|| {
+            explicit_settings.and_then(|path| {
+                path.parent()
+                    .map(|parent| parent.join("system-defaults.json"))
+            })
+        })
+        .or_else(|| platform_dir.map(|path| path.join("system-defaults.json")))
+}
+
 #[cfg(target_os = "linux")]
 fn system_dir() -> Option<PathBuf> {
     Some(PathBuf::from("/etc/gemini-cli"))
@@ -312,4 +335,32 @@ fn system_dir() -> Option<PathBuf> {
 #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
 fn system_dir() -> Option<PathBuf> {
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resolve_system_defaults_path;
+    use std::path::PathBuf;
+
+    #[test]
+    fn custom_system_settings_select_sibling_defaults_unless_explicitly_overridden() {
+        let platform = PathBuf::from("/platform/gemini-cli");
+        let settings = PathBuf::from("/custom/policy/settings.json");
+        assert_eq!(
+            resolve_system_defaults_path(None, Some(settings.clone()), Some(platform.clone())),
+            Some(PathBuf::from("/custom/policy/system-defaults.json"))
+        );
+        assert_eq!(
+            resolve_system_defaults_path(
+                Some(PathBuf::from("/override/defaults.json")),
+                Some(settings),
+                Some(platform.clone()),
+            ),
+            Some(PathBuf::from("/override/defaults.json"))
+        );
+        assert_eq!(
+            resolve_system_defaults_path(None, None, Some(platform)),
+            Some(PathBuf::from("/platform/gemini-cli/system-defaults.json"))
+        );
+    }
 }

@@ -90,6 +90,20 @@ fn visibility_check<'a>(envelope: &'a Value, id: &str) -> &'a Value {
         .unwrap_or_else(|| panic!("missing check {id}: {envelope}"))
 }
 
+fn frontmatter_check_ok(envelope: &Value) -> bool {
+    envelope["data"]["checks"]
+        .as_array()
+        .expect("visibility checks")
+        .iter()
+        .find(|candidate| {
+            candidate["id"]
+                .as_str()
+                .is_some_and(|id| id.starts_with("gemini-cli_frontmatter_valid:"))
+        })
+        .unwrap_or_else(|| panic!("missing Gemini frontmatter check: {envelope}"))["ok"]
+        == true
+}
+
 #[test]
 fn use_and_activate_share_native_gemini_root_and_reject_alias_shadow() {
     let use_root = TestDir::new("gemini-native-use-root");
@@ -688,92 +702,45 @@ fn visibility_uses_cwd_secure_trust_bootstrap_and_valid_gemini_frontmatter() {
         "omitted --workspace must use cwd and the process trust-file override"
     );
 
-    write_file(
-        &root.path().join("skills/demo/SKILL.md"),
-        "---\nname: demo\ndescription:\n  Use when: reviewing code\n---\n# Demo\n",
-    );
     let trust_workspace = [("GEMINI_CLI_TRUST_WORKSPACE", "true")];
-    let (fallback_output, fallback_envelope) = run(
-        root.path(),
-        home.path(),
-        workspace.path(),
-        &trust_workspace,
-        &["skill", "visibility", "demo", "--agent", "gemini-cli"],
-    );
-    assert!(
-        fallback_output.status.success(),
-        "fallback visibility failed: {fallback_envelope}"
-    );
-    assert_eq!(
-        visibility_check(&fallback_envelope, "gemini-cli_workspace_trusted")["ok"],
-        true,
-        "process GEMINI_CLI_TRUST_WORKSPACE must be honored"
-    );
-    assert!(
-        fallback_envelope["data"]["checks"]
-            .as_array()
-            .expect("checks")
-            .iter()
-            .any(|candidate| candidate["id"]
-                .as_str()
-                .is_some_and(|id| id.starts_with("gemini-cli_frontmatter_valid:"))
-                && candidate["ok"] == true),
-        "Gemini's multiline description must remain visible"
-    );
-
-    write_file(
-        &root.path().join("skills/demo/SKILL.md"),
-        "---\nname: demo\ndescription:\n  Use when: reviewing code\n# missing close\n",
-    );
-    let (unclosed_output, unclosed_envelope) = run(
-        root.path(),
-        home.path(),
-        workspace.path(),
-        &trust_workspace,
-        &["skill", "visibility", "demo", "--agent", "gemini-cli"],
-    );
-    assert!(
-        unclosed_output.status.success(),
-        "unclosed report failed: {unclosed_envelope}"
-    );
-    assert!(
-        unclosed_envelope["data"]["checks"]
-            .as_array()
-            .expect("checks")
-            .iter()
-            .any(|candidate| candidate["id"]
-                .as_str()
-                .is_some_and(|id| id.starts_with("gemini-cli_frontmatter_valid:"))
-                && candidate["ok"] == false),
-        "unclosed frontmatter must not pass Gemini validation"
-    );
-
-    write_file(
-        &root.path().join("skills/demo/SKILL.md"),
-        "---\nname: demo\ndescription: reviewing code\nbroken: [\n---\n# Demo\n",
-    );
-    let (malformed_output, malformed_envelope) = run(
-        root.path(),
-        home.path(),
-        workspace.path(),
-        &trust_workspace,
-        &["skill", "visibility", "demo", "--agent", "gemini-cli"],
-    );
-    assert!(
-        malformed_output.status.success(),
-        "malformed report failed: {malformed_envelope}"
-    );
-    assert!(
-        malformed_envelope["data"]["checks"]
-            .as_array()
-            .expect("checks")
-            .iter()
-            .any(|candidate| candidate["id"]
-                .as_str()
-                .is_some_and(|id| id.starts_with("gemini-cli_frontmatter_valid:"))
-                && candidate["ok"] == false),
-        "malformed YAML frontmatter must fail Gemini validation"
-    );
+    for (label, body, expected) in [
+        (
+            "YAML parse errors use Gemini's text fallback",
+            "---\nname: demo\ndescription: Use when: reviewing code\n---\n# Demo\n",
+            true,
+        ),
+        (
+            "frontmatter names are case insensitive",
+            "---\nname: DeMo\ndescription: Reviewing code\n---\n# Demo\n",
+            true,
+        ),
+        (
+            "parsed empty descriptions do not use the fallback",
+            "---\nname: demo\ndescription:\n---\n# Demo\n",
+            false,
+        ),
+        (
+            "parsed non-string descriptions do not use the fallback",
+            "---\nname: demo\ndescription: [reviewing, code]\n---\n# Demo\n",
+            false,
+        ),
+        (
+            "unclosed frontmatter does not pass the fallback",
+            "---\nname: demo\ndescription: reviewing code\n# missing close\n",
+            false,
+        ),
+    ] {
+        write_file(&root.path().join("skills/demo/SKILL.md"), body);
+        let (output, envelope) = run(
+            root.path(),
+            home.path(),
+            workspace.path(),
+            &trust_workspace,
+            &["skill", "visibility", "demo", "--agent", "gemini-cli"],
+        );
+        assert!(output.status.success(), "{label}: {envelope}");
+        assert_eq!(frontmatter_check_ok(&envelope), expected, "{label}");
+    }
 }
 
 #[test]

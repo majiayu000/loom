@@ -13,7 +13,7 @@ use crate::types::ErrorCode;
 mod gemini_projection;
 mod metadata;
 
-pub(crate) use gemini_projection::built_in_projection_root;
+pub(crate) use gemini_projection::{built_in_managed_projection_root, built_in_projection_root};
 
 use metadata::{
     adapter_json_invalid, built_in_default_skill_dirs, built_in_discovery_roots, built_in_reload,

@@ -168,6 +168,44 @@ fn use_apply_keeps_codex_and_gemini_cli_managed_roots_distinct() {
 }
 
 #[test]
+fn use_user_scope_gemini_root_uses_the_explicit_workspace_environment() {
+    let root = TestDir::new("use-gemini-user-workspace-root");
+    let home = TestDir::new("use-gemini-user-workspace-home");
+    let workspace = TestDir::new("use-gemini-user-workspace");
+    let redirected_home = TestDir::new("use-gemini-user-redirected-home");
+    write_skill(
+        root.path(),
+        "demo",
+        "---\nname: demo\ndescription: Gemini workspace redirect fixture.\n---\n# Demo\n",
+    );
+    write_file(
+        &workspace.path().join(".gemini/.env"),
+        &format!("GEMINI_CLI_HOME={}\n", redirected_home.path().display()),
+    );
+    let home_arg = home.path().display().to_string();
+    let workspace_arg = workspace.path().display().to_string();
+    let (output, env) = run_loom_with_env(
+        root.path(),
+        &[("HOME", &home_arg), ("GEMINI_CLI_TRUST_WORKSPACE", "true")],
+        &[
+            "use",
+            "demo",
+            "--agents",
+            "gemini-cli",
+            "--scope",
+            "user",
+            "--workspace",
+            &workspace_arg,
+        ],
+    );
+    assert!(output.status.success(), "Gemini use plan failed: {env}");
+    assert_eq!(
+        env["data"]["steps"][0]["target_path"],
+        json!(redirected_home.path().join(".gemini/skills"))
+    );
+}
+
+#[test]
 fn use_apply_and_skill_activate_share_project_projection_semantics() {
     let use_root = TestDir::new("use-activate-parity-use-root");
     let activate_root = TestDir::new("use-activate-parity-activate-root");

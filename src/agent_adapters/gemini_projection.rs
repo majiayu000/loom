@@ -19,21 +19,8 @@ pub(crate) fn built_in_projection_root(
     workspace: &Path,
     skill: &str,
 ) -> std::result::Result<Option<PathBuf>, CommandFailure> {
-    if adapter.id != "gemini-cli" || adapter.source != SOURCE_BUILT_IN {
+    let Some(base) = built_in_gemini_base(adapter, scope, workspace)? else {
         return Ok(None);
-    }
-    let base = match scope {
-        "user" => {
-            let workspace = std::env::current_dir().map_err(|error| {
-                CommandFailure::new(
-                    ErrorCode::IoError,
-                    format!("failed to resolve current workspace: {error}"),
-                )
-            })?;
-            gemini_cli::runtime_home(&workspace).map_err(gemini_config_failure)?
-        }
-        "project" => workspace.to_path_buf(),
-        _ => return Ok(None),
     };
     let alias = base.join(".agents/skills").join(skill);
     if (alias.exists() || fs::symlink_metadata(&alias).is_ok())
@@ -42,6 +29,30 @@ pub(crate) fn built_in_projection_root(
         return Err(alias_shadow_failure(scope, skill, alias, &base));
     }
     Ok(Some(base.join(".gemini/skills")))
+}
+
+pub(crate) fn built_in_managed_projection_root(
+    adapter: &AgentAdapter,
+    scope: &str,
+    workspace: &Path,
+) -> std::result::Result<Option<PathBuf>, CommandFailure> {
+    Ok(built_in_gemini_base(adapter, scope, workspace)?.map(|base| base.join(".gemini/skills")))
+}
+
+fn built_in_gemini_base(
+    adapter: &AgentAdapter,
+    scope: &str,
+    workspace: &Path,
+) -> std::result::Result<Option<PathBuf>, CommandFailure> {
+    if adapter.id != "gemini-cli" || adapter.source != SOURCE_BUILT_IN {
+        return Ok(None);
+    }
+    let base = match scope {
+        "user" => gemini_cli::runtime_home(workspace).map_err(gemini_config_failure)?,
+        "project" => workspace.to_path_buf(),
+        _ => return Ok(None),
+    };
+    Ok(Some(base))
 }
 
 fn gemini_config_failure(message: &'static str) -> CommandFailure {

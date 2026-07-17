@@ -279,6 +279,84 @@ fn working_source_drift_blocks_clean_projection_input() {
     assert!(conflict_codes(&plan).contains(&"STALE_PROJECTION_INPUT"));
 }
 
+#[test]
+fn unavailable_baseline_remains_a_reviewable_conflict() {
+    let fixture = projected_fixture();
+    let (output, initial) = plan_converge(&fixture, &[]);
+    assert!(output.status.success(), "initial plan failed: {initial}");
+    let instance = initial["data"]["effects"][0]["instance_id"]
+        .as_str()
+        .expect("instance id");
+    let projections_path = fixture.root.path().join("state/registry/projections.json");
+    let mut projections: Value =
+        serde_json::from_slice(&fs::read(&projections_path).expect("read projections"))
+            .expect("parse projections");
+    projections["projections"][0]["last_applied_rev"] = json!("missing-baseline-ref");
+    fs::write(
+        &projections_path,
+        serde_json::to_vec_pretty(&projections).expect("serialize projections"),
+    )
+    .expect("write missing baseline");
+
+    let (output, plan) = plan_converge(&fixture, &["--from-projection", "--instance", instance]);
+    assert!(
+        output.status.success(),
+        "unavailable baseline plan failed: {plan}"
+    );
+    assert!(conflict_codes(&plan).contains(&"PROJECTION_EVIDENCE_UNAVAILABLE"));
+}
+
+#[test]
+fn nested_git_metadata_is_excluded_from_projection_input_digest() {
+    let fixture = projected_fixture();
+    let (output, initial) = plan_converge(&fixture, &[]);
+    assert!(output.status.success(), "initial plan failed: {initial}");
+    let instance = initial["data"]["effects"][0]["instance_id"]
+        .as_str()
+        .expect("instance id");
+    let metadata = fixture.target.path().join("demo/.git");
+    fs::create_dir_all(&metadata).expect("create nested git metadata");
+    fs::write(
+        metadata.join("config"),
+        "[core]\n\trepositoryformatversion = 0\n",
+    )
+    .expect("write nested git metadata");
+
+    let (output, plan) = plan_converge(&fixture, &["--from-projection", "--instance", instance]);
+    assert!(
+        output.status.success(),
+        "nested git metadata blocked plan: {plan}"
+    );
+    assert_eq!(
+        plan["data"]["input"]["selected_input_tree_digest"],
+        initial["data"]["source"]["tree_digest"]
+    );
+}
+
+#[test]
+fn dirty_projection_requires_explicit_input_selection() {
+    let fixture = projected_fixture();
+    let (output, initial) = plan_converge(&fixture, &[]);
+    assert!(output.status.success(), "initial plan failed: {initial}");
+    let instance = initial["data"]["effects"][0]["instance_id"]
+        .as_str()
+        .expect("instance id");
+    fs::write(
+        fixture.target.path().join("demo/SKILL.md"),
+        "---\nname: demo\ndescription: Use when testing one dirty projection.\n---\n# dirty\n",
+    )
+    .expect("write dirty projection");
+
+    let (output, source) = plan_converge(&fixture, &[]);
+    assert!(output.status.success(), "source plan failed: {source}");
+    assert!(conflict_codes(&source).contains(&"DIRTY_PROJECTION_INPUT_REQUIRES_SELECTION"));
+
+    let (output, selected) =
+        plan_converge(&fixture, &["--from-projection", "--instance", instance]);
+    assert!(output.status.success(), "selected plan failed: {selected}");
+    assert!(!conflict_codes(&selected).contains(&"DIRTY_PROJECTION_INPUT_REQUIRES_SELECTION"));
+}
+
 #[cfg(unix)]
 #[test]
 fn copy_projection_input_preserves_contained_symlinks_for_preflight() {

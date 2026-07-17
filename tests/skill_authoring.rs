@@ -505,6 +505,85 @@ fn apply_patch_rejects_source_digest_drift_without_mutation() {
 }
 
 #[test]
+fn apply_patch_rejects_source_ref_drift_without_mutation() {
+    let root = TestDir::new("authoring-apply-ref-drift");
+    write_skill(
+        root.path(),
+        "demo",
+        "---\nname: demo\ndescription: Use when agents need demo workflow checks for focused local tasks.\n---\n# Demo\n",
+    );
+    write_eval_fixtures(root.path(), "demo");
+    let (output, initialized) = run_loom(root.path(), &["workspace", "init"]);
+    assert!(
+        output.status.success(),
+        "workspace init should pass: {initialized}"
+    );
+
+    let (output, generated) = run_loom(
+        root.path(),
+        &[
+            "skill",
+            "author",
+            "rewrite",
+            "demo",
+            "--instruction",
+            "tighten trigger precision",
+        ],
+    );
+    assert!(output.status.success(), "rewrite should pass: {generated}");
+    let patch_id = generated["data"]["patch_id"].as_str().expect("patch id");
+
+    write_file(
+        &root.path().join("review-marker.txt"),
+        "advance registry HEAD\n",
+    );
+    let add = Command::new("git")
+        .current_dir(root.path())
+        .args(["add", "review-marker.txt"])
+        .output()
+        .expect("git add marker");
+    assert!(
+        add.status.success(),
+        "git add failed: {}",
+        String::from_utf8_lossy(&add.stderr)
+    );
+    let commit = Command::new("git")
+        .current_dir(root.path())
+        .args(["commit", "-m", "test: advance registry head"])
+        .output()
+        .expect("git commit marker");
+    assert!(
+        commit.status.success(),
+        "git commit failed: {}",
+        String::from_utf8_lossy(&commit.stderr)
+    );
+
+    let (output, drift) = run_loom(
+        root.path(),
+        &[
+            "skill",
+            "author",
+            "apply-patch",
+            patch_id,
+            "--idempotency-key",
+            "req-ref-drift",
+        ],
+    );
+    assert!(!output.status.success(), "ref drift should fail: {drift}");
+    assert_eq!(drift["error"]["code"], json!("CAPTURE_CONFLICT"));
+    assert_eq!(
+        drift["error"]["next_actions"][0]["cmd"],
+        json!("loom --json skill inspect -- 'demo'")
+    );
+    assert!(
+        !fs::read_to_string(root.path().join("skills/demo/SKILL.md"))
+            .expect("read skill")
+            .contains("Requested rewrite"),
+        "ref drift failure must not apply patch"
+    );
+}
+
+#[test]
 fn apply_patch_applies_contextual_hunks_without_truncating_source() {
     let root = TestDir::new("authoring-apply-context");
     write_skill(

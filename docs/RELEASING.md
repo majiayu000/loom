@@ -54,6 +54,12 @@ Configure repository secrets:
 
 ## Install Checks
 
+Every archive contains `contract-manifest.json`, `contracts/agent-command-surfaces.toml`,
+and `skills/loom-registry`. Run `python3 scripts/release-contract.py verify --bundle
+<extracted-root>` before install; verification fails closed on missing or mismatched
+binary, Skill metadata/tree, inventory, target, or compatibility data. Homebrew installs
+the same three contract assets under `share/loom`.
+
 After the release is published:
 
 ```bash

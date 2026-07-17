@@ -21,6 +21,15 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Resolve contract diff base
+        run: |
+          set -euo pipefail
+          base_sha="$(git rev-parse HEAD^)"
+          git cat-file -e "${base_sha}^{tree}"
+          echo "LOOM_CONTRACT_DIFF_BASE=$base_sha" >> "$GITHUB_ENV"
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -118,11 +127,23 @@ jobs:
           version="${GITHUB_REF_NAME#v}"
           archive="skillloom-${version}-${{ matrix.target }}.tar.gz"
           staging="dist/skillloom-${version}-${{ matrix.target }}"
-          mkdir -p "$staging"
-          cp "target/${{ matrix.target }}/release/loom" "$staging/loom"
-          cp README.md LICENSE "$staging/"
-          mkdir -p "$staging/skills"
-          cp -R skills/loom-registry "$staging/skills/loom-registry"
+          contract_root="$(mktemp -d)"
+          trap 'rm -rf "$contract_root"' EXIT
+          contract_version="$(
+            "target/${{ matrix.target }}/release/loom" \
+              --json --root "$contract_root" workspace status \
+              | python3 -c 'import json, sys; value = json.load(sys.stdin).get("cli_contract_version"); isinstance(value, str) and value or sys.exit("binary returned no CLI contract version"); print(value)'
+          )"
+          python3 scripts/release-contract.py publish \
+            --binary "target/${{ matrix.target }}/release/loom" \
+            --skill-dir skills/loom-registry \
+            --inventory docs/agent-command-surfaces.toml \
+            --output-dir "$staging" \
+            --release-version "$version" \
+            --contract-version "$contract_version" \
+            --target "${{ matrix.target }}" \
+            --extra README.md \
+            --extra LICENSE
           tar -C dist -czf "dist/$archive" "skillloom-${version}-${{ matrix.target }}"
           (cd dist && shasum -a 256 "$archive" > "$archive.sha256")
 
@@ -136,6 +157,10 @@ jobs:
           tar -C "$unpack" -xzf "dist/$archive"
           bin="$unpack/skillloom-${version}-${{ matrix.target }}/loom"
           skill="$unpack/skillloom-${version}-${{ matrix.target }}/skills/loom-registry"
+          bundle="$unpack/skillloom-${version}-${{ matrix.target }}"
+          python3 scripts/release-contract.py verify --bundle "$bundle"
+          test -f "$bundle/contracts/agent-command-surfaces.toml"
+          test -f "$bundle/contract-manifest.json"
           test -f "$skill/SKILL.md"
           test -f "$skill/agents/openai.yaml"
           test -f "$skill/loom.skill.toml"
@@ -143,7 +168,16 @@ jobs:
           "$bin" --version
           "$bin" --help >/dev/null
           smoke_root="$(mktemp -d)"
-          "$bin" --json --root "$smoke_root" workspace status >/dev/null
+          status="$("$bin" --json --root "$smoke_root" workspace status)"
+          STATUS="$status" MANIFEST="$bundle/contract-manifest.json" python3 - <<'PY'
+          import json, os
+          status = json.loads(os.environ["STATUS"])
+          manifest = json.load(open(os.environ["MANIFEST"], encoding="utf-8"))
+          assert status["cli_contract_version"] == manifest["cli_contract_version"]
+          PY
+          LOOM_PACKAGED_CONTRACT_BUNDLE="$bundle" \
+            LOOM_PACKAGED_BINARY="$bin" \
+            cargo test --test release_contract packaged_surface_fixture_matrix -- --ignored --exact
           "$bin" --root "$smoke_root" panel --port 0 >/tmp/loom-panel-smoke.log 2>&1 &
           panel_pid="$!"
           sleep 1
@@ -285,8 +319,11 @@ jobs:
             end
 
             def install
-              bin.install "loom"
+              pkgshare.install "loom"
               pkgshare.install "skills"
+              pkgshare.install "contracts"
+              pkgshare.install "contract-manifest.json"
+              bin.install_symlink pkgshare/"loom"
             end
 
             test do
@@ -306,13 +343,41 @@ jobs:
           branch="loom-${GITHUB_REF_NAME}"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git checkout -B "$branch"
+          formula="$(mktemp)"
+          cp Formula/loom.rb "$formula"
+          if git ls-files --error-unmatch -- Formula/loom.rb >/dev/null 2>&1; then
+            git restore -- Formula/loom.rb
+          else
+            rm -f Formula/loom.rb
+          fi
+          if git ls-remote --exit-code --heads origin "$branch" >/dev/null; then
+            git fetch origin "refs/heads/$branch:refs/remotes/origin/$branch"
+            git checkout -B "$branch" "origin/$branch"
+          else
+            git checkout -B "$branch"
+          fi
+          install -m 0644 "$formula" Formula/loom.rb
+          rm -f "$formula"
           git add Formula/loom.rb
-          git commit -m "Update loom to ${GITHUB_REF_NAME}" || exit 0
-          git push --force-with-lease origin "$branch"
-          gh pr create \
-            --repo "$TAP_REPO" \
-            --head "$branch" \
-            --base main \
-            --title "Update loom to ${GITHUB_REF_NAME}" \
-            --body "Updates the loom formula for ${GITHUB_REF_NAME}."
+          if ! git diff --cached --quiet; then
+            git commit -m "Update loom to ${GITHUB_REF_NAME}"
+            git push origin "HEAD:refs/heads/$branch"
+          fi
+          git fetch origin "refs/heads/main:refs/remotes/origin/main"
+          if git diff --quiet "origin/main" -- Formula/loom.rb; then
+            exit 0
+          else
+            formula_diff_status=$?
+            if [[ "$formula_diff_status" -ne 1 ]]; then
+              exit "$formula_diff_status"
+            fi
+          fi
+          pr_number="$(gh pr list --repo "$TAP_REPO" --head "$branch" --base main --state open --json number --jq '.[0].number')"
+          if [[ -z "$pr_number" ]]; then
+            gh pr create \
+              --repo "$TAP_REPO" \
+              --head "$branch" \
+              --base main \
+              --title "Update loom to ${GITHUB_REF_NAME}" \
+              --body "Updates the loom formula for ${GITHUB_REF_NAME}."
+          fi

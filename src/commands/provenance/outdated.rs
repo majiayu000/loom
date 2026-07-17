@@ -8,6 +8,7 @@ use serde_json::{Value, json};
 use crate::cli::SkillProvenanceOutdatedArgs;
 use crate::envelope::Meta;
 use crate::fs_util::remove_path_if_exists;
+use crate::next_action_trace::observe_next_actions;
 use crate::state::AppContext;
 
 use super::super::CommandFailure;
@@ -66,7 +67,10 @@ impl ProviderOutdatedRow {
             "candidate_trust": self.candidate_trust,
             "source_locator": self.source_locator,
             "risk": self.risk,
-            "next_actions": next_actions_for_status(&self.skill_id, self.status),
+            "next_actions": observe_next_actions(
+                "provenance.outdated.row",
+                next_actions_for_status(&self.skill_id, self.status),
+            ),
         });
         if let Some(error) = &self.error {
             row["error"] = json!(error);
@@ -145,10 +149,13 @@ pub(super) fn cmd_provenance_outdated(
             "summary": summary.to_json(),
             "rows": row_values,
             "re_pin_plan": re_pin_plan,
-            "next_actions": [
-                "review rows with status outdated or unpinned_candidate before applying any re-pin",
-                "combine with `loom skill provenance verify <skill>` to confirm installed content still matches recorded provenance",
-            ],
+            "next_actions": observe_next_actions(
+                "provenance.outdated.summary",
+                [
+                    "review rows with status outdated or unpinned_candidate before applying any re-pin",
+                    "combine with `loom skill provenance verify <skill>` to confirm installed content still matches recorded provenance",
+                ],
+            ),
         }),
         Meta::default(),
     ))
@@ -519,7 +526,10 @@ fn re_pin_plan_for_rows(rows: &[ProviderOutdatedRow], generated_at: DateTime<Utc
                     "run catalog preview or equivalent source inspection",
                     "run skill scan after any explicit update flow",
                 ],
-                "next_actions": next_actions_for_status(&row.skill_id, row.status),
+                "next_actions": observe_next_actions(
+                    "provenance.outdated.repin_item",
+                    next_actions_for_status(&row.skill_id, row.status),
+                ),
             })
         })
         .collect();

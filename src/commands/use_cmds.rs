@@ -9,6 +9,7 @@ use crate::cli::{
 };
 use crate::envelope::Meta;
 use crate::error_actions::NextAction;
+use crate::next_action_trace::observe_next_actions;
 use crate::state::AppContext;
 use crate::state_model::RegistryStatePaths;
 use crate::types::ErrorCode;
@@ -67,9 +68,10 @@ impl App {
                     "skill": args.skill,
                     "apply_required": true,
                     "steps": steps,
-                    "next_actions": [
-                        format!("review this plan, then run `{}`", apply_command)
-                    ],
+                    "next_actions": observe_next_actions(
+                        "use.plan",
+                        [format!("review this plan, then run `{}`", apply_command)],
+                    ),
                 }),
                 Meta::default(),
             ));
@@ -159,6 +161,7 @@ impl App {
             }));
         }
 
+        let next_actions = use_post_apply_next_actions(&self.ctx, args, workspace.as_deref());
         Ok((
             json!({
                 "dry_run": false,
@@ -166,11 +169,7 @@ impl App {
                 "skill": args.skill,
                 "workspace": workspace.as_ref().map(|path| path.display().to_string()),
                 "applied": applied,
-                "next_actions": [
-                    "restart or refresh the selected agent if it caches skill inventory",
-                    "run `loom agent preflight` before follow-up writes",
-                    "use the returned rollback_commands if this projection should be removed"
-                ],
+                "next_actions": observe_next_actions("use.applied", next_actions),
             }),
             Meta {
                 warnings,
@@ -312,12 +311,16 @@ fn ensure_target_can_be_managed(
         "target_path": target_path.display().to_string(),
         "required_flag": "--adopt",
     });
-    failure.next_actions = vec![NextAction {
-        cmd: use_apply_command(&ctx.root, args, workspace).replace(" --apply", " --adopt --apply"),
-        reason:
-            "adopt the existing agent skills directory as a managed Loom target before projection"
-                .to_string(),
-    }];
+    failure.next_actions = observe_next_actions(
+        "use.adopt_required",
+        vec![NextAction {
+            cmd: use_apply_command(&ctx.root, args, workspace)
+                .replace(" --apply", " --adopt --apply"),
+            reason:
+                "adopt the existing agent skills directory as a managed Loom target before projection"
+                    .to_string(),
+        }],
+    );
     Err(failure)
 }
 
@@ -384,4 +387,27 @@ fn use_apply_command(root: &Path, args: &UseArgs, workspace: Option<&Path>) -> S
     }
     command.push_str(" --apply");
     command
+}
+
+fn use_post_apply_next_actions(
+    ctx: &AppContext,
+    args: &UseArgs,
+    workspace: Option<&Path>,
+) -> Vec<String> {
+    let preflight_workspace = workspace.unwrap_or_else(|| Path::new("user"));
+    let mut actions = vec![
+        "restart or refresh the selected agent if it caches skill inventory".to_string(),
+        "use the returned rollback_commands if this projection should be removed".to_string(),
+    ];
+    actions.extend(args.agents.iter().map(|agent| {
+        format!(
+            "loom --json --root {} agent preflight --agent {} --workspace {} --skill {} --method {}",
+            shell_arg(&ctx.root),
+            agent_kind_as_str(*agent),
+            shell_arg(preflight_workspace),
+            shell_arg(&args.skill),
+            projection_method_as_str(args.method),
+        )
+    }));
+    actions
 }

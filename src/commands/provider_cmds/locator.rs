@@ -9,6 +9,7 @@ use crate::cli::{
     CatalogCommand, CatalogPreviewArgs, CatalogSearchArgs, CatalogShowArgs, SkillInstallArgs,
 };
 use crate::envelope::Meta;
+use crate::next_action_trace::observe_next_actions;
 use crate::state::AppContext;
 use crate::types::ErrorCode;
 
@@ -479,11 +480,17 @@ fn install_dry_run_plan(
                 "resolved_ref": locator.requested_ref,
             },
         },
-        "next_actions": [
-            format!("loom catalog preview '{}'", locator.raw),
-            format!("loom skill scan {}", skill),
-            format!("loom skill activate {} --dry-run", skill),
-        ],
+        "next_actions": observe_next_actions(
+            "provider.install.plan",
+            [
+                format!("loom catalog preview '{}'", locator.raw),
+                format!("loom skill scan {}", skill),
+                format!(
+                    "loom skill activate {} --agent <agent> --dry-run",
+                    skill
+                ),
+            ],
+        ),
     }))
 }
 

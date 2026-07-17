@@ -3,6 +3,7 @@ use serde_json::{Value, json};
 use crate::cli::{SkillsetReleaseArgs, SkillsetRollbackArgs};
 use crate::envelope::Meta;
 use crate::gitops;
+use crate::next_action_trace::observe_next_actions;
 use crate::state::AppContext;
 use crate::types::ErrorCode;
 
@@ -187,9 +188,10 @@ fn ensure_clean_skillsets_definition(ctx: &AppContext) -> std::result::Result<()
     failure.details = json!({
         "path": SKILLSETS_REL,
         "status": output.lines().collect::<Vec<_>>(),
-        "next_actions": [
-            "commit or discard state/registry/skillsets.json changes before release"
-        ],
+        "next_actions": observe_next_actions(
+            "skillset.release.dirty_definition",
+            ["commit or discard state/registry/skillsets.json changes before release"],
+        ),
     });
     Err(failure)
 }

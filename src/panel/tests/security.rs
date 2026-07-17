@@ -20,7 +20,7 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 // Exhaustive list of every panel mutation command. Must stay in sync with the
-// Unique panel mutation command ids. The 23 HTTP routes in
+// Unique panel mutation command ids. The 25 HTTP routes in
 // docs/LOOM_ARCHITECTURE_DECISIONS.md section 4.1 include two commit routes and
 // two release routes that share command ids.
 const MUTATION_COMMANDS: &[&str] = &[
@@ -31,6 +31,8 @@ const MUTATION_COMMANDS: &[&str] = &[
     "workspace.binding.remove",
     "use",
     "skill.project",
+    "skill.add",
+    "skill.import_observed",
     "skill.commit",
     "skill.release",
     "skill.rollback",
@@ -94,7 +96,7 @@ const LEGACY_PANEL_ROUTES: &[&str] = &[
 
 #[test]
 fn mutation_commands_count_tracks_unique_mutation_command_ids() {
-    assert_eq!(MUTATION_COMMANDS.len(), 21);
+    assert_eq!(MUTATION_COMMANDS.len(), 23);
 }
 
 #[test]
@@ -182,6 +184,7 @@ fn error_envelope_uses_expected_shape() {
             "cmd": "skill.commit",
             "request_id": "req-1",
             "version": env!("CARGO_PKG_VERSION"),
+            "cli_contract_version": crate::cli_contract::CLI_CONTRACT_VERSION,
             "data": {},
             "error": {
                 "code": "INTERNAL_ERROR",

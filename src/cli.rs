@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use serde::Serialize;
 
-pub use crate::core::vocab::{
+pub use crate::vocab::{
     AgentKind, MatcherKind as WorkspaceMatcherKind, Ownership as TargetOwnership, ProjectionMethod,
 };
 mod backup;

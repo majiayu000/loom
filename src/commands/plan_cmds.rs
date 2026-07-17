@@ -8,6 +8,7 @@ use uuid::Uuid;
 use crate::cli::{ApplyArgs, PlanCommand, PlanUseArgs, UseArgs};
 use crate::envelope::Meta;
 use crate::gitops;
+use crate::next_action_trace::observe_next_actions;
 use crate::sha256::{Sha256, to_hex};
 use crate::types::ErrorCode;
 
@@ -144,9 +145,10 @@ impl App {
                     "target_root": use_args.target_root.as_ref().map(|path| path.display().to_string()),
                 },
                 "use_args": serde_json::to_value(&use_args).map_err(map_io)?,
-                "next_actions": [
-                    format!("review this durable plan, then run `{}`", apply_command)
-                ],
+                "next_actions": observe_next_actions(
+                    "plan.use.response",
+                    [format!("review this durable plan, then run `{}`", apply_command)],
+                ),
             }),
             Meta::default(),
         ))

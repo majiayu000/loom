@@ -1,7 +1,7 @@
 # GH523 Product Spec: 防止 CLI、Agent Skill 与生命周期文档契约漂移
 
 Issue: https://github.com/majiayu000/loom/issues/523
-Status: Maintainer architecture decisions approved; follow-up spec amendment
+Status: Implementation complete; independent follow-up review PASS; repository verification PASS; exact-head CI pending
 Locale: zh-CN
 Complexity: medium
 

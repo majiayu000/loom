@@ -4,6 +4,25 @@ use std::fs;
 
 use common::actions::{binding_add, save_skill, skill_project, target_add};
 use common::{TestDir, run_loom, write_skill};
+
+#[path = "../src/sha256.rs"]
+mod sha256;
+
+const CONVERGENCE_DIGEST_FIELDS: [&str; 13] = [
+    "skill",
+    "selectors",
+    "source",
+    "input",
+    "preflight",
+    "input_conflicts",
+    "registry",
+    "projections",
+    "visibility",
+    "accept_restart_required",
+    "remote",
+    "required_axes",
+    "required_approvals",
+];
 use serde_json::{Value, json};
 
 struct Fixture {
@@ -100,6 +119,17 @@ fn mutate_plan_event(root: &std::path::Path, plan_id: &str, mutate: impl FnOnce(
         .collect::<Vec<_>>();
     assert!(mutate.is_none(), "expected stored convergence plan event");
     fs::write(&audit_path, format!("{}\n", rows.join("\n"))).expect("rewrite stored plan");
+}
+
+fn raw_convergence_digest(plan: &Value) -> String {
+    let plan = plan.as_object().expect("plan object");
+    let payload = CONVERGENCE_DIGEST_FIELDS
+        .into_iter()
+        .map(|field| (field.to_string(), plan[field].clone()))
+        .collect::<serde_json::Map<_, _>>();
+    let mut hasher = sha256::Sha256::new();
+    hasher.update(&serde_json::to_vec(&payload).expect("serialize digest payload"));
+    format!("sha256:{}", sha256::to_hex(&hasher.finalize()))
 }
 
 #[test]
@@ -257,6 +287,40 @@ fn stored_schema_1_1_convergence_plan_reports_migration() {
     assert_eq!(
         applied["error"]["details"]["conflict"]["code"],
         json!("PLAN_SCHEMA_UNSUPPORTED")
+    );
+}
+
+#[test]
+fn stored_shape_corruption_is_rejected_even_with_matching_digest() {
+    let fixture = projected_fixture();
+    let (output, plan) = plan_converge(&fixture, &[]);
+    assert!(output.status.success(), "plan failed: {plan}");
+    let plan_id = plan["data"]["plan_id"].as_str().expect("plan id");
+    let mut corrupt_digest = None;
+    mutate_plan_event(fixture.root.path(), plan_id, |stored| {
+        stored["input_conflicts"] = json!("invalid-array-shape");
+        let digest = raw_convergence_digest(stored);
+        stored["plan_digest"] = json!(digest);
+        corrupt_digest = stored["plan_digest"].as_str().map(str::to_string);
+    });
+    let corrupt_digest = corrupt_digest.expect("corrupt digest");
+
+    let (output, rejected) = run_loom(
+        fixture.root.path(),
+        &[
+            "apply",
+            plan_id,
+            "--plan-digest",
+            &corrupt_digest,
+            "--idempotency-key",
+            "conv-shape-corrupt",
+        ],
+    );
+    assert!(!output.status.success(), "corrupt shape passed: {rejected}");
+    assert_eq!(rejected["error"]["code"], json!("STATE_CORRUPT"));
+    assert_eq!(
+        rejected["error"]["details"]["conflict"]["code"],
+        json!("PLAN_CORRUPT")
     );
 }
 

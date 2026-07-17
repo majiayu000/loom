@@ -358,15 +358,16 @@ pub(super) fn workspace_for_scope(
     scope: ActivationScope,
     workspace: Option<PathBuf>,
 ) -> std::result::Result<Option<PathBuf>, CommandFailure> {
-    if !matches!(scope, ActivationScope::Project) {
-        return Ok(None);
-    }
-    let raw = workspace.ok_or_else(|| {
-        CommandFailure::new(
-            ErrorCode::ArgInvalid,
-            "--workspace is required when --scope project",
-        )
-    })?;
+    let Some(raw) = workspace else {
+        return if matches!(scope, ActivationScope::Project) {
+            Err(CommandFailure::new(
+                ErrorCode::ArgInvalid,
+                "--workspace is required when --scope project",
+            ))
+        } else {
+            Ok(None)
+        };
+    };
     let absolute = if raw.is_absolute() {
         raw
     } else {

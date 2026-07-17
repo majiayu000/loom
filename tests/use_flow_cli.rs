@@ -240,6 +240,47 @@ fn gemini_user_root_uses_explicit_or_process_workspace_environment() {
         activate_env["data"]["target"]["path"],
         json!(redirected_home.path().join(".gemini/skills"))
     );
+
+    let explicit_activate_root = TestDir::new("activate-gemini-explicit-workspace-root");
+    let explicit_workspace = TestDir::new("activate-gemini-explicit-workspace");
+    let explicit_redirected_home = TestDir::new("activate-gemini-explicit-redirected-home");
+    write_skill(
+        explicit_activate_root.path(),
+        "demo",
+        "---\nname: demo\ndescription: Gemini explicit workspace fixture.\n---\n# Demo\n",
+    );
+    write_file(
+        &explicit_workspace.path().join(".gemini/.env"),
+        &format!(
+            "GEMINI_CLI_HOME={}\n",
+            explicit_redirected_home.path().display()
+        ),
+    );
+    let explicit_workspace_arg = explicit_workspace.path().display().to_string();
+    let (explicit_activate_output, explicit_activate_env) = run_loom_with_env_and_cwd(
+        explicit_activate_root.path(),
+        explicit_activate_root.path(),
+        &envs,
+        &[
+            "skill",
+            "activate",
+            "demo",
+            "--agent",
+            "gemini-cli",
+            "--scope",
+            "user",
+            "--workspace",
+            &explicit_workspace_arg,
+        ],
+    );
+    assert!(
+        explicit_activate_output.status.success(),
+        "explicit-workspace Gemini activation failed: {explicit_activate_env}"
+    );
+    assert_eq!(
+        explicit_activate_env["data"]["target"]["path"],
+        json!(explicit_redirected_home.path().join(".gemini/skills"))
+    );
 }
 
 #[test]

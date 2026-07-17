@@ -6,7 +6,7 @@ use serde_json::{Value, json};
 
 use crate::cli::ProjectionMethod;
 use crate::envelope::Meta;
-use crate::fs_util::remove_path_if_exists;
+use crate::fs_util::{exchange_paths_atomic, remove_path_if_exists, rename_atomic};
 use crate::gitops;
 use crate::state::AppContext;
 use crate::state_model::{
@@ -36,7 +36,17 @@ use super::skill_cmds::shared::{
 };
 use super::skill_safety::enforce_skill_safety;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ProjectionExecutionContext {
+    Standalone,
+    Convergence,
+}
+
+#[cfg(test)]
+mod tests;
+
 pub(crate) struct ProjectionExecutionInput {
+    pub(crate) context: ProjectionExecutionContext,
     pub(crate) skill: String,
     pub(crate) binding: RegistryWorkspaceBinding,
     pub(crate) binding_is_new: bool,
@@ -169,8 +179,42 @@ pub(crate) fn execute_projection(
         last_observed_error: None,
         updated_at: Some(Utc::now()),
     };
+    if let Err(err) = inject_convergence_observation_mismatch(&input) {
+        let rollback_errors = rollback_live_projection_path(
+            &input.materialized_path,
+            materialization.backup.as_ref(),
+        );
+        return Err(err.with_rollback_errors(rollback_errors));
+    }
     let observation = observe_projection(ctx, &projection);
     apply_projection_observation(&mut projection, &observation);
+
+    if input.context == ProjectionExecutionContext::Convergence {
+        if observation.status != "healthy" {
+            let rollback_errors = rollback_live_projection_path(
+                &input.materialized_path,
+                materialization.backup.as_ref(),
+            );
+            return Err(CommandFailure::new(
+                ErrorCode::ProjectionConflict,
+                format!(
+                    "convergence projection '{}' failed post-materialization validation: {}",
+                    projection.instance_id,
+                    observation
+                        .error_code
+                        .unwrap_or("projection_validation_failed")
+                ),
+            )
+            .with_rollback_errors(rollback_errors));
+        }
+        return Ok(ProjectionExecutionOutput {
+            projection: Some(projection),
+            backup: materialization.backup,
+            commit: None,
+            meta: Meta::default(),
+            noop: !materialization.changed && !state_changed,
+        });
+    }
 
     let mut projections = original_projections.clone();
     upsert_projection(&mut projections, projection.clone());
@@ -270,6 +314,29 @@ pub(crate) fn execute_projection(
     })
 }
 
+#[cfg(test)]
+fn inject_convergence_observation_mismatch(
+    input: &ProjectionExecutionInput,
+) -> std::result::Result<(), CommandFailure> {
+    if input.context == ProjectionExecutionContext::Convergence
+        && input.after_materialize_fault == Some("test_convergence_observation_mismatch")
+    {
+        fs::write(
+            input.materialized_path.join("details.txt"),
+            "fault-injected drift\n",
+        )
+        .map_err(map_io)?;
+    }
+    Ok(())
+}
+
+#[cfg(not(test))]
+fn inject_convergence_observation_mismatch(
+    _input: &ProjectionExecutionInput,
+) -> std::result::Result<(), CommandFailure> {
+    Ok(())
+}
+
 fn validate_execution_input(
     ctx: &AppContext,
     input: &ProjectionExecutionInput,
@@ -311,6 +378,11 @@ fn materialize_projection(
     let skill_src = ctx.skill_path(&input.skill);
     let path_exists =
         input.materialized_path.exists() || fs::symlink_metadata(&input.materialized_path).is_ok();
+    let safe_existing_noop = input.safe_existing_noop
+        || (input.context == ProjectionExecutionContext::Convergence
+            && matches!(input.method, ProjectionMethod::Symlink));
+    let replace_existing =
+        input.replace_existing || input.context == ProjectionExecutionContext::Convergence;
 
     if matches!(input.method, ProjectionMethod::Symlink) {
         let probe = probe_symlink(&target_base);
@@ -327,7 +399,7 @@ fn materialize_projection(
     }
 
     if path_exists {
-        if input.safe_existing_noop {
+        if safe_existing_noop {
             if matches!(input.method, ProjectionMethod::Symlink)
                 && projection_path_is_safe_symlink(&input.materialized_path, &skill_src)
             {
@@ -345,7 +417,7 @@ fn materialize_projection(
                 });
             }
         }
-        if !input.replace_existing {
+        if !replace_existing {
             return Err(CommandFailure::new(
                 ErrorCode::ProjectionConflict,
                 format!(
@@ -357,30 +429,95 @@ fn materialize_projection(
         }
     }
 
-    let backup = if input.replace_existing {
-        backup_path_if_exists(ctx, &input.materialized_path, "project.replace_projection")
-            .map_err(map_io)?
+    let staging_path = target_base.join(format!(
+        ".loom-projection-stage-{}",
+        uuid::Uuid::new_v4().simple()
+    ));
+    if let Err(err) = project_skill_to_target(&skill_src, &staging_path, input.method) {
+        let mut cleanup_errors = Vec::new();
+        cleanup_projection_staging(&staging_path, &mut cleanup_errors);
+        return Err(map_project_io(input.method)(err).with_rollback_errors(cleanup_errors));
+    }
+
+    let persistent_backup = if path_exists
+        && replace_existing
+        && input.context == ProjectionExecutionContext::Standalone
+    {
+        match backup_path_if_exists(ctx, &input.materialized_path, "project.replace_projection") {
+            Ok(backup) => backup,
+            Err(err) => {
+                let mut cleanup_errors = Vec::new();
+                cleanup_projection_staging(&staging_path, &mut cleanup_errors);
+                return Err(map_io(err).with_rollback_errors(cleanup_errors));
+            }
+        }
     } else {
         None
     };
-    if input.replace_existing
-        && let Err(err) = remove_path_if_exists(&input.materialized_path)
-    {
-        let rollback_errors =
-            rollback_live_projection_path(&input.materialized_path, backup.as_ref());
-        return Err(map_io(err).with_rollback_errors(rollback_errors));
-    }
-
-    if let Err(err) = project_skill_to_target(&skill_src, &input.materialized_path, input.method) {
-        let rollback_errors =
-            rollback_live_projection_path(&input.materialized_path, backup.as_ref());
-        return Err(map_project_io(input.method)(err).with_rollback_errors(rollback_errors));
-    }
+    let backup = if path_exists {
+        if let Err(err) = exchange_paths_atomic(&staging_path, &input.materialized_path) {
+            let mut cleanup_errors = Vec::new();
+            cleanup_projection_staging(&staging_path, &mut cleanup_errors);
+            return Err(map_io(err).with_rollback_errors(cleanup_errors));
+        }
+        if input.context == ProjectionExecutionContext::Convergence {
+            Some(atomic_exchange_backup(
+                &input.materialized_path,
+                &staging_path,
+            ))
+        } else {
+            let mut cleanup_errors = Vec::new();
+            cleanup_projection_staging(&staging_path, &mut cleanup_errors);
+            if !cleanup_errors.is_empty() {
+                let mut rollback_errors =
+                    rollback_atomic_exchange(&input.materialized_path, &staging_path);
+                rollback_errors.extend(cleanup_errors);
+                return Err(CommandFailure::new(
+                    ErrorCode::IoError,
+                    "failed to remove replaced projection after atomic exchange",
+                )
+                .with_rollback_errors(rollback_errors));
+            }
+            persistent_backup
+        }
+    } else {
+        if let Err(err) = rename_atomic(&staging_path, &input.materialized_path) {
+            let mut cleanup_errors = Vec::new();
+            cleanup_projection_staging(&staging_path, &mut cleanup_errors);
+            return Err(map_io(err).with_rollback_errors(cleanup_errors));
+        }
+        None
+    };
 
     Ok(MaterializationResult {
         changed: true,
         backup,
     })
+}
+
+fn cleanup_projection_staging(path: &Path, errors: &mut Vec<Value>) {
+    if let Err(err) = remove_path_if_exists(path) {
+        push_rollback_error(errors, "remove_projection_staging", err);
+    }
+}
+
+fn atomic_exchange_backup(materialized_path: &Path, backup_path: &Path) -> Value {
+    json!({
+        "reason": "convergence.atomic_exchange",
+        "kind": "atomic_exchange",
+        "original_path": materialized_path.display().to_string(),
+        "backup_path": backup_path.display().to_string(),
+    })
+}
+
+fn rollback_atomic_exchange(materialized_path: &Path, backup_path: &Path) -> Vec<Value> {
+    let mut errors = Vec::new();
+    if let Err(err) = exchange_paths_atomic(backup_path, materialized_path) {
+        push_rollback_error(&mut errors, "restore_projection_atomic_exchange", err);
+        return errors;
+    }
+    cleanup_projection_staging(backup_path, &mut errors);
+    errors
 }
 
 fn save_projection_state(
@@ -431,10 +568,24 @@ fn rollback_projection_mutation(rollback: ProjectionRollback<'_>) -> Vec<Value> 
 fn rollback_live_projection_path(materialized_path: &Path, backup: Option<&Value>) -> Vec<Value> {
     let mut errors = Vec::new();
     if let Some(backup) = backup {
-        if !rollback_fault_active("restore_projection_path")
-            && let Err(err) = restore_path_from_backup(materialized_path, backup)
-        {
-            push_rollback_error(&mut errors, "restore_projection_path", err);
+        if !rollback_fault_active("restore_projection_path") {
+            if backup.get("kind").and_then(Value::as_str) == Some("atomic_exchange") {
+                let Some(backup_path) = backup
+                    .get("backup_path")
+                    .and_then(Value::as_str)
+                    .map(Path::new)
+                else {
+                    push_rollback_error(
+                        &mut errors,
+                        "restore_projection_atomic_exchange",
+                        "atomic exchange backup is missing backup_path",
+                    );
+                    return errors;
+                };
+                errors.extend(rollback_atomic_exchange(materialized_path, backup_path));
+            } else if let Err(err) = restore_path_from_backup(materialized_path, backup) {
+                push_rollback_error(&mut errors, "restore_projection_path", err);
+            }
         }
     } else if !rollback_fault_active("remove_projection_path")
         && let Err(err) = remove_path_if_exists(materialized_path)

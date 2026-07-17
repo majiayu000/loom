@@ -80,6 +80,28 @@ fn conflict_codes(plan: &Value) -> Vec<&str> {
         .collect()
 }
 
+fn mutate_plan_event(root: &std::path::Path, plan_id: &str, mutate: impl FnOnce(&mut Value)) {
+    let audit_path = root.join("state/events/commands.jsonl");
+    let raw = fs::read_to_string(&audit_path).expect("read command events");
+    let mut mutate = Some(mutate);
+    let rows = raw
+        .lines()
+        .map(|line| {
+            let mut event: Value = serde_json::from_str(line).expect("parse command event");
+            if event["cmd"] == json!("plan.converge")
+                && event["status"] == json!("succeeded")
+                && event["output"]["plan_id"] == json!(plan_id)
+                && let Some(mutate) = mutate.take()
+            {
+                mutate(&mut event["output"]);
+            }
+            serde_json::to_string(&event).expect("serialize command event")
+        })
+        .collect::<Vec<_>>();
+    assert!(mutate.is_none(), "expected stored convergence plan event");
+    fs::write(&audit_path, format!("{}\n", rows.join("\n"))).expect("rewrite stored plan");
+}
+
 #[test]
 fn projection_input_drives_policy_approvals_and_risks() {
     let fixture = projected_fixture();
@@ -127,6 +149,14 @@ capabilities:
     assert_ne!(
         projection["data"]["plan_digest"],
         initial["data"]["plan_digest"]
+    );
+    assert!(
+        projection["data"]["effects"]
+            .as_array()
+            .expect("effects")
+            .iter()
+            .all(|effect| effect["source_tree_digest"]
+                == projection["data"]["input"]["selected_input_tree_digest"])
     );
 
     let (output, source) = plan_converge(&fixture, &[]);
@@ -179,6 +209,74 @@ fn untracked_existing_live_path_fails_closed() {
         plan["data"]["input"]["projections"][0]["issue"],
         json!("unmanaged_live_path_without_projection_record")
     );
+}
+
+#[test]
+fn non_directory_projection_path_fails_closed_for_source_plan() {
+    let fixture = projected_fixture();
+    fs::remove_dir_all(fixture.target.path().join("demo")).expect("remove projection directory");
+    fs::write(fixture.target.path().join("demo"), "unmanaged bytes\n")
+        .expect("replace projection with file");
+
+    let (output, plan) = plan_converge(&fixture, &[]);
+    assert!(output.status.success(), "non-directory plan failed: {plan}");
+    assert!(conflict_codes(&plan).contains(&"PROJECTION_EVIDENCE_UNAVAILABLE"));
+}
+
+#[test]
+fn stored_schema_1_1_convergence_plan_reports_migration() {
+    let fixture = projected_fixture();
+    let (output, plan) = plan_converge(&fixture, &[]);
+    assert!(output.status.success(), "plan failed: {plan}");
+    let plan_id = plan["data"]["plan_id"].as_str().expect("plan id");
+    let digest = plan["data"]["plan_digest"].as_str().expect("plan digest");
+    mutate_plan_event(fixture.root.path(), plan_id, |stored| {
+        stored["schema_version"] = json!("1.1");
+        let object = stored.as_object_mut().expect("stored plan object");
+        object.remove("input");
+        object.remove("preflight");
+        object.remove("input_conflicts");
+    });
+
+    let (output, applied) = run_loom(
+        fixture.root.path(),
+        &[
+            "apply",
+            plan_id,
+            "--plan-digest",
+            digest,
+            "--idempotency-key",
+            "schema-1-1-compat",
+        ],
+    );
+    assert!(
+        !output.status.success(),
+        "legacy schema unexpectedly ran: {applied}"
+    );
+    assert_eq!(applied["error"]["code"], json!("SCHEMA_MISMATCH"));
+    assert_eq!(
+        applied["error"]["details"]["conflict"]["code"],
+        json!("PLAN_SCHEMA_UNSUPPORTED")
+    );
+}
+
+#[test]
+fn working_source_drift_blocks_clean_projection_input() {
+    let fixture = projected_fixture();
+    let (output, initial) = plan_converge(&fixture, &[]);
+    assert!(output.status.success(), "initial plan failed: {initial}");
+    let instance = initial["data"]["effects"][0]["instance_id"]
+        .as_str()
+        .expect("instance id");
+    fs::write(
+        fixture.root.path().join("skills/demo/SKILL.md"),
+        "---\nname: demo\ndescription: Use when testing working source drift.\n---\n# dirty source\n",
+    )
+    .expect("write dirty source");
+
+    let (output, plan) = plan_converge(&fixture, &["--from-projection", "--instance", instance]);
+    assert!(output.status.success(), "working drift plan failed: {plan}");
+    assert!(conflict_codes(&plan).contains(&"STALE_PROJECTION_INPUT"));
 }
 
 #[cfg(unix)]

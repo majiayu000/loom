@@ -271,6 +271,19 @@ fn find_plan<'a>(events: &'a [CommandEventRow], plan_id: &str) -> Option<StoredP
 fn validate_stored_plan_metadata(
     stored: &StoredPlan<'_>,
 ) -> std::result::Result<(), CommandFailure> {
+    if stored.kind == StoredPlanKind::Converge
+        && stored.plan["operation"] == json!("converge")
+        && stored.plan["schema_version"] == json!("1.1")
+    {
+        return Err(plan_failure(
+            ErrorCode::SchemaMismatch,
+            "stored convergence plan schema 1.1 cannot be applied by the schema 1.2 executor",
+            "PLAN_SCHEMA_UNSUPPORTED",
+            false,
+            vec!["create and review a fresh convergence plan".to_string()],
+            Some(stored.cursor),
+        ));
+    }
     let valid = match stored.kind {
         StoredPlanKind::Use => {
             stored.plan["operation"] == json!("use")

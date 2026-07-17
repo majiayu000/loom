@@ -51,7 +51,7 @@ impl App {
         let snapshot = paths.maybe_load_snapshot().map_err(map_registry_state)?;
         let source_digest = skill_tree_digest(&self.ctx.skill_path(&args.skill)).map_err(map_io)?;
         let registry_head = gitops::head(&self.ctx).map_err(map_git)?;
-        let projections = resolve_projection_effects(
+        let mut projections = resolve_projection_effects(
             &self.ctx,
             snapshot.as_ref(),
             args,
@@ -69,6 +69,9 @@ impl App {
         };
         let (selected_input_tree_digest, candidate_path) =
             selected_input(args, &projection_evidence, &source_digest)?;
+        for effect in &mut projections {
+            effect.source_tree_digest = selected_input_tree_digest.clone();
+        }
         let candidate_method = args.instance.as_deref().and_then(|instance| {
             projection_evidence
                 .iter()
@@ -94,13 +97,14 @@ impl App {
             preflight_candidate.as_deref(),
         )?;
         let selected_source_drift = if direction == ConvergenceInputDirection::Projection {
-            projection_evidence
-                .iter()
-                .find(|item| item.instance_id == args.instance.as_deref().unwrap_or_default())
-                .and_then(|item| item.baseline_revision.as_deref())
-                .map(|revision| source_changed_since_revision(&self.ctx, &args.skill, revision))
-                .transpose()?
-                .unwrap_or(false)
+            !source_dirty_paths.is_empty()
+                || projection_evidence
+                    .iter()
+                    .find(|item| item.instance_id == args.instance.as_deref().unwrap_or_default())
+                    .and_then(|item| item.baseline_revision.as_deref())
+                    .map(|revision| source_changed_since_revision(&self.ctx, &args.skill, revision))
+                    .transpose()?
+                    .unwrap_or(false)
         } else {
             false
         };
@@ -380,7 +384,7 @@ fn resolve_input_conflicts(
             .and_then(|instance| projections.iter().find(|item| item.instance_id == instance));
         conflicts.push(ConvergenceInputConflict {
             code: "STALE_PROJECTION_INPUT".to_string(),
-            message: "selected projection baseline does not match the canonical source".to_string(),
+            message: "canonical source changed since the selected projection baseline".to_string(),
             evidence: json!({
                 "projection": selected,
             }),

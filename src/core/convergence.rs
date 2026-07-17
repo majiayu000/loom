@@ -62,7 +62,10 @@ impl ProjectionInputState {
     pub(crate) fn is_fail_closed(&self) -> bool {
         matches!(
             self,
-            Self::Unreadable | Self::BaselineUnavailable | Self::MetadataMismatch
+            Self::Unreadable
+                | Self::BaselineUnavailable
+                | Self::NotDirectory
+                | Self::MetadataMismatch
         )
     }
 }

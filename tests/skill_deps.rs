@@ -224,6 +224,37 @@ fn skill_deps_infers_frontmatter_scripts_agent_metadata_and_unknown_mcp_agent() 
 }
 
 #[test]
+fn skill_deps_reports_invalid_agent_metadata_yaml() {
+    let root = TestDir::new("skill-deps-invalid-agent-yaml");
+    let source = TestDir::new("skill-deps-invalid-agent-yaml-source");
+    write_source_skill(
+        source.path(),
+        "demo",
+        "---\nname: demo\ndescription: Use when checking invalid agent dependency metadata.\n---\n# Demo\n",
+    );
+    write_file(
+        &source.path().join("agents/codex.yaml"),
+        "requires_mcp: [filesystem\n",
+    );
+    add_skill(root.path(), source.path(), "demo");
+
+    let (output, env) = run_loom(root.path(), &["skill", "deps", "demo", "--agent", "codex"]);
+
+    assert!(
+        output.status.success(),
+        "dependency inspection should report: {env}"
+    );
+    assert!(
+        env["data"]["findings"]
+            .as_array()
+            .expect("findings")
+            .iter()
+            .any(|finding| finding["id"] == "agent_metadata_yaml_invalid"),
+        "invalid YAML must not be silently ignored: {env}"
+    );
+}
+
+#[test]
 fn unsupported_agent_mcp_status_is_not_ready_without_false_pass() {
     let root = TestDir::new("skill-deps-unknown-mcp");
     let source = TestDir::new("skill-deps-unknown-mcp-source");

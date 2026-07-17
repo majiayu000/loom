@@ -3,9 +3,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use toml_edit::{DocumentMut, Item};
-use yaml_rust2::{Yaml, YamlLoader};
 
 use super::super::codex_config::codex_config_path;
+use super::super::skill_yaml::{SkillYaml, parse_skill_yaml};
 
 pub(crate) fn contains_word_token(text: &str, token: &str) -> bool {
     text.match_indices(token).any(|(idx, _)| {
@@ -81,39 +81,39 @@ fn executable_file(path: &Path) -> bool {
     path.is_file()
 }
 
-pub(crate) fn yaml_dependency_values(raw: &str) -> Vec<(String, String)> {
-    let Ok(docs) = YamlLoader::load_from_str(raw) else {
-        return Vec::new();
-    };
-    let Some(Yaml::Hash(mapping)) = docs.first() else {
-        return Vec::new();
+pub(crate) fn yaml_dependency_values(raw: &str) -> Result<Vec<(String, String)>, String> {
+    let parsed = parse_skill_yaml(raw)?;
+    let SkillYaml::Mapping(mapping) = parsed else {
+        return Err("agent metadata YAML root must be a mapping".to_string());
     };
     let mut out = Vec::new();
     for (key, value) in mapping {
-        let Yaml::String(key) = key else {
-            continue;
-        };
         if !matches!(
             key.as_str(),
             "requires_tools" | "requires_mcp" | "requires_env" | "network"
         ) {
             continue;
         }
-        for value in yaml_scalar_values(value) {
-            out.push((key.to_string(), value));
+        for value in yaml_scalar_values(&value)? {
+            out.push((key.clone(), value));
         }
     }
-    out
+    Ok(out)
 }
 
-fn yaml_scalar_values(value: &Yaml) -> Vec<String> {
+fn yaml_scalar_values(value: &SkillYaml) -> Result<Vec<String>, String> {
     match value {
-        Yaml::String(text) => vec![text.trim().to_string()],
-        Yaml::Integer(number) => vec![number.to_string()],
-        Yaml::Real(number) => vec![number.to_string()],
-        Yaml::Boolean(flag) => vec![flag.to_string()],
-        Yaml::Array(items) => items.iter().flat_map(yaml_scalar_values).collect(),
-        _ => Vec::new(),
+        SkillYaml::String(text) => Ok(vec![text.trim().to_string()]),
+        SkillYaml::Integer(number) => Ok(vec![number.to_string()]),
+        SkillYaml::Real(number) => Ok(vec![number.to_string()]),
+        SkillYaml::Bool(flag) => Ok(vec![flag.to_string()]),
+        SkillYaml::Sequence(items) => items.iter().try_fold(Vec::new(), |mut out, item| {
+            out.extend(yaml_scalar_values(item)?);
+            Ok(out)
+        }),
+        SkillYaml::Null | SkillYaml::Mapping(_) => {
+            Err("dependency metadata values must be scalars or scalar sequences".to_string())
+        }
     }
 }
 

@@ -39,6 +39,78 @@ pub fn rename_atomic(src: &Path, dst: &Path) -> io::Result<()> {
     std::fs::rename(src, dst)
 }
 
+/// Atomically rename `src` to `dst` only when `dst` does not exist.
+///
+/// This closes the gap between preparing a new entry and activating it: a
+/// concurrently-created destination is preserved and reported as
+/// [`io::ErrorKind::AlreadyExists`]. Unsupported platforms fail closed.
+#[cfg(any(
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "linux",
+    target_os = "android"
+))]
+pub fn rename_no_replace_atomic(src: &Path, dst: &Path) -> io::Result<()> {
+    let src = path_to_c_string(src)?;
+    let dst = path_to_c_string(dst)?;
+
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    {
+        // `RENAME_EXCL` is 0x4 in the Darwin SDK. libc does not currently
+        // expose the constant, so keep the SDK value local to this call.
+        const RENAME_EXCL: libc::c_uint = 0x4;
+        // SAFETY: both C strings are NUL-terminated and remain alive for the
+        // duration of the call. `RENAME_EXCL` makes existence checking part
+        // of the same filesystem operation.
+        let result = unsafe { libc::renamex_np(src.as_ptr(), dst.as_ptr(), RENAME_EXCL) };
+        if result == 0 {
+            Ok(())
+        } else {
+            Err(io::Error::last_os_error())
+        }
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    {
+        // SAFETY: both C strings are valid for the call and AT_FDCWD anchors
+        // their paths exactly as rename(2) does. `RENAME_NOREPLACE` performs
+        // the destination existence check atomically.
+        let result = unsafe {
+            libc::renameat2(
+                libc::AT_FDCWD,
+                src.as_ptr(),
+                libc::AT_FDCWD,
+                dst.as_ptr(),
+                libc::RENAME_NOREPLACE,
+            )
+        };
+        if result == 0 {
+            Ok(())
+        } else {
+            Err(io::Error::last_os_error())
+        }
+    }
+}
+
+#[cfg(windows)]
+pub fn rename_no_replace_atomic(src: &Path, dst: &Path) -> io::Result<()> {
+    move_file_windows(src, dst, false)
+}
+
+#[cfg(not(any(
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "linux",
+    target_os = "android",
+    windows
+)))]
+pub fn rename_no_replace_atomic(_src: &Path, _dst: &Path) -> io::Result<()> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "atomic no-replace rename is unavailable on this platform",
+    ))
+}
+
 /// Atomically exchange two existing directory entries on the same filesystem.
 ///
 /// Callers use the entry left at `src` as their rollback artifact. Platforms or
@@ -275,6 +347,11 @@ fn append_single_record_write(file: &mut File, record: &[u8]) -> io::Result<()> 
 
 #[cfg(windows)]
 fn rename_atomic_windows(src: &Path, dst: &Path) -> io::Result<()> {
+    move_file_windows(src, dst, true)
+}
+
+#[cfg(windows)]
+fn move_file_windows(src: &Path, dst: &Path, replace_existing: bool) -> io::Result<()> {
     use std::os::windows::ffi::OsStrExt;
 
     const MOVEFILE_REPLACE_EXISTING: u32 = 0x1;
@@ -294,13 +371,13 @@ fn rename_atomic_windows(src: &Path, dst: &Path) -> io::Result<()> {
 
     let src = wide_null(src);
     let dst = wide_null(dst);
-    let ok = unsafe {
-        MoveFileExW(
-            src.as_ptr(),
-            dst.as_ptr(),
-            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
-        )
-    };
+    let flags = MOVEFILE_WRITE_THROUGH
+        | if replace_existing {
+            MOVEFILE_REPLACE_EXISTING
+        } else {
+            0
+        };
+    let ok = unsafe { MoveFileExW(src.as_ptr(), dst.as_ptr(), flags) };
     if ok == 0 {
         return Err(io::Error::last_os_error());
     }
@@ -348,6 +425,65 @@ mod tests {
         assert!(!src.exists());
         assert_eq!(fs::read(&dst).unwrap(), b"hello");
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(any(
+        target_os = "macos",
+        target_os = "ios",
+        target_os = "linux",
+        target_os = "android",
+        windows
+    ))]
+    #[test]
+    fn rename_no_replace_atomic_works_when_dst_absent() {
+        let dir = temp_dir("no-replace-absent");
+        let src = dir.join("src.txt");
+        let dst = dir.join("dst.txt");
+        fs::write(&src, b"new content").unwrap();
+
+        rename_no_replace_atomic(&src, &dst).expect("absent destination must be activated");
+
+        assert!(!src.exists());
+        assert_eq!(fs::read(&dst).unwrap(), b"new content");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(any(
+        target_os = "macos",
+        target_os = "ios",
+        target_os = "linux",
+        target_os = "android",
+        windows
+    ))]
+    #[test]
+    fn rename_no_replace_atomic_preserves_existing_destination() {
+        let dir = temp_dir("no-replace-existing");
+        let src = dir.join("src.txt");
+        let dst = dir.join("dst.txt");
+        fs::write(&src, b"staged content").unwrap();
+        fs::write(&dst, b"concurrent content").unwrap();
+
+        let error = rename_no_replace_atomic(&src, &dst)
+            .expect_err("existing destination must fail closed");
+
+        assert_eq!(error.kind(), io::ErrorKind::AlreadyExists);
+        assert_eq!(fs::read(&src).unwrap(), b"staged content");
+        assert_eq!(fs::read(&dst).unwrap(), b"concurrent content");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(not(any(
+        target_os = "macos",
+        target_os = "ios",
+        target_os = "linux",
+        target_os = "android",
+        windows
+    )))]
+    #[test]
+    fn rename_no_replace_atomic_fails_closed_when_unsupported() {
+        let error = rename_no_replace_atomic(Path::new("src"), Path::new("dst"))
+            .expect_err("unsupported platform must fail closed");
+        assert_eq!(error.kind(), io::ErrorKind::Unsupported);
     }
 
     #[cfg(any(

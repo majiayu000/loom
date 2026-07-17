@@ -199,10 +199,10 @@ fn symlink_copy_materialize_convergence_mode_has_no_child_persistence() {
         "every projection must remain live until all staging is validated"
     );
 
-    for (method, target, projection_path, projection, prepared) in prepared_outputs {
-        let activated = activate_prepared_projection(&fixture.ctx, projection, prepared)
+    for (method, target, projection_path, _projection, prepared) in prepared_outputs {
+        let activated = activate_prepared_projection(&fixture.ctx, prepared)
             .expect("activate validated convergence projection");
-        let backup = activated.backup.expect("transaction rollback artifact");
+        let backup = activated.rollback_evidence();
         assert_eq!(backup["kind"], json!("atomic_exchange"));
         let backup_path = PathBuf::from(backup["backup_path"].as_str().expect("backup path"));
         assert_eq!(backup_path.parent(), projection_path.parent());
@@ -233,6 +233,13 @@ fn symlink_copy_materialize_convergence_mode_has_no_child_persistence() {
             fs::read_to_string(projection_path.join("details.txt")).expect("projected details"),
             "canonical\n"
         );
+        let activated_projection = activated
+            .finalize()
+            .expect("finalize activated convergence projection");
+        assert_eq!(
+            activated_projection.materialized_path,
+            projection_path.display().to_string()
+        );
         let transaction_artifacts = fs::read_dir(&target)
             .expect("target entries")
             .filter_map(|entry| {
@@ -245,7 +252,7 @@ fn symlink_copy_materialize_convergence_mode_has_no_child_persistence() {
                     .then_some(path)
             })
             .collect::<Vec<_>>();
-        assert_eq!(transaction_artifacts, vec![backup_path]);
+        assert!(transaction_artifacts.is_empty());
     }
 
     assert_eq!(gitops::head(&fixture.ctx).expect("head after"), head_before);
@@ -283,12 +290,11 @@ fn convergence_post_activation_failure_atomically_restores_live_projection() {
         execution_input(&fixture, ProjectionMethod::Copy, projection_path.clone()),
     )
     .expect("prepare convergence projection");
-    let projection = output.projection.expect("projection delta");
     let prepared = output.prepared.expect("staging artifact");
-    fs::write(prepared.staging_path.join("details.txt"), "tampered\n")
+    fs::write(prepared.staging_path().join("details.txt"), "tampered\n")
         .expect("tamper validated staging before activation");
 
-    let error = match activate_prepared_projection(&fixture.ctx, projection, prepared) {
+    let error = match activate_prepared_projection(&fixture.ctx, prepared) {
         Ok(_) => panic!("post-activation digest mismatch must fail closed"),
         Err(error) => error,
     };
@@ -345,6 +351,155 @@ fn convergence_source_staging_failure_preserves_existing_projection() {
             .len(),
         0
     );
+}
+
+#[test]
+fn convergence_activation_preserves_destination_created_after_prepare() {
+    let fixture = convergence_projection_fixture();
+    let projection_path = fixture.root.join("live/copy/demo");
+    let output = execute_projection(
+        &fixture.ctx,
+        &fixture.paths,
+        &fixture.snapshot,
+        execution_input(&fixture, ProjectionMethod::Copy, projection_path.clone()),
+    )
+    .expect("prepare absent convergence projection");
+    let prepared = output.prepared.expect("staging artifact");
+    let staging_path = prepared.staging_path().to_path_buf();
+    fs::create_dir_all(&projection_path).expect("create concurrent destination");
+    fs::write(projection_path.join("concurrent.txt"), "concurrent\n")
+        .expect("write concurrent destination");
+
+    let error = match activate_prepared_projection(&fixture.ctx, prepared) {
+        Ok(_) => panic!("concurrent destination must fail closed"),
+        Err(error) => error,
+    };
+
+    assert_eq!(error.code, ErrorCode::ProjectionConflict);
+    assert_eq!(
+        fs::read_to_string(projection_path.join("concurrent.txt")).unwrap(),
+        "concurrent\n"
+    );
+    assert!(!projection_path.join("details.txt").exists());
+    assert!(
+        !staging_path.exists(),
+        "failed activation must clean staging"
+    );
+}
+
+#[test]
+fn convergence_prepared_projection_owns_activation_identity() {
+    let fixture = convergence_projection_fixture();
+    let projection_path = fixture.root.join("live/copy/demo");
+    let mut output = execute_projection(
+        &fixture.ctx,
+        &fixture.paths,
+        &fixture.snapshot,
+        execution_input(&fixture, ProjectionMethod::Copy, projection_path.clone()),
+    )
+    .expect("prepare convergence projection");
+    let mut detached_projection = output.projection.take().expect("projection delta");
+    detached_projection.materialized_path = fixture.root.join("wrong/demo").display().to_string();
+
+    let activated = activate_prepared_projection(
+        &fixture.ctx,
+        output.prepared.expect("identity-bound staging artifact"),
+    )
+    .expect("activate identity-bound prepared projection");
+
+    assert_eq!(
+        activated.projection().materialized_path,
+        projection_path.display().to_string()
+    );
+    activated.finalize().expect("finalize projection");
+    assert!(!fixture.root.join("wrong/demo").exists());
+}
+
+#[cfg(any(
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "linux",
+    target_os = "android"
+))]
+#[test]
+fn convergence_activation_rollback_restores_typed_artifact() {
+    let fixture = convergence_projection_fixture();
+    let projection_path = fixture.root.join("live/copy/demo");
+    fs::create_dir_all(&projection_path).expect("create existing projection");
+    fs::write(projection_path.join("keep.txt"), "keep\n").expect("write existing projection");
+    let output = execute_projection(
+        &fixture.ctx,
+        &fixture.paths,
+        &fixture.snapshot,
+        execution_input(&fixture, ProjectionMethod::Copy, projection_path.clone()),
+    )
+    .expect("prepare replacement");
+    let activated =
+        activate_prepared_projection(&fixture.ctx, output.prepared.expect("staging artifact"))
+            .expect("activate replacement");
+    assert!(projection_path.join("details.txt").is_file());
+
+    activated.rollback().expect("rollback typed artifact");
+
+    assert_eq!(
+        fs::read_to_string(projection_path.join("keep.txt")).unwrap(),
+        "keep\n"
+    );
+    assert!(!projection_path.join("details.txt").exists());
+}
+
+#[test]
+fn abandoned_prepared_projection_cleans_staging_on_drop() {
+    let fixture = convergence_projection_fixture();
+    let projection_path = fixture.root.join("live/copy/demo");
+    let output = execute_projection(
+        &fixture.ctx,
+        &fixture.paths,
+        &fixture.snapshot,
+        execution_input(&fixture, ProjectionMethod::Copy, projection_path.clone()),
+    )
+    .expect("prepare convergence projection");
+    let prepared = output.prepared.expect("staging artifact");
+    let staging_path = prepared.staging_path().to_path_buf();
+    assert!(staging_path.exists());
+
+    drop(prepared);
+
+    assert!(!staging_path.exists());
+    assert!(!projection_path.exists());
+}
+
+#[cfg(any(
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "linux",
+    target_os = "android"
+))]
+#[test]
+fn abandoned_activation_rolls_back_on_drop() {
+    let fixture = convergence_projection_fixture();
+    let projection_path = fixture.root.join("live/copy/demo");
+    fs::create_dir_all(&projection_path).expect("create existing projection");
+    fs::write(projection_path.join("keep.txt"), "keep\n").expect("write existing projection");
+    let output = execute_projection(
+        &fixture.ctx,
+        &fixture.paths,
+        &fixture.snapshot,
+        execution_input(&fixture, ProjectionMethod::Copy, projection_path.clone()),
+    )
+    .expect("prepare replacement");
+    let activated =
+        activate_prepared_projection(&fixture.ctx, output.prepared.expect("staging artifact"))
+            .expect("activate replacement");
+    assert!(projection_path.join("details.txt").is_file());
+
+    drop(activated);
+
+    assert_eq!(
+        fs::read_to_string(projection_path.join("keep.txt")).unwrap(),
+        "keep\n"
+    );
+    assert!(!projection_path.join("details.txt").exists());
 }
 
 #[test]
@@ -474,11 +629,8 @@ fn convergence_existing_path_fails_closed_without_atomic_exchange() {
     )
     .expect("prepare projection");
 
-    let error = match activate_prepared_projection(
-        &fixture.ctx,
-        output.projection.expect("projection"),
-        output.prepared.expect("staging"),
-    ) {
+    let error = match activate_prepared_projection(&fixture.ctx, output.prepared.expect("staging"))
+    {
         Ok(_) => panic!("unsupported exchange must fail closed"),
         Err(error) => error,
     };

@@ -133,12 +133,9 @@ fn find_env_file(workspace: &Path, home: &Path, ignore_local_env: bool) -> Optio
             return Some(generic);
         }
     }
-    for candidate in [home.join(".gemini/.env"), home.join(".env")] {
-        if candidate.is_file() {
-            return Some(candidate);
-        }
-    }
-    None
+    [home.join(".gemini/.env"), home.join(".env")]
+        .into_iter()
+        .find(|candidate| candidate.is_file())
 }
 
 fn is_gemini_env(path: &Path) -> bool {

@@ -74,6 +74,16 @@ impl AgentAdapter {
     pub(crate) fn has_verified_visibility_metadata(&self) -> bool {
         self.fidelity.is_verified() && !self.visibility.identity_by_projection_method.is_empty()
     }
+
+    pub(crate) fn scan_unavailable_reason(&self) -> Option<&str> {
+        if !self.capabilities.automatic_discovery || !self.default_skill_dirs.is_empty() {
+            return None;
+        }
+        self.discovery_roots
+            .iter()
+            .filter(|root| root.scan_eligible && !root.available)
+            .find_map(|root| root.unavailable_reason.as_deref())
+    }
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]

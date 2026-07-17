@@ -3,7 +3,7 @@ mod common;
 use std::fs;
 
 use common::actions::{binding_add, save_skill, skill_project, target_add};
-use common::{TestDir, run_loom, run_loom_with_env, write_skill};
+use common::{TestDir, run_loom, run_loom_with_env, write_file, write_skill};
 use serde_json::Value;
 
 fn find_check<'a>(env: &'a Value, id_prefix: &str) -> &'a Value {
@@ -360,4 +360,86 @@ fn workspace_doctor_agent_skill_inventory_when_home_unset() {
     assert_eq!(inventory["ok"], Value::Bool(true));
     assert_eq!(inventory["details"]["home_set"], Value::Bool(false));
     assert_eq!(inventory["details"]["total"], Value::from(0));
+}
+
+#[test]
+fn malformed_gemini_settings_are_explicit_in_scan_and_doctor_inventory() {
+    let root = TestDir::new("gemini-unavailable-diagnostics-root");
+    let home = TestDir::new("gemini-unavailable-diagnostics-home");
+    write_file(&home.path().join(".gemini/settings.json"), "{ malformed\n");
+    let home_arg = home.path().display().to_string();
+    let missing_defaults = root
+        .path()
+        .join("missing-defaults.json")
+        .display()
+        .to_string();
+    let missing_settings = root
+        .path()
+        .join("missing-settings.json")
+        .display()
+        .to_string();
+    let envs = [
+        ("HOME", home_arg.as_str()),
+        ("GEMINI_CLI_SYSTEM_DEFAULTS_PATH", missing_defaults.as_str()),
+        ("GEMINI_CLI_SYSTEM_SETTINGS_PATH", missing_settings.as_str()),
+    ];
+
+    let (init_output, init) = run_loom_with_env(
+        root.path(),
+        &envs,
+        &["workspace", "init", "--scan-existing"],
+    );
+    assert!(init_output.status.success(), "scan failed: {init}");
+    let gemini_skip = init["data"]["skipped"]
+        .as_array()
+        .expect("skipped rows")
+        .iter()
+        .find(|row| row["agent"] == "gemini-cli")
+        .expect("explicit Gemini skip");
+    assert_eq!(gemini_skip["reason"], "adapter-unavailable");
+    assert!(gemini_skip["path"].is_null());
+    assert!(
+        gemini_skip["unavailable_reason"]
+            .as_str()
+            .is_some_and(|reason| reason.contains("configuration is invalid"))
+    );
+    assert!(
+        init["meta"]["warnings"]
+            .as_array()
+            .expect("scan warnings")
+            .iter()
+            .any(|warning| warning
+                .as_str()
+                .is_some_and(|value| value.contains("gemini-cli")))
+    );
+
+    let (doctor_output, doctor) = run_loom_with_env(root.path(), &envs, &["workspace", "doctor"]);
+    assert!(doctor_output.status.success(), "doctor failed: {doctor}");
+    assert_eq!(doctor["data"]["healthy"], false);
+    let inventory = find_check(&doctor, "agent_skill_inventory");
+    assert_eq!(inventory["ok"], false);
+    assert_eq!(inventory["severity"], "warning");
+    assert_eq!(inventory["details"]["unavailable_count"], 1);
+    let gemini = inventory["details"]["agents"]
+        .as_array()
+        .expect("agent rows")
+        .iter()
+        .find(|row| row["agent"] == "gemini-cli")
+        .expect("Gemini unavailable row");
+    assert_eq!(gemini["available"], false);
+    assert!(gemini["default_path"].is_null());
+    assert!(
+        gemini["unavailable_reason"]
+            .as_str()
+            .is_some_and(|reason| reason.contains("configuration is invalid"))
+    );
+    assert!(
+        doctor["meta"]["warnings"]
+            .as_array()
+            .expect("doctor warnings")
+            .iter()
+            .any(|warning| warning
+                .as_str()
+                .is_some_and(|value| value.contains("gemini-cli")))
+    );
 }

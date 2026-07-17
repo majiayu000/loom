@@ -3,7 +3,7 @@ use std::path::Path;
 
 use serde_json::{Value, json};
 
-use crate::agent_adapters::load_agent_adapters;
+use crate::agent_adapters::{AgentAdapter, load_agent_adapters};
 use crate::envelope::Meta;
 use crate::gitops;
 use crate::state::{AppContext, home_dir};
@@ -45,6 +45,19 @@ impl App {
 
         let home_set = home_dir().is_some();
         let adapters = load_agent_adapters(&self.ctx)?;
+        let agent_warnings = if home_set {
+            adapters
+                .adapters()
+                .iter()
+                .filter_map(|adapter| {
+                    adapter
+                        .scan_unavailable_reason()
+                        .map(|reason| format!("agent '{}' scan unavailable: {reason}", adapter.id))
+                })
+                .collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        };
         let agent_inventory =
             build_agent_skill_inventory(&adapters, registry_snapshot.as_ref(), home_set);
         let agent_inventory_message = agent_inventory["message"]
@@ -61,13 +74,18 @@ impl App {
             operation_journal_ok,
             operation_warnings.as_slice(),
         );
+        let agent_inventory_ok = agent_warnings.is_empty();
         checks_v1.push(json!({
             "section": "agents",
             "id": "agent_skill_inventory",
-            "ok": true,
-            "severity": "info",
+            "ok": agent_inventory_ok,
+            "severity": if agent_inventory_ok { "info" } else { "warning" },
             "message": agent_inventory_message,
-            "next_action": Value::Null,
+            "next_action": if agent_inventory_ok {
+                Value::Null
+            } else {
+                Value::String("fix unavailable agent configuration and rerun loom workspace doctor".to_string())
+            },
             "details": agent_inventory.clone(),
         }));
         let checks_v1_ok = checks_v1
@@ -103,7 +121,10 @@ impl App {
                 },
                 "checks_v1": checks_v1
             }),
-            Meta::default(),
+            Meta {
+                warnings: agent_warnings,
+                ..Meta::default()
+            },
         ))
     }
 }
@@ -115,6 +136,20 @@ fn build_agent_skill_inventory(
 ) -> Value {
     let mut agents: Vec<Value> = Vec::new();
     for adapter in adapters.adapters() {
+        if home_set && let Some(reason) = adapter.scan_unavailable_reason() {
+            agents.push(json!({
+                "agent": adapter.id,
+                "agent_source": adapter.source,
+                "fidelity": adapter.fidelity.as_str(),
+                "available": false,
+                "unavailable_reason": reason,
+                "default_path": Value::Null,
+                "present": false,
+                "registered_target_count": 0,
+                "registered_targets": [],
+                "adapter": adapter_inventory_json(adapter),
+            }));
+        }
         for path in &adapter.default_skill_dirs {
             let path_str = path.display().to_string();
             let present = path.is_dir();
@@ -144,35 +179,7 @@ fn build_agent_skill_inventory(
                 "present": present,
                 "registered_target_count": registered_target_count,
                 "registered_targets": registered_targets,
-                "adapter": {
-                    "fidelity": adapter.fidelity.as_str(),
-                    "supported_scopes": adapter.supported_scopes.clone(),
-                    "projection_methods": adapter.projection_methods.clone(),
-                    "skill_entrypoint": adapter.skill_entrypoint.clone(),
-                    "reload_required": adapter.capabilities.reload_required,
-                    "discovery_roots": adapter.discovery_roots.iter().map(|root| json!({
-                        "scope": root.scope,
-                        "path_template": root.path_template,
-                        "role": root.role,
-                        "source_env_var": root.source_env_var,
-                        "priority": root.priority,
-                        "scan_eligible": root.scan_eligible,
-                        "available": root.available,
-                        "unavailable_reason": root.unavailable_reason,
-                    })).collect::<Vec<_>>(),
-                    "visibility": {
-                        "follows_symlink_dirs": adapter.visibility.follows_symlink_dirs,
-                        "identity_by_projection_method": adapter.visibility.identity_by_projection_method,
-                        "config_file": adapter.visibility.config_file,
-                        "disable_rules": adapter.visibility.disable_rules,
-                    },
-                    "reload": {
-                        "strategy": adapter.reload.strategy,
-                        "hot_reload": adapter.reload.hot_reload,
-                        "notes": adapter.reload.notes,
-                    },
-                    "config_path": adapter.config_path.as_ref().map(|path| path.display().to_string()),
-                },
+                "adapter": adapter_inventory_json(adapter),
             }));
         }
     }
@@ -180,7 +187,11 @@ fn build_agent_skill_inventory(
         .iter()
         .filter(|a| a["present"].as_bool().unwrap_or(false))
         .count();
-    let total = agents.len();
+    let total = agents
+        .iter()
+        .filter(|agent| !agent["default_path"].is_null())
+        .count();
+    let unavailable_count = agents.len() - total;
     let generic_adapter_count = adapters
         .adapters()
         .iter()
@@ -190,9 +201,14 @@ fn build_agent_skill_inventory(
         "; {generic_adapter_count} of {} adapters use generic fidelity metadata",
         adapters.adapters().len()
     );
+    let unavailable_suffix = if unavailable_count == 0 {
+        String::new()
+    } else {
+        format!("; {unavailable_count} agent adapters unavailable")
+    };
     let message = if total > 0 {
         format!(
-            "detected {present_count} of {total} known agent skill directories{fidelity_suffix}"
+            "detected {present_count} of {total} known agent skill directories{fidelity_suffix}{unavailable_suffix}"
         )
     } else {
         format!("HOME not set; agent skill directory inventory unavailable{fidelity_suffix}")
@@ -202,10 +218,43 @@ fn build_agent_skill_inventory(
         "home_set": home_set,
         "present_count": present_count,
         "total": total,
+        "unavailable_count": unavailable_count,
         "adapter_count": adapters.adapters().len(),
         "generic_adapter_count": generic_adapter_count,
         "adapter_config_locations": adapters.config_locations().to_vec(),
         "message": message,
+    })
+}
+
+fn adapter_inventory_json(adapter: &AgentAdapter) -> Value {
+    json!({
+        "fidelity": adapter.fidelity.as_str(),
+        "supported_scopes": adapter.supported_scopes.clone(),
+        "projection_methods": adapter.projection_methods.clone(),
+        "skill_entrypoint": adapter.skill_entrypoint.clone(),
+        "reload_required": adapter.capabilities.reload_required,
+        "discovery_roots": adapter.discovery_roots.iter().map(|root| json!({
+            "scope": root.scope,
+            "path_template": root.path_template,
+            "role": root.role,
+            "source_env_var": root.source_env_var,
+            "priority": root.priority,
+            "scan_eligible": root.scan_eligible,
+            "available": root.available,
+            "unavailable_reason": root.unavailable_reason,
+        })).collect::<Vec<_>>(),
+        "visibility": {
+            "follows_symlink_dirs": adapter.visibility.follows_symlink_dirs,
+            "identity_by_projection_method": adapter.visibility.identity_by_projection_method,
+            "config_file": adapter.visibility.config_file,
+            "disable_rules": adapter.visibility.disable_rules,
+        },
+        "reload": {
+            "strategy": adapter.reload.strategy,
+            "hot_reload": adapter.reload.hot_reload,
+            "notes": adapter.reload.notes,
+        },
+        "config_path": adapter.config_path.as_ref().map(|path| path.display().to_string()),
     })
 }
 

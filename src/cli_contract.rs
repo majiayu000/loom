@@ -211,7 +211,7 @@ fn command_schema_capabilities(
     let mut capabilities = BTreeSet::from([format!("command:{path}")]);
     capabilities.extend(
         command
-            .get_all_aliases()
+            .get_visible_aliases()
             .map(|alias| format!("command-alias:{path}:{alias}")),
     );
     capabilities.extend(
@@ -270,13 +270,13 @@ fn command_schema_capabilities(
             .collect::<Vec<_>>();
         conflicts.sort();
         let mut aliases = argument
-            .get_all_aliases()
+            .get_visible_aliases()
             .unwrap_or_default()
             .into_iter()
             .map(str::to_string)
             .collect::<Vec<_>>();
         aliases.sort();
-        let mut short_aliases = argument.get_all_short_aliases().unwrap_or_default();
+        let mut short_aliases = argument.get_visible_short_aliases().unwrap_or_default();
         short_aliases.sort();
         let mut defaults = argument
             .get_default_values()
@@ -376,11 +376,10 @@ fn command_schema_capabilities(
             if possible.is_hide_set() {
                 continue;
             }
-            capabilities.extend(
-                possible
-                    .get_name_and_aliases()
-                    .map(|value| format!("argument-value:{path}:{id}:{value}")),
-            );
+            capabilities.insert(format!(
+                "argument-value:{path}:{id}:{}",
+                possible.get_name()
+            ));
         }
     }
     for group in command.get_groups() {
@@ -431,10 +430,14 @@ fn inspect_requested_visibility(
         };
         if let Some(long) = token.strip_prefix("--") {
             let name = long.split('=').next().unwrap_or(long);
-            if let Some(argument) = current
-                .get_arguments()
-                .find(|argument| argument.get_long() == Some(name))
-                && argument.is_hide_set()
+            if let Some(argument) = current.get_arguments().find(|argument| {
+                argument.get_long() == Some(name)
+                    || argument
+                        .get_all_aliases()
+                        .unwrap_or_default()
+                        .contains(&name)
+            }) && (argument.is_hide_set()
+                || argument.get_aliases().unwrap_or_default().contains(&name))
             {
                 return Err(PublicArgvError {
                     kind: PublicArgvErrorKind::HiddenArgument,
@@ -448,10 +451,21 @@ fn inspect_requested_visibility(
         }
         if token.starts_with('-') && token.len() == 2 {
             let short = token.chars().nth(1).expect("length checked");
-            if let Some(argument) = current
-                .get_arguments()
-                .find(|argument| argument.get_short() == Some(short))
-                && argument.is_hide_set()
+            if let Some(argument) = current.get_arguments().find(|argument| {
+                argument.get_short() == Some(short)
+                    || argument
+                        .get_all_short_aliases()
+                        .unwrap_or_default()
+                        .contains(&short)
+            }) && (argument.is_hide_set()
+                || (argument
+                    .get_all_short_aliases()
+                    .unwrap_or_default()
+                    .contains(&short)
+                    && !argument
+                        .get_visible_short_aliases()
+                        .unwrap_or_default()
+                        .contains(&short)))
             {
                 return Err(PublicArgvError {
                     kind: PublicArgvErrorKind::HiddenArgument,
@@ -463,19 +477,18 @@ fn inspect_requested_visibility(
             }
             continue;
         }
-        let Some(subcommand) = current
-            .get_subcommands()
-            .find(|candidate| candidate.get_name() == token)
-        else {
+        let Some(subcommand) = current.get_subcommands().find(|candidate| {
+            candidate.get_name() == token || candidate.get_all_aliases().any(|alias| alias == token)
+        }) else {
             continue;
         };
-        if subcommand.is_hide_set() {
+        if subcommand.is_hide_set() || subcommand.get_aliases().any(|alias| alias == token) {
             return Err(PublicArgvError {
                 kind: PublicArgvErrorKind::HiddenCommand,
                 message: format!("hidden command '{token}' is not part of the public CLI contract"),
             });
         }
-        result.command_path.push(token.to_string());
+        result.command_path.push(subcommand.get_name().to_string());
         current = subcommand;
     }
     Ok(result)
@@ -510,6 +523,24 @@ fn inspect_public_matches(
                 ),
             });
         }
+        if let Some(values) = matches.get_raw(argument.get_id().as_str()) {
+            for value in values.filter_map(|value| value.to_str()) {
+                if argument.get_possible_values().iter().any(|possible| {
+                    possible
+                        .get_name_and_aliases()
+                        .skip(1)
+                        .any(|alias| alias == value)
+                }) {
+                    return Err(PublicArgvError {
+                        kind: PublicArgvErrorKind::HiddenArgument,
+                        message: format!(
+                            "hidden value alias for '{}' is not part of the public CLI contract",
+                            argument.get_id()
+                        ),
+                    });
+                }
+            }
+        }
         result.explicit_args.push(argument.get_id().to_string());
     }
     let Some((name, sub_matches)) = matches.subcommand() else {
@@ -534,10 +565,14 @@ fn inspect_public_matches(
 
 #[cfg(test)]
 mod tests {
-    use clap::{Arg, ArgAction, Command};
+    use std::ffi::OsString;
+
+    use clap::{Arg, ArgAction, Command, builder::PossibleValue};
 
     use super::{
-        command_schema_capabilities, public_command_schema_capabilities, validate_public_argv,
+        PublicArgv, PublicArgvError, PublicArgvErrorKind, command_schema_capabilities,
+        inspect_public_matches, inspect_requested_visibility, public_command_schema_capabilities,
+        validate_public_argv,
     };
 
     fn fixture_capabilities(command: Command) -> std::collections::BTreeSet<String> {
@@ -545,6 +580,25 @@ mod tests {
         command.build();
         command_schema_capabilities(&command, &["loom".to_string(), "demo".to_string()])
             .expect("fixture schema")
+    }
+
+    fn validate_fixture_argv(
+        mut command: Command,
+        argv: &[&str],
+    ) -> Result<PublicArgv, PublicArgvError> {
+        command.build();
+        let argv = argv.iter().map(OsString::from).collect::<Vec<_>>();
+        inspect_requested_visibility(&command, &argv)?;
+        let matches = command
+            .clone()
+            .try_get_matches_from(&argv)
+            .expect("fixture must remain valid Clap input");
+        let mut result = PublicArgv {
+            command_path: vec!["loom".to_string()],
+            explicit_args: Vec::new(),
+        };
+        inspect_public_matches(&command, &matches, &mut result)?;
+        Ok(result)
     }
 
     #[test]
@@ -598,7 +652,7 @@ mod tests {
                     .arg(
                         Arg::new("mode")
                             .long("mode")
-                            .alias("mode-alias")
+                            .visible_alias("mode-alias")
                             .value_parser(["safe", "fast"])
                             .default_value("safe")
                             .value_delimiter(','),
@@ -623,6 +677,47 @@ mod tests {
         );
         assert!(!base.is_subset(&breaking));
         assert!(!breaking.is_subset(&base));
+    }
+
+    #[test]
+    fn hidden_aliases_are_not_public_cli_spellings() {
+        let hidden_long = Command::new("loom").arg(
+            Arg::new("mode")
+                .long("mode")
+                .alias("secret-mode")
+                .action(ArgAction::SetTrue),
+        );
+        let error = validate_fixture_argv(hidden_long, &["loom", "--secret-mode"])
+            .expect_err("hidden long alias must fail closed");
+        assert_eq!(error.kind, PublicArgvErrorKind::HiddenArgument);
+
+        let hidden_short = Command::new("loom").arg(
+            Arg::new("mode")
+                .short('m')
+                .short_alias('x')
+                .action(ArgAction::SetTrue),
+        );
+        let error = validate_fixture_argv(hidden_short, &["loom", "-x"])
+            .expect_err("hidden short alias must fail closed");
+        assert_eq!(error.kind, PublicArgvErrorKind::HiddenArgument);
+
+        let hidden_command =
+            Command::new("loom").subcommand(Command::new("demo").alias("secret-demo"));
+        let error = validate_fixture_argv(hidden_command, &["loom", "secret-demo"])
+            .expect_err("hidden command alias must fail closed");
+        assert_eq!(error.kind, PublicArgvErrorKind::HiddenCommand);
+    }
+
+    #[test]
+    fn hidden_possible_value_aliases_are_not_public_cli_spellings() {
+        let command = Command::new("loom").arg(
+            Arg::new("mode")
+                .long("mode")
+                .value_parser([PossibleValue::new("safe").alias("secret-safe")]),
+        );
+        let error = validate_fixture_argv(command, &["loom", "--mode", "secret-safe"])
+            .expect_err("hidden possible-value alias must fail closed");
+        assert_eq!(error.kind, PublicArgvErrorKind::HiddenArgument);
     }
 
     #[test]

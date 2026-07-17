@@ -17,11 +17,16 @@ use super::CommandFailure;
 use super::codex_config::{CodexConfigLoad, load_codex_config};
 use super::helpers::{map_arg, map_registry_state, validate_skill_name};
 
+mod adapter;
+mod gemini;
 mod report_support;
+
+use adapter::{
+    adapter_has_visibility_metadata, adapter_metadata_details, adapter_visibility_details,
+    reload_check_message, unsupported_visibility_message, unsupported_visibility_report,
+};
 use report_support::{
-    active_rules_for_skill, adapter_has_visibility_metadata, adapter_metadata_details,
-    adapter_visibility_details, check, reconcile_next_action, reload_check_id, skill_is_referenced,
-    unsupported_visibility_report,
+    active_rules_for_skill, check, reconcile_next_action, reload_check_id, skill_is_referenced,
 };
 
 pub(crate) const CODEX_AGENT: &str = "codex";
@@ -33,6 +38,8 @@ const IDENTITY_RUNTIME_SKILL_MD_PATH: &str = "runtime-skill-md-path";
 pub(crate) struct CodexVisibilityReport {
     pub(crate) skill: String,
     pub(crate) agent: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) fidelity: Option<String>,
     pub(crate) visible: bool,
     pub(crate) checks: Vec<CodexVisibilityCheck>,
     pub(crate) next_actions: Vec<String>,
@@ -105,6 +112,17 @@ pub(crate) fn build_agent_visibility_report(
     profile: Option<&str>,
 ) -> std::result::Result<CodexVisibilityReport, CommandFailure> {
     validate_skill_name(skill).map_err(map_arg)?;
+    let default_workspace = if agent == "gemini-cli" && workspace.is_none() {
+        Some(std::env::current_dir().map_err(|error| {
+            CommandFailure::new(
+                ErrorCode::IoError,
+                format!("failed to resolve current workspace: {error}"),
+            )
+        })?)
+    } else {
+        None
+    };
+    let workspace = workspace.or(default_workspace.as_deref());
     let paths = RegistryStatePaths::from_app_context(ctx);
     let snapshot = paths.maybe_load_snapshot().map_err(map_registry_state)?;
     if !ctx.skill_path(skill).is_dir()
@@ -125,6 +143,7 @@ pub(crate) fn build_agent_visibility_report(
                 return Ok(unsupported_visibility_report(
                     skill,
                     agent,
+                    None,
                     format!("agent adapter '{}' is not registered", agent),
                     json!({"agent": agent}),
                 ));
@@ -136,10 +155,8 @@ pub(crate) fn build_agent_visibility_report(
         return Ok(unsupported_visibility_report(
             skill,
             agent,
-            format!(
-                "agent adapter '{}' does not expose visibility metadata",
-                agent
-            ),
+            Some(adapter.fidelity.as_str()),
+            unsupported_visibility_message(&adapter),
             adapter_metadata_details(&adapter),
         ));
     }
@@ -246,6 +263,8 @@ fn build_visibility_report_from_parts(parts: VisibilityBuildParts<'_>) -> CodexV
 
     let mut rule_count = 0;
     let mut projection_ok = false;
+    let mut trusted_independent_projection_ok = false;
+    let mut project_projection_ok = false;
     if let Some(snapshot) = snapshot {
         let rules = active_rules_for_skill(snapshot, skill, agent, workspace, profile);
         rule_count = rules.len();
@@ -262,15 +281,18 @@ fn build_visibility_report_from_parts(parts: VisibilityBuildParts<'_>) -> CodexV
             Some(format!("loom skill activate {skill} --agent {agent}")),
         ));
         for rule in rules {
-            add_rule_visibility_checks(
-                ctx,
-                snapshot,
-                adapter,
-                agent,
-                &rule,
-                &mut checks,
-                &mut projection_ok,
-            );
+            let requires_workspace_trust = agent == "gemini-cli"
+                && snapshot.target(&rule.target_id).is_some_and(|target| {
+                    gemini::target_requires_workspace_trust(adapter, Path::new(&target.path))
+                });
+            let rule_projection_ok =
+                add_rule_visibility_checks(ctx, snapshot, adapter, agent, &rule, &mut checks);
+            projection_ok |= rule_projection_ok;
+            if requires_workspace_trust {
+                project_projection_ok |= rule_projection_ok;
+            } else {
+                trusted_independent_projection_ok |= rule_projection_ok;
+            }
         }
     } else {
         checks.push(check(
@@ -283,17 +305,25 @@ fn build_visibility_report_from_parts(parts: VisibilityBuildParts<'_>) -> CodexV
         ));
     }
 
-    let disabled = if agent == CODEX_AGENT {
-        add_config_checks(skill, &skill_file, config, &mut checks)
-    } else {
-        add_adapter_config_metadata_checks(agent, adapter, &mut checks);
-        false
+    let disabled = match agent {
+        CODEX_AGENT => add_config_checks(skill, &skill_file, config, &mut checks),
+        "gemini-cli" => gemini::add_gemini_config_checks(
+            &ctx.root,
+            skill,
+            workspace,
+            project_projection_ok && !trusted_independent_projection_ok,
+            &mut checks,
+        ),
+        _ => {
+            add_adapter_config_metadata_checks(agent, adapter, &mut checks);
+            false
+        }
     };
     checks.push(check(
         &reload_check_id(agent),
         true,
         "warning",
-        "current agent sessions are not claimed to hot-reload visibility changes",
+        &reload_check_message(adapter),
         json!({
             "agent": agent,
             "strategy": adapter.reload.strategy,
@@ -320,7 +350,7 @@ fn build_visibility_report_from_parts(parts: VisibilityBuildParts<'_>) -> CodexV
             next_actions.insert(next.clone());
         }
     }
-    if disabled {
+    if disabled && agent == CODEX_AGENT {
         next_actions.insert("loom codex reconcile --apply --fix-config".to_string());
         next_actions.insert("restart Codex or open a new session".to_string());
     } else if !projection_ok && rule_count > 0 {
@@ -330,6 +360,7 @@ fn build_visibility_report_from_parts(parts: VisibilityBuildParts<'_>) -> CodexV
     CodexVisibilityReport {
         skill: skill.to_string(),
         agent: agent.to_string(),
+        fidelity: Some(adapter.fidelity.as_str().to_string()),
         visible,
         checks,
         next_actions: observe_next_actions(
@@ -347,8 +378,7 @@ fn add_rule_visibility_checks(
     agent: &str,
     rule: &RegistryBindingRule,
     checks: &mut Vec<CodexVisibilityCheck>,
-    projection_ok: &mut bool,
-) {
+) -> bool {
     let Some(target) = snapshot.target(&rule.target_id) else {
         checks.push(check(
             &format!("{agent}_target_exists:{}", rule.target_id),
@@ -358,7 +388,7 @@ fn add_rule_visibility_checks(
             json!({"target_id": rule.target_id}),
             Some("recreate the target or remove the stale rule".to_string()),
         ));
-        return;
+        return false;
     };
     let target_path = PathBuf::from(&target.path);
     checks.push(check(
@@ -422,14 +452,12 @@ fn add_rule_visibility_checks(
     ));
     if identity == IDENTITY_RUNTIME_SKILL_MD_PATH {
         let entrypoint = projection_path.join(&adapter.skill_entrypoint);
-        if entrypoint.is_file() {
-            *projection_ok = true;
-        }
+        let entrypoint_exists = entrypoint.is_file();
         checks.push(check(
             &format!("{agent}_runtime_entrypoint_exists:{}", target.target_id),
-            entrypoint.is_file(),
+            entrypoint_exists,
             "error",
-            if entrypoint.is_file() {
+            if entrypoint_exists {
                 "runtime projection entrypoint exists"
             } else {
                 "runtime projection entrypoint is missing"
@@ -442,12 +470,20 @@ fn add_rule_visibility_checks(
             }),
             Some(reconcile_next_action(agent)),
         ));
+        let runtime_valid = entrypoint_exists
+            && (agent != "gemini-cli"
+                || gemini::add_frontmatter_check(
+                    &entrypoint,
+                    &rule.skill_id,
+                    &target.target_id,
+                    checks,
+                ));
         add_entry_classification_checks(ctx, target, &rule.skill_id, agent, checks);
-        return;
+        return runtime_valid;
     }
     if identity != IDENTITY_CANONICAL_SKILL_MD_PATH {
         add_entry_classification_checks(ctx, target, &rule.skill_id, agent, checks);
-        return;
+        return false;
     }
     let is_symlink = fs::symlink_metadata(&projection_path)
         .map(|metadata| metadata.file_type().is_symlink())
@@ -466,9 +502,6 @@ fn add_rule_visibility_checks(
     ));
     let points_to_source =
         projection_path_is_safe_symlink(&projection_path, &ctx.skill_path(&rule.skill_id));
-    if points_to_source {
-        *projection_ok = true;
-    }
     checks.push(check(
         &format!("{agent}_projection_points_to_source:{}", target.target_id),
         points_to_source,
@@ -486,7 +519,17 @@ fn add_rule_visibility_checks(
         }),
         Some(reconcile_next_action(agent)),
     ));
+    let source_valid = points_to_source
+        && (agent != "gemini-cli"
+            || gemini::add_frontmatter_check(
+                &ctx.skill_path(&rule.skill_id)
+                    .join(&adapter.skill_entrypoint),
+                &rule.skill_id,
+                &target.target_id,
+                checks,
+            ));
     add_entry_classification_checks(ctx, target, &rule.skill_id, agent, checks);
+    source_valid
 }
 
 fn add_entry_classification_checks(

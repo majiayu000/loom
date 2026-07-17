@@ -465,8 +465,9 @@ pub struct SkillInventory {
 }
 
 pub fn collect_skill_inventory(ctx: &AppContext) -> SkillInventory {
-    let source_dirs = resolve_agent_skill_source_dirs(&ctx.root);
-    let mut warnings = Vec::new();
+    let source_dir_resolution = resolve_agent_skill_source_dirs(&ctx.root);
+    let source_dirs = source_dir_resolution.dirs;
+    let mut warnings = source_dir_resolution.warnings;
 
     let source_skills = list_unique_skills_from_dirs(&source_dirs, "source", &mut warnings);
     let backup_skills = list_unique_skills_from_dirs(

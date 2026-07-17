@@ -4,7 +4,9 @@ use std::process::Command;
 
 mod common;
 
-use common::{TestDir, run_loom, run_loom_with_env, write_minimal_registry_state, write_skill};
+use common::{
+    TestDir, run_loom, run_loom_with_env, write_file, write_minimal_registry_state, write_skill,
+};
 
 fn command_names_from_help(stdout: &str) -> Vec<String> {
     let mut in_commands = false;
@@ -438,6 +440,180 @@ fn use_codex_project_default_comes_from_adapter_metadata() {
         workspace
             .path()
             .join(".agents/skills")
+            .display()
+            .to_string()
+    );
+}
+
+#[test]
+fn use_gemini_cli_uses_native_managed_root_to_avoid_codex_collision() {
+    let root = TestDir::new("cli-use-gemini-adapter-root");
+    let workspace = TestDir::new("cli-use-gemini-workspace");
+    let fake_home = TestDir::new("cli-use-gemini-home");
+    write_skill(
+        root.path(),
+        "demo",
+        "---\nname: demo\ndescription: Use when testing Gemini adapter target roots.\n---\n# Demo\n",
+    );
+
+    let home_str = fake_home.path().to_string_lossy().into_owned();
+    let workspace_str = workspace.path().to_string_lossy().into_owned();
+    let (output, env) = run_loom_with_env(
+        root.path(),
+        &[("HOME", &home_str)],
+        &[
+            "use",
+            "demo",
+            "--agents",
+            "gemini-cli",
+            "--workspace",
+            &workspace_str,
+        ],
+    );
+
+    assert!(output.status.success(), "loom use failed: {env}");
+    assert_eq!(
+        env["data"]["steps"][0]["target_path"],
+        workspace
+            .path()
+            .join(".gemini/skills")
+            .display()
+            .to_string()
+    );
+}
+
+#[test]
+fn use_gemini_cli_keeps_configured_user_roots_out_of_project_scope() {
+    let root = TestDir::new("cli-use-gemini-project-scope-root");
+    let workspace = TestDir::new("cli-use-gemini-project-scope-workspace");
+    let fake_home = TestDir::new("cli-use-gemini-project-scope-home");
+    let configured = root.path().join("gemini-user-root");
+    write_skill(
+        root.path(),
+        "demo",
+        "---\nname: demo\ndescription: Use when testing Gemini project scope.\n---\n# Demo\n",
+    );
+    write_file(
+        &root.path().join(".env"),
+        &format!("GEMINI_CLI_SKILLS_DIR={}\n", configured.display()),
+    );
+
+    let home_str = fake_home.path().display().to_string();
+    let workspace_str = workspace.path().display().to_string();
+    let (output, env) = run_loom_with_env(
+        root.path(),
+        &[("HOME", &home_str)],
+        &[
+            "use",
+            "demo",
+            "--agents",
+            "gemini-cli",
+            "--workspace",
+            &workspace_str,
+        ],
+    );
+    assert!(output.status.success(), "loom use failed: {env}");
+    assert_eq!(
+        env["data"]["steps"][0]["target_path"],
+        workspace
+            .path()
+            .join(".gemini/skills")
+            .display()
+            .to_string()
+    );
+}
+
+#[test]
+fn use_gemini_cli_ignores_unofficial_dotenv_skill_roots() {
+    let root = TestDir::new("cli-use-gemini-dotenv-root");
+    let workspace = TestDir::new("cli-use-gemini-dotenv-workspace");
+    let fake_home = TestDir::new("cli-use-gemini-dotenv-home");
+    let first = root.path().join("gemini-one");
+    let second = root.path().join("gemini-two");
+    write_skill(
+        root.path(),
+        "demo",
+        "---\nname: demo\ndescription: Use when testing configured Gemini roots.\n---\n# Demo\n",
+    );
+    write_file(
+        &root.path().join(".env"),
+        &format!(
+            "GEMINI_CLI_SKILLS_DIR={},{}\n",
+            first.display(),
+            second.display()
+        ),
+    );
+
+    let home_str = fake_home.path().display().to_string();
+    let workspace_str = workspace.path().display().to_string();
+    let (output, env) = run_loom_with_env(
+        root.path(),
+        &[("HOME", &home_str)],
+        &[
+            "use",
+            "demo",
+            "--agents",
+            "gemini-cli",
+            "--scope",
+            "user",
+            "--workspace",
+            &workspace_str,
+        ],
+    );
+    assert!(output.status.success(), "loom use failed: {env}");
+    assert_eq!(
+        env["data"]["steps"][0]["target_path"],
+        fake_home
+            .path()
+            .join(".gemini/skills")
+            .display()
+            .to_string()
+    );
+}
+
+#[test]
+fn use_gemini_cli_does_not_treat_skills_dir_as_an_official_override() {
+    let root = TestDir::new("cli-use-gemini-explicit-official-root");
+    let workspace = TestDir::new("cli-use-gemini-explicit-official-workspace");
+    let fake_home = TestDir::new("cli-use-gemini-explicit-official-home");
+    let agents_root = fake_home.path().join(".agents/skills");
+    let second = root.path().join("gemini-two");
+    write_skill(
+        root.path(),
+        "demo",
+        "---\nname: demo\ndescription: Use when testing an explicit official Gemini root.\n---\n# Demo\n",
+    );
+    write_file(
+        &root.path().join(".env"),
+        &format!(
+            "GEMINI_CLI_SKILLS_DIR={},{}\n",
+            agents_root.display(),
+            second.display()
+        ),
+    );
+
+    let home_str = fake_home.path().display().to_string();
+    let workspace_str = workspace.path().display().to_string();
+    let (output, env) = run_loom_with_env(
+        root.path(),
+        &[("HOME", &home_str)],
+        &[
+            "use",
+            "demo",
+            "--agents",
+            "gemini-cli",
+            "--scope",
+            "user",
+            "--workspace",
+            &workspace_str,
+        ],
+    );
+    assert!(output.status.success(), "loom use failed: {env}");
+    assert_eq!(
+        env["data"]["steps"][0]["target_path"],
+        fake_home
+            .path()
+            .join(".gemini/skills")
             .display()
             .to_string()
     );

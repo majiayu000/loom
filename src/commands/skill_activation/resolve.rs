@@ -2,7 +2,9 @@ use std::path::{Path, PathBuf};
 
 use chrono::Utc;
 
-use crate::agent_adapters::{SOURCE_BUILT_IN, load_agent_adapters, preferred_discovery_root};
+use crate::agent_adapters::{
+    SOURCE_BUILT_IN, built_in_projection_root, load_agent_adapters, preferred_discovery_root,
+};
 use crate::cli::{ActivationScope, ProjectionMethod, TargetOwnership};
 use crate::state::resolve_agent_skill_dirs;
 use crate::state_model::{
@@ -297,11 +299,25 @@ fn default_target_path(
         ActivationScope::User => "user",
         ActivationScope::Project => "project",
     };
-    let workspace = selection.workspace.as_deref().unwrap_or(&ctx.root);
+    let implicit_workspace = selection
+        .workspace
+        .is_none()
+        .then(|| std::env::current_dir().map_err(map_io))
+        .transpose()?;
+    let workspace = selection
+        .workspace
+        .as_deref()
+        .or(implicit_workspace.as_deref())
+        .ok_or_else(|| CommandFailure::new(ErrorCode::IoError, "workspace is unavailable"))?;
     let adapters = load_agent_adapters(ctx)?;
     if let Some(adapter) = adapters.adapter_for_agent(&selection.agent)
         && adapter.has_discovery_root_for_scope(scope)
     {
+        if let Some(root) =
+            built_in_projection_root(ctx, adapter, scope, workspace, &selection.skill)?
+        {
+            return Ok(root);
+        }
         match preferred_discovery_root(adapter, scope, workspace) {
             Ok(root) => return Ok(root.path),
             Err(_err) if adapter.source == SOURCE_BUILT_IN => {}
@@ -342,15 +358,16 @@ pub(super) fn workspace_for_scope(
     scope: ActivationScope,
     workspace: Option<PathBuf>,
 ) -> std::result::Result<Option<PathBuf>, CommandFailure> {
-    if !matches!(scope, ActivationScope::Project) {
-        return Ok(None);
-    }
-    let raw = workspace.ok_or_else(|| {
-        CommandFailure::new(
-            ErrorCode::ArgInvalid,
-            "--workspace is required when --scope project",
-        )
-    })?;
+    let Some(raw) = workspace else {
+        return if matches!(scope, ActivationScope::Project) {
+            Err(CommandFailure::new(
+                ErrorCode::ArgInvalid,
+                "--workspace is required when --scope project",
+            ))
+        } else {
+            Ok(None)
+        };
+    };
     let absolute = if raw.is_absolute() {
         raw
     } else {

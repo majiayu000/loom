@@ -517,7 +517,7 @@ test("SettingsPage renders all live agent directories", async () => {
       { agent: "copilot", env_var: "COPILOT_SKILLS_DIR", path: "/tmp/home/.github/copilot/skills" },
       { agent: "aider", env_var: "AIDER_SKILLS_DIR", path: "/tmp/home/.aider/skills" },
       { agent: "opencode", env_var: "OPENCODE_SKILLS_DIR", path: "/tmp/home/.opencode/skills" },
-      { agent: "gemini-cli", env_var: "GEMINI_CLI_SKILLS_DIR", path: "/tmp/home/.gemini/skills" },
+      { agent: "gemini-cli", env_var: "GEMINI_CLI_HOME", path: "/tmp/home/.gemini/skills" },
       { agent: "goose", env_var: "GOOSE_SKILLS_DIR", path: "/tmp/home/.config/goose/skills" },
     ],
     remote_url: "git@example.com:loom.git",

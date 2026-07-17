@@ -109,6 +109,7 @@ impl App {
             "agent_dir_defaults": {
                 "claude_dir": target_dirs.claude.display().to_string(),
                 "codex_dir": target_dirs.codex.display().to_string(),
+                "unavailable_reasons": target_dirs.warnings,
                 "agent_dirs": target_dirs
                     .all
                     .iter()

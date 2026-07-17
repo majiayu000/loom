@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::{Value, json};
 
+use crate::agent_adapters::{AgentAdapter, built_in_adapter_for_agent, load_agent_adapters};
 use crate::state::AppContext;
 use crate::state_model::{
     RegistryBindingRule, RegistryProjectionInstance, RegistryProjectionTarget, RegistrySnapshot,
@@ -35,6 +36,12 @@ pub(crate) fn plan_agent_reconcile(
     } else {
         None
     };
+    let adapter = match built_in_adapter_for_agent(ctx, &request.agent) {
+        Some(adapter) => Some(adapter),
+        None => load_agent_adapters(ctx)?
+            .adapter_for_agent(&request.agent)
+            .cloned(),
+    };
     let targets = select_agent_targets(snapshot, request)?;
     let mut plans = Vec::with_capacity(targets.len());
     for target in targets {
@@ -44,6 +51,7 @@ pub(crate) fn plan_agent_reconcile(
             request,
             &target,
             config.as_ref(),
+            adapter.as_ref(),
         ));
     }
     Ok(plans)
@@ -55,6 +63,7 @@ fn plan_target(
     request: &CodexReconcileRequest,
     target: &RegistryProjectionTarget,
     config: Option<&CodexConfigLoad>,
+    adapter: Option<&AgentAdapter>,
 ) -> CodexReconcilePlan {
     let target_path = PathBuf::from(&target.path);
     let desired = desired_rules_for_target(snapshot, target, &request.agent);
@@ -180,7 +189,7 @@ fn plan_target(
         }
     }
 
-    let restart_required = actions.iter().any(|item| {
+    let refresh_required = actions.iter().any(|item| {
         matches!(
             item.category.as_str(),
             "create_projection"
@@ -189,8 +198,16 @@ fn plan_target(
                 | "fix_config_disable"
         )
     });
-    if restart_required {
-        warnings.push("restart_required_after_apply".to_string());
+    let restart_required =
+        refresh_required && adapter.is_none_or(|adapter| !adapter.reload.hot_reload);
+    if refresh_required {
+        warnings.push(if restart_required {
+            "restart_required_after_apply".to_string()
+        } else {
+            adapter
+                .and_then(|adapter| adapter.reload.notes.clone())
+                .unwrap_or_else(|| "reload_agent_after_apply".to_string())
+        });
     }
     let safe_to_apply = actions
         .iter()

@@ -6,6 +6,7 @@ mod core;
 mod envelope;
 mod error_actions;
 mod fs_util;
+mod gemini_cli;
 mod gitops;
 mod main_runtime;
 mod next_action_trace;

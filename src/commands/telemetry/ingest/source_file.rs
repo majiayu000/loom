@@ -123,10 +123,10 @@ pub(super) fn parser_state_before(
             "telemetry ingest parser context exceeds committed offset",
         ));
     }
-    if context_offset > 0 {
-        if let Some(value) = native_session_record(agent, file, Some(context_offset))? {
-            let _ = parse_agent_record(agent, &value, &mut state);
-        }
+    if context_offset > 0
+        && let Some(value) = native_session_record(agent, file, Some(context_offset))?
+    {
+        let _ = parse_agent_record(agent, &value, &mut state);
     }
     file.seek(SeekFrom::Start(context_offset)).map_err(map_io)?;
     let mut reader = BufReader::new(file);

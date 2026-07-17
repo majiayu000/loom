@@ -52,8 +52,8 @@ jobs:
           cargo nextest --version
           bun --version
 
-      - name: Ensure jq
-        run: sudo apt-get update && sudo apt-get install -y jq
+      - name: Ensure jq and Linux release linker
+        run: sudo apt-get update && sudo apt-get install -y jq clang lld
 
       - name: Rust Format Check
         run: make fmt-check

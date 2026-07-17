@@ -26,6 +26,10 @@ Configure repository secrets:
 
 ## Release Steps
 
+The x86_64 Linux release build requires `clang` and `lld`; `scripts/build-release.sh`
+uses lld safe identical-code folding for the shipped binary and the performance gate.
+Normal development builds and source installs continue to use Cargo's default linker.
+
 1. Update `Cargo.toml` version.
 2. Run local verification:
 

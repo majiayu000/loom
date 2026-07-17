@@ -3,7 +3,7 @@ set -euo pipefail
 
 bin="${1:-target/release/loom}"
 if [[ ! -x "$bin" ]]; then
-  cargo build --release --locked
+  "$(dirname "$0")/build-release.sh"
 fi
 
 # Hard ceiling: 5960 KiB. The durable plan/apply protocol, offline eval

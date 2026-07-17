@@ -56,7 +56,7 @@ e2e:
 	./scripts/e2e-agent-flow.sh
 
 perf-smoke: panel-build
-	cargo build --release --locked
+	./scripts/build-release.sh
 	./scripts/perf-smoke.sh
 
 check: fmt-check lint module-ceiling module-ceiling-test test contract-policy panel-typecheck panel-test panel-build e2e perf-smoke

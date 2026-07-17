@@ -308,7 +308,7 @@ fn command_surface_budget_tracks_read_surface_convergence() {
     assert!(output.status.success(), "skill help should pass");
     let stdout = String::from_utf8_lossy(&output.stdout);
     let skill = command_names_from_help(&stdout);
-    assert_eq!(skill.len(), 38, "skill command budget changed");
+    assert_eq!(skill.len(), 39, "skill command budget changed");
     for removed in [
         "show",
         "capture",

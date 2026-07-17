@@ -3,7 +3,7 @@
 Updated: 2026-07-18
 Status: Implemented
 
-Every JSON envelope includes independent SemVer field `cli_contract_version`. The current contract is `1.5.0`; compatibility history and shipped-Skill ranges live in `docs/cli-contract-history.toml` and `skills/loom-registry/loom.skill.toml`.
+Every JSON envelope includes independent SemVer field `cli_contract_version`. The current contract is `1.6.0`; compatibility history and shipped-Skill ranges live in `docs/cli-contract-history.toml` and `skills/loom-registry/loom.skill.toml`.
 
 ## 1. Purpose
 
@@ -811,3 +811,44 @@ Rules:
 
 Sections 11.1.5 through 19 remain normative and continue in
 [LOOM_CLI_CONTRACT_OPERATIONS.md](LOOM_CLI_CONTRACT_OPERATIONS.md).
+
+## GH542 skill lifecycle statistics
+
+```bash
+loom --json --root <root> skill stats [--since <date-or-rfc3339>] [--agent <agent>] [--zombie-days <n>]
+```
+
+`skill stats` is a read-only O(events) governance report. It holds the existing
+exclusive workspace lock only while capturing one registry snapshot, telemetry
+configuration, and event log; aggregation happens after the lock is released.
+It does not write command audit, registry, binding, projection, telemetry, or
+configuration state and does not access a network or LLM.
+
+The stable data object includes `since`, `agent`, `zombie_days`,
+`telemetry_enabled`, `telemetry_empty`, `persisted_events`, `malformed_events`,
+`single_runtime_scope="all_agents"`, `window_events`,
+`unattributed_window_events`, `unattributed`, `agentless`, `skills`, `zombies`,
+`unbound_unused`, and `orphans`. Every skill has exactly one `category` from
+`active`, `zombie`, `unbound_unused`, and `unbound_but_used`; `single_runtime`
+is an independent flag computed from unfiltered current multi-agent bindings
+and known-agent lifetime usage.
+
+Skill totals, `by_agent` entries, orphan entries, `agentless`, and
+`unattributed` explicitly return `invocation_count`, `error_count`,
+`attempt_count`, `error_sample_size`, and `failure_categories` (an empty object
+when no errors occurred). `attempt_count` is invocation plus error. `error_rate`
+is null below five attempts and otherwise is error divided by attempt. An
+agentless row never matches `--agent`; it appears only in an unfiltered report
+and never creates a synthetic `"unknown"` agent key.
+
+`--since` limits window counts, ranking, and orphans but not lifecycle history.
+`--agent` scopes both current bindings and lifecycle/window usage. Zombie status
+compares scoped lifetime `last_used` against the independently computed
+`now-zombie_days` cutoff. Current binding truth comes from active
+binding/rule/target relations in the captured snapshot, not projection
+observation history. `window_events` reconciles registry-skill, orphan, and
+unattributed attempts; `agentless` is an orthogonal subtotal and is not added a
+second time. All counters use checked arithmetic and overflow fails with
+`STATE_CORRUPT` naming the aggregate field. Missing or malformed registry,
+telemetry config, or event I/O returns an error; empty, all-malformed, or
+filter-empty inputs return the complete zero/empty shape.

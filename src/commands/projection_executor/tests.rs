@@ -290,7 +290,7 @@ fn convergence_staging_failure_preserves_existing_projection() {
     fs::write(projection_path.join("keep.txt"), "keep\n").expect("write live data");
 
     let input = execution_input(&fixture, ProjectionMethod::Copy, projection_path.clone());
-    let error = match materialize_projection(&fixture.ctx, &input, None) {
+    let error = match materialize_projection(&fixture.ctx, &input, None, None) {
         Ok(_) => panic!("escaping source symlink must fail closed before replacement"),
         Err(error) => error,
     };
@@ -321,7 +321,7 @@ fn standalone_replacement_retains_portable_persistent_backup_path() {
     input.context = ProjectionExecutionContext::Standalone;
     input.replace_existing = true;
 
-    let output = materialize_projection(&fixture.ctx, &input, None)
+    let output = materialize_projection(&fixture.ctx, &input, None, None)
         .expect("standalone replacement remains portable");
     let backup = output.backup.expect("persistent standalone backup");
 

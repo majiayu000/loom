@@ -138,16 +138,14 @@ fn validate_payload_shape(
             if !items.iter().all(Value::is_string) {
                 false
             } else {
-                !items.is_empty()
-                    || payload_type.contains("String")
-                    || payload_type.contains("&str")
+                !items.is_empty() || exact_empty_string_shape(payload_type)
             }
         }
         NextActionShape::Object => {
             if !items.iter().all(Value::is_object) {
                 false
             } else {
-                !items.is_empty() || payload_type.contains("NextAction")
+                !items.is_empty() || exact_empty_object_shape(payload_type)
             }
         }
     };
@@ -161,6 +159,33 @@ fn validate_payload_shape(
         )));
     }
     Ok(proven)
+}
+
+fn exact_empty_string_shape(payload_type: &str) -> bool {
+    payload_type == "alloc::vec::Vec<alloc::string::String>"
+        || exact_array_shape(payload_type, "alloc::string::String")
+        || exact_array_shape(payload_type, "&str")
+}
+
+fn exact_empty_object_shape(payload_type: &str) -> bool {
+    matches!(
+        payload_type,
+        "alloc::vec::Vec<loom::error_actions::NextAction>"
+            | "alloc::vec::Vec<skillloom::error_actions::NextAction>"
+    )
+}
+
+fn exact_array_shape(payload_type: &str, item_type: &str) -> bool {
+    let Some(inner) = payload_type
+        .strip_prefix('[')
+        .and_then(|value| value.strip_suffix(']'))
+    else {
+        return false;
+    };
+    let Some((actual_item, length)) = inner.rsplit_once(';') else {
+        return false;
+    };
+    actual_item.trim() == item_type && length.trim().parse::<usize>().is_ok()
 }
 
 fn validate_payload_commands(

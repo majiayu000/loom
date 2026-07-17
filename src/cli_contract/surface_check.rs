@@ -18,6 +18,11 @@ pub struct SurfaceCheckReport {
 
 pub fn check_surface_inventory(repo_root: &Path) -> Result<SurfaceCheckReport, InventoryError> {
     let inventory = load_surface_inventory(repo_root)?;
+    if inventory.agent_capabilities.is_empty() {
+        return Err(InventoryError::new(
+            "agent capability inventory must not be empty",
+        ));
+    }
     validate_public_surface_coverage(repo_root, &inventory.surfaces)?;
     let next_action_emitter_count =
         check_next_action_emitters(repo_root, &inventory.next_action_emitters)?;
@@ -75,18 +80,22 @@ pub fn check_surface_inventory(repo_root: &Path) -> Result<SurfaceCheckReport, I
                     surface.path, example.id
                 )));
             }
-            if example.classification != ExampleClassification::Executable {
+            if !matches!(
+                example.classification,
+                ExampleClassification::Executable | ExampleClassification::CommandReference
+            ) {
                 continue;
             }
             for command in commands {
-                let argv = normalize_command(&command);
-                if let Err(error) = validate_public_argv(&argv) {
-                    validation_errors.push(format!(
-                        "{}:{line_number}: example '{}': {}: {:?}",
-                        surface.path, example.id, error.message, argv
-                    ));
+                for argv in command_variants(&command, example.classification) {
+                    if let Err(error) = validate_public_argv(&argv) {
+                        validation_errors.push(format!(
+                            "{}:{line_number}: example '{}': {}: {:?}",
+                            surface.path, example.id, error.message, argv
+                        ));
+                    }
+                    command_count += 1;
                 }
-                command_count += 1;
             }
         }
     }
@@ -286,6 +295,41 @@ pub(super) fn normalize_command(command: &str) -> Vec<String> {
         }
     }
     argv
+}
+
+pub(super) fn command_variants(
+    command: &str,
+    classification: ExampleClassification,
+) -> Vec<Vec<String>> {
+    let mut variants = vec![normalize_command(command)];
+    if classification != ExampleClassification::CommandReference {
+        return variants;
+    }
+    for index in 0..variants[0].len() {
+        let choices = variants[0][index]
+            .split('/')
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+        if choices.len() == 1 {
+            continue;
+        }
+        variants = variants
+            .into_iter()
+            .flat_map(|variant| {
+                choices.iter().map(move |choice| {
+                    let mut expanded = variant.clone();
+                    expanded[index] = choice.clone();
+                    expanded
+                })
+            })
+            .collect();
+    }
+    for variant in &mut variants {
+        if !variant.iter().any(|token| token == "--help") {
+            variant.push("--help".to_string());
+        }
+    }
+    variants
 }
 
 fn shell_tokens(command: &str) -> Vec<String> {

@@ -15,6 +15,6 @@ mod state;
 mod state_model;
 mod types;
 #[path = "core/vocab.rs"]
-pub mod vocab;
+mod vocab;
 
 pub use main_runtime::run as run_binary;

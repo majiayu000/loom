@@ -1,4 +1,5 @@
 schema_version = 1
+agent_capabilities = ["field:envelope.ok:boolean", "field:envelope.cmd:string", "field:envelope.request_id:string", "field:envelope.version:string", "field:envelope.cli_contract_version:semver-string", "field:envelope.data:object", "field:envelope.error:null-or-object", "field:envelope.error.code:string", "field:envelope.error.message:string", "field:envelope.error.details:any-json", "field:envelope.error.next_actions:optional-array-object", "field:envelope.meta:object", "field:envelope.meta.warnings:array-string", "field:envelope.meta.sync_state:optional-enum", "field:envelope.meta.op_id:optional-string", "semantic:mutation_requires_compatible_contract", "semantic:success_requires_ok_true", "semantic:preflight_requires_safe_to_run", "semantic:durable_plan_requires_safe_to_apply"]
 panel_mutations = [
   { id = "panel.workspace.init", label_path = "panel/src/lib/operation_labels.ts", action_id = "workspace.init", backend_route = "POST /api/v1/workspace/init", handler = "v1_workspace_init", binding = "cli_equivalent", cli_argv = ["loom", "workspace", "init", "--scan-existing"] },
   { id = "panel.workspace.remote_set", label_path = "panel/src/lib/operation_labels.ts", action_id = "workspace.remote.set", backend_route = "POST /api/v1/workspace/remote", handler = "remote_set", binding = "cli_equivalent", cli_argv = ["loom", "workspace", "remote", "set", "<url>"] },
@@ -258,12 +259,12 @@ classification = "executable"
 id = "readme.command_matrix"
 surface = "readme"
 line_range = [222, 281]
-classification = "output_example"
+classification = "command_reference"
 [[example]]
 id = "readme.agent_guidance"
 surface = "readme"
 line_range = [309, 310]
-classification = "output_example"
+classification = "executable"
 [[example]]
 id = "readme.observed_targets"
 surface = "readme"

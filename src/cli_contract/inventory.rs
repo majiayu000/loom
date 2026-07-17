@@ -7,6 +7,7 @@ pub const INVENTORY_PATH: &str = "docs/agent-command-surfaces.toml";
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExampleClassification {
     Executable,
+    CommandReference,
     OutputExample,
     Legacy,
     NonCommand,
@@ -16,6 +17,7 @@ impl ExampleClassification {
     fn parse(value: &str, location: &str) -> Result<Self, InventoryError> {
         match value {
             "executable" => Ok(Self::Executable),
+            "command_reference" => Ok(Self::CommandReference),
             "output_example" => Ok(Self::OutputExample),
             "legacy" => Ok(Self::Legacy),
             "non_command" => Ok(Self::NonCommand),
@@ -99,6 +101,7 @@ pub struct PanelMutation {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SurfaceInventory {
+    pub agent_capabilities: Vec<String>,
     pub surfaces: Vec<SurfaceSpec>,
     pub examples: Vec<SurfaceExample>,
     pub next_action_emitters: Vec<NextActionEmitter>,
@@ -140,6 +143,27 @@ pub(crate) fn parse_surface_inventory(
     let document = source
         .parse::<DocumentMut>()
         .map_err(|error| InventoryError::new(format!("{location}: {error}")))?;
+    let agent_capabilities = document
+        .get("agent_capabilities")
+        .and_then(Item::as_array)
+        .map(|values| {
+            values
+                .iter()
+                .map(|value| {
+                    value
+                        .as_str()
+                        .filter(|value| !value.is_empty())
+                        .map(str::to_string)
+                        .ok_or_else(|| {
+                            InventoryError::new(format!(
+                                "{location}: agent_capabilities items must be non-empty strings"
+                            ))
+                        })
+                })
+                .collect::<Result<Vec<_>, _>>()
+        })
+        .transpose()?
+        .unwrap_or_default();
     let surfaces = parse_surfaces(required_tables(&document, "surface")?)?;
     let mut examples = parse_examples(required_tables(&document, "example")?)?;
     if let Some(values) = document.get("examples").and_then(Item::as_array) {
@@ -175,6 +199,7 @@ pub(crate) fn parse_surface_inventory(
         &panel_mutations,
     )?;
     Ok(SurfaceInventory {
+        agent_capabilities,
         surfaces,
         examples,
         next_action_emitters,

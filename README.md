@@ -306,7 +306,7 @@ Quick decision: **edits from either side → `commit` (add `--from-projection` o
 
 - Multi-directory behavior is explicit via `target add`; no implicit directory inference.
 - Agent automation should use explicit `--root`, `--json`, selectors such as `binding_id` / `target_id`, and branch on `ok` + `error.code`.
-- Agents can call `loom skill search "<task>" --for-task --agent <agent> --workspace <path>` before choosing a workflow skill, then `loom agent preflight --agent <agent> --workspace <path> --skill <skill>` before writing. Add `--dry-run` to high-risk writes, or use `loom skill rollback --dry-run` to get a no-mutation rollback plan.
+- Agents can call `loom skill search "<task>" --for-task --agent <agent> --workspace <path>` before choosing a workflow skill, then `loom agent preflight --agent <agent> --workspace <path> --skill <skill>` before writing. Add `--dry-run` to high-risk writes, or use `loom skill rollback <skill> --dry-run` to get a no-mutation rollback plan.
 - `--json` wraps both command execution errors and argument parsing failures in the same envelope. `loom panel` is the local HTTP UI server and does not return a command envelope.
 - Read commands such as `workspace status`, `workspace doctor`, `target list`, `skill list`, `skill inspect`, `skill inspect --brief`, `skill deps`, `skill search`, `skillset show`, `skillset lint`, and `sync status` do not mutate registry state, Git refs, the Git index, live target directories, or the operation backlog. Durable command audit events may be recorded under `state/events/commands.jsonl` for audited surfaces.
 - Registry metadata lives under `state/registry`; Loom does not use release-style labels for internal state names.

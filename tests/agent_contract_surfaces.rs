@@ -67,6 +67,13 @@ fn executable_examples_parse() {
 
 #[test]
 fn inventory_covers_public_surfaces() {
+    let inventory = load_surface_inventory(std::path::Path::new(".")).expect("surface inventory");
+    assert!(
+        inventory
+            .agent_capabilities
+            .iter()
+            .any(|capability| capability == "field:envelope.cli_contract_version:semver-string")
+    );
     let report = check_surface_inventory(std::path::Path::new(".")).expect("surface inventory");
     assert!(report.surface_count >= 6);
     assert!(report.example_count >= report.surface_count);
@@ -205,8 +212,9 @@ fn emitter_trace_rejects_shape_and_fixture_drift() {
     let inventory = load_surface_inventory(std::path::Path::new(".")).expect("surface inventory");
     let emitters = inventory
         .next_action_emitters
-        .into_iter()
+        .iter()
         .filter(|emitter| emitter.id == "error.target_not_found")
+        .cloned()
         .collect::<Vec<_>>();
     let trace = root.path().join("wrong-shape.jsonl");
     write_file(
@@ -232,6 +240,66 @@ fn emitter_trace_rejects_shape_and_fixture_drift() {
 }
 
 #[test]
+fn empty_trace_shape_requires_exact_type_identity() {
+    let root = TestDir::new("emitter-empty-shape-identity");
+    let inventory = load_surface_inventory(std::path::Path::new(".")).expect("surface inventory");
+    let emitters = inventory
+        .next_action_emitters
+        .iter()
+        .filter(|emitter| emitter.id == "error.target_not_found")
+        .cloned()
+        .collect::<Vec<_>>();
+    let trace = root.path().join("deceptive-empty-shape.jsonl");
+    write_file(
+        &trace,
+        r#"{"emitter_id":"error.target_not_found","fixture_id":"error_actions::tests::default_next_actions_cover_top_guidance_errors","payload_type":"alloc::vec::Vec<NextActionText>","payload":[]}
+"#,
+    );
+    let error = check_next_action_trace(&trace, &emitters)
+        .expect_err("a substring lookalike must not prove empty object shape");
+    assert!(error.to_string().contains("no payload proving"), "{error}");
+
+    let emitters = inventory
+        .next_action_emitters
+        .iter()
+        .filter(|emitter| emitter.id == "codex.visibility.report")
+        .cloned()
+        .collect::<Vec<_>>();
+    write_file(
+        &trace,
+        r#"{"emitter_id":"codex.visibility.report","fixture_id":"compiled_activation_materializes_valid_artifact_projection","payload_type":"alloc::vec::Vec<StringAction>","payload":[]}
+"#,
+    );
+    let error = check_next_action_trace(&trace, &emitters)
+        .expect_err("a substring lookalike must not prove empty string shape");
+    assert!(error.to_string().contains("no payload proving"), "{error}");
+}
+
+#[test]
+fn active_command_guidance_is_parser_checked() {
+    let inventory = load_surface_inventory(std::path::Path::new(".")).expect("surface inventory");
+    let classification = inventory
+        .examples
+        .iter()
+        .find(|example| example.id == "readme.command_matrix")
+        .map(|example| example.classification);
+    assert_eq!(
+        classification,
+        Some(skillloom::cli_contract::ExampleClassification::CommandReference)
+    );
+    let error = validate_public_argv(["loom", "skill", "save", "--help"])
+        .expect_err("removed command reference must fail");
+    assert_eq!(error.kind, PublicArgvErrorKind::Parse);
+}
+
+#[test]
+fn library_facade_does_not_export_raw_vocabulary() {
+    let source = std::fs::read_to_string("src/lib.rs").expect("read library facade");
+    assert!(!source.contains("pub mod vocab;"));
+    assert!(!source.contains("pub mod cli;"));
+}
+
+#[test]
 fn panel_cli_equivalents_parse() {
     let report = check_surface_inventory(std::path::Path::new(".")).expect("surface inventory");
     assert_eq!(report.panel_mutation_count, 25);
@@ -249,7 +317,8 @@ fn unclassified_command_fails() {
     write_file(&root.path().join("README.md"), "loom skill list\n");
     write_file(
         &root.path().join("docs/agent-command-surfaces.toml"),
-        r#"[[surface]]
+        r#"agent_capabilities = ["field:fixture.ok:boolean"]
+[[surface]]
 id = "readme"
 path = "README.md"
 
@@ -270,7 +339,8 @@ fn parse_failure_is_terminal() {
     write_file(&root.path().join("README.md"), "loom skill save demo\n");
     write_file(
         &root.path().join("docs/agent-command-surfaces.toml"),
-        r#"[[surface]]
+        r#"agent_capabilities = ["field:fixture.ok:boolean"]
+[[surface]]
 id = "readme"
 path = "README.md"
 
@@ -401,7 +471,8 @@ fn nested_public_surface_requires_inventory() {
     );
     write_file(
         &root.path().join("docs/agent-command-surfaces.toml"),
-        r#"[[surface]]
+        r#"agent_capabilities = ["field:fixture.ok:boolean"]
+[[surface]]
 id = "readme"
 path = "README.md"
 
@@ -443,7 +514,8 @@ fn whole_file_classification_fails() {
     );
     write_file(
         &root.path().join("docs/agent-command-surfaces.toml"),
-        r#"[[surface]]
+        r#"agent_capabilities = ["field:fixture.ok:boolean"]
+[[surface]]
 id = "readme"
 path = "README.md"
 
@@ -496,7 +568,8 @@ fn contract_additive_capability_requires_minor_bump() {
     );
     write_file(
         &root.path().join("docs/agent-command-surfaces.toml"),
-        r#"[[surface]]
+        r#"agent_capabilities = ["field:fixture.ok:boolean"]
+[[surface]]
 id = "readme"
 path = "README.md"
 [[example]]

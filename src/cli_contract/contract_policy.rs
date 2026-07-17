@@ -6,8 +6,11 @@ use std::process::Command;
 use toml_edit::DocumentMut;
 
 use super::inventory::{INVENTORY_PATH, parse_surface_inventory};
-use super::surface_check::{extract_loom_commands, join_continuation_lines, normalize_command};
-use super::{ContractVersion, ExampleClassification, InventoryError, parse_contract_version};
+use super::surface_check::{command_variants, extract_loom_commands, join_continuation_lines};
+use super::{
+    ContractVersion, ExampleClassification, InventoryError, PublicArgv, parse_contract_version,
+    validate_public_argv,
+};
 
 const SKILL_METADATA: &str = "skills/loom-registry/loom.skill.toml";
 const HISTORY: &str = "docs/cli-contract-history.toml";
@@ -71,19 +74,25 @@ pub fn check_contract_range_policy(
         let base_version =
             declared_contract_version(&base_source, &format!("{base}:{CONTRACT_SOURCE}"))?;
         let current_inventory_raw = read_current(repo_root, INVENTORY_PATH)?;
-        let base_capabilities = capability_set(&base_inventory_raw, |path| {
-            git_show(repo_root, base, path)?.ok_or_else(|| {
-                InventoryError::new(format!("{base}:{path}: inventoried surface is missing"))
-            })
-        })?;
+        let compare_agent_capabilities = inventory_has_agent_capabilities(&base_inventory_raw)?;
+        let base_capabilities =
+            capability_set(&base_inventory_raw, compare_agent_capabilities, |path| {
+                git_show(repo_root, base, path)?.ok_or_else(|| {
+                    InventoryError::new(format!("{base}:{path}: inventoried surface is missing"))
+                })
+            })?;
         let current_capabilities =
-            capability_set(&current_inventory_raw, |path| read_current(repo_root, path))?;
-        enforce_capability_version(
-            base_version,
-            current_version,
-            &base_capabilities,
-            &current_capabilities,
-        )?;
+            capability_set(&current_inventory_raw, compare_agent_capabilities, |path| {
+                read_current(repo_root, path)
+            })?;
+        if compare_agent_capabilities {
+            enforce_capability_version(
+                base_version,
+                current_version,
+                &base_capabilities,
+                &current_capabilities,
+            )?;
+        }
     }
     if base_range.as_deref() != Some(current_range.as_str()) {
         if !current_records
@@ -120,6 +129,7 @@ fn declared_contract_version(
 
 fn capability_set<F>(
     inventory_raw: &str,
+    include_agent_capabilities: bool,
     mut read_surface: F,
 ) -> Result<BTreeSet<String>, InventoryError>
 where
@@ -132,11 +142,12 @@ where
         .map(|surface| (surface.id.as_str(), surface.path.as_str()))
         .collect::<std::collections::BTreeMap<_, _>>();
     let mut capabilities = BTreeSet::new();
-    for example in inventory
-        .examples
-        .iter()
-        .filter(|example| example.classification == ExampleClassification::Executable)
-    {
+    for example in inventory.examples.iter().filter(|example| {
+        matches!(
+            example.classification,
+            ExampleClassification::Executable | ExampleClassification::CommandReference
+        )
+    }) {
         let path = surfaces.get(example.surface.as_str()).ok_or_else(|| {
             InventoryError::new(format!(
                 "{INVENTORY_PATH}: example '{}' references missing surface '{}'",
@@ -154,12 +165,25 @@ where
         for offset in example.start_line - 1..example.end_line {
             let logical_line = join_continuation_lines(&lines, offset, lines[offset]);
             for command in extract_loom_commands(&logical_line) {
-                capabilities.insert(format!(
-                    "command:{}",
-                    normalize_command(&command).join("\u{1f}")
-                ));
+                for argv in command_variants(&command, example.classification) {
+                    let parsed = validate_public_argv(&argv).map_err(|error| {
+                        InventoryError::new(format!(
+                            "{path}: example '{}' has invalid public command {argv:?}: {}",
+                            example.id, error.message
+                        ))
+                    })?;
+                    capabilities.insert(public_command_capability(parsed));
+                }
             }
         }
+    }
+    if include_agent_capabilities {
+        capabilities.extend(
+            inventory
+                .agent_capabilities
+                .iter()
+                .map(|capability| format!("agent:{capability}")),
+        );
     }
     for emitter in &inventory.next_action_emitters {
         capabilities.insert(format!("emitter:{}:{:?}", emitter.id, emitter.shape));
@@ -178,6 +202,28 @@ where
         return Err(InventoryError::new("CLI contract capability set is empty"));
     }
     Ok(capabilities)
+}
+
+fn public_command_capability(parsed: PublicArgv) -> String {
+    let mut explicit_args = parsed.explicit_args;
+    explicit_args.retain(|argument| argument != "help");
+    explicit_args.sort();
+    explicit_args.dedup();
+    format!(
+        "command:{}:args={}",
+        parsed.command_path.join("/"),
+        explicit_args.join(",")
+    )
+}
+
+fn inventory_has_agent_capabilities(raw: &str) -> Result<bool, InventoryError> {
+    let document = raw
+        .parse::<DocumentMut>()
+        .map_err(|error| InventoryError::new(format!("{INVENTORY_PATH}: {error}")))?;
+    Ok(document
+        .get("agent_capabilities")
+        .and_then(toml_edit::Item::as_array)
+        .is_some_and(|values| !values.is_empty()))
 }
 
 fn enforce_capability_version(
@@ -293,4 +339,59 @@ fn git_show(repo_root: &Path, base: &str, path: &str) -> Result<Option<String>, 
 fn read_current(repo_root: &Path, path: &str) -> Result<String, InventoryError> {
     fs::read_to_string(repo_root.join(path))
         .map_err(|error| InventoryError::new(format!("{path}: {error}")))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeSet;
+
+    use super::{
+        ContractVersion, enforce_capability_version, public_command_capability,
+        validate_public_argv,
+    };
+
+    fn version(major: u64, minor: u64, patch: u64) -> ContractVersion {
+        ContractVersion {
+            major,
+            minor,
+            patch,
+        }
+    }
+
+    #[test]
+    fn contract_additive_field_requires_minor_bump() {
+        let base = BTreeSet::from(["agent:field:envelope.ok:boolean".to_string()]);
+        let current = BTreeSet::from([
+            "agent:field:envelope.ok:boolean".to_string(),
+            "agent:field:envelope.request_id:string".to_string(),
+        ]);
+        let error = enforce_capability_version(version(1, 0, 0), version(1, 0, 1), &base, &current)
+            .expect_err("patch bump must not admit an additive field");
+        assert!(error.to_string().contains("minor bump"), "{error}");
+        enforce_capability_version(version(1, 0, 0), version(1, 1, 0), &base, &current)
+            .expect("minor bump admits an additive field");
+    }
+
+    #[test]
+    fn contract_breaking_field_semantics_require_major_bump() {
+        let base = BTreeSet::from(["agent:field:envelope.ok:boolean".to_string()]);
+        let current = BTreeSet::from(["agent:field:envelope.ok:truthy-string".to_string()]);
+        let error = enforce_capability_version(version(1, 0, 0), version(1, 1, 0), &base, &current)
+            .expect_err("minor bump must not admit changed field semantics");
+        assert!(error.to_string().contains("major bump"), "{error}");
+        enforce_capability_version(version(1, 0, 0), version(2, 0, 0), &base, &current)
+            .expect("major bump admits changed field semantics");
+    }
+
+    #[test]
+    fn command_capability_ignores_fixture_values() {
+        let first = validate_public_argv(["loom", "skill", "inspect", "alpha"])
+            .expect("first public command");
+        let second = validate_public_argv(["loom", "skill", "inspect", "beta"])
+            .expect("second public command");
+        assert_eq!(
+            public_command_capability(first),
+            public_command_capability(second)
+        );
+    }
 }

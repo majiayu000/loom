@@ -136,7 +136,7 @@ pub(super) fn target_paths(matches: &[Value]) -> Vec<String> {
         .collect()
 }
 
-pub(super) fn normalize_path(path: &Path) -> PathBuf {
+pub(crate) fn normalize_path(path: &Path) -> PathBuf {
     let absolute = if path.is_absolute() {
         path.to_path_buf()
     } else {
@@ -147,7 +147,7 @@ pub(super) fn normalize_path(path: &Path) -> PathBuf {
     absolute.canonicalize().unwrap_or(absolute)
 }
 
-pub(super) fn workspace_matches(kind: &str, value: &str, workspace: &Path) -> bool {
+pub(crate) fn workspace_matches(kind: &str, value: &str, workspace: &Path) -> bool {
     match kind {
         "path_prefix" => workspace.starts_with(normalize_path(Path::new(value))),
         "exact_path" => workspace == normalize_path(Path::new(value)),

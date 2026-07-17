@@ -95,7 +95,7 @@ pub(in crate::panel) async fn v1_info(State(state): State<PanelState>) -> Json<s
     let target_dirs = resolve_agent_skill_dirs(&state.ctx.root);
     let registry_paths = RegistryStatePaths::from_app_context(&state.ctx);
 
-    let mut warnings: Vec<String> = Vec::new();
+    let mut warnings = target_dirs.warnings.clone();
     let remote_url = match crate::gitops::remote_url(&state.ctx) {
         Ok(Some(url)) => redact_sensitive_string(&url),
         Ok(None) => {

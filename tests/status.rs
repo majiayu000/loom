@@ -225,7 +225,7 @@ fn workspace_status_reports_all_supported_agent_dir_defaults() {
         path_for("gemini-cli"),
         fake_home
             .path()
-            .join(".gemini/skills")
+            .join(".agents/skills")
             .display()
             .to_string()
     );
@@ -239,6 +239,16 @@ fn workspace_status_reports_all_supported_agent_dir_defaults() {
         .collect::<Vec<_>>();
     assert!(source_dirs.contains(&"/tmp/opencode-primary"));
     assert!(source_dirs.contains(&"/tmp/opencode-secondary"));
+    assert!(
+        source_dirs
+            .iter()
+            .any(|path| path.ends_with(".agents/skills"))
+    );
+    assert!(
+        source_dirs
+            .iter()
+            .any(|path| path.ends_with(".gemini/skills"))
+    );
     assert!(
         source_dirs
             .iter()

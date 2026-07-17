@@ -4,7 +4,10 @@ use std::fs;
 
 use serde_json::{Value, json};
 
-use common::{TestDir, operations_log, run_loom, run_loom_with_env, write_file, write_skill};
+use common::{
+    TestDir, operations_log, run_loom, run_loom_with_env, run_loom_with_env_and_cwd, write_file,
+    write_skill,
+};
 
 #[test]
 fn use_plan_is_read_only_before_apply() {
@@ -126,6 +129,158 @@ fn use_apply_projects_local_skill_without_manual_ids() {
     let (output, env) = run_loom(root.path(), &["target", "list"]);
     assert!(output.status.success(), "target list should pass: {env}");
     assert_eq!(env["data"]["count"], Value::from(1));
+}
+
+#[test]
+fn use_apply_keeps_codex_and_gemini_cli_managed_roots_distinct() {
+    let root = TestDir::new("use-codex-gemini");
+    let home = TestDir::new("use-codex-gemini-home");
+    let workspace = TestDir::new("use-codex-gemini-workspace");
+    write_skill(
+        root.path(),
+        "demo",
+        "---\nname: demo\ndescription: Use when testing shared agent roots.\n---\n# Demo\n",
+    );
+    let home_str = home.path().display().to_string();
+    let workspace_str = workspace.path().display().to_string();
+    let (output, env) = run_loom_with_env(
+        root.path(),
+        &[("HOME", &home_str)],
+        &[
+            "use",
+            "demo",
+            "--agents",
+            "codex,gemini-cli",
+            "--scope",
+            "project",
+            "--workspace",
+            &workspace_str,
+            "--apply",
+        ],
+    );
+    assert!(output.status.success(), "multi-agent use failed: {env}");
+    let applied = env["data"]["applied"].as_array().expect("applied");
+    assert_eq!(applied.len(), 2);
+    let paths = applied
+        .iter()
+        .map(|row| row["target"]["path"].as_str().expect("target path"))
+        .collect::<Vec<_>>();
+    assert!(paths.iter().any(|path| path.ends_with(".agents/skills")));
+    assert!(paths.iter().any(|path| path.ends_with(".gemini/skills")));
+    assert_ne!(paths[0], paths[1]);
+}
+
+#[test]
+fn gemini_user_root_uses_explicit_or_process_workspace_environment() {
+    let root = TestDir::new("use-gemini-user-workspace-root");
+    let home = TestDir::new("use-gemini-user-workspace-home");
+    let workspace = TestDir::new("use-gemini-user-workspace");
+    let redirected_home = TestDir::new("use-gemini-user-redirected-home");
+    write_skill(
+        root.path(),
+        "demo",
+        "---\nname: demo\ndescription: Gemini workspace redirect fixture.\n---\n# Demo\n",
+    );
+    write_file(
+        &workspace.path().join(".gemini/.env"),
+        &format!("GEMINI_CLI_HOME={}\n", redirected_home.path().display()),
+    );
+    let home_arg = home.path().display().to_string();
+    let workspace_arg = workspace.path().display().to_string();
+    let (output, env) = run_loom_with_env(
+        root.path(),
+        &[("HOME", &home_arg), ("GEMINI_CLI_TRUST_WORKSPACE", "true")],
+        &[
+            "use",
+            "demo",
+            "--agents",
+            "gemini-cli",
+            "--scope",
+            "user",
+            "--workspace",
+            &workspace_arg,
+        ],
+    );
+    assert!(output.status.success(), "Gemini use plan failed: {env}");
+    assert_eq!(
+        env["data"]["steps"][0]["target_path"],
+        json!(redirected_home.path().join(".gemini/skills"))
+    );
+
+    let envs = [
+        ("HOME", home_arg.as_str()),
+        ("GEMINI_CLI_TRUST_WORKSPACE", "true"),
+    ];
+    let (implicit_output, implicit_env) = run_loom_with_env_and_cwd(
+        root.path(),
+        workspace.path(),
+        &envs,
+        &["use", "demo", "--agents", "gemini-cli", "--scope", "user"],
+    );
+    assert!(
+        implicit_output.status.success(),
+        "implicit-workspace Gemini use plan failed: {implicit_env}"
+    );
+    assert_eq!(
+        implicit_env["data"]["steps"][0]["target_path"],
+        json!(redirected_home.path().join(".gemini/skills"))
+    );
+
+    let (activate_output, activate_env) = run_loom_with_env_and_cwd(
+        root.path(),
+        workspace.path(),
+        &envs,
+        &["skill", "activate", "demo", "--agent", "gemini-cli"],
+    );
+    assert!(
+        activate_output.status.success(),
+        "implicit-workspace Gemini activation failed: {activate_env}"
+    );
+    assert_eq!(
+        activate_env["data"]["target"]["path"],
+        json!(redirected_home.path().join(".gemini/skills"))
+    );
+
+    let explicit_activate_root = TestDir::new("activate-gemini-explicit-workspace-root");
+    let explicit_workspace = TestDir::new("activate-gemini-explicit-workspace");
+    let explicit_redirected_home = TestDir::new("activate-gemini-explicit-redirected-home");
+    write_skill(
+        explicit_activate_root.path(),
+        "demo",
+        "---\nname: demo\ndescription: Gemini explicit workspace fixture.\n---\n# Demo\n",
+    );
+    write_file(
+        &explicit_workspace.path().join(".gemini/.env"),
+        &format!(
+            "GEMINI_CLI_HOME={}\n",
+            explicit_redirected_home.path().display()
+        ),
+    );
+    let explicit_workspace_arg = explicit_workspace.path().display().to_string();
+    let (explicit_activate_output, explicit_activate_env) = run_loom_with_env_and_cwd(
+        explicit_activate_root.path(),
+        explicit_activate_root.path(),
+        &envs,
+        &[
+            "skill",
+            "activate",
+            "demo",
+            "--agent",
+            "gemini-cli",
+            "--scope",
+            "user",
+            "--workspace",
+            &explicit_workspace_arg,
+        ],
+    );
+    assert!(
+        explicit_activate_output.status.success(),
+        "explicit-workspace Gemini activation failed: {explicit_activate_env}"
+    );
+    assert_eq!(
+        explicit_activate_env["data"]["target"]["path"],
+        json!(explicit_redirected_home.path().join(".gemini/skills"))
+    );
 }
 
 #[test]

@@ -5,7 +5,7 @@ mod planning_helpers;
 use serde_json::{Value, json};
 
 use super::codex_reconcile_plan::plan_agent_reconcile;
-use super::codex_visibility::{CODEX_AGENT, CodexReconcileRequest};
+use super::codex_visibility::CodexReconcileRequest;
 use super::helpers::{
     agent_kind_as_str, map_arg, map_git, map_io, projection_method_as_str, shell_arg,
     validate_skill_name,
@@ -661,18 +661,22 @@ fn reconcile_visibility_unsupported_check(
     }
     Ok(Some(visibility_unsupported_check(
         agent,
-        format!(
-            "agent adapter '{}' does not expose visibility metadata",
-            agent
-        ),
+        if adapter.fidelity.is_verified() {
+            format!(
+                "agent adapter '{}' does not expose visibility metadata",
+                agent
+            )
+        } else {
+            format!(
+                "agent adapter '{}' has generic fidelity and does not expose verified visibility metadata",
+                agent
+            )
+        },
     )))
 }
 
 fn reconcile_adapter_supports_visibility(adapter: &AgentAdapter) -> bool {
-    if adapter.source == "built-in" {
-        return matches!(adapter.id.as_str(), CODEX_AGENT | "claude");
-    }
-    adapter.adapter_api == "2" && !adapter.visibility.identity_by_projection_method.is_empty()
+    adapter.has_verified_visibility_metadata()
 }
 
 fn visibility_unsupported_check(agent: &str, message: String) -> Value {

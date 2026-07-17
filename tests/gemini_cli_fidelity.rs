@@ -610,7 +610,7 @@ fn untrusted_dotenv_home_cannot_redirect_roots_settings_or_trust() {
 }
 
 #[test]
-fn visibility_uses_cwd_secure_trust_bootstrap_and_gemini_frontmatter_fallback() {
+fn visibility_uses_cwd_secure_trust_bootstrap_and_valid_gemini_frontmatter() {
     let root = TestDir::new("gemini-visibility-root");
     let home = TestDir::new("gemini-visibility-home");
     let workspace = TestDir::new("gemini-visibility-workspace");
@@ -718,7 +718,7 @@ fn visibility_uses_cwd_secure_trust_bootstrap_and_gemini_frontmatter_fallback() 
                 .as_str()
                 .is_some_and(|id| id.starts_with("gemini-cli_frontmatter_valid:"))
                 && candidate["ok"] == true),
-        "Gemini's multiline description fallback must remain visible"
+        "Gemini's multiline description must remain visible"
     );
 
     write_file(
@@ -745,7 +745,34 @@ fn visibility_uses_cwd_secure_trust_bootstrap_and_gemini_frontmatter_fallback() 
                 .as_str()
                 .is_some_and(|id| id.starts_with("gemini-cli_frontmatter_valid:"))
                 && candidate["ok"] == false),
-        "unclosed frontmatter must not pass Gemini fallback"
+        "unclosed frontmatter must not pass Gemini validation"
+    );
+
+    write_file(
+        &root.path().join("skills/demo/SKILL.md"),
+        "---\nname: demo\ndescription: reviewing code\nbroken: [\n---\n# Demo\n",
+    );
+    let (malformed_output, malformed_envelope) = run(
+        root.path(),
+        home.path(),
+        workspace.path(),
+        &trust_workspace,
+        &["skill", "visibility", "demo", "--agent", "gemini-cli"],
+    );
+    assert!(
+        malformed_output.status.success(),
+        "malformed report failed: {malformed_envelope}"
+    );
+    assert!(
+        malformed_envelope["data"]["checks"]
+            .as_array()
+            .expect("checks")
+            .iter()
+            .any(|candidate| candidate["id"]
+                .as_str()
+                .is_some_and(|id| id.starts_with("gemini-cli_frontmatter_valid:"))
+                && candidate["ok"] == false),
+        "malformed YAML frontmatter must fail Gemini validation"
     );
 }
 

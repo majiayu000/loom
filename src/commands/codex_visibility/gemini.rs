@@ -90,20 +90,20 @@ pub(super) fn add_frontmatter_check(
     target_id: &str,
     checks: &mut Vec<CodexVisibilityCheck>,
 ) -> bool {
-    let strict_valid = parse_skill_frontmatter(entrypoint).is_ok_and(|parsed| {
-        parsed.schema_issues.is_empty()
-            && parsed
-                .frontmatter
-                .name
-                .as_deref()
-                .is_some_and(|name| sanitize_name(name) == skill)
+    let parsed = parse_skill_frontmatter(entrypoint);
+    let strict_valid = parsed.as_ref().is_ok_and(|parsed| {
+        parsed
+            .frontmatter
+            .name
+            .as_deref()
+            .is_some_and(|name| sanitize_name(name) == skill)
             && parsed
                 .frontmatter
                 .description
                 .as_deref()
                 .is_some_and(|description| !description.is_empty())
     });
-    let valid = strict_valid || simple_frontmatter_valid(entrypoint, skill);
+    let valid = strict_valid || (parsed.is_ok() && simple_frontmatter_valid(entrypoint, skill));
     checks.push(check(
         &format!("gemini-cli_frontmatter_valid:{target_id}"),
         valid,

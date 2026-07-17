@@ -505,6 +505,48 @@ fn skillset_activate_dry_run_ready_ignores_optional_missing_members() {
 }
 
 #[test]
+fn skillset_activate_dry_run_skips_optional_member_activation_failure() {
+    let root = TestDir::new("skillset-activate-optional-failure");
+    write_fixture_skill(
+        &root,
+        "optional-flow",
+        "Use when testing optional activation failures.",
+    );
+    let (output, env) = run_loom(root.path(), &["skillset", "create", "bundle"]);
+    assert!(output.status.success(), "create should pass: {env}");
+    let (output, env) = run_loom(
+        root.path(),
+        &["skillset", "add", "bundle", "optional-flow", "--optional"],
+    );
+    assert!(output.status.success(), "add optional should pass: {env}");
+
+    let (output, env) = run_loom(
+        root.path(),
+        &[
+            "skillset",
+            "activate",
+            "bundle",
+            "--agent",
+            "unsupported-agent",
+            "--dry-run",
+        ],
+    );
+    assert!(
+        output.status.success(),
+        "optional failure should be skipped: {env}"
+    );
+    assert_eq!(env["data"]["summary"]["optional_blocked"], json!(1));
+    assert_eq!(
+        env["data"]["activation_plan"][0]["status"],
+        json!("skipped")
+    );
+    assert_eq!(
+        env["data"]["activation_plan"][0]["next_actions"][0],
+        json!("loom skill inspect optional-flow")
+    );
+}
+
+#[test]
 fn skillset_deactivate_preflights_non_symlink_members_before_mutating() {
     let root = TestDir::new("skillset-deactivate-copy-preflight");
     let home = TestDir::new("skillset-deactivate-copy-preflight-home");
@@ -650,6 +692,10 @@ fn skillset_eval_optional_failures_do_not_fail_bundle() {
         r#"{"id":"optional-task","task":"Run optional eval","output":"Optional miss","trace":["read context"],"checks":{"outcome_contains":["Expected"],"process_contains":["context"]}}
 "#,
     );
+    write_file(
+        &root.path().join("skillsets/bundle/evals/tasks.jsonl"),
+        "{}\n",
+    );
 
     let (output, env) = run_loom(root.path(), &["skillset", "create", "bundle"]);
     assert!(output.status.success(), "create should pass: {env}");
@@ -686,6 +732,7 @@ fn skillset_eval_optional_failures_do_not_fail_bundle() {
         .expect("optional member report");
     assert_eq!(optional["required"], json!(false));
     assert_eq!(optional["status"], json!("failed"));
+    assert_eq!(env["data"]["end_to_end"]["status"], json!("deferred"));
 }
 
 #[test]

@@ -1,6 +1,7 @@
 use serde_json::{Value, json};
 
 use crate::cli::AgentKind;
+use crate::next_action_trace::observe_next_actions;
 
 use super::super::skill_deps::SkillDependencyReport;
 
@@ -39,7 +40,10 @@ pub(super) fn add_dependency_checks(
         "run loom skill deps and resolve dependency next actions",
         json!({
             "status": dependencies.status,
-            "next_actions": next_actions
+            "next_actions": observe_next_actions(
+                "skill.diagnose.dependencies",
+                next_actions,
+            )
         }),
     ));
     for finding in &dependencies.findings {

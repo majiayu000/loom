@@ -7,6 +7,7 @@ use crate::commands::skill_eval::build_skill_eval_offline_report;
 use crate::commands::skillset_cmds::{load_skillsets, validate_skillset_id};
 use crate::commands::{App, CommandFailure};
 use crate::envelope::Meta;
+use crate::next_action_trace::observe_next_actions;
 use crate::state::AppContext;
 use crate::types::ErrorCode;
 
@@ -172,9 +173,10 @@ fn skillset_end_to_end_status(ctx: &AppContext, name: &str) -> Value {
         "status": "deferred",
         "eval_root": evals_dir.display().to_string(),
         "reason": "skillset end-to-end eval fixtures are detected but this command currently aggregates member evals only",
-        "next_actions": [
-            "track a follow-up runner for skillsets/<name>/evals/"
-        ],
+        "next_actions": observe_next_actions(
+            "skillset.eval.deferred",
+            ["track a follow-up runner for skillsets/<name>/evals/"],
+        ),
     })
 }
 

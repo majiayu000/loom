@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::Path;
 
-use serde_json::Value;
+use serde_json::{Value, json};
 
 mod common;
 
@@ -686,6 +686,46 @@ fn skill_deactivate_wrong_symlink_emits_contextual_projection_action() {
     assert_eq!(
         env["error"]["next_actions"][0]["cmd"],
         Value::String("loom --json skill inspect -- 'demo'".to_string())
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn skill_deactivate_refuses_directory_replacing_managed_symlink() {
+    let root = TestDir::new("skill-deactivate-directory-replacement");
+    let home = TestDir::new("skill-deactivate-directory-replacement-home");
+    write_good_skill(root.path(), "demo");
+    let (activate_output, activate_env) = run_with_home(
+        root.path(),
+        home.path(),
+        &["skill", "activate", "demo", "--agent", "codex"],
+    );
+    assert!(
+        activate_output.status.success(),
+        "activation failed: {activate_env}"
+    );
+
+    let projected = home.path().join(".agents/skills/demo");
+    fs::remove_file(&projected).expect("remove managed projection symlink");
+    fs::create_dir(&projected).expect("replace projection with a directory");
+    let (output, env) = run_with_home(
+        root.path(),
+        home.path(),
+        &["skill", "deactivate", "demo", "--agent", "codex"],
+    );
+
+    assert!(
+        !output.status.success(),
+        "directory replacement must fail: {env}"
+    );
+    assert_eq!(env["error"]["code"], json!("POLICY_BLOCKED"));
+    assert_eq!(
+        env["error"]["next_actions"][0]["cmd"],
+        json!("loom --json skill inspect -- 'demo'")
+    );
+    assert!(
+        projected.is_dir(),
+        "failed deactivation must preserve the directory"
     );
 }
 

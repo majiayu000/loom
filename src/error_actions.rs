@@ -1,5 +1,7 @@
 use serde::Serialize;
 
+use crate::next_action_trace::observe_next_actions;
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct NextAction {
     pub cmd: String,
@@ -17,34 +19,55 @@ impl NextAction {
 
 pub(crate) fn default_next_actions(code: &str) -> Vec<NextAction> {
     match code {
-        "BINDING_NOT_FOUND" => vec![NextAction::new(
-            "loom workspace binding list --json",
-            "list existing bindings to find a valid binding_id",
-        )],
-        "TARGET_NOT_FOUND" => vec![NextAction::new(
-            "loom target list --json",
-            "list registered targets to find a valid target_id",
-        )],
-        "SKILL_NOT_FOUND" => vec![NextAction::new(
-            "loom skill list --json",
-            "list available skills to find a valid skill name",
-        )],
-        "STATE_NOT_INITIALIZED" => vec![NextAction::new(
-            "loom workspace init --json",
-            "initialize registry state before running registry commands",
-        )],
-        "TARGET_NOT_MANAGED" => vec![NextAction::new(
-            "loom target list --json",
-            "inspect target ownership before writing projections",
-        )],
-        "LOCK_BUSY" => vec![NextAction::new(
-            "loom ops list --json",
-            "inspect active or queued operations before retrying",
-        )],
-        "REMOTE_UNREACHABLE" | "REMOTE_DIVERGED" | "PUSH_REJECTED" => vec![NextAction::new(
-            "loom sync status --json",
-            "inspect remote synchronization state before retrying",
-        )],
+        "BINDING_NOT_FOUND" => observe_next_actions(
+            "error.binding_not_found",
+            vec![NextAction::new(
+                "loom workspace binding list --json",
+                "list existing bindings to find a valid binding_id",
+            )],
+        ),
+        "TARGET_NOT_FOUND" => observe_next_actions(
+            "error.target_not_found",
+            vec![NextAction::new(
+                "loom target list --json",
+                "list registered targets to find a valid target_id",
+            )],
+        ),
+        "SKILL_NOT_FOUND" => observe_next_actions(
+            "error.skill_not_found",
+            vec![NextAction::new(
+                "loom skill list --json",
+                "list available skills to find a valid skill name",
+            )],
+        ),
+        "STATE_NOT_INITIALIZED" => observe_next_actions(
+            "error.state_not_initialized",
+            vec![NextAction::new(
+                "loom workspace init --json",
+                "initialize registry state before running registry commands",
+            )],
+        ),
+        "TARGET_NOT_MANAGED" => observe_next_actions(
+            "error.target_not_managed",
+            vec![NextAction::new(
+                "loom target list --json",
+                "inspect target ownership before writing projections",
+            )],
+        ),
+        "LOCK_BUSY" => observe_next_actions(
+            "error.lock_busy",
+            vec![NextAction::new(
+                "loom ops list --json",
+                "inspect active or queued operations before retrying",
+            )],
+        ),
+        "REMOTE_UNREACHABLE" | "REMOTE_DIVERGED" | "PUSH_REJECTED" => observe_next_actions(
+            "error.remote_sync",
+            vec![NextAction::new(
+                "loom sync status --json",
+                "inspect remote synchronization state before retrying",
+            )],
+        ),
         _ => Vec::new(),
     }
 }

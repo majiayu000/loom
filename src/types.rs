@@ -37,8 +37,7 @@ pub enum ErrorCode {
 }
 
 impl ErrorCode {
-    #[cfg(test)]
-    pub const ALL: [Self; 30] = [
+    pub(crate) const ALL: [Self; 30] = [
         Self::ArgInvalid,
         Self::InitError,
         Self::DependencyConflict,

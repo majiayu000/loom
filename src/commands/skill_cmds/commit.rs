@@ -1,6 +1,7 @@
 use tar::Archive;
 
 use crate::error_actions::NextAction;
+use crate::next_action_trace::observe_next_actions;
 
 use super::shared::*;
 use super::*;
@@ -50,7 +51,8 @@ impl App {
                     projection.instance_id
                 ),
             }));
-            failure.next_actions = next_actions;
+            failure.next_actions =
+                observe_next_actions("skill.commit.direction_ambiguous", next_actions);
             return Err(failure);
         }
         if source_dirty {

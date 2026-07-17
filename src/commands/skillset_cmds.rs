@@ -9,6 +9,7 @@ use serde_json::{Value, json};
 use crate::cli::{SkillsetAddArgs, SkillsetCreateArgs, SkillsetMemberArgs, SkillsetShowArgs};
 use crate::envelope::Meta;
 use crate::fs_util::write_atomic;
+use crate::next_action_trace::observe_next_actions;
 use crate::state::AppContext;
 use crate::state_model::REGISTRY_SCHEMA_VERSION;
 use crate::types::ErrorCode;
@@ -126,10 +127,13 @@ impl App {
                 "skillset": render_skillset(skillset, None),
                 "path": paths.registry_dir.join("skillsets.json"),
                 "commit": commit,
-                "next_actions": [
-                    format!("loom skillset add {} <skill>", args.name),
-                    format!("loom skillset lint {}", args.name)
-                ],
+                "next_actions": observe_next_actions(
+                    "skillset.create.applied",
+                    [
+                        format!("loom skillset add {} <skill>", args.name),
+                        format!("loom skillset lint {}", args.name)
+                    ],
+                ),
             }),
             Meta::default(),
         ))

@@ -3,6 +3,8 @@ use std::path::Path;
 
 use serde_json::{Value, json};
 
+use crate::next_action_trace::observe_next_actions;
+
 use crate::state_model::{
     RegistryOperationRecord, RegistryProjectionInstance, RegistrySnapshot, RegistryStatePaths,
 };
@@ -25,7 +27,10 @@ pub(crate) fn rollback_noop_projection_reconciliation() -> Value {
         "status": "noop",
         "mode": "recovery_plan_only",
         "items": [],
-        "next_actions": [],
+        "next_actions": observe_next_actions(
+            "rollback.reconciliation.noop",
+            Vec::<String>::new(),
+        ),
         "requires_projection_reapply": false,
         "live_projection_reconciled": true,
         "error": Value::Null
@@ -71,10 +76,13 @@ fn rollback_projection_registry_missing(
             "status": "registry_missing",
             "mode": "recovery_plan_only",
             "items": [],
-            "next_actions": [{
-                "type": "manual_review_required",
-                "reason": "registry state is missing; inspect live agent skill directories before assuming rollback updated projected content"
-            }],
+            "next_actions": observe_next_actions(
+                "rollback.reconciliation.registry_missing",
+                json!([{
+                    "type": "manual_review_required",
+                    "reason": "registry state is missing; inspect live agent skill directories before assuming rollback updated projected content"
+                }]),
+            ),
             "requires_projection_reapply": false,
             "live_projection_reconciled": false,
             "error": Value::Null
@@ -92,10 +100,13 @@ fn rollback_projection_registry_unavailable(message: String) -> (Value, Vec<Stri
             "status": "registry_unavailable",
             "mode": "recovery_plan_only",
             "items": [],
-            "next_actions": [{
-                "type": "manual_review_required",
-                "reason": "registry snapshot could not be loaded; inspect live agent skill directories before assuming rollback updated projected content"
-            }],
+            "next_actions": observe_next_actions(
+                "rollback.reconciliation.registry_unavailable",
+                json!([{
+                    "type": "manual_review_required",
+                    "reason": "registry snapshot could not be loaded; inspect live agent skill directories before assuming rollback updated projected content"
+                }]),
+            ),
             "requires_projection_reapply": false,
             "live_projection_reconciled": false,
             "error": {
@@ -152,7 +163,10 @@ fn rollback_projection_reconciliation_from_snapshot(
             "status": status,
             "mode": "recovery_plan_only",
             "items": items,
-            "next_actions": next_actions,
+            "next_actions": observe_next_actions(
+                "rollback.reconciliation.snapshot",
+                next_actions,
+            ),
             "requires_projection_reapply": requires_projection_reapply,
             "live_projection_reconciled": !requires_projection_reapply,
             "error": Value::Null

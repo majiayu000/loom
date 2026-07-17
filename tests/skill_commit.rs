@@ -20,6 +20,15 @@ fn project_copy(root: &TestDir, skill: &str) -> std::path::PathBuf {
 }
 
 fn project_copy_named(root: &TestDir, skill: &str, suffix: &str) -> (std::path::PathBuf, String) {
+    project_named(root, skill, suffix, "copy")
+}
+
+fn project_named(
+    root: &TestDir,
+    skill: &str,
+    suffix: &str,
+    method: &str,
+) -> (std::path::PathBuf, String) {
     let target_path = root.path().join(format!("live/claude-{suffix}"));
     let (target_output, target_env) = target_add(root.path(), "claude", &target_path, "managed");
     assert_success(&target_output, "target add");
@@ -38,13 +47,47 @@ fn project_copy_named(root: &TestDir, skill: &str, suffix: &str) -> (std::path::
     let binding_id = binding_env["data"]["binding"]["binding_id"]
         .as_str()
         .expect("binding id");
-    let (project_output, project_env) = skill_project(root.path(), skill, binding_id, Some("copy"));
+    let (project_output, project_env) = skill_project(root.path(), skill, binding_id, Some(method));
     assert_success(&project_output, "skill project");
     let instance_id = project_env["data"]["projection"]["instance_id"]
         .as_str()
         .expect("instance id")
         .to_string();
     (target_path.join(skill), instance_id)
+}
+
+#[cfg(unix)]
+#[test]
+fn source_commit_ignores_unselected_broken_symlink_projection() {
+    use std::os::unix::fs::symlink;
+
+    let root = TestDir::new("skill-commit-source-broken-symlink");
+    write_skill(root.path(), "demo", "# demo\n\nsource v1\n");
+    assert_success(&save_skill(root.path(), "demo").0, "initial source commit");
+    let (live, instance) = project_named(&root, "demo", "symlink", "symlink");
+    fs::remove_file(&live).expect("remove managed symlink");
+    let wrong = root.path().join("wrong-skill");
+    fs::create_dir_all(&wrong).expect("create wrong target");
+    symlink(&wrong, &live).expect("create mismatched symlink");
+    write_skill(root.path(), "demo", "# demo\n\nsource v2\n");
+
+    let (output, env) = run_loom(root.path(), &["skill", "commit", "demo"]);
+    assert_success(&output, "source commit with unrelated symlink drift");
+    assert_eq!(
+        env["data"]["direction"],
+        Value::String("source".to_string())
+    );
+
+    write_skill(root.path(), "demo", "# demo\n\nsource v3\n");
+    let (output, env) = run_loom(
+        root.path(),
+        &["skill", "commit", "demo", "--instance", &instance],
+    );
+    assert_success(&output, "selected auto source commit with symlink drift");
+    assert_eq!(
+        env["data"]["direction"],
+        Value::String("source".to_string())
+    );
 }
 
 #[test]

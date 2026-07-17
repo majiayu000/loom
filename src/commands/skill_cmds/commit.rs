@@ -170,6 +170,11 @@ fn dirty_projection_candidates(
             }
             crate::core::convergence::ProjectionInputState::Unreadable
             | crate::core::convergence::ProjectionInputState::MetadataMismatch => {
+                if projection.method == crate::core::vocab::ProjectionMethod::Symlink
+                    && !args.from_projection
+                {
+                    continue;
+                }
                 return Err(CommandFailure::new(
                     ErrorCode::IoError,
                     format!(

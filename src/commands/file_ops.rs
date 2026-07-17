@@ -198,12 +198,30 @@ pub(crate) fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<()> {
 }
 
 pub(crate) fn copy_dir_recursive_preserving_symlinks(src: &Path, dst: &Path) -> Result<()> {
+    copy_dir_recursive_preserving_symlinks_impl(src, dst, false)
+}
+
+pub(crate) fn copy_skill_tree_preserving_symlinks(src: &Path, dst: &Path) -> Result<()> {
+    copy_dir_recursive_preserving_symlinks_impl(src, dst, true)
+}
+
+fn copy_dir_recursive_preserving_symlinks_impl(
+    src: &Path,
+    dst: &Path,
+    exclude_git: bool,
+) -> Result<()> {
     if !src.exists() {
         return Err(anyhow!("source does not exist: {}", src.display()));
     }
     fs::create_dir_all(dst).with_context(|| format!("failed to create {}", dst.display()))?;
 
-    for entry in WalkDir::new(src).follow_links(false).into_iter() {
+    for entry in WalkDir::new(src)
+        .follow_links(false)
+        .into_iter()
+        .filter_entry(|entry| {
+            !exclude_git || entry.path() == src || entry.file_name() != OsStr::new(".git")
+        })
+    {
         let entry = entry.with_context(|| format!("failed to walk {}", src.display()))?;
         let rel = entry.path().strip_prefix(src)?;
         if rel.as_os_str().is_empty() {

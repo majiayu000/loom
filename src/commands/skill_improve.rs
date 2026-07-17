@@ -13,7 +13,7 @@ use crate::gitops;
 use crate::state::AppContext;
 use crate::types::ErrorCode;
 
-use super::file_ops::copy_dir_recursive_without_symlinks;
+use super::file_ops::{copy_dir_recursive_without_symlinks, copy_skill_tree_preserving_symlinks};
 use super::helpers::{ensure_skill_exists, map_arg, map_git, map_io, validate_skill_name};
 use super::skill_deps::skill_dependency_report;
 use super::skill_eval::build_skill_eval_offline_report;
@@ -21,6 +21,7 @@ use super::skill_lint::{SkillLintMode, lint_skill_source, lint_skill_source_for_
 use super::skill_policy::{SkillPolicyReport, evaluate_skill_policy};
 use super::skill_safety::evaluate_skill_safety;
 use super::{App, CommandFailure};
+use super::{projections::ensure_projection_symlinks_contained, provenance};
 
 mod evidence;
 
@@ -182,14 +183,16 @@ impl App {
     pub(crate) fn convergence_preflight_evidence(
         &self,
         skill: &str,
+        agent: Option<&str>,
+        workspace: Option<&Path>,
         direction: ConvergenceInputDirection,
         input_tree_digest: &str,
         candidate_path: Option<&Path>,
     ) -> std::result::Result<ConvergencePreflightEvidence, CommandFailure> {
         let report = self.skill_preflight_report(PreflightRequest {
             skill,
-            agent: None,
-            workspace: None,
+            agent,
+            workspace,
             baseline: "HEAD",
             target: "working-tree",
             real_eval: false,
@@ -239,6 +242,7 @@ impl App {
                 &self.ctx,
                 request.skill,
                 candidate_path,
+                true,
             )?)
         } else {
             materialize_target_context(&self.ctx, request.skill, request.target)?
@@ -534,6 +538,7 @@ fn materialize_candidate_context(
     ctx: &AppContext,
     skill: &str,
     candidate_path: &Path,
+    preserve_symlinks: bool,
 ) -> std::result::Result<MaterializedTarget, CommandFailure> {
     let root = std::env::temp_dir().join(format!(
         "loom-preflight-candidate-{}",
@@ -541,8 +546,14 @@ fn materialize_candidate_context(
     ));
     fs::create_dir_all(root.join("skills")).map_err(map_io)?;
     let prepared = (|| {
-        copy_dir_recursive_without_symlinks(candidate_path, &root.join("skills").join(skill))
-            .map_err(map_io)?;
+        if preserve_symlinks {
+            ensure_projection_symlinks_contained(candidate_path, true).map_err(map_io)?;
+            copy_skill_tree_preserving_symlinks(candidate_path, &root.join("skills").join(skill))
+                .map_err(map_io)?;
+        } else {
+            copy_dir_recursive_without_symlinks(candidate_path, &root.join("skills").join(skill))
+                .map_err(map_io)?;
+        }
         for rel in [
             "state/registry/trust.json",
             "state/registry/sources.json",
@@ -600,14 +611,37 @@ pub(crate) fn prepare_convergence_skill_input(
     ctx: &AppContext,
     skill: &str,
     candidate_path: Option<&Path>,
+    candidate_method: Option<&str>,
+    expected_digest: &str,
 ) -> std::result::Result<PreparedConvergenceInput, CommandFailure> {
     let materialized = candidate_path
-        .map(|path| materialize_candidate_context(ctx, skill, path))
+        .map(|path| {
+            materialize_candidate_context(ctx, skill, path, candidate_method == Some("copy"))
+        })
         .transpose()?;
     let policy_ctx = materialized
         .as_ref()
         .map(|target| &target.ctx)
         .unwrap_or(ctx);
+    if let Some(method) = candidate_method {
+        let snapshot_digest = match method {
+            "copy" => provenance::skill_tree_digest(&policy_ctx.skill_path(skill)),
+            "materialize" => provenance::materialized_tree_digest(&policy_ctx.skill_path(skill)),
+            _ => unreachable!("projection input method was validated before materialization"),
+        }
+        .map_err(map_io)?;
+        if snapshot_digest != expected_digest {
+            let mut failure = CommandFailure::new(
+                ErrorCode::ProjectionConflict,
+                "projection input changed while its planning snapshot was prepared",
+            );
+            failure.details = json!({
+                "observed_tree_digest": expected_digest,
+                "snapshot_tree_digest": snapshot_digest,
+            });
+            return Err(failure);
+        }
+    }
     let policy = evaluate_skill_policy(policy_ctx, skill, "safe-capture")?;
     Ok(PreparedConvergenceInput {
         policy,

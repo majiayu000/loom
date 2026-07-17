@@ -43,6 +43,25 @@ pub(crate) fn source_dirty_paths(
     Ok(paths)
 }
 
+pub(crate) fn source_changed_since_revision(
+    ctx: &AppContext,
+    skill: &str,
+    revision: &str,
+) -> std::result::Result<bool, CommandFailure> {
+    let path = format!("skills/{skill}");
+    let output =
+        gitops::run_git_allow_failure(ctx, &["diff", "--quiet", revision, "HEAD", "--", &path])
+            .map_err(map_git)?;
+    match output.status.code() {
+        Some(0) => Ok(false),
+        Some(1) => Ok(true),
+        _ => Err(CommandFailure::new(
+            crate::types::ErrorCode::GitError,
+            format!("failed to compare skill '{skill}' with projection baseline '{revision}'"),
+        )),
+    }
+}
+
 pub(crate) fn projection_input_evidence(
     ctx: &AppContext,
     projection: &RegistryProjectionInstance,

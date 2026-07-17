@@ -19,7 +19,9 @@ use crate::state_model::{RegistryProjectionInstance, RegistrySnapshot, RegistryS
 use crate::types::ErrorCode;
 
 use super::super::agent_cmds::planning_helpers::{normalize_path, workspace_matches};
-use super::super::convergence_input::{projection_input_evidence, source_dirty_paths};
+use super::super::convergence_input::{
+    projection_input_evidence, source_changed_since_revision, source_dirty_paths,
+};
 use super::super::helpers::{
     map_arg, map_git, map_io, map_registry_state, projection_instance_id, validate_skill_name,
 };
@@ -67,19 +69,49 @@ impl App {
         };
         let (selected_input_tree_digest, candidate_path) =
             selected_input(args, &projection_evidence, &source_digest)?;
-        let prepared_input =
-            prepare_convergence_skill_input(&self.ctx, &args.skill, candidate_path.as_deref())?;
+        let candidate_method = args.instance.as_deref().and_then(|instance| {
+            projection_evidence
+                .iter()
+                .find(|item| item.instance_id == instance)
+                .map(|item| item.method.as_str())
+        });
+        let prepared_input = prepare_convergence_skill_input(
+            &self.ctx,
+            &args.skill,
+            candidate_path.as_deref(),
+            candidate_path.as_ref().and(candidate_method),
+            &selected_input_tree_digest,
+        )?;
         let policy = prepared_input.policy();
         let approvals = required_approvals(policy);
         let preflight_candidate = prepared_input.candidate_path(&args.skill);
         let preflight = self.convergence_preflight_evidence(
             &args.skill,
+            args.agent.map(|agent| agent.as_str()),
+            workspace.as_deref(),
             direction.clone(),
             &selected_input_tree_digest,
             preflight_candidate.as_deref(),
         )?;
-        let input_conflicts =
-            resolve_input_conflicts(&source_dirty_paths, &projection_evidence, &preflight);
+        let selected_source_drift = if direction == ConvergenceInputDirection::Projection {
+            projection_evidence
+                .iter()
+                .find(|item| item.instance_id == args.instance.as_deref().unwrap_or_default())
+                .and_then(|item| item.baseline_revision.as_deref())
+                .map(|revision| source_changed_since_revision(&self.ctx, &args.skill, revision))
+                .transpose()?
+                .unwrap_or(false)
+        } else {
+            false
+        };
+        let input_conflicts = resolve_input_conflicts(
+            &source_dirty_paths,
+            &projection_evidence,
+            &preflight,
+            &direction,
+            args.instance.as_deref(),
+            selected_source_drift,
+        );
         let visibility = projections
             .iter()
             .map(|effect| VisibilityRequirement {
@@ -212,15 +244,24 @@ fn resolve_projection_input_evidence(
                     .iter()
                     .find(|record| record.instance_id == effect.instance_id)
             }) else {
+                let unmanaged_live_digest = effect.materialized_tree_digest.clone();
                 return Ok(ProjectionInputEvidence {
                     instance_id: effect.instance_id.clone(),
                     method: effect.method.clone(),
                     materialized_path: effect.materialized_path.clone(),
                     baseline_revision: None,
                     baseline_tree_digest: None,
-                    live_tree_digest: None,
-                    state: ProjectionInputState::Untracked,
-                    issue: Some("projection_record_missing".to_string()),
+                    live_tree_digest: unmanaged_live_digest.clone(),
+                    state: if unmanaged_live_digest.is_some() {
+                        ProjectionInputState::MetadataMismatch
+                    } else {
+                        ProjectionInputState::Untracked
+                    },
+                    issue: Some(if unmanaged_live_digest.is_some() {
+                        "unmanaged_live_path_without_projection_record".to_string()
+                    } else {
+                        "projection_record_missing".to_string()
+                    }),
                 });
             };
             if record.method.as_str() != effect.method
@@ -296,6 +337,9 @@ fn resolve_input_conflicts(
     source_dirty_paths: &[String],
     projections: &[ProjectionInputEvidence],
     preflight: &crate::core::convergence::ConvergencePreflightEvidence,
+    direction: &ConvergenceInputDirection,
+    selected_instance: Option<&str>,
+    selected_source_drift: bool,
 ) -> Vec<ConvergenceInputConflict> {
     let dirty = projections
         .iter()
@@ -321,6 +365,25 @@ fn resolve_input_conflicts(
             code: "DIVERGENT_PROJECTION_INPUTS".to_string(),
             message: "dirty projections contain divergent content".to_string(),
             evidence: json!({ "dirty_projections": dirty }),
+        });
+    }
+    if dirty.len() > 1 && selected_instance.is_none() {
+        conflicts.push(ConvergenceInputConflict {
+            code: "MULTIPLE_DIRTY_PROJECTION_INPUTS".to_string(),
+            message: "multiple dirty projections require an explicit instance selection"
+                .to_string(),
+            evidence: json!({ "dirty_projections": dirty }),
+        });
+    }
+    if *direction == ConvergenceInputDirection::Projection && selected_source_drift {
+        let selected = selected_instance
+            .and_then(|instance| projections.iter().find(|item| item.instance_id == instance));
+        conflicts.push(ConvergenceInputConflict {
+            code: "STALE_PROJECTION_INPUT".to_string(),
+            message: "selected projection baseline does not match the canonical source".to_string(),
+            evidence: json!({
+                "projection": selected,
+            }),
         });
     }
     for projection in projections

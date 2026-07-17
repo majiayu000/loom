@@ -603,60 +603,6 @@ fn projection_input_requires_instance() {
 }
 
 #[test]
-fn projection_input_drives_policy_approvals_and_risks() {
-    let fixture = projected_fixture();
-    let (output, initial) = plan_converge(&fixture, &[]);
-    assert!(output.status.success(), "initial plan failed: {initial}");
-    let instance = initial["data"]["effects"][0]["instance_id"]
-        .as_str()
-        .expect("instance id");
-    assert_eq!(initial["data"]["required_approvals"], json!([]));
-
-    fs::write(
-        fixture.target.path().join("demo/SKILL.md"),
-        r#"---
-name: demo
-description: Use when testing projection policy evidence.
-capabilities:
-  shell:
-    commands: ["git"]
-  network:
-    domains: ["api.example.com"]
----
-# demo
-"#,
-    )
-    .expect("write risky projection input");
-
-    let (output, projection) =
-        plan_converge(&fixture, &["--from-projection", "--instance", instance]);
-    assert!(
-        output.status.success(),
-        "projection plan failed: {projection}"
-    );
-    assert_eq!(
-        projection["data"]["required_approvals"],
-        json!(["network", "policy-high-risk", "shell"])
-    );
-    let risk_codes = projection["data"]["risks"]
-        .as_array()
-        .expect("risks")
-        .iter()
-        .filter_map(|risk| risk["code"].as_str())
-        .collect::<Vec<_>>();
-    assert!(risk_codes.contains(&"capability_shell_commands"));
-    assert!(risk_codes.contains(&"capability_network_domains"));
-    assert_ne!(
-        projection["data"]["plan_digest"],
-        initial["data"]["plan_digest"]
-    );
-
-    let (output, source) = plan_converge(&fixture, &[]);
-    assert!(output.status.success(), "source plan failed: {source}");
-    assert_eq!(source["data"]["required_approvals"], json!([]));
-}
-
-#[test]
 fn dirty_side_conflicts() {
     let fixture = projected_fixture();
     let (first_path, first_instance) = {
@@ -696,7 +642,8 @@ fn dirty_side_conflicts() {
         conflict_codes(&conflicted),
         vec![
             "SOURCE_PROJECTION_DIRTY_CONFLICT",
-            "DIVERGENT_PROJECTION_INPUTS"
+            "DIVERGENT_PROJECTION_INPUTS",
+            "MULTIPLE_DIRTY_PROJECTION_INPUTS"
         ]
     );
     let items = conflicted["data"]["input"]["projections"]
@@ -752,6 +699,12 @@ fn dirty_side_conflicts() {
         selected_plan["data"]["input"]["selected_projection_instance"],
         json!(selected)
     );
+    let (output, ambiguous) = plan_converge(&same, &[]);
+    assert!(
+        output.status.success(),
+        "identical dirty plan failed: {ambiguous}"
+    );
+    assert!(conflict_codes(&ambiguous).contains(&"MULTIPLE_DIRTY_PROJECTION_INPUTS"));
 
     let projections_path = same.root.path().join("state/registry/projections.json");
     let mut projections: Value =

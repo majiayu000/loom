@@ -20,9 +20,7 @@ use super::skill_lint::frontmatter::parse_skill_frontmatter;
 use super::skill_lint::{SkillLintFinding, SkillLintSummary};
 use super::{App, CommandFailure};
 
-mod agent_metadata;
 pub(crate) mod support;
-use agent_metadata::read_agent_metadata;
 use support::{
     codex_mcp_configured, contains_word_token, find_executable_on_path, yaml_dependency_values,
 };
@@ -370,6 +368,41 @@ fn read_scripts(
         infer_from_text(&text, "scripts", declarations);
     }
     Ok(())
+}
+
+fn read_agent_metadata(
+    skill_path: &Path,
+    agent: Option<&str>,
+    declarations: &mut DependencyDeclarations,
+) {
+    let agents_dir = skill_path.join("agents");
+    if !agents_dir.is_dir() {
+        return;
+    }
+    let mut paths = Vec::new();
+    if let Some(agent) = agent {
+        paths.push(agents_dir.join(format!("{agent}.yaml")));
+        paths.push(agents_dir.join(format!("{agent}.yml")));
+    } else if let Ok(entries) = fs::read_dir(&agents_dir) {
+        paths.extend(entries.flatten().map(|entry| entry.path()));
+    }
+    for path in paths.into_iter().filter(|path| path.is_file()) {
+        let Ok(raw) = fs::read_to_string(&path) else {
+            continue;
+        };
+        declarations.sources.insert("agent metadata".to_string());
+        for (key, value) in yaml_dependency_values(&raw) {
+            match key.as_str() {
+                "requires_tools" => {
+                    add_csv_value(&value, "agent metadata", &mut declarations.tools)
+                }
+                "requires_mcp" => add_csv_value(&value, "agent metadata", &mut declarations.mcp),
+                "requires_env" => add_csv_value(&value, "agent metadata", &mut declarations.env),
+                "network" => set_network(value.trim(), "agent metadata", declarations),
+                _ => {}
+            }
+        }
+    }
 }
 
 fn probe_tool(

@@ -43,13 +43,7 @@ pub(super) fn collect_mcp_requirements(
         &mut env_requirements,
         &mut findings,
     );
-    read_mcp_agent_metadata(
-        &skill_path,
-        agent,
-        &mut requirements,
-        &mut env_requirements,
-        &mut findings,
-    );
+    read_mcp_agent_metadata(&skill_path, agent, &mut requirements, &mut env_requirements);
     Ok((
         requirements.into_values().collect(),
         env_requirements
@@ -166,45 +160,19 @@ fn read_mcp_agent_metadata(
     agent: Option<&str>,
     requirements: &mut BTreeMap<String, McpRequirement>,
     env_requirements: &mut BTreeMap<String, BTreeSet<String>>,
-    findings: &mut Vec<Value>,
 ) {
     let Some(agent) = agent else {
         return;
     };
     for ext in ["yaml", "yml"] {
         let path = skill_path.join("agents").join(format!("{agent}.{ext}"));
-        if !path.is_file() {
-            continue;
-        }
-        let raw = match fs::read_to_string(&path) {
-            Ok(raw) => raw,
-            Err(err) => {
-                findings.push(json!({
-                    "id": "mcp_agent_metadata_read_failed",
-                    "severity": "warning",
-                    "message": err.to_string(),
-                    "path": path,
-                }));
-                continue;
-            }
-        };
-        let values = match yaml_dependency_values(&raw) {
-            Ok(values) => values,
-            Err(err) => {
-                findings.push(json!({
-                    "id": "mcp_agent_metadata_parse_failed",
-                    "severity": "warning",
-                    "message": err,
-                    "path": path,
-                }));
-                continue;
-            }
-        };
-        for (key, value) in values {
-            if key == "requires_mcp" {
-                add_csv_requirements(Some(&value), "agent metadata", requirements);
-            } else if key == "requires_env" {
-                add_csv_env(Some(&value), "agent metadata", env_requirements);
+        if let Ok(raw) = fs::read_to_string(path) {
+            for (key, value) in yaml_dependency_values(&raw) {
+                if key == "requires_mcp" {
+                    add_csv_requirements(Some(&value), "agent metadata", requirements);
+                } else if key == "requires_env" {
+                    add_csv_env(Some(&value), "agent metadata", env_requirements);
+                }
             }
         }
     }

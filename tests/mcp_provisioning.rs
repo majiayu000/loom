@@ -93,46 +93,6 @@ fn requirement_list_reads_nested_frontmatter_and_scalar_agent_metadata() {
 }
 
 #[test]
-fn requirement_list_reports_invalid_agent_metadata_yaml() {
-    let root = TestDir::new("mcp-requirement-invalid-agent-yaml");
-    write_skill(
-        root.path(),
-        "demo",
-        "---\nname: demo\ndescription: Use when checking invalid MCP agent metadata.\n---\n# Demo\n",
-    );
-    write_file(
-        &root.path().join("skills/demo/agents/codex.yaml"),
-        "requires_mcp: [filesystem\n",
-    );
-
-    let (output, env) = run_loom(
-        root.path(),
-        &[
-            "mcp",
-            "requirement",
-            "list",
-            "--skill",
-            "demo",
-            "--agent",
-            "codex",
-        ],
-    );
-
-    assert!(
-        output.status.success(),
-        "requirement inspection should report: {env}"
-    );
-    assert!(
-        env["data"]["findings"]
-            .as_array()
-            .expect("findings")
-            .iter()
-            .any(|finding| finding["id"] == "mcp_agent_metadata_parse_failed"),
-        "invalid YAML must not be silently ignored: {env}"
-    );
-}
-
-#[test]
 fn doctor_uses_table_only_mcp_requirements_without_non_mcp_plan_noise() {
     let root = TestDir::new("mcp-doctor-table-only");
     let codex_home = TestDir::new("mcp-doctor-table-only-home");

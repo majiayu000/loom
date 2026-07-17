@@ -9,6 +9,7 @@ use super::{ImportedInvocation, ImportedRecord, ParseOutcome};
 #[derive(Debug, Default)]
 pub(super) struct Context {
     session_id: Option<String>,
+    session_workspace: Option<PathBuf>,
     workspace: Option<PathBuf>,
     turn_id: Option<String>,
     mentioned_skills: BTreeMap<String, usize>,
@@ -29,11 +30,15 @@ pub(super) fn parse_record(value: &Value, context: &mut Context) -> ParseOutcome
                 return ParseOutcome::Rejected("missing_session_identity");
             };
             context.session_id = Some(session_id.to_string());
-            update_workspace(context, payload);
+            context.session_workspace = payload
+                .get("cwd")
+                .and_then(Value::as_str)
+                .map(PathBuf::from);
+            context.workspace = context.session_workspace.clone();
             ParseOutcome::Ignored
         }
         Some("turn_context") => {
-            context.workspace = None;
+            context.workspace = context.session_workspace.clone();
             context.turn_id = None;
             context.mentioned_skills.clear();
             context.next_skill_ordinal = 0;
@@ -74,18 +79,17 @@ fn parse_response_item(value: &Value, context: &mut Context) -> ParseOutcome {
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
-    let mut name = None;
+    let mut names = Vec::new();
     for text in texts {
         if let Some(structured_name) = structured_skill_name(text) {
-            name = Some(structured_name);
-            break;
+            if take_mentioned_skill(&mut context.mentioned_skills, structured_name) {
+                names.push(structured_name);
+            }
+            continue;
         }
         collect_skill_mentions(text, &mut context.mentioned_skills);
     }
-    let Some(name) = name else {
-        return ParseOutcome::Ignored;
-    };
-    if !take_mentioned_skill(&mut context.mentioned_skills, name) {
+    if names.is_empty() {
         return ParseOutcome::Ignored;
     }
     let Some(stable_record_key) = context.turn_id.as_deref() else {
@@ -97,8 +101,8 @@ fn parse_response_item(value: &Value, context: &mut Context) -> ParseOutcome {
     let Some(timestamp) = parse_timestamp(value) else {
         return ParseOutcome::Rejected("invalid_timestamp");
     };
-    let ordinal = context.next_skill_ordinal;
-    let Some(next_skill_ordinal) = context.next_skill_ordinal.checked_add(1) else {
+    let first_ordinal = context.next_skill_ordinal;
+    let Some(next_skill_ordinal) = context.next_skill_ordinal.checked_add(names.len()) else {
         return ParseOutcome::Rejected("invocation_ordinal_overflow");
     };
     context.next_skill_ordinal = next_skill_ordinal;
@@ -107,11 +111,18 @@ fn parse_response_item(value: &Value, context: &mut Context) -> ParseOutcome {
         session_id: session_id.to_string(),
         workspace: context.workspace.clone(),
         timestamp,
-        invocations: vec![ImportedInvocation {
-            name: name.to_string(),
-            identity: format!("skill-injection-{ordinal}"),
-            ordinal,
-        }],
+        invocations: names
+            .into_iter()
+            .enumerate()
+            .map(|(offset, name)| {
+                let ordinal = first_ordinal + offset;
+                ImportedInvocation {
+                    name: name.to_string(),
+                    identity: format!("skill-injection-{ordinal}"),
+                    ordinal,
+                }
+            })
+            .collect(),
     })
 }
 
@@ -182,6 +193,8 @@ fn parse_timestamp(value: &Value) -> Option<DateTime<Utc>> {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use serde_json::json;
 
     use super::{Context, ParseOutcome, parse_record};
@@ -341,6 +354,38 @@ mod tests {
     }
 
     #[test]
+    fn same_item_collects_all_matched_injections_in_order() {
+        let mut context = Context::default();
+        for value in [
+            json!({"type":"session_meta","payload":{"id":"session"}}),
+            json!({"type":"turn_context","payload":{"turn_id":"turn-1"}}),
+        ] {
+            assert!(matches!(
+                parse_record(&value, &mut context),
+                ParseOutcome::Ignored
+            ));
+        }
+        let value = json!({
+            "timestamp":"2026-07-01T00:00:00Z",
+            "type":"response_item",
+            "payload":{"type":"message","role":"user","content":[
+                {"type":"input_text","text":"please use $foo and $bar"},
+                {"type":"input_text","text":"<skill><name>unmatched</name>body</skill>"},
+                {"type":"input_text","text":"<skill><name>foo</name>body</skill>"},
+                {"type":"input_text","text":"<skill><name>bar</name>body</skill>"}
+            ]}
+        });
+        let ParseOutcome::Record(record) = parse_record(&value, &mut context) else {
+            panic!("all matched injections in one item must parse");
+        };
+        assert_eq!(record.invocations.len(), 2);
+        assert_eq!(record.invocations[0].name, "foo");
+        assert_eq!(record.invocations[0].ordinal, 0);
+        assert_eq!(record.invocations[1].name, "bar");
+        assert_eq!(record.invocations[1].ordinal, 1);
+    }
+
+    #[test]
     fn free_text_is_not_an_invocation() {
         let mut context = Context::default();
         let value = json!({
@@ -389,15 +434,14 @@ mod tests {
     fn malformed_turn_context_clears_the_previous_turn() {
         let mut context = Context::default();
         for value in [
-            json!({"type":"session_meta","payload":{"id":"session","cwd":"/old"}}),
-            json!({"type":"turn_context","payload":{"turn_id":"turn-1","cwd":"/old"}}),
+            json!({"type":"session_meta","payload":{"id":"session","cwd":"/session"}}),
+            json!({"type":"turn_context","payload":{"turn_id":"turn-1","cwd":"/turn"}}),
             json!({
                 "type":"response_item",
                 "payload":{"type":"message","role":"user","content":[{
                     "type":"input_text","text":"please use $demo"
                 }]}
             }),
-            json!({"type":"turn_context"}),
         ] {
             assert!(matches!(
                 parse_record(&value, &mut context),
@@ -411,6 +455,26 @@ mod tests {
                 "type":"input_text","text":"<skill><name>demo</name>body</skill>"
             }]}
         });
+        let ParseOutcome::Record(overridden) = parse_record(&stale_injection, &mut context) else {
+            panic!("turn workspace must override the session fallback");
+        };
+        assert_eq!(overridden.workspace, Some(PathBuf::from("/turn")));
+        assert!(matches!(
+            parse_record(
+                &json!({
+                    "type":"response_item",
+                    "payload":{"type":"message","role":"user","content":[{
+                        "type":"input_text","text":"please use $demo"
+                    }]}
+                }),
+                &mut context,
+            ),
+            ParseOutcome::Ignored
+        ));
+        assert!(matches!(
+            parse_record(&json!({"type":"turn_context"}), &mut context),
+            ParseOutcome::Ignored
+        ));
         assert!(matches!(
             parse_record(&stale_injection, &mut context),
             ParseOutcome::Ignored
@@ -439,7 +503,7 @@ mod tests {
             panic!("new turn must accept a fresh mention");
         };
         assert_eq!(record.stable_record_key, "turn-2");
-        assert_eq!(record.workspace, None);
+        assert_eq!(record.workspace, Some(PathBuf::from("/session")));
         assert_eq!(record.invocations[0].ordinal, 0);
     }
 }

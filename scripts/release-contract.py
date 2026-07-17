@@ -8,6 +8,7 @@ import fcntl
 import hashlib
 import json
 import os
+import re
 import shutil
 import stat
 import sys
@@ -18,10 +19,51 @@ from pathlib import Path
 MANIFEST = "contract-manifest.json"
 SKILL_REL = Path("skills/loom-registry")
 INVENTORY_REL = Path("contracts/agent-command-surfaces.toml")
+RELEASE_SEMVER = re.compile(
+    r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)"
+    r"(?:-((?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*))?"
+    r"(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$"
+)
+CONTRACT_SEMVER = re.compile(r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$")
 
 
 def fail(message: str) -> None:
     raise ValueError(message)
+
+
+def release_semver(value: str, field: str) -> tuple[int, int, int]:
+    match = RELEASE_SEMVER.fullmatch(value)
+    if not match:
+        fail(f"{field} must be a valid SemVer: {value!r}")
+    return tuple(int(match.group(index)) for index in range(1, 4))
+
+
+def contract_semver(value: str, field: str) -> tuple[int, int, int]:
+    match = CONTRACT_SEMVER.fullmatch(value)
+    if not match:
+        fail(f"{field} must be a canonical release SemVer: {value!r}")
+    return tuple(int(match.group(index)) for index in range(1, 4))
+
+
+def contract_range_matches(requirement: str, version: str) -> bool:
+    current = contract_semver(version, "CLI contract version")
+    if not requirement:
+        fail("Skill CLI contract range must not be empty")
+    matches = True
+    for raw in requirement.split(","):
+        comparator = raw.strip()
+        operator = next((candidate for candidate in (">=", "<=", ">", "<", "=") if comparator.startswith(candidate)), None)
+        if operator is None:
+            fail(f"unsupported Skill CLI contract comparator: {comparator!r}")
+        expected = contract_semver(comparator[len(operator):], "Skill CLI contract comparator")
+        matches = matches and {
+            ">=": current >= expected,
+            "<=": current <= expected,
+            ">": current > expected,
+            "<": current < expected,
+            "=": current == expected,
+        }[operator]
+    return matches
 
 
 def file_digest(path: Path) -> str:
@@ -82,11 +124,18 @@ def skill_range(skill_root: Path) -> str:
 def manifest_for(root: Path, release_version: str, contract_version: str, target: str) -> dict[str, str]:
     if not release_version or not contract_version or not target:
         fail("release version, contract version, and binary target are required")
+    release_semver(release_version, "release version")
+    contract_semver(contract_version, "CLI contract version")
+    supported_range = skill_range(root / SKILL_REL)
+    if not contract_range_matches(supported_range, contract_version):
+        fail(
+            f"Skill CLI contract range {supported_range!r} does not contain {contract_version!r}"
+        )
     return {
         "schema_version": "1",
         "release_version": release_version,
         "cli_contract_version": contract_version,
-        "skill_cli_contract_range": skill_range(root / SKILL_REL),
+        "skill_cli_contract_range": supported_range,
         "binary_target": target,
         "binary_sha256": file_digest(root / "loom"),
         "skill_tree_digest": skill_tree_digest(root / SKILL_REL),
@@ -107,11 +156,16 @@ def verify(root: Path) -> dict[str, str]:
     if not manifest_path.is_file():
         fail(f"contract manifest is missing: {manifest_path}")
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if not isinstance(manifest, dict):
+        fail("contract manifest must be a JSON object")
+    for field in ("release_version", "cli_contract_version", "binary_target"):
+        if not isinstance(manifest.get(field), str) or not manifest[field]:
+            fail(f"contract manifest field {field!r} must be a non-empty string")
     expected = manifest_for(
         root,
-        str(manifest.get("release_version", "")),
-        str(manifest.get("cli_contract_version", "")),
-        str(manifest.get("binary_target", "")),
+        manifest["release_version"],
+        manifest["cli_contract_version"],
+        manifest["binary_target"],
     )
     if manifest != expected:
         fail(f"contract manifest mismatch: expected {expected}, found {manifest}")

@@ -130,24 +130,42 @@ pub fn load_surface_inventory(repo_root: &Path) -> Result<SurfaceInventory, Inve
     let inventory_path = repo_root.join(INVENTORY_PATH);
     let source = fs::read_to_string(&inventory_path)
         .map_err(|error| InventoryError::new(format!("{}: {error}", inventory_path.display())))?;
+    parse_surface_inventory(&source, &inventory_path.display().to_string())
+}
+
+pub(crate) fn parse_surface_inventory(
+    source: &str,
+    location: &str,
+) -> Result<SurfaceInventory, InventoryError> {
     let document = source
         .parse::<DocumentMut>()
-        .map_err(|error| InventoryError::new(format!("{}: {error}", inventory_path.display())))?;
+        .map_err(|error| InventoryError::new(format!("{location}: {error}")))?;
     let surfaces = parse_surfaces(required_tables(&document, "surface")?)?;
-    let examples = parse_examples(required_tables(&document, "example")?)?;
-    let next_action_emitters =
-        parse_next_action_emitters(required_tables(&document, "next_action_emitter")?)?;
-    let panel_mutations = parse_panel_mutations(required_tables(&document, "panel_mutation")?)?;
+    let mut examples = parse_examples(required_tables(&document, "example")?)?;
+    if let Some(values) = document.get("examples").and_then(Item::as_array) {
+        examples.extend(parse_inline_examples(values)?);
+    }
+    let next_action_emitters = match document
+        .get("next_action_emitters")
+        .and_then(Item::as_array)
+    {
+        Some(values) => parse_inline_next_action_emitters(values)?,
+        None => parse_next_action_emitters(required_tables(&document, "next_action_emitter")?)?,
+    };
+    let panel_mutations = match document.get("panel_mutations").and_then(Item::as_array) {
+        Some(values) => parse_inline_panel_mutations(values)?,
+        None => parse_panel_mutations(required_tables(&document, "panel_mutation")?)?,
+    };
     if surfaces.is_empty() || examples.is_empty() {
         return Err(InventoryError::new(format!(
             "{}: surface and example inventories must not be empty",
-            inventory_path.display()
+            location
         )));
     }
     if next_action_emitters.is_empty() || panel_mutations.is_empty() {
         return Err(InventoryError::new(format!(
             "{}: next-action emitter and panel mutation inventories must not be empty",
-            inventory_path.display()
+            location
         )));
     }
     validate_unique_ids(
@@ -214,6 +232,57 @@ fn parse_examples(tables: &ArrayOfTables) -> Result<Vec<SurfaceExample>, Invento
         .collect()
 }
 
+fn parse_inline_examples(values: &toml_edit::Array) -> Result<Vec<SurfaceExample>, InventoryError> {
+    values
+        .iter()
+        .enumerate()
+        .map(|(index, value)| {
+            let location = format!("{INVENTORY_PATH}:examples[{}]", index + 1);
+            let table = value.as_inline_table().ok_or_else(|| {
+                InventoryError::new(format!("{location}: entry must be an inline table"))
+            })?;
+            let range = table
+                .get("line_range")
+                .and_then(toml_edit::Value::as_array)
+                .ok_or_else(|| {
+                    InventoryError::new(format!("{location}: missing 'line_range' array"))
+                })?;
+            let start_line = inline_positive_integer(range, 0, &location)?;
+            let end_line = inline_positive_integer(range, 1, &location)?;
+            if range.len() != 2 || end_line < start_line {
+                return Err(InventoryError::new(format!(
+                    "{location}: invalid line range {start_line}..={end_line}"
+                )));
+            }
+            Ok(SurfaceExample {
+                id: inline_string(table, "id", &location)?,
+                surface: inline_string(table, "surface", &location)?,
+                start_line,
+                end_line,
+                classification: ExampleClassification::parse(
+                    &inline_string(table, "classification", &location)?,
+                    &location,
+                )?,
+            })
+        })
+        .collect()
+}
+
+fn inline_positive_integer(
+    values: &toml_edit::Array,
+    index: usize,
+    location: &str,
+) -> Result<usize, InventoryError> {
+    let value = values
+        .get(index)
+        .and_then(toml_edit::Value::as_integer)
+        .ok_or_else(|| InventoryError::new(format!("{location}: invalid line_range")))?;
+    usize::try_from(value)
+        .ok()
+        .filter(|value| *value > 0)
+        .ok_or_else(|| InventoryError::new(format!("{location}: line_range must be positive")))
+}
+
 fn parse_next_action_emitters(
     tables: &ArrayOfTables,
 ) -> Result<Vec<NextActionEmitter>, InventoryError> {
@@ -230,6 +299,30 @@ fn parse_next_action_emitters(
                     &location,
                 )?,
                 fixture_ids: required_string_array(table, "fixture_ids", &location)?,
+            })
+        })
+        .collect()
+}
+
+fn parse_inline_next_action_emitters(
+    values: &toml_edit::Array,
+) -> Result<Vec<NextActionEmitter>, InventoryError> {
+    values
+        .iter()
+        .enumerate()
+        .map(|(index, value)| {
+            let location = format!("{INVENTORY_PATH}:next_action_emitters[{}]", index + 1);
+            let table = value.as_inline_table().ok_or_else(|| {
+                InventoryError::new(format!("{location}: entry must be an inline table"))
+            })?;
+            Ok(NextActionEmitter {
+                id: inline_string(table, "id", &location)?,
+                source: inline_string(table, "source", &location)?,
+                shape: NextActionShape::parse(
+                    &inline_string(table, "shape", &location)?,
+                    &location,
+                )?,
+                fixture_ids: inline_string_array(table, "fixture_ids", &location)?,
             })
         })
         .collect()
@@ -280,6 +373,124 @@ fn parse_panel_mutations(tables: &ArrayOfTables) -> Result<Vec<PanelMutation>, I
             })
         })
         .collect()
+}
+
+fn parse_inline_panel_mutations(
+    values: &toml_edit::Array,
+) -> Result<Vec<PanelMutation>, InventoryError> {
+    values
+        .iter()
+        .enumerate()
+        .map(|(index, value)| {
+            let location = format!("{INVENTORY_PATH}:panel_mutations[{}]", index + 1);
+            let table = value.as_inline_table().ok_or_else(|| {
+                InventoryError::new(format!("{location}: entry must be an inline table"))
+            })?;
+            let binding =
+                PanelBinding::parse(&inline_string(table, "binding", &location)?, &location)?;
+            let cli_argv = inline_optional_string_array(table, "cli_argv", &location)?;
+            let rationale = inline_optional_string(table, "rationale", &location)?;
+            match binding {
+                PanelBinding::CliEquivalent if cli_argv.is_empty() => {
+                    return Err(InventoryError::new(format!(
+                        "{location}: cli_equivalent requires non-empty 'cli_argv'"
+                    )));
+                }
+                PanelBinding::NoCliEquivalent if rationale.is_none() => {
+                    return Err(InventoryError::new(format!(
+                        "{location}: no_cli_equivalent requires a review-owned rationale"
+                    )));
+                }
+                PanelBinding::CliEquivalent if rationale.is_some() => {
+                    return Err(InventoryError::new(format!(
+                        "{location}: panel binding fields are inconsistent"
+                    )));
+                }
+                PanelBinding::NoCliEquivalent if !cli_argv.is_empty() => {
+                    return Err(InventoryError::new(format!(
+                        "{location}: panel binding fields are inconsistent"
+                    )));
+                }
+                _ => {}
+            }
+            Ok(PanelMutation {
+                id: inline_string(table, "id", &location)?,
+                label_path: inline_string(table, "label_path", &location)?,
+                action_id: inline_string(table, "action_id", &location)?,
+                backend_route: inline_string(table, "backend_route", &location)?,
+                handler: inline_string(table, "handler", &location)?,
+                binding,
+                cli_argv,
+                rationale,
+            })
+        })
+        .collect()
+}
+
+fn inline_string(
+    table: &toml_edit::InlineTable,
+    key: &str,
+    location: &str,
+) -> Result<String, InventoryError> {
+    table
+        .get(key)
+        .and_then(toml_edit::Value::as_str)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .ok_or_else(|| InventoryError::new(format!("{location}: missing non-empty '{key}'")))
+}
+
+fn inline_string_array(
+    table: &toml_edit::InlineTable,
+    key: &str,
+    location: &str,
+) -> Result<Vec<String>, InventoryError> {
+    let values = inline_optional_string_array(table, key, location)?;
+    if values.is_empty() {
+        return Err(InventoryError::new(format!(
+            "{location}: missing non-empty string array '{key}'"
+        )));
+    }
+    Ok(values)
+}
+
+fn inline_optional_string_array(
+    table: &toml_edit::InlineTable,
+    key: &str,
+    location: &str,
+) -> Result<Vec<String>, InventoryError> {
+    let Some(value) = table.get(key) else {
+        return Ok(Vec::new());
+    };
+    let array = value
+        .as_array()
+        .ok_or_else(|| InventoryError::new(format!("{location}: '{key}' must be an array")))?;
+    array
+        .iter()
+        .map(|item| {
+            item.as_str()
+                .filter(|item| !item.is_empty())
+                .map(str::to_string)
+                .ok_or_else(|| {
+                    InventoryError::new(format!("{location}: '{key}' items must be strings"))
+                })
+        })
+        .collect()
+}
+
+fn inline_optional_string(
+    table: &toml_edit::InlineTable,
+    key: &str,
+    location: &str,
+) -> Result<Option<String>, InventoryError> {
+    let Some(value) = table.get(key) else {
+        return Ok(None);
+    };
+    value
+        .as_str()
+        .filter(|value| !value.is_empty())
+        .map(|value| Some(value.to_string()))
+        .ok_or_else(|| InventoryError::new(format!("{location}: '{key}' must be non-empty")))
 }
 
 fn required_string(table: &Table, key: &str, location: &str) -> Result<String, InventoryError> {

@@ -53,7 +53,7 @@ const REVIEWED_SINKS: &[(&str, &str)] = &[
         "src/panel/auth.rs",
         "error[\"next_actions\"] = json!(next_actions)",
     ),
-    ("src/main.rs", "data[\"next_actions\"]"),
+    ("src/main_runtime.rs", "data[\"next_actions\"]"),
 ];
 
 pub fn check_next_action_emitters(

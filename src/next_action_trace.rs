@@ -20,6 +20,8 @@ static TRACE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 #[derive(Serialize)]
 struct TraceRecord<'a, T> {
     emitter_id: &'static str,
+    fixture_id: String,
+    payload_type: &'static str,
     payload: &'a T,
 }
 
@@ -34,6 +36,12 @@ pub(crate) fn observe_next_actions<T: Serialize>(emitter_id: &'static str, paylo
         .unwrap_or_else(|error| panic!("next-action trace lock poisoned: {error}"));
     let mut encoded = serde_json::to_vec(&TraceRecord {
         emitter_id,
+        fixture_id: std::env::var("NEXTEST_TEST_NAME")
+            .ok()
+            .filter(|value| !value.is_empty())
+            .or_else(|| std::thread::current().name().map(ToString::to_string))
+            .unwrap_or_else(|| panic!("next-action trace requires an observable fixture id")),
+        payload_type: std::any::type_name::<T>(),
         payload: &payload,
     })
     .unwrap_or_else(|error| panic!("next-action trace serialization failed: {error}"));

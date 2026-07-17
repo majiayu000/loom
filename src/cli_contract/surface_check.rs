@@ -110,7 +110,7 @@ pub fn check_surface_inventory(repo_root: &Path) -> Result<SurfaceCheckReport, I
     })
 }
 
-fn join_continuation_lines(lines: &[&str], offset: usize, first: &str) -> String {
+pub(super) fn join_continuation_lines(lines: &[&str], offset: usize, first: &str) -> String {
     if !first.trim_end().ends_with('\\') {
         return first.to_string();
     }
@@ -135,16 +135,13 @@ fn validate_public_surface_coverage(
         .collect::<std::collections::BTreeSet<_>>();
     let roots = [
         (repo_root.join("README.md"), 0),
-        (repo_root.join("docs"), 1),
-        (repo_root.join("skills"), 2),
-        (repo_root.join(".github/workflows"), 1),
+        (repo_root.join("docs"), usize::MAX),
+        (repo_root.join("skills"), usize::MAX),
+        (repo_root.join(".github/workflows"), usize::MAX),
     ];
     for (root, max_depth) in roots {
-        for entry in WalkDir::new(root)
-            .max_depth(max_depth)
-            .into_iter()
-            .filter_map(Result::ok)
-        {
+        for entry in WalkDir::new(root).max_depth(max_depth) {
+            let entry = entry.map_err(|error| InventoryError::new(error.to_string()))?;
             if !entry.file_type().is_file() || !is_public_surface_candidate(entry.path()) {
                 continue;
             }
@@ -184,6 +181,12 @@ fn validate_ranges(
     examples: &[&SurfaceExample],
 ) -> Result<(), InventoryError> {
     for example in examples {
+        if line_count > 1 && example.start_line == 1 && example.end_line == line_count {
+            return Err(InventoryError::new(format!(
+                "{path}: example '{}' uses prohibited whole-file classification",
+                example.id
+            )));
+        }
         if example.end_line > line_count {
             return Err(InventoryError::new(format!(
                 "{path}: example '{}' ends at line {}, but file has {line_count} lines",

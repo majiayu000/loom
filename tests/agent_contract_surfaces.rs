@@ -6,7 +6,7 @@ use common::{TestDir, run_loom, run_loom_with_env, write_file, write_skill};
 use skillloom::cli_contract::{
     CLI_CONTRACT_VERSION, PublicArgvErrorKind, check_contract_range_policy,
     check_next_action_trace, check_surface_inventory, contract_version_matches,
-    current_contract_version, parse_contract_version, validate_public_argv,
+    current_contract_version, load_surface_inventory, parse_contract_version, validate_public_argv,
 };
 
 #[test]
@@ -173,12 +173,22 @@ fn emitter_trace_payloads_parse() {
         let path = fallback.path().join("next-actions.jsonl");
         write_file(
             &path,
-            r#"{"emitter_id":"fixture.target_not_found","payload":[{"cmd":"loom target list --json","reason":"inspect targets"}]}
+            r#"{"emitter_id":"error.target_not_found","fixture_id":"error_actions::tests::default_next_actions_cover_top_guidance_errors","payload_type":"alloc::vec::Vec<loom::error_actions::NextAction>","payload":[{"cmd":"loom target list --json","reason":"inspect targets"}]}
 "#,
         );
         path
     };
-    let report = check_next_action_trace(&path).expect("next-action trace payloads");
+    let inventory = load_surface_inventory(std::path::Path::new(".")).expect("surface inventory");
+    let emitters = if std::env::var_os("LOOM_CONTRACT_TRACE_INPUT").is_some() {
+        inventory.next_action_emitters
+    } else {
+        inventory
+            .next_action_emitters
+            .into_iter()
+            .filter(|emitter| emitter.id == "error.target_not_found")
+            .collect()
+    };
+    let report = check_next_action_trace(&path, &emitters).expect("next-action trace payloads");
     assert!(report.record_count >= 1);
     assert!(report.command_count >= 1);
     if let Ok(expected) = std::env::var("LOOM_CONTRACT_TRACE_EXPECTED_EMITTERS") {
@@ -187,6 +197,38 @@ fn emitter_trace_payloads_parse() {
             expected.parse::<usize>().expect("expected emitter count")
         );
     }
+}
+
+#[test]
+fn emitter_trace_rejects_shape_and_fixture_drift() {
+    let root = TestDir::new("emitter-trace-contract-drift");
+    let inventory = load_surface_inventory(std::path::Path::new(".")).expect("surface inventory");
+    let emitters = inventory
+        .next_action_emitters
+        .into_iter()
+        .filter(|emitter| emitter.id == "error.target_not_found")
+        .collect::<Vec<_>>();
+    let trace = root.path().join("wrong-shape.jsonl");
+    write_file(
+        &trace,
+        r#"{"emitter_id":"error.target_not_found","fixture_id":"error_actions::tests::default_next_actions_cover_top_guidance_errors","payload_type":"alloc::vec::Vec<alloc::string::String>","payload":["loom target list --json"]}
+"#,
+    );
+    let error = check_next_action_trace(&trace, &emitters).expect_err("shape drift must fail");
+    assert!(error.to_string().contains("Object shape"), "{error}");
+
+    write_file(
+        &trace,
+        r#"{"emitter_id":"error.target_not_found","fixture_id":"invented.fixture","payload_type":"alloc::vec::Vec<loom::error_actions::NextAction>","payload":[{"cmd":"loom target list --json"}]}
+"#,
+    );
+    let error = check_next_action_trace(&trace, &emitters).expect_err("fixture drift must fail");
+    assert!(
+        error
+            .to_string()
+            .contains("did not produce declared fixture"),
+        "{error}"
+    );
 }
 
 #[test]
@@ -263,6 +305,8 @@ cli_argv = ["loom", "workspace", "status"]
 }
 
 fn write_minimal_panel_contract(root: &std::path::Path) {
+    write_file(&root.join("skills/.contract-scan-root"), "");
+    write_file(&root.join(".github/workflows/.contract-scan-root"), "");
     write_file(
         &root.join("src/panel/mod.rs"),
         "Router::new().route(\"/api/v1/write\", post(write))\n",
@@ -310,6 +354,21 @@ fn hidden_flags_fail() {
 }
 
 #[test]
+fn hidden_flags_with_help_fail() {
+    let error = validate_public_argv([
+        "loom",
+        "skill",
+        "watch",
+        "demo",
+        "--max-cycles",
+        "1",
+        "--help",
+    ])
+    .expect_err("hidden flag must not be exposed through help");
+    assert_eq!(error.kind, PublicArgvErrorKind::HiddenArgument);
+}
+
+#[test]
 fn hidden_commands_fail() {
     let error = validate_public_argv([
         "loom",
@@ -326,6 +385,98 @@ fn hidden_commands_fail() {
 }
 
 #[test]
+fn hidden_commands_with_help_fail() {
+    let error = validate_public_argv(["loom", "workflow", "run", "--help"])
+        .expect_err("hidden command must not be exposed through help");
+    assert_eq!(error.kind, PublicArgvErrorKind::HiddenCommand);
+}
+
+#[test]
+fn nested_public_surface_requires_inventory() {
+    let root = TestDir::new("nested-public-contract-surface");
+    write_file(&root.path().join("README.md"), "loom workspace status\n");
+    write_file(
+        &root.path().join("docs/plan/stale.md"),
+        "legacy prose says `loom skill save demo`\n",
+    );
+    write_file(
+        &root.path().join("docs/agent-command-surfaces.toml"),
+        r#"[[surface]]
+id = "readme"
+path = "README.md"
+
+[[example]]
+id = "readme.status"
+surface = "readme"
+line_range = [1, 1]
+classification = "executable"
+[[next_action_emitter]]
+id = "fixture.emitter"
+source = "src/fixture.rs#next_actions"
+shape = "string"
+fixture_ids = ["fixture.emitter.output"]
+[[panel_mutation]]
+id = "panel.fixture"
+label_path = "panel/src/lib/operation_labels.ts"
+action_id = "fixture.write"
+backend_route = "POST /api/v1/write"
+handler = "write"
+binding = "cli_equivalent"
+cli_argv = ["loom", "workspace", "status"]
+"#,
+    );
+    write_minimal_panel_contract(root.path());
+    write_file(
+        &root.path().join("src/fixture.rs"),
+        "fn fixture() { observe_next_actions(\"fixture.emitter\", Vec::<String>::new()); }\n",
+    );
+    let error = check_surface_inventory(root.path()).expect_err("nested surface must be covered");
+    assert!(error.to_string().contains("docs/plan/stale.md"), "{error}");
+}
+
+#[test]
+fn whole_file_classification_fails() {
+    let root = TestDir::new("whole-file-contract-classification");
+    write_file(
+        &root.path().join("README.md"),
+        "loom workspace status\nexplanatory prose\n",
+    );
+    write_file(
+        &root.path().join("docs/agent-command-surfaces.toml"),
+        r#"[[surface]]
+id = "readme"
+path = "README.md"
+
+[[example]]
+id = "readme.whole_file"
+surface = "readme"
+line_range = [1, 2]
+classification = "executable"
+[[next_action_emitter]]
+id = "fixture.emitter"
+source = "src/fixture.rs#next_actions"
+shape = "string"
+fixture_ids = ["fixture.emitter.output"]
+[[panel_mutation]]
+id = "panel.fixture"
+label_path = "panel/src/lib/operation_labels.ts"
+action_id = "fixture.write"
+backend_route = "POST /api/v1/write"
+handler = "write"
+binding = "cli_equivalent"
+cli_argv = ["loom", "workspace", "status"]
+"#,
+    );
+    write_minimal_panel_contract(root.path());
+    write_file(
+        &root.path().join("src/fixture.rs"),
+        "fn fixture() { observe_next_actions(\"fixture.emitter\", Vec::<String>::new()); }\n",
+    );
+    let error = check_surface_inventory(root.path()).expect_err("whole-file range must fail");
+    assert!(error.to_string().contains("whole-file"), "{error}");
+}
+
+#[test]
 fn removed_commands_fail() {
     let error = validate_public_argv(["loom", "skill", "save", "demo"])
         .expect_err("removed command must fail");
@@ -334,10 +485,100 @@ fn removed_commands_fail() {
 
 #[test]
 fn contract_additive_capability_requires_minor_bump() {
-    let history =
-        std::fs::read_to_string("docs/cli-contract-history.toml").expect("read contract history");
-    assert!(history.contains("version = \"1.0.0\""));
-    assert!(history.contains("migration_note ="));
+    let root = TestDir::new("contract-capability-minor-policy");
+    write_file(
+        &root.path().join("skills/loom-registry/loom.skill.toml"),
+        "[compatibility]\ncli_contract = \">=1.0.0,<2.0.0\"\n",
+    );
+    write_file(
+        &root.path().join("docs/cli-contract-history.toml"),
+        "[[contract]]\nversion = \"1.0.0\"\nskill_range = \">=1.0.0,<2.0.0\"\nmigration_note = \"bootstrap\"\n",
+    );
+    write_file(
+        &root.path().join("docs/agent-command-surfaces.toml"),
+        r#"[[surface]]
+id = "readme"
+path = "README.md"
+[[example]]
+id = "readme.status"
+surface = "readme"
+line_range = [1, 1]
+classification = "executable"
+[[next_action_emitter]]
+id = "fixture.emitter"
+source = "src/fixture.rs#next_actions"
+shape = "string"
+fixture_ids = ["fixture.emitter.output"]
+[[panel_mutation]]
+id = "panel.fixture"
+label_path = "panel/labels.ts"
+action_id = "fixture.write"
+backend_route = "POST /api/v1/write"
+handler = "write"
+binding = "cli_equivalent"
+cli_argv = ["loom", "workspace", "status"]
+"#,
+    );
+    write_file(&root.path().join("README.md"), "loom workspace status\n");
+    write_file(
+        &root.path().join("src/cli_contract.rs"),
+        "pub const CLI_CONTRACT_VERSION: &str = \"1.0.0\";\n",
+    );
+    write_file(
+        &root.path().join("CHANGELOG.md"),
+        "CLI contract bootstrap\n",
+    );
+    let git = |args: &[&str]| {
+        let output = std::process::Command::new("git")
+            .current_dir(root.path())
+            .args(args)
+            .output()
+            .expect("run git");
+        assert!(
+            output.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8(output.stdout)
+            .expect("git UTF-8")
+            .trim()
+            .to_string()
+    };
+    git(&["init", "-q"]);
+    git(&["config", "user.email", "contract@example.invalid"]);
+    git(&["config", "user.name", "Contract Fixture"]);
+    git(&["add", "."]);
+    git(&["commit", "-qm", "base"]);
+    let base = git(&["rev-parse", "HEAD"]);
+
+    write_file(
+        &root.path().join("README.md"),
+        "loom workspace status\nloom workspace doctor\n",
+    );
+    let inventory = std::fs::read_to_string(root.path().join("docs/agent-command-surfaces.toml"))
+        .expect("read fixture inventory");
+    write_file(
+        &root.path().join("docs/agent-command-surfaces.toml"),
+        &(inventory
+            + "[[example]]\nid = \"readme.doctor\"\nsurface = \"readme\"\nline_range = [2, 2]\nclassification = \"executable\"\n"),
+    );
+    let error = check_contract_range_policy(root.path(), Some(&base))
+        .expect_err("additive capability without minor bump must fail");
+    assert!(error.to_string().contains("minor bump"), "{error}");
+
+    write_file(
+        &root.path().join("src/cli_contract.rs"),
+        "pub const CLI_CONTRACT_VERSION: &str = \"1.1.0\";\n",
+    );
+    let history = std::fs::read_to_string(root.path().join("docs/cli-contract-history.toml"))
+        .expect("read fixture history");
+    write_file(
+        &root.path().join("docs/cli-contract-history.toml"),
+        &(history
+            + "[[contract]]\nversion = \"1.1.0\"\nskill_range = \">=1.0.0,<2.0.0\"\nmigration_note = \"add doctor\"\n"),
+    );
+    check_contract_range_policy(root.path(), Some(&base))
+        .expect("minor bump must admit additive capability");
 }
 
 #[test]

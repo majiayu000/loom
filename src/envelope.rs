@@ -40,7 +40,7 @@ impl Envelope {
             cmd: cmd.to_string(),
             request_id,
             version: env!("CARGO_PKG_VERSION").to_string(),
-            cli_contract_version: skillloom::cli_contract::CLI_CONTRACT_VERSION.to_string(),
+            cli_contract_version: crate::cli_contract::CLI_CONTRACT_VERSION.to_string(),
             data,
             error: None,
             meta,
@@ -77,7 +77,7 @@ impl Envelope {
             cmd: cmd.to_string(),
             request_id,
             version: env!("CARGO_PKG_VERSION").to_string(),
-            cli_contract_version: skillloom::cli_contract::CLI_CONTRACT_VERSION.to_string(),
+            cli_contract_version: crate::cli_contract::CLI_CONTRACT_VERSION.to_string(),
             data: serde_json::json!({}),
             error: Some(ErrorBody {
                 code: code.as_str().to_string(),

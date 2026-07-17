@@ -5,10 +5,13 @@ use std::process::Command;
 
 use toml_edit::DocumentMut;
 
-use super::InventoryError;
+use super::inventory::{INVENTORY_PATH, parse_surface_inventory};
+use super::surface_check::{extract_loom_commands, join_continuation_lines, normalize_command};
+use super::{ContractVersion, ExampleClassification, InventoryError, parse_contract_version};
 
 const SKILL_METADATA: &str = "skills/loom-registry/loom.skill.toml";
 const HISTORY: &str = "docs/cli-contract-history.toml";
+const CONTRACT_SOURCE: &str = "src/cli_contract.rs";
 
 pub fn check_contract_range_policy(
     repo_root: &Path,
@@ -46,6 +49,42 @@ pub fn check_contract_range_policy(
     {
         return Err(InventoryError::new("CLI contract history is append-only"));
     }
+    let current_version =
+        declared_contract_version(&read_current(repo_root, CONTRACT_SOURCE)?, CONTRACT_SOURCE)?;
+    let current_version_text = format!(
+        "{}.{}.{}",
+        current_version.major, current_version.minor, current_version.patch
+    );
+    if !current_records.iter().any(|(version, range, note)| {
+        version == &current_version_text && range == &current_range && !note.trim().is_empty()
+    }) {
+        return Err(InventoryError::new(format!(
+            "CLI contract {current_version_text} and Skill range '{current_range}' require a current history record with migration note"
+        )));
+    }
+    if let Some(base_inventory_raw) = git_show(repo_root, base, INVENTORY_PATH)? {
+        let base_source = git_show(repo_root, base, CONTRACT_SOURCE)?.ok_or_else(|| {
+            InventoryError::new(format!(
+                "{base}:{CONTRACT_SOURCE}: missing CLI contract version source"
+            ))
+        })?;
+        let base_version =
+            declared_contract_version(&base_source, &format!("{base}:{CONTRACT_SOURCE}"))?;
+        let current_inventory_raw = read_current(repo_root, INVENTORY_PATH)?;
+        let base_capabilities = capability_set(&base_inventory_raw, |path| {
+            git_show(repo_root, base, path)?.ok_or_else(|| {
+                InventoryError::new(format!("{base}:{path}: inventoried surface is missing"))
+            })
+        })?;
+        let current_capabilities =
+            capability_set(&current_inventory_raw, |path| read_current(repo_root, path))?;
+        enforce_capability_version(
+            base_version,
+            current_version,
+            &base_capabilities,
+            &current_capabilities,
+        )?;
+    }
     if base_range.as_deref() != Some(current_range.as_str()) {
         if !current_records
             .iter()
@@ -61,6 +100,112 @@ pub fn check_contract_range_policy(
                 "Skill range changes require a CHANGELOG CLI contract note",
             ));
         }
+    }
+    Ok(())
+}
+
+fn declared_contract_version(
+    source: &str,
+    location: &str,
+) -> Result<ContractVersion, InventoryError> {
+    let prefix = "pub const CLI_CONTRACT_VERSION: &str = \"";
+    let value = source
+        .lines()
+        .find_map(|line| line.trim().strip_prefix(prefix))
+        .and_then(|rest| rest.strip_suffix("\";"))
+        .ok_or_else(|| InventoryError::new(format!("{location}: missing CLI_CONTRACT_VERSION")))?;
+    parse_contract_version(value)
+        .map_err(|error| InventoryError::new(format!("{location}: {error}")))
+}
+
+fn capability_set<F>(
+    inventory_raw: &str,
+    mut read_surface: F,
+) -> Result<BTreeSet<String>, InventoryError>
+where
+    F: FnMut(&str) -> Result<String, InventoryError>,
+{
+    let inventory = parse_surface_inventory(inventory_raw, INVENTORY_PATH)?;
+    let surfaces = inventory
+        .surfaces
+        .iter()
+        .map(|surface| (surface.id.as_str(), surface.path.as_str()))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    let mut capabilities = BTreeSet::new();
+    for example in inventory
+        .examples
+        .iter()
+        .filter(|example| example.classification == ExampleClassification::Executable)
+    {
+        let path = surfaces.get(example.surface.as_str()).ok_or_else(|| {
+            InventoryError::new(format!(
+                "{INVENTORY_PATH}: example '{}' references missing surface '{}'",
+                example.id, example.surface
+            ))
+        })?;
+        let source = read_surface(path)?;
+        let lines = source.lines().collect::<Vec<_>>();
+        if example.end_line > lines.len() {
+            return Err(InventoryError::new(format!(
+                "{path}: example '{}' exceeds surface length",
+                example.id
+            )));
+        }
+        for offset in example.start_line - 1..example.end_line {
+            let logical_line = join_continuation_lines(&lines, offset, lines[offset]);
+            for command in extract_loom_commands(&logical_line) {
+                capabilities.insert(format!(
+                    "command:{}",
+                    normalize_command(&command).join("\u{1f}")
+                ));
+            }
+        }
+    }
+    for emitter in &inventory.next_action_emitters {
+        capabilities.insert(format!("emitter:{}:{:?}", emitter.id, emitter.shape));
+    }
+    for mutation in &inventory.panel_mutations {
+        capabilities.insert(format!(
+            "panel:{}:{}:{}:{:?}:{}",
+            mutation.action_id,
+            mutation.backend_route,
+            mutation.handler,
+            mutation.binding,
+            mutation.cli_argv.join("\u{1f}")
+        ));
+    }
+    if capabilities.is_empty() {
+        return Err(InventoryError::new("CLI contract capability set is empty"));
+    }
+    Ok(capabilities)
+}
+
+fn enforce_capability_version(
+    base_version: ContractVersion,
+    current_version: ContractVersion,
+    base: &BTreeSet<String>,
+    current: &BTreeSet<String>,
+) -> Result<(), InventoryError> {
+    if current_version < base_version {
+        return Err(InventoryError::new(
+            "CLI contract version must not move backwards",
+        ));
+    }
+    let removed = base.difference(current).next().is_some();
+    let added = current.difference(base).next().is_some();
+    if removed && current_version.major <= base_version.major {
+        return Err(InventoryError::new(
+            "removed or changed CLI capabilities require a contract major bump",
+        ));
+    }
+    if !removed
+        && added
+        && current_version.major == base_version.major
+        && current_version.minor <= base_version.minor
+    {
+        return Err(InventoryError::new(
+            "additive CLI capabilities require a contract minor bump",
+        ));
     }
     Ok(())
 }

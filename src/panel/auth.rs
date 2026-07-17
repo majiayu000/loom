@@ -269,7 +269,7 @@ pub(crate) fn error_envelope(
         "cmd": cmd,
         "request_id": request_id,
         "version": env!("CARGO_PKG_VERSION"),
-        "cli_contract_version": skillloom::cli_contract::CLI_CONTRACT_VERSION,
+        "cli_contract_version": crate::cli_contract::CLI_CONTRACT_VERSION,
         "data": {},
         "error": error,
         "meta": {
@@ -319,7 +319,7 @@ pub(super) fn registry_ok_with_warnings(
         "cmd": cmd,
         "request_id": Uuid::new_v4().to_string(),
         "version": env!("CARGO_PKG_VERSION"),
-        "cli_contract_version": skillloom::cli_contract::CLI_CONTRACT_VERSION,
+        "cli_contract_version": crate::cli_contract::CLI_CONTRACT_VERSION,
         "data": data,
         "meta": {
             "warnings": warnings,

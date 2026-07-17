@@ -1,4 +1,160 @@
 schema_version = 1
+panel_mutations = [
+  { id = "panel.workspace.init", label_path = "panel/src/lib/operation_labels.ts", action_id = "workspace.init", backend_route = "POST /api/v1/workspace/init", handler = "v1_workspace_init", binding = "cli_equivalent", cli_argv = ["loom", "workspace", "init", "--scan-existing"] },
+  { id = "panel.workspace.remote_set", label_path = "panel/src/lib/operation_labels.ts", action_id = "workspace.remote.set", backend_route = "POST /api/v1/workspace/remote", handler = "remote_set", binding = "cli_equivalent", cli_argv = ["loom", "workspace", "remote", "set", "<url>"] },
+  { id = "panel.target.add", label_path = "panel/src/lib/operation_labels.ts", action_id = "target.add", backend_route = "POST /api/v1/targets", handler = "registry_target_add", binding = "cli_equivalent", cli_argv = ["loom", "target", "add", "--agent", "claude", "--path", "<path>", "--ownership", "observed"] },
+  { id = "panel.target.remove", label_path = "panel/src/lib/operation_labels.ts", action_id = "target.remove", backend_route = "POST /api/v1/targets/{target_id}/remove", handler = "registry_target_remove", binding = "cli_equivalent", cli_argv = ["loom", "target", "remove", "<target_id>"] },
+  { id = "panel.workspace.binding_add", label_path = "panel/src/lib/operation_labels.ts", action_id = "workspace.binding.add", backend_route = "POST /api/v1/bindings", handler = "registry_binding_add", binding = "cli_equivalent", cli_argv = ["loom", "workspace", "binding", "add", "--agent", "claude", "--profile", "home", "--matcher-kind", "path-prefix", "--matcher-value", "<workspace>", "--target", "<target_id>", "--policy-profile", "safe-capture"] },
+  { id = "panel.workspace.binding_remove", label_path = "panel/src/lib/operation_labels.ts", action_id = "workspace.binding.remove", backend_route = "POST /api/v1/bindings/{binding_id}/remove", handler = "registry_binding_remove", binding = "cli_equivalent", cli_argv = ["loom", "workspace", "binding", "remove", "<binding_id>"] },
+  { id = "panel.skill.add", label_path = "panel/src/lib/operation_labels.ts", action_id = "skill.add", backend_route = "POST /api/v1/skills", handler = "registry_skill_add", binding = "cli_equivalent", cli_argv = ["loom", "skill", "add", "<source>", "--name", "contract-fixture"] },
+  { id = "panel.skill.import_observed", label_path = "panel/src/lib/operation_labels.ts", action_id = "skill.import_observed", backend_route = "POST /api/v1/skills/import-observed", handler = "registry_skill_import_observed", binding = "cli_equivalent", cli_argv = ["loom", "skill", "import-observed", "--target", "<target_id>"] },
+  { id = "panel.skill.use_apply", label_path = "panel/src/lib/operation_labels.ts", action_id = "use", backend_route = "POST /api/v1/skills/{skill_name}/use", handler = "registry_skill_use", binding = "cli_equivalent", cli_argv = ["loom", "use", "<skill>", "--agents", "claude", "--scope", "project", "--profile", "default", "--method", "symlink", "--apply"] },
+  { id = "panel.skill.trash_add", label_path = "panel/src/lib/operation_labels.ts", action_id = "skill.trash.add", backend_route = "POST /api/v1/skills/{skill_name}/trash", handler = "registry_skill_trash_add", binding = "cli_equivalent", cli_argv = ["loom", "skill", "trash", "add", "<skill>"] },
+  { id = "panel.skill.trash_restore", label_path = "panel/src/lib/operation_labels.ts", action_id = "skill.trash.restore", backend_route = "POST /api/v1/skills/trash/{trash_id}/restore", handler = "registry_skill_trash_restore", binding = "cli_equivalent", cli_argv = ["loom", "skill", "trash", "restore", "<skill>", "--trash-id", "<trash_id>"] },
+  { id = "panel.skill.trash_purge", label_path = "panel/src/lib/operation_labels.ts", action_id = "skill.trash.purge", backend_route = "POST /api/v1/skills/trash/{trash_id}/purge", handler = "registry_skill_trash_purge", binding = "cli_equivalent", cli_argv = ["loom", "skill", "trash", "purge", "<trash_id>"] },
+  { id = "panel.skill.commit_source", label_path = "panel/src/lib/operation_labels.ts", action_id = "skill.commit", backend_route = "POST /api/v1/skills/{skill_name}/commit", handler = "registry_skill_save", binding = "cli_equivalent", cli_argv = ["loom", "skill", "commit", "<skill>", "--from-source"] },
+  { id = "panel.skill.release_anchor", label_path = "panel/src/lib/operation_labels.ts", action_id = "skill.release", backend_route = "POST /api/v1/skills/{skill_name}/release-anchor", handler = "registry_skill_snapshot", binding = "cli_equivalent", cli_argv = ["loom", "skill", "release", "<skill>", "--anchor"] },
+  { id = "panel.skill.release_version", label_path = "panel/src/lib/operation_labels.ts", action_id = "skill.release", backend_route = "POST /api/v1/skills/{skill_name}/release", handler = "registry_skill_release", binding = "cli_equivalent", cli_argv = ["loom", "skill", "release", "<skill>", "<version>"] },
+  { id = "panel.skill.rollback", label_path = "panel/src/lib/operation_labels.ts", action_id = "skill.rollback", backend_route = "POST /api/v1/skills/{skill_name}/rollback", handler = "registry_skill_rollback", binding = "cli_equivalent", cli_argv = ["loom", "skill", "rollback", "<skill>", "--to", "<ref>"] },
+  { id = "panel.skill.project", label_path = "panel/src/lib/operation_labels.ts", action_id = "skill.project", backend_route = "POST /api/v1/projections/project", handler = "registry_project", binding = "cli_equivalent", cli_argv = ["loom", "skill", "project", "<skill>", "--binding", "<binding_id>", "--target", "<target_id>", "--method", "symlink"] },
+  { id = "panel.skill.commit_projection", label_path = "panel/src/lib/operation_labels.ts", action_id = "skill.commit", backend_route = "POST /api/v1/projections/commit", handler = "registry_capture", binding = "cli_equivalent", cli_argv = ["loom", "skill", "commit", "<skill>", "--from-projection", "--instance", "<instance_id>"] },
+  { id = "panel.skill.orphan_clean", label_path = "panel/src/lib/operation_labels.ts", action_id = "skill.orphan.clean", backend_route = "POST /api/v1/orphans/clean", handler = "registry_orphan_clean", binding = "cli_equivalent", cli_argv = ["loom", "skill", "orphan", "clean", "--delete-live-paths"] },
+  { id = "panel.ops.retry", label_path = "panel/src/lib/operation_labels.ts", action_id = "ops.retry", backend_route = "POST /api/v1/ops/retry", handler = "ops_retry", binding = "cli_equivalent", cli_argv = ["loom", "ops", "retry"] },
+  { id = "panel.ops.purge", label_path = "panel/src/lib/operation_labels.ts", action_id = "ops.purge", backend_route = "POST /api/v1/ops/purge", handler = "ops_purge", binding = "cli_equivalent", cli_argv = ["loom", "ops", "purge"] },
+  { id = "panel.ops.history_repair", label_path = "panel/src/lib/operation_labels.ts", action_id = "ops.history.repair", backend_route = "POST /api/v1/ops/history/repair", handler = "ops_history_repair", binding = "cli_equivalent", cli_argv = ["loom", "ops", "history", "repair", "--strategy", "local"] },
+  { id = "panel.sync.push", label_path = "panel/src/lib/operation_labels.ts", action_id = "sync.push", backend_route = "POST /api/v1/sync/push", handler = "sync_push", binding = "cli_equivalent", cli_argv = ["loom", "sync", "push"] },
+  { id = "panel.sync.pull", label_path = "panel/src/lib/operation_labels.ts", action_id = "sync.pull", backend_route = "POST /api/v1/sync/pull", handler = "sync_pull", binding = "cli_equivalent", cli_argv = ["loom", "sync", "pull"] },
+  { id = "panel.sync.replay", label_path = "panel/src/lib/operation_labels.ts", action_id = "sync.replay", backend_route = "POST /api/v1/sync/replay", handler = "sync_replay", binding = "cli_equivalent", cli_argv = ["loom", "sync", "replay"] },
+]
+next_action_emitters = [
+  { id = "error.binding_not_found", source = "src/error_actions.rs#default_next_actions.BINDING_NOT_FOUND", shape = "object", fixture_ids = ["error_actions::tests::default_next_actions_cover_top_guidance_errors"] },
+  { id = "error.target_not_found", source = "src/error_actions.rs#default_next_actions.TARGET_NOT_FOUND", shape = "object", fixture_ids = ["error_actions::tests::default_next_actions_cover_top_guidance_errors"] },
+  { id = "error.skill_not_found", source = "src/error_actions.rs#default_next_actions.SKILL_NOT_FOUND", shape = "object", fixture_ids = ["envelope::tests::error_envelope_includes_default_next_actions_for_not_found"] },
+  { id = "error.state_not_initialized", source = "src/error_actions.rs#default_next_actions.STATE_NOT_INITIALIZED", shape = "object", fixture_ids = ["error_actions::tests::default_next_actions_cover_top_guidance_errors"] },
+  { id = "error.target_not_managed", source = "src/error_actions.rs#default_next_actions.TARGET_NOT_MANAGED", shape = "object", fixture_ids = ["error_actions::tests::default_next_actions_cover_top_guidance_errors"] },
+  { id = "error.lock_busy", source = "src/error_actions.rs#default_next_actions.LOCK_BUSY", shape = "object", fixture_ids = ["backup_export_refuses_when_workspace_lock_is_held"] },
+  { id = "error.remote_sync", source = "src/error_actions.rs#default_next_actions.REMOTE_SYNC", shape = "object", fixture_ids = ["error_actions::tests::default_next_actions_cover_top_guidance_errors"] },
+  { id = "codex.visibility.report", source = "src/commands/codex_visibility.rs#evaluate_codex_visibility.next_actions", shape = "string", fixture_ids = ["compiled_activation_materializes_valid_artifact_projection"] },
+  { id = "codex.visibility.unsupported", source = "src/commands/codex_visibility/report_support.rs#unsupported_agent_visibility.next_actions", shape = "string", fixture_ids = ["skill_visibility_returns_structured_unsupported_for_adapter_without_metadata"] },
+  { id = "mcp.doctor.manual", source = "src/commands/mcp.rs#McpDoctorCommand.missing_skill.next_actions", shape = "string", fixture_ids = ["mcp_catalog_source_policy_and_manual_agent_mode_are_explicit"] },
+  { id = "mcp.doctor.report", source = "src/commands/mcp.rs#McpDoctorCommand.report.next_actions", shape = "string", fixture_ids = ["doctor_uses_table_only_mcp_requirements_without_non_mcp_plan_noise"] },
+  { id = "mcp.apply.response", source = "src/commands/mcp/apply/record.rs#record_apply_result.next_actions", shape = "string", fixture_ids = ["mcp_apply_overwrites_fuzzy_compatible_command"] },
+  { id = "plan.use.response", source = "src/commands/plan_cmds.rs#UsePlanCommand.execute.next_actions", shape = "string", fixture_ids = ["durable_plan_apply_blocks_missing_required_approval"] },
+  { id = "provenance.outdated.row", source = "src/commands/provenance/outdated.rs#OutdatedRow.into_json.next_actions", shape = "string", fixture_ids = ["skill_provenance_outdated_distinguishes_unreachable_unpinned_and_invalid_sources"] },
+  { id = "provenance.outdated.summary", source = "src/commands/provenance/outdated.rs#OutdatedCommand.summary.next_actions", shape = "string", fixture_ids = ["skill_provenance_outdated_distinguishes_unreachable_unpinned_and_invalid_sources"] },
+  { id = "provenance.outdated.repin_item", source = "src/commands/provenance/outdated.rs#RepinCommand.item.next_actions", shape = "string", fixture_ids = ["skill_provenance_outdated_reports_local_digest_status_and_review_plan"] },
+  { id = "provider.install.applied", source = "src/commands/provider_cmds/install.rs#ProviderInstallCommand.applied.next_actions", shape = "string", fixture_ids = ["provider_install_apply_imports_pinned_local_skill_with_provenance_lock_and_trust"] },
+  { id = "provider.install.plan", source = "src/commands/provider_cmds/locator.rs#provider_install_plan.next_actions", shape = "string", fixture_ids = ["provider_catalog_preview_and_install_dry_run_are_safe"] },
+  { id = "provision.doctor", source = "src/commands/provision/mod.rs#ProvisionCommand.doctor.next_actions", shape = "string", fixture_ids = ["provision_doctor_blocks_on_safety_findings_even_when_files_are_present"] },
+  { id = "provision.dependency.missing", source = "src/commands/provision/planner.rs#dependency_report.missing.next_actions", shape = "string", fixture_ids = ["provision_plan_reports_missing_active_skill_without_aborting"] },
+  { id = "skill.deps.report", source = "src/commands/skill_deps.rs#DependencyReport.next_actions", shape = "string", fixture_ids = ["active_recommend_reports_keep_and_project_scoped_add_commands"] },
+  { id = "rollback.reconciliation.noop", source = "src/commands/rollback_reconciliation.rs#not_requested.next_actions", shape = "string", fixture_ids = ["rollback_noop_reports_reconciliation_shape_without_registry_init"] },
+  { id = "rollback.reconciliation.registry_missing", source = "src/commands/rollback_reconciliation.rs#registry_missing.next_actions", shape = "object", fixture_ids = ["rollback_without_existing_registry_reports_unverified_projection_reconciliation"] },
+  { id = "rollback.reconciliation.registry_unavailable", source = "src/commands/rollback_reconciliation.rs#registry_unavailable.next_actions", shape = "object", fixture_ids = ["rollback_surfaces_projection_snapshot_load_failure"] },
+  { id = "rollback.reconciliation.snapshot", source = "src/commands/rollback_reconciliation.rs#reconcile_snapshot.next_actions", shape = "object", fixture_ids = ["rollback_compiled_activation_uses_compiled_recovery_from_registry_operation"] },
+  { id = "skill.activate.remove.non_directory", source = "src/commands/skill_activation/apply.rs#remove.non_directory.next_actions", shape = "object", fixture_ids = ["skill_deactivate_wrong_symlink_emits_contextual_projection_action"] },
+  { id = "skill.activate.remove.unsafe_path", source = "src/commands/skill_activation/apply.rs#remove.unsafe_path.next_actions", shape = "object", fixture_ids = ["skill_deactivate_refuses_directory_replacing_managed_symlink"] },
+  { id = "skill.activate.compiled_failure", source = "src/commands/skill_activation/compiled.rs#compiled_failure.next_actions", shape = "string", fixture_ids = ["skill_activate_compiled_rejects_agent_profile_mismatch"] },
+  { id = "skill.deactivate.unsafe_path", source = "src/commands/skill_activation/mod.rs#deactivate.unsafe_path.next_actions", shape = "object", fixture_ids = ["skill_deactivate_fails_closed_for_copy_projection"] },
+  { id = "skill.author.patch", source = "src/commands/skill_authoring.rs#author_patch.next_actions", shape = "string", fixture_ids = ["apply_failures::apply_patch_blocks_high_risk_generated_scripts_without_mutation"] },
+  { id = "skill.author.apply.source_digest_changed", source = "src/commands/skill_authoring_apply.rs#source_digest_changed.next_actions", shape = "object", fixture_ids = ["apply_patch_rejects_source_digest_drift_without_mutation"] },
+  { id = "skill.author.apply.source_ref_changed", source = "src/commands/skill_authoring_apply.rs#source_ref_changed.next_actions", shape = "object", fixture_ids = ["apply_patch_rejects_source_ref_drift_without_mutation"] },
+  { id = "skill.author.apply.replay_conflict", source = "src/commands/skill_authoring_apply.rs#replay_conflict.next_actions", shape = "object", fixture_ids = ["apply_patch_validates_commits_and_replays_by_idempotency_key"] },
+  { id = "skill.commit.direction_ambiguous", source = "src/commands/skill_cmds/commit.rs#direction_ambiguous.next_actions", shape = "object", fixture_ids = ["skill_commit_ambiguous_actions_select_each_dirty_projection"] },
+  { id = "skill.compile.plan", source = "src/commands/skill_compile/mod.rs#compile_plan.next_actions", shape = "string", fixture_ids = ["dry_run_reports_plan_and_writes_no_artifacts"] },
+  { id = "skill.compile.applied", source = "src/commands/skill_compile/mod.rs#compile_applied.next_actions", shape = "string", fixture_ids = ["compile_keeps_artifact_experimental_when_eval_fails"] },
+  { id = "skill.diagnose.dependencies", source = "src/commands/skill_diagnose/dependency_checks.rs#dependency_summary.next_actions", shape = "string", fixture_ids = ["commands::skill_diagnose_tests::skill_diagnose_checks_projection_only_targets"] },
+  { id = "skill.inspect.response", source = "src/commands/skill_inspect/command.rs#inspect_response.next_actions", shape = "string", fixture_ids = ["compiled_activation_materializes_valid_artifact_projection"] },
+  { id = "skill.inventory.row", source = "src/commands/skill_inventory.rs#inventory_row.next_actions", shape = "string", fixture_ids = ["active_recommend_blocks_unsafe_explicit_desired_skill"] },
+  { id = "skill.new.applied", source = "src/commands/skill_new.rs#new_applied.next_actions", shape = "string", fixture_ids = ["single_skill_lifecycle_e2e_covers_create_validate_activate_release_rollback_deactivate"] },
+  { id = "skill.new.plan", source = "src/commands/skill_new.rs#new_plan.next_actions", shape = "string", fixture_ids = ["skill_new_dry_run_does_not_write_files_or_state"] },
+  { id = "index.status", source = "src/commands/skill_recommend/index.rs#index_status.next_actions", shape = "string", fixture_ids = ["index_build_and_status_are_local_and_deterministic"] },
+  { id = "skillset.activate.optional_missing", source = "src/commands/skillset_activation.rs#optional_missing.next_actions", shape = "string", fixture_ids = ["skillset_activate_dry_run_ready_ignores_optional_missing_members"] },
+  { id = "skillset.activate.member_ready", source = "src/commands/skillset_activation.rs#member_ready.next_actions", shape = "string", fixture_ids = ["skillset_activate_dry_run_and_apply_use_single_skill_activation"] },
+  { id = "skillset.activate.optional_failed", source = "src/commands/skillset_activation.rs#optional_failed.next_actions", shape = "string", fixture_ids = ["skillset_activate_dry_run_skips_optional_member_activation_failure"] },
+  { id = "skillset.eval.deferred", source = "src/commands/skillset_activation/eval.rs#eval_deferred.next_actions", shape = "string", fixture_ids = ["skillset_eval_optional_failures_do_not_fail_bundle"] },
+  { id = "skillset.create.applied", source = "src/commands/skillset_cmds.rs#create_applied.next_actions", shape = "string", fixture_ids = ["dependency_blocked_skillsets_are_penalized_in_ranking"] },
+  { id = "skillset.release.dirty_definition", source = "src/commands/skillset_release.rs#dirty_definition.next_actions", shape = "string", fixture_ids = ["skillset_release_rejects_dirty_definition"] },
+  { id = "use.plan", source = "src/commands/use_cmds.rs#use_plan.next_actions", shape = "string", fixture_ids = ["durable_plan_apply_blocks_missing_required_approval"] },
+  { id = "use.applied", source = "src/commands/use_cmds.rs#use_applied.next_actions", shape = "string", fixture_ids = ["durable_plan_apply_rejects_same_idempotency_key_for_different_plan"] },
+  { id = "use.adopt_required", source = "src/commands/use_cmds.rs#adopt_required.next_actions", shape = "object", fixture_ids = ["use_user_scope_requires_adopt_before_writing_existing_agent_dirs"] },
+  { id = "workflow.create.plan", source = "src/commands/workflow_cmds/mod.rs#create_plan.next_actions", shape = "string", fixture_ids = ["workflow_create_from_skillset_is_preview_only"] },
+  { id = "workflow.create.applied", source = "src/commands/workflow_cmds/mod.rs#create_applied.next_actions", shape = "string", fixture_ids = ["workflow_create_show_plan_and_preflight_are_guarded"] },
+  { id = "workflow.plan", source = "src/commands/workflow_cmds/mod.rs#workflow_plan.next_actions", shape = "string", fixture_ids = ["workflow_create_show_plan_and_preflight_are_guarded"] },
+  { id = "workflow.preflight", source = "src/commands/workflow_cmds/mod.rs#workflow_preflight.next_actions", shape = "string", fixture_ids = ["workflow_create_show_plan_and_preflight_are_guarded"] },
+  { id = "workflow.run.dry_deferred", source = "src/commands/workflow_cmds/mod.rs#run_dry_deferred.next_actions", shape = "string", fixture_ids = ["workflow_run_is_deferred_without_execution"] },
+  { id = "workflow.run.error_deferred", source = "src/commands/workflow_cmds/mod.rs#run_error_deferred.next_actions", shape = "string", fixture_ids = ["workflow_run_is_deferred_without_execution"] },
+]
+examples = [
+  { id = "readme.command_reference.workspace", surface = "readme", line_range = [327, 343], classification = "executable" },
+  { id = "readme.command_reference.agent", surface = "readme", line_range = [345, 346], classification = "executable" },
+  { id = "readme.command_reference.targets", surface = "readme", line_range = [348, 351], classification = "executable" },
+  { id = "readme.command_reference.skills", surface = "readme", line_range = [353, 416], classification = "executable" },
+  { id = "readme.command_reference.instructions", surface = "readme", line_range = [418, 422], classification = "executable" },
+  { id = "readme.command_reference.package", surface = "readme", line_range = [424, 426], classification = "executable" },
+  { id = "readme.command_reference.mcp", surface = "readme", line_range = [428, 433], classification = "executable" },
+  { id = "readme.command_reference.provision", surface = "readme", line_range = [435, 439], classification = "executable" },
+  { id = "readme.command_reference.skillset", surface = "readme", line_range = [441, 450], classification = "executable" },
+  { id = "readme.command_reference.workflow", surface = "readme", line_range = [452, 456], classification = "executable" },
+  { id = "readme.command_reference.sync_ops", surface = "readme", line_range = [458, 467], classification = "executable" },
+  { id = "readme.command_reference.panel", surface = "readme", line_range = [469, 469], classification = "executable" },
+  { id = "cli_contract.envelope_action", surface = "cli_contract", line_range = [184, 184], classification = "executable" },
+  { id = "cli_contract.default_actions", surface = "cli_contract", line_range = [201, 207], classification = "executable" },
+  { id = "cli_contract.error_action_table", surface = "cli_contract", line_range = [232, 250], classification = "executable" },
+  { id = "cli_contract.workspace_status", surface = "cli_contract", line_range = [271, 271], classification = "executable" },
+  { id = "cli_contract.workspace_doctor", surface = "cli_contract", line_range = [344, 344], classification = "executable" },
+  { id = "cli_contract.binding_add", surface = "cli_contract", line_range = [352, 352], classification = "executable" },
+  { id = "cli_contract.binding_list", surface = "cli_contract", line_range = [382, 382], classification = "executable" },
+  { id = "cli_contract.binding_remove", surface = "cli_contract", line_range = [390, 390], classification = "executable" },
+  { id = "cli_contract.target_add", surface = "cli_contract", line_range = [405, 405], classification = "executable" },
+  { id = "cli_contract.target_list", surface = "cli_contract", line_range = [421, 421], classification = "executable" },
+  { id = "cli_contract.target_show", surface = "cli_contract", line_range = [429, 429], classification = "executable" },
+  { id = "cli_contract.target_remove", surface = "cli_contract", line_range = [437, 437], classification = "executable" },
+  { id = "cli_contract.skill_reads", surface = "cli_contract", line_range = [452, 463], classification = "executable" },
+  { id = "cli_contract.skill_compile", surface = "cli_contract", line_range = [501, 505], classification = "executable" },
+  { id = "cli_contract.skill_activation", surface = "cli_contract", line_range = [529, 531], classification = "executable" },
+  { id = "cli_contract.codex_visibility", surface = "cli_contract", line_range = [554, 558], classification = "executable" },
+  { id = "cli_contract.skill_diagnose", surface = "cli_contract", line_range = [577, 577], classification = "executable" },
+  { id = "cli_contract.skill_author_new", surface = "cli_contract", line_range = [592, 592], classification = "executable" },
+  { id = "cli_contract.skill_author", surface = "cli_contract", line_range = [610, 615], classification = "executable" },
+  { id = "cli_contract.skill_add", surface = "cli_contract", line_range = [642, 642], classification = "executable" },
+  { id = "cli_contract.providers", surface = "cli_contract", line_range = [662, 668], classification = "executable" },
+  { id = "cli_contract.package", surface = "cli_contract", line_range = [689, 691], classification = "executable" },
+  { id = "cli_contract.mcp", surface = "cli_contract", line_range = [710, 715], classification = "executable" },
+  { id = "cli_contract.provision", surface = "cli_contract", line_range = [733, 737], classification = "executable" },
+  { id = "cli_contract.policy", surface = "cli_contract", line_range = [759, 768], classification = "executable" },
+  { id = "cli_contract_operations.instructions", surface = "cli_contract_operations", line_range = [9, 13], classification = "executable" },
+  { id = "cli_contract_operations.provenance", surface = "cli_contract_operations", line_range = [33, 36], classification = "executable" },
+  { id = "cli_contract_operations.import", surface = "cli_contract_operations", line_range = [58, 58], classification = "executable" },
+  { id = "cli_contract_operations.monitor", surface = "cli_contract_operations", line_range = [75, 75], classification = "executable" },
+  { id = "cli_contract_operations.lint", surface = "cli_contract_operations", line_range = [94, 94], classification = "executable" },
+  { id = "cli_contract_operations.policy", surface = "cli_contract_operations", line_range = [114, 114], classification = "executable" },
+  { id = "cli_contract_operations.safety", surface = "cli_contract_operations", line_range = [133, 136], classification = "executable" },
+  { id = "cli_contract_operations.deps", surface = "cli_contract_operations", line_range = [156, 156], classification = "executable" },
+  { id = "cli_contract_operations.eval", surface = "cli_contract_operations", line_range = [174, 180], classification = "executable" },
+  { id = "cli_contract_operations.regression", surface = "cli_contract_operations", line_range = [210, 211], classification = "executable" },
+  { id = "cli_contract_operations.skillset", surface = "cli_contract_operations", line_range = [231, 240], classification = "executable" },
+  { id = "cli_contract_operations.workflow", surface = "cli_contract_operations", line_range = [265, 269], classification = "executable" },
+  { id = "cli_contract_operations.project", surface = "cli_contract_operations", line_range = [288, 288], classification = "executable" },
+  { id = "cli_contract_operations.commit", surface = "cli_contract_operations", line_range = [326, 326], classification = "executable" },
+  { id = "cli_contract_operations.release", surface = "cli_contract_operations", line_range = [352, 352], classification = "executable" },
+  { id = "cli_contract_operations.rollback", surface = "cli_contract_operations", line_range = [368, 368], classification = "executable" },
+  { id = "cli_contract_operations.project_output", surface = "cli_contract_operations", line_range = [397, 397], classification = "executable" },
+  { id = "cli_contract_operations.diff", surface = "cli_contract_operations", line_range = [423, 424], classification = "executable" },
+  { id = "cli_contract_operations.telemetry", surface = "cli_contract_operations", line_range = [439, 447], classification = "executable" },
+  { id = "cli_contract_operations.use", surface = "cli_contract_operations", line_range = [494, 494], classification = "executable" },
+  { id = "cli_contract_operations.plan_apply", surface = "cli_contract_operations", line_range = [516, 517], classification = "executable" },
+  { id = "cli_contract_operations.sync_status", surface = "cli_contract_operations", line_range = [541, 541], classification = "executable" },
+  { id = "cli_contract_operations.sync_push", surface = "cli_contract_operations", line_range = [553, 553], classification = "executable" },
+  { id = "cli_contract_operations.sync_pull", surface = "cli_contract_operations", line_range = [563, 563], classification = "executable" },
+  { id = "cli_contract_operations.sync_replay", surface = "cli_contract_operations", line_range = [571, 571], classification = "executable" },
+  { id = "cli_contract_operations.ops_list", surface = "cli_contract_operations", line_range = [581, 581], classification = "executable" },
+  { id = "cli_contract_operations.ops_retry", surface = "cli_contract_operations", line_range = [610, 610], classification = "executable" },
+  { id = "cli_contract_operations.ops_purge", surface = "cli_contract_operations", line_range = [618, 618], classification = "executable" },
+  { id = "cli_contract_operations.ops_diagnose", surface = "cli_contract_operations", line_range = [626, 626], classification = "executable" },
+  { id = "cli_contract_operations.ops_repair", surface = "cli_contract_operations", line_range = [634, 634], classification = "executable" },
+  { id = "cli_contract_operations.acceptance_flow", surface = "cli_contract_operations", line_range = [692, 696], classification = "executable" },
+]
 [[surface]]
 id = "readme"
 path = "README.md"
@@ -62,211 +218,32 @@ path = "docs/LOOM_V1_ACCEPTANCE.md"
 [[surface]]
 id = "v1_core_spec"
 path = "docs/LOOM_V1_CORE_SPEC.md"
+[[surface]]
+id = "plan_advanced_ecosystem"
+path = "docs/plan/advanced-skill-ecosystem-todolist.md"
+[[surface]]
+id = "plan_codex_active_view"
+path = "docs/plan/codex-active-view-projection-spec.md"
+[[surface]]
+id = "plan_panel_trash"
+path = "docs/plan/panel-trash-ui-spec.md"
+[[surface]]
+id = "plan_control_plane_audit"
+path = "docs/plan/skill-control-plane-audit-2026-06-24.md"
+[[surface]]
+id = "plan_skill_diagnose"
+path = "docs/plan/skill-diagnose-spec.md"
+[[surface]]
+id = "plan_skill_history"
+path = "docs/plan/skill-history-timeline-spec.md"
+[[surface]]
+id = "plan_trash_mvp"
+path = "docs/plan/trash-mvp-spec.md"
 [[example]]
 id = "readme.install_and_first_lifecycle"
 surface = "readme"
 line_range = [40, 100]
 classification = "executable"
-[[panel_mutation]]
-id = "panel.workspace.init"
-label_path = "panel/src/lib/operation_labels.ts"
-action_id = "workspace.init"
-backend_route = "POST /api/v1/workspace/init"
-handler = "v1_workspace_init"
-binding = "cli_equivalent"
-cli_argv = ["loom", "workspace", "init", "--scan-existing"]
-[[panel_mutation]]
-id = "panel.workspace.remote_set"
-label_path = "panel/src/lib/operation_labels.ts"
-action_id = "workspace.remote.set"
-backend_route = "POST /api/v1/workspace/remote"
-handler = "remote_set"
-binding = "cli_equivalent"
-cli_argv = ["loom", "workspace", "remote", "set", "<url>"]
-[[panel_mutation]]
-id = "panel.target.add"
-label_path = "panel/src/lib/operation_labels.ts"
-action_id = "target.add"
-backend_route = "POST /api/v1/targets"
-handler = "registry_target_add"
-binding = "cli_equivalent"
-cli_argv = ["loom", "target", "add", "--agent", "claude", "--path", "<path>", "--ownership", "observed"]
-[[panel_mutation]]
-id = "panel.target.remove"
-label_path = "panel/src/lib/operation_labels.ts"
-action_id = "target.remove"
-backend_route = "POST /api/v1/targets/{target_id}/remove"
-handler = "registry_target_remove"
-binding = "cli_equivalent"
-cli_argv = ["loom", "target", "remove", "<target_id>"]
-[[panel_mutation]]
-id = "panel.workspace.binding_add"
-label_path = "panel/src/lib/operation_labels.ts"
-action_id = "workspace.binding.add"
-backend_route = "POST /api/v1/bindings"
-handler = "registry_binding_add"
-binding = "cli_equivalent"
-cli_argv = ["loom", "workspace", "binding", "add", "--agent", "claude", "--profile", "home", "--matcher-kind", "path-prefix", "--matcher-value", "<workspace>", "--target", "<target_id>", "--policy-profile", "safe-capture"]
-[[panel_mutation]]
-id = "panel.workspace.binding_remove"
-label_path = "panel/src/lib/operation_labels.ts"
-action_id = "workspace.binding.remove"
-backend_route = "POST /api/v1/bindings/{binding_id}/remove"
-handler = "registry_binding_remove"
-binding = "cli_equivalent"
-cli_argv = ["loom", "workspace", "binding", "remove", "<binding_id>"]
-[[panel_mutation]]
-id = "panel.skill.add"
-label_path = "panel/src/lib/operation_labels.ts"
-action_id = "skill.add"
-backend_route = "POST /api/v1/skills"
-handler = "registry_skill_add"
-binding = "cli_equivalent"
-cli_argv = ["loom", "skill", "add", "<source>", "--name", "contract-fixture"]
-[[panel_mutation]]
-id = "panel.skill.import_observed"
-label_path = "panel/src/lib/operation_labels.ts"
-action_id = "skill.import_observed"
-backend_route = "POST /api/v1/skills/import-observed"
-handler = "registry_skill_import_observed"
-binding = "cli_equivalent"
-cli_argv = ["loom", "skill", "import-observed", "--target", "<target_id>"]
-[[panel_mutation]]
-id = "panel.skill.use_apply"
-label_path = "panel/src/lib/operation_labels.ts"
-action_id = "use"
-backend_route = "POST /api/v1/skills/{skill_name}/use"
-handler = "registry_skill_use"
-binding = "cli_equivalent"
-cli_argv = ["loom", "use", "<skill>", "--agents", "claude", "--scope", "project", "--profile", "default", "--method", "symlink", "--apply"]
-[[panel_mutation]]
-id = "panel.skill.trash_add"
-label_path = "panel/src/lib/operation_labels.ts"
-action_id = "skill.trash.add"
-backend_route = "POST /api/v1/skills/{skill_name}/trash"
-handler = "registry_skill_trash_add"
-binding = "cli_equivalent"
-cli_argv = ["loom", "skill", "trash", "add", "<skill>"]
-[[panel_mutation]]
-id = "panel.skill.trash_restore"
-label_path = "panel/src/lib/operation_labels.ts"
-action_id = "skill.trash.restore"
-backend_route = "POST /api/v1/skills/trash/{trash_id}/restore"
-handler = "registry_skill_trash_restore"
-binding = "cli_equivalent"
-cli_argv = ["loom", "skill", "trash", "restore", "<skill>", "--trash-id", "<trash_id>"]
-[[panel_mutation]]
-id = "panel.skill.trash_purge"
-label_path = "panel/src/lib/operation_labels.ts"
-action_id = "skill.trash.purge"
-backend_route = "POST /api/v1/skills/trash/{trash_id}/purge"
-handler = "registry_skill_trash_purge"
-binding = "cli_equivalent"
-cli_argv = ["loom", "skill", "trash", "purge", "<trash_id>"]
-[[panel_mutation]]
-id = "panel.skill.commit_source"
-label_path = "panel/src/lib/operation_labels.ts"
-action_id = "skill.commit"
-backend_route = "POST /api/v1/skills/{skill_name}/commit"
-handler = "registry_skill_save"
-binding = "cli_equivalent"
-cli_argv = ["loom", "skill", "commit", "<skill>", "--from-source"]
-[[panel_mutation]]
-id = "panel.skill.release_anchor"
-label_path = "panel/src/lib/operation_labels.ts"
-action_id = "skill.release"
-backend_route = "POST /api/v1/skills/{skill_name}/release-anchor"
-handler = "registry_skill_snapshot"
-binding = "cli_equivalent"
-cli_argv = ["loom", "skill", "release", "<skill>", "--anchor"]
-[[panel_mutation]]
-id = "panel.skill.release_version"
-label_path = "panel/src/lib/operation_labels.ts"
-action_id = "skill.release"
-backend_route = "POST /api/v1/skills/{skill_name}/release"
-handler = "registry_skill_release"
-binding = "cli_equivalent"
-cli_argv = ["loom", "skill", "release", "<skill>", "<version>"]
-[[panel_mutation]]
-id = "panel.skill.rollback"
-label_path = "panel/src/lib/operation_labels.ts"
-action_id = "skill.rollback"
-backend_route = "POST /api/v1/skills/{skill_name}/rollback"
-handler = "registry_skill_rollback"
-binding = "cli_equivalent"
-cli_argv = ["loom", "skill", "rollback", "<skill>", "--to", "<ref>"]
-[[panel_mutation]]
-id = "panel.skill.project"
-label_path = "panel/src/lib/operation_labels.ts"
-action_id = "skill.project"
-backend_route = "POST /api/v1/projections/project"
-handler = "registry_project"
-binding = "cli_equivalent"
-cli_argv = ["loom", "skill", "project", "<skill>", "--binding", "<binding_id>", "--target", "<target_id>", "--method", "symlink"]
-[[panel_mutation]]
-id = "panel.skill.commit_projection"
-label_path = "panel/src/lib/operation_labels.ts"
-action_id = "skill.commit"
-backend_route = "POST /api/v1/projections/commit"
-handler = "registry_capture"
-binding = "cli_equivalent"
-cli_argv = ["loom", "skill", "commit", "<skill>", "--from-projection", "--instance", "<instance_id>"]
-[[panel_mutation]]
-id = "panel.skill.orphan_clean"
-label_path = "panel/src/lib/operation_labels.ts"
-action_id = "skill.orphan.clean"
-backend_route = "POST /api/v1/orphans/clean"
-handler = "registry_orphan_clean"
-binding = "cli_equivalent"
-cli_argv = ["loom", "skill", "orphan", "clean", "--delete-live-paths"]
-[[panel_mutation]]
-id = "panel.ops.retry"
-label_path = "panel/src/lib/operation_labels.ts"
-action_id = "ops.retry"
-backend_route = "POST /api/v1/ops/retry"
-handler = "ops_retry"
-binding = "cli_equivalent"
-cli_argv = ["loom", "ops", "retry"]
-[[panel_mutation]]
-id = "panel.ops.purge"
-label_path = "panel/src/lib/operation_labels.ts"
-action_id = "ops.purge"
-backend_route = "POST /api/v1/ops/purge"
-handler = "ops_purge"
-binding = "cli_equivalent"
-cli_argv = ["loom", "ops", "purge"]
-[[panel_mutation]]
-id = "panel.ops.history_repair"
-label_path = "panel/src/lib/operation_labels.ts"
-action_id = "ops.history.repair"
-backend_route = "POST /api/v1/ops/history/repair"
-handler = "ops_history_repair"
-binding = "cli_equivalent"
-cli_argv = ["loom", "ops", "history", "repair", "--strategy", "local"]
-[[panel_mutation]]
-id = "panel.sync.push"
-label_path = "panel/src/lib/operation_labels.ts"
-action_id = "sync.push"
-backend_route = "POST /api/v1/sync/push"
-handler = "sync_push"
-binding = "cli_equivalent"
-cli_argv = ["loom", "sync", "push"]
-[[panel_mutation]]
-id = "panel.sync.pull"
-label_path = "panel/src/lib/operation_labels.ts"
-action_id = "sync.pull"
-backend_route = "POST /api/v1/sync/pull"
-handler = "sync_pull"
-binding = "cli_equivalent"
-cli_argv = ["loom", "sync", "pull"]
-[[panel_mutation]]
-id = "panel.sync.replay"
-label_path = "panel/src/lib/operation_labels.ts"
-action_id = "sync.replay"
-backend_route = "POST /api/v1/sync/replay"
-handler = "sync_replay"
-binding = "cli_equivalent"
-cli_argv = ["loom", "sync", "replay"]
 [[example]]
 id = "readme.monitor"
 surface = "readme"
@@ -287,11 +264,6 @@ id = "readme.agent_guidance"
 surface = "readme"
 line_range = [309, 310]
 classification = "output_example"
-[[example]]
-id = "readme.command_reference"
-surface = "readme"
-line_range = [326, 470]
-classification = "executable"
 [[example]]
 id = "readme.observed_targets"
 surface = "readme"
@@ -400,22 +372,32 @@ classification = "executable"
 [[example]]
 id = "release_workflow.homebrew_formula"
 surface = "release_workflow"
-line_range = [1, 344]
+line_range = [337, 344]
 classification = "output_example"
 [[example]]
-id = "codex_visibility.current_commands"
+id = "codex_visibility.inspect"
 surface = "codex_skill_visibility"
-line_range = [1, 124]
+line_range = [67, 68]
 classification = "executable"
 [[example]]
-id = "api_contract.current_commands"
+id = "codex_visibility.status"
+surface = "codex_skill_visibility"
+line_range = [88, 93]
+classification = "executable"
+[[example]]
+id = "codex_visibility.dry_run"
+surface = "codex_skill_visibility"
+line_range = [99, 100]
+classification = "executable"
+[[example]]
+id = "codex_visibility.apply"
+surface = "codex_skill_visibility"
+line_range = [106, 107]
+classification = "executable"
+[[example]]
+id = "api_contract.telemetry_report"
 surface = "api_contract"
-line_range = [1, 198]
-classification = "executable"
-[[example]]
-id = "cli_contract.current_commands"
-surface = "cli_contract"
-line_range = [1, 220]
+line_range = [194, 195]
 classification = "executable"
 [[example]]
 id = "cli_contract.generic_action_shape"
@@ -423,25 +405,10 @@ surface = "cli_contract"
 line_range = [221, 221]
 classification = "output_example"
 [[example]]
-id = "cli_contract.current_commands_after_action_shape"
-surface = "cli_contract"
-line_range = [222, 788]
-classification = "executable"
-[[example]]
-id = "cli_contract_operations.current_commands"
-surface = "cli_contract_operations"
-line_range = [1, 519]
-classification = "executable"
-[[example]]
 id = "cli_contract_operations.use_apply_name"
 surface = "cli_contract_operations"
 line_range = [520, 520]
 classification = "output_example"
-[[example]]
-id = "cli_contract_operations.current_commands_after_use"
-surface = "cli_contract_operations"
-line_range = [521, 709]
-classification = "executable"
 [[example]]
 id = "cli_contract_operations.rejected_shapes"
 surface = "cli_contract_operations"
@@ -455,340 +422,355 @@ classification = "executable"
 [[example]]
 id = "complete_guide.current_commands"
 surface = "complete_guide_zh"
-line_range = [1, 221]
+line_range = [43, 43]
 classification = "legacy"
 [[example]]
-id = "migration_active_view.current_commands"
+id = "complete_guide.add"
+surface = "complete_guide_zh"
+line_range = [65, 65]
+classification = "legacy"
+[[example]]
+id = "complete_guide.targets"
+surface = "complete_guide_zh"
+line_range = [72, 74]
+classification = "legacy"
+[[example]]
+id = "complete_guide.binding"
+surface = "complete_guide_zh"
+line_range = [85, 85]
+classification = "legacy"
+[[example]]
+id = "complete_guide.lifecycle"
+surface = "complete_guide_zh"
+line_range = [97, 103]
+classification = "legacy"
+[[example]]
+id = "complete_guide.root"
+surface = "complete_guide_zh"
+line_range = [220, 220]
+classification = "legacy"
+[[example]]
+id = "migration_active_view.reads"
 surface = "migration_active_view"
-line_range = [1, 138]
+line_range = [23, 26]
 classification = "executable"
 [[example]]
-id = "skill_provider_boundary.current_commands"
+id = "migration_active_view.visibility"
+surface = "migration_active_view"
+line_range = [38, 40]
+classification = "executable"
+[[example]]
+id = "migration_active_view.activate_dry"
+surface = "migration_active_view"
+line_range = [68, 69]
+classification = "executable"
+[[example]]
+id = "migration_active_view.activate"
+surface = "migration_active_view"
+line_range = [76, 76]
+classification = "executable"
+[[example]]
+id = "migration_active_view.reconcile_dry"
+surface = "migration_active_view"
+line_range = [84, 84]
+classification = "executable"
+[[example]]
+id = "migration_active_view.reconcile_apply"
+surface = "migration_active_view"
+line_range = [100, 100]
+classification = "executable"
+[[example]]
+id = "migration_active_view.verify"
+surface = "migration_active_view"
+line_range = [108, 111]
+classification = "executable"
+[[example]]
+id = "migration_active_view.rollback"
+surface = "migration_active_view"
+line_range = [128, 130]
+classification = "executable"
+[[example]]
+id = "skill_provider_boundary.comparison"
 surface = "skill_provider_boundary"
-line_range = [1, 139]
+line_range = [43, 43]
 classification = "output_example"
 [[example]]
-id = "supported_agents.current_commands"
+id = "supported_agents.scan"
 surface = "supported_agents"
-line_range = [1, 82]
+line_range = [4, 4]
 classification = "executable"
 [[example]]
-id = "architecture_decisions.historical_commands"
+id = "supported_agents.scan_detail"
+surface = "supported_agents"
+line_range = [32, 32]
+classification = "executable"
+[[example]]
+id = "supported_agents.doctor"
+surface = "supported_agents"
+line_range = [40, 40]
+classification = "executable"
+[[example]]
+id = "supported_agents.target_add"
+surface = "supported_agents"
+line_range = [61, 61]
+classification = "executable"
+[[example]]
+id = "architecture_decisions.orphans"
 surface = "architecture_decisions"
-line_range = [1, 290]
+line_range = [98, 100]
 classification = "legacy"
 [[example]]
-id = "legacy_prd.historical_commands"
+id = "architecture_decisions.budget"
+surface = "architecture_decisions"
+line_range = [130, 133]
+classification = "legacy"
+[[example]]
+id = "architecture_decisions.binding_remove"
+surface = "architecture_decisions"
+line_range = [227, 227]
+classification = "legacy"
+[[example]]
+id = "architecture_decisions.orphan_shape"
+surface = "architecture_decisions"
+line_range = [248, 248]
+classification = "legacy"
+[[example]]
+id = "legacy_prd.surface"
 surface = "legacy_prd"
-line_range = [1, 213]
+line_range = [109, 112]
 classification = "legacy"
 [[example]]
-id = "legacy_state_schema.historical_commands"
+id = "legacy_prd.migration"
+surface = "legacy_prd"
+line_range = [128, 144]
+classification = "legacy"
+[[example]]
+id = "legacy_state_schema.reset"
 surface = "legacy_state_schema"
-line_range = [1, 214]
+line_range = [207, 207]
 classification = "legacy"
 [[example]]
-id = "state_migration_notes.historical_commands"
+id = "legacy_state_schema.repair"
+surface = "legacy_state_schema"
+line_range = [214, 214]
+classification = "legacy"
+[[example]]
+id = "state_migration_notes.targets"
 surface = "state_migration_notes"
-line_range = [1, 392]
+line_range = [194, 199]
 classification = "legacy"
 [[example]]
-id = "state_model.historical_commands"
+id = "state_model.workspace"
 surface = "state_model"
-line_range = [1, 483]
+line_range = [336, 340]
 classification = "legacy"
 [[example]]
-id = "v1_acceptance.historical_commands"
+id = "state_model.targets"
+surface = "state_model"
+line_range = [346, 349]
+classification = "legacy"
+[[example]]
+id = "state_model.skills"
+surface = "state_model"
+line_range = [357, 365]
+classification = "legacy"
+[[example]]
+id = "state_model.sync"
+surface = "state_model"
+line_range = [371, 376]
+classification = "legacy"
+[[example]]
+id = "v1_acceptance.performance"
 surface = "v1_acceptance"
-line_range = [1, 61]
+line_range = [49, 50]
 classification = "legacy"
 [[example]]
-id = "v1_core_spec.historical_commands"
+id = "v1_core_spec.workspace"
 surface = "v1_core_spec"
-line_range = [1, 791]
+line_range = [279, 287]
 classification = "legacy"
-[[next_action_emitter]]
-id = "error.binding_not_found"
-source = "src/error_actions.rs#default_next_actions.BINDING_NOT_FOUND"
-shape = "object"
-fixture_ids = ["fixture.error.binding_not_found"]
-[[next_action_emitter]]
-id = "error.target_not_found"
-source = "src/error_actions.rs#default_next_actions.TARGET_NOT_FOUND"
-shape = "object"
-fixture_ids = ["fixture.error.target_not_found"]
-[[next_action_emitter]]
-id = "error.skill_not_found"
-source = "src/error_actions.rs#default_next_actions.SKILL_NOT_FOUND"
-shape = "object"
-fixture_ids = ["fixture.error.skill_not_found"]
-[[next_action_emitter]]
-id = "error.state_not_initialized"
-source = "src/error_actions.rs#default_next_actions.STATE_NOT_INITIALIZED"
-shape = "object"
-fixture_ids = ["fixture.error.state_not_initialized"]
-[[next_action_emitter]]
-id = "error.target_not_managed"
-source = "src/error_actions.rs#default_next_actions.TARGET_NOT_MANAGED"
-shape = "object"
-fixture_ids = ["fixture.error.target_not_managed"]
-[[next_action_emitter]]
-id = "error.lock_busy"
-source = "src/error_actions.rs#default_next_actions.LOCK_BUSY"
-shape = "object"
-fixture_ids = ["fixture.error.lock_busy"]
-[[next_action_emitter]]
-id = "error.remote_sync"
-source = "src/error_actions.rs#default_next_actions.REMOTE_SYNC"
-shape = "object"
-fixture_ids = ["fixture.error.remote_sync"]
-[[next_action_emitter]]
-id = "codex.visibility.report"
-source = "src/commands/codex_visibility.rs#evaluate_codex_visibility.next_actions"
-shape = "string"
-fixture_ids = ["fixture.codex.visibility.report"]
-[[next_action_emitter]]
-id = "codex.visibility.unsupported"
-source = "src/commands/codex_visibility/report_support.rs#unsupported_agent_visibility.next_actions"
-shape = "string"
-fixture_ids = ["fixture.codex.visibility.unsupported"]
-[[next_action_emitter]]
-id = "mcp.doctor.manual"
-source = "src/commands/mcp.rs#McpDoctorCommand.missing_skill.next_actions"
-shape = "string"
-fixture_ids = ["fixture.mcp.doctor.manual"]
-[[next_action_emitter]]
-id = "mcp.doctor.report"
-source = "src/commands/mcp.rs#McpDoctorCommand.report.next_actions"
-shape = "string"
-fixture_ids = ["fixture.mcp.doctor.report"]
-[[next_action_emitter]]
-id = "mcp.apply.response"
-source = "src/commands/mcp/apply/record.rs#record_apply_result.next_actions"
-shape = "string"
-fixture_ids = ["fixture.mcp.apply.response"]
-[[next_action_emitter]]
-id = "plan.use.response"
-source = "src/commands/plan_cmds.rs#UsePlanCommand.execute.next_actions"
-shape = "string"
-fixture_ids = ["fixture.plan.use.response"]
-[[next_action_emitter]]
-id = "provenance.outdated.row"
-source = "src/commands/provenance/outdated.rs#OutdatedRow.into_json.next_actions"
-shape = "string"
-fixture_ids = ["fixture.provenance.outdated.row"]
-[[next_action_emitter]]
-id = "provenance.outdated.summary"
-source = "src/commands/provenance/outdated.rs#OutdatedCommand.summary.next_actions"
-shape = "string"
-fixture_ids = ["fixture.provenance.outdated.summary"]
-[[next_action_emitter]]
-id = "provenance.outdated.repin_item"
-source = "src/commands/provenance/outdated.rs#RepinCommand.item.next_actions"
-shape = "string"
-fixture_ids = ["fixture.provenance.outdated.repin_item"]
-[[next_action_emitter]]
-id = "provider.install.applied"
-source = "src/commands/provider_cmds/install.rs#ProviderInstallCommand.applied.next_actions"
-shape = "string"
-fixture_ids = ["fixture.provider.install.applied"]
-[[next_action_emitter]]
-id = "provider.install.plan"
-source = "src/commands/provider_cmds/locator.rs#provider_install_plan.next_actions"
-shape = "string"
-fixture_ids = ["fixture.provider.install.plan"]
-[[next_action_emitter]]
-id = "provision.doctor"
-source = "src/commands/provision/mod.rs#ProvisionCommand.doctor.next_actions"
-shape = "string"
-fixture_ids = ["fixture.provision.doctor"]
-[[next_action_emitter]]
-id = "provision.dependency.missing"
-source = "src/commands/provision/planner.rs#dependency_report.missing.next_actions"
-shape = "string"
-fixture_ids = ["fixture.provision.dependency.missing"]
-[[next_action_emitter]]
-id = "skill.deps.report"
-source = "src/commands/skill_deps.rs#DependencyReport.next_actions"
-shape = "string"
-fixture_ids = ["fixture.skill.deps.report"]
-[[next_action_emitter]]
-id = "rollback.reconciliation.noop"
-source = "src/commands/rollback_reconciliation.rs#not_requested.next_actions"
-shape = "string"
-fixture_ids = ["fixture.rollback.reconciliation.noop"]
-[[next_action_emitter]]
-id = "rollback.reconciliation.registry_missing"
-source = "src/commands/rollback_reconciliation.rs#registry_missing.next_actions"
-shape = "object"
-fixture_ids = ["fixture.rollback.reconciliation.registry_missing"]
-[[next_action_emitter]]
-id = "rollback.reconciliation.registry_unavailable"
-source = "src/commands/rollback_reconciliation.rs#registry_unavailable.next_actions"
-shape = "object"
-fixture_ids = ["fixture.rollback.reconciliation.registry_unavailable"]
-[[next_action_emitter]]
-id = "rollback.reconciliation.snapshot"
-source = "src/commands/rollback_reconciliation.rs#reconcile_snapshot.next_actions"
-shape = "object"
-fixture_ids = ["fixture.rollback.reconciliation.snapshot"]
-[[next_action_emitter]]
-id = "skill.activate.remove.non_directory"
-source = "src/commands/skill_activation/apply.rs#remove.non_directory.next_actions"
-shape = "object"
-fixture_ids = ["fixture.skill.activate.remove.non_directory"]
-[[next_action_emitter]]
-id = "skill.activate.remove.unsafe_path"
-source = "src/commands/skill_activation/apply.rs#remove.unsafe_path.next_actions"
-shape = "object"
-fixture_ids = ["fixture.skill.activate.remove.unsafe_path"]
-[[next_action_emitter]]
-id = "skill.activate.compiled_failure"
-source = "src/commands/skill_activation/compiled.rs#compiled_failure.next_actions"
-shape = "string"
-fixture_ids = ["fixture.skill.activate.compiled_failure"]
-[[next_action_emitter]]
-id = "skill.deactivate.unsafe_path"
-source = "src/commands/skill_activation/mod.rs#deactivate.unsafe_path.next_actions"
-shape = "object"
-fixture_ids = ["fixture.skill.deactivate.unsafe_path"]
-[[next_action_emitter]]
-id = "skill.author.patch"
-source = "src/commands/skill_authoring.rs#author_patch.next_actions"
-shape = "string"
-fixture_ids = ["fixture.skill.author.patch"]
-[[next_action_emitter]]
-id = "skill.author.apply.source_digest_changed"
-source = "src/commands/skill_authoring_apply.rs#source_digest_changed.next_actions"
-shape = "object"
-fixture_ids = ["fixture.skill.author.apply.source_digest_changed"]
-[[next_action_emitter]]
-id = "skill.author.apply.source_ref_changed"
-source = "src/commands/skill_authoring_apply.rs#source_ref_changed.next_actions"
-shape = "object"
-fixture_ids = ["fixture.skill.author.apply.source_ref_changed"]
-[[next_action_emitter]]
-id = "skill.author.apply.replay_conflict"
-source = "src/commands/skill_authoring_apply.rs#replay_conflict.next_actions"
-shape = "object"
-fixture_ids = ["fixture.skill.author.apply.replay_conflict"]
-[[next_action_emitter]]
-id = "skill.commit.direction_ambiguous"
-source = "src/commands/skill_cmds/commit.rs#direction_ambiguous.next_actions"
-shape = "object"
-fixture_ids = ["fixture.skill.commit.direction_ambiguous"]
-[[next_action_emitter]]
-id = "skill.compile.plan"
-source = "src/commands/skill_compile/mod.rs#compile_plan.next_actions"
-shape = "string"
-fixture_ids = ["fixture.skill.compile.plan"]
-[[next_action_emitter]]
-id = "skill.compile.applied"
-source = "src/commands/skill_compile/mod.rs#compile_applied.next_actions"
-shape = "string"
-fixture_ids = ["fixture.skill.compile.applied"]
-[[next_action_emitter]]
-id = "skill.diagnose.dependencies"
-source = "src/commands/skill_diagnose/dependency_checks.rs#dependency_summary.next_actions"
-shape = "string"
-fixture_ids = ["fixture.skill.diagnose.dependencies"]
-[[next_action_emitter]]
-id = "skill.inspect.response"
-source = "src/commands/skill_inspect/command.rs#inspect_response.next_actions"
-shape = "string"
-fixture_ids = ["fixture.skill.inspect.response"]
-[[next_action_emitter]]
-id = "skill.inventory.row"
-source = "src/commands/skill_inventory.rs#inventory_row.next_actions"
-shape = "string"
-fixture_ids = ["fixture.skill.inventory.row"]
-[[next_action_emitter]]
-id = "skill.new.applied"
-source = "src/commands/skill_new.rs#new_applied.next_actions"
-shape = "string"
-fixture_ids = ["fixture.skill.new.applied"]
-[[next_action_emitter]]
-id = "skill.new.plan"
-source = "src/commands/skill_new.rs#new_plan.next_actions"
-shape = "string"
-fixture_ids = ["fixture.skill.new.plan"]
-[[next_action_emitter]]
-id = "index.status"
-source = "src/commands/skill_recommend/index.rs#index_status.next_actions"
-shape = "string"
-fixture_ids = ["fixture.index.status"]
-[[next_action_emitter]]
-id = "skillset.activate.optional_missing"
-source = "src/commands/skillset_activation.rs#optional_missing.next_actions"
-shape = "string"
-fixture_ids = ["fixture.skillset.activate.optional_missing"]
-[[next_action_emitter]]
-id = "skillset.activate.member_ready"
-source = "src/commands/skillset_activation.rs#member_ready.next_actions"
-shape = "string"
-fixture_ids = ["fixture.skillset.activate.member_ready"]
-[[next_action_emitter]]
-id = "skillset.activate.optional_failed"
-source = "src/commands/skillset_activation.rs#optional_failed.next_actions"
-shape = "string"
-fixture_ids = ["fixture.skillset.activate.optional_failed"]
-[[next_action_emitter]]
-id = "skillset.eval.deferred"
-source = "src/commands/skillset_activation/eval.rs#eval_deferred.next_actions"
-shape = "string"
-fixture_ids = ["fixture.skillset.eval.deferred"]
-[[next_action_emitter]]
-id = "skillset.create.applied"
-source = "src/commands/skillset_cmds.rs#create_applied.next_actions"
-shape = "string"
-fixture_ids = ["fixture.skillset.create.applied"]
-[[next_action_emitter]]
-id = "skillset.release.dirty_definition"
-source = "src/commands/skillset_release.rs#dirty_definition.next_actions"
-shape = "string"
-fixture_ids = ["fixture.skillset.release.dirty_definition"]
-[[next_action_emitter]]
-id = "use.plan"
-source = "src/commands/use_cmds.rs#use_plan.next_actions"
-shape = "string"
-fixture_ids = ["fixture.use.plan"]
-[[next_action_emitter]]
-id = "use.applied"
-source = "src/commands/use_cmds.rs#use_applied.next_actions"
-shape = "string"
-fixture_ids = ["fixture.use.applied"]
-[[next_action_emitter]]
-id = "use.adopt_required"
-source = "src/commands/use_cmds.rs#adopt_required.next_actions"
-shape = "object"
-fixture_ids = ["fixture.use.adopt_required"]
-[[next_action_emitter]]
-id = "workflow.create.plan"
-source = "src/commands/workflow_cmds/mod.rs#create_plan.next_actions"
-shape = "string"
-fixture_ids = ["fixture.workflow.create.plan"]
-[[next_action_emitter]]
-id = "workflow.create.applied"
-source = "src/commands/workflow_cmds/mod.rs#create_applied.next_actions"
-shape = "string"
-fixture_ids = ["fixture.workflow.create.applied"]
-[[next_action_emitter]]
-id = "workflow.plan"
-source = "src/commands/workflow_cmds/mod.rs#workflow_plan.next_actions"
-shape = "string"
-fixture_ids = ["fixture.workflow.plan"]
-[[next_action_emitter]]
-id = "workflow.preflight"
-source = "src/commands/workflow_cmds/mod.rs#workflow_preflight.next_actions"
-shape = "string"
-fixture_ids = ["fixture.workflow.preflight"]
-[[next_action_emitter]]
-id = "workflow.run.dry_deferred"
-source = "src/commands/workflow_cmds/mod.rs#run_dry_deferred.next_actions"
-shape = "string"
-fixture_ids = ["fixture.workflow.run.dry_deferred"]
-[[next_action_emitter]]
-id = "workflow.run.error_deferred"
-source = "src/commands/workflow_cmds/mod.rs#run_error_deferred.next_actions"
-shape = "string"
-fixture_ids = ["fixture.workflow.run.error_deferred"]
+[[example]]
+id = "v1_core_spec.targets"
+surface = "v1_core_spec"
+line_range = [301, 304]
+classification = "legacy"
+[[example]]
+id = "v1_core_spec.skills"
+surface = "v1_core_spec"
+line_range = [318, 329]
+classification = "legacy"
+[[example]]
+id = "v1_core_spec.sync"
+surface = "v1_core_spec"
+line_range = [350, 359]
+classification = "legacy"
+[[example]]
+id = "v1_core_spec.migrate"
+surface = "v1_core_spec"
+line_range = [637, 638]
+classification = "legacy"
+[[example]]
+id = "v1_core_spec.performance"
+surface = "v1_core_spec"
+line_range = [704, 705]
+classification = "legacy"
+[[example]]
+id = "v1_core_spec.acceptance"
+surface = "v1_core_spec"
+line_range = [720, 722]
+classification = "legacy"
+[[example]]
+id = "plan_advanced_ecosystem.index"
+surface = "plan_advanced_ecosystem"
+line_range = [102, 102]
+classification = "legacy"
+[[example]]
+id = "plan_panel_trash.commands"
+surface = "plan_panel_trash"
+line_range = [13, 16]
+classification = "legacy"
+[[example]]
+id = "plan_control_plane_audit.use"
+surface = "plan_control_plane_audit"
+line_range = [49, 49]
+classification = "legacy"
+[[example]]
+id = "plan_skill_history.command"
+surface = "plan_skill_history"
+line_range = [35, 35]
+classification = "legacy"
+[[example]]
+id = "plan_skill_history.example"
+surface = "plan_skill_history"
+line_range = [136, 136]
+classification = "legacy"
+[[example]]
+id = "plan_skill_diagnose.context"
+surface = "plan_skill_diagnose"
+line_range = [24, 25]
+classification = "legacy"
+[[example]]
+id = "plan_skill_diagnose.commands"
+surface = "plan_skill_diagnose"
+line_range = [49, 50]
+classification = "legacy"
+[[example]]
+id = "plan_skill_diagnose.output"
+surface = "plan_skill_diagnose"
+line_range = [104, 104]
+classification = "legacy"
+[[example]]
+id = "plan_skill_diagnose.save"
+surface = "plan_skill_diagnose"
+line_range = [140, 143]
+classification = "legacy"
+[[example]]
+id = "plan_skill_diagnose.acceptance"
+surface = "plan_skill_diagnose"
+line_range = [311, 311]
+classification = "legacy"
+[[example]]
+id = "plan_trash_mvp.surface"
+surface = "plan_trash_mvp"
+line_range = [22, 25]
+classification = "legacy"
+[[example]]
+id = "plan_trash_mvp.add"
+surface = "plan_trash_mvp"
+line_range = [62, 62]
+classification = "legacy"
+[[example]]
+id = "plan_trash_mvp.list"
+surface = "plan_trash_mvp"
+line_range = [75, 75]
+classification = "legacy"
+[[example]]
+id = "plan_trash_mvp.restore"
+surface = "plan_trash_mvp"
+line_range = [86, 86]
+classification = "legacy"
+[[example]]
+id = "plan_trash_mvp.purge"
+surface = "plan_trash_mvp"
+line_range = [97, 97]
+classification = "legacy"
+[[example]]
+id = "plan_codex_active_view.project"
+surface = "plan_codex_active_view"
+line_range = [71, 73]
+classification = "legacy"
+[[example]]
+id = "plan_codex_active_view.activate"
+surface = "plan_codex_active_view"
+line_range = [235, 235]
+classification = "legacy"
+[[example]]
+id = "plan_codex_active_view.deactivate"
+surface = "plan_codex_active_view"
+line_range = [291, 291]
+classification = "legacy"
+[[example]]
+id = "plan_codex_active_view.capture"
+surface = "plan_codex_active_view"
+line_range = [313, 313]
+classification = "legacy"
+[[example]]
+id = "plan_codex_active_view.list"
+surface = "plan_codex_active_view"
+line_range = [318, 318]
+classification = "legacy"
+[[example]]
+id = "plan_codex_active_view.reconcile"
+surface = "plan_codex_active_view"
+line_range = [331, 334]
+classification = "legacy"
+[[example]]
+id = "plan_codex_active_view.visibility"
+surface = "plan_codex_active_view"
+line_range = [479, 479]
+classification = "legacy"
+[[example]]
+id = "plan_codex_active_view.output"
+surface = "plan_codex_active_view"
+line_range = [509, 509]
+classification = "legacy"
+[[example]]
+id = "plan_codex_active_view.dry_run"
+surface = "plan_codex_active_view"
+line_range = [547, 547]
+classification = "legacy"
+[[example]]
+id = "plan_codex_active_view.activate_threads"
+surface = "plan_codex_active_view"
+line_range = [588, 588]
+classification = "legacy"
+[[example]]
+id = "plan_codex_active_view.allowlist"
+surface = "plan_codex_active_view"
+line_range = [600, 600]
+classification = "legacy"
+[[example]]
+id = "plan_codex_active_view.apply"
+surface = "plan_codex_active_view"
+line_range = [622, 622]
+classification = "legacy"
+[[example]]
+id = "plan_codex_active_view.fix_config"
+surface = "plan_codex_active_view"
+line_range = [646, 646]
+classification = "legacy"
+[[example]]
+id = "plan_codex_active_view.verify"
+surface = "plan_codex_active_view"
+line_range = [657, 659]
+classification = "legacy"
+[[example]]
+id = "plan_codex_active_view.acceptance"
+surface = "plan_codex_active_view"
+line_range = [803, 807]
+classification = "legacy"
+[[example]]
+id = "plan_codex_active_view.open_question"
+surface = "plan_codex_active_view"
+line_range = [832, 832]
+classification = "legacy"

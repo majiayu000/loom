@@ -106,6 +106,28 @@ fn packaged_contract_mismatch_fails() {
 }
 
 #[test]
+fn packaged_contract_incompatible_skill_range_fails() {
+    let fixture = Fixture::new("release-contract-incompatible-range");
+    write_file(
+        &fixture.skill.join("loom.skill.toml"),
+        "[compatibility]\ncli_contract = \">=2.0.0,<3.0.0\"\n",
+    );
+    assert!(!fixture.publish().status.success());
+    assert!(!fixture.output.exists());
+}
+
+#[test]
+fn packaged_contract_invalid_semver_fails() {
+    let fixture = Fixture::new("release-contract-invalid-semver");
+    let output = publish_command(&fixture)
+        .args(["--contract-version", "1.0"])
+        .output()
+        .expect("invalid contract publisher");
+    assert!(!output.status.success());
+    assert!(!fixture.output.exists());
+}
+
+#[test]
 fn packaged_contract_digests_match() {
     let fixture = Fixture::new("release-contract-digests");
     assert!(fixture.publish().status.success());

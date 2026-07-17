@@ -139,7 +139,9 @@ where
     S: Into<std::ffi::OsString> + Clone,
 {
     let command = Cli::command();
-    let matches = match command.clone().try_get_matches_from(argv) {
+    let argv = argv.into_iter().map(Into::into).collect::<Vec<_>>();
+    let help_result = inspect_requested_visibility(&command, &argv)?;
+    let matches = match command.clone().try_get_matches_from(&argv) {
         Ok(matches) => matches,
         Err(error)
             if matches!(
@@ -147,10 +149,7 @@ where
                 ErrorKind::DisplayHelp | ErrorKind::DisplayVersion
             ) =>
         {
-            return Ok(PublicArgv {
-                command_path: vec!["loom".to_string()],
-                explicit_args: Vec::new(),
-            });
+            return Ok(help_result);
         }
         Err(error) => {
             return Err(PublicArgvError {
@@ -168,6 +167,71 @@ where
         explicit_args: Vec::new(),
     };
     inspect_public_matches(&command, &matches, &mut result)?;
+    Ok(result)
+}
+
+fn inspect_requested_visibility(
+    command: &Command,
+    argv: &[std::ffi::OsString],
+) -> Result<PublicArgv, PublicArgvError> {
+    let mut current = command;
+    let mut result = PublicArgv {
+        command_path: vec!["loom".to_string()],
+        explicit_args: Vec::new(),
+    };
+    for raw in argv.iter().skip(1) {
+        let Some(token) = raw.to_str() else {
+            continue;
+        };
+        if let Some(long) = token.strip_prefix("--") {
+            let name = long.split('=').next().unwrap_or(long);
+            if let Some(argument) = current
+                .get_arguments()
+                .find(|argument| argument.get_long() == Some(name))
+                && argument.is_hide_set()
+            {
+                return Err(PublicArgvError {
+                    kind: PublicArgvErrorKind::HiddenArgument,
+                    message: format!(
+                        "hidden argument '{}' is not part of the public CLI contract",
+                        argument.get_id()
+                    ),
+                });
+            }
+            continue;
+        }
+        if token.starts_with('-') && token.len() == 2 {
+            let short = token.chars().nth(1).expect("length checked");
+            if let Some(argument) = current
+                .get_arguments()
+                .find(|argument| argument.get_short() == Some(short))
+                && argument.is_hide_set()
+            {
+                return Err(PublicArgvError {
+                    kind: PublicArgvErrorKind::HiddenArgument,
+                    message: format!(
+                        "hidden argument '{}' is not part of the public CLI contract",
+                        argument.get_id()
+                    ),
+                });
+            }
+            continue;
+        }
+        let Some(subcommand) = current
+            .get_subcommands()
+            .find(|candidate| candidate.get_name() == token)
+        else {
+            continue;
+        };
+        if subcommand.is_hide_set() {
+            return Err(PublicArgvError {
+                kind: PublicArgvErrorKind::HiddenCommand,
+                message: format!("hidden command '{token}' is not part of the public CLI contract"),
+            });
+        }
+        result.command_path.push(token.to_string());
+        current = subcommand;
+    }
     Ok(result)
 }
 

@@ -39,5 +39,11 @@ migration_note = "Clients may use both convergence planning and telemetry ingest
 [[contract]]
 version = "1.5.0"
 skill_range = ">=1.0.0,<2.0.0"
+change = "add digest-covered convergence input, dirty-side conflict, and preflight evidence"
+migration_note = "Clients may inspect input, preflight, and input_conflicts on schema 1.2 convergence plans; execution remains disabled."
+
+[[contract]]
+version = "1.6.0"
+skill_range = ">=1.0.0,<2.0.0"
 change = "add read-only skill lifecycle statistics joining current bindings and normalized telemetry usage"
 migration_note = "Clients may consume skill stats counters and lifecycle categories; existing 1.x commands and fields remain compatible."

@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result, anyhow};
 use walkdir::WalkDir;
 
-pub(super) fn ensure_projection_symlinks_contained(
+pub(crate) fn ensure_projection_symlinks_contained(
     src: &Path,
     allow_dangling_in_tree: bool,
 ) -> Result<()> {

@@ -33,14 +33,15 @@ pub(crate) use evidence::SkillTelemetryEvidenceCache;
 use export::{export_csv, export_format_label, export_jsonl};
 pub(crate) use model::{RecommendationFeedback, failure_category_allowed};
 use model::{TelemetryConfig, TelemetryEventDraft, TelemetryEventType, TelemetryMetrics};
-use query::{
-    NormalizedTelemetryDataset, NormalizedTelemetryRow, TelemetryFilters, filtered_rows,
-    load_dataset,
+pub(crate) use query::{
+    AgentRef, NormalizedTelemetryDataset, SkillRef, UsageKind, UsageRow, load_dataset, usage_rows,
 };
+use query::{NormalizedTelemetryRow, TelemetryFilters, filtered_rows};
+pub(crate) use store::parse_cutoff;
 use store::{
     MalformedTelemetryLine, TelemetryLog, TelemetryLogEntry, config_path, events_path,
-    output_path_outside_state, parse_cutoff, purge_token, read_config, read_event_log,
-    telemetry_dir, workspace_hash_for_path, write_config,
+    output_path_outside_state, purge_token, read_config, read_event_log, telemetry_dir,
+    workspace_hash_for_path, write_config,
 };
 
 impl App {

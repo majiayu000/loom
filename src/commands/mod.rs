@@ -48,6 +48,7 @@ mod skill_recommend;
 mod skill_recommend_active;
 mod skill_safety;
 mod skill_safety_findings;
+mod skill_stats;
 mod skill_usage;
 mod skill_verify;
 mod skillset_activation;
@@ -270,6 +271,7 @@ impl App {
                     command: SkillTrashCommand::Purge(args),
                 } => self.cmd_skill_trash_purge(args, &request_id),
                 SkillCommand::List => self.cmd_skill_list(),
+                SkillCommand::Stats(args) => self.cmd_skill_stats(args),
                 SkillCommand::Inspect(args) => self.cmd_skill_inspect(args),
                 SkillCommand::Deps(args) => self.cmd_skill_deps(args),
                 SkillCommand::Compile(args) => self.cmd_skill_compile(args),

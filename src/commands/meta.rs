@@ -140,6 +140,7 @@ pub(crate) fn command_meta(command: &Command) -> CommandMeta {
             } => CommandMeta::new(true, false, false),
             SkillCommand::History(_)
             | SkillCommand::List
+            | SkillCommand::Stats(_)
             | SkillCommand::Inspect(_)
             | SkillCommand::Deps(_)
             | SkillCommand::Compile(_)

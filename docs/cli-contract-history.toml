@@ -35,3 +35,9 @@ version = "1.4.0"
 skill_range = ">=1.0.0,<2.0.0"
 change = "reconcile concurrent additive convergence planning and telemetry ingest contracts"
 migration_note = "Clients may use both convergence planning and telemetry ingest; all earlier 1.x surfaces remain compatible."
+
+[[contract]]
+version = "1.5.0"
+skill_range = ">=1.0.0,<2.0.0"
+change = "add read-only skill lifecycle statistics joining current bindings and normalized telemetry usage"
+migration_note = "Clients may consume skill stats counters and lifecycle categories; existing 1.x commands and fields remain compatible."

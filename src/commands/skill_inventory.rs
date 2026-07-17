@@ -82,15 +82,23 @@ pub(crate) fn skill_brief_payload(
 }
 
 pub(crate) fn build_skill_read_model(ctx: &AppContext) -> Result<SkillInventoryReadModel> {
+    let paths = RegistryStatePaths::from_app_context(ctx);
+    let snapshot = paths.maybe_load_snapshot()?;
+    build_skill_read_model_from_snapshot(ctx, snapshot.as_ref())
+}
+
+pub(crate) fn build_skill_read_model_from_snapshot(
+    ctx: &AppContext,
+    snapshot: Option<&RegistrySnapshot>,
+) -> Result<SkillInventoryReadModel> {
     let mut warnings = Vec::new();
     let mut rows: BTreeMap<String, SkillReadRow> = BTreeMap::new();
 
     add_source_skill_rows(&ctx.skills_dir, &mut rows, &mut warnings)?;
 
     let paths = RegistryStatePaths::from_app_context(ctx);
-    let snapshot = paths.maybe_load_snapshot()?;
     let registry_available = snapshot.is_some();
-    if let Some(snapshot) = snapshot.as_ref() {
+    if let Some(snapshot) = snapshot {
         add_registry_skill_rows(snapshot, &mut rows);
         add_observed_target_inventory_rows(snapshot, &mut rows, &mut warnings);
         add_observed_import_rows(snapshot, &mut rows);

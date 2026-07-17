@@ -7,7 +7,6 @@ pub const INVENTORY_PATH: &str = "docs/agent-command-surfaces.toml";
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExampleClassification {
     Executable,
-    CommandReference,
     OutputExample,
     Legacy,
     NonCommand,
@@ -17,7 +16,6 @@ impl ExampleClassification {
     fn parse(value: &str, location: &str) -> Result<Self, InventoryError> {
         match value {
             "executable" => Ok(Self::Executable),
-            "command_reference" => Ok(Self::CommandReference),
             "output_example" => Ok(Self::OutputExample),
             "legacy" => Ok(Self::Legacy),
             "non_command" => Ok(Self::NonCommand),

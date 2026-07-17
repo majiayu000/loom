@@ -295,7 +295,8 @@ capabilities require a minor bump, breaking command/flag/field or semantic chang
 a major bump, and non-capability corrections may use a patch bump. The append-only history,
 shipped Skill range, migration note, and release manifest are reviewed as one change; CI
 compares them against an explicit reachable `LOOM_CONTRACT_DIFF_BASE` and fails closed.
-The review-owned inventory freezes field and semantic commitments in `agent_capabilities`;
-command-reference families expand each slash-delimited public path and validate it through shared
-Clap `--help`. A base without `agent_capabilities` is the one-time bootstrap boundary; after that
-base lands, additions require minor and removals or signature changes require major.
+The review-owned inventory freezes field and semantic commitments in `agent_capabilities`.
+Output/reference command families expand each slash-delimited public path and validate it through
+shared Clap `--help`; their capability fingerprints come from the full public Clap argument schema.
+A base without `agent_capabilities` is the one-time bootstrap boundary; after that base lands,
+additions require minor and removals or signature changes require major.

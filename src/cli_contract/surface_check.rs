@@ -4,7 +4,8 @@ use walkdir::WalkDir;
 
 use super::{
     ExampleClassification, InventoryError, SurfaceExample, check_next_action_emitters,
-    check_panel_mutations, load_surface_inventory, validate_public_argv,
+    check_panel_mutations, is_public_command_candidate, load_surface_inventory,
+    validate_public_argv,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -82,7 +83,7 @@ pub fn check_surface_inventory(repo_root: &Path) -> Result<SurfaceCheckReport, I
             }
             if !matches!(
                 example.classification,
-                ExampleClassification::Executable | ExampleClassification::CommandReference
+                ExampleClassification::Executable | ExampleClassification::OutputExample
             ) {
                 continue;
             }
@@ -302,17 +303,20 @@ pub(super) fn command_variants(
     classification: ExampleClassification,
 ) -> Vec<Vec<String>> {
     let mut variants = vec![normalize_command(command)];
-    if classification != ExampleClassification::CommandReference {
+    if classification != ExampleClassification::OutputExample {
         return variants;
     }
+    if !is_public_command_candidate(&variants[0]) {
+        return Vec::new();
+    }
     for index in 0..variants[0].len() {
+        if !is_command_family_token(&variants[0][index]) {
+            continue;
+        }
         let choices = variants[0][index]
             .split('/')
             .map(str::to_string)
             .collect::<Vec<_>>();
-        if choices.len() == 1 {
-            continue;
-        }
         variants = variants
             .into_iter()
             .flat_map(|variant| {
@@ -330,6 +334,16 @@ pub(super) fn command_variants(
         }
     }
     variants
+}
+
+fn is_command_family_token(token: &str) -> bool {
+    token.contains('/')
+        && token.split('/').all(|part| {
+            !part.is_empty()
+                && part
+                    .chars()
+                    .all(|character| character.is_ascii_alphanumeric() || character == '-')
+        })
 }
 
 fn shell_tokens(command: &str) -> Vec<String> {

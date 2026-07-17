@@ -9,7 +9,7 @@ use super::inventory::{INVENTORY_PATH, parse_surface_inventory};
 use super::surface_check::{command_variants, extract_loom_commands, join_continuation_lines};
 use super::{
     ContractVersion, ExampleClassification, InventoryError, PublicArgv, parse_contract_version,
-    validate_public_argv,
+    public_command_schema_signature, validate_public_argv,
 };
 
 const SKILL_METADATA: &str = "skills/loom-registry/loom.skill.toml";
@@ -145,7 +145,7 @@ where
     for example in inventory.examples.iter().filter(|example| {
         matches!(
             example.classification,
-            ExampleClassification::Executable | ExampleClassification::CommandReference
+            ExampleClassification::Executable | ExampleClassification::OutputExample
         )
     }) {
         let path = surfaces.get(example.surface.as_str()).ok_or_else(|| {
@@ -172,7 +172,7 @@ where
                             example.id, error.message
                         ))
                     })?;
-                    capabilities.insert(public_command_capability(parsed));
+                    capabilities.insert(public_command_capability(parsed)?);
                 }
             }
         }
@@ -204,16 +204,18 @@ where
     Ok(capabilities)
 }
 
-fn public_command_capability(parsed: PublicArgv) -> String {
-    let mut explicit_args = parsed.explicit_args;
-    explicit_args.retain(|argument| argument != "help");
-    explicit_args.sort();
-    explicit_args.dedup();
-    format!(
+fn public_command_capability(parsed: PublicArgv) -> Result<String, InventoryError> {
+    let schema = public_command_schema_signature(&parsed.command_path).map_err(|error| {
+        InventoryError::new(format!(
+            "failed to fingerprint public command {:?}: {}",
+            parsed.command_path, error.message
+        ))
+    })?;
+    Ok(format!(
         "command:{}:args={}",
         parsed.command_path.join("/"),
-        explicit_args.join(",")
-    )
+        schema.join(",")
+    ))
 }
 
 fn inventory_has_agent_capabilities(raw: &str) -> Result<bool, InventoryError> {
@@ -390,8 +392,18 @@ mod tests {
         let second = validate_public_argv(["loom", "skill", "inspect", "beta"])
             .expect("second public command");
         assert_eq!(
-            public_command_capability(first),
-            public_command_capability(second)
+            public_command_capability(first).expect("first capability"),
+            public_command_capability(second).expect("second capability")
         );
+    }
+
+    #[test]
+    fn command_capability_includes_public_schema_arguments() {
+        let parsed =
+            validate_public_argv(["loom", "skill", "inspect", "fixture"]).expect("public command");
+        let capability = public_command_capability(parsed).expect("command capability");
+        assert!(capability.contains("id=skill"), "{capability}");
+        assert!(capability.contains("long=brief"), "{capability}");
+        assert!(capability.contains("long=agent"), "{capability}");
     }
 }

@@ -170,6 +170,72 @@ where
     Ok(result)
 }
 
+pub(crate) fn public_command_schema_signature(
+    command_path: &[String],
+) -> Result<Vec<String>, PublicArgvError> {
+    if command_path.first().map(String::as_str) != Some("loom") {
+        return Err(PublicArgvError {
+            kind: PublicArgvErrorKind::Parse,
+            message: "public command path must start with 'loom'".to_string(),
+        });
+    }
+    let root = Cli::command();
+    let mut command = &root;
+    for name in command_path.iter().skip(1) {
+        command = command
+            .get_subcommands()
+            .find(|candidate| candidate.get_name() == name)
+            .ok_or_else(|| PublicArgvError {
+                kind: PublicArgvErrorKind::Parse,
+                message: format!("public command schema is missing path segment '{name}'"),
+            })?;
+        if command.is_hide_set() {
+            return Err(PublicArgvError {
+                kind: PublicArgvErrorKind::HiddenCommand,
+                message: format!("hidden command '{name}' is not part of the public CLI contract"),
+            });
+        }
+    }
+    let mut signature = command
+        .get_arguments()
+        .filter(|argument| !argument.is_hide_set())
+        .map(|argument| {
+            format!(
+                "id={};long={};short={};index={};required={};arity={};action={:?}",
+                argument.get_id(),
+                argument.get_long().unwrap_or(""),
+                argument
+                    .get_short()
+                    .map(|value| value.to_string())
+                    .unwrap_or_default(),
+                argument
+                    .get_index()
+                    .map(|value| value.to_string())
+                    .unwrap_or_default(),
+                argument.is_required_set(),
+                argument
+                    .get_num_args()
+                    .map(|value| value.to_string())
+                    .unwrap_or_default(),
+                argument.get_action()
+            )
+        })
+        .collect::<Vec<_>>();
+    signature.sort();
+    if signature.is_empty() {
+        signature.push("no-args".to_string());
+    }
+    Ok(signature)
+}
+
+pub(crate) fn is_public_command_candidate(argv: &[String]) -> bool {
+    let root = Cli::command();
+    argv.iter().skip(1).any(|token| {
+        root.get_subcommands()
+            .any(|command| !command.is_hide_set() && command.get_name() == token)
+    })
+}
+
 fn inspect_requested_visibility(
     command: &Command,
     argv: &[std::ffi::OsString],

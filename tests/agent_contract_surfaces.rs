@@ -277,19 +277,46 @@ fn empty_trace_shape_requires_exact_type_identity() {
 
 #[test]
 fn active_command_guidance_is_parser_checked() {
-    let inventory = load_surface_inventory(std::path::Path::new(".")).expect("surface inventory");
-    let classification = inventory
-        .examples
-        .iter()
-        .find(|example| example.id == "readme.command_matrix")
-        .map(|example| example.classification);
-    assert_eq!(
-        classification,
-        Some(skillloom::cli_contract::ExampleClassification::CommandReference)
+    let root = TestDir::new("output-example-command-contract");
+    write_file(
+        &root.path().join("README.md"),
+        "agent guidance: `loom skill save demo`\n",
     );
-    let error = validate_public_argv(["loom", "skill", "save", "--help"])
-        .expect_err("removed command reference must fail");
-    assert_eq!(error.kind, PublicArgvErrorKind::Parse);
+    write_file(
+        &root.path().join("docs/agent-command-surfaces.toml"),
+        r#"agent_capabilities = ["field:fixture.ok:boolean"]
+[[surface]]
+id = "readme"
+path = "README.md"
+[[example]]
+id = "readme.guidance"
+surface = "readme"
+line_range = [1, 1]
+classification = "output_example"
+[[next_action_emitter]]
+id = "fixture.emitter"
+source = "src/fixture.rs#next_actions"
+shape = "string"
+fixture_ids = ["fixture.emitter.output"]
+[[panel_mutation]]
+id = "panel.fixture"
+label_path = "panel/src/lib/operation_labels.ts"
+action_id = "fixture.write"
+backend_route = "POST /api/v1/write"
+handler = "write"
+binding = "cli_equivalent"
+cli_argv = ["loom", "workspace", "status"]
+"#,
+    );
+    write_minimal_panel_contract(root.path());
+    write_file(
+        &root.path().join("src/fixture.rs"),
+        "fn fixture() { observe_next_actions(\"fixture.emitter\", Vec::<String>::new()); }\n",
+    );
+    let error = check_surface_inventory(root.path())
+        .expect_err("removed command in output/reference guidance must fail");
+    assert!(error.to_string().contains("README.md:1"), "{error}");
+    assert!(error.to_string().contains("readme.guidance"), "{error}");
 }
 
 #[test]

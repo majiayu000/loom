@@ -259,7 +259,7 @@ classification = "executable"
 id = "readme.command_matrix"
 surface = "readme"
 line_range = [222, 281]
-classification = "command_reference"
+classification = "output_example"
 [[example]]
 id = "readme.agent_guidance"
 surface = "readme"

@@ -3,7 +3,11 @@ set -euo pipefail
 
 bin="${1:-target/release/loom}"
 if [[ ! -x "$bin" ]]; then
-  perf_rustflags="${LOOM_PERF_RUSTFLAGS:--Cllvm-args=-enable-machine-outliner=always}"
+  default_rustflags="-Cllvm-args=-enable-machine-outliner=always"
+  if [[ "$(uname -s)" == "Linux" ]]; then
+    default_rustflags+=" -Clink-arg=-Wl,--no-eh-frame-hdr"
+  fi
+  perf_rustflags="${LOOM_PERF_RUSTFLAGS:-$default_rustflags}"
   RUSTFLAGS="$perf_rustflags ${RUSTFLAGS:-}" cargo build --release --locked
 fi
 

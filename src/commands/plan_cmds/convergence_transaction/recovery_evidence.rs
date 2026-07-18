@@ -97,21 +97,25 @@ pub(super) fn validate_mutated_surfaces(
 ) -> std::result::Result<(), CommandFailure> {
     let mut contiguous_new = 0usize;
     let mut saw_old = false;
-    for effect in &plan.projections {
+    for (index, effect) in plan.projections.iter().enumerate() {
         let state = projection_state(app, plan, effect)?;
         match state {
-            ProjectionState::New if !saw_old => contiguous_new += 1,
-            ProjectionState::Old => saw_old = true,
+            ProjectionState::New if !saw_old => {
+                journal.projections[index].activated = true;
+                contiguous_new += 1;
+            }
+            ProjectionState::Old => {
+                journal.projections[index].activated = false;
+                saw_old = true;
+            }
             ProjectionState::New => {
                 return Err(recovery_stale(
                     "projection transaction progress is not contiguous",
                 ));
             }
             ProjectionState::Same => {
-                if contiguous_new < journal.installed_projections {
+                if journal.projections[index].activated {
                     contiguous_new += 1;
-                } else {
-                    saw_old = true;
                 }
             }
         }
@@ -236,7 +240,7 @@ pub(super) fn validate_rollback_evidence(
     }
     validate_index_backup(app, index_backup)?;
     if let Some(backup) = journal.source_backup.as_ref() {
-        validate_tree_backup(backup, &plan.source.tree_digest, None)?;
+        validate_tree_backup(backup, &plan.source.tree_digest, None, None)?;
     }
     for (effect, artifact) in plan.projections.iter().zip(&journal.projections) {
         match (effect.effect.as_str(), artifact.backup.as_ref()) {
@@ -248,6 +252,7 @@ pub(super) fn validate_rollback_evidence(
                     .as_deref()
                     .unwrap_or_default(),
                 (effect.method == "symlink").then(|| app.ctx.skill_path(&plan.skill)),
+                Some(&effect.method),
             )?,
             _ => return Err(corrupt("projection backup does not match its effect")),
         }
@@ -376,10 +381,11 @@ fn validate_index_backup(app: &App, path: &Path) -> std::result::Result<(), Comm
     gitops::validate_index_file(&app.ctx, path).map_err(map_git)
 }
 
-fn validate_tree_backup(
+pub(super) fn validate_tree_backup(
     backup: &serde_json::Value,
     expected_digest: &str,
     expected_symlink_target: Option<PathBuf>,
+    view: Option<&str>,
 ) -> std::result::Result<(), CommandFailure> {
     let backup_path = backup["backup_path"]
         .as_str()
@@ -387,7 +393,10 @@ fn validate_tree_backup(
         .ok_or_else(|| corrupt("backup has no path"))?;
     match backup["kind"].as_str() {
         Some("dir") => {
-            let digest = skill_tree_digest(backup_path).map_err(map_io)?;
+            let digest = match view {
+                Some(method) => projection_view_digest(backup_path, method)?,
+                None => skill_tree_digest(backup_path).map_err(map_io)?,
+            };
             if digest != expected_digest {
                 return Err(corrupt("transaction directory backup digest is invalid"));
             }

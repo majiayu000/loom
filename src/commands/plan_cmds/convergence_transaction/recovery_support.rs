@@ -1,4 +1,3 @@
-use super::projection_recovery::restore_projection_from_evidence;
 use super::recovery_evidence::{
     reprove_source_boundary, rollback_uncommitted_source_only, validate_expected_projections,
     validate_mutated_surfaces, validate_rollback_evidence, validate_rolling_back_state,
@@ -122,7 +121,7 @@ pub(super) fn recover_journal(
         }
         validate_mutated_surfaces(app, &paths, plan, &mut journal)?;
         validate_rollback_evidence(app, plan, &journal)?;
-        restore_projections_for_resume(&paths, plan, &journal)?;
+        restore_projections_for_resume(&paths, plan, &mut journal)?;
         journal.installed_projections = 0;
         journal.expected_projections = None;
         prepare_projection_stages(app, plan, request_id, &mut journal)?;
@@ -219,7 +218,7 @@ pub(super) fn source_is_committed(journal: &TransactionJournal) -> bool {
 pub(super) fn restore_projections_for_resume(
     paths: &RegistryStatePaths,
     plan: &SkillConvergencePlan,
-    journal: &TransactionJournal,
+    journal: &mut TransactionJournal,
 ) -> std::result::Result<(), CommandFailure> {
     let mut errors = validate_transaction_artifacts(journal);
     if !errors.is_empty() {
@@ -241,22 +240,13 @@ pub(super) fn restore_projections_for_resume(
         )
         .with_rollback_errors(errors));
     }
-    for projection in journal
-        .projections
-        .iter()
-        .take(journal.installed_projections)
-        .rev()
-    {
-        if let Err(err) = restore_projection_from_evidence(projection, &journal.plan_id) {
-            push_rollback_error(&mut errors, "restore_projection_from_evidence", err.message);
-        }
-        if !errors.is_empty() {
-            return Err(CommandFailure::new(
-                ErrorCode::StateCorrupt,
-                "failed to prepare committed source recovery",
-            )
-            .with_rollback_errors(errors));
-        }
+    errors.extend(restore_activated_projections(journal));
+    if !errors.is_empty() {
+        return Err(CommandFailure::new(
+            ErrorCode::StateCorrupt,
+            "failed to prepare committed source recovery",
+        )
+        .with_rollback_errors(errors));
     }
     for projection in journal.projections.iter().rev() {
         cleanup_owned_dir(
@@ -432,8 +422,25 @@ fn validate_journal(
                     .activated_fingerprint
                     .as_deref()
                     .is_some_and(valid_sha256_digest))
+            && match effect.effect.as_str() {
+                "refresh" => {
+                    journal.phase == TransactionPhase::Preparing
+                        || artifact
+                            .original_fingerprint
+                            .as_deref()
+                            .is_some_and(valid_sha256_digest)
+                }
+                "create" => artifact.original_fingerprint.is_none(),
+                _ => false,
+            }
             && backup_valid;
     }
+    valid &= journal.installed_projections
+        == journal
+            .projections
+            .iter()
+            .filter(|projection| projection.activated)
+            .count();
     valid &= validate_phase_invariants(journal);
     valid &= validate_expected_projections(plan, journal);
     if valid {
@@ -501,7 +508,7 @@ fn validate_phase_invariants(journal: &TransactionJournal) -> bool {
             }
             TransactionPhase::ProjectionsSwapped | TransactionPhase::CommittingRegistry => {
                 journal.source_head.is_some()
-                    && journal.installed_projections == count
+                    && journal.installed_projections <= count
                     && journal.expected_projections.is_some()
                     && journal.result.is_none()
             }
@@ -510,7 +517,7 @@ fn validate_phase_invariants(journal: &TransactionJournal) -> bool {
             }
             TransactionPhase::CommittedCleanupPending => {
                 journal.source_head.is_some()
-                    && journal.installed_projections == count
+                    && journal.installed_projections <= count
                     && journal.expected_projections.is_some()
                     && journal.result.is_some()
             }

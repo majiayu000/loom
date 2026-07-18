@@ -1,6 +1,28 @@
 use super::recovery_evidence::validate_mutated_surfaces;
 use super::*;
 
+pub(super) fn restore_activated_projections(journal: &mut TransactionJournal) -> Vec<Value> {
+    let mut errors = Vec::new();
+    for projection in journal.projections.iter_mut().rev() {
+        if projection.activated {
+            match restore_projection_from_evidence(projection, &journal.plan_id) {
+                Ok(()) => projection.activated = false,
+                Err(err) => push_rollback_error(
+                    &mut errors,
+                    "restore_projection_after_head_drift",
+                    err.message,
+                ),
+            }
+        }
+    }
+    journal.installed_projections = journal
+        .projections
+        .iter()
+        .filter(|projection| projection.activated)
+        .count();
+    errors
+}
+
 pub(super) fn rollback_journal(
     app: &App,
     paths: &RegistryStatePaths,
@@ -24,16 +46,7 @@ pub(super) fn rollback_journal(
     if rollback_fault(&mut errors, "convergence_interrupt_after_registry_restore") {
         return errors;
     }
-    for projection in journal
-        .projections
-        .iter()
-        .take(journal.installed_projections)
-        .rev()
-    {
-        if let Err(err) = restore_projection_from_evidence(projection, &journal.plan_id) {
-            push_rollback_error(&mut errors, "restore_projection_from_evidence", err.message);
-        }
-    }
+    errors.extend(restore_activated_projections(journal));
     if rollback_fault(
         &mut errors,
         "convergence_interrupt_after_projection_restore",

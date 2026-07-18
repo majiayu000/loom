@@ -6,7 +6,7 @@ pub(super) fn validate_guards(
     app: &App,
     plan: &SkillConvergencePlan,
     cursor: usize,
-) -> std::result::Result<(), CommandFailure> {
+) -> std::result::Result<Option<crate::state_model::RegistrySnapshot>, CommandFailure> {
     if !plan.input_conflicts.is_empty() || !plan.preflight.mutation_allowed {
         return Err(plan_failure(
             ErrorCode::PolicyBlocked,
@@ -57,7 +57,7 @@ pub(super) fn validate_guards(
             "PLAN_CHECKPOINT_DRIFT",
         ));
     }
-    if let Some(snapshot) = snapshot {
+    if let Some(snapshot) = snapshot.as_ref() {
         let digest = digest_value(&snapshot.checkpoint)?;
         let projections_digest = digest_value(&snapshot.projections)?;
         if plan.registry.checkpoint_digest.as_deref() != Some(digest.as_str())
@@ -70,12 +70,12 @@ pub(super) fn validate_guards(
                 "PLAN_CHECKPOINT_DRIFT",
             ));
         }
-        validate_projection_routing(&snapshot, plan)?;
+        validate_projection_routing(snapshot, plan)?;
         for effect in &plan.projections {
             validate_projection_guard(app, plan, effect)?;
         }
     }
-    Ok(())
+    Ok(snapshot)
 }
 
 pub(super) fn validate_recovery_routing(

@@ -679,7 +679,7 @@ fn prepared_execution_rejects_source_equivalent_staging_replacement() {
         &fixture.paths,
         &fixture.snapshot,
         input,
-        PreparedProjectionStaging::new(staging.clone(), expected),
+        PreparedProjectionStaging::new(staging.clone(), expected, None),
         |actual| {
             owner_checks += 1;
             assert_eq!(actual, staging);
@@ -694,6 +694,50 @@ fn prepared_execution_rejects_source_equivalent_staging_replacement() {
     assert_eq!(error.code, ErrorCode::ProjectionConflict);
     assert!(staging.is_dir());
     assert!(!projection_path.exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn prepared_execution_rejects_live_change_after_reviewed_fingerprint() {
+    let fixture = convergence_projection_fixture();
+    let projection_path = fixture.root.join("live/copy/demo");
+    fs::create_dir_all(&projection_path).expect("create live projection");
+    fs::write(projection_path.join("keep.txt"), "reviewed\n").expect("write reviewed bytes");
+    let reviewed = convergence_projection_fingerprint(&projection_path).expect("reviewed live");
+    let owner = projection_path
+        .parent()
+        .unwrap()
+        .join(".loom-projection-stage-live-guard.owner");
+    let staging = owner.join("stage");
+    fs::create_dir_all(&owner).expect("create staging owner");
+    let input = execution_input(&fixture, ProjectionMethod::Copy, projection_path.clone());
+    prepare_convergence_projection(
+        &fixture.ctx,
+        &input,
+        &fixture.ctx.skill_path("demo"),
+        &staging,
+    )
+    .expect("prepare staging");
+    let staged = convergence_projection_fingerprint(&staging).expect("staging fingerprint");
+    fs::write(projection_path.join("late.txt"), "preserve\n").expect("late live edit");
+
+    let error = match execute_prepared_convergence_projection(
+        &fixture.ctx,
+        &fixture.paths,
+        &fixture.snapshot,
+        input,
+        PreparedProjectionStaging::new(staging, staged, Some(reviewed)),
+        |_| Ok(()),
+    ) {
+        Err(error) => error,
+        Ok(_) => panic!("late live edit must block activation"),
+    };
+
+    assert_eq!(error.code, ErrorCode::ProjectionConflict);
+    assert_eq!(
+        fs::read_to_string(projection_path.join("late.txt")).unwrap(),
+        "preserve\n"
+    );
 }
 
 #[cfg(any(

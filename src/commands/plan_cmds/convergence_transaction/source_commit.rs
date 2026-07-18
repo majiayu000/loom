@@ -52,37 +52,61 @@ pub(super) fn commit_convergence_source(
             ));
         }
         validate_live_source(app, plan)?;
-        gitops::install_prepared_index_with_guard(&app.ctx, &prepared_index, &|candidate| {
-            validate_live_source(app, plan)
-                .map_err(|error| anyhow::anyhow!(error.message.clone()))?;
-            let installed =
-                file_digest(candidate).map_err(|error| anyhow::anyhow!(error.message))?;
-            if installed != staged {
-                return Err(anyhow::anyhow!(
-                    "prepared Git index changed after its digest was persisted"
+        let install =
+            gitops::install_prepared_index_with_guard(&app.ctx, &prepared_index, &|candidate| {
+                validate_live_source(app, plan)
+                    .map_err(|error| anyhow::anyhow!(error.message.clone()))?;
+                let installed =
+                    file_digest(candidate).map_err(|error| anyhow::anyhow!(error.message))?;
+                if installed != staged {
+                    return Err(anyhow::anyhow!(
+                        "prepared Git index changed after its digest was persisted"
+                    ));
+                }
+                let live =
+                    active_index_digest(app).map_err(|error| anyhow::anyhow!(error.message))?;
+                if live != original {
+                    return Err(anyhow::anyhow!(
+                        "active Git index changed before prepared index installation"
+                    ));
+                }
+                if gitops::head(&app.ctx)? != journal.previous_head {
+                    return Err(anyhow::anyhow!(
+                        "HEAD changed before source index installation"
+                    ));
+                }
+                Ok(())
+            });
+        if let Err(error) = install {
+            let failure = map_git(error);
+            if gitops::head(&app.ctx).map_err(map_git)? != journal.previous_head
+                && plan.source.direction == ConvergenceInputDirection::Projection
+            {
+                return Err(restore_source_after_external_head(
+                    app, plan, journal, failure,
                 ));
             }
-            let live = active_index_digest(app).map_err(|error| anyhow::anyhow!(error.message))?;
-            if live != original {
-                return Err(anyhow::anyhow!(
-                    "active Git index changed before prepared index installation"
-                ));
-            }
-            Ok(())
-        })
-        .map_err(map_git)?;
+            return Err(failure);
+        }
         maybe_skill_fault("convergence_interrupt_after_source_add")?;
         maybe_skill_fault("convergence_interrupt_after_staged_index_install")?;
         if let Err(error) = validate_live_source(app, plan) {
-            return Err(restore_index_after_failed_commit(app, journal, error));
+            return Err(restore_index_after_failed_commit(
+                app, journal, &staged, error,
+            ));
         }
         if let Err(error) =
             gitops::move_head_if_unchanged(&app.ctx, &commit, &journal.previous_head)
                 .map_err(map_git)
         {
             let observed = gitops::head(&app.ctx).map_err(map_git)?;
-            if source_cas_failure_requires_index_restore(&observed, &journal.previous_head) {
-                return Err(restore_index_after_failed_commit(app, journal, error));
+            let error = restore_index_after_failed_commit(app, journal, &staged, error);
+            if observed != journal.previous_head
+                && plan.source.direction == ConvergenceInputDirection::Projection
+            {
+                return Err(restore_source_after_external_head(
+                    app, plan, journal, error,
+                ));
             }
             return Err(error);
         }
@@ -112,8 +136,19 @@ pub(super) fn commit_convergence_source(
     Ok(commit)
 }
 
-fn source_cas_failure_requires_index_restore(observed: &str, previous: &str) -> bool {
-    observed == previous
+fn restore_source_after_external_head(
+    app: &App,
+    plan: &SkillConvergencePlan,
+    journal: &TransactionJournal,
+    error: CommandFailure,
+) -> CommandFailure {
+    match restore_source_from_evidence(app, plan, journal) {
+        Ok(()) => error,
+        Err(restore) => error.with_rollback_errors(vec![json!({
+            "step": "restore_source_after_external_head",
+            "message": restore.message,
+        })]),
+    }
 }
 
 pub(super) fn validate_live_source(
@@ -133,26 +168,28 @@ pub(super) fn validate_live_source(
 fn restore_index_after_failed_commit(
     app: &App,
     journal: &TransactionJournal,
+    staged: &str,
     error: CommandFailure,
 ) -> CommandFailure {
-    match gitops::restore_index_from_backup(&app.ctx, Path::new(&journal.index_backup)) {
+    let restore = gitops::install_prepared_index_with_guard(
+        &app.ctx,
+        Path::new(&journal.index_backup),
+        &|_| {
+            let live =
+                active_index_digest(app).map_err(|failure| anyhow::anyhow!(failure.message))?;
+            if live != staged {
+                return Err(anyhow::anyhow!(
+                    "active Git index is no longer transaction-owned"
+                ));
+            }
+            Ok(())
+        },
+    );
+    match restore {
         Ok(()) => error,
         Err(restore) => error.with_rollback_errors(vec![json!({
             "step": "restore_git_index_after_prepared_commit_failure",
             "message": restore.to_string(),
         })]),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::source_cas_failure_requires_index_restore;
-
-    #[test]
-    fn external_head_advance_never_restores_the_transaction_index() {
-        assert!(source_cas_failure_requires_index_restore("old", "old"));
-        assert!(!source_cas_failure_requires_index_restore(
-            "external", "old"
-        ));
     }
 }

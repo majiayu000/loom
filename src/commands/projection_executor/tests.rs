@@ -685,6 +685,7 @@ fn convergence_canonical_symlink_noop_does_not_require_writable_parent() {
 
     let output = result.expect("canonical symlink validation must be read-only");
     assert!(output.prepared.is_none());
+    assert!(!output.activated);
     assert_eq!(
         output.projection.expect("projection").health,
         Health::Healthy

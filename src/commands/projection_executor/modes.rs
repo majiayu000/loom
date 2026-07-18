@@ -56,6 +56,7 @@ impl ExecutionMode for ConvergenceMode {
             commit,
             meta,
             noop,
+            activated: false,
         }
     }
 }

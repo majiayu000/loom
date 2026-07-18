@@ -138,8 +138,14 @@ pub(super) fn path_matches_backup(
         .map(Path::new)
         .ok_or_else(|| corrupt("projection backup path is missing"))?;
     match backup["kind"].as_str() {
-        Some("dir") => Ok(skill_tree_digest(path).map_err(map_io)?
-            == skill_tree_digest(backup_path).map_err(map_io)?),
+        Some("dir") => {
+            let view = backup["view"].as_str();
+            let digest = |candidate: &Path| match view {
+                Some(method) => projection_view_digest(candidate, method),
+                None => skill_tree_digest(candidate).map_err(map_io),
+            };
+            Ok(digest(path)? == digest(backup_path)?)
+        }
         Some("file") => {
             Ok(fs::read(path).map_err(map_io)? == fs::read(backup_path).map_err(map_io)?)
         }
@@ -196,6 +202,8 @@ mod tests {
             activated_fingerprint: Some(
                 convergence_projection_fingerprint(&live).expect("fingerprint"),
             ),
+            activated: true,
+            original_fingerprint: None,
         }
     }
 
@@ -221,6 +229,27 @@ mod tests {
             fs::read_to_string(live.join("details.txt")).expect("preserved bytes"),
             "transaction\n"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn materialize_backup_comparison_uses_follow_symlink_view() {
+        let root = test_root();
+        let live = root.0.join("live");
+        let backup = root.0.join("backup");
+        fs::create_dir_all(&live).expect("live");
+        fs::create_dir_all(&backup).expect("backup");
+        fs::write(live.join("payload"), "same\n").expect("live payload");
+        fs::write(backup.join("payload"), "same\n").expect("backup target");
+        std::os::unix::fs::symlink("payload", live.join("entry")).expect("live symlink");
+        std::os::unix::fs::symlink("./payload", backup.join("entry")).expect("backup symlink");
+        let evidence = json!({
+            "kind": "dir",
+            "backup_path": backup.display().to_string(),
+            "view": "materialize",
+        });
+
+        assert!(path_matches_backup(&live, &evidence).expect("materialize comparison"));
     }
 
     #[test]

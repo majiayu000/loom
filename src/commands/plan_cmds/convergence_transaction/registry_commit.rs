@@ -57,6 +57,7 @@ pub(super) fn commit_convergence_registry(
         gitops::install_prepared_index_with_guard(&app.ctx, &prepared_index, &|candidate| {
             validate_registry_result(app, plan, journal)
                 .map_err(|error| anyhow::anyhow!(error.message))?;
+            validate_recovery_routing(app, plan).map_err(|error| anyhow::anyhow!(error.message))?;
             validate_index_install(
                 app,
                 candidate,

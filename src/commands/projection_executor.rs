@@ -21,9 +21,8 @@ use super::codex_visibility::projection_path_is_safe_symlink;
 use super::file_ops::{backup_path_if_exists, restore_path_from_backup};
 use super::fs_probe::probe_symlink;
 use super::helpers::{
-    commit_registry_state, ensure_skill_exists, map_git, map_io, map_project_io,
-    map_registry_state, projection_instance_id, projection_method_as_str,
-    validate_projection_method,
+    commit_registry_state, map_git, map_io, map_project_io, map_registry_state,
+    projection_instance_id, projection_method_as_str,
 };
 use super::projections::{
     apply_projection_observation, maybe_autosync_or_queue, observe_projection,
@@ -34,7 +33,6 @@ use super::skill_activation::resolve::{find_projection, find_rule};
 use super::skill_cmds::shared::{
     maybe_skill_fault, push_rollback_error, rollback_fault_active, rollback_registry_state,
 };
-use super::skill_safety::enforce_skill_safety;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[allow(
@@ -60,9 +58,9 @@ pub(crate) use convergence::{
     ProjectionRollbackArtifact, activate_prepared_projection, discard_prepared_projection,
 };
 use convergence::{map_ownership_fingerprint_error, projection_ownership_fingerprint};
-use prepared::PreparedOwnerGuard;
 #[cfg(test)]
 pub(crate) use prepared::execute_projection;
+use prepared::{PreparedOwnerGuard, validate_execution_input};
 pub(crate) use prepared::{
     PreparedProjectionStaging, convergence_projection_fingerprint,
     execute_prepared_convergence_projection, execute_standalone_projection,
@@ -106,6 +104,7 @@ pub(crate) struct ProjectionExecutionOutput {
     pub(crate) commit: Option<String>,
     pub(crate) meta: Meta,
     pub(crate) noop: bool,
+    pub(crate) activated: bool,
 }
 
 pub(crate) struct StandaloneProjectionExecutionOutput {
@@ -387,37 +386,6 @@ fn execute_projection_mode<M: ExecutionMode>(
     ))
 }
 
-fn validate_execution_input(
-    ctx: &AppContext,
-    input: &ProjectionExecutionInput,
-) -> std::result::Result<(), CommandFailure> {
-    ensure_skill_exists(ctx, &input.skill)?;
-    if input.target.agent != input.binding.agent {
-        return Err(CommandFailure::new(
-            ErrorCode::TargetAgentMismatch,
-            format!(
-                "binding '{}' is for agent '{}' but target '{}' is for agent '{}'",
-                input.binding.binding_id,
-                input.binding.agent,
-                input.target.target_id,
-                input.target.agent
-            ),
-        ));
-    }
-    if input.target.ownership != crate::core::vocab::Ownership::Managed {
-        return Err(CommandFailure::new(
-            ErrorCode::TargetNotManaged,
-            format!(
-                "target '{}' has ownership '{}' and cannot be written",
-                input.target.target_id, input.target.ownership
-            ),
-        ));
-    }
-    validate_projection_method(&input.target, input.method)?;
-    enforce_skill_safety(ctx, &input.skill, &input.binding.policy_profile)?;
-    Ok(())
-}
-
 fn materialize_projection<M: ExecutionMode>(
     ctx: &AppContext,
     input: &ProjectionExecutionInput,
@@ -491,10 +459,17 @@ fn materialize_projection<M: ExecutionMode>(
     }
 
     let existing_digest = if M::CONVERGENCE && path_exists {
-        Some(
-            projection_ownership_fingerprint(&input.materialized_path)
-                .map_err(|err| map_ownership_fingerprint_error(err, &input.materialized_path))?,
-        )
+        match prepared_staging
+            .as_ref()
+            .and_then(|staging| staging.expected_live_fingerprint.clone())
+        {
+            Some(expected) => Some(expected),
+            None => Some(
+                projection_ownership_fingerprint(&input.materialized_path).map_err(|err| {
+                    map_ownership_fingerprint_error(err, &input.materialized_path)
+                })?,
+            ),
+        }
     } else {
         None
     };

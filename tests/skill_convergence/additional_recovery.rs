@@ -381,7 +381,10 @@ fn committed_cleanup_accepts_an_unrelated_descendant_commit() {
         "descendant blocked cleanup-only recovery: {recovered}"
     );
     assert_eq!(git(fixture.root.path(), &["rev-parse", "HEAD"]), descendant);
-    assert!(!journal_path.exists());
+    super::skill_convergence_executor::assert_exact_retained_ledger(
+        &journal_path,
+        "committed_artifacts_retained",
+    );
 }
 
 #[test]

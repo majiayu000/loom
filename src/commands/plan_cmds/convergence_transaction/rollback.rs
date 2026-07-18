@@ -36,6 +36,7 @@ pub(super) fn rollback_journal(
         backup,
         Path::new(staging),
         &journal.plan_id,
+        journal.source_owner_proof.as_deref().unwrap_or_default(),
     ) {
         push_rollback_error(&mut errors, "restore_source_path", err.message);
     }
@@ -81,6 +82,7 @@ pub(super) fn finish_transaction(journal: &TransactionJournal) -> Vec<Value> {
         cleanup_owned_dir(
             Path::new(&projection.staging_owner),
             &journal.plan_id,
+            &projection.owner_proof,
             &mut errors,
         );
         if index == 0
@@ -99,12 +101,14 @@ pub(super) fn finish_transaction(journal: &TransactionJournal) -> Vec<Value> {
     }
     if let Some(path) = journal.source_staging.as_deref()
         && let Some(owner) = Path::new(path).parent()
+        && let Some(proof) = journal.source_owner_proof.as_deref()
     {
-        cleanup_owned_dir(owner, &journal.plan_id, &mut errors);
+        cleanup_owned_dir(owner, &journal.plan_id, proof, &mut errors);
     }
     cleanup_owned_dir(
         Path::new(&journal.artifact_root),
         &journal.plan_id,
+        &journal.artifact_owner_proof,
         &mut errors,
     );
     errors

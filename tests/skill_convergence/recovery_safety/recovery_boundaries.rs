@@ -132,7 +132,7 @@ fn restore_rejects_replaced_or_symlinked_source_and_projection_owner_dirs() {
     use std::os::unix::fs::symlink;
 
     for surface in ["source", "projection"] {
-        for attack in ["replacement", "symlink"] {
+        for attack in ["replacement", "symlink", "different-valid-proof"] {
             let fixture = projected_fixture();
             let plan = if surface == "source" {
                 let (output, initial) = plan_converge(&fixture, &[]);
@@ -226,6 +226,16 @@ fn restore_rejects_replaced_or_symlinked_source_and_projection_owner_dirs() {
             } else {
                 fs::create_dir(&owner).expect("replacement owner");
                 fs::write(owner.join("keep"), "replacement\n").expect("replacement marker");
+                if attack == "different-valid-proof" {
+                    let plan_id = journal["plan_id"].as_str().expect("journal plan id");
+                    fs::write(owner.join(".owner"), format!("{plan_id}\n"))
+                        .expect("forged owner marker");
+                    fs::write(
+                        owner.join(".reservation-owner"),
+                        format!("{plan_id}:{}\n", uuid::Uuid::new_v4()),
+                    )
+                    .expect("forged valid proof");
+                }
             }
             let head = git(fixture.root.path(), &["rev-parse", "HEAD"]);
             let status = git(fixture.root.path(), &["status", "--porcelain"]);
@@ -251,6 +261,12 @@ fn restore_rejects_replaced_or_symlinked_source_and_projection_owner_dirs() {
                 fs::read_to_string(external.join("keep")).expect("external"),
                 "external\n"
             );
+            if attack != "symlink" {
+                assert_eq!(
+                    fs::read_to_string(owner.join("keep")).expect("replacement"),
+                    "replacement\n"
+                );
+            }
             assert!(journal_path.is_file(), "owner attack deleted journal");
         }
     }

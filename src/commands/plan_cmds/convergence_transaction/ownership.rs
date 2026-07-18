@@ -7,48 +7,14 @@ pub(super) fn validate_owned_staging(
     live: &Path,
     staging: &Path,
     plan_id: &str,
+    expected_proof: &str,
 ) -> std::result::Result<(), CommandFailure> {
     let owner = staging
         .parent()
         .ok_or_else(|| ownership_failure("transaction staging has no owner directory"))?;
-    let owner_metadata = fs::symlink_metadata(owner).map_err(map_io)?;
-    if owner_metadata.file_type().is_symlink() || !owner_metadata.is_dir() {
+    if !owner_dir_is_exact(owner, plan_id, expected_proof) {
         return Err(ownership_failure(
-            "transaction staging owner is not a real directory",
-        ));
-    }
-    let owner_marker = owner.join(OWNER_FILE);
-    let marker_metadata = fs::symlink_metadata(&owner_marker).map_err(map_io)?;
-    if marker_metadata.file_type().is_symlink() || !marker_metadata.is_file() {
-        return Err(ownership_failure(
-            "transaction staging owner marker is not a real file",
-        ));
-    }
-    if fs::read_to_string(&owner_marker).map_err(map_io)?.trim() != plan_id {
-        return Err(ownership_failure(
-            "transaction staging owner marker does not match the plan",
-        ));
-    }
-    let proof_path = owner.join(RESERVATION_PROOF_FILE);
-    let proof_metadata = fs::symlink_metadata(&proof_path).map_err(map_io)?;
-    if proof_metadata.file_type().is_symlink() || !proof_metadata.is_file() {
-        return Err(ownership_failure(
-            "transaction staging reservation proof is not a real file",
-        ));
-    }
-    let proof = fs::read_to_string(proof_path).map_err(map_io)?;
-    let nonce = proof
-        .trim()
-        .strip_prefix(&format!("{plan_id}:"))
-        .ok_or_else(|| {
-            ownership_failure("transaction staging reservation proof has the wrong owner")
-        })?;
-    if uuid::Uuid::parse_str(nonce)
-        .ok()
-        .is_none_or(|parsed| parsed.hyphenated().to_string() != nonce)
-    {
-        return Err(ownership_failure(
-            "transaction staging reservation proof is invalid",
+            "transaction staging owner proof does not match the journal",
         ));
     }
     let live_parent = live
@@ -60,6 +26,34 @@ pub(super) fn validate_owned_staging(
         ));
     }
     Ok(())
+}
+
+pub(super) fn owner_dir_is_exact(owner: &Path, plan_id: &str, expected_proof: &str) -> bool {
+    fs::symlink_metadata(owner)
+        .ok()
+        .is_some_and(|metadata| metadata.is_dir() && !metadata.file_type().is_symlink())
+        && exact_regular_file(&owner.join(OWNER_FILE), plan_id)
+        && exact_regular_file(&owner.join(RESERVATION_PROOF_FILE), expected_proof)
+        && owner_proof_is_valid(plan_id, expected_proof)
+}
+
+pub(super) fn owner_proof_is_valid(plan_id: &str, proof: &str) -> bool {
+    let Some(nonce) = proof.strip_prefix(&format!("{plan_id}:")) else {
+        return false;
+    };
+    uuid::Uuid::parse_str(nonce)
+        .ok()
+        .is_some_and(|parsed| parsed.hyphenated().to_string() == nonce)
+}
+
+fn exact_regular_file(path: &Path, expected: &str) -> bool {
+    fs::symlink_metadata(path).ok().is_some_and(|metadata| {
+        metadata.is_file()
+            && !metadata.file_type().is_symlink()
+            && fs::read_to_string(path)
+                .ok()
+                .is_some_and(|value| value.trim() == expected)
+    })
 }
 
 #[cfg(unix)]

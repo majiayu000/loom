@@ -285,7 +285,11 @@ pub(super) fn rollback_uncommitted_source_only(
                 .as_deref()
                 .map(Path::new)
                 .ok_or_else(|| corrupt("projection-input transaction has no source staging"))?;
-            restore_backup_atomically(&source, backup, staging, &journal.plan_id)?;
+            let owner_proof = journal
+                .source_owner_proof
+                .as_deref()
+                .ok_or_else(|| corrupt("projection-input transaction has no owner proof"))?;
+            restore_backup_atomically(&source, backup, staging, &journal.plan_id, owner_proof)?;
         }
     }
     if journal.phase == TransactionPhase::CommittingSource {
@@ -363,7 +367,9 @@ pub(super) fn restore_projection_from_evidence(
     let live = Path::new(&artifact.materialized_path);
     let staging = Path::new(&artifact.staging_path);
     match artifact.backup.as_ref() {
-        Some(backup) => restore_backup_atomically(live, backup, staging, plan_id),
+        Some(backup) => {
+            restore_backup_atomically(live, backup, staging, plan_id, &artifact.owner_proof)
+        }
         None => remove_path_if_exists(live).map_err(map_io),
     }
 }
@@ -373,8 +379,9 @@ pub(super) fn restore_backup_atomically(
     backup: &serde_json::Value,
     staging: &Path,
     plan_id: &str,
+    owner_proof: &str,
 ) -> std::result::Result<(), CommandFailure> {
-    validate_owned_staging(live, staging, plan_id)?;
+    validate_owned_staging(live, staging, plan_id, owner_proof)?;
     remove_path_if_exists(staging).map_err(map_io)?;
     restore_path_from_backup(staging, backup).map_err(map_io)?;
     exchange_paths_atomic(staging, live).map_err(map_io)?;

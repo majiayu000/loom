@@ -32,6 +32,10 @@ pub(super) fn rollback_journal(
     journal: &mut TransactionJournal,
 ) -> Vec<Value> {
     let mut errors = Vec::new();
+    errors.extend(validate_transaction_artifacts(journal));
+    if !errors.is_empty() {
+        return errors;
+    }
     if let Err(err) = validate_mutated_surfaces(app, paths, plan, journal) {
         push_rollback_error(
             &mut errors,
@@ -50,6 +54,9 @@ pub(super) fn rollback_journal(
         return errors;
     }
     errors.extend(restore_activated_projections(journal));
+    if !errors.is_empty() {
+        return errors;
+    }
     if rollback_fault(
         &mut errors,
         "convergence_interrupt_after_projection_restore",

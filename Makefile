@@ -4,9 +4,9 @@ PANEL_DIR := panel
 PANEL_INSTALL_STAMP := $(PANEL_DIR)/node_modules/.bun-install.stamp
 LOOM_CONTRACT_DIFF_BASE ?= $(shell git merge-base HEAD origin/main 2>/dev/null)
 ifeq ($(shell uname -s),Linux)
-LOOM_PERF_RUSTFLAGS ?= -Cllvm-args=-enable-machine-outliner=always -Clink-arg=-Wl,--no-eh-frame-hdr
+LOOM_PERF_RUSTFLAGS ?= -Clink-arg=-Wl,--no-eh-frame-hdr
 else
-LOOM_PERF_RUSTFLAGS ?= -Cllvm-args=-enable-machine-outliner=always
+LOOM_PERF_RUSTFLAGS ?=
 endif
 
 .PHONY: fmt fmt-check test contract-policy lint module-ceiling module-ceiling-test panel-install panel-dev panel-build panel-test panel-typecheck e2e perf-smoke check ci install-hooks

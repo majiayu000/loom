@@ -162,7 +162,14 @@ pub(crate) fn execute_prepared_convergence_projection(
     input: ProjectionExecutionInput,
     staging_path: PathBuf,
 ) -> std::result::Result<ProjectionExecutionOutput, CommandFailure> {
-    execute_projection_mode::<true>(ctx, paths, snapshot, input, Some(staging_path))
+    let mut output =
+        execute_projection_mode::<true>(ctx, paths, snapshot, input, Some(staging_path))?;
+    let Some(prepared) = output.prepared.take() else {
+        return Ok(output);
+    };
+    let mut activated = activate_prepared_projection(ctx, prepared)?;
+    output.projection = Some(activated.finalize()?);
+    Ok(output)
 }
 
 fn execute_projection_mode<const CONVERGENCE: bool>(

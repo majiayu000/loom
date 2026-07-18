@@ -77,7 +77,10 @@ fn rollback_fault(errors: &mut Vec<Value>, fault: &str) -> bool {
 }
 
 pub(super) fn finish_transaction(journal: &TransactionJournal) -> Vec<Value> {
-    let mut errors = Vec::new();
+    let mut errors = validate_transaction_artifacts(journal);
+    if !errors.is_empty() {
+        return errors;
+    }
     for (index, projection) in journal.projections.iter().enumerate() {
         cleanup_owned_dir(
             Path::new(&projection.staging_owner),
@@ -85,6 +88,9 @@ pub(super) fn finish_transaction(journal: &TransactionJournal) -> Vec<Value> {
             &projection.owner_proof,
             &mut errors,
         );
+        if !errors.is_empty() {
+            return errors;
+        }
         if index == 0
             && (std::env::var("LOOM_FAULT_INJECT").ok().as_deref()
                 == Some("convergence_interrupt_during_cleanup")
@@ -104,6 +110,9 @@ pub(super) fn finish_transaction(journal: &TransactionJournal) -> Vec<Value> {
         && let Some(proof) = journal.source_owner_proof.as_deref()
     {
         cleanup_owned_dir(owner, &journal.plan_id, proof, &mut errors);
+        if !errors.is_empty() {
+            return errors;
+        }
     }
     cleanup_owned_dir(
         Path::new(&journal.artifact_root),

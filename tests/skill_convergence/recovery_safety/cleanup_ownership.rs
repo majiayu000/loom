@@ -39,6 +39,30 @@ fn owner_path(journal: &Value, surface: &str) -> PathBuf {
     }
 }
 
+fn existing_owned_paths(journal: &Value, attacked: &Path) -> Vec<PathBuf> {
+    let mut paths = vec![PathBuf::from(
+        journal["artifact_root"].as_str().expect("artifact root"),
+    )];
+    if let Some(staging) = journal["source_staging"].as_str()
+        && let Some(owner) = Path::new(staging).parent()
+    {
+        paths.push(owner.to_path_buf());
+    }
+    paths.extend(
+        journal["projections"]
+            .as_array()
+            .expect("projections")
+            .iter()
+            .map(|projection| {
+                PathBuf::from(projection["staging_owner"].as_str().expect("staging owner"))
+            }),
+    );
+    paths
+        .into_iter()
+        .filter(|path| path != attacked && fs::symlink_metadata(path).is_ok())
+        .collect()
+}
+
 #[cfg(unix)]
 fn install_owner_attack(owner: &Path, journal: &Value, mode: &str) -> PathBuf {
     let saved = owner.with_extension(format!("saved-{mode}"));
@@ -98,6 +122,15 @@ fn apply_with_cleanup_fault(
     )
 }
 
+fn reservation_paths(owner: &Path, plan_id: &str) -> (PathBuf, PathBuf) {
+    let parent = owner.parent().expect("owner parent");
+    let name = owner.file_name().expect("owner name").to_string_lossy();
+    (
+        parent.join(format!(".{name}.reservation-{plan_id}")),
+        parent.join(format!(".{name}.staging-{plan_id}")),
+    )
+}
+
 #[cfg(unix)]
 #[test]
 fn committed_cleanup_rejects_non_exact_present_owners_and_retains_retry_evidence() {
@@ -132,12 +165,21 @@ fn committed_cleanup_rejects_non_exact_present_owners_and_retains_retry_evidence
             assert_eq!(journal["phase"], json!("committed_cleanup_pending"));
             let owner = owner_path(&journal, surface);
             let saved = install_owner_attack(&owner, &journal, mode);
+            let retained = existing_owned_paths(&journal, &owner);
+            let index_path = PathBuf::from(journal["index_backup"].as_str().expect("index"));
+            let index = fs::read(&index_path).expect("index evidence");
             let (output, rejected) = apply(&fixture, &plan, &key, None);
             assert!(
                 !output.status.success(),
                 "cleanup attack passed: {rejected}"
             );
             assert!(journal_path.is_file(), "cleanup attack deleted journal");
+            assert_eq!(fs::read(&index_path).expect("retained index"), index);
+            assert!(
+                retained
+                    .iter()
+                    .all(|path| fs::symlink_metadata(path).is_ok())
+            );
             assert_eq!(
                 fs::read_to_string(owner.join("keep")).expect("keep"),
                 "external\n"
@@ -187,12 +229,21 @@ fn prepared_cleanup_rejects_non_exact_present_owners_and_retains_retry_evidence(
                 .expect("parse journal");
             let owner = owner_path(&journal, surface);
             let saved = install_owner_attack(&owner, &journal, mode);
+            let retained = existing_owned_paths(&journal, &owner);
+            let index_path = PathBuf::from(journal["index_backup"].as_str().expect("index"));
+            let index = fs::read(&index_path).expect("index evidence");
             let (output, rejected) = apply(&fixture, &plan, &key, None);
             assert!(
                 !output.status.success(),
                 "prepared cleanup attack passed: {rejected}"
             );
             assert!(journal_path.is_file(), "prepared cleanup deleted journal");
+            assert_eq!(fs::read(&index_path).expect("retained index"), index);
+            assert!(
+                retained
+                    .iter()
+                    .all(|path| fs::symlink_metadata(path).is_ok())
+            );
             assert_eq!(
                 fs::read_to_string(owner.join("keep")).expect("keep"),
                 "external\n"
@@ -205,5 +256,118 @@ fn prepared_cleanup_rejects_non_exact_present_owners_and_retains_retry_evidence(
             );
             assert!(!journal_path.exists());
         }
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn post_journal_nonexact_reservation_entries_block_all_cleanup_until_exact_retry() {
+    for entry_kind in ["token", "staging", "staging-symlink"] {
+        let fixture = projected_fixture();
+        fs::write(
+            fixture.root.path().join("skills/demo/details.txt"),
+            format!("reservation {entry_kind}\n"),
+        )
+        .expect("source edit");
+        let (output, plan) = plan_converge(&fixture, &[]);
+        assert!(output.status.success(), "plan failed: {plan}");
+        let key = format!("reservation-cleanup-{entry_kind}");
+        let (output, interrupted) = apply(
+            &fixture,
+            &plan,
+            &key,
+            Some("convergence_interrupt_after_prepared"),
+        );
+        assert!(
+            !output.status.success(),
+            "prepared fault passed: {interrupted}"
+        );
+        let journal_path = fixture
+            .root
+            .path()
+            .join("state/transactions/convergence-demo.json");
+        let journal: Value = serde_json::from_slice(&fs::read(&journal_path).expect("journal"))
+            .expect("parse journal");
+        let projection = &journal["projections"][0];
+        let owner = PathBuf::from(projection["staging_owner"].as_str().expect("owner"));
+        let expected_proof = projection["owner_proof"].as_str().expect("proof");
+        let plan_id = journal["plan_id"].as_str().expect("plan id");
+        let (reservation, staging) = reservation_paths(&owner, plan_id);
+        let wrong_proof = format!("{plan_id}:{}\n", uuid::Uuid::new_v4());
+        let external = staging.with_extension("external");
+        let attacked = if entry_kind == "token" {
+            fs::write(&reservation, wrong_proof).expect("mismatched token");
+            reservation.clone()
+        } else if entry_kind == "staging-symlink" {
+            fs::create_dir(&external).expect("external staging target");
+            fs::write(external.join("keep"), "external\n").expect("external marker");
+            fs::write(
+                external.join(".reservation-owner"),
+                format!("{expected_proof}\n"),
+            )
+            .expect("exact external proof");
+            symlink(&external, &staging).expect("staging symlink");
+            staging.clone()
+        } else {
+            fs::create_dir(&staging).expect("mismatched staging");
+            fs::write(staging.join(".reservation-owner"), wrong_proof)
+                .expect("mismatched staging proof");
+            staging.clone()
+        };
+        let retained = existing_owned_paths(&journal, Path::new("not-an-owner"));
+        let index_path = PathBuf::from(journal["index_backup"].as_str().expect("index"));
+        let index = fs::read(&index_path).expect("index evidence");
+        let (output, rejected) = apply(&fixture, &plan, &key, None);
+        assert!(
+            !output.status.success(),
+            "reservation mismatch passed: {rejected}"
+        );
+        assert!(attacked.exists(), "mismatched reservation was deleted");
+        assert!(
+            journal_path.is_file(),
+            "reservation mismatch deleted journal"
+        );
+        assert_eq!(fs::read(&index_path).expect("retained index"), index);
+        assert!(
+            retained
+                .iter()
+                .all(|path| fs::symlink_metadata(path).is_ok())
+        );
+        if entry_kind == "staging-symlink" {
+            assert!(
+                fs::symlink_metadata(&staging)
+                    .expect("staging link")
+                    .file_type()
+                    .is_symlink()
+            );
+            assert_eq!(
+                fs::read_to_string(external.join("keep")).expect("external"),
+                "external\n"
+            );
+        }
+        if entry_kind == "token" {
+            fs::write(&reservation, format!("{expected_proof}\n")).expect("exact token");
+        } else if entry_kind == "staging-symlink" {
+            fs::remove_file(&staging).expect("remove staging symlink");
+            fs::create_dir(&staging).expect("exact staging");
+            fs::write(
+                staging.join(".reservation-owner"),
+                format!("{expected_proof}\n"),
+            )
+            .expect("exact staging proof");
+        } else {
+            fs::write(
+                staging.join(".reservation-owner"),
+                format!("{expected_proof}\n"),
+            )
+            .expect("exact staging proof");
+        }
+        let (output, recovered) = apply(&fixture, &plan, &key, None);
+        assert!(
+            output.status.success(),
+            "exact reservation retry failed: {recovered}"
+        );
+        assert!(!journal_path.exists());
+        assert!(!attacked.exists());
     }
 }

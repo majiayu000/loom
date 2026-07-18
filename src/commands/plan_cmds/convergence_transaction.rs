@@ -34,7 +34,7 @@ mod recovery_support;
 mod rollback;
 use ownership::{
     cleanup_owned_dir, cleanup_reservation, owner_proof_is_valid, reservation_paths,
-    validate_owned_staging,
+    validate_owned_staging, validate_transaction_artifacts,
 };
 use recovery_evidence::{
     active_index_digest, file_digest, restore_backup_atomically, restore_projection_from_evidence,

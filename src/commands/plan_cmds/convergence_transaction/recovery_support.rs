@@ -337,6 +337,10 @@ pub(super) fn cleanup_declared_artifacts(
         );
         return errors;
     }
+    errors = validate_transaction_artifacts(journal);
+    if !errors.is_empty() {
+        return errors;
+    }
     for projection in journal.projections.iter().rev() {
         cleanup_owned_dir(
             Path::new(&projection.staging_owner),
@@ -344,12 +348,18 @@ pub(super) fn cleanup_declared_artifacts(
             &projection.owner_proof,
             &mut errors,
         );
+        if !errors.is_empty() {
+            return errors;
+        }
     }
     if let Some(path) = journal.source_staging.as_deref()
         && let Some(owner) = Path::new(path).parent()
         && let Some(proof) = journal.source_owner_proof.as_deref()
     {
         cleanup_owned_dir(owner, &journal.plan_id, proof, &mut errors);
+        if !errors.is_empty() {
+            return errors;
+        }
     }
     cleanup_owned_dir(
         Path::new(&journal.artifact_root),

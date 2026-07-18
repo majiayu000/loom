@@ -435,7 +435,7 @@ fn materialize_projection<const CONVERGENCE: bool>(
             return Err(CommandFailure::new(
                 ErrorCode::ProjectionMethodUnsupported,
                 format!(
-                    "target '{}' does not support symlink projections: {}",
+                    "target '{}' does not support symlink projections: {}; retry with --method copy",
                     input.target.target_id,
                     probe.reason.unwrap_or_else(|| "unknown reason".to_string())
                 ),

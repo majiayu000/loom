@@ -264,7 +264,6 @@ fn safe_symlink_refresh_preparation_does_not_stage_beside_target() {
     let fixture = projected_fixture_with_method("symlink");
     let (output, plan) = plan_converge(&fixture, &[]);
     assert!(output.status.success(), "plan failed: {plan}");
-    let plan_id = plan["data"]["plan_id"].as_str().expect("plan id");
     let (output, interrupted) = apply_plan(
         &fixture,
         &plan,
@@ -275,14 +274,26 @@ fn safe_symlink_refresh_preparation_does_not_stage_beside_target() {
         !output.status.success(),
         "prepare fault passed: {interrupted}"
     );
+    let journal_path = fixture
+        .root
+        .path()
+        .join("state/transactions/convergence-demo.json");
+    let journal: Value =
+        serde_json::from_slice(&fs::read(journal_path).expect("journal")).expect("parse journal");
+    let projection = &journal["projections"][0];
+    let staging_owner = Path::new(projection["staging_owner"].as_str().expect("staging owner"));
+    let staging_path = Path::new(projection["staging_path"].as_str().expect("staging path"));
     assert!(
-        !fixture
-            .target
-            .path()
-            .join(format!(".loom-projection-stage-{plan_id}-0.owner"))
-            .exists(),
+        !staging_owner.exists() && !staging_path.exists(),
         "safe symlink no-op must not reserve writable target staging"
     );
+    let attempt = journal["ownership_attempts"]
+        .as_array()
+        .expect("ownership attempts")
+        .iter()
+        .find(|attempt| attempt["destination"] == json!(staging_owner.display().to_string()))
+        .expect("projection ownership attempt");
+    assert_eq!(attempt["state"], json!("allocated"));
 }
 
 #[test]

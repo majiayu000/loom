@@ -233,7 +233,7 @@ fn registry_recovery_adopts_only_its_durable_index_lock() {
             .as_str()
             .expect("prepared index"),
     );
-    fs::copy(&prepared, fixture.root.path().join(".git/index.lock"))
+    fs::copy(prepared, fixture.root.path().join(".git/index.lock"))
         .expect("simulate retained transaction lock");
     git(
         fixture.root.path(),

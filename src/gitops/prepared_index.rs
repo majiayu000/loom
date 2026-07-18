@@ -213,6 +213,10 @@ fn create_prepared_commit_inner(
         run_git(ctx, &["commit-tree", &tree, "-p", parent, "-m", message])
     })();
     if retain_index {
+        if result.is_ok() {
+            fs::File::open(commit_index)?.sync_all()?;
+            crate::fs_util::sync_parent_directory(commit_index)?;
+        }
         return result;
     }
     match (result, fs::remove_file(commit_index)) {

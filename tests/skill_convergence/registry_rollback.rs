@@ -19,7 +19,7 @@ fn retry_apply(fixture: &Fixture, plan: &Value, key: &str) -> (std::process::Out
 }
 
 #[test]
-fn retry_retains_superseded_registry_index_generation() {
+fn ready_registry_index_replacement_fails_closed_without_deletion() {
     let fixture = projected_fixture();
     fs::write(
         fixture.root.path().join("skills/demo/details.txt"),
@@ -89,7 +89,10 @@ fn retry_retains_superseded_registry_index_generation() {
     fs::write(&superseded, foreign).expect("replace superseded index");
 
     let (output, recovered) = retry_apply(&fixture, &plan, "registry-index-generation");
-    assert!(output.status.success(), "recovery failed: {recovered}");
+    assert!(
+        !output.status.success(),
+        "replacement was accepted by recovery: {recovered}"
+    );
     assert_eq!(
         fs::read(&superseded).expect("read superseded index"),
         foreign,
@@ -101,16 +104,93 @@ fn retry_retains_superseded_registry_index_generation() {
     let attempts = recovered_journal["registry_index_attempts"]
         .as_array()
         .expect("recovered registry index attempts");
-    assert!(attempts.len() >= 2, "retry did not append a new generation");
+    assert_eq!(attempts.len(), 1, "failed validation mutated the ledger");
     let superseded_attempt = attempts
         .iter()
         .find(|attempt| attempt["generation"] == json!(generation))
         .expect("superseded generation evidence");
-    assert_eq!(superseded_attempt["state"], json!("abandoned"));
+    assert_eq!(superseded_attempt["state"], json!("ready"));
     assert_eq!(
         superseded_attempt["base_index"],
         json!(superseded.display().to_string())
     );
+}
+
+#[test]
+fn retry_appends_and_terminalizes_registry_index_generations() {
+    let fixture = projected_fixture();
+    fs::write(
+        fixture.root.path().join("skills/demo/details.txt"),
+        "registry index generation retry\n",
+    )
+    .expect("edit source");
+    let (output, plan) = plan_converge(&fixture, &[]);
+    assert!(output.status.success(), "plan failed: {plan}");
+    let plan_id = plan["data"]["plan_id"].as_str().expect("plan id");
+    let digest = plan["data"]["plan_digest"].as_str().expect("digest");
+    let (output, interrupted) = run_loom_with_env(
+        fixture.root.path(),
+        &[(
+            "LOOM_FAULT_INJECT",
+            "convergence_interrupt_before_registry_cas",
+        )],
+        &[
+            "apply",
+            plan_id,
+            "--plan-digest",
+            digest,
+            "--idempotency-key",
+            "registry-index-append",
+        ],
+    );
+    assert!(
+        !output.status.success(),
+        "registry CAS interruption passed: {interrupted}"
+    );
+    let journal_path = fixture
+        .root
+        .path()
+        .join("state/transactions/convergence-demo.json");
+    let interrupted_journal: Value =
+        serde_json::from_slice(&fs::read(&journal_path).expect("journal")).expect("parse journal");
+    let generation = interrupted_journal["registry_index_attempts"][0]["generation"]
+        .as_str()
+        .expect("first generation")
+        .to_string();
+
+    let (output, recovered) = retry_apply(&fixture, &plan, "registry-index-append");
+    assert!(output.status.success(), "recovery failed: {recovered}");
+    let recovered_journal: Value =
+        serde_json::from_slice(&fs::read(&journal_path).expect("recovered journal"))
+            .expect("parse recovered journal");
+    let attempts = recovered_journal["registry_index_attempts"]
+        .as_array()
+        .expect("recovered registry index attempts");
+    assert!(attempts.len() >= 2, "retry did not append a new generation");
+    assert_eq!(
+        attempts
+            .iter()
+            .find(|attempt| attempt["generation"] == json!(generation))
+            .expect("superseded generation")["state"],
+        json!("abandoned")
+    );
+    for attempt in attempts {
+        assert!(matches!(
+            attempt["state"].as_str(),
+            Some("abandoned" | "retained")
+        ));
+        if attempt["state"] == json!("retained") {
+            assert!(attempt["base_digest"].as_str().is_some());
+            assert!(attempt["prepared_digest"].as_str().is_some());
+            for (path, digest) in [
+                ("base_index", "base_digest"),
+                ("prepared_index", "prepared_digest"),
+            ] {
+                assert!(Path::new(attempt[path].as_str().expect(path)).is_file());
+                assert!(attempt[digest].as_str().is_some());
+            }
+        }
+    }
 }
 
 #[test]

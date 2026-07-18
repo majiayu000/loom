@@ -14,6 +14,8 @@ pub(super) struct RegistryIndexAttempt {
     base_digest: Option<String>,
     prepared_digest: Option<String>,
     commit_digest: Option<String>,
+    #[serde(default)]
+    changed: Option<bool>,
     state: RegistryIndexAttemptState,
 }
 
@@ -45,14 +47,21 @@ pub(super) fn commit_convergence_registry(
     let (attempt, base_index, prepared_index, commit_index) =
         allocate_registry_indexes(journal_path, journal, "commit")?;
     gitops::snapshot_index_to(&app.ctx, &base_index).map_err(map_git)?;
+    sync_registry_index(&base_index)?;
     let base_index_digest = file_digest(&base_index)?;
     journal.registry_index_attempts[attempt].base_digest = Some(base_index_digest.clone());
     save_journal(journal_path, journal)?;
     let changed =
         gitops::prepare_index_for_paths(&app.ctx, &base_index, &prepared_index, &[REGISTRY_PATH])
             .map_err(map_git)?;
+    sync_registry_index(&prepared_index)?;
     let expected_index = file_digest(&prepared_index)?;
     journal.registry_index_attempts[attempt].prepared_digest = Some(expected_index.clone());
+    journal.registry_index_attempts[attempt].changed = Some(changed);
+    if !changed {
+        journal.registry_index_attempts[attempt].state = RegistryIndexAttemptState::Ready;
+    }
+    save_journal(journal_path, journal)?;
     if !changed {
         require_head(app, &source_head, "no-op registry commit changed HEAD")?;
         validate_registry_result(app, plan, journal)?;
@@ -139,13 +148,17 @@ pub(super) fn align_registry_index(
     let (attempt, base_index, prepared_index, _) =
         allocate_registry_indexes(journal_path, journal, "repair")?;
     gitops::snapshot_index_to(&app.ctx, &base_index).map_err(map_git)?;
+    sync_registry_index(&base_index)?;
     let base_index_digest = file_digest(&base_index)?;
     journal.registry_index_attempts[attempt].base_digest = Some(base_index_digest.clone());
     save_journal(journal_path, journal)?;
-    gitops::prepare_index_for_paths(&app.ctx, &base_index, &prepared_index, &[REGISTRY_PATH])
-        .map_err(map_git)?;
+    let changed =
+        gitops::prepare_index_for_paths(&app.ctx, &base_index, &prepared_index, &[REGISTRY_PATH])
+            .map_err(map_git)?;
+    sync_registry_index(&prepared_index)?;
     let expected_index = file_digest(&prepared_index)?;
     journal.registry_index_attempts[attempt].prepared_digest = Some(expected_index.clone());
+    journal.registry_index_attempts[attempt].changed = Some(changed);
     journal.registry_index_attempts[attempt].state = RegistryIndexAttemptState::Ready;
     save_journal(journal_path, journal)?;
     if let Some(recorded) = journal.registry_staged_index_digest.as_deref()
@@ -204,6 +217,7 @@ fn allocate_registry_indexes(
         base_digest: None,
         prepared_digest: None,
         commit_digest: None,
+        changed: None,
         state: RegistryIndexAttemptState::Allocated,
     });
     let attempt = journal.registry_index_attempts.len() - 1;
@@ -216,6 +230,12 @@ fn retain_registry_index_attempt(
     journal: &mut TransactionJournal,
     attempt: usize,
 ) -> std::result::Result<(), CommandFailure> {
+    if journal.registry_index_attempts[attempt].state != RegistryIndexAttemptState::Ready {
+        return Err(CommandFailure::new(
+            ErrorCode::StateCorrupt,
+            "registry index attempt is not ready for retention",
+        ));
+    }
     journal.registry_index_attempts[attempt].state = RegistryIndexAttemptState::Retained;
     save_journal(journal_path, journal)
 }
@@ -235,7 +255,11 @@ fn retain_current_registry_index_attempt(
             )
         })
     {
-        attempt.state = RegistryIndexAttemptState::Retained;
+        attempt.state = if attempt.state == RegistryIndexAttemptState::Ready {
+            RegistryIndexAttemptState::Retained
+        } else {
+            RegistryIndexAttemptState::Abandoned
+        };
         save_journal(journal_path, journal)?;
     }
     Ok(())
@@ -250,7 +274,7 @@ pub(super) fn terminalize_registry_index_attempts(
             attempt.state,
             RegistryIndexAttemptState::Abandoned | RegistryIndexAttemptState::Retained
         ) {
-            attempt.state = if committed {
+            attempt.state = if committed && attempt.state == RegistryIndexAttemptState::Ready {
                 RegistryIndexAttemptState::Retained
             } else {
                 RegistryIndexAttemptState::Abandoned
@@ -291,6 +315,7 @@ pub(super) fn registry_index_attempts_valid(journal: &TransactionJournal) -> boo
             .into_iter()
             .flatten()
             .all(valid_digest)
+            && registry_index_attempt_evidence_valid(attempt)
     });
     let evidence_valid = journal.registry_commit.is_none()
         || journal
@@ -321,6 +346,45 @@ fn valid_digest(value: &str) -> bool {
     value.len() == 71
         && value.starts_with("sha256:")
         && value[7..].bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+fn registry_index_attempt_evidence_valid(attempt: &RegistryIndexAttempt) -> bool {
+    if attempt.state == RegistryIndexAttemptState::Abandoned {
+        return true;
+    }
+    let recorded_bytes_are_exact = [
+        (&attempt.base_index, attempt.base_digest.as_deref()),
+        (&attempt.prepared_index, attempt.prepared_digest.as_deref()),
+        (&attempt.commit_index, attempt.commit_digest.as_deref()),
+    ]
+    .into_iter()
+    .all(|(path, digest)| {
+        digest.is_none_or(|digest| file_digest(Path::new(path)).ok().as_deref() == Some(digest))
+    });
+    if !recorded_bytes_are_exact {
+        return false;
+    }
+    match attempt.state {
+        RegistryIndexAttemptState::Allocated => true,
+        RegistryIndexAttemptState::Ready | RegistryIndexAttemptState::Retained => {
+            attempt.base_digest.is_some()
+                && attempt.prepared_digest.is_some()
+                && attempt.changed.is_some()
+                && if attempt.purpose == "commit" && attempt.changed == Some(true) {
+                    attempt.commit_digest.is_some()
+                } else {
+                    attempt.commit_digest.is_none()
+                }
+        }
+        RegistryIndexAttemptState::Abandoned => true,
+    }
+}
+
+fn sync_registry_index(path: &Path) -> std::result::Result<(), CommandFailure> {
+    fs::File::open(path)
+        .and_then(|file| file.sync_all())
+        .map_err(map_io)?;
+    crate::fs_util::sync_parent_directory(path).map_err(map_io)
 }
 
 fn validate_index_install(

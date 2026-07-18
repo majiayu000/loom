@@ -59,7 +59,6 @@ use projection_recovery::{
 use projection_view::projection_view_digest;
 use recovery_evidence::{
     active_index_digest, file_digest, validate_mutated_surfaces, validate_rollback_evidence,
-    validate_tree_backup,
 };
 use recovery_support::*;
 use registry_commit::{commit_convergence_registry, require_head};
@@ -94,6 +93,8 @@ struct TransactionJournal {
     registry_commit: Option<String>,
     #[serde(default)]
     registry_staged_index_digest: Option<String>,
+    #[serde(default)]
+    registry_index_generation: Option<String>,
     rollback_head: Option<String>,
     rollback_index_digest: Option<String>,
     result: Option<Value>,
@@ -311,6 +312,7 @@ pub(super) fn apply_convergence(
         source_staged_index_digest: None,
         registry_commit: None,
         registry_staged_index_digest: None,
+        registry_index_generation: None,
         rollback_head: None,
         rollback_index_digest: None,
         result: None,

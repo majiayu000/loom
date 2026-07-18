@@ -463,7 +463,7 @@ fn validate_journal(
                         || artifact
                             .backup
                             .as_ref()
-                            .and_then(|backup| backup["fingerprint"].as_str())
+                            .and_then(|backup| backup["backup_digest"].as_str())
                             .is_some_and(valid_sha256_digest)
                 }
                 "create" => artifact.backup.is_none(),
@@ -667,7 +667,7 @@ fn prove_registry_boundary(
             &format!("skill({}): record convergence projections", plan.skill),
             |path| path == "state/registry/projections.json",
         )?;
-        super::registry_commit::align_registry_index(app, plan, journal, &head)?;
+        super::registry_commit::align_registry_index(app, plan, journal_path, journal, &head)?;
     }
     Ok(Some(head))
 }

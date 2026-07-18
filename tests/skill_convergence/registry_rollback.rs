@@ -1,6 +1,79 @@
 use super::*;
 use common::run_loom_with_env;
 
+fn retry_apply(fixture: &Fixture, plan: &Value, key: &str) -> (std::process::Output, Value) {
+    let plan_id = plan["data"]["plan_id"].as_str().expect("plan id");
+    let digest = plan["data"]["plan_digest"].as_str().expect("plan digest");
+    run_loom_with_env(
+        fixture.root.path(),
+        &[],
+        &[
+            "apply",
+            plan_id,
+            "--plan-digest",
+            digest,
+            "--idempotency-key",
+            key,
+        ],
+    )
+}
+
+#[test]
+fn retry_retains_superseded_registry_index_generation() {
+    let fixture = projected_fixture();
+    fs::write(
+        fixture.root.path().join("skills/demo/details.txt"),
+        "registry index generation race\n",
+    )
+    .expect("edit source");
+    let (output, plan) = plan_converge(&fixture, &[]);
+    assert!(output.status.success(), "plan failed: {plan}");
+    let plan_id = plan["data"]["plan_id"].as_str().expect("plan id");
+    let digest = plan["data"]["plan_digest"].as_str().expect("digest");
+    let (output, interrupted) = run_loom_with_env(
+        fixture.root.path(),
+        &[(
+            "LOOM_FAULT_INJECT",
+            "convergence_interrupt_before_registry_cas",
+        )],
+        &[
+            "apply",
+            plan_id,
+            "--plan-digest",
+            digest,
+            "--idempotency-key",
+            "registry-index-generation",
+        ],
+    );
+    assert!(
+        !output.status.success(),
+        "registry CAS interruption passed: {interrupted}"
+    );
+
+    let journal_path = fixture
+        .root
+        .path()
+        .join("state/transactions/convergence-demo.json");
+    let journal: Value =
+        serde_json::from_slice(&fs::read(&journal_path).expect("journal")).expect("parse journal");
+    let generation = journal["registry_index_generation"]
+        .as_str()
+        .expect("registry index generation");
+    let artifact_root = Path::new(journal["artifact_root"].as_str().expect("artifact root"));
+    let superseded = artifact_root.join(format!("registry-commit-{generation}-base-index"));
+    assert!(superseded.is_file(), "first generation index is absent");
+    let foreign = b"foreign replacement must survive";
+    fs::write(&superseded, foreign).expect("replace superseded index");
+
+    let (output, recovered) = retry_apply(&fixture, &plan, "registry-index-generation");
+    assert!(output.status.success(), "recovery failed: {recovered}");
+    assert_eq!(
+        fs::read(&superseded).expect("read superseded index"),
+        foreign,
+        "recovery deleted or overwrote a superseded generation"
+    );
+}
+
 #[test]
 fn rolling_back_registry_restore_preserves_an_external_second_writer() {
     let fixture = projected_fixture();
@@ -53,7 +126,7 @@ fn rolling_back_registry_restore_preserves_an_external_second_writer() {
     let external = serde_json::to_vec_pretty(&external).expect("encode external registry");
     fs::write(&registry_path, &external).expect("install external registry value");
 
-    let (output, retry) = apply(&fixture, &plan, "registry-rollback-cas", None);
+    let (output, retry) = retry_apply(&fixture, &plan, "registry-rollback-cas");
     assert!(
         !output.status.success(),
         "external registry was overwritten: {retry}"

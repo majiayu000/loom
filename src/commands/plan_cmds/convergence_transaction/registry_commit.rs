@@ -10,30 +10,26 @@ pub(super) fn commit_convergence_registry(
     journal_path: &Path,
     journal: &mut TransactionJournal,
 ) -> std::result::Result<Option<String>, CommandFailure> {
-    let source_head = journal.source_head.as_deref().ok_or_else(|| {
+    let source_head = journal.source_head.clone().ok_or_else(|| {
         CommandFailure::new(ErrorCode::StateCorrupt, "journal is missing source head")
     })?;
     validate_registry_result(app, plan, journal)?;
     require_head(
         app,
-        source_head,
+        &source_head,
         "registry commit parent changed before preparation",
     )?;
 
-    let root = Path::new(&journal.artifact_root);
-    let base_index = root.join("registry-base-index");
-    let prepared_index = root.join("registry-index");
-    let commit_index = root.join("registry-commit-index");
-    reset_owned_files([&base_index, &prepared_index, &commit_index])?;
+    let (base_index, prepared_index, commit_index) =
+        allocate_registry_indexes(journal_path, journal, "commit")?;
     gitops::snapshot_index_to(&app.ctx, &base_index).map_err(map_git)?;
     let base_index_digest = file_digest(&base_index)?;
     let changed =
         gitops::prepare_index_for_paths(&app.ctx, &base_index, &prepared_index, &[REGISTRY_PATH])
             .map_err(map_git)?;
     if !changed {
-        require_head(app, source_head, "no-op registry commit changed HEAD")?;
+        require_head(app, &source_head, "no-op registry commit changed HEAD")?;
         validate_registry_result(app, plan, journal)?;
-        reset_owned_files([&base_index, &prepared_index, &commit_index])?;
         return Ok(None);
     }
 
@@ -43,11 +39,11 @@ pub(super) fn commit_convergence_registry(
         &prepared_index,
         &commit_index,
         &[REGISTRY_PATH],
-        source_head,
+        &source_head,
         &message,
     )
     .map_err(map_git)?;
-    verify_commit(app, &commit, source_head, &message, |path| {
+    verify_commit(app, &commit, &source_head, &message, |path| {
         path == REGISTRY_PATH
     })?;
     let expected_index = file_digest(&prepared_index)?;
@@ -64,15 +60,15 @@ pub(super) fn commit_convergence_registry(
                 candidate,
                 &expected_index,
                 &base_index_digest,
-                source_head,
+                &source_head,
             )?;
             maybe_skill_fault("convergence_interrupt_before_registry_cas")
                 .map_err(|error| anyhow::anyhow!(error.message))?;
-            gitops::move_head_if_unchanged(&app.ctx, &commit, source_head)
+            gitops::move_head_if_unchanged(&app.ctx, &commit, &source_head)
         });
     if let Err(error) = install {
         if gitops::head(&app.ctx).map_err(map_git)? == commit {
-            align_registry_index(app, plan, journal, &commit)?;
+            align_registry_index(app, plan, journal_path, journal, &commit)?;
         } else {
             return Err(map_git(error));
         }
@@ -83,14 +79,14 @@ pub(super) fn commit_convergence_registry(
         "registry commit compare-and-swap did not persist",
     )?;
     validate_registry_result(app, plan, journal)?;
-    reset_owned_files([&base_index, &prepared_index, &commit_index])?;
     Ok(Some(commit))
 }
 
 pub(super) fn align_registry_index(
     app: &App,
     plan: &SkillConvergencePlan,
-    journal: &TransactionJournal,
+    journal_path: &Path,
+    journal: &mut TransactionJournal,
     expected_head: &str,
 ) -> std::result::Result<(), CommandFailure> {
     let staged = gitops::run_git_allow_failure(
@@ -110,10 +106,8 @@ pub(super) fn align_registry_index(
             "recorded registry commit differs from HEAD",
         ));
     }
-    let root = Path::new(&journal.artifact_root);
-    let base_index = root.join("registry-repair-base-index");
-    let prepared_index = root.join("registry-repair-index");
-    reset_owned_files([&base_index, &prepared_index])?;
+    let (base_index, prepared_index, _) =
+        allocate_registry_indexes(journal_path, journal, "repair")?;
     gitops::snapshot_index_to(&app.ctx, &base_index).map_err(map_git)?;
     let base_index_digest = file_digest(&base_index)?;
     gitops::prepare_index_for_paths(&app.ctx, &base_index, &prepared_index, &[REGISTRY_PATH])
@@ -140,11 +134,25 @@ pub(super) fn align_registry_index(
         gitops::recover_prepared_index_lock_with_guard(&app.ctx, &prepared_index, &guard)
             .map_err(map_git)?;
     if recovered_lock {
-        return reset_owned_files([&base_index, &prepared_index]);
+        return Ok(());
     }
-    gitops::install_prepared_index_with_guard(&app.ctx, &prepared_index, &guard)
-        .map_err(map_git)?;
-    reset_owned_files([&base_index, &prepared_index])
+    gitops::install_prepared_index_with_guard(&app.ctx, &prepared_index, &guard).map_err(map_git)
+}
+
+fn allocate_registry_indexes(
+    journal_path: &Path,
+    journal: &mut TransactionJournal,
+    purpose: &str,
+) -> std::result::Result<(PathBuf, PathBuf, PathBuf), CommandFailure> {
+    let generation = uuid::Uuid::new_v4().hyphenated().to_string();
+    journal.registry_index_generation = Some(generation.clone());
+    save_journal(journal_path, journal)?;
+    let root = Path::new(&journal.artifact_root);
+    Ok((
+        root.join(format!("registry-{purpose}-{generation}-base-index")),
+        root.join(format!("registry-{purpose}-{generation}-prepared-index")),
+        root.join(format!("registry-{purpose}-{generation}-commit-index")),
+    ))
 }
 
 fn validate_index_install(
@@ -173,11 +181,4 @@ pub(super) fn require_head(
     } else {
         Err(CommandFailure::new(ErrorCode::StateCorrupt, message))
     }
-}
-
-fn reset_owned_files<const N: usize>(paths: [&Path; N]) -> std::result::Result<(), CommandFailure> {
-    for path in paths {
-        remove_path_if_exists(path).map_err(map_io)?;
-    }
-    Ok(())
 }

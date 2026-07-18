@@ -79,7 +79,7 @@ impl App {
         let resolved = resolve_activation(&self.ctx, &snapshot, selection)?;
         let plan = activation_plan(&resolved, false);
 
-        let execution = super::projection_executor::execute_projection(
+        let execution = super::projection_executor::execute_standalone_projection(
             &self.ctx,
             &paths,
             &snapshot,

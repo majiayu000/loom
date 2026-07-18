@@ -1,6 +1,6 @@
 use std::ffi::OsStr;
 use std::fs;
-use std::io::{self, Read};
+use std::io;
 use std::path::Path;
 
 use anyhow::Context;
@@ -10,22 +10,24 @@ use crate::sha256::{Sha256, to_hex};
 use crate::types::ErrorCode;
 
 use super::super::super::CommandFailure;
+use super::super::super::provenance::skill_tree_digest;
 
 #[cfg(unix)]
 mod xattrs;
 
 pub(crate) fn projection_ownership_fingerprint(path: &Path) -> anyhow::Result<String> {
-    let mut entries = WalkDir::new(path)
+    let content_digest = skill_tree_digest(path)?;
+    let entries = WalkDir::new(path)
         .follow_links(false)
         .sort_by_file_name()
         .into_iter()
-        .map(|entry| entry.with_context(|| format!("walk {}", path.display())))
-        .collect::<anyhow::Result<Vec<_>>>()?;
-    entries.sort_by(|left, right| left.path().cmp(right.path()));
+        .map(|entry| entry.with_context(|| format!("walk {}", path.display())));
 
     let mut hasher = Sha256::new();
     hasher.update(b"loom-projection-ownership-v1\0");
+    hasher.update(content_digest.as_bytes());
     for entry in entries {
+        let entry = entry?;
         let full = entry.path();
         let relative = full
             .strip_prefix(path)
@@ -39,21 +41,8 @@ pub(crate) fn projection_ownership_fingerprint(path: &Path) -> anyhow::Result<St
             hasher.update(b"directory\0");
         } else if file_type.is_symlink() {
             hasher.update(b"symlink\0");
-            hash_os_str(
-                &mut hasher,
-                fs::read_link(full)
-                    .with_context(|| format!("readlink {}", full.display()))?
-                    .as_os_str(),
-            );
         } else if file_type.is_file() {
             hasher.update(b"file\0");
-            let mut file =
-                fs::File::open(full).with_context(|| format!("open {}", full.display()))?;
-            let mut bytes = Vec::new();
-            file.read_to_end(&mut bytes)
-                .with_context(|| format!("read {}", full.display()))?;
-            hasher.update(&(bytes.len() as u64).to_be_bytes());
-            hasher.update(&bytes);
         } else {
             hasher.update(b"special\0");
         }

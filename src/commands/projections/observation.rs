@@ -32,8 +32,15 @@ pub(crate) fn observe_projection(
     ctx: &AppContext,
     projection: &RegistryProjectionInstance,
 ) -> ProjectionObservation {
-    let observed_at = Utc::now();
     let source = ctx.skill_path(&projection.skill_id);
+    observe_projection_from_source(projection, &source)
+}
+
+pub(crate) fn observe_projection_from_source(
+    projection: &RegistryProjectionInstance,
+    source: &Path,
+) -> ProjectionObservation {
+    let observed_at = Utc::now();
     let materialized = Path::new(&projection.materialized_path);
 
     let make = |health,
@@ -81,13 +88,13 @@ pub(crate) fn observe_projection(
 
     match projection.method {
         crate::core::vocab::ProjectionMethod::Symlink => {
-            observe_symlink_projection(ctx, projection, materialized, observed_at)
+            observe_symlink_projection(source, materialized, observed_at)
         }
         crate::core::vocab::ProjectionMethod::Copy => {
-            observe_tree_projection(&source, materialized, false, observed_at)
+            observe_tree_projection(source, materialized, false, observed_at)
         }
         crate::core::vocab::ProjectionMethod::Materialize => {
-            observe_tree_projection(&source, materialized, true, observed_at)
+            observe_tree_projection(source, materialized, true, observed_at)
         }
     }
 }
@@ -210,12 +217,10 @@ fn observe_tree_projection(
 }
 
 fn observe_symlink_projection(
-    ctx: &AppContext,
-    projection: &RegistryProjectionInstance,
+    expected: &Path,
     materialized: &Path,
     observed_at: DateTime<Utc>,
 ) -> ProjectionObservation {
-    let expected = ctx.skill_path(&projection.skill_id);
     let link_target = match fs::read_link(materialized) {
         Ok(target) => target,
         Err(err) => {
@@ -237,7 +242,7 @@ fn observe_symlink_projection(
             .unwrap_or_else(|| link_target.clone())
     };
     let matches =
-        resolved.exists() && fs::canonicalize(&resolved).ok() == fs::canonicalize(&expected).ok();
+        resolved.exists() && fs::canonicalize(&resolved).ok() == fs::canonicalize(expected).ok();
     ProjectionObservation {
         observed_at,
         health: if matches {

@@ -41,6 +41,12 @@ pub(crate) fn projection_ownership_fingerprint(path: &Path) -> anyhow::Result<St
             hasher.update(b"directory\0");
         } else if file_type.is_symlink() {
             hasher.update(b"symlink\0");
+            hash_os_str(
+                &mut hasher,
+                fs::read_link(full)
+                    .with_context(|| format!("readlink {}", full.display()))?
+                    .as_os_str(),
+            );
         } else if file_type.is_file() {
             hasher.update(b"file\0");
         } else {
@@ -81,6 +87,14 @@ fn io_error_is_unsupported(error: &io::Error) -> bool {
     }) {
         return true;
     }
+    #[cfg(windows)]
+    if error.raw_os_error().is_some_and(|code| {
+        use windows_sys::Win32::Foundation::{ERROR_INVALID_PARAMETER, ERROR_NOT_SUPPORTED};
+
+        code == ERROR_INVALID_PARAMETER as i32 || code == ERROR_NOT_SUPPORTED as i32
+    }) {
+        return true;
+    }
     false
 }
 
@@ -102,13 +116,6 @@ fn hash_os_str(hasher: &mut Sha256, value: &OsStr) {
     for word in words {
         hasher.update(&word.to_be_bytes());
     }
-}
-
-#[cfg(any(windows, test))]
-fn hash_windows_security_descriptor(hasher: &mut Sha256, descriptor: &[u8]) {
-    hasher.update(b"windows-security-descriptor\0");
-    hasher.update(&(descriptor.len() as u64).to_be_bytes());
-    hasher.update(descriptor);
 }
 
 #[cfg(unix)]
@@ -245,7 +252,9 @@ fn hash_ownership_metadata(
     let (volume_serial, file_id, security_descriptor) = windows_file_ownership(path)?;
     hasher.update(&volume_serial.to_be_bytes());
     hasher.update(&file_id);
-    hash_windows_security_descriptor(hasher, &security_descriptor);
+    hasher.update(b"windows-security-descriptor\0");
+    hasher.update(&(security_descriptor.len() as u64).to_be_bytes());
+    hasher.update(&security_descriptor);
     if include_write_time {
         hasher.update(&metadata.last_write_time().to_be_bytes());
     }
@@ -257,23 +266,24 @@ fn windows_file_ownership(path: &Path) -> anyhow::Result<(u64, [u8; 16], Vec<u8>
     use std::fs::OpenOptions;
     use std::os::windows::fs::OpenOptionsExt;
     use std::os::windows::io::AsRawHandle;
-    use std::ptr;
-    use windows_sys::Win32::Foundation::{ERROR_SUCCESS, LocalFree};
-    use windows_sys::Win32::Security::Authorization::{GetSecurityInfo, SE_FILE_OBJECT};
-    use windows_sys::Win32::Security::{
-        DACL_SECURITY_INFORMATION, GetSecurityDescriptorLength, OWNER_SECURITY_INFORMATION,
-        PSECURITY_DESCRIPTOR,
-    };
     use windows_sys::Win32::Storage::FileSystem::{
         FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_ID_INFO, FileIdInfo,
         GetFileInformationByHandleEx, READ_CONTROL,
+    };
+    use windows_sys::Win32::{
+        Foundation::LocalFree,
+        Security::{
+            Authorization::{GetSecurityInfo, SE_FILE_OBJECT},
+            DACL_SECURITY_INFORMATION, GROUP_SECURITY_INFORMATION, GetSecurityDescriptorLength,
+            OWNER_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR,
+        },
     };
 
     let file = OpenOptions::new()
         .access_mode(READ_CONTROL)
         .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
         .open(path)
-        .with_context(|| format!("open ownership handle {}", path.display()))?;
+        .with_context(|| format!("open identity handle {}", path.display()))?;
     let mut identity = FILE_ID_INFO::default();
     // SAFETY: the handle stays open for the call, and the output pointer and
     // byte length describe a live `FILE_ID_INFO` value.
@@ -289,23 +299,24 @@ fn windows_file_ownership(path: &Path) -> anyhow::Result<(u64, [u8; 16], Vec<u8>
         return Err(io::Error::last_os_error())
             .with_context(|| format!("read file identity {}", path.display()));
     }
-
-    let mut descriptor: PSECURITY_DESCRIPTOR = ptr::null_mut();
-    // SAFETY: the file handle remains live, unused output pointers are null,
-    // and `descriptor` is valid writable storage for the allocated result.
+    let mut descriptor: PSECURITY_DESCRIPTOR = std::ptr::null_mut();
+    let security_information =
+        OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION;
+    // SAFETY: the file handle is live, optional component pointers are null,
+    // and `descriptor` receives one LocalAlloc-owned security descriptor.
     let status = unsafe {
         GetSecurityInfo(
             file.as_raw_handle(),
             SE_FILE_OBJECT,
-            OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION,
-            ptr::null_mut(),
-            ptr::null_mut(),
-            ptr::null_mut(),
-            ptr::null_mut(),
+            security_information,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
             &raw mut descriptor,
         )
     };
-    if status != ERROR_SUCCESS {
+    if status != 0 {
         return Err(io::Error::from_raw_os_error(status as i32))
             .with_context(|| format!("read security descriptor {}", path.display()));
     }
@@ -313,34 +324,27 @@ fn windows_file_ownership(path: &Path) -> anyhow::Result<(u64, [u8; 16], Vec<u8>
         return Err(io::Error::other("security descriptor was null"))
             .with_context(|| format!("read security descriptor {}", path.display()));
     }
-    struct LocalDescriptor(PSECURITY_DESCRIPTOR);
-    impl Drop for LocalDescriptor {
+    struct SecurityDescriptor(PSECURITY_DESCRIPTOR);
+    impl Drop for SecurityDescriptor {
         fn drop(&mut self) {
-            // SAFETY: GetSecurityInfo allocated this descriptor with LocalAlloc,
-            // and the guard releases it exactly once after the byte copy.
-            unsafe {
-                LocalFree(self.0.cast());
-            }
+            // SAFETY: GetSecurityInfo returned this allocation exactly once.
+            unsafe { LocalFree(self.0) };
         }
     }
-    let descriptor_guard = LocalDescriptor(descriptor);
-    // SAFETY: the descriptor returned by GetSecurityInfo is live and valid
-    // until LocalFree runs in `descriptor_guard`'s Drop implementation.
-    let descriptor_len = unsafe { GetSecurityDescriptorLength(descriptor_guard.0) };
-    if descriptor_len == 0 {
+    let descriptor = SecurityDescriptor(descriptor);
+    // SAFETY: the descriptor allocation remains live through the copy.
+    let length = unsafe { GetSecurityDescriptorLength(descriptor.0) } as usize;
+    if length == 0 {
         return Err(io::Error::last_os_error())
             .with_context(|| format!("measure security descriptor {}", path.display()));
     }
     // SAFETY: GetSecurityDescriptorLength reports the initialized size of the
-    // self-relative descriptor owned by `descriptor_guard`.
-    let descriptor_bytes = unsafe {
-        std::slice::from_raw_parts(descriptor_guard.0.cast::<u8>(), descriptor_len as usize)
-    }
-    .to_vec();
+    // self-relative descriptor owned by `descriptor`.
+    let bytes = unsafe { std::slice::from_raw_parts(descriptor.0.cast::<u8>(), length) }.to_vec();
     Ok((
         identity.VolumeSerialNumber,
         identity.FileId.Identifier,
-        descriptor_bytes,
+        bytes,
     ))
 }
 
@@ -362,15 +366,34 @@ mod tests {
         assert!(failure.message.contains("xattrs unavailable"));
     }
 
+    #[cfg(windows)]
     #[test]
-    fn windows_security_descriptor_changes_ownership_fingerprint() {
-        fn digest(descriptor: &[u8]) -> [u8; 32] {
-            let mut hasher = Sha256::new();
-            hash_windows_security_descriptor(&mut hasher, descriptor);
-            hasher.finalize()
-        }
+    fn unsupported_windows_file_identity_codes_are_typed_method_unsupported() {
+        use windows_sys::Win32::Foundation::{ERROR_INVALID_PARAMETER, ERROR_NOT_SUPPORTED};
 
-        assert_ne!(digest(b"owner-a-dacl-a"), digest(b"owner-b-dacl-a"));
-        assert_ne!(digest(b"owner-a-dacl-a"), digest(b"owner-a-dacl-b"));
+        for code in [ERROR_INVALID_PARAMETER, ERROR_NOT_SUPPORTED] {
+            let error = anyhow::Error::new(io::Error::from_raw_os_error(code as i32))
+                .context("read file identity");
+            let failure = map_ownership_fingerprint_error(error, Path::new("projection"));
+            assert_eq!(failure.code, ErrorCode::ProjectionMethodUnsupported);
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_ownership_reads_a_security_descriptor() {
+        let root = std::env::temp_dir().join(format!(
+            "loom-windows-ownership-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        std::fs::create_dir(&root).expect("create ownership fixture");
+
+        let (_, _, descriptor) =
+            windows_file_ownership(&root).expect("read Windows ownership metadata");
+
+        assert!(!descriptor.is_empty());
+        projection_ownership_fingerprint(&root)
+            .expect("fingerprint with owner, group, and DACL access");
+        std::fs::remove_dir(root).expect("remove ownership fixture");
     }
 }

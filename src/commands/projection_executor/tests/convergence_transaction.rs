@@ -1,5 +1,7 @@
 use super::*;
 
+mod durable_recovery;
+
 #[cfg(any(
     target_os = "macos",
     target_os = "ios",
@@ -526,4 +528,118 @@ fn activation_rejects_live_change_after_prepare() {
     assert!(projection_path.join("keep.txt").is_file());
     assert!(!projection_path.join("details.txt").exists());
     assert!(!staging_path.exists());
+}
+
+#[test]
+fn tampered_prepared_artifact_is_preserved_on_drop_and_discard() {
+    let fixture = convergence_projection_fixture();
+    let projection_path = fixture.root.join("live/copy/demo");
+    let prepare = || {
+        execute_projection(
+            &fixture.ctx,
+            &fixture.paths,
+            &fixture.snapshot,
+            execution_input(&fixture, ProjectionMethod::Copy, projection_path.clone()),
+        )
+        .expect("prepare projection")
+        .prepared
+        .expect("prepared artifact")
+    };
+
+    let prepared = prepare();
+    let staging_path = prepared.staging_path().to_path_buf();
+    let claim_path = staging_path.with_file_name(format!(
+        "{}.prepared-cleanup-claim",
+        staging_path.file_name().unwrap().to_string_lossy()
+    ));
+    fs::remove_dir_all(&staging_path).expect("replace prepared staging");
+    fs::create_dir(&staging_path).expect("create external replacement");
+    fs::write(staging_path.join("external.txt"), "external\n").expect("write replacement");
+    drop(prepared);
+    assert_eq!(
+        fs::read_to_string(claim_path.join("external.txt")).unwrap(),
+        "external\n"
+    );
+    fs::remove_dir_all(&claim_path).expect("remove first replacement");
+
+    let prepared = prepare();
+    let staging_path = prepared.staging_path().to_path_buf();
+    let claim_path = staging_path.with_file_name(format!(
+        "{}.prepared-cleanup-claim",
+        staging_path.file_name().unwrap().to_string_lossy()
+    ));
+    fs::write(staging_path.join("external.txt"), "changed\n").expect("tamper staging");
+    let error = discard_prepared_projection(prepared).expect_err("tamper must be preserved");
+    assert_eq!(error.code, ErrorCode::ProjectionConflict);
+    assert_eq!(error.details["recovery_required"], true);
+    assert!(claim_path.join("external.txt").is_file());
+}
+
+#[test]
+fn caller_selected_source_and_staging_round_trip_as_durable_evidence() {
+    let fixture = convergence_projection_fixture();
+    let selected_source = fixture.root.join("selected-source");
+    fs::create_dir(&selected_source).expect("create selected source");
+    fs::write(selected_source.join("details.txt"), "selected\n").expect("write selected source");
+    let projection_path = fixture.root.join("live/copy/demo");
+    let supplied_staging = projection_path
+        .parent()
+        .expect("projection parent")
+        .join(".loom-projection-stage-journal-owned");
+    let mut input = execution_input(&fixture, ProjectionMethod::Copy, projection_path.clone());
+    input.source_path = Some(selected_source.clone());
+    input.staging_path = Some(supplied_staging.clone());
+
+    let output = execute_projection(&fixture.ctx, &fixture.paths, &fixture.snapshot, input)
+        .expect("prepare caller-owned projection");
+    let prepared = output.prepared.expect("prepared artifact");
+    assert_eq!(prepared.staging_path(), supplied_staging);
+    assert_eq!(
+        fs::read_to_string(supplied_staging.join("details.txt")).unwrap(),
+        "selected\n"
+    );
+    let artifact = prepared.into_durable_artifact();
+    let artifact: PreparedProjectionArtifact =
+        serde_json::from_value(serde_json::to_value(artifact).unwrap()).unwrap();
+    assert_eq!(artifact.source_path, selected_source);
+    assert_eq!(artifact.staging_path, supplied_staging);
+    let reconstructed = PreparedProjection::from_durable_artifact(artifact);
+
+    discard_prepared_projection(reconstructed).expect("discard reconstructed staging");
+    assert!(!supplied_staging.exists());
+    assert!(!projection_path.exists());
+}
+
+#[cfg(any(
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "linux",
+    target_os = "android"
+))]
+#[test]
+fn durable_activation_round_trip_restores_projection() {
+    let fixture = convergence_projection_fixture();
+    let projection_path = fixture.root.join("live/copy/demo");
+    fs::create_dir_all(&projection_path).expect("create existing projection");
+    fs::write(projection_path.join("keep.txt"), "keep\n").expect("write existing projection");
+    let output = execute_projection(
+        &fixture.ctx,
+        &fixture.paths,
+        &fixture.snapshot,
+        execution_input(&fixture, ProjectionMethod::Copy, projection_path.clone()),
+    )
+    .expect("prepare replacement");
+    let activated =
+        activate_prepared_projection(&fixture.ctx, output.prepared.expect("staging artifact"))
+            .expect("activate replacement");
+    let (projection, artifact) = activated.into_durable_parts();
+    let projection: RegistryProjectionInstance =
+        serde_json::from_value(serde_json::to_value(projection).unwrap()).unwrap();
+    let artifact: ProjectionRollbackArtifact =
+        serde_json::from_value(serde_json::to_value(artifact).unwrap()).unwrap();
+    let mut resumed = ProjectionActivationOutput::from_durable_parts(projection, artifact);
+
+    resumed.rollback().expect("rollback reconstructed artifact");
+    assert!(projection_path.join("keep.txt").is_file());
+    assert!(!projection_path.join("details.txt").exists());
 }

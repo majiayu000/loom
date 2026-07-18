@@ -90,6 +90,8 @@ impl App {
                 binding_is_new: resolved.binding_is_new,
                 target: resolved.target.clone(),
                 target_is_new: resolved.target_is_new,
+                source_path: None,
+                staging_path: None,
                 materialized_path: resolved.materialized_path.clone(),
                 method: resolved.selection.method,
                 operation_intent: "skill.activate",

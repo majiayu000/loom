@@ -357,9 +357,8 @@ pub(crate) fn execute_standalone_projection(
     ctx: &AppContext,
     paths: &RegistryStatePaths,
     snapshot: &RegistrySnapshot,
-    mut input: ProjectionExecutionInput,
+    input: ProjectionExecutionInput,
 ) -> std::result::Result<ProjectionExecutionOutput, CommandFailure> {
-    input.context = ProjectionExecutionContext::Standalone;
     execute_projection_mode::<false>(ctx, paths, snapshot, input)
 }
 

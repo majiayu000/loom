@@ -21,6 +21,7 @@ pub(super) fn interruption_fault_active() -> bool {
                 | "convergence_interrupt_after_owner_marker_write"
                 | "convergence_interrupt_after_prepared"
                 | "convergence_interrupt_after_source_replacement"
+                | "convergence_interrupt_after_source_add"
         )
     )
 }
@@ -352,7 +353,7 @@ pub(super) fn restore_projections_for_resume(
         .take(journal.installed_projections)
         .rev()
     {
-        if let Err(err) = restore_projection_from_evidence(projection) {
+        if let Err(err) = restore_projection_from_evidence(projection, &journal.plan_id) {
             push_rollback_error(&mut errors, "restore_projection_from_evidence", err.message);
         }
     }
@@ -512,7 +513,16 @@ fn validate_phase_invariants(journal: &TransactionJournal) -> bool {
         && journal.installed_projections == 0
         && journal.expected_projections.is_none()
         && journal.result.is_none();
+    let index_evidence =
+        journal.phase == TransactionPhase::Preparing || journal.index_backup_digest.is_some();
+    let rollback_evidence = matches!(
+        journal.phase,
+        TransactionPhase::RollingBack | TransactionPhase::RolledBackCleanupPending
+    ) == (journal.rollback_head.is_some()
+        && journal.rollback_index_digest.is_some());
     source_relation
+        && index_evidence
+        && rollback_evidence
         && journal.installed_projections <= count
         && match journal.phase {
             TransactionPhase::Preparing

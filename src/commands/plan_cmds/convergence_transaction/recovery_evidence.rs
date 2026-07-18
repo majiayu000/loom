@@ -217,7 +217,15 @@ pub(super) fn validate_rollback_evidence(
     plan: &SkillConvergencePlan,
     journal: &TransactionJournal,
 ) -> std::result::Result<(), CommandFailure> {
-    validate_index_backup(app, Path::new(&journal.index_backup))?;
+    let index_backup = Path::new(&journal.index_backup);
+    let expected_index_digest = journal
+        .index_backup_digest
+        .as_deref()
+        .ok_or_else(|| corrupt("transaction Git index backup digest is missing"))?;
+    if file_digest(index_backup)? != expected_index_digest {
+        return Err(corrupt("transaction Git index backup digest is invalid"));
+    }
+    validate_index_backup(app, index_backup)?;
     if let Some(backup) = journal.source_backup.as_ref() {
         validate_tree_backup(backup, &plan.source.tree_digest, None)?;
     }
@@ -258,30 +266,44 @@ pub(super) fn rollback_uncommitted_source_only(
             "registry changed during an uncommitted source transaction",
         ));
     }
-    if plan.source.direction == ConvergenceInputDirection::Source {
-        return Ok(());
-    }
-    let source = app.ctx.skill_path(&plan.skill);
-    let live_digest = skill_tree_digest(&source).map_err(map_io)?;
-    if live_digest == plan.source.tree_digest {
-        return Ok(());
-    }
-    if live_digest != plan.input.selected_input_tree_digest {
-        return Err(recovery_stale(
-            "source is neither old nor transaction-new during recovery",
-        ));
-    }
     validate_rollback_evidence(app, plan, journal)?;
-    let backup = journal
-        .source_backup
-        .as_ref()
-        .ok_or_else(|| corrupt("projection-input transaction has no source backup"))?;
-    let staging = journal
-        .source_staging
-        .as_deref()
-        .map(Path::new)
-        .ok_or_else(|| corrupt("projection-input transaction has no source staging"))?;
-    restore_backup_atomically(&source, backup, staging)
+    if plan.source.direction == ConvergenceInputDirection::Projection {
+        let source = app.ctx.skill_path(&plan.skill);
+        let live_digest = skill_tree_digest(&source).map_err(map_io)?;
+        if live_digest != plan.source.tree_digest {
+            if live_digest != plan.input.selected_input_tree_digest {
+                return Err(recovery_stale(
+                    "source is neither old nor transaction-new during recovery",
+                ));
+            }
+            let backup = journal
+                .source_backup
+                .as_ref()
+                .ok_or_else(|| corrupt("projection-input transaction has no source backup"))?;
+            let staging = journal
+                .source_staging
+                .as_deref()
+                .map(Path::new)
+                .ok_or_else(|| corrupt("projection-input transaction has no source staging"))?;
+            restore_backup_atomically(&source, backup, staging, &journal.plan_id)?;
+        }
+    }
+    if journal.phase == TransactionPhase::CommittingSource {
+        let live = active_index_digest(app)?;
+        let original = journal
+            .index_backup_digest
+            .as_deref()
+            .ok_or_else(|| corrupt("transaction Git index backup digest is missing"))?;
+        if live != original && journal.source_staged_index_digest.as_deref() != Some(live.as_str())
+        {
+            return Err(recovery_stale(
+                "Git index is neither old nor transaction-staged during source recovery",
+            ));
+        }
+        gitops::restore_index_from_backup(&app.ctx, Path::new(&journal.index_backup))
+            .map_err(map_git)?;
+    }
+    Ok(())
 }
 
 pub(super) fn validate_rolling_back_state(
@@ -289,9 +311,10 @@ pub(super) fn validate_rolling_back_state(
     plan: &SkillConvergencePlan,
     journal: &TransactionJournal,
 ) -> std::result::Result<(), CommandFailure> {
-    if gitops::head(&app.ctx).map_err(map_git)? != journal.previous_head {
+    let head = gitops::head(&app.ctx).map_err(map_git)?;
+    if head != journal.previous_head && journal.rollback_head.as_deref() != Some(head.as_str()) {
         return Err(recovery_stale(
-            "HEAD is not restored at the rolling-back recovery boundary",
+            "HEAD is neither old nor transaction-new while rolling back",
         ));
     }
     let source_digest = skill_tree_digest(&app.ctx.skill_path(&plan.skill)).map_err(map_io)?;
@@ -302,31 +325,45 @@ pub(super) fn validate_rolling_back_state(
             "source is neither old nor transaction-new while rolling back",
         ));
     }
-    let active_index =
-        gitops::run_git(&app.ctx, &["rev-parse", "--git-path", "index"]).map_err(map_git)?;
-    let active_index = PathBuf::from(active_index);
-    let active_index = if active_index.is_absolute() {
-        active_index
-    } else {
-        app.ctx.root.join(active_index)
-    };
-    let live = fs::read(active_index).map_err(map_io)?;
-    let original = fs::read(&journal.index_backup).map_err(map_io)?;
-    if live != original {
+    let live = active_index_digest(app)?;
+    let original = journal
+        .index_backup_digest
+        .as_deref()
+        .ok_or_else(|| corrupt("transaction Git index backup digest is missing"))?;
+    if live != original && journal.rollback_index_digest.as_deref() != Some(live.as_str()) {
         return Err(recovery_stale(
-            "Git index is not restored at the rolling-back recovery boundary",
+            "Git index is neither old nor transaction-new while rolling back",
         ));
     }
     Ok(())
 }
 
+pub(super) fn active_index_digest(app: &App) -> std::result::Result<String, CommandFailure> {
+    let raw = gitops::run_git(&app.ctx, &["rev-parse", "--git-path", "index"]).map_err(map_git)?;
+    let path = PathBuf::from(raw);
+    let path = if path.is_absolute() {
+        path
+    } else {
+        app.ctx.root.join(path)
+    };
+    file_digest(&path)
+}
+
+pub(super) fn file_digest(path: &Path) -> std::result::Result<String, CommandFailure> {
+    let bytes = fs::read(path).map_err(map_io)?;
+    let mut hasher = Sha256::new();
+    hasher.update(&bytes);
+    Ok(format!("sha256:{}", to_hex(&hasher.finalize())))
+}
+
 pub(super) fn restore_projection_from_evidence(
     artifact: &ProjectionBackup,
+    plan_id: &str,
 ) -> std::result::Result<(), CommandFailure> {
     let live = Path::new(&artifact.materialized_path);
     let staging = Path::new(&artifact.staging_path);
     match artifact.backup.as_ref() {
-        Some(backup) => restore_backup_atomically(live, backup, staging),
+        Some(backup) => restore_backup_atomically(live, backup, staging, plan_id),
         None => remove_path_if_exists(live).map_err(map_io),
     }
 }
@@ -335,7 +372,9 @@ pub(super) fn restore_backup_atomically(
     live: &Path,
     backup: &serde_json::Value,
     staging: &Path,
+    plan_id: &str,
 ) -> std::result::Result<(), CommandFailure> {
+    validate_owned_staging(live, staging, plan_id)?;
     remove_path_if_exists(staging).map_err(map_io)?;
     restore_path_from_backup(staging, backup).map_err(map_io)?;
     exchange_paths_atomic(staging, live).map_err(map_io)?;

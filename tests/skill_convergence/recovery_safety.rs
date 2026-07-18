@@ -4,6 +4,9 @@ use common::run_loom_with_env;
 
 use super::*;
 
+#[path = "recovery_safety/recovery_boundaries.rs"]
+mod recovery_boundaries;
+
 fn apply(
     fixture: &Fixture,
     plan: &Value,
@@ -245,7 +248,14 @@ fn corrupt_projection_and_index_backups_fail_before_live_mutation() {
         if kind == "projection" {
             fs::remove_dir_all(backup).expect("remove backup");
         } else {
-            fs::write(backup, b"not-an-index").expect("corrupt index");
+            fs::write(
+                fixture.root.path().join("other-valid-index-entry"),
+                "other\n",
+            )
+            .expect("other index entry");
+            git(fixture.root.path(), &["add", "other-valid-index-entry"]);
+            fs::copy(fixture.root.path().join(".git/index"), backup)
+                .expect("replace with another valid index");
         }
         let head = git(fixture.root.path(), &["rev-parse", "HEAD"]);
         let source = snapshot_tree(&fixture.root.path().join("skills/demo"));

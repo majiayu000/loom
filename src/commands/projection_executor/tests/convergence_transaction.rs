@@ -48,6 +48,51 @@ fn rollback_preserves_concurrent_live_change_and_is_retryable() {
     assert!(!backup_path.exists());
 }
 
+#[cfg(any(
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "linux",
+    target_os = "android"
+))]
+#[test]
+fn rollback_preserves_concurrent_backup_change_and_is_retryable() {
+    let fixture = convergence_projection_fixture();
+    let projection_path = fixture.root.join("live/copy/demo");
+    fs::create_dir_all(&projection_path).expect("create existing projection");
+    fs::write(projection_path.join("keep.txt"), "keep\n").expect("write existing projection");
+    let output = execute_projection(
+        &fixture.ctx,
+        &fixture.paths,
+        &fixture.snapshot,
+        execution_input(&fixture, ProjectionMethod::Copy, projection_path.clone()),
+    )
+    .expect("prepare replacement");
+    let mut activated =
+        activate_prepared_projection(&fixture.ctx, output.prepared.expect("staging artifact"))
+            .expect("activate replacement");
+    let evidence = activated.rollback_evidence();
+    let backup_path = PathBuf::from(evidence["backup_path"].as_str().expect("backup path"));
+    fs::write(backup_path.join("concurrent.txt"), "concurrent\n").expect("change rollback backup");
+
+    let error = activated
+        .rollback()
+        .expect_err("rollback must preserve a changed backup");
+
+    assert_eq!(error.code, ErrorCode::ProjectionConflict);
+    assert_eq!(error.details["recovery_required"], true);
+    assert!(projection_path.join("details.txt").is_file());
+    assert!(backup_path.join("keep.txt").is_file());
+    assert!(backup_path.join("concurrent.txt").is_file());
+
+    fs::remove_file(backup_path.join("concurrent.txt")).expect("resolve backup conflict");
+    activated.rollback().expect("retry rollback");
+    assert_eq!(
+        fs::read_to_string(projection_path.join("keep.txt")).unwrap(),
+        "keep\n"
+    );
+    assert!(!backup_path.exists());
+}
+
 #[test]
 fn created_rollback_preserves_concurrent_live_change_and_is_retryable() {
     let fixture = convergence_projection_fixture();
@@ -285,6 +330,108 @@ fn finalize_preserves_changed_backup_and_is_retryable() {
     activated.finalize().expect("retry finalize");
     assert!(!backup_path.exists());
     assert!(projection_path.join("details.txt").is_file());
+}
+
+#[cfg(any(
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "linux",
+    target_os = "android"
+))]
+#[test]
+fn finalize_preserves_changed_live_projection_for_created_and_replaced_paths() {
+    for replace_existing in [false, true] {
+        let fixture = convergence_projection_fixture();
+        let projection_path = fixture.root.join("live/copy/demo");
+        if replace_existing {
+            fs::create_dir_all(&projection_path).expect("create existing projection");
+            fs::write(projection_path.join("keep.txt"), "keep\n")
+                .expect("write existing projection");
+        }
+        let output = execute_projection(
+            &fixture.ctx,
+            &fixture.paths,
+            &fixture.snapshot,
+            execution_input(&fixture, ProjectionMethod::Copy, projection_path.clone()),
+        )
+        .expect("prepare projection");
+        let mut activated =
+            activate_prepared_projection(&fixture.ctx, output.prepared.expect("staging artifact"))
+                .expect("activate projection");
+        fs::write(projection_path.join("concurrent.txt"), "concurrent\n")
+            .expect("change live projection");
+
+        let error = activated
+            .finalize()
+            .expect_err("finalize must preserve a changed live projection");
+
+        assert_eq!(error.code, ErrorCode::ProjectionConflict);
+        assert_eq!(error.details["recovery_required"], true);
+        assert!(projection_path.join("concurrent.txt").is_file());
+        fs::remove_file(projection_path.join("concurrent.txt")).expect("resolve live conflict");
+        activated.finalize().expect("retry finalize");
+        assert!(projection_path.join("details.txt").is_file());
+    }
+}
+
+#[cfg(any(
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "linux",
+    target_os = "android"
+))]
+#[test]
+fn finalize_rejects_rollback_pending_cleanup() {
+    for replace_existing in [false, true] {
+        let fixture = convergence_projection_fixture();
+        let projection_path = fixture.root.join("live/copy/demo");
+        if replace_existing {
+            fs::create_dir_all(&projection_path).expect("create existing projection");
+            fs::write(projection_path.join("keep.txt"), "keep\n")
+                .expect("write existing projection");
+        }
+        let output = execute_projection(
+            &fixture.ctx,
+            &fixture.paths,
+            &fixture.snapshot,
+            execution_input(&fixture, ProjectionMethod::Copy, projection_path.clone()),
+        )
+        .expect("prepare projection");
+        let mut activated =
+            activate_prepared_projection(&fixture.ctx, output.prepared.expect("staging artifact"))
+                .expect("activate projection");
+        let evidence = activated.rollback_evidence();
+        let artifact_path = PathBuf::from(
+            evidence
+                .get(if replace_existing {
+                    "backup_path"
+                } else {
+                    "rollback_path"
+                })
+                .and_then(Value::as_str)
+                .expect("rollback artifact path"),
+        );
+        activated.fail_cleanup_once_for_test();
+
+        let rollback_error = activated
+            .rollback()
+            .expect_err("rollback cleanup fault must remain retryable");
+        assert_eq!(rollback_error.details["recovery_required"], true);
+        if replace_existing {
+            assert!(projection_path.join("keep.txt").is_file());
+        } else {
+            assert!(!projection_path.exists());
+        }
+        assert!(artifact_path.join("details.txt").is_file());
+
+        let finalize_error = activated
+            .finalize()
+            .expect_err("finalize must reject rollback-pending cleanup");
+        assert_eq!(finalize_error.code, ErrorCode::ProjectionConflict);
+        assert_eq!(finalize_error.details["recovery_required"], true);
+        activated.rollback().expect("finish rollback cleanup");
+        assert!(!artifact_path.exists());
+    }
 }
 
 #[cfg(any(

@@ -162,17 +162,28 @@ impl ProjectionRollbackArtifact {
     }
 
     fn rollback(&mut self) -> std::result::Result<(), CommandFailure> {
+        self.begin_rollback()?;
+        self.cleanup_pending()
+    }
+
+    fn begin_rollback(&mut self) -> std::result::Result<(), CommandFailure> {
         match self.clone() {
             Self::Exchanged {
                 materialized_path,
                 backup_path,
                 activated_digest,
-                ..
+                original_digest,
             } => {
                 validate_owned_digest(
                     &materialized_path,
                     &activated_digest,
                     "rollback live projection",
+                    self,
+                )?;
+                validate_owned_digest(
+                    &backup_path,
+                    &original_digest,
+                    "rollback projection backup",
                     self,
                 )?;
                 exchange_paths_atomic(&backup_path, &materialized_path)
@@ -184,7 +195,7 @@ impl ProjectionRollbackArtifact {
                     expected_digest: activated_digest,
                     reason: PendingCleanupReason::RollbackExchanged,
                 };
-                self.cleanup_pending()
+                Ok(())
             }
             Self::Created {
                 materialized_path,
@@ -206,19 +217,30 @@ impl ProjectionRollbackArtifact {
                     expected_digest: activated_digest,
                     reason: PendingCleanupReason::RollbackCreated,
                 };
-                self.cleanup_pending()
+                Ok(())
             }
-            Self::PendingCleanup { .. } => self.cleanup_pending(),
+            Self::PendingCleanup { .. } => Ok(()),
         }
+    }
+
+    fn rollback_took_effect(&self) -> bool {
+        matches!(self, Self::PendingCleanup { .. })
     }
 
     fn finalize(&mut self) -> std::result::Result<(), CommandFailure> {
         match self.clone() {
             Self::Exchanged {
+                materialized_path,
                 backup_path,
+                activated_digest,
                 original_digest,
-                ..
             } => {
+                validate_owned_digest(
+                    &materialized_path,
+                    &activated_digest,
+                    "finalize live projection",
+                    self,
+                )?;
                 validate_owned_digest(
                     &backup_path,
                     &original_digest,
@@ -229,8 +251,23 @@ impl ProjectionRollbackArtifact {
                     .map_err(map_io)
                     .map_err(|err| with_recovery_details(err, self))
             }
-            Self::Created { .. } => Ok(()),
-            Self::PendingCleanup { .. } => self.cleanup_pending(),
+            Self::Created {
+                materialized_path,
+                activated_digest,
+                ..
+            } => validate_owned_digest(
+                &materialized_path,
+                &activated_digest,
+                "finalize live projection",
+                self,
+            ),
+            Self::PendingCleanup { .. } => Err(with_recovery_details(
+                CommandFailure::new(
+                    ErrorCode::ProjectionConflict,
+                    "cannot finalize after rollback took effect; retry rollback cleanup",
+                ),
+                self,
+            )),
         }
     }
 
@@ -264,6 +301,8 @@ impl ProjectionRollbackArtifact {
 pub(crate) struct ProjectionActivationOutput {
     projection: Option<RegistryProjectionInstance>,
     rollback_artifact: Option<ProjectionRollbackArtifact>,
+    #[cfg(test)]
+    fail_cleanup_once: bool,
 }
 
 impl ProjectionActivationOutput {
@@ -287,14 +326,36 @@ impl ProjectionActivationOutput {
         reason = "consumed by the SP524-T004 convergence transaction"
     )]
     pub(crate) fn rollback(&mut self) -> std::result::Result<(), CommandFailure> {
-        let artifact = self
-            .rollback_artifact
-            .as_mut()
-            .expect("activated projection must own a rollback artifact");
-        artifact.rollback()?;
+        let artifact = self.rollback_artifact.as_mut().ok_or_else(|| {
+            CommandFailure::new(
+                ErrorCode::InternalError,
+                "activated projection has no rollback artifact",
+            )
+        })?;
+        let transition = artifact.begin_rollback();
+        if artifact.rollback_took_effect() {
+            self.projection = None;
+        }
+        transition?;
+        #[cfg(test)]
+        if self.fail_cleanup_once {
+            self.fail_cleanup_once = false;
+            return Err(with_recovery_details(
+                CommandFailure::new(
+                    ErrorCode::InternalError,
+                    "fault injected before rollback artifact cleanup",
+                ),
+                artifact,
+            ));
+        }
+        artifact.cleanup_pending()?;
         self.rollback_artifact = None;
-        self.projection = None;
         Ok(())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn fail_cleanup_once_for_test(&mut self) {
+        self.fail_cleanup_once = true;
     }
 
     #[allow(
@@ -400,6 +461,8 @@ pub(crate) fn activate_prepared_projection(
     Ok(ProjectionActivationOutput {
         projection: Some(projection),
         rollback_artifact: Some(rollback_artifact),
+        #[cfg(test)]
+        fail_cleanup_once: false,
     })
 }
 

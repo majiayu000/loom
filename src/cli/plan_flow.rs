@@ -7,10 +7,10 @@ use super::{AgentKind, ProjectionMethod, UseScope};
 
 #[derive(Debug, Clone, Subcommand, Serialize)]
 pub enum PlanCommand {
-    #[command(about = "Create a durable plan for converging one skill change")]
+    #[command(about = "Plan one skill convergence")]
     Converge(PlanConvergeArgs),
 
-    #[command(about = "Create a durable plan for the skill use flow")]
+    #[command(about = "Plan the skill use flow")]
     Use(PlanUseArgs),
 }
 
@@ -21,90 +21,90 @@ pub enum PlanCommand {
         .multiple(false)
 ))]
 pub struct PlanConvergeArgs {
-    /// Registry skill id to converge.
+    /// Skill id.
     pub skill: String,
 
-    /// Use the canonical registry source as the change input (the default).
+    /// Use registry source input (default).
     #[arg(long)]
     pub from_source: bool,
 
-    /// Capture the change from one explicitly selected projection instance.
+    /// Use one projection instance as input.
     #[arg(long, requires = "instance")]
     pub from_projection: bool,
 
-    /// Projection instance used as input with --from-projection.
+    /// Input projection instance id.
     #[arg(long, requires = "from_projection")]
     pub instance: Option<String>,
 
-    /// Restrict active bindings to one agent.
+    /// Filter bindings by agent.
     #[arg(long, value_enum)]
     pub agent: Option<AgentKind>,
 
-    /// Restrict active bindings to a matching workspace.
+    /// Filter bindings by workspace.
     #[arg(long)]
     pub workspace: Option<PathBuf>,
 
-    /// Restrict active bindings to one profile.
+    /// Filter bindings by profile.
     #[arg(long)]
     pub profile: Option<String>,
 
-    /// Require at least one selected active runtime projection.
+    /// Require a selected runtime projection.
     #[arg(long)]
     pub require_runtime: bool,
 
-    /// Treat a post-apply restart requirement as accepted evidence.
+    /// Accept required restart evidence.
     #[arg(long, requires = "require_runtime")]
     pub accept_restart_required: bool,
 
-    /// Request registry remote push after the future local transaction.
+    /// Request a remote push after apply.
     #[arg(long)]
     pub push_remote: bool,
 }
 
 #[derive(Debug, Clone, Args, Serialize)]
 pub struct PlanUseArgs {
-    /// Registry skill id to use.
+    /// Skill id.
     pub skill: String,
 
-    /// Comma-separated agents to prepare, for example claude,codex.
+    /// Target agents, comma-separated.
     #[arg(long, value_enum, value_delimiter = ',')]
     pub agents: Vec<AgentKind>,
 
-    /// Scope for target and binding creation.
+    /// Target scope.
     #[arg(long, value_enum, default_value_t = UseScope::Project)]
     pub scope: UseScope,
 
-    /// Workspace path used for project scope matching. Defaults to current directory.
+    /// Project workspace (default: current directory).
     #[arg(long)]
     pub workspace: Option<PathBuf>,
 
-    /// Profile label for the generated or reused binding.
+    /// Binding profile.
     #[arg(long, default_value = "default")]
     pub profile: String,
 
-    /// Projection method to use when applying.
+    /// Projection method.
     #[arg(long, value_enum, default_value_t = ProjectionMethod::Symlink)]
     pub method: ProjectionMethod,
 
-    /// Base directory for managed targets. Defaults to <root>/targets/<scope>.
+    /// Managed target root (default: <root>/targets/<scope>).
     #[arg(long)]
     pub target_root: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Args, Serialize)]
 pub struct ApplyArgs {
-    /// Durable plan id returned by `loom plan`.
+    /// Plan id from `loom plan`.
     pub plan_id: String,
 
-    /// Reviewed digest required by convergence plans.
+    /// Reviewed convergence-plan digest.
     #[arg(long)]
     pub plan_digest: Option<String>,
 
-    /// Caller-provided idempotency key for safe retries.
+    /// Retry-safe idempotency key.
     #[arg(long)]
     pub idempotency_key: String,
 
-    /// Approval tokens required by the plan. Can be repeated or comma-separated.
+    /// Plan approvals; repeat or comma-separate.
     #[arg(long = "approve", value_delimiter = ',')]
     pub approvals: Vec<String>,
 }

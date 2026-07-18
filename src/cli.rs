@@ -502,42 +502,42 @@ pub enum AgentCommand {
 
 #[derive(Debug, Clone, Args, Serialize)]
 pub struct AgentPreflightArgs {
-    /// Agent kind asking for the plan.
+    /// Requesting agent.
     #[arg(long, value_enum)]
     pub agent: AgentKind,
 
-    /// Workspace path the agent is operating in.
+    /// Agent workspace.
     #[arg(long)]
     pub workspace: PathBuf,
 
-    /// Optional skill to resolve project/capture selectors for.
+    /// Optional skill selector.
     #[arg(long)]
     pub skill: Option<String>,
 
-    /// Desired projection method for a new project operation.
+    /// Projection method for new targets.
     #[arg(long, value_enum, default_value_t = ProjectionMethod::Symlink)]
     pub method: ProjectionMethod,
 }
 
 #[derive(Debug, Clone, Args, Serialize)]
 pub struct AgentReconcileArgs {
-    /// Agent kind to plan active-view reconciliation for.
+    /// Agent to reconcile.
     #[arg(long, value_enum)]
     pub agent: AgentKind,
 
-    /// Preview active-view repairs without mutating registry or target state.
+    /// Preview without registry or target writes.
     #[arg(long)]
     pub dry_run: bool,
 
-    /// Restrict planning to one workspace binding id.
+    /// Binding id filter.
     #[arg(long)]
     pub binding: Option<String>,
 
-    /// Restrict planning to one target id.
+    /// Target id filter.
     #[arg(long)]
     pub target: Option<String>,
 
-    /// Optional allowlist for future legacy cleanup flows.
+    /// Legacy cleanup allowlist.
     #[arg(long)]
     pub allowlist: Option<PathBuf>,
 }
@@ -557,44 +557,44 @@ pub enum HistoryRepairStrategyArg {
 
 #[derive(Debug, Clone, Args, Serialize)]
 pub struct ProjectArgs {
-    /// Registry skill name.
+    /// Skill id.
     pub skill: String,
 
-    /// Workspace binding id that selects the default target.
+    /// Binding id.
     #[arg(long)]
     pub binding: String,
 
-    /// Optional target id override.
+    /// Target id override.
     #[arg(long)]
     pub target: Option<String>,
 
-    /// Projection strategy used for the live agent directory.
+    /// Projection method.
     #[arg(long, value_enum, default_value_t = ProjectionMethod::Symlink)]
     pub method: ProjectionMethod,
 
-    /// Show the projection plan without writing registry state or target files.
+    /// Preview without registry or target writes.
     #[arg(long)]
     pub dry_run: bool,
 }
 
 #[derive(Debug, Clone, Args, Serialize)]
 pub struct CaptureArgs {
-    /// Registry skill name. Optional only when --instance uniquely identifies the projection.
+    /// Skill id; optional when --instance is unique.
     pub skill: Option<String>,
 
-    /// Binding id for selecting a projection when --instance is not provided.
+    /// Binding id; used when --instance is absent.
     #[arg(long)]
     pub binding: Option<String>,
 
-    /// Projection instance id to capture from directly.
+    /// Projection instance id.
     #[arg(long)]
     pub instance: Option<String>,
 
-    /// Git commit message for the captured source revision.
+    /// Source commit message.
     #[arg(long)]
     pub message: Option<String>,
 
-    /// Show the capture plan without writing registry state or source files.
+    /// Preview without registry or source writes.
     #[arg(long)]
     pub dry_run: bool,
 }

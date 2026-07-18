@@ -224,13 +224,15 @@ fn restore_json_candidate_windows(
             })
         }
         displaced => {
-            let restore_latest = replace_file_with_backup_windows(path, candidate, backup);
+            let (restore_latest, evidence) =
+                match replace_file_with_backup_windows(path, candidate, backup) {
+                    Ok(()) => ("succeeded".to_string(), backup),
+                    Err(error) => (error.to_string(), candidate),
+                };
             Err(anyhow!(
-                "unknown concurrent JSON value was displaced to {}; latest-value restoration: {}; inspection: {}",
-                candidate.display(),
-                restore_latest
-                    .map(|_| "succeeded".to_string())
-                    .unwrap_or_else(|error| error.to_string()),
+                "unknown concurrent JSON value; evidence retained at {}; latest-value restoration: {}; inspection: {}",
+                evidence.display(),
+                restore_latest,
                 displaced
                     .err()
                     .map_or_else(|| "value differs".to_string(), |error| error.to_string())

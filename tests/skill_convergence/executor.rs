@@ -5,7 +5,7 @@ use serde_json::json;
 use super::*;
 use common::run_loom_with_env;
 
-fn all_paths(root: &Path) -> Vec<String> {
+pub(super) fn all_paths(root: &Path) -> Vec<String> {
     fn visit(base: &Path, path: &Path, out: &mut Vec<String>) {
         let Ok(entries) = fs::read_dir(path) else {
             return;

@@ -3,6 +3,8 @@ mod common;
 mod skill_convergence_executor;
 #[path = "skill_convergence/recovery_identity.rs"]
 mod skill_convergence_recovery_identity;
+#[path = "skill_convergence/recovery_safety.rs"]
+mod skill_convergence_recovery_safety;
 
 use std::collections::BTreeMap;
 use std::fs;

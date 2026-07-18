@@ -32,7 +32,7 @@ mod ownership;
 mod recovery_evidence;
 mod recovery_support;
 mod rollback;
-use ownership::validate_owned_staging;
+use ownership::{owner_dir_is_exact, owner_proof_is_valid, validate_owned_staging};
 use recovery_evidence::{
     active_index_digest, file_digest, restore_backup_atomically, restore_projection_from_evidence,
     validate_rollback_evidence,
@@ -48,10 +48,12 @@ struct TransactionJournal {
     skill: String,
     previous_head: String,
     artifact_root: String,
+    artifact_owner_proof: String,
     index_backup: String,
     index_backup_digest: Option<String>,
     source_backup: Option<Value>,
     source_staging: Option<String>,
+    source_owner_proof: Option<String>,
     projections: Vec<ProjectionBackup>,
     original_projections: RegistryProjectionsFile,
     installed_projections: usize,
@@ -87,6 +89,7 @@ struct ProjectionBackup {
     materialized_path: String,
     backup: Option<Value>,
     staging_owner: String,
+    owner_proof: String,
     staging_path: String,
 }
 
@@ -153,6 +156,9 @@ pub(super) fn apply_convergence(
                 .display()
                 .to_string()
         });
+    let source_owner_proof = source_staging
+        .as_ref()
+        .map(|_| new_owner_proof(&plan.plan_id));
     let projection_backups = plan
         .projections
         .iter()
@@ -174,6 +180,7 @@ pub(super) fn apply_convergence(
                 )?,
                 staging_path: staging_owner.join("stage").display().to_string(),
                 staging_owner: staging_owner.display().to_string(),
+                owner_proof: new_owner_proof(&plan.plan_id),
             })
         })
         .collect::<std::result::Result<Vec<_>, CommandFailure>>()?;
@@ -182,10 +189,12 @@ pub(super) fn apply_convergence(
         skill: plan.skill.clone(),
         previous_head: plan.source.registry_head.clone(),
         artifact_root: artifact_dir.display().to_string(),
+        artifact_owner_proof: new_owner_proof(&plan.plan_id),
         index_backup: durable_index.display().to_string(),
         index_backup_digest: None,
         source_backup,
         source_staging,
+        source_owner_proof,
         projections: projection_backups,
         original_projections: snapshot.projections.clone(),
         installed_projections: 0,
@@ -570,7 +579,11 @@ fn prepare_transaction_artifacts(
     journal_path: &Path,
     journal: &mut TransactionJournal,
 ) -> std::result::Result<(), CommandFailure> {
-    reserve_owned_dir(Path::new(&journal.artifact_root), &journal.plan_id)?;
+    reserve_owned_dir(
+        Path::new(&journal.artifact_root),
+        &journal.plan_id,
+        &journal.artifact_owner_proof,
+    )?;
     gitops::snapshot_index_to(&app.ctx, Path::new(&journal.index_backup)).map_err(map_git)?;
     journal.index_backup_digest = Some(file_digest(Path::new(&journal.index_backup))?);
     save_journal(journal_path, journal)?;
@@ -591,6 +604,9 @@ fn prepare_transaction_artifacts(
                 CommandFailure::new(ErrorCode::StateCorrupt, "source stage has no owner")
             })?,
             &journal.plan_id,
+            journal.source_owner_proof.as_deref().ok_or_else(|| {
+                CommandFailure::new(ErrorCode::StateCorrupt, "source owner proof is absent")
+            })?,
         )?;
         project_skill_to_target(&selected_source, Path::new(staging), ProjectionMethod::Copy)
             .map_err(map_io)?;
@@ -623,7 +639,11 @@ fn prepare_projection_stages_from(
     let paths = RegistryStatePaths::from_app_context(&app.ctx);
     let snapshot = paths.load_snapshot().map_err(map_registry_state)?;
     for (effect, artifact) in plan.projections.iter().zip(&journal.projections) {
-        reserve_owned_dir(Path::new(&artifact.staging_owner), &journal.plan_id)?;
+        reserve_owned_dir(
+            Path::new(&artifact.staging_owner),
+            &journal.plan_id,
+            &artifact.owner_proof,
+        )?;
         let input = projection_input(&snapshot, plan, effect, request_id)?;
         prepare_convergence_projection(
             &app.ctx,
@@ -717,6 +737,10 @@ fn digest_value(value: &impl Serialize) -> std::result::Result<String, CommandFa
     let mut hasher = Sha256::new();
     hasher.update(&bytes);
     Ok(format!("sha256:{}", to_hex(&hasher.finalize())))
+}
+
+fn new_owner_proof(plan_id: &str) -> String {
+    format!("{plan_id}:{}", uuid::Uuid::new_v4())
 }
 
 fn stale(message: impl Into<String>, code: &str) -> CommandFailure {

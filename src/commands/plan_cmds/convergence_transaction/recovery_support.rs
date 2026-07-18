@@ -29,9 +29,15 @@ pub(super) fn interruption_fault_active() -> bool {
 pub(super) fn reserve_owned_dir(
     path: &Path,
     plan_id: &str,
+    reservation_proof: &str,
 ) -> std::result::Result<(), CommandFailure> {
+    if !owner_proof_is_valid(plan_id, reservation_proof) {
+        return Err(CommandFailure::new(
+            ErrorCode::StateCorrupt,
+            "journal owner proof is invalid",
+        ));
+    }
     let (reservation, staging) = reservation_paths(path, plan_id)?;
-    let reservation_proof = format!("{plan_id}:{}", uuid::Uuid::new_v4());
     let mut token = OpenOptions::new()
         .create_new(true)
         .write(true)
@@ -83,7 +89,7 @@ pub(super) fn reserve_owned_dir(
     maybe_skill_fault("convergence_interrupt_after_owner_marker_write")?;
     if let Err(err) = rename_no_replace_atomic(&staging, path) {
         let mut cleanup_errors = Vec::new();
-        cleanup_reservation(path, plan_id, &mut cleanup_errors);
+        cleanup_reservation(path, plan_id, reservation_proof, &mut cleanup_errors);
         return Err(CommandFailure::new(
             ErrorCode::StateCorrupt,
             format!(
@@ -96,14 +102,18 @@ pub(super) fn reserve_owned_dir(
     fs::remove_file(&reservation).map_err(map_io)
 }
 
-pub(super) fn cleanup_owned_dir(path: &Path, plan_id: &str, errors: &mut Vec<Value>) {
-    let owned = fs::read_to_string(path.join(OWNER_FILE))
-        .ok()
-        .is_some_and(|owner| owner.trim() == plan_id);
-    if owned && let Err(err) = remove_path_if_exists(path) {
+pub(super) fn cleanup_owned_dir(
+    path: &Path,
+    plan_id: &str,
+    owner_proof: &str,
+    errors: &mut Vec<Value>,
+) {
+    if owner_dir_is_exact(path, plan_id, owner_proof)
+        && let Err(err) = remove_path_if_exists(path)
+    {
         push_rollback_error(errors, "remove_owned_transaction_artifact", err);
     }
-    cleanup_reservation(path, plan_id, errors);
+    cleanup_reservation(path, plan_id, owner_proof, errors);
 }
 
 fn reservation_paths(
@@ -123,7 +133,7 @@ fn reservation_paths(
     ))
 }
 
-fn cleanup_reservation(path: &Path, plan_id: &str, errors: &mut Vec<Value>) {
+fn cleanup_reservation(path: &Path, plan_id: &str, expected_proof: &str, errors: &mut Vec<Value>) {
     let Ok((reservation, staging)) = reservation_paths(path, plan_id) else {
         push_rollback_error(
             errors,
@@ -136,13 +146,7 @@ fn cleanup_reservation(path: &Path, plan_id: &str, errors: &mut Vec<Value>) {
         return;
     };
     let reservation_proof = reservation_proof.trim();
-    let Some(nonce) = reservation_proof.strip_prefix(&format!("{plan_id}:")) else {
-        return;
-    };
-    if uuid::Uuid::parse_str(nonce)
-        .ok()
-        .is_none_or(|parsed| parsed.hyphenated().to_string() != nonce)
-    {
+    if reservation_proof != expected_proof || !owner_proof_is_valid(plan_id, expected_proof) {
         return;
     }
     let staging_owned = fs::read_to_string(staging.join(RESERVATION_PROOF_FILE))
@@ -361,6 +365,7 @@ pub(super) fn restore_projections_for_resume(
         cleanup_owned_dir(
             Path::new(&projection.staging_owner),
             &journal.plan_id,
+            &projection.owner_proof,
             &mut errors,
         );
     }
@@ -394,17 +399,20 @@ pub(super) fn cleanup_declared_artifacts(
         cleanup_owned_dir(
             Path::new(&projection.staging_owner),
             &journal.plan_id,
+            &projection.owner_proof,
             &mut errors,
         );
     }
     if let Some(path) = journal.source_staging.as_deref()
         && let Some(owner) = Path::new(path).parent()
+        && let Some(proof) = journal.source_owner_proof.as_deref()
     {
-        cleanup_owned_dir(owner, &journal.plan_id, &mut errors);
+        cleanup_owned_dir(owner, &journal.plan_id, proof, &mut errors);
     }
     cleanup_owned_dir(
         Path::new(&journal.artifact_root),
         &journal.plan_id,
+        &journal.artifact_owner_proof,
         &mut errors,
     );
     if errors.is_empty()
@@ -433,6 +441,7 @@ fn validate_journal(
         && journal.previous_head == plan.source.registry_head
         && journal_path == expected_journal
         && Path::new(&journal.artifact_root) == artifact_root
+        && owner_proof_is_valid(&plan.plan_id, &journal.artifact_owner_proof)
         && Path::new(&journal.index_backup) == artifact_root.join("index")
         && journal.projections.len() == plan.projections.len();
     let previous_projections = gitops::run_git(
@@ -450,10 +459,16 @@ fn validate_journal(
     });
     valid &= match plan.source.direction {
         ConvergenceInputDirection::Source => {
-            journal.source_backup.is_none() && journal.source_staging.is_none()
+            journal.source_backup.is_none()
+                && journal.source_staging.is_none()
+                && journal.source_owner_proof.is_none()
         }
         ConvergenceInputDirection::Projection => {
             journal.source_staging.as_deref() == source_stage.to_str()
+                && journal
+                    .source_owner_proof
+                    .as_deref()
+                    .is_some_and(|proof| owner_proof_is_valid(&plan.plan_id, proof))
                 && backup_matches(
                     journal.source_backup.as_ref(),
                     &app.ctx.skill_path(&plan.skill),
@@ -484,6 +499,7 @@ fn validate_journal(
         valid &= artifact.materialized_path == effect.materialized_path
             && Path::new(&artifact.staging_owner) == owner
             && Path::new(&artifact.staging_path) == owner.join("stage")
+            && owner_proof_is_valid(&plan.plan_id, &artifact.owner_proof)
             && backup_valid;
     }
     valid &= validate_phase_invariants(journal);

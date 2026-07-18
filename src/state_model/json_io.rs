@@ -13,7 +13,6 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result, anyhow};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
-use serde_json::Value;
 
 #[cfg(any(
     target_os = "macos",
@@ -71,7 +70,7 @@ pub(super) fn compare_exchange_json_file<T>(
 where
     T: Serialize,
 {
-    let expected = serde_json::to_value(expected).context("failed to encode expected json")?;
+    let expected = serialize_json_file(expected)?;
     let raw = serialize_json_file(replacement)?;
     let parent = path
         .parent()
@@ -91,7 +90,12 @@ where
     file.sync_all()?;
     drop(file);
 
-    compare_exchange_json_candidate(path, &candidate, &expected, raw.as_bytes())
+    Ok(compare_exchange_json_candidate(
+        path,
+        &candidate,
+        expected.as_bytes(),
+        raw.as_bytes(),
+    )?)
 }
 
 #[cfg(any(
@@ -103,39 +107,30 @@ where
 fn compare_exchange_json_candidate(
     path: &Path,
     candidate: &Path,
-    expected: &Value,
+    expected: &[u8],
     owned_replacement: &[u8],
-) -> Result<bool> {
+) -> std::io::Result<bool> {
     if let Err(error) = exchange_paths_atomic(candidate, path) {
-        let cleanup = fs::remove_file(candidate)
-            .err()
-            .map_or_else(|| "succeeded".to_string(), |error| error.to_string());
-        return Err(anyhow!(
-            "failed to atomically exchange json file {}: {}; candidate cleanup: {}",
-            path.display(),
-            error,
-            cleanup
-        ));
+        return match fs::remove_file(candidate) {
+            Ok(()) => Err(error),
+            Err(cleanup) => Err(std::io::Error::other(format!(
+                "JSON exchange failed: {error}; cleanup failed: {cleanup}"
+            ))),
+        };
     }
-    let matches = fs::read(candidate)
-        .ok()
-        .and_then(|raw| serde_json::from_slice::<Value>(&raw).ok())
-        .as_ref()
-        == Some(expected);
+    let matches = fs::read(candidate).is_ok_and(|raw| raw == expected);
     if !matches {
         restore_json_candidate(path, candidate, owned_replacement)?;
         return Ok(false);
     }
     if let Err(cleanup) = fs::remove_file(candidate) {
         let restore = restore_json_candidate(path, candidate, owned_replacement);
-        return Err(anyhow!(
-            "failed to retire displaced json file {}: {}; restoration: {}",
-            candidate.display(),
-            cleanup,
-            restore
-                .map(|_| "succeeded".to_string())
-                .unwrap_or_else(|error| error.to_string())
-        ));
+        return match restore {
+            Ok(()) => Err(cleanup),
+            Err(error) => Err(std::io::Error::other(format!(
+                "JSON cleanup failed: {cleanup}; restoration failed: {error}"
+            ))),
+        };
     }
     Ok(true)
 }
@@ -146,30 +141,25 @@ fn compare_exchange_json_candidate(
     target_os = "linux",
     target_os = "android"
 ))]
-fn restore_json_candidate(path: &Path, candidate: &Path, owned_replacement: &[u8]) -> Result<()> {
-    exchange_paths_atomic(candidate, path)
-        .with_context(|| format!("failed to restore JSON file {}", path.display()))?;
+fn restore_json_candidate(
+    path: &Path,
+    candidate: &Path,
+    owned_replacement: &[u8],
+) -> std::io::Result<()> {
+    exchange_paths_atomic(candidate, path)?;
     match fs::read(candidate) {
-        Ok(displaced) if displaced == owned_replacement => {
-            fs::remove_file(candidate).with_context(|| {
-                format!(
-                    "failed to remove rejected JSON candidate {}",
-                    candidate.display()
-                )
-            })
-        }
-        displaced => {
+        Ok(displaced) if displaced == owned_replacement => fs::remove_file(candidate),
+        _ => {
             let restore_latest = exchange_paths_atomic(candidate, path);
-            Err(anyhow!(
-                "unknown concurrent JSON value was displaced to {}; latest-value restoration: {}; inspection: {}",
-                candidate.display(),
-                restore_latest
-                    .map(|_| "succeeded".to_string())
-                    .unwrap_or_else(|error| error.to_string()),
-                displaced
-                    .err()
-                    .map_or_else(|| "value differs".to_string(), |error| error.to_string())
-            ))
+            let evidence = candidate.display();
+            match restore_latest {
+                Ok(()) => Err(std::io::Error::other(format!(
+                    "unknown concurrent JSON retained at {evidence}"
+                ))),
+                Err(error) => Err(std::io::Error::other(format!(
+                    "unknown concurrent JSON at {evidence}; restoration failed: {error}"
+                ))),
+            }
         }
     }
 }
@@ -178,30 +168,24 @@ fn restore_json_candidate(path: &Path, candidate: &Path, owned_replacement: &[u8
 fn compare_exchange_json_candidate(
     path: &Path,
     candidate: &Path,
-    expected: &Value,
+    expected: &[u8],
     owned_replacement: &[u8],
-) -> Result<bool> {
+) -> std::io::Result<bool> {
     let backup = path.with_extension(format!("cas-backup-{}", uuid::Uuid::new_v4()));
     replace_file_with_backup_windows(path, candidate, &backup)?;
-    let matches = fs::read(&backup)
-        .ok()
-        .and_then(|raw| serde_json::from_slice::<Value>(&raw).ok())
-        .as_ref()
-        == Some(expected);
+    let matches = fs::read(&backup).is_ok_and(|raw| raw == expected);
     if !matches {
         restore_json_candidate_windows(path, &backup, candidate, owned_replacement)?;
         return Ok(false);
     }
     if let Err(cleanup) = fs::remove_file(&backup) {
         let restore = restore_json_candidate_windows(path, &backup, candidate, owned_replacement);
-        return Err(anyhow!(
-            "failed to retire displaced JSON file {}: {}; restoration: {}",
-            backup.display(),
-            cleanup,
-            restore
-                .map(|_| "succeeded".to_string())
-                .unwrap_or_else(|error| error.to_string())
-        ));
+        return match restore {
+            Ok(()) => Err(cleanup),
+            Err(error) => Err(std::io::Error::other(format!(
+                "JSON cleanup failed: {cleanup}; restoration failed: {error}"
+            ))),
+        };
     }
     Ok(true)
 }
@@ -212,37 +196,36 @@ fn restore_json_candidate_windows(
     backup: &Path,
     candidate: &Path,
     owned_replacement: &[u8],
-) -> Result<()> {
+) -> std::io::Result<()> {
     replace_file_with_backup_windows(path, backup, candidate)?;
     match fs::read(candidate) {
-        Ok(displaced) if displaced == owned_replacement => {
-            fs::remove_file(candidate).with_context(|| {
-                format!(
-                    "failed to remove rejected JSON candidate {}",
-                    candidate.display()
-                )
-            })
-        }
-        displaced => {
+        Ok(displaced) if displaced == owned_replacement => fs::remove_file(candidate),
+        _ => {
             let (restore_latest, evidence) =
                 match replace_file_with_backup_windows(path, candidate, backup) {
-                    Ok(()) => ("succeeded".to_string(), backup),
-                    Err(error) => (error.to_string(), candidate),
+                    Ok(()) => (None, backup),
+                    Err(error) => (Some(error), candidate),
                 };
-            Err(anyhow!(
-                "unknown concurrent JSON value; evidence retained at {}; latest-value restoration: {}; inspection: {}",
-                evidence.display(),
-                restore_latest,
-                displaced
-                    .err()
-                    .map_or_else(|| "value differs".to_string(), |error| error.to_string())
-            ))
+            match restore_latest {
+                None => Err(std::io::Error::other(format!(
+                    "unknown concurrent JSON retained at {}",
+                    evidence.display()
+                ))),
+                Some(error) => Err(std::io::Error::other(format!(
+                    "unknown concurrent JSON at {}; restoration failed: {error}",
+                    evidence.display()
+                ))),
+            }
         }
     }
 }
 
 #[cfg(windows)]
-fn replace_file_with_backup_windows(path: &Path, replacement: &Path, backup: &Path) -> Result<()> {
+fn replace_file_with_backup_windows(
+    path: &Path,
+    replacement: &Path,
+    backup: &Path,
+) -> std::io::Result<()> {
     use std::os::windows::ffi::OsStrExt;
 
     const REPLACEFILE_WRITE_THROUGH: u32 = 0x1;
@@ -277,8 +260,7 @@ fn replace_file_with_backup_windows(path: &Path, replacement: &Path, backup: &Pa
         )
     };
     if ok == 0 {
-        return Err(std::io::Error::last_os_error())
-            .context("atomic Windows file replacement failed");
+        return Err(std::io::Error::last_os_error());
     }
     Ok(())
 }
@@ -293,16 +275,16 @@ fn replace_file_with_backup_windows(path: &Path, replacement: &Path, backup: &Pa
 fn compare_exchange_json_candidate(
     _path: &Path,
     candidate: &Path,
-    _expected: &Value,
+    _expected: &[u8],
     _owned_replacement: &[u8],
-) -> Result<bool> {
+) -> std::io::Result<bool> {
     let cleanup = fs::remove_file(candidate)
         .err()
         .map_or_else(|| "succeeded".to_string(), |error| error.to_string());
-    Err(anyhow!(
+    Err(std::io::Error::other(format!(
         "atomic JSON compare-and-exchange is unsupported; candidate cleanup: {}",
         cleanup
-    ))
+    )))
 }
 
 pub(super) fn serialize_json_file<T: Serialize>(value: &T) -> Result<String> {
@@ -426,7 +408,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
+    use serde_json::{Value, json};
 
     #[test]
     fn json_compare_exchange_installs_only_over_the_reviewed_value() {
@@ -471,7 +453,7 @@ mod tests {
 
         let error = restore_json_candidate(&path, &candidate, replacement.as_bytes())
             .expect_err("unknown displaced value must fail closed");
-        assert!(error.to_string().contains("unknown concurrent JSON value"));
+        assert!(error.to_string().contains("unknown concurrent JSON"));
         assert_eq!(read_json_file::<Value>(&path).unwrap(), latest_external);
         assert_eq!(read_json_file::<Value>(&candidate).unwrap(), first_external);
         fs::remove_dir_all(root).expect("remove CAS restore fixture");

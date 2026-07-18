@@ -104,6 +104,13 @@ fn hash_os_str(hasher: &mut Sha256, value: &OsStr) {
     }
 }
 
+#[cfg(any(windows, test))]
+fn hash_windows_security_descriptor(hasher: &mut Sha256, descriptor: &[u8]) {
+    hasher.update(b"windows-security-descriptor\0");
+    hasher.update(&(descriptor.len() as u64).to_be_bytes());
+    hasher.update(descriptor);
+}
+
 #[cfg(unix)]
 fn hash_ownership_metadata(
     hasher: &mut Sha256,
@@ -235,9 +242,10 @@ fn hash_ownership_metadata(
     ] {
         hasher.update(&value.to_be_bytes());
     }
-    let (volume_serial, file_id) = windows_file_identity(path)?;
+    let (volume_serial, file_id, security_descriptor) = windows_file_ownership(path)?;
     hasher.update(&volume_serial.to_be_bytes());
     hasher.update(&file_id);
+    hash_windows_security_descriptor(hasher, &security_descriptor);
     if include_write_time {
         hasher.update(&metadata.last_write_time().to_be_bytes());
     }
@@ -245,20 +253,27 @@ fn hash_ownership_metadata(
 }
 
 #[cfg(windows)]
-fn windows_file_identity(path: &Path) -> anyhow::Result<(u64, [u8; 16])> {
+fn windows_file_ownership(path: &Path) -> anyhow::Result<(u64, [u8; 16], Vec<u8>)> {
     use std::fs::OpenOptions;
     use std::os::windows::fs::OpenOptionsExt;
     use std::os::windows::io::AsRawHandle;
+    use std::ptr;
+    use windows_sys::Win32::Foundation::{ERROR_SUCCESS, LocalFree};
+    use windows_sys::Win32::Security::Authorization::{GetSecurityInfo, SE_FILE_OBJECT};
+    use windows_sys::Win32::Security::{
+        DACL_SECURITY_INFORMATION, GetSecurityDescriptorLength, OWNER_SECURITY_INFORMATION,
+        PSECURITY_DESCRIPTOR,
+    };
     use windows_sys::Win32::Storage::FileSystem::{
         FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_ID_INFO, FileIdInfo,
-        GetFileInformationByHandleEx,
+        GetFileInformationByHandleEx, READ_CONTROL,
     };
 
     let file = OpenOptions::new()
-        .access_mode(0)
+        .access_mode(READ_CONTROL)
         .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
         .open(path)
-        .with_context(|| format!("open identity handle {}", path.display()))?;
+        .with_context(|| format!("open ownership handle {}", path.display()))?;
     let mut identity = FILE_ID_INFO::default();
     // SAFETY: the handle stays open for the call, and the output pointer and
     // byte length describe a live `FILE_ID_INFO` value.
@@ -274,7 +289,59 @@ fn windows_file_identity(path: &Path) -> anyhow::Result<(u64, [u8; 16])> {
         return Err(io::Error::last_os_error())
             .with_context(|| format!("read file identity {}", path.display()));
     }
-    Ok((identity.VolumeSerialNumber, identity.FileId.Identifier))
+
+    let mut descriptor: PSECURITY_DESCRIPTOR = ptr::null_mut();
+    // SAFETY: the file handle remains live, unused output pointers are null,
+    // and `descriptor` is valid writable storage for the allocated result.
+    let status = unsafe {
+        GetSecurityInfo(
+            file.as_raw_handle(),
+            SE_FILE_OBJECT,
+            OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION,
+            ptr::null_mut(),
+            ptr::null_mut(),
+            ptr::null_mut(),
+            ptr::null_mut(),
+            &raw mut descriptor,
+        )
+    };
+    if status != ERROR_SUCCESS {
+        return Err(io::Error::from_raw_os_error(status as i32))
+            .with_context(|| format!("read security descriptor {}", path.display()));
+    }
+    if descriptor.is_null() {
+        return Err(io::Error::other("security descriptor was null"))
+            .with_context(|| format!("read security descriptor {}", path.display()));
+    }
+    struct LocalDescriptor(PSECURITY_DESCRIPTOR);
+    impl Drop for LocalDescriptor {
+        fn drop(&mut self) {
+            // SAFETY: GetSecurityInfo allocated this descriptor with LocalAlloc,
+            // and the guard releases it exactly once after the byte copy.
+            unsafe {
+                LocalFree(self.0.cast());
+            }
+        }
+    }
+    let descriptor_guard = LocalDescriptor(descriptor);
+    // SAFETY: the descriptor returned by GetSecurityInfo is live and valid
+    // until LocalFree runs in `descriptor_guard`'s Drop implementation.
+    let descriptor_len = unsafe { GetSecurityDescriptorLength(descriptor_guard.0) };
+    if descriptor_len == 0 {
+        return Err(io::Error::last_os_error())
+            .with_context(|| format!("measure security descriptor {}", path.display()));
+    }
+    // SAFETY: GetSecurityDescriptorLength reports the initialized size of the
+    // self-relative descriptor owned by `descriptor_guard`.
+    let descriptor_bytes = unsafe {
+        std::slice::from_raw_parts(descriptor_guard.0.cast::<u8>(), descriptor_len as usize)
+    }
+    .to_vec();
+    Ok((
+        identity.VolumeSerialNumber,
+        identity.FileId.Identifier,
+        descriptor_bytes,
+    ))
 }
 
 #[cfg(test)]
@@ -293,5 +360,17 @@ mod tests {
 
         assert_eq!(failure.code, ErrorCode::ProjectionMethodUnsupported);
         assert!(failure.message.contains("xattrs unavailable"));
+    }
+
+    #[test]
+    fn windows_security_descriptor_changes_ownership_fingerprint() {
+        fn digest(descriptor: &[u8]) -> [u8; 32] {
+            let mut hasher = Sha256::new();
+            hash_windows_security_descriptor(&mut hasher, descriptor);
+            hasher.finalize()
+        }
+
+        assert_ne!(digest(b"owner-a-dacl-a"), digest(b"owner-b-dacl-a"));
+        assert_ne!(digest(b"owner-a-dacl-a"), digest(b"owner-a-dacl-b"));
     }
 }

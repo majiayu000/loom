@@ -31,7 +31,7 @@ mod observation;
 mod symlink_guard;
 pub(crate) use observation::{
     ProjectionObservation, ProjectionObservationUpdate, apply_projection_observation,
-    observe_projection, projection_observation_check,
+    observe_projection, observe_projection_from_source, projection_observation_check,
 };
 pub(crate) use symlink_guard::ensure_projection_symlinks_contained;
 

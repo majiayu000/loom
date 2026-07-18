@@ -39,7 +39,7 @@ use super::skill_safety::enforce_skill_safety;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[allow(
     dead_code,
-    reason = "the convergence variant is consumed by the SP524-T004 transaction"
+    reason = "the convergence variant is consumed by SP524-T004"
 )]
 pub(crate) enum ProjectionExecutionContext {
     Standalone,
@@ -47,14 +47,23 @@ pub(crate) enum ProjectionExecutionContext {
 }
 
 mod convergence;
+mod modes;
+mod staging_cleanup;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+use convergence::activate_after_mutation;
 #[allow(unused_imports)]
 pub(crate) use convergence::{
-    PreparedProjection, ProjectionActivationOutput, activate_prepared_projection,
-    discard_prepared_projection,
+    PreparedProjection, PreparedProjectionArtifact, ProjectionActivationOutput,
+    ProjectionRollbackArtifact, activate_prepared_projection, discard_prepared_projection,
 };
 use convergence::{map_ownership_fingerprint_error, projection_ownership_fingerprint};
+use staging_cleanup::{
+    StagingOwnership, cleanup_owned_staging, inject_convergence_anchor_failure,
+    inject_convergence_project_failure_replacement, inject_convergence_staging_mismatch,
+    observe_projection_path, preserve_unverified_staging,
+};
 
 pub(crate) struct ProjectionExecutionInput {
     pub(crate) context: ProjectionExecutionContext,
@@ -63,6 +72,8 @@ pub(crate) struct ProjectionExecutionInput {
     pub(crate) binding_is_new: bool,
     pub(crate) target: RegistryProjectionTarget,
     pub(crate) target_is_new: bool,
+    pub(crate) source_path: Option<PathBuf>,
+    pub(crate) staging_path: Option<PathBuf>,
     pub(crate) materialized_path: PathBuf,
     pub(crate) method: ProjectionMethod,
     pub(crate) operation_intent: &'static str,
@@ -78,12 +89,9 @@ pub(crate) struct ProjectionExecutionInput {
     pub(crate) activation_after_projection_fault: bool,
 }
 
+#[allow(dead_code, reason = "consumed by the SP524-T004 transaction")]
 pub(crate) struct ProjectionExecutionOutput {
     pub(crate) projection: Option<RegistryProjectionInstance>,
-    #[allow(
-        dead_code,
-        reason = "consumed by the SP524-T004 convergence transaction"
-    )]
     pub(crate) prepared: Option<PreparedProjection>,
     pub(crate) backup: Option<Value>,
     pub(crate) commit: Option<String>,
@@ -91,12 +99,40 @@ pub(crate) struct ProjectionExecutionOutput {
     pub(crate) noop: bool,
 }
 
-struct MaterializationResult {
+pub(crate) struct StandaloneProjectionExecutionOutput {
+    pub(crate) projection: Option<RegistryProjectionInstance>,
+    pub(crate) backup: Option<Value>,
+    pub(crate) commit: Option<String>,
+    pub(crate) meta: Meta,
+    pub(crate) noop: bool,
+}
+
+struct MaterializationResult<P> {
     changed: bool,
     backup: Option<Value>,
-    prepared: Option<PreparedProjection>,
+    prepared: P,
     observation: Option<super::projections::ProjectionObservation>,
 }
+
+trait ExecutionMode {
+    const CONVERGENCE: bool;
+    type Prepared;
+    type Output;
+
+    fn none() -> Self::Prepared;
+    fn prepared(prepared: PreparedProjection) -> Self::Prepared;
+    fn output(
+        projection: Option<RegistryProjectionInstance>,
+        prepared: Self::Prepared,
+        backup: Option<Value>,
+        commit: Option<String>,
+        meta: Meta,
+        noop: bool,
+    ) -> Self::Output;
+}
+
+struct StandaloneMode;
+struct ConvergenceMode;
 
 struct ProjectionRollback<'a> {
     paths: &'a RegistryStatePaths,
@@ -113,6 +149,7 @@ struct ProjectionRollback<'a> {
     dead_code,
     reason = "the generic convergence entry point is consumed by SP524-T004"
 )]
+#[cfg(test)]
 pub(crate) fn execute_projection(
     ctx: &AppContext,
     paths: &RegistryStatePaths,
@@ -121,20 +158,29 @@ pub(crate) fn execute_projection(
 ) -> std::result::Result<ProjectionExecutionOutput, CommandFailure> {
     match input.context {
         ProjectionExecutionContext::Standalone => {
-            execute_projection_mode::<false>(ctx, paths, snapshot, input)
+            execute_projection_mode::<StandaloneMode>(ctx, paths, snapshot, input).map(|output| {
+                ProjectionExecutionOutput {
+                    projection: output.projection,
+                    prepared: None,
+                    backup: output.backup,
+                    commit: output.commit,
+                    meta: output.meta,
+                    noop: output.noop,
+                }
+            })
         }
         ProjectionExecutionContext::Convergence => {
-            execute_projection_mode::<true>(ctx, paths, snapshot, input)
+            execute_projection_mode::<ConvergenceMode>(ctx, paths, snapshot, input)
         }
     }
 }
 
-fn execute_projection_mode<const CONVERGENCE: bool>(
+fn execute_projection_mode<M: ExecutionMode>(
     ctx: &AppContext,
     paths: &RegistryStatePaths,
     snapshot: &RegistrySnapshot,
     input: ProjectionExecutionInput,
-) -> std::result::Result<ProjectionExecutionOutput, CommandFailure> {
+) -> std::result::Result<M::Output, CommandFailure> {
     validate_execution_input(ctx, &input)?;
 
     // Resolve repository guards before convergence creates staging or mutates
@@ -166,12 +212,8 @@ fn execute_projection_mode<const CONVERGENCE: bool>(
         last_observed_error: None,
         updated_at: Some(now),
     };
-    let materialization = materialize_projection::<CONVERGENCE>(
-        ctx,
-        &input,
-        existing_projection.as_ref(),
-        &projection,
-    )?;
+    let materialization =
+        materialize_projection::<M>(ctx, &input, existing_projection.as_ref(), &projection)?;
 
     let state_changed = input.target_is_new
         || input.binding_is_new
@@ -180,18 +222,14 @@ fn execute_projection_mode<const CONVERGENCE: bool>(
         || materialization.changed;
 
     if input.safe_existing_noop && !state_changed {
-        return Ok(ProjectionExecutionOutput {
-            projection: existing_projection,
-            prepared: if CONVERGENCE {
-                materialization.prepared
-            } else {
-                None
-            },
-            backup: materialization.backup,
-            commit: None,
-            meta: Meta::default(),
-            noop: true,
-        });
+        return Ok(M::output(
+            existing_projection,
+            materialization.prepared,
+            materialization.backup,
+            None,
+            Meta::default(),
+            true,
+        ));
     }
 
     let original_targets = snapshot.targets.clone();
@@ -231,7 +269,7 @@ fn execute_projection_mode<const CONVERGENCE: bool>(
         },
     );
 
-    let observation = if CONVERGENCE {
+    let observation = if M::CONVERGENCE {
         materialization
             .observation
             .unwrap_or_else(|| observe_projection(ctx, &projection))
@@ -240,7 +278,7 @@ fn execute_projection_mode<const CONVERGENCE: bool>(
     };
     apply_projection_observation(&mut projection, &observation);
 
-    if CONVERGENCE {
+    if M::CONVERGENCE {
         if observation.status != "healthy" {
             return Err(CommandFailure::new(
                 ErrorCode::ProjectionConflict,
@@ -253,14 +291,14 @@ fn execute_projection_mode<const CONVERGENCE: bool>(
                 ),
             ));
         }
-        return Ok(ProjectionExecutionOutput {
-            projection: Some(projection),
-            prepared: materialization.prepared,
-            backup: materialization.backup,
-            commit: None,
-            meta: Meta::default(),
-            noop: !materialization.changed && !state_changed,
-        });
+        return Ok(M::output(
+            Some(projection),
+            materialization.prepared,
+            materialization.backup,
+            None,
+            Meta::default(),
+            !materialization.changed && !state_changed,
+        ));
     }
 
     let mut projections = original_projections.clone();
@@ -352,14 +390,14 @@ fn execute_projection_mode<const CONVERGENCE: bool>(
         }
     };
 
-    Ok(ProjectionExecutionOutput {
-        projection: Some(projection),
-        prepared: None,
-        backup: materialization.backup,
+    Ok(M::output(
+        Some(projection),
+        materialization.prepared,
+        materialization.backup,
         commit,
         meta,
-        noop: false,
-    })
+        false,
+    ))
 }
 
 #[inline(always)]
@@ -368,8 +406,20 @@ pub(crate) fn execute_standalone_projection(
     paths: &RegistryStatePaths,
     snapshot: &RegistrySnapshot,
     input: ProjectionExecutionInput,
+) -> std::result::Result<StandaloneProjectionExecutionOutput, CommandFailure> {
+    debug_assert_eq!(input.context, ProjectionExecutionContext::Standalone);
+    execute_projection_mode::<StandaloneMode>(ctx, paths, snapshot, input)
+}
+
+#[allow(dead_code, reason = "consumed by the SP524-T004 transaction")]
+pub(crate) fn execute_convergence_projection(
+    ctx: &AppContext,
+    paths: &RegistryStatePaths,
+    snapshot: &RegistrySnapshot,
+    input: ProjectionExecutionInput,
 ) -> std::result::Result<ProjectionExecutionOutput, CommandFailure> {
-    execute_projection_mode::<false>(ctx, paths, snapshot, input)
+    debug_assert_eq!(input.context, ProjectionExecutionContext::Convergence);
+    execute_projection_mode::<ConvergenceMode>(ctx, paths, snapshot, input)
 }
 
 fn validate_execution_input(
@@ -403,28 +453,33 @@ fn validate_execution_input(
     Ok(())
 }
 
-fn materialize_projection<const CONVERGENCE: bool>(
+fn materialize_projection<M: ExecutionMode>(
     ctx: &AppContext,
     input: &ProjectionExecutionInput,
     existing_projection: Option<&RegistryProjectionInstance>,
     projection: &RegistryProjectionInstance,
-) -> std::result::Result<MaterializationResult, CommandFailure> {
+) -> std::result::Result<MaterializationResult<M::Prepared>, CommandFailure> {
     let target_base = PathBuf::from(&input.target.path);
     fs::create_dir_all(&target_base).map_err(map_io)?;
-    let skill_src = ctx.skill_path(&input.skill);
+    let canonical_skill_src = ctx.skill_path(&input.skill);
+    let skill_src = if M::CONVERGENCE {
+        input.source_path.as_deref().unwrap_or(&canonical_skill_src)
+    } else {
+        &canonical_skill_src
+    };
     let path_exists =
         input.materialized_path.exists() || fs::symlink_metadata(&input.materialized_path).is_ok();
-    let replace_existing = input.replace_existing || CONVERGENCE;
+    let replace_existing = input.replace_existing || M::CONVERGENCE;
 
     if path_exists
         && matches!(input.method, ProjectionMethod::Symlink)
-        && (CONVERGENCE || input.safe_existing_noop)
-        && projection_path_is_safe_symlink(&input.materialized_path, &skill_src)
+        && (M::CONVERGENCE || input.safe_existing_noop)
+        && projection_path_is_safe_symlink(&input.materialized_path, skill_src)
     {
         return Ok(MaterializationResult {
             changed: false,
             backup: None,
-            prepared: None,
+            prepared: M::none(),
             observation: None,
         });
     }
@@ -435,7 +490,7 @@ fn materialize_projection<const CONVERGENCE: bool>(
             return Err(CommandFailure::new(
                 ErrorCode::ProjectionMethodUnsupported,
                 format!(
-                    "target '{}' does not support symlink projections: {}; retry with --method copy",
+                    "target '{}' does not support symlink projections: {}",
                     input.target.target_id,
                     probe.reason.unwrap_or_else(|| "unknown reason".to_string())
                 ),
@@ -444,7 +499,7 @@ fn materialize_projection<const CONVERGENCE: bool>(
     }
 
     if path_exists {
-        if !CONVERGENCE
+        if !M::CONVERGENCE
             && input.safe_existing_noop
             && existing_projection.is_some_and(|projection| projection.method == input.method)
             && !matches!(input.method, ProjectionMethod::Symlink)
@@ -452,7 +507,7 @@ fn materialize_projection<const CONVERGENCE: bool>(
             return Ok(MaterializationResult {
                 changed: false,
                 backup: None,
-                prepared: None,
+                prepared: M::none(),
                 observation: None,
             });
         }
@@ -468,7 +523,7 @@ fn materialize_projection<const CONVERGENCE: bool>(
         }
     }
 
-    let existing_digest = if CONVERGENCE && path_exists {
+    let existing_digest = if M::CONVERGENCE && path_exists {
         Some(
             projection_ownership_fingerprint(&input.materialized_path)
                 .map_err(|err| map_ownership_fingerprint_error(err, &input.materialized_path))?,
@@ -477,27 +532,78 @@ fn materialize_projection<const CONVERGENCE: bool>(
         None
     };
 
-    let staging_path = target_base.join(format!(
-        ".loom-projection-stage-{}",
-        uuid::Uuid::new_v4().simple()
-    ));
-    if let Err(err) = project_skill_to_target(&skill_src, &staging_path, input.method) {
+    let staging_path = if M::CONVERGENCE {
+        input.staging_path.clone().unwrap_or_else(|| {
+            target_base.join(format!(
+                ".loom-projection-stage-{}",
+                uuid::Uuid::new_v4().simple()
+            ))
+        })
+    } else {
+        target_base.join(format!(
+            ".loom-projection-stage-{}",
+            uuid::Uuid::new_v4().simple()
+        ))
+    };
+    if M::CONVERGENCE
+        && (staging_path == input.materialized_path
+            || staging_path.parent() != input.materialized_path.parent())
+    {
+        return Err(CommandFailure::new(
+            ErrorCode::ArgInvalid,
+            "staging path must be a distinct sibling",
+        ));
+    }
+    if M::CONVERGENCE && fs::symlink_metadata(&staging_path).is_ok() {
+        return Err(CommandFailure::new(
+            ErrorCode::ProjectionConflict,
+            format!(
+                "staging path '{}' exists; data was preserved",
+                staging_path.display()
+            ),
+        ));
+    }
+    if let Err(err) = project_skill_to_target(skill_src, &staging_path, input.method) {
+        if M::CONVERGENCE {
+            inject_convergence_project_failure_replacement(input, &staging_path)?;
+            return Err(preserve_unverified_staging(
+                map_project_io(input.method)(err),
+                &staging_path,
+            ));
+        }
         let mut cleanup_errors = Vec::new();
         cleanup_projection_staging(&staging_path, &mut cleanup_errors);
         return Err(map_project_io(input.method)(err).with_rollback_errors(cleanup_errors));
     }
 
-    if CONVERGENCE && let Err(err) = inject_convergence_staging_mismatch(input, &staging_path) {
-        let mut cleanup_errors = Vec::new();
-        cleanup_projection_staging(&staging_path, &mut cleanup_errors);
+    let staging_ownership = if M::CONVERGENCE {
+        if let Err(err) = inject_convergence_anchor_failure(input, &staging_path) {
+            return Err(preserve_unverified_staging(err, &staging_path));
+        }
+        match projection_ownership_fingerprint(&staging_path) {
+            Ok(digest) => Some(StagingOwnership::new(staging_path.clone(), digest)),
+            Err(err) => {
+                return Err(preserve_unverified_staging(
+                    map_ownership_fingerprint_error(err, &staging_path),
+                    &staging_path,
+                ));
+            }
+        }
+    } else {
+        None
+    };
+
+    if M::CONVERGENCE
+        && let Err(err) = inject_convergence_staging_mismatch(input, &staging_path)
+    {
+        let cleanup_errors = cleanup_owned_staging(staging_ownership);
         return Err(err.with_rollback_errors(cleanup_errors));
     }
 
-    if CONVERGENCE {
-        let observation = observe_projection_path(ctx, projection, &staging_path);
+    if M::CONVERGENCE {
+        let observation = observe_projection_path(projection, skill_src, &staging_path);
         if observation.status != "healthy" {
-            let mut cleanup_errors = Vec::new();
-            cleanup_projection_staging(&staging_path, &mut cleanup_errors);
+            let cleanup_errors = cleanup_owned_staging(staging_ownership);
             return Err(CommandFailure::new(
                 ErrorCode::ProjectionConflict,
                 format!(
@@ -512,16 +618,21 @@ fn materialize_projection<const CONVERGENCE: bool>(
         }
         let mut prepared_projection = projection.clone();
         apply_projection_observation(&mut prepared_projection, &observation);
-        let staging_digest = projection_ownership_fingerprint(&staging_path).map_err(|err| {
-            let mut cleanup_errors = Vec::new();
-            cleanup_projection_staging(&staging_path, &mut cleanup_errors);
-            map_ownership_fingerprint_error(err, &staging_path).with_rollback_errors(cleanup_errors)
-        })?;
+        let staging_digest = staging_ownership
+            .as_ref()
+            .map(|ownership| ownership.digest().to_string())
+            .ok_or_else(|| {
+                CommandFailure::new(
+                    ErrorCode::InternalError,
+                    "convergence staging ownership anchor is missing",
+                )
+            })?;
         return Ok(MaterializationResult {
             changed: true,
             backup: None,
-            prepared: Some(PreparedProjection::new(
+            prepared: M::prepared(PreparedProjection::new(
                 prepared_projection,
+                skill_src.to_path_buf(),
                 staging_path,
                 input.materialized_path.clone(),
                 path_exists,
@@ -532,7 +643,7 @@ fn materialize_projection<const CONVERGENCE: bool>(
         });
     }
 
-    let persistent_backup = if path_exists && replace_existing && !CONVERGENCE {
+    let persistent_backup = if path_exists && replace_existing && !M::CONVERGENCE {
         match backup_path_if_exists(ctx, &input.materialized_path, "project.replace_projection") {
             Ok(backup) => backup,
             Err(err) => {
@@ -558,41 +669,9 @@ fn materialize_projection<const CONVERGENCE: bool>(
     Ok(MaterializationResult {
         changed: true,
         backup,
-        prepared: None,
+        prepared: M::none(),
         observation: None,
     })
-}
-
-fn observe_projection_path(
-    ctx: &AppContext,
-    projection: &RegistryProjectionInstance,
-    path: &Path,
-) -> super::projections::ProjectionObservation {
-    let mut staged = projection.clone();
-    staged.materialized_path = path.display().to_string();
-    observe_projection(ctx, &staged)
-}
-
-#[cfg(test)]
-fn inject_convergence_staging_mismatch(
-    input: &ProjectionExecutionInput,
-    staging_path: &Path,
-) -> std::result::Result<(), CommandFailure> {
-    if input.context == ProjectionExecutionContext::Convergence
-        && input.after_materialize_fault == Some("test_convergence_staging_mismatch")
-        && !matches!(input.method, ProjectionMethod::Symlink)
-    {
-        fs::write(staging_path.join("details.txt"), "fault-injected drift\n").map_err(map_io)?;
-    }
-    Ok(())
-}
-
-#[cfg(not(test))]
-fn inject_convergence_staging_mismatch(
-    _input: &ProjectionExecutionInput,
-    _staging_path: &Path,
-) -> std::result::Result<(), CommandFailure> {
-    Ok(())
 }
 
 fn replace_standalone_projection(

@@ -1,7 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsStr;
 use std::fs;
-use std::io::Read;
 use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 
@@ -580,11 +579,7 @@ fn tree_digest(
             hasher.update(fs::read_link(&full)?.to_string_lossy().as_bytes());
         } else if metadata.file_type().is_file() {
             hasher.update(b"file\0");
-            let mut file =
-                fs::File::open(&full).with_context(|| format!("open {}", full.display()))?;
-            let mut buf = Vec::new();
-            file.read_to_end(&mut buf)
-                .with_context(|| format!("read {}", full.display()))?;
+            let buf = fs::read(&full).with_context(|| format!("read {}", full.display()))?;
             hasher.update(&(buf.len() as u64).to_be_bytes());
             hasher.update(&buf);
         } else {

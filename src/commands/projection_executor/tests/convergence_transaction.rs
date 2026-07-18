@@ -2,6 +2,13 @@ use super::*;
 
 mod durable_recovery;
 
+fn suffixed_path(path: &Path, suffix: &str) -> PathBuf {
+    path.with_file_name(format!(
+        "{}{suffix}",
+        path.file_name().unwrap().to_string_lossy()
+    ))
+}
+
 #[test]
 fn convergence_create_intent_preserves_a_late_existing_path() {
     let fixture = convergence_projection_fixture();
@@ -70,6 +77,8 @@ fn rollback_preserves_concurrent_live_change_and_is_retryable() {
         "keep\n"
     );
     assert!(!backup_path.exists());
+    let retained = suffixed_path(&backup_path, ".pending-cleanup-claim");
+    assert!(retained.join("details.txt").is_file());
 }
 
 #[cfg(any(
@@ -115,6 +124,8 @@ fn rollback_preserves_concurrent_backup_change_and_is_retryable() {
         "keep\n"
     );
     assert!(!backup_path.exists());
+    let retained = suffixed_path(&backup_path, ".pending-cleanup-claim");
+    assert!(retained.join("details.txt").is_file());
 }
 
 #[test]
@@ -353,6 +364,8 @@ fn finalize_preserves_changed_backup_and_is_retryable() {
     fs::remove_file(backup_path.join("concurrent.txt")).expect("resolve backup conflict");
     activated.finalize().expect("retry finalize");
     assert!(!backup_path.exists());
+    let retained = suffixed_path(&backup_path, ".finalize-claim.pending-cleanup-claim");
+    assert!(retained.join("keep.txt").is_file());
     assert!(projection_path.join("details.txt").is_file());
 }
 
@@ -550,6 +563,8 @@ fn activation_rejects_live_change_after_prepare() {
     assert!(projection_path.join("keep.txt").is_file());
     assert!(!projection_path.join("details.txt").exists());
     assert!(!staging_path.exists());
+    let claim_path = suffixed_path(&staging_path, ".prepared-cleanup-claim");
+    assert!(claim_path.join("details.txt").is_file());
 }
 
 #[test]
@@ -629,6 +644,8 @@ fn caller_selected_source_and_staging_round_trip_as_durable_evidence() {
 
     discard_prepared_projection(reconstructed).expect("discard reconstructed staging");
     assert!(!supplied_staging.exists());
+    let claim_path = suffixed_path(&supplied_staging, ".prepared-cleanup-claim");
+    assert!(claim_path.join("details.txt").is_file());
     assert!(!projection_path.exists());
 }
 

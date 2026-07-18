@@ -17,7 +17,7 @@ use super::convergence::{map_ownership_fingerprint_error, projection_ownership_f
 use super::{
     ConvergenceMode, ProjectionExecutionContext, ProjectionExecutionInput,
     ProjectionExecutionOutput, StandaloneMode, StandaloneProjectionExecutionOutput,
-    activate_prepared_projection, cleanup_projection_staging, execute_projection_mode,
+    activate_prepared_projection, execute_projection_mode,
 };
 
 pub(super) fn validate_execution_input(
@@ -171,13 +171,6 @@ pub(crate) fn execute_standalone_projection(
     execute_projection_mode::<StandaloneMode>(ctx, paths, snapshot, input, None, None)
 }
 
-pub(crate) fn finish_convergence_projection(backup: Option<&Value>) -> Vec<Value> {
-    let mut errors = Vec::new();
-    if let Some(path) = backup
-        .and_then(|value| value.get("backup_path"))
-        .and_then(Value::as_str)
-    {
-        cleanup_projection_staging(Path::new(path), &mut errors);
-    }
-    errors
+pub(crate) fn finish_convergence_projection(_backup: Option<&Value>) -> Vec<Value> {
+    Vec::new()
 }

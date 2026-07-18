@@ -58,7 +58,7 @@ where
                     "restored live projection does not match durable backup",
                 ));
             }
-            return remove_path_if_exists(staging).map_err(map_io);
+            return Ok(());
         }
         require_fingerprint(staging, expected, "retained rollback artifact")?;
         let rollback_complete = match artifact.backup.as_ref() {
@@ -71,7 +71,7 @@ where
                 "rollback artifact is present but the live projection is not restored",
             ));
         }
-        return remove_path_if_exists(staging).map_err(map_io);
+        return Ok(());
     }
     if !live_exists {
         return if artifact.backup.is_none() {
@@ -109,7 +109,7 @@ where
             require_fingerprint(staging, expected, "projection removed during rollback")?;
         }
     }
-    remove_path_if_exists(staging).map_err(map_io)
+    Ok(())
 }
 
 fn require_fingerprint(

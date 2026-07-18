@@ -89,9 +89,33 @@ pub(crate) fn snapshot_without_ledgered_paths(
         let comparable =
             std::fs::canonicalize(path).unwrap_or_else(|_| Path::new(path).to_path_buf());
         if let Ok(relative) = comparable.strip_prefix(&canonical_root) {
-            let relative = relative.display().to_string();
+            let artifact_root =
+                Path::new(journal["artifact_root"].as_str().expect("artifact root"));
+            let is_artifact_root = Path::new(path) == artifact_root;
             snapshot.retain(|entry, _| {
-                entry != &relative && !entry.starts_with(&format!("{relative}/"))
+                let Ok(descendant) = Path::new(entry).strip_prefix(relative) else {
+                    return true;
+                };
+                let Some(name) = descendant
+                    .components()
+                    .next()
+                    .and_then(|component| component.as_os_str().to_str())
+                else {
+                    return true;
+                };
+                let ownership_metadata = matches!(
+                    name,
+                    ".owner" | ".reservation-owner" | ".ownership-manifest.json"
+                );
+                let declared_child = if is_artifact_root {
+                    name == "index"
+                        || name.starts_with("source")
+                        || name.starts_with("projection-")
+                        || name.starts_with("registry-")
+                } else {
+                    name.starts_with("stage")
+                };
+                !ownership_metadata && !declared_child
             });
         }
     }

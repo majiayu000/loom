@@ -159,7 +159,14 @@ impl StagingOwnership {
         &self.digest
     }
 
-    pub(super) fn claim_and_cleanup(self) -> Result<(), CommandFailure> {
+    pub(super) fn claim_and_retain(self) -> Result<(), CommandFailure> {
+        self.claim_and_retain_with_after_validation(|_| Ok(()))
+    }
+
+    fn claim_and_retain_with_after_validation(
+        self,
+        after_validation: impl FnOnce(&Path) -> io::Result<()>,
+    ) -> Result<(), CommandFailure> {
         let claim_path = match claim_for_cleanup(&self.path, ".staging-cleanup-claim")
             .map_err(map_io)
             .map_err(|err| attach_recovery(err, &self.path, None, &self.digest))?
@@ -187,9 +194,18 @@ impl StagingOwnership {
                 &self.digest,
             ));
         }
-        remove_path_if_exists(&claim_path)
+        after_validation(&claim_path)
             .map_err(map_io)
-            .map_err(|err| attach_recovery(err, &self.path, Some(&claim_path), &self.digest))
+            .map_err(|err| attach_recovery(err, &self.path, Some(&claim_path), &self.digest))?;
+        Ok(())
+    }
+
+    #[cfg(test)]
+    pub(super) fn claim_and_retain_after_validation(
+        self,
+        after_validation: impl FnOnce(&Path) -> io::Result<()>,
+    ) -> Result<(), CommandFailure> {
+        self.claim_and_retain_with_after_validation(after_validation)
     }
 }
 
@@ -201,7 +217,7 @@ pub(super) fn cleanup_owned_staging(ownership: Option<StagingOwnership>) -> Vec<
             "reason": "ownership_anchor_missing",
         })];
     };
-    match ownership.claim_and_cleanup() {
+    match ownership.claim_and_retain() {
         Ok(()) => Vec::new(),
         Err(err) => vec![json!({
             "step": "claim_projection_staging",

@@ -26,12 +26,8 @@ pub(super) fn list_nofollow(path: &Path) -> io::Result<Vec<OsString>> {
 #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
 pub(super) fn get_nofollow(path: &Path, name: &OsStr) -> io::Result<Option<Vec<u8>>> {
     let path = path_to_c_string(path)?;
-    let name = CString::new(name.as_bytes()).map_err(|_| {
-        io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "extended attribute name contains an interior NUL byte",
-        )
-    })?;
+    let name = CString::new(name.as_bytes())
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "xattr name contains NUL"))?;
     read_resizing(
         |buffer, length| get_call(path.as_ptr(), name.as_ptr(), buffer, length),
         is_missing_attribute,
@@ -52,17 +48,16 @@ fn read_resizing(
             }
             return Err(error);
         }
-        let required = usize::try_from(required)
-            .map_err(|_| io::Error::other("extended attribute size was negative"))?;
+        // A non-negative isize always fits in usize.
+        let required = required as usize;
         if required == 0 {
             return Ok(Some(Vec::new()));
         }
         let mut bytes = vec![0u8; required];
         let written = call(bytes.as_mut_ptr().cast(), bytes.len());
         if written >= 0 {
-            let written = usize::try_from(written)
-                .map_err(|_| io::Error::other("extended attribute size was negative"))?;
-            bytes.truncate(written);
+            // A non-negative isize always fits in usize.
+            bytes.truncate(written as usize);
             return Ok(Some(bytes));
         }
         let error = io::Error::last_os_error();
@@ -73,9 +68,7 @@ fn read_resizing(
             return Err(error);
         }
     }
-    Err(io::Error::other(
-        "extended attributes changed repeatedly while being read",
-    ))
+    Err(io::Error::other("xattrs changed during read"))
 }
 
 #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
@@ -86,7 +79,7 @@ fn parse_name_list(mut bytes: Vec<u8>) -> io::Result<Vec<OsString>> {
     if bytes.pop() != Some(0) {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
-            "extended attribute list was not NUL-terminated",
+            "invalid xattr name list",
         ));
     }
     Ok(bytes

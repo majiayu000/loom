@@ -27,6 +27,8 @@ const SOURCES_REL: &str = "state/registry/sources.json";
 const LOCK_REL: &str = "loom.lock";
 
 mod outdated;
+#[cfg(test)]
+mod provenance_tests;
 
 #[derive(Debug, Clone)]
 pub(crate) struct AddSourceResolution {
@@ -576,7 +578,7 @@ fn tree_digest(
         if metadata.file_type().is_symlink() {
             hasher.update(b"symlink\0");
             hasher.update(fs::read_link(&full)?.to_string_lossy().as_bytes());
-        } else {
+        } else if metadata.file_type().is_file() {
             hasher.update(b"file\0");
             let mut file =
                 fs::File::open(&full).with_context(|| format!("open {}", full.display()))?;
@@ -585,6 +587,8 @@ fn tree_digest(
                 .with_context(|| format!("read {}", full.display()))?;
             hasher.update(&(buf.len() as u64).to_be_bytes());
             hasher.update(&buf);
+        } else {
+            hasher.update(b"special\0");
         }
         hasher.update(b"\0");
     }

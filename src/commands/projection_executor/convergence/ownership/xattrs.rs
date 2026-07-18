@@ -15,11 +15,8 @@ const MAX_RESIZE_ATTEMPTS: usize = 8;
 #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
 pub(super) fn list_nofollow(path: &Path) -> io::Result<Vec<OsString>> {
     let path = path_to_c_string(path)?;
-    let bytes = read_resizing(
-        |buffer, length| list_call(path.as_ptr(), buffer.cast(), length),
-        |_| false,
-    )?
-    .expect("list operation cannot report a missing attribute");
+    let bytes = read_resizing(XattrOperation::List { path: &path })?
+        .expect("list operation cannot report a missing attribute");
     parse_name_list(bytes)
 }
 
@@ -28,22 +25,47 @@ pub(super) fn get_nofollow(path: &Path, name: &OsStr) -> io::Result<Option<Vec<u
     let path = path_to_c_string(path)?;
     let name = CString::new(name.as_bytes())
         .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "xattr name contains NUL"))?;
-    read_resizing(
-        |buffer, length| get_call(path.as_ptr(), name.as_ptr(), buffer, length),
-        is_missing_attribute,
-    )
+    read_resizing(XattrOperation::Get {
+        path: &path,
+        name: &name,
+    })
 }
 
 #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
-fn read_resizing(
-    mut call: impl FnMut(*mut c_void, usize) -> isize,
-    missing: impl Fn(i32) -> bool,
-) -> io::Result<Option<Vec<u8>>> {
+enum XattrOperation<'a> {
+    List {
+        path: &'a CString,
+    },
+    Get {
+        path: &'a CString,
+        name: &'a CString,
+    },
+}
+
+#[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
+impl XattrOperation<'_> {
+    fn call(&self, buffer: *mut c_void, length: usize) -> isize {
+        match self {
+            Self::List { path } => list_call(path.as_ptr(), buffer.cast(), length),
+            Self::Get { path, name } => get_call(path.as_ptr(), name.as_ptr(), buffer, length),
+        }
+    }
+
+    fn is_missing(&self, code: i32) -> bool {
+        matches!(self, Self::Get { .. }) && is_missing_attribute(code)
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
+fn read_resizing(operation: XattrOperation<'_>) -> io::Result<Option<Vec<u8>>> {
     for _ in 0..MAX_RESIZE_ATTEMPTS {
-        let required = call(std::ptr::null_mut(), 0);
+        let required = operation.call(std::ptr::null_mut(), 0);
         if required < 0 {
             let error = io::Error::last_os_error();
-            if error.raw_os_error().is_some_and(&missing) {
+            if error
+                .raw_os_error()
+                .is_some_and(|code| operation.is_missing(code))
+            {
                 return Ok(None);
             }
             return Err(error);
@@ -54,14 +76,17 @@ fn read_resizing(
             return Ok(Some(Vec::new()));
         }
         let mut bytes = vec![0u8; required];
-        let written = call(bytes.as_mut_ptr().cast(), bytes.len());
+        let written = operation.call(bytes.as_mut_ptr().cast(), bytes.len());
         if written >= 0 {
             // A non-negative isize always fits in usize.
             bytes.truncate(written as usize);
             return Ok(Some(bytes));
         }
         let error = io::Error::last_os_error();
-        if error.raw_os_error().is_some_and(&missing) {
+        if error
+            .raw_os_error()
+            .is_some_and(|code| operation.is_missing(code))
+        {
             return Ok(None);
         }
         if error.raw_os_error() != Some(libc::ERANGE) {

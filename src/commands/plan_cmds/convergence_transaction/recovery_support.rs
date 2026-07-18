@@ -151,7 +151,7 @@ pub(super) fn recover_journal(
             validate_mutated_surfaces(app, &paths, plan, &mut journal)?;
             validate_rollback_evidence(app, plan, &journal)?;
             validate_rolling_back_state(app, plan, &journal)?;
-            let errors = rollback_journal(app, &paths, &journal);
+            let errors = rollback_journal(app, &paths, plan, &journal);
             if !errors.is_empty() {
                 return Err(CommandFailure::new(
                     ErrorCode::StateCorrupt,
@@ -221,7 +221,7 @@ pub(super) fn recover_journal(
         return Ok(Some(result));
     }
     validate_rollback_evidence(app, plan, &journal)?;
-    let errors = rollback_journal(app, &paths, &journal);
+    let errors = rollback_journal(app, &paths, plan, &journal);
     if !errors.is_empty() {
         return Err(CommandFailure::new(
             ErrorCode::StateCorrupt,
@@ -445,6 +445,7 @@ fn validate_journal(
             journal.source_backup.is_none()
                 && journal.source_staging.is_none()
                 && journal.source_owner_proof.is_none()
+                && journal.source_activated_fingerprint.is_none()
         }
         ConvergenceInputDirection::Projection => {
             journal.source_staging.as_deref() == source_stage.to_str()
@@ -457,6 +458,11 @@ fn validate_journal(
                     &app.ctx.skill_path(&plan.skill),
                     &artifact_root.join("source"),
                 )
+                && (journal.phase == TransactionPhase::Preparing
+                    || journal
+                        .source_activated_fingerprint
+                        .as_deref()
+                        .is_some_and(valid_sha256_digest))
         }
     };
     for (index, (effect, artifact)) in plan

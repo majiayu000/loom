@@ -57,7 +57,7 @@ pub fn install_prepared_index_with_guard<F>(
     guard: F,
 ) -> Result<()>
 where
-    F: FnOnce() -> Result<()>,
+    F: FnOnce(&Path) -> Result<()>,
 {
     let index = resolve_git_index_path(ctx, &[])?;
     let lock = index_lock_path(&index);
@@ -70,7 +70,7 @@ where
         io::copy(&mut source, &mut destination)?;
         destination.sync_all()?;
         drop(destination);
-        guard()?;
+        guard(&lock)?;
         crate::fs_util::rename_atomic(&lock, &index)?;
         Ok(())
     })();

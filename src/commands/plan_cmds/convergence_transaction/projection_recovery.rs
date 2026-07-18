@@ -109,7 +109,10 @@ fn require_fingerprint(
     }
 }
 
-fn path_matches_backup(path: &Path, backup: &Value) -> std::result::Result<bool, CommandFailure> {
+pub(super) fn path_matches_backup(
+    path: &Path,
+    backup: &Value,
+) -> std::result::Result<bool, CommandFailure> {
     let backup_path = backup["backup_path"]
         .as_str()
         .map(Path::new)

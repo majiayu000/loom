@@ -276,20 +276,7 @@ pub(super) fn rollback_uncommitted_source_only(
                     "source is neither old nor transaction-new during recovery",
                 ));
             }
-            let backup = journal
-                .source_backup
-                .as_ref()
-                .ok_or_else(|| corrupt("projection-input transaction has no source backup"))?;
-            let staging = journal
-                .source_staging
-                .as_deref()
-                .map(Path::new)
-                .ok_or_else(|| corrupt("projection-input transaction has no source staging"))?;
-            let owner_proof = journal
-                .source_owner_proof
-                .as_deref()
-                .ok_or_else(|| corrupt("projection-input transaction has no owner proof"))?;
-            restore_backup_atomically(&source, backup, staging, &journal.plan_id, owner_proof)?;
+            restore_source_from_evidence(app, plan, journal)?;
         }
     }
     if journal.phase == TransactionPhase::CommittingSource {
@@ -358,20 +345,6 @@ pub(super) fn file_digest(path: &Path) -> std::result::Result<String, CommandFai
     let mut hasher = Sha256::new();
     hasher.update(&bytes);
     Ok(format!("sha256:{}", to_hex(&hasher.finalize())))
-}
-
-pub(super) fn restore_backup_atomically(
-    live: &Path,
-    backup: &serde_json::Value,
-    staging: &Path,
-    plan_id: &str,
-    owner_proof: &str,
-) -> std::result::Result<(), CommandFailure> {
-    validate_owned_staging(live, staging, plan_id, owner_proof)?;
-    remove_path_if_exists(staging).map_err(map_io)?;
-    restore_path_from_backup(staging, backup).map_err(map_io)?;
-    exchange_paths_atomic(staging, live).map_err(map_io)?;
-    remove_path_if_exists(staging).map_err(map_io)
 }
 
 fn validate_index_backup(app: &App, path: &Path) -> std::result::Result<(), CommandFailure> {
@@ -525,7 +498,7 @@ fn verify_registry_commit(
     require_clean_path(app, "state/registry/projections.json")
 }
 
-fn committed_skill_digest(
+pub(super) fn committed_skill_digest(
     app: &App,
     head: &str,
     skill: &str,

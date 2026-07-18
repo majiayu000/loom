@@ -1,4 +1,5 @@
 use super::*;
+use crate::sha256::{Sha256, to_hex};
 use crate::state::AppContext;
 use std::process::Command;
 use uuid::Uuid;
@@ -71,6 +72,52 @@ fn git_ok_with_env(dir: &Path, args: &[&str], envs: &[(&str, &str)]) -> String {
         String::from_utf8_lossy(&out.stderr)
     );
     String::from_utf8(out.stdout).expect("git stdout utf8")
+}
+
+fn file_sha256(path: &Path) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(&fs::read(path).expect("read digest input"));
+    format!("sha256:{}", to_hex(&hasher.finalize()))
+}
+
+#[test]
+fn prepared_index_install_rejects_tamper_before_active_mutation() {
+    let (ctx, dir) = fresh_repo("prepared-index-tamper");
+    let active_index = dir.join(".git/index");
+    let original_index = fs::read(&active_index).expect("original index");
+    let original_head = git_ok(&dir, &["rev-parse", "HEAD"]);
+    let backup = dir.join("index-backup");
+    fs::copy(&active_index, &backup).expect("index backup");
+    fs::write(dir.join("base.txt"), "reviewed\n").expect("reviewed source");
+    let prepared = dir.join("prepared-index");
+    assert!(
+        prepare_index_for_paths(&ctx, &backup, &prepared, &["base.txt"])
+            .expect("prepare alternate index")
+    );
+    let expected = file_sha256(&prepared);
+
+    fs::write(dir.join("tampered.txt"), "tampered\n").expect("tampered path");
+    let prepared_env = prepared.to_str().expect("prepared path");
+    git_ok_with_env(
+        &dir,
+        &["add", "--", "tampered.txt"],
+        &[("GIT_INDEX_FILE", prepared_env)],
+    );
+    let error = install_prepared_index_with_guard(&ctx, &prepared, |candidate| {
+        if file_sha256(candidate) != expected {
+            return Err(anyhow!("prepared index digest mismatch"));
+        }
+        Ok(())
+    })
+    .expect_err("tampered prepared index must fail closed");
+
+    assert!(error.to_string().contains("prepared index digest mismatch"));
+    assert_eq!(
+        fs::read(&active_index).expect("active index"),
+        original_index
+    );
+    assert_eq!(git_ok(&dir, &["rev-parse", "HEAD"]), original_head);
+    fs::remove_dir_all(&dir).expect("remove test repository");
 }
 
 /// `ls-files -v` tag legend: H=cached, h=assume-unchanged, S=skip-worktree,

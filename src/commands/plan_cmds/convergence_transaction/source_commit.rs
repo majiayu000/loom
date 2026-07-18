@@ -1,4 +1,5 @@
-use super::recovery_evidence::{active_index_digest, file_digest};
+use super::recovery_evidence::{active_index_digest, committed_skill_digest, file_digest};
+use super::recovery_support::recovery_stale;
 use super::*;
 
 pub(super) fn commit_convergence_source(
@@ -27,7 +28,17 @@ pub(super) fn commit_convergence_source(
             .index_backup_digest
             .clone()
             .ok_or_else(|| CommandFailure::new(ErrorCode::StateCorrupt, "index digest missing"))?;
-        gitops::install_prepared_index_with_guard(&app.ctx, &prepared_index, || {
+        let staged = journal.source_staged_index_digest.clone().ok_or_else(|| {
+            CommandFailure::new(ErrorCode::StateCorrupt, "staged index digest missing")
+        })?;
+        gitops::install_prepared_index_with_guard(&app.ctx, &prepared_index, |candidate| {
+            let installed =
+                file_digest(candidate).map_err(|error| anyhow::anyhow!(error.message))?;
+            if installed != staged {
+                return Err(anyhow::anyhow!(
+                    "prepared Git index changed after its digest was persisted"
+                ));
+            }
             let live = active_index_digest(app).map_err(|error| anyhow::anyhow!(error.message))?;
             if live != original {
                 return Err(anyhow::anyhow!(
@@ -49,9 +60,23 @@ pub(super) fn commit_convergence_source(
         None
     };
 
-    maybe_skill_fault("convergence_interrupt_committing_source")?;
-    journal.source_head = Some(gitops::head(&app.ctx).map_err(map_git)?);
+    let source_head = gitops::head(&app.ctx).map_err(map_git)?;
+    journal.source_head = Some(source_head.clone());
     journal.source_commit = commit.clone();
+    if let Some(commit) = commit.as_deref() {
+        let committed = committed_skill_digest(app, commit, &plan.skill)?;
+        if committed != plan.input.selected_input_tree_digest {
+            return Err(recovery_stale(
+                "source commit tree does not match the reviewed convergence input",
+            ));
+        }
+    } else if source_head != journal.previous_head {
+        return Err(CommandFailure::new(
+            ErrorCode::StateCorrupt,
+            "no-op source commit changed HEAD",
+        ));
+    }
+    maybe_skill_fault("convergence_interrupt_committing_source")?;
     journal.phase = TransactionPhase::SourceCommitted;
     save_journal(journal_path, journal)?;
     maybe_skill_fault("convergence_interrupt_after_source_commit")?;

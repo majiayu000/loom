@@ -16,9 +16,7 @@ use crate::state_model::{RegistryProjectionsFile, RegistryStatePaths};
 use crate::types::ErrorCode;
 
 use super::super::codex_visibility::projection_path_is_safe_symlink;
-use super::super::file_ops::{
-    create_declared_path_backup, restore_path_from_backup, restore_path_from_backup_if_absent,
-};
+use super::super::file_ops::{create_declared_path_backup, restore_path_from_backup_if_absent};
 use super::super::helpers::{map_git, map_io, map_lock, map_registry_state};
 use super::super::projection_executor::{
     ProjectionExecutionContext, ProjectionExecutionInput, convergence_projection_fingerprint,
@@ -37,6 +35,7 @@ mod recovery_evidence;
 mod recovery_support;
 mod rollback;
 mod source_commit;
+mod source_recovery;
 use ownership::{
     cleanup_owned_dir, cleanup_reservation, owner_proof_is_valid, reservation_paths,
     validate_owned_staging, validate_transaction_artifacts,
@@ -44,11 +43,10 @@ use ownership::{
 use projection_recovery::{
     restore_projection_from_evidence, validate_projection_staging_fingerprint,
 };
-use recovery_evidence::{
-    active_index_digest, file_digest, restore_backup_atomically, validate_rollback_evidence,
-};
+use recovery_evidence::{active_index_digest, file_digest, validate_rollback_evidence};
 use recovery_support::*;
 use rollback::{finish_transaction, rollback_journal};
+use source_recovery::restore_source_from_evidence;
 
 const SCHEMA_VERSION: &str = "1.2";
 
@@ -64,6 +62,8 @@ struct TransactionJournal {
     source_backup: Option<Value>,
     source_staging: Option<String>,
     source_owner_proof: Option<String>,
+    #[serde(default)]
+    source_activated_fingerprint: Option<String>,
     projections: Vec<ProjectionBackup>,
     original_projections: RegistryProjectionsFile,
     installed_projections: usize,
@@ -208,6 +208,7 @@ pub(super) fn apply_convergence(
         source_backup,
         source_staging,
         source_owner_proof,
+        source_activated_fingerprint: None,
         projections: projection_backups,
         original_projections: snapshot.projections.clone(),
         installed_projections: 0,
@@ -276,7 +277,7 @@ pub(super) fn apply_convergence(
                         "message": validation.message,
                     }));
                 } else {
-                    rollback_errors = rollback_journal(app, &paths, &journal);
+                    rollback_errors = rollback_journal(app, &paths, &plan, &journal);
                 }
             }
             if rollback_errors.is_empty()
@@ -603,6 +604,8 @@ fn prepare_transaction_artifacts(
         )?;
         project_skill_to_target(&selected_source, Path::new(staging), ProjectionMethod::Copy)
             .map_err(map_io)?;
+        journal.source_activated_fingerprint =
+            Some(convergence_projection_fingerprint(Path::new(staging))?);
     }
     prepare_projection_stages_from(app, plan, "", journal, &selected_source)?;
     Ok(())

@@ -3,6 +3,7 @@ use super::*;
 pub(super) fn rollback_journal(
     app: &App,
     paths: &RegistryStatePaths,
+    plan: &SkillConvergencePlan,
     journal: &TransactionJournal,
 ) -> Vec<Value> {
     let mut errors = Vec::new();
@@ -28,16 +29,9 @@ pub(super) fn rollback_journal(
     ) {
         return errors;
     }
-    if let (Some(backup), Some(staging)) = (
-        journal.source_backup.as_ref(),
-        journal.source_staging.as_deref(),
-    ) && let Err(err) = restore_backup_atomically(
-        &app.ctx.skill_path(&journal.skill),
-        backup,
-        Path::new(staging),
-        &journal.plan_id,
-        journal.source_owner_proof.as_deref().unwrap_or_default(),
-    ) {
+    if journal.source_backup.is_some()
+        && let Err(err) = restore_source_from_evidence(app, plan, journal)
+    {
         push_rollback_error(&mut errors, "restore_source_path", err.message);
     }
     if rollback_fault(&mut errors, "convergence_interrupt_after_source_restore") {

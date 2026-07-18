@@ -22,7 +22,7 @@ const FRONTEND_INPUT_DIRS: &[&str] = &["public", "src"];
 
 fn main() {
     if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("linux") {
-        println!("cargo:rustc-link-arg=-Wl,-O1");
+        println!("cargo:rustc-link-arg=-Wl,-O1,--sort-section=alignment");
     }
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("manifest dir"));
     let panel_dir = manifest_dir.join("panel");

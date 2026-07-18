@@ -114,6 +114,7 @@ pub(super) fn cleanup_reservation(
         &staging,
         &staging.join(RESERVATION_PROOF_FILE),
         expected_proof,
+        true,
         "reservation staging",
         errors,
     );
@@ -121,6 +122,7 @@ pub(super) fn cleanup_reservation(
         &reservation,
         &reservation,
         expected_proof,
+        false,
         "reservation token",
         errors,
     );
@@ -130,13 +132,14 @@ fn cleanup_proof_entry(
     entry: &Path,
     proof_path: &Path,
     expected_proof: &str,
+    require_directory: bool,
     label: &str,
     errors: &mut Vec<Value>,
 ) {
     match fs::symlink_metadata(entry) {
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
         Err(err) => push_rollback_error(errors, "inspect_artifact_reservation", err),
-        Ok(_) if exact_regular_file(proof_path, expected_proof) => {
+        Ok(_) if proof_entry_is_exact(entry, proof_path, expected_proof, require_directory) => {
             if let Err(err) = remove_path_if_exists(entry) {
                 push_rollback_error(errors, "remove_artifact_reservation", err);
             }
@@ -147,6 +150,105 @@ fn cleanup_proof_entry(
             format!("present {label} does not match its journal ownership proof"),
         ),
     }
+}
+
+pub(super) fn validate_transaction_artifacts(journal: &TransactionJournal) -> Vec<Value> {
+    let mut errors = Vec::new();
+    for projection in &journal.projections {
+        validate_cleanup_entry(
+            Path::new(&projection.staging_owner),
+            &journal.plan_id,
+            &projection.owner_proof,
+            &mut errors,
+        );
+    }
+    if let Some(staging) = journal.source_staging.as_deref()
+        && let Some(owner) = Path::new(staging).parent()
+        && let Some(proof) = journal.source_owner_proof.as_deref()
+    {
+        validate_cleanup_entry(owner, &journal.plan_id, proof, &mut errors);
+    }
+    validate_cleanup_entry(
+        Path::new(&journal.artifact_root),
+        &journal.plan_id,
+        &journal.artifact_owner_proof,
+        &mut errors,
+    );
+    errors
+}
+
+fn validate_cleanup_entry(path: &Path, plan_id: &str, proof: &str, errors: &mut Vec<Value>) {
+    match fs::symlink_metadata(path) {
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+        Err(err) => push_rollback_error(errors, "inspect_owned_transaction_artifact", err),
+        Ok(_) if owner_dir_is_exact(path, plan_id, proof) => {}
+        Ok(_) => push_rollback_error(
+            errors,
+            "validate_owned_transaction_artifact",
+            "present transaction artifact does not match its journal ownership proof",
+        ),
+    }
+    let Ok((reservation, staging)) = reservation_paths(path, plan_id) else {
+        push_rollback_error(
+            errors,
+            "resolve_artifact_reservation",
+            "artifact path has no parent or file name",
+        );
+        return;
+    };
+    validate_proof_entry(
+        &staging,
+        &staging.join(RESERVATION_PROOF_FILE),
+        proof,
+        true,
+        "reservation staging",
+        errors,
+    );
+    validate_proof_entry(
+        &reservation,
+        &reservation,
+        proof,
+        false,
+        "reservation token",
+        errors,
+    );
+}
+
+fn validate_proof_entry(
+    entry: &Path,
+    proof_path: &Path,
+    expected_proof: &str,
+    require_directory: bool,
+    label: &str,
+    errors: &mut Vec<Value>,
+) {
+    match fs::symlink_metadata(entry) {
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+        Err(err) => push_rollback_error(errors, "inspect_artifact_reservation", err),
+        Ok(_) if proof_entry_is_exact(entry, proof_path, expected_proof, require_directory) => {}
+        Ok(_) => push_rollback_error(
+            errors,
+            "validate_artifact_reservation",
+            format!("present {label} does not match its journal ownership proof"),
+        ),
+    }
+}
+
+fn proof_entry_is_exact(
+    entry: &Path,
+    proof_path: &Path,
+    expected_proof: &str,
+    require_directory: bool,
+) -> bool {
+    let kind_matches = fs::symlink_metadata(entry).ok().is_some_and(|metadata| {
+        !metadata.file_type().is_symlink()
+            && if require_directory {
+                metadata.is_dir()
+            } else {
+                metadata.is_file()
+            }
+    });
+    kind_matches && exact_regular_file(proof_path, expected_proof)
 }
 
 #[cfg(unix)]

@@ -506,9 +506,16 @@ fn execute_local_transaction(
         if let Err(error) = save_guard {
             return Err(error.with_rollback_errors(restore_activated_projections(journal)));
         }
-        paths
-            .save_projections(&projections)
+        let replaced = paths
+            .compare_exchange_projections(&journal.original_projections, &projections)
             .map_err(map_registry_state)?;
+        if !replaced {
+            return Err(stale(
+                "registry projections changed during atomic replacement",
+                "PLAN_PROJECTION_DRIFT",
+            )
+            .with_rollback_errors(restore_activated_projections(journal)));
+        }
     }
     maybe_skill_fault("convergence_after_registry_save")?;
     journal.phase = TransactionPhase::CommittingRegistry;

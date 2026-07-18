@@ -6,8 +6,9 @@ use chrono::Utc;
 use serde_json::Value;
 
 use super::json_io::{
-    append_json_line, ensure_json_file, ensure_text_file, read_json_file, read_json_lines,
-    serialize_json_file, write_atomic_batch, write_json_file, write_json_lines,
+    append_json_line, compare_exchange_json_file, ensure_json_file, ensure_text_file,
+    read_json_file, read_json_lines, serialize_json_file, write_atomic_batch, write_json_file,
+    write_json_lines,
 };
 use super::{
     REGISTRY_SCHEMA_VERSION, RegistryBindingsFile, RegistryObservationEvent,
@@ -261,6 +262,14 @@ impl RegistryStatePaths {
 
     pub fn save_projections(&self, value: &RegistryProjectionsFile) -> Result<()> {
         write_json_file(&self.projections_file, value)
+    }
+
+    pub fn compare_exchange_projections(
+        &self,
+        expected: &RegistryProjectionsFile,
+        replacement: &RegistryProjectionsFile,
+    ) -> Result<bool> {
+        compare_exchange_json_file(&self.projections_file, expected, replacement)
     }
 
     pub fn save_trust(&self, value: &RegistryTrustFile) -> Result<()> {

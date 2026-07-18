@@ -240,6 +240,11 @@ pub(super) fn restore_projections_for_resume(
         )
         .with_rollback_errors(errors));
     }
+    let restored = journal
+        .projections
+        .iter()
+        .map(ProjectionBackup::is_activated)
+        .collect::<Vec<_>>();
     errors.extend(restore_activated_projections(journal));
     if !errors.is_empty() {
         return Err(CommandFailure::new(
@@ -248,8 +253,8 @@ pub(super) fn restore_projections_for_resume(
         )
         .with_rollback_errors(errors));
     }
-    for projection in &mut journal.projections {
-        if let Some(backup) = projection.backup.as_mut() {
+    for (projection, was_restored) in journal.projections.iter_mut().zip(restored) {
+        if was_restored && let Some(backup) = projection.backup.as_mut() {
             backup["fingerprint"] = Value::Null;
         }
     }

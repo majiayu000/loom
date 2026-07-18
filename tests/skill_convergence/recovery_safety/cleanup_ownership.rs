@@ -371,3 +371,92 @@ fn post_journal_nonexact_reservation_entries_block_all_cleanup_until_exact_retry
         assert!(!attacked.exists());
     }
 }
+
+#[test]
+fn resume_prevalidates_all_projection_artifacts_before_any_live_restore() {
+    for fault in [
+        "convergence_interrupt_after_source_commit",
+        "convergence_interrupt_after_projection_swap",
+    ] {
+        for corruption in ["late-owner", "late-reservation"] {
+            let fixture = projected_fixture();
+            add_copy_projection(&fixture, "resume-second");
+            fs::write(
+                fixture.root.path().join("skills/demo/details.txt"),
+                format!("resume {fault} {corruption}\n"),
+            )
+            .expect("source edit");
+            let (output, plan) = plan_converge(&fixture, &[]);
+            assert!(output.status.success(), "plan failed: {plan}");
+            let key = format!("resume-{fault}-{corruption}");
+            let (output, interrupted) = apply(&fixture, &plan, &key, Some(fault));
+            assert!(
+                !output.status.success(),
+                "resume fault passed: {interrupted}"
+            );
+            let journal_path = fixture
+                .root
+                .path()
+                .join("state/transactions/convergence-demo.json");
+            let journal: Value = serde_json::from_slice(&fs::read(&journal_path).expect("journal"))
+                .expect("parse journal");
+            let late = journal["projections"]
+                .as_array()
+                .expect("projections")
+                .last()
+                .expect("late");
+            let late_owner = PathBuf::from(late["staging_owner"].as_str().expect("owner"));
+            let late_proof = late["owner_proof"].as_str().expect("proof");
+            let plan_id = journal["plan_id"].as_str().expect("plan id");
+            let mut saved_owner = None;
+            let mut reservation_path = None;
+            if corruption == "late-owner" {
+                let saved = late_owner.with_extension("resume-saved");
+                fs::rename(&late_owner, &saved).expect("save late owner");
+                fs::create_dir(&late_owner).expect("replace late owner");
+                fs::write(late_owner.join("keep"), "external\n").expect("external owner");
+                saved_owner = Some(saved);
+            } else {
+                let (reservation, _) = reservation_paths(&late_owner, plan_id);
+                fs::write(
+                    &reservation,
+                    format!("{plan_id}:{}\n", uuid::Uuid::new_v4()),
+                )
+                .expect("late reservation mismatch");
+                reservation_path = Some(reservation);
+            }
+            let registry_path = fixture.root.path().join("state/registry/projections.json");
+            let registry = fs::read(&registry_path).expect("registry");
+            let live = snapshot_tree(fixture.target.path());
+            let artifact_root =
+                PathBuf::from(journal["artifact_root"].as_str().expect("artifacts"));
+            let artifacts = snapshot_tree(&artifact_root);
+            let index_path = PathBuf::from(journal["index_backup"].as_str().expect("index"));
+            let index = fs::read(&index_path).expect("index evidence");
+            let (output, rejected) = apply(&fixture, &plan, &key, None);
+            assert!(
+                !output.status.success(),
+                "late mismatch resumed: {rejected}"
+            );
+            assert_eq!(fs::read(&registry_path).expect("registry after"), registry);
+            assert_eq!(snapshot_tree(fixture.target.path()), live);
+            assert_eq!(snapshot_tree(&artifact_root), artifacts);
+            assert_eq!(fs::read(&index_path).expect("index after"), index);
+            assert!(journal_path.is_file(), "resume mismatch deleted journal");
+            if let Some(saved) = saved_owner {
+                assert_eq!(
+                    fs::read_to_string(late_owner.join("keep")).expect("external owner"),
+                    "external\n"
+                );
+                fs::remove_dir_all(&late_owner).expect("remove replacement owner");
+                fs::rename(saved, &late_owner).expect("restore late owner");
+            }
+            if let Some(reservation) = reservation_path {
+                fs::write(reservation, format!("{late_proof}\n")).expect("restore exact proof");
+            }
+            let (output, recovered) = apply(&fixture, &plan, &key, None);
+            assert!(output.status.success(), "resume retry failed: {recovered}");
+            assert!(!journal_path.exists());
+        }
+    }
+}

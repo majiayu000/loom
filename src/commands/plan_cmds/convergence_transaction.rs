@@ -383,6 +383,7 @@ fn execute_local_transaction(
         journal.installed_projections += 1;
         save_journal(journal_path, journal)?;
         maybe_skill_fault("convergence_after_projection_swap")?;
+        maybe_skill_fault("convergence_interrupt_after_projection_swap")?;
     }
     journal.expected_projections = Some(projections.clone());
     journal.phase = TransactionPhase::ProjectionsSwapped;

@@ -132,6 +132,93 @@ fn interrupted_recovery_is_single_commit() {
     );
 }
 
+#[test]
+fn completed_retained_plan_is_archived_before_a_different_plan() {
+    let fixture = projected_fixture();
+    fs::write(
+        fixture.root.path().join("skills/demo/details.txt"),
+        "first convergence\n",
+    )
+    .expect("first source edit");
+    let (output, first) = plan_converge(&fixture, &[]);
+    assert!(output.status.success(), "first plan failed: {first}");
+    let (output, applied) = apply_plan(&fixture, &first, "first-plan", &[]);
+    assert!(output.status.success(), "first apply failed: {applied}");
+
+    fs::write(
+        fixture.root.path().join("skills/demo/details.txt"),
+        "second convergence\n",
+    )
+    .expect("second source edit");
+    let (output, second) = plan_converge(&fixture, &[]);
+    assert!(output.status.success(), "second plan failed: {second}");
+    assert_ne!(first["data"]["plan_id"], second["data"]["plan_id"]);
+    let (output, applied) = apply_plan(&fixture, &second, "second-plan", &[]);
+    assert!(output.status.success(), "second apply failed: {applied}");
+
+    let tx_dir = fixture.root.path().join("state/transactions");
+    let first_id = first["data"]["plan_id"].as_str().expect("first plan id");
+    assert!(
+        fs::read_dir(&tx_dir)
+            .expect("transaction directory")
+            .filter_map(Result::ok)
+            .any(|entry| entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with(&format!("retained-{first_id}-"))),
+        "first retained ledger was not archived"
+    );
+    assert_exact_retained_ledger(
+        &tx_dir.join("convergence-demo.json"),
+        "committed_artifacts_retained",
+    );
+}
+
+#[test]
+fn corrupt_terminal_ownership_ledger_blocks_a_different_plan() {
+    let fixture = projected_fixture();
+    fs::write(
+        fixture.root.path().join("skills/demo/details.txt"),
+        "first convergence\n",
+    )
+    .expect("first source edit");
+    let (output, first) = plan_converge(&fixture, &[]);
+    assert!(output.status.success(), "first plan failed: {first}");
+    let (output, applied) = apply_plan(&fixture, &first, "terminal-corrupt-first", &[]);
+    assert!(output.status.success(), "first apply failed: {applied}");
+    let journal_path = fixture
+        .root
+        .path()
+        .join("state/transactions/convergence-demo.json");
+    let mut journal: Value =
+        serde_json::from_slice(&fs::read(&journal_path).expect("journal")).expect("parse journal");
+    journal["ownership_attempts"][0]["state"] = json!("allocated");
+    fs::write(
+        &journal_path,
+        serde_json::to_vec_pretty(&journal).expect("encode journal"),
+    )
+    .expect("corrupt terminal ownership state");
+    fs::write(
+        fixture.root.path().join("skills/demo/details.txt"),
+        "second convergence\n",
+    )
+    .expect("second source edit");
+    let (output, second) = plan_converge(&fixture, &[]);
+    assert!(output.status.success(), "second plan failed: {second}");
+
+    let (output, rejected) = apply_plan(&fixture, &second, "terminal-corrupt-second", &[]);
+    assert!(
+        !output.status.success(),
+        "corrupt ledger was archived: {rejected}"
+    );
+    assert!(journal_path.exists(), "corrupt ledger was removed");
+    assert_eq!(
+        serde_json::from_slice::<Value>(&fs::read(&journal_path).expect("retained corrupt ledger"))
+            .expect("parse retained corrupt ledger")["ownership_attempts"][0]["state"],
+        json!("allocated")
+    );
+}
+
 #[cfg(unix)]
 #[test]
 fn interrupted_symlink_registry_recovery_is_single_commit() {

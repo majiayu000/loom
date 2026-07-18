@@ -121,17 +121,20 @@ where
     let _lock = JsonFileLock::acquire(path)?;
     recover_json_cas(path)?;
     let current = fs::read(path)?;
-    if serde_json::from_slice::<serde_json::Value>(&current)?
-        != serde_json::from_slice::<serde_json::Value>(expected.as_bytes())?
-    {
+    let current_value = serde_json::from_slice::<serde_json::Value>(&current)?;
+    let expected_value = serde_json::from_slice::<serde_json::Value>(expected.as_bytes())?;
+    if current_value != expected_value {
         return Ok(false);
     }
-    let expected = current;
     let candidate = path.with_extension("loom-cas-candidate");
     let journal = path.with_extension("loom-cas-journal");
     if candidate.exists() {
         return Err(anyhow!("untracked JSON CAS evidence retained"));
     }
+    if current_value == serde_json::from_slice::<serde_json::Value>(raw.as_bytes())? {
+        return Ok(true);
+    }
+    let expected = current;
     let journal_raw = encode_cas_journal(0, &expected, raw.as_bytes());
     crate::fs_util::write_atomic_bytes(&journal, &journal_raw)?;
     sync_parent(path)?;
@@ -626,6 +629,24 @@ mod tests {
 
         assert!(compare_exchange_json_file(&path, &reviewed, &replacement).expect("matching CAS"));
         assert_eq!(read_json_file::<Value>(&path).unwrap(), replacement);
+
+        let candidate = path.with_extension("loom-cas-candidate");
+        let journal = path.with_extension("loom-cas-journal");
+        assert!(
+            compare_exchange_json_file(&path, &replacement, &replacement)
+                .expect("semantic no-op CAS")
+        );
+        assert_eq!(read_json_file::<Value>(&path).unwrap(), replacement);
+        assert!(!candidate.exists());
+        assert!(!journal.exists());
+
+        fs::write(&candidate, b"untracked\n").expect("write stray CAS candidate");
+        assert!(
+            compare_exchange_json_file(&path, &replacement, &replacement).is_err(),
+            "semantic no-op must not hide untracked CAS evidence"
+        );
+        assert!(candidate.exists());
+        fs::remove_file(&candidate).expect("remove stray candidate");
 
         write_json_file(&path, &external).expect("write external value");
         assert!(

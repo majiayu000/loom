@@ -85,11 +85,38 @@ pub(super) fn prepare_transaction_artifacts_from_snapshot(
             CommandFailure::new(ErrorCode::StateCorrupt, "source owner proof is absent")
         })?;
         activate_owned_dir(journal_path, journal, &owner, &proof)?;
-        copy_skill_tree_preserving_symlinks(&selected_source, Path::new(&staging))
-            .map_err(map_io)?;
-        validate_selected_source(plan, Path::new(&staging))?;
-        journal.source_activated_fingerprint =
-            Some(convergence_projection_fingerprint(Path::new(&staging))?);
+        let staging = Path::new(&staging);
+        if let Some(expected) = journal.source_activated_fingerprint.as_deref() {
+            validate_owned_staging(
+                &app.ctx.skill_path(&plan.skill),
+                staging,
+                &journal.plan_id,
+                &proof,
+            )?;
+            let actual = convergence_projection_fingerprint(staging)?;
+            if actual != expected {
+                return Err(CommandFailure::new(
+                    ErrorCode::StateCorrupt,
+                    "persisted source staging fingerprint no longer matches",
+                ));
+            }
+            validate_selected_source(plan, staging)?;
+        } else {
+            if staging.try_exists().map_err(map_io)? {
+                validate_owned_staging(
+                    &app.ctx.skill_path(&plan.skill),
+                    staging,
+                    &journal.plan_id,
+                    &proof,
+                )?;
+                crate::fs_util::remove_path_if_exists(staging).map_err(map_io)?;
+            }
+            copy_skill_tree_preserving_symlinks(&selected_source, staging).map_err(map_io)?;
+            validate_selected_source(plan, staging)?;
+            journal.source_activated_fingerprint =
+                Some(convergence_projection_fingerprint(staging)?);
+            save_journal(journal_path, journal)?;
+        }
     }
     let projection_source = journal
         .source_staging
@@ -294,13 +321,17 @@ fn prepare_projection_stages_from(
         )
     })?;
     for (index, effect) in plan.projections.iter().enumerate() {
-        let materialized_path = Path::new(&journal.projections[index].materialized_path);
+        let materialized_path = PathBuf::from(&journal.projections[index].materialized_path);
         let safe_symlink_noop = effect.effect == "refresh"
             && effect.method == "symlink"
-            && projection_path_is_safe_symlink(materialized_path, &app.ctx.skill_path(&plan.skill));
+            && projection_path_is_safe_symlink(
+                &materialized_path,
+                &app.ctx.skill_path(&plan.skill),
+            );
         if safe_symlink_noop {
             journal.projections[index].activated_fingerprint =
-                Some(convergence_projection_fingerprint(materialized_path)?);
+                Some(convergence_projection_fingerprint(&materialized_path)?);
+            save_journal(journal_path, journal)?;
             continue;
         }
         let owner = journal.projections[index].staging_owner.clone();
@@ -319,16 +350,26 @@ fn prepare_projection_stages_from(
         } else {
             source.to_path_buf()
         };
-        prepare_convergence_projection(
-            &app.ctx,
-            &input,
-            &stage_source,
-            Path::new(&journal.projections[index].staging_path),
-        )?;
+        let staging_path = PathBuf::from(&journal.projections[index].staging_path);
+        if let Some(expected) = journal.projections[index].fingerprint() {
+            validate_owned_staging(&materialized_path, &staging_path, &journal.plan_id, &proof)?;
+            if convergence_projection_fingerprint(&staging_path)? != expected {
+                return Err(CommandFailure::new(
+                    ErrorCode::StateCorrupt,
+                    "persisted projection staging fingerprint no longer matches",
+                ));
+            }
+            continue;
+        }
+        if staging_path.try_exists().map_err(map_io)? {
+            validate_owned_staging(&materialized_path, &staging_path, &journal.plan_id, &proof)?;
+            crate::fs_util::remove_path_if_exists(&staging_path).map_err(map_io)?;
+        }
+        prepare_convergence_projection(&app.ctx, &input, &stage_source, &staging_path)?;
+        maybe_skill_fault("convergence_interrupt_after_projection_stage")?;
         journal.projections[index].activated_fingerprint =
-            Some(convergence_projection_fingerprint(Path::new(
-                &journal.projections[index].staging_path,
-            ))?);
+            Some(convergence_projection_fingerprint(&staging_path)?);
+        save_journal(journal_path, journal)?;
     }
     Ok(())
 }

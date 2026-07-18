@@ -129,3 +129,47 @@ fn uninitialized_source_only_apply_and_recovery() {
         );
     }
 }
+
+#[test]
+fn initialized_source_only_apply_uses_semantic_noop_registry_cas() {
+    let fixture = source_only_fixture();
+    let (output, target) = target_add(
+        fixture.root.path(),
+        "claude",
+        fixture.target.path(),
+        "managed",
+    );
+    assert!(
+        output.status.success(),
+        "registry initialization failed: {target}"
+    );
+    fs::write(
+        fixture.root.path().join("skills/demo/SKILL.md"),
+        "---\nname: demo\ndescription: Use when testing source-only convergence.\n---\n# initialized change\n",
+    )
+    .expect("source edit");
+    let projections_path = fixture.root.path().join("state/registry/projections.json");
+    let projections_before = fs::read(&projections_path).expect("projections before");
+    let (output, plan) = source_only_plan(&fixture);
+    assert!(output.status.success(), "source-only plan failed: {plan}");
+    assert_eq!(plan["data"]["effects"], json!([]));
+    assert_eq!(plan["data"]["safe_to_apply"], json!(true));
+
+    let (output, applied) = apply_plan(&fixture, &plan, "initialized-source-only", &[]);
+    assert!(
+        output.status.success(),
+        "source-only apply failed: {applied}"
+    );
+    assert!(applied["data"]["applied"]["source_commit"].is_string());
+    assert!(applied["data"]["applied"]["registry_commit"].is_null());
+    assert_eq!(
+        fs::read(&projections_path).expect("projections after"),
+        projections_before
+    );
+    assert!(
+        !projections_path
+            .with_extension("loom-cas-candidate")
+            .exists()
+    );
+    assert!(!projections_path.with_extension("loom-cas-journal").exists());
+}

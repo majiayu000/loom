@@ -126,7 +126,7 @@ impl App {
         } else {
             false
         };
-        let input_conflicts = resolve_input_conflicts(
+        let mut input_conflicts = resolve_input_conflicts(
             &source_dirty_paths,
             &projection_evidence,
             &preflight,
@@ -134,6 +134,10 @@ impl App {
             args.instance.as_deref(),
             selected_source_drift,
         );
+        input_conflicts.extend(resolve_projection_route_conflicts(
+            snapshot.as_ref(),
+            &projections,
+        ));
         let visibility = projections
             .iter()
             .map(|effect| VisibilityRequirement {
@@ -548,6 +552,44 @@ fn resolve_projection_effects(
         effects.insert(instance_id, effect);
     }
     Ok(effects.into_values().collect())
+}
+
+fn resolve_projection_route_conflicts(
+    snapshot: Option<&RegistrySnapshot>,
+    effects: &[ProjectionEffectPlan],
+) -> Vec<ConvergenceInputConflict> {
+    let Some(snapshot) = snapshot else {
+        return Vec::new();
+    };
+    effects
+        .iter()
+        .filter_map(|effect| {
+            let target = snapshot.target(&effect.target_id)?;
+            if target.ownership != crate::core::vocab::Ownership::Managed {
+                return Some(ConvergenceInputConflict {
+                    code: "TARGET_NOT_MANAGED".to_string(),
+                    message: format!(
+                        "target '{}' has ownership '{}' and cannot be written",
+                        target.target_id, target.ownership
+                    ),
+                    evidence: json!({ "effect": effect }),
+                });
+            }
+            let supported = match effect.method.as_str() {
+                "symlink" => target.capabilities.symlink,
+                "copy" | "materialize" => target.capabilities.copy,
+                _ => false,
+            };
+            (!supported).then(|| ConvergenceInputConflict {
+                code: "PROJECTION_METHOD_UNSUPPORTED".to_string(),
+                message: format!(
+                    "target '{}' does not support '{}' projections",
+                    target.target_id, effect.method
+                ),
+                evidence: json!({ "effect": effect }),
+            })
+        })
+        .collect()
 }
 
 fn validate_projection_input(

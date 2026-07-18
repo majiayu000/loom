@@ -24,6 +24,56 @@ fn post_local_axes_are_not_reported_safe_to_apply() {
 }
 
 #[test]
+fn ineligible_projection_routes_are_sealed_as_conflicts() {
+    for (ownership, disable_copy, expected) in [
+        (Some("external"), false, "TARGET_NOT_MANAGED"),
+        (None, true, "PROJECTION_METHOD_UNSUPPORTED"),
+    ] {
+        let fixture = projected_fixture();
+        let path = fixture.root.path().join("state/registry/targets.json");
+        let mut targets: Value =
+            serde_json::from_slice(&fs::read(&path).expect("targets")).expect("parse targets");
+        if let Some(ownership) = ownership {
+            targets["targets"][0]["ownership"] = json!(ownership);
+        }
+        if disable_copy {
+            targets["targets"][0]["capabilities"]["copy"] = json!(false);
+        }
+        fs::write(
+            &path,
+            serde_json::to_vec_pretty(&targets).expect("encode targets"),
+        )
+        .expect("write targets");
+        git(fixture.root.path(), &["add", "state/registry/targets.json"]);
+        git(
+            fixture.root.path(),
+            &["commit", "-m", "test: make route ineligible"],
+        );
+
+        let (output, plan) = plan_converge(&fixture, &[]);
+        assert!(
+            output.status.success(),
+            "ineligible plan was not reviewable: {plan}"
+        );
+        assert_eq!(plan["data"]["safe_to_apply"], json!(false));
+        assert!(conflict_codes(&plan).contains(&expected));
+        assert!(!plan["data"]["effects"].as_array().unwrap().is_empty());
+        let (output, rejected) = apply_plan(&fixture, &plan, expected, &[]);
+        assert!(
+            !output.status.success(),
+            "ineligible plan applied: {rejected}"
+        );
+        assert!(
+            !fixture
+                .root
+                .path()
+                .join("state/transactions/convergence-demo.json")
+                .exists()
+        );
+    }
+}
+
+#[test]
 fn uncommitted_checkpoint_is_not_an_apply_boundary() {
     let fixture = projected_fixture();
     let checkpoint_path = fixture

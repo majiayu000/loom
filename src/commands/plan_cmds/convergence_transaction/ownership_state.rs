@@ -129,6 +129,13 @@ pub(super) fn archive_rolled_back_journal(
     if journal.phase != TransactionPhase::RolledBackArtifactsRetained {
         return Ok(());
     }
+    archive_retained_journal(path, journal)
+}
+
+fn archive_retained_journal(
+    path: &Path,
+    journal: &TransactionJournal,
+) -> std::result::Result<(), CommandFailure> {
     let nonce = journal
         .ownership_attempts
         .first()
@@ -140,4 +147,62 @@ pub(super) fn archive_rolled_back_journal(
         .join(format!("retained-{}-{nonce}.json", journal.plan_id));
     rename_no_replace_atomic(path, &archive).map_err(map_io)?;
     crate::fs_util::sync_parent_directory(&archive).map_err(map_io)
+}
+
+pub(super) fn archive_previous_terminal_journal(
+    app: &App,
+    path: &Path,
+    plan: &SkillConvergencePlan,
+) -> std::result::Result<(), CommandFailure> {
+    if !path.exists() {
+        return Ok(());
+    }
+    let raw = fs::read_to_string(path).map_err(map_io)?;
+    let journal: TransactionJournal = serde_json::from_str(&raw).map_err(|error| {
+        CommandFailure::new(
+            ErrorCode::StateCorrupt,
+            format!("invalid convergence journal: {error}"),
+        )
+    })?;
+    if journal.plan_id == plan.plan_id {
+        return Ok(());
+    }
+    let tx_dir = app.ctx.state_dir.join("transactions");
+    let plan_id_valid = journal
+        .plan_id
+        .strip_prefix("plan_")
+        .is_some_and(|id| id.len() == 32 && id.bytes().all(|byte| byte.is_ascii_hexdigit()));
+    let valid = journal.skill == plan.skill
+        && path == tx_dir.join(format!("convergence-{}.json", journal.skill))
+        && plan_id_valid
+        && super::recovery_support::generated_owned_path_matches(
+            Path::new(&journal.artifact_root),
+            &tx_dir,
+            &format!("{}-artifacts-", journal.plan_id),
+            "",
+        )
+        && owner_proof_is_valid(&journal.plan_id, &journal.artifact_owner_proof)
+        && Path::new(&journal.index_backup) == Path::new(&journal.artifact_root).join("index")
+        && journal.ownership_attempts.iter().all(|attempt| {
+            matches!(
+                attempt.state,
+                OwnershipAttemptState::Abandoned | OwnershipAttemptState::Retained
+            )
+        })
+        && ownership_attempts_match_journal(&journal)
+        && super::registry_commit::registry_index_attempts_valid(&journal)
+        && super::recovery_support::validate_phase_invariants(&journal)
+        && validate_transaction_artifacts(&journal).is_empty()
+        && matches!(
+            journal.phase,
+            TransactionPhase::CommittedArtifactsRetained
+                | TransactionPhase::RolledBackArtifactsRetained
+        );
+    if !valid {
+        return Err(CommandFailure::new(
+            ErrorCode::StateCorrupt,
+            "previous convergence journal is not a valid terminal retained ledger",
+        ));
+    }
+    archive_retained_journal(path, &journal)
 }

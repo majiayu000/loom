@@ -282,3 +282,45 @@ fn source_cas_does_not_adopt_a_following_external_head() {
         external_head
     );
 }
+
+#[test]
+fn foreign_index_lock_with_interrupted_rollback_remains_retryable() {
+    let fixture = projected_fixture();
+    let (output, plan) = plan_converge(&fixture, &[]);
+    assert!(output.status.success(), "plan failed: {plan}");
+    let lock = fixture.root.path().join(".git/index.lock");
+    let foreign = b"foreign Git process lock\n";
+    fs::write(&lock, foreign).expect("foreign index lock");
+
+    let (output, interrupted) = apply_plan(
+        &fixture,
+        &plan,
+        "foreign-lock-rollback",
+        &[(
+            "LOOM_ROLLBACK_FAULT_INJECT",
+            "convergence_interrupt_after_registry_restore",
+        )],
+    );
+    assert!(
+        !output.status.success(),
+        "foreign lock unexpectedly applied: {interrupted}"
+    );
+    assert_eq!(fs::read(&lock).expect("preserved foreign lock"), foreign);
+    let journal_path = fixture
+        .root
+        .path()
+        .join("state/transactions/convergence-demo.json");
+    let journal: Value =
+        serde_json::from_slice(&fs::read(&journal_path).expect("journal")).expect("parse journal");
+    assert_eq!(journal["phase"], json!("rolling_back"));
+    assert!(journal["registry_commit"].is_null());
+    assert!(journal["registry_staged_index_digest"].is_null());
+
+    fs::remove_file(&lock).expect("release foreign lock");
+    let (output, recovered) = apply_plan(&fixture, &plan, "foreign-lock-rollback", &[]);
+    assert!(
+        output.status.success(),
+        "rollback retry failed: {recovered}"
+    );
+    assert!(!journal_path.exists());
+}

@@ -276,6 +276,8 @@ pub(super) fn apply_convergence(
                     "message": "HEAD is neither old nor the recorded transaction head",
                 })]));
             }
+            journal.registry_commit = None;
+            journal.registry_staged_index_digest = None;
             journal.rollback_head = Some(rollback_head);
             journal.rollback_index_digest = Some(active_index_digest(app)?);
             journal.phase = TransactionPhase::RollingBack;

@@ -7,10 +7,10 @@ use super::{AgentKind, ProjectionMethod, UseScope};
 
 #[derive(Debug, Clone, Subcommand, Serialize)]
 pub enum PlanCommand {
-    #[command(about = "Plan one skill convergence")]
+    #[command(about = "Create a durable skill-convergence plan")]
     Converge(PlanConvergeArgs),
 
-    #[command(about = "Plan the skill use flow")]
+    #[command(about = "Create a durable skill-use plan")]
     Use(PlanUseArgs),
 }
 
@@ -96,7 +96,7 @@ pub struct ApplyArgs {
     /// Plan id from `loom plan`.
     pub plan_id: String,
 
-    /// Reviewed convergence-plan digest.
+    /// Required reviewed digest for convergence plans.
     #[arg(long)]
     pub plan_digest: Option<String>,
 

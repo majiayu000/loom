@@ -91,6 +91,14 @@ pub(crate) struct ProjectionExecutionOutput {
     pub(crate) noop: bool,
 }
 
+pub(crate) struct StandaloneProjectionExecutionOutput {
+    pub(crate) projection: Option<RegistryProjectionInstance>,
+    pub(crate) backup: Option<Value>,
+    pub(crate) commit: Option<String>,
+    pub(crate) meta: Meta,
+    pub(crate) noop: bool,
+}
+
 struct MaterializationResult {
     changed: bool,
     backup: Option<Value>,
@@ -358,8 +366,16 @@ pub(crate) fn execute_standalone_projection(
     paths: &RegistryStatePaths,
     snapshot: &RegistrySnapshot,
     input: ProjectionExecutionInput,
-) -> std::result::Result<ProjectionExecutionOutput, CommandFailure> {
-    execute_projection_mode::<false>(ctx, paths, snapshot, input)
+) -> std::result::Result<StandaloneProjectionExecutionOutput, CommandFailure> {
+    let output = execute_projection_mode::<false>(ctx, paths, snapshot, input)?;
+    debug_assert!(output.prepared.is_none());
+    Ok(StandaloneProjectionExecutionOutput {
+        projection: output.projection,
+        backup: output.backup,
+        commit: output.commit,
+        meta: output.meta,
+        noop: output.noop,
+    })
 }
 
 fn validate_execution_input(

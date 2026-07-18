@@ -460,15 +460,8 @@ fn materialize_projection<const CONVERGENCE: bool>(
 
     let existing_digest = if CONVERGENCE && path_exists {
         Some(
-            projection_ownership_fingerprint(&input.materialized_path).map_err(|err| {
-                map_ownership_fingerprint_error(
-                    err,
-                    format!(
-                        "failed to fingerprint existing projection '{}'",
-                        input.materialized_path.display()
-                    ),
-                )
-            })?,
+            projection_ownership_fingerprint(&input.materialized_path)
+                .map_err(|err| map_ownership_fingerprint_error(err, &input.materialized_path))?,
         )
     } else {
         None
@@ -512,14 +505,7 @@ fn materialize_projection<const CONVERGENCE: bool>(
         let staging_digest = projection_ownership_fingerprint(&staging_path).map_err(|err| {
             let mut cleanup_errors = Vec::new();
             cleanup_projection_staging(&staging_path, &mut cleanup_errors);
-            map_ownership_fingerprint_error(
-                err,
-                format!(
-                    "failed to fingerprint convergence staging projection '{}'",
-                    projection.instance_id
-                ),
-            )
-            .with_rollback_errors(cleanup_errors)
+            map_ownership_fingerprint_error(err, &staging_path).with_rollback_errors(cleanup_errors)
         })?;
         return Ok(MaterializationResult {
             changed: true,

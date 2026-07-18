@@ -52,10 +52,7 @@ pub(crate) fn projection_ownership_fingerprint(path: &Path) -> anyhow::Result<St
     Ok(format!("sha256:{}", to_hex(&hasher.finalize())))
 }
 
-pub(crate) fn map_ownership_fingerprint_error(
-    error: anyhow::Error,
-    message: String,
-) -> CommandFailure {
+pub(crate) fn map_ownership_fingerprint_error(error: anyhow::Error, path: &Path) -> CommandFailure {
     let code = if error.chain().any(|cause| {
         cause
             .downcast_ref::<io::Error>()
@@ -65,7 +62,13 @@ pub(crate) fn map_ownership_fingerprint_error(
     } else {
         ErrorCode::ProjectionConflict
     };
-    CommandFailure::new(code, format!("{message}: {error:#}"))
+    CommandFailure::new(
+        code,
+        format!(
+            "projection fingerprint failed for '{}': {error:#}",
+            path.display()
+        ),
+    )
 }
 
 fn io_error_is_unsupported(error: &io::Error) -> bool {
@@ -286,8 +289,7 @@ mod tests {
         ))
         .context("list projection xattrs");
 
-        let failure =
-            map_ownership_fingerprint_error(error, "failed to fingerprint projection".to_string());
+        let failure = map_ownership_fingerprint_error(error, Path::new("projection"));
 
         assert_eq!(failure.code, ErrorCode::ProjectionMethodUnsupported);
         assert!(failure.message.contains("xattrs unavailable"));

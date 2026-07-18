@@ -437,12 +437,8 @@ fn validate_prepared_digest(
     expected_digest: &str,
     label: &str,
 ) -> std::result::Result<(), CommandFailure> {
-    let actual_digest = projection_ownership_fingerprint(path).map_err(|err| {
-        map_ownership_fingerprint_error(
-            err,
-            format!("failed to validate {label} '{}'", path.display()),
-        )
-    })?;
+    let actual_digest = projection_ownership_fingerprint(path)
+        .map_err(|err| map_ownership_fingerprint_error(err, path))?;
     if actual_digest == expected_digest {
         return Ok(());
     }
@@ -465,16 +461,7 @@ fn validate_owned_digest(
     artifact: &ProjectionRollbackArtifact,
 ) -> std::result::Result<(), CommandFailure> {
     let actual_digest = projection_ownership_fingerprint(path).map_err(|err| {
-        with_recovery_details(
-            map_ownership_fingerprint_error(
-                err,
-                format!(
-                    "cannot {operation} because '{}' is unavailable or unreadable",
-                    path.display()
-                ),
-            ),
-            artifact,
-        )
+        with_recovery_details(map_ownership_fingerprint_error(err, path), artifact)
     })?;
     if actual_digest == expected_digest {
         return Ok(());

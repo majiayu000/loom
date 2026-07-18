@@ -12,7 +12,7 @@ pub(super) fn restore_projection_from_evidence(
 pub(super) fn validate_projection_staging_fingerprint(
     artifact: &ProjectionBackup,
 ) -> std::result::Result<(), CommandFailure> {
-    let Some(expected) = artifact.activated_fingerprint.as_deref() else {
+    let Some(expected) = artifact.fingerprint() else {
         return Ok(());
     };
     require_fingerprint(
@@ -33,8 +33,7 @@ where
     let live = Path::new(&artifact.materialized_path);
     let staging = Path::new(&artifact.staging_path);
     let expected = artifact
-        .activated_fingerprint
-        .as_deref()
+        .fingerprint()
         .ok_or_else(|| corrupt("projection activation fingerprint is missing"))?;
     validate_owned_staging(live, staging, plan_id, &artifact.owner_proof)?;
 
@@ -199,11 +198,10 @@ mod tests {
             staging_owner: owner.display().to_string(),
             owner_proof,
             staging_path: owner.join("stage").display().to_string(),
-            activated_fingerprint: Some(
-                convergence_projection_fingerprint(&live).expect("fingerprint"),
-            ),
-            activated: true,
-            original_fingerprint: None,
+            activated_fingerprint: Some(format!(
+                "active:{}",
+                convergence_projection_fingerprint(&live).expect("fingerprint")
+            )),
         }
     }
 

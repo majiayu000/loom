@@ -4,9 +4,9 @@ use super::*;
 pub(super) fn restore_activated_projections(journal: &mut TransactionJournal) -> Vec<Value> {
     let mut errors = Vec::new();
     for projection in journal.projections.iter_mut().rev() {
-        if projection.activated {
+        if projection.is_activated() {
             match restore_projection_from_evidence(projection, &journal.plan_id) {
-                Ok(()) => projection.activated = false,
+                Ok(()) => projection.mark_activated(false),
                 Err(err) => push_rollback_error(
                     &mut errors,
                     "restore_projection_after_head_drift",
@@ -18,7 +18,7 @@ pub(super) fn restore_activated_projections(journal: &mut TransactionJournal) ->
     journal.installed_projections = journal
         .projections
         .iter()
-        .filter(|projection| projection.activated)
+        .filter(|projection| projection.is_activated())
         .count();
     errors
 }

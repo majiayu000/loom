@@ -248,6 +248,11 @@ pub(super) fn restore_projections_for_resume(
         )
         .with_rollback_errors(errors));
     }
+    for projection in &mut journal.projections {
+        if let Some(backup) = projection.backup.as_mut() {
+            backup["fingerprint"] = Value::Null;
+        }
+    }
     for projection in journal.projections.iter().rev() {
         cleanup_owned_dir(
             Path::new(&projection.staging_owner),
@@ -418,19 +423,17 @@ fn validate_journal(
             && Path::new(&artifact.staging_path) == owner.join("stage")
             && owner_proof_is_valid(&plan.plan_id, &artifact.owner_proof)
             && (journal.phase == TransactionPhase::Preparing
-                || artifact
-                    .activated_fingerprint
-                    .as_deref()
-                    .is_some_and(valid_sha256_digest))
+                || artifact.fingerprint().is_some_and(valid_sha256_digest))
             && match effect.effect.as_str() {
                 "refresh" => {
                     journal.phase == TransactionPhase::Preparing
                         || artifact
-                            .original_fingerprint
-                            .as_deref()
+                            .backup
+                            .as_ref()
+                            .and_then(|backup| backup["fingerprint"].as_str())
                             .is_some_and(valid_sha256_digest)
                 }
-                "create" => artifact.original_fingerprint.is_none(),
+                "create" => artifact.backup.is_none(),
                 _ => false,
             }
             && backup_valid;
@@ -439,7 +442,7 @@ fn validate_journal(
         == journal
             .projections
             .iter()
-            .filter(|projection| projection.activated)
+            .filter(|projection| projection.is_activated())
             .count();
     valid &= validate_phase_invariants(journal);
     valid &= validate_expected_projections(plan, journal);

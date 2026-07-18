@@ -56,9 +56,12 @@ pub(super) fn prepare_transaction_artifacts(
     }
     for (effect, projection) in plan.projections.iter().zip(&mut journal.projections) {
         validate_projection_guard(app, plan, effect)?;
-        projection.original_fingerprint = (effect.effect == "refresh")
+        let original = (effect.effect == "refresh")
             .then(|| convergence_projection_fingerprint(Path::new(&projection.materialized_path)))
             .transpose()?;
+        if let (Some(backup), Some(fingerprint)) = (projection.backup.as_mut(), original.as_ref()) {
+            backup["fingerprint"] = json!(fingerprint);
+        }
         if let Some(backup) = projection.backup.as_ref() {
             create_declared_path_backup(Path::new(&projection.materialized_path), backup)
                 .map_err(map_io)?;
@@ -76,7 +79,7 @@ pub(super) fn prepare_transaction_artifacts(
         let live = (effect.effect == "refresh")
             .then(|| convergence_projection_fingerprint(Path::new(&projection.materialized_path)))
             .transpose()?;
-        if projection.original_fingerprint != live {
+        if original != live {
             return Err(stale(
                 "projection changed while recording rollback evidence",
                 "PLAN_PROJECTION_DRIFT",
@@ -132,9 +135,16 @@ fn prepare_projection_stages_from(
     let snapshot = paths.load_snapshot().map_err(map_registry_state)?;
     for (effect, artifact) in plan.projections.iter().zip(journal.projections.iter_mut()) {
         validate_projection_guard(app, plan, effect)?;
-        artifact.original_fingerprint = (effect.effect == "refresh")
-            .then(|| convergence_projection_fingerprint(Path::new(&artifact.materialized_path)))
-            .transpose()?;
+        if effect.effect == "refresh"
+            && artifact
+                .backup
+                .as_ref()
+                .is_none_or(|backup| backup["fingerprint"].is_null())
+        {
+            artifact.backup.as_mut().expect("refresh backup")["fingerprint"] = json!(
+                convergence_projection_fingerprint(Path::new(&artifact.materialized_path))?
+            );
+        }
         reserve_owned_dir(
             Path::new(&artifact.staging_owner),
             &journal.plan_id,

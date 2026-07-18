@@ -49,7 +49,8 @@ use projection_recovery::{
 };
 use projection_view::projection_view_digest;
 use recovery_evidence::{
-    active_index_digest, file_digest, validate_rollback_evidence, validate_tree_backup,
+    active_index_digest, file_digest, validate_mutated_surfaces, validate_rollback_evidence,
+    validate_tree_backup,
 };
 use recovery_support::*;
 use registry_commit::{commit_convergence_registry, require_head};
@@ -115,10 +116,31 @@ struct ProjectionBackup {
     staging_path: String,
     #[serde(default)]
     activated_fingerprint: Option<String>,
-    #[serde(default)]
-    activated: bool,
-    #[serde(default)]
-    original_fingerprint: Option<String>,
+}
+
+impl ProjectionBackup {
+    fn fingerprint(&self) -> Option<&str> {
+        self.activated_fingerprint
+            .as_deref()
+            .map(|value| value.strip_prefix("active:").unwrap_or(value))
+    }
+
+    fn is_activated(&self) -> bool {
+        self.activated_fingerprint
+            .as_deref()
+            .is_some_and(|value| value.starts_with("active:"))
+    }
+
+    fn mark_activated(&mut self, active: bool) {
+        let Some(value) = self.activated_fingerprint.as_mut() else {
+            return;
+        };
+        if active && !value.starts_with("active:") {
+            value.insert_str(0, "active:");
+        } else if !active && value.starts_with("active:") {
+            value.drain(..7);
+        }
+    }
 }
 
 pub(super) fn apply_convergence(
@@ -228,8 +250,6 @@ pub(super) fn apply_convergence(
                 staging_owner: staging_owner.display().to_string(),
                 owner_proof: new_owner_proof(&plan.plan_id),
                 activated_fingerprint: None,
-                activated: false,
-                original_fingerprint: None,
             })
         })
         .collect::<std::result::Result<Vec<_>, CommandFailure>>()?;
@@ -416,13 +436,17 @@ fn execute_local_transaction(
         let staging_path = PathBuf::from(&artifact.staging_path);
         let staging = PreparedProjectionStaging::new(
             staging_path,
-            artifact.activated_fingerprint.clone().ok_or_else(|| {
+            artifact.fingerprint().map(str::to_string).ok_or_else(|| {
                 CommandFailure::new(
                     ErrorCode::StateCorrupt,
                     "prepared projection staging fingerprint is absent",
                 )
             })?,
-            artifact.original_fingerprint.clone(),
+            artifact
+                .backup
+                .as_ref()
+                .and_then(|backup| backup["fingerprint"].as_str())
+                .map(str::to_string),
         );
         let live_path = PathBuf::from(&artifact.materialized_path);
         let output = execute_prepared_convergence_projection(
@@ -454,7 +478,7 @@ fn execute_local_transaction(
         upsert_projection(&mut projections, projection.clone());
         applied.push(projection.instance_id);
         if output.activated {
-            journal.projections[index].activated = true;
+            journal.projections[index].mark_activated(true);
             journal.installed_projections += 1;
         }
         if let Err(error) = require_head(
@@ -477,7 +501,8 @@ fn execute_local_transaction(
             journal.source_head.as_deref().unwrap_or_default(),
             "HEAD changed before saving projection results",
         )
-        .and_then(|_| validate_recovery_routing(app, plan));
+        .and_then(|_| validate_recovery_routing(app, plan))
+        .and_then(|_| validate_mutated_surfaces(app, paths, plan, journal));
         if let Err(error) = save_guard {
             return Err(error.with_rollback_errors(restore_activated_projections(journal)));
         }

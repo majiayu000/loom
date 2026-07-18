@@ -101,11 +101,11 @@ pub(super) fn validate_mutated_surfaces(
         let state = projection_state(app, plan, effect)?;
         match state {
             ProjectionState::New if !saw_old => {
-                journal.projections[index].activated = true;
+                journal.projections[index].mark_activated(true);
                 contiguous_new += 1;
             }
             ProjectionState::Old => {
-                journal.projections[index].activated = false;
+                journal.projections[index].mark_activated(false);
                 saw_old = true;
             }
             ProjectionState::New => {
@@ -114,7 +114,7 @@ pub(super) fn validate_mutated_surfaces(
                 ));
             }
             ProjectionState::Same => {
-                if journal.projections[index].activated {
+                if journal.projections[index].is_activated() {
                     contiguous_new += 1;
                 }
             }

@@ -588,11 +588,46 @@ fn tree_digest(
             hasher.update(&(buf.len() as u64).to_be_bytes());
             hasher.update(&buf);
         } else {
-            hasher.update(b"special\0");
+            hash_special_node(&mut hasher, &metadata);
         }
         hasher.update(b"\0");
     }
     Ok(format!("sha256:{}", to_hex(&hasher.finalize())))
+}
+
+#[cfg(unix)]
+fn hash_special_node(hasher: &mut Sha256, metadata: &fs::Metadata) {
+    use std::os::unix::fs::{FileTypeExt, MetadataExt};
+
+    let file_type = metadata.file_type();
+    let kind = if file_type.is_fifo() {
+        b"fifo".as_slice()
+    } else if file_type.is_socket() {
+        b"socket".as_slice()
+    } else if file_type.is_char_device() {
+        b"char-device".as_slice()
+    } else if file_type.is_block_device() {
+        b"block-device".as_slice()
+    } else {
+        b"other".as_slice()
+    };
+    hasher.update(b"special\0");
+    hasher.update(kind);
+    hasher.update(b"\0");
+    hasher.update(&metadata.rdev().to_be_bytes());
+}
+
+#[cfg(windows)]
+fn hash_special_node(hasher: &mut Sha256, metadata: &fs::Metadata) {
+    use std::os::windows::fs::MetadataExt;
+
+    hasher.update(b"special\0windows\0");
+    hasher.update(&metadata.file_attributes().to_be_bytes());
+}
+
+#[cfg(not(any(unix, windows)))]
+fn hash_special_node(hasher: &mut Sha256, _metadata: &fs::Metadata) {
+    hasher.update(b"special\0other\0");
 }
 
 struct GithubSource {

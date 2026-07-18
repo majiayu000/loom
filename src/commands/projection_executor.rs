@@ -181,7 +181,11 @@ fn execute_projection_mode<const CONVERGENCE: bool>(
     if input.safe_existing_noop && !state_changed {
         return Ok(ProjectionExecutionOutput {
             projection: existing_projection,
-            prepared: materialization.prepared,
+            prepared: if CONVERGENCE {
+                materialization.prepared
+            } else {
+                None
+            },
             backup: materialization.backup,
             commit: None,
             meta: Meta::default(),
@@ -226,9 +230,13 @@ fn execute_projection_mode<const CONVERGENCE: bool>(
         },
     );
 
-    let observation = materialization
-        .observation
-        .unwrap_or_else(|| observe_projection(ctx, &projection));
+    let observation = if CONVERGENCE {
+        materialization
+            .observation
+            .unwrap_or_else(|| observe_projection(ctx, &projection))
+    } else {
+        observe_projection(ctx, &projection)
+    };
     apply_projection_observation(&mut projection, &observation);
 
     if CONVERGENCE {
@@ -353,6 +361,7 @@ fn execute_projection_mode<const CONVERGENCE: bool>(
     })
 }
 
+#[inline(always)]
 pub(crate) fn execute_standalone_projection(
     ctx: &AppContext,
     paths: &RegistryStatePaths,

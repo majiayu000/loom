@@ -265,19 +265,22 @@ fn rolling_back_registry_restore_preserves_an_external_second_writer() {
 fn assert_external_registry_retired(
     fixture: &Fixture,
     plan: &Value,
-    journal_path: &Path,
-    registry_path: &Path,
     original_registry: &[u8],
     original_projection: &BTreeMap<String, Vec<u8>>,
     external_head: &str,
     expect_registry_attempt: bool,
 ) {
+    let journal_path = fixture
+        .root
+        .path()
+        .join("state/transactions/convergence-demo.json");
+    let registry_path = fixture.root.path().join("state/registry/projections.json");
     assert_eq!(
         git(fixture.root.path(), &["rev-parse", "HEAD"]),
         external_head
     );
     assert_eq!(
-        fs::read(registry_path).expect("restored registry"),
+        fs::read(&registry_path).expect("restored registry"),
         original_registry
     );
     assert_eq!(
@@ -384,8 +387,6 @@ fn external_head_after_registry_commit_preparation_clears_orphan_evidence() {
     assert_external_registry_retired(
         &fixture,
         &plan,
-        &journal_path,
-        &registry_path,
         &original_registry,
         &original_projection,
         &external_head,
@@ -447,8 +448,6 @@ fn registry_json_cas_interruption_recovers_after_external_head() {
     assert_external_registry_retired(
         &fixture,
         &plan,
-        &journal_path,
-        &registry_path,
         &original_registry,
         &original_projection,
         &external_head,

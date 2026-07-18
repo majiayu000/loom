@@ -74,6 +74,77 @@ fn assert_live_projection_snapshots_unchanged(before: &[(PathBuf, BTreeMap<Strin
     }
 }
 
+struct RecoverySurfaceSnapshot {
+    journal: Vec<u8>,
+    artifacts: BTreeMap<String, Vec<u8>>,
+    live: Vec<(PathBuf, BTreeMap<String, Vec<u8>>)>,
+    source: BTreeMap<String, Vec<u8>>,
+    registry: BTreeMap<String, Vec<u8>>,
+    index: Vec<u8>,
+    head: String,
+}
+
+fn recovery_surface_snapshot(
+    fixture: &Fixture,
+    journal_path: &Path,
+    journal: &Value,
+) -> RecoverySurfaceSnapshot {
+    let artifact_root = PathBuf::from(journal["artifact_root"].as_str().expect("artifact root"));
+    RecoverySurfaceSnapshot {
+        journal: fs::read(journal_path).expect("journal bytes"),
+        artifacts: snapshot_tree(&artifact_root),
+        live: live_projection_snapshots(journal),
+        source: snapshot_tree(&fixture.root.path().join("skills/demo")),
+        registry: snapshot_tree(&fixture.root.path().join("state/registry")),
+        index: fs::read(fixture.root.path().join(".git/index")).expect("index"),
+        head: git(fixture.root.path(), &["rev-parse", "HEAD"]),
+    }
+}
+
+fn assert_recovery_surfaces_unchanged(
+    fixture: &Fixture,
+    journal_path: &Path,
+    journal: &Value,
+    before: &RecoverySurfaceSnapshot,
+) {
+    let artifact_root = PathBuf::from(journal["artifact_root"].as_str().expect("artifact root"));
+    assert_eq!(
+        fs::read(journal_path).expect("journal after"),
+        before.journal
+    );
+    assert_eq!(snapshot_tree(&artifact_root), before.artifacts);
+    assert_live_projection_snapshots_unchanged(&before.live);
+    assert_eq!(
+        snapshot_tree(&fixture.root.path().join("skills/demo")),
+        before.source
+    );
+    assert_eq!(
+        snapshot_tree(&fixture.root.path().join("state/registry")),
+        before.registry
+    );
+    assert_eq!(
+        fs::read(fixture.root.path().join(".git/index")).expect("index after"),
+        before.index
+    );
+    assert_eq!(
+        git(fixture.root.path(), &["rev-parse", "HEAD"]),
+        before.head
+    );
+}
+
+fn claim_path(path: &Path, suffix: &str) -> PathBuf {
+    let name = path.file_name().expect("claim base name").to_string_lossy();
+    path.with_file_name(format!("{name}{suffix}"))
+}
+
+fn write_journal(path: &Path, journal: &Value) {
+    fs::write(
+        path,
+        serde_json::to_vec_pretty(journal).expect("serialize journal"),
+    )
+    .expect("write journal");
+}
+
 #[test]
 fn activation_syscall_before_journal_save_recovers_existing_and_created_paths() {
     for created in [false, true] {
@@ -347,4 +418,348 @@ fn late_rollback_artifact_corruption_is_zero_mutation_before_batch_rollback() {
         "rollback retry failed: {recovered}"
     );
     assert!(!journal_path.exists());
+}
+
+#[test]
+fn created_rollback_claim_live_collision_fails_closed_before_mutation() {
+    let fixture = projected_fixture();
+    let plan = create_projection_plan(&fixture);
+    let key = "created-claim-live-collision";
+    let (output, interrupted) = apply_with_faults(
+        &fixture,
+        &plan,
+        key,
+        &[
+            ("LOOM_FAULT_INJECT", "convergence_after_registry_save"),
+            (
+                "LOOM_ROLLBACK_FAULT_INJECT",
+                "convergence_interrupt_after_registry_restore",
+            ),
+        ],
+    );
+    assert!(
+        !output.status.success(),
+        "rollback boundary passed: {interrupted}"
+    );
+    let (journal_path, mut journal) = transaction_journal(&fixture);
+    let original_journal = fs::read(&journal_path).expect("original journal");
+    let live = PathBuf::from(
+        journal["projections"][0]["materialized_path"]
+            .as_str()
+            .expect("live"),
+    );
+    let staging = PathBuf::from(
+        journal["projections"][0]["staging_path"]
+            .as_str()
+            .expect("staging"),
+    );
+    let claim = claim_path(&staging, ".pending-cleanup-claim");
+    let digest = journal["projections"][0]["rollback"]["activated_digest"]
+        .as_str()
+        .expect("activated digest")
+        .to_string();
+    fs::rename(&live, &claim).expect("simulate rollback cleanup claim syscall gap");
+    journal["projections"][0]["rollback"] = json!({
+        "kind": "pending_cleanup",
+        "materialized_path": claim,
+        "artifact_path": staging,
+        "expected_live_digest": digest,
+        "expected_digest": digest,
+        "reason": "rollback_created",
+    });
+    journal["projections"][0]["state"] = json!("rollback_cleanup_pending");
+    write_journal(&journal_path, &journal);
+    let before = recovery_surface_snapshot(&fixture, &journal_path, &journal);
+
+    let (output, rejected) = apply(&fixture, &plan, key, None);
+    assert!(
+        !output.status.success(),
+        "claim/live collision resumed: {rejected}"
+    );
+    assert_recovery_surfaces_unchanged(&fixture, &journal_path, &journal, &before);
+
+    fs::rename(&claim, &live).expect("repair syscall gap");
+    fs::write(&journal_path, original_journal).expect("restore journal");
+    let (output, recovered) = apply(&fixture, &plan, key, None);
+    assert!(
+        output.status.success(),
+        "collision repair retry failed: {recovered}"
+    );
+}
+
+#[test]
+fn external_sibling_rollback_evidence_fails_closed_before_mutation() {
+    let fixture = projected_fixture();
+    fs::write(
+        fixture.root.path().join("skills/demo/details.txt"),
+        "external sibling\n",
+    )
+    .unwrap();
+    let (output, plan) = plan_converge(&fixture, &[]);
+    assert!(output.status.success(), "plan failed: {plan}");
+    let key = "external-sibling-evidence";
+    let (output, interrupted) = apply(
+        &fixture,
+        &plan,
+        key,
+        Some("convergence_interrupt_committing_registry"),
+    );
+    assert!(
+        !output.status.success(),
+        "commit boundary passed: {interrupted}"
+    );
+    let (journal_path, mut journal) = transaction_journal(&fixture);
+    let original_journal = fs::read(&journal_path).expect("original journal");
+    let backup = rollback_artifact_path(&journal, 0);
+    let external = backup.with_file_name("external-sibling-rollback-evidence");
+    fs::rename(&backup, &external).expect("move rollback evidence to malicious sibling");
+    journal["projections"][0]["rollback"]["backup_path"] = json!(external.display().to_string());
+    write_journal(&journal_path, &journal);
+    let before = recovery_surface_snapshot(&fixture, &journal_path, &journal);
+
+    let (output, rejected) = apply(&fixture, &plan, key, None);
+    assert!(
+        !output.status.success(),
+        "external sibling resumed: {rejected}"
+    );
+    assert_recovery_surfaces_unchanged(&fixture, &journal_path, &journal, &before);
+
+    fs::rename(&external, &backup).expect("restore rollback evidence");
+    fs::write(&journal_path, original_journal).expect("restore journal");
+    let (output, recovered) = apply(&fixture, &plan, key, None);
+    assert!(
+        output.status.success(),
+        "external sibling repair failed: {recovered}"
+    );
+}
+
+#[test]
+fn prepared_cleanup_claim_collision_fails_closed_before_cleanup() {
+    let fixture = projected_fixture();
+    fs::write(
+        fixture.root.path().join("skills/demo/details.txt"),
+        "prepared collision\n",
+    )
+    .unwrap();
+    let (output, plan) = plan_converge(&fixture, &[]);
+    assert!(output.status.success(), "plan failed: {plan}");
+    let key = "prepared-claim-collision";
+    let (output, interrupted) = apply(
+        &fixture,
+        &plan,
+        key,
+        Some("convergence_interrupt_after_prepared"),
+    );
+    assert!(
+        !output.status.success(),
+        "prepared boundary passed: {interrupted}"
+    );
+    let (journal_path, mut journal) = transaction_journal(&fixture);
+    let original_journal = fs::read(&journal_path).expect("original journal");
+    let staging = PathBuf::from(
+        journal["projections"][0]["staging_path"]
+            .as_str()
+            .expect("staging"),
+    );
+    journal["projections"][0]["prepared"]["source_path"] = json!(
+        claim_path(&staging, ".prepared-cleanup-claim")
+            .display()
+            .to_string()
+    );
+    write_journal(&journal_path, &journal);
+    let before = recovery_surface_snapshot(&fixture, &journal_path, &journal);
+
+    let (output, rejected) = apply(&fixture, &plan, key, None);
+    assert!(
+        !output.status.success(),
+        "prepared claim collision resumed: {rejected}"
+    );
+    assert_recovery_surfaces_unchanged(&fixture, &journal_path, &journal, &before);
+
+    fs::write(&journal_path, original_journal).expect("restore journal");
+    let (output, recovered) = apply(&fixture, &plan, key, None);
+    assert!(
+        output.status.success(),
+        "prepared collision repair failed: {recovered}"
+    );
+}
+
+#[test]
+fn nested_prepared_projection_identity_tampering_is_zero_mutation() {
+    for field in ["materialized_path", "instance_id"] {
+        let fixture = projected_fixture();
+        fs::write(
+            fixture.root.path().join("skills/demo/details.txt"),
+            format!("nested prepared {field}\n"),
+        )
+        .unwrap();
+        let (output, plan) = plan_converge(&fixture, &[]);
+        assert!(output.status.success(), "plan failed: {plan}");
+        let key = format!("nested-prepared-{field}");
+        let (output, interrupted) = apply(
+            &fixture,
+            &plan,
+            &key,
+            Some("convergence_interrupt_after_prepared"),
+        );
+        assert!(
+            !output.status.success(),
+            "prepared boundary passed: {interrupted}"
+        );
+        let (journal_path, mut journal) = transaction_journal(&fixture);
+        let original_journal = fs::read(&journal_path).expect("original journal");
+        journal["projections"][0]["prepared"]["projection"][field] = if field == "materialized_path"
+        {
+            json!(
+                fixture
+                    .target
+                    .path()
+                    .join("external-sibling")
+                    .display()
+                    .to_string()
+            )
+        } else {
+            json!("malicious-instance")
+        };
+        write_journal(&journal_path, &journal);
+        let before = recovery_surface_snapshot(&fixture, &journal_path, &journal);
+
+        let (output, rejected) = apply(&fixture, &plan, &key, None);
+        assert!(
+            !output.status.success(),
+            "nested {field} tampering resumed: {rejected}"
+        );
+        assert_recovery_surfaces_unchanged(&fixture, &journal_path, &journal, &before);
+
+        fs::write(&journal_path, original_journal).expect("restore journal");
+        let (output, recovered) = apply(&fixture, &plan, &key, None);
+        assert!(
+            output.status.success(),
+            "nested {field} repair failed: {recovered}"
+        );
+    }
+}
+
+#[test]
+fn finalize_claim_live_collision_fails_closed_before_cleanup() {
+    let fixture = projected_fixture();
+    fs::write(
+        fixture.root.path().join("skills/demo/details.txt"),
+        "finalize collision\n",
+    )
+    .unwrap();
+    let (output, plan) = plan_converge(&fixture, &[]);
+    assert!(output.status.success(), "plan failed: {plan}");
+    let key = "finalize-claim-collision";
+    let (output, interrupted) = apply(
+        &fixture,
+        &plan,
+        key,
+        Some("convergence_interrupt_committing_registry"),
+    );
+    assert!(
+        !output.status.success(),
+        "commit boundary passed: {interrupted}"
+    );
+    let (journal_path, mut journal) = transaction_journal(&fixture);
+    let original_journal = fs::read(&journal_path).expect("original journal");
+    let staging = PathBuf::from(
+        journal["projections"][0]["staging_path"]
+            .as_str()
+            .expect("staging"),
+    );
+    journal["projections"][0]["rollback"]["materialized_path"] = json!(
+        claim_path(&staging, ".finalize-claim")
+            .display()
+            .to_string()
+    );
+    write_journal(&journal_path, &journal);
+    let before = recovery_surface_snapshot(&fixture, &journal_path, &journal);
+
+    let (output, rejected) = apply(&fixture, &plan, key, None);
+    assert!(
+        !output.status.success(),
+        "finalize claim collision resumed: {rejected}"
+    );
+    assert_recovery_surfaces_unchanged(&fixture, &journal_path, &journal, &before);
+
+    fs::write(&journal_path, original_journal).expect("restore journal");
+    let (output, recovered) = apply(&fixture, &plan, key, None);
+    assert!(
+        output.status.success(),
+        "finalize collision repair failed: {recovered}"
+    );
+}
+
+#[test]
+fn partial_rollback_late_owner_or_reservation_corruption_is_zero_mutation() {
+    for mode in ["owner", "reservation"] {
+        let fixture = projected_fixture();
+        add_copy_projection(&fixture, &format!("{mode}-second"));
+        add_copy_projection(&fixture, &format!("{mode}-third"));
+        fs::write(
+            fixture.root.path().join("skills/demo/details.txt"),
+            format!("{mode}\n"),
+        )
+        .unwrap();
+        let (output, plan) = plan_converge(&fixture, &[]);
+        assert!(output.status.success(), "plan failed: {plan}");
+        let key = format!("late-{mode}-corruption");
+        let (output, interrupted) = apply_with_faults(
+            &fixture,
+            &plan,
+            &key,
+            &[
+                ("LOOM_FAULT_INJECT", "convergence_after_registry_save"),
+                (
+                    "LOOM_ROLLBACK_FAULT_INJECT",
+                    "convergence_interrupt_after_first_projection_rollback",
+                ),
+            ],
+        );
+        assert!(
+            !output.status.success(),
+            "rollback boundary passed: {interrupted}"
+        );
+        let (journal_path, journal) = transaction_journal(&fixture);
+        let owner = PathBuf::from(
+            journal["projections"][0]["staging_owner"]
+                .as_str()
+                .expect("owner"),
+        );
+        let attacked = if mode == "owner" {
+            let path = owner.join(".owner");
+            fs::write(&path, "external\n").expect("corrupt owner");
+            path
+        } else {
+            let plan_id = journal["plan_id"].as_str().expect("plan id");
+            let name = owner.file_name().expect("owner name").to_string_lossy();
+            let path = owner.with_file_name(format!(".{name}.reservation-{plan_id}"));
+            fs::write(&path, "external\n").expect("corrupt reservation");
+            path
+        };
+        let before = recovery_surface_snapshot(&fixture, &journal_path, &journal);
+
+        let (output, rejected) = apply(&fixture, &plan, &key, None);
+        assert!(
+            !output.status.success(),
+            "late {mode} corruption resumed: {rejected}"
+        );
+        assert_recovery_surfaces_unchanged(&fixture, &journal_path, &journal, &before);
+
+        if mode == "owner" {
+            fs::write(
+                &attacked,
+                format!("{}\n", journal["plan_id"].as_str().unwrap()),
+            )
+            .expect("repair owner");
+        } else {
+            fs::remove_file(&attacked).expect("repair reservation");
+        }
+        let (output, recovered) = apply(&fixture, &plan, &key, None);
+        assert!(
+            output.status.success(),
+            "late {mode} repair failed: {recovered}"
+        );
+    }
 }

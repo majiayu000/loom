@@ -125,11 +125,11 @@ pub(super) fn recover_journal(
             let result = journal.result.clone().ok_or_else(|| {
                 CommandFailure::new(ErrorCode::StateCorrupt, "committed journal has no result")
             })?;
-            finish_committed_cleanup(journal_path, &mut journal)?;
+            finish_committed_cleanup(app, plan, journal_path, &mut journal)?;
             return Ok(Some(result));
         }
         TransactionPhase::RolledBackCleanupPending => {
-            finish_committed_cleanup(journal_path, &mut journal)?;
+            finish_committed_cleanup(app, plan, journal_path, &mut journal)?;
             return Ok(None);
         }
         TransactionPhase::Preparing | TransactionPhase::Prepared => {
@@ -149,7 +149,7 @@ pub(super) fn recover_journal(
             validate_mutated_surfaces(app, &paths, plan, &mut journal)?;
             validate_rollback_evidence(app, plan, &journal)?;
             validate_rolling_back_state(app, plan, &journal)?;
-            let errors = rollback_journal(app, &paths, journal_path, &mut journal);
+            let errors = rollback_journal(app, plan, &paths, journal_path, &mut journal);
             if !errors.is_empty() {
                 return Err(CommandFailure::new(
                     ErrorCode::StateCorrupt,
@@ -159,7 +159,7 @@ pub(super) fn recover_journal(
             }
             journal.phase = TransactionPhase::RolledBackCleanupPending;
             save_journal(journal_path, &journal)?;
-            finish_committed_cleanup(journal_path, &mut journal)?;
+            finish_committed_cleanup(app, plan, journal_path, &mut journal)?;
             return Ok(None);
         }
         _ => {}
@@ -191,7 +191,7 @@ pub(super) fn recover_journal(
             journal.result = Some(result.clone());
             journal.phase = TransactionPhase::CommittedCleanupPending;
             save_journal(journal_path, &journal)?;
-            finish_committed_cleanup(journal_path, &mut journal)?;
+            finish_committed_cleanup(app, plan, journal_path, &mut journal)?;
             return Ok(Some(result));
         }
         validate_mutated_surfaces(app, &paths, plan, &mut journal)?;
@@ -217,11 +217,11 @@ pub(super) fn recover_journal(
         journal.result = Some(result.clone());
         journal.phase = TransactionPhase::CommittedCleanupPending;
         save_journal(journal_path, &journal)?;
-        finish_committed_cleanup(journal_path, &mut journal)?;
+        finish_committed_cleanup(app, plan, journal_path, &mut journal)?;
         return Ok(Some(result));
     }
     validate_rollback_evidence(app, plan, &journal)?;
-    let errors = rollback_journal(app, &paths, journal_path, &mut journal);
+    let errors = rollback_journal(app, plan, &paths, journal_path, &mut journal);
     if !errors.is_empty() {
         return Err(CommandFailure::new(
             ErrorCode::StateCorrupt,
@@ -231,7 +231,7 @@ pub(super) fn recover_journal(
     }
     journal.phase = TransactionPhase::RolledBackCleanupPending;
     save_journal(journal_path, &journal)?;
-    finish_committed_cleanup(journal_path, &mut journal)?;
+    finish_committed_cleanup(app, plan, journal_path, &mut journal)?;
     Ok(None)
 }
 
@@ -403,6 +403,7 @@ fn validate_journal(
                 )
         }
     };
+    let selected_source = selected_source_path(app, plan)?;
     for (index, (effect, artifact)) in plan
         .projections
         .iter()
@@ -422,6 +423,24 @@ fn validate_journal(
                     .unwrap_or(Path::new(""))
                     .join(format!(".loom-projection-stage-{}-{index}", plan.plan_id))
             && owner_proof_is_valid(&plan.plan_id, &artifact.owner_proof);
+        valid &= artifact.projection.as_ref().is_none_or(|projection| {
+            projection.instance_id == effect.instance_id
+                && projection.skill_id == plan.skill
+                && projection.binding_id.as_deref() == Some(effect.binding_id.as_str())
+                && projection.target_id == effect.target_id
+                && projection.materialized_path == effect.materialized_path
+                && projection.method.as_str() == effect.method
+        });
+        valid &= validate_projection_artifact_layout(
+            materialized,
+            &selected_source,
+            Path::new(&artifact.staging_path),
+            Path::new(&artifact.staging_owner),
+            artifact.projection.as_ref(),
+            artifact.prepared.as_ref(),
+            artifact.rollback.as_ref(),
+        )
+        .is_ok();
     }
     valid &= validate_phase_invariants(journal);
     valid &= validate_expected_projections(plan, journal);

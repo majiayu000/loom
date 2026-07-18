@@ -45,13 +45,15 @@ fn create_projection_plan(fixture: &Fixture) -> Value {
         fs::remove_dir_all(&projection).expect("remove projection");
     }
     let projections_path = fixture.root.path().join("state/registry/projections.json");
-    let mut projections: Value =
+    let projections: Value =
         serde_json::from_slice(&fs::read(&projections_path).expect("registry"))
             .expect("parse registry");
-    projections["projections"] = json!([]);
     fs::write(
         &projections_path,
-        serde_json::to_vec_pretty(&projections).expect("encode"),
+        format!(
+            "{{\n  \"schema_version\": {},\n  \"projections\": []\n}}\n",
+            projections["schema_version"]
+        ),
     )
     .expect("registry write");
     git(

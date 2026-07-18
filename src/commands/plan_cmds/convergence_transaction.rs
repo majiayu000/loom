@@ -22,7 +22,8 @@ use super::super::projection_executor::{
     PreparedProjection, PreparedProjectionArtifact, ProjectionExecutionContext,
     ProjectionExecutionInput, ProjectionRollbackArtifact, activate_prepared_projection,
     discard_prepared_projection, execute_convergence_projection,
-    validate_prepared_projection_artifact, validate_projection_rollback_artifact_for_finalize,
+    validate_prepared_projection_artifact, validate_projection_artifact_layout,
+    validate_projection_rollback_artifact_for_finalize,
     validate_projection_rollback_artifact_for_rollback,
 };
 use super::super::projections::{project_skill_to_target, upsert_projection};
@@ -268,7 +269,8 @@ pub(super) fn apply_convergence(
                         "message": validation.message,
                     }));
                 } else {
-                    rollback_errors = rollback_journal(app, &paths, &journal_path, &mut journal);
+                    rollback_errors =
+                        rollback_journal(app, &plan, &paths, &journal_path, &mut journal);
                 }
             }
             if rollback_errors.is_empty()
@@ -287,7 +289,7 @@ pub(super) fn apply_convergence(
                 }
             }
             if rollback_errors.is_empty() {
-                rollback_errors.extend(finish_transaction(&journal_path, &mut journal));
+                rollback_errors.extend(finish_transaction(app, &plan, &journal_path, &mut journal));
             }
             if rollback_errors.is_empty() {
                 cleanup_journal(&journal_path, &journal).map_err(map_io)?;
@@ -298,7 +300,7 @@ pub(super) fn apply_convergence(
     journal.result = Some(output.clone());
     journal.phase = TransactionPhase::CommittedCleanupPending;
     save_journal(&journal_path, &journal)?;
-    let cleanup_errors = finish_transaction(&journal_path, &mut journal);
+    let cleanup_errors = finish_transaction(app, &plan, &journal_path, &mut journal);
     if !cleanup_errors.is_empty() {
         return Err(CommandFailure::new(
             ErrorCode::IoError,
@@ -556,10 +558,12 @@ fn cleanup_journal(path: &Path, journal: &TransactionJournal) -> std::io::Result
 }
 
 fn finish_committed_cleanup(
+    app: &App,
+    plan: &SkillConvergencePlan,
     journal_path: &Path,
     journal: &mut TransactionJournal,
 ) -> std::result::Result<(), CommandFailure> {
-    let errors = finish_transaction(journal_path, journal);
+    let errors = finish_transaction(app, plan, journal_path, journal);
     if !errors.is_empty() {
         return Err(CommandFailure::new(
             ErrorCode::IoError,

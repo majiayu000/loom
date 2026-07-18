@@ -20,7 +20,8 @@ pub(crate) use activation::activate_after_mutation;
 pub(crate) use activation::{activate_prepared_projection, discard_prepared_projection};
 pub(super) use ownership::{map_ownership_fingerprint_error, projection_ownership_fingerprint};
 pub(crate) use validation::{
-    validate_prepared_projection_artifact, validate_projection_rollback_artifact_for_finalize,
+    validate_prepared_projection_artifact, validate_projection_artifact_layout,
+    validate_projection_rollback_artifact_for_finalize,
     validate_projection_rollback_artifact_for_rollback,
 };
 

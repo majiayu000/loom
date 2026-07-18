@@ -57,7 +57,8 @@ use convergence::activate_after_mutation;
 pub(crate) use convergence::{
     PreparedProjection, PreparedProjectionArtifact, ProjectionActivationOutput,
     ProjectionRollbackArtifact, activate_prepared_projection, discard_prepared_projection,
-    validate_prepared_projection_artifact, validate_projection_rollback_artifact_for_finalize,
+    validate_prepared_projection_artifact, validate_projection_artifact_layout,
+    validate_projection_rollback_artifact_for_finalize,
     validate_projection_rollback_artifact_for_rollback,
 };
 use convergence::{map_ownership_fingerprint_error, projection_ownership_fingerprint};

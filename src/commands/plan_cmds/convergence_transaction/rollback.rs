@@ -2,18 +2,12 @@ use super::*;
 
 pub(super) fn rollback_journal(
     app: &App,
+    plan: &SkillConvergencePlan,
     paths: &RegistryStatePaths,
     journal_path: &Path,
     journal: &mut TransactionJournal,
 ) -> Vec<Value> {
-    let mut errors = Vec::new();
-    for projection in &journal.projections[..journal.installed_projections] {
-        if let Some(artifact) = projection.rollback.as_ref()
-            && let Err(err) = validate_projection_rollback_artifact_for_rollback(artifact)
-        {
-            push_rollback_error(&mut errors, "validate_projection_rollback", err.message);
-        }
-    }
+    let mut errors = validate_batch_preflight(app, plan, journal, BatchOperation::Rollback);
     if !errors.is_empty() {
         return errors;
     }
@@ -122,17 +116,12 @@ fn rollback_fault(errors: &mut Vec<Value>, fault: &str) -> bool {
 }
 
 pub(super) fn finish_transaction(
+    app: &App,
+    plan: &SkillConvergencePlan,
     journal_path: &Path,
     journal: &mut TransactionJournal,
 ) -> Vec<Value> {
-    let mut errors = validate_transaction_artifacts(journal);
-    for projection in &journal.projections {
-        if let Some(artifact) = projection.rollback.as_ref()
-            && let Err(err) = validate_projection_rollback_artifact_for_finalize(artifact)
-        {
-            push_rollback_error(&mut errors, "validate_projection_finalize", err.message);
-        }
-    }
+    let mut errors = validate_batch_preflight(app, plan, journal, BatchOperation::Finalize);
     if !errors.is_empty() {
         return errors;
     }
@@ -212,5 +201,59 @@ pub(super) fn finish_transaction(
         &journal.artifact_owner_proof,
         &mut errors,
     );
+    errors
+}
+
+#[derive(Clone, Copy)]
+enum BatchOperation {
+    Rollback,
+    Finalize,
+}
+
+fn validate_batch_preflight(
+    app: &App,
+    plan: &SkillConvergencePlan,
+    journal: &TransactionJournal,
+    operation: BatchOperation,
+) -> Vec<Value> {
+    let mut errors = validate_transaction_artifacts(journal);
+    let selected_source = match selected_source_path(app, plan) {
+        Ok(path) => path,
+        Err(err) => {
+            push_rollback_error(&mut errors, "resolve_projection_source", err.message);
+            return errors;
+        }
+    };
+    for projection in &journal.projections {
+        if let Err(err) = validate_projection_artifact_layout(
+            Path::new(&projection.materialized_path),
+            &selected_source,
+            Path::new(&projection.staging_path),
+            Path::new(&projection.staging_owner),
+            projection.projection.as_ref(),
+            projection.prepared.as_ref(),
+            projection.rollback.as_ref(),
+        ) {
+            push_rollback_error(&mut errors, "validate_projection_layout", err.message);
+        }
+        if let Some(prepared) = projection.prepared.as_ref()
+            && let Err(err) = validate_prepared_projection_artifact(prepared)
+        {
+            push_rollback_error(&mut errors, "validate_prepared_projection", err.message);
+        }
+        if let Some(artifact) = projection.rollback.as_ref() {
+            let result = match operation {
+                BatchOperation::Rollback => {
+                    validate_projection_rollback_artifact_for_rollback(artifact)
+                }
+                BatchOperation::Finalize => {
+                    validate_projection_rollback_artifact_for_finalize(artifact)
+                }
+            };
+            if let Err(err) = result {
+                push_rollback_error(&mut errors, "validate_projection_rollback", err.message);
+            }
+        }
+    }
     errors
 }

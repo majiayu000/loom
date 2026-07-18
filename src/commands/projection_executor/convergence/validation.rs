@@ -48,6 +48,112 @@ pub(crate) fn validate_prepared_projection_artifact(
     Ok(())
 }
 
+pub(crate) fn validate_projection_artifact_layout(
+    expected_materialized_path: &std::path::Path,
+    expected_source_path: &std::path::Path,
+    expected_staging_path: &std::path::Path,
+    expected_staging_owner: &std::path::Path,
+    expected_projection: Option<&crate::state_model::RegistryProjectionInstance>,
+    prepared: Option<&PreparedProjectionArtifact>,
+    rollback: Option<&ProjectionRollbackArtifact>,
+) -> Result<(), CommandFailure> {
+    let finalize_claim = derived_claim(expected_staging_path, ".finalize-claim")?;
+    let rollback_cleanup_claim = derived_claim(expected_staging_path, ".pending-cleanup-claim")?;
+    let finalize_cleanup_claim = derived_claim(&finalize_claim, ".pending-cleanup-claim")?;
+    let prepared_cleanup_claim = derived_claim(expected_staging_path, ".prepared-cleanup-claim")?;
+    let controlled = [
+        expected_staging_path,
+        expected_staging_owner,
+        finalize_claim.as_path(),
+        rollback_cleanup_claim.as_path(),
+        finalize_cleanup_claim.as_path(),
+        prepared_cleanup_claim.as_path(),
+    ];
+    for (index, path) in controlled.iter().enumerate() {
+        if *path == expected_materialized_path || *path == expected_source_path {
+            return Err(layout_mismatch(
+                "derived projection artifact aliases live or source path",
+            ));
+        }
+        if controlled[..index].contains(path) {
+            return Err(layout_mismatch("derived projection artifact paths collide"));
+        }
+    }
+    if let Some(prepared) = prepared
+        && (expected_projection
+            .is_none_or(|expected| !projection_identity_matches(&prepared.projection, expected))
+            || prepared.materialized_path != expected_materialized_path
+            || prepared.source_path != expected_source_path
+            || prepared.staging_path != expected_staging_path)
+    {
+        return Err(layout_mismatch(
+            "prepared projection evidence does not match its reviewed journal paths",
+        ));
+    }
+    if let Some(rollback) = rollback {
+        let (materialized_path, artifact_path, expected_artifact_path) = match rollback {
+            ProjectionRollbackArtifact::Exchanged {
+                materialized_path,
+                backup_path,
+                ..
+            } => (materialized_path, backup_path, expected_staging_path),
+            ProjectionRollbackArtifact::Created {
+                materialized_path,
+                rollback_path,
+                ..
+            } => (materialized_path, rollback_path, expected_staging_path),
+            ProjectionRollbackArtifact::PendingCleanup {
+                materialized_path,
+                artifact_path,
+                reason,
+                ..
+            } => (
+                materialized_path,
+                artifact_path,
+                if *reason == PendingCleanupReason::FinalizeExchanged {
+                    finalize_claim.as_path()
+                } else {
+                    expected_staging_path
+                },
+            ),
+        };
+        if materialized_path != expected_materialized_path
+            || artifact_path != expected_artifact_path
+        {
+            return Err(layout_mismatch(
+                "projection rollback evidence does not match its reviewed journal paths",
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn projection_identity_matches(
+    actual: &crate::state_model::RegistryProjectionInstance,
+    expected: &crate::state_model::RegistryProjectionInstance,
+) -> bool {
+    actual.instance_id == expected.instance_id
+        && actual.skill_id == expected.skill_id
+        && actual.binding_id == expected.binding_id
+        && actual.target_id == expected.target_id
+        && actual.materialized_path == expected.materialized_path
+        && actual.method == expected.method
+}
+
+fn derived_claim(
+    path: &std::path::Path,
+    suffix: &str,
+) -> Result<std::path::PathBuf, CommandFailure> {
+    let name = path.file_name().ok_or_else(|| {
+        layout_mismatch("projection artifact path has no deterministic claim name")
+    })?;
+    Ok(path.with_file_name(format!("{}{suffix}", name.to_string_lossy())))
+}
+
+fn layout_mismatch(message: &str) -> CommandFailure {
+    CommandFailure::new(ErrorCode::StateCorrupt, message)
+}
+
 pub(crate) fn validate_projection_rollback_artifact_for_finalize(
     artifact: &ProjectionRollbackArtifact,
 ) -> Result<(), CommandFailure> {
@@ -191,16 +297,7 @@ fn sibling_claim(
     suffix: &str,
     artifact: &ProjectionRollbackArtifact,
 ) -> Result<std::path::PathBuf, CommandFailure> {
-    let name = path.file_name().ok_or_else(|| {
-        with_recovery_details(
-            CommandFailure::new(
-                ErrorCode::StateCorrupt,
-                "projection artifact path has no file name",
-            ),
-            artifact,
-        )
-    })?;
-    Ok(path.with_file_name(format!("{}{suffix}", name.to_string_lossy())))
+    derived_claim(path, suffix).map_err(|err| with_recovery_details(err, artifact))
 }
 
 fn validate_artifact_state(

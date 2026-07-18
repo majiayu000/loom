@@ -17,7 +17,7 @@ use crate::types::ErrorCode;
 
 use super::super::codex_visibility::projection_path_is_safe_symlink;
 use super::super::file_ops::{create_declared_path_backup, restore_path_from_backup};
-use super::super::helpers::{commit_registry_state, map_git, map_io, map_lock, map_registry_state};
+use super::super::helpers::{map_git, map_io, map_lock, map_registry_state};
 use super::super::projection_executor::{
     ProjectionExecutionContext, ProjectionExecutionInput, execute_prepared_convergence_projection,
     finish_convergence_projection, prepare_convergence_projection, rollback_convergence_projection,
@@ -28,6 +28,7 @@ use super::super::skill_cmds::shared::{maybe_skill_fault, push_rollback_error};
 use super::super::{App, CommandFailure};
 use super::{PLAN_PROTOCOL_VERSION, plan_failure};
 
+mod recovery_evidence;
 mod recovery_support;
 use recovery_support::*;
 
@@ -44,6 +45,8 @@ struct TransactionJournal {
     source_staging: Option<String>,
     projections: Vec<ProjectionBackup>,
     original_projections: RegistryProjectionsFile,
+    installed_projections: usize,
+    expected_projections: Option<RegistryProjectionsFile>,
     source_head: Option<String>,
     source_commit: Option<String>,
     result: Option<Value>,
@@ -62,6 +65,7 @@ enum TransactionPhase {
     InstallingProjections,
     ProjectionsSwapped,
     CommittingRegistry,
+    RollingBack,
     CommittedCleanupPending,
     RolledBackCleanupPending,
 }
@@ -171,6 +175,8 @@ pub(super) fn apply_convergence(
         source_staging,
         projections: projection_backups,
         original_projections: snapshot.projections.clone(),
+        installed_projections: 0,
+        expected_projections: None,
         source_head: None,
         source_commit: None,
         result: None,
@@ -187,6 +193,7 @@ pub(super) fn apply_convergence(
     }
     journal.phase = TransactionPhase::Prepared;
     save_journal(&journal_path, &journal)?;
+    maybe_skill_fault("convergence_interrupt_after_prepared")?;
 
     let result = execute_local_transaction(
         app,
@@ -203,7 +210,25 @@ pub(super) fn apply_convergence(
             return Err(err);
         }
         Err(err) => {
-            let mut rollback_errors = rollback_journal(app, &paths, &journal);
+            journal.phase = TransactionPhase::RollingBack;
+            let mut rollback_errors = save_journal(&journal_path, &journal)
+                .err()
+                .map(|save_err| {
+                    vec![json!({
+                        "step": "persist_rolling_back",
+                        "message": save_err.message,
+                    })]
+                })
+                .unwrap_or_default();
+            if rollback_errors.is_empty() {
+                rollback_errors = rollback_journal(app, &paths, &journal);
+            }
+            if rollback_errors.is_empty()
+                && std::env::var("LOOM_ROLLBACK_FAULT_INJECT").ok().as_deref()
+                    == Some("convergence_interrupt_after_rollback")
+            {
+                return Err(err);
+            }
             if rollback_errors.is_empty() {
                 journal.phase = TransactionPhase::RolledBackCleanupPending;
                 if let Err(save_err) = save_journal(&journal_path, &journal) {
@@ -301,8 +326,11 @@ fn execute_local_transaction(
         }
         upsert_projection(&mut projections, projection.clone());
         applied.push(projection.instance_id);
+        journal.installed_projections += 1;
+        save_journal(journal_path, journal)?;
         maybe_skill_fault("convergence_after_projection_swap")?;
     }
+    journal.expected_projections = Some(projections.clone());
     journal.phase = TransactionPhase::ProjectionsSwapped;
     save_journal(journal_path, journal)?;
     paths
@@ -311,10 +339,12 @@ fn execute_local_transaction(
     maybe_skill_fault("convergence_after_registry_save")?;
     journal.phase = TransactionPhase::CommittingRegistry;
     save_journal(journal_path, journal)?;
-    let registry_commit = commit_registry_state(
+    let registry_commit = gitops::commit_paths_if_changed(
         &app.ctx,
+        &["state/registry/projections.json"],
         &format!("skill({}): record convergence projections", plan.skill),
-    )?;
+    )
+    .map_err(map_git)?;
     maybe_skill_fault("convergence_interrupt_committing_registry")?;
     Ok(json!({
         "skill": plan.skill,
@@ -431,7 +461,12 @@ fn rollback_journal(
     if let Err(err) = paths.save_projections(&journal.original_projections) {
         push_rollback_error(&mut errors, "restore_registry_projections", err);
     }
-    for projection in journal.projections.iter().rev() {
+    for projection in journal
+        .projections
+        .iter()
+        .take(journal.installed_projections)
+        .rev()
+    {
         errors.extend(rollback_convergence_projection(
             Path::new(&projection.materialized_path),
             projection.backup.as_ref(),
@@ -721,6 +756,7 @@ fn interruption_fault_active() -> bool {
                 | "convergence_interrupt_committing_registry"
                 | "convergence_interrupt_after_owner_root_creation"
                 | "convergence_interrupt_after_owner_marker_write"
+                | "convergence_interrupt_after_prepared"
         )
     )
 }

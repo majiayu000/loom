@@ -393,7 +393,7 @@ fn validate_execution_input(
         return Err(CommandFailure::new(
             ErrorCode::TargetNotManaged,
             format!(
-                "target '{}' has ownership '{}' and cannot be projected into",
+                "target '{}' has ownership '{}' and cannot be written",
                 input.target.target_id, input.target.ownership
             ),
         ));
@@ -435,7 +435,7 @@ fn materialize_projection<const CONVERGENCE: bool>(
             return Err(CommandFailure::new(
                 ErrorCode::ProjectionMethodUnsupported,
                 format!(
-                    "target '{}' filesystem does not support symlink projection: {}. retry with --method copy",
+                    "target '{}' does not support symlink projections: {}",
                     input.target.target_id,
                     probe.reason.unwrap_or_else(|| "unknown reason".to_string())
                 ),
@@ -460,7 +460,7 @@ fn materialize_projection<const CONVERGENCE: bool>(
             return Err(CommandFailure::new(
                 ErrorCode::ProjectionConflict,
                 format!(
-                    "projection path '{}' already exists and is not a safe Loom-owned {} projection",
+                    "path '{}' is not a safe Loom-owned {} projection",
                     input.materialized_path.display(),
                     projection_method_as_str(input.method)
                 ),

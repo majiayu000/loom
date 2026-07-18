@@ -56,11 +56,34 @@ fn retry_retains_superseded_registry_index_generation() {
         .join("state/transactions/convergence-demo.json");
     let journal: Value =
         serde_json::from_slice(&fs::read(&journal_path).expect("journal")).expect("parse journal");
-    let generation = journal["registry_index_generation"]
+    let first_attempt = journal["registry_index_attempts"]
+        .as_array()
+        .expect("registry index attempts")
+        .iter()
+        .find(|attempt| attempt["purpose"] == json!("commit"))
+        .expect("registry commit index attempt");
+    let generation = first_attempt["generation"]
         .as_str()
-        .expect("registry index generation");
-    let artifact_root = Path::new(journal["artifact_root"].as_str().expect("artifact root"));
-    let superseded = artifact_root.join(format!("registry-commit-{generation}-base-index"));
+        .expect("registry index generation")
+        .to_string();
+    let superseded = Path::new(
+        first_attempt["base_index"]
+            .as_str()
+            .expect("base index path"),
+    )
+    .to_path_buf();
+    assert!(first_attempt["base_digest"].as_str().is_some());
+    assert!(first_attempt["prepared_digest"].as_str().is_some());
+    assert!(first_attempt["commit_digest"].as_str().is_some());
+    assert!(
+        Path::new(
+            first_attempt["commit_index"]
+                .as_str()
+                .expect("commit index path")
+        )
+        .is_file(),
+        "commit index evidence was deleted"
+    );
     assert!(superseded.is_file(), "first generation index is absent");
     let foreign = b"foreign replacement must survive";
     fs::write(&superseded, foreign).expect("replace superseded index");
@@ -71,6 +94,22 @@ fn retry_retains_superseded_registry_index_generation() {
         fs::read(&superseded).expect("read superseded index"),
         foreign,
         "recovery deleted or overwrote a superseded generation"
+    );
+    let recovered_journal: Value =
+        serde_json::from_slice(&fs::read(&journal_path).expect("recovered journal"))
+            .expect("parse recovered journal");
+    let attempts = recovered_journal["registry_index_attempts"]
+        .as_array()
+        .expect("recovered registry index attempts");
+    assert!(attempts.len() >= 2, "retry did not append a new generation");
+    let superseded_attempt = attempts
+        .iter()
+        .find(|attempt| attempt["generation"] == json!(generation))
+        .expect("superseded generation evidence");
+    assert_eq!(superseded_attempt["state"], json!("abandoned"));
+    assert_eq!(
+        superseded_attempt["base_index"],
+        json!(superseded.display().to_string())
     );
 }
 

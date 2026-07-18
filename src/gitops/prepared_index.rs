@@ -139,6 +139,45 @@ pub fn create_prepared_commit(
     parent: &str,
     message: &str,
 ) -> Result<String> {
+    create_prepared_commit_inner(
+        ctx,
+        prepared_index,
+        commit_index,
+        paths,
+        parent,
+        message,
+        false,
+    )
+}
+
+pub fn create_prepared_commit_retaining_index(
+    ctx: &AppContext,
+    prepared_index: &Path,
+    commit_index: &Path,
+    paths: &[&str],
+    parent: &str,
+    message: &str,
+) -> Result<String> {
+    create_prepared_commit_inner(
+        ctx,
+        prepared_index,
+        commit_index,
+        paths,
+        parent,
+        message,
+        true,
+    )
+}
+
+fn create_prepared_commit_inner(
+    ctx: &AppContext,
+    prepared_index: &Path,
+    commit_index: &Path,
+    paths: &[&str],
+    parent: &str,
+    message: &str,
+    retain_index: bool,
+) -> Result<String> {
     let paths = eligible_paths(ctx, paths)?;
     if paths.is_empty() {
         return Err(anyhow!("prepared commit has no eligible paths"));
@@ -173,6 +212,9 @@ pub fn create_prepared_commit(
         super::ensure_local_identity(ctx)?;
         run_git(ctx, &["commit-tree", &tree, "-p", parent, "-m", message])
     })();
+    if retain_index {
+        return result;
+    }
     match (result, fs::remove_file(commit_index)) {
         (Ok(commit), Ok(())) => Ok(commit),
         (Ok(_), Err(cleanup)) => Err(anyhow!(

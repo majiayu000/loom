@@ -221,8 +221,18 @@ fn registry_recovery_adopts_only_its_durable_index_lock() {
         .as_str()
         .expect("registry commit");
     let source_head = journal["source_head"].as_str().expect("source head");
-    let prepared =
-        Path::new(journal["artifact_root"].as_str().expect("artifact root")).join("registry-index");
+    let commit_attempt = journal["registry_index_attempts"]
+        .as_array()
+        .expect("registry index attempts")
+        .iter()
+        .rev()
+        .find(|attempt| attempt["purpose"] == json!("commit"))
+        .expect("registry commit index attempt");
+    let prepared = Path::new(
+        commit_attempt["prepared_index"]
+            .as_str()
+            .expect("prepared index"),
+    );
     fs::copy(&prepared, fixture.root.path().join(".git/index.lock"))
         .expect("simulate retained transaction lock");
     git(

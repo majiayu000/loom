@@ -198,6 +198,8 @@ pub(super) fn finish_transaction(
         &mut errors,
     );
     if errors.is_empty() {
+        let committed = journal.phase == TransactionPhase::CommittedCleanupPending;
+        super::registry_commit::terminalize_registry_index_attempts(journal, committed);
         for attempt in &mut journal.ownership_attempts {
             attempt.state = match attempt.state {
                 OwnershipAttemptState::Activated => OwnershipAttemptState::Retained,

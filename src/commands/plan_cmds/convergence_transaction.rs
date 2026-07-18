@@ -92,7 +92,7 @@ struct TransactionJournal {
     #[serde(default)]
     registry_staged_index_digest: Option<String>,
     #[serde(default)]
-    registry_index_generation: Option<String>,
+    registry_index_attempts: Vec<registry_commit::RegistryIndexAttempt>,
     rollback_head: Option<String>,
     rollback_index_digest: Option<String>,
     result: Option<Value>,
@@ -310,7 +310,7 @@ pub(super) fn apply_convergence(
         source_staged_index_digest: None,
         registry_commit: None,
         registry_staged_index_digest: None,
-        registry_index_generation: None,
+        registry_index_attempts: Vec::new(),
         rollback_head: None,
         rollback_index_digest: None,
         result: None,
@@ -384,6 +384,7 @@ pub(super) fn apply_convergence(
                 return Err(err);
             }
             if rollback_errors.is_empty() {
+                registry_commit::terminalize_registry_index_attempts(&mut journal, false);
                 journal.phase = TransactionPhase::RolledBackCleanupPending;
                 if let Err(save_err) = save_journal(&journal_path, &journal) {
                     rollback_errors.push(json!({

@@ -113,6 +113,7 @@ pub(super) fn recover_journal(
                 )
                 .with_rollback_errors(errors));
             }
+            super::registry_commit::terminalize_registry_index_attempts(&mut journal, false);
             journal.phase = TransactionPhase::RolledBackCleanupPending;
             save_journal(journal_path, &journal)?;
             finish_committed_cleanup(journal_path, &mut journal)?;
@@ -185,6 +186,7 @@ pub(super) fn recover_journal(
         )
         .with_rollback_errors(errors));
     }
+    super::registry_commit::terminalize_registry_index_attempts(&mut journal, false);
     journal.phase = TransactionPhase::RolledBackCleanupPending;
     save_journal(journal_path, &journal)?;
     finish_committed_cleanup(journal_path, &mut journal)?;
@@ -337,6 +339,7 @@ pub(super) fn cleanup_declared_artifacts(
     }
     errors.extend(retain_declared_attempts(journal));
     if errors.is_empty() {
+        super::registry_commit::terminalize_registry_index_attempts(journal, false);
         journal.phase = TransactionPhase::RolledBackArtifactsRetained;
         if let Err(err) = save_journal(journal_path, journal) {
             push_rollback_error(
@@ -369,6 +372,7 @@ fn validate_journal(
         )
         && owner_proof_is_valid(&plan.plan_id, &journal.artifact_owner_proof)
         && ownership_attempts_match_journal(journal)
+        && super::registry_commit::registry_index_attempts_valid(journal)
         && Path::new(&journal.index_backup) == Path::new(&journal.artifact_root).join("index")
         && journal.projections.len() == plan.projections.len();
     let previous_projections = gitops::run_git(

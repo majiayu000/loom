@@ -9,6 +9,8 @@ mod skill_convergence_guards;
 mod skill_convergence_recovery_identity;
 #[path = "skill_convergence/recovery_safety.rs"]
 mod skill_convergence_recovery_safety;
+#[path = "skill_convergence/registry_rollback.rs"]
+mod skill_convergence_registry_rollback;
 #[path = "skill_convergence/remaining_review.rs"]
 mod skill_convergence_remaining_review;
 #[path = "skill_convergence/source_only.rs"]

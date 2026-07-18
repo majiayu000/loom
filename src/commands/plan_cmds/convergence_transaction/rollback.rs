@@ -1,4 +1,5 @@
 use super::recovery_evidence::validate_mutated_surfaces;
+use super::recovery_support::restore_registry_projections_if_owned;
 use super::*;
 
 pub(super) fn restore_activated_projections(journal: &mut TransactionJournal) -> Vec<Value> {
@@ -39,9 +40,10 @@ pub(super) fn rollback_journal(
         return errors;
     }
     if plan.registry.initialized
-        && let Err(err) = paths.save_projections(&journal.original_projections)
+        && let Err(err) = restore_registry_projections_if_owned(paths, journal)
     {
-        push_rollback_error(&mut errors, "restore_registry_projections", err);
+        push_rollback_error(&mut errors, "restore_registry_projections", err.message);
+        return errors;
     }
     if rollback_fault(&mut errors, "convergence_interrupt_after_registry_restore") {
         return errors;

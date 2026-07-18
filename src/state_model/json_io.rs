@@ -23,6 +23,42 @@ use serde::de::DeserializeOwned;
 use crate::fs_util::exchange_paths_atomic;
 use crate::fs_util::{append_jsonl_raw, write_atomic};
 
+const CAS_JOURNAL_MAGIC: &[u8; 8] = b"LOOMCAS1";
+
+struct JsonFileLock {
+    _file: fs::File,
+}
+
+impl JsonFileLock {
+    fn acquire(path: &Path) -> std::io::Result<Self> {
+        let parent = path.parent().ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::InvalidInput, "JSON path has no parent")
+        })?;
+        let registry = if parent.file_name().is_some_and(|name| name == "registry") {
+            Some(parent)
+        } else {
+            parent
+                .parent()
+                .filter(|path| path.file_name().is_some_and(|name| name == "registry"))
+        };
+        let lock_dir = if let Some(registry) = registry {
+            registry.parent().unwrap_or(registry).join("locks")
+        } else {
+            parent.join(".loom-locks")
+        };
+        fs::create_dir_all(&lock_dir)?;
+        let lock = lock_dir.join("registry-json.lock");
+        let file = OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(lock)?;
+        file.lock()?;
+        Ok(Self { _file: file })
+    }
+}
+
 pub(super) fn ensure_json_file<T>(path: &Path, value: &T) -> Result<()>
 where
     T: Serialize,
@@ -57,6 +93,12 @@ where
     T: Serialize,
 {
     let raw = serialize_json_file(value)?;
+    fs::create_dir_all(
+        path.parent()
+            .context("cannot write json file without parent")?,
+    )?;
+    let _lock = JsonFileLock::acquire(path)?;
+    recover_json_cas(path)?;
     Ok(write_atomic(path, &raw)?)
 }
 
@@ -76,63 +118,117 @@ where
         .parent()
         .context("cannot replace json file without parent")?;
     fs::create_dir_all(parent)?;
-    let candidate = parent.join(format!(
-        ".{}.cas-{}",
-        path.file_name().unwrap_or_default().to_string_lossy(),
-        uuid::Uuid::new_v4()
-    ));
-    let mut file = OpenOptions::new()
-        .create_new(true)
-        .write(true)
-        .open(&candidate)
-        .with_context(|| format!("failed to create json candidate {}", candidate.display()))?;
-    file.write_all(raw.as_bytes())?;
-    file.sync_all()?;
-    drop(file);
-
-    Ok(compare_exchange_json_candidate(
-        path,
-        &candidate,
-        expected.as_bytes(),
-        raw.as_bytes(),
-    )?)
-}
-
-#[cfg(any(
-    target_os = "macos",
-    target_os = "ios",
-    target_os = "linux",
-    target_os = "android"
-))]
-fn compare_exchange_json_candidate(
-    path: &Path,
-    candidate: &Path,
-    expected: &[u8],
-    owned_replacement: &[u8],
-) -> std::io::Result<bool> {
-    if let Err(error) = exchange_paths_atomic(candidate, path) {
-        return match fs::remove_file(candidate) {
-            Ok(()) => Err(error),
-            Err(cleanup) => Err(std::io::Error::other(format!(
-                "JSON exchange failed: {error}; cleanup failed: {cleanup}"
-            ))),
-        };
-    }
-    let matches = fs::read(candidate).is_ok_and(|raw| raw == expected);
-    if !matches {
-        restore_json_candidate(path, candidate, owned_replacement)?;
+    let _lock = JsonFileLock::acquire(path)?;
+    recover_json_cas(path)?;
+    let current = fs::read(path)?;
+    if serde_json::from_slice::<serde_json::Value>(&current)?
+        != serde_json::from_slice::<serde_json::Value>(expected.as_bytes())?
+    {
         return Ok(false);
     }
-    if let Err(cleanup) = fs::remove_file(candidate) {
-        let restore = restore_json_candidate(path, candidate, owned_replacement);
-        return match restore {
-            Ok(()) => Err(cleanup),
-            Err(error) => Err(std::io::Error::other(format!(
-                "JSON cleanup failed: {cleanup}; restoration failed: {error}"
-            ))),
-        };
+    let expected = current;
+    let candidate = path.with_extension("loom-cas-candidate");
+    let journal = path.with_extension("loom-cas-journal");
+    if candidate.exists() {
+        return Err(anyhow!("untracked JSON CAS evidence retained"));
     }
-    Ok(true)
+    let journal_raw = encode_cas_journal(0, &expected, raw.as_bytes());
+    crate::fs_util::write_atomic_bytes(&journal, &journal_raw)?;
+    sync_parent(path)?;
+    crate::fs_util::write_atomic_bytes(&candidate, raw.as_bytes())?;
+    sync_parent(path)?;
+
+    compare_exchange_json_candidate(path, &candidate)?;
+    sync_parent(path)?;
+    Ok(matches!(recover_json_cas(path)?, CasRecovery::Committed))
+}
+
+enum CasRecovery {
+    None,
+    Committed,
+    Aborted,
+}
+
+fn encode_cas_journal(state: u8, expected: &[u8], replacement: &[u8]) -> Vec<u8> {
+    let mut raw = Vec::with_capacity(17 + expected.len() + replacement.len());
+    raw.extend_from_slice(CAS_JOURNAL_MAGIC);
+    raw.push(state);
+    raw.extend_from_slice(&(expected.len() as u64).to_le_bytes());
+    raw.extend_from_slice(expected);
+    raw.extend_from_slice(replacement);
+    raw
+}
+
+fn decode_cas_journal(raw: &[u8]) -> std::io::Result<(u8, &[u8], &[u8])> {
+    if raw.len() < 17 || &raw[..8] != CAS_JOURNAL_MAGIC || raw[8] > 2 {
+        return Err(std::io::Error::other("invalid JSON CAS journal header"));
+    }
+    let expected_len = usize::try_from(u64::from_le_bytes(raw[9..17].try_into().unwrap()))
+        .map_err(|_| std::io::Error::other("invalid JSON CAS journal length"))?;
+    let split = 17usize
+        .checked_add(expected_len)
+        .filter(|split| *split <= raw.len())
+        .ok_or_else(|| std::io::Error::other("truncated JSON CAS journal"))?;
+    Ok((raw[8], &raw[17..split], &raw[split..]))
+}
+
+fn recover_json_cas(path: &Path) -> std::io::Result<CasRecovery> {
+    let journal = path.with_extension("loom-cas-journal");
+    let raw = match fs::read(&journal) {
+        Ok(raw) => raw,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(CasRecovery::None),
+        Err(error) => return Err(error),
+    };
+    let (state, expected, replacement) = decode_cas_journal(&raw)?;
+    if state == 0 {
+        recover_json_cas_platform(path, &journal, expected, replacement)
+    } else {
+        finish_cas_decision(path, &journal, expected, replacement, state)
+    }
+}
+
+fn record_cas_decision(
+    path: &Path,
+    journal: &Path,
+    expected: &[u8],
+    replacement: &[u8],
+    outcome: CasRecovery,
+) -> std::io::Result<CasRecovery> {
+    let state = match outcome {
+        CasRecovery::Committed => 1,
+        CasRecovery::Aborted => 2,
+        CasRecovery::None => unreachable!("a CAS decision cannot be none"),
+    };
+    crate::fs_util::write_atomic_bytes(journal, &encode_cas_journal(state, expected, replacement))?;
+    sync_parent(path)?;
+    finish_cas_decision(path, journal, expected, replacement, state)
+}
+
+fn remove_if_exists(path: &Path) -> std::io::Result<()> {
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error),
+    }
+}
+
+fn finish_cas_recovery(path: &Path, journal: &Path, evidence: &Path) -> std::io::Result<()> {
+    remove_if_exists(evidence)?;
+    fs::remove_file(journal)?;
+    sync_parent(path)
+}
+
+#[cfg(unix)]
+fn sync_parent(path: &Path) -> std::io::Result<()> {
+    fs::File::open(path.parent().ok_or_else(|| {
+        std::io::Error::new(std::io::ErrorKind::InvalidInput, "JSON path has no parent")
+    })?)?
+    .sync_all()
+}
+
+#[cfg(not(unix))]
+fn sync_parent(_path: &Path) -> std::io::Result<()> {
+    Ok(())
 }
 
 #[cfg(any(
@@ -141,83 +237,144 @@ fn compare_exchange_json_candidate(
     target_os = "linux",
     target_os = "android"
 ))]
-fn restore_json_candidate(
+fn compare_exchange_json_candidate(path: &Path, candidate: &Path) -> std::io::Result<()> {
+    exchange_paths_atomic(candidate, path)
+}
+
+#[cfg(any(
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "linux",
+    target_os = "android"
+))]
+fn recover_json_cas_platform(
     path: &Path,
-    candidate: &Path,
-    owned_replacement: &[u8],
-) -> std::io::Result<()> {
-    exchange_paths_atomic(candidate, path)?;
-    match fs::read(candidate) {
-        Ok(displaced) if displaced == owned_replacement => fs::remove_file(candidate),
-        _ => {
-            let restore_latest = exchange_paths_atomic(candidate, path);
-            let evidence = candidate.display();
-            match restore_latest {
-                Ok(()) => Err(std::io::Error::other(format!(
-                    "unknown concurrent JSON retained at {evidence}"
-                ))),
-                Err(error) => Err(std::io::Error::other(format!(
-                    "unknown concurrent JSON at {evidence}; restoration failed: {error}"
-                ))),
-            }
+    journal: &Path,
+    expected: &[u8],
+    replacement: &[u8],
+) -> std::io::Result<CasRecovery> {
+    let candidate = path.with_extension("loom-cas-candidate");
+    let live = fs::read(path)?;
+    let staged = fs::read(&candidate).ok();
+    let outcome =
+        if live == expected && staged.as_deref().is_none_or(|staged| staged == replacement) {
+            CasRecovery::Aborted
+        } else if live == replacement && staged.as_deref().is_none_or(|staged| staged == expected) {
+            CasRecovery::Committed
+        } else if live == replacement && staged.is_some() {
+            exchange_paths_atomic(&candidate, path)?;
+            sync_parent(path)?;
+            return recover_json_cas_platform(path, journal, expected, replacement);
+        } else if staged.as_deref() == Some(replacement) {
+            CasRecovery::Aborted
+        } else {
+            return Err(std::io::Error::other("ambiguous JSON CAS retained"));
+        };
+    record_cas_decision(path, journal, expected, replacement, outcome)
+}
+
+#[cfg(any(
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "linux",
+    target_os = "android"
+))]
+fn finish_cas_decision(
+    path: &Path,
+    journal: &Path,
+    expected: &[u8],
+    replacement: &[u8],
+    state: u8,
+) -> std::io::Result<CasRecovery> {
+    let candidate = path.with_extension("loom-cas-candidate");
+    let owned = if state == 1 { expected } else { replacement };
+    match fs::read(&candidate) {
+        Ok(raw) if raw != owned => {
+            return Err(std::io::Error::other("unknown JSON CAS evidence retained"));
         }
+        _ => {}
     }
+    finish_cas_recovery(path, journal, &candidate)?;
+    Ok(if state == 1 {
+        CasRecovery::Committed
+    } else {
+        CasRecovery::Aborted
+    })
 }
 
 #[cfg(windows)]
-fn compare_exchange_json_candidate(
-    path: &Path,
-    candidate: &Path,
-    expected: &[u8],
-    owned_replacement: &[u8],
-) -> std::io::Result<bool> {
-    let backup = path.with_extension(format!("cas-backup-{}", uuid::Uuid::new_v4()));
+fn compare_exchange_json_candidate(path: &Path, candidate: &Path) -> std::io::Result<()> {
+    let backup = path.with_extension("loom-cas-backup");
     replace_file_with_backup_windows(path, candidate, &backup)?;
-    let matches = fs::read(&backup).is_ok_and(|raw| raw == expected);
-    if !matches {
-        restore_json_candidate_windows(path, &backup, candidate, owned_replacement)?;
-        return Ok(false);
-    }
-    if let Err(cleanup) = fs::remove_file(&backup) {
-        let restore = restore_json_candidate_windows(path, &backup, candidate, owned_replacement);
-        return match restore {
-            Ok(()) => Err(cleanup),
-            Err(error) => Err(std::io::Error::other(format!(
-                "JSON cleanup failed: {cleanup}; restoration failed: {error}"
-            ))),
-        };
-    }
-    Ok(true)
+    Ok(())
 }
 
 #[cfg(windows)]
-fn restore_json_candidate_windows(
+fn recover_json_cas_platform(
     path: &Path,
-    backup: &Path,
-    candidate: &Path,
-    owned_replacement: &[u8],
-) -> std::io::Result<()> {
-    replace_file_with_backup_windows(path, backup, candidate)?;
-    match fs::read(candidate) {
-        Ok(displaced) if displaced == owned_replacement => fs::remove_file(candidate),
-        _ => {
-            let (restore_latest, evidence) =
-                match replace_file_with_backup_windows(path, candidate, backup) {
-                    Ok(()) => (None, backup),
-                    Err(error) => (Some(error), candidate),
-                };
-            match restore_latest {
-                None => Err(std::io::Error::other(format!(
-                    "unknown concurrent JSON retained at {}",
-                    evidence.display()
-                ))),
-                Some(error) => Err(std::io::Error::other(format!(
-                    "unknown concurrent JSON at {}; restoration failed: {error}",
-                    evidence.display()
-                ))),
-            }
+    journal: &Path,
+    expected: &[u8],
+    replacement: &[u8],
+) -> std::io::Result<CasRecovery> {
+    let candidate = path.with_extension("loom-cas-candidate");
+    let backup = path.with_extension("loom-cas-backup");
+    let live = fs::read(path)?;
+    let staged = fs::read(&candidate).ok();
+    let displaced = fs::read(&backup).ok();
+    match (live.as_slice(), staged.as_deref(), displaced.as_deref()) {
+        (live, Some(staged), None) if live == expected && staged == replacement => {
+            record_cas_decision(path, journal, expected, replacement, CasRecovery::Aborted)
         }
+        (live, None, None) if live == expected => {
+            record_cas_decision(path, journal, expected, replacement, CasRecovery::Aborted)
+        }
+        (live, None, Some(old)) if live == replacement && old == expected => {
+            record_cas_decision(path, journal, expected, replacement, CasRecovery::Committed)
+        }
+        (live, None, Some(old)) if live == replacement && old != expected => {
+            replace_file_with_backup_windows(path, &backup, &candidate)?;
+            recover_json_cas_platform(path, journal, expected, replacement)
+        }
+        (live, Some(staged), None) if live != expected && staged == replacement => {
+            record_cas_decision(path, journal, expected, replacement, CasRecovery::Aborted)
+        }
+        _ => Err(std::io::Error::other("ambiguous JSON CAS retained")),
     }
+}
+
+#[cfg(windows)]
+fn finish_cas_decision(
+    path: &Path,
+    journal: &Path,
+    expected: &[u8],
+    replacement: &[u8],
+    state: u8,
+) -> std::io::Result<CasRecovery> {
+    let candidate = path.with_extension("loom-cas-candidate");
+    let backup = path.with_extension("loom-cas-backup");
+    let (evidence, owned) = if state == 1 {
+        (&backup, expected)
+    } else {
+        (&candidate, replacement)
+    };
+    match fs::read(evidence) {
+        Ok(raw) if raw != owned => {
+            return Err(std::io::Error::other("unknown JSON CAS evidence retained"));
+        }
+        _ => {}
+    }
+    let unexpected = if state == 1 { &candidate } else { &backup };
+    if unexpected.exists() {
+        return Err(std::io::Error::other(
+            "unexpected JSON CAS evidence retained",
+        ));
+    }
+    finish_cas_recovery(path, journal, evidence)?;
+    Ok(if state == 1 {
+        CasRecovery::Committed
+    } else {
+        CasRecovery::Aborted
+    })
 }
 
 #[cfg(windows)]
@@ -272,19 +429,50 @@ fn replace_file_with_backup_windows(
     target_os = "android",
     windows
 )))]
-fn compare_exchange_json_candidate(
-    _path: &Path,
-    candidate: &Path,
+fn compare_exchange_json_candidate(_path: &Path, candidate: &Path) -> std::io::Result<()> {
+    Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "atomic JSON compare-and-exchange is unsupported",
+    ))
+}
+
+#[cfg(not(any(
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "linux",
+    target_os = "android",
+    windows
+)))]
+fn recover_json_cas_platform(
+    path: &Path,
+    _journal: &Path,
     _expected: &[u8],
-    _owned_replacement: &[u8],
-) -> std::io::Result<bool> {
-    let cleanup = fs::remove_file(candidate)
-        .err()
-        .map_or_else(|| "succeeded".to_string(), |error| error.to_string());
-    Err(std::io::Error::other(format!(
-        "atomic JSON compare-and-exchange is unsupported; candidate cleanup: {}",
-        cleanup
-    )))
+    _replacement: &[u8],
+) -> std::io::Result<CasRecovery> {
+    Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "JSON CAS recovery is unsupported",
+    ))
+}
+
+#[cfg(not(any(
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "linux",
+    target_os = "android",
+    windows
+)))]
+fn finish_cas_decision(
+    path: &Path,
+    _journal: &Path,
+    _expected: &[u8],
+    _replacement: &[u8],
+    _state: u8,
+) -> std::io::Result<CasRecovery> {
+    Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "JSON CAS recovery is unsupported",
+    ))
 }
 
 pub(super) fn serialize_json_file<T: Serialize>(value: &T) -> Result<String> {
@@ -296,6 +484,19 @@ pub(super) fn serialize_json_file<T: Serialize>(value: &T) -> Result<String> {
 /// Minimizes the crash window for multi-file state updates. On a rename
 /// failure midway, any temp files not yet renamed are cleaned up.
 pub(super) fn write_atomic_batch(files: &[(&Path, &str)]) -> Result<()> {
+    let lock = if let Some((path, _)) = files.first() {
+        fs::create_dir_all(
+            path.parent()
+                .context("cannot write batch file without parent")?,
+        )?;
+        Some(JsonFileLock::acquire(path)?)
+    } else {
+        None
+    };
+    for (path, _) in files {
+        recover_json_cas(path)?;
+    }
+
     let mut staged: Vec<(PathBuf, &Path)> = Vec::with_capacity(files.len());
 
     // Phase 1: write all temp files
@@ -330,6 +531,7 @@ pub(super) fn write_atomic_batch(files: &[(&Path, &str)]) -> Result<()> {
         }
     }
 
+    drop(lock);
     Ok(())
 }
 
@@ -363,6 +565,8 @@ pub(super) fn read_json_file<T>(path: &Path) -> Result<T>
 where
     T: DeserializeOwned,
 {
+    let _lock = JsonFileLock::acquire(path)?;
+    recover_json_cas(path)?;
     let raw = fs::read_to_string(path)
         .with_context(|| format!("failed to read registry json file {}", path.display()))?;
     serde_json::from_str(&raw)
@@ -438,24 +642,92 @@ mod tests {
         target_os = "android"
     ))]
     #[test]
-    fn cas_restore_preserves_a_second_concurrent_value() {
+    fn cas_recovery_handles_each_unix_crash_boundary() {
         let root =
             std::env::temp_dir().join(format!("loom-json-cas-restore-{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(&root).expect("create CAS restore fixture");
         let path = root.join("state.json");
-        let candidate = root.join("candidate.json");
+        let expected = serialize_json_file(&json!({"value": "reviewed"})).unwrap();
         let replacement = serialize_json_file(&json!({"value": "replacement"})).unwrap();
-        let first_external = json!({"value": "first-external"});
-        let latest_external = json!({"value": "latest-external"});
-        write_json_file(&path, &replacement).expect("write transaction replacement");
-        write_json_file(&candidate, &first_external).expect("write first external value");
-        write_json_file(&path, &latest_external).expect("write latest external value");
+        let external = serialize_json_file(&json!({"value": "external"})).unwrap();
+        let candidate = path.with_extension("loom-cas-candidate");
+        let journal = path.with_extension("loom-cas-journal");
 
-        let error = restore_json_candidate(&path, &candidate, replacement.as_bytes())
-            .expect_err("unknown displaced value must fail closed");
-        assert!(error.to_string().contains("unknown concurrent JSON"));
-        assert_eq!(read_json_file::<Value>(&path).unwrap(), latest_external);
-        assert_eq!(read_json_file::<Value>(&candidate).unwrap(), first_external);
+        let stage = |live: &str, staged: Option<&str>| {
+            fs::write(&path, live).unwrap();
+            fs::write(
+                &journal,
+                encode_cas_journal(0, expected.as_bytes(), replacement.as_bytes()),
+            )
+            .unwrap();
+            if let Some(staged) = staged {
+                fs::write(&candidate, staged).unwrap();
+            }
+        };
+
+        stage(&expected, Some(&replacement));
+        assert_eq!(
+            read_json_file::<Value>(&path).unwrap(),
+            json!({"value": "reviewed"})
+        );
+        assert!(!journal.exists() && !candidate.exists());
+
+        stage(&replacement, Some(&expected));
+        assert_eq!(
+            read_json_file::<Value>(&path).unwrap(),
+            json!({"value": "replacement"})
+        );
+        assert!(!journal.exists() && !candidate.exists());
+
+        stage(&replacement, Some(&external));
+        assert_eq!(
+            read_json_file::<Value>(&path).unwrap(),
+            json!({"value": "external"})
+        );
+        assert!(!journal.exists() && !candidate.exists());
+
+        stage(&external, Some(&expected));
+        let error =
+            read_json_file::<Value>(&path).expect_err("ambiguous evidence must fail closed");
+        assert!(error.to_string().contains("ambiguous JSON CAS retained"));
+        assert_eq!(fs::read(&path).unwrap(), external.as_bytes());
+        assert_eq!(fs::read(&candidate).unwrap(), expected.as_bytes());
+        assert!(journal.exists());
+
+        fs::remove_file(&candidate).unwrap();
+        fs::write(
+            &journal,
+            encode_cas_journal(1, expected.as_bytes(), replacement.as_bytes()),
+        )
+        .unwrap();
+        fs::write(&path, &replacement).unwrap();
+        assert!(read_json_file::<Value>(&path).is_ok());
+        assert!(!journal.exists());
+
+        fs::write(
+            &journal,
+            encode_cas_journal(2, expected.as_bytes(), replacement.as_bytes()),
+        )
+        .unwrap();
+        fs::write(&path, &external).unwrap();
+        assert!(read_json_file::<Value>(&path).is_ok());
+        assert!(!journal.exists());
         fs::remove_dir_all(root).expect("remove CAS restore fixture");
+    }
+
+    #[test]
+    fn corrupt_cas_journal_is_retained_and_blocks_reads() {
+        let root = std::env::temp_dir().join(format!("loom-json-cas-bad-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("state.json");
+        fs::write(&path, "{}\n").unwrap();
+        let journal = path.with_extension("loom-cas-journal");
+        fs::write(&journal, b"partial").unwrap();
+
+        let error = read_json_file::<Value>(&path).expect_err("corrupt journal must fail closed");
+        assert!(error.to_string().contains("invalid JSON CAS journal"));
+        assert_eq!(fs::read(&path).unwrap(), b"{}\n");
+        assert_eq!(fs::read(&journal).unwrap(), b"partial");
+        fs::remove_dir_all(root).unwrap();
     }
 }

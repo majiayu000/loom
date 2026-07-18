@@ -84,6 +84,7 @@ pub(super) fn commit_convergence_registry(
         &commit,
         "registry commit compare-and-swap did not persist",
     )?;
+    validate_registry_result(app, plan, journal)?;
     reset_owned_files([&base_index, &prepared_index, &commit_index])?;
     Ok(Some(commit))
 }
@@ -160,7 +161,7 @@ pub(super) fn align_registry_index(
     reset_owned_files([&base_index, &prepared_index])
 }
 
-fn require_head(
+pub(super) fn require_head(
     app: &App,
     expected: &str,
     message: &str,

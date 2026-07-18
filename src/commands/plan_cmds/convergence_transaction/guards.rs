@@ -115,6 +115,19 @@ fn validate_routing_paths_clean(
     paths: &[&str],
 ) -> std::result::Result<(), CommandFailure> {
     for path in paths {
+        if app.ctx.root.join(path).exists() {
+            let committed = gitops::run_git_allow_failure(
+                &app.ctx,
+                &["cat-file", "-e", &format!("HEAD:{path}")],
+            )
+            .map_err(map_git)?;
+            if !committed.status.success() {
+                return Err(stale(
+                    "registry routing exists without committed HEAD evidence",
+                    "PLAN_CHECKPOINT_DRIFT",
+                ));
+            }
+        }
         for args in [
             vec!["diff", "--quiet", "--", path],
             vec!["diff", "--cached", "--quiet", "--", path],

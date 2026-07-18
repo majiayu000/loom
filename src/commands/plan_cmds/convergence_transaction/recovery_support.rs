@@ -154,7 +154,7 @@ pub(super) fn recover_journal(
             validate_mutated_surfaces(app, &paths, plan, &mut journal)?;
             validate_rollback_evidence(app, plan, &journal)?;
             validate_rolling_back_state(app, plan, &journal)?;
-            let errors = rollback_journal(app, &paths, plan, &journal);
+            let errors = rollback_journal(app, &paths, plan, &mut journal);
             if !errors.is_empty() {
                 return Err(CommandFailure::new(
                     ErrorCode::StateCorrupt,
@@ -225,7 +225,7 @@ pub(super) fn recover_journal(
         return Ok(Some(result));
     }
     validate_rollback_evidence(app, plan, &journal)?;
-    let errors = rollback_journal(app, &paths, plan, &journal);
+    let errors = rollback_journal(app, &paths, plan, &mut journal);
     if !errors.is_empty() {
         return Err(CommandFailure::new(
             ErrorCode::StateCorrupt,

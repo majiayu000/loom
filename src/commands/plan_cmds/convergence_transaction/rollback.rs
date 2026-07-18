@@ -1,12 +1,21 @@
+use super::recovery_evidence::validate_mutated_surfaces;
 use super::*;
 
 pub(super) fn rollback_journal(
     app: &App,
     paths: &RegistryStatePaths,
     plan: &SkillConvergencePlan,
-    journal: &TransactionJournal,
+    journal: &mut TransactionJournal,
 ) -> Vec<Value> {
     let mut errors = Vec::new();
+    if let Err(err) = validate_mutated_surfaces(app, paths, plan, journal) {
+        push_rollback_error(
+            &mut errors,
+            "validate_live_surfaces_before_rollback",
+            err.message,
+        );
+        return errors;
+    }
     if plan.registry.initialized
         && let Err(err) = paths.save_projections(&journal.original_projections)
     {

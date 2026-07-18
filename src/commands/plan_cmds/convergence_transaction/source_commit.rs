@@ -94,6 +94,8 @@ pub(super) fn commit_convergence_source(
     };
 
     let expected_source_head = commit.as_deref().unwrap_or(&journal.previous_head);
+    journal.source_head = Some(expected_source_head.to_string());
+    journal.source_commit = commit.clone();
     let source_head = gitops::head(&app.ctx).map_err(map_git)?;
     if source_head != expected_source_head {
         return Err(CommandFailure::new(
@@ -101,8 +103,7 @@ pub(super) fn commit_convergence_source(
             "HEAD changed after the source compare-and-swap",
         ));
     }
-    journal.source_head = Some(expected_source_head.to_string());
-    journal.source_commit = commit.clone();
+    validate_live_source(app, plan)?;
     maybe_skill_fault("convergence_interrupt_committing_source")?;
     journal.phase = TransactionPhase::SourceCommitted;
     save_journal(journal_path, journal)?;
@@ -115,7 +116,7 @@ fn source_cas_failure_requires_index_restore(observed: &str, previous: &str) -> 
     observed == previous
 }
 
-fn validate_live_source(
+pub(super) fn validate_live_source(
     app: &App,
     plan: &SkillConvergencePlan,
 ) -> std::result::Result<(), CommandFailure> {

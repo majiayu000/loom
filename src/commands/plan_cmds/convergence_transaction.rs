@@ -48,7 +48,7 @@ use projection_recovery::{
 use projection_view::projection_view_digest;
 use recovery_evidence::{active_index_digest, file_digest, validate_rollback_evidence};
 use recovery_support::*;
-use registry_commit::commit_convergence_registry;
+use registry_commit::{commit_convergence_registry, require_head};
 use rollback::{finish_transaction, rollback_journal};
 use source_recovery::restore_source_from_evidence;
 
@@ -299,7 +299,7 @@ pub(super) fn apply_convergence(
                         "message": validation.message,
                     }));
                 } else {
-                    rollback_errors = rollback_journal(app, &paths, &plan, &journal);
+                    rollback_errors = rollback_journal(app, &paths, &plan, &mut journal);
                 }
             }
             if rollback_errors.is_empty()
@@ -379,6 +379,15 @@ fn execute_local_transaction(
                 "projection transaction has no registry snapshot",
             )
         })?;
+        let source_head = journal.source_head.as_deref().ok_or_else(|| {
+            CommandFailure::new(ErrorCode::StateCorrupt, "journal is missing source head")
+        })?;
+        require_head(
+            app,
+            source_head,
+            "HEAD changed before projection activation",
+        )?;
+        source_commit::validate_live_source(app, plan)?;
         validate_projection_staging_fingerprint(artifact)?;
         let staging_path = PathBuf::from(&artifact.staging_path);
         let staging = PreparedProjectionStaging::new(
@@ -469,6 +478,11 @@ fn replace_source_from_projection(
             "source_changed_before_exchange",
         ));
     }
+    require_head(
+        app,
+        &journal.previous_head,
+        "HEAD changed before projection source replacement",
+    )?;
     exchange_paths_atomic(&staging, &source).map_err(map_io)?;
     if skill_tree_digest(&staging).map_err(map_io)? != *reviewed {
         let mut failure = stale(

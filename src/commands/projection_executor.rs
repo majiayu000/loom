@@ -658,13 +658,6 @@ fn rollback_live_projection_path(materialized_path: &Path, backup: Option<&Value
     errors
 }
 
-pub(crate) fn rollback_convergence_projection(
-    materialized_path: &Path,
-    backup: Option<&Value>,
-) -> Vec<Value> {
-    rollback_live_projection_path(materialized_path, backup)
-}
-
 pub(crate) fn finish_convergence_projection(backup: Option<&Value>) -> Vec<Value> {
     let mut errors = Vec::new();
     if let Some(path) = backup

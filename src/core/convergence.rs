@@ -111,6 +111,7 @@ pub(crate) struct RegistryGuard {
     pub initialized: bool,
     pub checkpoint_digest: Option<String>,
     pub checkpoint_updated_at: Option<String>,
+    pub projections_digest: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -318,6 +319,7 @@ fn registry_is_valid(value: &serde_json::Map<String, Value>) -> bool {
     field_is_bool(value, "initialized")
         && field_is_optional_string(value, "checkpoint_digest")
         && field_is_optional_string(value, "checkpoint_updated_at")
+        && field_is_optional_string(value, "projections_digest")
 }
 
 fn projection_effect_is_valid(value: &serde_json::Map<String, Value>) -> bool {

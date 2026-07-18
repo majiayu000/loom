@@ -1,5 +1,7 @@
 use super::recovery_evidence::{
-    reprove_source_boundary, validate_expected_projections, validate_mutated_surfaces,
+    reprove_source_boundary, restore_projection_from_evidence, rollback_uncommitted_source_only,
+    validate_expected_projections, validate_mutated_surfaces, validate_rollback_evidence,
+    validate_rolling_back_state,
 };
 use super::*;
 use std::fs::OpenOptions;
@@ -7,6 +9,21 @@ use std::io::Write;
 
 const OWNER_FILE: &str = ".owner";
 const RESERVATION_PROOF_FILE: &str = ".reservation-owner";
+
+pub(super) fn interruption_fault_active() -> bool {
+    matches!(
+        std::env::var("LOOM_FAULT_INJECT").ok().as_deref(),
+        Some(
+            "convergence_interrupt_after_source_commit"
+                | "convergence_interrupt_committing_source"
+                | "convergence_interrupt_committing_registry"
+                | "convergence_interrupt_after_owner_root_creation"
+                | "convergence_interrupt_after_owner_marker_write"
+                | "convergence_interrupt_after_prepared"
+                | "convergence_interrupt_after_source_replacement"
+        )
+    )
+}
 
 pub(super) fn reserve_owned_dir(
     path: &Path,
@@ -182,6 +199,8 @@ pub(super) fn recover_journal(
         TransactionPhase::RollingBack => {
             let paths = RegistryStatePaths::from_app_context(&app.ctx);
             validate_mutated_surfaces(app, &paths, plan, &mut journal)?;
+            validate_rollback_evidence(app, plan, &journal)?;
+            validate_rolling_back_state(app, plan, &journal)?;
             let errors = rollback_journal(app, &paths, &journal);
             if !errors.is_empty() {
                 return Err(CommandFailure::new(
@@ -198,6 +217,24 @@ pub(super) fn recover_journal(
         _ => {}
     }
     let paths = RegistryStatePaths::from_app_context(&app.ctx);
+    if matches!(
+        journal.phase,
+        TransactionPhase::ReplacingSource
+            | TransactionPhase::SourceReplaced
+            | TransactionPhase::CommittingSource
+    ) && !source_is_committed(&journal)
+    {
+        rollback_uncommitted_source_only(app, plan, &journal)?;
+        let errors = cleanup_declared_artifacts(journal_path, &journal);
+        if errors.is_empty() {
+            return Ok(None);
+        }
+        return Err(CommandFailure::new(
+            ErrorCode::StateCorrupt,
+            "uncommitted source cleanup failed",
+        )
+        .with_rollback_errors(errors));
+    }
     if source_is_committed(&journal) {
         reprove_source_boundary(app, plan, &journal)?;
         if journal.phase == TransactionPhase::CommittingRegistry {
@@ -210,6 +247,7 @@ pub(super) fn recover_journal(
             return Ok(Some(result));
         }
         validate_mutated_surfaces(app, &paths, plan, &mut journal)?;
+        validate_rollback_evidence(app, plan, &journal)?;
         restore_projections_for_resume(&paths, &journal)?;
         journal.installed_projections = 0;
         journal.expected_projections = None;
@@ -232,6 +270,7 @@ pub(super) fn recover_journal(
         finish_committed_cleanup(journal_path, &journal)?;
         return Ok(Some(result));
     }
+    validate_rollback_evidence(app, plan, &journal)?;
     let errors = rollback_journal(app, &paths, &journal);
     if !errors.is_empty() {
         return Err(CommandFailure::new(
@@ -313,10 +352,9 @@ pub(super) fn restore_projections_for_resume(
         .take(journal.installed_projections)
         .rev()
     {
-        errors.extend(rollback_convergence_projection(
-            Path::new(&projection.materialized_path),
-            projection.backup.as_ref(),
-        ));
+        if let Err(err) = restore_projection_from_evidence(projection) {
+            push_rollback_error(&mut errors, "restore_projection_from_evidence", err.message);
+        }
     }
     for projection in journal.projections.iter().rev() {
         cleanup_owned_dir(
@@ -341,6 +379,16 @@ pub(super) fn cleanup_declared_artifacts(
     journal: &TransactionJournal,
 ) -> Vec<Value> {
     let mut errors = Vec::new();
+    if std::env::var("LOOM_CLEANUP_FAULT_INJECT").ok().as_deref()
+        == Some("convergence_fail_declared_cleanup")
+    {
+        push_rollback_error(
+            &mut errors,
+            "cleanup_declared_transaction_artifacts",
+            "fault injected before declared artifact cleanup",
+        );
+        return errors;
+    }
     for projection in journal.projections.iter().rev() {
         cleanup_owned_dir(
             Path::new(&projection.staging_owner),
@@ -358,7 +406,9 @@ pub(super) fn cleanup_declared_artifacts(
         &journal.plan_id,
         &mut errors,
     );
-    if let Err(err) = remove_path_if_exists(journal_path) {
+    if errors.is_empty()
+        && let Err(err) = remove_path_if_exists(journal_path)
+    {
         push_rollback_error(&mut errors, "remove_transaction_journal", err);
     }
     errors

@@ -568,12 +568,14 @@ fn registry_guard(
             initialized: false,
             checkpoint_digest: None,
             checkpoint_updated_at: None,
+            projections_digest: None,
         });
     };
     Ok(RegistryGuard {
         initialized: true,
         checkpoint_digest: Some(digest_value(&snapshot.checkpoint)?),
         checkpoint_updated_at: Some(snapshot.checkpoint.updated_at.to_rfc3339()),
+        projections_digest: Some(digest_value(&snapshot.projections)?),
     })
 }
 

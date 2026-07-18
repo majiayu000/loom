@@ -19,9 +19,9 @@ use super::super::codex_visibility::projection_path_is_safe_symlink;
 use super::super::file_ops::{create_declared_path_backup, restore_path_from_backup_if_absent};
 use super::super::helpers::{map_git, map_io, map_lock, map_registry_state};
 use super::super::projection_executor::{
-    ProjectionExecutionContext, ProjectionExecutionInput, convergence_projection_fingerprint,
-    execute_prepared_convergence_projection, finish_convergence_projection,
-    prepare_convergence_projection,
+    PreparedProjectionStaging, ProjectionExecutionContext, ProjectionExecutionInput,
+    convergence_projection_fingerprint, execute_prepared_convergence_projection,
+    finish_convergence_projection, prepare_convergence_projection,
 };
 use super::super::projections::{project_skill_to_target, upsert_projection};
 use super::super::provenance::skill_tree_digest;
@@ -350,12 +350,31 @@ fn execute_local_transaction(
     save_journal(journal_path, journal)?;
     for (effect, artifact) in plan.projections.iter().zip(&journal.projections) {
         validate_projection_staging_fingerprint(artifact)?;
+        let staging_path = PathBuf::from(&artifact.staging_path);
+        let staging = PreparedProjectionStaging::new(
+            staging_path,
+            artifact.activated_fingerprint.clone().ok_or_else(|| {
+                CommandFailure::new(
+                    ErrorCode::StateCorrupt,
+                    "prepared projection staging fingerprint is absent",
+                )
+            })?,
+        );
+        let live_path = PathBuf::from(&artifact.materialized_path);
         let output = execute_prepared_convergence_projection(
             &app.ctx,
             paths,
             snapshot,
             projection_input(snapshot, plan, effect, request_id)?,
-            PathBuf::from(&artifact.staging_path),
+            staging,
+            |staging_path| {
+                validate_owned_staging(
+                    &live_path,
+                    staging_path,
+                    &journal.plan_id,
+                    &artifact.owner_proof,
+                )
+            },
         )?;
         let projection = output.projection.ok_or_else(|| {
             CommandFailure::new(ErrorCode::StateCorrupt, "executor omitted projection state")

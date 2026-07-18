@@ -11,6 +11,7 @@ use super::super::{
     CommandFailure,
     helpers::map_io,
     projections::{ProjectionObservation, observe_projection_from_source},
+    skill_cmds::shared::push_rollback_error,
 };
 use super::ProjectionExecutionInput;
 use super::convergence::{map_ownership_fingerprint_error, projection_ownership_fingerprint};
@@ -208,6 +209,12 @@ pub(super) fn cleanup_owned_staging(ownership: Option<StagingOwnership>) -> Vec<
             "message": err.message,
             "details": err.details,
         })],
+    }
+}
+
+pub(super) fn cleanup_projection_staging(path: &Path, errors: &mut Vec<serde_json::Value>) {
+    if let Err(err) = remove_path_if_exists(path) {
+        push_rollback_error(errors, "remove_projection_staging", err);
     }
 }
 

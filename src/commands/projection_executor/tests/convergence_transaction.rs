@@ -610,6 +610,70 @@ fn caller_selected_source_and_staging_round_trip_as_durable_evidence() {
     assert!(!projection_path.exists());
 }
 
+#[cfg(unix)]
+#[test]
+fn prepared_execution_rejects_source_equivalent_staging_replacement() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let fixture = convergence_projection_fixture();
+    let projection_path = fixture.root.join("live/copy/demo");
+    let owner = projection_path
+        .parent()
+        .unwrap()
+        .join(".loom-projection-stage-reviewed.owner");
+    let staging = owner.join("stage");
+    fs::create_dir_all(&owner).expect("create staging owner");
+    let input = execution_input(&fixture, ProjectionMethod::Copy, projection_path.clone());
+    prepare_convergence_projection(
+        &fixture.ctx,
+        &input,
+        &fixture.ctx.skill_path("demo"),
+        &staging,
+    )
+    .expect("prepare reviewed staging");
+    let expected = convergence_projection_fingerprint(&staging).expect("reviewed fingerprint");
+
+    let displaced = owner.join("displaced-stage");
+    fs::rename(&staging, &displaced).expect("displace reviewed staging");
+    project_skill_to_target(
+        &fixture.ctx.skill_path("demo"),
+        &staging,
+        ProjectionMethod::Copy,
+    )
+    .expect("create source-equivalent replacement");
+    fs::set_permissions(
+        staging.join("details.txt"),
+        fs::Permissions::from_mode(0o600),
+    )
+    .expect("change replacement metadata");
+    assert_ne!(
+        convergence_projection_fingerprint(&staging).expect("replacement fingerprint"),
+        expected
+    );
+
+    let mut owner_checks = 0;
+    let error = match execute_prepared_convergence_projection(
+        &fixture.ctx,
+        &fixture.paths,
+        &fixture.snapshot,
+        input,
+        PreparedProjectionStaging::new(staging.clone(), expected),
+        |actual| {
+            owner_checks += 1;
+            assert_eq!(actual, staging);
+            Ok(())
+        },
+    ) {
+        Err(error) => error,
+        Ok(_) => panic!("replacement must not be activated"),
+    };
+
+    assert_eq!(owner_checks, 1);
+    assert_eq!(error.code, ErrorCode::ProjectionConflict);
+    assert!(staging.is_dir());
+    assert!(!projection_path.exists());
+}
+
 #[cfg(any(
     target_os = "macos",
     target_os = "ios",

@@ -139,6 +139,23 @@ fn prepared_index_install_preserves_preexisting_lock() {
 }
 
 #[test]
+fn prepared_index_lock_recovery_preserves_nonmatching_lock() {
+    let (ctx, dir) = fresh_repo("prepared-index-recovery-foreign-lock");
+    let prepared = dir.join("prepared-index");
+    fs::copy(dir.join(".git/index"), &prepared).expect("prepared index");
+    let lock = dir.join(".git/index.lock");
+    let foreign = b"foreign lock bytes\n";
+    fs::write(&lock, foreign).expect("foreign lock");
+
+    recover_prepared_index_lock_with_guard(&ctx, &prepared, |_| Ok(()))
+        .expect_err("foreign lock must not be adopted");
+
+    assert_eq!(fs::read(&lock).expect("preserved foreign lock"), foreign);
+    fs::remove_file(&lock).expect("remove test lock");
+    fs::remove_dir_all(&dir).expect("remove test repository");
+}
+
+#[test]
 fn prepared_commit_ignores_late_worktree_tamper_without_moving_head_or_index() {
     let (ctx, dir) = fresh_repo("prepared-commit-worktree-tamper");
     let active_index = dir.join(".git/index");

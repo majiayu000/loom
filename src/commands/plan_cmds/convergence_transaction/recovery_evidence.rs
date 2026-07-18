@@ -510,7 +510,14 @@ fn verify_registry_commit(
             "registry commit tree differs from transaction evidence",
         ));
     }
-    require_clean_path(app, "state/registry/projections.json")
+    if journal.phase == TransactionPhase::CommittingRegistry
+        && journal.registry_commit.as_deref() == Some(head)
+        && journal.registry_staged_index_digest.is_some()
+    {
+        Ok(())
+    } else {
+        require_clean_path(app, "state/registry/projections.json")
+    }
 }
 
 pub(super) fn committed_skill_digest(

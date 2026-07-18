@@ -7,7 +7,8 @@ const REGISTRY_PATH: &str = "state/registry/projections.json";
 pub(super) fn commit_convergence_registry(
     app: &App,
     plan: &SkillConvergencePlan,
-    journal: &TransactionJournal,
+    journal_path: &Path,
+    journal: &mut TransactionJournal,
 ) -> std::result::Result<Option<String>, CommandFailure> {
     let source_head = journal.source_head.as_deref().ok_or_else(|| {
         CommandFailure::new(ErrorCode::StateCorrupt, "journal is missing source head")
@@ -48,6 +49,9 @@ pub(super) fn commit_convergence_registry(
         path == REGISTRY_PATH
     })?;
     let expected_index = file_digest(&prepared_index)?;
+    journal.registry_commit = Some(commit.clone());
+    journal.registry_staged_index_digest = Some(expected_index.clone());
+    save_journal(journal_path, journal)?;
     let install =
         gitops::install_prepared_index_with_guard(&app.ctx, &prepared_index, |candidate| {
             validate_registry_result(app, plan, journal)
@@ -99,6 +103,14 @@ pub(super) fn align_registry_index(
         return Ok(());
     }
     validate_registry_result(app, plan, journal)?;
+    if let Some(recorded) = journal.registry_commit.as_deref()
+        && recorded != expected_head
+    {
+        return Err(CommandFailure::new(
+            ErrorCode::StateCorrupt,
+            "recorded registry commit differs from HEAD",
+        ));
+    }
     let root = Path::new(&journal.artifact_root);
     let base_index = root.join("registry-repair-base-index");
     let prepared_index = root.join("registry-repair-index");
@@ -107,6 +119,32 @@ pub(super) fn align_registry_index(
     gitops::prepare_index_for_paths(&app.ctx, &base_index, &prepared_index, &[REGISTRY_PATH])
         .map_err(map_git)?;
     let expected_index = file_digest(&prepared_index)?;
+    if let Some(recorded) = journal.registry_staged_index_digest.as_deref()
+        && recorded != expected_index
+    {
+        return Err(CommandFailure::new(
+            ErrorCode::StateCorrupt,
+            "registry recovery index differs from durable transaction evidence",
+        ));
+    }
+    let recovered_lock =
+        gitops::recover_prepared_index_lock_with_guard(&app.ctx, &prepared_index, |candidate| {
+            let head = gitops::head(&app.ctx)?;
+            if head != expected_head {
+                return Err(anyhow::anyhow!(
+                    "HEAD changed during registry lock recovery"
+                ));
+            }
+            let actual = file_digest(candidate).map_err(|error| anyhow::anyhow!(error.message))?;
+            if actual != expected_index {
+                return Err(anyhow::anyhow!("recovered registry index lock changed"));
+            }
+            Ok(())
+        })
+        .map_err(map_git)?;
+    if recovered_lock {
+        return reset_owned_files([&base_index, &prepared_index]);
+    }
     gitops::install_prepared_index_with_guard(&app.ctx, &prepared_index, |candidate| {
         let head = gitops::head(&app.ctx)?;
         if head != expected_head {

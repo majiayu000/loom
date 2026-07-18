@@ -137,3 +137,148 @@ fn registry_cas_rejects_an_external_head_without_installing_index() {
         index_before
     );
 }
+
+#[cfg(unix)]
+#[test]
+fn create_plan_rejects_safe_symlink_created_after_review() {
+    use std::os::unix::fs::symlink;
+
+    let fixture = projected_fixture_with_method("symlink");
+    fs::remove_file(fixture.target.path().join("demo")).expect("remove projection");
+    let registry_path = fixture.root.path().join("state/registry/projections.json");
+    let mut registry: Value = serde_json::from_slice(&fs::read(&registry_path).expect("registry"))
+        .expect("parse registry");
+    registry["projections"] = json!([]);
+    fs::write(
+        &registry_path,
+        serde_json::to_vec_pretty(&registry).expect("encode registry"),
+    )
+    .expect("write registry");
+    git(
+        fixture.root.path(),
+        &["add", "state/registry/projections.json"],
+    );
+    git(
+        fixture.root.path(),
+        &["commit", "-m", "test: prepare missing symlink"],
+    );
+    let (output, plan) = plan_converge(&fixture, &[]);
+    assert!(output.status.success(), "create plan failed: {plan}");
+    assert_eq!(plan["data"]["effects"][0]["effect"], json!("create"));
+
+    symlink(
+        fixture.root.path().join("skills/demo"),
+        fixture.target.path().join("demo"),
+    )
+    .expect("late safe symlink");
+    let head = git(fixture.root.path(), &["rev-parse", "HEAD"]);
+    let (output, rejected) = apply_plan(&fixture, &plan, "late-safe-symlink", &[]);
+    assert!(
+        !output.status.success(),
+        "late symlink was accepted: {rejected}"
+    );
+    assert_eq!(git(fixture.root.path(), &["rev-parse", "HEAD"]), head);
+    assert!(
+        !fixture
+            .root
+            .path()
+            .join("state/transactions/convergence-demo.json")
+            .exists()
+    );
+}
+
+#[test]
+fn registry_recovery_adopts_only_its_durable_index_lock() {
+    let fixture = projected_fixture();
+    fs::write(
+        fixture.root.path().join("skills/demo/details.txt"),
+        "registry lock crash\n",
+    )
+    .expect("edit source");
+    let (output, plan) = plan_converge(&fixture, &[]);
+    assert!(output.status.success(), "plan failed: {plan}");
+    let (output, interrupted) = apply_plan(
+        &fixture,
+        &plan,
+        "registry-lock-crash",
+        &[(
+            "LOOM_FAULT_INJECT",
+            "convergence_interrupt_before_registry_cas",
+        )],
+    );
+    assert!(
+        !output.status.success(),
+        "registry CAS did not stop: {interrupted}"
+    );
+
+    let journal_path = fixture
+        .root
+        .path()
+        .join("state/transactions/convergence-demo.json");
+    let journal: Value =
+        serde_json::from_slice(&fs::read(&journal_path).expect("journal")).expect("parse journal");
+    let registry_commit = journal["registry_commit"]
+        .as_str()
+        .expect("registry commit");
+    let source_head = journal["source_head"].as_str().expect("source head");
+    let prepared =
+        Path::new(journal["artifact_root"].as_str().expect("artifact root")).join("registry-index");
+    fs::copy(&prepared, fixture.root.path().join(".git/index.lock"))
+        .expect("simulate retained transaction lock");
+    git(
+        fixture.root.path(),
+        &["update-ref", "HEAD", registry_commit, source_head],
+    );
+
+    let (output, recovered) = apply_plan(&fixture, &plan, "registry-lock-crash", &[]);
+    assert!(
+        output.status.success(),
+        "owned lock recovery failed: {recovered}"
+    );
+    assert_eq!(
+        git(fixture.root.path(), &["rev-parse", "HEAD"]).trim(),
+        registry_commit
+    );
+    assert!(!fixture.root.path().join(".git/index.lock").exists());
+}
+
+#[test]
+fn source_cas_does_not_adopt_a_following_external_head() {
+    let fixture = projected_fixture();
+    fs::write(
+        fixture.root.path().join("skills/demo/details.txt"),
+        "source CAS race\n",
+    )
+    .expect("edit source");
+    let (output, plan) = plan_converge(&fixture, &[]);
+    assert!(output.status.success(), "plan failed: {plan}");
+    let (output, interrupted) = apply_plan(
+        &fixture,
+        &plan,
+        "source-cas-race",
+        &[(
+            "LOOM_FAULT_INJECT",
+            "convergence_interrupt_after_source_cas",
+        )],
+    );
+    assert!(
+        !output.status.success(),
+        "source CAS did not stop: {interrupted}"
+    );
+    fs::write(fixture.root.path().join("external.txt"), "external\n").expect("external file");
+    git(fixture.root.path(), &["add", "external.txt"]);
+    git(
+        fixture.root.path(),
+        &["commit", "-m", "test: external after source CAS"],
+    );
+    let external_head = git(fixture.root.path(), &["rev-parse", "HEAD"]);
+    let (output, rejected) = apply_plan(&fixture, &plan, "source-cas-race", &[]);
+    assert!(
+        !output.status.success(),
+        "external source HEAD accepted: {rejected}"
+    );
+    assert_eq!(
+        git(fixture.root.path(), &["rev-parse", "HEAD"]),
+        external_head
+    );
+}

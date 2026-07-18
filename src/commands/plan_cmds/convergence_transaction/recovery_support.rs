@@ -15,6 +15,7 @@ pub(super) fn interruption_fault_active() -> bool {
         std::env::var("LOOM_FAULT_INJECT").ok().as_deref(),
         Some(
             "convergence_interrupt_after_source_commit"
+                | "convergence_interrupt_after_source_cas"
                 | "convergence_interrupt_committing_source"
                 | "convergence_interrupt_committing_registry"
                 | "convergence_interrupt_after_owner_root_creation"
@@ -190,7 +191,7 @@ pub(super) fn recover_journal(
     if source_is_committed(&journal) {
         reprove_source_boundary(app, plan, &journal)?;
         if journal.phase == TransactionPhase::CommittingRegistry {
-            let registry_commit = prove_registry_boundary(app, plan, &journal)?;
+            let registry_commit = prove_registry_boundary(app, plan, journal_path, &mut journal)?;
             let result = committed_result_with_registry(plan, &journal, registry_commit);
             journal.result = Some(result.clone());
             journal.phase = TransactionPhase::CommittedCleanupPending;
@@ -255,7 +256,8 @@ pub(super) fn validate_projection_guard(
             }
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
             Ok(metadata)
-                if effect.method == "symlink"
+                if effect.effect == "refresh"
+                    && effect.method == "symlink"
                     && metadata.file_type().is_symlink()
                     && projection_path_is_safe_symlink(path, &app.ctx.skill_path(&plan.skill)) =>
             {
@@ -551,9 +553,18 @@ fn validate_phase_invariants(journal: &TransactionJournal) -> bool {
         TransactionPhase::RollingBack | TransactionPhase::RolledBackCleanupPending
     ) == (journal.rollback_head.is_some()
         && journal.rollback_index_digest.is_some());
+    let registry_evidence =
+        journal.registry_commit.is_some() == journal.registry_staged_index_digest.is_some();
+    let registry_evidence_phase = journal.registry_commit.is_none()
+        || matches!(
+            journal.phase,
+            TransactionPhase::CommittingRegistry | TransactionPhase::CommittedCleanupPending
+        );
     source_relation
         && index_evidence
         && rollback_evidence
+        && registry_evidence
+        && registry_evidence_phase
         && journal.installed_projections <= count
         && match journal.phase {
             TransactionPhase::Preparing
@@ -638,7 +649,8 @@ fn prove_source_boundary(
 fn prove_registry_boundary(
     app: &App,
     plan: &SkillConvergencePlan,
-    journal: &TransactionJournal,
+    journal_path: &Path,
+    journal: &mut TransactionJournal,
 ) -> std::result::Result<Option<String>, CommandFailure> {
     let source_head = journal.source_head.as_deref().ok_or_else(|| {
         CommandFailure::new(ErrorCode::StateCorrupt, "journal is missing source head")
@@ -654,7 +666,12 @@ fn prove_registry_boundary(
     }
     validate_registry_result(app, plan, journal)?;
     if head == source_head {
-        return super::registry_commit::commit_convergence_registry(app, plan, journal);
+        return super::registry_commit::commit_convergence_registry(
+            app,
+            plan,
+            journal_path,
+            journal,
+        );
     } else {
         verify_commit(
             app,

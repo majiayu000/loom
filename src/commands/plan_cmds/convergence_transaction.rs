@@ -73,6 +73,10 @@ struct TransactionJournal {
     source_head: Option<String>,
     source_commit: Option<String>,
     source_staged_index_digest: Option<String>,
+    #[serde(default)]
+    registry_commit: Option<String>,
+    #[serde(default)]
+    registry_staged_index_digest: Option<String>,
     rollback_head: Option<String>,
     rollback_index_digest: Option<String>,
     result: Option<Value>,
@@ -228,6 +232,8 @@ pub(super) fn apply_convergence(
         source_head: None,
         source_commit: None,
         source_staged_index_digest: None,
+        registry_commit: None,
+        registry_staged_index_digest: None,
         rollback_head: None,
         rollback_index_digest: None,
         result: None,
@@ -426,7 +432,7 @@ fn execute_local_transaction(
     journal.phase = TransactionPhase::CommittingRegistry;
     save_journal(journal_path, journal)?;
     let registry_commit = if snapshot.is_some() {
-        commit_convergence_registry(app, plan, journal)?
+        commit_convergence_registry(app, plan, journal_path, journal)?
     } else {
         None
     };

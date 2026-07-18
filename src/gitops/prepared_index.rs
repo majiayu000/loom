@@ -90,6 +90,29 @@ where
     }
 }
 
+pub fn recover_prepared_index_lock_with_guard<F>(
+    ctx: &AppContext,
+    prepared_index: &Path,
+    guard: F,
+) -> Result<bool>
+where
+    F: FnOnce(&Path) -> Result<()>,
+{
+    let index = resolve_git_index_path(ctx, &[])?;
+    let lock = index_lock_path(&index);
+    if !lock.exists() {
+        return Ok(false);
+    }
+    if fs::read(&lock)? != fs::read(prepared_index)? {
+        return Err(anyhow!(
+            "existing Git index lock does not match durable transaction evidence"
+        ));
+    }
+    guard(&lock)?;
+    crate::fs_util::rename_atomic(&lock, &index)?;
+    Ok(true)
+}
+
 pub fn create_prepared_commit(
     ctx: &AppContext,
     prepared_index: &Path,

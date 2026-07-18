@@ -16,19 +16,57 @@ pub(super) fn handle_external_registry_failure(
     journal: &mut TransactionJournal,
     failure: CommandFailure,
 ) -> std::result::Result<CommandFailure, CommandFailure> {
+    let errors = retire_registry_after_external_head(app, paths, plan, journal_path, journal)?
+        .unwrap_or_default();
+    Ok(failure.with_rollback_errors(errors))
+}
+
+pub(super) fn recover_registry_after_external_head(
+    app: &App,
+    paths: &RegistryStatePaths,
+    plan: &SkillConvergencePlan,
+    journal_path: &Path,
+    journal: &mut TransactionJournal,
+) -> std::result::Result<bool, CommandFailure> {
+    let Some(errors) =
+        retire_registry_after_external_head(app, paths, plan, journal_path, journal)?
+    else {
+        return Ok(false);
+    };
+    if errors.is_empty() {
+        return Ok(true);
+    }
+    Err(CommandFailure::new(
+        ErrorCode::StateCorrupt,
+        "external HEAD registry recovery failed",
+    )
+    .with_rollback_errors(errors))
+}
+
+fn retire_registry_after_external_head(
+    app: &App,
+    paths: &RegistryStatePaths,
+    plan: &SkillConvergencePlan,
+    journal_path: &Path,
+    journal: &mut TransactionJournal,
+) -> std::result::Result<Option<Vec<Value>>, CommandFailure> {
     if !external_head_preserves_reviewed_boundaries(app, plan, journal)? {
-        return Ok(failure);
+        return Ok(None);
     }
     let mut errors =
         super::rollback::restore_registry_and_activated_projections(paths, plan, journal);
     if errors.is_empty() {
         super::source_commit::validate_live_source(app, plan)?;
+        journal.registry_commit = None;
+        journal.registry_staged_index_digest = None;
+        journal.rollback_head = Some(gitops::head(&app.ctx).map_err(map_git)?);
+        journal.rollback_index_digest = Some(active_index_digest(app)?);
         errors = cleanup_declared_artifacts(journal_path, journal);
     }
     if errors.is_empty() {
         archive_rolled_back_journal(journal_path, journal)?;
     }
-    Ok(failure.with_rollback_errors(errors))
+    Ok(Some(errors))
 }
 
 fn external_head_preserves_reviewed_boundaries(
@@ -114,6 +152,8 @@ pub(super) fn retire_uncommitted_noop_after_external_head(
     } else {
         super::source_commit::validate_live_source(app, plan)?;
     }
+    journal.rollback_head = Some(head);
+    journal.rollback_index_digest = Some(active_index_digest(app)?);
     let errors = cleanup_declared_artifacts(journal_path, journal);
     if !errors.is_empty() {
         return Err(CommandFailure::new(

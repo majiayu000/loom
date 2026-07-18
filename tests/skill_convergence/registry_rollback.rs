@@ -1,4 +1,5 @@
 use super::*;
+use crate::skill_convergence_executor::apply_plan;
 use common::run_loom_with_env;
 
 fn retry_apply(fixture: &Fixture, plan: &Value, key: &str) -> (std::process::Output, Value) {
@@ -259,4 +260,202 @@ fn rolling_back_registry_restore_preserves_an_external_second_writer() {
         journal_path.is_file(),
         "failed recovery discarded its journal"
     );
+}
+
+fn assert_external_registry_retired(
+    fixture: &Fixture,
+    plan: &Value,
+    journal_path: &Path,
+    registry_path: &Path,
+    original_registry: &[u8],
+    original_projection: &BTreeMap<String, Vec<u8>>,
+    external_head: &str,
+    expect_registry_attempt: bool,
+) {
+    assert_eq!(
+        git(fixture.root.path(), &["rev-parse", "HEAD"]),
+        external_head
+    );
+    assert_eq!(
+        fs::read(registry_path).expect("restored registry"),
+        original_registry
+    );
+    assert_eq!(
+        snapshot_tree(&fixture.target.path().join("demo")),
+        *original_projection
+    );
+    assert!(!journal_path.exists(), "active journal was not retired");
+    assert!(
+        Command::new("git")
+            .args(["diff", "--cached", "--quiet"])
+            .current_dir(fixture.root.path())
+            .status()
+            .expect("inspect external index")
+            .success(),
+        "transaction changed the external commit index"
+    );
+    let prefix = format!(
+        "retained-{}-",
+        plan["data"]["plan_id"].as_str().expect("plan id")
+    );
+    let retained = fs::read_dir(journal_path.parent().expect("journal parent"))
+        .expect("retained journal directory")
+        .filter_map(Result::ok)
+        .find(|entry| entry.file_name().to_string_lossy().starts_with(&prefix))
+        .expect("retained registry journal");
+    let retained: Value =
+        serde_json::from_slice(&fs::read(retained.path()).expect("retained journal"))
+            .expect("parse retained journal");
+    assert_eq!(retained["phase"], json!("rolled_back_artifacts_retained"));
+    assert!(retained["registry_commit"].is_null());
+    assert!(retained["registry_staged_index_digest"].is_null());
+    assert_eq!(retained["rollback_head"], json!(external_head.trim()));
+    assert!(retained["rollback_index_digest"].as_str().is_some());
+    let attempts = retained["registry_index_attempts"]
+        .as_array()
+        .expect("registry index attempts");
+    if expect_registry_attempt {
+        assert!(!attempts.is_empty(), "registry attempt evidence is absent");
+    }
+    assert!(
+        attempts
+            .iter()
+            .all(|attempt| matches!(attempt["state"].as_str(), Some("retained" | "abandoned")))
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn external_head_after_registry_commit_preparation_clears_orphan_evidence() {
+    let fixture = projected_fixture();
+    let registry_path = fixture.root.path().join("state/registry/projections.json");
+    let original_registry = fs::read(&registry_path).expect("original registry");
+    let original_projection = snapshot_tree(&fixture.target.path().join("demo"));
+    fs::write(
+        fixture.root.path().join("skills/demo/details.txt"),
+        "late registry CAS race\n",
+    )
+    .expect("edit source");
+    let (output, plan) = plan_converge(&fixture, &[]);
+    assert!(output.status.success(), "plan failed: {plan}");
+    let journal_path = fixture
+        .root
+        .path()
+        .join("state/transactions/convergence-demo.json");
+
+    let (output, rejected, external_head) = std::thread::scope(|scope| {
+        let apply = scope.spawn(|| {
+            apply_plan(
+                &fixture,
+                &plan,
+                "late-registry-cas-race",
+                &[("LOOM_TEST_CONVERGENCE_REGISTRY_CAS_PAUSE_MS", "2000")],
+            )
+        });
+        let mut prepared = false;
+        for _ in 0..200 {
+            if let Ok(raw) = fs::read(&journal_path)
+                && let Ok(journal) = serde_json::from_slice::<Value>(&raw)
+                && journal["phase"] == json!("committing_registry")
+                && !journal["registry_commit"].is_null()
+                && !journal["registry_staged_index_digest"].is_null()
+            {
+                prepared = true;
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(prepared, "registry commit evidence was never persisted");
+        fs::write(fixture.root.path().join("external-head.txt"), "external\n")
+            .expect("external file");
+        git(fixture.root.path(), &["add", "external-head.txt"]);
+        git(
+            fixture.root.path(),
+            &["commit", "-m", "test: late registry CAS head"],
+        );
+        let external_head = git(fixture.root.path(), &["rev-parse", "HEAD"]);
+        let (output, rejected) = apply.join().expect("apply thread");
+        (output, rejected, external_head)
+    });
+    assert!(
+        !output.status.success(),
+        "external HEAD was accepted: {rejected}"
+    );
+    assert_external_registry_retired(
+        &fixture,
+        &plan,
+        &journal_path,
+        &registry_path,
+        &original_registry,
+        &original_projection,
+        &external_head,
+        true,
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn registry_json_cas_interruption_recovers_after_external_head() {
+    let fixture = projected_fixture();
+    let registry_path = fixture.root.path().join("state/registry/projections.json");
+    let original_registry = fs::read(&registry_path).expect("original registry");
+    let original_projection = snapshot_tree(&fixture.target.path().join("demo"));
+    fs::write(
+        fixture.root.path().join("skills/demo/details.txt"),
+        "registry JSON CAS interruption\n",
+    )
+    .expect("edit source");
+    let (output, plan) = plan_converge(&fixture, &[]);
+    assert!(output.status.success(), "plan failed: {plan}");
+    let (output, interrupted) = apply_plan(
+        &fixture,
+        &plan,
+        "registry-json-cas-crash",
+        &[(
+            "LOOM_FAULT_INJECT",
+            "convergence_interrupt_after_registry_save_cas",
+        )],
+    );
+    assert!(
+        !output.status.success(),
+        "CAS interruption passed: {interrupted}"
+    );
+    let journal_path = fixture
+        .root
+        .path()
+        .join("state/transactions/convergence-demo.json");
+    let journal: Value =
+        serde_json::from_slice(&fs::read(&journal_path).expect("journal")).expect("parse journal");
+    assert_eq!(journal["phase"], json!("projections_swapped"));
+    assert_ne!(
+        fs::read(&registry_path).expect("mutated registry"),
+        original_registry
+    );
+
+    fs::write(fixture.root.path().join("external-head.txt"), "external\n").expect("external file");
+    git(fixture.root.path(), &["add", "external-head.txt"]);
+    git(
+        fixture.root.path(),
+        &["commit", "-m", "test: post-JSON-CAS head"],
+    );
+    let external_head = git(fixture.root.path(), &["rev-parse", "HEAD"]);
+    let (output, rejected) = retry_apply(&fixture, &plan, "registry-json-cas-crash");
+    assert!(
+        !output.status.success(),
+        "stale plan was accepted after recovery: {rejected}"
+    );
+    assert_external_registry_retired(
+        &fixture,
+        &plan,
+        &journal_path,
+        &registry_path,
+        &original_registry,
+        &original_projection,
+        &external_head,
+        false,
+    );
+    let (output, fresh) = plan_converge(&fixture, &[]);
+    assert!(output.status.success(), "fresh plan failed: {fresh}");
+    let (output, applied) = apply_plan(&fixture, &fresh, "post-cas-fresh", &[]);
+    assert!(output.status.success(), "fresh apply failed: {applied}");
 }

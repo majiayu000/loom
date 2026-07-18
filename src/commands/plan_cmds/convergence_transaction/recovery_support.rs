@@ -5,32 +5,6 @@ use super::recovery_evidence::{
 use super::registry_restore::restore_registry_projections_if_owned;
 use super::*;
 
-pub(super) fn interruption_fault_active() -> bool {
-    matches!(
-        std::env::var("LOOM_FAULT_INJECT").ok().as_deref(),
-        Some(
-            "convergence_interrupt_after_source_commit"
-                | "convergence_interrupt_after_source_cas"
-                | "convergence_interrupt_committing_source"
-                | "convergence_interrupt_committing_registry"
-                | "convergence_interrupt_after_owner_root_creation"
-                | "convergence_interrupt_after_owner_marker_write"
-                | "convergence_interrupt_before_index_snapshot"
-                | "convergence_interrupt_after_index_snapshot"
-                | "convergence_interrupt_after_index_snapshot_digest"
-                | "convergence_interrupt_after_prepared"
-                | "convergence_interrupt_after_source_replacement"
-                | "convergence_interrupt_after_source_add"
-                | "convergence_interrupt_after_staged_index_prepared"
-                | "convergence_interrupt_after_staged_index_install"
-                | "convergence_interrupt_after_projection_activation"
-                | "convergence_interrupt_after_projection_swap"
-                | "convergence_interrupt_before_registry_cas"
-                | "convergence_interrupt_after_reservation_pending_create"
-        )
-    )
-}
-
 pub(super) fn recover_journal(
     app: &App,
     journal_path: &Path,
@@ -134,6 +108,18 @@ pub(super) fn recover_journal(
         _ => {}
     }
     let paths = RegistryStatePaths::from_app_context(&app.ctx);
+    if matches!(
+        journal.phase,
+        TransactionPhase::ProjectionsSwapped | TransactionPhase::CommittingRegistry
+    ) && super::external_head::recover_registry_after_external_head(
+        app,
+        &paths,
+        plan,
+        journal_path,
+        &mut journal,
+    )? {
+        return Ok(None);
+    }
     if matches!(
         journal.phase,
         TransactionPhase::ReplacingSource

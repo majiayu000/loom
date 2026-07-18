@@ -87,6 +87,13 @@ pub(super) fn commit_convergence_registry(
     journal.registry_commit = Some(commit.clone());
     journal.registry_staged_index_digest = Some(expected_index.clone());
     save_journal(journal_path, journal)?;
+    #[cfg(debug_assertions)]
+    if let Some(milliseconds) = std::env::var("LOOM_TEST_CONVERGENCE_REGISTRY_CAS_PAUSE_MS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+    {
+        std::thread::sleep(std::time::Duration::from_millis(milliseconds.min(2_000)));
+    }
     let install =
         gitops::install_prepared_index_with_guard(&app.ctx, &prepared_index, &|candidate| {
             validate_registry_result(app, plan, journal)

@@ -27,6 +27,7 @@ use super::converge::digest_value;
 use super::{PLAN_PROTOCOL_VERSION, plan_failure};
 
 mod external_head;
+mod faults;
 mod guards;
 mod ownership;
 mod ownership_state;
@@ -40,6 +41,7 @@ mod registry_restore;
 mod rollback;
 mod source_commit;
 mod source_recovery;
+use faults::interruption_fault_active;
 use guards::{validate_guards, validate_recovery_routing};
 #[cfg(test)]
 use ownership::reserve_owned_dir;
@@ -550,6 +552,7 @@ fn execute_local_transaction(
             )
             .with_rollback_errors(restore_activated_projections(journal)));
         }
+        maybe_skill_fault("convergence_interrupt_after_registry_save_cas")?;
         if let Err(error) = require_head(
             app,
             journal.source_head.as_deref().unwrap_or_default(),

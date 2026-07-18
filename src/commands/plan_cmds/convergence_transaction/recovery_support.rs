@@ -1,7 +1,7 @@
+use super::projection_recovery::restore_projection_from_evidence;
 use super::recovery_evidence::{
-    reprove_source_boundary, restore_projection_from_evidence, rollback_uncommitted_source_only,
-    validate_expected_projections, validate_mutated_surfaces, validate_rollback_evidence,
-    validate_rolling_back_state,
+    reprove_source_boundary, rollback_uncommitted_source_only, validate_expected_projections,
+    validate_mutated_surfaces, validate_rollback_evidence, validate_rolling_back_state,
 };
 use super::*;
 use std::fs::OpenOptions;
@@ -22,6 +22,8 @@ pub(super) fn interruption_fault_active() -> bool {
                 | "convergence_interrupt_after_prepared"
                 | "convergence_interrupt_after_source_replacement"
                 | "convergence_interrupt_after_source_add"
+                | "convergence_interrupt_after_staged_index_prepared"
+                | "convergence_interrupt_after_staged_index_install"
                 | "convergence_interrupt_after_projection_swap"
         )
     )
@@ -199,7 +201,7 @@ pub(super) fn recover_journal(
         restore_projections_for_resume(&paths, &journal)?;
         journal.installed_projections = 0;
         journal.expected_projections = None;
-        prepare_projection_stages(app, plan, request_id, &journal)?;
+        prepare_projection_stages(app, plan, request_id, &mut journal)?;
         journal.phase = TransactionPhase::SourceCommitted;
         save_journal(journal_path, &journal)?;
         let snapshot = paths.load_snapshot().map_err(map_registry_state)?;
@@ -481,6 +483,11 @@ fn validate_journal(
             && Path::new(&artifact.staging_owner) == owner
             && Path::new(&artifact.staging_path) == owner.join("stage")
             && owner_proof_is_valid(&plan.plan_id, &artifact.owner_proof)
+            && (journal.phase == TransactionPhase::Preparing
+                || artifact
+                    .activated_fingerprint
+                    .as_deref()
+                    .is_some_and(valid_sha256_digest))
             && backup_valid;
     }
     valid &= validate_phase_invariants(journal);
@@ -493,6 +500,12 @@ fn validate_journal(
             "convergence journal does not match the reviewed plan",
         ))
     }
+}
+
+fn valid_sha256_digest(value: &str) -> bool {
+    value.len() == 71
+        && value.starts_with("sha256:")
+        && value[7..].bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
 fn validate_phase_invariants(journal: &TransactionJournal) -> bool {

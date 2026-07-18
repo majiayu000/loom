@@ -16,11 +16,14 @@ use crate::state_model::{RegistryProjectionsFile, RegistryStatePaths};
 use crate::types::ErrorCode;
 
 use super::super::codex_visibility::projection_path_is_safe_symlink;
-use super::super::file_ops::{create_declared_path_backup, restore_path_from_backup};
+use super::super::file_ops::{
+    create_declared_path_backup, restore_path_from_backup, restore_path_from_backup_if_absent,
+};
 use super::super::helpers::{map_git, map_io, map_lock, map_registry_state};
 use super::super::projection_executor::{
-    ProjectionExecutionContext, ProjectionExecutionInput, execute_prepared_convergence_projection,
-    finish_convergence_projection, prepare_convergence_projection,
+    ProjectionExecutionContext, ProjectionExecutionInput, convergence_projection_fingerprint,
+    execute_prepared_convergence_projection, finish_convergence_projection,
+    prepare_convergence_projection,
 };
 use super::super::projections::{project_skill_to_target, upsert_projection};
 use super::super::provenance::skill_tree_digest;
@@ -29,16 +32,20 @@ use super::super::{App, CommandFailure};
 use super::{PLAN_PROTOCOL_VERSION, plan_failure};
 
 mod ownership;
+mod projection_recovery;
 mod recovery_evidence;
 mod recovery_support;
 mod rollback;
+mod source_commit;
 use ownership::{
     cleanup_owned_dir, cleanup_reservation, owner_proof_is_valid, reservation_paths,
     validate_owned_staging, validate_transaction_artifacts,
 };
+use projection_recovery::{
+    restore_projection_from_evidence, validate_projection_staging_fingerprint,
+};
 use recovery_evidence::{
-    active_index_digest, file_digest, restore_backup_atomically, restore_projection_from_evidence,
-    validate_rollback_evidence,
+    active_index_digest, file_digest, restore_backup_atomically, validate_rollback_evidence,
 };
 use recovery_support::*;
 use rollback::{finish_transaction, rollback_journal};
@@ -94,6 +101,8 @@ struct ProjectionBackup {
     staging_owner: String,
     owner_proof: String,
     staging_path: String,
+    #[serde(default)]
+    activated_fingerprint: Option<String>,
 }
 
 pub(super) fn apply_convergence(
@@ -184,6 +193,7 @@ pub(super) fn apply_convergence(
                 staging_path: staging_owner.join("stage").display().to_string(),
                 staging_owner: staging_owner.display().to_string(),
                 owner_proof: new_owner_proof(&plan.plan_id),
+                activated_fingerprint: None,
             })
         })
         .collect::<std::result::Result<Vec<_>, CommandFailure>>()?;
@@ -330,29 +340,7 @@ fn execute_local_transaction(
     let source_commit = if journal.source_head.is_some() {
         journal.source_commit.clone()
     } else {
-        journal.phase = TransactionPhase::CommittingSource;
-        save_journal(journal_path, journal)?;
-        let commit = gitops::commit_paths_if_changed_with_pre_commit(
-            &app.ctx,
-            &[&format!("skills/{}", plan.skill)],
-            &format!("skill({}): converge source", plan.skill),
-            || {
-                journal.source_staged_index_digest =
-                    Some(active_index_digest(app).map_err(|err| anyhow::anyhow!(err.message))?);
-                save_journal(journal_path, journal).map_err(|err| anyhow::anyhow!(err.message))?;
-                maybe_skill_fault("convergence_interrupt_after_source_add")
-                    .map_err(|err| anyhow::anyhow!(err.message))
-            },
-        )
-        .map_err(map_git)?;
-        maybe_skill_fault("convergence_interrupt_committing_source")?;
-        journal.source_head = Some(gitops::head(&app.ctx).map_err(map_git)?);
-        journal.source_commit = commit.clone();
-        journal.phase = TransactionPhase::SourceCommitted;
-        save_journal(journal_path, journal)?;
-        maybe_skill_fault("convergence_interrupt_after_source_commit")?;
-        maybe_skill_fault("convergence_after_source_commit")?;
-        commit
+        source_commit::commit_convergence_source(app, plan, journal_path, journal)?
     };
 
     let mut projections = snapshot.projections.clone();
@@ -360,6 +348,7 @@ fn execute_local_transaction(
     journal.phase = TransactionPhase::InstallingProjections;
     save_journal(journal_path, journal)?;
     for (effect, artifact) in plan.projections.iter().zip(&journal.projections) {
+        validate_projection_staging_fingerprint(artifact)?;
         let output = execute_prepared_convergence_projection(
             &app.ctx,
             paths,
@@ -615,14 +604,15 @@ fn prepare_transaction_artifacts(
         project_skill_to_target(&selected_source, Path::new(staging), ProjectionMethod::Copy)
             .map_err(map_io)?;
     }
-    prepare_projection_stages_from(app, plan, "", journal, &selected_source)
+    prepare_projection_stages_from(app, plan, "", journal, &selected_source)?;
+    Ok(())
 }
 
 fn prepare_projection_stages(
     app: &App,
     plan: &SkillConvergencePlan,
     request_id: &str,
-    journal: &TransactionJournal,
+    journal: &mut TransactionJournal,
 ) -> std::result::Result<(), CommandFailure> {
     prepare_projection_stages_from(
         app,
@@ -630,19 +620,20 @@ fn prepare_projection_stages(
         request_id,
         journal,
         &app.ctx.skill_path(&plan.skill),
-    )
+    )?;
+    Ok(())
 }
 
 fn prepare_projection_stages_from(
     app: &App,
     plan: &SkillConvergencePlan,
     request_id: &str,
-    journal: &TransactionJournal,
+    journal: &mut TransactionJournal,
     source: &Path,
 ) -> std::result::Result<(), CommandFailure> {
     let paths = RegistryStatePaths::from_app_context(&app.ctx);
     let snapshot = paths.load_snapshot().map_err(map_registry_state)?;
-    for (effect, artifact) in plan.projections.iter().zip(&journal.projections) {
+    for (effect, artifact) in plan.projections.iter().zip(journal.projections.iter_mut()) {
         reserve_owned_dir(
             Path::new(&artifact.staging_owner),
             &journal.plan_id,
@@ -655,6 +646,9 @@ fn prepare_projection_stages_from(
             source,
             Path::new(&artifact.staging_path),
         )?;
+        artifact.activated_fingerprint = Some(convergence_projection_fingerprint(Path::new(
+            &artifact.staging_path,
+        ))?);
     }
     Ok(())
 }

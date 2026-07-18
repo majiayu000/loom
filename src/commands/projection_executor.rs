@@ -56,6 +56,13 @@ pub(crate) use convergence::{
 };
 use convergence::{map_ownership_fingerprint_error, projection_ownership_fingerprint};
 
+pub(crate) fn convergence_projection_fingerprint(
+    path: &Path,
+) -> std::result::Result<String, CommandFailure> {
+    projection_ownership_fingerprint(path)
+        .map_err(|error| map_ownership_fingerprint_error(error, path))
+}
+
 pub(crate) struct ProjectionExecutionInput {
     pub(crate) context: ProjectionExecutionContext,
     pub(crate) skill: String,

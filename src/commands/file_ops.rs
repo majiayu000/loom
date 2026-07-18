@@ -1,5 +1,6 @@
 use std::ffi::OsStr;
 use std::fs;
+use std::io;
 use std::path::Path;
 
 use anyhow::{Context, Result, anyhow};
@@ -69,6 +70,44 @@ pub(crate) fn restore_path_from_backup(path: &Path, backup: &serde_json::Value) 
                     path.display()
                 )
             })?;
+            Ok(())
+        }
+        "symlink" => restore_symlink_backup(backup_path, path),
+        other => Err(anyhow!("unsupported backup kind '{}'", other)),
+    }
+}
+
+pub(crate) fn restore_path_from_backup_if_absent(
+    path: &Path,
+    backup: &serde_json::Value,
+) -> Result<()> {
+    let backup_path = backup
+        .get("backup_path")
+        .and_then(serde_json::Value::as_str)
+        .map(Path::new)
+        .ok_or_else(|| anyhow!("backup record missing backup_path"))?;
+    let kind = backup
+        .get("kind")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| anyhow!("backup record missing kind"))?;
+    if fs::symlink_metadata(path).is_ok() {
+        return Err(anyhow!(
+            "refusing to replace recovery staging path {}",
+            path.display()
+        ));
+    }
+    match kind {
+        "dir" => {
+            fs::create_dir(path)?;
+            copy_dir_recursive_preserving_symlinks(backup_path, path)
+        }
+        "file" => {
+            let mut source = fs::File::open(backup_path)?;
+            let mut destination = fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(path)?;
+            io::copy(&mut source, &mut destination)?;
             Ok(())
         }
         "symlink" => restore_symlink_backup(backup_path, path),

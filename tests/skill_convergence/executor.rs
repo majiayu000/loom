@@ -62,7 +62,7 @@ fn symlink_copy_materialize() {
     }
 }
 
-fn apply_plan(
+pub(super) fn apply_plan(
     fixture: &Fixture,
     plan: &Value,
     key: &str,
@@ -82,46 +82,6 @@ fn apply_plan(
             key,
         ],
     )
-}
-
-#[test]
-fn stale_plan_and_lock_contention() {
-    let stale_fixture = projected_fixture();
-    let (output, stale_plan) = plan_converge(&stale_fixture, &[]);
-    assert!(output.status.success(), "plan failed: {stale_plan}");
-    fs::write(
-        stale_fixture.root.path().join("skills/demo/details.txt"),
-        "source drift\n",
-    )
-    .expect("mutate source");
-    let (output, stale) = apply_plan(&stale_fixture, &stale_plan, "stale", &[]);
-    assert!(!output.status.success(), "stale plan applied: {stale}");
-    assert_eq!(
-        stale["error"]["details"]["conflict"]["code"],
-        json!("PLAN_SOURCE_DRIFT")
-    );
-
-    let locked_fixture = projected_fixture();
-    let (output, locked_plan) = plan_converge(&locked_fixture, &[]);
-    assert!(output.status.success(), "plan failed: {locked_plan}");
-    let locks = locked_fixture.root.path().join("state/locks");
-    fs::create_dir_all(&locks).expect("create locks");
-    fs::write(
-        locks.join("workspace.lock"),
-        format!(
-            "{{\"pid\":{},\"owner_id\":\"held\",\"host\":\"other-host\",\"created_at\":\"{}\"}}\n",
-            std::process::id(),
-            chrono::Utc::now().to_rfc3339()
-        ),
-    )
-    .expect("hold workspace lock");
-    let (output, busy) = apply_plan(&locked_fixture, &locked_plan, "busy", &[]);
-    assert!(!output.status.success(), "held lock bypassed: {busy}");
-    assert!(
-        busy["error"]["message"]
-            .as_str()
-            .is_some_and(|message| message.contains("LOCK_BUSY"))
-    );
 }
 
 #[test]

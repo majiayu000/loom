@@ -126,6 +126,53 @@ fn source_add_crash_restores_the_exact_original_index_before_retry() {
     );
 }
 
+#[test]
+fn prepared_index_install_crash_restores_the_exact_original_index() {
+    let fixture = projected_fixture();
+    fs::write(
+        fixture.root.path().join("skills/demo/details.txt"),
+        "prepared index crash\n",
+    )
+    .expect("source edit");
+    fs::write(fixture.root.path().join("external-staged"), "staged\n").expect("staged");
+    git(fixture.root.path(), &["add", "external-staged"]);
+    let original_index = fs::read(fixture.root.path().join(".git/index")).expect("index");
+    let (output, plan) = plan_converge(&fixture, &[]);
+    assert!(output.status.success(), "plan failed: {plan}");
+    let (output, interrupted) = apply(
+        &fixture,
+        &plan,
+        "prepared-index-install",
+        Some("convergence_interrupt_after_staged_index_install"),
+    );
+    assert!(
+        !output.status.success(),
+        "prepared index install fault passed: {interrupted}"
+    );
+    let plan_id = plan["data"]["plan_id"].as_str().expect("plan id");
+    let digest = plan["data"]["plan_digest"].as_str().expect("digest");
+    let (output, restarted) = run_loom_with_env(
+        fixture.root.path(),
+        &[("LOOM_FAULT_INJECT", "convergence_interrupt_after_prepared")],
+        &[
+            "apply",
+            plan_id,
+            "--plan-digest",
+            digest,
+            "--idempotency-key",
+            "prepared-index-install",
+        ],
+    );
+    assert!(
+        !output.status.success(),
+        "restart fault passed: {restarted}"
+    );
+    assert_eq!(
+        fs::read(fixture.root.path().join(".git/index")).expect("restored index"),
+        original_index
+    );
+}
+
 #[cfg(unix)]
 #[test]
 fn restore_rejects_replaced_or_symlinked_source_and_projection_owner_dirs() {

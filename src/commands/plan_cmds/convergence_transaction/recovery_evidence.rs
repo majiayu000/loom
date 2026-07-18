@@ -360,20 +360,6 @@ pub(super) fn file_digest(path: &Path) -> std::result::Result<String, CommandFai
     Ok(format!("sha256:{}", to_hex(&hasher.finalize())))
 }
 
-pub(super) fn restore_projection_from_evidence(
-    artifact: &ProjectionBackup,
-    plan_id: &str,
-) -> std::result::Result<(), CommandFailure> {
-    let live = Path::new(&artifact.materialized_path);
-    let staging = Path::new(&artifact.staging_path);
-    match artifact.backup.as_ref() {
-        Some(backup) => {
-            restore_backup_atomically(live, backup, staging, plan_id, &artifact.owner_proof)
-        }
-        None => remove_path_if_exists(live).map_err(map_io),
-    }
-}
-
 pub(super) fn restore_backup_atomically(
     live: &Path,
     backup: &serde_json::Value,
@@ -632,6 +618,6 @@ fn require_clean_path(app: &App, path: &str) -> std::result::Result<(), CommandF
     Ok(())
 }
 
-fn corrupt(message: &str) -> CommandFailure {
+pub(super) fn corrupt(message: &str) -> CommandFailure {
     CommandFailure::new(ErrorCode::StateCorrupt, message)
 }

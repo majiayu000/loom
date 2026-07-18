@@ -2,10 +2,12 @@ mod diff;
 mod history;
 mod history_impl;
 mod history_types;
+mod prepared_index;
 
 pub use diff::*;
 pub use history::*;
 pub use history_types::*;
+pub use prepared_index::*;
 
 use std::fs::{self, OpenOptions};
 use std::io::Write;
@@ -362,14 +364,7 @@ pub fn commit_paths_if_changed_with_pre_commit<F>(
 where
     F: FnOnce() -> Result<()>,
 {
-    let paths = paths
-        .iter()
-        .filter_map(|path| match path_exists_or_is_tracked(ctx, path) {
-            Ok(true) => Some(Ok((*path).to_string())),
-            Ok(false) => None,
-            Err(err) => Some(Err(err)),
-        })
-        .collect::<Result<Vec<_>>>()?;
+    let paths = prepared_index::eligible_paths(ctx, paths)?;
 
     if paths.is_empty() {
         return Ok(None);

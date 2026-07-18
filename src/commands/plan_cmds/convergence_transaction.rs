@@ -28,12 +28,17 @@ use super::super::skill_cmds::shared::{maybe_skill_fault, push_rollback_error};
 use super::super::{App, CommandFailure};
 use super::{PLAN_PROTOCOL_VERSION, plan_failure};
 
+mod ownership;
 mod recovery_evidence;
 mod recovery_support;
+mod rollback;
+use ownership::validate_owned_staging;
 use recovery_evidence::{
-    restore_backup_atomically, restore_projection_from_evidence, validate_rollback_evidence,
+    active_index_digest, file_digest, restore_backup_atomically, restore_projection_from_evidence,
+    validate_rollback_evidence,
 };
 use recovery_support::*;
+use rollback::{finish_transaction, rollback_journal};
 
 const SCHEMA_VERSION: &str = "1.2";
 
@@ -44,6 +49,7 @@ struct TransactionJournal {
     previous_head: String,
     artifact_root: String,
     index_backup: String,
+    index_backup_digest: Option<String>,
     source_backup: Option<Value>,
     source_staging: Option<String>,
     projections: Vec<ProjectionBackup>,
@@ -52,6 +58,9 @@ struct TransactionJournal {
     expected_projections: Option<RegistryProjectionsFile>,
     source_head: Option<String>,
     source_commit: Option<String>,
+    source_staged_index_digest: Option<String>,
+    rollback_head: Option<String>,
+    rollback_index_digest: Option<String>,
     result: Option<Value>,
     phase: TransactionPhase,
 }
@@ -174,6 +183,7 @@ pub(super) fn apply_convergence(
         previous_head: plan.source.registry_head.clone(),
         artifact_root: artifact_dir.display().to_string(),
         index_backup: durable_index.display().to_string(),
+        index_backup_digest: None,
         source_backup,
         source_staging,
         projections: projection_backups,
@@ -182,12 +192,15 @@ pub(super) fn apply_convergence(
         expected_projections: None,
         source_head: None,
         source_commit: None,
+        source_staged_index_digest: None,
+        rollback_head: None,
+        rollback_index_digest: None,
         result: None,
         phase: TransactionPhase::Preparing,
     };
     save_journal(&journal_path, &journal)?;
 
-    if let Err(err) = prepare_transaction_artifacts(app, &plan, &journal) {
+    if let Err(err) = prepare_transaction_artifacts(app, &plan, &journal_path, &mut journal) {
         if interruption_fault_active() {
             return Err(err);
         }
@@ -213,6 +226,17 @@ pub(super) fn apply_convergence(
             return Err(err);
         }
         Err(err) => {
+            let rollback_head = gitops::head(&app.ctx).map_err(map_git)?;
+            if rollback_head != journal.previous_head
+                && journal.source_head.as_deref() != Some(rollback_head.as_str())
+            {
+                return Err(err.with_rollback_errors(vec![json!({
+                    "step": "capture_rollback_head",
+                    "message": "HEAD is neither old nor the recorded transaction head",
+                })]));
+            }
+            journal.rollback_head = Some(rollback_head);
+            journal.rollback_index_digest = Some(active_index_digest(app)?);
             journal.phase = TransactionPhase::RollingBack;
             let mut rollback_errors = save_journal(&journal_path, &journal)
                 .err()
@@ -296,10 +320,17 @@ fn execute_local_transaction(
     } else {
         journal.phase = TransactionPhase::CommittingSource;
         save_journal(journal_path, journal)?;
-        let commit = gitops::commit_paths_if_changed(
+        let commit = gitops::commit_paths_if_changed_with_pre_commit(
             &app.ctx,
             &[&format!("skills/{}", plan.skill)],
             &format!("skill({}): converge source", plan.skill),
+            || {
+                journal.source_staged_index_digest =
+                    Some(active_index_digest(app).map_err(|err| anyhow::anyhow!(err.message))?);
+                save_journal(journal_path, journal).map_err(|err| anyhow::anyhow!(err.message))?;
+                maybe_skill_fault("convergence_interrupt_after_source_add")
+                    .map_err(|err| anyhow::anyhow!(err.message))
+            },
         )
         .map_err(map_git)?;
         maybe_skill_fault("convergence_interrupt_committing_source")?;
@@ -482,91 +513,6 @@ fn replace_source_from_projection(
     Ok(())
 }
 
-fn rollback_journal(
-    app: &App,
-    paths: &RegistryStatePaths,
-    journal: &TransactionJournal,
-) -> Vec<Value> {
-    let mut errors = Vec::new();
-    if let Err(err) = paths.save_projections(&journal.original_projections) {
-        push_rollback_error(&mut errors, "restore_registry_projections", err);
-    }
-    for projection in journal
-        .projections
-        .iter()
-        .take(journal.installed_projections)
-        .rev()
-    {
-        if let Err(err) = restore_projection_from_evidence(projection) {
-            push_rollback_error(&mut errors, "restore_projection_from_evidence", err.message);
-        }
-    }
-    if let (Some(backup), Some(staging)) = (
-        journal.source_backup.as_ref(),
-        journal.source_staging.as_deref(),
-    ) && let Err(err) = restore_backup_atomically(
-        &app.ctx.skill_path(&journal.skill),
-        backup,
-        Path::new(staging),
-    ) {
-        push_rollback_error(&mut errors, "restore_source_path", err.message);
-    }
-    if let Some(staging) = journal.source_staging.as_deref()
-        && let Err(err) = remove_path_if_exists(Path::new(staging))
-    {
-        push_rollback_error(&mut errors, "remove_source_staging", err);
-    }
-    match gitops::run_git_allow_failure(&app.ctx, &["reset", "--soft", &journal.previous_head]) {
-        Ok(output) if output.status.success() => {}
-        Ok(output) => push_rollback_error(
-            &mut errors,
-            "restore_head",
-            String::from_utf8_lossy(&output.stderr).trim(),
-        ),
-        Err(err) => push_rollback_error(&mut errors, "restore_head", err),
-    }
-    if let Err(err) = gitops::restore_index_from_backup(&app.ctx, Path::new(&journal.index_backup))
-    {
-        push_rollback_error(&mut errors, "restore_git_index", err);
-    }
-    errors
-}
-
-fn finish_transaction(journal: &TransactionJournal) -> Vec<Value> {
-    let mut errors = Vec::new();
-    for (index, projection) in journal.projections.iter().enumerate() {
-        cleanup_owned_dir(
-            Path::new(&projection.staging_owner),
-            &journal.plan_id,
-            &mut errors,
-        );
-        if index == 0
-            && (std::env::var("LOOM_FAULT_INJECT").ok().as_deref()
-                == Some("convergence_interrupt_during_cleanup")
-                || std::env::var("LOOM_CLEANUP_FAULT_INJECT").ok().as_deref()
-                    == Some("convergence_interrupt_during_cleanup"))
-        {
-            push_rollback_error(
-                &mut errors,
-                "cleanup_transaction_backups",
-                "fault injected during committed cleanup",
-            );
-            return errors;
-        }
-    }
-    if let Some(path) = journal.source_staging.as_deref()
-        && let Some(owner) = Path::new(path).parent()
-    {
-        cleanup_owned_dir(owner, &journal.plan_id, &mut errors);
-    }
-    cleanup_owned_dir(
-        Path::new(&journal.artifact_root),
-        &journal.plan_id,
-        &mut errors,
-    );
-    errors
-}
-
 fn save_journal(
     path: &Path,
     journal: &TransactionJournal,
@@ -621,10 +567,13 @@ fn declared_backup(
 fn prepare_transaction_artifacts(
     app: &App,
     plan: &SkillConvergencePlan,
-    journal: &TransactionJournal,
+    journal_path: &Path,
+    journal: &mut TransactionJournal,
 ) -> std::result::Result<(), CommandFailure> {
     reserve_owned_dir(Path::new(&journal.artifact_root), &journal.plan_id)?;
     gitops::snapshot_index_to(&app.ctx, Path::new(&journal.index_backup)).map_err(map_git)?;
+    journal.index_backup_digest = Some(file_digest(Path::new(&journal.index_backup))?);
+    save_journal(journal_path, journal)?;
     if let Some(backup) = journal.source_backup.as_ref() {
         create_declared_path_backup(&app.ctx.skill_path(&plan.skill), backup).map_err(map_io)?;
     }

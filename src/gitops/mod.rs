@@ -272,6 +272,24 @@ pub fn validate_index_file(ctx: &AppContext, index_path: &Path) -> Result<()> {
         &["ls-files", "--stage"],
     )?;
     if output.status.success() {
+        for line in String::from_utf8_lossy(&output.stdout).lines() {
+            let Some(object) = line.split_whitespace().nth(1) else {
+                return Err(anyhow!(
+                    "invalid Git index entry in {}",
+                    index_path.display()
+                ));
+            };
+            if object.bytes().all(|byte| byte == b'0') {
+                continue;
+            }
+            let object = run_git_allow_failure(ctx, &["cat-file", "-e", object])?;
+            if !object.status.success() {
+                return Err(anyhow!(
+                    "Git index {} references a missing object",
+                    index_path.display()
+                ));
+            }
+        }
         Ok(())
     } else {
         Err(anyhow!(
@@ -332,6 +350,18 @@ pub fn commit_paths_if_changed(
     paths: &[&str],
     message: &str,
 ) -> Result<Option<String>> {
+    commit_paths_if_changed_with_pre_commit(ctx, paths, message, || Ok(()))
+}
+
+pub fn commit_paths_if_changed_with_pre_commit<F>(
+    ctx: &AppContext,
+    paths: &[&str],
+    message: &str,
+    pre_commit: F,
+) -> Result<Option<String>>
+where
+    F: FnOnce() -> Result<()>,
+{
     let paths = paths
         .iter()
         .filter_map(|path| match path_exists_or_is_tracked(ctx, path) {
@@ -355,6 +385,7 @@ pub fn commit_paths_if_changed(
     if diff.status.success() {
         return Ok(None);
     }
+    pre_commit()?;
 
     let mut commit_args = vec!["commit", "-m", message, "--"];
     commit_args.extend(paths.iter().map(String::as_str));

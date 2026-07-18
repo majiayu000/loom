@@ -516,7 +516,7 @@ fn projection_input_symlink_stage_targets_final_canonical_source() {
 
 #[cfg(unix)]
 #[test]
-fn noop_source_commit_rejects_a_head_changed_during_index_preparation() {
+fn noop_source_commit_retires_after_a_head_changed_during_index_preparation() {
     let fixture = projected_fixture();
     let (output, plan) = plan_converge(&fixture, &[]);
     assert!(output.status.success(), "plan failed: {plan}");
@@ -568,7 +568,36 @@ fn noop_source_commit_rejects_a_head_changed_during_index_preparation() {
     );
     let external = git(fixture.root.path(), &["rev-parse", "HEAD"]);
     assert_ne!(external.trim(), original);
-    let journal: Value = serde_json::from_slice(&fs::read(&journal_path).expect("durable journal"))
-        .expect("parse journal");
-    assert!(journal["source_head"].is_null());
+    assert!(
+        !journal_path.exists(),
+        "active no-op journal was not retired"
+    );
+    assert!(
+        Command::new("git")
+            .args(["diff", "--cached", "--quiet"])
+            .current_dir(fixture.root.path())
+            .status()
+            .expect("inspect external index")
+            .success(),
+        "transaction changed the external commit index"
+    );
+    let retained = fs::read_dir(journal_path.parent().expect("journal parent"))
+        .expect("retained journal directory")
+        .filter_map(Result::ok)
+        .find(|entry| entry.file_name().to_string_lossy().starts_with("retained-"))
+        .expect("retained no-op journal");
+    let retained: Value =
+        serde_json::from_slice(&fs::read(retained.path()).expect("retained journal"))
+            .expect("parse retained journal");
+    assert_eq!(retained["phase"], json!("rolled_back_artifacts_retained"));
+    assert_eq!(retained["source_index_changed"], json!(false));
+    assert!(retained["source_head"].is_null());
+
+    let (output, fresh) = plan_converge(&fixture, &[]);
+    assert!(output.status.success(), "fresh plan failed: {fresh}");
+    let (output, applied) = apply_plan(&fixture, &fresh, "noop-head-race-fresh", &[]);
+    assert!(
+        output.status.success(),
+        "retired no-op journal blocked a fresh apply: {applied}"
+    );
 }

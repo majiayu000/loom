@@ -3,6 +3,80 @@ use super::recovery_evidence::validate_mutated_surfaces;
 use super::registry_restore::restore_registry_projections_if_owned;
 use super::*;
 
+pub(super) fn handle_transaction_failure(
+    app: &App,
+    paths: &RegistryStatePaths,
+    plan: &SkillConvergencePlan,
+    journal_path: &Path,
+    journal: &mut TransactionJournal,
+    failure: CommandFailure,
+) -> std::result::Result<CommandFailure, CommandFailure> {
+    let rollback_head = gitops::head(&app.ctx).map_err(map_git)?;
+    if rollback_head != journal.previous_head
+        && super::external_head::retire_uncommitted_noop_after_external_head(
+            app,
+            paths,
+            plan,
+            journal_path,
+            journal,
+        )?
+    {
+        return Ok(failure);
+    }
+    if rollback_head != journal.previous_head
+        && journal.source_head.as_deref() != Some(rollback_head.as_str())
+    {
+        return Ok(failure.with_rollback_errors(vec![json!({
+            "step": "capture_rollback_head",
+            "message": "HEAD is neither old nor the recorded transaction head",
+        })]));
+    }
+    journal.registry_commit = None;
+    journal.registry_staged_index_digest = None;
+    journal.rollback_head = Some(rollback_head);
+    journal.rollback_index_digest = Some(active_index_digest(app)?);
+    journal.phase = TransactionPhase::RollingBack;
+    let mut errors = save_journal(journal_path, journal)
+        .err()
+        .map(|error| {
+            vec![json!({
+                "step": "persist_rolling_back",
+                "message": error.message,
+            })]
+        })
+        .unwrap_or_default();
+    if errors.is_empty() {
+        if let Err(error) = validate_rollback_evidence(app, plan, journal) {
+            errors.push(json!({
+                "step": "validate_rollback_evidence",
+                "message": error.message,
+            }));
+        } else {
+            errors = rollback_journal(app, paths, plan, journal);
+        }
+    }
+    if errors.is_empty()
+        && std::env::var("LOOM_ROLLBACK_FAULT_INJECT").ok().as_deref()
+            == Some("convergence_interrupt_after_rollback")
+    {
+        return Ok(failure);
+    }
+    if errors.is_empty() {
+        registry_commit::terminalize_registry_index_attempts(journal, false);
+        journal.phase = TransactionPhase::RolledBackCleanupPending;
+        if let Err(error) = save_journal(journal_path, journal) {
+            errors.push(json!({
+                "step": "persist_rolled_back_cleanup_pending",
+                "message": error.message,
+            }));
+        }
+    }
+    if errors.is_empty() {
+        errors.extend(finish_transaction(journal_path, journal));
+    }
+    Ok(failure.with_rollback_errors(errors))
+}
+
 pub(super) fn restore_activated_projections(journal: &mut TransactionJournal) -> Vec<Value> {
     let mut errors = Vec::new();
     for projection in journal.projections.iter_mut().rev() {

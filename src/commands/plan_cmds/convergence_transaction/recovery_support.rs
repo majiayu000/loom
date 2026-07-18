@@ -99,7 +99,19 @@ pub(super) fn recover_journal(
             finish_committed_cleanup(journal_path, &mut journal)?;
             return Ok(Some(result));
         }
-        TransactionPhase::CommittingSource => prove_source_boundary(app, plan, &mut journal)?,
+        TransactionPhase::CommittingSource => {
+            let paths = RegistryStatePaths::from_app_context(&app.ctx);
+            if super::external_head::retire_uncommitted_noop_after_external_head(
+                app,
+                &paths,
+                plan,
+                journal_path,
+                &mut journal,
+            )? {
+                return Ok(None);
+            }
+            prove_source_boundary(app, plan, &mut journal)?;
+        }
         TransactionPhase::RollingBack => {
             let paths = RegistryStatePaths::from_app_context(&app.ctx);
             validate_mutated_surfaces(app, &paths, plan, &mut journal)?;

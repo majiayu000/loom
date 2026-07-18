@@ -26,6 +26,7 @@ use super::super::{App, CommandFailure};
 use super::converge::digest_value;
 use super::{PLAN_PROTOCOL_VERSION, plan_failure};
 
+mod external_head;
 mod guards;
 mod ownership;
 mod ownership_state;
@@ -87,6 +88,8 @@ struct TransactionJournal {
     source_head: Option<String>,
     source_commit: Option<String>,
     source_staged_index_digest: Option<String>,
+    #[serde(default)]
+    source_index_changed: Option<bool>,
     #[serde(default)]
     registry_commit: Option<String>,
     #[serde(default)]
@@ -308,6 +311,7 @@ pub(super) fn apply_convergence(
         source_head: None,
         source_commit: None,
         source_staged_index_digest: None,
+        source_index_changed: None,
         registry_commit: None,
         registry_staged_index_digest: None,
         registry_index_attempts: Vec::new(),
@@ -344,59 +348,14 @@ pub(super) fn apply_convergence(
             return Err(err);
         }
         Err(err) => {
-            let rollback_head = gitops::head(&app.ctx).map_err(map_git)?;
-            if rollback_head != journal.previous_head
-                && journal.source_head.as_deref() != Some(rollback_head.as_str())
-            {
-                return Err(err.with_rollback_errors(vec![json!({
-                    "step": "capture_rollback_head",
-                    "message": "HEAD is neither old nor the recorded transaction head",
-                })]));
-            }
-            journal.registry_commit = None;
-            journal.registry_staged_index_digest = None;
-            journal.rollback_head = Some(rollback_head);
-            journal.rollback_index_digest = Some(active_index_digest(app)?);
-            journal.phase = TransactionPhase::RollingBack;
-            let mut rollback_errors = save_journal(&journal_path, &journal)
-                .err()
-                .map(|save_err| {
-                    vec![json!({
-                        "step": "persist_rolling_back",
-                        "message": save_err.message,
-                    })]
-                })
-                .unwrap_or_default();
-            if rollback_errors.is_empty() {
-                if let Err(validation) = validate_rollback_evidence(app, &plan, &journal) {
-                    rollback_errors.push(json!({
-                        "step": "validate_rollback_evidence",
-                        "message": validation.message,
-                    }));
-                } else {
-                    rollback_errors = rollback_journal(app, &paths, &plan, &mut journal);
-                }
-            }
-            if rollback_errors.is_empty()
-                && std::env::var("LOOM_ROLLBACK_FAULT_INJECT").ok().as_deref()
-                    == Some("convergence_interrupt_after_rollback")
-            {
-                return Err(err);
-            }
-            if rollback_errors.is_empty() {
-                registry_commit::terminalize_registry_index_attempts(&mut journal, false);
-                journal.phase = TransactionPhase::RolledBackCleanupPending;
-                if let Err(save_err) = save_journal(&journal_path, &journal) {
-                    rollback_errors.push(json!({
-                        "step": "persist_rolled_back_cleanup_pending",
-                        "message": save_err.message,
-                    }));
-                }
-            }
-            if rollback_errors.is_empty() {
-                rollback_errors.extend(finish_transaction(&journal_path, &mut journal));
-            }
-            return Err(err.with_rollback_errors(rollback_errors));
+            return Err(rollback::handle_transaction_failure(
+                app,
+                &paths,
+                &plan,
+                &journal_path,
+                &mut journal,
+                err,
+            )?);
         }
     };
     journal.result = Some(output.clone());

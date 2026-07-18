@@ -20,6 +20,7 @@ pub(super) fn commit_convergence_source(
     )
     .map_err(map_git)?;
     journal.source_staged_index_digest = Some(file_digest(&prepared_index)?);
+    journal.source_index_changed = Some(changed);
     save_journal(journal_path, journal)?;
     maybe_skill_fault("convergence_interrupt_after_staged_index_prepared")?;
 

@@ -13,6 +13,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result, anyhow};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
+use serde_json::Value;
 
 #[cfg(any(
     target_os = "macos",
@@ -62,6 +63,7 @@ where
 
 /// Atomically replace a JSON file only when the displaced value still matches
 /// the caller's reviewed baseline.
+#[inline(never)]
 pub(super) fn compare_exchange_json_file<T>(
     path: &Path,
     expected: &T,
@@ -70,7 +72,7 @@ pub(super) fn compare_exchange_json_file<T>(
 where
     T: Serialize,
 {
-    let expected = serialize_json_file(expected)?;
+    let expected: Value = serde_json::from_str(&serialize_json_file(expected)?)?;
     let raw = serialize_json_file(replacement)?;
     let parent = path
         .parent()
@@ -93,7 +95,7 @@ where
     Ok(compare_exchange_json_candidate(
         path,
         &candidate,
-        expected.as_bytes(),
+        &expected,
         raw.as_bytes(),
     )?)
 }
@@ -107,7 +109,7 @@ where
 fn compare_exchange_json_candidate(
     path: &Path,
     candidate: &Path,
-    expected: &[u8],
+    expected: &Value,
     owned_replacement: &[u8],
 ) -> std::io::Result<bool> {
     if let Err(error) = exchange_paths_atomic(candidate, path) {
@@ -118,7 +120,11 @@ fn compare_exchange_json_candidate(
             ))),
         };
     }
-    let matches = fs::read(candidate).is_ok_and(|raw| raw == expected);
+    let matches = fs::read(candidate)
+        .ok()
+        .and_then(|raw| serde_json::from_slice::<Value>(&raw).ok())
+        .as_ref()
+        == Some(expected);
     if !matches {
         restore_json_candidate(path, candidate, owned_replacement)?;
         return Ok(false);
@@ -168,12 +174,16 @@ fn restore_json_candidate(
 fn compare_exchange_json_candidate(
     path: &Path,
     candidate: &Path,
-    expected: &[u8],
+    expected: &Value,
     owned_replacement: &[u8],
 ) -> std::io::Result<bool> {
     let backup = path.with_extension(format!("cas-backup-{}", uuid::Uuid::new_v4()));
     replace_file_with_backup_windows(path, candidate, &backup)?;
-    let matches = fs::read(&backup).is_ok_and(|raw| raw == expected);
+    let matches = fs::read(&backup)
+        .ok()
+        .and_then(|raw| serde_json::from_slice::<Value>(&raw).ok())
+        .as_ref()
+        == Some(expected);
     if !matches {
         restore_json_candidate_windows(path, &backup, candidate, owned_replacement)?;
         return Ok(false);
@@ -275,7 +285,7 @@ fn replace_file_with_backup_windows(
 fn compare_exchange_json_candidate(
     _path: &Path,
     candidate: &Path,
-    _expected: &[u8],
+    _expected: &Value,
     _owned_replacement: &[u8],
 ) -> std::io::Result<bool> {
     let cleanup = fs::remove_file(candidate)
@@ -408,7 +418,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::{Value, json};
+    use serde_json::json;
 
     #[test]
     fn json_compare_exchange_installs_only_over_the_reviewed_value() {

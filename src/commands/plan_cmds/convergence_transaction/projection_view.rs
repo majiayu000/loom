@@ -1,5 +1,6 @@
 use super::*;
 
+#[inline(never)]
 pub(super) fn projection_view_digest(
     path: &Path,
     method: &str,

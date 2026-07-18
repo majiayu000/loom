@@ -1,25 +1,26 @@
 use super::recovery_evidence::validate_mutated_surfaces;
 use super::*;
 
+#[inline(never)]
 pub(super) fn restore_activated_projections(journal: &mut TransactionJournal) -> Vec<Value> {
     let mut errors = Vec::new();
+    let mut installed = 0;
     for projection in journal.projections.iter_mut().rev() {
-        if projection.is_activated() {
+        if projection.activated {
             match restore_projection_from_evidence(projection, &journal.plan_id) {
-                Ok(()) => projection.mark_activated(false),
-                Err(err) => push_rollback_error(
-                    &mut errors,
-                    "restore_projection_after_head_drift",
-                    err.message,
-                ),
+                Ok(()) => projection.activated = false,
+                Err(err) => {
+                    installed += 1;
+                    push_rollback_error(
+                        &mut errors,
+                        "restore_projection_after_head_drift",
+                        err.message,
+                    );
+                }
             }
         }
     }
-    journal.installed_projections = journal
-        .projections
-        .iter()
-        .filter(|projection| projection.is_activated())
-        .count();
+    journal.installed_projections = installed;
     errors
 }
 
@@ -88,8 +89,7 @@ fn restore_head_if_owned(
         return Ok(());
     }
     if journal.rollback_head.as_deref() != Some(live.as_str()) {
-        return Err(CommandFailure::new(
-            ErrorCode::StateCorrupt,
+        return Err(state_corrupt(
             "HEAD changed after rollback evidence was captured",
         ));
     }
@@ -100,41 +100,36 @@ fn restore_index_if_owned(
     app: &App,
     journal: &TransactionJournal,
 ) -> std::result::Result<(), CommandFailure> {
-    let original = journal.index_backup_digest.as_deref().ok_or_else(|| {
-        CommandFailure::new(
-            ErrorCode::StateCorrupt,
-            "transaction Git index backup digest is missing",
-        )
-    })?;
+    let original = journal
+        .index_backup_digest
+        .as_deref()
+        .ok_or_else(|| state_corrupt("transaction Git index backup digest is missing"))?;
     let live = active_index_digest(app)?;
     if live == original {
         return Ok(());
     }
-    let rollback = journal.rollback_index_digest.as_deref().ok_or_else(|| {
-        CommandFailure::new(
-            ErrorCode::StateCorrupt,
-            "rollback Git index digest is missing",
-        )
-    })?;
+    let rollback = journal
+        .rollback_index_digest
+        .as_deref()
+        .ok_or_else(|| state_corrupt("rollback Git index digest is missing"))?;
     if live != rollback {
-        return Err(CommandFailure::new(
-            ErrorCode::StateCorrupt,
+        return Err(state_corrupt(
             "Git index changed after rollback evidence was captured",
         ));
     }
-    gitops::install_prepared_index_with_guard(&app.ctx, Path::new(&journal.index_backup), &|_| {
-        let active = active_index_digest(app).map_err(|error| anyhow::anyhow!(error.message))?;
-        if active != rollback {
-            return Err(anyhow::anyhow!("active Git index changed"));
-        }
-        let head = gitops::head(&app.ctx)?;
-        if head != journal.previous_head {
-            return Err(anyhow::anyhow!(
-                "HEAD changed before rollback index installation"
-            ));
-        }
-        Ok(())
-    })
+    gitops::install_prepared_index_with_guard(
+        &app.ctx,
+        Path::new(&journal.index_backup),
+        &|candidate| {
+            super::registry_commit::validate_index_install(
+                app,
+                candidate,
+                original,
+                rollback,
+                &journal.previous_head,
+            )
+        },
+    )
     .map_err(map_git)
 }
 

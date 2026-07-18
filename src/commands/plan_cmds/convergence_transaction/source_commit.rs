@@ -1,7 +1,8 @@
-use super::recovery_evidence::{active_index_digest, committed_skill_digest, file_digest};
+use super::recovery_evidence::{committed_skill_digest, file_digest};
 use super::recovery_support::{recovery_stale, verify_commit};
 use super::*;
 
+#[inline(never)]
 pub(super) fn commit_convergence_source(
     app: &App,
     plan: &SkillConvergencePlan,
@@ -27,10 +28,11 @@ pub(super) fn commit_convergence_source(
         let original = journal
             .index_backup_digest
             .clone()
-            .ok_or_else(|| CommandFailure::new(ErrorCode::StateCorrupt, "index digest missing"))?;
-        let staged = journal.source_staged_index_digest.clone().ok_or_else(|| {
-            CommandFailure::new(ErrorCode::StateCorrupt, "staged index digest missing")
-        })?;
+            .ok_or_else(|| state_corrupt("index digest missing"))?;
+        let staged = journal
+            .source_staged_index_digest
+            .clone()
+            .ok_or_else(|| state_corrupt("staged index digest missing"))?;
         let message = format!("skill({}): converge source", plan.skill);
         let commit_index = Path::new(&journal.artifact_root).join("source-commit-index");
         let commit = gitops::create_prepared_commit(
@@ -54,28 +56,14 @@ pub(super) fn commit_convergence_source(
         validate_live_source(app, plan)?;
         let install =
             gitops::install_prepared_index_with_guard(&app.ctx, &prepared_index, &|candidate| {
-                validate_live_source(app, plan)
-                    .map_err(|error| anyhow::anyhow!(error.message.clone()))?;
-                let installed =
-                    file_digest(candidate).map_err(|error| anyhow::anyhow!(error.message))?;
-                if installed != staged {
-                    return Err(anyhow::anyhow!(
-                        "prepared Git index changed after its digest was persisted"
-                    ));
-                }
-                let live =
-                    active_index_digest(app).map_err(|error| anyhow::anyhow!(error.message))?;
-                if live != original {
-                    return Err(anyhow::anyhow!(
-                        "active Git index changed before prepared index installation"
-                    ));
-                }
-                if gitops::head(&app.ctx)? != journal.previous_head {
-                    return Err(anyhow::anyhow!(
-                        "HEAD changed before source index installation"
-                    ));
-                }
-                Ok(())
+                validate_live_source(app, plan).map_err(|error| anyhow::anyhow!(error.message))?;
+                super::registry_commit::validate_index_install(
+                    app,
+                    candidate,
+                    &staged,
+                    &original,
+                    &journal.previous_head,
+                )
             });
         if let Err(error) = install {
             let failure = map_git(error);
@@ -92,7 +80,7 @@ pub(super) fn commit_convergence_source(
         maybe_skill_fault("convergence_interrupt_after_staged_index_install")?;
         if let Err(error) = validate_live_source(app, plan) {
             return Err(restore_index_after_failed_commit(
-                app, journal, &staged, error,
+                app, journal, &original, &staged, error,
             ));
         }
         if let Err(error) =
@@ -100,7 +88,7 @@ pub(super) fn commit_convergence_source(
                 .map_err(map_git)
         {
             let observed = gitops::head(&app.ctx).map_err(map_git)?;
-            let error = restore_index_after_failed_commit(app, journal, &staged, error);
+            let error = restore_index_after_failed_commit(app, journal, &original, &staged, error);
             if observed != journal.previous_head
                 && plan.source.direction == ConvergenceInputDirection::Projection
             {
@@ -122,8 +110,7 @@ pub(super) fn commit_convergence_source(
     journal.source_commit = commit.clone();
     let source_head = gitops::head(&app.ctx).map_err(map_git)?;
     if source_head != expected_source_head {
-        return Err(CommandFailure::new(
-            ErrorCode::StateCorrupt,
+        return Err(state_corrupt(
             "HEAD changed after the source compare-and-swap",
         ));
     }
@@ -136,6 +123,7 @@ pub(super) fn commit_convergence_source(
     Ok(commit)
 }
 
+#[inline(never)]
 fn restore_source_after_external_head(
     app: &App,
     plan: &SkillConvergencePlan,
@@ -144,13 +132,15 @@ fn restore_source_after_external_head(
 ) -> CommandFailure {
     match restore_source_from_evidence(app, plan, journal) {
         Ok(()) => error,
-        Err(restore) => error.with_rollback_errors(vec![json!({
-            "step": "restore_source_after_external_head",
-            "message": restore.message,
-        })]),
+        Err(restore) => with_rollback_error(
+            error,
+            "restore_source_after_external_head",
+            &restore.message,
+        ),
     }
 }
 
+#[inline(never)]
 pub(super) fn validate_live_source(
     app: &App,
     plan: &SkillConvergencePlan,
@@ -165,31 +155,33 @@ pub(super) fn validate_live_source(
     }
 }
 
+#[inline(never)]
 fn restore_index_after_failed_commit(
     app: &App,
     journal: &TransactionJournal,
+    original: &str,
     staged: &str,
     error: CommandFailure,
 ) -> CommandFailure {
     let restore = gitops::install_prepared_index_with_guard(
         &app.ctx,
         Path::new(&journal.index_backup),
-        &|_| {
-            let live =
-                active_index_digest(app).map_err(|failure| anyhow::anyhow!(failure.message))?;
-            if live != staged {
-                return Err(anyhow::anyhow!(
-                    "active Git index is no longer transaction-owned"
-                ));
-            }
-            Ok(())
+        &|candidate| {
+            super::registry_commit::validate_index_install(
+                app,
+                candidate,
+                original,
+                staged,
+                &journal.previous_head,
+            )
         },
     );
     match restore {
         Ok(()) => error,
-        Err(restore) => error.with_rollback_errors(vec![json!({
-            "step": "restore_git_index_after_prepared_commit_failure",
-            "message": restore.to_string(),
-        })]),
+        Err(restore) => with_rollback_error(
+            error,
+            "restore_git_index_after_prepared_commit_failure",
+            &restore,
+        ),
     }
 }

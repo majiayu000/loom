@@ -5,6 +5,7 @@ use std::io::Write;
 const OWNER_FILE: &str = ".owner";
 const RESERVATION_PROOF_FILE: &str = ".reservation-owner";
 
+#[inline(never)]
 pub(super) fn validate_owned_staging(
     live: &Path,
     staging: &Path,
@@ -39,6 +40,7 @@ pub(super) fn owner_dir_is_exact(owner: &Path, plan_id: &str, expected_proof: &s
         && owner_proof_is_valid(plan_id, expected_proof)
 }
 
+#[inline(never)]
 pub(super) fn owner_proof_is_valid(plan_id: &str, proof: &str) -> bool {
     let Some(nonce) = proof.strip_prefix(&format!("{plan_id}:")) else {
         return false;
@@ -85,12 +87,12 @@ pub(super) fn reservation_paths(
     path: &Path,
     plan_id: &str,
 ) -> std::result::Result<(PathBuf, PathBuf), CommandFailure> {
-    let parent = path.parent().ok_or_else(|| {
-        CommandFailure::new(ErrorCode::StateCorrupt, "artifact path has no parent")
-    })?;
-    let name = path.file_name().ok_or_else(|| {
-        CommandFailure::new(ErrorCode::StateCorrupt, "artifact path has no file name")
-    })?;
+    let parent = path
+        .parent()
+        .ok_or_else(|| state_corrupt("artifact path has no parent"))?;
+    let name = path
+        .file_name()
+        .ok_or_else(|| state_corrupt("artifact path has no file name"))?;
     let name = name.to_string_lossy();
     Ok((
         parent.join(format!(".{name}.reservation-{plan_id}")),
@@ -396,6 +398,7 @@ fn same_filesystem(_left: &Path, _right: &Path) -> std::result::Result<bool, Com
     ))
 }
 
+#[inline(never)]
 fn ownership_failure(message: &str) -> CommandFailure {
     CommandFailure::new(ErrorCode::StateCorrupt, message)
 }

@@ -78,6 +78,7 @@ pub(super) fn validate_guards(
     Ok(snapshot)
 }
 
+#[inline(never)]
 pub(super) fn validate_recovery_routing(
     app: &App,
     plan: &SkillConvergencePlan,

@@ -23,6 +23,7 @@ pub(super) fn declared_backup(
     })))
 }
 
+#[inline(never)]
 pub(super) fn prepare_transaction_artifacts(
     app: &App,
     plan: &SkillConvergencePlan,
@@ -56,12 +57,9 @@ pub(super) fn prepare_transaction_artifacts(
     }
     for (effect, projection) in plan.projections.iter().zip(&mut journal.projections) {
         validate_projection_guard(app, plan, effect)?;
-        let original = (effect.effect == "refresh")
+        projection.original_fingerprint = (effect.effect == "refresh")
             .then(|| convergence_projection_fingerprint(Path::new(&projection.materialized_path)))
             .transpose()?;
-        if let (Some(backup), Some(fingerprint)) = (projection.backup.as_mut(), original.as_ref()) {
-            backup["fingerprint"] = json!(fingerprint);
-        }
         if let Some(backup) = projection.backup.as_ref() {
             create_declared_path_backup(Path::new(&projection.materialized_path), backup)
                 .map_err(map_io)?;
@@ -79,7 +77,7 @@ pub(super) fn prepare_transaction_artifacts(
         let live = (effect.effect == "refresh")
             .then(|| convergence_projection_fingerprint(Path::new(&projection.materialized_path)))
             .transpose()?;
-        if original != live {
+        if projection.original_fingerprint != live {
             return Err(stale(
                 "projection changed while recording rollback evidence",
                 "PLAN_PROJECTION_DRIFT",
@@ -90,13 +88,14 @@ pub(super) fn prepare_transaction_artifacts(
     let selected_source = selected_source_path(app, plan)?;
     if let Some(staging) = journal.source_staging.as_deref() {
         reserve_owned_dir(
-            Path::new(staging).parent().ok_or_else(|| {
-                CommandFailure::new(ErrorCode::StateCorrupt, "source stage has no owner")
-            })?,
+            Path::new(staging)
+                .parent()
+                .ok_or_else(|| state_corrupt("source stage has no owner"))?,
             &journal.plan_id,
-            journal.source_owner_proof.as_deref().ok_or_else(|| {
-                CommandFailure::new(ErrorCode::StateCorrupt, "source owner proof is absent")
-            })?,
+            journal
+                .source_owner_proof
+                .as_deref()
+                .ok_or_else(|| state_corrupt("source owner proof is absent"))?,
         )?;
         project_skill_to_target(&selected_source, Path::new(staging), ProjectionMethod::Copy)
             .map_err(map_io)?;
@@ -121,6 +120,7 @@ pub(super) fn prepare_projection_stages(
     )
 }
 
+#[inline(never)]
 fn prepare_projection_stages_from(
     app: &App,
     plan: &SkillConvergencePlan,
@@ -135,15 +135,10 @@ fn prepare_projection_stages_from(
     let snapshot = paths.load_snapshot().map_err(map_registry_state)?;
     for (effect, artifact) in plan.projections.iter().zip(journal.projections.iter_mut()) {
         validate_projection_guard(app, plan, effect)?;
-        if effect.effect == "refresh"
-            && artifact
-                .backup
-                .as_ref()
-                .is_none_or(|backup| backup["fingerprint"].is_null())
-        {
-            artifact.backup.as_mut().expect("refresh backup")["fingerprint"] = json!(
-                convergence_projection_fingerprint(Path::new(&artifact.materialized_path))?
-            );
+        if effect.effect == "refresh" && artifact.original_fingerprint.is_none() {
+            artifact.original_fingerprint = Some(convergence_projection_fingerprint(Path::new(
+                &artifact.materialized_path,
+            ))?);
         }
         reserve_owned_dir(
             Path::new(&artifact.staging_owner),

@@ -5,26 +5,26 @@ use super::recovery_evidence::{
 use super::*;
 
 pub(super) fn interruption_fault_active() -> bool {
-    matches!(
-        std::env::var("LOOM_FAULT_INJECT").ok().as_deref(),
-        Some(
-            "convergence_interrupt_after_source_commit"
-                | "convergence_interrupt_after_source_cas"
-                | "convergence_interrupt_committing_source"
-                | "convergence_interrupt_committing_registry"
-                | "convergence_interrupt_after_owner_root_creation"
-                | "convergence_interrupt_after_owner_marker_write"
-                | "convergence_interrupt_after_prepared"
-                | "convergence_interrupt_after_source_replacement"
-                | "convergence_interrupt_after_source_add"
-                | "convergence_interrupt_after_staged_index_prepared"
-                | "convergence_interrupt_after_staged_index_install"
-                | "convergence_interrupt_after_projection_activation"
-                | "convergence_interrupt_after_projection_swap"
-                | "convergence_interrupt_before_registry_cas"
-                | "convergence_interrupt_after_reservation_pending_create"
-        )
-    )
+    const FAULTS: &[&str] = &[
+        "convergence_interrupt_after_source_commit",
+        "convergence_interrupt_after_source_cas",
+        "convergence_interrupt_committing_source",
+        "convergence_interrupt_committing_registry",
+        "convergence_interrupt_after_owner_root_creation",
+        "convergence_interrupt_after_owner_marker_write",
+        "convergence_interrupt_after_prepared",
+        "convergence_interrupt_after_source_replacement",
+        "convergence_interrupt_after_source_add",
+        "convergence_interrupt_after_staged_index_prepared",
+        "convergence_interrupt_after_staged_index_install",
+        "convergence_interrupt_after_projection_activation",
+        "convergence_interrupt_after_projection_swap",
+        "convergence_interrupt_before_registry_cas",
+        "convergence_interrupt_after_reservation_pending_create",
+    ];
+    std::env::var("LOOM_FAULT_INJECT")
+        .ok()
+        .is_some_and(|fault| FAULTS.contains(&fault.as_str()))
 }
 
 pub(super) fn recover_journal(
@@ -46,9 +46,10 @@ pub(super) fn recover_journal(
             reprove_source_boundary(app, plan, &journal)?;
             let paths = RegistryStatePaths::from_app_context(&app.ctx);
             validate_mutated_surfaces(app, &paths, plan, &mut journal)?;
-            let result = journal.result.clone().ok_or_else(|| {
-                CommandFailure::new(ErrorCode::StateCorrupt, "committed journal has no result")
-            })?;
+            let result = journal
+                .result
+                .clone()
+                .ok_or_else(|| state_corrupt("committed journal has no result"))?;
             finish_committed_cleanup(journal_path, &journal)?;
             return Ok(Some(result));
         }
@@ -61,11 +62,8 @@ pub(super) fn recover_journal(
             if errors.is_empty() {
                 return Ok(None);
             }
-            return Err(CommandFailure::new(
-                ErrorCode::StateCorrupt,
-                "interrupted preparation cleanup failed",
-            )
-            .with_rollback_errors(errors));
+            return Err(state_corrupt("interrupted preparation cleanup failed")
+                .with_rollback_errors(errors));
         }
         TransactionPhase::CommittingSource => prove_source_boundary(app, plan, &mut journal)?,
         TransactionPhase::RollingBack => {
@@ -75,11 +73,8 @@ pub(super) fn recover_journal(
             validate_rolling_back_state(app, plan, &journal)?;
             let errors = rollback_journal(app, &paths, plan, &mut journal);
             if !errors.is_empty() {
-                return Err(CommandFailure::new(
-                    ErrorCode::StateCorrupt,
-                    "interrupted convergence rollback failed",
-                )
-                .with_rollback_errors(errors));
+                return Err(state_corrupt("interrupted convergence rollback failed")
+                    .with_rollback_errors(errors));
             }
             journal.phase = TransactionPhase::RolledBackCleanupPending;
             save_journal(journal_path, &journal)?;
@@ -101,11 +96,7 @@ pub(super) fn recover_journal(
         if errors.is_empty() {
             return Ok(None);
         }
-        return Err(CommandFailure::new(
-            ErrorCode::StateCorrupt,
-            "uncommitted source cleanup failed",
-        )
-        .with_rollback_errors(errors));
+        return Err(state_corrupt("uncommitted source cleanup failed").with_rollback_errors(errors));
     }
     if source_is_committed(&journal) {
         reprove_source_boundary(app, plan, &journal)?;
@@ -146,11 +137,9 @@ pub(super) fn recover_journal(
     validate_rollback_evidence(app, plan, &journal)?;
     let errors = rollback_journal(app, &paths, plan, &mut journal);
     if !errors.is_empty() {
-        return Err(CommandFailure::new(
-            ErrorCode::StateCorrupt,
-            "interrupted convergence recovery failed",
-        )
-        .with_rollback_errors(errors));
+        return Err(
+            state_corrupt("interrupted convergence recovery failed").with_rollback_errors(errors)
+        );
     }
     journal.phase = TransactionPhase::RolledBackCleanupPending;
     save_journal(journal_path, &journal)?;
@@ -158,39 +147,38 @@ pub(super) fn recover_journal(
     Ok(None)
 }
 
+#[inline(never)]
 pub(super) fn validate_projection_guard(
     app: &App,
     plan: &SkillConvergencePlan,
     effect: &crate::core::convergence::ProjectionEffectPlan,
 ) -> std::result::Result<(), CommandFailure> {
     let path = Path::new(&effect.materialized_path);
-    if let Some(expected) = effect.materialized_tree_digest.as_deref() {
-        let live = projection_view_digest(path, &effect.method)?;
-        if live == expected {
-            return Ok(());
-        }
+    let valid = if let Some(expected) = effect.materialized_tree_digest.as_deref() {
+        projection_view_digest(path, &effect.method)? == expected
     } else {
         match fs::symlink_metadata(path) {
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound && effect.effect == "create" => {
-                return Ok(());
-            }
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => effect.effect == "create",
             Ok(metadata)
                 if effect.effect == "refresh"
                     && effect.method == "symlink"
                     && metadata.file_type().is_symlink()
                     && projection_path_is_safe_symlink(path, &app.ctx.skill_path(&plan.skill)) =>
             {
-                return Ok(());
+                true
             }
             Err(err) => return Err(map_io(err)),
-            Ok(_) => {}
+            Ok(_) => false,
         }
+    };
+    if valid {
+        Ok(())
+    } else {
+        Err(stale(
+            "projection bytes or path kind changed after planning",
+            "PLAN_PROJECTION_DRIFT",
+        ))
     }
-    Err(stale(
-        "projection bytes or path kind changed after planning",
-        "PLAN_PROJECTION_DRIFT",
-    ))
 }
 
 pub(super) fn apply_output(
@@ -222,11 +210,7 @@ pub(super) fn restore_projections_for_resume(
 ) -> std::result::Result<(), CommandFailure> {
     let mut errors = validate_transaction_artifacts(journal);
     if !errors.is_empty() {
-        return Err(CommandFailure::new(
-            ErrorCode::StateCorrupt,
-            "committed source recovery artifact validation failed",
-        )
-        .with_rollback_errors(errors));
+        return Err(committed_source_recovery_failure(errors));
     }
     if plan.registry.initialized
         && let Err(err) = paths.save_projections(&journal.original_projections)
@@ -234,29 +218,17 @@ pub(super) fn restore_projections_for_resume(
         push_rollback_error(&mut errors, "restore_registry_projections", err);
     }
     if !errors.is_empty() {
-        return Err(CommandFailure::new(
-            ErrorCode::StateCorrupt,
-            "failed to prepare committed source recovery",
-        )
-        .with_rollback_errors(errors));
+        return Err(committed_source_recovery_failure(errors));
     }
     let restored = journal
         .projections
         .iter()
-        .map(ProjectionBackup::is_activated)
+        .map(|projection| projection.activated)
         .collect::<Vec<_>>();
     errors.extend(restore_activated_projections(journal));
+    clear_restored_projection_fingerprints(&mut journal.projections, &restored);
     if !errors.is_empty() {
-        return Err(CommandFailure::new(
-            ErrorCode::StateCorrupt,
-            "failed to prepare committed source recovery",
-        )
-        .with_rollback_errors(errors));
-    }
-    for (projection, was_restored) in journal.projections.iter_mut().zip(restored) {
-        if was_restored && let Some(backup) = projection.backup.as_mut() {
-            backup["fingerprint"] = Value::Null;
-        }
+        return Err(committed_source_recovery_failure(errors));
     }
     for projection in journal.projections.iter().rev() {
         cleanup_owned_dir(
@@ -266,22 +238,31 @@ pub(super) fn restore_projections_for_resume(
             &mut errors,
         );
         if !errors.is_empty() {
-            return Err(CommandFailure::new(
-                ErrorCode::StateCorrupt,
-                "failed to prepare committed source recovery",
-            )
-            .with_rollback_errors(errors));
+            return Err(committed_source_recovery_failure(errors));
         }
     }
     if errors.is_empty() {
         Ok(())
     } else {
-        Err(CommandFailure::new(
-            ErrorCode::StateCorrupt,
-            "failed to prepare committed source recovery",
-        )
-        .with_rollback_errors(errors))
+        Err(committed_source_recovery_failure(errors))
     }
+}
+
+fn clear_restored_projection_fingerprints(projections: &mut [ProjectionBackup], restored: &[bool]) {
+    for (projection, was_restored) in projections.iter_mut().zip(restored) {
+        if *was_restored && !projection.activated {
+            projection.original_fingerprint = None;
+        }
+    }
+}
+
+#[inline(never)]
+fn committed_source_recovery_failure(errors: Vec<Value>) -> CommandFailure {
+    CommandFailure::new(
+        ErrorCode::StateCorrupt,
+        "failed to prepare committed source recovery",
+    )
+    .with_rollback_errors(errors)
 }
 
 pub(super) fn cleanup_declared_artifacts(
@@ -368,10 +349,7 @@ fn validate_journal(
     .ok()
     .and_then(|raw| serde_json::from_str::<RegistryProjectionsFile>(&raw).ok());
     valid &= if plan.registry.initialized {
-        previous_projections.as_ref().is_some_and(|previous| {
-            serde_json::to_value(previous).ok()
-                == serde_json::to_value(&journal.original_projections).ok()
-        })
+        previous_projections.as_ref() == Some(&journal.original_projections)
     } else {
         previous_projections.is_none()
             && journal.original_projections.projections.is_empty()
@@ -428,17 +406,19 @@ fn validate_journal(
             && Path::new(&artifact.staging_path) == owner.join("stage")
             && owner_proof_is_valid(&plan.plan_id, &artifact.owner_proof)
             && (journal.phase == TransactionPhase::Preparing
-                || artifact.fingerprint().is_some_and(valid_sha256_digest))
+                || artifact
+                    .activated_fingerprint
+                    .as_deref()
+                    .is_some_and(valid_sha256_digest))
             && match effect.effect.as_str() {
                 "refresh" => {
                     journal.phase == TransactionPhase::Preparing
                         || artifact
-                            .backup
-                            .as_ref()
-                            .and_then(|backup| backup["fingerprint"].as_str())
+                            .original_fingerprint
+                            .as_deref()
                             .is_some_and(valid_sha256_digest)
                 }
-                "create" => artifact.backup.is_none(),
+                "create" => artifact.original_fingerprint.is_none(),
                 _ => false,
             }
             && backup_valid;
@@ -447,15 +427,14 @@ fn validate_journal(
         == journal
             .projections
             .iter()
-            .filter(|projection| projection.is_activated())
+            .filter(|projection| projection.activated)
             .count();
     valid &= validate_phase_invariants(journal);
     valid &= validate_expected_projections(plan, journal);
     if valid {
         Ok(())
     } else {
-        Err(CommandFailure::new(
-            ErrorCode::StateCorrupt,
+        Err(state_corrupt(
             "convergence journal does not match the reviewed plan",
         ))
     }
@@ -588,9 +567,10 @@ fn prove_registry_boundary(
     journal_path: &Path,
     journal: &mut TransactionJournal,
 ) -> std::result::Result<Option<String>, CommandFailure> {
-    let source_head = journal.source_head.as_deref().ok_or_else(|| {
-        CommandFailure::new(ErrorCode::StateCorrupt, "journal is missing source head")
-    })?;
+    let source_head = journal
+        .source_head
+        .as_deref()
+        .ok_or_else(|| state_corrupt("journal is missing source head"))?;
     let head = gitops::head(&app.ctx).map_err(map_git)?;
     if !plan.registry.initialized {
         if RegistryStatePaths::from_app_context(&app.ctx).exists() || head != source_head {
@@ -653,15 +633,11 @@ pub(super) fn validate_registry_result(
 ) -> std::result::Result<(), CommandFailure> {
     let paths = RegistryStatePaths::from_app_context(&app.ctx);
     let snapshot = paths.load_snapshot().map_err(map_registry_state)?;
-    let expected = journal.expected_projections.as_ref().ok_or_else(|| {
-        CommandFailure::new(
-            ErrorCode::StateCorrupt,
-            "journal is missing expected projections",
-        )
-    })?;
-    if serde_json::to_value(&snapshot.projections).map_err(map_io)?
-        != serde_json::to_value(expected).map_err(map_io)?
-    {
+    let expected = journal
+        .expected_projections
+        .as_ref()
+        .ok_or_else(|| state_corrupt("journal is missing expected projections"))?;
+    if snapshot.projections != *expected {
         return Err(recovery_stale(
             "live registry differs from transaction evidence",
         ));
@@ -713,6 +689,7 @@ fn committed_result_with_registry(
     })
 }
 
+#[inline(never)]
 pub(super) fn recovery_stale(message: &str) -> CommandFailure {
     plan_failure(
         ErrorCode::DependencyConflict,
@@ -722,4 +699,48 @@ pub(super) fn recovery_stale(message: &str) -> CommandFailure {
         vec!["inspect and resolve the interrupted convergence journal".to_string()],
         None,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn projection(label: &str, activated: bool) -> ProjectionBackup {
+        ProjectionBackup {
+            materialized_path: label.to_string(),
+            backup: Some(Value::Null),
+            staging_owner: format!("{label}-owner"),
+            owner_proof: format!("{label}-proof"),
+            staging_path: format!("{label}-stage"),
+            activated_fingerprint: Some(format!("{label}-activated")),
+            activated,
+            original_fingerprint: Some(format!("{label}-original")),
+        }
+    }
+
+    #[test]
+    fn resume_clears_only_successfully_restored_projection_fingerprints() {
+        let mut projections = vec![
+            projection("symlink-noop", false),
+            projection("copy-restored", true),
+            projection("copy-failed", true),
+        ];
+        let restored = projections
+            .iter()
+            .map(|projection| projection.activated)
+            .collect::<Vec<_>>();
+        projections[1].activated = false;
+
+        clear_restored_projection_fingerprints(&mut projections, &restored);
+
+        assert_eq!(
+            projections[0].original_fingerprint.as_deref(),
+            Some("symlink-noop-original")
+        );
+        assert!(projections[1].original_fingerprint.is_none());
+        assert_eq!(
+            projections[2].original_fingerprint.as_deref(),
+            Some("copy-failed-original")
+        );
+    }
 }

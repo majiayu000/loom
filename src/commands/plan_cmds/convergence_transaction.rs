@@ -49,8 +49,8 @@ use projection_recovery::{
 };
 use projection_view::projection_view_digest;
 use recovery_evidence::{
-    active_index_digest, file_digest, validate_mutated_surfaces, validate_rollback_evidence,
-    validate_tree_backup,
+    active_index_digest, corrupt as state_corrupt, file_digest, validate_mutated_surfaces,
+    validate_rollback_evidence, validate_tree_backup,
 };
 use recovery_support::*;
 use registry_commit::{commit_convergence_registry, require_head};
@@ -116,33 +116,13 @@ struct ProjectionBackup {
     staging_path: String,
     #[serde(default)]
     activated_fingerprint: Option<String>,
+    #[serde(default)]
+    activated: bool,
+    #[serde(default)]
+    original_fingerprint: Option<String>,
 }
 
-impl ProjectionBackup {
-    fn fingerprint(&self) -> Option<&str> {
-        self.activated_fingerprint
-            .as_deref()
-            .map(|value| value.strip_prefix("active:").unwrap_or(value))
-    }
-
-    fn is_activated(&self) -> bool {
-        self.activated_fingerprint
-            .as_deref()
-            .is_some_and(|value| value.starts_with("active:"))
-    }
-
-    fn mark_activated(&mut self, active: bool) {
-        let Some(value) = self.activated_fingerprint.as_mut() else {
-            return;
-        };
-        if active && !value.starts_with("active:") {
-            value.insert_str(0, "active:");
-        } else if !active && value.starts_with("active:") {
-            value.drain(..7);
-        }
-    }
-}
-
+#[inline(never)]
 pub(super) fn apply_convergence(
     app: &App,
     stored: &Value,
@@ -219,9 +199,9 @@ pub(super) fn apply_convergence(
         .enumerate()
         .map(|(index, effect)| {
             let materialized = Path::new(&effect.materialized_path);
-            let parent = materialized.parent().ok_or_else(|| {
-                CommandFailure::new(ErrorCode::StateCorrupt, "projection path has no parent")
-            })?;
+            let parent = materialized
+                .parent()
+                .ok_or_else(|| state_corrupt("projection path has no parent"))?;
             let staging_owner = parent.join(format!(
                 ".loom-projection-stage-{}-{index}.owner",
                 plan.plan_id
@@ -250,6 +230,8 @@ pub(super) fn apply_convergence(
                 staging_owner: staging_owner.display().to_string(),
                 owner_proof: new_owner_proof(&plan.plan_id),
                 activated_fingerprint: None,
+                activated: false,
+                original_fingerprint: None,
             })
         })
         .collect::<std::result::Result<Vec<_>, CommandFailure>>()?;
@@ -315,10 +297,11 @@ pub(super) fn apply_convergence(
             if rollback_head != journal.previous_head
                 && journal.source_head.as_deref() != Some(rollback_head.as_str())
             {
-                return Err(err.with_rollback_errors(vec![json!({
-                    "step": "capture_rollback_head",
-                    "message": "HEAD is neither old nor the recorded transaction head",
-                })]));
+                return Err(with_rollback_error(
+                    err,
+                    "capture_rollback_head",
+                    &"HEAD is neither old nor the recorded transaction head",
+                ));
             }
             journal.registry_commit = None;
             journal.registry_staged_index_digest = None;
@@ -383,6 +366,7 @@ pub(super) fn apply_convergence(
     Ok(apply_output(&plan, cursor, idempotency_key_digest, output))
 }
 
+#[inline(never)]
 fn execute_local_transaction(
     app: &App,
     paths: &RegistryStatePaths,
@@ -417,15 +401,12 @@ fn execute_local_transaction(
     for index in 0..plan.projections.len() {
         let effect = &plan.projections[index];
         let artifact = &journal.projections[index];
-        let snapshot = snapshot.ok_or_else(|| {
-            CommandFailure::new(
-                ErrorCode::StateCorrupt,
-                "projection transaction has no registry snapshot",
-            )
-        })?;
-        let source_head = journal.source_head.as_deref().ok_or_else(|| {
-            CommandFailure::new(ErrorCode::StateCorrupt, "journal is missing source head")
-        })?;
+        let snapshot = snapshot
+            .ok_or_else(|| state_corrupt("projection transaction has no registry snapshot"))?;
+        let source_head = journal
+            .source_head
+            .as_deref()
+            .ok_or_else(|| state_corrupt("journal is missing source head"))?;
         require_head(
             app,
             source_head,
@@ -436,17 +417,10 @@ fn execute_local_transaction(
         let staging_path = PathBuf::from(&artifact.staging_path);
         let staging = PreparedProjectionStaging::new(
             staging_path,
-            artifact.fingerprint().map(str::to_string).ok_or_else(|| {
-                CommandFailure::new(
-                    ErrorCode::StateCorrupt,
-                    "prepared projection staging fingerprint is absent",
-                )
+            artifact.activated_fingerprint.clone().ok_or_else(|| {
+                state_corrupt("prepared projection staging fingerprint is absent")
             })?,
-            artifact
-                .backup
-                .as_ref()
-                .and_then(|backup| backup["fingerprint"].as_str())
-                .map(str::to_string),
+            artifact.original_fingerprint.clone(),
         );
         let live_path = PathBuf::from(&artifact.materialized_path);
         let output = execute_prepared_convergence_projection(
@@ -464,9 +438,9 @@ fn execute_local_transaction(
                 )
             },
         )?;
-        let projection = output.projection.ok_or_else(|| {
-            CommandFailure::new(ErrorCode::StateCorrupt, "executor omitted projection state")
-        })?;
+        let projection = output
+            .projection
+            .ok_or_else(|| state_corrupt("executor omitted projection state"))?;
         let cleanup_errors = finish_convergence_projection(output.backup.as_ref());
         if !cleanup_errors.is_empty() {
             return Err(CommandFailure::new(
@@ -478,7 +452,7 @@ fn execute_local_transaction(
         upsert_projection(&mut projections, projection.clone());
         applied.push(projection.instance_id);
         if output.activated {
-            journal.projections[index].mark_activated(true);
+            journal.projections[index].activated = true;
             journal.installed_projections += 1;
         }
         if let Err(error) = require_head(
@@ -544,9 +518,7 @@ fn replace_source_from_projection(
         .source_staging
         .as_deref()
         .map(PathBuf::from)
-        .ok_or_else(|| {
-            CommandFailure::new(ErrorCode::StateCorrupt, "source staging path is absent")
-        })?;
+        .ok_or_else(|| state_corrupt("source staging path is absent"))?;
     let reviewed = &plan.source.tree_digest;
     if skill_tree_digest(&source).map_err(map_io)? != *reviewed {
         return Err(stale(
@@ -566,10 +538,11 @@ fn replace_source_from_projection(
             "source_changed_during_exchange",
         );
         if let Err(error) = exchange_paths_atomic(&staging, &source) {
-            failure = failure.with_rollback_errors(vec![json!({
-                "step": "restore_source_after_exchange_guard_failure",
-                "message": error.to_string(),
-            })]);
+            failure = with_rollback_error(
+                failure,
+                "restore_source_after_exchange_guard_failure",
+                &error,
+            );
         }
         return Err(failure);
     }
@@ -579,10 +552,7 @@ fn replace_source_from_projection(
         "HEAD changed during projection source replacement",
     ) {
         if let Err(error) = exchange_paths_atomic(&staging, &source) {
-            failure = failure.with_rollback_errors(vec![json!({
-                "step": "restore_source_after_head_drift",
-                "message": error.to_string(),
-            })]);
+            failure = with_rollback_error(failure, "restore_source_after_head_drift", &error);
         }
         return Err(failure);
     }
@@ -593,8 +563,8 @@ fn save_journal(
     path: &Path,
     journal: &TransactionJournal,
 ) -> std::result::Result<(), CommandFailure> {
-    let raw = serde_json::to_string_pretty(journal).map_err(map_io)?;
-    write_atomic(path, &(raw + "\n")).map_err(map_io)
+    let raw = serde_json::to_string(journal).map_err(map_io)?;
+    write_atomic(path, &raw).map_err(map_io)
 }
 
 fn cleanup_journal(path: &Path, journal: &TransactionJournal) -> std::io::Result<()> {
@@ -673,17 +643,16 @@ fn selected_source_path(
     if plan.source.direction == ConvergenceInputDirection::Source {
         return Ok(app.ctx.skill_path(&plan.skill));
     }
-    let instance = plan.source.input_instance.as_deref().ok_or_else(|| {
-        CommandFailure::new(
-            ErrorCode::StateCorrupt,
-            "projection input has no instance id",
-        )
-    })?;
+    let instance = plan
+        .source
+        .input_instance
+        .as_deref()
+        .ok_or_else(|| state_corrupt("projection input has no instance id"))?;
     plan.projections
         .iter()
         .find(|effect| effect.instance_id == instance)
         .map(|effect| PathBuf::from(&effect.materialized_path))
-        .ok_or_else(|| CommandFailure::new(ErrorCode::StateCorrupt, "projection input is absent"))
+        .ok_or_else(|| state_corrupt("projection input is absent"))
 }
 
 fn journal_path(app: &App, skill: &str) -> PathBuf {
@@ -707,6 +676,17 @@ fn parse_method(value: &str) -> std::result::Result<ProjectionMethod, CommandFai
 
 fn new_owner_proof(plan_id: &str) -> String {
     format!("{plan_id}:{}", uuid::Uuid::new_v4())
+}
+
+#[inline(never)]
+fn with_rollback_error(
+    error: CommandFailure,
+    step: &str,
+    message: &dyn std::fmt::Display,
+) -> CommandFailure {
+    let mut errors = Vec::with_capacity(1);
+    push_rollback_error(&mut errors, step, message);
+    error.with_rollback_errors(errors)
 }
 
 fn stale(message: impl Into<String>, code: &str) -> CommandFailure {

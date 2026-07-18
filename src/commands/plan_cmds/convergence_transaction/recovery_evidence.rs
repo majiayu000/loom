@@ -58,21 +58,22 @@ pub(super) fn reprove_source_boundary(
             .ok_or_else(|| corrupt("missing committed result"))?;
         let expected_registry = (head != source_head).then_some(head.as_str());
         if result["skill"].as_str() != Some(plan.skill.as_str())
-            || result["source_commit"]
-                != journal
-                    .source_commit
-                    .as_ref()
-                    .map_or(serde_json::Value::Null, |value| {
-                        serde_json::Value::String(value.clone())
-                    })
+            || match journal.source_commit.as_deref() {
+                Some(commit) => result["source_commit"].as_str() != Some(commit),
+                None => !result["source_commit"].is_null(),
+            }
             || result["registry_commit"].as_str() != expected_registry
-            || result["projection_instances"]
-                != serde_json::json!(
-                    plan.projections
-                        .iter()
-                        .map(|effect| effect.instance_id.clone())
-                        .collect::<Vec<_>>()
-                )
+            || !result["projection_instances"]
+                .as_array()
+                .is_some_and(|instances| {
+                    instances.len() == plan.projections.len()
+                        && instances
+                            .iter()
+                            .zip(&plan.projections)
+                            .all(|(actual, effect)| {
+                                actual.as_str() == Some(effect.instance_id.as_str())
+                            })
+                })
         {
             return Err(corrupt(
                 "committed result does not match transaction evidence",
@@ -95,39 +96,17 @@ pub(super) fn validate_mutated_surfaces(
     plan: &SkillConvergencePlan,
     journal: &mut TransactionJournal,
 ) -> std::result::Result<(), CommandFailure> {
-    let mut contiguous_new = 0usize;
+    let mut activated = 0usize;
     let mut saw_old = false;
     for (index, effect) in plan.projections.iter().enumerate() {
-        let state = projection_state(app, plan, effect)?;
-        match state {
-            ProjectionState::New if !saw_old => {
-                journal.projections[index].mark_activated(true);
-                contiguous_new += 1;
-            }
-            ProjectionState::Old => {
-                journal.projections[index].mark_activated(false);
-                saw_old = true;
-            }
-            ProjectionState::New => {
-                return Err(recovery_stale(
-                    "projection transaction progress is not contiguous",
-                ));
-            }
-            ProjectionState::Same => {
-                if journal.projections[index].is_activated() {
-                    contiguous_new += 1;
-                }
-            }
-        }
+        let state = projection_state(app, plan, effect, &journal.projections[index])?;
+        activated += usize::from(reconcile_projection_state(
+            &mut journal.projections[index],
+            state,
+            &mut saw_old,
+        )?);
     }
-    if contiguous_new < journal.installed_projections
-        && journal.phase != TransactionPhase::RollingBack
-    {
-        return Err(recovery_stale(
-            "an installed projection no longer has transaction bytes",
-        ));
-    }
-    journal.installed_projections = contiguous_new;
+    journal.installed_projections = activated;
 
     if !plan.registry.initialized {
         if paths.exists() {
@@ -139,15 +118,8 @@ pub(super) fn validate_mutated_surfaces(
     }
 
     let live = paths.load_projections().map_err(map_registry_state)?;
-    let live_value = serde_json::to_value(&live).map_err(map_io)?;
-    let old_value = serde_json::to_value(&journal.original_projections).map_err(map_io)?;
-    let expected_value = journal
-        .expected_projections
-        .as_ref()
-        .map(serde_json::to_value)
-        .transpose()
-        .map_err(map_io)?;
-    if live_value != old_value && expected_value.as_ref() != Some(&live_value) {
+    if live != journal.original_projections && journal.expected_projections.as_ref() != Some(&live)
+    {
         return Err(recovery_stale(
             "registry projections are neither old nor transaction-new",
         ));
@@ -167,61 +139,55 @@ pub(super) fn validate_expected_projections(
                 | TransactionPhase::CommittedCleanupPending
         );
     };
-    let planned = plan
-        .projections
-        .iter()
-        .map(|effect| effect.instance_id.as_str())
-        .collect::<std::collections::BTreeSet<_>>();
     let old_unplanned = journal
         .original_projections
         .projections
         .iter()
-        .filter(|item| !planned.contains(item.instance_id.as_str()))
-        .map(|item| serde_json::to_value(item).ok())
-        .collect::<Option<Vec<_>>>();
-    let new_unplanned = expected
-        .projections
-        .iter()
-        .filter(|item| !planned.contains(item.instance_id.as_str()))
-        .map(|item| serde_json::to_value(item).ok())
-        .collect::<Option<Vec<_>>>();
-    if old_unplanned.is_none()
-        || old_unplanned != new_unplanned
+        .filter(|item| {
+            !plan
+                .projections
+                .iter()
+                .any(|effect| effect.instance_id == item.instance_id)
+        });
+    let old_unplanned_count = old_unplanned.clone().count();
+    let new_unplanned = expected.projections.iter().filter(|item| {
+        !plan
+            .projections
+            .iter()
+            .any(|effect| effect.instance_id == item.instance_id)
+    });
+    if !old_unplanned.eq(new_unplanned)
         || expected.schema_version != journal.original_projections.schema_version
-        || expected.projections.len()
-            != old_unplanned.as_ref().map_or(0, Vec::len) + plan.projections.len()
+        || expected.projections.len() != old_unplanned_count + plan.projections.len()
     {
         return false;
     }
     plan.projections.iter().all(|effect| {
-        expected
+        let mut matching = expected
             .projections
             .iter()
             .filter(|item| item.instance_id == effect.instance_id)
-            .count()
-            == 1
-            && expected.projections.iter().any(|item| {
-                item.instance_id == effect.instance_id
-                    && item.skill_id == plan.skill
-                    && item.binding_id.as_deref() == Some(effect.binding_id.as_str())
-                    && item.target_id == effect.target_id
-                    && item.materialized_path == effect.materialized_path
-                    && item.method.as_str() == effect.method
-                    && item.last_applied_rev == journal.source_head.as_deref().unwrap_or_default()
-                    && item.health.as_str() == "healthy"
-                    && item.observed_drift == Some(false)
-                    && item.last_observed_error.is_none()
-                    && item.last_observed_at.is_some()
-                    && item.last_observed_at == item.updated_at
-                    && if effect.method == "symlink" {
-                        item.source_tree_digest.is_none() && item.materialized_tree_digest.is_none()
-                    } else {
-                        item.source_tree_digest.as_deref()
+            .take(2);
+        matching.next().is_some_and(|item| {
+            item.skill_id == plan.skill
+                && item.binding_id.as_deref() == Some(effect.binding_id.as_str())
+                && item.target_id == effect.target_id
+                && item.materialized_path == effect.materialized_path
+                && item.method.as_str() == effect.method
+                && item.last_applied_rev == journal.source_head.as_deref().unwrap_or_default()
+                && item.health.as_str() == "healthy"
+                && item.observed_drift == Some(false)
+                && item.last_observed_error.is_none()
+                && item.last_observed_at.is_some()
+                && item.last_observed_at == item.updated_at
+                && if effect.method == "symlink" {
+                    item.source_tree_digest.is_none() && item.materialized_tree_digest.is_none()
+                } else {
+                    item.source_tree_digest.as_deref() == Some(effect.source_tree_digest.as_str())
+                        && item.materialized_tree_digest.as_deref()
                             == Some(effect.source_tree_digest.as_str())
-                            && item.materialized_tree_digest.as_deref()
-                                == Some(effect.source_tree_digest.as_str())
-                    }
-            })
+                }
+        }) && matching.next().is_none()
     })
 }
 
@@ -274,9 +240,7 @@ pub(super) fn rollback_uncommitted_source_only(
     let paths = RegistryStatePaths::from_app_context(&app.ctx);
     if plan.registry.initialized {
         let live_registry = paths.load_projections().map_err(map_registry_state)?;
-        if serde_json::to_value(live_registry).map_err(map_io)?
-            != serde_json::to_value(&journal.original_projections).map_err(map_io)?
-        {
+        if live_registry != journal.original_projections {
             return Err(recovery_stale(
                 "registry changed during an uncommitted source transaction",
             ));
@@ -360,6 +324,7 @@ pub(super) fn active_index_digest(app: &App) -> std::result::Result<String, Comm
     file_digest(&path)
 }
 
+#[inline(never)]
 pub(super) fn file_digest(path: &Path) -> std::result::Result<String, CommandFailure> {
     let bytes = fs::read(path).map_err(map_io)?;
     let mut hasher = Sha256::new();
@@ -433,13 +398,37 @@ pub(super) fn validate_tree_backup(
 enum ProjectionState {
     Old,
     New,
-    Same,
+}
+
+fn reconcile_projection_state(
+    artifact: &mut ProjectionBackup,
+    state: ProjectionState,
+    saw_old: &mut bool,
+) -> std::result::Result<bool, CommandFailure> {
+    match state {
+        ProjectionState::New if !*saw_old || artifact.activated => {
+            artifact.activated = true;
+            Ok(true)
+        }
+        ProjectionState::New => Err(recovery_stale(
+            "projection transaction progress is not contiguous",
+        )),
+        ProjectionState::Old => {
+            if artifact.activated {
+                artifact.original_fingerprint = None;
+            }
+            artifact.activated = false;
+            *saw_old = true;
+            Ok(false)
+        }
+    }
 }
 
 fn projection_state(
     app: &App,
     plan: &SkillConvergencePlan,
     effect: &crate::core::convergence::ProjectionEffectPlan,
+    artifact: &ProjectionBackup,
 ) -> std::result::Result<ProjectionState, CommandFailure> {
     let path = Path::new(&effect.materialized_path);
     if effect.method == "symlink" {
@@ -447,7 +436,7 @@ fn projection_state(
             return Ok(if effect.effect == "create" {
                 ProjectionState::New
             } else {
-                ProjectionState::Same
+                same_content_projection_state(path, artifact)?
             });
         }
         if effect.effect == "create" {
@@ -473,7 +462,7 @@ fn projection_state(
             let old = effect.materialized_tree_digest.as_deref();
             let new = effect.source_tree_digest.as_str();
             if old == Some(new) && digest == new {
-                Ok(ProjectionState::Same)
+                same_content_projection_state(path, artifact)
             } else if old == Some(digest.as_str()) {
                 Ok(ProjectionState::Old)
             } else if digest == new {
@@ -484,6 +473,30 @@ fn projection_state(
                 ))
             }
         }
+    }
+}
+
+#[inline(never)]
+fn same_content_projection_state(
+    path: &Path,
+    artifact: &ProjectionBackup,
+) -> std::result::Result<ProjectionState, CommandFailure> {
+    let live = convergence_projection_fingerprint(path)?;
+    projection_identity_state(artifact, &live)
+}
+
+fn projection_identity_state(
+    artifact: &ProjectionBackup,
+    live: &str,
+) -> std::result::Result<ProjectionState, CommandFailure> {
+    let original = artifact.original_fingerprint.as_deref() == Some(live);
+    let activated = artifact.activated_fingerprint.as_deref() == Some(live);
+    match (original, activated) {
+        (true, false) => Ok(ProjectionState::Old),
+        (false, true) => Ok(ProjectionState::New),
+        _ => Err(recovery_stale(
+            "equal-content projection identity is neither uniquely old nor transaction-new",
+        )),
     }
 }
 
@@ -512,9 +525,7 @@ fn verify_registry_commit(
     .map_err(map_git)?;
     let committed: RegistryProjectionsFile = serde_json::from_str(&raw)
         .map_err(|_| corrupt("registry commit projections are invalid"))?;
-    if serde_json::to_value(committed).map_err(map_io)?
-        != serde_json::to_value(expected).map_err(map_io)?
-    {
+    if committed != *expected {
         return Err(recovery_stale(
             "registry commit tree differs from transaction evidence",
         ));
@@ -622,6 +633,96 @@ fn require_clean_path(app: &App, path: &str) -> std::result::Result<(), CommandF
     Ok(())
 }
 
+#[inline(never)]
 pub(super) fn corrupt(message: &str) -> CommandFailure {
     CommandFailure::new(ErrorCode::StateCorrupt, message)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn projection(label: &str, activated: bool) -> ProjectionBackup {
+        ProjectionBackup {
+            materialized_path: label.to_string(),
+            backup: Some(Value::Null),
+            staging_owner: format!("{label}-owner"),
+            owner_proof: format!("{label}-proof"),
+            staging_path: format!("{label}-stage"),
+            activated_fingerprint: Some(format!("{label}-activated")),
+            activated,
+            original_fingerprint: Some(format!("{label}-original")),
+        }
+    }
+
+    #[test]
+    fn partial_restore_state_is_inferred_and_retryable() {
+        let mut projections = [projection("restored", true), projection("failed", true)];
+        let mut saw_old = false;
+
+        assert!(
+            !reconcile_projection_state(&mut projections[0], ProjectionState::Old, &mut saw_old,)
+                .expect("infer restored projection")
+        );
+        assert!(
+            reconcile_projection_state(&mut projections[1], ProjectionState::New, &mut saw_old,)
+                .expect("retain failed projection")
+        );
+        assert!(projections[0].original_fingerprint.is_none());
+        assert!(projections[1].original_fingerprint.is_some());
+
+        let mut saw_old = false;
+        assert!(
+            !reconcile_projection_state(&mut projections[0], ProjectionState::Old, &mut saw_old,)
+                .expect("retain restored projection")
+        );
+        assert!(
+            !reconcile_projection_state(&mut projections[1], ProjectionState::Old, &mut saw_old,)
+                .expect("infer retry restoration")
+        );
+        assert!(
+            projections.iter().all(
+                |projection| !projection.activated && projection.original_fingerprint.is_none()
+            )
+        );
+    }
+
+    #[test]
+    fn unrecorded_new_projection_after_old_remains_stale() {
+        let mut projection = projection("unrecorded", false);
+        let mut saw_old = true;
+        let error = reconcile_projection_state(&mut projection, ProjectionState::New, &mut saw_old)
+            .expect_err("unrecorded out-of-order projection must fail");
+        assert_eq!(error.code, ErrorCode::DependencyConflict);
+    }
+
+    #[test]
+    fn equal_content_partial_restore_uses_ownership_identity() {
+        let mut restored = projection("equal-content-restored", true);
+        let mut failed = projection("equal-content-failed", true);
+        let restored_identity = restored.original_fingerprint.clone().expect("original");
+        let failed_identity = failed.activated_fingerprint.clone().expect("activated");
+        let mut saw_old = false;
+
+        let restored_state =
+            projection_identity_state(&restored, &restored_identity).expect("restored identity");
+        assert!(
+            !reconcile_projection_state(&mut restored, restored_state, &mut saw_old,)
+                .expect("infer restored equal-content projection")
+        );
+        let failed_state =
+            projection_identity_state(&failed, &failed_identity).expect("activated identity");
+        assert!(
+            reconcile_projection_state(&mut failed, failed_state, &mut saw_old,)
+                .expect("retain failed equal-content projection")
+        );
+        assert!(restored.original_fingerprint.is_none());
+        assert!(failed.original_fingerprint.is_some());
+
+        let unknown = match projection_identity_state(&failed, "unknown-identity") {
+            Ok(_) => panic!("unknown equal-content identity must fail"),
+            Err(error) => error,
+        };
+        assert_eq!(unknown.code, ErrorCode::DependencyConflict);
+    }
 }

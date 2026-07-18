@@ -10,9 +10,10 @@ pub(super) fn commit_convergence_registry(
     journal_path: &Path,
     journal: &mut TransactionJournal,
 ) -> std::result::Result<Option<String>, CommandFailure> {
-    let source_head = journal.source_head.as_deref().ok_or_else(|| {
-        CommandFailure::new(ErrorCode::StateCorrupt, "journal is missing source head")
-    })?;
+    let source_head = journal
+        .source_head
+        .as_deref()
+        .ok_or_else(|| state_corrupt("journal is missing source head"))?;
     validate_registry_result(app, plan, journal)?;
     require_head(
         app,
@@ -24,7 +25,7 @@ pub(super) fn commit_convergence_registry(
     let base_index = root.join("registry-base-index");
     let prepared_index = root.join("registry-index");
     let commit_index = root.join("registry-commit-index");
-    reset_owned_files([&base_index, &prepared_index, &commit_index])?;
+    reset_owned_files(&[&base_index, &prepared_index, &commit_index])?;
     gitops::snapshot_index_to(&app.ctx, &base_index).map_err(map_git)?;
     let base_index_digest = file_digest(&base_index)?;
     let changed =
@@ -32,7 +33,7 @@ pub(super) fn commit_convergence_registry(
             .map_err(map_git)?;
     if !changed {
         require_head(app, source_head, "no-op registry commit changed HEAD")?;
-        reset_owned_files([&base_index, &prepared_index, &commit_index])?;
+        reset_owned_files(&[&base_index, &prepared_index, &commit_index])?;
         return Ok(None);
     }
 
@@ -82,7 +83,7 @@ pub(super) fn commit_convergence_registry(
         "registry commit compare-and-swap did not persist",
     )?;
     validate_registry_result(app, plan, journal)?;
-    reset_owned_files([&base_index, &prepared_index, &commit_index])?;
+    reset_owned_files(&[&base_index, &prepared_index, &commit_index])?;
     Ok(Some(commit))
 }
 
@@ -104,15 +105,12 @@ pub(super) fn align_registry_index(
     if let Some(recorded) = journal.registry_commit.as_deref()
         && recorded != expected_head
     {
-        return Err(CommandFailure::new(
-            ErrorCode::StateCorrupt,
-            "recorded registry commit differs from HEAD",
-        ));
+        return Err(state_corrupt("recorded registry commit differs from HEAD"));
     }
     let root = Path::new(&journal.artifact_root);
     let base_index = root.join("registry-repair-base-index");
     let prepared_index = root.join("registry-repair-index");
-    reset_owned_files([&base_index, &prepared_index])?;
+    reset_owned_files(&[&base_index, &prepared_index])?;
     gitops::snapshot_index_to(&app.ctx, &base_index).map_err(map_git)?;
     let base_index_digest = file_digest(&base_index)?;
     gitops::prepare_index_for_paths(&app.ctx, &base_index, &prepared_index, &[REGISTRY_PATH])
@@ -121,8 +119,7 @@ pub(super) fn align_registry_index(
     if let Some(recorded) = journal.registry_staged_index_digest.as_deref()
         && recorded != expected_index
     {
-        return Err(CommandFailure::new(
-            ErrorCode::StateCorrupt,
+        return Err(state_corrupt(
             "registry recovery index differs from durable transaction evidence",
         ));
     }
@@ -139,14 +136,15 @@ pub(super) fn align_registry_index(
         gitops::recover_prepared_index_lock_with_guard(&app.ctx, &prepared_index, &guard)
             .map_err(map_git)?;
     if recovered_lock {
-        return reset_owned_files([&base_index, &prepared_index]);
+        return reset_owned_files(&[&base_index, &prepared_index]);
     }
     gitops::install_prepared_index_with_guard(&app.ctx, &prepared_index, &guard)
         .map_err(map_git)?;
-    reset_owned_files([&base_index, &prepared_index])
+    reset_owned_files(&[&base_index, &prepared_index])
 }
 
-fn validate_index_install(
+#[inline(never)]
+pub(super) fn validate_index_install(
     app: &App,
     candidate: &Path,
     expected_candidate: &str,
@@ -170,11 +168,11 @@ pub(super) fn require_head(
     if gitops::head(&app.ctx).map_err(map_git)? == expected {
         Ok(())
     } else {
-        Err(CommandFailure::new(ErrorCode::StateCorrupt, message))
+        Err(state_corrupt(message))
     }
 }
 
-fn reset_owned_files<const N: usize>(paths: [&Path; N]) -> std::result::Result<(), CommandFailure> {
+fn reset_owned_files(paths: &[&Path]) -> std::result::Result<(), CommandFailure> {
     for path in paths {
         remove_path_if_exists(path).map_err(map_io)?;
     }

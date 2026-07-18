@@ -161,14 +161,21 @@ fn publish_reservation_token(
         Err(err) => return Err(map_io(err)),
     }
     let pending = reservation_pending_path(reservation, reservation_proof);
-    match fs::symlink_metadata(&pending) {
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-            write_atomic(&pending, reservation_proof).map_err(map_io)?;
-            maybe_skill_fault("convergence_interrupt_after_reservation_pending_create")?;
-        }
-        Ok(_) if exact_regular_file(&pending, reservation_proof) => {}
+    let create_pending = match fs::symlink_metadata(&pending) {
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => true,
+        Ok(_) if exact_regular_file(&pending, reservation_proof) => false,
         Ok(_) => return Err(ownership_failure("reservation pending proof is invalid")),
         Err(err) => return Err(map_io(err)),
+    };
+    if create_pending {
+        let mut token = OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&pending)
+            .map_err(map_io)?;
+        maybe_skill_fault("convergence_interrupt_after_reservation_pending_create")?;
+        writeln!(token, "{reservation_proof}").map_err(map_io)?;
+        token.sync_all().map_err(map_io)?;
     }
     if let Err(error) = rename_no_replace_atomic(&pending, reservation) {
         if exact_regular_file(reservation, reservation_proof) {
@@ -211,14 +218,15 @@ pub(super) fn cleanup_reservation(
         return;
     };
     let pending = reservation_pending_path(&reservation, expected_proof);
-    cleanup_proof_entry(
-        &pending,
-        &pending,
-        expected_proof,
-        false,
-        "reservation pending token",
-        errors,
-    );
+    match pending_entry_present(&pending) {
+        Ok(false) => {}
+        Ok(true) => {
+            if let Err(err) = fs::remove_file(&pending) {
+                push_rollback_error(errors, "remove_reservation_pending", err);
+            }
+        }
+        Err(err) => push_rollback_error(errors, "validate_reservation_pending", err.message),
+    }
     cleanup_proof_entry(
         &staging,
         &staging.join(RESERVATION_PROOF_FILE),
@@ -306,14 +314,9 @@ fn validate_cleanup_entry(path: &Path, plan_id: &str, proof: &str, errors: &mut 
         return;
     };
     let pending = reservation_pending_path(&reservation, proof);
-    validate_proof_entry(
-        &pending,
-        &pending,
-        proof,
-        false,
-        "reservation pending token",
-        errors,
-    );
+    if let Err(err) = pending_entry_present(&pending) {
+        push_rollback_error(errors, "validate_reservation_pending", err.message);
+    }
     validate_proof_entry(
         &staging,
         &staging.join(RESERVATION_PROOF_FILE),
@@ -330,6 +333,17 @@ fn validate_cleanup_entry(path: &Path, plan_id: &str, proof: &str, errors: &mut 
         "reservation token",
         errors,
     );
+}
+
+fn pending_entry_present(path: &Path) -> std::result::Result<bool, CommandFailure> {
+    match fs::symlink_metadata(path) {
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Ok(metadata) if metadata.is_file() && !metadata.file_type().is_symlink() => Ok(true),
+        Ok(_) => Err(ownership_failure(
+            "reservation pending entry is not an owned regular file",
+        )),
+        Err(err) => Err(map_io(err)),
+    }
 }
 
 fn validate_proof_entry(

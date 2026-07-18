@@ -198,7 +198,7 @@ fn normalize_atomic_rename_error(err: io::Error) -> io::Error {
     target_os = "linux",
     target_os = "android"
 ))]
-fn path_to_c_string(path: &Path) -> io::Result<CString> {
+pub(crate) fn path_to_c_string(path: &Path) -> io::Result<CString> {
     CString::new(path.as_os_str().as_bytes()).map_err(|_| {
         io::Error::new(
             io::ErrorKind::InvalidInput,

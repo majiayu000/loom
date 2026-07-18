@@ -11,6 +11,9 @@ use crate::types::ErrorCode;
 
 use super::super::super::CommandFailure;
 
+#[cfg(unix)]
+mod xattrs;
+
 pub(crate) fn projection_ownership_fingerprint(path: &Path) -> anyhow::Result<String> {
     let mut entries = WalkDir::new(path)
         .follow_links(false)
@@ -142,14 +145,13 @@ fn hash_ownership_metadata(
 
 #[cfg(unix)]
 fn hash_xattrs(hasher: &mut Sha256, path: &Path) -> anyhow::Result<()> {
-    let mut names = xattr::list(path)
-        .with_context(|| format!("list xattrs {}", path.display()))?
-        .collect::<Vec<_>>();
+    let mut names =
+        xattrs::list_nofollow(path).with_context(|| format!("list xattrs {}", path.display()))?;
     names.sort();
     for name in names {
         hasher.update(b"xattr\0");
         hash_os_str(hasher, &name);
-        let value = xattr::get(path, &name)
+        let value = xattrs::get_nofollow(path, &name)
             .with_context(|| format!("read xattr {:?} on {}", name, path.display()))?
             .ok_or_else(|| {
                 anyhow::anyhow!(

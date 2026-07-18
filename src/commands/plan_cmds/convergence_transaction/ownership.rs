@@ -56,6 +56,99 @@ fn exact_regular_file(path: &Path, expected: &str) -> bool {
     })
 }
 
+pub(super) fn cleanup_owned_dir(
+    path: &Path,
+    plan_id: &str,
+    owner_proof: &str,
+    errors: &mut Vec<Value>,
+) {
+    match fs::symlink_metadata(path) {
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+        Err(err) => push_rollback_error(errors, "inspect_owned_transaction_artifact", err),
+        Ok(_) if owner_dir_is_exact(path, plan_id, owner_proof) => {
+            if let Err(err) = remove_path_if_exists(path) {
+                push_rollback_error(errors, "remove_owned_transaction_artifact", err);
+            }
+        }
+        Ok(_) => push_rollback_error(
+            errors,
+            "validate_owned_transaction_artifact",
+            "present transaction artifact does not match its journal ownership proof",
+        ),
+    }
+    cleanup_reservation(path, plan_id, owner_proof, errors);
+}
+
+pub(super) fn reservation_paths(
+    path: &Path,
+    plan_id: &str,
+) -> std::result::Result<(PathBuf, PathBuf), CommandFailure> {
+    let parent = path.parent().ok_or_else(|| {
+        CommandFailure::new(ErrorCode::StateCorrupt, "artifact path has no parent")
+    })?;
+    let name = path.file_name().ok_or_else(|| {
+        CommandFailure::new(ErrorCode::StateCorrupt, "artifact path has no file name")
+    })?;
+    let name = name.to_string_lossy();
+    Ok((
+        parent.join(format!(".{name}.reservation-{plan_id}")),
+        parent.join(format!(".{name}.staging-{plan_id}")),
+    ))
+}
+
+pub(super) fn cleanup_reservation(
+    path: &Path,
+    plan_id: &str,
+    expected_proof: &str,
+    errors: &mut Vec<Value>,
+) {
+    let Ok((reservation, staging)) = reservation_paths(path, plan_id) else {
+        push_rollback_error(
+            errors,
+            "resolve_artifact_reservation",
+            "artifact path has no parent or file name",
+        );
+        return;
+    };
+    cleanup_proof_entry(
+        &staging,
+        &staging.join(RESERVATION_PROOF_FILE),
+        expected_proof,
+        "reservation staging",
+        errors,
+    );
+    cleanup_proof_entry(
+        &reservation,
+        &reservation,
+        expected_proof,
+        "reservation token",
+        errors,
+    );
+}
+
+fn cleanup_proof_entry(
+    entry: &Path,
+    proof_path: &Path,
+    expected_proof: &str,
+    label: &str,
+    errors: &mut Vec<Value>,
+) {
+    match fs::symlink_metadata(entry) {
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+        Err(err) => push_rollback_error(errors, "inspect_artifact_reservation", err),
+        Ok(_) if exact_regular_file(proof_path, expected_proof) => {
+            if let Err(err) = remove_path_if_exists(entry) {
+                push_rollback_error(errors, "remove_artifact_reservation", err);
+            }
+        }
+        Ok(_) => push_rollback_error(
+            errors,
+            "validate_artifact_reservation",
+            format!("present {label} does not match its journal ownership proof"),
+        ),
+    }
+}
+
 #[cfg(unix)]
 fn same_filesystem(left: &Path, right: &Path) -> std::result::Result<bool, CommandFailure> {
     use std::os::unix::fs::MetadataExt;

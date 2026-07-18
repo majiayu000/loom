@@ -102,64 +102,6 @@ pub(super) fn reserve_owned_dir(
     fs::remove_file(&reservation).map_err(map_io)
 }
 
-pub(super) fn cleanup_owned_dir(
-    path: &Path,
-    plan_id: &str,
-    owner_proof: &str,
-    errors: &mut Vec<Value>,
-) {
-    if owner_dir_is_exact(path, plan_id, owner_proof)
-        && let Err(err) = remove_path_if_exists(path)
-    {
-        push_rollback_error(errors, "remove_owned_transaction_artifact", err);
-    }
-    cleanup_reservation(path, plan_id, owner_proof, errors);
-}
-
-fn reservation_paths(
-    path: &Path,
-    plan_id: &str,
-) -> std::result::Result<(PathBuf, PathBuf), CommandFailure> {
-    let parent = path.parent().ok_or_else(|| {
-        CommandFailure::new(ErrorCode::StateCorrupt, "artifact path has no parent")
-    })?;
-    let name = path.file_name().ok_or_else(|| {
-        CommandFailure::new(ErrorCode::StateCorrupt, "artifact path has no file name")
-    })?;
-    let name = name.to_string_lossy();
-    Ok((
-        parent.join(format!(".{name}.reservation-{plan_id}")),
-        parent.join(format!(".{name}.staging-{plan_id}")),
-    ))
-}
-
-fn cleanup_reservation(path: &Path, plan_id: &str, expected_proof: &str, errors: &mut Vec<Value>) {
-    let Ok((reservation, staging)) = reservation_paths(path, plan_id) else {
-        push_rollback_error(
-            errors,
-            "resolve_artifact_reservation",
-            "artifact path has no parent or file name",
-        );
-        return;
-    };
-    let Ok(reservation_proof) = fs::read_to_string(&reservation) else {
-        return;
-    };
-    let reservation_proof = reservation_proof.trim();
-    if reservation_proof != expected_proof || !owner_proof_is_valid(plan_id, expected_proof) {
-        return;
-    }
-    let staging_owned = fs::read_to_string(staging.join(RESERVATION_PROOF_FILE))
-        .ok()
-        .is_some_and(|proof| proof.trim() == reservation_proof);
-    if staging_owned && let Err(err) = remove_path_if_exists(&staging) {
-        push_rollback_error(errors, "remove_artifact_reservation_staging", err);
-    }
-    if let Err(err) = remove_path_if_exists(&reservation) {
-        push_rollback_error(errors, "remove_artifact_reservation_token", err);
-    }
-}
-
 pub(super) fn recover_journal(
     app: &App,
     journal_path: &Path,

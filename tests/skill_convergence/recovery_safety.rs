@@ -4,6 +4,8 @@ use common::run_loom_with_env;
 
 use super::*;
 
+#[path = "recovery_safety/cleanup_ownership.rs"]
+mod cleanup_ownership;
 #[path = "recovery_safety/recovery_boundaries.rs"]
 mod recovery_boundaries;
 

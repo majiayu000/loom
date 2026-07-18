@@ -32,7 +32,10 @@ mod ownership;
 mod recovery_evidence;
 mod recovery_support;
 mod rollback;
-use ownership::{owner_dir_is_exact, owner_proof_is_valid, validate_owned_staging};
+use ownership::{
+    cleanup_owned_dir, cleanup_reservation, owner_proof_is_valid, reservation_paths,
+    validate_owned_staging,
+};
 use recovery_evidence::{
     active_index_digest, file_digest, restore_backup_atomically, restore_projection_from_evidence,
     validate_rollback_evidence,

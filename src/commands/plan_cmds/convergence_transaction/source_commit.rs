@@ -53,6 +53,8 @@ pub(super) fn commit_convergence_source(
         }
         validate_live_source(app, plan)?;
         gitops::install_prepared_index_with_guard(&app.ctx, &prepared_index, |candidate| {
+            validate_live_source(app, plan)
+                .map_err(|error| anyhow::anyhow!(error.message.clone()))?;
             let installed =
                 file_digest(candidate).map_err(|error| anyhow::anyhow!(error.message))?;
             if installed != staged {
@@ -82,6 +84,7 @@ pub(super) fn commit_convergence_source(
         }
         Some(commit)
     } else {
+        validate_live_source(app, plan)?;
         None
     };
 

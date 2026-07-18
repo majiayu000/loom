@@ -473,11 +473,7 @@ fn execute_local_transaction(
                         "prepared projection staging fingerprint is absent",
                     )
                 })?,
-                artifact
-                    .backup
-                    .as_ref()
-                    .and_then(|backup| backup["fingerprint"].as_str())
-                    .map(str::to_string),
+                artifact.original_fingerprint.clone(),
             );
             execute_prepared_convergence_projection(
                 &app.ctx,

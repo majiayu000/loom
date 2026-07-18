@@ -149,6 +149,7 @@ fn execute_projection_mode<const CONVERGENCE: bool>(
         &input.binding.binding_id,
         &input.target.target_id,
     );
+    let now = Utc::now();
     let mut projection = RegistryProjectionInstance {
         instance_id: instance_id.clone(),
         skill_id: input.skill.clone(),
@@ -156,14 +157,14 @@ fn execute_projection_mode<const CONVERGENCE: bool>(
         target_id: input.target.target_id.clone(),
         materialized_path: input.materialized_path.display().to_string(),
         method: input.method,
-        last_applied_rev: head.clone(),
+        last_applied_rev: head,
         health: crate::core::vocab::Health::Healthy,
         observed_drift: Some(false),
         source_tree_digest: None,
         materialized_tree_digest: None,
         last_observed_at: None,
         last_observed_error: None,
-        updated_at: Some(Utc::now()),
+        updated_at: Some(now),
     };
     let materialization = materialize_projection::<CONVERGENCE>(
         ctx,
@@ -226,7 +227,7 @@ fn execute_projection_mode<const CONVERGENCE: bool>(
             created_at: existing_rule
                 .as_ref()
                 .and_then(|rule| rule.created_at)
-                .or_else(|| Some(Utc::now())),
+                .or(Some(now)),
         },
     );
 

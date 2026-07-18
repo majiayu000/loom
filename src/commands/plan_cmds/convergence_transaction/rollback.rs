@@ -7,7 +7,9 @@ pub(super) fn rollback_journal(
     journal: &TransactionJournal,
 ) -> Vec<Value> {
     let mut errors = Vec::new();
-    if let Err(err) = paths.save_projections(&journal.original_projections) {
+    if plan.registry.initialized
+        && let Err(err) = paths.save_projections(&journal.original_projections)
+    {
         push_rollback_error(&mut errors, "restore_registry_projections", err);
     }
     if rollback_fault(&mut errors, "convergence_interrupt_after_registry_restore") {

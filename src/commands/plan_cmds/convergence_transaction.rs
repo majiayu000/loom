@@ -5,14 +5,12 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::cli::ProjectionMethod;
-use crate::core::convergence::{
-    ConvergenceAxis, ConvergenceInputDirection, RemotePolicy, SkillConvergencePlan,
-};
+use crate::core::convergence::{ConvergenceInputDirection, SkillConvergencePlan};
 use crate::fs_util::{
     exchange_paths_atomic, remove_path_if_exists, rename_no_replace_atomic, write_atomic,
 };
 use crate::gitops;
-use crate::state_model::{RegistryProjectionsFile, RegistryStatePaths};
+use crate::state_model::{RegistryProjectionsFile, RegistryStatePaths, empty_projections_file};
 use crate::types::ErrorCode;
 
 use super::super::codex_visibility::projection_path_is_safe_symlink;
@@ -29,6 +27,7 @@ use super::super::skill_cmds::shared::{maybe_skill_fault, push_rollback_error};
 use super::super::{App, CommandFailure};
 use super::{PLAN_PROTOCOL_VERSION, plan_failure};
 
+mod guards;
 mod ownership;
 mod projection_recovery;
 mod recovery_evidence;
@@ -36,6 +35,7 @@ mod recovery_support;
 mod rollback;
 mod source_commit;
 mod source_recovery;
+use guards::validate_guards;
 use ownership::{
     cleanup_owned_dir, cleanup_reservation, owner_proof_is_valid, reservation_paths,
     validate_owned_staging, validate_transaction_artifacts,
@@ -143,7 +143,13 @@ pub(super) fn apply_convergence(
     validate_guards(app, &plan, cursor)?;
 
     let paths = RegistryStatePaths::from_app_context(&app.ctx);
-    let snapshot = paths.load_snapshot().map_err(map_registry_state)?;
+    let snapshot = paths.maybe_load_snapshot().map_err(map_registry_state)?;
+    if snapshot.is_none() && (!plan.projections.is_empty() || plan.registry.initialized) {
+        return Err(stale(
+            "registry state disappeared after planning",
+            "PLAN_CHECKPOINT_DRIFT",
+        ));
+    }
     let tx_dir = journal_path.parent().expect("journal has parent");
     fs::create_dir_all(tx_dir).map_err(map_io)?;
     let artifact_dir = tx_dir.join(format!("{}-artifacts", plan.plan_id));
@@ -210,7 +216,11 @@ pub(super) fn apply_convergence(
         source_owner_proof,
         source_activated_fingerprint: None,
         projections: projection_backups,
-        original_projections: snapshot.projections.clone(),
+        original_projections: snapshot
+            .as_ref()
+            .map_or_else(empty_projections_file, |snapshot| {
+                snapshot.projections.clone()
+            }),
         installed_projections: 0,
         expected_projections: None,
         source_head: None,
@@ -237,7 +247,7 @@ pub(super) fn apply_convergence(
     let result = execute_local_transaction(
         app,
         &paths,
-        &snapshot,
+        snapshot.as_ref(),
         &plan,
         request_id,
         &journal_path,
@@ -322,7 +332,7 @@ pub(super) fn apply_convergence(
 fn execute_local_transaction(
     app: &App,
     paths: &RegistryStatePaths,
-    snapshot: &crate::state_model::RegistrySnapshot,
+    snapshot: Option<&crate::state_model::RegistrySnapshot>,
     plan: &SkillConvergencePlan,
     request_id: &str,
     journal_path: &Path,
@@ -344,11 +354,19 @@ fn execute_local_transaction(
         source_commit::commit_convergence_source(app, plan, journal_path, journal)?
     };
 
-    let mut projections = snapshot.projections.clone();
+    let mut projections = snapshot.map_or_else(empty_projections_file, |snapshot| {
+        snapshot.projections.clone()
+    });
     let mut applied = Vec::new();
     journal.phase = TransactionPhase::InstallingProjections;
     save_journal(journal_path, journal)?;
     for (effect, artifact) in plan.projections.iter().zip(&journal.projections) {
+        let snapshot = snapshot.ok_or_else(|| {
+            CommandFailure::new(
+                ErrorCode::StateCorrupt,
+                "projection transaction has no registry snapshot",
+            )
+        })?;
         validate_projection_staging_fingerprint(artifact)?;
         let staging_path = PathBuf::from(&artifact.staging_path);
         let staging = PreparedProjectionStaging::new(
@@ -397,18 +415,24 @@ fn execute_local_transaction(
     journal.expected_projections = Some(projections.clone());
     journal.phase = TransactionPhase::ProjectionsSwapped;
     save_journal(journal_path, journal)?;
-    paths
-        .save_projections(&projections)
-        .map_err(map_registry_state)?;
+    if snapshot.is_some() {
+        paths
+            .save_projections(&projections)
+            .map_err(map_registry_state)?;
+    }
     maybe_skill_fault("convergence_after_registry_save")?;
     journal.phase = TransactionPhase::CommittingRegistry;
     save_journal(journal_path, journal)?;
-    let registry_commit = gitops::commit_paths_if_changed(
-        &app.ctx,
-        &["state/registry/projections.json"],
-        &format!("skill({}): record convergence projections", plan.skill),
-    )
-    .map_err(map_git)?;
+    let registry_commit = if snapshot.is_some() {
+        gitops::commit_paths_if_changed(
+            &app.ctx,
+            &["state/registry/projections.json"],
+            &format!("skill({}): record convergence projections", plan.skill),
+        )
+        .map_err(map_git)?
+    } else {
+        None
+    };
     maybe_skill_fault("convergence_interrupt_committing_registry")?;
     Ok(json!({
         "skill": plan.skill,
@@ -416,106 +440,6 @@ fn execute_local_transaction(
         "registry_commit": registry_commit,
         "projection_instances": applied,
     }))
-}
-
-fn validate_guards(
-    app: &App,
-    plan: &SkillConvergencePlan,
-    cursor: usize,
-) -> std::result::Result<(), CommandFailure> {
-    if !plan.input_conflicts.is_empty() || !plan.preflight.mutation_allowed {
-        return Err(plan_failure(
-            ErrorCode::PolicyBlocked,
-            "convergence plan contains unresolved conflicts",
-            "PLAN_NOT_SAFE_TO_APPLY",
-            false,
-            vec!["resolve conflicts and create a fresh plan".to_string()],
-            Some(cursor),
-        ));
-    }
-    if plan.remote != RemotePolicy::NotRequested
-        || plan.required_axes.contains(&ConvergenceAxis::Visibility)
-    {
-        return Err(plan_failure(
-            ErrorCode::PolicyBlocked,
-            "requested post-local convergence axes are not executable in this tranche",
-            "CONVERGENCE_POST_LOCAL_UNAVAILABLE",
-            false,
-            vec!["create a local-only convergence plan".to_string()],
-            Some(cursor),
-        ));
-    }
-    let head = gitops::head(&app.ctx).map_err(map_git)?;
-    if head != plan.source.registry_head {
-        return Err(stale("registry HEAD changed after planning", "PLAN_STALE"));
-    }
-    let source_digest = skill_tree_digest(&app.ctx.skill_path(&plan.skill)).map_err(map_io)?;
-    if source_digest != plan.source.tree_digest {
-        return Err(stale(
-            "canonical source changed after planning",
-            "PLAN_SOURCE_DRIFT",
-        ));
-    }
-    let paths = RegistryStatePaths::from_app_context(&app.ctx);
-    for args in [
-        ["diff", "--quiet", "--", "state/registry/projections.json"],
-        [
-            "diff",
-            "--cached",
-            "--quiet",
-            "state/registry/projections.json",
-        ],
-    ] {
-        let output = gitops::run_git_allow_failure(&app.ctx, &args).map_err(map_git)?;
-        if !output.status.success() {
-            return Err(stale(
-                "registry projections changed after planning or are not committed",
-                "PLAN_CHECKPOINT_DRIFT",
-            ));
-        }
-    }
-    let snapshot = paths.maybe_load_snapshot().map_err(map_registry_state)?;
-    if plan.registry.initialized != snapshot.is_some() {
-        return Err(stale(
-            "registry initialization changed after planning",
-            "PLAN_CHECKPOINT_DRIFT",
-        ));
-    }
-    if let Some(snapshot) = snapshot {
-        let digest = digest_value(&snapshot.checkpoint)?;
-        let projections_digest = digest_value(&snapshot.projections)?;
-        if plan.registry.checkpoint_digest.as_deref() != Some(digest.as_str())
-            || plan.registry.checkpoint_updated_at.as_deref()
-                != Some(snapshot.checkpoint.updated_at.to_rfc3339().as_str())
-            || plan.registry.projections_digest.as_deref() != Some(projections_digest.as_str())
-        {
-            return Err(stale(
-                "registry checkpoint changed after planning",
-                "PLAN_CHECKPOINT_DRIFT",
-            ));
-        }
-        for effect in &plan.projections {
-            let binding = snapshot
-                .binding(&effect.binding_id)
-                .ok_or_else(|| stale("planned binding no longer exists", "PLAN_BINDING_DRIFT"))?;
-            let target = snapshot
-                .target(&effect.target_id)
-                .ok_or_else(|| stale("planned target no longer exists", "PLAN_TARGET_DRIFT"))?;
-            if binding.agent.as_str() != effect.agent
-                || binding.profile_id != effect.profile
-                || target.agent.as_str() != effect.agent
-                || target.ownership.as_str() != effect.ownership
-                || Path::new(&target.path).join(&plan.skill) != Path::new(&effect.materialized_path)
-            {
-                return Err(stale(
-                    "projection routing changed after planning",
-                    "PLAN_PROJECTION_DRIFT",
-                ));
-            }
-            validate_projection_guard(app, plan, effect)?;
-        }
-    }
-    Ok(())
 }
 
 fn replace_source_from_projection(
@@ -653,6 +577,9 @@ fn prepare_projection_stages_from(
     journal: &mut TransactionJournal,
     source: &Path,
 ) -> std::result::Result<(), CommandFailure> {
+    if plan.projections.is_empty() {
+        return Ok(());
+    }
     let paths = RegistryStatePaths::from_app_context(&app.ctx);
     let snapshot = paths.load_snapshot().map_err(map_registry_state)?;
     for (effect, artifact) in plan.projections.iter().zip(journal.projections.iter_mut()) {
@@ -751,14 +678,6 @@ fn parse_method(value: &str) -> std::result::Result<ProjectionMethod, CommandFai
             format!("stored projection method '{value}' is invalid"),
         )),
     }
-}
-
-fn digest_value(value: &impl Serialize) -> std::result::Result<String, CommandFailure> {
-    use crate::sha256::{Sha256, to_hex};
-    let bytes = serde_json::to_vec(value).map_err(map_io)?;
-    let mut hasher = Sha256::new();
-    hasher.update(&bytes);
-    Ok(format!("sha256:{}", to_hex(&hasher.finalize())))
 }
 
 fn new_owner_proof(plan_id: &str) -> String {

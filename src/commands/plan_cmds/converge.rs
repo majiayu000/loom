@@ -579,7 +579,7 @@ fn registry_guard(
     })
 }
 
-fn digest_value(value: &impl Serialize) -> std::result::Result<String, CommandFailure> {
+pub(super) fn digest_value(value: &impl Serialize) -> std::result::Result<String, CommandFailure> {
     let bytes = serde_json::to_vec(value).map_err(map_io)?;
     let mut hasher = Sha256::new();
     hasher.update(&bytes);

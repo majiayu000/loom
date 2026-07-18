@@ -7,6 +7,8 @@ mod skill_convergence_guards;
 mod skill_convergence_recovery_identity;
 #[path = "skill_convergence/recovery_safety.rs"]
 mod skill_convergence_recovery_safety;
+#[path = "skill_convergence/source_only.rs"]
+mod skill_convergence_source_only;
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -753,45 +755,4 @@ fn dirty_side_conflicts() {
     }
 
     assert_ne!(first_instance, second_instance);
-}
-
-#[test]
-fn source_only_and_required_runtime() {
-    let root = TestDir::new("convergence-source-only");
-    write_skill(
-        root.path(),
-        "demo",
-        "---\nname: demo\ndescription: Use when testing source-only convergence.\n---\n# demo\n",
-    );
-    let (output, env) = save_skill(root.path(), "demo");
-    assert!(output.status.success(), "save failed: {env}");
-
-    let (output, source_only) = run_loom(root.path(), &["plan", "converge", "demo"]);
-    assert!(
-        output.status.success(),
-        "source-only plan failed: {source_only}"
-    );
-    assert_eq!(source_only["data"]["effects"], json!([]));
-    assert_eq!(
-        source_only["data"]["projection_state"],
-        json!("not_applicable")
-    );
-
-    let (output, required) = run_loom(
-        root.path(),
-        &["plan", "converge", "demo", "--require-runtime"],
-    );
-    assert!(
-        output.status.success(),
-        "blocked plan should remain reviewable: {required}"
-    );
-    assert_eq!(required["data"]["safe_to_apply"], json!(false));
-    assert_eq!(
-        required["data"]["conflicts"][0]["code"],
-        json!("RUNTIME_PROJECTION_REQUIRED")
-    );
-    assert_eq!(
-        required["data"]["required_axes"],
-        json!(["projections", "visibility"])
-    );
 }

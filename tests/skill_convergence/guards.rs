@@ -124,3 +124,94 @@ fn stale_plan_and_lock_contention() {
         "external\n"
     );
 }
+
+#[cfg(unix)]
+#[test]
+fn missing_symlink_refresh_is_stale_before_writes() {
+    let fixture = projected_fixture_with_method("symlink");
+    let (output, plan) = plan_converge(&fixture, &[]);
+    assert!(output.status.success(), "plan failed: {plan}");
+    assert_eq!(plan["data"]["effects"][0]["effect"], json!("refresh"));
+    let head = git(fixture.root.path(), &["rev-parse", "HEAD"]);
+    let source = snapshot_tree(&fixture.root.path().join("skills/demo"));
+    let registry = snapshot_tree(&fixture.root.path().join("state/registry"));
+    let projection = fixture.target.path().join("demo");
+    fs::remove_file(&projection).expect("remove planned symlink refresh");
+
+    let (output, stale) = apply_plan(&fixture, &plan, "missing-symlink", &[]);
+    assert!(!output.status.success(), "missing symlink applied: {stale}");
+    assert_eq!(
+        stale["error"]["details"]["conflict"]["code"],
+        json!("PLAN_PROJECTION_DRIFT")
+    );
+    assert_eq!(git(fixture.root.path(), &["rev-parse", "HEAD"]), head);
+    assert_eq!(
+        snapshot_tree(&fixture.root.path().join("skills/demo")),
+        source
+    );
+    assert_eq!(
+        snapshot_tree(&fixture.root.path().join("state/registry")),
+        registry
+    );
+    assert!(!projection.exists());
+    assert!(
+        !fixture
+            .root
+            .path()
+            .join("state/transactions/convergence-demo.json")
+            .exists()
+    );
+}
+
+#[test]
+fn routing_drift_is_stale_before_writes() {
+    for kind in ["rule-removed", "binding-inactive"] {
+        let fixture = projected_fixture();
+        let (output, plan) = plan_converge(&fixture, &[]);
+        assert!(output.status.success(), "plan failed: {plan}");
+        let head = git(fixture.root.path(), &["rev-parse", "HEAD"]);
+        let source = snapshot_tree(&fixture.root.path().join("skills/demo"));
+        let target = snapshot_tree(fixture.target.path());
+        let relative = match kind {
+            "rule-removed" => "state/registry/rules.json",
+            "binding-inactive" => "state/registry/bindings.json",
+            _ => unreachable!(),
+        };
+        let path = fixture.root.path().join(relative);
+        let mut registry: Value =
+            serde_json::from_slice(&fs::read(&path).expect("read routing state"))
+                .expect("parse routing state");
+        match kind {
+            "rule-removed" => registry["rules"] = json!([]),
+            "binding-inactive" => registry["bindings"][0]["active"] = json!(false),
+            _ => unreachable!(),
+        }
+        fs::write(
+            &path,
+            serde_json::to_vec_pretty(&registry).expect("encode routing state"),
+        )
+        .expect("write routing drift");
+        let changed = fs::read(&path).expect("capture routing drift");
+
+        let (output, stale) = apply_plan(&fixture, &plan, kind, &[]);
+        assert!(!output.status.success(), "{kind} applied: {stale}");
+        assert_eq!(
+            stale["error"]["details"]["conflict"]["code"],
+            json!("PLAN_CHECKPOINT_DRIFT")
+        );
+        assert_eq!(git(fixture.root.path(), &["rev-parse", "HEAD"]), head);
+        assert_eq!(
+            snapshot_tree(&fixture.root.path().join("skills/demo")),
+            source
+        );
+        assert_eq!(snapshot_tree(fixture.target.path()), target);
+        assert_eq!(fs::read(&path).expect("routing after rejection"), changed);
+        assert!(
+            !fixture
+                .root
+                .path()
+                .join("state/transactions/convergence-demo.json")
+                .exists()
+        );
+    }
+}

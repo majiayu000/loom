@@ -198,17 +198,17 @@ pub(super) fn recover_journal(
         }
         validate_mutated_surfaces(app, &paths, plan, &mut journal)?;
         validate_rollback_evidence(app, plan, &journal)?;
-        restore_projections_for_resume(&paths, &journal)?;
+        restore_projections_for_resume(&paths, plan, &journal)?;
         journal.installed_projections = 0;
         journal.expected_projections = None;
         prepare_projection_stages(app, plan, request_id, &mut journal)?;
         journal.phase = TransactionPhase::SourceCommitted;
         save_journal(journal_path, &journal)?;
-        let snapshot = paths.load_snapshot().map_err(map_registry_state)?;
+        let snapshot = paths.maybe_load_snapshot().map_err(map_registry_state)?;
         let result = execute_local_transaction(
             app,
             &paths,
-            &snapshot,
+            snapshot.as_ref(),
             plan,
             request_id,
             journal_path,
@@ -248,7 +248,10 @@ pub(super) fn validate_projection_guard(
         }
     } else {
         match fs::symlink_metadata(path) {
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound && effect.effect == "create" => {
+                return Ok(());
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
             Ok(metadata)
                 if effect.method == "symlink"
                     && metadata.file_type().is_symlink()
@@ -290,6 +293,7 @@ pub(super) fn source_is_committed(journal: &TransactionJournal) -> bool {
 
 pub(super) fn restore_projections_for_resume(
     paths: &RegistryStatePaths,
+    plan: &SkillConvergencePlan,
     journal: &TransactionJournal,
 ) -> std::result::Result<(), CommandFailure> {
     let mut errors = validate_transaction_artifacts(journal);
@@ -300,7 +304,9 @@ pub(super) fn restore_projections_for_resume(
         )
         .with_rollback_errors(errors));
     }
-    if let Err(err) = paths.save_projections(&journal.original_projections) {
+    if plan.registry.initialized
+        && let Err(err) = paths.save_projections(&journal.original_projections)
+    {
         push_rollback_error(&mut errors, "restore_registry_projections", err);
     }
     if !errors.is_empty() {
@@ -436,10 +442,17 @@ fn validate_journal(
     )
     .ok()
     .and_then(|raw| serde_json::from_str::<RegistryProjectionsFile>(&raw).ok());
-    valid &= previous_projections.as_ref().is_some_and(|previous| {
-        serde_json::to_value(previous).ok()
-            == serde_json::to_value(&journal.original_projections).ok()
-    });
+    valid &= if plan.registry.initialized {
+        previous_projections.as_ref().is_some_and(|previous| {
+            serde_json::to_value(previous).ok()
+                == serde_json::to_value(&journal.original_projections).ok()
+        })
+    } else {
+        previous_projections.is_none()
+            && journal.original_projections.projections.is_empty()
+            && journal.original_projections.schema_version
+                == crate::state_model::REGISTRY_SCHEMA_VERSION
+    };
     valid &= match plan.source.direction {
         ConvergenceInputDirection::Source => {
             journal.source_backup.is_none()
@@ -629,6 +642,14 @@ fn prove_registry_boundary(
         CommandFailure::new(ErrorCode::StateCorrupt, "journal is missing source head")
     })?;
     let head = gitops::head(&app.ctx).map_err(map_git)?;
+    if !plan.registry.initialized {
+        if RegistryStatePaths::from_app_context(&app.ctx).exists() || head != source_head {
+            return Err(recovery_stale(
+                "source-only transaction unexpectedly changed registry state",
+            ));
+        }
+        return Ok(None);
+    }
     validate_registry_result(app, plan, journal)?;
     if head == source_head {
         return gitops::commit_paths_if_changed(
@@ -714,10 +735,12 @@ fn validate_registry_result(
         } else {
             projection.materialized_tree_digest.as_deref() == Some(digest)
         };
-        if projection.method.as_str() != effect.method
-            || projection.source_tree_digest.as_deref() != Some(digest)
-            || !materialized_matches
-        {
+        let source_matches = if effect.method == "symlink" {
+            projection.source_tree_digest.is_none()
+        } else {
+            projection.source_tree_digest.as_deref() == Some(digest)
+        };
+        if projection.method.as_str() != effect.method || !source_matches || !materialized_matches {
             return Err(recovery_stale(
                 "registry projection evidence does not match the plan",
             ));

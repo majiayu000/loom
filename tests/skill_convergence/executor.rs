@@ -187,6 +187,85 @@ fn interrupted_recovery_is_single_commit() {
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn interrupted_symlink_registry_recovery_is_single_commit() {
+    let fixture = projected_fixture_with_method("symlink");
+    fs::write(
+        fixture.root.path().join("skills/demo/details.txt"),
+        "interrupted symlink source\n",
+    )
+    .expect("edit source");
+    let (output, plan) = plan_converge(&fixture, &[]);
+    assert!(output.status.success(), "plan failed: {plan}");
+    let (output, interrupted) = apply_plan(
+        &fixture,
+        &plan,
+        "symlink-interrupt",
+        &[(
+            "LOOM_FAULT_INJECT",
+            "convergence_interrupt_committing_registry",
+        )],
+    );
+    assert!(!output.status.success(), "interrupt applied: {interrupted}");
+
+    let (output, recovered) = apply_plan(&fixture, &plan, "symlink-interrupt", &[]);
+    assert!(
+        output.status.success(),
+        "symlink recovery failed: {recovered}"
+    );
+    let projection = fixture.target.path().join("demo");
+    assert!(
+        fs::symlink_metadata(&projection)
+            .expect("symlink projection")
+            .file_type()
+            .is_symlink()
+    );
+    assert_eq!(
+        projection.canonicalize().expect("canonical projection"),
+        fixture
+            .root
+            .path()
+            .join("skills/demo")
+            .canonicalize()
+            .expect("canonical source")
+    );
+    let registry: Value = serde_json::from_slice(
+        &fs::read(fixture.root.path().join("state/registry/projections.json"))
+            .expect("read projections"),
+    )
+    .expect("parse projections");
+    assert_eq!(
+        registry["projections"][0]["source_tree_digest"],
+        Value::Null
+    );
+    assert_eq!(
+        registry["projections"][0]["materialized_tree_digest"],
+        Value::Null
+    );
+    for subject in [
+        "skill(demo): converge source",
+        "skill(demo): record convergence projections",
+    ] {
+        assert_eq!(
+            git(
+                fixture.root.path(),
+                &["rev-list", "--count", &format!("--grep={subject}"), "HEAD"]
+            )
+            .trim(),
+            "1",
+            "recovery duplicated {subject}"
+        );
+    }
+    assert!(
+        !fixture
+            .root
+            .path()
+            .join("state/transactions/convergence-demo.json")
+            .exists()
+    );
+}
+
 #[test]
 fn pre_journal_backup_failure_cleans_artifacts() {
     let fixture = projected_fixture();

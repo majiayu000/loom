@@ -125,6 +125,15 @@ pub(super) fn validate_mutated_surfaces(
     }
     journal.installed_projections = contiguous_new;
 
+    if !plan.registry.initialized {
+        if paths.exists() {
+            return Err(recovery_stale(
+                "source-only transaction unexpectedly initialized registry state",
+            ));
+        }
+        return Ok(());
+    }
+
     let live = paths.load_projections().map_err(map_registry_state)?;
     let live_value = serde_json::to_value(&live).map_err(map_io)?;
     let old_value = serde_json::to_value(&journal.original_projections).map_err(map_io)?;
@@ -200,13 +209,13 @@ pub(super) fn validate_expected_projections(
                     && item.last_observed_error.is_none()
                     && item.last_observed_at.is_some()
                     && item.last_observed_at == item.updated_at
-                    && item.source_tree_digest.as_deref()
-                        == Some(plan.input.selected_input_tree_digest.as_str())
                     && if effect.method == "symlink" {
-                        item.materialized_tree_digest.is_none()
+                        item.source_tree_digest.is_none() && item.materialized_tree_digest.is_none()
                     } else {
-                        item.materialized_tree_digest.as_deref()
+                        item.source_tree_digest.as_deref()
                             == Some(plan.input.selected_input_tree_digest.as_str())
+                            && item.materialized_tree_digest.as_deref()
+                                == Some(plan.input.selected_input_tree_digest.as_str())
                     }
             })
     })
@@ -258,12 +267,18 @@ pub(super) fn rollback_uncommitted_source_only(
         ));
     }
     let paths = RegistryStatePaths::from_app_context(&app.ctx);
-    let live_registry = paths.load_projections().map_err(map_registry_state)?;
-    if serde_json::to_value(live_registry).map_err(map_io)?
-        != serde_json::to_value(&journal.original_projections).map_err(map_io)?
-    {
+    if plan.registry.initialized {
+        let live_registry = paths.load_projections().map_err(map_registry_state)?;
+        if serde_json::to_value(live_registry).map_err(map_io)?
+            != serde_json::to_value(&journal.original_projections).map_err(map_io)?
+        {
+            return Err(recovery_stale(
+                "registry changed during an uncommitted source transaction",
+            ));
+        }
+    } else if paths.exists() {
         return Err(recovery_stale(
-            "registry changed during an uncommitted source transaction",
+            "registry initialized during an uncommitted source transaction",
         ));
     }
     validate_rollback_evidence(app, plan, journal)?;

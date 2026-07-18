@@ -677,6 +677,8 @@ fn projection_input(
         binding_is_new: false,
         target,
         target_is_new: false,
+        source_path: None,
+        staging_path: None,
         materialized_path: PathBuf::from(&effect.materialized_path),
         method: parse_method(&effect.method)?,
         operation_intent: "converge",

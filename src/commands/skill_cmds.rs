@@ -187,6 +187,8 @@ impl App {
                 binding_is_new: false,
                 target,
                 target_is_new: false,
+                source_path: None,
+                staging_path: None,
                 materialized_path,
                 method: args.method,
                 operation_intent: "skill.project",

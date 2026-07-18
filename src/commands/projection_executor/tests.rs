@@ -99,6 +99,8 @@ fn execution_input(
             created_at: Some(Utc::now()),
         },
         target_is_new: true,
+        source_path: None,
+        staging_path: None,
         materialized_path,
         method,
         operation_intent: "skill.converge.child",
@@ -293,6 +295,7 @@ fn convergence_post_activation_failure_atomically_restores_live_projection() {
     )
     .expect("prepare convergence projection");
     let prepared = output.prepared.expect("staging artifact");
+    let staging_path = prepared.staging_path().to_path_buf();
     fs::write(prepared.staging_path().join("details.txt"), "tampered\n")
         .expect("tamper validated staging before activation");
 
@@ -307,16 +310,8 @@ fn convergence_post_activation_failure_atomically_restores_live_projection() {
         "keep\n"
     );
     assert!(!projection_path.join("details.txt").exists());
-    assert!(
-        fs::read_dir(projection_path.parent().expect("projection parent"))
-            .expect("target entries")
-            .all(|entry| !entry
-                .expect("target entry")
-                .file_name()
-                .to_string_lossy()
-                .starts_with(".loom-projection-stage-")),
-        "failed convergence must consume its rollback artifact"
-    );
+    assert!(staging_path.join("details.txt").is_file());
+    assert_eq!(error.details["recovery_required"], true);
     assert_eq!(filesystem_snapshot(&fixture.ctx.state_dir), state_before);
     assert_eq!(gitops::head(&fixture.ctx).expect("head after"), head_before);
 }
@@ -352,6 +347,89 @@ fn convergence_source_staging_failure_preserves_existing_projection() {
             .operations
             .len(),
         0
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn project_failure_preserves_unanchored_caller_staging_replacement() {
+    let fixture = convergence_projection_fixture();
+    let outside = fixture.root.join("outside.txt");
+    fs::write(&outside, "outside\n").unwrap();
+    std::os::unix::fs::symlink(&outside, fixture.ctx.skill_path("demo").join("escape.txt"))
+        .unwrap();
+    let staging = fixture.root.join("live/copy/caller-stage");
+    fs::create_dir_all(staging.parent().unwrap()).unwrap();
+    let mut input = execution_input(
+        &fixture,
+        ProjectionMethod::Copy,
+        fixture.root.join("live/copy/demo"),
+    );
+    input.staging_path = Some(staging.clone());
+    input.after_materialize_fault = Some("test_convergence_project_failure_replacement");
+
+    let error = match execute_projection(&fixture.ctx, &fixture.paths, &fixture.snapshot, input) {
+        Err(error) => error,
+        Ok(_) => panic!("project failure must preserve unverified replacement"),
+    };
+
+    assert!(staging.join("external.txt").is_file());
+    assert_eq!(
+        error.details["rollback_errors"][0]["recovery_required"],
+        true
+    );
+}
+
+#[test]
+fn fingerprint_failure_preserves_unanchored_caller_staging_replacement() {
+    let fixture = convergence_projection_fixture();
+    let staging = fixture.root.join("live/copy/caller-stage");
+    let mut input = execution_input(
+        &fixture,
+        ProjectionMethod::Copy,
+        fixture.root.join("live/copy/demo"),
+    );
+    input.staging_path = Some(staging.clone());
+    input.after_materialize_fault = Some("test_convergence_fingerprint_failure_replacement");
+
+    let error = match execute_projection(&fixture.ctx, &fixture.paths, &fixture.snapshot, input) {
+        Err(error) => error,
+        Ok(_) => panic!("fingerprint failure must preserve unverified replacement"),
+    };
+
+    assert!(staging.join("external.txt").is_file());
+    assert_eq!(
+        error.details["rollback_errors"][0]["recovery_required"],
+        true
+    );
+}
+
+#[test]
+fn observation_failure_claims_and_preserves_changed_caller_staging() {
+    let fixture = convergence_projection_fixture();
+    let staging = fixture.root.join("live/copy/caller-stage");
+    let mut input = execution_input(
+        &fixture,
+        ProjectionMethod::Copy,
+        fixture.root.join("live/copy/demo"),
+    );
+    input.staging_path = Some(staging.clone());
+    input.after_materialize_fault = Some("test_convergence_observation_failure_replacement");
+
+    let error = match execute_projection(&fixture.ctx, &fixture.paths, &fixture.snapshot, input) {
+        Err(error) => error,
+        Ok(_) => panic!("changed staging must fail observation"),
+    };
+    let claim = PathBuf::from(
+        error.details["rollback_errors"][0]["details"]["claim_path"]
+            .as_str()
+            .expect("preserved claim path"),
+    );
+
+    assert!(!staging.exists());
+    assert_eq!(
+        fs::read_to_string(claim.join("external.txt")).unwrap(),
+        "external\n"
     );
 }
 
@@ -523,15 +601,17 @@ fn convergence_staging_validation_rejects_bytes_before_live_swap() {
         fs::read_to_string(projection_path.join("keep.txt")).unwrap(),
         "keep\n"
     );
-    assert!(
-        fs::read_dir(projection_path.parent().unwrap())
-            .unwrap()
-            .all(|entry| !entry
-                .unwrap()
+    let preserved = fs::read_dir(projection_path.parent().unwrap())
+        .unwrap()
+        .filter_map(Result::ok)
+        .find(|entry| {
+            entry
                 .file_name()
                 .to_string_lossy()
-                .starts_with(".loom-projection-stage-"))
-    );
+                .ends_with(".staging-cleanup-claim")
+        })
+        .expect("mismatched staging must remain atomically claimed for recovery");
+    assert!(preserved.path().join("details.txt").is_file());
 }
 
 #[test]

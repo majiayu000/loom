@@ -6,9 +6,7 @@ use serde_json::{Value, json};
 
 use crate::cli::ProjectionMethod;
 use crate::core::convergence::{ConvergenceInputDirection, SkillConvergencePlan};
-use crate::fs_util::{
-    exchange_paths_atomic, remove_path_if_exists, rename_no_replace_atomic, write_atomic,
-};
+use crate::fs_util::{exchange_paths_atomic, rename_no_replace_atomic, write_atomic};
 use crate::gitops;
 use crate::state_model::{RegistryProjectionsFile, RegistryStatePaths, empty_projections_file};
 use crate::types::ErrorCode;

@@ -229,18 +229,9 @@ pub(super) fn validate_rollback_evidence(
     if let Some(backup) = journal.source_backup.as_ref() {
         validate_tree_backup(backup, &plan.source.tree_digest, None)?;
     }
-    for (effect, artifact) in plan.projections.iter().zip(&journal.projections) {
-        match (effect.effect.as_str(), artifact.backup.as_ref()) {
-            ("create", None) => {}
-            ("refresh", Some(backup)) => validate_tree_backup(
-                backup,
-                effect
-                    .materialized_tree_digest
-                    .as_deref()
-                    .unwrap_or_default(),
-                (effect.method == "symlink").then(|| app.ctx.skill_path(&plan.skill)),
-            )?,
-            _ => return Err(corrupt("projection backup does not match its effect")),
+    for projection in &journal.projections {
+        if let Some(prepared) = projection.prepared.as_ref() {
+            validate_prepared_projection_artifact(prepared)?;
         }
     }
     Ok(())
@@ -360,30 +351,16 @@ pub(super) fn file_digest(path: &Path) -> std::result::Result<String, CommandFai
     Ok(format!("sha256:{}", to_hex(&hasher.finalize())))
 }
 
-pub(super) fn restore_projection_from_evidence(
-    artifact: &ProjectionBackup,
-    plan_id: &str,
-) -> std::result::Result<(), CommandFailure> {
-    let live = Path::new(&artifact.materialized_path);
-    let staging = Path::new(&artifact.staging_path);
-    match artifact.backup.as_ref() {
-        Some(backup) => {
-            restore_backup_atomically(live, backup, staging, plan_id, &artifact.owner_proof)
-        }
-        None => remove_path_if_exists(live).map_err(map_io),
-    }
-}
-
 pub(super) fn restore_backup_atomically(
     live: &Path,
-    backup: &serde_json::Value,
+    backup: &DeclaredPathBackupEvidence,
     staging: &Path,
     plan_id: &str,
     owner_proof: &str,
 ) -> std::result::Result<(), CommandFailure> {
     validate_owned_staging(live, staging, plan_id, owner_proof)?;
     remove_path_if_exists(staging).map_err(map_io)?;
-    restore_path_from_backup(staging, backup).map_err(map_io)?;
+    restore_path_from_backup(staging, &backup.as_legacy_value()).map_err(map_io)?;
     exchange_paths_atomic(staging, live).map_err(map_io)?;
     remove_path_if_exists(staging).map_err(map_io)
 }
@@ -403,10 +380,11 @@ fn validate_index_backup(app: &App, path: &Path) -> std::result::Result<(), Comm
 }
 
 fn validate_tree_backup(
-    backup: &serde_json::Value,
+    backup: &DeclaredPathBackupEvidence,
     expected_digest: &str,
     expected_symlink_target: Option<PathBuf>,
 ) -> std::result::Result<(), CommandFailure> {
+    let backup = backup.as_legacy_value();
     let backup_path = backup["backup_path"]
         .as_str()
         .map(Path::new)

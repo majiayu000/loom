@@ -176,7 +176,7 @@ impl App {
         })?;
 
         let materialized_path = PathBuf::from(&target.path).join(&args.skill);
-        let execution = super::projection_executor::execute_projection(
+        let execution = super::projection_executor::execute_standalone_projection(
             &self.ctx,
             &paths,
             &snapshot,
@@ -187,6 +187,8 @@ impl App {
                 binding_is_new: false,
                 target,
                 target_is_new: false,
+                source_path: None,
+                staging_path: None,
                 materialized_path,
                 method: args.method,
                 operation_intent: "skill.project",

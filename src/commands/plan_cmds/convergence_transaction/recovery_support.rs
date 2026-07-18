@@ -1,7 +1,6 @@
 use super::recovery_evidence::{
-    reprove_source_boundary, restore_projection_from_evidence, rollback_uncommitted_source_only,
-    validate_expected_projections, validate_mutated_surfaces, validate_rollback_evidence,
-    validate_rolling_back_state,
+    reprove_source_boundary, rollback_uncommitted_source_only, validate_expected_projections,
+    validate_mutated_surfaces, validate_rollback_evidence, validate_rolling_back_state,
 };
 use super::*;
 use std::fs::OpenOptions;
@@ -22,6 +21,7 @@ pub(super) fn interruption_fault_active() -> bool {
                 | "convergence_interrupt_after_prepared"
                 | "convergence_interrupt_after_source_replacement"
                 | "convergence_interrupt_after_source_add"
+                | "convergence_interrupt_after_projection_activation"
                 | "convergence_interrupt_after_projection_swap"
         )
     )
@@ -125,11 +125,11 @@ pub(super) fn recover_journal(
             let result = journal.result.clone().ok_or_else(|| {
                 CommandFailure::new(ErrorCode::StateCorrupt, "committed journal has no result")
             })?;
-            finish_committed_cleanup(journal_path, &journal)?;
+            finish_committed_cleanup(journal_path, &mut journal)?;
             return Ok(Some(result));
         }
         TransactionPhase::RolledBackCleanupPending => {
-            finish_committed_cleanup(journal_path, &journal)?;
+            finish_committed_cleanup(journal_path, &mut journal)?;
             return Ok(None);
         }
         TransactionPhase::Preparing | TransactionPhase::Prepared => {
@@ -149,7 +149,7 @@ pub(super) fn recover_journal(
             validate_mutated_surfaces(app, &paths, plan, &mut journal)?;
             validate_rollback_evidence(app, plan, &journal)?;
             validate_rolling_back_state(app, plan, &journal)?;
-            let errors = rollback_journal(app, &paths, &journal);
+            let errors = rollback_journal(app, &paths, journal_path, &mut journal);
             if !errors.is_empty() {
                 return Err(CommandFailure::new(
                     ErrorCode::StateCorrupt,
@@ -159,7 +159,7 @@ pub(super) fn recover_journal(
             }
             journal.phase = TransactionPhase::RolledBackCleanupPending;
             save_journal(journal_path, &journal)?;
-            finish_committed_cleanup(journal_path, &journal)?;
+            finish_committed_cleanup(journal_path, &mut journal)?;
             return Ok(None);
         }
         _ => {}
@@ -191,17 +191,19 @@ pub(super) fn recover_journal(
             journal.result = Some(result.clone());
             journal.phase = TransactionPhase::CommittedCleanupPending;
             save_journal(journal_path, &journal)?;
-            finish_committed_cleanup(journal_path, &journal)?;
+            finish_committed_cleanup(journal_path, &mut journal)?;
             return Ok(Some(result));
         }
         validate_mutated_surfaces(app, &paths, plan, &mut journal)?;
         validate_rollback_evidence(app, plan, &journal)?;
-        restore_projections_for_resume(&paths, &journal)?;
-        journal.installed_projections = 0;
-        journal.expected_projections = None;
-        prepare_projection_stages(app, plan, request_id, &journal)?;
-        journal.phase = TransactionPhase::SourceCommitted;
-        save_journal(journal_path, &journal)?;
+        let artifact_errors = validate_transaction_artifacts(&journal);
+        if !artifact_errors.is_empty() {
+            return Err(CommandFailure::new(
+                ErrorCode::StateCorrupt,
+                "committed source recovery artifact validation failed",
+            )
+            .with_rollback_errors(artifact_errors));
+        }
         let snapshot = paths.load_snapshot().map_err(map_registry_state)?;
         let result = execute_local_transaction(
             app,
@@ -215,11 +217,11 @@ pub(super) fn recover_journal(
         journal.result = Some(result.clone());
         journal.phase = TransactionPhase::CommittedCleanupPending;
         save_journal(journal_path, &journal)?;
-        finish_committed_cleanup(journal_path, &journal)?;
+        finish_committed_cleanup(journal_path, &mut journal)?;
         return Ok(Some(result));
     }
     validate_rollback_evidence(app, plan, &journal)?;
-    let errors = rollback_journal(app, &paths, &journal);
+    let errors = rollback_journal(app, &paths, journal_path, &mut journal);
     if !errors.is_empty() {
         return Err(CommandFailure::new(
             ErrorCode::StateCorrupt,
@@ -229,7 +231,7 @@ pub(super) fn recover_journal(
     }
     journal.phase = TransactionPhase::RolledBackCleanupPending;
     save_journal(journal_path, &journal)?;
-    finish_committed_cleanup(journal_path, &journal)?;
+    finish_committed_cleanup(journal_path, &mut journal)?;
     Ok(None)
 }
 
@@ -286,71 +288,6 @@ pub(super) fn source_is_committed(journal: &TransactionJournal) -> bool {
     journal.source_head.is_some()
 }
 
-pub(super) fn restore_projections_for_resume(
-    paths: &RegistryStatePaths,
-    journal: &TransactionJournal,
-) -> std::result::Result<(), CommandFailure> {
-    let mut errors = validate_transaction_artifacts(journal);
-    if !errors.is_empty() {
-        return Err(CommandFailure::new(
-            ErrorCode::StateCorrupt,
-            "committed source recovery artifact validation failed",
-        )
-        .with_rollback_errors(errors));
-    }
-    if let Err(err) = paths.save_projections(&journal.original_projections) {
-        push_rollback_error(&mut errors, "restore_registry_projections", err);
-    }
-    if !errors.is_empty() {
-        return Err(CommandFailure::new(
-            ErrorCode::StateCorrupt,
-            "failed to prepare committed source recovery",
-        )
-        .with_rollback_errors(errors));
-    }
-    for projection in journal
-        .projections
-        .iter()
-        .take(journal.installed_projections)
-        .rev()
-    {
-        if let Err(err) = restore_projection_from_evidence(projection, &journal.plan_id) {
-            push_rollback_error(&mut errors, "restore_projection_from_evidence", err.message);
-        }
-        if !errors.is_empty() {
-            return Err(CommandFailure::new(
-                ErrorCode::StateCorrupt,
-                "failed to prepare committed source recovery",
-            )
-            .with_rollback_errors(errors));
-        }
-    }
-    for projection in journal.projections.iter().rev() {
-        cleanup_owned_dir(
-            Path::new(&projection.staging_owner),
-            &journal.plan_id,
-            &projection.owner_proof,
-            &mut errors,
-        );
-        if !errors.is_empty() {
-            return Err(CommandFailure::new(
-                ErrorCode::StateCorrupt,
-                "failed to prepare committed source recovery",
-            )
-            .with_rollback_errors(errors));
-        }
-    }
-    if errors.is_empty() {
-        Ok(())
-    } else {
-        Err(CommandFailure::new(
-            ErrorCode::StateCorrupt,
-            "failed to prepare committed source recovery",
-        )
-        .with_rollback_errors(errors))
-    }
-}
-
 pub(super) fn cleanup_declared_artifacts(
     journal_path: &Path,
     journal: &TransactionJournal,
@@ -369,6 +306,15 @@ pub(super) fn cleanup_declared_artifacts(
     errors = validate_transaction_artifacts(journal);
     if !errors.is_empty() {
         return errors;
+    }
+    for projection in journal.projections.iter().rev() {
+        if let Some(prepared) = projection.prepared.clone()
+            && let Err(err) =
+                discard_prepared_projection(PreparedProjection::from_durable_artifact(prepared))
+        {
+            push_rollback_error(&mut errors, "discard_prepared_projection", err.message);
+            return errors;
+        }
     }
     for projection in journal.projections.iter().rev() {
         cleanup_owned_dir(
@@ -468,20 +414,14 @@ fn validate_journal(
             ".loom-projection-stage-{}-{index}.owner",
             plan.plan_id
         ));
-        let backup_valid = match effect.effect.as_str() {
-            "refresh" => backup_matches(
-                artifact.backup.as_ref(),
-                materialized,
-                &artifact_root.join(format!("projection-{index}")),
-            ),
-            "create" => artifact.backup.is_none(),
-            _ => false,
-        };
         valid &= artifact.materialized_path == effect.materialized_path
             && Path::new(&artifact.staging_owner) == owner
-            && Path::new(&artifact.staging_path) == owner.join("stage")
-            && owner_proof_is_valid(&plan.plan_id, &artifact.owner_proof)
-            && backup_valid;
+            && Path::new(&artifact.staging_path)
+                == materialized
+                    .parent()
+                    .unwrap_or(Path::new(""))
+                    .join(format!(".loom-projection-stage-{}-{index}", plan.plan_id))
+            && owner_proof_is_valid(&plan.plan_id, &artifact.owner_proof);
     }
     valid &= validate_phase_invariants(journal);
     valid &= validate_expected_projections(plan, journal);
@@ -520,6 +460,7 @@ fn validate_phase_invariants(journal: &TransactionJournal) -> bool {
     source_relation
         && index_evidence
         && rollback_evidence
+        && validate_projection_states(journal)
         && journal.installed_projections <= count
         && match journal.phase {
             TransactionPhase::Preparing
@@ -551,12 +492,12 @@ fn validate_phase_invariants(journal: &TransactionJournal) -> bool {
         }
 }
 
-fn backup_matches(backup: Option<&Value>, original: &Path, stored: &Path) -> bool {
-    backup.is_some_and(|backup| {
-        backup["original_path"].as_str() == original.to_str()
-            && backup["backup_path"].as_str() == stored.to_str()
-            && matches!(backup["kind"].as_str(), Some("dir" | "file" | "symlink"))
-    })
+fn backup_matches(
+    backup: Option<&DeclaredPathBackupEvidence>,
+    original: &Path,
+    stored: &Path,
+) -> bool {
+    backup.is_some_and(|backup| backup.original_path == original && backup.backup_path == stored)
 }
 
 fn prove_source_boundary(

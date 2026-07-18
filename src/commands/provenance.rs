@@ -1,7 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsStr;
 use std::fs;
-use std::io::Read;
 use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 
@@ -27,6 +26,8 @@ const SOURCES_REL: &str = "state/registry/sources.json";
 const LOCK_REL: &str = "loom.lock";
 
 mod outdated;
+#[cfg(test)]
+mod provenance_tests;
 
 #[derive(Debug, Clone)]
 pub(crate) struct AddSourceResolution {
@@ -576,19 +577,51 @@ fn tree_digest(
         if metadata.file_type().is_symlink() {
             hasher.update(b"symlink\0");
             hasher.update(fs::read_link(&full)?.to_string_lossy().as_bytes());
-        } else {
+        } else if metadata.file_type().is_file() {
             hasher.update(b"file\0");
-            let mut file =
-                fs::File::open(&full).with_context(|| format!("open {}", full.display()))?;
-            let mut buf = Vec::new();
-            file.read_to_end(&mut buf)
-                .with_context(|| format!("read {}", full.display()))?;
+            let buf = fs::read(&full).with_context(|| format!("read {}", full.display()))?;
             hasher.update(&(buf.len() as u64).to_be_bytes());
             hasher.update(&buf);
+        } else {
+            hash_special_node(&mut hasher, &metadata);
         }
         hasher.update(b"\0");
     }
     Ok(format!("sha256:{}", to_hex(&hasher.finalize())))
+}
+
+#[cfg(unix)]
+fn hash_special_node(hasher: &mut Sha256, metadata: &fs::Metadata) {
+    use std::os::unix::fs::{FileTypeExt, MetadataExt};
+
+    let file_type = metadata.file_type();
+    let kind = if file_type.is_fifo() {
+        1u8
+    } else if file_type.is_socket() {
+        2
+    } else if file_type.is_char_device() {
+        3
+    } else if file_type.is_block_device() {
+        4
+    } else {
+        0
+    };
+    hasher.update(b"special\0");
+    hasher.update(&[kind]);
+    hasher.update(&metadata.rdev().to_be_bytes());
+}
+
+#[cfg(windows)]
+fn hash_special_node(hasher: &mut Sha256, metadata: &fs::Metadata) {
+    use std::os::windows::fs::MetadataExt;
+
+    hasher.update(b"special\0windows\0");
+    hasher.update(&metadata.file_attributes().to_be_bytes());
+}
+
+#[cfg(not(any(unix, windows)))]
+fn hash_special_node(hasher: &mut Sha256, _metadata: &fs::Metadata) {
+    hasher.update(b"special\0other\0");
 }
 
 struct GithubSource {

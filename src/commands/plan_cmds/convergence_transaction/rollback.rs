@@ -3,7 +3,8 @@ use super::*;
 pub(super) fn rollback_journal(
     app: &App,
     paths: &RegistryStatePaths,
-    journal: &TransactionJournal,
+    journal_path: &Path,
+    journal: &mut TransactionJournal,
 ) -> Vec<Value> {
     let mut errors = Vec::new();
     if let Err(err) = paths.save_projections(&journal.original_projections) {
@@ -12,15 +13,41 @@ pub(super) fn rollback_journal(
     if rollback_fault(&mut errors, "convergence_interrupt_after_registry_restore") {
         return errors;
     }
-    for projection in journal
-        .projections
-        .iter()
-        .take(journal.installed_projections)
-        .rev()
-    {
-        if let Err(err) = restore_projection_from_evidence(projection, &journal.plan_id) {
-            push_rollback_error(&mut errors, "restore_projection_from_evidence", err.message);
+    for index in (0..journal.installed_projections).rev() {
+        if let Some(artifact) = journal.projections[index].rollback.as_mut() {
+            if let Err(err) = artifact.prepare_rollback() {
+                push_rollback_error(&mut errors, "prepare_projection_rollback", err.message);
+                return errors;
+            }
+            journal.projections[index].state = ProjectionTransactionState::RollbackCleanupPending;
+            if let Err(err) = save_journal(journal_path, journal) {
+                push_rollback_error(&mut errors, "persist_projection_rollback", err.message);
+                return errors;
+            }
+            if let Some(artifact) = journal.projections[index].rollback.as_mut()
+                && let Err(err) = artifact.cleanup_pending()
+            {
+                push_rollback_error(&mut errors, "cleanup_projection_rollback", err.message);
+                return errors;
+            }
+            journal.projections[index].rollback = None;
+            journal.projections[index].state = ProjectionTransactionState::RolledBack;
+            if let Err(err) = save_journal(journal_path, journal) {
+                push_rollback_error(&mut errors, "persist_projection_cleanup", err.message);
+                return errors;
+            }
         }
+        journal.projections[index].state = ProjectionTransactionState::RolledBack;
+    }
+    for index in journal.installed_projections..journal.projections.len() {
+        if let Some(prepared) = journal.projections[index].prepared.take()
+            && let Err(err) =
+                discard_prepared_projection(PreparedProjection::from_durable_artifact(prepared))
+        {
+            push_rollback_error(&mut errors, "discard_prepared_projection", err.message);
+            return errors;
+        }
+        journal.projections[index].state = ProjectionTransactionState::RolledBack;
     }
     if rollback_fault(
         &mut errors,
@@ -76,16 +103,45 @@ fn rollback_fault(errors: &mut Vec<Value>, fault: &str) -> bool {
     }
 }
 
-pub(super) fn finish_transaction(journal: &TransactionJournal) -> Vec<Value> {
+pub(super) fn finish_transaction(
+    journal_path: &Path,
+    journal: &mut TransactionJournal,
+) -> Vec<Value> {
     let mut errors = validate_transaction_artifacts(journal);
     if !errors.is_empty() {
         return errors;
     }
-    for (index, projection) in journal.projections.iter().enumerate() {
+    for index in 0..journal.projections.len() {
+        if let Some(artifact) = journal.projections[index].rollback.as_mut() {
+            if let Err(err) = artifact.prepare_finalize() {
+                push_rollback_error(&mut errors, "prepare_projection_finalize", err.message);
+                return errors;
+            }
+            journal.projections[index].state = ProjectionTransactionState::FinalizeCleanupPending;
+            if let Err(err) = save_journal(journal_path, journal) {
+                push_rollback_error(&mut errors, "persist_projection_finalize", err.message);
+                return errors;
+            }
+            if let Some(artifact) = journal.projections[index].rollback.as_mut()
+                && matches!(artifact, ProjectionRollbackArtifact::PendingCleanup { .. })
+                && let Err(err) = artifact.cleanup_pending()
+            {
+                push_rollback_error(&mut errors, "cleanup_projection_finalize", err.message);
+                return errors;
+            }
+            journal.projections[index].rollback = None;
+            journal.projections[index].state = ProjectionTransactionState::Finalized;
+            if let Err(err) = save_journal(journal_path, journal) {
+                push_rollback_error(&mut errors, "persist_projection_cleanup", err.message);
+                return errors;
+            }
+        }
+        let staging_owner = journal.projections[index].staging_owner.clone();
+        let owner_proof = journal.projections[index].owner_proof.clone();
         cleanup_owned_dir(
-            Path::new(&projection.staging_owner),
+            Path::new(&staging_owner),
             &journal.plan_id,
-            &projection.owner_proof,
+            &owner_proof,
             &mut errors,
         );
         if !errors.is_empty() {

@@ -315,93 +315,93 @@ pub enum TargetCommand {
 pub enum SkillCommand {
     #[command(about = "List registry and observed skills")]
     List,
-    #[command(about = "Report skill lifecycle governance from registry bindings and usage")]
+    #[command(about = "Report skill lifecycle governance")]
     Stats(SkillStatsArgs),
-    #[command(about = "Inspect one skill lifecycle status without mutating state")]
+    #[command(about = "Inspect skill lifecycle status (read-only)")]
     Inspect(SkillInspectArgs),
-    #[command(about = "Check one skill runtime dependencies and MCP readiness")]
+    #[command(about = "Check runtime dependencies and MCP readiness")]
     Deps(SkillDepsArgs),
-    #[command(about = "Plan, write, list, and verify derived compiled runtime artifacts")]
+    #[command(about = "Manage compiled runtime artifacts")]
     Compile(SkillCompileArgs),
-    #[command(about = "Activate one skill for an agent target")]
+    #[command(about = "Activate a skill for an agent target")]
     Activate(SkillActivateArgs),
-    #[command(about = "Deactivate one skill for an agent target")]
+    #[command(about = "Deactivate a skill for an agent target")]
     Deactivate(SkillDeactivateArgs),
-    #[command(about = "List active skill desired state and projections")]
+    #[command(about = "List desired and projected active skills")]
     Active {
         #[command(subcommand)]
         command: SkillActiveCommand,
     },
-    #[command(about = "Search, resolve, and explain skills with deterministic scoring")]
+    #[command(about = "Search and explain skills")]
     Search(SkillSearchArgs),
-    #[command(about = "Recommend skills and skillsets for a task without mutating active views")]
+    #[command(about = "Recommend skills for a task (read-only)")]
     Recommend(SkillSearchArgs),
-    #[command(about = "Resolve the best skill candidate for a task without mutating state")]
+    #[command(about = "Resolve a skill for a task (read-only)")]
     Resolve(SkillSearchArgs),
     #[command(about = "Record skill telemetry")]
     Used(SkillUsedArgs),
     #[command(about = "Record recommendation feedback")]
     Feedback(SkillFeedbackArgs),
-    #[command(about = "Create and apply guarded skill authoring artifacts")]
+    #[command(about = "Manage guarded skill authoring artifacts")]
     Author {
         #[command(subcommand)]
         command: SkillAuthorCommand,
     },
-    #[command(about = "Import a skill source into the registry")]
+    #[command(about = "Import a skill source")]
     Add(AddArgs),
     #[command(about = "Plan a provider-backed skill install")]
     Install(SkillInstallArgs),
-    #[command(about = "Project a registry skill into a bound target")]
+    #[command(about = "Project a skill into a bound target")]
     Project(ProjectArgs),
-    #[command(about = "Commit source changes from the registry or a live projection")]
+    #[command(about = "Commit source or live-projection changes")]
     Commit(SkillCommitArgs),
-    #[command(about = "Run a read-only single-skill improvement preflight")]
+    #[command(about = "Run a read-only skill improvement preflight")]
     Improve(SkillImproveArgs),
-    #[command(about = "Compare one skill against a baseline for regressions")]
+    #[command(about = "Compare a skill with a regression baseline")]
     Regression(SkillRegressionArgs),
     #[command(about = "Tag a skill release")]
     Release(ReleaseArgs),
-    #[command(about = "Roll back a skill source to an earlier revision")]
+    #[command(about = "Roll back a skill source")]
     Rollback(RollbackArgs),
-    #[command(about = "Diff two revisions of a skill source")]
+    #[command(about = "Diff skill source revisions")]
     Diff(DiffArgs),
-    #[command(about = "Show Git history for one skill source")]
+    #[command(about = "Show skill source Git history")]
     History(HistoryArgs),
-    #[command(about = "Move skills to trash, list trash entries, restore, or purge")]
+    #[command(about = "Manage skill trash")]
     Trash {
         #[command(subcommand)]
         command: SkillTrashCommand,
     },
-    #[command(about = "Inspect, verify, and refresh skill source provenance")]
+    #[command(about = "Manage skill source provenance")]
     Provenance {
         #[command(subcommand)]
         command: SkillProvenanceCommand,
     },
-    #[command(about = "Lint one skill for portable Agent Skills compliance")]
+    #[command(about = "Lint portable Agent Skill compliance")]
     Lint(SkillLintArgs),
-    #[command(about = "Report skill capabilities, risks, and policy decision before projection")]
+    #[command(about = "Report skill policy, capabilities, and risks")]
     Policy(SkillPolicyArgs),
-    #[command(about = "Scan one skill for safety and trust risks")]
+    #[command(about = "Scan skill safety and trust risks")]
     Scan(SkillScanArgs),
-    #[command(about = "Persist registry-owned trust metadata for one skill")]
+    #[command(about = "Persist registry-owned skill trust")]
     Trust(SkillTrustArgs),
-    #[command(about = "Quarantine one skill without deleting its source")]
+    #[command(about = "Quarantine a skill without deletion")]
     Quarantine(SkillQuarantineArgs),
-    #[command(about = "Clear quarantine state for one skill")]
+    #[command(about = "Clear skill quarantine")]
     Unquarantine(SkillOnlyArgs),
-    #[command(about = "Explain whether one skill is visible to an agent active view")]
+    #[command(about = "Explain skill visibility to an agent")]
     Visibility(SkillVisibilityArgs),
-    #[command(about = "Diagnose one skill source and registry projection state")]
+    #[command(about = "Diagnose skill source and projection state")]
     Diagnose(SkillDiagnoseArgs),
-    #[command(about = "Run offline skill eval fixtures for trigger, task, and artifact checks")]
+    #[command(about = "Run offline trigger, task, and artifact evals")]
     Eval(SkillEvalArgs),
-    #[command(about = "Watch registry skill sources and autosave stable local edits")]
+    #[command(about = "Watch and autosave stable skill edits")]
     Watch(WatchArgs),
-    #[command(about = "Continuously import and update skills from observed targets")]
+    #[command(about = "Continuously import observed skills")]
     MonitorObserved(MonitorObservedArgs),
-    #[command(about = "Run one import pass over observed targets and exit")]
+    #[command(about = "Import observed skills once")]
     ImportObserved(ImportObservedArgs),
-    #[command(about = "Inspect and clean projections orphaned by binding removal")]
+    #[command(about = "Inspect and clean orphan projections")]
     Orphan {
         #[command(subcommand)]
         command: SkillOrphanCommand,
@@ -502,42 +502,42 @@ pub enum AgentCommand {
 
 #[derive(Debug, Clone, Args, Serialize)]
 pub struct AgentPreflightArgs {
-    /// Agent kind asking for the plan.
+    /// Requesting agent.
     #[arg(long, value_enum)]
     pub agent: AgentKind,
 
-    /// Workspace path the agent is operating in.
+    /// Agent workspace.
     #[arg(long)]
     pub workspace: PathBuf,
 
-    /// Optional skill to resolve project/capture selectors for.
+    /// Optional skill selector.
     #[arg(long)]
     pub skill: Option<String>,
 
-    /// Desired projection method for a new project operation.
+    /// Projection method when no rule exists.
     #[arg(long, value_enum, default_value_t = ProjectionMethod::Symlink)]
     pub method: ProjectionMethod,
 }
 
 #[derive(Debug, Clone, Args, Serialize)]
 pub struct AgentReconcileArgs {
-    /// Agent kind to plan active-view reconciliation for.
+    /// Agent to reconcile.
     #[arg(long, value_enum)]
     pub agent: AgentKind,
 
-    /// Preview active-view repairs without mutating registry or target state.
+    /// Preview without registry or target writes.
     #[arg(long)]
     pub dry_run: bool,
 
-    /// Restrict planning to one workspace binding id.
+    /// Binding id filter.
     #[arg(long)]
     pub binding: Option<String>,
 
-    /// Restrict planning to one target id.
+    /// Target id filter.
     #[arg(long)]
     pub target: Option<String>,
 
-    /// Optional allowlist for future legacy cleanup flows.
+    /// Reserved for future legacy cleanup; not applied.
     #[arg(long)]
     pub allowlist: Option<PathBuf>,
 }
@@ -557,44 +557,44 @@ pub enum HistoryRepairStrategyArg {
 
 #[derive(Debug, Clone, Args, Serialize)]
 pub struct ProjectArgs {
-    /// Registry skill name.
+    /// Skill id.
     pub skill: String,
 
-    /// Workspace binding id that selects the default target.
+    /// Binding id.
     #[arg(long)]
     pub binding: String,
 
-    /// Optional target id override.
+    /// Target id override.
     #[arg(long)]
     pub target: Option<String>,
 
-    /// Projection strategy used for the live agent directory.
+    /// Projection method.
     #[arg(long, value_enum, default_value_t = ProjectionMethod::Symlink)]
     pub method: ProjectionMethod,
 
-    /// Show the projection plan without writing registry state or target files.
+    /// Preview without registry or target writes.
     #[arg(long)]
     pub dry_run: bool,
 }
 
 #[derive(Debug, Clone, Args, Serialize)]
 pub struct CaptureArgs {
-    /// Registry skill name. Optional only when --instance uniquely identifies the projection.
+    /// Skill id; optional when --instance is unique.
     pub skill: Option<String>,
 
-    /// Binding id for selecting a projection when --instance is not provided.
+    /// Binding id; used when --instance is absent.
     #[arg(long)]
     pub binding: Option<String>,
 
-    /// Projection instance id to capture from directly.
+    /// Projection instance id.
     #[arg(long)]
     pub instance: Option<String>,
 
-    /// Git commit message for the captured source revision.
+    /// Source commit message.
     #[arg(long)]
     pub message: Option<String>,
 
-    /// Show the capture plan without writing registry state or source files.
+    /// Preview without registry or source writes.
     #[arg(long)]
     pub dry_run: bool,
 }

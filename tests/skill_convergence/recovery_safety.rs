@@ -8,6 +8,8 @@ use super::*;
 mod cleanup_ownership;
 #[path = "recovery_safety/recovery_boundaries.rs"]
 mod recovery_boundaries;
+#[path = "recovery_safety/typed_projection_journal.rs"]
+mod typed_projection_journal;
 
 fn apply(
     fixture: &Fixture,
@@ -93,7 +95,7 @@ fn internal_reservation_staging_collisions_are_preserved() {
 }
 
 #[test]
-fn refresh_journal_rejects_null_backup_before_cleanup() {
+fn refresh_journal_rejects_missing_prepared_evidence_before_cleanup() {
     let fixture = projected_fixture();
     let (output, plan) = plan_converge(&fixture, &[]);
     assert!(output.status.success(), "plan failed: {plan}");
@@ -106,7 +108,8 @@ fn refresh_journal_rejects_null_backup_before_cleanup() {
         .join("state/transactions/convergence-demo.json");
     let mut journal: Value =
         serde_json::from_slice(&fs::read(&journal_path).expect("journal")).expect("parse journal");
-    journal["projections"][0]["backup"] = Value::Null;
+    journal["projections"][0]["state"] = Value::String("prepared".to_string());
+    journal["projections"][0]["prepared"] = Value::Null;
     fs::write(
         &journal_path,
         serde_json::to_vec_pretty(&journal).expect("encode"),
@@ -118,7 +121,7 @@ fn refresh_journal_rejects_null_backup_before_cleanup() {
     let (output, rejected) = apply(&fixture, &plan, "null-backup", None);
     assert!(
         !output.status.success(),
-        "null backup recovered: {rejected}"
+        "missing prepared evidence recovered: {rejected}"
     );
     assert_eq!(
         super::skill_convergence_executor::all_paths(
@@ -221,7 +224,7 @@ fn staged_and_unstaged_projection_registry_drift_are_zero_mutation() {
 }
 
 #[test]
-fn corrupt_projection_and_index_backups_fail_before_live_mutation() {
+fn corrupt_projection_artifact_and_index_backup_fail_before_live_mutation() {
     for kind in ["projection", "index"] {
         let fixture = projected_fixture();
         fs::write(
@@ -241,14 +244,14 @@ fn corrupt_projection_and_index_backups_fail_before_live_mutation() {
         let journal: Value =
             serde_json::from_slice(&fs::read(&journal_path).expect("journal")).expect("parse");
         let backup = if kind == "projection" {
-            journal["projections"][0]["backup"]["backup_path"]
+            journal["projections"][0]["prepared"]["staging_path"]
                 .as_str()
-                .expect("projection backup")
+                .expect("prepared projection artifact")
         } else {
             journal["index_backup"].as_str().expect("index backup")
         };
         if kind == "projection" {
-            fs::remove_dir_all(backup).expect("remove backup");
+            fs::remove_dir_all(backup).expect("remove prepared artifact");
         } else {
             fs::write(
                 fixture.root.path().join("other-valid-index-entry"),

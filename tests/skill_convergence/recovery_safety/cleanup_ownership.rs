@@ -131,11 +131,11 @@ fn reservation_paths(owner: &Path, plan_id: &str) -> (PathBuf, PathBuf) {
     )
 }
 
-fn reservation_pending_path(owner: &Path, proof: &str) -> PathBuf {
-    let nonce = proof.rsplit_once(':').expect("proof nonce").1;
-    let parent = owner.parent().expect("owner parent");
-    let name = owner.file_name().expect("owner name").to_string_lossy();
-    parent.join(format!(".{name}.reservation-pending-{nonce}"))
+fn reservation_pending_path(reservation: &Path, proof: &str) -> PathBuf {
+    let mut pending = reservation.as_os_str().to_owned();
+    pending.push(".pending-");
+    pending.push(proof.rsplit_once(':').expect("proof nonce").1);
+    PathBuf::from(pending)
 }
 
 #[test]
@@ -173,7 +173,7 @@ fn crash_before_reservation_publication_is_retryable() {
         .as_str()
         .expect("artifact owner proof");
     let (reservation, _) = reservation_paths(&owner, plan_id);
-    let pending = reservation_pending_path(&owner, proof);
+    let pending = reservation_pending_path(&reservation, proof);
     assert!(pending.is_file(), "private pending token was not retained");
     assert!(
         !reservation.exists(),

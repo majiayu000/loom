@@ -98,25 +98,11 @@ pub(super) fn reservation_paths(
     ))
 }
 
-fn reservation_pending_path(
-    path: &Path,
-    plan_id: &str,
-    expected_proof: &str,
-) -> std::result::Result<PathBuf, CommandFailure> {
-    let nonce = expected_proof
-        .strip_prefix(&format!("{plan_id}:"))
-        .filter(|nonce| uuid::Uuid::parse_str(nonce).is_ok())
-        .ok_or_else(|| ownership_failure("journal owner proof is invalid"))?;
-    let parent = path.parent().ok_or_else(|| {
-        CommandFailure::new(ErrorCode::StateCorrupt, "artifact path has no parent")
-    })?;
-    let name = path.file_name().ok_or_else(|| {
-        CommandFailure::new(ErrorCode::StateCorrupt, "artifact path has no file name")
-    })?;
-    Ok(parent.join(format!(
-        ".{}.reservation-pending-{nonce}",
-        name.to_string_lossy()
-    )))
+fn reservation_pending_path(reservation: &Path, proof: &str) -> PathBuf {
+    let mut pending = reservation.as_os_str().to_owned();
+    pending.push(".pending-");
+    pending.push(proof.rsplit_once(':').map_or(proof, |(_, nonce)| nonce));
+    PathBuf::from(pending)
 }
 
 pub(super) fn reserve_owned_dir(
@@ -128,7 +114,7 @@ pub(super) fn reserve_owned_dir(
         return Err(ownership_failure("journal owner proof is invalid"));
     }
     let (reservation, staging) = reservation_paths(path, plan_id)?;
-    publish_reservation_token(path, &reservation, plan_id, reservation_proof)?;
+    publish_reservation_token(path, &reservation, reservation_proof)?;
     if let Err(err) = fs::create_dir(&staging) {
         let mut cleanup_errors = Vec::new();
         cleanup_reservation(path, plan_id, reservation_proof, &mut cleanup_errors);
@@ -161,7 +147,6 @@ pub(super) fn reserve_owned_dir(
 fn publish_reservation_token(
     path: &Path,
     reservation: &Path,
-    plan_id: &str,
     reservation_proof: &str,
 ) -> std::result::Result<(), CommandFailure> {
     match fs::symlink_metadata(reservation) {
@@ -175,73 +160,30 @@ fn publish_reservation_token(
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
         Err(err) => return Err(map_io(err)),
     }
-    let pending = reservation_pending_path(path, plan_id, reservation_proof)?;
+    let pending = reservation_pending_path(reservation, reservation_proof);
     match fs::symlink_metadata(&pending) {
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
-        Ok(metadata) if metadata.is_file() && !metadata.file_type().is_symlink() => {
-            fs::remove_file(&pending).map_err(map_io)?;
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            write_atomic(&pending, reservation_proof).map_err(map_io)?;
+            maybe_skill_fault("convergence_interrupt_after_reservation_pending_create")?;
         }
-        Ok(_) => {
-            return Err(ownership_failure(
-                "reservation pending entry is not an owned regular file",
-            ));
-        }
+        Ok(_) if exact_regular_file(&pending, reservation_proof) => {}
+        Ok(_) => return Err(ownership_failure("reservation pending proof is invalid")),
         Err(err) => return Err(map_io(err)),
     }
-    let mut token = OpenOptions::new()
-        .create_new(true)
-        .write(true)
-        .open(&pending)
-        .map_err(map_io)?;
-    maybe_skill_fault("convergence_interrupt_after_reservation_pending_create")?;
-    if let Err(error) = writeln!(token, "{reservation_proof}").and_then(|_| token.sync_all()) {
-        drop(token);
-        let cleanup = fs::remove_file(&pending);
-        return Err(match cleanup {
-            Ok(()) => map_io(error),
-            Err(cleanup) => CommandFailure::new(
-                ErrorCode::IoError,
-                format!(
-                    "{error}; additionally failed to remove reservation pending file: {cleanup}"
-                ),
-            ),
-        });
-    }
-    drop(token);
     if let Err(error) = rename_no_replace_atomic(&pending, reservation) {
         if exact_regular_file(reservation, reservation_proof) {
-            remove_regular_pending(&pending)?;
+            fs::remove_file(&pending).map_err(map_io)?;
             return Ok(());
         }
-        let mut failure = CommandFailure::new(
+        return Err(CommandFailure::new(
             ErrorCode::StateCorrupt,
             format!(
                 "artifact reservation collision at {}: {error}",
                 path.display()
             ),
-        );
-        if let Err(cleanup) = remove_regular_pending(&pending) {
-            failure = failure.with_rollback_errors(vec![json!({
-                "step": "remove_failed_reservation_pending",
-                "message": cleanup.message,
-            })]);
-        }
-        return Err(failure);
+        ));
     }
     Ok(())
-}
-
-fn remove_regular_pending(path: &Path) -> std::result::Result<(), CommandFailure> {
-    match fs::symlink_metadata(path) {
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Ok(metadata) if metadata.is_file() && !metadata.file_type().is_symlink() => {
-            fs::remove_file(path).map_err(map_io)
-        }
-        Ok(_) => Err(ownership_failure(
-            "reservation pending entry is not an owned regular file",
-        )),
-        Err(err) => Err(map_io(err)),
-    }
 }
 
 fn write_new_synced(path: &Path, contents: &str) -> std::result::Result<(), CommandFailure> {
@@ -268,10 +210,15 @@ pub(super) fn cleanup_reservation(
         );
         return;
     };
-    match reservation_pending_path(path, plan_id, expected_proof) {
-        Ok(pending) => cleanup_pending_entry(&pending, errors),
-        Err(err) => push_rollback_error(errors, "resolve_reservation_pending", err.message),
-    }
+    let pending = reservation_pending_path(&reservation, expected_proof);
+    cleanup_proof_entry(
+        &pending,
+        &pending,
+        expected_proof,
+        false,
+        "reservation pending token",
+        errors,
+    );
     cleanup_proof_entry(
         &staging,
         &staging.join(RESERVATION_PROOF_FILE),
@@ -288,23 +235,6 @@ pub(super) fn cleanup_reservation(
         "reservation token",
         errors,
     );
-}
-
-fn cleanup_pending_entry(path: &Path, errors: &mut Vec<Value>) {
-    match fs::symlink_metadata(path) {
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
-        Ok(metadata) if metadata.is_file() && !metadata.file_type().is_symlink() => {
-            if let Err(err) = fs::remove_file(path) {
-                push_rollback_error(errors, "remove_reservation_pending", err);
-            }
-        }
-        Ok(_) => push_rollback_error(
-            errors,
-            "validate_reservation_pending",
-            "reservation pending entry is not an owned regular file",
-        ),
-        Err(err) => push_rollback_error(errors, "inspect_reservation_pending", err),
-    }
 }
 
 fn cleanup_proof_entry(
@@ -375,10 +305,15 @@ fn validate_cleanup_entry(path: &Path, plan_id: &str, proof: &str, errors: &mut 
         );
         return;
     };
-    match reservation_pending_path(path, plan_id, proof) {
-        Ok(pending) => validate_pending_entry(&pending, errors),
-        Err(err) => push_rollback_error(errors, "resolve_reservation_pending", err.message),
-    }
+    let pending = reservation_pending_path(&reservation, proof);
+    validate_proof_entry(
+        &pending,
+        &pending,
+        proof,
+        false,
+        "reservation pending token",
+        errors,
+    );
     validate_proof_entry(
         &staging,
         &staging.join(RESERVATION_PROOF_FILE),
@@ -395,19 +330,6 @@ fn validate_cleanup_entry(path: &Path, plan_id: &str, proof: &str, errors: &mut 
         "reservation token",
         errors,
     );
-}
-
-fn validate_pending_entry(path: &Path, errors: &mut Vec<Value>) {
-    match fs::symlink_metadata(path) {
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
-        Ok(metadata) if metadata.is_file() && !metadata.file_type().is_symlink() => {}
-        Ok(_) => push_rollback_error(
-            errors,
-            "validate_reservation_pending",
-            "reservation pending entry is not an owned regular file",
-        ),
-        Err(err) => push_rollback_error(errors, "inspect_reservation_pending", err),
-    }
 }
 
 fn validate_proof_entry(

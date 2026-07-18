@@ -75,14 +75,11 @@ fn prepare_index_for_paths_with_options(
     }
 }
 
-pub fn install_prepared_index_with_guard<F>(
+pub fn install_prepared_index_with_guard(
     ctx: &AppContext,
     prepared_index: &Path,
-    guard: F,
-) -> Result<()>
-where
-    F: FnOnce(&Path) -> Result<()>,
-{
+    guard: &dyn Fn(&Path) -> Result<()>,
+) -> Result<()> {
     let index = resolve_git_index_path(ctx, &[])?;
     let lock = index_lock_path(&index);
     let mut owns_lock = false;
@@ -114,14 +111,11 @@ where
     }
 }
 
-pub fn recover_prepared_index_lock_with_guard<F>(
+pub fn recover_prepared_index_lock_with_guard(
     ctx: &AppContext,
     prepared_index: &Path,
-    guard: F,
-) -> Result<bool>
-where
-    F: FnOnce(&Path) -> Result<()>,
-{
+    guard: &dyn Fn(&Path) -> Result<()>,
+) -> Result<bool> {
     let index = resolve_git_index_path(ctx, &[])?;
     let lock = index_lock_path(&index);
     if !lock.exists() {

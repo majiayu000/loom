@@ -103,7 +103,7 @@ fn prepared_index_install_rejects_tamper_before_active_mutation() {
         &["add", "--", "tampered.txt"],
         &[("GIT_INDEX_FILE", prepared_env)],
     );
-    let error = install_prepared_index_with_guard(&ctx, &prepared, |candidate| {
+    let error = install_prepared_index_with_guard(&ctx, &prepared, &|candidate| {
         if file_sha256(candidate) != expected {
             return Err(anyhow!("prepared index digest mismatch"));
         }
@@ -130,7 +130,7 @@ fn prepared_index_install_preserves_preexisting_lock() {
     let owner_bytes = b"owned by another git process\n";
     fs::write(&lock, owner_bytes).expect("preexisting index lock");
 
-    install_prepared_index_with_guard(&ctx, &prepared, |_| Ok(()))
+    install_prepared_index_with_guard(&ctx, &prepared, &|_| Ok(()))
         .expect_err("preexisting lock must block installation");
 
     assert_eq!(fs::read(&lock).expect("preserved lock"), owner_bytes);
@@ -147,7 +147,7 @@ fn prepared_index_lock_recovery_preserves_nonmatching_lock() {
     let foreign = b"foreign lock bytes\n";
     fs::write(&lock, foreign).expect("foreign lock");
 
-    recover_prepared_index_lock_with_guard(&ctx, &prepared, |_| Ok(()))
+    recover_prepared_index_lock_with_guard(&ctx, &prepared, &|_| Ok(()))
         .expect_err("foreign lock must not be adopted");
 
     assert_eq!(fs::read(&lock).expect("preserved foreign lock"), foreign);
@@ -185,7 +185,7 @@ fn prepared_commit_ignores_late_worktree_tamper_without_moving_head_or_index() {
         git_ok(&dir, &["show", &format!("{commit}:base.txt")]),
         "reviewed\n"
     );
-    let error = install_prepared_index_with_guard(&ctx, &prepared, |_| {
+    let error = install_prepared_index_with_guard(&ctx, &prepared, &|_| {
         if fs::read_to_string(dir.join("base.txt"))? != "reviewed\n" {
             return Err(anyhow!("live source changed after preparation"));
         }

@@ -109,12 +109,10 @@ fn restore_index_if_owned(
             "Git index changed after rollback evidence was captured",
         ));
     }
-    gitops::install_prepared_index_with_guard(&app.ctx, Path::new(&journal.index_backup), |_| {
+    gitops::install_prepared_index_with_guard(&app.ctx, Path::new(&journal.index_backup), &|_| {
         let active = active_index_digest(app).map_err(|error| anyhow::anyhow!(error.message))?;
         if active != rollback {
-            return Err(anyhow::anyhow!(
-                "active Git index changed before rollback installation"
-            ));
+            return Err(anyhow::anyhow!("active Git index changed"));
         }
         let head = gitops::head(&app.ctx)?;
         if head != journal.previous_head {

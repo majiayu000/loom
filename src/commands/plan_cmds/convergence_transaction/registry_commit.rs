@@ -54,28 +54,16 @@ pub(super) fn commit_convergence_registry(
     journal.registry_staged_index_digest = Some(expected_index.clone());
     save_journal(journal_path, journal)?;
     let install =
-        gitops::install_prepared_index_with_guard(&app.ctx, &prepared_index, |candidate| {
+        gitops::install_prepared_index_with_guard(&app.ctx, &prepared_index, &|candidate| {
             validate_registry_result(app, plan, journal)
                 .map_err(|error| anyhow::anyhow!(error.message))?;
-            let actual = file_digest(candidate).map_err(|error| anyhow::anyhow!(error.message))?;
-            if actual != expected_index {
-                return Err(anyhow::anyhow!(
-                    "prepared registry index changed after validation"
-                ));
-            }
-            let active =
-                active_index_digest(app).map_err(|error| anyhow::anyhow!(error.message))?;
-            if active != base_index_digest {
-                return Err(anyhow::anyhow!(
-                    "active Git index changed before registry index installation"
-                ));
-            }
-            let head = gitops::head(&app.ctx)?;
-            if head != source_head {
-                return Err(anyhow::anyhow!(
-                    "registry commit parent changed before compare-and-swap"
-                ));
-            }
+            validate_index_install(
+                app,
+                candidate,
+                &expected_index,
+                &base_index_digest,
+                source_head,
+            )?;
             maybe_skill_fault("convergence_interrupt_before_registry_cas")
                 .map_err(|error| anyhow::anyhow!(error.message))?;
             gitops::move_head_if_unchanged(&app.ctx, &commit, source_head)
@@ -137,50 +125,40 @@ pub(super) fn align_registry_index(
             "registry recovery index differs from durable transaction evidence",
         ));
     }
+    let guard = |candidate: &Path| {
+        validate_index_install(
+            app,
+            candidate,
+            &expected_index,
+            &base_index_digest,
+            expected_head,
+        )
+    };
     let recovered_lock =
-        gitops::recover_prepared_index_lock_with_guard(&app.ctx, &prepared_index, |candidate| {
-            let head = gitops::head(&app.ctx)?;
-            if head != expected_head {
-                return Err(anyhow::anyhow!(
-                    "HEAD changed during registry lock recovery"
-                ));
-            }
-            let actual = file_digest(candidate).map_err(|error| anyhow::anyhow!(error.message))?;
-            if actual != expected_index {
-                return Err(anyhow::anyhow!("recovered registry index lock changed"));
-            }
-            let active =
-                active_index_digest(app).map_err(|error| anyhow::anyhow!(error.message))?;
-            if active != base_index_digest {
-                return Err(anyhow::anyhow!(
-                    "active Git index changed during registry lock recovery"
-                ));
-            }
-            Ok(())
-        })
-        .map_err(map_git)?;
+        gitops::recover_prepared_index_lock_with_guard(&app.ctx, &prepared_index, &guard)
+            .map_err(map_git)?;
     if recovered_lock {
         return reset_owned_files([&base_index, &prepared_index]);
     }
-    gitops::install_prepared_index_with_guard(&app.ctx, &prepared_index, |candidate| {
-        let head = gitops::head(&app.ctx)?;
-        if head != expected_head {
-            return Err(anyhow::anyhow!("HEAD changed during registry index repair"));
-        }
-        let actual = file_digest(candidate).map_err(|error| anyhow::anyhow!(error.message))?;
-        if actual != expected_index {
-            return Err(anyhow::anyhow!("registry repair index changed"));
-        }
-        let active = active_index_digest(app).map_err(|error| anyhow::anyhow!(error.message))?;
-        if active != base_index_digest {
-            return Err(anyhow::anyhow!(
-                "active Git index changed during registry index repair"
-            ));
-        }
-        Ok(())
-    })
-    .map_err(map_git)?;
+    gitops::install_prepared_index_with_guard(&app.ctx, &prepared_index, &guard)
+        .map_err(map_git)?;
     reset_owned_files([&base_index, &prepared_index])
+}
+
+fn validate_index_install(
+    app: &App,
+    candidate: &Path,
+    expected_candidate: &str,
+    expected_active: &str,
+    expected_head: &str,
+) -> anyhow::Result<()> {
+    let actual = file_digest(candidate).map_err(|error| anyhow::anyhow!(error.message))?;
+    let active = active_index_digest(app).map_err(|error| anyhow::anyhow!(error.message))?;
+    let head = gitops::head(&app.ctx)?;
+    if actual != expected_candidate || active != expected_active || head != expected_head {
+        return Err(anyhow::anyhow!("registry index install guard changed"));
+    }
+    Ok(())
 }
 
 pub(super) fn require_head(

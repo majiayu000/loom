@@ -152,6 +152,105 @@ fn prepared_recovery_preserves_external_target_creation() {
     );
 }
 
+#[test]
+fn prepared_source_staging_tamper_is_rejected_before_exchange() {
+    let fixture = projected_fixture();
+    let (output, initial) = plan_converge(&fixture, &[]);
+    assert!(output.status.success(), "initial plan failed: {initial}");
+    let instance = initial["data"]["effects"][0]["instance_id"]
+        .as_str()
+        .expect("instance");
+    fs::write(
+        fixture.target.path().join("demo/details.txt"),
+        "projection input\n",
+    )
+    .expect("projection edit");
+    let (output, plan) = plan_converge(&fixture, &["--from-projection", "--instance", instance]);
+    assert!(output.status.success(), "projection plan failed: {plan}");
+    let source_before = snapshot_tree(&fixture.root.path().join("skills/demo"));
+    let head_before = git(fixture.root.path(), &["rev-parse", "HEAD"]);
+    let (output, stopped) = apply(
+        &fixture,
+        &plan,
+        "tampered-source-stage",
+        Some("convergence_interrupt_after_prepared"),
+    );
+    assert!(!output.status.success(), "prepared fault passed: {stopped}");
+    let journal_path = fixture
+        .root
+        .path()
+        .join("state/transactions/convergence-demo.json");
+    let journal: Value =
+        serde_json::from_slice(&fs::read(&journal_path).expect("journal")).expect("parse journal");
+    let staging = std::path::PathBuf::from(journal["source_staging"].as_str().expect("stage"));
+    fs::write(staging.join("external.txt"), "external\n").expect("tamper stage");
+
+    let (output, rejected) = apply(&fixture, &plan, "tampered-source-stage", None);
+    assert!(
+        !output.status.success(),
+        "tampered stage applied: {rejected}"
+    );
+    assert_eq!(
+        snapshot_tree(&fixture.root.path().join("skills/demo")),
+        source_before
+    );
+    assert_eq!(
+        git(fixture.root.path(), &["rev-parse", "HEAD"]),
+        head_before
+    );
+    assert_eq!(
+        fs::read_to_string(staging.join("external.txt")).unwrap(),
+        "external\n"
+    );
+}
+
+#[test]
+fn projection_stage_creation_crash_recovers_owned_partial_stage() {
+    let fixture = projected_fixture();
+    fs::write(
+        fixture.root.path().join("skills/demo/details.txt"),
+        "stage recovery\n",
+    )
+    .expect("source edit");
+    let (output, plan) = plan_converge(&fixture, &[]);
+    assert!(output.status.success(), "plan failed: {plan}");
+    let (output, stopped) = apply(
+        &fixture,
+        &plan,
+        "projection-stage-crash",
+        Some("convergence_interrupt_after_projection_stage"),
+    );
+    assert!(
+        !output.status.success(),
+        "projection stage fault passed: {stopped}"
+    );
+    let journal_path = fixture
+        .root
+        .path()
+        .join("state/transactions/convergence-demo.json");
+    let journal: Value =
+        serde_json::from_slice(&fs::read(&journal_path).expect("journal")).expect("parse journal");
+    assert_eq!(journal["phase"], json!("preparing"));
+    assert!(journal["projections"][0]["activated_fingerprint"].is_null());
+    let staging = std::path::PathBuf::from(
+        journal["projections"][0]["staging_path"]
+            .as_str()
+            .expect("stage"),
+    );
+    fs::write(staging.join("partial.txt"), "partial\n").expect("partial stage");
+
+    let (output, recovered) = apply(&fixture, &plan, "projection-stage-crash", None);
+    assert!(
+        output.status.success(),
+        "projection stage recovery failed: {recovered}"
+    );
+    assert_eq!(
+        fs::read_to_string(fixture.target.path().join("demo/details.txt")).unwrap(),
+        "stage recovery\n"
+    );
+    assert!(!fixture.target.path().join("demo/partial.txt").exists());
+}
+
 #[cfg(unix)]
 #[test]
 fn source_committed_create_preserves_external_dangling_symlink() {

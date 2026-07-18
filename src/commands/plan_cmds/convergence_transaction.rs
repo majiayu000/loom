@@ -49,7 +49,10 @@ use ownership::{
     activate_owned_dir, cleanup_owned_dir, owner_proof_is_valid, ownership_attempts_match_journal,
     retain_declared_attempts, validate_owned_staging, validate_transaction_artifacts,
 };
-use ownership_state::{OwnershipAttempt, allocate_attempt, archive_rolled_back_journal};
+use ownership_state::{
+    OwnershipAttempt, allocate_attempt, archive_previous_terminal_journal,
+    archive_rolled_back_journal,
+};
 use preparation::{
     declared_backup, prepare_projection_stages, prepare_transaction_artifacts,
     rotate_projection_stages,
@@ -64,7 +67,10 @@ use recovery_evidence::{
 use recovery_support::*;
 use registry_commit::{commit_convergence_registry, require_head};
 use rollback::{finish_transaction, restore_activated_projections, rollback_journal};
-use source_recovery::restore_source_from_evidence;
+use source_recovery::{
+    restore_source_after_activation_guard, restore_source_from_evidence,
+    validate_activated_source_fingerprint, validate_source_staging_fingerprint,
+};
 
 const SCHEMA_VERSION: &str = "1.3";
 
@@ -182,6 +188,7 @@ pub(super) fn apply_convergence(
     let _workspace_lock = app.ctx.lock_workspace().map_err(map_lock)?;
     let _skill_lock = app.ctx.lock_skill(&plan.skill).map_err(map_lock)?;
     let journal_path = journal_path(app, &plan.skill);
+    archive_previous_terminal_journal(app, &journal_path, &plan)?;
     if journal_path.exists()
         && let Some(output) = recover_journal(app, &journal_path, &plan, request_id)?
     {
@@ -617,6 +624,7 @@ fn replace_source_from_projection(
         &journal.previous_head,
         "HEAD changed before projection source replacement",
     )?;
+    validate_source_staging_fingerprint(&source, journal)?;
     exchange_paths_atomic(&staging, &source).map_err(map_io)?;
     if skill_tree_digest(&staging).map_err(map_io)? != *reviewed {
         let mut failure = stale(
@@ -643,6 +651,11 @@ fn replace_source_from_projection(
             })]);
         }
         return Err(failure);
+    }
+    if let Err(failure) = validate_activated_source_fingerprint(&source, journal) {
+        return Err(restore_source_after_activation_guard(
+            &source, &staging, reviewed, failure,
+        ));
     }
     Ok(())
 }

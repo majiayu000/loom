@@ -36,6 +36,60 @@ pub(super) fn restore_source_from_evidence(
     )
 }
 
+pub(super) fn validate_source_staging_fingerprint(
+    live: &Path,
+    journal: &TransactionJournal,
+) -> std::result::Result<(), CommandFailure> {
+    let staging = journal
+        .source_staging
+        .as_deref()
+        .map(Path::new)
+        .ok_or_else(|| corrupt("projection-input transaction has no source staging"))?;
+    let proof = journal
+        .source_owner_proof
+        .as_deref()
+        .ok_or_else(|| corrupt("projection-input transaction has no source owner proof"))?;
+    let expected = journal
+        .source_activated_fingerprint
+        .as_deref()
+        .ok_or_else(|| corrupt("source activation fingerprint is missing"))?;
+    validate_owned_staging(live, staging, &journal.plan_id, proof)?;
+    require_activated(staging, expected, "source staging before exchange")
+}
+
+pub(super) fn validate_activated_source_fingerprint(
+    live: &Path,
+    journal: &TransactionJournal,
+) -> std::result::Result<(), CommandFailure> {
+    let expected = journal
+        .source_activated_fingerprint
+        .as_deref()
+        .ok_or_else(|| corrupt("source activation fingerprint is missing"))?;
+    require_activated(live, expected, "canonical source after exchange")
+}
+
+pub(super) fn restore_source_after_activation_guard(
+    live: &Path,
+    staging: &Path,
+    reviewed: &str,
+    mut failure: CommandFailure,
+) -> CommandFailure {
+    let error = match skill_tree_digest(staging) {
+        Ok(actual) if actual == reviewed => exchange_paths_atomic(staging, live)
+            .err()
+            .map(|error| error.to_string()),
+        Ok(_) => Some("displaced source changed; concurrent data was preserved".to_string()),
+        Err(error) => Some(format!("cannot validate displaced source: {error}")),
+    };
+    if let Some(message) = error {
+        failure = failure.with_rollback_errors(vec![json!({
+            "step": "restore_source_after_activation_guard_failure",
+            "message": message,
+        })]);
+    }
+    failure
+}
+
 fn restore_source_with_hook<F>(
     live: &Path,
     backup: &Value,

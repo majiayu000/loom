@@ -502,7 +502,12 @@ fn valid_sha256_digest(value: &str) -> bool {
         && value[7..].bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
-fn generated_owned_path_matches(path: &Path, parent: &Path, prefix: &str, suffix: &str) -> bool {
+pub(super) fn generated_owned_path_matches(
+    path: &Path,
+    parent: &Path,
+    prefix: &str,
+    suffix: &str,
+) -> bool {
     if path.parent() != Some(parent) {
         return false;
     }
@@ -520,7 +525,7 @@ fn generated_owned_path_matches(path: &Path, parent: &Path, prefix: &str, suffix
         .is_some_and(|uuid| uuid.hyphenated().to_string() == generation)
 }
 
-fn validate_phase_invariants(journal: &TransactionJournal) -> bool {
+pub(super) fn validate_phase_invariants(journal: &TransactionJournal) -> bool {
     let count = journal.projections.len();
     let source_relation = journal
         .source_commit

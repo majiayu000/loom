@@ -7,6 +7,16 @@ pub(super) fn rollback_journal(
     journal: &mut TransactionJournal,
 ) -> Vec<Value> {
     let mut errors = Vec::new();
+    for projection in &journal.projections[..journal.installed_projections] {
+        if let Some(artifact) = projection.rollback.as_ref()
+            && let Err(err) = validate_projection_rollback_artifact_for_rollback(artifact)
+        {
+            push_rollback_error(&mut errors, "validate_projection_rollback", err.message);
+        }
+    }
+    if !errors.is_empty() {
+        return errors;
+    }
     if let Err(err) = paths.save_projections(&journal.original_projections) {
         push_rollback_error(&mut errors, "restore_registry_projections", err);
     }
@@ -34,6 +44,14 @@ pub(super) fn rollback_journal(
             journal.projections[index].state = ProjectionTransactionState::RolledBack;
             if let Err(err) = save_journal(journal_path, journal) {
                 push_rollback_error(&mut errors, "persist_projection_cleanup", err.message);
+                return errors;
+            }
+            if index + 1 == journal.installed_projections
+                && rollback_fault(
+                    &mut errors,
+                    "convergence_interrupt_after_first_projection_rollback",
+                )
+            {
                 return errors;
             }
         }
@@ -108,6 +126,13 @@ pub(super) fn finish_transaction(
     journal: &mut TransactionJournal,
 ) -> Vec<Value> {
     let mut errors = validate_transaction_artifacts(journal);
+    for projection in &journal.projections {
+        if let Some(artifact) = projection.rollback.as_ref()
+            && let Err(err) = validate_projection_rollback_artifact_for_finalize(artifact)
+        {
+            push_rollback_error(&mut errors, "validate_projection_finalize", err.message);
+        }
+    }
     if !errors.is_empty() {
         return errors;
     }
@@ -133,6 +158,17 @@ pub(super) fn finish_transaction(
             journal.projections[index].state = ProjectionTransactionState::Finalized;
             if let Err(err) = save_journal(journal_path, journal) {
                 push_rollback_error(&mut errors, "persist_projection_cleanup", err.message);
+                return errors;
+            }
+            if index == 0
+                && std::env::var("LOOM_CLEANUP_FAULT_INJECT").ok().as_deref()
+                    == Some("convergence_interrupt_after_first_projection_finalize")
+            {
+                push_rollback_error(
+                    &mut errors,
+                    "cleanup_transaction_backups",
+                    "fault injected after first projection finalize",
+                );
                 return errors;
             }
         }

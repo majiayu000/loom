@@ -19,7 +19,10 @@ mod validation;
 pub(crate) use activation::activate_after_mutation;
 pub(crate) use activation::{activate_prepared_projection, discard_prepared_projection};
 pub(super) use ownership::{map_ownership_fingerprint_error, projection_ownership_fingerprint};
-pub(crate) use validation::validate_prepared_projection_artifact;
+pub(crate) use validation::{
+    validate_prepared_projection_artifact, validate_projection_rollback_artifact_for_finalize,
+    validate_projection_rollback_artifact_for_rollback,
+};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct PreparedProjectionArtifact {
@@ -144,6 +147,7 @@ pub(crate) enum ProjectionRollbackArtifact {
     PendingCleanup {
         materialized_path: PathBuf,
         artifact_path: PathBuf,
+        expected_live_digest: Option<String>,
         expected_digest: String,
         reason: PendingCleanupReason,
     },
@@ -183,6 +187,7 @@ impl ProjectionRollbackArtifact {
             Self::PendingCleanup {
                 materialized_path,
                 artifact_path,
+                expected_live_digest,
                 expected_digest,
                 reason,
             } => json!({
@@ -190,6 +195,7 @@ impl ProjectionRollbackArtifact {
                 "kind": "pending_cleanup",
                 "original_path": materialized_path.display().to_string(),
                 "artifact_path": artifact_path.display().to_string(),
+                "expected_live_digest": expected_live_digest,
                 "expected_digest": expected_digest,
             }),
         }
@@ -234,6 +240,7 @@ impl ProjectionRollbackArtifact {
                 *self = Self::PendingCleanup {
                     materialized_path,
                     artifact_path: backup_path,
+                    expected_live_digest: Some(original_digest),
                     expected_digest: activated_digest,
                     reason: PendingCleanupReason::RollbackExchanged,
                 };
@@ -261,6 +268,7 @@ impl ProjectionRollbackArtifact {
                 *self = Self::PendingCleanup {
                     materialized_path,
                     artifact_path: rollback_path,
+                    expected_live_digest: None,
                     expected_digest: activated_digest,
                     reason: PendingCleanupReason::RollbackCreated,
                 };
@@ -338,6 +346,7 @@ impl ProjectionRollbackArtifact {
                     *self = Self::PendingCleanup {
                         materialized_path,
                         artifact_path: claim_path,
+                        expected_live_digest: Some(activated_digest),
                         expected_digest: original_digest,
                         reason: PendingCleanupReason::FinalizeExchanged,
                     };
@@ -349,6 +358,7 @@ impl ProjectionRollbackArtifact {
                 *self = Self::PendingCleanup {
                     materialized_path,
                     artifact_path: claim_path.clone(),
+                    expected_live_digest: Some(activated_digest),
                     expected_digest: original_digest.clone(),
                     reason: PendingCleanupReason::FinalizeExchanged,
                 };

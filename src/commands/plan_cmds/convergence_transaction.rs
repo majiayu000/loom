@@ -22,7 +22,8 @@ use super::super::projection_executor::{
     PreparedProjection, PreparedProjectionArtifact, ProjectionExecutionContext,
     ProjectionExecutionInput, ProjectionRollbackArtifact, activate_prepared_projection,
     discard_prepared_projection, execute_convergence_projection,
-    validate_prepared_projection_artifact,
+    validate_prepared_projection_artifact, validate_projection_rollback_artifact_for_finalize,
+    validate_projection_rollback_artifact_for_rollback,
 };
 use super::super::projections::{project_skill_to_target, upsert_projection};
 use super::super::provenance::skill_tree_digest;

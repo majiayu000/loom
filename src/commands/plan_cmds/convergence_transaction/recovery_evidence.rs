@@ -39,24 +39,12 @@ pub(super) fn reprove_source_boundary(
     }
 
     let head = gitops::head(&app.ctx).map_err(map_git)?;
-    let registry_boundary = matches!(
-        journal.phase,
-        TransactionPhase::CommittingRegistry | TransactionPhase::CommittedCleanupPending
-    );
-    if head != source_head {
-        if !registry_boundary {
-            return Err(recovery_stale(
-                "an intervening commit followed the source boundary",
-            ));
-        }
-        verify_registry_commit(app, plan, journal, &head, source_head)?;
-    }
     if journal.phase == TransactionPhase::CommittedCleanupPending {
         let result = journal
             .result
             .as_ref()
             .ok_or_else(|| corrupt("missing committed result"))?;
-        let expected_registry = (head != source_head).then_some(head.as_str());
+        let recorded_registry = result["registry_commit"].as_str();
         if result["skill"].as_str() != Some(plan.skill.as_str())
             || result["source_commit"]
                 != journal
@@ -65,7 +53,7 @@ pub(super) fn reprove_source_boundary(
                     .map_or(serde_json::Value::Null, |value| {
                         serde_json::Value::String(value.clone())
                     })
-            || result["registry_commit"].as_str() != expected_registry
+            || recorded_registry != journal.registry_commit.as_deref()
             || result["projection_instances"]
                 != serde_json::json!(
                     plan.projections
@@ -78,6 +66,23 @@ pub(super) fn reprove_source_boundary(
                 "committed result does not match transaction evidence",
             ));
         }
+        let committed_boundary = if let Some(registry_commit) = recorded_registry {
+            verify_registry_commit(app, plan, journal, registry_commit, source_head)?;
+            registry_commit
+        } else {
+            source_head
+        };
+        require_ancestor(app, committed_boundary, &head)?;
+        return Ok(());
+    }
+    let registry_boundary = journal.phase == TransactionPhase::CommittingRegistry;
+    if head != source_head {
+        if !registry_boundary {
+            return Err(recovery_stale(
+                "an intervening commit followed the source boundary",
+            ));
+        }
+        verify_registry_commit(app, plan, journal, &head, source_head)?;
     }
     require_clean_path(app, &format!("skills/{}", plan.skill))?;
     let live_digest = skill_tree_digest(&app.ctx.skill_path(&plan.skill)).map_err(map_io)?;
@@ -87,6 +92,25 @@ pub(super) fn reprove_source_boundary(
         ));
     }
     Ok(())
+}
+
+fn require_ancestor(
+    app: &App,
+    ancestor: &str,
+    descendant: &str,
+) -> std::result::Result<(), CommandFailure> {
+    let output = gitops::run_git_allow_failure(
+        &app.ctx,
+        &["merge-base", "--is-ancestor", ancestor, descendant],
+    )
+    .map_err(map_git)?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(recovery_stale(
+            "live HEAD does not descend from the committed transaction boundary",
+        ))
+    }
 }
 
 pub(super) fn validate_mutated_surfaces(
@@ -519,8 +543,10 @@ fn verify_registry_commit(
             "registry commit tree differs from transaction evidence",
         ));
     }
-    if journal.phase == TransactionPhase::CommittingRegistry
-        && journal.registry_commit.as_deref() == Some(head)
+    if matches!(
+        journal.phase,
+        TransactionPhase::CommittingRegistry | TransactionPhase::CommittedCleanupPending
+    ) && journal.registry_commit.as_deref() == Some(head)
         && journal.registry_staged_index_digest.is_some()
     {
         Ok(())

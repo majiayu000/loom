@@ -21,7 +21,7 @@ use super::super::projection_executor::{
     convergence_projection_fingerprint, execute_prepared_convergence_projection,
     finish_convergence_projection, prepare_convergence_projection,
 };
-use super::super::projections::{project_skill_to_target, upsert_projection};
+use super::super::projections::upsert_projection;
 use super::super::provenance::{materialized_tree_digest, skill_tree_digest};
 use super::super::skill_cmds::shared::{maybe_skill_fault, push_rollback_error};
 use super::super::{App, CommandFailure};
@@ -416,6 +416,29 @@ fn execute_local_transaction(
     save_journal(journal_path, journal)?;
     for index in 0..plan.projections.len() {
         let effect = &plan.projections[index];
+        let live_path = PathBuf::from(&journal.projections[index].materialized_path);
+        let safe_symlink_noop = effect.effect == "refresh"
+            && effect.method == "symlink"
+            && projection_path_is_safe_symlink(&live_path, &app.ctx.skill_path(&plan.skill));
+        if effect.method == "symlink" && !safe_symlink_noop {
+            let artifact = &mut journal.projections[index];
+            let staging_path = Path::new(&artifact.staging_path);
+            validate_owned_staging(
+                &live_path,
+                staging_path,
+                &journal.plan_id,
+                &artifact.owner_proof,
+            )?;
+            if !projection_path_is_safe_symlink(staging_path, &app.ctx.skill_path(&plan.skill)) {
+                return Err(stale(
+                    "prepared symlink does not target the final canonical source",
+                    "PLAN_PROJECTION_DRIFT",
+                ));
+            }
+            artifact.activated_fingerprint =
+                Some(convergence_projection_fingerprint(staging_path)?);
+            save_journal(journal_path, journal)?;
+        }
         let artifact = &journal.projections[index];
         let snapshot = snapshot.ok_or_else(|| {
             CommandFailure::new(
@@ -432,38 +455,53 @@ fn execute_local_transaction(
             "HEAD changed before projection activation",
         )?;
         source_commit::validate_live_source(app, plan)?;
-        validate_projection_staging_fingerprint(artifact)?;
-        let staging_path = PathBuf::from(&artifact.staging_path);
-        let staging = PreparedProjectionStaging::new(
-            staging_path,
-            artifact.fingerprint().map(str::to_string).ok_or_else(|| {
-                CommandFailure::new(
-                    ErrorCode::StateCorrupt,
-                    "prepared projection staging fingerprint is absent",
-                )
-            })?,
-            artifact
-                .backup
-                .as_ref()
-                .and_then(|backup| backup["fingerprint"].as_str())
-                .map(str::to_string),
-        );
-        let live_path = PathBuf::from(&artifact.materialized_path);
-        let output = execute_prepared_convergence_projection(
-            &app.ctx,
-            paths,
-            snapshot,
-            projection_input(snapshot, plan, effect, request_id)?,
-            staging,
-            |staging_path| {
-                validate_owned_staging(
-                    &live_path,
-                    staging_path,
-                    &journal.plan_id,
-                    &artifact.owner_proof,
-                )
-            },
-        )?;
+        let input = projection_input(snapshot, plan, effect, request_id)?;
+        let output = if safe_symlink_noop {
+            execute_prepared_convergence_projection(
+                &app.ctx,
+                paths,
+                snapshot,
+                input,
+                None::<PreparedProjectionStaging>,
+                |_| {
+                    Err(CommandFailure::new(
+                        ErrorCode::StateCorrupt,
+                        "safe symlink no-op unexpectedly requested a staging owner",
+                    ))
+                },
+            )?
+        } else {
+            validate_projection_staging_fingerprint(artifact)?;
+            let staging = PreparedProjectionStaging::new(
+                PathBuf::from(&artifact.staging_path),
+                artifact.fingerprint().map(str::to_string).ok_or_else(|| {
+                    CommandFailure::new(
+                        ErrorCode::StateCorrupt,
+                        "prepared projection staging fingerprint is absent",
+                    )
+                })?,
+                artifact
+                    .backup
+                    .as_ref()
+                    .and_then(|backup| backup["fingerprint"].as_str())
+                    .map(str::to_string),
+            );
+            execute_prepared_convergence_projection(
+                &app.ctx,
+                paths,
+                snapshot,
+                input,
+                staging,
+                |staging_path| {
+                    validate_owned_staging(
+                        &live_path,
+                        staging_path,
+                        &journal.plan_id,
+                        &artifact.owner_proof,
+                    )
+                },
+            )?
+        };
         let projection = output.projection.ok_or_else(|| {
             CommandFailure::new(ErrorCode::StateCorrupt, "executor omitted projection state")
         })?;

@@ -1,4 +1,6 @@
 use super::*;
+use crate::commands::file_ops::copy_skill_tree_preserving_symlinks;
+use crate::commands::provenance::convergence_input_tree_digest;
 
 pub(super) fn declared_backup(
     path: &Path,
@@ -89,6 +91,7 @@ pub(super) fn prepare_transaction_artifacts(
     maybe_skill_fault("convergence_during_backup_preparation")?;
     let selected_source = selected_source_path(app, plan)?;
     if let Some(staging) = journal.source_staging.as_deref() {
+        validate_selected_source(plan, &selected_source)?;
         reserve_owned_dir(
             Path::new(staging).parent().ok_or_else(|| {
                 CommandFailure::new(ErrorCode::StateCorrupt, "source stage has no owner")
@@ -98,12 +101,18 @@ pub(super) fn prepare_transaction_artifacts(
                 CommandFailure::new(ErrorCode::StateCorrupt, "source owner proof is absent")
             })?,
         )?;
-        project_skill_to_target(&selected_source, Path::new(staging), ProjectionMethod::Copy)
+        copy_skill_tree_preserving_symlinks(&selected_source, Path::new(staging))
             .map_err(map_io)?;
+        validate_selected_source(plan, Path::new(staging))?;
         journal.source_activated_fingerprint =
             Some(convergence_projection_fingerprint(Path::new(staging))?);
     }
-    prepare_projection_stages_from(app, plan, "", journal, &selected_source)
+    let projection_source = journal
+        .source_staging
+        .as_deref()
+        .map(PathBuf::from)
+        .unwrap_or(selected_source);
+    prepare_projection_stages_from(app, plan, "", journal, &projection_source)
 }
 
 pub(super) fn prepare_projection_stages(
@@ -145,21 +154,64 @@ fn prepare_projection_stages_from(
                 convergence_projection_fingerprint(Path::new(&artifact.materialized_path))?
             );
         }
-        reserve_owned_dir(
-            Path::new(&artifact.staging_owner),
-            &journal.plan_id,
-            &artifact.owner_proof,
-        )?;
+        let materialized_path = Path::new(&artifact.materialized_path);
+        let safe_symlink_noop = effect.effect == "refresh"
+            && effect.method == "symlink"
+            && projection_path_is_safe_symlink(materialized_path, &app.ctx.skill_path(&plan.skill));
+        if safe_symlink_noop {
+            artifact.activated_fingerprint =
+                Some(convergence_projection_fingerprint(materialized_path)?);
+            continue;
+        }
+        let staging_owner = Path::new(&artifact.staging_owner);
+        fs::create_dir_all(staging_owner.parent().ok_or_else(|| {
+            CommandFailure::new(
+                ErrorCode::StateCorrupt,
+                "projection stage has no target root",
+            )
+        })?)
+        .map_err(map_io)?;
+        reserve_owned_dir(staging_owner, &journal.plan_id, &artifact.owner_proof)?;
         let input = projection_input(&snapshot, plan, effect, request_id)?;
+        let stage_source = if effect.method == "symlink" {
+            app.ctx.skill_path(&plan.skill)
+        } else {
+            source.to_path_buf()
+        };
         prepare_convergence_projection(
             &app.ctx,
             &input,
-            source,
+            &stage_source,
             Path::new(&artifact.staging_path),
         )?;
         artifact.activated_fingerprint = Some(convergence_projection_fingerprint(Path::new(
             &artifact.staging_path,
         ))?);
+    }
+    Ok(())
+}
+
+fn validate_selected_source(
+    plan: &SkillConvergencePlan,
+    source: &Path,
+) -> std::result::Result<(), CommandFailure> {
+    let selected_method = plan
+        .input
+        .selected_projection_instance
+        .as_deref()
+        .and_then(|instance| {
+            plan.projections
+                .iter()
+                .find(|effect| effect.instance_id == instance)
+                .map(|effect| effect.method.as_str())
+        });
+    let digest = convergence_input_tree_digest(source, selected_method == Some("materialize"))
+        .map_err(map_io)?;
+    if digest != plan.input.selected_input_tree_digest {
+        return Err(stale(
+            "selected projection changed immediately before source staging",
+            "PLAN_PROJECTION_DRIFT",
+        ));
     }
     Ok(())
 }

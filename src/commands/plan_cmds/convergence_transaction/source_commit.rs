@@ -114,6 +114,18 @@ pub(super) fn commit_convergence_source(
         Some(commit)
     } else {
         validate_live_source(app, plan)?;
+        #[cfg(debug_assertions)]
+        if let Some(milliseconds) = std::env::var("LOOM_TEST_CONVERGENCE_NOOP_SOURCE_PAUSE_MS")
+            .ok()
+            .and_then(|value| value.parse::<u64>().ok())
+        {
+            std::thread::sleep(std::time::Duration::from_millis(milliseconds.min(2_000)));
+        }
+        require_head(
+            app,
+            &journal.previous_head,
+            "no-op source commit changed HEAD",
+        )?;
         None
     };
 

@@ -32,6 +32,7 @@ pub(super) fn commit_convergence_registry(
             .map_err(map_git)?;
     if !changed {
         require_head(app, source_head, "no-op registry commit changed HEAD")?;
+        validate_registry_result(app, plan, journal)?;
         reset_owned_files([&base_index, &prepared_index, &commit_index])?;
         return Ok(None);
     }

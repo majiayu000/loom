@@ -324,3 +324,96 @@ fn foreign_index_lock_with_interrupted_rollback_remains_retryable() {
     );
     assert!(!journal_path.exists());
 }
+
+#[test]
+fn committed_cleanup_accepts_an_unrelated_descendant_commit() {
+    let fixture = projected_fixture();
+    fs::write(
+        fixture.root.path().join("skills/demo/details.txt"),
+        "cleanup descendant\n",
+    )
+    .expect("edit source");
+    let (output, plan) = plan_converge(&fixture, &[]);
+    assert!(output.status.success(), "plan failed: {plan}");
+    let (output, interrupted) = apply_plan(
+        &fixture,
+        &plan,
+        "cleanup-descendant",
+        &[("LOOM_FAULT_INJECT", "convergence_interrupt_during_cleanup")],
+    );
+    assert!(
+        !output.status.success(),
+        "cleanup fault passed: {interrupted}"
+    );
+    let journal_path = fixture
+        .root
+        .path()
+        .join("state/transactions/convergence-demo.json");
+    assert!(
+        journal_path.is_file(),
+        "cleanup journal must remain durable"
+    );
+
+    fs::write(fixture.root.path().join("external.txt"), "external\n").expect("external file");
+    git(fixture.root.path(), &["add", "external.txt"]);
+    git(
+        fixture.root.path(),
+        &["commit", "-m", "test: descendant after convergence"],
+    );
+    let descendant = git(fixture.root.path(), &["rev-parse", "HEAD"]);
+
+    let (output, recovered) = apply_plan(&fixture, &plan, "cleanup-descendant", &[]);
+    assert!(
+        output.status.success(),
+        "descendant blocked cleanup-only recovery: {recovered}"
+    );
+    assert_eq!(git(fixture.root.path(), &["rev-parse", "HEAD"]), descendant);
+    assert!(!journal_path.exists());
+}
+
+#[test]
+fn source_committed_recovery_rechecks_checkpoint_evidence() {
+    let fixture = projected_fixture();
+    fs::write(
+        fixture.root.path().join("skills/demo/details.txt"),
+        "checkpoint recovery\n",
+    )
+    .expect("edit source");
+    let (output, plan) = plan_converge(&fixture, &[]);
+    assert!(output.status.success(), "plan failed: {plan}");
+    let (output, interrupted) = apply_plan(
+        &fixture,
+        &plan,
+        "checkpoint-recovery",
+        &[(
+            "LOOM_FAULT_INJECT",
+            "convergence_interrupt_after_source_commit",
+        )],
+    );
+    assert!(
+        !output.status.success(),
+        "source fault passed: {interrupted}"
+    );
+    let target_before = snapshot_tree(fixture.target.path());
+
+    let checkpoint_path = fixture
+        .root
+        .path()
+        .join("state/registry/ops/checkpoint.json");
+    let mut checkpoint: Value =
+        serde_json::from_slice(&fs::read(&checkpoint_path).expect("checkpoint"))
+            .expect("parse checkpoint");
+    checkpoint["updated_at"] = json!("2000-01-01T00:00:00Z");
+    fs::write(
+        &checkpoint_path,
+        serde_json::to_vec_pretty(&checkpoint).expect("encode checkpoint"),
+    )
+    .expect("drift checkpoint");
+
+    let (output, rejected) = apply_plan(&fixture, &plan, "checkpoint-recovery", &[]);
+    assert!(
+        !output.status.success(),
+        "checkpoint drift resumed recovery: {rejected}"
+    );
+    assert_eq!(snapshot_tree(fixture.target.path()), target_before);
+}

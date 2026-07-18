@@ -6,6 +6,54 @@ use super::skill_convergence_executor::apply_plan;
 use super::*;
 
 #[test]
+fn post_local_axes_are_not_reported_safe_to_apply() {
+    let fixture = projected_fixture();
+    for args in [
+        vec!["--push-remote"],
+        vec!["--require-runtime"],
+        vec!["--push-remote", "--require-runtime"],
+    ] {
+        let (output, plan) = plan_converge(&fixture, &args);
+        assert!(output.status.success(), "plan failed: {plan}");
+        assert_eq!(
+            plan["data"]["safe_to_apply"],
+            json!(false),
+            "post-local plan was reported applyable: {plan}"
+        );
+    }
+}
+
+#[test]
+fn uncommitted_checkpoint_is_not_an_apply_boundary() {
+    let fixture = projected_fixture();
+    let checkpoint_path = fixture
+        .root
+        .path()
+        .join("state/registry/ops/checkpoint.json");
+    let mut checkpoint: Value =
+        serde_json::from_slice(&fs::read(&checkpoint_path).expect("checkpoint"))
+            .expect("parse checkpoint");
+    checkpoint["updated_at"] = json!("2000-01-01T00:00:00Z");
+    fs::write(
+        &checkpoint_path,
+        serde_json::to_vec_pretty(&checkpoint).expect("encode checkpoint"),
+    )
+    .expect("write uncommitted checkpoint");
+
+    let (output, plan) = plan_converge(&fixture, &[]);
+    assert!(output.status.success(), "plan failed: {plan}");
+    let (output, rejected) = apply_plan(&fixture, &plan, "dirty-checkpoint", &[]);
+    assert!(
+        !output.status.success(),
+        "uncommitted checkpoint was accepted: {rejected}"
+    );
+    assert_eq!(
+        rejected["error"]["details"]["conflict"]["code"],
+        json!("PLAN_CHECKPOINT_DRIFT")
+    );
+}
+
+#[test]
 fn stale_plan_and_lock_contention() {
     let stale_fixture = projected_fixture();
     let (output, stale_plan) = plan_converge(&stale_fixture, &[]);

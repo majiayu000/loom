@@ -257,3 +257,307 @@ fn untracked_registry_routing_is_not_an_apply_boundary() {
     );
     assert_eq!(git(fixture.root.path(), &["rev-parse", "HEAD"]), head);
 }
+
+#[cfg(unix)]
+#[test]
+fn safe_symlink_refresh_preparation_does_not_stage_beside_target() {
+    let fixture = projected_fixture_with_method("symlink");
+    let (output, plan) = plan_converge(&fixture, &[]);
+    assert!(output.status.success(), "plan failed: {plan}");
+    let plan_id = plan["data"]["plan_id"].as_str().expect("plan id");
+    let (output, interrupted) = apply_plan(
+        &fixture,
+        &plan,
+        "safe-symlink-no-stage",
+        &[("LOOM_FAULT_INJECT", "convergence_interrupt_after_prepared")],
+    );
+    assert!(
+        !output.status.success(),
+        "prepare fault passed: {interrupted}"
+    );
+    assert!(
+        !fixture
+            .target
+            .path()
+            .join(format!(".loom-projection-stage-{plan_id}-0.owner"))
+            .exists(),
+        "safe symlink no-op must not reserve writable target staging"
+    );
+}
+
+#[test]
+fn projection_source_swap_excludes_nested_git_metadata() {
+    let fixture = projected_fixture();
+    let (output, initial) = plan_converge(&fixture, &[]);
+    assert!(output.status.success(), "initial plan failed: {initial}");
+    let instance = initial["data"]["effects"][0]["instance_id"]
+        .as_str()
+        .expect("instance");
+    let projection = fixture.target.path().join("demo");
+    fs::create_dir_all(projection.join(".git/objects")).expect("nested git dir");
+    fs::write(projection.join(".git/config"), "[core]\n").expect("nested git config");
+
+    let (output, plan) = plan_converge(&fixture, &["--from-projection", "--instance", instance]);
+    assert!(output.status.success(), "projection plan failed: {plan}");
+    assert_eq!(plan["data"]["safe_to_apply"], json!(true));
+    let (output, applied) = apply_plan(&fixture, &plan, "nested-git", &[]);
+    assert!(
+        output.status.success(),
+        "nested Git metadata broke apply: {applied}"
+    );
+    assert!(
+        !fixture.root.path().join("skills/demo/.git").exists(),
+        "nested Git metadata entered canonical source"
+    );
+}
+
+#[test]
+fn create_projection_materializes_a_missing_target_root() {
+    let fixture = projected_fixture();
+    let registry_path = fixture.root.path().join("state/registry/projections.json");
+    let mut registry: Value = serde_json::from_slice(&fs::read(&registry_path).expect("registry"))
+        .expect("parse registry");
+    registry["projections"] = json!([]);
+    fs::write(
+        &registry_path,
+        serde_json::to_vec_pretty(&registry).expect("encode registry"),
+    )
+    .expect("clear registry projection");
+    git(
+        fixture.root.path(),
+        &["add", "state/registry/projections.json"],
+    );
+    git(
+        fixture.root.path(),
+        &["commit", "-m", "test: remove projection record"],
+    );
+    fs::remove_dir_all(fixture.target.path()).expect("remove target root");
+
+    let (output, plan) = plan_converge(&fixture, &[]);
+    assert!(output.status.success(), "create plan failed: {plan}");
+    assert_eq!(plan["data"]["effects"][0]["effect"], json!("create"));
+    let (output, applied) = apply_plan(&fixture, &plan, "missing-target-root", &[]);
+    assert!(
+        output.status.success(),
+        "missing target root blocked apply: {applied}"
+    );
+    assert!(fixture.target.path().join("demo/SKILL.md").is_file());
+}
+
+#[test]
+fn projection_candidate_is_validated_instead_of_blocked_canonical_source() {
+    let fixture = projected_fixture();
+    let (output, initial) = plan_converge(&fixture, &[]);
+    assert!(output.status.success(), "initial plan failed: {initial}");
+    let instance = initial["data"]["effects"][0]["instance_id"]
+        .as_str()
+        .expect("instance")
+        .to_string();
+
+    let scripts = fixture.root.path().join("skills/demo/scripts");
+    fs::create_dir_all(&scripts).expect("scripts dir");
+    fs::write(scripts.join("danger.sh"), "#!/bin/sh\nrm -rf /\n").expect("unsafe source");
+    git(fixture.root.path(), &["add", "skills/demo"]);
+    git(
+        fixture.root.path(),
+        &["commit", "-m", "test: blocked canonical source"],
+    );
+    let source_revision = git(fixture.root.path(), &["rev-parse", "HEAD"]);
+    let registry_path = fixture.root.path().join("state/registry/projections.json");
+    let mut registry: Value = serde_json::from_slice(&fs::read(&registry_path).expect("registry"))
+        .expect("parse registry");
+    registry["projections"][0]["last_applied_rev"] = json!(source_revision.trim());
+    fs::write(
+        &registry_path,
+        serde_json::to_vec_pretty(&registry).expect("encode registry"),
+    )
+    .expect("update projection baseline");
+    let bindings_path = fixture.root.path().join("state/registry/bindings.json");
+    let mut bindings: Value = serde_json::from_slice(&fs::read(&bindings_path).expect("bindings"))
+        .expect("parse bindings");
+    bindings["bindings"][0]["policy_profile"] = json!("deny-risky");
+    fs::write(
+        &bindings_path,
+        serde_json::to_vec_pretty(&bindings).expect("encode bindings"),
+    )
+    .expect("require strict activation policy");
+    git(
+        fixture.root.path(),
+        &[
+            "add",
+            "state/registry/projections.json",
+            "state/registry/bindings.json",
+        ],
+    );
+    git(
+        fixture.root.path(),
+        &["commit", "-m", "test: record safe projection baseline"],
+    );
+
+    let (output, plan) = plan_converge(
+        &fixture,
+        &["--from-projection", "--instance", instance.as_str()],
+    );
+    assert!(output.status.success(), "projection plan failed: {plan}");
+    assert_eq!(plan["data"]["safe_to_apply"], json!(true));
+    let (output, applied) = apply_plan(&fixture, &plan, "candidate-safety", &[]);
+    assert!(
+        output.status.success(),
+        "canonical source blocked reviewed candidate: {applied}"
+    );
+    assert!(
+        !fixture
+            .root
+            .path()
+            .join("skills/demo/scripts/danger.sh")
+            .exists()
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn projection_input_symlink_stage_targets_final_canonical_source() {
+    let fixture = projected_fixture();
+    let selected_plan = plan_converge(&fixture, &[]).1;
+    let selected = selected_plan["data"]["effects"][0]["instance_id"]
+        .as_str()
+        .expect("selected instance")
+        .to_string();
+    let symlink_target = fixture.root.path().join("live/symlink-target");
+    let (output, target) = target_add(fixture.root.path(), "claude", &symlink_target, "managed");
+    assert!(output.status.success(), "target add failed: {target}");
+    let target_id = target["data"]["target"]["target_id"]
+        .as_str()
+        .expect("target id");
+    let workspace = fixture.workspace.path().to_str().expect("workspace");
+    let (output, binding) = binding_add(
+        fixture.root.path(),
+        "claude",
+        "default",
+        "exact-path",
+        workspace,
+        target_id,
+    );
+    assert!(output.status.success(), "binding add failed: {binding}");
+    let binding_id = binding["data"]["binding"]["binding_id"]
+        .as_str()
+        .expect("binding id");
+    let (output, projected) =
+        skill_project(fixture.root.path(), "demo", binding_id, Some("symlink"));
+    assert!(
+        output.status.success(),
+        "symlink project failed: {projected}"
+    );
+    let symlink_instance = projected["data"]["projection"]["instance_id"]
+        .as_str()
+        .expect("symlink instance")
+        .to_string();
+    fs::remove_file(symlink_target.join("demo")).expect("remove symlink projection");
+    let registry_path = fixture.root.path().join("state/registry/projections.json");
+    let mut registry: Value = serde_json::from_slice(&fs::read(&registry_path).expect("registry"))
+        .expect("parse registry");
+    registry["projections"]
+        .as_array_mut()
+        .expect("projections")
+        .retain(|projection| projection["instance_id"] != json!(symlink_instance));
+    fs::write(
+        &registry_path,
+        serde_json::to_vec_pretty(&registry).expect("encode registry"),
+    )
+    .expect("remove symlink record");
+    git(
+        fixture.root.path(),
+        &["add", "state/registry/projections.json"],
+    );
+    git(
+        fixture.root.path(),
+        &["commit", "-m", "test: require symlink activation"],
+    );
+    fs::write(
+        fixture.target.path().join("demo/details.txt"),
+        "selected projection bytes\n",
+    )
+    .expect("edit selected projection");
+
+    let (output, plan) = plan_converge(
+        &fixture,
+        &["--from-projection", "--instance", selected.as_str()],
+    );
+    assert!(output.status.success(), "projection plan failed: {plan}");
+    let (output, applied) = apply_plan(&fixture, &plan, "symlink-final-source", &[]);
+    assert!(
+        output.status.success(),
+        "symlink activation failed: {applied}"
+    );
+    assert_eq!(
+        symlink_target
+            .join("demo")
+            .canonicalize()
+            .expect("canonical symlink"),
+        fixture
+            .root
+            .path()
+            .join("skills/demo")
+            .canonicalize()
+            .expect("canonical source")
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn noop_source_commit_rejects_a_head_changed_during_index_preparation() {
+    let fixture = projected_fixture();
+    let (output, plan) = plan_converge(&fixture, &[]);
+    assert!(output.status.success(), "plan failed: {plan}");
+    let original = plan["data"]["source"]["registry_head"]
+        .as_str()
+        .expect("planned head")
+        .to_string();
+    let journal_path = fixture
+        .root
+        .path()
+        .join("state/transactions/convergence-demo.json");
+    let (output, rejected) = std::thread::scope(|scope| {
+        let apply = scope.spawn(|| {
+            apply_plan(
+                &fixture,
+                &plan,
+                "noop-head-race",
+                &[("LOOM_TEST_CONVERGENCE_NOOP_SOURCE_PAUSE_MS", "2000")],
+            )
+        });
+        let mut entered_noop_source = false;
+        for _ in 0..200 {
+            if let Ok(raw) = fs::read(&journal_path)
+                && let Ok(journal) = serde_json::from_slice::<Value>(&raw)
+                && journal["phase"] == json!("committing_source")
+                && !journal["source_staged_index_digest"].is_null()
+            {
+                entered_noop_source = true;
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(
+            entered_noop_source,
+            "apply never entered no-op source boundary"
+        );
+        fs::write(fixture.root.path().join("external-head.txt"), "external\n")
+            .expect("external file");
+        git(fixture.root.path(), &["add", "external-head.txt"]);
+        git(
+            fixture.root.path(),
+            &["commit", "-m", "test: concurrent no-op source head"],
+        );
+        apply.join().expect("apply thread")
+    });
+    assert!(
+        !output.status.success(),
+        "external HEAD was accepted: {rejected}"
+    );
+    let external = git(fixture.root.path(), &["rev-parse", "HEAD"]);
+    assert_ne!(external.trim(), original);
+    let journal: Value = serde_json::from_slice(&fs::read(&journal_path).expect("durable journal"))
+        .expect("parse journal");
+    assert!(journal["source_head"].is_null());
+}

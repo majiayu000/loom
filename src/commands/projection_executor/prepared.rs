@@ -25,6 +25,12 @@ pub(super) fn validate_execution_input(
     input: &ProjectionExecutionInput,
 ) -> Result<(), CommandFailure> {
     ensure_skill_exists(ctx, &input.skill)?;
+    validate_projection_route(input)?;
+    enforce_skill_safety(ctx, &input.skill, &input.binding.policy_profile)?;
+    Ok(())
+}
+
+fn validate_projection_route(input: &ProjectionExecutionInput) -> Result<(), CommandFailure> {
     if input.target.agent != input.binding.agent {
         return Err(CommandFailure::new(
             ErrorCode::TargetAgentMismatch,
@@ -47,7 +53,6 @@ pub(super) fn validate_execution_input(
         ));
     }
     validate_projection_method(&input.target, input.method)?;
-    enforce_skill_safety(ctx, &input.skill, &input.binding.policy_profile)?;
     Ok(())
 }
 
@@ -105,12 +110,12 @@ pub(crate) fn execute_projection(
 }
 
 pub(crate) fn prepare_convergence_projection(
-    ctx: &AppContext,
+    _ctx: &AppContext,
     input: &ProjectionExecutionInput,
     source: &Path,
     staging_path: &Path,
 ) -> Result<(), CommandFailure> {
-    validate_execution_input(ctx, input)?;
+    validate_projection_route(input)?;
     if input.context != ProjectionExecutionContext::Convergence {
         return Err(CommandFailure::new(
             ErrorCode::InternalError,
@@ -135,7 +140,7 @@ pub(crate) fn execute_prepared_convergence_projection(
     paths: &RegistryStatePaths,
     snapshot: &RegistrySnapshot,
     input: ProjectionExecutionInput,
-    staging: PreparedProjectionStaging,
+    staging: impl Into<Option<PreparedProjectionStaging>>,
     mut validate_owner: impl FnMut(&Path) -> Result<(), CommandFailure>,
 ) -> Result<ProjectionExecutionOutput, CommandFailure> {
     let mut output = execute_projection_mode::<ConvergenceMode>(
@@ -143,7 +148,7 @@ pub(crate) fn execute_prepared_convergence_projection(
         paths,
         snapshot,
         input,
-        Some(staging),
+        staging.into(),
         Some(&mut validate_owner),
     )?;
     let Some(prepared) = output.prepared.take() else {

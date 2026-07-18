@@ -20,7 +20,7 @@ use super::super::file_ops::{create_declared_path_backup, restore_path_from_back
 use super::super::helpers::{map_git, map_io, map_lock, map_registry_state};
 use super::super::projection_executor::{
     ProjectionExecutionContext, ProjectionExecutionInput, execute_prepared_convergence_projection,
-    finish_convergence_projection, prepare_convergence_projection, rollback_convergence_projection,
+    finish_convergence_projection, prepare_convergence_projection,
 };
 use super::super::projections::{project_skill_to_target, upsert_projection};
 use super::super::provenance::skill_tree_digest;
@@ -30,6 +30,9 @@ use super::{PLAN_PROTOCOL_VERSION, plan_failure};
 
 mod recovery_evidence;
 mod recovery_support;
+use recovery_evidence::{
+    restore_backup_atomically, restore_projection_from_evidence, validate_rollback_evidence,
+};
 use recovery_support::*;
 
 const SCHEMA_VERSION: &str = "1.2";
@@ -221,7 +224,14 @@ pub(super) fn apply_convergence(
                 })
                 .unwrap_or_default();
             if rollback_errors.is_empty() {
-                rollback_errors = rollback_journal(app, &paths, &journal);
+                if let Err(validation) = validate_rollback_evidence(app, &plan, &journal) {
+                    rollback_errors.push(json!({
+                        "step": "validate_rollback_evidence",
+                        "message": validation.message,
+                    }));
+                } else {
+                    rollback_errors = rollback_journal(app, &paths, &journal);
+                }
             }
             if rollback_errors.is_empty()
                 && std::env::var("LOOM_ROLLBACK_FAULT_INJECT").ok().as_deref()
@@ -277,6 +287,7 @@ fn execute_local_transaction(
         journal.phase = TransactionPhase::ReplacingSource;
         save_journal(journal_path, journal)?;
         replace_source_from_projection(app, plan, journal)?;
+        maybe_skill_fault("convergence_interrupt_after_source_replacement")?;
         journal.phase = TransactionPhase::SourceReplaced;
         save_journal(journal_path, journal)?;
     }
@@ -393,6 +404,23 @@ fn validate_guards(
         ));
     }
     let paths = RegistryStatePaths::from_app_context(&app.ctx);
+    for args in [
+        ["diff", "--quiet", "--", "state/registry/projections.json"],
+        [
+            "diff",
+            "--cached",
+            "--quiet",
+            "state/registry/projections.json",
+        ],
+    ] {
+        let output = gitops::run_git_allow_failure(&app.ctx, &args).map_err(map_git)?;
+        if !output.status.success() {
+            return Err(stale(
+                "registry projections changed after planning or are not committed",
+                "PLAN_CHECKPOINT_DRIFT",
+            ));
+        }
+    }
     let snapshot = paths.maybe_load_snapshot().map_err(map_registry_state)?;
     if plan.registry.initialized != snapshot.is_some() {
         return Err(stale(
@@ -402,9 +430,11 @@ fn validate_guards(
     }
     if let Some(snapshot) = snapshot {
         let digest = digest_value(&snapshot.checkpoint)?;
+        let projections_digest = digest_value(&snapshot.projections)?;
         if plan.registry.checkpoint_digest.as_deref() != Some(digest.as_str())
             || plan.registry.checkpoint_updated_at.as_deref()
                 != Some(snapshot.checkpoint.updated_at.to_rfc3339().as_str())
+            || plan.registry.projections_digest.as_deref() != Some(projections_digest.as_str())
         {
             return Err(stale(
                 "registry checkpoint changed after planning",
@@ -467,15 +497,19 @@ fn rollback_journal(
         .take(journal.installed_projections)
         .rev()
     {
-        errors.extend(rollback_convergence_projection(
-            Path::new(&projection.materialized_path),
-            projection.backup.as_ref(),
-        ));
+        if let Err(err) = restore_projection_from_evidence(projection) {
+            push_rollback_error(&mut errors, "restore_projection_from_evidence", err.message);
+        }
     }
-    if let Some(backup) = journal.source_backup.as_ref()
-        && let Err(err) = restore_path_from_backup(&app.ctx.skill_path(&journal.skill), backup)
-    {
-        push_rollback_error(&mut errors, "restore_source_path", err);
+    if let (Some(backup), Some(staging)) = (
+        journal.source_backup.as_ref(),
+        journal.source_staging.as_deref(),
+    ) && let Err(err) = restore_backup_atomically(
+        &app.ctx.skill_path(&journal.skill),
+        backup,
+        Path::new(staging),
+    ) {
+        push_rollback_error(&mut errors, "restore_source_path", err.message);
     }
     if let Some(staging) = journal.source_staging.as_deref()
         && let Err(err) = remove_path_if_exists(Path::new(staging))
@@ -744,19 +778,5 @@ fn stale(message: impl Into<String>, code: &str) -> CommandFailure {
         false,
         vec!["create and review a fresh convergence plan".to_string()],
         None,
-    )
-}
-
-fn interruption_fault_active() -> bool {
-    matches!(
-        std::env::var("LOOM_FAULT_INJECT").ok().as_deref(),
-        Some(
-            "convergence_interrupt_after_source_commit"
-                | "convergence_interrupt_committing_source"
-                | "convergence_interrupt_committing_registry"
-                | "convergence_interrupt_after_owner_root_creation"
-                | "convergence_interrupt_after_owner_marker_write"
-                | "convergence_interrupt_after_prepared"
-        )
     )
 }

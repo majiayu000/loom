@@ -29,6 +29,37 @@ fn apply(
     )
 }
 
+fn create_projection_plan(fixture: &Fixture) -> Value {
+    let projection = fixture.target.path().join("demo");
+    let metadata = fs::symlink_metadata(&projection).expect("projection metadata");
+    if metadata.file_type().is_symlink() || metadata.is_file() {
+        fs::remove_file(&projection).expect("remove projection");
+    } else {
+        fs::remove_dir_all(&projection).expect("remove projection");
+    }
+    let projections_path = fixture.root.path().join("state/registry/projections.json");
+    let mut projections: Value =
+        serde_json::from_slice(&fs::read(&projections_path).expect("registry"))
+            .expect("parse registry");
+    projections["projections"] = json!([]);
+    fs::write(
+        &projections_path,
+        serde_json::to_vec_pretty(&projections).expect("encode"),
+    )
+    .expect("registry write");
+    git(
+        fixture.root.path(),
+        &["add", "state/registry/projections.json"],
+    );
+    git(
+        fixture.root.path(),
+        &["commit", "-m", "test: create projection plan"],
+    );
+    let (output, plan) = plan_converge(fixture, &[]);
+    assert!(output.status.success(), "plan failed: {plan}");
+    plan
+}
+
 #[test]
 fn internal_reservation_staging_collisions_are_preserved() {
     for kind in ["artifact", "projection"] {
@@ -96,27 +127,7 @@ fn refresh_journal_rejects_null_backup_before_cleanup() {
 #[test]
 fn prepared_recovery_preserves_external_target_creation() {
     let fixture = projected_fixture();
-    fs::remove_dir_all(fixture.target.path().join("demo")).expect("remove target");
-    let projections_path = fixture.root.path().join("state/registry/projections.json");
-    let mut projections: Value =
-        serde_json::from_slice(&fs::read(&projections_path).expect("registry"))
-            .expect("parse registry");
-    projections["projections"] = json!([]);
-    fs::write(
-        &projections_path,
-        serde_json::to_vec_pretty(&projections).expect("encode"),
-    )
-    .expect("registry write");
-    git(
-        fixture.root.path(),
-        &["add", "state/registry/projections.json"],
-    );
-    git(
-        fixture.root.path(),
-        &["commit", "-m", "test: create projection plan"],
-    );
-    let (output, plan) = plan_converge(&fixture, &[]);
-    assert!(output.status.success(), "plan failed: {plan}");
+    let plan = create_projection_plan(&fixture);
     let fault = "convergence_interrupt_after_prepared";
     let (output, interrupted) = apply(&fixture, &plan, "prepared", Some(fault));
     assert!(!output.status.success(), "fault passed: {interrupted}");
@@ -128,6 +139,281 @@ fn prepared_recovery_preserves_external_target_creation() {
         fs::read_to_string(fixture.target.path().join("demo/external"))
             .expect("external preserved"),
         "external\n"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn source_committed_create_preserves_external_dangling_symlink() {
+    use std::os::unix::fs::symlink;
+
+    let fixture = projected_fixture_with_method("symlink");
+    let plan = create_projection_plan(&fixture);
+    let fault = "convergence_interrupt_after_source_commit";
+    let (output, interrupted) = apply(&fixture, &plan, "dangling-create", Some(fault));
+    assert!(!output.status.success(), "fault passed: {interrupted}");
+    let projection = fixture.target.path().join("demo");
+    let dangling_target = fixture.target.path().join("external-missing-target");
+    symlink(&dangling_target, &projection).expect("external dangling symlink");
+    let (output, rejected) = apply(&fixture, &plan, "dangling-create", None);
+    assert!(
+        !output.status.success(),
+        "dangling symlink was accepted: {rejected}"
+    );
+    assert!(
+        fs::symlink_metadata(&projection)
+            .expect("symlink preserved")
+            .file_type()
+            .is_symlink()
+    );
+    assert_eq!(
+        fs::read_link(&projection).expect("link target"),
+        dangling_target
+    );
+}
+
+#[test]
+fn staged_and_unstaged_projection_registry_drift_are_zero_mutation() {
+    for staged in [false, true] {
+        let fixture = projected_fixture();
+        let (output, plan) = plan_converge(&fixture, &[]);
+        assert!(output.status.success(), "plan failed: {plan}");
+        let path = fixture.root.path().join("state/registry/projections.json");
+        let mut registry: Value =
+            serde_json::from_slice(&fs::read(&path).expect("registry")).expect("parse registry");
+        registry["projections"][0]["observed_drift"] = json!(true);
+        fs::write(&path, serde_json::to_vec_pretty(&registry).expect("encode")).expect("drift");
+        if staged {
+            git(
+                fixture.root.path(),
+                &["add", "state/registry/projections.json"],
+            );
+        }
+        let head = git(fixture.root.path(), &["rev-parse", "HEAD"]);
+        let status = git(fixture.root.path(), &["status", "--porcelain"]);
+        let source = snapshot_tree(&fixture.root.path().join("skills/demo"));
+        let target = snapshot_tree(fixture.target.path());
+        let (output, rejected) = apply(&fixture, &plan, "registry-drift", None);
+        assert!(
+            !output.status.success(),
+            "registry drift applied: {rejected}"
+        );
+        assert_eq!(git(fixture.root.path(), &["rev-parse", "HEAD"]), head);
+        assert_eq!(git(fixture.root.path(), &["status", "--porcelain"]), status);
+        assert_eq!(
+            snapshot_tree(&fixture.root.path().join("skills/demo")),
+            source
+        );
+        assert_eq!(snapshot_tree(fixture.target.path()), target);
+        assert!(
+            !fixture
+                .root
+                .path()
+                .join("state/transactions/convergence-demo.json")
+                .exists()
+        );
+    }
+}
+
+#[test]
+fn corrupt_projection_and_index_backups_fail_before_live_mutation() {
+    for kind in ["projection", "index"] {
+        let fixture = projected_fixture();
+        fs::write(
+            fixture.root.path().join("skills/demo/details.txt"),
+            "backup evidence source\n",
+        )
+        .expect("source edit");
+        let (output, plan) = plan_converge(&fixture, &[]);
+        assert!(output.status.success(), "plan failed: {plan}");
+        let fault = "convergence_interrupt_after_source_commit";
+        let (output, interrupted) = apply(&fixture, &plan, kind, Some(fault));
+        assert!(!output.status.success(), "fault passed: {interrupted}");
+        let journal_path = fixture
+            .root
+            .path()
+            .join("state/transactions/convergence-demo.json");
+        let journal: Value =
+            serde_json::from_slice(&fs::read(&journal_path).expect("journal")).expect("parse");
+        let backup = if kind == "projection" {
+            journal["projections"][0]["backup"]["backup_path"]
+                .as_str()
+                .expect("projection backup")
+        } else {
+            journal["index_backup"].as_str().expect("index backup")
+        };
+        if kind == "projection" {
+            fs::remove_dir_all(backup).expect("remove backup");
+        } else {
+            fs::write(backup, b"not-an-index").expect("corrupt index");
+        }
+        let head = git(fixture.root.path(), &["rev-parse", "HEAD"]);
+        let source = snapshot_tree(&fixture.root.path().join("skills/demo"));
+        let target = snapshot_tree(fixture.target.path());
+        let registry = snapshot_tree(&fixture.root.path().join("state/registry"));
+        let (output, rejected) = apply(&fixture, &plan, kind, None);
+        assert!(
+            !output.status.success(),
+            "corrupt backup recovered: {rejected}"
+        );
+        assert_eq!(git(fixture.root.path(), &["rev-parse", "HEAD"]), head);
+        assert_eq!(
+            snapshot_tree(&fixture.root.path().join("skills/demo")),
+            source
+        );
+        assert_eq!(snapshot_tree(fixture.target.path()), target);
+        assert_eq!(
+            snapshot_tree(&fixture.root.path().join("state/registry")),
+            registry
+        );
+        assert!(journal_path.is_file(), "recovery pointer was deleted");
+    }
+}
+
+#[test]
+fn corrupt_source_backup_fails_before_live_mutation() {
+    let fixture = projected_fixture();
+    let (output, initial) = plan_converge(&fixture, &[]);
+    assert!(output.status.success(), "initial plan failed: {initial}");
+    let instance = initial["data"]["effects"][0]["instance_id"]
+        .as_str()
+        .expect("instance");
+    fs::write(
+        fixture.target.path().join("demo/details.txt"),
+        "projection input\n",
+    )
+    .expect("projection edit");
+    let (output, plan) = plan_converge(&fixture, &["--from-projection", "--instance", instance]);
+    assert!(output.status.success(), "plan failed: {plan}");
+    let fault = "convergence_interrupt_after_source_commit";
+    let (output, interrupted) = apply(&fixture, &plan, "source-backup", Some(fault));
+    assert!(!output.status.success(), "fault passed: {interrupted}");
+    let journal_path = fixture
+        .root
+        .path()
+        .join("state/transactions/convergence-demo.json");
+    let journal: Value =
+        serde_json::from_slice(&fs::read(&journal_path).expect("journal")).expect("parse");
+    let backup = journal["source_backup"]["backup_path"]
+        .as_str()
+        .expect("source backup");
+    fs::remove_dir_all(backup).expect("remove source backup");
+    let head = git(fixture.root.path(), &["rev-parse", "HEAD"]);
+    let source = snapshot_tree(&fixture.root.path().join("skills/demo"));
+    let target = snapshot_tree(&fixture.target.path().join("demo"));
+    let (output, rejected) = apply(&fixture, &plan, "source-backup", None);
+    assert!(
+        !output.status.success(),
+        "corrupt source backup recovered: {rejected}"
+    );
+    assert_eq!(git(fixture.root.path(), &["rev-parse", "HEAD"]), head);
+    assert_eq!(
+        snapshot_tree(&fixture.root.path().join("skills/demo")),
+        source
+    );
+    assert_eq!(snapshot_tree(&fixture.target.path().join("demo")), target);
+    assert!(journal_path.is_file());
+}
+
+#[test]
+fn declared_cleanup_failure_retains_journal_for_retry() {
+    let fixture = projected_fixture();
+    let (output, plan) = plan_converge(&fixture, &[]);
+    assert!(output.status.success(), "plan failed: {plan}");
+    let fault = "convergence_interrupt_after_prepared";
+    let (output, interrupted) = apply(&fixture, &plan, "cleanup-retain", Some(fault));
+    assert!(!output.status.success(), "fault passed: {interrupted}");
+    let plan_id = plan["data"]["plan_id"].as_str().expect("plan id");
+    let digest = plan["data"]["plan_digest"].as_str().expect("digest");
+    let (output, failed_cleanup) = run_loom_with_env(
+        fixture.root.path(),
+        &[(
+            "LOOM_CLEANUP_FAULT_INJECT",
+            "convergence_fail_declared_cleanup",
+        )],
+        &[
+            "apply",
+            plan_id,
+            "--plan-digest",
+            digest,
+            "--idempotency-key",
+            "cleanup-retain",
+        ],
+    );
+    assert!(
+        !output.status.success(),
+        "cleanup fault passed: {failed_cleanup}"
+    );
+    let journal = fixture
+        .root
+        .path()
+        .join("state/transactions/convergence-demo.json");
+    assert!(journal.is_file(), "cleanup failure deleted retry journal");
+    let (output, recovered) = apply(&fixture, &plan, "cleanup-retain", None);
+    assert!(output.status.success(), "cleanup retry failed: {recovered}");
+    assert!(!journal.exists());
+}
+
+#[test]
+fn source_replacement_recovery_touches_only_source_before_restart() {
+    let fixture = projected_fixture();
+    let (output, initial) = plan_converge(&fixture, &[]);
+    assert!(output.status.success(), "initial plan failed: {initial}");
+    let instance = initial["data"]["effects"][0]["instance_id"]
+        .as_str()
+        .expect("instance");
+    fs::write(
+        fixture.target.path().join("demo/details.txt"),
+        "replacement input\n",
+    )
+    .expect("projection edit");
+    let (output, plan) = plan_converge(&fixture, &["--from-projection", "--instance", instance]);
+    assert!(output.status.success(), "plan failed: {plan}");
+    fs::write(fixture.root.path().join("unrelated-index"), "staged\n").expect("unrelated");
+    git(fixture.root.path(), &["add", "unrelated-index"]);
+    let head = git(fixture.root.path(), &["rev-parse", "HEAD"]);
+    let index = git(fixture.root.path(), &["diff", "--cached", "--name-only"]);
+    let old_source = snapshot_tree(&fixture.root.path().join("skills/demo"));
+    let target = snapshot_tree(&fixture.target.path().join("demo"));
+    let registry = snapshot_tree(&fixture.root.path().join("state/registry"));
+    let first_fault = "convergence_interrupt_after_source_replacement";
+    let (output, interrupted) = apply(&fixture, &plan, "source-replacement", Some(first_fault));
+    assert!(
+        !output.status.success(),
+        "replacement fault passed: {interrupted}"
+    );
+
+    let plan_id = plan["data"]["plan_id"].as_str().expect("plan id");
+    let digest = plan["data"]["plan_digest"].as_str().expect("digest");
+    let (output, restarted) = run_loom_with_env(
+        fixture.root.path(),
+        &[("LOOM_FAULT_INJECT", "convergence_interrupt_after_prepared")],
+        &[
+            "apply",
+            plan_id,
+            "--plan-digest",
+            digest,
+            "--idempotency-key",
+            "source-replacement",
+        ],
+    );
+    assert!(
+        !output.status.success(),
+        "restart fault passed: {restarted}"
+    );
+    assert_eq!(git(fixture.root.path(), &["rev-parse", "HEAD"]), head);
+    assert_eq!(
+        git(fixture.root.path(), &["diff", "--cached", "--name-only"]),
+        index
+    );
+    assert_eq!(
+        snapshot_tree(&fixture.root.path().join("skills/demo")),
+        old_source
+    );
+    assert_eq!(snapshot_tree(&fixture.target.path().join("demo")), target);
+    assert_eq!(
+        snapshot_tree(&fixture.root.path().join("state/registry")),
+        registry
     );
 }
 

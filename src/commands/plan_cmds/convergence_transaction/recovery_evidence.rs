@@ -1,9 +1,9 @@
 use std::fs;
-use std::io::Cursor;
 use std::path::Path;
 
 use super::recovery_support::{recovery_stale, verify_commit};
 use super::*;
+use crate::sha256::{Sha256, to_hex};
 
 pub(super) fn reprove_source_boundary(
     app: &App,
@@ -212,6 +212,195 @@ pub(super) fn validate_expected_projections(
     })
 }
 
+pub(super) fn validate_rollback_evidence(
+    app: &App,
+    plan: &SkillConvergencePlan,
+    journal: &TransactionJournal,
+) -> std::result::Result<(), CommandFailure> {
+    validate_index_backup(app, Path::new(&journal.index_backup))?;
+    if let Some(backup) = journal.source_backup.as_ref() {
+        validate_tree_backup(backup, &plan.source.tree_digest, None)?;
+    }
+    for (effect, artifact) in plan.projections.iter().zip(&journal.projections) {
+        match (effect.effect.as_str(), artifact.backup.as_ref()) {
+            ("create", None) => {}
+            ("refresh", Some(backup)) => validate_tree_backup(
+                backup,
+                effect
+                    .materialized_tree_digest
+                    .as_deref()
+                    .unwrap_or_default(),
+                (effect.method == "symlink").then(|| app.ctx.skill_path(&plan.skill)),
+            )?,
+            _ => return Err(corrupt("projection backup does not match its effect")),
+        }
+    }
+    Ok(())
+}
+
+pub(super) fn rollback_uncommitted_source_only(
+    app: &App,
+    plan: &SkillConvergencePlan,
+    journal: &TransactionJournal,
+) -> std::result::Result<(), CommandFailure> {
+    let head = gitops::head(&app.ctx).map_err(map_git)?;
+    if head != journal.previous_head {
+        return Err(recovery_stale(
+            "HEAD changed during an uncommitted source transaction",
+        ));
+    }
+    let paths = RegistryStatePaths::from_app_context(&app.ctx);
+    let live_registry = paths.load_projections().map_err(map_registry_state)?;
+    if serde_json::to_value(live_registry).map_err(map_io)?
+        != serde_json::to_value(&journal.original_projections).map_err(map_io)?
+    {
+        return Err(recovery_stale(
+            "registry changed during an uncommitted source transaction",
+        ));
+    }
+    if plan.source.direction == ConvergenceInputDirection::Source {
+        return Ok(());
+    }
+    let source = app.ctx.skill_path(&plan.skill);
+    let live_digest = skill_tree_digest(&source).map_err(map_io)?;
+    if live_digest == plan.source.tree_digest {
+        return Ok(());
+    }
+    if live_digest != plan.input.selected_input_tree_digest {
+        return Err(recovery_stale(
+            "source is neither old nor transaction-new during recovery",
+        ));
+    }
+    validate_rollback_evidence(app, plan, journal)?;
+    let backup = journal
+        .source_backup
+        .as_ref()
+        .ok_or_else(|| corrupt("projection-input transaction has no source backup"))?;
+    let staging = journal
+        .source_staging
+        .as_deref()
+        .map(Path::new)
+        .ok_or_else(|| corrupt("projection-input transaction has no source staging"))?;
+    restore_backup_atomically(&source, backup, staging)
+}
+
+pub(super) fn validate_rolling_back_state(
+    app: &App,
+    plan: &SkillConvergencePlan,
+    journal: &TransactionJournal,
+) -> std::result::Result<(), CommandFailure> {
+    if gitops::head(&app.ctx).map_err(map_git)? != journal.previous_head {
+        return Err(recovery_stale(
+            "HEAD is not restored at the rolling-back recovery boundary",
+        ));
+    }
+    let source_digest = skill_tree_digest(&app.ctx.skill_path(&plan.skill)).map_err(map_io)?;
+    if source_digest != plan.source.tree_digest
+        && source_digest != plan.input.selected_input_tree_digest
+    {
+        return Err(recovery_stale(
+            "source is neither old nor transaction-new while rolling back",
+        ));
+    }
+    let active_index =
+        gitops::run_git(&app.ctx, &["rev-parse", "--git-path", "index"]).map_err(map_git)?;
+    let active_index = PathBuf::from(active_index);
+    let active_index = if active_index.is_absolute() {
+        active_index
+    } else {
+        app.ctx.root.join(active_index)
+    };
+    let live = fs::read(active_index).map_err(map_io)?;
+    let original = fs::read(&journal.index_backup).map_err(map_io)?;
+    if live != original {
+        return Err(recovery_stale(
+            "Git index is not restored at the rolling-back recovery boundary",
+        ));
+    }
+    Ok(())
+}
+
+pub(super) fn restore_projection_from_evidence(
+    artifact: &ProjectionBackup,
+) -> std::result::Result<(), CommandFailure> {
+    let live = Path::new(&artifact.materialized_path);
+    let staging = Path::new(&artifact.staging_path);
+    match artifact.backup.as_ref() {
+        Some(backup) => restore_backup_atomically(live, backup, staging),
+        None => remove_path_if_exists(live).map_err(map_io),
+    }
+}
+
+pub(super) fn restore_backup_atomically(
+    live: &Path,
+    backup: &serde_json::Value,
+    staging: &Path,
+) -> std::result::Result<(), CommandFailure> {
+    remove_path_if_exists(staging).map_err(map_io)?;
+    restore_path_from_backup(staging, backup).map_err(map_io)?;
+    exchange_paths_atomic(staging, live).map_err(map_io)?;
+    remove_path_if_exists(staging).map_err(map_io)
+}
+
+fn validate_index_backup(app: &App, path: &Path) -> std::result::Result<(), CommandFailure> {
+    let bytes = fs::read(path).map_err(map_io)?;
+    if bytes.len() < 12 || &bytes[..4] != b"DIRC" {
+        return Err(corrupt("transaction Git index backup is invalid"));
+    }
+    let version = u32::from_be_bytes(bytes[4..8].try_into().expect("four-byte index version"));
+    if !(2..=4).contains(&version) {
+        return Err(corrupt(
+            "transaction Git index backup has an unsupported version",
+        ));
+    }
+    gitops::validate_index_file(&app.ctx, path).map_err(map_git)
+}
+
+fn validate_tree_backup(
+    backup: &serde_json::Value,
+    expected_digest: &str,
+    expected_symlink_target: Option<PathBuf>,
+) -> std::result::Result<(), CommandFailure> {
+    let backup_path = backup["backup_path"]
+        .as_str()
+        .map(Path::new)
+        .ok_or_else(|| corrupt("backup has no path"))?;
+    match backup["kind"].as_str() {
+        Some("dir") => {
+            let digest = skill_tree_digest(backup_path).map_err(map_io)?;
+            if digest != expected_digest {
+                return Err(corrupt("transaction directory backup digest is invalid"));
+            }
+        }
+        Some("symlink") => {
+            let expected = expected_symlink_target
+                .ok_or_else(|| corrupt("source backup cannot be a symlink"))?;
+            let raw = fs::read_to_string(backup_path.join("symlink.json")).map_err(map_io)?;
+            let payload: serde_json::Value =
+                serde_json::from_str(&raw).map_err(|_| corrupt("symlink backup is invalid"))?;
+            let target = payload["target"]
+                .as_str()
+                .map(Path::new)
+                .ok_or_else(|| corrupt("symlink backup has no target"))?;
+            let resolved = if target.is_absolute() {
+                target.to_path_buf()
+            } else {
+                Path::new(backup["original_path"].as_str().unwrap_or_default())
+                    .parent()
+                    .unwrap_or(Path::new(""))
+                    .join(target)
+            };
+            let expected = expected.canonicalize().map_err(map_io)?;
+            let actual = resolved.canonicalize().map_err(map_io)?;
+            if actual != expected {
+                return Err(corrupt("symlink backup target is invalid"));
+            }
+        }
+        _ => return Err(corrupt("transaction backup kind is invalid")),
+    }
+    Ok(())
+}
+
 enum ProjectionState {
     Old,
     New,
@@ -232,8 +421,14 @@ fn projection_state(
                 ProjectionState::Same
             });
         }
-        if effect.effect == "create" && !path.exists() {
-            return Ok(ProjectionState::Old);
+        if effect.effect == "create" {
+            return match fs::symlink_metadata(path) {
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(ProjectionState::Old),
+                Err(err) => Err(map_io(err)),
+                Ok(_) => Err(recovery_stale(
+                    "created symlink projection path has unexpected external content",
+                )),
+            };
         }
         return Err(recovery_stale(
             "symlink projection has unexpected target or path kind",
@@ -303,30 +498,77 @@ fn committed_skill_digest(
     head: &str,
     skill: &str,
 ) -> std::result::Result<String, CommandFailure> {
-    let rel = format!("skills/{skill}");
-    let output =
-        gitops::run_git_allow_failure(&app.ctx, &["archive", "--format=tar", head, "--", &rel])
-            .map_err(map_git)?;
+    let prefix = format!("skills/{skill}/");
+    let output = gitops::run_git_allow_failure(
+        &app.ctx,
+        &[
+            "ls-tree",
+            "-rz",
+            "-r",
+            head,
+            "--",
+            prefix.trim_end_matches('/'),
+        ],
+    )
+    .map_err(map_git)?;
     if !output.status.success() {
         return Err(map_git(anyhow::anyhow!(
             String::from_utf8_lossy(&output.stderr).to_string()
         )));
     }
-    let root =
-        std::env::temp_dir().join(format!("loom-convergence-proof-{}", uuid::Uuid::new_v4()));
-    fs::create_dir(&root).map_err(map_io)?;
-    let result = (|| {
-        tar::Archive::new(Cursor::new(output.stdout))
-            .unpack(&root)
-            .map_err(map_io)?;
-        skill_tree_digest(&root.join(&rel)).map_err(map_io)
-    })();
-    let cleanup = fs::remove_dir_all(&root);
-    match (result, cleanup) {
-        (Ok(digest), Ok(())) => Ok(digest),
-        (Err(err), _) => Err(err),
-        (Ok(_), Err(err)) => Err(map_io(err)),
+    let mut entries = Vec::new();
+    for record in output
+        .stdout
+        .split(|byte| *byte == 0)
+        .filter(|record| !record.is_empty())
+    {
+        let tab = record
+            .iter()
+            .position(|byte| *byte == b'\t')
+            .ok_or_else(|| corrupt("invalid git tree record"))?;
+        let header = std::str::from_utf8(&record[..tab])
+            .map_err(|_| corrupt("non-UTF-8 git tree header"))?;
+        let mut fields = header.split_whitespace();
+        let mode = fields
+            .next()
+            .ok_or_else(|| corrupt("git tree record has no mode"))?;
+        if fields.next() != Some("blob") {
+            return Err(corrupt("skill commit tree contains a non-blob leaf"));
+        }
+        let oid = fields
+            .next()
+            .ok_or_else(|| corrupt("git tree record has no object id"))?;
+        let path =
+            std::str::from_utf8(&record[tab + 1..]).map_err(|_| corrupt("non-UTF-8 skill path"))?;
+        let relative = path
+            .strip_prefix(&prefix)
+            .ok_or_else(|| corrupt("skill commit path escaped prefix"))?;
+        entries.push((relative.to_string(), mode == "120000", oid.to_string()));
     }
+    entries.sort_by(|left, right| left.0.cmp(&right.0));
+    let mut hasher = Sha256::new();
+    for (relative, symlink, oid) in entries {
+        let blob = gitops::run_git_allow_failure(&app.ctx, &["cat-file", "blob", &oid])
+            .map_err(map_git)?;
+        if !blob.status.success() {
+            return Err(map_git(anyhow::anyhow!(
+                String::from_utf8_lossy(&blob.stderr).to_string()
+            )));
+        }
+        hasher.update(b"path\0");
+        hasher.update(relative.as_bytes());
+        hasher.update(b"\0");
+        if symlink {
+            hasher.update(b"symlink\0");
+            hasher.update(&blob.stdout);
+        } else {
+            hasher.update(b"file\0");
+            hasher.update(&(blob.stdout.len() as u64).to_be_bytes());
+            hasher.update(&blob.stdout);
+        }
+        hasher.update(b"\0");
+    }
+    Ok(format!("sha256:{}", to_hex(&hasher.finalize())))
 }
 
 fn require_clean_path(app: &App, path: &str) -> std::result::Result<(), CommandFailure> {

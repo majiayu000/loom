@@ -262,6 +262,26 @@ pub fn restore_index_from_backup(ctx: &AppContext, backup_path: &Path) -> Result
     result
 }
 
+pub fn validate_index_file(ctx: &AppContext, index_path: &Path) -> Result<()> {
+    let index = index_path
+        .to_str()
+        .ok_or_else(|| anyhow!("Git index path is not UTF-8: {}", index_path.display()))?;
+    let output = run_git_allow_failure_in_with_env(
+        &ctx.root,
+        &[("GIT_INDEX_FILE", index)],
+        &["ls-files", "--stage"],
+    )?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(anyhow!(
+            "invalid Git index {}: {}",
+            index_path.display(),
+            String::from_utf8_lossy(&output.stderr).trim()
+        ))
+    }
+}
+
 fn restore_index_with_env(
     ctx: &AppContext,
     snapshot: &IndexSnapshot,

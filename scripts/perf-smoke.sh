@@ -6,7 +6,7 @@ if [[ ! -x "$bin" ]]; then
   cargo build --release --locked
 fi
 
-# Hard ceiling: 5960 KiB. The durable plan/apply protocol, offline eval
+# Hard ceiling: 6120 KiB. The durable plan/apply protocol, offline eval
 # matrix, local skill scaffolding CLI, skillset foundation, portable YAML
 # lint parser, single-skill inspect read model, single-skill activation
 # commands, and safety/trust/quarantine/security-diff command surfaces expanded
@@ -86,9 +86,11 @@ fi
 # recommendation evidence. Adapter-driven visibility adds cross-agent
 # visibility/diagnose reporting plus generic dry-run reconcile planning for
 # non-Codex agents. Real Codex CLI eval execution adds subprocess timeout,
-# JSONL trace parsing, workspace diff scoring, and real-evidence compile gates
-# while keeping cold CLI startup guarded below.
-max_bin_bytes=$((5960 * 1024))
+# JSONL trace parsing, workspace diff scoring, and real-evidence compile gates.
+# Atomic convergence transactions add workspace/Skill guards, ownership-bound
+# staging, durable interruption journals, reverse recovery, and exact cleanup
+# evidence while keeping cold CLI startup guarded below.
+max_bin_bytes=$((6120 * 1024))
 bin_bytes="$(wc -c < "$bin" | tr -d ' ')"
 if (( bin_bytes > max_bin_bytes )); then
   echo "release binary is ${bin_bytes} bytes; limit is ${max_bin_bytes}" >&2

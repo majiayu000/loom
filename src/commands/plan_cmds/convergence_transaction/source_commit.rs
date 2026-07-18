@@ -1,5 +1,5 @@
 use super::recovery_evidence::{active_index_digest, committed_skill_digest, file_digest};
-use super::recovery_support::recovery_stale;
+use super::recovery_support::{recovery_stale, verify_commit};
 use super::*;
 
 pub(super) fn commit_convergence_source(
@@ -31,6 +31,27 @@ pub(super) fn commit_convergence_source(
         let staged = journal.source_staged_index_digest.clone().ok_or_else(|| {
             CommandFailure::new(ErrorCode::StateCorrupt, "staged index digest missing")
         })?;
+        let message = format!("skill({}): converge source", plan.skill);
+        let commit_index = Path::new(&journal.artifact_root).join("source-commit-index");
+        let commit = gitops::create_prepared_commit(
+            &app.ctx,
+            &prepared_index,
+            &commit_index,
+            &[&relative],
+            &journal.previous_head,
+            &message,
+        )
+        .map_err(map_git)?;
+        verify_commit(app, &commit, &journal.previous_head, &message, |path| {
+            path == relative || path.starts_with(&format!("{relative}/"))
+        })?;
+        let committed = committed_skill_digest(app, &commit, &plan.skill)?;
+        if committed != plan.input.selected_input_tree_digest {
+            return Err(recovery_stale(
+                "prepared source commit tree does not match the reviewed convergence input",
+            ));
+        }
+        validate_live_source(app, plan)?;
         gitops::install_prepared_index_with_guard(&app.ctx, &prepared_index, |candidate| {
             let installed =
                 file_digest(candidate).map_err(|error| anyhow::anyhow!(error.message))?;
@@ -50,12 +71,16 @@ pub(super) fn commit_convergence_source(
         .map_err(map_git)?;
         maybe_skill_fault("convergence_interrupt_after_source_add")?;
         maybe_skill_fault("convergence_interrupt_after_staged_index_install")?;
-        gitops::commit_prepared_paths(
-            &app.ctx,
-            &[&relative],
-            &format!("skill({}): converge source", plan.skill),
-        )
-        .map_err(map_git)?
+        if let Err(error) = validate_live_source(app, plan) {
+            restore_index_after_failed_commit(app, journal, error)?;
+        }
+        if let Err(error) =
+            gitops::move_head_if_unchanged(&app.ctx, &commit, &journal.previous_head)
+                .map_err(map_git)
+        {
+            restore_index_after_failed_commit(app, journal, error)?;
+        }
+        Some(commit)
     } else {
         None
     };
@@ -63,14 +88,7 @@ pub(super) fn commit_convergence_source(
     let source_head = gitops::head(&app.ctx).map_err(map_git)?;
     journal.source_head = Some(source_head.clone());
     journal.source_commit = commit.clone();
-    if let Some(commit) = commit.as_deref() {
-        let committed = committed_skill_digest(app, commit, &plan.skill)?;
-        if committed != plan.input.selected_input_tree_digest {
-            return Err(recovery_stale(
-                "source commit tree does not match the reviewed convergence input",
-            ));
-        }
-    } else if source_head != journal.previous_head {
+    if commit.is_none() && source_head != journal.previous_head {
         return Err(CommandFailure::new(
             ErrorCode::StateCorrupt,
             "no-op source commit changed HEAD",
@@ -82,4 +100,32 @@ pub(super) fn commit_convergence_source(
     maybe_skill_fault("convergence_interrupt_after_source_commit")?;
     maybe_skill_fault("convergence_after_source_commit")?;
     Ok(commit)
+}
+
+fn validate_live_source(
+    app: &App,
+    plan: &SkillConvergencePlan,
+) -> std::result::Result<(), CommandFailure> {
+    let live = skill_tree_digest(&app.ctx.skill_path(&plan.skill)).map_err(map_io)?;
+    if live == plan.input.selected_input_tree_digest {
+        Ok(())
+    } else {
+        Err(recovery_stale(
+            "source changed after the prepared index was reviewed",
+        ))
+    }
+}
+
+fn restore_index_after_failed_commit(
+    app: &App,
+    journal: &TransactionJournal,
+    error: CommandFailure,
+) -> std::result::Result<(), CommandFailure> {
+    match gitops::restore_index_from_backup(&app.ctx, Path::new(&journal.index_backup)) {
+        Ok(()) => Err(error),
+        Err(restore) => Err(error.with_rollback_errors(vec![json!({
+            "step": "restore_git_index_after_prepared_commit_failure",
+            "message": restore.to_string(),
+        })])),
+    }
 }

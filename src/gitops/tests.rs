@@ -120,6 +120,53 @@ fn prepared_index_install_rejects_tamper_before_active_mutation() {
     fs::remove_dir_all(&dir).expect("remove test repository");
 }
 
+#[test]
+fn prepared_commit_ignores_late_worktree_tamper_without_moving_head_or_index() {
+    let (ctx, dir) = fresh_repo("prepared-commit-worktree-tamper");
+    let active_index = dir.join(".git/index");
+    let original_index = fs::read(&active_index).expect("original index");
+    let original_head = git_ok(&dir, &["rev-parse", "HEAD"]);
+    let backup = dir.join("index-backup");
+    fs::copy(&active_index, &backup).expect("index backup");
+    fs::write(dir.join("base.txt"), "reviewed\n").expect("reviewed source");
+    let prepared = dir.join("prepared-index");
+    assert!(
+        prepare_index_for_paths(&ctx, &backup, &prepared, &["base.txt"])
+            .expect("prepare alternate index")
+    );
+    fs::write(dir.join("base.txt"), "tampered-after-index\n").expect("late worktree tamper");
+
+    let commit_index = dir.join("prepared-commit-index");
+    let commit = create_prepared_commit(
+        &ctx,
+        &prepared,
+        &commit_index,
+        &["base.txt"],
+        original_head.trim(),
+        "prepared source",
+    )
+    .expect("create prepared commit object");
+    assert_eq!(
+        git_ok(&dir, &["show", &format!("{commit}:base.txt")]),
+        "reviewed\n"
+    );
+    let error = install_prepared_index_with_guard(&ctx, &prepared, |_| {
+        if fs::read_to_string(dir.join("base.txt"))? != "reviewed\n" {
+            return Err(anyhow!("live source changed after preparation"));
+        }
+        Ok(())
+    })
+    .expect_err("late source drift must fail before index installation");
+
+    assert!(error.to_string().contains("live source changed"));
+    assert_eq!(
+        fs::read(&active_index).expect("active index"),
+        original_index
+    );
+    assert_eq!(git_ok(&dir, &["rev-parse", "HEAD"]), original_head);
+    fs::remove_dir_all(&dir).expect("remove test repository");
+}
+
 /// `ls-files -v` tag legend: H=cached, h=assume-unchanged, S=skip-worktree,
 /// s=skip-worktree+assume-unchanged.
 fn ls_files_v(dir: &Path) -> String {

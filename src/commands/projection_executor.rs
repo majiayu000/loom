@@ -141,9 +141,9 @@ fn execute_projection_mode<const CONVERGENCE: bool>(
     // a live path. No later read-only HEAD failure can strand a projection.
     let head = gitops::head(ctx).map_err(map_git)?;
 
-    let existing_rule = find_rule(snapshot, &input.binding, &input.target, &input.skill).cloned();
+    let existing_rule = find_rule(snapshot, &input.binding, &input.target, &input.skill);
     let existing_projection =
-        find_projection(snapshot, &input.binding, &input.target, &input.skill).cloned();
+        find_projection(snapshot, &input.binding, &input.target, &input.skill);
     let instance_id = projection_instance_id(
         &input.skill,
         &input.binding.binding_id,
@@ -166,22 +166,18 @@ fn execute_projection_mode<const CONVERGENCE: bool>(
         last_observed_error: None,
         updated_at: Some(now),
     };
-    let materialization = materialize_projection::<CONVERGENCE>(
-        ctx,
-        &input,
-        existing_projection.as_ref(),
-        &projection,
-    )?;
+    let materialization =
+        materialize_projection::<CONVERGENCE>(ctx, &input, existing_projection, &projection)?;
 
     let state_changed = input.target_is_new
         || input.binding_is_new
-        || rule_needs_update(existing_rule.as_ref(), &input)
-        || projection_needs_update(existing_projection.as_ref(), &input)
+        || rule_needs_update(existing_rule, &input)
+        || projection_needs_update(existing_projection, &input)
         || materialization.changed;
 
     if input.safe_existing_noop && !state_changed {
         return Ok(ProjectionExecutionOutput {
-            projection: existing_projection,
+            projection: existing_projection.cloned(),
             prepared: if CONVERGENCE {
                 materialization.prepared
             } else {
@@ -224,10 +220,7 @@ fn execute_projection_mode<const CONVERGENCE: bool>(
             target_id: input.target.target_id.clone(),
             method: input.method,
             watch_policy: "observe_only".to_string(),
-            created_at: existing_rule
-                .as_ref()
-                .and_then(|rule| rule.created_at)
-                .or(Some(now)),
+            created_at: existing_rule.and_then(|rule| rule.created_at).or(Some(now)),
         },
     );
 

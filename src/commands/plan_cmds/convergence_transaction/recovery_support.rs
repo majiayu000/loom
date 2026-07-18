@@ -461,13 +461,12 @@ fn validate_journal(
                 || artifact.fingerprint().is_some_and(valid_sha256_digest))
             && match effect.effect.as_str() {
                 "refresh" => {
-                    (journal.phase == TransactionPhase::Preparing
-                        || artifact
+                    journal.phase == TransactionPhase::Preparing
+                        || (artifact
                             .original_fingerprint
                             .as_deref()
-                            .is_some_and(valid_sha256_digest))
-                        && (journal.phase == TransactionPhase::Preparing
-                            || artifact
+                            .is_some_and(valid_sha256_digest)
+                            && artifact
                                 .backup
                                 .as_ref()
                                 .and_then(|backup| backup["backup_digest"].as_str())

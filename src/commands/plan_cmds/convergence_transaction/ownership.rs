@@ -3,7 +3,7 @@ use super::ownership_state::{
     manifest_is_exact, manifest_raw,
 };
 use super::*;
-use crate::fs_util::sync_parent_directory;
+use crate::fs_util::{paths_share_filesystem, sync_parent_directory};
 use std::fs::OpenOptions;
 use std::io::Write;
 
@@ -27,7 +27,7 @@ pub(super) fn validate_owned_staging(
     let live_parent = live
         .parent()
         .ok_or_else(|| ownership_failure("transaction live path has no parent"))?;
-    if !same_filesystem(owner, live_parent)? {
+    if !paths_share_filesystem(owner, live_parent).map_err(map_io)? {
         return Err(ownership_failure(
             "transaction staging and live path are on different filesystems",
         ));
@@ -305,19 +305,6 @@ pub(super) fn ownership_attempts_match_journal(journal: &TransactionJournal) -> 
             attempt.destination == *destination && attempt.proof == *proof
         })) && attempt_is_well_formed(attempt, &journal.plan_id)
     })
-}
-
-#[cfg(unix)]
-fn same_filesystem(left: &Path, right: &Path) -> std::result::Result<bool, CommandFailure> {
-    use std::os::unix::fs::MetadataExt;
-    Ok(fs::metadata(left).map_err(map_io)?.dev() == fs::metadata(right).map_err(map_io)?.dev())
-}
-
-#[cfg(not(unix))]
-fn same_filesystem(_left: &Path, _right: &Path) -> std::result::Result<bool, CommandFailure> {
-    Err(ownership_failure(
-        "transaction restore filesystem validation is unsupported",
-    ))
 }
 
 fn ownership_failure(message: &str) -> CommandFailure {

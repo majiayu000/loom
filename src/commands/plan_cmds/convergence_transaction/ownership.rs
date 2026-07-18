@@ -1,4 +1,9 @@
+use super::ownership_state::{
+    OWNERSHIP_MANIFEST, OwnershipAttemptState, allocate_attempt, attempt_is_well_formed,
+    manifest_is_exact, manifest_raw,
+};
 use super::*;
+use crate::fs_util::sync_parent_directory;
 use std::fs::OpenOptions;
 use std::io::Write;
 
@@ -67,129 +72,123 @@ pub(super) fn cleanup_owned_dir(
     match fs::symlink_metadata(path) {
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
         Err(err) => push_rollback_error(errors, "inspect_owned_transaction_artifact", err),
-        Ok(_) if owner_dir_is_exact(path, plan_id, owner_proof) => {
-            if let Err(err) = remove_path_if_exists(path) {
-                push_rollback_error(errors, "remove_owned_transaction_artifact", err);
-            }
-        }
+        Ok(_) if owner_dir_is_exact(path, plan_id, owner_proof) => {}
         Ok(_) => push_rollback_error(
             errors,
             "validate_owned_transaction_artifact",
             "present transaction artifact does not match its journal ownership proof",
         ),
     }
-    cleanup_reservation(path, plan_id, owner_proof, errors);
 }
 
-pub(super) fn reservation_paths(
+pub(super) fn activate_owned_dir(
+    journal_path: &Path,
+    journal: &mut TransactionJournal,
+    destination: &Path,
+    proof: &str,
+) -> std::result::Result<(), CommandFailure> {
+    loop {
+        let index = journal
+            .ownership_attempts
+            .iter()
+            .position(|attempt| {
+                attempt.destination == destination.display().to_string()
+                    && attempt.proof == proof
+                    && attempt.state != OwnershipAttemptState::Abandoned
+            })
+            .ok_or_else(|| ownership_failure("journal ownership attempt is absent"))?;
+        let state = journal.ownership_attempts[index].state;
+        let candidate = PathBuf::from(&journal.ownership_attempts[index].candidate_path);
+        match state {
+            OwnershipAttemptState::Allocated => {
+                match fs::symlink_metadata(&candidate) {
+                    Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+                    Ok(_) => {
+                        journal.ownership_attempts[index].state = OwnershipAttemptState::Abandoned;
+                        journal.ownership_attempts.push(allocate_attempt(
+                            destination,
+                            &journal.plan_id,
+                            proof,
+                        )?);
+                        save_journal(journal_path, journal)?;
+                        continue;
+                    }
+                    Err(err) => return Err(map_io(err)),
+                }
+                fs::create_dir(&candidate).map_err(map_io)?;
+                write_new_synced(&candidate.join(RESERVATION_PROOF_FILE), proof)?;
+                maybe_skill_fault("convergence_interrupt_after_owner_root_creation")?;
+                write_new_synced(&candidate.join(OWNER_FILE), &journal.plan_id)?;
+                let manifest =
+                    manifest_raw(&journal.plan_id, &destination.display().to_string(), proof)?;
+                write_new_synced(&candidate.join(OWNERSHIP_MANIFEST), manifest.trim_end())?;
+                sync_parent_directory(&candidate).map_err(map_io)?;
+                journal.ownership_attempts[index].state = OwnershipAttemptState::Ready;
+                save_journal(journal_path, journal)?;
+                maybe_skill_fault("convergence_interrupt_after_owner_marker_write")?;
+                maybe_skill_fault("convergence_interrupt_after_reservation_pending_create")?;
+            }
+            OwnershipAttemptState::Ready => {
+                let attempt = &journal.ownership_attempts[index];
+                if owned_attempt_is_exact(attempt, destination, &journal.plan_id) {
+                    journal.ownership_attempts[index].state = OwnershipAttemptState::Activated;
+                    save_journal(journal_path, journal)?;
+                    continue;
+                }
+                if !owned_attempt_is_exact(attempt, &candidate, &journal.plan_id) {
+                    return Err(ownership_failure("ready ownership candidate is not exact"));
+                }
+                rename_no_replace_atomic(&candidate, destination).map_err(|err| {
+                    CommandFailure::new(
+                        ErrorCode::StateCorrupt,
+                        format!(
+                            "owned artifact activation collision at {}: {err}",
+                            destination.display()
+                        ),
+                    )
+                })?;
+                sync_parent_directory(destination).map_err(map_io)?;
+                journal.ownership_attempts[index].state = OwnershipAttemptState::Activated;
+                save_journal(journal_path, journal)?;
+            }
+            OwnershipAttemptState::Activated | OwnershipAttemptState::Retained => {
+                if owned_attempt_is_exact(
+                    &journal.ownership_attempts[index],
+                    destination,
+                    &journal.plan_id,
+                ) {
+                    return Ok(());
+                }
+                return Err(ownership_failure("activated owned artifact is not exact"));
+            }
+            OwnershipAttemptState::Abandoned => unreachable!("abandoned attempts are excluded"),
+        }
+    }
+}
+
+fn owned_attempt_is_exact(
+    attempt: &super::ownership_state::OwnershipAttempt,
     path: &Path,
     plan_id: &str,
-) -> std::result::Result<(PathBuf, PathBuf), CommandFailure> {
-    let parent = path.parent().ok_or_else(|| {
-        CommandFailure::new(ErrorCode::StateCorrupt, "artifact path has no parent")
-    })?;
-    let name = path.file_name().ok_or_else(|| {
-        CommandFailure::new(ErrorCode::StateCorrupt, "artifact path has no file name")
-    })?;
-    let name = name.to_string_lossy();
-    Ok((
-        parent.join(format!(".{name}.reservation-{plan_id}")),
-        parent.join(format!(".{name}.staging-{plan_id}")),
-    ))
+) -> bool {
+    owner_dir_is_exact(path, plan_id, &attempt.proof) && manifest_is_exact(attempt, path)
 }
 
-fn reservation_pending_path(reservation: &Path, proof: &str) -> PathBuf {
-    let mut pending = reservation.as_os_str().to_owned();
-    pending.push(".pending-");
-    pending.push(proof.rsplit_once(':').map_or(proof, |(_, nonce)| nonce));
-    PathBuf::from(pending)
-}
-
+#[cfg(test)]
 pub(super) fn reserve_owned_dir(
     path: &Path,
     plan_id: &str,
-    reservation_proof: &str,
+    proof: &str,
 ) -> std::result::Result<(), CommandFailure> {
-    if !owner_proof_is_valid(plan_id, reservation_proof) {
+    if !owner_proof_is_valid(plan_id, proof) {
         return Err(ownership_failure("journal owner proof is invalid"));
     }
-    let (reservation, staging) = reservation_paths(path, plan_id)?;
-    publish_reservation_token(path, &reservation, reservation_proof)?;
-    if let Err(err) = fs::create_dir(&staging) {
-        let mut cleanup_errors = Vec::new();
-        cleanup_reservation(path, plan_id, reservation_proof, &mut cleanup_errors);
-        return Err(CommandFailure::new(
-            ErrorCode::StateCorrupt,
-            format!("artifact staging collision at {}: {err}", staging.display()),
-        )
-        .with_rollback_errors(cleanup_errors));
+    if owner_dir_is_exact(path, plan_id, proof) {
+        return Ok(());
     }
-    let proof_path = staging.join(RESERVATION_PROOF_FILE);
-    write_new_synced(&proof_path, reservation_proof)?;
-    maybe_skill_fault("convergence_interrupt_after_owner_root_creation")?;
-    write_new_synced(&staging.join(OWNER_FILE), plan_id)?;
-    maybe_skill_fault("convergence_interrupt_after_owner_marker_write")?;
-    if let Err(err) = rename_no_replace_atomic(&staging, path) {
-        let mut cleanup_errors = Vec::new();
-        cleanup_reservation(path, plan_id, reservation_proof, &mut cleanup_errors);
-        return Err(CommandFailure::new(
-            ErrorCode::StateCorrupt,
-            format!(
-                "artifact reservation collision at {}: {err}",
-                path.display()
-            ),
-        )
-        .with_rollback_errors(cleanup_errors));
-    }
-    fs::remove_file(&reservation).map_err(map_io)
-}
-
-fn publish_reservation_token(
-    path: &Path,
-    reservation: &Path,
-    reservation_proof: &str,
-) -> std::result::Result<(), CommandFailure> {
-    match fs::symlink_metadata(reservation) {
-        Ok(_) if exact_regular_file(reservation, reservation_proof) => return Ok(()),
-        Ok(_) => {
-            return Err(ownership_failure(&format!(
-                "artifact reservation collision at {}",
-                path.display()
-            )));
-        }
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
-        Err(err) => return Err(map_io(err)),
-    }
-    let pending = reservation_pending_path(reservation, reservation_proof);
-    let create_pending = match fs::symlink_metadata(&pending) {
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => true,
-        Ok(_) if exact_regular_file(&pending, reservation_proof) => false,
-        Ok(_) => return Err(ownership_failure("reservation pending proof is invalid")),
-        Err(err) => return Err(map_io(err)),
-    };
-    if create_pending {
-        let mut token = OpenOptions::new()
-            .create_new(true)
-            .write(true)
-            .open(&pending)
-            .map_err(map_io)?;
-        maybe_skill_fault("convergence_interrupt_after_reservation_pending_create")?;
-        writeln!(token, "{reservation_proof}").map_err(map_io)?;
-        token.sync_all().map_err(map_io)?;
-    }
-    if let Err(error) = rename_no_replace_atomic(&pending, reservation) {
-        if exact_regular_file(reservation, reservation_proof) {
-            fs::remove_file(&pending).map_err(map_io)?;
-            return Ok(());
-        }
-        return Err(CommandFailure::new(
-            ErrorCode::StateCorrupt,
-            format!(
-                "artifact reservation collision at {}: {error}",
-                path.display()
-            ),
-        ));
-    }
+    fs::create_dir(path).map_err(map_io)?;
+    write_new_synced(&path.join(RESERVATION_PROOF_FILE), proof)?;
+    write_new_synced(&path.join(OWNER_FILE), plan_id)?;
     Ok(())
 }
 
@@ -203,184 +202,109 @@ fn write_new_synced(path: &Path, contents: &str) -> std::result::Result<(), Comm
     file.sync_all().map_err(map_io)
 }
 
-pub(super) fn cleanup_reservation(
-    path: &Path,
-    plan_id: &str,
-    expected_proof: &str,
-    errors: &mut Vec<Value>,
-) {
-    let Ok((reservation, staging)) = reservation_paths(path, plan_id) else {
-        push_rollback_error(
-            errors,
-            "resolve_artifact_reservation",
-            "artifact path has no parent or file name",
-        );
-        return;
-    };
-    let pending = reservation_pending_path(&reservation, expected_proof);
-    match pending_entry_present(&pending) {
-        Ok(false) => {}
-        Ok(true) => {
-            if let Err(err) = fs::remove_file(&pending) {
-                push_rollback_error(errors, "remove_reservation_pending", err);
-            }
-        }
-        Err(err) => push_rollback_error(errors, "validate_reservation_pending", err.message),
-    }
-    cleanup_proof_entry(
-        &staging,
-        &staging.join(RESERVATION_PROOF_FILE),
-        expected_proof,
-        true,
-        "reservation staging",
-        errors,
-    );
-    cleanup_proof_entry(
-        &reservation,
-        &reservation,
-        expected_proof,
-        false,
-        "reservation token",
-        errors,
-    );
-}
-
-fn cleanup_proof_entry(
-    entry: &Path,
-    proof_path: &Path,
-    expected_proof: &str,
-    require_directory: bool,
-    label: &str,
-    errors: &mut Vec<Value>,
-) {
-    match fs::symlink_metadata(entry) {
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
-        Err(err) => push_rollback_error(errors, "inspect_artifact_reservation", err),
-        Ok(_) if proof_entry_is_exact(entry, proof_path, expected_proof, require_directory) => {
-            if let Err(err) = remove_path_if_exists(entry) {
-                push_rollback_error(errors, "remove_artifact_reservation", err);
-            }
-        }
-        Ok(_) => push_rollback_error(
-            errors,
-            "validate_artifact_reservation",
-            format!("present {label} does not match its journal ownership proof"),
-        ),
-    }
-}
-
 pub(super) fn validate_transaction_artifacts(journal: &TransactionJournal) -> Vec<Value> {
     let mut errors = Vec::new();
-    for projection in &journal.projections {
-        validate_cleanup_entry(
-            Path::new(&projection.staging_owner),
-            &journal.plan_id,
-            &projection.owner_proof,
-            &mut errors,
-        );
+    for attempt in &journal.ownership_attempts {
+        let candidate = Path::new(&attempt.candidate_path);
+        let destination = Path::new(&attempt.destination);
+        let valid = match attempt.state {
+            OwnershipAttemptState::Allocated | OwnershipAttemptState::Abandoned => true,
+            OwnershipAttemptState::Ready => {
+                owned_attempt_is_exact(attempt, candidate, &journal.plan_id)
+                    || owned_attempt_is_exact(attempt, destination, &journal.plan_id)
+            }
+            OwnershipAttemptState::Activated | OwnershipAttemptState::Retained => {
+                owned_attempt_is_exact(attempt, destination, &journal.plan_id)
+            }
+        };
+        if !valid {
+            push_rollback_error(
+                &mut errors,
+                "validate_owned_transaction_artifact",
+                format!("ownership attempt at {} is not exact", attempt.destination),
+            );
+        }
     }
-    if let Some(staging) = journal.source_staging.as_deref()
-        && let Some(owner) = Path::new(staging).parent()
-        && let Some(proof) = journal.source_owner_proof.as_deref()
-    {
-        validate_cleanup_entry(owner, &journal.plan_id, proof, &mut errors);
-    }
-    validate_cleanup_entry(
-        Path::new(&journal.artifact_root),
-        &journal.plan_id,
-        &journal.artifact_owner_proof,
-        &mut errors,
-    );
     errors
 }
 
-fn validate_cleanup_entry(path: &Path, plan_id: &str, proof: &str, errors: &mut Vec<Value>) {
-    match fs::symlink_metadata(path) {
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
-        Err(err) => push_rollback_error(errors, "inspect_owned_transaction_artifact", err),
-        Ok(_) if owner_dir_is_exact(path, plan_id, proof) => {}
-        Ok(_) => push_rollback_error(
-            errors,
-            "validate_owned_transaction_artifact",
-            "present transaction artifact does not match its journal ownership proof",
-        ),
-    }
-    let Ok((reservation, staging)) = reservation_paths(path, plan_id) else {
-        push_rollback_error(
-            errors,
-            "resolve_artifact_reservation",
-            "artifact path has no parent or file name",
-        );
-        return;
-    };
-    let pending = reservation_pending_path(&reservation, proof);
-    if let Err(err) = pending_entry_present(&pending) {
-        push_rollback_error(errors, "validate_reservation_pending", err.message);
-    }
-    validate_proof_entry(
-        &staging,
-        &staging.join(RESERVATION_PROOF_FILE),
-        proof,
-        true,
-        "reservation staging",
-        errors,
-    );
-    validate_proof_entry(
-        &reservation,
-        &reservation,
-        proof,
-        false,
-        "reservation token",
-        errors,
-    );
-}
-
-fn pending_entry_present(path: &Path) -> std::result::Result<bool, CommandFailure> {
-    match fs::symlink_metadata(path) {
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(false),
-        Ok(metadata) if metadata.is_file() && !metadata.file_type().is_symlink() => Ok(true),
-        Ok(_) => Err(ownership_failure(
-            "reservation pending entry is not an owned regular file",
-        )),
-        Err(err) => Err(map_io(err)),
-    }
-}
-
-fn validate_proof_entry(
-    entry: &Path,
-    proof_path: &Path,
-    expected_proof: &str,
-    require_directory: bool,
-    label: &str,
-    errors: &mut Vec<Value>,
-) {
-    match fs::symlink_metadata(entry) {
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
-        Err(err) => push_rollback_error(errors, "inspect_artifact_reservation", err),
-        Ok(_) if proof_entry_is_exact(entry, proof_path, expected_proof, require_directory) => {}
-        Ok(_) => push_rollback_error(
-            errors,
-            "validate_artifact_reservation",
-            format!("present {label} does not match its journal ownership proof"),
-        ),
-    }
-}
-
-fn proof_entry_is_exact(
-    entry: &Path,
-    proof_path: &Path,
-    expected_proof: &str,
-    require_directory: bool,
-) -> bool {
-    let kind_matches = fs::symlink_metadata(entry).ok().is_some_and(|metadata| {
-        !metadata.file_type().is_symlink()
-            && if require_directory {
-                metadata.is_dir()
-            } else {
-                metadata.is_file()
+pub(super) fn retain_declared_attempts(journal: &mut TransactionJournal) -> Vec<Value> {
+    let mut errors = Vec::new();
+    for attempt in &mut journal.ownership_attempts {
+        let candidate = Path::new(&attempt.candidate_path);
+        let destination = Path::new(&attempt.destination);
+        attempt.state = match attempt.state {
+            OwnershipAttemptState::Activated => {
+                if !owned_attempt_is_exact(attempt, destination, &journal.plan_id) {
+                    push_rollback_error(
+                        &mut errors,
+                        "retain_activated_ownership_attempt",
+                        format!(
+                            "activated ownership path is not exact: {}",
+                            destination.display()
+                        ),
+                    );
+                }
+                OwnershipAttemptState::Retained
             }
-    });
-    kind_matches && exact_regular_file(proof_path, expected_proof)
+            OwnershipAttemptState::Ready => {
+                if owned_attempt_is_exact(attempt, destination, &journal.plan_id) {
+                    OwnershipAttemptState::Retained
+                } else if owned_attempt_is_exact(attempt, candidate, &journal.plan_id) {
+                    OwnershipAttemptState::Abandoned
+                } else {
+                    push_rollback_error(
+                        &mut errors,
+                        "retain_ready_ownership_attempt",
+                        "ready ownership proof is neither candidate nor destination",
+                    );
+                    OwnershipAttemptState::Ready
+                }
+            }
+            OwnershipAttemptState::Allocated => OwnershipAttemptState::Abandoned,
+            state => state,
+        };
+    }
+    errors
+}
+
+pub(super) fn ownership_attempts_match_journal(journal: &TransactionJournal) -> bool {
+    let mut expected = vec![(
+        journal.artifact_root.as_str(),
+        journal.artifact_owner_proof.as_str(),
+    )];
+    if let (Some(staging), Some(proof)) = (
+        journal.source_staging.as_deref(),
+        journal.source_owner_proof.as_deref(),
+    ) && let Some(owner) = Path::new(staging).parent().and_then(Path::to_str)
+    {
+        expected.push((owner, proof));
+    }
+    expected.extend(journal.projections.iter().map(|projection| {
+        (
+            projection.staging_owner.as_str(),
+            projection.owner_proof.as_str(),
+        )
+    }));
+    expected.iter().all(|(destination, proof)| {
+        journal
+            .ownership_attempts
+            .iter()
+            .filter(|attempt| {
+                attempt.destination == *destination
+                    && attempt.proof == *proof
+                    && attempt.state != OwnershipAttemptState::Abandoned
+            })
+            .count()
+            == 1
+    }) && journal.ownership_attempts.iter().all(|attempt| {
+        (matches!(
+            attempt.state,
+            OwnershipAttemptState::Abandoned | OwnershipAttemptState::Retained
+        ) || expected.iter().any(|(destination, proof)| {
+            attempt.destination == *destination && attempt.proof == *proof
+        })) && attempt_is_well_formed(attempt, &journal.plan_id)
+    })
 }
 
 #[cfg(unix)]

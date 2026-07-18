@@ -251,7 +251,43 @@ pub fn write_atomic_bytes(path: &Path, contents: &[u8]) -> io::Result<()> {
         file.sync_all()?;
     }
 
-    rename_atomic(&tmp_path, path)
+    rename_atomic(&tmp_path, path)?;
+    sync_parent_directory(path)
+}
+
+/// Persist the directory entry containing `path` after a create or rename.
+///
+/// File synchronization alone does not make a newly published name durable.
+/// Unsupported platforms fail closed instead of claiming crash durability.
+#[cfg(unix)]
+pub fn sync_parent_directory(path: &Path) -> io::Result<()> {
+    let parent = path.parent().ok_or_else(|| {
+        io::Error::new(io::ErrorKind::InvalidInput, "path has no parent directory")
+    })?;
+    File::open(parent)?.sync_all()
+}
+
+#[cfg(windows)]
+pub fn sync_parent_directory(path: &Path) -> io::Result<()> {
+    use std::os::windows::fs::OpenOptionsExt;
+    use windows_sys::Win32::Storage::FileSystem::FILE_FLAG_BACKUP_SEMANTICS;
+
+    let parent = path.parent().ok_or_else(|| {
+        io::Error::new(io::ErrorKind::InvalidInput, "path has no parent directory")
+    })?;
+    OpenOptions::new()
+        .read(true)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+        .open(parent)?
+        .sync_all()
+}
+
+#[cfg(not(any(unix, windows)))]
+pub fn sync_parent_directory(_path: &Path) -> io::Result<()> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "durable parent directory synchronization is unavailable",
+    ))
 }
 
 /// Append newline-terminated records and sync the file.

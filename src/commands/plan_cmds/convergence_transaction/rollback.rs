@@ -1,5 +1,6 @@
+use super::ownership_state::OwnershipAttemptState;
 use super::recovery_evidence::validate_mutated_surfaces;
-use super::recovery_support::restore_registry_projections_if_owned;
+use super::registry_restore::restore_registry_projections_if_owned;
 use super::*;
 
 pub(super) fn restore_activated_projections(journal: &mut TransactionJournal) -> Vec<Value> {
@@ -149,7 +150,10 @@ fn rollback_fault(errors: &mut Vec<Value>, fault: &str) -> bool {
     }
 }
 
-pub(super) fn finish_transaction(journal: &TransactionJournal) -> Vec<Value> {
+pub(super) fn finish_transaction(
+    journal_path: &Path,
+    journal: &mut TransactionJournal,
+) -> Vec<Value> {
     let mut errors = validate_transaction_artifacts(journal);
     if !errors.is_empty() {
         return errors;
@@ -193,5 +197,39 @@ pub(super) fn finish_transaction(journal: &TransactionJournal) -> Vec<Value> {
         &journal.artifact_owner_proof,
         &mut errors,
     );
+    if errors.is_empty() {
+        for attempt in &mut journal.ownership_attempts {
+            attempt.state = match attempt.state {
+                OwnershipAttemptState::Activated => OwnershipAttemptState::Retained,
+                OwnershipAttemptState::Allocated | OwnershipAttemptState::Ready => {
+                    OwnershipAttemptState::Abandoned
+                }
+                state => state,
+            };
+        }
+        journal.phase = match journal.phase {
+            TransactionPhase::CommittedCleanupPending => {
+                TransactionPhase::CommittedArtifactsRetained
+            }
+            TransactionPhase::RolledBackCleanupPending => {
+                TransactionPhase::RolledBackArtifactsRetained
+            }
+            _ => {
+                push_rollback_error(
+                    &mut errors,
+                    "retain_transaction_artifacts",
+                    "transaction is not in a cleanup-pending phase",
+                );
+                return errors;
+            }
+        };
+        if let Err(err) = save_journal(journal_path, journal) {
+            push_rollback_error(
+                &mut errors,
+                "persist_retained_transaction_artifacts",
+                err.message,
+            );
+        }
+    }
     errors
 }

@@ -3,8 +3,12 @@ mod common;
 mod skill_convergence_additional_recovery;
 #[path = "skill_convergence/executor.rs"]
 mod skill_convergence_executor;
+#[path = "skill_convergence/executor_faults.rs"]
+mod skill_convergence_executor_faults;
 #[path = "skill_convergence/guards.rs"]
 mod skill_convergence_guards;
+#[path = "skill_convergence/ledger_assertions.rs"]
+mod skill_convergence_ledger_assertions;
 #[path = "skill_convergence/recovery_identity.rs"]
 mod skill_convergence_recovery_identity;
 #[path = "skill_convergence/recovery_safety.rs"]
@@ -347,7 +351,17 @@ fn apply_requires_reviewed_plan_digest() {
         snapshot_tree(&fixture.root.path().join("state/registry")),
         domain_before
     );
-    assert_eq!(snapshot_tree(fixture.target.path()), target_before);
+    assert_eq!(
+        skill_convergence_ledger_assertions::snapshot_without_ledgered_paths(
+            fixture.target.path(),
+            &fixture
+                .root
+                .path()
+                .join("state/transactions/convergence-demo.json"),
+            "committed_artifacts_retained",
+        ),
+        target_before
+    );
     assert_ne!(
         git(fixture.root.path(), &["rev-parse", "HEAD"]),
         head_before,

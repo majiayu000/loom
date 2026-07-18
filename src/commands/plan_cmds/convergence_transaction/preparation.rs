@@ -1,3 +1,4 @@
+use super::ownership_state::OwnershipAttemptState;
 use super::*;
 use crate::commands::file_ops::copy_skill_tree_preserving_symlinks;
 use crate::commands::provenance::convergence_input_tree_digest;
@@ -18,10 +19,20 @@ pub(super) fn declared_backup(
     } else {
         "file"
     };
+    let backup_digest = match kind {
+        "dir" => skill_tree_digest(path).map_err(map_io)?,
+        "file" => file_digest(path)?,
+        "symlink" => {
+            let target = fs::read_link(path).map_err(map_io)?;
+            digest_value(&json!({"target": target.display().to_string()}))?
+        }
+        _ => unreachable!("declared backup kind is exhaustive"),
+    };
     Ok(Some(json!({
         "kind": kind,
         "original_path": path.display().to_string(),
         "backup_path": backup_path.display().to_string(),
+        "backup_digest": backup_digest,
     })))
 }
 
@@ -31,109 +42,221 @@ pub(super) fn prepare_transaction_artifacts(
     journal_path: &Path,
     journal: &mut TransactionJournal,
 ) -> std::result::Result<(), CommandFailure> {
-    reserve_owned_dir(
-        Path::new(&journal.artifact_root),
-        &journal.plan_id,
-        &journal.artifact_owner_proof,
+    let artifact_root = journal.artifact_root.clone();
+    let artifact_proof = journal.artifact_owner_proof.clone();
+    activate_owned_dir(
+        journal_path,
+        journal,
+        Path::new(&artifact_root),
+        &artifact_proof,
     )?;
-    gitops::snapshot_index_to(&app.ctx, Path::new(&journal.index_backup)).map_err(map_git)?;
-    journal.index_backup_digest = Some(file_digest(Path::new(&journal.index_backup))?);
-    save_journal(journal_path, journal)?;
+    prepare_index_backup(app, journal_path, journal)?;
     if let Some(backup) = journal.source_backup.as_ref() {
-        let source = app.ctx.skill_path(&plan.skill);
-        if skill_tree_digest(&source).map_err(map_io)? != plan.source.tree_digest {
-            return Err(stale(
-                "source changed before rollback backup",
-                "PLAN_SOURCE_DRIFT",
-            ));
-        }
-        create_declared_path_backup(&source, backup).map_err(map_io)?;
-        validate_tree_backup(backup, &plan.source.tree_digest, None, None)?;
-        if skill_tree_digest(&source).map_err(map_io)? != plan.source.tree_digest {
-            return Err(stale(
-                "source changed while recording rollback evidence",
-                "PLAN_SOURCE_DRIFT",
-            ));
-        }
+        prepare_declared_backup(&app.ctx.skill_path(&plan.skill), backup)?;
     }
-    for (effect, projection) in plan.projections.iter().zip(&mut journal.projections) {
-        validate_projection_guard(app, plan, effect)?;
-        let original = (effect.effect == "refresh")
-            .then(|| convergence_projection_fingerprint(Path::new(&projection.materialized_path)))
-            .transpose()?;
-        if let (Some(backup), Some(fingerprint)) = (projection.backup.as_mut(), original.as_ref()) {
-            backup["fingerprint"] = json!(fingerprint);
-        }
+    for projection in &journal.projections {
         if let Some(backup) = projection.backup.as_ref() {
-            create_declared_path_backup(Path::new(&projection.materialized_path), backup)
-                .map_err(map_io)?;
-            validate_tree_backup(
-                backup,
-                effect
-                    .materialized_tree_digest
-                    .as_deref()
-                    .unwrap_or_default(),
-                (effect.method == "symlink").then(|| app.ctx.skill_path(&plan.skill)),
-                Some(&effect.method),
-            )?;
-        }
-        validate_projection_guard(app, plan, effect)?;
-        let live = (effect.effect == "refresh")
-            .then(|| convergence_projection_fingerprint(Path::new(&projection.materialized_path)))
-            .transpose()?;
-        if original != live {
-            return Err(stale(
-                "projection changed while recording rollback evidence",
-                "PLAN_PROJECTION_DRIFT",
-            ));
+            prepare_declared_backup(Path::new(&projection.materialized_path), backup)?;
         }
     }
     maybe_skill_fault("convergence_during_backup_preparation")?;
     let selected_source = selected_source_path(app, plan)?;
-    if let Some(staging) = journal.source_staging.as_deref() {
+    if let Some(staging) = journal.source_staging.clone() {
         validate_selected_source(plan, &selected_source)?;
-        reserve_owned_dir(
-            Path::new(staging).parent().ok_or_else(|| {
+        let owner = Path::new(&staging)
+            .parent()
+            .ok_or_else(|| {
                 CommandFailure::new(ErrorCode::StateCorrupt, "source stage has no owner")
-            })?,
-            &journal.plan_id,
-            journal.source_owner_proof.as_deref().ok_or_else(|| {
-                CommandFailure::new(ErrorCode::StateCorrupt, "source owner proof is absent")
-            })?,
-        )?;
-        copy_skill_tree_preserving_symlinks(&selected_source, Path::new(staging))
+            })?
+            .to_path_buf();
+        let proof = journal.source_owner_proof.clone().ok_or_else(|| {
+            CommandFailure::new(ErrorCode::StateCorrupt, "source owner proof is absent")
+        })?;
+        activate_owned_dir(journal_path, journal, &owner, &proof)?;
+        copy_skill_tree_preserving_symlinks(&selected_source, Path::new(&staging))
             .map_err(map_io)?;
-        validate_selected_source(plan, Path::new(staging))?;
+        validate_selected_source(plan, Path::new(&staging))?;
         journal.source_activated_fingerprint =
-            Some(convergence_projection_fingerprint(Path::new(staging))?);
+            Some(convergence_projection_fingerprint(Path::new(&staging))?);
     }
     let projection_source = journal
         .source_staging
         .as_deref()
         .map(PathBuf::from)
         .unwrap_or(selected_source);
-    prepare_projection_stages_from(app, plan, "", journal, &projection_source)
+    prepare_projection_stages_from(app, plan, "", journal_path, journal, &projection_source)
+}
+
+fn prepare_index_backup(
+    app: &App,
+    journal_path: &Path,
+    journal: &mut TransactionJournal,
+) -> std::result::Result<(), CommandFailure> {
+    let backup = Path::new(&journal.index_backup);
+    if backup.exists() {
+        let actual = file_digest(backup)?;
+        if let Some(expected) = journal.index_backup_digest.as_deref() {
+            if actual != expected {
+                return Err(CommandFailure::new(
+                    ErrorCode::StateCorrupt,
+                    "existing transaction Git index backup does not match its journal digest",
+                ));
+            }
+            return Ok(());
+        }
+        let live = active_index_digest(app)?;
+        if actual != live {
+            return Err(CommandFailure::new(
+                ErrorCode::StateCorrupt,
+                "uncommitted transaction Git index backup does not match the locked Git index",
+            ));
+        }
+        journal.index_backup_digest = Some(actual);
+        save_journal(journal_path, journal)?;
+        maybe_skill_fault("convergence_interrupt_after_index_snapshot_digest")?;
+        return Ok(());
+    }
+    if journal.index_backup_digest.is_some() {
+        return Err(CommandFailure::new(
+            ErrorCode::StateCorrupt,
+            "transaction Git index backup is missing despite a persisted digest",
+        ));
+    }
+    maybe_skill_fault("convergence_interrupt_before_index_snapshot")?;
+    gitops::snapshot_index_to(&app.ctx, backup).map_err(map_git)?;
+    maybe_skill_fault("convergence_interrupt_after_index_snapshot")?;
+    journal.index_backup_digest = Some(file_digest(backup)?);
+    save_journal(journal_path, journal)?;
+    maybe_skill_fault("convergence_interrupt_after_index_snapshot_digest")?;
+    Ok(())
+}
+
+fn prepare_declared_backup(
+    original: &Path,
+    backup: &Value,
+) -> std::result::Result<(), CommandFailure> {
+    let backup_path = backup["backup_path"]
+        .as_str()
+        .map(Path::new)
+        .ok_or_else(|| {
+            CommandFailure::new(ErrorCode::StateCorrupt, "declared backup has no path")
+        })?;
+    let expected = backup["backup_digest"].as_str().ok_or_else(|| {
+        CommandFailure::new(
+            ErrorCode::StateCorrupt,
+            "declared backup has no persisted digest",
+        )
+    })?;
+    if !backup_path.exists() {
+        create_declared_path_backup(original, backup).map_err(map_io)?;
+    }
+    let actual = declared_backup_digest(backup_path, backup)?;
+    if actual != expected {
+        return Err(CommandFailure::new(
+            ErrorCode::StateCorrupt,
+            format!(
+                "existing declared backup {} does not match its journal digest",
+                backup_path.display()
+            ),
+        ));
+    }
+    Ok(())
+}
+
+fn declared_backup_digest(
+    backup_path: &Path,
+    backup: &Value,
+) -> std::result::Result<String, CommandFailure> {
+    match backup["kind"].as_str() {
+        Some("dir") => skill_tree_digest(backup_path).map_err(map_io),
+        Some("file") => file_digest(backup_path),
+        Some("symlink") => {
+            let raw = fs::read_to_string(backup_path.join("symlink.json")).map_err(map_io)?;
+            let payload: Value = serde_json::from_str(&raw).map_err(|err| {
+                CommandFailure::new(
+                    ErrorCode::StateCorrupt,
+                    format!("declared symlink backup is invalid: {err}"),
+                )
+            })?;
+            let target = payload["target"].as_str().ok_or_else(|| {
+                CommandFailure::new(
+                    ErrorCode::StateCorrupt,
+                    "declared symlink backup has no target",
+                )
+            })?;
+            digest_value(&json!({"target": target}))
+        }
+        _ => Err(CommandFailure::new(
+            ErrorCode::StateCorrupt,
+            "declared backup kind is invalid",
+        )),
+    }
 }
 
 pub(super) fn prepare_projection_stages(
     app: &App,
     plan: &SkillConvergencePlan,
     request_id: &str,
+    journal_path: &Path,
     journal: &mut TransactionJournal,
 ) -> std::result::Result<(), CommandFailure> {
     prepare_projection_stages_from(
         app,
         plan,
         request_id,
+        journal_path,
         journal,
         &app.ctx.skill_path(&plan.skill),
     )
+}
+
+pub(super) fn rotate_projection_stages(
+    journal_path: &Path,
+    journal: &mut TransactionJournal,
+) -> std::result::Result<(), CommandFailure> {
+    let generation = uuid::Uuid::new_v4().hyphenated().to_string();
+    for attempt in &mut journal.ownership_attempts {
+        if journal
+            .projections
+            .iter()
+            .any(|projection| projection.staging_owner == attempt.destination)
+        {
+            attempt.state = match attempt.state {
+                OwnershipAttemptState::Activated => OwnershipAttemptState::Retained,
+                OwnershipAttemptState::Allocated | OwnershipAttemptState::Ready => {
+                    OwnershipAttemptState::Abandoned
+                }
+                state => state,
+            };
+        }
+    }
+    for (index, projection) in journal.projections.iter_mut().enumerate() {
+        let parent = Path::new(&projection.materialized_path)
+            .parent()
+            .ok_or_else(|| {
+                CommandFailure::new(ErrorCode::StateCorrupt, "projection has no parent")
+            })?;
+        let owner = parent.join(format!(
+            ".loom-projection-stage-{}-{index}-{generation}.owner",
+            journal.plan_id
+        ));
+        let proof = new_owner_proof(&journal.plan_id);
+        journal
+            .ownership_attempts
+            .push(allocate_attempt(&owner, &journal.plan_id, &proof)?);
+        projection.staging_path = owner.join("stage").display().to_string();
+        projection.staging_owner = owner.display().to_string();
+        projection.owner_proof = proof;
+        projection.activated_fingerprint = None;
+    }
+    save_journal(journal_path, journal)
 }
 
 fn prepare_projection_stages_from(
     app: &App,
     plan: &SkillConvergencePlan,
     request_id: &str,
+    journal_path: &Path,
     journal: &mut TransactionJournal,
     source: &Path,
 ) -> std::result::Result<(), CommandFailure> {
@@ -142,36 +265,26 @@ fn prepare_projection_stages_from(
     }
     let paths = RegistryStatePaths::from_app_context(&app.ctx);
     let snapshot = paths.load_snapshot().map_err(map_registry_state)?;
-    for (effect, artifact) in plan.projections.iter().zip(journal.projections.iter_mut()) {
-        validate_projection_guard(app, plan, effect)?;
-        if effect.effect == "refresh"
-            && artifact
-                .backup
-                .as_ref()
-                .is_none_or(|backup| backup["fingerprint"].is_null())
-        {
-            artifact.backup.as_mut().expect("refresh backup")["fingerprint"] = json!(
-                convergence_projection_fingerprint(Path::new(&artifact.materialized_path))?
-            );
-        }
-        let materialized_path = Path::new(&artifact.materialized_path);
+    for (index, effect) in plan.projections.iter().enumerate() {
+        let materialized_path = Path::new(&journal.projections[index].materialized_path);
         let safe_symlink_noop = effect.effect == "refresh"
             && effect.method == "symlink"
             && projection_path_is_safe_symlink(materialized_path, &app.ctx.skill_path(&plan.skill));
         if safe_symlink_noop {
-            artifact.activated_fingerprint =
+            journal.projections[index].activated_fingerprint =
                 Some(convergence_projection_fingerprint(materialized_path)?);
             continue;
         }
-        let staging_owner = Path::new(&artifact.staging_owner);
-        fs::create_dir_all(staging_owner.parent().ok_or_else(|| {
+        let owner = journal.projections[index].staging_owner.clone();
+        let proof = journal.projections[index].owner_proof.clone();
+        fs::create_dir_all(Path::new(&owner).parent().ok_or_else(|| {
             CommandFailure::new(
                 ErrorCode::StateCorrupt,
                 "projection stage has no target root",
             )
         })?)
         .map_err(map_io)?;
-        reserve_owned_dir(staging_owner, &journal.plan_id, &artifact.owner_proof)?;
+        activate_owned_dir(journal_path, journal, Path::new(&owner), &proof)?;
         let input = projection_input(&snapshot, plan, effect, request_id)?;
         let stage_source = if effect.method == "symlink" {
             app.ctx.skill_path(&plan.skill)
@@ -182,11 +295,12 @@ fn prepare_projection_stages_from(
             &app.ctx,
             &input,
             &stage_source,
-            Path::new(&artifact.staging_path),
+            Path::new(&journal.projections[index].staging_path),
         )?;
-        artifact.activated_fingerprint = Some(convergence_projection_fingerprint(Path::new(
-            &artifact.staging_path,
-        ))?);
+        journal.projections[index].activated_fingerprint =
+            Some(convergence_projection_fingerprint(Path::new(
+                &journal.projections[index].staging_path,
+            ))?);
     }
     Ok(())
 }

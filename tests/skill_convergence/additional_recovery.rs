@@ -322,7 +322,10 @@ fn foreign_index_lock_with_interrupted_rollback_remains_retryable() {
         output.status.success(),
         "rollback retry failed: {recovered}"
     );
-    assert!(!journal_path.exists());
+    super::skill_convergence_executor::assert_exact_retained_ledger(
+        &journal_path,
+        "committed_artifacts_retained",
+    );
 }
 
 #[test]

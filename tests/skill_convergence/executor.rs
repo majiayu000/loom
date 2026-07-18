@@ -5,29 +5,10 @@ use serde_json::json;
 use super::*;
 use common::run_loom_with_env;
 
-pub(super) fn all_paths(root: &Path) -> Vec<String> {
-    fn visit(base: &Path, path: &Path, out: &mut Vec<String>) {
-        let Ok(entries) = fs::read_dir(path) else {
-            return;
-        };
-        for entry in entries {
-            let path = entry.expect("path entry").path();
-            out.push(
-                path.strip_prefix(base)
-                    .expect("relative path")
-                    .display()
-                    .to_string(),
-            );
-            if path.is_dir() {
-                visit(base, &path, out);
-            }
-        }
-    }
-    let mut out = Vec::new();
-    visit(root, root, &mut out);
-    out.sort();
-    out
-}
+#[path = "executor_helpers.rs"]
+mod executor_helpers;
+pub(super) use super::skill_convergence_ledger_assertions::assert_exact_retained_ledger;
+pub(super) use executor_helpers::all_paths;
 
 #[test]
 fn symlink_copy_materialize() {
@@ -82,42 +63,6 @@ pub(super) fn apply_plan(
             key,
         ],
     )
-}
-
-#[test]
-fn local_faults_restore_all_surfaces() {
-    let fixture = projected_fixture();
-    fs::write(
-        fixture.root.path().join("skills/demo/details.txt"),
-        "locally edited source\n",
-    )
-    .expect("edit source");
-    let (output, plan) = plan_converge(&fixture, &[]);
-    assert!(output.status.success(), "plan failed: {plan}");
-    let head = git(fixture.root.path(), &["rev-parse", "HEAD"]);
-    let status = git(fixture.root.path(), &["status", "--porcelain"]);
-    let source = snapshot_tree(&fixture.root.path().join("skills/demo"));
-    let target = snapshot_tree(fixture.target.path());
-    let registry = snapshot_tree(&fixture.root.path().join("state/registry"));
-
-    let (output, failed) = apply_plan(
-        &fixture,
-        &plan,
-        "rollback",
-        &[("LOOM_FAULT_INJECT", "convergence_after_registry_save")],
-    );
-    assert!(!output.status.success(), "fault did not fail: {failed}");
-    assert_eq!(git(fixture.root.path(), &["rev-parse", "HEAD"]), head);
-    assert_eq!(git(fixture.root.path(), &["status", "--porcelain"]), status);
-    assert_eq!(
-        snapshot_tree(&fixture.root.path().join("skills/demo")),
-        source
-    );
-    assert_eq!(snapshot_tree(fixture.target.path()), target);
-    assert_eq!(
-        snapshot_tree(&fixture.root.path().join("state/registry")),
-        registry
-    );
 }
 
 #[test]
@@ -178,12 +123,12 @@ fn interrupted_recovery_is_single_commit() {
         ],
     );
     assert_eq!(count.trim(), "1", "source commit duplicated after recovery");
-    assert!(
-        !fixture
+    assert_exact_retained_ledger(
+        &fixture
             .root
             .path()
-            .join("state/transactions/convergence-demo.json")
-            .exists()
+            .join("state/transactions/convergence-demo.json"),
+        "committed_artifacts_retained",
     );
 }
 
@@ -257,60 +202,12 @@ fn interrupted_symlink_registry_recovery_is_single_commit() {
             "recovery duplicated {subject}"
         );
     }
-    assert!(
-        !fixture
+    assert_exact_retained_ledger(
+        &fixture
             .root
             .path()
-            .join("state/transactions/convergence-demo.json")
-            .exists()
-    );
-}
-
-#[test]
-fn pre_journal_backup_failure_cleans_artifacts() {
-    let fixture = projected_fixture();
-    fs::write(
-        fixture.root.path().join("skills/demo/details.txt"),
-        "prepared source\n",
-    )
-    .expect("edit source");
-    let (output, plan) = plan_converge(&fixture, &[]);
-    assert!(output.status.success(), "plan failed: {plan}");
-    let head = git(fixture.root.path(), &["rev-parse", "HEAD"]);
-    let status = git(fixture.root.path(), &["status", "--porcelain"]);
-    let source = snapshot_tree(&fixture.root.path().join("skills/demo"));
-    let target = snapshot_tree(fixture.target.path());
-    let registry = snapshot_tree(&fixture.root.path().join("state/registry"));
-    let backups = snapshot_tree(&fixture.root.path().join("state/backups"));
-
-    let (output, failed) = apply_plan(
-        &fixture,
-        &plan,
-        "prepare-fault",
-        &[("LOOM_FAULT_INJECT", "convergence_during_backup_preparation")],
-    );
-    assert!(
-        !output.status.success(),
-        "preparation fault passed: {failed}"
-    );
-    assert_eq!(git(fixture.root.path(), &["rev-parse", "HEAD"]), head);
-    assert_eq!(git(fixture.root.path(), &["status", "--porcelain"]), status);
-    assert_eq!(
-        snapshot_tree(&fixture.root.path().join("skills/demo")),
-        source
-    );
-    assert_eq!(snapshot_tree(fixture.target.path()), target);
-    assert_eq!(
-        snapshot_tree(&fixture.root.path().join("state/registry")),
-        registry
-    );
-    assert_eq!(
-        snapshot_tree(&fixture.root.path().join("state/backups")),
-        backups
-    );
-    assert!(
-        snapshot_tree(&fixture.root.path().join("state/transactions")).is_empty(),
-        "failed preparation left durable transaction artifacts"
+            .join("state/transactions/convergence-demo.json"),
+        "committed_artifacts_retained",
     );
 }
 
@@ -368,9 +265,12 @@ fn partial_cleanup_retry_does_not_rollback_commit() {
         "1",
         "cleanup recovery duplicated source commit"
     );
-    assert!(
-        snapshot_tree(&fixture.root.path().join("state/transactions")).is_empty(),
-        "cleanup recovery left transaction artifacts"
+    assert_exact_retained_ledger(
+        &fixture
+            .root
+            .path()
+            .join("state/transactions/convergence-demo.json"),
+        "committed_artifacts_retained",
     );
 }
 
@@ -462,42 +362,41 @@ fn required_approvals_are_fail_closed_before_t007() {
 }
 
 #[test]
-fn artifact_collisions_preserve_unowned_paths() {
-    for kind in ["index", "backup", "projection-stage"] {
-        let fixture = projected_fixture();
-        let (output, plan) = plan_converge(&fixture, &[]);
-        assert!(output.status.success(), "plan failed: {plan}");
-        let plan_id = plan["data"]["plan_id"].as_str().expect("plan id");
-        let collision = match kind {
-            "index" => fixture
-                .root
-                .path()
-                .join(format!("state/transactions/{plan_id}-artifacts/index")),
-            "backup" => fixture.root.path().join(format!(
-                "state/transactions/{plan_id}-artifacts/projection-0"
-            )),
-            "projection-stage" => fixture
-                .target
-                .path()
-                .join(format!(".loom-projection-stage-{plan_id}-0.owner/stage")),
-            _ => unreachable!(),
-        };
-        fs::create_dir_all(collision.parent().expect("collision parent")).expect("parent");
-        fs::write(&collision, format!("unowned-{kind}\n")).expect("collision");
-        let (output, failed) = apply_plan(&fixture, &plan, kind, &[]);
-        assert!(
-            !output.status.success(),
-            "{kind} collision applied: {failed}"
-        );
-        assert_eq!(
-            fs::read_to_string(&collision).expect("collision preserved"),
-            format!("unowned-{kind}\n")
-        );
-    }
+fn allocated_attempt_collision_is_abandoned_without_deletion() {
+    let fixture = projected_fixture();
+    let (output, plan) = plan_converge(&fixture, &[]);
+    assert!(output.status.success(), "plan failed: {plan}");
+    let fault = "convergence_interrupt_after_owner_root_creation";
+    let (output, interrupted) = apply_plan(
+        &fixture,
+        &plan,
+        "allocated-collision",
+        &[("LOOM_FAULT_INJECT", fault)],
+    );
+    assert!(!output.status.success(), "fault passed: {interrupted}");
+    let journal_path = fixture
+        .root
+        .path()
+        .join("state/transactions/convergence-demo.json");
+    let journal: Value =
+        serde_json::from_slice(&fs::read(&journal_path).expect("journal")).expect("parse journal");
+    let candidate = std::path::PathBuf::from(
+        journal["ownership_attempts"][0]["candidate_path"]
+            .as_str()
+            .expect("candidate"),
+    );
+    fs::write(candidate.join("foreign-keep"), "external\n").expect("foreign entry");
+    let (output, recovered) = apply_plan(&fixture, &plan, "allocated-collision", &[]);
+    assert!(output.status.success(), "retry failed: {recovered}");
+    assert_eq!(
+        fs::read_to_string(candidate.join("foreign-keep")).expect("preserved foreign entry"),
+        "external\n"
+    );
+    assert_exact_retained_ledger(&journal_path, "committed_artifacts_retained");
 }
 
 #[test]
-fn source_staging_collision_is_preserved() {
+fn unrelated_legacy_source_staging_prefix_is_preserved() {
     let fixture = projected_fixture();
     let (output, initial) = plan_converge(&fixture, &[]);
     assert!(output.status.success(), "initial plan failed: {initial}");
@@ -518,10 +417,7 @@ fn source_staging_collision_is_preserved() {
     fs::create_dir_all(collision.parent().expect("collision parent")).expect("parent");
     fs::write(&collision, "unowned-source-stage\n").expect("collision");
     let (output, failed) = apply_plan(&fixture, &plan, "source-stage", &[]);
-    assert!(
-        !output.status.success(),
-        "source collision applied: {failed}"
-    );
+    assert!(output.status.success(), "apply failed: {failed}");
     assert_eq!(
         fs::read_to_string(&collision).expect("preserved"),
         "unowned-source-stage\n"
@@ -529,15 +425,18 @@ fn source_staging_collision_is_preserved() {
 }
 
 #[test]
-fn transaction_directories_are_removed() {
+fn transaction_directories_are_exactly_retained() {
     let fixture = projected_fixture();
     let (output, plan) = plan_converge(&fixture, &[]);
     assert!(output.status.success(), "plan failed: {plan}");
     let (output, applied) = apply_plan(&fixture, &plan, "directory-cleanup", &[]);
     assert!(output.status.success(), "apply failed: {applied}");
-    assert!(
-        all_paths(&fixture.root.path().join("state/transactions")).is_empty(),
-        "transaction directories remain"
+    assert_exact_retained_ledger(
+        &fixture
+            .root
+            .path()
+            .join("state/transactions/convergence-demo.json"),
+        "committed_artifacts_retained",
     );
 }
 
@@ -596,7 +495,7 @@ fn committing_registry_rejects_unrelated_head() {
 }
 
 #[test]
-fn owner_reservation_interruptions_recover_without_orphans() {
+fn owner_attempt_interruptions_recover_with_exact_retained_ledger() {
     for fault in [
         "convergence_interrupt_after_owner_root_creation",
         "convergence_interrupt_after_owner_marker_write",
@@ -622,16 +521,37 @@ fn owner_reservation_interruptions_recover_without_orphans() {
             output.status.success(),
             "reservation recovery failed: {recovered}"
         );
+        let journal_path = fixture
+            .root
+            .path()
+            .join("state/transactions/convergence-demo.json");
+        let journal: Value =
+            serde_json::from_slice(&fs::read(&journal_path).expect("retained journal"))
+                .expect("parse retained journal");
+        assert_eq!(journal["phase"], json!("committed_artifacts_retained"));
+        let attempts = journal["ownership_attempts"]
+            .as_array()
+            .expect("attempt ledger");
+        assert!(!attempts.is_empty());
+        for attempt in attempts {
+            let state = attempt["state"].as_str().expect("attempt state");
+            let path = if state == "abandoned" {
+                attempt["candidate_path"].as_str().expect("candidate path")
+            } else {
+                assert_eq!(state, "retained");
+                attempt["destination"].as_str().expect("destination")
+            };
+            assert!(Path::new(path).exists(), "ledger path was removed: {path}");
+        }
+        let retained = fs::read(&journal_path).expect("retained journal bytes");
+        let head = git(fixture.root.path(), &["rev-parse", "HEAD"]);
+        let (output, replayed) = apply_plan(&fixture, &plan, fault, &[]);
         assert!(
-            all_paths(&fixture.root.path().join("state/transactions")).is_empty(),
-            "reservation recovery left transaction paths"
+            output.status.success(),
+            "terminal replay failed: {replayed}"
         );
-        assert!(
-            all_paths(&fixture.root.path().join("skills"))
-                .iter()
-                .all(|path| !path.contains("reservation-") && !path.contains("staging-")),
-            "reservation recovery left source staging paths"
-        );
+        assert_eq!(git(fixture.root.path(), &["rev-parse", "HEAD"]), head);
+        assert_eq!(fs::read(&journal_path).expect("replayed journal"), retained);
     }
 }
 

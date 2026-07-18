@@ -213,9 +213,9 @@ pub(super) fn validate_expected_projections(
                         item.source_tree_digest.is_none() && item.materialized_tree_digest.is_none()
                     } else {
                         item.source_tree_digest.as_deref()
-                            == Some(plan.input.selected_input_tree_digest.as_str())
+                            == Some(effect.source_tree_digest.as_str())
                             && item.materialized_tree_digest.as_deref()
-                                == Some(plan.input.selected_input_tree_digest.as_str())
+                                == Some(effect.source_tree_digest.as_str())
                     }
             })
     })
@@ -460,9 +460,9 @@ fn projection_state(
         }
         Err(err) => Err(map_io(err)),
         Ok(_) => {
-            let digest = skill_tree_digest(path).map_err(map_io)?;
+            let digest = projection_view_digest(path, &effect.method)?;
             let old = effect.materialized_tree_digest.as_deref();
-            let new = plan.input.selected_input_tree_digest.as_str();
+            let new = effect.source_tree_digest.as_str();
             if old == Some(new) && digest == new {
                 Ok(ProjectionState::Same)
             } else if old == Some(digest.as_str()) {

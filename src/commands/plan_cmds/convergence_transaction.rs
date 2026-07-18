@@ -22,7 +22,7 @@ use super::super::projection_executor::{
     finish_convergence_projection, prepare_convergence_projection,
 };
 use super::super::projections::{project_skill_to_target, upsert_projection};
-use super::super::provenance::skill_tree_digest;
+use super::super::provenance::{materialized_tree_digest, skill_tree_digest};
 use super::super::skill_cmds::shared::{maybe_skill_fault, push_rollback_error};
 use super::super::{App, CommandFailure};
 use super::{PLAN_PROTOCOL_VERSION, plan_failure};
@@ -30,13 +30,14 @@ use super::{PLAN_PROTOCOL_VERSION, plan_failure};
 mod guards;
 mod ownership;
 mod projection_recovery;
+mod projection_view;
 mod recovery_evidence;
 mod recovery_support;
 mod registry_commit;
 mod rollback;
 mod source_commit;
 mod source_recovery;
-use guards::validate_guards;
+use guards::{validate_guards, validate_recovery_routing};
 use ownership::{
     cleanup_owned_dir, cleanup_reservation, owner_proof_is_valid, reservation_paths,
     validate_owned_staging, validate_transaction_artifacts,
@@ -44,6 +45,7 @@ use ownership::{
 use projection_recovery::{
     restore_projection_from_evidence, validate_projection_staging_fingerprint,
 };
+use projection_view::projection_view_digest;
 use recovery_evidence::{active_index_digest, file_digest, validate_rollback_evidence};
 use recovery_support::*;
 use registry_commit::commit_convergence_registry;

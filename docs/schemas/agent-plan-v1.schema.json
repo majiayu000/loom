@@ -112,8 +112,7 @@
         "properties": {
           "schema_version": { "const": "1.2" },
           "requires_digest_confirmation": { "const": true },
-          "execution_enabled": { "const": false },
-          "safe_to_apply": { "const": false }
+          "execution_enabled": { "const": true }
         },
         "required": [
           "plan_digest",

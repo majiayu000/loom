@@ -9,6 +9,8 @@ mod skill_convergence_guards;
 mod skill_convergence_recovery_identity;
 #[path = "skill_convergence/recovery_safety.rs"]
 mod skill_convergence_recovery_safety;
+#[path = "skill_convergence/remaining_review.rs"]
+mod skill_convergence_remaining_review;
 #[path = "skill_convergence/source_only.rs"]
 mod skill_convergence_source_only;
 
@@ -234,6 +236,12 @@ fn exact_effect_plan() {
             .as_array()
             .is_some_and(|operations| operations.contains(&json!("converge"))),
         "authoritative schema must declare plan converge"
+    );
+    let converge_contract = &schema["allOf"][1]["then"]["properties"];
+    assert_eq!(converge_contract["execution_enabled"]["const"], json!(true));
+    assert!(
+        converge_contract["safe_to_apply"].is_null(),
+        "convergence safe_to_apply must remain a runtime boolean"
     );
 }
 

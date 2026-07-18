@@ -16,6 +16,25 @@ pub fn prepare_index_for_paths(
     prepared_index: &Path,
     paths: &[&str],
 ) -> Result<bool> {
+    prepare_index_for_paths_with_options(ctx, base_index, prepared_index, paths, false)
+}
+
+pub fn prepare_index_for_paths_force(
+    ctx: &AppContext,
+    base_index: &Path,
+    prepared_index: &Path,
+    paths: &[&str],
+) -> Result<bool> {
+    prepare_index_for_paths_with_options(ctx, base_index, prepared_index, paths, true)
+}
+
+fn prepare_index_for_paths_with_options(
+    ctx: &AppContext,
+    base_index: &Path,
+    prepared_index: &Path,
+    paths: &[&str],
+    force: bool,
+) -> Result<bool> {
     if prepared_index.exists() {
         return Err(anyhow!(
             "refusing to overwrite prepared Git index {}",
@@ -35,7 +54,12 @@ pub fn prepare_index_for_paths(
         .ok_or_else(|| anyhow!("prepared Git index path is not UTF-8"))?;
     let envs = [("GIT_INDEX_FILE", index)];
     for path in &paths {
-        run_git_in_with_env(&ctx.root, &envs, &["add", "-A", "--", path])?;
+        let mut args = vec!["add", "-A"];
+        if force {
+            args.push("-f");
+        }
+        args.extend(["--", path]);
+        run_git_in_with_env(&ctx.root, &envs, &args)?;
     }
     let mut diff_args = vec!["diff", "--cached", "--quiet", "--"];
     diff_args.extend(paths.iter().map(String::as_str));

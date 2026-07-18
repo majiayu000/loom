@@ -190,6 +190,7 @@ pub(super) fn recover_journal(
     }
     if source_is_committed(&journal) {
         reprove_source_boundary(app, plan, &journal)?;
+        validate_recovery_routing(app, plan)?;
         if journal.phase == TransactionPhase::CommittingRegistry {
             let registry_commit = prove_registry_boundary(app, plan, journal_path, &mut journal)?;
             let result = committed_result_with_registry(plan, &journal, registry_commit);
@@ -245,7 +246,7 @@ pub(super) fn validate_projection_guard(
 ) -> std::result::Result<(), CommandFailure> {
     let path = Path::new(&effect.materialized_path);
     if let Some(expected) = effect.materialized_tree_digest.as_deref() {
-        let live = skill_tree_digest(path).map_err(map_io)?;
+        let live = projection_view_digest(path, &effect.method)?;
         if live == expected {
             return Ok(());
         }
@@ -740,7 +741,7 @@ pub(super) fn validate_registry_result(
                     && item.materialized_path == effect.materialized_path
             })
             .ok_or_else(|| recovery_stale("registry projection result is missing"))?;
-        let digest = plan.input.selected_input_tree_digest.as_str();
+        let digest = effect.source_tree_digest.as_str();
         let materialized_matches = if effect.method == "symlink" {
             projection.materialized_tree_digest.is_none()
                 && projection_path_is_safe_symlink(

@@ -27,7 +27,7 @@ use super::super::helpers::{
     map_arg, map_git, map_io, map_registry_state, projection_instance_id, validate_skill_name,
 };
 use super::super::projections::observe_projection;
-use super::super::provenance::skill_tree_digest;
+use super::super::provenance::{materialized_tree_digest, skill_tree_digest};
 use super::super::skill_improve::prepare_convergence_skill_input;
 use super::super::{App, CommandFailure};
 use super::{PLAN_PROTOCOL_VERSION, canonical_root, policy_risks, required_approvals};
@@ -70,8 +70,24 @@ impl App {
         };
         let (selected_input_tree_digest, candidate_path) =
             selected_input(args, &projection_evidence, &source_digest)?;
+        let canonical_source = self.ctx.skill_path(&args.skill);
+        let selected_path = candidate_path.as_deref().unwrap_or(&canonical_source);
+        let materialize_digest = projections
+            .iter()
+            .any(|effect| effect.method == "materialize")
+            .then(|| materialized_tree_digest(selected_path).map_err(map_io))
+            .transpose()?;
         for effect in &mut projections {
-            effect.source_tree_digest = selected_input_tree_digest.clone();
+            effect.source_tree_digest = if effect.method == "materialize" {
+                materialize_digest.clone().ok_or_else(|| {
+                    CommandFailure::new(
+                        ErrorCode::StateCorrupt,
+                        "materialize projection digest is absent",
+                    )
+                })?
+            } else {
+                selected_input_tree_digest.clone()
+            };
         }
         let candidate_method = args.instance.as_deref().and_then(|instance| {
             projection_evidence

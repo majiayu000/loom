@@ -40,25 +40,15 @@ pub(super) fn validate_guards(
             "PLAN_SOURCE_DRIFT",
         ));
     }
-    for registry_path in [
-        "state/registry/bindings.json",
-        "state/registry/rules.json",
-        "state/registry/targets.json",
-        "state/registry/projections.json",
-    ] {
-        for args in [
-            vec!["diff", "--quiet", "--", registry_path],
-            vec!["diff", "--cached", "--quiet", "--", registry_path],
-        ] {
-            let output = gitops::run_git_allow_failure(&app.ctx, &args).map_err(map_git)?;
-            if !output.status.success() {
-                return Err(stale(
-                    "registry routing changed after planning or is not committed",
-                    "PLAN_CHECKPOINT_DRIFT",
-                ));
-            }
-        }
-    }
+    validate_routing_paths_clean(
+        app,
+        &[
+            "state/registry/bindings.json",
+            "state/registry/rules.json",
+            "state/registry/targets.json",
+            "state/registry/projections.json",
+        ],
+    )?;
     let paths = RegistryStatePaths::from_app_context(&app.ctx);
     let snapshot = paths.maybe_load_snapshot().map_err(map_registry_state)?;
     if plan.registry.initialized != snapshot.is_some() {
@@ -80,33 +70,96 @@ pub(super) fn validate_guards(
                 "PLAN_CHECKPOINT_DRIFT",
             ));
         }
+        validate_projection_routing(&snapshot, plan)?;
         for effect in &plan.projections {
-            let binding = snapshot
-                .binding(&effect.binding_id)
-                .ok_or_else(|| stale("planned binding no longer exists", "PLAN_BINDING_DRIFT"))?;
-            let target = snapshot
-                .target(&effect.target_id)
-                .ok_or_else(|| stale("planned target no longer exists", "PLAN_TARGET_DRIFT"))?;
-            let rule_matches = snapshot.rules.rules.iter().any(|rule| {
-                rule.binding_id == effect.binding_id
-                    && rule.skill_id == plan.skill
-                    && rule.target_id == effect.target_id
-                    && rule.method.as_str() == effect.method
-            });
-            if !binding.active
-                || !rule_matches
-                || binding.agent.as_str() != effect.agent
-                || binding.profile_id != effect.profile
-                || target.agent.as_str() != effect.agent
-                || target.ownership.as_str() != effect.ownership
-                || Path::new(&target.path).join(&plan.skill) != Path::new(&effect.materialized_path)
-            {
+            validate_projection_guard(app, plan, effect)?;
+        }
+    }
+    Ok(())
+}
+
+pub(super) fn validate_recovery_routing(
+    app: &App,
+    plan: &SkillConvergencePlan,
+) -> std::result::Result<(), CommandFailure> {
+    validate_routing_paths_clean(
+        app,
+        &[
+            "state/registry/bindings.json",
+            "state/registry/rules.json",
+            "state/registry/targets.json",
+        ],
+    )?;
+    let snapshot = RegistryStatePaths::from_app_context(&app.ctx)
+        .maybe_load_snapshot()
+        .map_err(map_registry_state)?;
+    if plan.registry.initialized != snapshot.is_some() {
+        return Err(stale(
+            "registry initialization changed during recovery",
+            "PLAN_CHECKPOINT_DRIFT",
+        ));
+    }
+    if let Some(snapshot) = snapshot.as_ref() {
+        validate_projection_routing(snapshot, plan)?;
+    } else if !plan.projections.is_empty() {
+        return Err(stale(
+            "projection routing disappeared during recovery",
+            "PLAN_PROJECTION_DRIFT",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_routing_paths_clean(
+    app: &App,
+    paths: &[&str],
+) -> std::result::Result<(), CommandFailure> {
+    for path in paths {
+        for args in [
+            vec!["diff", "--quiet", "--", path],
+            vec!["diff", "--cached", "--quiet", "--", path],
+        ] {
+            let output = gitops::run_git_allow_failure(&app.ctx, &args).map_err(map_git)?;
+            if !output.status.success() {
                 return Err(stale(
-                    "projection routing changed after planning",
-                    "PLAN_PROJECTION_DRIFT",
+                    "registry routing changed after planning or is not committed",
+                    "PLAN_CHECKPOINT_DRIFT",
                 ));
             }
-            validate_projection_guard(app, plan, effect)?;
+        }
+    }
+    Ok(())
+}
+
+fn validate_projection_routing(
+    snapshot: &crate::state_model::RegistrySnapshot,
+    plan: &SkillConvergencePlan,
+) -> std::result::Result<(), CommandFailure> {
+    for effect in &plan.projections {
+        let binding = snapshot
+            .binding(&effect.binding_id)
+            .ok_or_else(|| stale("planned binding no longer exists", "PLAN_BINDING_DRIFT"))?;
+        let target = snapshot
+            .target(&effect.target_id)
+            .ok_or_else(|| stale("planned target no longer exists", "PLAN_TARGET_DRIFT"))?;
+        let rule_matches = snapshot.rules.rules.iter().any(|rule| {
+            rule.binding_id == effect.binding_id
+                && rule.skill_id == plan.skill
+                && rule.target_id == effect.target_id
+                && rule.method.as_str() == effect.method
+        });
+        if !binding.active
+            || !rule_matches
+            || binding.agent.as_str() != effect.agent
+            || binding.profile_id != effect.profile
+            || target.agent.as_str() != effect.agent
+            || target.ownership.as_str() != effect.ownership
+            || Path::new(&target.path).join(&plan.skill) != Path::new(&effect.materialized_path)
+        {
+            return Err(stale(
+                "projection routing changed after planning",
+                "PLAN_PROJECTION_DRIFT",
+            ));
         }
     }
     Ok(())

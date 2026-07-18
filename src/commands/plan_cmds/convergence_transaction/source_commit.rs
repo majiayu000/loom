@@ -12,7 +12,7 @@ pub(super) fn commit_convergence_source(
     save_journal(journal_path, journal)?;
     let relative = format!("skills/{}", plan.skill);
     let prepared_index = Path::new(&journal.artifact_root).join("source-index");
-    let changed = gitops::prepare_index_for_paths(
+    let changed = gitops::prepare_index_for_paths_force(
         &app.ctx,
         Path::new(&journal.index_backup),
         &prepared_index,
@@ -74,13 +74,17 @@ pub(super) fn commit_convergence_source(
         maybe_skill_fault("convergence_interrupt_after_source_add")?;
         maybe_skill_fault("convergence_interrupt_after_staged_index_install")?;
         if let Err(error) = validate_live_source(app, plan) {
-            restore_index_after_failed_commit(app, journal, error)?;
+            return Err(restore_index_after_failed_commit(app, journal, error));
         }
         if let Err(error) =
             gitops::move_head_if_unchanged(&app.ctx, &commit, &journal.previous_head)
                 .map_err(map_git)
         {
-            restore_index_after_failed_commit(app, journal, error)?;
+            let observed = gitops::head(&app.ctx).map_err(map_git)?;
+            if source_cas_failure_requires_index_restore(&observed, &journal.previous_head) {
+                return Err(restore_index_after_failed_commit(app, journal, error));
+            }
+            return Err(error);
         }
         maybe_skill_fault("convergence_interrupt_after_source_cas")?;
         Some(commit)
@@ -107,6 +111,10 @@ pub(super) fn commit_convergence_source(
     Ok(commit)
 }
 
+fn source_cas_failure_requires_index_restore(observed: &str, previous: &str) -> bool {
+    observed == previous
+}
+
 fn validate_live_source(
     app: &App,
     plan: &SkillConvergencePlan,
@@ -125,12 +133,25 @@ fn restore_index_after_failed_commit(
     app: &App,
     journal: &TransactionJournal,
     error: CommandFailure,
-) -> std::result::Result<(), CommandFailure> {
+) -> CommandFailure {
     match gitops::restore_index_from_backup(&app.ctx, Path::new(&journal.index_backup)) {
-        Ok(()) => Err(error),
-        Err(restore) => Err(error.with_rollback_errors(vec![json!({
+        Ok(()) => error,
+        Err(restore) => error.with_rollback_errors(vec![json!({
             "step": "restore_git_index_after_prepared_commit_failure",
             "message": restore.to_string(),
-        })])),
+        })]),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::source_cas_failure_requires_index_restore;
+
+    #[test]
+    fn external_head_advance_never_restores_the_transaction_index() {
+        assert!(source_cas_failure_requires_index_restore("old", "old"));
+        assert!(!source_cas_failure_requires_index_restore(
+            "external", "old"
+        ));
     }
 }

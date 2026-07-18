@@ -22,6 +22,7 @@ pub(super) fn interruption_fault_active() -> bool {
                 | "convergence_interrupt_after_prepared"
                 | "convergence_interrupt_after_source_replacement"
                 | "convergence_interrupt_after_source_add"
+                | "convergence_interrupt_after_projection_swap"
         )
     )
 }
@@ -289,9 +290,23 @@ pub(super) fn restore_projections_for_resume(
     paths: &RegistryStatePaths,
     journal: &TransactionJournal,
 ) -> std::result::Result<(), CommandFailure> {
-    let mut errors = Vec::new();
+    let mut errors = validate_transaction_artifacts(journal);
+    if !errors.is_empty() {
+        return Err(CommandFailure::new(
+            ErrorCode::StateCorrupt,
+            "committed source recovery artifact validation failed",
+        )
+        .with_rollback_errors(errors));
+    }
     if let Err(err) = paths.save_projections(&journal.original_projections) {
         push_rollback_error(&mut errors, "restore_registry_projections", err);
+    }
+    if !errors.is_empty() {
+        return Err(CommandFailure::new(
+            ErrorCode::StateCorrupt,
+            "failed to prepare committed source recovery",
+        )
+        .with_rollback_errors(errors));
     }
     for projection in journal
         .projections
@@ -302,6 +317,13 @@ pub(super) fn restore_projections_for_resume(
         if let Err(err) = restore_projection_from_evidence(projection, &journal.plan_id) {
             push_rollback_error(&mut errors, "restore_projection_from_evidence", err.message);
         }
+        if !errors.is_empty() {
+            return Err(CommandFailure::new(
+                ErrorCode::StateCorrupt,
+                "failed to prepare committed source recovery",
+            )
+            .with_rollback_errors(errors));
+        }
     }
     for projection in journal.projections.iter().rev() {
         cleanup_owned_dir(
@@ -310,6 +332,13 @@ pub(super) fn restore_projections_for_resume(
             &projection.owner_proof,
             &mut errors,
         );
+        if !errors.is_empty() {
+            return Err(CommandFailure::new(
+                ErrorCode::StateCorrupt,
+                "failed to prepare committed source recovery",
+            )
+            .with_rollback_errors(errors));
+        }
     }
     if errors.is_empty() {
         Ok(())

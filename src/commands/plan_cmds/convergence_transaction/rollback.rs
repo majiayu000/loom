@@ -224,18 +224,10 @@ fn validate_batch_preflight(
             return errors;
         }
     };
+    if let Err(err) = validate_projection_transaction(plan, journal, &selected_source) {
+        push_rollback_error(&mut errors, "validate_projection_transaction", err.message);
+    }
     for projection in &journal.projections {
-        if let Err(err) = validate_projection_artifact_layout(
-            Path::new(&projection.materialized_path),
-            &selected_source,
-            Path::new(&projection.staging_path),
-            Path::new(&projection.staging_owner),
-            projection.projection.as_ref(),
-            projection.prepared.as_ref(),
-            projection.rollback.as_ref(),
-        ) {
-            push_rollback_error(&mut errors, "validate_projection_layout", err.message);
-        }
         if let Some(prepared) = projection.prepared.as_ref()
             && let Err(err) = validate_prepared_projection_artifact(prepared)
         {

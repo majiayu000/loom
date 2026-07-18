@@ -26,6 +26,7 @@ use super::super::projection_executor::{
     validate_projection_rollback_artifact_for_finalize,
     validate_projection_rollback_artifact_for_rollback,
 };
+use super::super::projections::observe_projection_from_source;
 use super::super::projections::{project_skill_to_target, upsert_projection};
 use super::super::provenance::skill_tree_digest;
 use super::super::skill_cmds::shared::{maybe_skill_fault, push_rollback_error};
@@ -34,6 +35,7 @@ use super::{PLAN_PROTOCOL_VERSION, plan_failure};
 
 mod journal_state;
 mod ownership;
+mod projection_validation;
 mod recovery_evidence;
 mod recovery_support;
 mod rollback;
@@ -45,6 +47,7 @@ use ownership::{
     cleanup_owned_dir, cleanup_reservation, owner_proof_is_valid, reservation_paths,
     validate_owned_staging, validate_transaction_artifacts,
 };
+use projection_validation::validate_projection_transaction;
 use recovery_evidence::{
     active_index_digest, file_digest, restore_backup_atomically, validate_rollback_evidence,
 };
@@ -213,6 +216,7 @@ pub(super) fn apply_convergence(
         result: None,
         phase: TransactionPhase::Preparing,
     };
+    validate_projection_transaction(&plan, &journal, &selected_source_path(app, &plan)?)?;
     save_journal(&journal_path, &journal)?;
 
     if let Err(err) = prepare_transaction_artifacts(app, &plan, &journal_path, &mut journal) {

@@ -5,6 +5,9 @@ use serde_json::Value;
 
 use super::*;
 
+#[path = "typed_projection_journal/projection_payload_validation.rs"]
+mod projection_payload_validation;
+
 fn apply_with_faults(
     fixture: &Fixture,
     plan: &Value,

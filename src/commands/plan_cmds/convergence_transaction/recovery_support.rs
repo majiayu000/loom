@@ -442,6 +442,7 @@ fn validate_journal(
         )
         .is_ok();
     }
+    valid &= validate_projection_transaction(plan, journal, &selected_source).is_ok();
     valid &= validate_phase_invariants(journal);
     valid &= validate_expected_projections(plan, journal);
     if valid {

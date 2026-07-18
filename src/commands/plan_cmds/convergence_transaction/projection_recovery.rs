@@ -12,7 +12,7 @@ pub(super) fn restore_projection_from_evidence(
 pub(super) fn validate_projection_staging_fingerprint(
     artifact: &ProjectionBackup,
 ) -> std::result::Result<(), CommandFailure> {
-    let Some(expected) = artifact.activated_fingerprint.as_deref() else {
+    let Some(expected) = artifact.fingerprint() else {
         return Ok(());
     };
     require_fingerprint(
@@ -22,7 +22,6 @@ pub(super) fn validate_projection_staging_fingerprint(
     )
 }
 
-#[inline(never)]
 fn restore_projection_with_hook<F>(
     artifact: &ProjectionBackup,
     plan_id: &str,
@@ -34,8 +33,7 @@ where
     let live = Path::new(&artifact.materialized_path);
     let staging = Path::new(&artifact.staging_path);
     let expected = artifact
-        .activated_fingerprint
-        .as_deref()
+        .fingerprint()
         .ok_or_else(|| corrupt("projection activation fingerprint is missing"))?;
     validate_owned_staging(live, staging, plan_id, &artifact.owner_proof)?;
 
@@ -60,7 +58,7 @@ where
                     "restored live projection does not match durable backup",
                 ));
             }
-            return remove_path_if_exists(staging).map_err(map_io);
+            return Ok(());
         }
         require_fingerprint(staging, expected, "retained rollback artifact")?;
         let rollback_complete = match artifact.backup.as_ref() {
@@ -73,7 +71,7 @@ where
                 "rollback artifact is present but the live projection is not restored",
             ));
         }
-        return remove_path_if_exists(staging).map_err(map_io);
+        return Ok(());
     }
     if !live_exists {
         return if artifact.backup.is_none() {
@@ -111,7 +109,7 @@ where
             require_fingerprint(staging, expected, "projection removed during rollback")?;
         }
     }
-    remove_path_if_exists(staging).map_err(map_io)
+    Ok(())
 }
 
 fn require_fingerprint(
@@ -130,7 +128,6 @@ fn require_fingerprint(
     }
 }
 
-#[inline(never)]
 pub(super) fn path_matches_backup(
     path: &Path,
     backup: &Value,

@@ -29,6 +29,20 @@ pub(super) fn validate_guards(
             Some(cursor),
         ));
     }
+    validate_pre_mutation_state(app, plan)
+}
+
+pub(super) fn validate_pre_mutation_recovery_guards(
+    app: &App,
+    plan: &SkillConvergencePlan,
+) -> std::result::Result<Option<crate::state_model::RegistrySnapshot>, CommandFailure> {
+    validate_pre_mutation_state(app, plan)
+}
+
+fn validate_pre_mutation_state(
+    app: &App,
+    plan: &SkillConvergencePlan,
+) -> std::result::Result<Option<crate::state_model::RegistrySnapshot>, CommandFailure> {
     let head = gitops::head(&app.ctx).map_err(map_git)?;
     if head != plan.source.registry_head {
         return Err(stale("registry HEAD changed after planning", "PLAN_STALE"));
@@ -47,6 +61,7 @@ pub(super) fn validate_guards(
             "state/registry/rules.json",
             "state/registry/targets.json",
             "state/registry/projections.json",
+            "state/registry/ops/checkpoint.json",
         ],
     )?;
     let paths = RegistryStatePaths::from_app_context(&app.ctx);
@@ -58,13 +73,9 @@ pub(super) fn validate_guards(
         ));
     }
     if let Some(snapshot) = snapshot.as_ref() {
-        let digest = digest_value(&snapshot.checkpoint)?;
+        validate_checkpoint_evidence(snapshot, plan)?;
         let projections_digest = digest_value(&snapshot.projections)?;
-        if plan.registry.checkpoint_digest.as_deref() != Some(digest.as_str())
-            || plan.registry.checkpoint_updated_at.as_deref()
-                != Some(snapshot.checkpoint.updated_at.to_rfc3339().as_str())
-            || plan.registry.projections_digest.as_deref() != Some(projections_digest.as_str())
-        {
+        if plan.registry.projections_digest.as_deref() != Some(projections_digest.as_str()) {
             return Err(stale(
                 "registry checkpoint changed after planning",
                 "PLAN_CHECKPOINT_DRIFT",
@@ -74,11 +85,15 @@ pub(super) fn validate_guards(
         for effect in &plan.projections {
             validate_projection_guard(app, plan, effect)?;
         }
+    } else if !plan.projections.is_empty() {
+        return Err(stale(
+            "projection routing disappeared after planning",
+            "PLAN_PROJECTION_DRIFT",
+        ));
     }
     Ok(snapshot)
 }
 
-#[inline(never)]
 pub(super) fn validate_recovery_routing(
     app: &App,
     plan: &SkillConvergencePlan,
@@ -89,6 +104,7 @@ pub(super) fn validate_recovery_routing(
             "state/registry/bindings.json",
             "state/registry/rules.json",
             "state/registry/targets.json",
+            "state/registry/ops/checkpoint.json",
         ],
     )?;
     let snapshot = RegistryStatePaths::from_app_context(&app.ctx)
@@ -101,11 +117,29 @@ pub(super) fn validate_recovery_routing(
         ));
     }
     if let Some(snapshot) = snapshot.as_ref() {
+        validate_checkpoint_evidence(snapshot, plan)?;
         validate_projection_routing(snapshot, plan)?;
     } else if !plan.projections.is_empty() {
         return Err(stale(
             "projection routing disappeared during recovery",
             "PLAN_PROJECTION_DRIFT",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_checkpoint_evidence(
+    snapshot: &crate::state_model::RegistrySnapshot,
+    plan: &SkillConvergencePlan,
+) -> std::result::Result<(), CommandFailure> {
+    let digest = digest_value(&snapshot.checkpoint)?;
+    if plan.registry.checkpoint_digest.as_deref() != Some(digest.as_str())
+        || plan.registry.checkpoint_updated_at.as_deref()
+            != Some(snapshot.checkpoint.updated_at.to_rfc3339().as_str())
+    {
+        return Err(stale(
+            "registry checkpoint changed after planning",
+            "PLAN_CHECKPOINT_DRIFT",
         ));
     }
     Ok(())

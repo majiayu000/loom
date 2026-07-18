@@ -120,12 +120,12 @@ fn uninitialized_source_only_apply_and_recovery() {
             "1"
         );
         assert!(!fixture.root.path().join("state/registry").exists());
-        assert!(
-            !fixture
+        super::skill_convergence_ledger_assertions::assert_exact_retained_ledger(
+            &fixture
                 .root
                 .path()
-                .join("state/transactions/convergence-demo.json")
-                .exists()
+                .join("state/transactions/convergence-demo.json"),
+            "committed_artifacts_retained",
         );
     }
 }

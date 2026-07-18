@@ -66,30 +66,35 @@ fn create_projection_plan(fixture: &Fixture) -> Value {
 }
 
 #[test]
-fn internal_reservation_staging_collisions_are_preserved() {
-    for kind in ["artifact", "projection"] {
-        let fixture = projected_fixture();
-        let (output, plan) = plan_converge(&fixture, &[]);
-        assert!(output.status.success(), "plan failed: {plan}");
-        let plan_id = plan["data"]["plan_id"].as_str().expect("plan id");
-        let collision = if kind == "artifact" {
-            fixture.root.path().join(format!(
-                "state/transactions/.{plan_id}-artifacts.staging-{plan_id}"
-            ))
-        } else {
-            fixture.target.path().join(format!(
-                "..loom-projection-stage-{plan_id}-0.owner.staging-{plan_id}"
-            ))
-        };
-        fs::create_dir_all(&collision).expect("collision dir");
-        fs::write(collision.join("keep"), format!("unowned-{kind}\n")).expect("collision file");
-        let (output, rejected) = apply(&fixture, &plan, kind, None);
-        assert!(!output.status.success(), "collision applied: {rejected}");
-        assert_eq!(
-            fs::read_to_string(collision.join("keep")).expect("preserved collision"),
-            format!("unowned-{kind}\n")
-        );
-    }
+fn journal_allocated_candidate_collision_is_preserved() {
+    let fixture = projected_fixture();
+    let (output, plan) = plan_converge(&fixture, &[]);
+    assert!(output.status.success(), "plan failed: {plan}");
+    let fault = "convergence_interrupt_after_owner_root_creation";
+    let (output, interrupted) = apply(&fixture, &plan, "candidate-collision", Some(fault));
+    assert!(!output.status.success(), "fault passed: {interrupted}");
+    let journal_path = fixture
+        .root
+        .path()
+        .join("state/transactions/convergence-demo.json");
+    let journal: Value =
+        serde_json::from_slice(&fs::read(&journal_path).expect("journal")).expect("parse journal");
+    let candidate = std::path::PathBuf::from(
+        journal["ownership_attempts"][0]["candidate_path"]
+            .as_str()
+            .expect("candidate"),
+    );
+    fs::write(candidate.join("foreign-keep"), "external\n").expect("foreign collision");
+    let (output, recovered) = apply(&fixture, &plan, "candidate-collision", None);
+    assert!(output.status.success(), "retry failed: {recovered}");
+    assert_eq!(
+        fs::read_to_string(candidate.join("foreign-keep")).expect("preserved collision"),
+        "external\n"
+    );
+    super::skill_convergence_ledger_assertions::assert_exact_retained_ledger(
+        &journal_path,
+        "committed_artifacts_retained",
+    );
 }
 
 #[test]
@@ -332,17 +337,17 @@ fn declared_cleanup_failure_retains_journal_for_retry() {
     let fixture = projected_fixture();
     let (output, plan) = plan_converge(&fixture, &[]);
     assert!(output.status.success(), "plan failed: {plan}");
-    let fault = "convergence_interrupt_after_prepared";
-    let (output, interrupted) = apply(&fixture, &plan, "cleanup-retain", Some(fault));
-    assert!(!output.status.success(), "fault passed: {interrupted}");
     let plan_id = plan["data"]["plan_id"].as_str().expect("plan id");
     let digest = plan["data"]["plan_digest"].as_str().expect("digest");
     let (output, failed_cleanup) = run_loom_with_env(
         fixture.root.path(),
-        &[(
-            "LOOM_CLEANUP_FAULT_INJECT",
-            "convergence_fail_declared_cleanup",
-        )],
+        &[
+            ("LOOM_FAULT_INJECT", "convergence_during_backup_preparation"),
+            (
+                "LOOM_CLEANUP_FAULT_INJECT",
+                "convergence_fail_declared_cleanup",
+            ),
+        ],
         &[
             "apply",
             plan_id,
@@ -361,9 +366,72 @@ fn declared_cleanup_failure_retains_journal_for_retry() {
         .path()
         .join("state/transactions/convergence-demo.json");
     assert!(journal.is_file(), "cleanup failure deleted retry journal");
+    let preparing: Value =
+        serde_json::from_slice(&fs::read(&journal).expect("journal")).expect("parse journal");
+    assert_eq!(preparing["phase"], json!("preparing"));
+    assert!(
+        preparing["ownership_attempts"]
+            .as_array()
+            .is_some_and(|attempts| {
+                attempts
+                    .iter()
+                    .any(|attempt| attempt["state"] == json!("activated"))
+            })
+    );
     let (output, recovered) = apply(&fixture, &plan, "cleanup-retain", None);
     assert!(output.status.success(), "cleanup retry failed: {recovered}");
-    assert!(!journal.exists());
+    super::skill_convergence_ledger_assertions::assert_exact_retained_ledger(
+        &journal,
+        "committed_artifacts_retained",
+    );
+}
+
+#[test]
+fn index_snapshot_preparation_boundaries_resume_without_overwrite() {
+    for (fault, backup_exists, digest_exists) in [
+        ("convergence_interrupt_before_index_snapshot", false, false),
+        ("convergence_interrupt_after_index_snapshot", true, false),
+        (
+            "convergence_interrupt_after_index_snapshot_digest",
+            true,
+            true,
+        ),
+    ] {
+        let fixture = projected_fixture();
+        let (output, plan) = plan_converge(&fixture, &[]);
+        assert!(output.status.success(), "plan failed for {fault}: {plan}");
+        let (output, interrupted) = apply(&fixture, &plan, fault, Some(fault));
+        assert!(
+            !output.status.success(),
+            "fault {fault} unexpectedly passed: {interrupted}"
+        );
+        let journal_path = fixture
+            .root
+            .path()
+            .join("state/transactions/convergence-demo.json");
+        let journal: Value = serde_json::from_slice(
+            &fs::read(&journal_path).expect("interrupted preparation journal"),
+        )
+        .expect("parse interrupted preparation journal");
+        let backup =
+            std::path::PathBuf::from(journal["index_backup"].as_str().expect("index backup path"));
+        assert_eq!(backup.exists(), backup_exists, "backup state for {fault}");
+        assert_eq!(
+            journal["index_backup_digest"].as_str().is_some(),
+            digest_exists,
+            "digest state for {fault}"
+        );
+
+        let (output, recovered) = apply(&fixture, &plan, fault, None);
+        assert!(
+            output.status.success(),
+            "recovery failed for {fault}: {recovered}"
+        );
+        super::skill_convergence_ledger_assertions::assert_exact_retained_ledger(
+            &journal_path,
+            "committed_artifacts_retained",
+        );
+    }
 }
 
 #[test]

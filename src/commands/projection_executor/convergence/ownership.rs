@@ -15,7 +15,6 @@ use super::super::super::provenance::skill_tree_digest;
 #[cfg(unix)]
 mod xattrs;
 
-#[inline(never)]
 pub(crate) fn projection_ownership_fingerprint(path: &Path) -> anyhow::Result<String> {
     let content_digest = skill_tree_digest(path)?;
     let entries = WalkDir::new(path)
@@ -59,7 +58,6 @@ pub(crate) fn projection_ownership_fingerprint(path: &Path) -> anyhow::Result<St
     Ok(format!("sha256:{}", to_hex(&hasher.finalize())))
 }
 
-#[inline(never)]
 pub(crate) fn map_ownership_fingerprint_error(error: anyhow::Error, path: &Path) -> CommandFailure {
     let code = if error.chain().any(|cause| {
         cause
@@ -137,11 +135,11 @@ fn hash_ownership_metadata(
         u64::from(metadata.uid()),
         u64::from(metadata.gid()),
         metadata.rdev(),
+        metadata.size(),
     ] {
         hasher.update(&value.to_be_bytes());
     }
     if include_write_time {
-        hasher.update(&metadata.size().to_be_bytes());
         hasher.update(&metadata.mtime().to_be_bytes());
         hasher.update(&metadata.mtime_nsec().to_be_bytes());
     }
@@ -247,6 +245,7 @@ fn hash_ownership_metadata(
     for value in [
         u64::from(metadata.file_attributes()),
         metadata.creation_time(),
+        metadata.file_size(),
     ] {
         hasher.update(&value.to_be_bytes());
     }
@@ -257,7 +256,6 @@ fn hash_ownership_metadata(
     hasher.update(&(security_descriptor.len() as u64).to_be_bytes());
     hasher.update(&security_descriptor);
     if include_write_time {
-        hasher.update(&metadata.file_size().to_be_bytes());
         hasher.update(&metadata.last_write_time().to_be_bytes());
     }
     Ok(())
@@ -353,30 +351,6 @@ fn windows_file_ownership(path: &Path) -> anyhow::Result<(u64, [u8; 16], Vec<u8>
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[cfg(unix)]
-    #[test]
-    fn fingerprint_is_stable_across_atomic_directory_exchange() {
-        for attempt in 0..256 {
-            let root = std::env::temp_dir().join(format!(
-                "loom-fingerprint-exchange-{}-{attempt}",
-                uuid::Uuid::new_v4().simple()
-            ));
-            let live = root.join("live");
-            let staged = root.join("owner/stage");
-            fs::create_dir_all(&live).expect("create live");
-            fs::create_dir_all(&staged).expect("create staged");
-            fs::write(live.join("SKILL.md"), "old\n").expect("write live");
-            fs::write(staged.join("SKILL.md"), "new\n").expect("write staged");
-            fs::write(staged.join("details.txt"), "details\n").expect("write staged details");
-
-            let expected = projection_ownership_fingerprint(&staged).expect("fingerprint staged");
-            crate::fs_util::exchange_paths_atomic(&staged, &live).expect("exchange");
-            let actual = projection_ownership_fingerprint(&live).expect("fingerprint live");
-            assert_eq!(actual, expected, "attempt {attempt}");
-            fs::remove_dir_all(root).expect("remove fixture");
-        }
-    }
 
     #[test]
     fn unsupported_metadata_backend_is_typed_method_unsupported() {

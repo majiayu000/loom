@@ -3,6 +3,11 @@ SHELL := /usr/bin/env bash
 PANEL_DIR := panel
 PANEL_INSTALL_STAMP := $(PANEL_DIR)/node_modules/.bun-install.stamp
 LOOM_CONTRACT_DIFF_BASE ?= $(shell git merge-base HEAD origin/main 2>/dev/null)
+ifeq ($(shell uname -s),Linux)
+LOOM_PERF_RUSTFLAGS ?= -Cllvm-args=-enable-machine-outliner=always -Clink-arg=-Wl,--no-eh-frame-hdr
+else
+LOOM_PERF_RUSTFLAGS ?= -Cllvm-args=-enable-machine-outliner=always
+endif
 
 .PHONY: fmt fmt-check test contract-policy lint module-ceiling module-ceiling-test panel-install panel-dev panel-build panel-test panel-typecheck e2e perf-smoke check ci install-hooks
 
@@ -56,7 +61,7 @@ e2e:
 	./scripts/e2e-agent-flow.sh
 
 perf-smoke: panel-build
-	cargo build --release --locked
+	RUSTFLAGS="$(LOOM_PERF_RUSTFLAGS) $${RUSTFLAGS:-}" cargo build --release --locked
 	./scripts/perf-smoke.sh
 
 check: fmt-check lint module-ceiling module-ceiling-test test contract-policy panel-typecheck panel-test panel-build e2e perf-smoke

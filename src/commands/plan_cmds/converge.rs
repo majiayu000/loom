@@ -205,6 +205,8 @@ impl App {
         let risks = policy_risks(policy);
         let safe_to_apply = conflicts.is_empty()
             && plan.required_approvals.is_empty()
+            && plan.remote == RemotePolicy::NotRequested
+            && !plan.required_axes.contains(&ConvergenceAxis::Visibility)
             && !risks.iter().any(|risk| risk["blocks_apply"] == json!(true));
 
         let mut output = serde_json::to_value(&plan).map_err(map_io)?;

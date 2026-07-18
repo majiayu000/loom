@@ -60,7 +60,6 @@ where
     if path_matches_backup(live, backup)? {
         if staging_exists {
             require_activated(staging, activated, "retained source rollback artifact")?;
-            remove_path_if_exists(staging).map_err(map_io)?;
         }
         return Ok(());
     }
@@ -90,7 +89,7 @@ where
             "restored live source does not match durable backup evidence",
         ));
     }
-    remove_path_if_exists(staging).map_err(map_io)
+    Ok(())
 }
 
 fn require_activated(

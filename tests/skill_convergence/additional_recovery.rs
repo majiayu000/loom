@@ -221,9 +221,19 @@ fn registry_recovery_adopts_only_its_durable_index_lock() {
         .as_str()
         .expect("registry commit");
     let source_head = journal["source_head"].as_str().expect("source head");
-    let prepared =
-        Path::new(journal["artifact_root"].as_str().expect("artifact root")).join("registry-index");
-    fs::copy(&prepared, fixture.root.path().join(".git/index.lock"))
+    let commit_attempt = journal["registry_index_attempts"]
+        .as_array()
+        .expect("registry index attempts")
+        .iter()
+        .rev()
+        .find(|attempt| attempt["purpose"] == json!("commit"))
+        .expect("registry commit index attempt");
+    let prepared = Path::new(
+        commit_attempt["prepared_index"]
+            .as_str()
+            .expect("prepared index"),
+    );
+    fs::copy(prepared, fixture.root.path().join(".git/index.lock"))
         .expect("simulate retained transaction lock");
     git(
         fixture.root.path(),
@@ -322,5 +332,213 @@ fn foreign_index_lock_with_interrupted_rollback_remains_retryable() {
         output.status.success(),
         "rollback retry failed: {recovered}"
     );
-    assert!(!journal_path.exists());
+    super::skill_convergence_executor::assert_exact_retained_ledger(
+        &journal_path,
+        "committed_artifacts_retained",
+    );
+}
+
+#[test]
+fn committed_cleanup_accepts_an_unrelated_descendant_commit() {
+    let fixture = projected_fixture();
+    fs::write(
+        fixture.root.path().join("skills/demo/details.txt"),
+        "cleanup descendant\n",
+    )
+    .expect("edit source");
+    let (output, plan) = plan_converge(&fixture, &[]);
+    assert!(output.status.success(), "plan failed: {plan}");
+    let (output, interrupted) = apply_plan(
+        &fixture,
+        &plan,
+        "cleanup-descendant",
+        &[("LOOM_FAULT_INJECT", "convergence_interrupt_during_cleanup")],
+    );
+    assert!(
+        !output.status.success(),
+        "cleanup fault passed: {interrupted}"
+    );
+    let journal_path = fixture
+        .root
+        .path()
+        .join("state/transactions/convergence-demo.json");
+    assert!(
+        journal_path.is_file(),
+        "cleanup journal must remain durable"
+    );
+
+    fs::write(fixture.root.path().join("external.txt"), "external\n").expect("external file");
+    git(fixture.root.path(), &["add", "external.txt"]);
+    git(
+        fixture.root.path(),
+        &["commit", "-m", "test: descendant after convergence"],
+    );
+    let descendant = git(fixture.root.path(), &["rev-parse", "HEAD"]);
+
+    let (output, recovered) = apply_plan(&fixture, &plan, "cleanup-descendant", &[]);
+    assert!(
+        output.status.success(),
+        "descendant blocked cleanup-only recovery: {recovered}"
+    );
+    assert_eq!(git(fixture.root.path(), &["rev-parse", "HEAD"]), descendant);
+    super::skill_convergence_executor::assert_exact_retained_ledger(
+        &journal_path,
+        "committed_artifacts_retained",
+    );
+}
+
+#[test]
+fn source_committed_recovery_rechecks_checkpoint_evidence() {
+    let fixture = projected_fixture();
+    fs::write(
+        fixture.root.path().join("skills/demo/details.txt"),
+        "checkpoint recovery\n",
+    )
+    .expect("edit source");
+    let (output, plan) = plan_converge(&fixture, &[]);
+    assert!(output.status.success(), "plan failed: {plan}");
+    let (output, interrupted) = apply_plan(
+        &fixture,
+        &plan,
+        "checkpoint-recovery",
+        &[(
+            "LOOM_FAULT_INJECT",
+            "convergence_interrupt_after_source_commit",
+        )],
+    );
+    assert!(
+        !output.status.success(),
+        "source fault passed: {interrupted}"
+    );
+    let target_before = snapshot_tree(fixture.target.path());
+
+    let checkpoint_path = fixture
+        .root
+        .path()
+        .join("state/registry/ops/checkpoint.json");
+    let mut checkpoint: Value =
+        serde_json::from_slice(&fs::read(&checkpoint_path).expect("checkpoint"))
+            .expect("parse checkpoint");
+    checkpoint["updated_at"] = json!("2000-01-01T00:00:00Z");
+    fs::write(
+        &checkpoint_path,
+        serde_json::to_vec_pretty(&checkpoint).expect("encode checkpoint"),
+    )
+    .expect("drift checkpoint");
+
+    let (output, rejected) = apply_plan(&fixture, &plan, "checkpoint-recovery", &[]);
+    assert!(
+        !output.status.success(),
+        "checkpoint drift resumed recovery: {rejected}"
+    );
+    assert_eq!(snapshot_tree(fixture.target.path()), target_before);
+}
+
+#[test]
+fn pre_mutation_recovery_revalidates_all_routing_and_live_guards() {
+    #[derive(Clone, Copy, Debug)]
+    enum Drift {
+        Checkpoint,
+        Projections,
+        LiveProjection,
+    }
+
+    let phases = [
+        (
+            "preparing",
+            "convergence_interrupt_after_index_snapshot_digest",
+        ),
+        ("prepared", "convergence_interrupt_after_prepared"),
+    ];
+    let drifts = [Drift::Checkpoint, Drift::Projections, Drift::LiveProjection];
+
+    for (phase, fault) in phases {
+        for drift in drifts {
+            let fixture = projected_fixture();
+            fs::write(
+                fixture.root.path().join("skills/demo/details.txt"),
+                "recovery guard source\n",
+            )
+            .expect("edit source");
+            let (output, plan) = plan_converge(&fixture, &[]);
+            assert!(output.status.success(), "plan failed: {plan}");
+            let key = format!("pre-mutation-{phase}-{drift:?}");
+            let (output, interrupted) =
+                apply_plan(&fixture, &plan, &key, &[("LOOM_FAULT_INJECT", fault)]);
+            assert!(
+                !output.status.success(),
+                "{phase} fault did not interrupt: {interrupted}"
+            );
+
+            match drift {
+                Drift::Checkpoint => {
+                    let path = fixture
+                        .root
+                        .path()
+                        .join("state/registry/ops/checkpoint.json");
+                    let mut value: Value =
+                        serde_json::from_slice(&fs::read(&path).expect("read checkpoint"))
+                            .expect("parse checkpoint");
+                    value["updated_at"] = json!("2000-01-01T00:00:00Z");
+                    fs::write(
+                        &path,
+                        serde_json::to_vec_pretty(&value).expect("encode checkpoint"),
+                    )
+                    .expect("drift checkpoint");
+                }
+                Drift::Projections => {
+                    let path = fixture.root.path().join("state/registry/projections.json");
+                    let mut value: Value =
+                        serde_json::from_slice(&fs::read(&path).expect("read projections"))
+                            .expect("parse projections");
+                    value["projections"][0]["observed_drift"] = json!(true);
+                    fs::write(
+                        &path,
+                        serde_json::to_vec_pretty(&value).expect("encode projections"),
+                    )
+                    .expect("drift projections");
+                }
+                Drift::LiveProjection => {
+                    fs::write(
+                        fixture.target.path().join("demo/SKILL.md"),
+                        "external live projection drift\n",
+                    )
+                    .expect("drift live projection");
+                }
+            }
+
+            let transaction_dir = fixture.root.path().join("state/transactions");
+            let transactions_before = snapshot_tree(&transaction_dir);
+            let source_before = snapshot_tree(&fixture.root.path().join("skills/demo"));
+            let target_before = snapshot_tree(fixture.target.path());
+            let head_before = git(fixture.root.path(), &["rev-parse", "HEAD"]);
+            let status_before = git(fixture.root.path(), &["status", "--porcelain"]);
+            let index_before =
+                fs::read(fixture.root.path().join(".git/index")).expect("read index");
+
+            let (output, rejected) = apply_plan(&fixture, &plan, &key, &[]);
+            assert!(
+                !output.status.success(),
+                "{phase} recovery accepted {drift:?}: {rejected}"
+            );
+            assert_eq!(snapshot_tree(&transaction_dir), transactions_before);
+            assert_eq!(
+                snapshot_tree(&fixture.root.path().join("skills/demo")),
+                source_before
+            );
+            assert_eq!(snapshot_tree(fixture.target.path()), target_before);
+            assert_eq!(
+                git(fixture.root.path(), &["rev-parse", "HEAD"]),
+                head_before
+            );
+            assert_eq!(
+                git(fixture.root.path(), &["status", "--porcelain"]),
+                status_before
+            );
+            assert_eq!(
+                fs::read(fixture.root.path().join(".git/index")).expect("read index"),
+                index_before
+            );
+        }
+    }
 }

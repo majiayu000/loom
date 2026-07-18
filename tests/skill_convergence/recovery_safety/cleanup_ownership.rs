@@ -122,24 +122,8 @@ fn apply_with_cleanup_fault(
     )
 }
 
-fn reservation_paths(owner: &Path, plan_id: &str) -> (PathBuf, PathBuf) {
-    let parent = owner.parent().expect("owner parent");
-    let name = owner.file_name().expect("owner name").to_string_lossy();
-    (
-        parent.join(format!(".{name}.reservation-{plan_id}")),
-        parent.join(format!(".{name}.staging-{plan_id}")),
-    )
-}
-
-fn reservation_pending_path(reservation: &Path, proof: &str) -> PathBuf {
-    let mut pending = reservation.as_os_str().to_owned();
-    pending.push(".pending-");
-    pending.push(proof.rsplit_once(':').expect("proof nonce").1);
-    PathBuf::from(pending)
-}
-
 #[test]
-fn crash_before_reservation_publication_is_retryable() {
+fn crash_after_ready_proof_is_retryable_and_retains_exact_attempt() {
     let fixture = projected_fixture();
     fs::write(
         fixture.root.path().join("skills/demo/details.txt"),
@@ -167,17 +151,14 @@ fn crash_before_reservation_publication_is_retryable() {
     let journal: Value =
         serde_json::from_slice(&fs::read(&journal_path).expect("journal")).expect("parse journal");
     assert_eq!(journal["phase"], json!("preparing"));
-    let owner = PathBuf::from(journal["artifact_root"].as_str().expect("artifact root"));
-    let plan_id = journal["plan_id"].as_str().expect("plan id");
-    let proof = journal["artifact_owner_proof"]
-        .as_str()
-        .expect("artifact owner proof");
-    let (reservation, _) = reservation_paths(&owner, plan_id);
-    let pending = reservation_pending_path(&reservation, proof);
-    assert!(pending.is_file(), "private pending token was not retained");
+    let attempt = &journal["ownership_attempts"][0];
+    assert_eq!(attempt["state"], json!("ready"));
+    let candidate = PathBuf::from(attempt["candidate_path"].as_str().expect("candidate"));
+    let destination = PathBuf::from(attempt["destination"].as_str().expect("destination"));
+    assert!(candidate.join(".ownership-manifest.json").is_file());
     assert!(
-        !reservation.exists(),
-        "incomplete reservation token became public"
+        !destination.exists(),
+        "ready attempt became public before activation"
     );
 
     let (output, recovered) = apply(&fixture, &plan, key, None);
@@ -185,9 +166,15 @@ fn crash_before_reservation_publication_is_retryable() {
         output.status.success(),
         "reservation retry failed: {recovered}"
     );
-    assert!(!pending.exists());
-    assert!(!reservation.exists());
-    assert!(!journal_path.exists());
+    let retained: Value =
+        serde_json::from_slice(&fs::read(&journal_path).expect("retained journal"))
+            .expect("parse retained journal");
+    assert_eq!(retained["phase"], json!("committed_artifacts_retained"));
+    assert_eq!(
+        retained["ownership_attempts"][0]["state"],
+        json!("retained")
+    );
+    assert!(destination.join(".ownership-manifest.json").is_file());
 }
 
 #[cfg(unix)]
@@ -246,7 +233,10 @@ fn committed_cleanup_rejects_non_exact_present_owners_and_retains_retry_evidence
             restore_exact_owner(&owner, &saved, mode);
             let (output, recovered) = apply(&fixture, &plan, &key, None);
             assert!(output.status.success(), "cleanup retry failed: {recovered}");
-            assert!(!journal_path.exists());
+            super::super::skill_convergence_ledger_assertions::assert_exact_retained_ledger(
+                &journal_path,
+                "committed_artifacts_retained",
+            );
         }
     }
 }
@@ -313,33 +303,36 @@ fn prepared_cleanup_rejects_non_exact_present_owners_and_retains_retry_evidence(
                 output.status.success(),
                 "prepared cleanup retry failed: {recovered}"
             );
-            assert!(!journal_path.exists());
+            super::super::skill_convergence_ledger_assertions::assert_exact_retained_ledger(
+                &journal_path,
+                "committed_artifacts_retained",
+            );
         }
     }
 }
 
 #[cfg(unix)]
 #[test]
-fn post_journal_nonexact_reservation_entries_block_all_cleanup_until_exact_retry() {
-    for entry_kind in ["token", "staging", "staging-symlink"] {
+fn nonexact_ready_attempts_block_activation_until_exact_retry() {
+    for corruption in ["proof", "manifest", "symlink"] {
         let fixture = projected_fixture();
         fs::write(
             fixture.root.path().join("skills/demo/details.txt"),
-            format!("reservation {entry_kind}\n"),
+            format!("ready attempt {corruption}\n"),
         )
         .expect("source edit");
         let (output, plan) = plan_converge(&fixture, &[]);
         assert!(output.status.success(), "plan failed: {plan}");
-        let key = format!("reservation-cleanup-{entry_kind}");
+        let key = format!("ready-attempt-{corruption}");
         let (output, interrupted) = apply(
             &fixture,
             &plan,
             &key,
-            Some("convergence_interrupt_after_prepared"),
+            Some("convergence_interrupt_after_reservation_pending_create"),
         );
         assert!(
             !output.status.success(),
-            "prepared fault passed: {interrupted}"
+            "ready fault passed: {interrupted}"
         );
         let journal_path = fixture
             .root
@@ -347,87 +340,51 @@ fn post_journal_nonexact_reservation_entries_block_all_cleanup_until_exact_retry
             .join("state/transactions/convergence-demo.json");
         let journal: Value = serde_json::from_slice(&fs::read(&journal_path).expect("journal"))
             .expect("parse journal");
-        let projection = &journal["projections"][0];
-        let owner = PathBuf::from(projection["staging_owner"].as_str().expect("owner"));
-        let expected_proof = projection["owner_proof"].as_str().expect("proof");
-        let plan_id = journal["plan_id"].as_str().expect("plan id");
-        let (reservation, staging) = reservation_paths(&owner, plan_id);
-        let wrong_proof = format!("{plan_id}:{}\n", uuid::Uuid::new_v4());
-        let external = staging.with_extension("external");
-        let attacked = if entry_kind == "token" {
-            fs::write(&reservation, wrong_proof).expect("mismatched token");
-            reservation.clone()
-        } else if entry_kind == "staging-symlink" {
-            fs::create_dir(&external).expect("external staging target");
-            fs::write(external.join("keep"), "external\n").expect("external marker");
-            fs::write(
-                external.join(".reservation-owner"),
-                format!("{expected_proof}\n"),
-            )
-            .expect("exact external proof");
-            symlink(&external, &staging).expect("staging symlink");
-            staging.clone()
-        } else {
-            fs::create_dir(&staging).expect("mismatched staging");
-            fs::write(staging.join(".reservation-owner"), wrong_proof)
-                .expect("mismatched staging proof");
-            staging.clone()
-        };
-        let retained = existing_owned_paths(&journal, Path::new("not-an-owner"));
-        let index_path = PathBuf::from(journal["index_backup"].as_str().expect("index"));
-        let index = fs::read(&index_path).expect("index evidence");
+        let attempt = &journal["ownership_attempts"][0];
+        assert_eq!(attempt["state"], json!("ready"));
+        let candidate = PathBuf::from(attempt["candidate_path"].as_str().expect("candidate"));
+        let proof_path = candidate.join(".reservation-owner");
+        let manifest_path = candidate.join(".ownership-manifest.json");
+        let proof = fs::read(&proof_path).expect("proof");
+        let manifest = fs::read(&manifest_path).expect("manifest");
+        let saved = candidate.with_extension("saved-exact");
+        let external = candidate.with_extension("external");
+        match corruption {
+            "proof" => fs::write(&proof_path, "foreign-proof\n").expect("replace proof"),
+            "manifest" => fs::write(&manifest_path, "{}\n").expect("replace manifest"),
+            "symlink" => {
+                fs::rename(&candidate, &saved).expect("save candidate");
+                fs::create_dir(&external).expect("external target");
+                fs::write(external.join("keep"), "external\n").expect("external marker");
+                symlink(&external, &candidate).expect("candidate symlink");
+            }
+            _ => unreachable!(),
+        }
         let (output, rejected) = apply(&fixture, &plan, &key, None);
         assert!(
             !output.status.success(),
-            "reservation mismatch passed: {rejected}"
+            "nonexact attempt passed: {rejected}"
         );
-        assert!(attacked.exists(), "mismatched reservation was deleted");
-        assert!(
-            journal_path.is_file(),
-            "reservation mismatch deleted journal"
-        );
-        assert_eq!(fs::read(&index_path).expect("retained index"), index);
-        assert!(
-            retained
-                .iter()
-                .all(|path| fs::symlink_metadata(path).is_ok())
-        );
-        if entry_kind == "staging-symlink" {
-            assert!(
-                fs::symlink_metadata(&staging)
-                    .expect("staging link")
-                    .file_type()
-                    .is_symlink()
-            );
-            assert_eq!(
-                fs::read_to_string(external.join("keep")).expect("external"),
-                "external\n"
-            );
-        }
-        if entry_kind == "token" {
-            fs::write(&reservation, format!("{expected_proof}\n")).expect("exact token");
-        } else if entry_kind == "staging-symlink" {
-            fs::remove_file(&staging).expect("remove staging symlink");
-            fs::create_dir(&staging).expect("exact staging");
-            fs::write(
-                staging.join(".reservation-owner"),
-                format!("{expected_proof}\n"),
-            )
-            .expect("exact staging proof");
-        } else {
-            fs::write(
-                staging.join(".reservation-owner"),
-                format!("{expected_proof}\n"),
-            )
-            .expect("exact staging proof");
+        assert!(journal_path.is_file());
+        match corruption {
+            "proof" => fs::write(&proof_path, proof).expect("restore proof"),
+            "manifest" => fs::write(&manifest_path, manifest).expect("restore manifest"),
+            "symlink" => {
+                assert_eq!(
+                    fs::read_to_string(external.join("keep")).expect("external"),
+                    "external\n"
+                );
+                fs::remove_file(&candidate).expect("remove test symlink");
+                fs::rename(&saved, &candidate).expect("restore candidate");
+            }
+            _ => unreachable!(),
         }
         let (output, recovered) = apply(&fixture, &plan, &key, None);
-        assert!(
-            output.status.success(),
-            "exact reservation retry failed: {recovered}"
+        assert!(output.status.success(), "exact retry failed: {recovered}");
+        super::super::skill_convergence_ledger_assertions::assert_exact_retained_ledger(
+            &journal_path,
+            "committed_artifacts_retained",
         );
-        assert!(!journal_path.exists());
-        assert!(!attacked.exists());
     }
 }
 
@@ -465,10 +422,9 @@ fn resume_prevalidates_all_projection_artifacts_before_any_live_restore() {
                 .last()
                 .expect("late");
             let late_owner = PathBuf::from(late["staging_owner"].as_str().expect("owner"));
-            let late_proof = late["owner_proof"].as_str().expect("proof");
             let plan_id = journal["plan_id"].as_str().expect("plan id");
             let mut saved_owner = None;
-            let mut reservation_path = None;
+            let mut saved_proof = None;
             if corruption == "late-owner" {
                 let saved = late_owner.with_extension("resume-saved");
                 fs::rename(&late_owner, &saved).expect("save late owner");
@@ -476,13 +432,10 @@ fn resume_prevalidates_all_projection_artifacts_before_any_live_restore() {
                 fs::write(late_owner.join("keep"), "external\n").expect("external owner");
                 saved_owner = Some(saved);
             } else {
-                let (reservation, _) = reservation_paths(&late_owner, plan_id);
-                fs::write(
-                    &reservation,
-                    format!("{plan_id}:{}\n", uuid::Uuid::new_v4()),
-                )
-                .expect("late reservation mismatch");
-                reservation_path = Some(reservation);
+                let proof_path = late_owner.join(".reservation-owner");
+                saved_proof = Some(fs::read(&proof_path).expect("exact proof"));
+                fs::write(&proof_path, format!("{plan_id}:{}\n", uuid::Uuid::new_v4()))
+                    .expect("late proof mismatch");
             }
             let registry_path = fixture.root.path().join("state/registry/projections.json");
             let registry = fs::read(&registry_path).expect("registry");
@@ -510,12 +463,16 @@ fn resume_prevalidates_all_projection_artifacts_before_any_live_restore() {
                 fs::remove_dir_all(&late_owner).expect("remove replacement owner");
                 fs::rename(saved, &late_owner).expect("restore late owner");
             }
-            if let Some(reservation) = reservation_path {
-                fs::write(reservation, format!("{late_proof}\n")).expect("restore exact proof");
+            if let Some(proof) = saved_proof {
+                fs::write(late_owner.join(".reservation-owner"), proof)
+                    .expect("restore exact proof");
             }
             let (output, recovered) = apply(&fixture, &plan, &key, None);
             assert!(output.status.success(), "resume retry failed: {recovered}");
-            assert!(!journal_path.exists());
+            super::super::skill_convergence_ledger_assertions::assert_exact_retained_ledger(
+                &journal_path,
+                "committed_artifacts_retained",
+            );
         }
     }
 }

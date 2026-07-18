@@ -39,30 +39,18 @@ pub(super) fn reprove_source_boundary(
     }
 
     let head = gitops::head(&app.ctx).map_err(map_git)?;
-    let registry_boundary = matches!(
-        journal.phase,
-        TransactionPhase::CommittingRegistry | TransactionPhase::CommittedCleanupPending
-    );
-    if head != source_head {
-        if !registry_boundary {
-            return Err(recovery_stale(
-                "an intervening commit followed the source boundary",
-            ));
-        }
-        verify_registry_commit(app, plan, journal, &head, source_head)?;
-    }
     if journal.phase == TransactionPhase::CommittedCleanupPending {
         let result = journal
             .result
             .as_ref()
             .ok_or_else(|| corrupt("missing committed result"))?;
-        let expected_registry = (head != source_head).then_some(head.as_str());
+        let recorded_registry = result["registry_commit"].as_str();
         if result["skill"].as_str() != Some(plan.skill.as_str())
             || match journal.source_commit.as_deref() {
                 Some(commit) => result["source_commit"].as_str() != Some(commit),
                 None => !result["source_commit"].is_null(),
             }
-            || result["registry_commit"].as_str() != expected_registry
+            || recorded_registry != journal.registry_commit.as_deref()
             || !result["projection_instances"]
                 .as_array()
                 .is_some_and(|instances| {
@@ -79,6 +67,23 @@ pub(super) fn reprove_source_boundary(
                 "committed result does not match transaction evidence",
             ));
         }
+        let committed_boundary = if let Some(registry_commit) = recorded_registry {
+            verify_registry_commit(app, plan, journal, registry_commit, source_head)?;
+            registry_commit
+        } else {
+            source_head
+        };
+        require_ancestor(app, committed_boundary, &head)?;
+        return Ok(());
+    }
+    let registry_boundary = journal.phase == TransactionPhase::CommittingRegistry;
+    if head != source_head {
+        if !registry_boundary {
+            return Err(recovery_stale(
+                "an intervening commit followed the source boundary",
+            ));
+        }
+        verify_registry_commit(app, plan, journal, &head, source_head)?;
     }
     require_clean_path(app, &format!("skills/{}", plan.skill))?;
     let live_digest = skill_tree_digest(&app.ctx.skill_path(&plan.skill)).map_err(map_io)?;
@@ -88,6 +93,25 @@ pub(super) fn reprove_source_boundary(
         ));
     }
     Ok(())
+}
+
+fn require_ancestor(
+    app: &App,
+    ancestor: &str,
+    descendant: &str,
+) -> std::result::Result<(), CommandFailure> {
+    let output = gitops::run_git_allow_failure(
+        &app.ctx,
+        &["merge-base", "--is-ancestor", ancestor, descendant],
+    )
+    .map_err(map_git)?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(recovery_stale(
+            "live HEAD does not descend from the committed transaction boundary",
+        ))
+    }
 }
 
 pub(super) fn validate_mutated_surfaces(
@@ -324,7 +348,6 @@ pub(super) fn active_index_digest(app: &App) -> std::result::Result<String, Comm
     file_digest(&path)
 }
 
-#[inline(never)]
 pub(super) fn file_digest(path: &Path) -> std::result::Result<String, CommandFailure> {
     let bytes = fs::read(path).map_err(map_io)?;
     let mut hasher = Sha256::new();
@@ -406,18 +429,18 @@ fn reconcile_projection_state(
     saw_old: &mut bool,
 ) -> std::result::Result<bool, CommandFailure> {
     match state {
-        ProjectionState::New if !*saw_old || artifact.activated => {
-            artifact.activated = true;
+        ProjectionState::New if !*saw_old || artifact.is_activated() => {
+            artifact.mark_activated(true);
             Ok(true)
         }
         ProjectionState::New => Err(recovery_stale(
             "projection transaction progress is not contiguous",
         )),
         ProjectionState::Old => {
-            if artifact.activated {
+            if artifact.is_activated() {
                 artifact.original_fingerprint = None;
             }
-            artifact.activated = false;
+            artifact.mark_activated(false);
             *saw_old = true;
             Ok(false)
         }
@@ -435,6 +458,10 @@ fn projection_state(
         if projection_path_is_safe_symlink(path, &app.ctx.skill_path(&plan.skill)) {
             return Ok(if effect.effect == "create" {
                 ProjectionState::New
+            } else if artifact.original_fingerprint == artifact.activated_fingerprint
+                && !artifact.is_activated()
+            {
+                ProjectionState::Old
             } else {
                 same_content_projection_state(path, artifact)?
             });
@@ -476,7 +503,6 @@ fn projection_state(
     }
 }
 
-#[inline(never)]
 fn same_content_projection_state(
     path: &Path,
     artifact: &ProjectionBackup,
@@ -490,7 +516,7 @@ fn projection_identity_state(
     live: &str,
 ) -> std::result::Result<ProjectionState, CommandFailure> {
     let original = artifact.original_fingerprint.as_deref() == Some(live);
-    let activated = artifact.activated_fingerprint.as_deref() == Some(live);
+    let activated = artifact.fingerprint() == Some(live);
     match (original, activated) {
         (true, false) => Ok(ProjectionState::Old),
         (false, true) => Ok(ProjectionState::New),
@@ -530,8 +556,10 @@ fn verify_registry_commit(
             "registry commit tree differs from transaction evidence",
         ));
     }
-    if journal.phase == TransactionPhase::CommittingRegistry
-        && journal.registry_commit.as_deref() == Some(head)
+    if matches!(
+        journal.phase,
+        TransactionPhase::CommittingRegistry | TransactionPhase::CommittedCleanupPending
+    ) && journal.registry_commit.as_deref() == Some(head)
         && journal.registry_staged_index_digest.is_some()
     {
         Ok(())
@@ -633,96 +661,9 @@ fn require_clean_path(app: &App, path: &str) -> std::result::Result<(), CommandF
     Ok(())
 }
 
-#[inline(never)]
 pub(super) fn corrupt(message: &str) -> CommandFailure {
     CommandFailure::new(ErrorCode::StateCorrupt, message)
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn projection(label: &str, activated: bool) -> ProjectionBackup {
-        ProjectionBackup {
-            materialized_path: label.to_string(),
-            backup: Some(Value::Null),
-            staging_owner: format!("{label}-owner"),
-            owner_proof: format!("{label}-proof"),
-            staging_path: format!("{label}-stage"),
-            activated_fingerprint: Some(format!("{label}-activated")),
-            activated,
-            original_fingerprint: Some(format!("{label}-original")),
-        }
-    }
-
-    #[test]
-    fn partial_restore_state_is_inferred_and_retryable() {
-        let mut projections = [projection("restored", true), projection("failed", true)];
-        let mut saw_old = false;
-
-        assert!(
-            !reconcile_projection_state(&mut projections[0], ProjectionState::Old, &mut saw_old,)
-                .expect("infer restored projection")
-        );
-        assert!(
-            reconcile_projection_state(&mut projections[1], ProjectionState::New, &mut saw_old,)
-                .expect("retain failed projection")
-        );
-        assert!(projections[0].original_fingerprint.is_none());
-        assert!(projections[1].original_fingerprint.is_some());
-
-        let mut saw_old = false;
-        assert!(
-            !reconcile_projection_state(&mut projections[0], ProjectionState::Old, &mut saw_old,)
-                .expect("retain restored projection")
-        );
-        assert!(
-            !reconcile_projection_state(&mut projections[1], ProjectionState::Old, &mut saw_old,)
-                .expect("infer retry restoration")
-        );
-        assert!(
-            projections.iter().all(
-                |projection| !projection.activated && projection.original_fingerprint.is_none()
-            )
-        );
-    }
-
-    #[test]
-    fn unrecorded_new_projection_after_old_remains_stale() {
-        let mut projection = projection("unrecorded", false);
-        let mut saw_old = true;
-        let error = reconcile_projection_state(&mut projection, ProjectionState::New, &mut saw_old)
-            .expect_err("unrecorded out-of-order projection must fail");
-        assert_eq!(error.code, ErrorCode::DependencyConflict);
-    }
-
-    #[test]
-    fn equal_content_partial_restore_uses_ownership_identity() {
-        let mut restored = projection("equal-content-restored", true);
-        let mut failed = projection("equal-content-failed", true);
-        let restored_identity = restored.original_fingerprint.clone().expect("original");
-        let failed_identity = failed.activated_fingerprint.clone().expect("activated");
-        let mut saw_old = false;
-
-        let restored_state =
-            projection_identity_state(&restored, &restored_identity).expect("restored identity");
-        assert!(
-            !reconcile_projection_state(&mut restored, restored_state, &mut saw_old,)
-                .expect("infer restored equal-content projection")
-        );
-        let failed_state =
-            projection_identity_state(&failed, &failed_identity).expect("activated identity");
-        assert!(
-            reconcile_projection_state(&mut failed, failed_state, &mut saw_old,)
-                .expect("retain failed equal-content projection")
-        );
-        assert!(restored.original_fingerprint.is_none());
-        assert!(failed.original_fingerprint.is_some());
-
-        let unknown = match projection_identity_state(&failed, "unknown-identity") {
-            Ok(_) => panic!("unknown equal-content identity must fail"),
-            Err(error) => error,
-        };
-        assert_eq!(unknown.code, ErrorCode::DependencyConflict);
-    }
-}
+mod recovery_evidence_tests;

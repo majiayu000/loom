@@ -2,30 +2,8 @@ use super::recovery_evidence::{
     reprove_source_boundary, rollback_uncommitted_source_only, validate_expected_projections,
     validate_mutated_surfaces, validate_rollback_evidence, validate_rolling_back_state,
 };
+use super::registry_restore::restore_registry_projections_if_owned;
 use super::*;
-
-pub(super) fn interruption_fault_active() -> bool {
-    const FAULTS: &[&str] = &[
-        "convergence_interrupt_after_source_commit",
-        "convergence_interrupt_after_source_cas",
-        "convergence_interrupt_committing_source",
-        "convergence_interrupt_committing_registry",
-        "convergence_interrupt_after_owner_root_creation",
-        "convergence_interrupt_after_owner_marker_write",
-        "convergence_interrupt_after_prepared",
-        "convergence_interrupt_after_source_replacement",
-        "convergence_interrupt_after_source_add",
-        "convergence_interrupt_after_staged_index_prepared",
-        "convergence_interrupt_after_staged_index_install",
-        "convergence_interrupt_after_projection_activation",
-        "convergence_interrupt_after_projection_swap",
-        "convergence_interrupt_before_registry_cas",
-        "convergence_interrupt_after_reservation_pending_create",
-    ];
-    std::env::var("LOOM_FAULT_INJECT")
-        .ok()
-        .is_some_and(|fault| FAULTS.contains(&fault.as_str()))
-}
 
 pub(super) fn recover_journal(
     app: &App,
@@ -42,30 +20,72 @@ pub(super) fn recover_journal(
     })?;
     validate_journal(app, journal_path, plan, &journal)?;
     match journal.phase {
+        TransactionPhase::CommittedArtifactsRetained => {
+            let result = journal.result.clone().ok_or_else(|| {
+                CommandFailure::new(ErrorCode::StateCorrupt, "retained journal has no result")
+            })?;
+            return Ok(Some(result));
+        }
+        TransactionPhase::RolledBackArtifactsRetained => {
+            archive_rolled_back_journal(journal_path, &journal)?;
+            return Ok(None);
+        }
         TransactionPhase::CommittedCleanupPending => {
             reprove_source_boundary(app, plan, &journal)?;
             let paths = RegistryStatePaths::from_app_context(&app.ctx);
             validate_mutated_surfaces(app, &paths, plan, &mut journal)?;
-            let result = journal
-                .result
-                .clone()
-                .ok_or_else(|| state_corrupt("committed journal has no result"))?;
-            finish_committed_cleanup(journal_path, &journal)?;
+            let result = journal.result.clone().ok_or_else(|| {
+                CommandFailure::new(ErrorCode::StateCorrupt, "committed journal has no result")
+            })?;
+            finish_committed_cleanup(journal_path, &mut journal)?;
             return Ok(Some(result));
         }
         TransactionPhase::RolledBackCleanupPending => {
-            finish_committed_cleanup(journal_path, &journal)?;
+            finish_committed_cleanup(journal_path, &mut journal)?;
             return Ok(None);
         }
         TransactionPhase::Preparing | TransactionPhase::Prepared => {
-            let errors = cleanup_declared_artifacts(journal_path, &journal);
-            if errors.is_empty() {
+            let snapshot = super::guards::validate_pre_mutation_recovery_guards(app, plan)?;
+            if journal.phase == TransactionPhase::Preparing {
+                super::preparation::prepare_transaction_artifacts_from_snapshot(
+                    app,
+                    snapshot.as_ref(),
+                    plan,
+                    journal_path,
+                    &mut journal,
+                )?;
+                journal.phase = TransactionPhase::Prepared;
+                save_journal(journal_path, &journal)?;
+            }
+            let paths = RegistryStatePaths::from_app_context(&app.ctx);
+            let result = execute_local_transaction(
+                app,
+                &paths,
+                snapshot.as_ref(),
+                plan,
+                request_id,
+                journal_path,
+                &mut journal,
+            )?;
+            journal.result = Some(result.clone());
+            journal.phase = TransactionPhase::CommittedCleanupPending;
+            save_journal(journal_path, &journal)?;
+            finish_committed_cleanup(journal_path, &mut journal)?;
+            return Ok(Some(result));
+        }
+        TransactionPhase::CommittingSource => {
+            let paths = RegistryStatePaths::from_app_context(&app.ctx);
+            if super::external_head::retire_uncommitted_noop_after_external_head(
+                app,
+                &paths,
+                plan,
+                journal_path,
+                &mut journal,
+            )? {
                 return Ok(None);
             }
-            return Err(state_corrupt("interrupted preparation cleanup failed")
-                .with_rollback_errors(errors));
+            prove_source_boundary(app, plan, &mut journal)?;
         }
-        TransactionPhase::CommittingSource => prove_source_boundary(app, plan, &mut journal)?,
         TransactionPhase::RollingBack => {
             let paths = RegistryStatePaths::from_app_context(&app.ctx);
             validate_mutated_surfaces(app, &paths, plan, &mut journal)?;
@@ -73,17 +93,33 @@ pub(super) fn recover_journal(
             validate_rolling_back_state(app, plan, &journal)?;
             let errors = rollback_journal(app, &paths, plan, &mut journal);
             if !errors.is_empty() {
-                return Err(state_corrupt("interrupted convergence rollback failed")
-                    .with_rollback_errors(errors));
+                return Err(CommandFailure::new(
+                    ErrorCode::StateCorrupt,
+                    "interrupted convergence rollback failed",
+                )
+                .with_rollback_errors(errors));
             }
+            super::registry_commit::terminalize_registry_index_attempts(&mut journal, false);
             journal.phase = TransactionPhase::RolledBackCleanupPending;
             save_journal(journal_path, &journal)?;
-            finish_committed_cleanup(journal_path, &journal)?;
+            finish_committed_cleanup(journal_path, &mut journal)?;
             return Ok(None);
         }
         _ => {}
     }
     let paths = RegistryStatePaths::from_app_context(&app.ctx);
+    if matches!(
+        journal.phase,
+        TransactionPhase::ProjectionsSwapped | TransactionPhase::CommittingRegistry
+    ) && super::external_head::recover_registry_after_external_head(
+        app,
+        &paths,
+        plan,
+        journal_path,
+        &mut journal,
+    )? {
+        return Ok(None);
+    }
     if matches!(
         journal.phase,
         TransactionPhase::ReplacingSource
@@ -92,11 +128,15 @@ pub(super) fn recover_journal(
     ) && !source_is_committed(&journal)
     {
         rollback_uncommitted_source_only(app, plan, &journal)?;
-        let errors = cleanup_declared_artifacts(journal_path, &journal);
+        let errors = cleanup_declared_artifacts(journal_path, &mut journal);
         if errors.is_empty() {
             return Ok(None);
         }
-        return Err(state_corrupt("uncommitted source cleanup failed").with_rollback_errors(errors));
+        return Err(CommandFailure::new(
+            ErrorCode::StateCorrupt,
+            "uncommitted source cleanup failed",
+        )
+        .with_rollback_errors(errors));
     }
     if source_is_committed(&journal) {
         reprove_source_boundary(app, plan, &journal)?;
@@ -107,15 +147,16 @@ pub(super) fn recover_journal(
             journal.result = Some(result.clone());
             journal.phase = TransactionPhase::CommittedCleanupPending;
             save_journal(journal_path, &journal)?;
-            finish_committed_cleanup(journal_path, &journal)?;
+            finish_committed_cleanup(journal_path, &mut journal)?;
             return Ok(Some(result));
         }
         validate_mutated_surfaces(app, &paths, plan, &mut journal)?;
         validate_rollback_evidence(app, plan, &journal)?;
         restore_projections_for_resume(&paths, plan, &mut journal)?;
+        rotate_projection_stages(journal_path, &mut journal)?;
         journal.installed_projections = 0;
         journal.expected_projections = None;
-        prepare_projection_stages(app, plan, request_id, &mut journal)?;
+        prepare_projection_stages(app, plan, request_id, journal_path, &mut journal)?;
         journal.phase = TransactionPhase::SourceCommitted;
         save_journal(journal_path, &journal)?;
         let snapshot = paths.maybe_load_snapshot().map_err(map_registry_state)?;
@@ -131,54 +172,58 @@ pub(super) fn recover_journal(
         journal.result = Some(result.clone());
         journal.phase = TransactionPhase::CommittedCleanupPending;
         save_journal(journal_path, &journal)?;
-        finish_committed_cleanup(journal_path, &journal)?;
+        finish_committed_cleanup(journal_path, &mut journal)?;
         return Ok(Some(result));
     }
     validate_rollback_evidence(app, plan, &journal)?;
     let errors = rollback_journal(app, &paths, plan, &mut journal);
     if !errors.is_empty() {
-        return Err(
-            state_corrupt("interrupted convergence recovery failed").with_rollback_errors(errors)
-        );
+        return Err(CommandFailure::new(
+            ErrorCode::StateCorrupt,
+            "interrupted convergence recovery failed",
+        )
+        .with_rollback_errors(errors));
     }
+    super::registry_commit::terminalize_registry_index_attempts(&mut journal, false);
     journal.phase = TransactionPhase::RolledBackCleanupPending;
     save_journal(journal_path, &journal)?;
-    finish_committed_cleanup(journal_path, &journal)?;
+    finish_committed_cleanup(journal_path, &mut journal)?;
     Ok(None)
 }
 
-#[inline(never)]
 pub(super) fn validate_projection_guard(
     app: &App,
     plan: &SkillConvergencePlan,
     effect: &crate::core::convergence::ProjectionEffectPlan,
 ) -> std::result::Result<(), CommandFailure> {
     let path = Path::new(&effect.materialized_path);
-    let valid = if let Some(expected) = effect.materialized_tree_digest.as_deref() {
-        projection_view_digest(path, &effect.method)? == expected
+    if let Some(expected) = effect.materialized_tree_digest.as_deref() {
+        let live = projection_view_digest(path, &effect.method)?;
+        if live == expected {
+            return Ok(());
+        }
     } else {
         match fs::symlink_metadata(path) {
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => effect.effect == "create",
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound && effect.effect == "create" => {
+                return Ok(());
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
             Ok(metadata)
                 if effect.effect == "refresh"
                     && effect.method == "symlink"
                     && metadata.file_type().is_symlink()
                     && projection_path_is_safe_symlink(path, &app.ctx.skill_path(&plan.skill)) =>
             {
-                true
+                return Ok(());
             }
             Err(err) => return Err(map_io(err)),
-            Ok(_) => false,
+            Ok(_) => {}
         }
-    };
-    if valid {
-        Ok(())
-    } else {
-        Err(stale(
-            "projection bytes or path kind changed after planning",
-            "PLAN_PROJECTION_DRIFT",
-        ))
     }
+    Err(stale(
+        "projection bytes or path kind changed after planning",
+        "PLAN_PROJECTION_DRIFT",
+    ))
 }
 
 pub(super) fn apply_output(
@@ -210,25 +255,43 @@ pub(super) fn restore_projections_for_resume(
 ) -> std::result::Result<(), CommandFailure> {
     let mut errors = validate_transaction_artifacts(journal);
     if !errors.is_empty() {
-        return Err(committed_source_recovery_failure(errors));
+        return Err(CommandFailure::new(
+            ErrorCode::StateCorrupt,
+            "committed source recovery artifact validation failed",
+        )
+        .with_rollback_errors(errors));
     }
     if plan.registry.initialized
-        && let Err(err) = paths.save_projections(&journal.original_projections)
+        && let Err(err) = restore_registry_projections_if_owned(paths, journal)
     {
-        push_rollback_error(&mut errors, "restore_registry_projections", err);
+        push_rollback_error(&mut errors, "restore_registry_projections", err.message);
     }
     if !errors.is_empty() {
-        return Err(committed_source_recovery_failure(errors));
+        return Err(CommandFailure::new(
+            ErrorCode::StateCorrupt,
+            "failed to prepare committed source recovery",
+        )
+        .with_rollback_errors(errors));
     }
-    let restored = journal
-        .projections
-        .iter()
-        .map(|projection| projection.activated)
-        .collect::<Vec<_>>();
-    errors.extend(restore_activated_projections(journal));
-    clear_restored_projection_fingerprints(&mut journal.projections, &restored);
-    if !errors.is_empty() {
-        return Err(committed_source_recovery_failure(errors));
+    for index in (0..journal.projections.len()).rev() {
+        if !journal.projections[index].is_activated() {
+            continue;
+        }
+        if let Err(err) =
+            restore_projection_from_evidence(&journal.projections[index], &journal.plan_id)
+        {
+            push_rollback_error(&mut errors, "restore_projection_from_evidence", err.message);
+        } else {
+            journal.projections[index].mark_activated(false);
+            journal.projections[index].original_fingerprint = None;
+        }
+        if !errors.is_empty() {
+            return Err(CommandFailure::new(
+                ErrorCode::StateCorrupt,
+                "failed to prepare committed source recovery",
+            )
+            .with_rollback_errors(errors));
+        }
     }
     for projection in journal.projections.iter().rev() {
         cleanup_owned_dir(
@@ -238,36 +301,27 @@ pub(super) fn restore_projections_for_resume(
             &mut errors,
         );
         if !errors.is_empty() {
-            return Err(committed_source_recovery_failure(errors));
+            return Err(CommandFailure::new(
+                ErrorCode::StateCorrupt,
+                "failed to prepare committed source recovery",
+            )
+            .with_rollback_errors(errors));
         }
     }
     if errors.is_empty() {
         Ok(())
     } else {
-        Err(committed_source_recovery_failure(errors))
+        Err(CommandFailure::new(
+            ErrorCode::StateCorrupt,
+            "failed to prepare committed source recovery",
+        )
+        .with_rollback_errors(errors))
     }
-}
-
-fn clear_restored_projection_fingerprints(projections: &mut [ProjectionBackup], restored: &[bool]) {
-    for (projection, was_restored) in projections.iter_mut().zip(restored) {
-        if *was_restored && !projection.activated {
-            projection.original_fingerprint = None;
-        }
-    }
-}
-
-#[inline(never)]
-fn committed_source_recovery_failure(errors: Vec<Value>) -> CommandFailure {
-    CommandFailure::new(
-        ErrorCode::StateCorrupt,
-        "failed to prepare committed source recovery",
-    )
-    .with_rollback_errors(errors)
 }
 
 pub(super) fn cleanup_declared_artifacts(
     journal_path: &Path,
-    journal: &TransactionJournal,
+    journal: &mut TransactionJournal,
 ) -> Vec<Value> {
     let mut errors = Vec::new();
     if std::env::var("LOOM_CLEANUP_FAULT_INJECT").ok().as_deref()
@@ -284,36 +338,17 @@ pub(super) fn cleanup_declared_artifacts(
     if !errors.is_empty() {
         return errors;
     }
-    for projection in journal.projections.iter().rev() {
-        cleanup_owned_dir(
-            Path::new(&projection.staging_owner),
-            &journal.plan_id,
-            &projection.owner_proof,
-            &mut errors,
-        );
-        if !errors.is_empty() {
-            return errors;
+    errors.extend(retain_declared_attempts(journal));
+    if errors.is_empty() {
+        super::registry_commit::terminalize_registry_index_attempts(journal, false);
+        journal.phase = TransactionPhase::RolledBackArtifactsRetained;
+        if let Err(err) = save_journal(journal_path, journal) {
+            push_rollback_error(
+                &mut errors,
+                "persist_declared_retained_artifacts",
+                err.message,
+            );
         }
-    }
-    if let Some(path) = journal.source_staging.as_deref()
-        && let Some(owner) = Path::new(path).parent()
-        && let Some(proof) = journal.source_owner_proof.as_deref()
-    {
-        cleanup_owned_dir(owner, &journal.plan_id, proof, &mut errors);
-        if !errors.is_empty() {
-            return errors;
-        }
-    }
-    cleanup_owned_dir(
-        Path::new(&journal.artifact_root),
-        &journal.plan_id,
-        &journal.artifact_owner_proof,
-        &mut errors,
-    );
-    if errors.is_empty()
-        && let Err(err) = remove_path_if_exists(journal_path)
-    {
-        push_rollback_error(&mut errors, "remove_transaction_journal", err);
     }
     errors
 }
@@ -325,19 +360,21 @@ fn validate_journal(
     journal: &TransactionJournal,
 ) -> std::result::Result<(), CommandFailure> {
     let tx_dir = app.ctx.state_dir.join("transactions");
-    let artifact_root = tx_dir.join(format!("{}-artifacts", plan.plan_id));
     let expected_journal = tx_dir.join(format!("convergence-{}.json", plan.skill));
-    let source_stage = app.ctx.skills_dir.join(format!(
-        ".loom-convergence-source-stage-{}.owner/stage",
-        plan.plan_id
-    ));
     let mut valid = journal.plan_id == plan.plan_id
         && journal.skill == plan.skill
         && journal.previous_head == plan.source.registry_head
         && journal_path == expected_journal
-        && Path::new(&journal.artifact_root) == artifact_root
+        && generated_owned_path_matches(
+            Path::new(&journal.artifact_root),
+            &tx_dir,
+            &format!("{}-artifacts-", plan.plan_id),
+            "",
+        )
         && owner_proof_is_valid(&plan.plan_id, &journal.artifact_owner_proof)
-        && Path::new(&journal.index_backup) == artifact_root.join("index")
+        && ownership_attempts_match_journal(journal)
+        && super::registry_commit::registry_index_attempts_valid(journal)
+        && Path::new(&journal.index_backup) == Path::new(&journal.artifact_root).join("index")
         && journal.projections.len() == plan.projections.len();
     let previous_projections = gitops::run_git(
         &app.ctx,
@@ -364,15 +401,25 @@ fn validate_journal(
                 && journal.source_activated_fingerprint.is_none()
         }
         ConvergenceInputDirection::Projection => {
-            journal.source_staging.as_deref() == source_stage.to_str()
-                && journal
-                    .source_owner_proof
-                    .as_deref()
-                    .is_some_and(|proof| owner_proof_is_valid(&plan.plan_id, proof))
+            journal.source_staging.as_deref().is_some_and(|staging| {
+                Path::new(staging).parent().is_some_and(|owner| {
+                    generated_owned_path_matches(
+                        owner,
+                        &app.ctx.skills_dir,
+                        &format!(".loom-convergence-source-stage-{}-", plan.plan_id),
+                        ".owner",
+                    )
+                }) && Path::new(staging)
+                    .file_name()
+                    .is_some_and(|name| name == "stage")
+            }) && journal
+                .source_owner_proof
+                .as_deref()
+                .is_some_and(|proof| owner_proof_is_valid(&plan.plan_id, proof))
                 && backup_matches(
                     journal.source_backup.as_ref(),
                     &app.ctx.skill_path(&plan.skill),
-                    &artifact_root.join("source"),
+                    &Path::new(&journal.artifact_root).join("source"),
                 )
                 && (journal.phase == TransactionPhase::Preparing
                     || journal
@@ -388,37 +435,45 @@ fn validate_journal(
         .enumerate()
     {
         let materialized = Path::new(&effect.materialized_path);
-        let owner = materialized.parent().unwrap_or(Path::new("")).join(format!(
-            ".loom-projection-stage-{}-{index}.owner",
-            plan.plan_id
-        ));
+        let owner_valid = materialized.parent().is_some_and(|parent| {
+            generated_owned_path_matches(
+                Path::new(&artifact.staging_owner),
+                parent,
+                &format!(".loom-projection-stage-{}-{index}-", plan.plan_id),
+                ".owner",
+            )
+        });
         let backup_valid = match effect.effect.as_str() {
             "refresh" => backup_matches(
                 artifact.backup.as_ref(),
                 materialized,
-                &artifact_root.join(format!("projection-{index}")),
+                &Path::new(&journal.artifact_root).join(format!("projection-{index}")),
             ),
             "create" => artifact.backup.is_none(),
             _ => false,
         };
         valid &= artifact.materialized_path == effect.materialized_path
-            && Path::new(&artifact.staging_owner) == owner
-            && Path::new(&artifact.staging_path) == owner.join("stage")
+            && owner_valid
+            && Path::new(&artifact.staging_path)
+                == Path::new(&artifact.staging_owner).join("stage")
             && owner_proof_is_valid(&plan.plan_id, &artifact.owner_proof)
             && (journal.phase == TransactionPhase::Preparing
-                || artifact
-                    .activated_fingerprint
-                    .as_deref()
-                    .is_some_and(valid_sha256_digest))
+                || artifact.fingerprint().is_some_and(valid_sha256_digest))
             && match effect.effect.as_str() {
                 "refresh" => {
-                    journal.phase == TransactionPhase::Preparing
+                    (journal.phase == TransactionPhase::Preparing
                         || artifact
                             .original_fingerprint
                             .as_deref()
-                            .is_some_and(valid_sha256_digest)
+                            .is_some_and(valid_sha256_digest))
+                        && (journal.phase == TransactionPhase::Preparing
+                            || artifact
+                                .backup
+                                .as_ref()
+                                .and_then(|backup| backup["backup_digest"].as_str())
+                                .is_some_and(valid_sha256_digest))
                 }
-                "create" => artifact.original_fingerprint.is_none(),
+                "create" => artifact.backup.is_none() && artifact.original_fingerprint.is_none(),
                 _ => false,
             }
             && backup_valid;
@@ -427,14 +482,15 @@ fn validate_journal(
         == journal
             .projections
             .iter()
-            .filter(|projection| projection.activated)
+            .filter(|projection| projection.is_activated())
             .count();
     valid &= validate_phase_invariants(journal);
     valid &= validate_expected_projections(plan, journal);
     if valid {
         Ok(())
     } else {
-        Err(state_corrupt(
+        Err(CommandFailure::new(
+            ErrorCode::StateCorrupt,
             "convergence journal does not match the reviewed plan",
         ))
     }
@@ -444,6 +500,24 @@ fn valid_sha256_digest(value: &str) -> bool {
     value.len() == 71
         && value.starts_with("sha256:")
         && value[7..].bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+fn generated_owned_path_matches(path: &Path, parent: &Path, prefix: &str, suffix: &str) -> bool {
+    if path.parent() != Some(parent) {
+        return false;
+    }
+    let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+        return false;
+    };
+    let Some(generation) = name
+        .strip_prefix(prefix)
+        .and_then(|name| name.strip_suffix(suffix))
+    else {
+        return false;
+    };
+    uuid::Uuid::parse_str(generation)
+        .ok()
+        .is_some_and(|uuid| uuid.hyphenated().to_string() == generation)
 }
 
 fn validate_phase_invariants(journal: &TransactionJournal) -> bool {
@@ -465,7 +539,9 @@ fn validate_phase_invariants(journal: &TransactionJournal) -> bool {
         journal.phase == TransactionPhase::Preparing || journal.index_backup_digest.is_some();
     let rollback_evidence = matches!(
         journal.phase,
-        TransactionPhase::RollingBack | TransactionPhase::RolledBackCleanupPending
+        TransactionPhase::RollingBack
+            | TransactionPhase::RolledBackCleanupPending
+            | TransactionPhase::RolledBackArtifactsRetained
     ) == (journal.rollback_head.is_some()
         && journal.rollback_index_digest.is_some());
     let registry_evidence =
@@ -473,7 +549,9 @@ fn validate_phase_invariants(journal: &TransactionJournal) -> bool {
     let registry_evidence_phase = journal.registry_commit.is_none()
         || matches!(
             journal.phase,
-            TransactionPhase::CommittingRegistry | TransactionPhase::CommittedCleanupPending
+            TransactionPhase::CommittingRegistry
+                | TransactionPhase::CommittedCleanupPending
+                | TransactionPhase::CommittedArtifactsRetained
         );
     source_relation
         && index_evidence
@@ -499,10 +577,11 @@ fn validate_phase_invariants(journal: &TransactionJournal) -> bool {
                     && journal.expected_projections.is_some()
                     && journal.result.is_none()
             }
-            TransactionPhase::RollingBack | TransactionPhase::RolledBackCleanupPending => {
-                journal.result.is_none()
-            }
-            TransactionPhase::CommittedCleanupPending => {
+            TransactionPhase::RollingBack
+            | TransactionPhase::RolledBackCleanupPending
+            | TransactionPhase::RolledBackArtifactsRetained => journal.result.is_none(),
+            TransactionPhase::CommittedCleanupPending
+            | TransactionPhase::CommittedArtifactsRetained => {
                 journal.source_head.is_some()
                     && journal.installed_projections <= count
                     && journal.expected_projections.is_some()
@@ -567,10 +646,9 @@ fn prove_registry_boundary(
     journal_path: &Path,
     journal: &mut TransactionJournal,
 ) -> std::result::Result<Option<String>, CommandFailure> {
-    let source_head = journal
-        .source_head
-        .as_deref()
-        .ok_or_else(|| state_corrupt("journal is missing source head"))?;
+    let source_head = journal.source_head.as_deref().ok_or_else(|| {
+        CommandFailure::new(ErrorCode::StateCorrupt, "journal is missing source head")
+    })?;
     let head = gitops::head(&app.ctx).map_err(map_git)?;
     if !plan.registry.initialized {
         if RegistryStatePaths::from_app_context(&app.ctx).exists() || head != source_head {
@@ -596,7 +674,7 @@ fn prove_registry_boundary(
             &format!("skill({}): record convergence projections", plan.skill),
             |path| path == "state/registry/projections.json",
         )?;
-        super::registry_commit::align_registry_index(app, plan, journal, &head)?;
+        super::registry_commit::align_registry_index(app, plan, journal_path, journal, &head)?;
     }
     Ok(Some(head))
 }
@@ -633,10 +711,12 @@ pub(super) fn validate_registry_result(
 ) -> std::result::Result<(), CommandFailure> {
     let paths = RegistryStatePaths::from_app_context(&app.ctx);
     let snapshot = paths.load_snapshot().map_err(map_registry_state)?;
-    let expected = journal
-        .expected_projections
-        .as_ref()
-        .ok_or_else(|| state_corrupt("journal is missing expected projections"))?;
+    let expected = journal.expected_projections.as_ref().ok_or_else(|| {
+        CommandFailure::new(
+            ErrorCode::StateCorrupt,
+            "journal is missing expected projections",
+        )
+    })?;
     if snapshot.projections != *expected {
         return Err(recovery_stale(
             "live registry differs from transaction evidence",
@@ -689,7 +769,6 @@ fn committed_result_with_registry(
     })
 }
 
-#[inline(never)]
 pub(super) fn recovery_stale(message: &str) -> CommandFailure {
     plan_failure(
         ErrorCode::DependencyConflict,
@@ -699,48 +778,4 @@ pub(super) fn recovery_stale(message: &str) -> CommandFailure {
         vec!["inspect and resolve the interrupted convergence journal".to_string()],
         None,
     )
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn projection(label: &str, activated: bool) -> ProjectionBackup {
-        ProjectionBackup {
-            materialized_path: label.to_string(),
-            backup: Some(Value::Null),
-            staging_owner: format!("{label}-owner"),
-            owner_proof: format!("{label}-proof"),
-            staging_path: format!("{label}-stage"),
-            activated_fingerprint: Some(format!("{label}-activated")),
-            activated,
-            original_fingerprint: Some(format!("{label}-original")),
-        }
-    }
-
-    #[test]
-    fn resume_clears_only_successfully_restored_projection_fingerprints() {
-        let mut projections = vec![
-            projection("symlink-noop", false),
-            projection("copy-restored", true),
-            projection("copy-failed", true),
-        ];
-        let restored = projections
-            .iter()
-            .map(|projection| projection.activated)
-            .collect::<Vec<_>>();
-        projections[1].activated = false;
-
-        clear_restored_projection_fingerprints(&mut projections, &restored);
-
-        assert_eq!(
-            projections[0].original_fingerprint.as_deref(),
-            Some("symlink-noop-original")
-        );
-        assert!(projections[1].original_fingerprint.is_none());
-        assert_eq!(
-            projections[2].original_fingerprint.as_deref(),
-            Some("copy-failed-original")
-        );
-    }
 }

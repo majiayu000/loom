@@ -155,7 +155,7 @@ fn filesystem_snapshot(root: &Path) -> BTreeMap<String, Vec<u8>> {
     target_os = "android"
 ))]
 #[test]
-fn symlink_copy_materialize_convergence_mode_has_no_child_persistence() {
+fn symlink_copy_materialize_convergence_mode_retains_transaction_artifacts() {
     let fixture = convergence_projection_fixture();
     let head_before = gitops::head(&fixture.ctx).expect("head before");
     let registry_before = registry_snapshot(&fixture.paths);
@@ -256,7 +256,8 @@ fn symlink_copy_materialize_convergence_mode_has_no_child_persistence() {
                     .then_some(path)
             })
             .collect::<Vec<_>>();
-        assert!(transaction_artifacts.is_empty());
+        assert_eq!(transaction_artifacts.len(), 1);
+        assert!(transaction_artifacts[0].join("stale.txt").is_file());
     }
 
     assert_eq!(gitops::head(&fixture.ctx).expect("head after"), head_before);
@@ -434,6 +435,35 @@ fn observation_failure_claims_and_preserves_changed_caller_staging() {
 }
 
 #[test]
+fn validated_staging_claim_retains_a_foreign_replacement() {
+    let fixture = convergence_projection_fixture();
+    let staging = fixture.root.join("live/copy/validated-stage");
+    fs::create_dir_all(&staging).expect("create validated staging");
+    fs::write(staging.join("details.txt"), "transaction\n").expect("write staging");
+    let digest = projection_ownership_fingerprint(&staging).expect("staging fingerprint");
+    let ownership = StagingOwnership::new(staging.clone(), digest);
+    let saved = staging.with_file_name("validated-stage.saved-transaction");
+
+    ownership
+        .claim_and_retain_after_validation(|claim| {
+            fs::rename(claim, &saved)?;
+            fs::create_dir(claim)?;
+            fs::write(claim.join("external.txt"), "external\n")
+        })
+        .expect("retention must not touch the replacement");
+
+    let claim = staging.with_file_name("validated-stage.staging-cleanup-claim");
+    assert_eq!(
+        fs::read_to_string(claim.join("external.txt")).expect("foreign replacement"),
+        "external\n"
+    );
+    assert_eq!(
+        fs::read_to_string(saved.join("details.txt")).expect("retained transaction bytes"),
+        "transaction\n"
+    );
+}
+
+#[test]
 fn convergence_activation_preserves_destination_created_after_prepare() {
     let fixture = convergence_projection_fixture();
     let projection_path = fixture.root.join("live/copy/demo");
@@ -461,10 +491,12 @@ fn convergence_activation_preserves_destination_created_after_prepare() {
         "concurrent\n"
     );
     assert!(!projection_path.join("details.txt").exists());
-    assert!(
-        !staging_path.exists(),
-        "failed activation must clean staging"
-    );
+    assert!(!staging_path.exists());
+    let claim = staging_path.with_file_name(format!(
+        "{}.prepared-cleanup-claim",
+        staging_path.file_name().unwrap().to_string_lossy()
+    ));
+    assert!(claim.join("details.txt").is_file());
 }
 
 #[test]
@@ -529,7 +561,7 @@ fn convergence_activation_rollback_restores_typed_artifact() {
 }
 
 #[test]
-fn abandoned_prepared_projection_cleans_staging_on_drop() {
+fn abandoned_prepared_projection_retains_claim_on_drop() {
     let fixture = convergence_projection_fixture();
     let projection_path = fixture.root.join("live/copy/demo");
     let output = execute_projection(
@@ -546,6 +578,11 @@ fn abandoned_prepared_projection_cleans_staging_on_drop() {
     drop(prepared);
 
     assert!(!staging_path.exists());
+    let claim = staging_path.with_file_name(format!(
+        "{}.prepared-cleanup-claim",
+        staging_path.file_name().unwrap().to_string_lossy()
+    ));
+    assert!(claim.join("details.txt").is_file());
     assert!(!projection_path.exists());
 }
 

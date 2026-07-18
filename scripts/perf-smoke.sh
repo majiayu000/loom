@@ -3,7 +3,8 @@ set -euo pipefail
 
 bin="${1:-target/release/loom}"
 if [[ ! -x "$bin" ]]; then
-  cargo build --release --locked
+  perf_rustflags="${LOOM_PERF_RUSTFLAGS:--Cllvm-args=-enable-machine-outliner=always}"
+  RUSTFLAGS="$perf_rustflags ${RUSTFLAGS:-}" cargo build --release --locked
 fi
 
 # Hard ceiling: 6260 KiB. The durable plan/apply protocol, offline eval

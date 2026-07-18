@@ -285,12 +285,28 @@ impl ProjectionRollbackArtifact {
                 ));
             }
         };
-        validate_owned_digest(
+        if !artifact_path
+            .try_exists()
+            .map_err(map_io)
+            .map_err(|err| with_recovery_details(err, self))?
+        {
+            return Ok(());
+        }
+        if let Err(validation_error) = validate_owned_digest(
             &artifact_path,
             &expected_digest,
             "clean projection rollback artifact",
             self,
-        )?;
+        ) {
+            if !artifact_path
+                .try_exists()
+                .map_err(map_io)
+                .map_err(|err| with_recovery_details(err, self))?
+            {
+                return Ok(());
+            }
+            return Err(validation_error);
+        }
         remove_path_if_exists(&artifact_path)
             .map_err(map_io)
             .map_err(|err| with_recovery_details(err, self))

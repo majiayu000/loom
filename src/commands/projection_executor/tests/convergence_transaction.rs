@@ -441,6 +441,61 @@ fn finalize_rejects_rollback_pending_cleanup() {
     target_os = "android"
 ))]
 #[test]
+fn rollback_accepts_already_removed_pending_cleanup_artifact() {
+    for replace_existing in [false, true] {
+        let fixture = convergence_projection_fixture();
+        let projection_path = fixture.root.join("live/copy/demo");
+        if replace_existing {
+            fs::create_dir_all(&projection_path).expect("create existing projection");
+            fs::write(projection_path.join("keep.txt"), "keep\n")
+                .expect("write existing projection");
+        }
+        let output = execute_projection(
+            &fixture.ctx,
+            &fixture.paths,
+            &fixture.snapshot,
+            execution_input(&fixture, ProjectionMethod::Copy, projection_path.clone()),
+        )
+        .expect("prepare projection");
+        let mut activated =
+            activate_prepared_projection(&fixture.ctx, output.prepared.expect("staging artifact"))
+                .expect("activate projection");
+        let evidence = activated.rollback_evidence();
+        let artifact_path = PathBuf::from(
+            evidence
+                .get(if replace_existing {
+                    "backup_path"
+                } else {
+                    "rollback_path"
+                })
+                .and_then(Value::as_str)
+                .expect("rollback artifact path"),
+        );
+        activated.fail_cleanup_once_for_test();
+        activated
+            .rollback()
+            .expect_err("rollback cleanup fault must preserve retry state");
+        fs::remove_dir_all(&artifact_path).expect("simulate external artifact cleanup");
+
+        activated
+            .rollback()
+            .expect("missing pending cleanup artifact is already clean");
+
+        assert!(!artifact_path.exists());
+        let cleared_error = activated
+            .rollback()
+            .expect_err("successful retry must clear rollback state");
+        assert_eq!(cleared_error.code, ErrorCode::InternalError);
+    }
+}
+
+#[cfg(any(
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "linux",
+    target_os = "android"
+))]
+#[test]
 fn activation_rejects_live_change_after_prepare() {
     let fixture = convergence_projection_fixture();
     let projection_path = fixture.root.join("live/copy/demo");

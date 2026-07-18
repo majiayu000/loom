@@ -45,12 +45,12 @@ pub(crate) enum ProjectionExecutionContext {
 mod convergence;
 #[cfg(test)]
 mod tests;
-use convergence::projection_ownership_fingerprint;
 #[allow(unused_imports)]
 pub(crate) use convergence::{
     PreparedProjection, ProjectionActivationOutput, activate_prepared_projection,
     discard_prepared_projection,
 };
+use convergence::{map_ownership_fingerprint_error, projection_ownership_fingerprint};
 
 pub(crate) struct ProjectionExecutionInput {
     pub(crate) context: ProjectionExecutionContext,
@@ -426,10 +426,10 @@ fn materialize_projection(
     {
         Some(
             projection_ownership_fingerprint(&input.materialized_path).map_err(|err| {
-                CommandFailure::new(
-                    ErrorCode::ProjectionConflict,
+                map_ownership_fingerprint_error(
+                    err,
                     format!(
-                        "failed to fingerprint existing projection '{}': {err}",
+                        "failed to fingerprint existing projection '{}'",
                         input.materialized_path.display()
                     ),
                 )
@@ -477,10 +477,10 @@ fn materialize_projection(
         let staging_digest = projection_ownership_fingerprint(&staging_path).map_err(|err| {
             let mut cleanup_errors = Vec::new();
             cleanup_projection_staging(&staging_path, &mut cleanup_errors);
-            CommandFailure::new(
-                ErrorCode::ProjectionConflict,
+            map_ownership_fingerprint_error(
+                err,
                 format!(
-                    "failed to fingerprint convergence staging projection '{}': {err}",
+                    "failed to fingerprint convergence staging projection '{}'",
                     projection.instance_id
                 ),
             )

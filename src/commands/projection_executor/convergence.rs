@@ -1,14 +1,8 @@
-use std::ffi::OsStr;
-use std::fs;
-use std::io::Read;
 use std::path::{Path, PathBuf};
 
-use anyhow::Context;
 use serde_json::{Value, json};
-use walkdir::WalkDir;
 
 use crate::fs_util::{exchange_paths_atomic, remove_path_if_exists, rename_no_replace_atomic};
-use crate::sha256::{Sha256, to_hex};
 use crate::state::AppContext;
 use crate::state_model::RegistryProjectionInstance;
 use crate::types::ErrorCode;
@@ -17,6 +11,9 @@ use super::super::CommandFailure;
 use super::super::helpers::map_io;
 use super::super::projections::{apply_projection_observation, observe_projection};
 use super::super::skill_cmds::shared::push_rollback_error;
+
+mod ownership;
+pub(super) use ownership::{map_ownership_fingerprint_error, projection_ownership_fingerprint};
 
 struct PreparedProjectionParts {
     projection: RegistryProjectionInstance,
@@ -441,9 +438,9 @@ fn validate_prepared_digest(
     label: &str,
 ) -> std::result::Result<(), CommandFailure> {
     let actual_digest = projection_ownership_fingerprint(path).map_err(|err| {
-        CommandFailure::new(
-            ErrorCode::ProjectionConflict,
-            format!("failed to validate {label} '{}': {err}", path.display()),
+        map_ownership_fingerprint_error(
+            err,
+            format!("failed to validate {label} '{}'", path.display()),
         )
     })?;
     if actual_digest == expected_digest {
@@ -469,10 +466,10 @@ fn validate_owned_digest(
 ) -> std::result::Result<(), CommandFailure> {
     let actual_digest = projection_ownership_fingerprint(path).map_err(|err| {
         with_recovery_details(
-            CommandFailure::new(
-                ErrorCode::ProjectionConflict,
+            map_ownership_fingerprint_error(
+                err,
                 format!(
-                    "cannot {operation} because '{}' is unavailable or unreadable: {err}",
+                    "cannot {operation} because '{}' is unavailable or unreadable",
                     path.display()
                 ),
             ),
@@ -507,180 +504,6 @@ fn cleanup_prepare_failure(err: CommandFailure, parts: &PreparedProjectionParts)
         );
     }
     err.with_rollback_errors(cleanup_errors)
-}
-
-pub(super) fn projection_ownership_fingerprint(path: &Path) -> anyhow::Result<String> {
-    let mut entries = WalkDir::new(path)
-        .follow_links(false)
-        .sort_by_file_name()
-        .into_iter()
-        .map(|entry| entry.with_context(|| format!("walk {}", path.display())))
-        .collect::<anyhow::Result<Vec<_>>>()?;
-    entries.sort_by(|left, right| left.path().cmp(right.path()));
-
-    let mut hasher = Sha256::new();
-    hasher.update(b"loom-projection-ownership-v1\0");
-    for entry in entries {
-        let full = entry.path();
-        let relative = full
-            .strip_prefix(path)
-            .with_context(|| format!("strip {}", path.display()))?;
-        hash_os_str(&mut hasher, relative.as_os_str());
-
-        let metadata =
-            fs::symlink_metadata(full).with_context(|| format!("stat {}", full.display()))?;
-        let file_type = metadata.file_type();
-        if file_type.is_dir() {
-            hasher.update(b"directory\0");
-        } else if file_type.is_symlink() {
-            hasher.update(b"symlink\0");
-            hash_os_str(
-                &mut hasher,
-                fs::read_link(full)
-                    .with_context(|| format!("readlink {}", full.display()))?
-                    .as_os_str(),
-            );
-        } else if file_type.is_file() {
-            hasher.update(b"file\0");
-            let mut file =
-                fs::File::open(full).with_context(|| format!("open {}", full.display()))?;
-            let mut bytes = Vec::new();
-            file.read_to_end(&mut bytes)
-                .with_context(|| format!("read {}", full.display()))?;
-            hasher.update(&(bytes.len() as u64).to_be_bytes());
-            hasher.update(&bytes);
-        } else {
-            hasher.update(b"special\0");
-        }
-        hash_ownership_metadata(&mut hasher, full, &metadata, file_type.is_file())?;
-        hasher.update(b"entry-end\0");
-    }
-    Ok(format!("sha256:{}", to_hex(&hasher.finalize())))
-}
-
-#[cfg(unix)]
-fn hash_os_str(hasher: &mut Sha256, value: &OsStr) {
-    use std::os::unix::ffi::OsStrExt;
-
-    let bytes = value.as_bytes();
-    hasher.update(&(bytes.len() as u64).to_be_bytes());
-    hasher.update(bytes);
-}
-
-#[cfg(windows)]
-fn hash_os_str(hasher: &mut Sha256, value: &OsStr) {
-    use std::os::windows::ffi::OsStrExt;
-
-    let words = value.encode_wide().collect::<Vec<_>>();
-    hasher.update(&(words.len() as u64).to_be_bytes());
-    for word in words {
-        hasher.update(&word.to_be_bytes());
-    }
-}
-
-#[cfg(unix)]
-fn hash_ownership_metadata(
-    hasher: &mut Sha256,
-    path: &Path,
-    metadata: &fs::Metadata,
-    include_write_time: bool,
-) -> anyhow::Result<()> {
-    use std::os::unix::fs::MetadataExt;
-
-    for value in [
-        metadata.dev(),
-        metadata.ino(),
-        u64::from(metadata.mode()),
-        metadata.nlink(),
-        u64::from(metadata.uid()),
-        u64::from(metadata.gid()),
-        metadata.rdev(),
-        metadata.size(),
-    ] {
-        hasher.update(&value.to_be_bytes());
-    }
-    if include_write_time {
-        hasher.update(&metadata.mtime().to_be_bytes());
-        hasher.update(&metadata.mtime_nsec().to_be_bytes());
-    }
-    let mut names = xattr::list(path)
-        .with_context(|| format!("list xattrs {}", path.display()))?
-        .collect::<Vec<_>>();
-    names.sort();
-    for name in names {
-        hasher.update(b"xattr\0");
-        hash_os_str(hasher, &name);
-        let value = xattr::get(path, &name)
-            .with_context(|| format!("read xattr {:?} on {}", name, path.display()))?
-            .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "xattr {:?} disappeared while fingerprinting {}",
-                    name,
-                    path.display()
-                )
-            })?;
-        hasher.update(&(value.len() as u64).to_be_bytes());
-        hasher.update(&value);
-    }
-    Ok(())
-}
-
-#[cfg(windows)]
-fn hash_ownership_metadata(
-    hasher: &mut Sha256,
-    path: &Path,
-    metadata: &fs::Metadata,
-    include_write_time: bool,
-) -> anyhow::Result<()> {
-    use std::os::windows::fs::MetadataExt;
-
-    for value in [
-        u64::from(metadata.file_attributes()),
-        metadata.creation_time(),
-        metadata.file_size(),
-    ] {
-        hasher.update(&value.to_be_bytes());
-    }
-    let (volume_serial, file_id) = windows_file_identity(path)?;
-    hasher.update(&volume_serial.to_be_bytes());
-    hasher.update(&file_id);
-    if include_write_time {
-        hasher.update(&metadata.last_write_time().to_be_bytes());
-    }
-    Ok(())
-}
-
-#[cfg(windows)]
-fn windows_file_identity(path: &Path) -> anyhow::Result<(u64, [u8; 16])> {
-    use std::fs::OpenOptions;
-    use std::os::windows::fs::OpenOptionsExt;
-    use std::os::windows::io::AsRawHandle;
-    use windows_sys::Win32::Storage::FileSystem::{
-        FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_ID_INFO, FileIdInfo,
-        GetFileInformationByHandleEx,
-    };
-
-    let file = OpenOptions::new()
-        .access_mode(0)
-        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
-        .open(path)
-        .with_context(|| format!("open identity handle {}", path.display()))?;
-    let mut identity = FILE_ID_INFO::default();
-    // SAFETY: the handle stays open for the call, and the output pointer and
-    // byte length describe a live `FILE_ID_INFO` value.
-    let succeeded = unsafe {
-        GetFileInformationByHandleEx(
-            file.as_raw_handle(),
-            FileIdInfo,
-            (&raw mut identity).cast(),
-            std::mem::size_of::<FILE_ID_INFO>() as u32,
-        )
-    };
-    if succeeded == 0 {
-        return Err(std::io::Error::last_os_error())
-            .with_context(|| format!("read file identity {}", path.display()));
-    }
-    Ok((identity.VolumeSerialNumber, identity.FileId.Identifier))
 }
 
 fn with_recovery_details(

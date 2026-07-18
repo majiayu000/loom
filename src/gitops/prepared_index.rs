@@ -214,8 +214,7 @@ fn create_prepared_commit_inner(
     })();
     if retain_index {
         if result.is_ok() {
-            fs::File::open(commit_index)?.sync_all()?;
-            crate::fs_util::sync_parent_directory(commit_index)?;
+            crate::fs_util::sync_file_and_parent(commit_index)?;
         }
         return result;
     }

@@ -3,7 +3,7 @@ use super::ownership_state::{
     manifest_is_exact, manifest_raw,
 };
 use super::*;
-use crate::fs_util::{paths_share_filesystem, sync_parent_directory};
+use crate::fs_util::{paths_share_filesystem, sync_directory, sync_parent_directory};
 use std::fs::OpenOptions;
 use std::io::Write;
 
@@ -122,6 +122,7 @@ pub(super) fn activate_owned_dir(
                 let manifest =
                     manifest_raw(&journal.plan_id, &destination.display().to_string(), proof)?;
                 write_new_synced(&candidate.join(OWNERSHIP_MANIFEST), manifest.trim_end())?;
+                sync_directory(&candidate).map_err(map_io)?;
                 sync_parent_directory(&candidate).map_err(map_io)?;
                 journal.ownership_attempts[index].state = OwnershipAttemptState::Ready;
                 save_journal(journal_path, journal)?;

@@ -255,39 +255,54 @@ pub fn write_atomic_bytes(path: &Path, contents: &[u8]) -> io::Result<()> {
     sync_parent_directory(path)
 }
 
-/// Persist the directory entry containing `path` after a create or rename.
+/// Flush a directory after creating entries within it.
 ///
-/// File synchronization alone does not make a newly published name durable.
-/// Unsupported platforms fail closed instead of claiming crash durability.
+/// Windows requires both backup semantics to obtain a directory handle and
+/// write access for `FlushFileBuffers`. Filesystems that cannot provide a
+/// flushable directory handle fail closed rather than claiming durability.
 #[cfg(unix)]
-pub fn sync_parent_directory(path: &Path) -> io::Result<()> {
-    let parent = path.parent().ok_or_else(|| {
-        io::Error::new(io::ErrorKind::InvalidInput, "path has no parent directory")
-    })?;
-    File::open(parent)?.sync_all()
+pub fn sync_directory(directory: &Path) -> io::Result<()> {
+    File::open(directory)?.sync_all()
 }
 
 #[cfg(windows)]
-pub fn sync_parent_directory(path: &Path) -> io::Result<()> {
+pub fn sync_directory(directory: &Path) -> io::Result<()> {
     use std::os::windows::fs::OpenOptionsExt;
+    use windows_sys::Win32::Foundation::GENERIC_WRITE;
     use windows_sys::Win32::Storage::FileSystem::FILE_FLAG_BACKUP_SEMANTICS;
 
-    let parent = path.parent().ok_or_else(|| {
-        io::Error::new(io::ErrorKind::InvalidInput, "path has no parent directory")
-    })?;
     OpenOptions::new()
-        .read(true)
+        .access_mode(GENERIC_WRITE)
         .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
-        .open(parent)?
+        .open(directory)?
         .sync_all()
 }
 
 #[cfg(not(any(unix, windows)))]
-pub fn sync_parent_directory(_path: &Path) -> io::Result<()> {
+pub fn sync_directory(_directory: &Path) -> io::Result<()> {
     Err(io::Error::new(
         io::ErrorKind::Unsupported,
-        "durable parent directory synchronization is unavailable",
+        "durable directory synchronization is unavailable",
     ))
+}
+
+/// Persist the directory entry containing `path` after a create or rename.
+///
+/// File synchronization alone does not make a newly published name durable.
+/// Unsupported filesystems and platforms fail closed.
+pub fn sync_parent_directory(path: &Path) -> io::Result<()> {
+    let parent = path.parent().ok_or_else(|| {
+        io::Error::new(io::ErrorKind::InvalidInput, "path has no parent directory")
+    })?;
+    sync_directory(parent)
+}
+
+/// Persist an existing file and the publication of its directory entry.
+///
+/// Windows requires a handle opened with write access for `FlushFileBuffers`.
+pub fn sync_file_and_parent(path: &Path) -> io::Result<()> {
+    OpenOptions::new().write(true).open(path)?.sync_all()?;
+    sync_parent_directory(path)
 }
 
 /// Return whether both existing paths resolve to entries on the same filesystem.
@@ -558,6 +573,16 @@ mod tests {
 
         assert!(paths_share_filesystem(&dir, &child)?);
         fs::remove_dir_all(&dir)
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn directory_sync_uses_a_flushable_handle() -> io::Result<()> {
+        let dir = temp_dir("sync-directory");
+        fs::write(dir.join("entry"), b"durable")?;
+
+        sync_directory(&dir)?;
+        fs::remove_dir_all(dir)
     }
 
     #[cfg(any(

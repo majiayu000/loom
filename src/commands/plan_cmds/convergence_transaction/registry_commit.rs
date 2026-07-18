@@ -381,10 +381,7 @@ fn registry_index_attempt_evidence_valid(attempt: &RegistryIndexAttempt) -> bool
 }
 
 fn sync_registry_index(path: &Path) -> std::result::Result<(), CommandFailure> {
-    fs::File::open(path)
-        .and_then(|file| file.sync_all())
-        .map_err(map_io)?;
-    crate::fs_util::sync_parent_directory(path).map_err(map_io)
+    crate::fs_util::sync_file_and_parent(path).map_err(map_io)
 }
 
 fn validate_index_install(

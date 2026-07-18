@@ -4,11 +4,6 @@ use super::recovery_evidence::{
     validate_mutated_surfaces, validate_rollback_evidence, validate_rolling_back_state,
 };
 use super::*;
-use std::fs::OpenOptions;
-use std::io::Write;
-
-const OWNER_FILE: &str = ".owner";
-const RESERVATION_PROOF_FILE: &str = ".reservation-owner";
 
 pub(super) fn interruption_fault_active() -> bool {
     matches!(
@@ -28,84 +23,9 @@ pub(super) fn interruption_fault_active() -> bool {
                 | "convergence_interrupt_after_projection_activation"
                 | "convergence_interrupt_after_projection_swap"
                 | "convergence_interrupt_before_registry_cas"
+                | "convergence_interrupt_after_reservation_pending_create"
         )
     )
-}
-
-pub(super) fn reserve_owned_dir(
-    path: &Path,
-    plan_id: &str,
-    reservation_proof: &str,
-) -> std::result::Result<(), CommandFailure> {
-    if !owner_proof_is_valid(plan_id, reservation_proof) {
-        return Err(CommandFailure::new(
-            ErrorCode::StateCorrupt,
-            "journal owner proof is invalid",
-        ));
-    }
-    let (reservation, staging) = reservation_paths(path, plan_id)?;
-    let mut token = OpenOptions::new()
-        .create_new(true)
-        .write(true)
-        .open(&reservation)
-        .map_err(|err| {
-            CommandFailure::new(
-                ErrorCode::StateCorrupt,
-                format!(
-                    "artifact reservation collision at {}: {err}",
-                    path.display()
-                ),
-            )
-        })?;
-    writeln!(token, "{reservation_proof}").map_err(map_io)?;
-    token.sync_all().map_err(map_io)?;
-    if let Err(err) = fs::create_dir(&staging) {
-        drop(token);
-        let mut cleanup_errors = Vec::new();
-        if let Err(cleanup_err) = fs::remove_file(&reservation) {
-            push_rollback_error(
-                &mut cleanup_errors,
-                "remove_failed_artifact_reservation_token",
-                cleanup_err,
-            );
-        }
-        return Err(CommandFailure::new(
-            ErrorCode::StateCorrupt,
-            format!("artifact staging collision at {}: {err}", staging.display()),
-        )
-        .with_rollback_errors(cleanup_errors));
-    }
-    let proof_path = staging.join(RESERVATION_PROOF_FILE);
-    let mut proof = OpenOptions::new()
-        .create_new(true)
-        .write(true)
-        .open(&proof_path)
-        .map_err(map_io)?;
-    writeln!(proof, "{reservation_proof}").map_err(map_io)?;
-    proof.sync_all().map_err(map_io)?;
-    maybe_skill_fault("convergence_interrupt_after_owner_root_creation")?;
-    let owner = staging.join(OWNER_FILE);
-    let mut file = OpenOptions::new()
-        .create_new(true)
-        .write(true)
-        .open(&owner)
-        .map_err(map_io)?;
-    writeln!(file, "{plan_id}").map_err(map_io)?;
-    file.sync_all().map_err(map_io)?;
-    maybe_skill_fault("convergence_interrupt_after_owner_marker_write")?;
-    if let Err(err) = rename_no_replace_atomic(&staging, path) {
-        let mut cleanup_errors = Vec::new();
-        cleanup_reservation(path, plan_id, reservation_proof, &mut cleanup_errors);
-        return Err(CommandFailure::new(
-            ErrorCode::StateCorrupt,
-            format!(
-                "artifact reservation collision at {}: {err}",
-                path.display()
-            ),
-        )
-        .with_rollback_errors(cleanup_errors));
-    }
-    fs::remove_file(&reservation).map_err(map_io)
 }
 
 pub(super) fn recover_journal(

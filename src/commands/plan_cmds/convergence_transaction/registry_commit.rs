@@ -26,6 +26,7 @@ pub(super) fn commit_convergence_registry(
     let commit_index = root.join("registry-commit-index");
     reset_owned_files([&base_index, &prepared_index, &commit_index])?;
     gitops::snapshot_index_to(&app.ctx, &base_index).map_err(map_git)?;
+    let base_index_digest = file_digest(&base_index)?;
     let changed =
         gitops::prepare_index_for_paths(&app.ctx, &base_index, &prepared_index, &[REGISTRY_PATH])
             .map_err(map_git)?;
@@ -60,6 +61,13 @@ pub(super) fn commit_convergence_registry(
             if actual != expected_index {
                 return Err(anyhow::anyhow!(
                     "prepared registry index changed after validation"
+                ));
+            }
+            let active =
+                active_index_digest(app).map_err(|error| anyhow::anyhow!(error.message))?;
+            if active != base_index_digest {
+                return Err(anyhow::anyhow!(
+                    "active Git index changed before registry index installation"
                 ));
             }
             let head = gitops::head(&app.ctx)?;
@@ -117,6 +125,7 @@ pub(super) fn align_registry_index(
     let prepared_index = root.join("registry-repair-index");
     reset_owned_files([&base_index, &prepared_index])?;
     gitops::snapshot_index_to(&app.ctx, &base_index).map_err(map_git)?;
+    let base_index_digest = file_digest(&base_index)?;
     gitops::prepare_index_for_paths(&app.ctx, &base_index, &prepared_index, &[REGISTRY_PATH])
         .map_err(map_git)?;
     let expected_index = file_digest(&prepared_index)?;
@@ -140,6 +149,13 @@ pub(super) fn align_registry_index(
             if actual != expected_index {
                 return Err(anyhow::anyhow!("recovered registry index lock changed"));
             }
+            let active =
+                active_index_digest(app).map_err(|error| anyhow::anyhow!(error.message))?;
+            if active != base_index_digest {
+                return Err(anyhow::anyhow!(
+                    "active Git index changed during registry lock recovery"
+                ));
+            }
             Ok(())
         })
         .map_err(map_git)?;
@@ -154,6 +170,12 @@ pub(super) fn align_registry_index(
         let actual = file_digest(candidate).map_err(|error| anyhow::anyhow!(error.message))?;
         if actual != expected_index {
             return Err(anyhow::anyhow!("registry repair index changed"));
+        }
+        let active = active_index_digest(app).map_err(|error| anyhow::anyhow!(error.message))?;
+        if active != base_index_digest {
+            return Err(anyhow::anyhow!(
+                "active Git index changed during registry index repair"
+            ));
         }
         Ok(())
     })

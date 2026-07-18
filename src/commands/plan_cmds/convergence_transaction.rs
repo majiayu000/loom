@@ -39,8 +39,8 @@ mod source_commit;
 mod source_recovery;
 use guards::{validate_guards, validate_recovery_routing};
 use ownership::{
-    cleanup_owned_dir, cleanup_reservation, owner_proof_is_valid, reservation_paths,
-    validate_owned_staging, validate_transaction_artifacts,
+    cleanup_owned_dir, owner_proof_is_valid, reserve_owned_dir, validate_owned_staging,
+    validate_transaction_artifacts,
 };
 use projection_recovery::{
     restore_projection_from_evidence, validate_projection_staging_fingerprint,

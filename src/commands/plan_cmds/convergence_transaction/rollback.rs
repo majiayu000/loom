@@ -48,28 +48,83 @@ pub(super) fn rollback_journal(
     if rollback_fault(&mut errors, "convergence_interrupt_after_source_restore") {
         return errors;
     }
-    match gitops::run_git_allow_failure(&app.ctx, &["reset", "--soft", &journal.previous_head]) {
-        Ok(output) if output.status.success() => {}
-        Ok(output) => push_rollback_error(
-            &mut errors,
-            "restore_head",
-            String::from_utf8_lossy(&output.stderr).trim(),
-        ),
-        Err(err) => push_rollback_error(&mut errors, "restore_head", err),
+    if let Err(err) = restore_head_if_owned(app, journal) {
+        push_rollback_error(&mut errors, "restore_head", err.message);
+        return errors;
     }
     if rollback_fault(&mut errors, "convergence_interrupt_after_reset")
         || rollback_fault(&mut errors, "convergence_interrupt_before_index_restore")
     {
         return errors;
     }
-    if let Err(err) = gitops::restore_index_from_backup(&app.ctx, Path::new(&journal.index_backup))
-    {
-        push_rollback_error(&mut errors, "restore_git_index", err);
+    if let Err(err) = restore_index_if_owned(app, journal) {
+        push_rollback_error(&mut errors, "restore_git_index", err.message);
     }
     if rollback_fault(&mut errors, "convergence_interrupt_after_index_restore") {
         return errors;
     }
     errors
+}
+
+fn restore_head_if_owned(
+    app: &App,
+    journal: &TransactionJournal,
+) -> std::result::Result<(), CommandFailure> {
+    let live = gitops::head(&app.ctx).map_err(map_git)?;
+    if live == journal.previous_head {
+        return Ok(());
+    }
+    if journal.rollback_head.as_deref() != Some(live.as_str()) {
+        return Err(CommandFailure::new(
+            ErrorCode::StateCorrupt,
+            "HEAD changed after rollback evidence was captured",
+        ));
+    }
+    gitops::move_head_if_unchanged(&app.ctx, &journal.previous_head, &live).map_err(map_git)
+}
+
+fn restore_index_if_owned(
+    app: &App,
+    journal: &TransactionJournal,
+) -> std::result::Result<(), CommandFailure> {
+    let original = journal.index_backup_digest.as_deref().ok_or_else(|| {
+        CommandFailure::new(
+            ErrorCode::StateCorrupt,
+            "transaction Git index backup digest is missing",
+        )
+    })?;
+    let live = active_index_digest(app)?;
+    if live == original {
+        return Ok(());
+    }
+    let rollback = journal.rollback_index_digest.as_deref().ok_or_else(|| {
+        CommandFailure::new(
+            ErrorCode::StateCorrupt,
+            "rollback Git index digest is missing",
+        )
+    })?;
+    if live != rollback {
+        return Err(CommandFailure::new(
+            ErrorCode::StateCorrupt,
+            "Git index changed after rollback evidence was captured",
+        ));
+    }
+    gitops::install_prepared_index_with_guard(&app.ctx, Path::new(&journal.index_backup), |_| {
+        let active = active_index_digest(app).map_err(|error| anyhow::anyhow!(error.message))?;
+        if active != rollback {
+            return Err(anyhow::anyhow!(
+                "active Git index changed before rollback installation"
+            ));
+        }
+        let head = gitops::head(&app.ctx)?;
+        if head != journal.previous_head {
+            return Err(anyhow::anyhow!(
+                "HEAD changed before rollback index installation"
+            ));
+        }
+        Ok(())
+    })
+    .map_err(map_git)
 }
 
 fn rollback_fault(errors: &mut Vec<Value>, fault: &str) -> bool {

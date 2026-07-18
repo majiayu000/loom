@@ -75,6 +75,85 @@ fn every_partial_rollback_boundary_recovers_without_losing_external_index_state(
 }
 
 #[test]
+fn rollback_retry_preserves_a_late_external_head() {
+    let fixture = projected_fixture();
+    fs::write(
+        fixture.root.path().join("skills/demo/details.txt"),
+        "rollback external head\n",
+    )
+    .expect("source edit");
+    let (output, plan) = plan_converge(&fixture, &[]);
+    assert!(output.status.success(), "plan failed: {plan}");
+    let key = "rollback-late-head";
+    let (output, interrupted) = apply_with_rollback_fault(
+        &fixture,
+        &plan,
+        key,
+        "convergence_interrupt_after_source_restore",
+    );
+    assert!(
+        !output.status.success(),
+        "rollback fault passed: {interrupted}"
+    );
+
+    fs::write(fixture.root.path().join("external-head"), "external\n").expect("external file");
+    git(fixture.root.path(), &["add", "external-head"]);
+    git(
+        fixture.root.path(),
+        &["commit", "-m", "test: external during rollback"],
+    );
+    let external_head = git(fixture.root.path(), &["rev-parse", "HEAD"]);
+    let (output, rejected) = apply(&fixture, &plan, key, None);
+    assert!(
+        !output.status.success(),
+        "late external HEAD passed: {rejected}"
+    );
+    assert_eq!(
+        git(fixture.root.path(), &["rev-parse", "HEAD"]),
+        external_head
+    );
+}
+
+#[test]
+fn rollback_retry_preserves_a_late_external_index() {
+    let fixture = projected_fixture();
+    fs::write(
+        fixture.root.path().join("skills/demo/details.txt"),
+        "rollback external index\n",
+    )
+    .expect("source edit");
+    let (output, plan) = plan_converge(&fixture, &[]);
+    assert!(output.status.success(), "plan failed: {plan}");
+    let key = "rollback-late-index";
+    let (output, interrupted) = apply_with_rollback_fault(
+        &fixture,
+        &plan,
+        key,
+        "convergence_interrupt_before_index_restore",
+    );
+    assert!(
+        !output.status.success(),
+        "rollback fault passed: {interrupted}"
+    );
+
+    fs::write(fixture.root.path().join("external-index"), "external\n").expect("external file");
+    git(fixture.root.path(), &["add", "external-index"]);
+    let external_index = fs::read(fixture.root.path().join(".git/index")).expect("external index");
+    let (output, rejected) = apply(&fixture, &plan, key, None);
+    assert!(
+        !output.status.success(),
+        "late external index passed: {rejected}"
+    );
+    assert_eq!(
+        fs::read(fixture.root.path().join(".git/index")).expect("preserved index"),
+        external_index
+    );
+    assert!(
+        git(fixture.root.path(), &["diff", "--cached", "--name-only"]).contains("external-index")
+    );
+}
+
+#[test]
 fn source_add_crash_restores_the_exact_original_index_before_retry() {
     let fixture = projected_fixture();
     fs::write(

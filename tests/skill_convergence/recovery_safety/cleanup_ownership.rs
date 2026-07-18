@@ -131,6 +131,65 @@ fn reservation_paths(owner: &Path, plan_id: &str) -> (PathBuf, PathBuf) {
     )
 }
 
+fn reservation_pending_path(owner: &Path, proof: &str) -> PathBuf {
+    let nonce = proof.rsplit_once(':').expect("proof nonce").1;
+    let parent = owner.parent().expect("owner parent");
+    let name = owner.file_name().expect("owner name").to_string_lossy();
+    parent.join(format!(".{name}.reservation-pending-{nonce}"))
+}
+
+#[test]
+fn crash_before_reservation_publication_is_retryable() {
+    let fixture = projected_fixture();
+    fs::write(
+        fixture.root.path().join("skills/demo/details.txt"),
+        "reservation publication crash\n",
+    )
+    .expect("source edit");
+    let (output, plan) = plan_converge(&fixture, &[]);
+    assert!(output.status.success(), "plan failed: {plan}");
+    let key = "reservation-publication-crash";
+    let (output, interrupted) = apply(
+        &fixture,
+        &plan,
+        key,
+        Some("convergence_interrupt_after_reservation_pending_create"),
+    );
+    assert!(
+        !output.status.success(),
+        "reservation publication fault passed: {interrupted}"
+    );
+
+    let journal_path = fixture
+        .root
+        .path()
+        .join("state/transactions/convergence-demo.json");
+    let journal: Value =
+        serde_json::from_slice(&fs::read(&journal_path).expect("journal")).expect("parse journal");
+    assert_eq!(journal["phase"], json!("preparing"));
+    let owner = PathBuf::from(journal["artifact_root"].as_str().expect("artifact root"));
+    let plan_id = journal["plan_id"].as_str().expect("plan id");
+    let proof = journal["artifact_owner_proof"]
+        .as_str()
+        .expect("artifact owner proof");
+    let (reservation, _) = reservation_paths(&owner, plan_id);
+    let pending = reservation_pending_path(&owner, proof);
+    assert!(pending.is_file(), "private pending token was not retained");
+    assert!(
+        !reservation.exists(),
+        "incomplete reservation token became public"
+    );
+
+    let (output, recovered) = apply(&fixture, &plan, key, None);
+    assert!(
+        output.status.success(),
+        "reservation retry failed: {recovered}"
+    );
+    assert!(!pending.exists());
+    assert!(!reservation.exists());
+    assert!(!journal_path.exists());
+}
+
 #[cfg(unix)]
 #[test]
 fn committed_cleanup_rejects_non_exact_present_owners_and_retains_retry_evidence() {

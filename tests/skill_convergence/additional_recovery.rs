@@ -508,7 +508,7 @@ fn pre_mutation_recovery_revalidates_all_routing_and_live_guards() {
             }
 
             let transaction_dir = fixture.root.path().join("state/transactions");
-            let transactions_before = snapshot_tree(&transaction_dir);
+            let journal_path = transaction_dir.join("convergence-demo.json");
             let source_before = snapshot_tree(&fixture.root.path().join("skills/demo"));
             let target_before = snapshot_tree(fixture.target.path());
             let head_before = git(fixture.root.path(), &["rev-parse", "HEAD"]);
@@ -521,7 +521,17 @@ fn pre_mutation_recovery_revalidates_all_routing_and_live_guards() {
                 !output.status.success(),
                 "{phase} recovery accepted {drift:?}: {rejected}"
             );
-            assert_eq!(snapshot_tree(&transaction_dir), transactions_before);
+            assert!(
+                !journal_path.exists(),
+                "stale active journal was not retired"
+            );
+            assert!(
+                fs::read_dir(&transaction_dir)
+                    .expect("transaction directory")
+                    .filter_map(Result::ok)
+                    .any(|entry| entry.file_name().to_string_lossy().starts_with("retained-")),
+                "stale journal retained evidence was not archived"
+            );
             assert_eq!(
                 snapshot_tree(&fixture.root.path().join("skills/demo")),
                 source_before
@@ -541,4 +551,93 @@ fn pre_mutation_recovery_revalidates_all_routing_and_live_guards() {
             );
         }
     }
+}
+
+#[test]
+fn partial_declared_backup_is_rebuilt_on_preparation_recovery() {
+    let fixture = projected_fixture();
+    fs::write(
+        fixture.root.path().join("skills/demo/details.txt"),
+        "declared backup recovery\n",
+    )
+    .expect("source edit");
+    let (output, plan) = plan_converge(&fixture, &[]);
+    assert!(output.status.success(), "plan failed: {plan}");
+    let (output, stopped) = apply_plan(
+        &fixture,
+        &plan,
+        "partial-declared-backup",
+        &[(
+            "LOOM_FAULT_INJECT",
+            "convergence_interrupt_after_declared_backup",
+        )],
+    );
+    assert!(!output.status.success(), "backup fault passed: {stopped}");
+    let journal_path = fixture
+        .root
+        .path()
+        .join("state/transactions/convergence-demo.json");
+    let journal: Value =
+        serde_json::from_slice(&fs::read(&journal_path).expect("journal")).expect("parse journal");
+    assert_eq!(journal["phase"], json!("preparing"));
+    let backup = std::path::PathBuf::from(
+        journal["projections"][0]["backup"]["backup_path"]
+            .as_str()
+            .expect("projection backup"),
+    );
+    fs::remove_dir_all(&backup).expect("remove complete backup");
+    fs::create_dir_all(&backup).expect("partial backup directory");
+    fs::write(backup.join("partial.txt"), "partial\n").expect("partial backup");
+
+    let (output, recovered) = apply_plan(&fixture, &plan, "partial-declared-backup", &[]);
+    assert!(
+        output.status.success(),
+        "backup recovery failed: {recovered}"
+    );
+    assert_eq!(
+        fs::read_to_string(fixture.target.path().join("demo/details.txt")).unwrap(),
+        "declared backup recovery\n"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn partial_symlink_backup_is_rebuilt_on_preparation_recovery() {
+    let fixture = projected_fixture_with_method("symlink");
+    let (output, plan) = plan_converge(&fixture, &[]);
+    assert!(output.status.success(), "plan failed: {plan}");
+    let (output, stopped) = apply_plan(
+        &fixture,
+        &plan,
+        "partial-symlink-backup",
+        &[(
+            "LOOM_FAULT_INJECT",
+            "convergence_interrupt_after_declared_backup",
+        )],
+    );
+    assert!(!output.status.success(), "backup fault passed: {stopped}");
+    let journal_path = fixture
+        .root
+        .path()
+        .join("state/transactions/convergence-demo.json");
+    let journal: Value =
+        serde_json::from_slice(&fs::read(&journal_path).expect("journal")).expect("parse journal");
+    let backup = std::path::PathBuf::from(
+        journal["projections"][0]["backup"]["backup_path"]
+            .as_str()
+            .expect("symlink backup"),
+    );
+    fs::remove_file(backup.join("symlink.json")).expect("make symlink backup partial");
+
+    let (output, recovered) = apply_plan(&fixture, &plan, "partial-symlink-backup", &[]);
+    assert!(
+        output.status.success(),
+        "symlink backup recovery failed: {recovered}"
+    );
+    assert!(
+        fs::symlink_metadata(fixture.target.path().join("demo"))
+            .expect("live projection")
+            .file_type()
+            .is_symlink()
+    );
 }

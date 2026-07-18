@@ -13,6 +13,7 @@ pub(super) fn interruption_fault_active() -> bool {
                 | "convergence_interrupt_after_index_snapshot_digest"
                 | "convergence_interrupt_after_prepared"
                 | "convergence_interrupt_after_projection_stage"
+                | "convergence_interrupt_after_declared_backup"
                 | "convergence_interrupt_after_source_replacement"
                 | "convergence_interrupt_after_source_add"
                 | "convergence_interrupt_after_staged_index_prepared"

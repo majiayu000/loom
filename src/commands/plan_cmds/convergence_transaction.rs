@@ -649,6 +649,16 @@ fn projection_input(
     effect: &crate::core::convergence::ProjectionEffectPlan,
     request_id: &str,
 ) -> std::result::Result<ProjectionExecutionInput, CommandFailure> {
+    let replace_existing = match effect.effect.as_str() {
+        "create" => false,
+        "refresh" => true,
+        value => {
+            return Err(CommandFailure::new(
+                ErrorCode::StateCorrupt,
+                format!("stored projection effect '{value}' is invalid"),
+            ));
+        }
+    };
     let binding = snapshot
         .binding(&effect.binding_id)
         .cloned()
@@ -673,7 +683,7 @@ fn projection_input(
         observation_kind: "converge",
         request_id: request_id.to_string(),
         commit_message: String::new(),
-        replace_existing: true,
+        replace_existing,
         safe_existing_noop: false,
         after_materialize_fault: None,
         after_state_save_fault: None,

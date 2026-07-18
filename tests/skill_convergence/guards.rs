@@ -215,3 +215,38 @@ fn routing_drift_is_stale_before_writes() {
         );
     }
 }
+
+#[test]
+fn projection_input_rejects_ignored_only_canonical_source_bytes() {
+    let fixture = projected_fixture();
+    fs::write(
+        fixture.root.path().join(".gitignore"),
+        "skills/demo/private.txt\n",
+    )
+    .expect("gitignore");
+    git(fixture.root.path(), &["add", ".gitignore"]);
+    git(
+        fixture.root.path(),
+        &["commit", "-m", "test: ignore canonical source evidence"],
+    );
+    fs::write(
+        fixture.root.path().join("skills/demo/private.txt"),
+        "ignored canonical bytes\n",
+    )
+    .expect("ignored source bytes");
+    let (output, initial) = plan_converge(&fixture, &[]);
+    assert!(output.status.success(), "initial plan failed: {initial}");
+    let instance = initial["data"]["effects"][0]["instance_id"]
+        .as_str()
+        .expect("projection instance");
+
+    let (output, blocked) = plan_converge(&fixture, &["--from-projection", "--instance", instance]);
+    assert!(output.status.success(), "reviewable plan failed: {blocked}");
+    assert_eq!(blocked["data"]["safe_to_apply"], json!(false));
+    assert!(conflict_codes(&blocked).contains(&"STALE_PROJECTION_INPUT"));
+    assert!(
+        blocked["data"]["input"]["source_dirty_paths"]
+            .as_array()
+            .is_some_and(|paths| paths.contains(&json!("skills/demo/private.txt")))
+    );
+}

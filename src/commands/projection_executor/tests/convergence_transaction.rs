@@ -2,6 +2,28 @@ use super::*;
 
 mod durable_recovery;
 
+#[test]
+fn convergence_create_intent_preserves_a_late_existing_path() {
+    let fixture = convergence_projection_fixture();
+    let projection_path = fixture.root.join("live/copy/demo");
+    fs::create_dir_all(&projection_path).expect("create late external projection path");
+    fs::write(projection_path.join("external.txt"), "external\n")
+        .expect("write late external projection bytes");
+    let mut input = execution_input(&fixture, ProjectionMethod::Copy, projection_path.clone());
+    input.replace_existing = false;
+
+    let error = match execute_projection(&fixture.ctx, &fixture.paths, &fixture.snapshot, input) {
+        Err(error) => error,
+        Ok(_) => panic!("create intent accepted a late existing projection path"),
+    };
+
+    assert_eq!(error.code, ErrorCode::ProjectionConflict);
+    assert_eq!(
+        fs::read_to_string(projection_path.join("external.txt")).unwrap(),
+        "external\n"
+    );
+}
+
 #[cfg(any(
     target_os = "macos",
     target_os = "ios",

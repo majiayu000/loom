@@ -436,11 +436,11 @@ fn materialize_projection<M: ExecutionMode>(
     };
     let path_exists =
         input.materialized_path.exists() || fs::symlink_metadata(&input.materialized_path).is_ok();
-    let replace_existing = input.replace_existing || M::CONVERGENCE;
+    let replace_existing = input.replace_existing;
 
     if path_exists
         && matches!(input.method, ProjectionMethod::Symlink)
-        && (M::CONVERGENCE || input.safe_existing_noop)
+        && ((M::CONVERGENCE && input.replace_existing) || input.safe_existing_noop)
         && projection_path_is_safe_symlink(&input.materialized_path, skill_src)
     {
         return Ok(MaterializationResult {

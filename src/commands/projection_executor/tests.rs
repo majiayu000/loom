@@ -108,7 +108,7 @@ fn execution_input(
         observation_kind: "converged_child",
         request_id: "convergence-child-must-not-run".to_string(),
         commit_message: "must not commit convergence child".to_string(),
-        replace_existing: false,
+        replace_existing: true,
         safe_existing_noop: false,
         after_materialize_fault: None,
         after_state_save_fault: None,

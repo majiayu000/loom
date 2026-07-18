@@ -21,7 +21,7 @@ use crate::types::ErrorCode;
 use super::super::agent_cmds::planning_helpers::{normalize_path, workspace_matches};
 use super::super::codex_visibility::projection_path_is_safe_symlink;
 use super::super::convergence_input::{
-    projection_input_evidence, source_changed_since_revision, source_dirty_paths,
+    projection_input_evidence, source_changed_since_revision, source_replacement_risk_paths,
 };
 use super::super::helpers::{
     map_arg, map_git, map_io, map_registry_state, projection_instance_id, validate_skill_name,
@@ -60,7 +60,7 @@ impl App {
             &source_digest,
         )?;
         validate_projection_input(args, &projections)?;
-        let source_dirty_paths = source_dirty_paths(&self.ctx, &args.skill)?;
+        let source_dirty_paths = source_replacement_risk_paths(&self.ctx, &args.skill)?;
         let projection_evidence =
             resolve_projection_input_evidence(&self.ctx, snapshot.as_ref(), &projections)?;
         let direction = if args.from_projection {

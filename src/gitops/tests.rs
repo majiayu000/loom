@@ -121,6 +121,24 @@ fn prepared_index_install_rejects_tamper_before_active_mutation() {
 }
 
 #[test]
+fn prepared_index_install_preserves_preexisting_lock() {
+    let (ctx, dir) = fresh_repo("prepared-index-existing-lock");
+    let active_index = dir.join(".git/index");
+    let prepared = dir.join("prepared-index");
+    fs::copy(&active_index, &prepared).expect("prepared index");
+    let lock = dir.join(".git/index.lock");
+    let owner_bytes = b"owned by another git process\n";
+    fs::write(&lock, owner_bytes).expect("preexisting index lock");
+
+    install_prepared_index_with_guard(&ctx, &prepared, |_| Ok(()))
+        .expect_err("preexisting lock must block installation");
+
+    assert_eq!(fs::read(&lock).expect("preserved lock"), owner_bytes);
+    fs::remove_file(&lock).expect("remove test lock");
+    fs::remove_dir_all(&dir).expect("remove test repository");
+}
+
+#[test]
 fn prepared_commit_ignores_late_worktree_tamper_without_moving_head_or_index() {
     let (ctx, dir) = fresh_repo("prepared-commit-worktree-tamper");
     let active_index = dir.join(".git/index");

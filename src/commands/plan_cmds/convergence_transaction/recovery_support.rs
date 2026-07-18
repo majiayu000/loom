@@ -24,7 +24,9 @@ pub(super) fn interruption_fault_active() -> bool {
                 | "convergence_interrupt_after_source_add"
                 | "convergence_interrupt_after_staged_index_prepared"
                 | "convergence_interrupt_after_staged_index_install"
+                | "convergence_interrupt_after_projection_activation"
                 | "convergence_interrupt_after_projection_swap"
+                | "convergence_interrupt_before_registry_cas"
         )
     )
 }
@@ -652,12 +654,7 @@ fn prove_registry_boundary(
     }
     validate_registry_result(app, plan, journal)?;
     if head == source_head {
-        return gitops::commit_paths_if_changed(
-            &app.ctx,
-            &["state/registry/projections.json"],
-            &format!("skill({}): record convergence projections", plan.skill),
-        )
-        .map_err(map_git);
+        return super::registry_commit::commit_convergence_registry(app, plan, journal);
     } else {
         verify_commit(
             app,
@@ -666,6 +663,7 @@ fn prove_registry_boundary(
             &format!("skill({}): record convergence projections", plan.skill),
             |path| path == "state/registry/projections.json",
         )?;
+        super::registry_commit::align_registry_index(app, plan, journal, &head)?;
     }
     Ok(Some(head))
 }
@@ -695,7 +693,7 @@ pub(super) fn verify_commit(
     Ok(())
 }
 
-fn validate_registry_result(
+pub(super) fn validate_registry_result(
     app: &App,
     plan: &SkillConvergencePlan,
     journal: &TransactionJournal,

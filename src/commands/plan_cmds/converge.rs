@@ -19,6 +19,7 @@ use crate::state_model::{RegistryProjectionInstance, RegistrySnapshot, RegistryS
 use crate::types::ErrorCode;
 
 use super::super::agent_cmds::planning_helpers::{normalize_path, workspace_matches};
+use super::super::codex_visibility::projection_path_is_safe_symlink;
 use super::super::convergence_input::{
     projection_input_evidence, source_changed_since_revision, source_dirty_paths,
 };
@@ -515,7 +516,12 @@ fn resolve_projection_effects(
             materialized_path: materialized_path.display().to_string(),
             source_tree_digest: source_digest.to_string(),
             materialized_tree_digest: observation.materialized_tree_digest,
-            effect: if existing.is_some() {
+            effect: if existing.is_some()
+                || (rule.method == crate::cli::ProjectionMethod::Symlink
+                    && projection_path_is_safe_symlink(
+                        &materialized_path,
+                        &ctx.skill_path(&args.skill),
+                    )) {
                 "refresh".to_string()
             } else {
                 "create".to_string()

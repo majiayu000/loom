@@ -32,6 +32,7 @@ mod ownership;
 mod projection_recovery;
 mod recovery_evidence;
 mod recovery_support;
+mod registry_commit;
 mod rollback;
 mod source_commit;
 mod source_recovery;
@@ -45,6 +46,7 @@ use projection_recovery::{
 };
 use recovery_evidence::{active_index_digest, file_digest, validate_rollback_evidence};
 use recovery_support::*;
+use registry_commit::commit_convergence_registry;
 use rollback::{finish_transaction, rollback_journal};
 use source_recovery::restore_source_from_evidence;
 
@@ -424,12 +426,7 @@ fn execute_local_transaction(
     journal.phase = TransactionPhase::CommittingRegistry;
     save_journal(journal_path, journal)?;
     let registry_commit = if snapshot.is_some() {
-        gitops::commit_paths_if_changed(
-            &app.ctx,
-            &["state/registry/projections.json"],
-            &format!("skill({}): record convergence projections", plan.skill),
-        )
-        .map_err(map_git)?
+        commit_convergence_registry(app, plan, journal)?
     } else {
         None
     };
@@ -455,7 +452,27 @@ fn replace_source_from_projection(
         .ok_or_else(|| {
             CommandFailure::new(ErrorCode::StateCorrupt, "source staging path is absent")
         })?;
+    let reviewed = &plan.source.tree_digest;
+    if skill_tree_digest(&source).map_err(map_io)? != *reviewed {
+        return Err(stale(
+            "source changed immediately before projection replacement",
+            "source_changed_before_exchange",
+        ));
+    }
     exchange_paths_atomic(&staging, &source).map_err(map_io)?;
+    if skill_tree_digest(&staging).map_err(map_io)? != *reviewed {
+        let mut failure = stale(
+            "the displaced source did not match the reviewed source",
+            "source_changed_during_exchange",
+        );
+        if let Err(error) = exchange_paths_atomic(&staging, &source) {
+            failure = failure.with_rollback_errors(vec![json!({
+                "step": "restore_source_after_exchange_guard_failure",
+                "message": error.to_string(),
+            })]);
+        }
+        return Err(failure);
+    }
     Ok(())
 }
 

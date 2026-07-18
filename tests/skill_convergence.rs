@@ -1,4 +1,6 @@
 mod common;
+#[path = "skill_convergence/additional_recovery.rs"]
+mod skill_convergence_additional_recovery;
 #[path = "skill_convergence/executor.rs"]
 mod skill_convergence_executor;
 #[path = "skill_convergence/guards.rs"]

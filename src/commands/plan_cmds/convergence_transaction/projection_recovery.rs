@@ -41,6 +41,26 @@ where
     let live_exists = live.try_exists().map_err(map_io)?;
     let staging_exists = staging.try_exists().map_err(map_io)?;
     if staging_exists {
+        if let Some(backup) = artifact.backup.as_ref()
+            && live_exists
+            && path_matches_backup(staging, backup)?
+        {
+            require_fingerprint(
+                live,
+                expected,
+                "live projection after interrupted activation",
+            )?;
+            before_atomic_restore(live);
+            exchange_paths_atomic(staging, live).map_err(map_io)?;
+            require_fingerprint(staging, expected, "projection exchanged during rollback")?;
+            if !path_matches_backup(live, backup)? {
+                return Err(recovery_conflict(
+                    live,
+                    "restored live projection does not match durable backup",
+                ));
+            }
+            return remove_path_if_exists(staging).map_err(map_io);
+        }
         require_fingerprint(staging, expected, "retained rollback artifact")?;
         let rollback_complete = match artifact.backup.as_ref() {
             Some(backup) => live_exists && path_matches_backup(live, backup)?,

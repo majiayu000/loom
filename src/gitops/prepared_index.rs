@@ -61,12 +61,14 @@ where
 {
     let index = resolve_git_index_path(ctx, &[])?;
     let lock = index_lock_path(&index);
+    let mut owns_lock = false;
     let result = (|| {
         let mut source = fs::File::open(prepared_index)?;
         let mut destination = OpenOptions::new()
             .write(true)
             .create_new(true)
             .open(&lock)?;
+        owns_lock = true;
         io::copy(&mut source, &mut destination)?;
         destination.sync_all()?;
         drop(destination);
@@ -76,6 +78,7 @@ where
     })();
     match result {
         Ok(()) => Ok(()),
+        Err(error) if !owns_lock => Err(error),
         Err(error) => match fs::remove_file(&lock) {
             Ok(()) => Err(error),
             Err(cleanup) if cleanup.kind() == io::ErrorKind::NotFound => Err(error),

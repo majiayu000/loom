@@ -89,14 +89,14 @@ pub(super) fn commit_convergence_source(
     };
 
     let source_head = gitops::head(&app.ctx).map_err(map_git)?;
-    journal.source_head = Some(source_head.clone());
-    journal.source_commit = commit.clone();
     if commit.is_none() && source_head != journal.previous_head {
         return Err(CommandFailure::new(
             ErrorCode::StateCorrupt,
             "no-op source commit changed HEAD",
         ));
     }
+    journal.source_head = Some(source_head.clone());
+    journal.source_commit = commit.clone();
     maybe_skill_fault("convergence_interrupt_committing_source")?;
     journal.phase = TransactionPhase::SourceCommitted;
     save_journal(journal_path, journal)?;

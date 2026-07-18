@@ -29,6 +29,20 @@ pub(super) fn validate_guards(
             Some(cursor),
         ));
     }
+    validate_pre_mutation_state(app, plan)
+}
+
+pub(super) fn validate_pre_mutation_recovery_guards(
+    app: &App,
+    plan: &SkillConvergencePlan,
+) -> std::result::Result<Option<crate::state_model::RegistrySnapshot>, CommandFailure> {
+    validate_pre_mutation_state(app, plan)
+}
+
+fn validate_pre_mutation_state(
+    app: &App,
+    plan: &SkillConvergencePlan,
+) -> std::result::Result<Option<crate::state_model::RegistrySnapshot>, CommandFailure> {
     let head = gitops::head(&app.ctx).map_err(map_git)?;
     if head != plan.source.registry_head {
         return Err(stale("registry HEAD changed after planning", "PLAN_STALE"));
@@ -71,6 +85,11 @@ pub(super) fn validate_guards(
         for effect in &plan.projections {
             validate_projection_guard(app, plan, effect)?;
         }
+    } else if !plan.projections.is_empty() {
+        return Err(stale(
+            "projection routing disappeared after planning",
+            "PLAN_PROJECTION_DRIFT",
+        ));
     }
     Ok(snapshot)
 }

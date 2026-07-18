@@ -71,13 +71,19 @@ pub(super) fn recover_journal(
             return Ok(None);
         }
         TransactionPhase::Preparing | TransactionPhase::Prepared => {
+            let snapshot = super::guards::validate_pre_mutation_recovery_guards(app, plan)?;
             if journal.phase == TransactionPhase::Preparing {
-                prepare_transaction_artifacts(app, plan, journal_path, &mut journal)?;
+                super::preparation::prepare_transaction_artifacts_from_snapshot(
+                    app,
+                    snapshot.as_ref(),
+                    plan,
+                    journal_path,
+                    &mut journal,
+                )?;
                 journal.phase = TransactionPhase::Prepared;
                 save_journal(journal_path, &journal)?;
             }
             let paths = RegistryStatePaths::from_app_context(&app.ctx);
-            let snapshot = paths.maybe_load_snapshot().map_err(map_registry_state)?;
             let result = execute_local_transaction(
                 app,
                 &paths,

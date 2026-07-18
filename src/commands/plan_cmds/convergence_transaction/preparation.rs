@@ -42,6 +42,18 @@ pub(super) fn prepare_transaction_artifacts(
     journal_path: &Path,
     journal: &mut TransactionJournal,
 ) -> std::result::Result<(), CommandFailure> {
+    let paths = RegistryStatePaths::from_app_context(&app.ctx);
+    let snapshot = paths.maybe_load_snapshot().map_err(map_registry_state)?;
+    prepare_transaction_artifacts_from_snapshot(app, snapshot.as_ref(), plan, journal_path, journal)
+}
+
+pub(super) fn prepare_transaction_artifacts_from_snapshot(
+    app: &App,
+    snapshot: Option<&crate::state_model::RegistrySnapshot>,
+    plan: &SkillConvergencePlan,
+    journal_path: &Path,
+    journal: &mut TransactionJournal,
+) -> std::result::Result<(), CommandFailure> {
     let artifact_root = journal.artifact_root.clone();
     let artifact_proof = journal.artifact_owner_proof.clone();
     activate_owned_dir(
@@ -84,7 +96,15 @@ pub(super) fn prepare_transaction_artifacts(
         .as_deref()
         .map(PathBuf::from)
         .unwrap_or(selected_source);
-    prepare_projection_stages_from(app, plan, "", journal_path, journal, &projection_source)
+    prepare_projection_stages_from(
+        app,
+        snapshot,
+        plan,
+        "",
+        journal_path,
+        journal,
+        &projection_source,
+    )
 }
 
 fn prepare_index_backup(
@@ -200,8 +220,11 @@ pub(super) fn prepare_projection_stages(
     journal_path: &Path,
     journal: &mut TransactionJournal,
 ) -> std::result::Result<(), CommandFailure> {
+    let paths = RegistryStatePaths::from_app_context(&app.ctx);
+    let snapshot = paths.maybe_load_snapshot().map_err(map_registry_state)?;
     prepare_projection_stages_from(
         app,
+        snapshot.as_ref(),
         plan,
         request_id,
         journal_path,
@@ -254,6 +277,7 @@ pub(super) fn rotate_projection_stages(
 
 fn prepare_projection_stages_from(
     app: &App,
+    snapshot: Option<&crate::state_model::RegistrySnapshot>,
     plan: &SkillConvergencePlan,
     request_id: &str,
     journal_path: &Path,
@@ -263,8 +287,12 @@ fn prepare_projection_stages_from(
     if plan.projections.is_empty() {
         return Ok(());
     }
-    let paths = RegistryStatePaths::from_app_context(&app.ctx);
-    let snapshot = paths.load_snapshot().map_err(map_registry_state)?;
+    let snapshot = snapshot.ok_or_else(|| {
+        CommandFailure::new(
+            ErrorCode::StateCorrupt,
+            "projection transaction has no registry snapshot",
+        )
+    })?;
     for (index, effect) in plan.projections.iter().enumerate() {
         let materialized_path = Path::new(&journal.projections[index].materialized_path);
         let safe_symlink_noop = effect.effect == "refresh"
@@ -285,7 +313,7 @@ fn prepare_projection_stages_from(
         })?)
         .map_err(map_io)?;
         activate_owned_dir(journal_path, journal, Path::new(&owner), &proof)?;
-        let input = projection_input(&snapshot, plan, effect, request_id)?;
+        let input = projection_input(snapshot, plan, effect, request_id)?;
         let stage_source = if effect.method == "symlink" {
             app.ctx.skill_path(&plan.skill)
         } else {

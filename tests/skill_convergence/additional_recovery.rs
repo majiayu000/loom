@@ -420,3 +420,112 @@ fn source_committed_recovery_rechecks_checkpoint_evidence() {
     );
     assert_eq!(snapshot_tree(fixture.target.path()), target_before);
 }
+
+#[test]
+fn pre_mutation_recovery_revalidates_all_routing_and_live_guards() {
+    #[derive(Clone, Copy, Debug)]
+    enum Drift {
+        Checkpoint,
+        Projections,
+        LiveProjection,
+    }
+
+    let phases = [
+        (
+            "preparing",
+            "convergence_interrupt_after_index_snapshot_digest",
+        ),
+        ("prepared", "convergence_interrupt_after_prepared"),
+    ];
+    let drifts = [Drift::Checkpoint, Drift::Projections, Drift::LiveProjection];
+
+    for (phase, fault) in phases {
+        for drift in drifts {
+            let fixture = projected_fixture();
+            fs::write(
+                fixture.root.path().join("skills/demo/details.txt"),
+                "recovery guard source\n",
+            )
+            .expect("edit source");
+            let (output, plan) = plan_converge(&fixture, &[]);
+            assert!(output.status.success(), "plan failed: {plan}");
+            let key = format!("pre-mutation-{phase}-{drift:?}");
+            let (output, interrupted) =
+                apply_plan(&fixture, &plan, &key, &[("LOOM_FAULT_INJECT", fault)]);
+            assert!(
+                !output.status.success(),
+                "{phase} fault did not interrupt: {interrupted}"
+            );
+
+            match drift {
+                Drift::Checkpoint => {
+                    let path = fixture
+                        .root
+                        .path()
+                        .join("state/registry/ops/checkpoint.json");
+                    let mut value: Value =
+                        serde_json::from_slice(&fs::read(&path).expect("read checkpoint"))
+                            .expect("parse checkpoint");
+                    value["updated_at"] = json!("2000-01-01T00:00:00Z");
+                    fs::write(
+                        &path,
+                        serde_json::to_vec_pretty(&value).expect("encode checkpoint"),
+                    )
+                    .expect("drift checkpoint");
+                }
+                Drift::Projections => {
+                    let path = fixture.root.path().join("state/registry/projections.json");
+                    let mut value: Value =
+                        serde_json::from_slice(&fs::read(&path).expect("read projections"))
+                            .expect("parse projections");
+                    value["projections"][0]["observed_drift"] = json!(true);
+                    fs::write(
+                        &path,
+                        serde_json::to_vec_pretty(&value).expect("encode projections"),
+                    )
+                    .expect("drift projections");
+                }
+                Drift::LiveProjection => {
+                    fs::write(
+                        fixture.target.path().join("demo/SKILL.md"),
+                        "external live projection drift\n",
+                    )
+                    .expect("drift live projection");
+                }
+            }
+
+            let transaction_dir = fixture.root.path().join("state/transactions");
+            let transactions_before = snapshot_tree(&transaction_dir);
+            let source_before = snapshot_tree(&fixture.root.path().join("skills/demo"));
+            let target_before = snapshot_tree(fixture.target.path());
+            let head_before = git(fixture.root.path(), &["rev-parse", "HEAD"]);
+            let status_before = git(fixture.root.path(), &["status", "--porcelain"]);
+            let index_before =
+                fs::read(fixture.root.path().join(".git/index")).expect("read index");
+
+            let (output, rejected) = apply_plan(&fixture, &plan, &key, &[]);
+            assert!(
+                !output.status.success(),
+                "{phase} recovery accepted {drift:?}: {rejected}"
+            );
+            assert_eq!(snapshot_tree(&transaction_dir), transactions_before);
+            assert_eq!(
+                snapshot_tree(&fixture.root.path().join("skills/demo")),
+                source_before
+            );
+            assert_eq!(snapshot_tree(fixture.target.path()), target_before);
+            assert_eq!(
+                git(fixture.root.path(), &["rev-parse", "HEAD"]),
+                head_before
+            );
+            assert_eq!(
+                git(fixture.root.path(), &["status", "--porcelain"]),
+                status_before
+            );
+            assert_eq!(
+                fs::read(fixture.root.path().join(".git/index")).expect("read index"),
+                index_before
+            );
+        }
+    }
+}

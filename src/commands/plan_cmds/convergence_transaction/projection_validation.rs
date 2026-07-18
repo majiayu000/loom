@@ -1,22 +1,25 @@
-use std::collections::BTreeMap;
+use std::ffi::OsString;
+use std::fs;
+use std::path::Component;
 
 use super::*;
 
 pub(super) fn validate_projection_transaction(
     plan: &SkillConvergencePlan,
     journal: &TransactionJournal,
-    source: &Path,
+    observation_source: &Path,
+    registry_source: &Path,
 ) -> std::result::Result<(), CommandFailure> {
     if plan.projections.len() != journal.projections.len() {
         return Err(payload_corrupt(
             "journal projection count differs from its reviewed plan",
         ));
     }
-    validate_global_paths(journal, source)?;
+    validate_global_paths(plan, journal, registry_source)?;
     for (effect, backup) in plan.projections.iter().zip(&journal.projections) {
         validate_projection_artifact_layout(
             Path::new(&effect.materialized_path),
-            source,
+            observation_source,
             Path::new(&backup.staging_path),
             Path::new(&backup.staging_owner),
             backup.projection.as_ref(),
@@ -26,8 +29,8 @@ pub(super) fn validate_projection_transaction(
         let Some(projection) = backup.projection.as_ref() else {
             continue;
         };
-        validate_routing(plan, effect, projection)?;
-        validate_observed_payload(plan, source, backup, projection)?;
+        validate_routing(plan, journal, effect, projection)?;
+        validate_observed_payload(plan, observation_source, backup, projection)?;
         if let Some(prepared) = backup.prepared.as_ref()
             && projection_value(&prepared.projection)? != projection_value(projection)?
         {
@@ -44,6 +47,7 @@ pub(super) fn validate_projection_transaction(
 
 fn validate_routing(
     plan: &SkillConvergencePlan,
+    journal: &TransactionJournal,
     effect: &crate::core::convergence::ProjectionEffectPlan,
     projection: &crate::state_model::RegistryProjectionInstance,
 ) -> std::result::Result<(), CommandFailure> {
@@ -53,7 +57,8 @@ fn validate_routing(
         && projection.target_id == effect.target_id
         && projection.materialized_path == effect.materialized_path
         && projection.method.as_str() == effect.method
-        && projection.last_applied_rev == plan.source.registry_head;
+        && (projection.last_applied_rev == plan.source.registry_head
+            || journal.source_head.as_ref() == Some(&projection.last_applied_rev));
     valid
         .then_some(())
         .ok_or_else(|| payload_corrupt("projection payload does not match its reviewed plan"))
@@ -122,9 +127,13 @@ fn validate_healthy_shape(
 fn validate_timestamps(
     projection: &crate::state_model::RegistryProjectionInstance,
 ) -> std::result::Result<(), CommandFailure> {
-    (projection.last_observed_at.is_some() && projection.last_observed_at == projection.updated_at)
-        .then_some(())
-        .ok_or_else(|| payload_corrupt("projection observation timestamps are invalid"))
+    (projection.last_observed_at.is_some()
+        && projection.last_observed_at == projection.updated_at
+        && projection
+            .last_observed_at
+            .is_some_and(|timestamp| timestamp <= chrono::Utc::now()))
+    .then_some(())
+    .ok_or_else(|| payload_corrupt("projection observation timestamps are invalid"))
 }
 
 fn expected_projection<'a>(
@@ -177,15 +186,17 @@ fn projection_value(
 }
 
 fn validate_global_paths(
+    plan: &SkillConvergencePlan,
     journal: &TransactionJournal,
     source: &Path,
 ) -> std::result::Result<(), CommandFailure> {
-    let live = journal
-        .projections
-        .iter()
-        .map(|projection| PathBuf::from(&projection.materialized_path))
-        .collect::<Vec<_>>();
-    let mut controlled = BTreeMap::<PathBuf, String>::new();
+    let mut paths = vec![("registry source".to_string(), entry_identity(source)?)];
+    for (index, effect) in plan.projections.iter().enumerate() {
+        paths.push((
+            format!("projection {index} live"),
+            entry_identity(Path::new(&effect.materialized_path))?,
+        ));
+    }
     for (index, projection) in journal.projections.iter().enumerate() {
         let staging = PathBuf::from(&projection.staging_path);
         for (label, path) in [
@@ -208,20 +219,89 @@ fn validate_global_paths(
                 )?,
             ),
         ] {
-            if path == source || live.iter().any(|candidate| candidate == &path) {
-                return Err(payload_corrupt(
-                    "controlled projection path aliases source or a live projection",
-                ));
-            }
-            let identity = format!("projection {index} {label}");
-            if controlled.insert(path, identity).is_some() {
-                return Err(payload_corrupt(
-                    "controlled projection paths collide across projections",
-                ));
+            paths.push((
+                format!("projection {index} {label}"),
+                entry_identity(&path)?,
+            ));
+        }
+    }
+    for left in 0..paths.len() {
+        for right in left + 1..paths.len() {
+            let (left_label, left_path) = &paths[left];
+            let (right_label, right_path) = &paths[right];
+            if left_path.starts_with(right_path) || right_path.starts_with(left_path) {
+                return Err(payload_corrupt(&format!(
+                    "transaction paths overlap: {left_label} and {right_label}"
+                )));
             }
         }
     }
     Ok(())
+}
+
+fn entry_identity(path: &Path) -> std::result::Result<PathBuf, CommandFailure> {
+    let normalized = lexical_normalize(path)?;
+    let name = normalized
+        .file_name()
+        .ok_or_else(|| payload_corrupt("transaction path has no entry name"))?
+        .to_os_string();
+    let parent = normalized
+        .parent()
+        .ok_or_else(|| payload_corrupt("transaction path has no parent"))?;
+    Ok(canonicalize_existing_prefix(parent)?.join(name))
+}
+
+fn canonicalize_existing_prefix(path: &Path) -> std::result::Result<PathBuf, CommandFailure> {
+    let mut cursor = path.to_path_buf();
+    let mut suffix = Vec::<OsString>::new();
+    loop {
+        match fs::canonicalize(&cursor) {
+            Ok(mut canonical) => {
+                for component in suffix.iter().rev() {
+                    canonical.push(component);
+                }
+                return lexical_normalize(&canonical);
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                let name = cursor
+                    .file_name()
+                    .ok_or_else(|| payload_corrupt("transaction path has no existing prefix"))?;
+                suffix.push(name.to_os_string());
+                cursor = cursor
+                    .parent()
+                    .ok_or_else(|| payload_corrupt("transaction path has no existing prefix"))?
+                    .to_path_buf();
+            }
+            Err(err) => {
+                return Err(payload_corrupt(&format!(
+                    "transaction path identity cannot be resolved: {err}"
+                )));
+            }
+        }
+    }
+}
+
+fn lexical_normalize(path: &Path) -> std::result::Result<PathBuf, CommandFailure> {
+    if !path.is_absolute() {
+        return Err(payload_corrupt("transaction path is not absolute"));
+    }
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::Prefix(_) | Component::RootDir | Component::Normal(_) => {
+                normalized.push(component.as_os_str());
+            }
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if !normalized.pop() {
+                    return Err(payload_corrupt(
+                        "transaction path escapes its filesystem root",
+                    ));
+                }
+            }
+        }
+    }
+    Ok(normalized)
 }
 
 fn claim(path: &Path, suffix: &str) -> std::result::Result<PathBuf, CommandFailure> {

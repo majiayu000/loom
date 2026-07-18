@@ -224,7 +224,12 @@ fn validate_batch_preflight(
             return errors;
         }
     };
-    if let Err(err) = validate_projection_transaction(plan, journal, &selected_source) {
+    if let Err(err) = validate_projection_transaction(
+        plan,
+        journal,
+        &selected_source,
+        &app.ctx.skill_path(&plan.skill),
+    ) {
         push_rollback_error(&mut errors, "validate_projection_transaction", err.message);
     }
     for projection in &journal.projections {

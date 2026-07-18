@@ -26,7 +26,7 @@ use super::super::projection_executor::{
     validate_projection_rollback_artifact_for_finalize,
     validate_projection_rollback_artifact_for_rollback,
 };
-use super::super::projections::observe_projection_from_source;
+use super::super::projections::{apply_projection_observation, observe_projection_from_source};
 use super::super::projections::{project_skill_to_target, upsert_projection};
 use super::super::provenance::skill_tree_digest;
 use super::super::skill_cmds::shared::{maybe_skill_fault, push_rollback_error};
@@ -216,7 +216,12 @@ pub(super) fn apply_convergence(
         result: None,
         phase: TransactionPhase::Preparing,
     };
-    validate_projection_transaction(&plan, &journal, &selected_source_path(app, &plan)?)?;
+    validate_projection_transaction(
+        &plan,
+        &journal,
+        &selected_source_path(app, &plan)?,
+        &app.ctx.skill_path(&plan.skill),
+    )?;
     save_journal(&journal_path, &journal)?;
 
     if let Err(err) = prepare_transaction_artifacts(app, &plan, &journal_path, &mut journal) {
@@ -386,7 +391,7 @@ fn execute_local_transaction(
             save_journal(journal_path, journal)?;
             projection
         } else {
-            let projection = journal.projections[index]
+            journal.projections[index]
                 .projection
                 .clone()
                 .ok_or_else(|| {
@@ -394,14 +399,31 @@ fn execute_local_transaction(
                         ErrorCode::StateCorrupt,
                         "prepared transaction omitted projection state",
                     )
-                })?;
-            journal.installed_projections = index + 1;
-            save_journal(journal_path, journal)?;
-            projection
+                })?
         };
         projection.last_applied_rev = journal.source_head.clone().ok_or_else(|| {
             CommandFailure::new(ErrorCode::StateCorrupt, "source head is not durable")
         })?;
+        let observation =
+            observe_projection_from_source(&projection, &selected_source_path(app, plan)?);
+        if observation.status != "healthy" {
+            return Err(CommandFailure::new(
+                ErrorCode::ProjectionConflict,
+                format!(
+                    "convergence projection '{}' failed final observation: {}",
+                    projection.instance_id,
+                    observation
+                        .error_code
+                        .unwrap_or("projection_validation_failed")
+                ),
+            ));
+        }
+        apply_projection_observation(&mut projection, &observation);
+        maybe_skill_fault("convergence_interrupt_after_projection_reobservation")?;
+        journal.projections[index].projection = Some(projection.clone());
+        journal.projections[index].state = ProjectionTransactionState::Activated;
+        journal.installed_projections = index + 1;
+        save_journal(journal_path, journal)?;
         upsert_projection(&mut projections, projection.clone());
         applied.push(projection.instance_id);
         maybe_skill_fault("convergence_after_projection_swap")?;

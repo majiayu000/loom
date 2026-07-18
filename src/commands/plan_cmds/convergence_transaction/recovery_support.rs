@@ -22,6 +22,7 @@ pub(super) fn interruption_fault_active() -> bool {
                 | "convergence_interrupt_after_source_replacement"
                 | "convergence_interrupt_after_source_add"
                 | "convergence_interrupt_after_projection_activation"
+                | "convergence_interrupt_after_projection_reobservation"
                 | "convergence_interrupt_after_projection_swap"
         )
     )
@@ -442,7 +443,13 @@ fn validate_journal(
         )
         .is_ok();
     }
-    valid &= validate_projection_transaction(plan, journal, &selected_source).is_ok();
+    valid &= validate_projection_transaction(
+        plan,
+        journal,
+        &selected_source,
+        &app.ctx.skill_path(&plan.skill),
+    )
+    .is_ok();
     valid &= validate_phase_invariants(journal);
     valid &= validate_expected_projections(plan, journal);
     if valid {

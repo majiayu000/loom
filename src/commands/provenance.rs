@@ -601,19 +601,18 @@ fn hash_special_node(hasher: &mut Sha256, metadata: &fs::Metadata) {
 
     let file_type = metadata.file_type();
     let kind = if file_type.is_fifo() {
-        b"fifo".as_slice()
+        1u8
     } else if file_type.is_socket() {
-        b"socket".as_slice()
+        2
     } else if file_type.is_char_device() {
-        b"char-device".as_slice()
+        3
     } else if file_type.is_block_device() {
-        b"block-device".as_slice()
+        4
     } else {
-        b"other".as_slice()
+        0
     };
     hasher.update(b"special\0");
-    hasher.update(kind);
-    hasher.update(b"\0");
+    hasher.update(&[kind]);
     hasher.update(&metadata.rdev().to_be_bytes());
 }
 

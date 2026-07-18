@@ -601,3 +601,92 @@ fn noop_source_commit_retires_after_a_head_changed_during_index_preparation() {
         "retired no-op journal blocked a fresh apply: {applied}"
     );
 }
+
+#[cfg(unix)]
+#[test]
+fn external_head_between_registry_guard_and_json_cas_restores_owned_surfaces() {
+    let fixture = projected_fixture();
+    let registry_path = fixture.root.path().join("state/registry/projections.json");
+    let original_registry = fs::read(&registry_path).expect("original registry projections");
+    let live_projection = fixture.target.path().join("demo");
+    let original_projection = snapshot_tree(&live_projection);
+    fs::write(
+        fixture.root.path().join("skills/demo/details.txt"),
+        "registry save race\n",
+    )
+    .expect("edit source");
+    let (output, plan) = plan_converge(&fixture, &[]);
+    assert!(output.status.success(), "plan failed: {plan}");
+    let journal_path = fixture
+        .root
+        .path()
+        .join("state/transactions/convergence-demo.json");
+
+    let (output, rejected, external_head) = std::thread::scope(|scope| {
+        let apply = scope.spawn(|| {
+            apply_plan(
+                &fixture,
+                &plan,
+                "registry-save-head-race",
+                &[("LOOM_TEST_CONVERGENCE_REGISTRY_SAVE_PAUSE_MS", "2000")],
+            )
+        });
+        let mut entered_registry_save = false;
+        for _ in 0..200 {
+            if let Ok(raw) = fs::read(&journal_path)
+                && let Ok(journal) = serde_json::from_slice::<Value>(&raw)
+                && journal["phase"] == json!("projections_swapped")
+                && snapshot_tree(&live_projection) != original_projection
+            {
+                entered_registry_save = true;
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(entered_registry_save, "apply never entered registry save");
+        fs::write(fixture.root.path().join("external-head.txt"), "external\n")
+            .expect("external file");
+        git(fixture.root.path(), &["add", "external-head.txt"]);
+        git(
+            fixture.root.path(),
+            &["commit", "-m", "test: concurrent registry save head"],
+        );
+        let external_head = git(fixture.root.path(), &["rev-parse", "HEAD"]);
+        let (output, rejected) = apply.join().expect("apply thread");
+        (output, rejected, external_head)
+    });
+    assert!(
+        !output.status.success(),
+        "external HEAD was accepted without a fresh plan: {rejected}"
+    );
+    assert_eq!(
+        git(fixture.root.path(), &["rev-parse", "HEAD"]),
+        external_head
+    );
+    assert_eq!(
+        fs::read(&registry_path).expect("restored registry projections"),
+        original_registry
+    );
+    assert_eq!(snapshot_tree(&live_projection), original_projection);
+    assert!(
+        !journal_path.exists(),
+        "active registry race journal remained"
+    );
+    assert!(
+        Command::new("git")
+            .args(["diff", "--cached", "--quiet"])
+            .current_dir(fixture.root.path())
+            .status()
+            .expect("inspect external index")
+            .success(),
+        "transaction changed the external commit index"
+    );
+
+    let (output, fresh) = plan_converge(&fixture, &[]);
+    assert!(output.status.success(), "fresh plan failed: {fresh}");
+    let (output, applied) = apply_plan(&fixture, &fresh, "registry-save-head-fresh", &[]);
+    assert!(
+        output.status.success(),
+        "restored registry race blocked a fresh apply: {applied}"
+    );
+}

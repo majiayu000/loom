@@ -533,6 +533,13 @@ fn execute_local_transaction(
         if let Err(error) = save_guard {
             return Err(error.with_rollback_errors(restore_activated_projections(journal)));
         }
+        #[cfg(debug_assertions)]
+        if let Some(milliseconds) = std::env::var("LOOM_TEST_CONVERGENCE_REGISTRY_SAVE_PAUSE_MS")
+            .ok()
+            .and_then(|value| value.parse::<u64>().ok())
+        {
+            std::thread::sleep(std::time::Duration::from_millis(milliseconds.min(2_000)));
+        }
         let replaced = paths
             .compare_exchange_projections(&journal.original_projections, &projections)
             .map_err(map_registry_state)?;
@@ -543,12 +550,38 @@ fn execute_local_transaction(
             )
             .with_rollback_errors(restore_activated_projections(journal)));
         }
+        if let Err(error) = require_head(
+            app,
+            journal.source_head.as_deref().unwrap_or_default(),
+            "HEAD changed while saving projection results",
+        ) {
+            return Err(external_head::handle_external_registry_failure(
+                app,
+                paths,
+                plan,
+                journal_path,
+                journal,
+                error,
+            )?);
+        }
     }
     maybe_skill_fault("convergence_after_registry_save")?;
     journal.phase = TransactionPhase::CommittingRegistry;
     save_journal(journal_path, journal)?;
     let registry_commit = if snapshot.is_some() {
-        commit_convergence_registry(app, plan, journal_path, journal)?
+        match commit_convergence_registry(app, plan, journal_path, journal) {
+            Ok(commit) => commit,
+            Err(error) => {
+                return Err(external_head::handle_external_registry_failure(
+                    app,
+                    paths,
+                    plan,
+                    journal_path,
+                    journal,
+                    error,
+                )?);
+            }
+        }
     } else {
         None
     };

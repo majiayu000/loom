@@ -1,5 +1,78 @@
 use super::*;
 
+const MANAGED_REGISTRY_PATHS: &[&str] = &[
+    "state/registry/bindings.json",
+    "state/registry/rules.json",
+    "state/registry/targets.json",
+    "state/registry/projections.json",
+    "state/registry/ops/checkpoint.json",
+];
+
+pub(super) fn handle_external_registry_failure(
+    app: &App,
+    paths: &RegistryStatePaths,
+    plan: &SkillConvergencePlan,
+    journal_path: &Path,
+    journal: &mut TransactionJournal,
+    failure: CommandFailure,
+) -> std::result::Result<CommandFailure, CommandFailure> {
+    if !external_head_preserves_reviewed_boundaries(app, plan, journal)? {
+        return Ok(failure);
+    }
+    let mut errors =
+        super::rollback::restore_registry_and_activated_projections(paths, plan, journal);
+    if errors.is_empty() {
+        super::source_commit::validate_live_source(app, plan)?;
+        errors = cleanup_declared_artifacts(journal_path, journal);
+    }
+    if errors.is_empty() {
+        archive_rolled_back_journal(journal_path, journal)?;
+    }
+    Ok(failure.with_rollback_errors(errors))
+}
+
+fn external_head_preserves_reviewed_boundaries(
+    app: &App,
+    plan: &SkillConvergencePlan,
+    journal: &TransactionJournal,
+) -> std::result::Result<bool, CommandFailure> {
+    let source_head = journal
+        .source_head
+        .as_deref()
+        .ok_or_else(|| CommandFailure::new(ErrorCode::StateCorrupt, "source head is missing"))?;
+    let head = gitops::head(&app.ctx).map_err(map_git)?;
+    if head == source_head {
+        return Ok(false);
+    }
+    let ancestor = gitops::run_git_allow_failure(
+        &app.ctx,
+        &["merge-base", "--is-ancestor", source_head, &head],
+    )
+    .map_err(map_git)?;
+    if !ancestor.status.success() {
+        return Ok(false);
+    }
+    let committed = gitops::run_git(
+        &app.ctx,
+        &["show", &format!("{head}:state/registry/projections.json")],
+    )
+    .ok()
+    .and_then(|raw| serde_json::from_str::<RegistryProjectionsFile>(&raw).ok());
+    if committed
+        .as_ref()
+        .and_then(|value| serde_json::to_value(value).ok())
+        != serde_json::to_value(&journal.original_projections).ok()
+    {
+        return Ok(false);
+    }
+    let range = format!("{source_head}..{head}");
+    let skill_path = format!("skills/{}", plan.skill);
+    let mut args = vec!["diff", "--quiet", range.as_str(), "--", skill_path.as_str()];
+    args.extend(MANAGED_REGISTRY_PATHS.iter().copied());
+    let unchanged = gitops::run_git_allow_failure(&app.ctx, &args).map_err(map_git)?;
+    Ok(unchanged.status.success())
+}
+
 pub(super) fn retire_uncommitted_noop_after_external_head(
     app: &App,
     paths: &RegistryStatePaths,

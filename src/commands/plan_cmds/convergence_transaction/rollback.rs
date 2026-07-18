@@ -11,6 +11,9 @@ pub(super) fn handle_transaction_failure(
     journal: &mut TransactionJournal,
     failure: CommandFailure,
 ) -> std::result::Result<CommandFailure, CommandFailure> {
+    if journal.phase == TransactionPhase::RolledBackArtifactsRetained {
+        return Ok(failure);
+    }
     let rollback_head = gitops::head(&app.ctx).map_err(map_git)?;
     if rollback_head != journal.previous_head
         && super::external_head::retire_uncommitted_noop_after_external_head(
@@ -75,6 +78,22 @@ pub(super) fn handle_transaction_failure(
         errors.extend(finish_transaction(journal_path, journal));
     }
     Ok(failure.with_rollback_errors(errors))
+}
+
+pub(super) fn restore_registry_and_activated_projections(
+    paths: &RegistryStatePaths,
+    plan: &SkillConvergencePlan,
+    journal: &mut TransactionJournal,
+) -> Vec<Value> {
+    let mut errors = Vec::new();
+    if plan.registry.initialized
+        && let Err(error) = restore_registry_projections_if_owned(paths, journal)
+    {
+        push_rollback_error(&mut errors, "restore_registry_projections", error.message);
+        return errors;
+    }
+    errors.extend(restore_activated_projections(journal));
+    errors
 }
 
 pub(super) fn restore_activated_projections(journal: &mut TransactionJournal) -> Vec<Value> {

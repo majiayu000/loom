@@ -341,6 +341,25 @@ fn prepared_index_post_publication_crash_recovers_the_retained_claim() {
 }
 
 #[test]
+fn prepared_index_prepublication_rollback_marker_resumes() {
+    let (ctx, dir) = fresh_repo("prepublication-rollback-marker");
+    let active_index = dir.join(".git/index");
+    let prepared = dir.join("prepared-index");
+    fs::copy(&active_index, &prepared).expect("prepared index");
+    let lock = dir.join(".git/index.lock");
+    seed_owned_index_lock(&prepared, &lock);
+    let rollback = super::prepared_index::prepared_index_aux_path(&prepared, ".lock-rollback");
+    fs::hard_link(&active_index, &rollback).expect("durable rollback marker");
+
+    assert!(
+        recover_prepared_index_lock_with_guard(&ctx, &prepared, &|_| Ok(()))
+            .expect("resume before publication")
+    );
+    assert_no_index_aux_paths(&prepared);
+    fs::remove_dir_all(&dir).expect("remove test repository");
+}
+
+#[test]
 fn prepared_index_recovery_isolates_a_mutating_guard_from_its_owned_lock() {
     for replacement in [false, true] {
         let (ctx, dir) = fresh_repo("prepared-index-recovery-guard");

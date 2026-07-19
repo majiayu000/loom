@@ -127,10 +127,15 @@ fn install_or_recover_prepared_index(
                 remove_private_entry(&publish)?;
                 return Ok(true);
             }
-            rollback_incomplete_publication(&rollback, &capture, &lock, &index)?;
-            return Err(anyhow!(
-                "foreign Git index lock was rolled back and preserved"
-            ));
+            if owned_paths_match(&claim, &lock, &prepared_bytes)? {
+                remove_private_entry(&rollback)?;
+                crate::fs_util::sync_parent_directory(&rollback)?;
+            } else {
+                rollback_incomplete_publication(&rollback, &capture, &lock, &index)?;
+                return Err(anyhow!(
+                    "foreign Git index lock was rolled back and preserved"
+                ));
+            }
         }
         if recovery && owned_paths_match(&claim, &index, &prepared_bytes)? {
             release_owned_lock(&claim, &capture, &lock, &prepared_bytes)?;

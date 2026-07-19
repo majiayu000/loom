@@ -48,6 +48,20 @@ pub(super) fn durable_registry_noop(journal: &TransactionJournal) -> bool {
         })
 }
 
+pub(super) fn discard_retained_registry_index_locks(
+    app: &App,
+    journal: &TransactionJournal,
+) -> std::result::Result<(), CommandFailure> {
+    for attempt in &journal.registry_index_attempts {
+        let prepared = Path::new(&attempt.prepared_index);
+        if gitops::prepared_index_claim_exists(&app.ctx, prepared).map_err(map_git)? {
+            gitops::discard_prepared_index_lock(&app.ctx, prepared)
+                .map_err(super::index_lock_failure::map_install_error)?;
+        }
+    }
+    Ok(())
+}
+
 pub(super) fn commit_convergence_registry(
     app: &App,
     plan: &SkillConvergencePlan,
@@ -63,6 +77,11 @@ pub(super) fn commit_convergence_registry(
         &source_head,
         "registry commit parent changed before preparation",
     )?;
+    if let Some(commit) =
+        resume_ready_registry_index_lock(app, plan, journal_path, journal, &source_head)?
+    {
+        return Ok(Some(commit));
+    }
 
     let (attempt, base_index, prepared_index, commit_index) =
         allocate_registry_indexes(journal_path, journal, "commit")?;
@@ -131,10 +150,14 @@ pub(super) fn commit_convergence_registry(
             gitops::move_head_if_unchanged(&app.ctx, &commit, &source_head)
         });
     if let Err(error) = install {
+        let failure = super::index_lock_failure::map_install_error(error);
+        if super::index_lock_failure::retained(&failure) {
+            return Err(failure);
+        }
         if gitops::head(&app.ctx).map_err(map_git)? == commit {
             align_registry_index(app, plan, journal_path, journal, &commit)?;
         } else {
-            return Err(map_git(error));
+            return Err(failure);
         }
     }
     require_head(
@@ -147,6 +170,70 @@ pub(super) fn commit_convergence_registry(
     Ok(Some(commit))
 }
 
+pub(super) fn resume_ready_registry_index_lock(
+    app: &App,
+    plan: &SkillConvergencePlan,
+    journal_path: &Path,
+    journal: &mut TransactionJournal,
+    source_head: &str,
+) -> std::result::Result<Option<String>, CommandFailure> {
+    let Some((attempt, ready)) = journal
+        .registry_index_attempts
+        .iter()
+        .enumerate()
+        .rev()
+        .find(|(_, attempt)| {
+            attempt.purpose == "commit"
+                && attempt.state == RegistryIndexAttemptState::Ready
+                && attempt.changed == Some(true)
+        })
+    else {
+        return Ok(None);
+    };
+    let prepared_index = PathBuf::from(&ready.prepared_index);
+    let expected_index = ready.prepared_digest.clone().ok_or_else(|| {
+        CommandFailure::new(
+            ErrorCode::StateCorrupt,
+            "prepared registry index digest is missing",
+        )
+    })?;
+    let base_index_digest = ready.base_digest.clone().ok_or_else(|| {
+        CommandFailure::new(
+            ErrorCode::StateCorrupt,
+            "base registry index digest is missing",
+        )
+    })?;
+    let commit = journal.registry_commit.clone().ok_or_else(|| {
+        CommandFailure::new(
+            ErrorCode::StateCorrupt,
+            "prepared registry commit is missing",
+        )
+    })?;
+    super::recovery_evidence::verify_registry_commit(app, plan, journal, &commit, source_head)?;
+    let guard = |candidate: &Path| {
+        validate_registry_result(app, plan, journal)
+            .map_err(|error| anyhow::anyhow!(error.message))?;
+        validate_recovery_routing(app, plan).map_err(|error| anyhow::anyhow!(error.message))?;
+        let head = gitops::head(&app.ctx)?;
+        if head != source_head && head != commit {
+            return Err(anyhow::anyhow!("registry recovery HEAD changed"));
+        }
+        validate_index_install(app, candidate, &expected_index, &base_index_digest, &head)?;
+        if head == source_head {
+            gitops::move_head_if_unchanged(&app.ctx, &commit, source_head)?;
+        }
+        Ok(())
+    };
+    if !gitops::recover_prepared_index_lock_with_guard(&app.ctx, &prepared_index, &guard)
+        .map_err(super::index_lock_failure::map_install_error)?
+    {
+        return Ok(None);
+    }
+    require_head(app, &commit, "recovered registry commit did not persist")?;
+    retain_registry_index_attempt(journal_path, journal, attempt)?;
+    Ok(Some(commit))
+}
+
 pub(super) fn align_registry_index(
     app: &App,
     plan: &SkillConvergencePlan,
@@ -154,6 +241,15 @@ pub(super) fn align_registry_index(
     journal: &mut TransactionJournal,
     expected_head: &str,
 ) -> std::result::Result<(), CommandFailure> {
+    validate_registry_result(app, plan, journal)?;
+    if let Some(recorded) = journal.registry_commit.as_deref()
+        && recorded != expected_head
+    {
+        return Err(CommandFailure::new(
+            ErrorCode::StateCorrupt,
+            "recorded registry commit differs from HEAD",
+        ));
+    }
     if let Some(attempt) = recover_recorded_registry_index_lock(app, journal, expected_head)? {
         retain_registry_index_attempt(journal_path, journal, attempt)?;
         return Ok(());
@@ -167,15 +263,6 @@ pub(super) fn align_registry_index(
         retain_current_registry_index_attempt(journal_path, journal)?;
         return Ok(());
     }
-    validate_registry_result(app, plan, journal)?;
-    if let Some(recorded) = journal.registry_commit.as_deref()
-        && recorded != expected_head
-    {
-        return Err(CommandFailure::new(
-            ErrorCode::StateCorrupt,
-            "recorded registry commit differs from HEAD",
-        ));
-    }
     let (attempt, base_index, prepared_index, _) =
         allocate_registry_indexes(journal_path, journal, "repair")?;
     gitops::snapshot_index_to(&app.ctx, &base_index).map_err(map_git)?;
@@ -185,7 +272,7 @@ pub(super) fn align_registry_index(
     save_journal(journal_path, journal)?;
     let changed =
         gitops::prepare_index_for_paths(&app.ctx, &base_index, &prepared_index, &[REGISTRY_PATH])
-            .map_err(map_git)?;
+            .map_err(super::index_lock_failure::map_install_error)?;
     sync_registry_index(&prepared_index)?;
     let expected_index = file_digest(&prepared_index)?;
     journal.registry_index_attempts[attempt].prepared_digest = Some(expected_index.clone());
@@ -211,13 +298,13 @@ pub(super) fn align_registry_index(
     };
     let recovered_lock =
         gitops::recover_prepared_index_lock_with_guard(&app.ctx, &prepared_index, &guard)
-            .map_err(map_git)?;
+            .map_err(super::index_lock_failure::map_install_error)?;
     if recovered_lock {
         retain_registry_index_attempt(journal_path, journal, attempt)?;
         return Ok(());
     }
     gitops::install_prepared_index_with_guard(&app.ctx, &prepared_index, &guard)
-        .map_err(map_git)?;
+        .map_err(super::index_lock_failure::map_install_error)?;
     retain_registry_index_attempt(journal_path, journal, attempt)
 }
 
@@ -231,7 +318,7 @@ fn recover_recorded_registry_index_lock(
             continue;
         }
         let prepared = Path::new(&attempt.prepared_index);
-        if !gitops::prepared_index_claim_exists(prepared).map_err(map_git)? {
+        if !gitops::prepared_index_claim_exists(&app.ctx, prepared).map_err(map_git)? {
             continue;
         }
         let expected_index = attempt.prepared_digest.as_deref().ok_or_else(|| {
@@ -250,7 +337,7 @@ fn recover_recorded_registry_index_lock(
             gitops::recover_prepared_index_lock_with_guard(&app.ctx, prepared, &|candidate| {
                 validate_index_install(app, candidate, expected_index, base_index, expected_head)
             })
-            .map_err(map_git)?;
+            .map_err(super::index_lock_failure::map_install_error)?;
         if recovered {
             return Ok(Some(index));
         }

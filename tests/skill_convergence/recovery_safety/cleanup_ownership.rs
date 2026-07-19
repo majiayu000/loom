@@ -301,7 +301,7 @@ fn prepared_cleanup_rejects_non_exact_present_owners_and_retains_retry_evidence(
             let (output, recovered) = apply(&fixture, &plan, &key, None);
             assert!(
                 output.status.success(),
-                "prepared cleanup retry failed: {recovered}"
+                "prepared cleanup retry failed for {surface}/{mode}: {recovered}"
             );
             super::super::skill_convergence_ledger_assertions::assert_exact_retained_ledger(
                 &journal_path,

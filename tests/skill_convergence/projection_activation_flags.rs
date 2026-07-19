@@ -35,15 +35,12 @@ fn has_activation_gap(methods: &[&str]) -> bool {
         .any(|window| window == ["copy", "symlink", "copy"])
 }
 
-#[cfg(unix)]
-#[test]
-fn recovery_restores_noncontiguous_activated_projection_flags() {
-    let fixture = projected_fixture();
+fn plan_with_activation_gap(fixture: &Fixture) -> Value {
     let mut planned = Value::Null;
     for index in 0..16 {
         let method = if index % 2 == 0 { "symlink" } else { "copy" };
-        add_test_projection(&fixture, &format!("{index}-{method}"), method);
-        let (output, candidate) = plan_converge(&fixture, &[]);
+        add_test_projection(fixture, &format!("{index}-{method}"), method);
+        let (output, candidate) = plan_converge(fixture, &[]);
         assert!(output.status.success(), "plan failed: {candidate}");
         let has_gap = {
             let methods = candidate["data"]["effects"]
@@ -56,9 +53,17 @@ fn recovery_restores_noncontiguous_activated_projection_flags() {
         };
         planned = candidate;
         if has_gap {
-            break;
+            return planned;
         }
     }
+    panic!("could not construct a noncontiguous projection activation plan: {planned}");
+}
+
+#[cfg(unix)]
+#[test]
+fn recovery_restores_noncontiguous_activated_projection_flags() {
+    let fixture = projected_fixture();
+    let planned = plan_with_activation_gap(&fixture);
     let methods = planned["data"]["effects"]
         .as_array()
         .expect("effects")
@@ -101,11 +106,7 @@ fn recovery_restores_noncontiguous_activated_projection_flags() {
         .as_array()
         .expect("journal projections")
         .iter()
-        .map(|projection| {
-            projection["activated_fingerprint"]
-                .as_str()
-                .is_some_and(|value| value.starts_with("active:"))
-        })
+        .map(|projection| projection["activated"].as_bool().unwrap_or(false))
         .collect::<Vec<_>>();
     assert!(flags.windows(3).any(|window| window == [true, false, true]));
     assert_eq!(
@@ -149,6 +150,143 @@ fn recovery_restores_noncontiguous_activated_projection_flags() {
         .root
         .path()
         .join("state/transactions/convergence-demo.json");
+    assert_exact_retained_ledger(&journal_path, "committed_artifacts_retained");
+}
+
+#[cfg(unix)]
+#[test]
+fn recovery_replays_rotation_and_post_exchange_activation_intent() {
+    let fixture = projected_fixture();
+    plan_with_activation_gap(&fixture);
+    fs::write(
+        fixture.root.path().join("skills/demo/details.txt"),
+        "activation intent recovery\n",
+    )
+    .expect("edit source");
+    let (output, plan) = plan_converge(&fixture, &[]);
+    assert!(output.status.success(), "updated plan failed: {plan}");
+    let key = "rotation-activation-intent";
+
+    let (output, source_stopped) = apply_plan(
+        &fixture,
+        &plan,
+        key,
+        &[(
+            "LOOM_FAULT_INJECT",
+            "convergence_interrupt_after_source_commit",
+        )],
+    );
+    assert!(
+        !output.status.success(),
+        "source fault passed: {source_stopped}"
+    );
+    let (output, rotation_stopped) = apply_plan(
+        &fixture,
+        &plan,
+        key,
+        &[(
+            "LOOM_FAULT_INJECT",
+            "convergence_interrupt_after_projection_generation_rotation",
+        )],
+    );
+    assert!(
+        !output.status.success(),
+        "rotation fault passed: {rotation_stopped}"
+    );
+
+    let journal_path = fixture
+        .root
+        .path()
+        .join("state/transactions/convergence-demo.json");
+    let rotated_raw = fs::read(&journal_path).expect("journal");
+    let rotated: Value = serde_json::from_slice(&rotated_raw).expect("parse rotated journal");
+    assert_eq!(rotated["phase"], json!("preparing_projections"));
+    assert!(
+        rotated["projections"]
+            .as_array()
+            .expect("projections")
+            .iter()
+            .all(|projection| projection["activated_fingerprint"].is_null())
+    );
+
+    let methods = plan["data"]["effects"]
+        .as_array()
+        .expect("effects")
+        .iter()
+        .map(|effect| effect["method"].as_str().expect("method"))
+        .collect::<Vec<_>>();
+    let target = methods
+        .windows(3)
+        .position(|window| window == ["copy", "symlink", "copy"])
+        .map(|index| index + 2)
+        .expect("activation gap");
+    let staging = rotated["projections"][target]["staging_path"]
+        .as_str()
+        .expect("target staging")
+        .to_string();
+    let backup = std::path::PathBuf::from(
+        rotated["projections"][target]["backup"]["backup_path"]
+            .as_str()
+            .expect("target backup"),
+    );
+    let tamper = backup.join("concurrent-tamper.txt");
+    let live_before = snapshot_tree(fixture.target.path());
+    fs::write(&tamper, "tamper\n").expect("tamper rollback backup");
+    let (output, rejected) = apply_plan(&fixture, &plan, key, &[]);
+    assert!(
+        !output.status.success(),
+        "tampered backup resumed: {rejected}"
+    );
+    assert_eq!(rejected["error"]["code"], json!("STATE_CORRUPT"));
+    assert_eq!(snapshot_tree(fixture.target.path()), live_before);
+    assert_eq!(
+        fs::read(&journal_path).expect("preserved journal"),
+        rotated_raw
+    );
+    fs::remove_file(tamper).expect("restore rollback backup");
+
+    let (output, activation_stopped) = apply_plan(
+        &fixture,
+        &plan,
+        key,
+        &[
+            (
+                "LOOM_FAULT_INJECT",
+                "convergence_interrupt_after_projection_activation",
+            ),
+            ("LOOM_TEST_CONVERGENCE_ACTIVATION_STAGING", &staging),
+        ],
+    );
+    assert!(
+        !output.status.success(),
+        "post-exchange fault passed: {activation_stopped}"
+    );
+    let interrupted: Value = serde_json::from_slice(&fs::read(&journal_path).expect("journal"))
+        .expect("parse interrupted journal");
+    let flags = interrupted["projections"]
+        .as_array()
+        .expect("projections")
+        .iter()
+        .map(|projection| projection["activated"].as_bool().unwrap_or(false))
+        .collect::<Vec<_>>();
+    let pending = interrupted["projections"]
+        .as_array()
+        .expect("projections")
+        .iter()
+        .map(|projection| projection["activation_pending"].as_bool().unwrap_or(false))
+        .collect::<Vec<_>>();
+    assert_eq!(&flags[target - 2..=target], &[true, false, false]);
+    assert_eq!(&pending[target - 2..=target], &[false, false, true]);
+    assert_eq!(
+        interrupted["installed_projections"],
+        json!(flags.iter().filter(|flag| **flag).count())
+    );
+
+    let (output, recovered) = apply_plan(&fixture, &plan, key, &[]);
+    assert!(
+        output.status.success(),
+        "intent recovery failed: {recovered}"
+    );
     assert_exact_retained_ledger(&journal_path, "committed_artifacts_retained");
 }
 

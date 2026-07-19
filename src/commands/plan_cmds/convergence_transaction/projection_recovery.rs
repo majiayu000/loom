@@ -22,6 +22,54 @@ pub(super) fn validate_projection_staging_fingerprint(
     )
 }
 
+pub(super) fn prepare_projection_restore_fingerprint(
+    artifact: &ProjectionBackup,
+    plan_id: &str,
+) -> std::result::Result<Option<String>, CommandFailure> {
+    let Some(backup) = artifact.backup.as_ref() else {
+        return Ok(None);
+    };
+    if artifact.restored_fingerprint.is_some() {
+        return Ok(None);
+    }
+    let live = Path::new(&artifact.materialized_path);
+    let staging = Path::new(&artifact.staging_path);
+    let expected = artifact
+        .fingerprint()
+        .ok_or_else(|| corrupt("projection activation fingerprint is missing"))?;
+    validate_owned_staging(live, staging, plan_id, &artifact.owner_proof)?;
+    require_fingerprint(
+        live,
+        expected,
+        "live projection before rollback preparation",
+    )?;
+    if staging.try_exists().map_err(map_io)? {
+        let fingerprint = convergence_projection_fingerprint(staging)?;
+        if artifact.original_fingerprint.as_deref() == Some(fingerprint.as_str()) {
+            if !path_matches_backup(staging, backup)? {
+                return Err(recovery_conflict(
+                    staging,
+                    "retained original staging does not match durable backup evidence",
+                ));
+            }
+            return Ok(Some(fingerprint));
+        }
+        // The owner proof and exact live activation fingerprint above make this
+        // declared private path safe to rebuild. With no persisted restore
+        // fingerprint, anything else here is an interrupted restore candidate.
+        crate::fs_util::remove_path_if_exists(staging).map_err(map_io)?;
+    }
+    let candidate = staging.with_file_name(".rollback-restore");
+    restore_path_from_backup_if_absent(staging, &candidate, backup).map_err(map_io)?;
+    if !path_matches_backup(staging, backup)? {
+        return Err(recovery_conflict(
+            staging,
+            "staged rollback backup does not match durable evidence",
+        ));
+    }
+    Ok(Some(convergence_projection_fingerprint(staging)?))
+}
+
 fn restore_projection_with_hook<F>(
     artifact: &ProjectionBackup,
     plan_id: &str,
@@ -35,6 +83,16 @@ where
     let expected = artifact
         .fingerprint()
         .ok_or_else(|| corrupt("projection activation fingerprint is missing"))?;
+    let restored = if artifact.backup.is_some() {
+        Some(
+            artifact
+                .restored_fingerprint
+                .as_deref()
+                .ok_or_else(|| corrupt("projection restore fingerprint is missing"))?,
+        )
+    } else {
+        None
+    };
     validate_owned_staging(live, staging, plan_id, &artifact.owner_proof)?;
 
     let live_exists = live.try_exists().map_err(map_io)?;
@@ -44,6 +102,9 @@ where
             && live_exists
             && path_matches_backup(staging, backup)?
         {
+            let restored =
+                restored.ok_or_else(|| corrupt("projection restore fingerprint is missing"))?;
+            require_fingerprint(staging, restored, "prepared projection rollback staging")?;
             require_fingerprint(
                 live,
                 expected,
@@ -52,6 +113,7 @@ where
             before_atomic_restore(live);
             exchange_paths_atomic(staging, live).map_err(map_io)?;
             require_fingerprint(staging, expected, "projection exchanged during rollback")?;
+            require_fingerprint(live, restored, "restored live projection")?;
             if !path_matches_backup(live, backup)? {
                 return Err(recovery_conflict(
                     live,
@@ -71,6 +133,9 @@ where
                 "rollback artifact is present but the live projection is not restored",
             ));
         }
+        if let Some(restored) = restored {
+            require_fingerprint(live, restored, "restored live projection")?;
+        }
         return Ok(());
     }
     if !live_exists {
@@ -86,30 +151,14 @@ where
 
     require_fingerprint(live, expected, "live projection before rollback")?;
     before_atomic_restore(live);
-    match artifact.backup.as_ref() {
-        Some(backup) => {
-            let candidate = staging.with_file_name(".rollback-restore");
-            restore_path_from_backup_if_absent(staging, &candidate, backup).map_err(map_io)?;
-            if !path_matches_backup(staging, backup)? {
-                return Err(recovery_conflict(
-                    staging,
-                    "staged rollback backup does not match durable evidence",
-                ));
-            }
-            exchange_paths_atomic(staging, live).map_err(map_io)?;
-            require_fingerprint(staging, expected, "projection exchanged during rollback")?;
-            if !path_matches_backup(live, backup)? {
-                return Err(recovery_conflict(
-                    live,
-                    "restored live projection does not match durable backup",
-                ));
-            }
-        }
-        None => {
-            rename_no_replace_atomic(live, staging).map_err(map_io)?;
-            require_fingerprint(staging, expected, "projection removed during rollback")?;
-        }
+    if artifact.backup.is_some() {
+        return Err(recovery_conflict(
+            staging,
+            "refresh rollback staging was not durably prepared",
+        ));
     }
+    rename_no_replace_atomic(live, staging).map_err(map_io)?;
+    require_fingerprint(staging, expected, "projection removed during rollback")?;
     Ok(())
 }
 
@@ -199,10 +248,14 @@ mod tests {
             staging_owner: owner.display().to_string(),
             owner_proof,
             staging_path: owner.join("stage").display().to_string(),
-            activated_fingerprint: Some(format!(
-                "active:{}",
-                convergence_projection_fingerprint(&live).expect("fingerprint")
-            )),
+            activated_fingerprint: Some(
+                convergence_projection_fingerprint(&live).expect("fingerprint"),
+            ),
+            activated: true,
+            activation_pending: false,
+            original_fingerprint: None,
+            restored_fingerprint: None,
+            restore_pending: false,
         }
     }
 
@@ -282,6 +335,9 @@ mod tests {
             "original_path": live.display().to_string(),
             "backup_path": backup.display().to_string(),
         }));
+        artifact.restored_fingerprint =
+            prepare_projection_restore_fingerprint(&artifact, "plan-concurrent-live")
+                .expect("prepare restore fingerprint");
 
         let error = restore_projection_with_hook(&artifact, "plan-concurrent-live", |path| {
             fs::write(path.join("external.txt"), "external\n").expect("race write")

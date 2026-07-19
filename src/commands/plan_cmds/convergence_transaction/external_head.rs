@@ -120,8 +120,16 @@ fn retire_registry_after_external_head(
     if !external_head_preserves_reviewed_boundaries(app, plan, journal)? {
         return Ok(None);
     }
-    let mut errors =
-        super::rollback::restore_registry_and_activated_projections(paths, plan, journal);
+    super::registry_commit::discard_retained_registry_index_locks(app, journal)?;
+    if !external_head_preserves_reviewed_boundaries(app, plan, journal)? {
+        return Ok(None);
+    }
+    let mut errors = super::rollback::restore_registry_and_activated_projections(
+        paths,
+        plan,
+        journal_path,
+        journal,
+    );
     if errors.is_empty() {
         super::source_commit::validate_live_source(app, plan)?;
         journal.registry_commit = None;

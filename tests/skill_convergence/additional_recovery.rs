@@ -1,22 +1,9 @@
 use std::fs;
-use std::path::PathBuf;
 
 use serde_json::json;
 
 use super::*;
 use crate::skill_convergence_executor::apply_plan;
-
-fn seed_owned_index_lock(prepared: &Path, lock: &Path) {
-    let mut claim_name = prepared.as_os_str().to_os_string();
-    claim_name.push(".lock-claim");
-    let claim = PathBuf::from(claim_name);
-    let detached = prepared.with_extension("detached-index");
-    fs::hard_link(prepared, &claim).expect("durable index claim");
-    fs::copy(prepared, &detached).expect("copy detached evidence");
-    fs::remove_file(prepared).expect("detach prepared name");
-    fs::rename(&detached, prepared).expect("restore detached prepared evidence");
-    fs::hard_link(&claim, lock).expect("publish owned index lock");
-}
 
 #[test]
 fn interrupted_projection_activation_recovers_refresh() {
@@ -64,6 +51,91 @@ fn interrupted_projection_activation_recovers_refresh() {
             .expect("recovered projection"),
         "projection activation recovery\n"
     );
+}
+
+#[test]
+fn multi_projection_restore_wal_is_restartable_between_items() {
+    let fixture = projected_fixture();
+    let (second, _) = add_copy_projection(&fixture, "restore-wal-second");
+    fs::write(
+        fixture.root.path().join("skills/demo/details.txt"),
+        "multi projection restore WAL\n",
+    )
+    .expect("edit source");
+    let (output, plan) = plan_converge(&fixture, &[]);
+    assert!(output.status.success(), "plan failed: {plan}");
+    assert_eq!(
+        plan["data"]["effects"]
+            .as_array()
+            .expect("projection effects")
+            .len(),
+        2
+    );
+
+    let key = "multi-projection-restore-wal";
+    let (output, interrupted) = apply_plan(
+        &fixture,
+        &plan,
+        key,
+        &[(
+            "LOOM_FAULT_INJECT",
+            "convergence_interrupt_after_projection_swap",
+        )],
+    );
+    assert!(
+        !output.status.success(),
+        "projection swap fault passed: {interrupted}"
+    );
+
+    let (output, wal_interrupted) = apply_plan(
+        &fixture,
+        &plan,
+        key,
+        &[
+            (
+                "LOOM_FAULT_INJECT",
+                "convergence_interrupt_after_projection_restore_wal",
+            ),
+            ("LOOM_TEST_CONVERGENCE_RESTORE_WAL_INDEX", "0"),
+        ],
+    );
+    assert!(
+        !output.status.success(),
+        "restore WAL fault passed: {wal_interrupted}"
+    );
+
+    let journal_path = fixture
+        .root
+        .path()
+        .join("state/transactions/convergence-demo.json");
+    let journal: Value =
+        serde_json::from_slice(&fs::read(&journal_path).expect("journal")).expect("parse journal");
+    let projections = journal["projections"].as_array().expect("projections");
+    assert_eq!(journal["installed_projections"], json!(1));
+    assert_eq!(
+        projections
+            .iter()
+            .filter(|projection| projection["activated"] == json!(true))
+            .count(),
+        1
+    );
+    assert!(
+        projections
+            .iter()
+            .all(|projection| projection["original_fingerprint"].as_str().is_some())
+    );
+
+    let (output, recovered) = apply_plan(&fixture, &plan, key, &[]);
+    assert!(
+        output.status.success(),
+        "restore WAL recovery failed: {recovered}"
+    );
+    for projection in [fixture.target.path().join("demo"), second] {
+        assert_eq!(
+            fs::read_to_string(projection.join("details.txt")).expect("restored projection"),
+            "multi projection restore WAL\n"
+        );
+    }
 }
 
 #[cfg(unix)]
@@ -137,6 +209,8 @@ fn registry_cas_rejects_an_external_head_without_installing_index() {
         !output.status.success(),
         "registry CAS did not stop: {interrupted}"
     );
+    fs::remove_file(fixture.root.path().join(".git/index.lock"))
+        .expect("simulate operator cleanup of the retained stale lock");
 
     fs::write(fixture.root.path().join("external.txt"), "external\n").expect("external file");
     git(fixture.root.path(), &["add", "external.txt"]);
@@ -245,19 +319,7 @@ fn registry_recovery_adopts_only_its_durable_index_lock() {
         .as_str()
         .expect("registry commit");
     let source_head = journal["source_head"].as_str().expect("source head");
-    let commit_attempt = journal["registry_index_attempts"]
-        .as_array()
-        .expect("registry index attempts")
-        .iter()
-        .rev()
-        .find(|attempt| attempt["purpose"] == json!("commit"))
-        .expect("registry commit index attempt");
-    let prepared = Path::new(
-        commit_attempt["prepared_index"]
-            .as_str()
-            .expect("prepared index"),
-    );
-    seed_owned_index_lock(prepared, &fixture.root.path().join(".git/index.lock"));
+    assert!(fixture.root.path().join(".git/index.lock").is_file());
     git(
         fixture.root.path(),
         &["update-ref", "HEAD", registry_commit, source_head],
@@ -289,25 +351,14 @@ fn source_recovery_adopts_only_its_durable_index_lock() {
         &fixture,
         &plan,
         "source-lock-crash",
-        &[(
-            "LOOM_FAULT_INJECT",
-            "convergence_interrupt_after_staged_index_prepared",
-        )],
+        &[("LOOM_TEST_PREPARED_INDEX_FAIL_AFTER_PUBLICATION", "1")],
     );
     assert!(
         !output.status.success(),
-        "source index preparation did not stop: {interrupted}"
+        "source index publication did not stop: {interrupted}"
     );
-    let journal_path = fixture
-        .root
-        .path()
-        .join("state/transactions/convergence-demo.json");
-    let journal: Value =
-        serde_json::from_slice(&fs::read(journal_path).expect("journal")).expect("parse journal");
-    let prepared =
-        Path::new(journal["artifact_root"].as_str().expect("artifact root")).join("source-index");
     let lock = fixture.root.path().join(".git/index.lock");
-    seed_owned_index_lock(&prepared, &lock);
+    assert!(lock.is_file());
 
     let (output, recovered) = apply_plan(&fixture, &plan, "source-lock-crash", &[]);
     assert!(

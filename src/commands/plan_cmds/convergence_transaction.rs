@@ -29,6 +29,7 @@ use super::{PLAN_PROTOCOL_VERSION, plan_failure};
 mod external_head;
 mod faults;
 mod guards;
+mod index_lock_failure;
 mod ownership;
 mod ownership_state;
 mod preparation;
@@ -58,7 +59,8 @@ use preparation::{
     rotate_projection_stages,
 };
 use projection_recovery::{
-    restore_projection_from_evidence, validate_projection_staging_fingerprint,
+    prepare_projection_restore_fingerprint, restore_projection_from_evidence,
+    validate_projection_staging_fingerprint,
 };
 use projection_view::projection_view_digest;
 use recovery_evidence::{
@@ -121,6 +123,8 @@ enum TransactionPhase {
     SourceReplaced,
     CommittingSource,
     SourceCommitted,
+    RotatingProjections,
+    PreparingProjections,
     InstallingProjections,
     ProjectionsSwapped,
     CommittingRegistry,
@@ -140,8 +144,17 @@ struct ProjectionBackup {
     staging_path: String,
     #[serde(default)]
     activated_fingerprint: Option<String>,
+    #[serde(default)]
+    activated: bool,
+    #[serde(default)]
+    activation_pending: bool,
+    #[serde(default)]
+    original_fingerprint: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    restored_fingerprint: Option<String>,
+    #[serde(default)]
+    restore_pending: bool,
 }
-
 pub(super) fn apply_convergence(
     app: &App,
     stored: &Value,
@@ -251,6 +264,11 @@ pub(super) fn apply_convergence(
                 staging_owner: staging_owner.display().to_string(),
                 owner_proof: new_owner_proof(&plan.plan_id),
                 activated_fingerprint: None,
+                activated: false,
+                activation_pending: false,
+                original_fingerprint: None,
+                restored_fingerprint: None,
+                restore_pending: false,
             })
         })
         .collect::<std::result::Result<Vec<_>, CommandFailure>>()?;
@@ -415,6 +433,9 @@ fn execute_local_transaction(
                 Some(convergence_projection_fingerprint(staging_path)?);
             save_journal(journal_path, journal)?;
         }
+        if !safe_symlink_noop {
+            rollback::persist_projection_activation_intent(journal_path, journal, index)?;
+        }
         let artifact = &journal.projections[index];
         let snapshot = snapshot.ok_or_else(|| {
             CommandFailure::new(
@@ -456,11 +477,7 @@ fn execute_local_transaction(
                         "prepared projection staging fingerprint is absent",
                     )
                 })?,
-                artifact
-                    .backup
-                    .as_ref()
-                    .and_then(|backup| backup["fingerprint"].as_str())
-                    .map(str::to_string),
+                artifact.original_fingerprint.clone(),
             );
             execute_prepared_convergence_projection(
                 &app.ctx,
@@ -491,7 +508,9 @@ fn execute_local_transaction(
         }
         upsert_projection(&mut projections, projection.clone());
         applied.push(projection.instance_id);
+        debug_assert_eq!(output.activated, !safe_symlink_noop);
         if output.activated {
+            journal.projections[index].activation_pending = false;
             journal.projections[index].mark_activated(true);
             journal.installed_projections += 1;
         }
@@ -500,7 +519,9 @@ fn execute_local_transaction(
             source_head,
             "HEAD changed during projection activation",
         ) {
-            return Err(error.with_rollback_errors(restore_activated_projections(journal)));
+            return Err(
+                error.with_rollback_errors(restore_activated_projections(journal_path, journal))
+            );
         }
         save_journal(journal_path, journal)?;
         maybe_skill_fault("convergence_after_projection_swap")?;
@@ -519,7 +540,9 @@ fn execute_local_transaction(
         .and_then(|_| validate_recovery_routing(app, plan))
         .and_then(|_| validate_mutated_surfaces(app, paths, plan, journal));
         if let Err(error) = save_guard {
-            return Err(error.with_rollback_errors(restore_activated_projections(journal)));
+            return Err(
+                error.with_rollback_errors(restore_activated_projections(journal_path, journal))
+            );
         }
         #[cfg(debug_assertions)]
         if let Some(milliseconds) = std::env::var("LOOM_TEST_CONVERGENCE_REGISTRY_SAVE_PAUSE_MS")
@@ -536,7 +559,7 @@ fn execute_local_transaction(
                 "registry projections changed during atomic replacement",
                 "PLAN_PROJECTION_DRIFT",
             )
-            .with_rollback_errors(restore_activated_projections(journal)));
+            .with_rollback_errors(restore_activated_projections(journal_path, journal)));
         }
         maybe_skill_fault("convergence_interrupt_after_registry_save_cas")?;
         if let Err(error) = require_head(
@@ -648,8 +671,8 @@ fn save_journal(
     path: &Path,
     journal: &TransactionJournal,
 ) -> std::result::Result<(), CommandFailure> {
-    let raw = serde_json::to_string_pretty(journal).map_err(map_io)?;
-    write_atomic(path, &(raw + "\n")).map_err(map_io)
+    let raw = serde_json::to_string(journal).map_err(map_io)?;
+    write_atomic(path, &raw).map_err(map_io)
 }
 
 fn finish_committed_cleanup(

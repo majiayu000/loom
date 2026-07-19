@@ -77,9 +77,21 @@ pub(super) fn prepare_transaction_artifacts_from_snapshot(
     if let Some(backup) = journal.source_backup.as_ref() {
         prepare_declared_backup(&app.ctx.skill_path(&plan.skill), backup)?;
     }
-    for projection in &journal.projections {
+    for (effect, projection) in plan.projections.iter().zip(&mut journal.projections) {
+        projection.original_fingerprint = (effect.effect == "refresh")
+            .then(|| convergence_projection_fingerprint(Path::new(&projection.materialized_path)))
+            .transpose()?;
         if let Some(backup) = projection.backup.as_ref() {
             prepare_declared_backup(Path::new(&projection.materialized_path), backup)?;
+        }
+        let live = (effect.effect == "refresh")
+            .then(|| convergence_projection_fingerprint(Path::new(&projection.materialized_path)))
+            .transpose()?;
+        if projection.original_fingerprint != live {
+            return Err(stale(
+                "projection changed while recording rollback evidence",
+                "PLAN_PROJECTION_DRIFT",
+            ));
         }
     }
     maybe_skill_fault("convergence_during_backup_preparation")?;
@@ -319,8 +331,29 @@ pub(super) fn rotate_projection_stages(
         projection.staging_owner = owner.display().to_string();
         projection.owner_proof = proof;
         projection.activated_fingerprint = None;
+        projection.activated = false;
+        projection.activation_pending = false;
+        projection.original_fingerprint = projection
+            .backup
+            .as_ref()
+            .map(|_| convergence_projection_fingerprint(Path::new(&projection.materialized_path)))
+            .transpose()?;
+        projection.restored_fingerprint = None;
+        projection.restore_pending = false;
     }
+    journal.phase = TransactionPhase::PreparingProjections;
     save_journal(journal_path, journal)
+}
+
+pub(super) fn begin_projection_rotation(
+    journal_path: &Path,
+    journal: &mut TransactionJournal,
+) -> std::result::Result<(), CommandFailure> {
+    journal.installed_projections = 0;
+    journal.expected_projections = None;
+    journal.phase = TransactionPhase::RotatingProjections;
+    save_journal(journal_path, journal)?;
+    rotate_projection_stages(journal_path, journal)
 }
 
 pub(super) fn refresh_projection_live_fingerprints(
@@ -369,6 +402,19 @@ fn prepare_projection_stages_from(
     })?;
     for (index, effect) in plan.projections.iter().enumerate() {
         let materialized_path = PathBuf::from(&journal.projections[index].materialized_path);
+        if effect.effect == "refresh" {
+            let live = convergence_projection_fingerprint(&materialized_path)?;
+            match journal.projections[index].original_fingerprint.as_deref() {
+                Some(expected) if expected != live => {
+                    return Err(stale(
+                        "projection identity changed before staging preparation",
+                        "PLAN_PROJECTION_DRIFT",
+                    ));
+                }
+                None => journal.projections[index].original_fingerprint = Some(live),
+                Some(_) => {}
+            }
+        }
         let safe_symlink_noop = effect.effect == "refresh"
             && effect.method == "symlink"
             && projection_path_is_safe_symlink(

@@ -2,13 +2,17 @@ mod diff;
 mod history;
 mod history_impl;
 mod history_types;
+mod prepared_commit;
 mod prepared_index;
+mod prepared_index_paths;
 mod snapshot;
 
 pub use diff::*;
 pub use history::*;
 pub use history_types::*;
+pub use prepared_commit::*;
 pub use prepared_index::*;
+pub use prepared_index_paths::prepared_index_claim_exists;
 pub use snapshot::snapshot_index_to;
 
 use std::fs::{self, OpenOptions};
@@ -339,7 +343,7 @@ pub fn commit_paths_if_changed_with_pre_commit<F>(
 where
     F: FnOnce() -> Result<()>,
 {
-    let paths = prepared_index::eligible_paths(ctx, paths)?;
+    let paths = prepared_index_paths::eligible_paths(ctx, paths)?;
 
     if paths.is_empty() {
         return Ok(None);
@@ -752,5 +756,7 @@ impl Drop for TempFile {
     }
 }
 
+#[cfg(test)]
+mod prepared_index_concurrency_tests;
 #[cfg(test)]
 mod tests;

@@ -5,47 +5,23 @@ use super::*;
 
 impl ProjectionBackup {
     pub(super) fn fingerprint(&self) -> Option<&str> {
-        self.activated_fingerprint.as_deref().map(|value| {
-            value
-                .strip_prefix("active:")
-                .or_else(|| value.strip_prefix("restore:"))
-                .unwrap_or(value)
-        })
+        self.activated_fingerprint.as_deref()
     }
 
     pub(super) fn is_activated(&self) -> bool {
-        self.activated_fingerprint
-            .as_deref()
-            .is_some_and(|value| value.starts_with("active:"))
+        self.activated
+    }
+
+    pub(super) fn is_activation_pending(&self) -> bool {
+        self.activation_pending
     }
 
     pub(super) fn is_restore_pending(&self) -> bool {
-        self.activated_fingerprint
-            .as_deref()
-            .is_some_and(|value| value.starts_with("restore:"))
+        self.restore_pending
     }
 
     pub(super) fn mark_activated(&mut self, active: bool) {
-        let Some(value) = self.activated_fingerprint.as_mut() else {
-            return;
-        };
-        let digest = value
-            .strip_prefix("active:")
-            .or_else(|| value.strip_prefix("restore:"))
-            .unwrap_or(value)
-            .to_string();
-        *value = if active {
-            format!("active:{digest}")
-        } else {
-            digest
-        };
-    }
-
-    fn mark_restore_pending(&mut self) {
-        if self.is_activated() {
-            let digest = self.fingerprint().unwrap_or_default().to_string();
-            self.activated_fingerprint = Some(format!("restore:{digest}"));
-        }
+        self.activated = active;
     }
 }
 
@@ -57,6 +33,9 @@ pub(super) fn handle_transaction_failure(
     journal: &mut TransactionJournal,
     failure: CommandFailure,
 ) -> std::result::Result<CommandFailure, CommandFailure> {
+    if super::index_lock_failure::retained(&failure) {
+        return Ok(failure);
+    }
     if journal.phase == TransactionPhase::RolledBackArtifactsRetained {
         return Ok(failure);
     }
@@ -101,7 +80,7 @@ pub(super) fn handle_transaction_failure(
                 "message": error.message,
             }));
         } else {
-            errors = rollback_journal(app, paths, plan, journal);
+            errors = rollback_journal(app, paths, plan, journal_path, journal);
         }
     }
     if errors.is_empty()
@@ -129,6 +108,7 @@ pub(super) fn handle_transaction_failure(
 pub(super) fn restore_registry_and_activated_projections(
     paths: &RegistryStatePaths,
     plan: &SkillConvergencePlan,
+    journal_path: &Path,
     journal: &mut TransactionJournal,
 ) -> Vec<Value> {
     let mut errors = Vec::new();
@@ -138,63 +118,168 @@ pub(super) fn restore_registry_and_activated_projections(
         push_rollback_error(&mut errors, "restore_registry_projections", error.message);
         return errors;
     }
-    errors.extend(restore_activated_projections(journal));
+    errors.extend(restore_activated_projections(journal_path, journal));
     errors
 }
 
-pub(super) fn restore_activated_projections(journal: &mut TransactionJournal) -> Vec<Value> {
-    let mut errors = Vec::new();
-    for projection in journal.projections.iter_mut().rev() {
-        if projection.is_activated() {
-            match restore_projection_from_evidence(projection, &journal.plan_id) {
-                Ok(()) => projection.mark_activated(false),
-                Err(err) => push_rollback_error(
-                    &mut errors,
-                    "restore_projection_after_head_drift",
-                    err.message,
-                ),
-            }
+pub(super) fn restore_activated_projection_at(
+    journal_path: &Path,
+    journal: &mut TransactionJournal,
+    index: usize,
+) -> std::result::Result<(), CommandFailure> {
+    if !journal.projections[index].is_restore_pending() {
+        if let Some(fingerprint) =
+            prepare_projection_restore_fingerprint(&journal.projections[index], &journal.plan_id)?
+        {
+            journal.projections[index].restored_fingerprint = Some(fingerprint);
+        }
+        journal.projections[index].restore_pending = true;
+        sync_installed_projection_count(journal);
+        save_journal(journal_path, journal)?;
+        maybe_skill_fault("convergence_interrupt_after_durable_projection_restore_intent")?;
+        #[cfg(debug_assertions)]
+        if std::env::var("LOOM_TEST_CONVERGENCE_RESTORE_WAL_INDEX")
+            .ok()
+            .and_then(|value| value.parse::<usize>().ok())
+            == Some(index)
+        {
+            maybe_skill_fault("convergence_interrupt_after_projection_restore_wal")?;
         }
     }
+    restore_projection_from_evidence(&journal.projections[index], &journal.plan_id)?;
+    #[cfg(debug_assertions)]
+    if std::env::var("LOOM_ROLLBACK_FAULT_INJECT").ok().as_deref()
+        == Some("convergence_interrupt_after_projection_restore_exchange")
+        && std::env::var("LOOM_TEST_CONVERGENCE_RESTORE_WAL_INDEX")
+            .ok()
+            .and_then(|value| value.parse::<usize>().ok())
+            == Some(index)
+    {
+        return Err(CommandFailure::new(
+            ErrorCode::InternalError,
+            "fault injected after projection restore exchange",
+        ));
+    }
+    journal.projections[index].mark_activated(false);
+    journal.projections[index].restore_pending = false;
+    sync_installed_projection_count(journal);
+    Ok(())
+}
+
+fn sync_installed_projection_count(journal: &mut TransactionJournal) {
     journal.installed_projections = journal
         .projections
         .iter()
         .filter(|projection| projection.is_activated())
         .count();
+}
+
+pub(super) fn persist_projection_activation_intent(
+    journal_path: &Path,
+    journal: &mut TransactionJournal,
+    index: usize,
+) -> std::result::Result<(), CommandFailure> {
+    journal.projections[index].restore_pending = false;
+    journal.projections[index].activation_pending = true;
+    save_journal(journal_path, journal)
+}
+
+pub(super) fn restore_activated_projections(
+    journal_path: &Path,
+    journal: &mut TransactionJournal,
+) -> Vec<Value> {
+    let mut errors = Vec::new();
+    for index in (0..journal.projections.len()).rev() {
+        if (journal.projections[index].is_activated()
+            || journal.projections[index].is_restore_pending())
+            && let Err(err) = restore_activated_projection_at(journal_path, journal, index)
+        {
+            push_rollback_error(
+                &mut errors,
+                "restore_projection_after_head_drift",
+                err.message,
+            );
+        }
+    }
+    sync_installed_projection_count(journal);
     errors
 }
 
-pub(super) fn restore_activated_projections_durably(
+pub(super) fn restore_projections_for_resume(
+    paths: &RegistryStatePaths,
+    plan: &SkillConvergencePlan,
     journal_path: &Path,
     journal: &mut TransactionJournal,
 ) -> std::result::Result<(), CommandFailure> {
+    let mut errors = validate_transaction_artifacts(journal);
+    if !errors.is_empty() {
+        return Err(CommandFailure::new(
+            ErrorCode::StateCorrupt,
+            "committed source recovery artifact validation failed",
+        )
+        .with_rollback_errors(errors));
+    }
+    if plan.registry.initialized
+        && let Err(err) = restore_registry_projections_if_owned(paths, journal)
+    {
+        push_rollback_error(&mut errors, "restore_registry_projections", err.message);
+    }
+    if !errors.is_empty() {
+        return Err(CommandFailure::new(
+            ErrorCode::StateCorrupt,
+            "failed to prepare committed source recovery",
+        )
+        .with_rollback_errors(errors));
+    }
     for index in (0..journal.projections.len()).rev() {
         if !journal.projections[index].is_activated()
             && !journal.projections[index].is_restore_pending()
         {
             continue;
         }
-        if journal.projections[index].is_activated() {
-            journal.projections[index].mark_restore_pending();
-            save_journal(journal_path, journal)?;
-            maybe_skill_fault("convergence_interrupt_after_durable_projection_restore_intent")?;
+        if let Err(err) = restore_activated_projection_at(journal_path, journal, index) {
+            push_rollback_error(&mut errors, "restore_projection_from_evidence", err.message);
         }
-        restore_projection_from_evidence(&journal.projections[index], &journal.plan_id)?;
-        journal.projections[index].mark_activated(false);
-        journal.installed_projections = journal
-            .projections
-            .iter()
-            .filter(|projection| projection.is_activated())
-            .count();
-        save_journal(journal_path, journal)?;
+        if !errors.is_empty() {
+            return Err(CommandFailure::new(
+                ErrorCode::StateCorrupt,
+                "failed to prepare committed source recovery",
+            )
+            .with_rollback_errors(errors));
+        }
     }
-    Ok(())
+    super::preparation::refresh_projection_live_fingerprints(journal_path, journal)?;
+    for projection in journal.projections.iter().rev() {
+        cleanup_owned_dir(
+            Path::new(&projection.staging_owner),
+            &journal.plan_id,
+            &projection.owner_proof,
+            &mut errors,
+        );
+        if !errors.is_empty() {
+            return Err(CommandFailure::new(
+                ErrorCode::StateCorrupt,
+                "failed to prepare committed source recovery",
+            )
+            .with_rollback_errors(errors));
+        }
+    }
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(CommandFailure::new(
+            ErrorCode::StateCorrupt,
+            "failed to prepare committed source recovery",
+        )
+        .with_rollback_errors(errors))
+    }
 }
 
 pub(super) fn rollback_journal(
     app: &App,
     paths: &RegistryStatePaths,
     plan: &SkillConvergencePlan,
+    journal_path: &Path,
     journal: &mut TransactionJournal,
 ) -> Vec<Value> {
     let mut errors = Vec::new();
@@ -219,7 +304,7 @@ pub(super) fn rollback_journal(
     if rollback_fault(&mut errors, "convergence_interrupt_after_registry_restore") {
         return errors;
     }
-    errors.extend(restore_activated_projections(journal));
+    errors.extend(restore_activated_projections(journal_path, journal));
     if !errors.is_empty() {
         return errors;
     }
@@ -284,6 +369,13 @@ fn restore_index_if_owned(
     })?;
     let live = active_index_digest(app)?;
     if live == original {
+        let backup = Path::new(&journal.index_backup);
+        if gitops::prepared_index_claim_exists(&app.ctx, backup)
+            .map_err(super::index_lock_failure::map_install_error)?
+        {
+            gitops::recover_prepared_index_lock_with_guard(&app.ctx, backup, &|_| Ok(()))
+                .map_err(super::index_lock_failure::map_install_error)?;
+        }
         return Ok(());
     }
     let rollback = journal.rollback_index_digest.as_deref().ok_or_else(|| {
@@ -298,7 +390,8 @@ fn restore_index_if_owned(
             "Git index changed after rollback evidence was captured",
         ));
     }
-    gitops::install_prepared_index_with_guard(&app.ctx, Path::new(&journal.index_backup), &|_| {
+    let backup = Path::new(&journal.index_backup);
+    let guard = |_: &Path| {
         let active = active_index_digest(app).map_err(|error| anyhow::anyhow!(error.message))?;
         if active != rollback {
             return Err(anyhow::anyhow!("active Git index changed"));
@@ -310,8 +403,14 @@ fn restore_index_if_owned(
             ));
         }
         Ok(())
-    })
-    .map_err(map_git)
+    };
+    if gitops::recover_prepared_index_lock_with_guard(&app.ctx, backup, &guard)
+        .map_err(super::index_lock_failure::map_install_error)?
+    {
+        return Ok(());
+    }
+    gitops::install_prepared_index_with_guard(&app.ctx, backup, &guard)
+        .map_err(super::index_lock_failure::map_install_error)
 }
 
 fn rollback_fault(errors: &mut Vec<Value>, fault: &str) -> bool {

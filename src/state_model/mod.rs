@@ -76,7 +76,7 @@ pub struct RegistryRulesFile {
     pub rules: Vec<RegistryBindingRule>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RegistryProjectionsFile {
     pub schema_version: u32,
     #[serde(default)]
@@ -167,7 +167,7 @@ pub struct RegistryBindingRule {
     pub created_at: Option<DateTime<Utc>>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[ts(
     export,
     export_to = "../panel/src/generated/",

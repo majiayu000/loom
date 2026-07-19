@@ -58,7 +58,10 @@ pub(super) fn commit_convergence_source(
                 validate_source_index_install(app, plan, journal, candidate, &staged, &original)
             });
         if let Err(error) = install {
-            let failure = map_git(error);
+            let failure = super::index_lock_failure::map_install_error(error);
+            if super::index_lock_failure::retained(&failure) {
+                return Err(failure);
+            }
             if gitops::head(&app.ctx).map_err(map_git)? != journal.previous_head
                 && plan.source.direction == ConvergenceInputDirection::Projection
             {
@@ -155,7 +158,7 @@ pub(super) fn recover_source_index_lock_if_owned(
     gitops::recover_prepared_index_lock_with_guard(&app.ctx, &prepared, &|candidate| {
         validate_source_index_install(app, plan, journal, candidate, staged, original)
     })
-    .map_err(map_git)
+    .map_err(super::index_lock_failure::map_install_error)
 }
 
 fn validate_source_index_install(

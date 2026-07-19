@@ -49,21 +49,22 @@ pub(super) fn reprove_source_boundary(
             .ok_or_else(|| corrupt("missing committed result"))?;
         let recorded_registry = result["registry_commit"].as_str();
         if result["skill"].as_str() != Some(plan.skill.as_str())
-            || result["source_commit"]
-                != journal
-                    .source_commit
-                    .as_ref()
-                    .map_or(serde_json::Value::Null, |value| {
-                        serde_json::Value::String(value.clone())
-                    })
+            || match journal.source_commit.as_deref() {
+                Some(commit) => result["source_commit"].as_str() != Some(commit),
+                None => !result["source_commit"].is_null(),
+            }
             || recorded_registry != journal.registry_commit.as_deref()
-            || result["projection_instances"]
-                != serde_json::json!(
-                    plan.projections
-                        .iter()
-                        .map(|effect| effect.instance_id.clone())
-                        .collect::<Vec<_>>()
-                )
+            || !result["projection_instances"]
+                .as_array()
+                .is_some_and(|instances| {
+                    instances.len() == plan.projections.len()
+                        && instances
+                            .iter()
+                            .zip(&plan.projections)
+                            .all(|(actual, effect)| {
+                                actual.as_str() == Some(effect.instance_id.as_str())
+                            })
+                })
         {
             return Err(corrupt(
                 "committed result does not match transaction evidence",
@@ -162,36 +163,22 @@ pub(super) fn validate_mutated_surfaces(
     plan: &SkillConvergencePlan,
     journal: &mut TransactionJournal,
 ) -> std::result::Result<(), CommandFailure> {
+    let prior_installed = journal.installed_projections;
     let restore_pending = journal
         .projections
         .iter()
         .any(ProjectionBackup::is_restore_pending);
-    let mut contiguous_new = 0usize;
+    let mut activated = 0usize;
     let mut saw_old = false;
     for (index, effect) in plan.projections.iter().enumerate() {
-        let state = projection_state(app, plan, effect)?;
-        match state {
-            ProjectionState::New if !saw_old => {
-                journal.projections[index].mark_activated(true);
-                contiguous_new += 1;
-            }
-            ProjectionState::Old => {
-                journal.projections[index].mark_activated(false);
-                saw_old = true;
-            }
-            ProjectionState::New => {
-                return Err(recovery_stale(
-                    "projection transaction progress is not contiguous",
-                ));
-            }
-            ProjectionState::Same => {
-                if journal.projections[index].is_activated() {
-                    contiguous_new += 1;
-                }
-            }
-        }
+        let state = projection_state(app, plan, effect, &journal.projections[index])?;
+        activated += usize::from(reconcile_projection_state(
+            &mut journal.projections[index],
+            state,
+            &mut saw_old,
+        )?);
     }
-    if contiguous_new < journal.installed_projections
+    if activated < prior_installed
         && journal.phase != TransactionPhase::RollingBack
         && !restore_pending
     {
@@ -199,7 +186,7 @@ pub(super) fn validate_mutated_surfaces(
             "an installed projection no longer has transaction bytes",
         ));
     }
-    journal.installed_projections = contiguous_new;
+    journal.installed_projections = activated;
 
     if !plan.registry.initialized {
         if paths.exists() {
@@ -211,15 +198,8 @@ pub(super) fn validate_mutated_surfaces(
     }
 
     let live = paths.load_projections().map_err(map_registry_state)?;
-    let live_value = serde_json::to_value(&live).map_err(map_io)?;
-    let old_value = serde_json::to_value(&journal.original_projections).map_err(map_io)?;
-    let expected_value = journal
-        .expected_projections
-        .as_ref()
-        .map(serde_json::to_value)
-        .transpose()
-        .map_err(map_io)?;
-    if live_value != old_value && expected_value.as_ref() != Some(&live_value) {
+    if live != journal.original_projections && journal.expected_projections.as_ref() != Some(&live)
+    {
         return Err(recovery_stale(
             "registry projections are neither old nor transaction-new",
         ));
@@ -239,61 +219,55 @@ pub(super) fn validate_expected_projections(
                 | TransactionPhase::CommittedCleanupPending
         );
     };
-    let planned = plan
-        .projections
-        .iter()
-        .map(|effect| effect.instance_id.as_str())
-        .collect::<std::collections::BTreeSet<_>>();
     let old_unplanned = journal
         .original_projections
         .projections
         .iter()
-        .filter(|item| !planned.contains(item.instance_id.as_str()))
-        .map(|item| serde_json::to_value(item).ok())
-        .collect::<Option<Vec<_>>>();
-    let new_unplanned = expected
-        .projections
-        .iter()
-        .filter(|item| !planned.contains(item.instance_id.as_str()))
-        .map(|item| serde_json::to_value(item).ok())
-        .collect::<Option<Vec<_>>>();
-    if old_unplanned.is_none()
-        || old_unplanned != new_unplanned
+        .filter(|item| {
+            !plan
+                .projections
+                .iter()
+                .any(|effect| effect.instance_id == item.instance_id)
+        });
+    let old_unplanned_count = old_unplanned.clone().count();
+    let new_unplanned = expected.projections.iter().filter(|item| {
+        !plan
+            .projections
+            .iter()
+            .any(|effect| effect.instance_id == item.instance_id)
+    });
+    if !old_unplanned.eq(new_unplanned)
         || expected.schema_version != journal.original_projections.schema_version
-        || expected.projections.len()
-            != old_unplanned.as_ref().map_or(0, Vec::len) + plan.projections.len()
+        || expected.projections.len() != old_unplanned_count + plan.projections.len()
     {
         return false;
     }
     plan.projections.iter().all(|effect| {
-        expected
+        let mut matching = expected
             .projections
             .iter()
             .filter(|item| item.instance_id == effect.instance_id)
-            .count()
-            == 1
-            && expected.projections.iter().any(|item| {
-                item.instance_id == effect.instance_id
-                    && item.skill_id == plan.skill
-                    && item.binding_id.as_deref() == Some(effect.binding_id.as_str())
-                    && item.target_id == effect.target_id
-                    && item.materialized_path == effect.materialized_path
-                    && item.method.as_str() == effect.method
-                    && item.last_applied_rev == journal.source_head.as_deref().unwrap_or_default()
-                    && item.health.as_str() == "healthy"
-                    && item.observed_drift == Some(false)
-                    && item.last_observed_error.is_none()
-                    && item.last_observed_at.is_some()
-                    && item.last_observed_at == item.updated_at
-                    && if effect.method == "symlink" {
-                        item.source_tree_digest.is_none() && item.materialized_tree_digest.is_none()
-                    } else {
-                        item.source_tree_digest.as_deref()
+            .take(2);
+        matching.next().is_some_and(|item| {
+            item.skill_id == plan.skill
+                && item.binding_id.as_deref() == Some(effect.binding_id.as_str())
+                && item.target_id == effect.target_id
+                && item.materialized_path == effect.materialized_path
+                && item.method.as_str() == effect.method
+                && item.last_applied_rev == journal.source_head.as_deref().unwrap_or_default()
+                && item.health.as_str() == "healthy"
+                && item.observed_drift == Some(false)
+                && item.last_observed_error.is_none()
+                && item.last_observed_at.is_some()
+                && item.last_observed_at == item.updated_at
+                && if effect.method == "symlink" {
+                    item.source_tree_digest.is_none() && item.materialized_tree_digest.is_none()
+                } else {
+                    item.source_tree_digest.as_deref() == Some(effect.source_tree_digest.as_str())
+                        && item.materialized_tree_digest.as_deref()
                             == Some(effect.source_tree_digest.as_str())
-                            && item.materialized_tree_digest.as_deref()
-                                == Some(effect.source_tree_digest.as_str())
-                    }
-            })
+                }
+        }) && matching.next().is_none()
     })
 }
 
@@ -341,9 +315,7 @@ pub(super) fn rollback_uncommitted_source_only(
     let paths = RegistryStatePaths::from_app_context(&app.ctx);
     if plan.registry.initialized {
         let live_registry = paths.load_projections().map_err(map_registry_state)?;
-        if serde_json::to_value(live_registry).map_err(map_io)?
-            != serde_json::to_value(&journal.original_projections).map_err(map_io)?
-        {
+        if live_registry != journal.original_projections {
             return Err(recovery_stale(
                 "registry changed during an uncommitted source transaction",
             ));
@@ -575,21 +547,50 @@ pub(super) fn validate_tree_backup(
 enum ProjectionState {
     Old,
     New,
-    Same,
+}
+
+fn reconcile_projection_state(
+    artifact: &mut ProjectionBackup,
+    state: ProjectionState,
+    saw_old: &mut bool,
+) -> std::result::Result<bool, CommandFailure> {
+    match state {
+        ProjectionState::New
+            if !*saw_old || artifact.is_activated() || artifact.is_activation_pending() =>
+        {
+            artifact.activation_pending = false;
+            artifact.mark_activated(true);
+            Ok(true)
+        }
+        ProjectionState::New => Err(recovery_stale(
+            "projection transaction progress is not contiguous",
+        )),
+        ProjectionState::Old => {
+            artifact.activation_pending = false;
+            artifact.mark_activated(false);
+            *saw_old = true;
+            Ok(false)
+        }
+    }
 }
 
 fn projection_state(
     app: &App,
     plan: &SkillConvergencePlan,
     effect: &crate::core::convergence::ProjectionEffectPlan,
+    artifact: &ProjectionBackup,
 ) -> std::result::Result<ProjectionState, CommandFailure> {
     let path = Path::new(&effect.materialized_path);
     if effect.method == "symlink" {
         if projection_path_is_safe_symlink(path, &app.ctx.skill_path(&plan.skill)) {
             return Ok(if effect.effect == "create" {
                 ProjectionState::New
+            } else if artifact.original_fingerprint == artifact.activated_fingerprint
+                && !artifact.is_activated()
+            {
+                ProjectionState::Old
             } else {
-                ProjectionState::Same
+                same_content_projection_state(path, artifact)?
             });
         }
         if effect.effect == "create" {
@@ -615,7 +616,7 @@ fn projection_state(
             let old = effect.materialized_tree_digest.as_deref();
             let new = effect.source_tree_digest.as_str();
             if old == Some(new) && digest == new {
-                Ok(ProjectionState::Same)
+                same_content_projection_state(path, artifact)
             } else if old == Some(digest.as_str()) {
                 Ok(ProjectionState::Old)
             } else if digest == new {
@@ -629,7 +630,31 @@ fn projection_state(
     }
 }
 
-fn verify_registry_commit(
+fn same_content_projection_state(
+    path: &Path,
+    artifact: &ProjectionBackup,
+) -> std::result::Result<ProjectionState, CommandFailure> {
+    let live = convergence_projection_fingerprint(path)?;
+    projection_identity_state(artifact, &live)
+}
+
+fn projection_identity_state(
+    artifact: &ProjectionBackup,
+    live: &str,
+) -> std::result::Result<ProjectionState, CommandFailure> {
+    let old = artifact.original_fingerprint.as_deref() == Some(live)
+        || artifact.restored_fingerprint.as_deref() == Some(live);
+    let activated = artifact.fingerprint() == Some(live);
+    match (old, activated) {
+        (true, false) => Ok(ProjectionState::Old),
+        (false, true) => Ok(ProjectionState::New),
+        _ => Err(recovery_stale(
+            "equal-content projection identity is neither uniquely old nor transaction-new",
+        )),
+    }
+}
+
+pub(super) fn verify_registry_commit(
     app: &App,
     plan: &SkillConvergencePlan,
     journal: &TransactionJournal,
@@ -654,9 +679,7 @@ fn verify_registry_commit(
     .map_err(map_git)?;
     let committed: RegistryProjectionsFile = serde_json::from_str(&raw)
         .map_err(|_| corrupt("registry commit projections are invalid"))?;
-    if serde_json::to_value(committed).map_err(map_io)?
-        != serde_json::to_value(expected).map_err(map_io)?
-    {
+    if committed != *expected {
         return Err(recovery_stale(
             "registry commit tree differs from transaction evidence",
         ));
@@ -769,3 +792,6 @@ fn require_clean_path(app: &App, path: &str) -> std::result::Result<(), CommandF
 pub(super) fn corrupt(message: &str) -> CommandFailure {
     CommandFailure::new(ErrorCode::StateCorrupt, message)
 }
+
+#[cfg(test)]
+mod recovery_evidence_tests;

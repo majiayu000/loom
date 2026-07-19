@@ -103,6 +103,7 @@ fn install_or_recover_prepared_index(
     let capture = prepared_index_aux_path(prepared_index, ".lock-capture");
     let guarded = prepared_index_aux_path(prepared_index, ".lock-guard");
     let publish = prepared_index_aux_path(prepared_index, ".lock-publish");
+    let rollback = prepared_index_aux_path(prepared_index, ".lock-rollback");
 
     if recovery
         && !path_entry_exists(&lock)?
@@ -117,9 +118,31 @@ fn install_or_recover_prepared_index(
         .write(true)
         .open(prepared_index)?
         .sync_all()?;
+    if path_entry_exists(&claim)? {
+        require_regular_exact(&claim, &prepared_bytes, "durable Git index claim")?;
+        if recovery && path_entry_exists(&rollback)? {
+            if owned_paths_match(&claim, &index, &prepared_bytes)? {
+                finish_published_install(&claim, &rollback, &capture, &lock)?;
+                remove_private_entry(&guarded)?;
+                remove_private_entry(&publish)?;
+                return Ok(true);
+            }
+            rollback_incomplete_publication(&rollback, &capture, &lock, &index)?;
+            return Err(anyhow!(
+                "foreign Git index lock was rolled back and preserved"
+            ));
+        }
+        if recovery && owned_paths_match(&claim, &index, &prepared_bytes)? {
+            release_owned_lock(&claim, &capture, &lock, &prepared_bytes)?;
+            remove_private_entry(&claim)?;
+            crate::fs_util::sync_parent_directory(&claim)?;
+            return Ok(true);
+        }
+    }
     reconcile_private_capture(&claim, &capture, &lock, &prepared_bytes)?;
     remove_private_entry(&guarded)?;
     remove_private_entry(&publish)?;
+    remove_private_entry(&rollback)?;
 
     if recovery && !path_entry_exists(&claim)? {
         return Err(anyhow!(
@@ -127,17 +150,9 @@ fn install_or_recover_prepared_index(
         ));
     }
 
-    if path_entry_exists(&claim)? {
-        require_regular_exact(&claim, &prepared_bytes, "durable Git index claim")?;
-    } else {
+    if !path_entry_exists(&claim)? {
         fs::hard_link(prepared_index, &claim)?;
         crate::fs_util::sync_parent_directory(&claim)?;
-    }
-    if recovery && owned_paths_match(&claim, &index, &prepared_bytes)? {
-        release_owned_lock(&claim, &capture, &lock, &prepared_bytes)?;
-        remove_private_entry(&claim)?;
-        crate::fs_util::sync_parent_directory(&claim)?;
-        return Ok(true);
     }
     crate::fs_util::write_atomic_bytes(prepared_index, &prepared_bytes)?;
     require_regular_exact(prepared_index, &prepared_bytes, "prepared Git index")?;
@@ -149,15 +164,14 @@ fn install_or_recover_prepared_index(
         require_regular_exact(&guarded, &prepared_bytes, "guarded Git index candidate")?;
         require_regular_exact(&claim, &prepared_bytes, "durable Git index claim")?;
         require_regular_exact(prepared_index, &prepared_bytes, "prepared Git index")?;
-        capture_owned_lock(&claim, &capture, &lock, &prepared_bytes)?;
-        crate::fs_util::rename_atomic(&capture, &index)?;
-        crate::fs_util::sync_parent_directory(&index)?;
+        fs::hard_link(&index, &rollback)?;
+        crate::fs_util::sync_parent_directory(&rollback)?;
+        publish_claim_atomic(&claim, &rollback, &capture, &lock, &index, &prepared_bytes)?;
         #[cfg(test)]
         if std::env::var_os("LOOM_TEST_INDEX_INSTALL_CRASH_AFTER_PUBLISH").is_some() {
             std::process::exit(93);
         }
-        remove_private_entry(&claim)?;
-        crate::fs_util::sync_parent_directory(&claim)?;
+        finish_published_install(&claim, &rollback, &capture, &lock)?;
         Ok(true)
     })();
     remove_private_entry(&guarded)?;
@@ -167,6 +181,7 @@ fn install_or_recover_prepared_index(
             let cleanup = release_owned_lock(&claim, &capture, &lock, &prepared_bytes);
             match cleanup {
                 Ok(()) => {
+                    remove_private_entry(&rollback)?;
                     remove_private_entry(&claim)?;
                     crate::fs_util::sync_parent_directory(&claim)?;
                     Err(error)
@@ -177,6 +192,116 @@ fn install_or_recover_prepared_index(
             }
         }
     }
+}
+
+#[cfg(not(windows))]
+fn publish_claim_atomic(
+    claim: &Path,
+    _rollback: &Path,
+    _capture: &Path,
+    lock: &Path,
+    index: &Path,
+    expected: &[u8],
+) -> Result<()> {
+    crate::fs_util::exchange_paths_atomic(lock, index)?;
+    crate::fs_util::sync_parent_directory(index)?;
+    if owned_paths_match(claim, index, expected)? {
+        return Ok(());
+    }
+    crate::fs_util::exchange_paths_atomic(lock, index)?;
+    crate::fs_util::sync_parent_directory(index)?;
+    Err(anyhow!(
+        "foreign Git index lock was atomically rolled back and preserved"
+    ))
+}
+
+#[cfg(not(windows))]
+fn rollback_incomplete_publication(
+    rollback: &Path,
+    _capture: &Path,
+    lock: &Path,
+    index: &Path,
+) -> Result<()> {
+    if !same_regular_file(rollback, lock)? {
+        return Err(anyhow!(
+            "interrupted Git index publication has ambiguous rollback evidence"
+        ));
+    }
+    crate::fs_util::exchange_paths_atomic(lock, index)?;
+    crate::fs_util::sync_parent_directory(index)?;
+    remove_private_entry(rollback)?;
+    crate::fs_util::sync_parent_directory(rollback)?;
+    Ok(())
+}
+
+#[cfg(windows)]
+fn rollback_incomplete_publication(
+    rollback: &Path,
+    capture: &Path,
+    lock: &Path,
+    index: &Path,
+) -> Result<()> {
+    fs::hard_link(index, capture)?;
+    crate::fs_util::sync_parent_directory(capture)?;
+    crate::fs_util::rename_atomic(rollback, index)?;
+    crate::fs_util::sync_parent_directory(index)?;
+    crate::fs_util::rename_no_replace_atomic(capture, lock)?;
+    crate::fs_util::sync_parent_directory(lock)?;
+    Ok(())
+}
+
+#[cfg(windows)]
+fn publish_claim_atomic(
+    claim: &Path,
+    rollback: &Path,
+    capture: &Path,
+    lock: &Path,
+    index: &Path,
+    expected: &[u8],
+) -> Result<()> {
+    crate::fs_util::rename_atomic(lock, index)?;
+    crate::fs_util::sync_parent_directory(index)?;
+    if owned_paths_match(claim, index, expected)? {
+        return Ok(());
+    }
+    fs::hard_link(index, capture)?;
+    crate::fs_util::sync_parent_directory(capture)?;
+    crate::fs_util::rename_atomic(rollback, index)?;
+    crate::fs_util::sync_parent_directory(index)?;
+    crate::fs_util::rename_no_replace_atomic(capture, lock)?;
+    crate::fs_util::sync_parent_directory(lock)?;
+    Err(anyhow!(
+        "foreign Git index lock was atomically rolled back and preserved"
+    ))
+}
+
+fn finish_published_install(
+    claim: &Path,
+    rollback: &Path,
+    capture: &Path,
+    lock: &Path,
+) -> Result<()> {
+    if path_entry_exists(capture)? {
+        if !same_regular_file(rollback, capture)? {
+            return Err(anyhow!(
+                "captured post-publication Git index is not the durable rollback entry"
+            ));
+        }
+    } else if path_entry_exists(lock)? {
+        crate::fs_util::rename_no_replace_atomic(lock, capture)?;
+        crate::fs_util::sync_parent_directory(lock)?;
+        if !same_regular_file(rollback, capture)? {
+            restore_foreign_capture(capture, lock)?;
+            return Err(anyhow!(
+                "post-publication Git index lock was concurrently replaced"
+            ));
+        }
+    }
+    remove_private_entry(capture)?;
+    remove_private_entry(rollback)?;
+    remove_private_entry(claim)?;
+    crate::fs_util::sync_parent_directory(claim)?;
+    Ok(())
 }
 
 fn reserve_public_lock(claim: &Path, capture: &Path, lock: &Path, expected: &[u8]) -> Result<()> {
@@ -285,6 +410,17 @@ fn owned_paths_match(claim: &Path, candidate: &Path, expected: &[u8]) -> Result<
         return Ok(false);
     }
     captured_lock_is_owned(claim, candidate, expected)
+}
+
+fn same_regular_file(left: &Path, right: &Path) -> Result<bool> {
+    if !path_entry_exists(left)? || !path_entry_exists(right)? {
+        return Ok(false);
+    }
+    let left = fs::symlink_metadata(left)?;
+    let right = fs::symlink_metadata(right)?;
+    Ok(left.file_type().is_file()
+        && right.file_type().is_file()
+        && same_file_identity(&left, &right))
 }
 
 fn read_regular_file(path: &Path, description: &str) -> Result<Vec<u8>> {

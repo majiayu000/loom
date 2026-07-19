@@ -94,6 +94,7 @@ fn assert_no_index_aux_paths(prepared: &Path) {
         ".lock-capture",
         ".lock-guard",
         ".lock-publish",
+        ".lock-rollback",
     ] {
         assert!(
             !super::prepared_index::prepared_index_aux_path(prepared, suffix).exists(),
@@ -210,6 +211,34 @@ fn prepared_index_install_rejects_a_mutating_guard_without_evidence_damage() {
 }
 
 #[test]
+fn prepared_index_install_rolls_back_a_lock_replaced_during_guard() {
+    let (ctx, dir) = fresh_repo("prepared-index-guard-lock-replacement");
+    let active_index = dir.join(".git/index");
+    let original_index = fs::read(&active_index).expect("active index");
+    let prepared = dir.join("prepared-index");
+    fs::copy(&active_index, &prepared).expect("prepared index");
+    let lock = dir.join(".git/index.lock");
+
+    install_prepared_index_with_guard(&ctx, &prepared, &|_| {
+        fs::remove_file(&lock)?;
+        fs::copy(&prepared, &lock)?;
+        Ok(())
+    })
+    .expect_err("foreign replacement must be rolled back");
+
+    assert_eq!(
+        fs::read(&active_index).expect("active index"),
+        original_index
+    );
+    assert_eq!(
+        fs::read(&lock).expect("preserved foreign lock"),
+        fs::read(&prepared).expect("prepared evidence")
+    );
+    fs::remove_file(&lock).expect("remove foreign lock");
+    fs::remove_dir_all(&dir).expect("remove test repository");
+}
+
+#[test]
 fn prepared_index_install_crash_helper() {
     let Ok(()) = std::env::var("LOOM_TEST_INDEX_INSTALL_CRASH").map(|_| ()) else {
         return;
@@ -294,7 +323,10 @@ fn prepared_index_post_publication_crash_recovers_the_retained_claim() {
         .status()
         .expect("run post-publication crash helper");
     assert_eq!(status.code(), Some(93));
-    assert!(!dir.join(".git/index.lock").exists());
+    assert!(
+        dir.join(".git/index.lock").exists(),
+        "atomic exchange must keep the public lock occupied until recovery"
+    );
     assert_eq!(
         fs::read(&active_index).expect("published index"),
         fs::read(&prepared).expect("prepared evidence")

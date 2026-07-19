@@ -95,12 +95,19 @@ pub fn install_prepared_index_with_guard(
         if !metadata.file_type().is_file() {
             return Err(anyhow!("prepared Git index is not a regular file"));
         }
+        fs::File::open(prepared_index)?.sync_all()?;
+        let prepared_bytes = fs::read(prepared_index)?;
         fs::copy(prepared_index, &staging)?;
         crate::fs_util::sync_file_and_parent(&staging)?;
         crate::fs_util::rename_no_replace_atomic(&staging, &lock)?;
         owns_lock = true;
         crate::fs_util::sync_parent_directory(&lock)?;
         guard(&lock)?;
+        if fs::read(&lock)? != prepared_bytes || fs::read(prepared_index)? != prepared_bytes {
+            return Err(anyhow!(
+                "prepared Git index changed during guarded installation"
+            ));
+        }
         crate::fs_util::rename_atomic(&lock, &index)?;
         crate::fs_util::sync_parent_directory(&index)?;
         Ok(())
@@ -150,7 +157,15 @@ pub fn recover_prepared_index_lock_with_guard(
             "existing Git index lock does not match durable transaction evidence"
         ));
     }
+    let prepared_bytes = fs::read(prepared_index)?;
+    fs::File::open(prepared_index)?.sync_all()?;
+    crate::fs_util::write_atomic_bytes(prepared_index, &prepared_bytes)?;
     guard(&lock)?;
+    if fs::read(&lock)? != prepared_bytes || fs::read(prepared_index)? != prepared_bytes {
+        return Err(anyhow!(
+            "prepared Git index changed during guarded recovery"
+        ));
+    }
     crate::fs_util::rename_atomic(&lock, &index)?;
     Ok(true)
 }

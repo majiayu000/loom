@@ -172,6 +172,33 @@ fn prepared_index_install_crosses_filesystems_without_overwriting_the_lock() {
 }
 
 #[test]
+fn prepared_index_install_rejects_a_mutating_guard_without_evidence_damage() {
+    let (ctx, dir) = fresh_repo("prepared-index-mutating-guard");
+    let active_index = dir.join(".git/index");
+    let original_index = fs::read(&active_index).expect("active index");
+    let prepared = dir.join("prepared-index");
+    fs::copy(&active_index, &prepared).expect("prepared index");
+    let prepared_bytes = fs::read(&prepared).expect("prepared evidence");
+
+    install_prepared_index_with_guard(&ctx, &prepared, &|candidate| {
+        fs::write(candidate, b"mutated lock\n")?;
+        Ok(())
+    })
+    .expect_err("mutating guard must fail closed");
+
+    assert_eq!(
+        fs::read(&prepared).expect("prepared after guard"),
+        prepared_bytes
+    );
+    assert_eq!(
+        fs::read(&active_index).expect("active after guard"),
+        original_index
+    );
+    assert!(!dir.join(".git/index.lock").exists());
+    fs::remove_dir_all(&dir).expect("remove test repository");
+}
+
+#[test]
 fn prepared_index_install_crash_helper() {
     let Ok(()) = std::env::var("LOOM_TEST_INDEX_INSTALL_CRASH").map(|_| ()) else {
         return;
@@ -215,6 +242,12 @@ fn prepared_index_publication_crash_leaves_an_exact_recoverable_lock() {
     assert_eq!(
         fs::read(&active_index).expect("installed index"),
         fs::read(&prepared).unwrap()
+    );
+    let prepared_bytes = fs::read(&prepared).expect("independent prepared evidence");
+    fs::write(&active_index, b"later active mutation\n").expect("mutate active index inode");
+    assert_eq!(
+        fs::read(&prepared).expect("prepared after active mutation"),
+        prepared_bytes
     );
     fs::remove_dir_all(&dir).expect("remove test repository");
 }

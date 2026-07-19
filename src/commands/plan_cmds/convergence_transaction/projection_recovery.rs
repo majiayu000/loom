@@ -254,6 +254,7 @@ mod tests {
             activated: true,
             original_fingerprint: None,
             restored_fingerprint: None,
+            restore_pending: false,
         }
     }
 

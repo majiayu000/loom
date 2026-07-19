@@ -167,7 +167,7 @@ pub(super) fn validate_mutated_surfaces(
     let restore_pending = journal
         .projections
         .iter()
-        .any(|projection| projection.activated && projection.restored_fingerprint.is_some());
+        .any(ProjectionBackup::is_restore_pending);
     let mut activated = 0usize;
     let mut saw_old = false;
     for (index, effect) in plan.projections.iter().enumerate() {

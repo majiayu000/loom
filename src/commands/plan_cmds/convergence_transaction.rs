@@ -150,20 +150,8 @@ struct ProjectionBackup {
     original_fingerprint: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     restored_fingerprint: Option<String>,
-}
-
-impl ProjectionBackup {
-    fn fingerprint(&self) -> Option<&str> {
-        self.activated_fingerprint.as_deref()
-    }
-
-    fn is_activated(&self) -> bool {
-        self.activated
-    }
-
-    fn mark_activated(&mut self, active: bool) {
-        self.activated = active;
-    }
+    #[serde(default)]
+    restore_pending: bool,
 }
 pub(super) fn apply_convergence(
     app: &App,
@@ -277,6 +265,7 @@ pub(super) fn apply_convergence(
                 activated: false,
                 original_fingerprint: None,
                 restored_fingerprint: None,
+                restore_pending: false,
             })
         })
         .collect::<std::result::Result<Vec<_>, CommandFailure>>()?;

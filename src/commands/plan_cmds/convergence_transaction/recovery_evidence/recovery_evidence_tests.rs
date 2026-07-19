@@ -21,6 +21,7 @@ fn projection_artifact(label: &str, activated: bool) -> ProjectionBackup {
         activated,
         original_fingerprint: Some(format!("{label}-original")),
         restored_fingerprint: None,
+        restore_pending: false,
     }
 }
 
@@ -123,6 +124,7 @@ fn equal_content_backup_copy_restore_uses_retained_exchange_evidence() {
         activated: true,
         original_fingerprint: Some(original.clone()),
         restored_fingerprint: None,
+        restore_pending: false,
     };
 
     fs::create_dir_all(&staging).expect("create interrupted restore staging");

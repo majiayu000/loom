@@ -338,6 +338,7 @@ pub(super) fn rotate_projection_stages(
             .map(|_| convergence_projection_fingerprint(Path::new(&projection.materialized_path)))
             .transpose()?;
         projection.restored_fingerprint = None;
+        projection.restore_pending = false;
     }
     journal.phase = TransactionPhase::PreparingProjections;
     save_journal(journal_path, journal)

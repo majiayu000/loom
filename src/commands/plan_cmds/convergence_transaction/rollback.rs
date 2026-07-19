@@ -3,6 +3,24 @@ use super::recovery_evidence::validate_mutated_surfaces;
 use super::registry_restore::restore_registry_projections_if_owned;
 use super::*;
 
+impl ProjectionBackup {
+    pub(super) fn fingerprint(&self) -> Option<&str> {
+        self.activated_fingerprint.as_deref()
+    }
+
+    pub(super) fn is_activated(&self) -> bool {
+        self.activated
+    }
+
+    pub(super) fn is_restore_pending(&self) -> bool {
+        self.restore_pending
+    }
+
+    pub(super) fn mark_activated(&mut self, active: bool) {
+        self.activated = active;
+    }
+}
+
 pub(super) fn handle_transaction_failure(
     app: &App,
     paths: &RegistryStatePaths,
@@ -105,11 +123,13 @@ pub(super) fn restore_activated_projection_at(
     journal: &mut TransactionJournal,
     index: usize,
 ) -> std::result::Result<(), CommandFailure> {
-    if journal.projections[index].restored_fingerprint.is_none()
-        && let Some(fingerprint) =
+    if !journal.projections[index].is_restore_pending() {
+        if let Some(fingerprint) =
             prepare_projection_restore_fingerprint(&journal.projections[index], &journal.plan_id)?
-    {
-        journal.projections[index].restored_fingerprint = Some(fingerprint);
+        {
+            journal.projections[index].restored_fingerprint = Some(fingerprint);
+        }
+        journal.projections[index].restore_pending = true;
         sync_installed_projection_count(journal);
         save_journal(journal_path, journal)?;
         maybe_skill_fault("convergence_interrupt_after_durable_projection_restore_intent")?;
@@ -137,6 +157,7 @@ pub(super) fn restore_activated_projection_at(
         ));
     }
     journal.projections[index].mark_activated(false);
+    journal.projections[index].restore_pending = false;
     sync_installed_projection_count(journal);
     Ok(())
 }
@@ -154,6 +175,7 @@ pub(super) fn persist_projection_activation_intent(
     journal: &mut TransactionJournal,
     index: usize,
 ) -> std::result::Result<(), CommandFailure> {
+    journal.projections[index].restore_pending = false;
     journal.projections[index].mark_activated(true);
     sync_installed_projection_count(journal);
     save_journal(journal_path, journal)
@@ -165,7 +187,8 @@ pub(super) fn restore_activated_projections(
 ) -> Vec<Value> {
     let mut errors = Vec::new();
     for index in (0..journal.projections.len()).rev() {
-        if journal.projections[index].is_activated()
+        if (journal.projections[index].is_activated()
+            || journal.projections[index].is_restore_pending())
             && let Err(err) = restore_activated_projection_at(journal_path, journal, index)
         {
             push_rollback_error(
@@ -206,7 +229,9 @@ pub(super) fn restore_projections_for_resume(
         .with_rollback_errors(errors));
     }
     for index in (0..journal.projections.len()).rev() {
-        if !journal.projections[index].is_activated() {
+        if !journal.projections[index].is_activated()
+            && !journal.projections[index].is_restore_pending()
+        {
             continue;
         }
         if let Err(err) = restore_activated_projection_at(journal_path, journal, index) {

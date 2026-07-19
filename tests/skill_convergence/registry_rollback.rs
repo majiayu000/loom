@@ -542,3 +542,59 @@ fn rolling_back_final_projection_exchange_keeps_terminal_journal_valid() {
         "terminal reopen failed: {reopened}"
     );
 }
+
+#[test]
+fn rolling_back_create_projection_exchange_replays_durable_restore_intent() {
+    let fixture = projected_fixture();
+    fs::remove_dir_all(fixture.target.path().join("demo")).expect("remove projection path");
+    let (output, plan) = plan_converge(&fixture, &[]);
+    assert!(output.status.success(), "create plan failed: {plan}");
+    assert_eq!(plan["data"]["effects"][0]["effect"], json!("create"));
+    let key = "rollback-create-projection-exchange";
+
+    let (output, interrupted) = apply_plan(
+        &fixture,
+        &plan,
+        key,
+        &[
+            ("LOOM_FAULT_INJECT", "convergence_after_registry_save"),
+            (
+                "LOOM_ROLLBACK_FAULT_INJECT",
+                "convergence_interrupt_after_projection_restore_exchange",
+            ),
+            ("LOOM_TEST_CONVERGENCE_RESTORE_WAL_INDEX", "0"),
+        ],
+    );
+    assert!(
+        !output.status.success(),
+        "create projection restore exchange fault passed: {interrupted}"
+    );
+    let journal_path = fixture
+        .root
+        .path()
+        .join("state/transactions/convergence-demo.json");
+    let interrupted_journal: Value =
+        serde_json::from_slice(&fs::read(&journal_path).expect("journal")).expect("parse journal");
+    assert_eq!(interrupted_journal["phase"], json!("rolling_back"));
+    assert_eq!(
+        interrupted_journal["projections"][0]["restore_pending"],
+        json!(true)
+    );
+    assert!(interrupted_journal["projections"][0]["backup"].is_null());
+    assert!(interrupted_journal["projections"][0]["restored_fingerprint"].is_null());
+    assert!(!fixture.target.path().join("demo").exists());
+
+    let (output, recovered) = apply_plan(&fixture, &plan, key, &[]);
+    assert!(
+        output.status.success(),
+        "create projection restore recovery failed: {recovered}"
+    );
+    let terminal: Value =
+        serde_json::from_slice(&fs::read(&journal_path).expect("terminal journal"))
+            .expect("parse terminal journal");
+    assert_eq!(terminal["phase"], json!("committed_artifacts_retained"));
+    assert_eq!(terminal["installed_projections"], json!(1));
+    assert_eq!(terminal["projections"][0]["activated"], json!(true));
+    assert_eq!(terminal["projections"][0]["restore_pending"], json!(false));
+    assert!(fixture.target.path().join("demo/SKILL.md").is_file());
+}

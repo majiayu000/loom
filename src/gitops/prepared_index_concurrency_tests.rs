@@ -142,3 +142,41 @@ fn completed_recovery_preserves_a_foreign_capture_collision() {
     assert!(crate::fs_util::same_file_identity_paths(&active, &claim).expect("active claim"));
     fs::remove_dir_all(&dir).expect("remove test repository");
 }
+
+#[cfg(unix)]
+#[test]
+fn guard_replacement_with_a_fifo_fails_without_blocking() {
+    use std::ffi::CString;
+    use std::os::unix::ffi::OsStrExt;
+    use std::os::unix::fs::FileTypeExt;
+
+    let (ctx, dir) = super::tests::fresh_repo("prepared-index-guard-fifo");
+    let active = dir.join(".git/index");
+    let prepared = dir.join("prepared-index");
+    fs::write(dir.join("base.txt"), "prepared before fifo\n").expect("change tracked source");
+    assert!(
+        prepare_index_for_paths(&ctx, &active, &prepared, &["base.txt"])
+            .expect("prepare distinct index")
+    );
+    let lock = dir.join(".git/index.lock");
+
+    install_prepared_index_with_guard(&ctx, &prepared, &|_| {
+        fs::remove_file(&lock)?;
+        let path = CString::new(lock.as_os_str().as_bytes())?;
+        let result = unsafe { libc::mkfifo(path.as_ptr(), 0o600) };
+        if result != 0 {
+            return Err(std::io::Error::last_os_error().into());
+        }
+        Ok(())
+    })
+    .expect_err("FIFO replacement must fail closed");
+
+    assert!(
+        fs::symlink_metadata(&lock)
+            .expect("preserved FIFO")
+            .file_type()
+            .is_fifo()
+    );
+    fs::remove_file(&lock).expect("remove FIFO");
+    fs::remove_dir_all(&dir).expect("remove test repository");
+}

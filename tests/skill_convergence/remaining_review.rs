@@ -298,7 +298,7 @@ fn safe_symlink_refresh_preparation_does_not_stage_beside_target() {
 
 #[test]
 fn projection_source_swap_excludes_nested_git_metadata() {
-    let fixture = projected_fixture();
+    let fixture = projected_fixture_with_method("materialize");
     let (output, initial) = plan_converge(&fixture, &[]);
     assert!(output.status.success(), "initial plan failed: {initial}");
     let instance = initial["data"]["effects"][0]["instance_id"]
@@ -311,6 +311,11 @@ fn projection_source_swap_excludes_nested_git_metadata() {
     let (output, plan) = plan_converge(&fixture, &["--from-projection", "--instance", instance]);
     assert!(output.status.success(), "projection plan failed: {plan}");
     assert_eq!(plan["data"]["safe_to_apply"], json!(true));
+    assert_eq!(
+        plan["data"]["effects"][0]["source_tree_digest"],
+        plan["data"]["input"]["selected_input_tree_digest"],
+        "materialize effects must seal the same Git-excluding input view that staging uses"
+    );
     let (output, applied) = apply_plan(&fixture, &plan, "nested-git", &[]);
     assert!(
         output.status.success(),

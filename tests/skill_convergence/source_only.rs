@@ -42,6 +42,7 @@ fn source_only_and_required_runtime() {
         "source-only plan failed: {source_only}"
     );
     assert_eq!(source_only["data"]["effects"], json!([]));
+    assert_eq!(source_only["data"]["execution_enabled"], json!(true));
     assert_eq!(
         source_only["data"]["projection_state"],
         json!("not_applicable")

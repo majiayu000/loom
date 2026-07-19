@@ -27,7 +27,7 @@ use super::super::helpers::{
     map_arg, map_git, map_io, map_registry_state, projection_instance_id, validate_skill_name,
 };
 use super::super::projections::observe_projection;
-use super::super::provenance::{materialized_tree_digest, skill_tree_digest};
+use super::super::provenance::{convergence_input_tree_digest, skill_tree_digest};
 use super::super::skill_improve::prepare_convergence_skill_input;
 use super::super::{App, CommandFailure};
 use super::{PLAN_PROTOCOL_VERSION, canonical_root, policy_risks, required_approvals};
@@ -75,7 +75,7 @@ impl App {
         let materialize_digest = projections
             .iter()
             .any(|effect| effect.method == "materialize")
-            .then(|| materialized_tree_digest(selected_path).map_err(map_io))
+            .then(|| convergence_input_tree_digest(selected_path, true).map_err(map_io))
             .transpose()?;
         for effect in &mut projections {
             effect.source_tree_digest = if effect.method == "materialize" {
@@ -138,6 +138,10 @@ impl App {
             snapshot.as_ref(),
             &projections,
         ));
+        let platform_conflicts =
+            resolve_platform_capability_conflicts(&direction, &projections, &canonical_source);
+        let execution_enabled = platform_conflicts.is_empty();
+        input_conflicts.extend(platform_conflicts);
         let visibility = projections
             .iter()
             .map(|effect| VisibilityRequirement {
@@ -227,7 +231,7 @@ impl App {
         );
         object.insert("operation".to_string(), json!("converge"));
         object.insert("requires_digest_confirmation".to_string(), json!(true));
-        object.insert("execution_enabled".to_string(), json!(true));
+        object.insert("execution_enabled".to_string(), json!(execution_enabled));
         object.insert("safe_to_apply".to_string(), json!(safe_to_apply));
         object.insert("effects".to_string(), json!(plan.projections));
         object.insert(
@@ -593,6 +597,100 @@ fn resolve_projection_route_conflicts(
             })
         })
         .collect()
+}
+
+#[derive(Clone, Copy)]
+struct AtomicPathCapabilities {
+    exchange: bool,
+    no_replace: bool,
+}
+
+impl AtomicPathCapabilities {
+    fn current_platform() -> Self {
+        Self {
+            exchange: cfg!(any(
+                target_os = "macos",
+                target_os = "ios",
+                target_os = "linux",
+                target_os = "android"
+            )),
+            no_replace: cfg!(any(
+                target_os = "macos",
+                target_os = "ios",
+                target_os = "linux",
+                target_os = "android",
+                windows
+            )),
+        }
+    }
+}
+
+fn resolve_platform_capability_conflicts(
+    direction: &ConvergenceInputDirection,
+    effects: &[ProjectionEffectPlan],
+    canonical_source: &Path,
+) -> Vec<ConvergenceInputConflict> {
+    resolve_platform_capability_conflicts_with(
+        direction,
+        effects,
+        canonical_source,
+        AtomicPathCapabilities::current_platform(),
+    )
+}
+
+fn resolve_platform_capability_conflicts_with(
+    direction: &ConvergenceInputDirection,
+    effects: &[ProjectionEffectPlan],
+    canonical_source: &Path,
+    capabilities: AtomicPathCapabilities,
+) -> Vec<ConvergenceInputConflict> {
+    let mut conflicts = Vec::new();
+    if *direction == ConvergenceInputDirection::Projection && !capabilities.exchange {
+        conflicts.push(ConvergenceInputConflict {
+            code: "PLATFORM_ATOMIC_SOURCE_EXCHANGE_UNSUPPORTED".to_string(),
+            message: "this platform cannot atomically replace the canonical source from a projection input"
+                .to_string(),
+            evidence: json!({ "required_operation": "atomic_path_exchange" }),
+        });
+    }
+
+    let unsupported_effects = effects
+        .iter()
+        .filter(|effect| {
+            let safe_symlink_noop = effect.effect == "refresh"
+                && effect.method == "symlink"
+                && projection_path_is_safe_symlink(
+                    Path::new(&effect.materialized_path),
+                    canonical_source,
+                );
+            projection_requires_unsupported_activation(effect, safe_symlink_noop, capabilities)
+        })
+        .map(|effect| effect.instance_id.clone())
+        .collect::<Vec<_>>();
+    if !unsupported_effects.is_empty() {
+        conflicts.push(ConvergenceInputConflict {
+            code: "PLATFORM_ATOMIC_PROJECTION_ACTIVATION_UNSUPPORTED".to_string(),
+            message: "this platform cannot atomically activate every planned projection"
+                .to_string(),
+            evidence: json!({ "projection_instances": unsupported_effects }),
+        });
+    }
+    conflicts
+}
+
+fn projection_requires_unsupported_activation(
+    effect: &ProjectionEffectPlan,
+    safe_symlink_noop: bool,
+    capabilities: AtomicPathCapabilities,
+) -> bool {
+    if safe_symlink_noop {
+        return false;
+    }
+    match effect.effect.as_str() {
+        "create" => !capabilities.no_replace,
+        "refresh" => !capabilities.exchange,
+        _ => true,
+    }
 }
 
 fn validate_projection_input(

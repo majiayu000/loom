@@ -23,6 +23,34 @@ fn post_local_axes_are_not_reported_safe_to_apply() {
     }
 }
 
+#[cfg(windows)]
+#[test]
+fn unsupported_atomic_refresh_and_source_exchange_are_non_executable() {
+    let fixture = projected_fixture();
+    let (output, refresh) = plan_converge(&fixture, &[]);
+    assert!(output.status.success(), "refresh plan failed: {refresh}");
+    assert_eq!(refresh["data"]["execution_enabled"], json!(false));
+    assert_eq!(refresh["data"]["safe_to_apply"], json!(false));
+    assert!(
+        conflict_codes(&refresh).contains(&"PLATFORM_ATOMIC_PROJECTION_ACTIVATION_UNSUPPORTED")
+    );
+
+    let instance = refresh["data"]["effects"][0]["instance_id"]
+        .as_str()
+        .expect("instance");
+    let (output, projection_input) =
+        plan_converge(&fixture, &["--from-projection", "--instance", instance]);
+    assert!(
+        output.status.success(),
+        "projection-input plan failed: {projection_input}"
+    );
+    assert_eq!(projection_input["data"]["execution_enabled"], json!(false));
+    assert_eq!(projection_input["data"]["safe_to_apply"], json!(false));
+    assert!(
+        conflict_codes(&projection_input).contains(&"PLATFORM_ATOMIC_SOURCE_EXCHANGE_UNSUPPORTED")
+    );
+}
+
 #[test]
 fn ineligible_projection_routes_are_sealed_as_conflicts() {
     for (ownership, disable_copy, expected) in [

@@ -628,7 +628,7 @@ fn prove_registry_boundary(
     journal_path: &Path,
     journal: &mut TransactionJournal,
 ) -> std::result::Result<Option<String>, CommandFailure> {
-    let source_head = journal.source_head.as_deref().ok_or_else(|| {
+    let source_head = journal.source_head.clone().ok_or_else(|| {
         CommandFailure::new(ErrorCode::StateCorrupt, "journal is missing source head")
     })?;
     let head = gitops::head(&app.ctx).map_err(map_git)?;
@@ -641,6 +641,15 @@ fn prove_registry_boundary(
         return Ok(None);
     }
     validate_registry_result(app, plan, journal)?;
+    if let Some(commit) = super::registry_commit::resume_ready_registry_index_lock(
+        app,
+        plan,
+        journal_path,
+        journal,
+        &source_head,
+    )? {
+        return Ok(Some(commit));
+    }
     if head == source_head {
         return super::registry_commit::commit_convergence_registry(
             app,
@@ -652,7 +661,7 @@ fn prove_registry_boundary(
         verify_commit(
             app,
             &head,
-            source_head,
+            &source_head,
             &format!("skill({}): record convergence projections", plan.skill),
             |path| path == "state/registry/projections.json",
         )?;

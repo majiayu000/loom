@@ -118,7 +118,7 @@ fn ready_registry_index_replacement_fails_closed_without_deletion() {
 }
 
 #[test]
-fn retry_appends_and_terminalizes_registry_index_generations() {
+fn retry_recovers_and_retains_the_published_registry_index_generation() {
     let fixture = projected_fixture();
     fs::write(
         fixture.root.path().join("skills/demo/details.txt"),
@@ -167,13 +167,13 @@ fn retry_appends_and_terminalizes_registry_index_generations() {
     let attempts = recovered_journal["registry_index_attempts"]
         .as_array()
         .expect("recovered registry index attempts");
-    assert!(attempts.len() >= 2, "retry did not append a new generation");
+    assert_eq!(attempts.len(), 1, "retry replaced the published generation");
     assert_eq!(
         attempts
             .iter()
             .find(|attempt| attempt["generation"] == json!(generation))
-            .expect("superseded generation")["state"],
-        json!("abandoned")
+            .expect("recovered generation")["state"],
+        json!("retained")
     );
     for attempt in attempts {
         assert!(matches!(

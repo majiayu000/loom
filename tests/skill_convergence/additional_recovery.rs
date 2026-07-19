@@ -198,6 +198,8 @@ fn registry_cas_rejects_an_external_head_without_installing_index() {
         !output.status.success(),
         "registry CAS did not stop: {interrupted}"
     );
+    fs::remove_file(fixture.root.path().join(".git/index.lock"))
+        .expect("simulate operator cleanup of the retained stale lock");
 
     fs::write(fixture.root.path().join("external.txt"), "external\n").expect("external file");
     git(fixture.root.path(), &["add", "external.txt"]);

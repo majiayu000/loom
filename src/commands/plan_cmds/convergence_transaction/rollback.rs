@@ -354,7 +354,8 @@ fn restore_index_if_owned(
             "Git index changed after rollback evidence was captured",
         ));
     }
-    gitops::install_prepared_index_with_guard(&app.ctx, Path::new(&journal.index_backup), &|_| {
+    let backup = Path::new(&journal.index_backup);
+    let guard = |_: &Path| {
         let active = active_index_digest(app).map_err(|error| anyhow::anyhow!(error.message))?;
         if active != rollback {
             return Err(anyhow::anyhow!("active Git index changed"));
@@ -366,8 +367,14 @@ fn restore_index_if_owned(
             ));
         }
         Ok(())
-    })
-    .map_err(map_git)
+    };
+    if gitops::recover_prepared_index_lock_with_guard(&app.ctx, backup, &guard)
+        .map_err(super::index_lock_failure::map_install_error)?
+    {
+        return Ok(());
+    }
+    gitops::install_prepared_index_with_guard(&app.ctx, backup, &guard)
+        .map_err(super::index_lock_failure::map_install_error)
 }
 
 fn rollback_fault(errors: &mut Vec<Value>, fault: &str) -> bool {

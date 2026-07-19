@@ -63,6 +63,11 @@ pub(super) fn commit_convergence_registry(
         &source_head,
         "registry commit parent changed before preparation",
     )?;
+    if let Some(commit) =
+        resume_ready_registry_index_lock(app, plan, journal_path, journal, &source_head)?
+    {
+        return Ok(Some(commit));
+    }
 
     let (attempt, base_index, prepared_index, commit_index) =
         allocate_registry_indexes(journal_path, journal, "commit")?;
@@ -131,10 +136,14 @@ pub(super) fn commit_convergence_registry(
             gitops::move_head_if_unchanged(&app.ctx, &commit, &source_head)
         });
     if let Err(error) = install {
+        let failure = super::index_lock_failure::map_install_error(error);
+        if super::index_lock_failure::retained(&failure) {
+            return Err(failure);
+        }
         if gitops::head(&app.ctx).map_err(map_git)? == commit {
             align_registry_index(app, plan, journal_path, journal, &commit)?;
         } else {
-            return Err(super::index_lock_failure::map_install_error(error));
+            return Err(failure);
         }
     }
     require_head(
@@ -143,6 +152,66 @@ pub(super) fn commit_convergence_registry(
         "registry commit compare-and-swap did not persist",
     )?;
     validate_registry_result(app, plan, journal)?;
+    retain_registry_index_attempt(journal_path, journal, attempt)?;
+    Ok(Some(commit))
+}
+
+pub(super) fn resume_ready_registry_index_lock(
+    app: &App,
+    plan: &SkillConvergencePlan,
+    journal_path: &Path,
+    journal: &mut TransactionJournal,
+    source_head: &str,
+) -> std::result::Result<Option<String>, CommandFailure> {
+    let Some((attempt, ready)) = journal
+        .registry_index_attempts
+        .iter()
+        .enumerate()
+        .rev()
+        .find(|(_, attempt)| {
+            attempt.purpose == "commit"
+                && attempt.state == RegistryIndexAttemptState::Ready
+                && attempt.changed == Some(true)
+        })
+    else {
+        return Ok(None);
+    };
+    let prepared_index = PathBuf::from(&ready.prepared_index);
+    let expected_index = ready.prepared_digest.clone().ok_or_else(|| {
+        CommandFailure::new(ErrorCode::StateCorrupt, "prepared registry index digest is missing")
+    })?;
+    let base_index_digest = ready.base_digest.clone().ok_or_else(|| {
+        CommandFailure::new(ErrorCode::StateCorrupt, "base registry index digest is missing")
+    })?;
+    let commit = journal.registry_commit.clone().ok_or_else(|| {
+        CommandFailure::new(ErrorCode::StateCorrupt, "prepared registry commit is missing")
+    })?;
+    let guard = |candidate: &Path| {
+        validate_registry_result(app, plan, journal)
+            .map_err(|error| anyhow::anyhow!(error.message))?;
+        validate_recovery_routing(app, plan).map_err(|error| anyhow::anyhow!(error.message))?;
+        let head = gitops::head(&app.ctx)?;
+        if head != source_head && head != commit {
+            return Err(anyhow::anyhow!("registry recovery HEAD changed"));
+        }
+        validate_index_install(
+            app,
+            candidate,
+            &expected_index,
+            &base_index_digest,
+            &head,
+        )?;
+        if head == source_head {
+            gitops::move_head_if_unchanged(&app.ctx, &commit, source_head)?;
+        }
+        Ok(())
+    };
+    if !gitops::recover_prepared_index_lock_with_guard(&app.ctx, &prepared_index, &guard)
+        .map_err(super::index_lock_failure::map_install_error)?
+    {
+        return Ok(None);
+    }
+    require_head(app, &commit, "recovered registry commit did not persist")?;
     retain_registry_index_attempt(journal_path, journal, attempt)?;
     Ok(Some(commit))
 }
@@ -207,7 +276,7 @@ pub(super) fn align_registry_index(
     };
     let recovered_lock =
         gitops::recover_prepared_index_lock_with_guard(&app.ctx, &prepared_index, &guard)
-            .map_err(map_git)?;
+            .map_err(super::index_lock_failure::map_install_error)?;
     if recovered_lock {
         retain_registry_index_attempt(journal_path, journal, attempt)?;
         return Ok(());

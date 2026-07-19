@@ -126,11 +126,25 @@ pub fn install_prepared_index_with_guard(
         if std::env::var_os("LOOM_TEST_PREPARED_INDEX_FAIL_AFTER_PUBLICATION").is_some() {
             return Err(anyhow!("prepared index post-publication test failure"));
         }
+        #[cfg(debug_assertions)]
+        if std::env::var_os("LOOM_TEST_ROLLBACK_INDEX_FAIL_AFTER_PUBLICATION").is_some()
+            && prepared_index.file_name().is_some_and(|name| name == "index")
+        {
+            return Err(anyhow!("rollback index post-publication test failure"));
+        }
         guard(&lock)?;
         if fs::read(&lock)? != prepared_bytes || fs::read(prepared_index)? != prepared_bytes {
             return Err(anyhow!(
                 "prepared Git index changed during guarded installation"
             ));
+        }
+        #[cfg(debug_assertions)]
+        if std::env::var_os("LOOM_TEST_REGISTRY_INDEX_FAIL_AFTER_GUARD").is_some()
+            && prepared_index
+                .file_name()
+                .is_some_and(|name| name.to_string_lossy().starts_with("registry-"))
+        {
+            return Err(anyhow!("registry index post-guard test failure"));
         }
         crate::fs_util::rename_atomic(&lock, &index)?;
         lock_published = false;

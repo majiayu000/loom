@@ -147,6 +147,8 @@ struct ProjectionBackup {
     #[serde(default)]
     activated: bool,
     #[serde(default)]
+    activation_pending: bool,
+    #[serde(default)]
     original_fingerprint: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     restored_fingerprint: Option<String>,
@@ -263,6 +265,7 @@ pub(super) fn apply_convergence(
                 owner_proof: new_owner_proof(&plan.plan_id),
                 activated_fingerprint: None,
                 activated: false,
+                activation_pending: false,
                 original_fingerprint: None,
                 restored_fingerprint: None,
                 restore_pending: false,
@@ -506,6 +509,11 @@ fn execute_local_transaction(
         upsert_projection(&mut projections, projection.clone());
         applied.push(projection.instance_id);
         debug_assert_eq!(output.activated, !safe_symlink_noop);
+        if output.activated {
+            journal.projections[index].activation_pending = false;
+            journal.projections[index].mark_activated(true);
+            journal.installed_projections += 1;
+        }
         if let Err(error) = require_head(
             app,
             source_head,

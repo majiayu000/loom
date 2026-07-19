@@ -269,7 +269,18 @@ fn recovery_replays_rotation_and_post_exchange_activation_intent() {
         .iter()
         .map(|projection| projection["activated"].as_bool().unwrap_or(false))
         .collect::<Vec<_>>();
-    assert_eq!(&flags[target - 2..=target], &[true, false, true]);
+    let pending = interrupted["projections"]
+        .as_array()
+        .expect("projections")
+        .iter()
+        .map(|projection| projection["activation_pending"].as_bool().unwrap_or(false))
+        .collect::<Vec<_>>();
+    assert_eq!(&flags[target - 2..=target], &[true, false, false]);
+    assert_eq!(&pending[target - 2..=target], &[false, false, true]);
+    assert_eq!(
+        interrupted["installed_projections"],
+        json!(flags.iter().filter(|flag| **flag).count())
+    );
 
     let (output, recovered) = apply_plan(&fixture, &plan, key, &[]);
     assert!(

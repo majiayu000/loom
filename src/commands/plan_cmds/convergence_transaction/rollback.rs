@@ -12,6 +12,10 @@ impl ProjectionBackup {
         self.activated
     }
 
+    pub(super) fn is_activation_pending(&self) -> bool {
+        self.activation_pending
+    }
+
     pub(super) fn is_restore_pending(&self) -> bool {
         self.restore_pending
     }
@@ -176,8 +180,7 @@ pub(super) fn persist_projection_activation_intent(
     index: usize,
 ) -> std::result::Result<(), CommandFailure> {
     journal.projections[index].restore_pending = false;
-    journal.projections[index].mark_activated(true);
-    sync_installed_projection_count(journal);
+    journal.projections[index].activation_pending = true;
     save_journal(journal_path, journal)
 }
 

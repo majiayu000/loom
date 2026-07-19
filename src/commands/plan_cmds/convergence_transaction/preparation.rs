@@ -332,6 +332,7 @@ pub(super) fn rotate_projection_stages(
         projection.owner_proof = proof;
         projection.activated_fingerprint = None;
         projection.activated = false;
+        projection.activation_pending = false;
         projection.original_fingerprint = projection
             .backup
             .as_ref()

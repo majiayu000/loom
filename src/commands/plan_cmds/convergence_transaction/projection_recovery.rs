@@ -252,6 +252,7 @@ mod tests {
                 convergence_projection_fingerprint(&live).expect("fingerprint"),
             ),
             activated: true,
+            activation_pending: false,
             original_fingerprint: None,
             restored_fingerprint: None,
             restore_pending: false,

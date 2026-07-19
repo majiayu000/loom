@@ -555,7 +555,10 @@ fn reconcile_projection_state(
     saw_old: &mut bool,
 ) -> std::result::Result<bool, CommandFailure> {
     match state {
-        ProjectionState::New if !*saw_old || artifact.is_activated() => {
+        ProjectionState::New
+            if !*saw_old || artifact.is_activated() || artifact.is_activation_pending() =>
+        {
+            artifact.activation_pending = false;
             artifact.mark_activated(true);
             Ok(true)
         }
@@ -563,6 +566,7 @@ fn reconcile_projection_state(
             "projection transaction progress is not contiguous",
         )),
         ProjectionState::Old => {
+            artifact.activation_pending = false;
             artifact.mark_activated(false);
             *saw_old = true;
             Ok(false)

@@ -1,5 +1,5 @@
 use std::ffi::OsString;
-use std::fs;
+use std::fs::{self, OpenOptions};
 use std::io;
 use std::path::{Path, PathBuf};
 
@@ -89,7 +89,10 @@ pub fn install_prepared_index_with_guard(
             return Err(anyhow!("prepared Git index is not a regular file"));
         }
         let prepared_bytes = fs::read(prepared_index)?;
-        fs::File::open(prepared_index)?.sync_all()?;
+        OpenOptions::new()
+            .write(true)
+            .open(prepared_index)?
+            .sync_all()?;
         fs::hard_link(prepared_index, &lock)?;
         owns_lock = true;
         crate::fs_util::sync_parent_directory(&lock)?;
@@ -133,22 +136,84 @@ pub fn recover_prepared_index_lock_with_guard(
     if !metadata.file_type().is_file() {
         return Err(anyhow!("existing Git index lock is not a regular file"));
     }
+    let owned_lock = fs::File::open(&lock)?;
+    let owned_identity = owned_lock.metadata()?;
     if fs::read(&lock)? != fs::read(prepared_index)? {
         return Err(anyhow!(
             "existing Git index lock does not match durable transaction evidence"
         ));
     }
     let prepared_bytes = fs::read(prepared_index)?;
-    fs::File::open(prepared_index)?.sync_all()?;
+    OpenOptions::new()
+        .write(true)
+        .open(prepared_index)?
+        .sync_all()?;
     crate::fs_util::write_atomic_bytes(prepared_index, &prepared_bytes)?;
-    guard(&lock)?;
-    if fs::read(&lock)? != prepared_bytes || fs::read(prepared_index)? != prepared_bytes {
-        return Err(anyhow!(
-            "prepared Git index changed during guarded recovery"
-        ));
+    let guarded = (|| {
+        guard(&lock)?;
+        if fs::read(&lock)? != prepared_bytes || fs::read(prepared_index)? != prepared_bytes {
+            return Err(anyhow!(
+                "prepared Git index changed during guarded recovery"
+            ));
+        }
+        crate::fs_util::rename_atomic(&lock, &index)?;
+        crate::fs_util::sync_parent_directory(&index)?;
+        Ok(true)
+    })();
+    match guarded {
+        Ok(recovered) => Ok(recovered),
+        Err(error) => Err(cleanup_guarded_lock(&lock, &owned_identity, error)),
     }
-    crate::fs_util::rename_atomic(&lock, &index)?;
-    Ok(true)
+}
+
+fn cleanup_guarded_lock(
+    lock: &Path,
+    owned_identity: &fs::Metadata,
+    error: anyhow::Error,
+) -> anyhow::Error {
+    let current = match fs::symlink_metadata(lock) {
+        Ok(current) => current,
+        Err(cleanup) if cleanup.kind() == io::ErrorKind::NotFound => return error,
+        Err(cleanup) => {
+            return anyhow!(
+                "{error:#}; additionally failed to inspect guarded Git index lock: {cleanup}"
+            );
+        }
+    };
+    if !same_file_identity(owned_identity, &current) {
+        return anyhow!(
+            "{error:#}; guarded Git index lock was concurrently replaced and was preserved"
+        );
+    }
+    match fs::remove_file(lock) {
+        Ok(()) => error,
+        Err(cleanup) if cleanup.kind() == io::ErrorKind::NotFound => error,
+        Err(cleanup) => {
+            anyhow!("{error:#}; additionally failed to remove guarded Git index lock: {cleanup}")
+        }
+    }
+}
+
+#[cfg(unix)]
+fn same_file_identity(left: &fs::Metadata, right: &fs::Metadata) -> bool {
+    use std::os::unix::fs::MetadataExt;
+
+    left.dev() == right.dev() && left.ino() == right.ino()
+}
+
+#[cfg(windows)]
+fn same_file_identity(left: &fs::Metadata, right: &fs::Metadata) -> bool {
+    use std::os::windows::fs::MetadataExt;
+
+    left.volume_serial_number().is_some()
+        && left.volume_serial_number() == right.volume_serial_number()
+        && left.file_index().is_some()
+        && left.file_index() == right.file_index()
+}
+
+#[cfg(not(any(unix, windows)))]
+fn same_file_identity(_left: &fs::Metadata, _right: &fs::Metadata) -> bool {
+    false
 }
 
 pub fn create_prepared_commit(

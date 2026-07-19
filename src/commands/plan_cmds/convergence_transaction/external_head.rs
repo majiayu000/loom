@@ -20,6 +20,9 @@ const MANAGED_REGISTRY_PATHS: &[&str] = &[
     "state/registry/targets.json",
     "state/registry/projections.json",
     "state/registry/ops/checkpoint.json",
+    "state/registry/trust.json",
+    "state/registry/sources.json",
+    "loom.lock",
 ];
 
 pub(super) fn handle_external_registry_failure(
@@ -87,7 +90,7 @@ fn retire_registry_after_external_head(
     Ok(Some(errors))
 }
 
-fn external_head_preserves_reviewed_boundaries(
+pub(super) fn external_head_preserves_reviewed_boundaries(
     app: &App,
     plan: &SkillConvergencePlan,
     journal: &TransactionJournal,
@@ -127,6 +130,39 @@ fn external_head_preserves_reviewed_boundaries(
     args.extend(MANAGED_REGISTRY_PATHS.iter().copied());
     let unchanged = gitops::run_git_allow_failure(&app.ctx, &args).map_err(map_git)?;
     Ok(unchanged.status.success())
+}
+
+pub(super) fn complete_durable_registry_noop(
+    app: &App,
+    plan: &SkillConvergencePlan,
+    journal_path: &Path,
+    journal: &mut TransactionJournal,
+) -> std::result::Result<Option<Value>, CommandFailure> {
+    if journal.phase != TransactionPhase::CommittingRegistry
+        || !super::registry_commit::durable_registry_noop(journal)
+    {
+        return Ok(None);
+    }
+    let source_head = journal.source_head.as_deref().ok_or_else(|| {
+        CommandFailure::new(
+            ErrorCode::StateCorrupt,
+            "no-op registry source head is missing",
+        )
+    })?;
+    let head = gitops::head(&app.ctx).map_err(map_git)?;
+    if head != source_head && !external_head_preserves_reviewed_boundaries(app, plan, journal)? {
+        return Err(recovery_stale(
+            "descendant changed a reviewed no-op registry boundary",
+        ));
+    }
+    super::recovery_evidence::reprove_source_boundary(app, plan, journal)?;
+    super::recovery_support::validate_registry_result(app, plan, journal)?;
+    let result = committed_result_with_registry(plan, journal, None);
+    journal.result = Some(result.clone());
+    journal.phase = TransactionPhase::CommittedCleanupPending;
+    save_journal(journal_path, journal)?;
+    finish_committed_cleanup(journal_path, journal)?;
+    Ok(Some(result))
 }
 
 pub(super) fn retire_uncommitted_noop_after_external_head(

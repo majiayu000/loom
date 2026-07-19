@@ -62,6 +62,9 @@ fn validate_pre_mutation_state(
             "state/registry/targets.json",
             "state/registry/projections.json",
             "state/registry/ops/checkpoint.json",
+            "state/registry/trust.json",
+            "state/registry/sources.json",
+            "loom.lock",
         ],
     )?;
     let paths = RegistryStatePaths::from_app_context(&app.ctx);
@@ -105,6 +108,9 @@ pub(super) fn validate_recovery_routing(
             "state/registry/rules.json",
             "state/registry/targets.json",
             "state/registry/ops/checkpoint.json",
+            "state/registry/trust.json",
+            "state/registry/sources.json",
+            "loom.lock",
         ],
     )?;
     let snapshot = RegistryStatePaths::from_app_context(&app.ctx)

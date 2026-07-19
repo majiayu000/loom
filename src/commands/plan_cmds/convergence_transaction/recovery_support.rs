@@ -20,10 +20,8 @@ pub(super) fn recover_journal(
     validate_journal(app, journal_path, plan, &journal)?;
     match journal.phase {
         TransactionPhase::CommittedArtifactsRetained => {
-            let result = journal.result.clone().ok_or_else(|| {
-                CommandFailure::new(ErrorCode::StateCorrupt, "retained journal has no result")
-            })?;
-            return Ok(Some(result));
+            return super::recovery_evidence::replay_committed_retained(app, plan, &mut journal)
+                .map(Some);
         }
         TransactionPhase::RolledBackArtifactsRetained => {
             archive_rolled_back_journal(journal_path, &journal)?;
@@ -119,6 +117,11 @@ pub(super) fn recover_journal(
         _ => {}
     }
     let paths = RegistryStatePaths::from_app_context(&app.ctx);
+    if let Some(result) =
+        super::external_head::complete_durable_registry_noop(app, plan, journal_path, &mut journal)?
+    {
+        return Ok(Some(result));
+    }
     if matches!(
         journal.phase,
         TransactionPhase::ProjectionsSwapped | TransactionPhase::CommittingRegistry
@@ -721,7 +724,7 @@ pub(super) fn validate_registry_result(
     Ok(())
 }
 
-fn committed_result_with_registry(
+pub(super) fn committed_result_with_registry(
     plan: &SkillConvergencePlan,
     journal: &TransactionJournal,
     registry_commit: Option<String>,

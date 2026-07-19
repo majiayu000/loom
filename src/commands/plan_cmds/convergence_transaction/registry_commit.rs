@@ -28,6 +28,26 @@ enum RegistryIndexAttemptState {
     Retained,
 }
 
+pub(super) fn durable_registry_noop(journal: &TransactionJournal) -> bool {
+    journal.registry_commit.is_none()
+        && journal.registry_staged_index_digest.is_none()
+        && journal
+            .expected_projections
+            .as_ref()
+            .is_some_and(|expected| {
+                serde_json::to_value(expected).ok()
+                    == serde_json::to_value(&journal.original_projections).ok()
+            })
+        && registry_index_attempts_valid(journal)
+        && journal.registry_index_attempts.iter().any(|attempt| {
+            attempt.purpose == "commit"
+                && attempt.state == RegistryIndexAttemptState::Retained
+                && attempt.changed == Some(false)
+                && attempt.base_digest.is_some()
+                && attempt.prepared_digest.is_some()
+        })
+}
+
 pub(super) fn commit_convergence_registry(
     app: &App,
     plan: &SkillConvergencePlan,

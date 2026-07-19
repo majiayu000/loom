@@ -125,11 +125,24 @@ fn equal_content_backup_copy_restore_uses_retained_exchange_evidence() {
         restored_fingerprint: None,
     };
 
-    artifact.restored_fingerprint =
+    fs::create_dir_all(&staging).expect("create interrupted restore staging");
+    fs::write(staging.join("partial.txt"), "partial\n").expect("write interrupted restore staging");
+    let interrupted_partial =
         super::super::projection_recovery::prepare_projection_restore_fingerprint(
             &artifact, plan_id,
         )
-        .expect("prepare restore fingerprint");
+        .expect("rebuild partial restore staging")
+        .expect("partial restore fingerprint");
+    assert!(!staging.join("partial.txt").exists());
+
+    let interrupted_complete =
+        super::super::projection_recovery::prepare_projection_restore_fingerprint(
+            &artifact, plan_id,
+        )
+        .expect("rebuild unrecorded complete restore staging")
+        .expect("complete restore fingerprint");
+    assert_ne!(interrupted_complete, interrupted_partial);
+    artifact.restored_fingerprint = Some(interrupted_complete);
     let durable_restored = artifact
         .restored_fingerprint
         .clone()

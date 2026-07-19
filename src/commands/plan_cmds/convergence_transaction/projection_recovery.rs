@@ -44,20 +44,20 @@ pub(super) fn prepare_projection_restore_fingerprint(
         "live projection before rollback preparation",
     )?;
     if staging.try_exists().map_err(map_io)? {
-        if !path_matches_backup(staging, backup)? {
-            return Err(recovery_conflict(
-                staging,
-                "unrecorded rollback staging cannot be trusted",
-            ));
-        }
         let fingerprint = convergence_projection_fingerprint(staging)?;
-        if artifact.original_fingerprint.as_deref() != Some(fingerprint.as_str()) {
-            return Err(recovery_conflict(
-                staging,
-                "rollback staging identity has no durable ownership evidence",
-            ));
+        if artifact.original_fingerprint.as_deref() == Some(fingerprint.as_str()) {
+            if !path_matches_backup(staging, backup)? {
+                return Err(recovery_conflict(
+                    staging,
+                    "retained original staging does not match durable backup evidence",
+                ));
+            }
+            return Ok(Some(fingerprint));
         }
-        return Ok(Some(fingerprint));
+        // The owner proof and exact live activation fingerprint above make this
+        // declared private path safe to rebuild. With no persisted restore
+        // fingerprint, anything else here is an interrupted restore candidate.
+        crate::fs_util::remove_path_if_exists(staging).map_err(map_io)?;
     }
     restore_path_from_backup_if_absent(staging, backup).map_err(map_io)?;
     if !path_matches_backup(staging, backup)? {

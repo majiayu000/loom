@@ -10,6 +10,29 @@ use super::{
     run_git_allow_failure_in_with_env, run_git_in_with_env,
 };
 
+#[derive(Debug)]
+struct PreparedIndexLockRetained(String);
+
+impl std::fmt::Display for PreparedIndexLockRetained {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for PreparedIndexLockRetained {}
+
+pub(crate) fn prepared_index_lock_was_retained(error: &anyhow::Error) -> bool {
+    error.downcast_ref::<PreparedIndexLockRetained>().is_some()
+}
+
+fn retained_lock_error(lock: &Path, error: anyhow::Error) -> anyhow::Error {
+    PreparedIndexLockRetained(format!(
+        "{error:#}; published Git index lock '{}' was retained for recovery",
+        lock.display()
+    ))
+    .into()
+}
+
 pub fn prepare_index_for_paths(
     ctx: &AppContext,
     base_index: &Path,
@@ -99,6 +122,10 @@ pub fn install_prepared_index_with_guard(
         crate::fs_util::rename_no_replace_atomic(&staging, &lock)?;
         lock_published = true;
         crate::fs_util::sync_parent_directory(&lock)?;
+        #[cfg(debug_assertions)]
+        if std::env::var_os("LOOM_TEST_PREPARED_INDEX_FAIL_AFTER_PUBLICATION").is_some() {
+            return Err(anyhow!("prepared index post-publication test failure"));
+        }
         guard(&lock)?;
         if fs::read(&lock)? != prepared_bytes || fs::read(prepared_index)? != prepared_bytes {
             return Err(anyhow!(
@@ -112,10 +139,7 @@ pub fn install_prepared_index_with_guard(
     })();
     let result = match result {
         Ok(()) => Ok(()),
-        Err(error) if lock_published => Err(anyhow!(
-            "{error:#}; published Git index lock '{}' was retained for recovery",
-            lock.display()
-        )),
+        Err(error) if lock_published => Err(retained_lock_error(&lock, error)),
         Err(error) => Err(error),
     };
     match fs::remove_file(&staging) {
@@ -154,7 +178,8 @@ pub fn recover_prepared_index_lock_with_guard(
     let prepared_bytes = fs::read(prepared_index)?;
     crate::fs_util::sync_file_and_parent(prepared_index)?;
     crate::fs_util::write_atomic_bytes(prepared_index, &prepared_bytes)?;
-    (|| {
+    let mut lock_published = true;
+    let result = (|| {
         guard(&lock)?;
         if fs::read(&lock)? != prepared_bytes || fs::read(prepared_index)? != prepared_bytes {
             return Err(anyhow!(
@@ -162,9 +187,14 @@ pub fn recover_prepared_index_lock_with_guard(
             ));
         }
         crate::fs_util::rename_atomic(&lock, &index)?;
+        lock_published = false;
         crate::fs_util::sync_parent_directory(&index)?;
         Ok(true)
-    })()
+    })();
+    match result {
+        Err(error) if lock_published => Err(retained_lock_error(&lock, error)),
+        result => result,
+    }
 }
 
 pub fn create_prepared_commit(

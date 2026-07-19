@@ -11,6 +11,9 @@ pub(super) fn handle_transaction_failure(
     journal: &mut TransactionJournal,
     failure: CommandFailure,
 ) -> std::result::Result<CommandFailure, CommandFailure> {
+    if super::index_lock_failure::retained(&failure) {
+        return Ok(failure);
+    }
     if journal.phase == TransactionPhase::RolledBackArtifactsRetained {
         return Ok(failure);
     }

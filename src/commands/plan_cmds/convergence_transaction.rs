@@ -29,6 +29,7 @@ use super::{PLAN_PROTOCOL_VERSION, plan_failure};
 mod external_head;
 mod faults;
 mod guards;
+mod index_lock_failure;
 mod ownership;
 mod ownership_state;
 mod preparation;

@@ -134,7 +134,7 @@ pub(super) fn commit_convergence_registry(
         if gitops::head(&app.ctx).map_err(map_git)? == commit {
             align_registry_index(app, plan, journal_path, journal, &commit)?;
         } else {
-            return Err(map_git(error));
+            return Err(super::index_lock_failure::map_install_error(error));
         }
     }
     require_head(
@@ -181,7 +181,7 @@ pub(super) fn align_registry_index(
     save_journal(journal_path, journal)?;
     let changed =
         gitops::prepare_index_for_paths(&app.ctx, &base_index, &prepared_index, &[REGISTRY_PATH])
-            .map_err(map_git)?;
+            .map_err(super::index_lock_failure::map_install_error)?;
     sync_registry_index(&prepared_index)?;
     let expected_index = file_digest(&prepared_index)?;
     journal.registry_index_attempts[attempt].prepared_digest = Some(expected_index.clone());
@@ -213,7 +213,7 @@ pub(super) fn align_registry_index(
         return Ok(());
     }
     gitops::install_prepared_index_with_guard(&app.ctx, &prepared_index, &guard)
-        .map_err(map_git)?;
+        .map_err(super::index_lock_failure::map_install_error)?;
     retain_registry_index_attempt(journal_path, journal, attempt)
 }
 

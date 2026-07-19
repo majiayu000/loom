@@ -458,3 +458,87 @@ fn registry_json_cas_interruption_recovers_after_external_head() {
     let (output, applied) = apply_plan(&fixture, &fresh, "post-cas-fresh", &[]);
     assert!(output.status.success(), "fresh apply failed: {applied}");
 }
+
+#[test]
+fn rolling_back_final_projection_exchange_keeps_terminal_journal_valid() {
+    let fixture = projected_fixture();
+    fs::write(
+        fixture.root.path().join("skills/demo/details.txt"),
+        "rollback terminal baseline\n",
+    )
+    .expect("source edit");
+    let (output, plan) = plan_converge(&fixture, &[]);
+    assert!(output.status.success(), "plan failed: {plan}");
+    let key = "rollback-final-projection-exchange";
+
+    let (output, interrupted) = apply_plan(
+        &fixture,
+        &plan,
+        key,
+        &[
+            ("LOOM_FAULT_INJECT", "convergence_after_registry_save"),
+            (
+                "LOOM_ROLLBACK_FAULT_INJECT",
+                "convergence_interrupt_after_projection_restore_exchange",
+            ),
+            ("LOOM_TEST_CONVERGENCE_RESTORE_WAL_INDEX", "0"),
+        ],
+    );
+    assert!(
+        !output.status.success(),
+        "projection restore exchange fault passed: {interrupted}"
+    );
+    let journal_path = fixture
+        .root
+        .path()
+        .join("state/transactions/convergence-demo.json");
+    let interrupted_journal: Value =
+        serde_json::from_slice(&fs::read(&journal_path).expect("interrupted journal"))
+            .expect("parse interrupted journal");
+    assert_eq!(interrupted_journal["phase"], json!("rolling_back"));
+    assert_eq!(
+        interrupted_journal["projections"][0]["activated"],
+        json!(true)
+    );
+    assert!(
+        interrupted_journal["projections"][0]["original_fingerprint"]
+            .as_str()
+            .is_some()
+    );
+
+    let (output, cleanup_interrupted) = apply_plan(
+        &fixture,
+        &plan,
+        key,
+        &[(
+            "LOOM_CLEANUP_FAULT_INJECT",
+            "convergence_interrupt_during_cleanup",
+        )],
+    );
+    assert!(
+        !output.status.success(),
+        "rolled-back cleanup fault passed: {cleanup_interrupted}"
+    );
+    let terminal: Value =
+        serde_json::from_slice(&fs::read(&journal_path).expect("terminal journal"))
+            .expect("parse terminal journal");
+    assert_eq!(terminal["phase"], json!("rolled_back_cleanup_pending"));
+    assert_eq!(terminal["installed_projections"], json!(0));
+    assert_eq!(terminal["projections"][0]["activated"], json!(false));
+    assert!(
+        terminal["projections"][0]["original_fingerprint"]
+            .as_str()
+            .is_some()
+    );
+
+    let (output, recovered) = apply_plan(&fixture, &plan, key, &[]);
+    assert!(
+        output.status.success(),
+        "terminal recovery failed: {recovered}"
+    );
+    let (output, reopened) = apply_plan(&fixture, &plan, key, &[]);
+    assert!(
+        output.status.success(),
+        "terminal reopen failed: {reopened}"
+    );
+}

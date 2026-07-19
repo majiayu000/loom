@@ -437,9 +437,6 @@ fn reconcile_projection_state(
             "projection transaction progress is not contiguous",
         )),
         ProjectionState::Old => {
-            if artifact.is_activated() {
-                artifact.original_fingerprint = None;
-            }
             artifact.mark_activated(false);
             *saw_old = true;
             Ok(false)

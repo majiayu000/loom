@@ -119,6 +119,19 @@ pub(super) fn restore_activated_projection_at(
         }
     }
     restore_projection_from_evidence(&journal.projections[index], &journal.plan_id)?;
+    #[cfg(debug_assertions)]
+    if std::env::var("LOOM_ROLLBACK_FAULT_INJECT").ok().as_deref()
+        == Some("convergence_interrupt_after_projection_restore_exchange")
+        && std::env::var("LOOM_TEST_CONVERGENCE_RESTORE_WAL_INDEX")
+            .ok()
+            .and_then(|value| value.parse::<usize>().ok())
+            == Some(index)
+    {
+        return Err(CommandFailure::new(
+            ErrorCode::InternalError,
+            "fault injected after projection restore exchange",
+        ));
+    }
     journal.projections[index].mark_activated(false);
     sync_installed_projection_count(journal);
     Ok(())

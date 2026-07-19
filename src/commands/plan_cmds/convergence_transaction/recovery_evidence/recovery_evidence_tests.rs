@@ -39,7 +39,7 @@ fn partial_restore_state_is_inferred_and_retryable() {
             .expect("retain failed projection")
     );
     assert!(!restored.is_activated());
-    assert!(restored.original_fingerprint.is_none());
+    assert!(restored.original_fingerprint.is_some());
     assert!(failed.is_activated());
     assert!(failed.original_fingerprint.is_some());
 }
@@ -72,7 +72,7 @@ fn equal_content_partial_restore_uses_ownership_identity() {
         reconcile_projection_state(&mut failed, failed_state, &mut saw_old)
             .expect("retain failed equal-content projection")
     );
-    assert!(restored.original_fingerprint.is_none());
+    assert!(restored.original_fingerprint.is_some());
     assert!(failed.original_fingerprint.is_some());
 
     let error = match projection_identity_state(&failed, "unknown-identity") {

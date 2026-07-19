@@ -122,6 +122,8 @@ enum TransactionPhase {
     SourceReplaced,
     CommittingSource,
     SourceCommitted,
+    RotatingProjections,
+    PreparingProjections,
     InstallingProjections,
     ProjectionsSwapped,
     CommittingRegistry,
@@ -439,6 +441,9 @@ fn execute_local_transaction(
                 Some(convergence_projection_fingerprint(staging_path)?);
             save_journal(journal_path, journal)?;
         }
+        if !safe_symlink_noop {
+            rollback::persist_projection_activation_intent(journal_path, journal, index)?;
+        }
         let artifact = &journal.projections[index];
         let snapshot = snapshot.ok_or_else(|| {
             CommandFailure::new(
@@ -511,10 +516,7 @@ fn execute_local_transaction(
         }
         upsert_projection(&mut projections, projection.clone());
         applied.push(projection.instance_id);
-        if output.activated {
-            journal.projections[index].mark_activated(true);
-            journal.installed_projections += 1;
-        }
+        debug_assert_eq!(output.activated, !safe_symlink_noop);
         if let Err(error) = require_head(
             app,
             source_head,

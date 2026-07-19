@@ -146,6 +146,16 @@ fn sync_installed_projection_count(journal: &mut TransactionJournal) {
         .count();
 }
 
+pub(super) fn persist_projection_activation_intent(
+    journal_path: &Path,
+    journal: &mut TransactionJournal,
+    index: usize,
+) -> std::result::Result<(), CommandFailure> {
+    journal.projections[index].mark_activated(true);
+    sync_installed_projection_count(journal);
+    save_journal(journal_path, journal)
+}
+
 pub(super) fn restore_activated_projections(
     journal_path: &Path,
     journal: &mut TransactionJournal,

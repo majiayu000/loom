@@ -21,6 +21,7 @@ pub(super) fn interruption_fault_active() -> bool {
                 | "convergence_interrupt_after_projection_activation"
                 | "convergence_interrupt_after_projection_swap"
                 | "convergence_interrupt_after_projection_restore_wal"
+                | "convergence_interrupt_after_projection_generation_rotation"
                 | "convergence_interrupt_after_all_projection_swaps"
                 | "convergence_interrupt_after_durable_projection_restore_intent"
                 | "convergence_interrupt_after_registry_save_cas"

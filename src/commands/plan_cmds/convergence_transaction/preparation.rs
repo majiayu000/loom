@@ -319,10 +319,26 @@ pub(super) fn rotate_projection_stages(
         projection.owner_proof = proof;
         projection.activated_fingerprint = None;
         projection.activated = false;
-        projection.original_fingerprint = None;
+        projection.original_fingerprint = projection
+            .backup
+            .as_ref()
+            .map(|_| convergence_projection_fingerprint(Path::new(&projection.materialized_path)))
+            .transpose()?;
         projection.restored_fingerprint = None;
     }
+    journal.phase = TransactionPhase::PreparingProjections;
     save_journal(journal_path, journal)
+}
+
+pub(super) fn begin_projection_rotation(
+    journal_path: &Path,
+    journal: &mut TransactionJournal,
+) -> std::result::Result<(), CommandFailure> {
+    journal.installed_projections = 0;
+    journal.expected_projections = None;
+    journal.phase = TransactionPhase::RotatingProjections;
+    save_journal(journal_path, journal)?;
+    rotate_projection_stages(journal_path, journal)
 }
 
 fn prepare_projection_stages_from(
@@ -345,9 +361,18 @@ fn prepare_projection_stages_from(
     })?;
     for (index, effect) in plan.projections.iter().enumerate() {
         let materialized_path = PathBuf::from(&journal.projections[index].materialized_path);
-        if effect.effect == "refresh" && journal.projections[index].original_fingerprint.is_none() {
-            journal.projections[index].original_fingerprint =
-                Some(convergence_projection_fingerprint(&materialized_path)?);
+        if effect.effect == "refresh" {
+            let live = convergence_projection_fingerprint(&materialized_path)?;
+            match journal.projections[index].original_fingerprint.as_deref() {
+                Some(expected) if expected != live => {
+                    return Err(stale(
+                        "projection identity changed before staging preparation",
+                        "PLAN_PROJECTION_DRIFT",
+                    ));
+                }
+                None => journal.projections[index].original_fingerprint = Some(live),
+                Some(_) => {}
+            }
         }
         let safe_symlink_noop = effect.effect == "refresh"
             && effect.method == "symlink"

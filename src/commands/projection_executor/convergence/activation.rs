@@ -19,9 +19,22 @@ pub(crate) fn activate_prepared_projection(
     _ctx: &AppContext,
     prepared: PreparedProjection,
 ) -> Result<ProjectionActivationOutput, CommandFailure> {
+    #[cfg(debug_assertions)]
+    let staging_path = prepared
+        .durable_artifact()
+        .staging_path
+        .display()
+        .to_string();
     activate_prepared_projection_with_after_mutation(prepared, || {
+        #[cfg(debug_assertions)]
+        let selected = std::env::var("LOOM_TEST_CONVERGENCE_ACTIVATION_STAGING")
+            .ok()
+            .is_none_or(|value| value == staging_path);
+        #[cfg(not(debug_assertions))]
+        let selected = true;
         if std::env::var("LOOM_FAULT_INJECT").ok().as_deref()
             == Some("convergence_interrupt_after_projection_activation")
+            && selected
         {
             return Err(std::io::Error::other(
                 "fault injection: convergence_interrupt_after_projection_activation",

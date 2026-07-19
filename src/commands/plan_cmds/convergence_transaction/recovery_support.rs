@@ -164,12 +164,22 @@ pub(super) fn recover_journal(
             finish_committed_cleanup(journal_path, &mut journal)?;
             return Ok(Some(result));
         }
-        validate_mutated_surfaces(app, &paths, plan, &mut journal)?;
-        validate_rollback_evidence(app, plan, &journal)?;
-        super::rollback::restore_projections_for_resume(&paths, plan, journal_path, &mut journal)?;
-        rotate_projection_stages(journal_path, &mut journal)?;
-        journal.installed_projections = 0;
-        journal.expected_projections = None;
+        if journal.phase != TransactionPhase::PreparingProjections {
+            validate_mutated_surfaces(app, &paths, plan, &mut journal)?;
+            validate_rollback_evidence(app, plan, &journal)?;
+            if journal.phase == TransactionPhase::RotatingProjections {
+                rotate_projection_stages(journal_path, &mut journal)?;
+            } else {
+                super::rollback::restore_projections_for_resume(
+                    &paths,
+                    plan,
+                    journal_path,
+                    &mut journal,
+                )?;
+                super::preparation::begin_projection_rotation(journal_path, &mut journal)?;
+            }
+            maybe_skill_fault("convergence_interrupt_after_projection_generation_rotation")?;
+        }
         prepare_projection_stages(app, plan, request_id, journal_path, &mut journal)?;
         journal.phase = TransactionPhase::SourceCommitted;
         save_journal(journal_path, &journal)?;
@@ -417,8 +427,10 @@ fn validate_journal(
                 .restored_fingerprint
                 .as_deref()
                 .is_none_or(valid_sha256_digest)
-            && (journal.phase == TransactionPhase::Preparing
-                || super::ownership::is_pre_mutation_retained(journal)
+            && (matches!(
+                journal.phase,
+                TransactionPhase::Preparing | TransactionPhase::PreparingProjections
+            ) || super::ownership::is_pre_mutation_retained(journal)
                 || artifact.fingerprint().is_some_and(valid_sha256_digest))
             && match effect.effect.as_str() {
                 "refresh" => {
@@ -533,7 +545,9 @@ pub(super) fn validate_phase_invariants(journal: &TransactionJournal) -> bool {
             | TransactionPhase::ReplacingSource
             | TransactionPhase::SourceReplaced
             | TransactionPhase::CommittingSource => pre_source,
-            TransactionPhase::SourceCommitted => source_only,
+            TransactionPhase::SourceCommitted
+            | TransactionPhase::RotatingProjections
+            | TransactionPhase::PreparingProjections => source_only,
             TransactionPhase::InstallingProjections => {
                 journal.source_head.is_some()
                     && journal.expected_projections.is_none()

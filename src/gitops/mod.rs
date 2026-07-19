@@ -3,11 +3,13 @@ mod history;
 mod history_impl;
 mod history_types;
 mod prepared_index;
+mod snapshot;
 
 pub use diff::*;
 pub use history::*;
 pub use history_types::*;
 pub use prepared_index::*;
+pub use snapshot::snapshot_index_to;
 
 use std::fs::{self, OpenOptions};
 use std::io::Write;
@@ -200,42 +202,6 @@ impl Drop for IndexSnapshot {
 
 pub fn snapshot_index(ctx: &AppContext) -> Result<IndexSnapshot> {
     snapshot_index_with_env(ctx, &[])
-}
-
-pub fn snapshot_index_to(ctx: &AppContext, backup_path: &Path) -> Result<()> {
-    let index_path = resolve_git_index_path(ctx, &[])?;
-    if !index_path.exists() {
-        return Err(anyhow!(
-            "git index missing at {}; cannot snapshot",
-            index_path.display()
-        ));
-    }
-    if let Some(parent) = backup_path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    let mut source = fs::File::open(&index_path)
-        .with_context(|| format!("open Git index {} for backup", index_path.display()))?;
-    let mut backup = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(backup_path)
-        .with_context(|| {
-            format!(
-                "create new Git index snapshot {}; refusing to follow or overwrite an existing entry",
-                backup_path.display()
-            )
-        })?;
-    std::io::copy(&mut source, &mut backup).with_context(|| {
-        format!(
-            "back up Git index from {} to {}",
-            index_path.display(),
-            backup_path.display()
-        )
-    })?;
-    backup
-        .sync_all()
-        .with_context(|| format!("sync Git index snapshot {}", backup_path.display()))?;
-    Ok(())
 }
 
 fn snapshot_index_with_env(ctx: &AppContext, envs: &[(&str, &str)]) -> Result<IndexSnapshot> {

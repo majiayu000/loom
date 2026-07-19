@@ -330,6 +330,47 @@ fn changed_source_pre_boundary_retires_after_an_unrelated_external_head() {
 
 #[cfg(unix)]
 #[test]
+fn index_backup_preserves_restrictive_source_permissions() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let fixture = projected_fixture();
+    let index = fixture.root.path().join(".git/index");
+    fs::set_permissions(&index, fs::Permissions::from_mode(0o600)).expect("restrict Git index");
+    fs::write(
+        fixture.root.path().join("skills/demo/details.txt"),
+        "permission-preserving index backup\n",
+    )
+    .expect("source edit");
+    let (output, plan) = plan_converge(&fixture, &[]);
+    assert!(output.status.success(), "plan failed: {plan}");
+    let (output, stopped) = apply(
+        &fixture,
+        &plan,
+        "index-backup-permissions",
+        Some("convergence_interrupt_after_index_snapshot"),
+    );
+    assert!(!output.status.success(), "snapshot fault passed: {stopped}");
+    let journal: Value = serde_json::from_slice(
+        &fs::read(
+            fixture
+                .root
+                .path()
+                .join("state/transactions/convergence-demo.json"),
+        )
+        .expect("journal"),
+    )
+    .expect("parse journal");
+    let backup = PathBuf::from(journal["index_backup"].as_str().expect("index backup"));
+    let mode = fs::metadata(backup)
+        .expect("backup metadata")
+        .permissions()
+        .mode()
+        & 0o777;
+    assert_eq!(mode, 0o600, "index backup permissions were widened");
+}
+
+#[cfg(unix)]
+#[test]
 fn dangling_index_backup_is_rejected_without_following_its_target() {
     use std::os::unix::fs::symlink;
 

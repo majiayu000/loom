@@ -251,6 +251,46 @@ fn prepared_index_publication_crash_leaves_an_exact_recoverable_lock() {
 }
 
 #[test]
+fn prepared_index_recovery_cleans_only_its_mutated_lock() {
+    for replacement in [false, true] {
+        let (ctx, dir) = fresh_repo("prepared-index-recovery-guard");
+        let active_index = dir.join(".git/index");
+        let original_index = fs::read(&active_index).expect("active index");
+        let prepared = dir.join("prepared-index");
+        fs::copy(&active_index, &prepared).expect("prepared index");
+        let prepared_bytes = fs::read(&prepared).expect("prepared evidence");
+        let lock = dir.join(".git/index.lock");
+        fs::copy(&prepared, &lock).expect("exact recoverable lock");
+        let foreign = b"concurrently replaced foreign lock\n";
+
+        recover_prepared_index_lock_with_guard(&ctx, &prepared, &|candidate| {
+            if replacement {
+                fs::remove_file(candidate)?;
+            }
+            fs::write(candidate, foreign)?;
+            Ok(())
+        })
+        .expect_err("mutating recovery guard must fail closed");
+
+        assert_eq!(
+            fs::read(&prepared).expect("prepared after guard"),
+            prepared_bytes
+        );
+        assert_eq!(
+            fs::read(&active_index).expect("active after guard"),
+            original_index
+        );
+        if replacement {
+            assert_eq!(fs::read(&lock).expect("preserved foreign lock"), foreign);
+            fs::remove_file(&lock).expect("remove foreign lock");
+        } else {
+            assert!(!lock.exists(), "owned mutated lock was not cleaned");
+        }
+        fs::remove_dir_all(&dir).expect("remove test repository");
+    }
+}
+
+#[test]
 fn prepared_index_lock_recovery_preserves_nonmatching_lock() {
     let (ctx, dir) = fresh_repo("prepared-index-recovery-foreign-lock");
     let prepared = dir.join("prepared-index");

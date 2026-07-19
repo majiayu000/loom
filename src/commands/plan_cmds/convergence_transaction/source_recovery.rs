@@ -36,6 +36,22 @@ pub(super) fn restore_source_from_evidence(
     )
 }
 
+pub(super) fn finish_uncommitted_source_recovery(
+    journal_path: &Path,
+    journal: &TransactionJournal,
+    errors: Vec<Value>,
+) -> std::result::Result<Option<Value>, CommandFailure> {
+    if !errors.is_empty() {
+        return Err(CommandFailure::new(
+            ErrorCode::StateCorrupt,
+            "uncommitted source cleanup failed",
+        )
+        .with_rollback_errors(errors));
+    }
+    archive_rolled_back_journal(journal_path, journal)?;
+    Ok(None)
+}
+
 pub(super) fn validate_source_staging_fingerprint(
     live: &Path,
     journal: &TransactionJournal,

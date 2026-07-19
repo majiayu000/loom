@@ -299,11 +299,6 @@ pub(super) fn rollback_uncommitted_source_only(
     journal: &TransactionJournal,
 ) -> std::result::Result<(), CommandFailure> {
     let head = gitops::head(&app.ctx).map_err(map_git)?;
-    if head != journal.previous_head {
-        return Err(recovery_stale(
-            "HEAD changed during an uncommitted source transaction",
-        ));
-    }
     let paths = RegistryStatePaths::from_app_context(&app.ctx);
     if plan.registry.initialized {
         let live_registry = paths.load_projections().map_err(map_registry_state)?;
@@ -318,6 +313,24 @@ pub(super) fn rollback_uncommitted_source_only(
         ));
     }
     validate_rollback_evidence(app, plan, journal)?;
+    let live_index = active_index_digest(app)?;
+    let original_index = journal
+        .index_backup_digest
+        .as_deref()
+        .ok_or_else(|| corrupt("transaction Git index backup digest is missing"))?;
+    if head != journal.previous_head {
+        let live_source = skill_tree_digest(&app.ctx.skill_path(&plan.skill)).map_err(map_io)?;
+        let relative_source = PathBuf::from(format!("skills/{}", plan.skill));
+        if live_source != plan.input.selected_input_tree_digest
+            || journal.source_head.is_some()
+            || journal.source_commit.is_some()
+            || gitops::has_staged_changes_for_path(&app.ctx, &relative_source).map_err(map_git)?
+        {
+            return Err(recovery_stale(
+                "external HEAD does not preserve the uncommitted source boundary",
+            ));
+        }
+    }
     if plan.source.direction == ConvergenceInputDirection::Projection {
         let source = app.ctx.skill_path(&plan.skill);
         let live_digest = skill_tree_digest(&source).map_err(map_io)?;
@@ -330,22 +343,73 @@ pub(super) fn rollback_uncommitted_source_only(
             restore_source_from_evidence(app, plan, journal)?;
         }
     }
-    if journal.phase == TransactionPhase::CommittingSource {
-        let live = active_index_digest(app)?;
-        let original = journal
-            .index_backup_digest
-            .as_deref()
-            .ok_or_else(|| corrupt("transaction Git index backup digest is missing"))?;
-        if live != original && journal.source_staged_index_digest.as_deref() != Some(live.as_str())
-        {
+    if journal.phase == TransactionPhase::CommittingSource && live_index != original_index {
+        if head != journal.previous_head {
+            // A later commit may legitimately rewrite the index bytes while
+            // leaving no staged change on the transaction-owned source path.
+            // Preserve that external index after the path-level proof above.
+        } else if journal.source_staged_index_digest.as_deref() != Some(live_index.as_str()) {
             return Err(recovery_stale(
                 "Git index is neither old nor transaction-staged during source recovery",
             ));
+        } else {
+            gitops::restore_index_from_backup(&app.ctx, Path::new(&journal.index_backup))
+                .map_err(map_git)?;
         }
-        gitops::restore_index_from_backup(&app.ctx, Path::new(&journal.index_backup))
-            .map_err(map_git)?;
     }
     Ok(())
+}
+
+pub(super) fn retire_uncommitted_source_after_external_head(
+    app: &App,
+    paths: &RegistryStatePaths,
+    plan: &SkillConvergencePlan,
+    journal_path: &Path,
+    journal: &mut TransactionJournal,
+) -> std::result::Result<bool, CommandFailure> {
+    if super::external_head::retire_uncommitted_noop_after_external_head(
+        app,
+        paths,
+        plan,
+        journal_path,
+        journal,
+    )? {
+        return Ok(true);
+    }
+    if journal.phase != TransactionPhase::CommittingSource
+        || journal.source_index_changed != Some(true)
+        || journal.source_head.is_some()
+        || journal.source_commit.is_some()
+        || journal.installed_projections != 0
+        || journal.expected_projections.is_some()
+    {
+        return Ok(false);
+    }
+    let head = gitops::head(&app.ctx).map_err(map_git)?;
+    if head == journal.previous_head {
+        return Ok(false);
+    }
+    let staged = journal
+        .source_staged_index_digest
+        .as_deref()
+        .ok_or_else(|| corrupt("staged source index digest is missing"))?;
+    let prepared = Path::new(&journal.artifact_root).join("source-index");
+    if file_digest(&prepared)? != staged {
+        return Err(corrupt("prepared source index digest is invalid"));
+    }
+    rollback_uncommitted_source_only(app, plan, journal)?;
+    journal.rollback_head = Some(head);
+    journal.rollback_index_digest = Some(active_index_digest(app)?);
+    let errors = cleanup_declared_artifacts(app, journal_path, journal, false);
+    if !errors.is_empty() {
+        return Err(CommandFailure::new(
+            ErrorCode::StateCorrupt,
+            "uncommitted changed-source cleanup failed",
+        )
+        .with_rollback_errors(errors));
+    }
+    archive_rolled_back_journal(journal_path, journal)?;
+    Ok(true)
 }
 
 pub(super) fn validate_rolling_back_state(

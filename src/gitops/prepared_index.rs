@@ -562,6 +562,11 @@ fn reconcile_legacy_sentinel(
             crate::fs_util::sync_parent_directory(sentinel)?;
             return Ok(());
         }
+        if !path_entry_exists(lock)? && !path_entry_exists(capture)? {
+            remove_private_entry(sentinel)?;
+            crate::fs_util::sync_parent_directory(sentinel)?;
+            return Ok(());
+        }
         if !path_entry_exists(capture)? && public_lock_is_owned(claim, lock, expected)? {
             remove_private_entry(sentinel)?;
             crate::fs_util::sync_parent_directory(sentinel)?;

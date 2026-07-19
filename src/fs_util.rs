@@ -15,6 +15,25 @@ pub use index_lock_capture::ExclusiveDeleteFile;
 pub use index_lock_capture::capture_with_placeholder_atomic;
 pub use index_lock_capture::{restore_capture_atomic, same_file_identity_paths};
 
+pub(crate) const fn atomic_path_exchange_supported() -> bool {
+    cfg!(any(
+        target_os = "macos",
+        target_os = "ios",
+        target_os = "linux",
+        target_os = "android"
+    ))
+}
+
+pub(crate) const fn atomic_no_replace_supported() -> bool {
+    cfg!(any(
+        target_os = "macos",
+        target_os = "ios",
+        target_os = "linux",
+        target_os = "android",
+        windows
+    ))
+}
+
 #[cfg(any(
     target_os = "macos",
     target_os = "ios",

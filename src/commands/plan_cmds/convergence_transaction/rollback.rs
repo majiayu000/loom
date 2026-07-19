@@ -220,6 +220,7 @@ pub(super) fn restore_projections_for_resume(
             .with_rollback_errors(errors));
         }
     }
+    super::preparation::refresh_projection_live_fingerprints(journal_path, journal)?;
     for projection in journal.projections.iter().rev() {
         cleanup_owned_dir(
             Path::new(&projection.staging_owner),

@@ -527,7 +527,7 @@ fn transaction_directories_are_exactly_retained() {
     );
 }
 
-fn assert_unrelated_commit_is_not_recovery(boundary: &str) {
+fn assert_unrelated_commit_recovery(boundary: &str, recoverable: bool) {
     let fixture = projected_fixture();
     fs::write(
         fixture.root.path().join("skills/demo/details.txt"),
@@ -553,32 +553,44 @@ fn assert_unrelated_commit_is_not_recovery(boundary: &str) {
         &["commit", "-m", "test: unrelated intervening commit"],
     );
     let unrelated_head = git(fixture.root.path(), &["rev-parse", "HEAD"]);
-    let (output, rejected) = apply_plan(&fixture, &plan, boundary, &[]);
+    let (output, recovered) = apply_plan(&fixture, &plan, boundary, &[]);
     assert!(
         !output.status.success(),
-        "unrelated commit classified as recovery: {rejected}"
+        "stale plan unexpectedly reapplied: {recovered}"
     );
     assert_eq!(
         git(fixture.root.path(), &["rev-parse", "HEAD"]),
         unrelated_head
     );
-    assert!(
-        fixture
-            .root
-            .path()
-            .join("state/transactions/convergence-demo.json")
-            .is_file()
-    );
+    let journal = fixture
+        .root
+        .path()
+        .join("state/transactions/convergence-demo.json");
+    if recoverable {
+        assert_eq!(
+            recovered["error"]["details"]["conflict"]["code"],
+            json!("PLAN_STALE")
+        );
+        assert!(
+            !journal.exists(),
+            "recovered source journal remained active"
+        );
+    } else {
+        assert!(
+            journal.is_file(),
+            "unrecovered registry journal disappeared"
+        );
+    }
 }
 
 #[test]
-fn committing_source_rejects_unrelated_head() {
-    assert_unrelated_commit_is_not_recovery("convergence_interrupt_committing_source");
+fn committing_source_retires_before_stale_plan_rejection() {
+    assert_unrelated_commit_recovery("convergence_interrupt_committing_source", true);
 }
 
 #[test]
 fn committing_registry_rejects_unrelated_head() {
-    assert_unrelated_commit_is_not_recovery("convergence_interrupt_committing_registry");
+    assert_unrelated_commit_recovery("convergence_interrupt_committing_registry", false);
 }
 
 #[test]

@@ -36,6 +36,17 @@ pub(super) fn declared_backup(
     })))
 }
 
+pub(super) fn declared_projection_backup(
+    path: &Path,
+    backup_path: &Path,
+) -> std::result::Result<Option<Value>, CommandFailure> {
+    let Some(mut backup) = declared_backup(path, backup_path)? else {
+        return Ok(None);
+    };
+    backup["fingerprint"] = json!(convergence_projection_fingerprint(path)?);
+    Ok(Some(backup))
+}
+
 pub(super) fn prepare_transaction_artifacts(
     app: &App,
     plan: &SkillConvergencePlan,
@@ -153,8 +164,8 @@ fn prepare_index_backup(
 ) -> std::result::Result<(), CommandFailure> {
     let backup = Path::new(&journal.index_backup);
     if backup.exists() {
-        let actual = file_digest(backup)?;
         if let Some(expected) = journal.index_backup_digest.as_deref() {
+            let actual = file_digest(backup)?;
             if actual != expected {
                 return Err(CommandFailure::new(
                     ErrorCode::StateCorrupt,
@@ -163,17 +174,15 @@ fn prepare_index_backup(
             }
             return Ok(());
         }
-        let live = active_index_digest(app)?;
-        if actual != live {
+        let metadata = fs::symlink_metadata(backup).map_err(map_io)?;
+        if !metadata.file_type().is_file() {
             return Err(CommandFailure::new(
                 ErrorCode::StateCorrupt,
-                "uncommitted transaction Git index backup does not match the locked Git index",
+                "uncommitted transaction Git index backup is not a regular file",
             ));
         }
-        journal.index_backup_digest = Some(actual);
-        save_journal(journal_path, journal)?;
-        maybe_skill_fault("convergence_interrupt_after_index_snapshot_digest")?;
-        return Ok(());
+        fs::remove_file(backup).map_err(map_io)?;
+        crate::fs_util::sync_parent_directory(backup).map_err(map_io)?;
     }
     if journal.index_backup_digest.is_some() {
         return Err(CommandFailure::new(
@@ -339,6 +348,20 @@ pub(super) fn begin_projection_rotation(
     journal.phase = TransactionPhase::RotatingProjections;
     save_journal(journal_path, journal)?;
     rotate_projection_stages(journal_path, journal)
+}
+
+pub(super) fn refresh_projection_live_fingerprints(
+    journal_path: &Path,
+    journal: &mut TransactionJournal,
+) -> std::result::Result<(), CommandFailure> {
+    for projection in &mut journal.projections {
+        if let Some(backup) = projection.backup.as_mut() {
+            backup["fingerprint"] = json!(convergence_projection_fingerprint(Path::new(
+                &projection.materialized_path,
+            ))?);
+        }
+    }
+    save_journal(journal_path, journal)
 }
 
 fn prepare_projection_stages_from(

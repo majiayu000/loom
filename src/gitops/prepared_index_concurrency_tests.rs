@@ -87,3 +87,40 @@ fn discard_preserves_a_foreign_byte_identical_placeholder() {
     );
     fs::remove_dir_all(&dir).expect("remove test repository");
 }
+
+#[test]
+fn discard_recovers_after_owned_placeholder_was_removed() {
+    let (ctx, dir) = super::tests::fresh_repo("prepared-index-discard-removed-placeholder");
+    let active = dir.join(".git/index");
+    let original = fs::read(&active).expect("active index");
+    let prepared = dir.join("prepared-index");
+    fs::write(
+        dir.join("base.txt"),
+        "discarded after placeholder removal\n",
+    )
+    .expect("change tracked source");
+    assert!(
+        prepare_index_for_paths(&ctx, &active, &prepared, &["base.txt"])
+            .expect("prepare distinct index")
+    );
+
+    install_prepared_index_with_guard(&ctx, &prepared, &|_| {
+        Err(anyhow::anyhow!("retain prepared lock"))
+    })
+    .expect_err("guard rejection must retain the owned lock");
+
+    let lock = dir.join(".git/index.lock");
+    let sentinel =
+        super::prepared_index_paths::prepared_index_aux_path(&ctx, &prepared, ".lock-sentinel")
+            .expect("sentinel path");
+    fs::remove_file(&lock).expect("remove retained public lock");
+    fs::write(&sentinel, b"loom index lock placeholder\n").expect("create owned marker");
+    fs::hard_link(&sentinel, &lock).expect("publish owned placeholder");
+    fs::remove_file(&lock).expect("simulate crash after placeholder removal");
+
+    assert!(discard_prepared_index_lock(&ctx, &prepared).expect("resume retained-lock discard"));
+    assert_eq!(fs::read(&active).expect("active index"), original);
+    assert!(!sentinel.exists());
+    assert!(!prepared_index_claim_exists(&ctx, &prepared).expect("inspect claim"));
+    fs::remove_dir_all(&dir).expect("remove test repository");
+}

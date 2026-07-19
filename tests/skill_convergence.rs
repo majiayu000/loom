@@ -248,7 +248,10 @@ fn exact_effect_plan() {
         "authoritative schema must declare plan converge"
     );
     let converge_contract = &schema["allOf"][1]["then"]["properties"];
-    assert_eq!(converge_contract["execution_enabled"]["const"], json!(true));
+    assert!(
+        converge_contract["execution_enabled"].is_null(),
+        "convergence execution_enabled must remain a runtime boolean"
+    );
     assert!(
         converge_contract["safe_to_apply"].is_null(),
         "convergence safe_to_apply must remain a runtime boolean"

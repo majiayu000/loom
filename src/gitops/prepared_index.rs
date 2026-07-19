@@ -227,6 +227,11 @@ fn rollback_incomplete_publication(
     lock: &Path,
     index: &Path,
 ) -> Result<()> {
+    if same_regular_file(rollback, index)? {
+        remove_private_entry(rollback)?;
+        crate::fs_util::sync_parent_directory(rollback)?;
+        return Ok(());
+    }
     if !same_regular_file(rollback, lock)? {
         return Err(anyhow!(
             "interrupted Git index publication has ambiguous rollback evidence"
@@ -246,8 +251,16 @@ fn rollback_incomplete_publication(
     lock: &Path,
     index: &Path,
 ) -> Result<()> {
-    fs::hard_link(index, capture)?;
-    crate::fs_util::sync_parent_directory(capture)?;
+    if path_entry_exists(capture)? {
+        if !same_regular_file(capture, index)? {
+            return Err(anyhow!(
+                "interrupted Windows Git index publication has ambiguous capture evidence"
+            ));
+        }
+    } else {
+        fs::hard_link(index, capture)?;
+        crate::fs_util::sync_parent_directory(capture)?;
+    }
     crate::fs_util::rename_atomic(rollback, index)?;
     crate::fs_util::sync_parent_directory(index)?;
     crate::fs_util::rename_no_replace_atomic(capture, lock)?;
@@ -467,6 +480,31 @@ pub(super) fn prepared_index_aux_path(prepared_index: &Path, suffix: &str) -> Pa
 
 pub fn prepared_index_claim_exists(prepared_index: &Path) -> Result<bool> {
     path_entry_exists(&prepared_index_aux_path(prepared_index, ".lock-claim"))
+}
+
+#[cfg(test)]
+pub(super) fn seed_owned_index_lock(prepared: &Path, lock: &Path) {
+    let bytes = fs::read(prepared).expect("prepared index bytes");
+    let claim = prepared_index_aux_path(prepared, ".lock-claim");
+    fs::hard_link(prepared, &claim).expect("durable index claim");
+    crate::fs_util::write_atomic_bytes(prepared, &bytes).expect("detach prepared evidence");
+    fs::hard_link(&claim, lock).expect("publish owned index lock");
+}
+
+#[cfg(test)]
+pub(super) fn assert_no_index_aux_paths(prepared: &Path) {
+    for suffix in [
+        ".lock-claim",
+        ".lock-capture",
+        ".lock-guard",
+        ".lock-publish",
+        ".lock-rollback",
+    ] {
+        assert!(
+            !prepared_index_aux_path(prepared, suffix).exists(),
+            "private index path remained after completion: {suffix}"
+        );
+    }
 }
 
 #[cfg(unix)]

@@ -80,29 +80,6 @@ fn file_sha256(path: &Path) -> String {
     format!("sha256:{}", to_hex(&hasher.finalize()))
 }
 
-fn seed_owned_index_lock(prepared: &Path, lock: &Path) {
-    let bytes = fs::read(prepared).expect("prepared index bytes");
-    let claim = super::prepared_index::prepared_index_aux_path(prepared, ".lock-claim");
-    fs::hard_link(prepared, &claim).expect("durable index claim");
-    crate::fs_util::write_atomic_bytes(prepared, &bytes).expect("detach prepared evidence");
-    fs::hard_link(&claim, lock).expect("publish owned index lock");
-}
-
-fn assert_no_index_aux_paths(prepared: &Path) {
-    for suffix in [
-        ".lock-claim",
-        ".lock-capture",
-        ".lock-guard",
-        ".lock-publish",
-        ".lock-rollback",
-    ] {
-        assert!(
-            !super::prepared_index::prepared_index_aux_path(prepared, suffix).exists(),
-            "private index path remained after completion: {suffix}"
-        );
-    }
-}
-
 #[test]
 fn prepared_index_install_rejects_tamper_before_active_mutation() {
     let (ctx, dir) = fresh_repo("prepared-index-tamper");
@@ -291,7 +268,7 @@ fn prepared_index_publication_crash_leaves_an_exact_recoverable_lock() {
             .expect("recover exact published lock")
     );
     assert!(!lock.exists());
-    assert_no_index_aux_paths(&prepared);
+    super::prepared_index::assert_no_index_aux_paths(&prepared);
     assert_eq!(
         fs::read(&active_index).expect("installed index"),
         fs::read(&prepared).unwrap()
@@ -336,7 +313,7 @@ fn prepared_index_post_publication_crash_recovers_the_retained_claim() {
         recover_prepared_index_lock_with_guard(&ctx, &prepared, &|_| Ok(()))
             .expect("recover retained publication claim")
     );
-    assert_no_index_aux_paths(&prepared);
+    super::prepared_index::assert_no_index_aux_paths(&prepared);
     fs::remove_dir_all(&dir).expect("remove test repository");
 }
 
@@ -347,15 +324,42 @@ fn prepared_index_prepublication_rollback_marker_resumes() {
     let prepared = dir.join("prepared-index");
     fs::copy(&active_index, &prepared).expect("prepared index");
     let lock = dir.join(".git/index.lock");
-    seed_owned_index_lock(&prepared, &lock);
+    super::prepared_index::seed_owned_index_lock(&prepared, &lock);
     let rollback = super::prepared_index::prepared_index_aux_path(&prepared, ".lock-rollback");
     fs::hard_link(&active_index, &rollback).expect("durable rollback marker");
-
     assert!(
         recover_prepared_index_lock_with_guard(&ctx, &prepared, &|_| Ok(()))
             .expect("resume before publication")
     );
-    assert_no_index_aux_paths(&prepared);
+    super::prepared_index::assert_no_index_aux_paths(&prepared);
+    fs::remove_dir_all(&dir).expect("remove test repository");
+}
+
+#[cfg(unix)]
+#[test]
+fn prepared_index_completed_foreign_rollback_is_idempotent() {
+    let (ctx, dir) = fresh_repo("completed-foreign-rollback");
+    let active_index = dir.join(".git/index");
+    let original_index = fs::read(&active_index).expect("active index");
+    let prepared = dir.join("prepared-index");
+    fs::copy(&active_index, &prepared).expect("prepared index");
+    let lock = dir.join(".git/index.lock");
+    super::prepared_index::seed_owned_index_lock(&prepared, &lock);
+    let rollback = super::prepared_index::prepared_index_aux_path(&prepared, ".lock-rollback");
+    fs::hard_link(&active_index, &rollback).expect("durable rollback marker");
+    fs::remove_file(&lock).expect("replace owned lock");
+    fs::copy(&prepared, &lock).expect("foreign exact lock");
+    crate::fs_util::exchange_paths_atomic(&lock, &active_index).expect("foreign publication");
+    crate::fs_util::exchange_paths_atomic(&lock, &active_index).expect("foreign rollback");
+    recover_prepared_index_lock_with_guard(&ctx, &prepared, &|_| Ok(()))
+        .expect_err("foreign lock must remain rejected");
+    assert_eq!(
+        fs::read(&active_index).expect("active index"),
+        original_index
+    );
+    assert_eq!(fs::read(&lock).expect("foreign lock"), original_index);
+    assert!(!rollback.exists());
+    fs::remove_file(&lock).expect("remove foreign lock");
     fs::remove_dir_all(&dir).expect("remove test repository");
 }
 
@@ -369,7 +373,7 @@ fn prepared_index_recovery_isolates_a_mutating_guard_from_its_owned_lock() {
         fs::copy(&active_index, &prepared).expect("prepared index");
         let prepared_bytes = fs::read(&prepared).expect("prepared evidence");
         let lock = dir.join(".git/index.lock");
-        seed_owned_index_lock(&prepared, &lock);
+        super::prepared_index::seed_owned_index_lock(&prepared, &lock);
         let foreign = b"concurrently replaced foreign lock\n";
 
         recover_prepared_index_lock_with_guard(&ctx, &prepared, &|candidate| {
@@ -390,7 +394,7 @@ fn prepared_index_recovery_isolates_a_mutating_guard_from_its_owned_lock() {
             original_index
         );
         assert!(!lock.exists(), "owned lock was not atomically cleaned");
-        assert_no_index_aux_paths(&prepared);
+        super::prepared_index::assert_no_index_aux_paths(&prepared);
         fs::remove_dir_all(&dir).expect("remove test repository");
     }
 }

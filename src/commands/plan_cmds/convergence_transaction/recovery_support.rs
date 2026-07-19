@@ -287,6 +287,7 @@ pub(super) fn restore_projections_for_resume(
         .with_rollback_errors(errors));
     }
     super::rollback::restore_activated_projections_durably(journal_path, journal)?;
+    super::preparation::refresh_projection_live_fingerprints(journal_path, journal)?;
     for projection in journal.projections.iter().rev() {
         cleanup_owned_dir(
             Path::new(&projection.staging_owner),

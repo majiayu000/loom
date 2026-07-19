@@ -319,6 +319,20 @@ pub(super) fn rotate_projection_stages(
     save_journal(journal_path, journal)
 }
 
+pub(super) fn refresh_projection_live_fingerprints(
+    journal_path: &Path,
+    journal: &mut TransactionJournal,
+) -> std::result::Result<(), CommandFailure> {
+    for projection in &mut journal.projections {
+        if let Some(backup) = projection.backup.as_mut() {
+            backup["fingerprint"] = json!(convergence_projection_fingerprint(Path::new(
+                &projection.materialized_path,
+            ))?);
+        }
+    }
+    save_journal(journal_path, journal)
+}
+
 fn prepare_projection_stages_from(
     app: &App,
     snapshot: Option<&crate::state_model::RegistrySnapshot>,

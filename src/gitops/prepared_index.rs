@@ -1,6 +1,7 @@
+use std::ffi::OsString;
 use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Result, anyhow};
 
@@ -126,6 +127,7 @@ pub fn discard_prepared_index_lock(ctx: &AppContext, prepared_index: &Path) -> R
     }
     let capture = prepared_index_aux_path(ctx, prepared_index, ".lock-capture")?;
     let sentinel = prepared_index_aux_path(ctx, prepared_index, ".lock-sentinel")?;
+    let proof = placeholder_proof_path(&sentinel);
     let guarded = prepared_index_aux_path(ctx, prepared_index, ".lock-guard")?;
     let publish = prepared_index_aux_path(ctx, prepared_index, ".lock-publish")?;
     let expected = read_regular_file(&claim, "durable Git index claim")
@@ -146,6 +148,7 @@ pub fn discard_prepared_index_lock(ctx: &AppContext, prepared_index: &Path) -> R
         remove_private_entry(&guarded)?;
         remove_private_entry(&publish)?;
         remove_private_entry(&sentinel)?;
+        remove_private_entry(&proof)?;
         remove_private_entry(&claim)?;
         crate::fs_util::sync_parent_directory(&claim)?;
         Ok(true)
@@ -164,6 +167,7 @@ fn install_or_recover_prepared_index(
     let claim = prepared_index_aux_path(ctx, prepared_index, ".lock-claim")?;
     let capture = prepared_index_aux_path(ctx, prepared_index, ".lock-capture")?;
     let sentinel = prepared_index_aux_path(ctx, prepared_index, ".lock-sentinel")?;
+    let proof = placeholder_proof_path(&sentinel);
     let guarded = prepared_index_aux_path(ctx, prepared_index, ".lock-guard")?;
     let publish = prepared_index_aux_path(ctx, prepared_index, ".lock-publish")?;
 
@@ -172,6 +176,7 @@ fn install_or_recover_prepared_index(
         && !path_entry_exists(&claim)?
         && !path_entry_exists(&capture)?
         && !path_entry_exists(&sentinel)?
+        && !path_entry_exists(&proof)?
     {
         return Ok(false);
     }
@@ -548,28 +553,49 @@ fn reconcile_legacy_sentinel(
     lock: &Path,
     expected: &[u8],
 ) -> Result<()> {
+    let proof = placeholder_proof_path(sentinel);
     if !path_entry_exists(sentinel)? {
+        if path_entry_exists(&proof)? {
+            if !path_entry_exists(claim)? || path_entry_exists(lock)? || path_entry_exists(capture)?
+            {
+                return Err(anyhow!("unowned Git index placeholder proof was preserved"));
+            }
+            require_regular_exact(
+                &proof,
+                INDEX_LOCK_PLACEHOLDER,
+                "Git index placeholder proof",
+            )?;
+            remove_private_entry(&proof)?;
+            crate::fs_util::sync_parent_directory(&proof)?;
+        }
         return Ok(());
+    }
+    if !path_entry_exists(claim)? {
+        return Err(anyhow!(
+            "Git index lock sentinel has no durable transaction claim"
+        ));
     }
     let sentinel_bytes = read_regular_file(sentinel, "Git index lock sentinel")?;
     if sentinel_bytes == INDEX_LOCK_PLACEHOLDER {
+        if !placeholder_is_owned(sentinel, &proof)? {
+            return Err(anyhow!(
+                "Git index lock sentinel has no exact ownership proof"
+            ));
+        }
         if path_entry_exists(lock)? && placeholder_is_owned(lock, sentinel)? {
             return Ok(());
         }
         if path_entry_exists(capture)? && placeholder_is_owned(capture, sentinel)? {
             remove_private_entry(capture)?;
-            remove_private_entry(sentinel)?;
-            crate::fs_util::sync_parent_directory(sentinel)?;
+            remove_placeholder_evidence(sentinel)?;
             return Ok(());
         }
         if !path_entry_exists(lock)? && !path_entry_exists(capture)? {
-            remove_private_entry(sentinel)?;
-            crate::fs_util::sync_parent_directory(sentinel)?;
+            remove_placeholder_evidence(sentinel)?;
             return Ok(());
         }
         if !path_entry_exists(capture)? && public_lock_is_owned(claim, lock, expected)? {
-            remove_private_entry(sentinel)?;
-            crate::fs_util::sync_parent_directory(sentinel)?;
+            remove_placeholder_evidence(sentinel)?;
             return Ok(());
         }
         return Err(anyhow!("unknown Git index lock placeholder marker state"));
@@ -597,6 +623,9 @@ fn capture_owned_lock(
     expected: &[u8],
 ) -> Result<()> {
     create_private_entry(sentinel, INDEX_LOCK_PLACEHOLDER)?;
+    let proof = placeholder_proof_path(sentinel);
+    fs::hard_link(sentinel, &proof)?;
+    crate::fs_util::sync_parent_directory(&proof)?;
     fs::hard_link(sentinel, capture)?;
     crate::fs_util::sync_parent_directory(capture)?;
     crate::fs_util::capture_with_placeholder_atomic(lock, capture)?;
@@ -629,8 +658,7 @@ fn reconcile_private_capture(
         if placeholder_is_owned(capture, sentinel)? && public_lock_is_owned(claim, lock, expected)?
         {
             remove_private_entry(capture)?;
-            remove_private_entry(sentinel)?;
-            crate::fs_util::sync_parent_directory(capture)?;
+            remove_placeholder_evidence(sentinel)?;
             return Ok(());
         }
         return Err(anyhow!(
@@ -652,8 +680,20 @@ fn restore_foreign_capture(capture: &Path, sentinel: &Path, lock: &Path) -> Resu
         "Git index lock placeholder",
     )?;
     remove_private_entry(capture)?;
+    remove_placeholder_evidence(sentinel)?;
+    Ok(())
+}
+
+fn placeholder_proof_path(sentinel: &Path) -> PathBuf {
+    let mut path = OsString::from(sentinel.as_os_str());
+    path.push(".proof");
+    PathBuf::from(path)
+}
+
+fn remove_placeholder_evidence(sentinel: &Path) -> Result<()> {
     remove_private_entry(sentinel)?;
-    crate::fs_util::sync_parent_directory(capture)?;
+    remove_private_entry(&placeholder_proof_path(sentinel))?;
+    crate::fs_util::sync_parent_directory(sentinel)?;
     Ok(())
 }
 
@@ -675,7 +715,9 @@ fn placeholder_is_owned(path: &Path, sentinel: &Path) -> Result<bool> {
 }
 
 fn require_owned_placeholder(lock: &Path, sentinel: &Path) -> Result<()> {
-    if !placeholder_is_owned(lock, sentinel)? {
+    if !placeholder_is_owned(lock, sentinel)?
+        || !placeholder_is_owned(sentinel, &placeholder_proof_path(sentinel))?
+    {
         return Err(anyhow!(
             "Git index lock placeholder is not transaction-owned"
         ));
@@ -686,9 +728,7 @@ fn require_owned_placeholder(lock: &Path, sentinel: &Path) -> Result<()> {
 fn remove_placeholder_lock(lock: &Path, sentinel: &Path) -> Result<()> {
     require_owned_placeholder(lock, sentinel)?;
     fs::remove_file(lock)?;
-    remove_private_entry(sentinel)?;
-    crate::fs_util::sync_parent_directory(lock)?;
-    Ok(())
+    remove_placeholder_evidence(sentinel)
 }
 
 fn captured_lock_is_owned(claim: &Path, capture: &Path, expected: &[u8]) -> Result<bool> {

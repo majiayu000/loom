@@ -85,10 +85,7 @@ pub fn install_prepared_index_with_guard(
     let lock_parent = lock
         .parent()
         .ok_or_else(|| anyhow!("Git index lock has no parent: {}", lock.display()))?;
-    let staging = lock_parent.join(format!(
-        ".loom-index-lock-staging-{}",
-        uuid::Uuid::new_v4()
-    ));
+    let staging = lock_parent.join(format!(".loom-index-lock-staging-{}", uuid::Uuid::new_v4()));
     let mut owns_lock = false;
     let result = (|| {
         let metadata = fs::symlink_metadata(prepared_index)?;

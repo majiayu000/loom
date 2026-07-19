@@ -145,10 +145,8 @@ fn prepared_index_install_crosses_filesystems_without_overwriting_the_lock() {
 
     let (ctx, dir) = fresh_repo("prepared-index-cross-filesystem");
     let active_index = dir.join(".git/index");
-    let prepared_root = Path::new("/dev/shm").join(format!(
-        "loom-prepared-index-{}",
-        Uuid::new_v4()
-    ));
+    let prepared_root =
+        Path::new("/dev/shm").join(format!("loom-prepared-index-{}", Uuid::new_v4()));
     fs::create_dir(&prepared_root).expect("create cross-filesystem artifact root");
     let prepared = prepared_root.join("prepared-index");
     fs::copy(&active_index, &prepared).expect("copy prepared index");

@@ -2,6 +2,35 @@ use super::*;
 
 mod durable_recovery;
 
+fn suffixed_path(path: &Path, suffix: &str) -> PathBuf {
+    path.with_file_name(format!(
+        "{}{suffix}",
+        path.file_name().unwrap().to_string_lossy()
+    ))
+}
+
+#[test]
+fn convergence_create_intent_preserves_a_late_existing_path() {
+    let fixture = convergence_projection_fixture();
+    let projection_path = fixture.root.join("live/copy/demo");
+    fs::create_dir_all(&projection_path).expect("create late external projection path");
+    fs::write(projection_path.join("external.txt"), "external\n")
+        .expect("write late external projection bytes");
+    let mut input = execution_input(&fixture, ProjectionMethod::Copy, projection_path.clone());
+    input.replace_existing = false;
+
+    let error = match execute_projection(&fixture.ctx, &fixture.paths, &fixture.snapshot, input) {
+        Err(error) => error,
+        Ok(_) => panic!("create intent accepted a late existing projection path"),
+    };
+
+    assert_eq!(error.code, ErrorCode::ProjectionConflict);
+    assert_eq!(
+        fs::read_to_string(projection_path.join("external.txt")).unwrap(),
+        "external\n"
+    );
+}
+
 #[cfg(any(
     target_os = "macos",
     target_os = "ios",
@@ -48,6 +77,8 @@ fn rollback_preserves_concurrent_live_change_and_is_retryable() {
         "keep\n"
     );
     assert!(!backup_path.exists());
+    let retained = suffixed_path(&backup_path, ".pending-cleanup-claim");
+    assert!(retained.join("details.txt").is_file());
 }
 
 #[cfg(any(
@@ -93,6 +124,8 @@ fn rollback_preserves_concurrent_backup_change_and_is_retryable() {
         "keep\n"
     );
     assert!(!backup_path.exists());
+    let retained = suffixed_path(&backup_path, ".pending-cleanup-claim");
+    assert!(retained.join("details.txt").is_file());
 }
 
 #[test]
@@ -331,6 +364,8 @@ fn finalize_preserves_changed_backup_and_is_retryable() {
     fs::remove_file(backup_path.join("concurrent.txt")).expect("resolve backup conflict");
     activated.finalize().expect("retry finalize");
     assert!(!backup_path.exists());
+    let retained = suffixed_path(&backup_path, ".finalize-claim.pending-cleanup-claim");
+    assert!(retained.join("keep.txt").is_file());
     assert!(projection_path.join("details.txt").is_file());
 }
 
@@ -528,6 +563,8 @@ fn activation_rejects_live_change_after_prepare() {
     assert!(projection_path.join("keep.txt").is_file());
     assert!(!projection_path.join("details.txt").exists());
     assert!(!staging_path.exists());
+    let claim_path = suffixed_path(&staging_path, ".prepared-cleanup-claim");
+    assert!(claim_path.join("details.txt").is_file());
 }
 
 #[test]
@@ -607,7 +644,117 @@ fn caller_selected_source_and_staging_round_trip_as_durable_evidence() {
 
     discard_prepared_projection(reconstructed).expect("discard reconstructed staging");
     assert!(!supplied_staging.exists());
+    let claim_path = suffixed_path(&supplied_staging, ".prepared-cleanup-claim");
+    assert!(claim_path.join("details.txt").is_file());
     assert!(!projection_path.exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn prepared_execution_rejects_source_equivalent_staging_replacement() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let fixture = convergence_projection_fixture();
+    let projection_path = fixture.root.join("live/copy/demo");
+    let owner = projection_path
+        .parent()
+        .unwrap()
+        .join(".loom-projection-stage-reviewed.owner");
+    let staging = owner.join("stage");
+    fs::create_dir_all(&owner).expect("create staging owner");
+    let input = execution_input(&fixture, ProjectionMethod::Copy, projection_path.clone());
+    prepare_convergence_projection(
+        &fixture.ctx,
+        &input,
+        &fixture.ctx.skill_path("demo"),
+        &staging,
+    )
+    .expect("prepare reviewed staging");
+    let expected = convergence_projection_fingerprint(&staging).expect("reviewed fingerprint");
+
+    let displaced = owner.join("displaced-stage");
+    fs::rename(&staging, &displaced).expect("displace reviewed staging");
+    project_skill_to_target(
+        &fixture.ctx.skill_path("demo"),
+        &staging,
+        ProjectionMethod::Copy,
+    )
+    .expect("create source-equivalent replacement");
+    fs::set_permissions(
+        staging.join("details.txt"),
+        fs::Permissions::from_mode(0o600),
+    )
+    .expect("change replacement metadata");
+    assert_ne!(
+        convergence_projection_fingerprint(&staging).expect("replacement fingerprint"),
+        expected
+    );
+
+    let mut owner_checks = 0;
+    let error = match execute_prepared_convergence_projection(
+        &fixture.ctx,
+        &fixture.paths,
+        &fixture.snapshot,
+        input,
+        PreparedProjectionStaging::new(staging.clone(), expected, None),
+        |actual| {
+            owner_checks += 1;
+            assert_eq!(actual, staging);
+            Ok(())
+        },
+    ) {
+        Err(error) => error,
+        Ok(_) => panic!("replacement must not be activated"),
+    };
+
+    assert_eq!(owner_checks, 1);
+    assert_eq!(error.code, ErrorCode::ProjectionConflict);
+    assert!(staging.is_dir());
+    assert!(!projection_path.exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn prepared_execution_rejects_live_change_after_reviewed_fingerprint() {
+    let fixture = convergence_projection_fixture();
+    let projection_path = fixture.root.join("live/copy/demo");
+    fs::create_dir_all(&projection_path).expect("create live projection");
+    fs::write(projection_path.join("keep.txt"), "reviewed\n").expect("write reviewed bytes");
+    let reviewed = convergence_projection_fingerprint(&projection_path).expect("reviewed live");
+    let owner = projection_path
+        .parent()
+        .unwrap()
+        .join(".loom-projection-stage-live-guard.owner");
+    let staging = owner.join("stage");
+    fs::create_dir_all(&owner).expect("create staging owner");
+    let input = execution_input(&fixture, ProjectionMethod::Copy, projection_path.clone());
+    prepare_convergence_projection(
+        &fixture.ctx,
+        &input,
+        &fixture.ctx.skill_path("demo"),
+        &staging,
+    )
+    .expect("prepare staging");
+    let staged = convergence_projection_fingerprint(&staging).expect("staging fingerprint");
+    fs::write(projection_path.join("late.txt"), "preserve\n").expect("late live edit");
+
+    let error = match execute_prepared_convergence_projection(
+        &fixture.ctx,
+        &fixture.paths,
+        &fixture.snapshot,
+        input,
+        PreparedProjectionStaging::new(staging, staged, Some(reviewed)),
+        |_| Ok(()),
+    ) {
+        Err(error) => error,
+        Ok(_) => panic!("late live edit must block activation"),
+    };
+
+    assert_eq!(error.code, ErrorCode::ProjectionConflict);
+    assert_eq!(
+        fs::read_to_string(projection_path.join("late.txt")).unwrap(),
+        "preserve\n"
+    );
 }
 
 #[cfg(any(

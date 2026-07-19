@@ -19,14 +19,15 @@ use crate::state_model::{RegistryProjectionInstance, RegistrySnapshot, RegistryS
 use crate::types::ErrorCode;
 
 use super::super::agent_cmds::planning_helpers::{normalize_path, workspace_matches};
+use super::super::codex_visibility::projection_path_is_safe_symlink;
 use super::super::convergence_input::{
-    projection_input_evidence, source_changed_since_revision, source_dirty_paths,
+    projection_input_evidence, source_changed_since_revision, source_replacement_risk_paths,
 };
 use super::super::helpers::{
     map_arg, map_git, map_io, map_registry_state, projection_instance_id, validate_skill_name,
 };
 use super::super::projections::observe_projection;
-use super::super::provenance::skill_tree_digest;
+use super::super::provenance::{convergence_input_tree_digest, skill_tree_digest};
 use super::super::skill_improve::prepare_convergence_skill_input;
 use super::super::{App, CommandFailure};
 use super::{PLAN_PROTOCOL_VERSION, canonical_root, policy_risks, required_approvals};
@@ -59,7 +60,7 @@ impl App {
             &source_digest,
         )?;
         validate_projection_input(args, &projections)?;
-        let source_dirty_paths = source_dirty_paths(&self.ctx, &args.skill)?;
+        let source_dirty_paths = source_replacement_risk_paths(&self.ctx, &args.skill)?;
         let projection_evidence =
             resolve_projection_input_evidence(&self.ctx, snapshot.as_ref(), &projections)?;
         let direction = if args.from_projection {
@@ -69,8 +70,24 @@ impl App {
         };
         let (selected_input_tree_digest, candidate_path) =
             selected_input(args, &projection_evidence, &source_digest)?;
+        let canonical_source = self.ctx.skill_path(&args.skill);
+        let selected_path = candidate_path.as_deref().unwrap_or(&canonical_source);
+        let materialize_digest = projections
+            .iter()
+            .any(|effect| effect.method == "materialize")
+            .then(|| convergence_input_tree_digest(selected_path, true).map_err(map_io))
+            .transpose()?;
         for effect in &mut projections {
-            effect.source_tree_digest = selected_input_tree_digest.clone();
+            effect.source_tree_digest = if effect.method == "materialize" {
+                materialize_digest.clone().ok_or_else(|| {
+                    CommandFailure::new(
+                        ErrorCode::StateCorrupt,
+                        "materialize projection digest is absent",
+                    )
+                })?
+            } else {
+                selected_input_tree_digest.clone()
+            };
         }
         let candidate_method = args.instance.as_deref().and_then(|instance| {
             projection_evidence
@@ -109,7 +126,7 @@ impl App {
         } else {
             false
         };
-        let input_conflicts = resolve_input_conflicts(
+        let mut input_conflicts = resolve_input_conflicts(
             &source_dirty_paths,
             &projection_evidence,
             &preflight,
@@ -117,6 +134,14 @@ impl App {
             args.instance.as_deref(),
             selected_source_drift,
         );
+        input_conflicts.extend(resolve_projection_route_conflicts(
+            snapshot.as_ref(),
+            &projections,
+        ));
+        let platform_conflicts =
+            resolve_platform_capability_conflicts(&direction, &projections, &canonical_source);
+        let execution_enabled = platform_conflicts.is_empty();
+        input_conflicts.extend(platform_conflicts);
         let visibility = projections
             .iter()
             .map(|effect| VisibilityRequirement {
@@ -185,13 +210,12 @@ impl App {
                 "message": "--require-runtime resolved no active projection",
             }));
         }
-        let mut risks = policy_risks(policy);
-        risks.push(json!({
-            "code": "CONVERGENCE_EXECUTOR_UNAVAILABLE",
-            "risk_level": "error",
-            "blocks_apply": true,
-            "details": "this tranche persists reviewed convergence plans but does not execute them",
-        }));
+        let risks = policy_risks(policy);
+        let safe_to_apply = conflicts.is_empty()
+            && plan.required_approvals.is_empty()
+            && plan.remote == RemotePolicy::NotRequested
+            && !plan.required_axes.contains(&ConvergenceAxis::Visibility)
+            && !risks.iter().any(|risk| risk["blocks_apply"] == json!(true));
 
         let mut output = serde_json::to_value(&plan).map_err(map_io)?;
         let object = output.as_object_mut().ok_or_else(|| {
@@ -207,8 +231,8 @@ impl App {
         );
         object.insert("operation".to_string(), json!("converge"));
         object.insert("requires_digest_confirmation".to_string(), json!(true));
-        object.insert("execution_enabled".to_string(), json!(false));
-        object.insert("safe_to_apply".to_string(), json!(false));
+        object.insert("execution_enabled".to_string(), json!(execution_enabled));
+        object.insert("safe_to_apply".to_string(), json!(safe_to_apply));
         object.insert("effects".to_string(), json!(plan.projections));
         object.insert(
             "projection_state".to_string(),
@@ -220,7 +244,7 @@ impl App {
         );
         object.insert("conflicts".to_string(), json!(conflicts));
         object.insert("risks".to_string(), json!(risks));
-        object.insert("recovery".to_string(), json!({"rollback_supported": false}));
+        object.insert("recovery".to_string(), json!({"rollback_supported": true}));
         object.insert(
             "guards".to_string(),
             json!({
@@ -507,6 +531,7 @@ fn resolve_projection_effects(
                 updated_at: None,
             });
         let observation = observe_projection(ctx, &observed_projection);
+        let materialized_missing = observation.error_code == Some("materialized_missing");
         let effect = ProjectionEffectPlan {
             instance_id: instance_id.clone(),
             binding_id: binding.binding_id.clone(),
@@ -518,7 +543,14 @@ fn resolve_projection_effects(
             materialized_path: materialized_path.display().to_string(),
             source_tree_digest: source_digest.to_string(),
             materialized_tree_digest: observation.materialized_tree_digest,
-            effect: if existing.is_some() {
+            effect: if !materialized_missing
+                && (existing.is_some()
+                    || (rule.method == crate::cli::ProjectionMethod::Symlink
+                        && projection_path_is_safe_symlink(
+                            &materialized_path,
+                            &ctx.skill_path(&args.skill),
+                        )))
+            {
                 "refresh".to_string()
             } else {
                 "create".to_string()
@@ -527,6 +559,135 @@ fn resolve_projection_effects(
         effects.insert(instance_id, effect);
     }
     Ok(effects.into_values().collect())
+}
+
+fn resolve_projection_route_conflicts(
+    snapshot: Option<&RegistrySnapshot>,
+    effects: &[ProjectionEffectPlan],
+) -> Vec<ConvergenceInputConflict> {
+    let Some(snapshot) = snapshot else {
+        return Vec::new();
+    };
+    effects
+        .iter()
+        .filter_map(|effect| {
+            let target = snapshot.target(&effect.target_id)?;
+            if target.ownership != crate::core::vocab::Ownership::Managed {
+                return Some(ConvergenceInputConflict {
+                    code: "TARGET_NOT_MANAGED".to_string(),
+                    message: format!(
+                        "target '{}' has ownership '{}' and cannot be written",
+                        target.target_id, target.ownership
+                    ),
+                    evidence: json!({ "effect": effect }),
+                });
+            }
+            let supported = match effect.method.as_str() {
+                "symlink" => target.capabilities.symlink,
+                "copy" | "materialize" => target.capabilities.copy,
+                _ => false,
+            };
+            (!supported).then(|| ConvergenceInputConflict {
+                code: "PROJECTION_METHOD_UNSUPPORTED".to_string(),
+                message: format!(
+                    "target '{}' does not support '{}' projections",
+                    target.target_id, effect.method
+                ),
+                evidence: json!({ "effect": effect }),
+            })
+        })
+        .collect()
+}
+
+#[derive(Clone, Copy)]
+struct AtomicPathCapabilities {
+    exchange: bool,
+    no_replace: bool,
+}
+
+impl AtomicPathCapabilities {
+    fn current_platform() -> Self {
+        Self {
+            exchange: crate::fs_util::atomic_path_exchange_supported(),
+            no_replace: crate::fs_util::atomic_no_replace_supported(),
+        }
+    }
+}
+
+fn resolve_platform_capability_conflicts(
+    direction: &ConvergenceInputDirection,
+    effects: &[ProjectionEffectPlan],
+    canonical_source: &Path,
+) -> Vec<ConvergenceInputConflict> {
+    resolve_platform_capability_conflicts_with(
+        direction,
+        effects,
+        canonical_source,
+        AtomicPathCapabilities::current_platform(),
+    )
+}
+
+fn resolve_platform_capability_conflicts_with(
+    direction: &ConvergenceInputDirection,
+    effects: &[ProjectionEffectPlan],
+    canonical_source: &Path,
+    capabilities: AtomicPathCapabilities,
+) -> Vec<ConvergenceInputConflict> {
+    let mut conflicts = Vec::new();
+    if !capabilities.no_replace {
+        conflicts.push(ConvergenceInputConflict {
+            code: "PLATFORM_ATOMIC_TRANSACTION_OWNERSHIP_UNSUPPORTED".to_string(),
+            message: "this platform cannot atomically claim convergence transaction ownership"
+                .to_string(),
+            evidence: json!({ "required_operation": "atomic_no_replace" }),
+        });
+    }
+    if *direction == ConvergenceInputDirection::Projection && !capabilities.exchange {
+        conflicts.push(ConvergenceInputConflict {
+            code: "PLATFORM_ATOMIC_SOURCE_EXCHANGE_UNSUPPORTED".to_string(),
+            message: "this platform cannot atomically replace the canonical source from a projection input"
+                .to_string(),
+            evidence: json!({ "required_operation": "atomic_path_exchange" }),
+        });
+    }
+
+    let unsupported_effects = effects
+        .iter()
+        .filter(|effect| {
+            let safe_symlink_noop = effect.effect == "refresh"
+                && effect.method == "symlink"
+                && projection_path_is_safe_symlink(
+                    Path::new(&effect.materialized_path),
+                    canonical_source,
+                );
+            projection_requires_unsupported_activation(effect, safe_symlink_noop, capabilities)
+        })
+        .map(|effect| effect.instance_id.clone())
+        .collect::<Vec<_>>();
+    if !unsupported_effects.is_empty() {
+        conflicts.push(ConvergenceInputConflict {
+            code: "PLATFORM_ATOMIC_PROJECTION_ACTIVATION_UNSUPPORTED".to_string(),
+            message: "this platform cannot atomically activate every planned projection"
+                .to_string(),
+            evidence: json!({ "projection_instances": unsupported_effects }),
+        });
+    }
+    conflicts
+}
+
+fn projection_requires_unsupported_activation(
+    effect: &ProjectionEffectPlan,
+    safe_symlink_noop: bool,
+    capabilities: AtomicPathCapabilities,
+) -> bool {
+    if safe_symlink_noop {
+        return false;
+    }
+    match effect.effect.as_str() {
+        "create" => !capabilities.no_replace,
+        "refresh" => !capabilities.exchange,
+        _ => true,
+    }
 }
 
 fn validate_projection_input(
@@ -571,16 +732,18 @@ fn registry_guard(
             initialized: false,
             checkpoint_digest: None,
             checkpoint_updated_at: None,
+            projections_digest: None,
         });
     };
     Ok(RegistryGuard {
         initialized: true,
         checkpoint_digest: Some(digest_value(&snapshot.checkpoint)?),
         checkpoint_updated_at: Some(snapshot.checkpoint.updated_at.to_rfc3339()),
+        projections_digest: Some(digest_value(&snapshot.projections)?),
     })
 }
 
-fn digest_value(value: &impl Serialize) -> std::result::Result<String, CommandFailure> {
+pub(super) fn digest_value(value: &impl Serialize) -> std::result::Result<String, CommandFailure> {
     let bytes = serde_json::to_vec(value).map_err(map_io)?;
     let mut hasher = Sha256::new();
     hasher.update(&bytes);
@@ -589,4 +752,25 @@ fn digest_value(value: &impl Serialize) -> std::result::Result<String, CommandFa
 
 fn corrupt_state(message: String) -> CommandFailure {
     CommandFailure::new(ErrorCode::StateCorrupt, message)
+}
+
+#[cfg(test)]
+mod platform_capability_tests {
+    use super::*;
+
+    #[test]
+    fn transaction_ownership_is_required_without_projection_effects() {
+        let conflicts = resolve_platform_capability_conflicts_with(
+            &ConvergenceInputDirection::Source,
+            &[],
+            Path::new("unused-source"),
+            AtomicPathCapabilities {
+                exchange: false,
+                no_replace: false,
+            },
+        );
+        assert!(conflicts.iter().any(|conflict| {
+            conflict.code == "PLATFORM_ATOMIC_TRANSACTION_OWNERSHIP_UNSUPPORTED"
+        }));
+    }
 }

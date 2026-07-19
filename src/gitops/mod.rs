@@ -2,10 +2,14 @@ mod diff;
 mod history;
 mod history_impl;
 mod history_types;
+mod prepared_index;
+mod snapshot;
 
 pub use diff::*;
 pub use history::*;
 pub use history_types::*;
+pub use prepared_index::*;
+pub use snapshot::snapshot_index_to;
 
 use std::fs::{self, OpenOptions};
 use std::io::Write;
@@ -226,6 +230,53 @@ pub fn restore_index(ctx: &AppContext, snapshot: &IndexSnapshot) -> Result<()> {
     restore_index_with_env(ctx, snapshot, &[])
 }
 
+pub fn restore_index_from_backup(ctx: &AppContext, backup_path: &Path) -> Result<()> {
+    let snapshot = IndexSnapshot {
+        backup_path: backup_path.to_path_buf(),
+    };
+    let result = restore_index_with_env(ctx, &snapshot, &[]);
+    std::mem::forget(snapshot);
+    result
+}
+
+pub fn validate_index_file(ctx: &AppContext, index_path: &Path) -> Result<()> {
+    let index = index_path
+        .to_str()
+        .ok_or_else(|| anyhow!("Git index path is not UTF-8: {}", index_path.display()))?;
+    let output = run_git_allow_failure_in_with_env(
+        &ctx.root,
+        &[("GIT_INDEX_FILE", index)],
+        &["ls-files", "--stage"],
+    )?;
+    if output.status.success() {
+        for line in String::from_utf8_lossy(&output.stdout).lines() {
+            let Some(object) = line.split_whitespace().nth(1) else {
+                return Err(anyhow!(
+                    "invalid Git index entry in {}",
+                    index_path.display()
+                ));
+            };
+            if object.bytes().all(|byte| byte == b'0') {
+                continue;
+            }
+            let object = run_git_allow_failure(ctx, &["cat-file", "-e", object])?;
+            if !object.status.success() {
+                return Err(anyhow!(
+                    "Git index {} references a missing object",
+                    index_path.display()
+                ));
+            }
+        }
+        Ok(())
+    } else {
+        Err(anyhow!(
+            "invalid Git index {}: {}",
+            index_path.display(),
+            String::from_utf8_lossy(&output.stderr).trim()
+        ))
+    }
+}
+
 fn restore_index_with_env(
     ctx: &AppContext,
     snapshot: &IndexSnapshot,
@@ -276,14 +327,19 @@ pub fn commit_paths_if_changed(
     paths: &[&str],
     message: &str,
 ) -> Result<Option<String>> {
-    let paths = paths
-        .iter()
-        .filter_map(|path| match path_exists_or_is_tracked(ctx, path) {
-            Ok(true) => Some(Ok((*path).to_string())),
-            Ok(false) => None,
-            Err(err) => Some(Err(err)),
-        })
-        .collect::<Result<Vec<_>>>()?;
+    commit_paths_if_changed_with_pre_commit(ctx, paths, message, || Ok(()))
+}
+
+pub fn commit_paths_if_changed_with_pre_commit<F>(
+    ctx: &AppContext,
+    paths: &[&str],
+    message: &str,
+    pre_commit: F,
+) -> Result<Option<String>>
+where
+    F: FnOnce() -> Result<()>,
+{
+    let paths = prepared_index::eligible_paths(ctx, paths)?;
 
     if paths.is_empty() {
         return Ok(None);
@@ -299,6 +355,7 @@ pub fn commit_paths_if_changed(
     if diff.status.success() {
         return Ok(None);
     }
+    pre_commit()?;
 
     let mut commit_args = vec!["commit", "-m", message, "--"];
     commit_args.extend(paths.iter().map(String::as_str));

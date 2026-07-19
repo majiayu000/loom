@@ -88,6 +88,22 @@ policy。输出采用 #522 的三轴词汇。
 8. 追加单一 aggregate `skill.converge` operation，写 observations 与一个 registry state commit；
 9. 任一本地步骤失败时逆序恢复 live paths、registry/audit、Git index/HEAD/source。
 
+#### 4.1 Crash-safe ownership ledger
+
+每个 artifact owner 使用 journal-authoritative attempt，而不是可覆盖的固定 reservation token。
+Journal 在创建前持久化 `allocated` 的 canonical UUID、精确 candidate/destination path、proof 与
+manifest digest；proof、manifest、文件和 parent directory 完成 durable sync 后才持久化 `ready`；
+发布仅允许同文件系统 atomic no-replace rename，随后持久化 `activated`。`allocated` 阶段留下的
+partial candidate 标记为 `abandoned` 并使用新 generation 重试，不复用或按 prefix/glob 扫描。
+
+恢复与 transaction cleanup 是逻辑终结，不是自动物理删除：精确 artifact 最终进入 `retained`，
+未发布 attempt 进入 `abandoned`，journal phase 为 `committed_artifacts_retained` 或
+`rolled_back_artifacts_retained`。同文件系统要求意味着 projection/source staging owner 可能保留在
+对应 live parent 的隐藏路径；terminal journal 必须逐项列出其 exact path、proof、manifest 与状态。
+恢复不得执行“验证 pathname 后删除”的 TOCTOU cleanup，也不得删除或跟随 foreign regular file、
+directory 或 symlink。磁盘回收属于未来的显式、人工授权 GC；GC 未实现前 retained evidence 必须保留
+并在 recovery evidence 中可见，不能报告成 zero-orphan 或 physical cleanup complete。
+
 为避免每个 projection 独立 commit/autosync，给 #497 executor 增加内部
 `ExecutionContext::{Standalone, Convergence}`。Convergence mode 只提供 materialize/validate/state
 delta，不自行写 operation、commit 或 remote；所有公开旧入口继续使用 Standalone。
@@ -117,7 +133,8 @@ delta，不自行写 operation、commit 或 remote；所有公开旧入口继续
 - succeeded/partial terminal record：同 key 重放已记录 result，并对 pending remote 可执行同一
   convergence id 的 transport retry；
 - in_progress 且 lease 未过期：返回 `LOCK_BUSY`；
-- interrupted/expired：读取 transaction journal 的阶段与 backup evidence，先 recovery 后重试；
+- interrupted/expired：读取 transaction journal 的阶段、ownership attempt ledger 与 backup evidence，
+  先 recovery 后重试；terminal retained journal 的同 plan replay 返回原 result，不重复副作用；
 - key 用于不同 plan：`DEPENDENCY_CONFLICT`。
 
 idempotency 原文始终 redacted，只持久化 digest。

@@ -43,6 +43,29 @@ pub(crate) fn source_dirty_paths(
     Ok(paths)
 }
 
+pub(crate) fn source_replacement_risk_paths(
+    ctx: &AppContext,
+    skill: &str,
+) -> std::result::Result<Vec<String>, CommandFailure> {
+    let prefix = format!("skills/{skill}");
+    let mut paths = source_dirty_paths(ctx, skill)?;
+    collect_git_paths(
+        ctx,
+        &[
+            "ls-files",
+            "--others",
+            "--ignored",
+            "--exclude-standard",
+            "--",
+            &prefix,
+        ],
+        &mut paths,
+    )?;
+    paths.sort();
+    paths.dedup();
+    Ok(paths)
+}
+
 pub(crate) fn source_changed_since_revision(
     ctx: &AppContext,
     skill: &str,

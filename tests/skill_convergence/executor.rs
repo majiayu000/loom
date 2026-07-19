@@ -3,6 +3,12 @@ use std::fs;
 use serde_json::json;
 
 use super::*;
+use common::run_loom_with_env;
+
+#[path = "executor_helpers.rs"]
+mod executor_helpers;
+pub(super) use super::skill_convergence_ledger_assertions::assert_exact_retained_ledger;
+pub(super) use executor_helpers::all_paths;
 
 #[test]
 fn symlink_copy_materialize() {
@@ -17,6 +23,8 @@ fn symlink_copy_materialize() {
         assert!(output.status.success(), "{method} plan failed: {plan}");
         assert_eq!(plan["data"]["effects"][0]["method"], json!(method));
         assert_eq!(plan["data"]["effects"][0]["effect"], json!("refresh"));
+        let (output, applied) = apply_plan(&fixture, &plan, &format!("apply-{method}"), &[]);
+        assert!(output.status.success(), "{method} apply failed: {applied}");
 
         let projection = fixture.target.path().join("demo");
         match method {
@@ -33,4 +41,766 @@ fn symlink_copy_materialize() {
             unexpected => panic!("unexpected projection method {unexpected}"),
         }
     }
+}
+
+pub(super) fn apply_plan(
+    fixture: &Fixture,
+    plan: &Value,
+    key: &str,
+    envs: &[(&str, &str)],
+) -> (std::process::Output, Value) {
+    let plan_id = plan["data"]["plan_id"].as_str().expect("plan id");
+    let digest = plan["data"]["plan_digest"].as_str().expect("plan digest");
+    run_loom_with_env(
+        fixture.root.path(),
+        envs,
+        &[
+            "apply",
+            plan_id,
+            "--plan-digest",
+            digest,
+            "--idempotency-key",
+            key,
+        ],
+    )
+}
+
+#[test]
+fn interrupted_recovery_is_single_commit() {
+    let fixture = projected_fixture();
+    fs::write(
+        fixture.root.path().join("skills/demo/details.txt"),
+        "interrupted source\n",
+    )
+    .expect("edit source");
+    let (output, plan) = plan_converge(&fixture, &[]);
+    assert!(output.status.success(), "plan failed: {plan}");
+    let (output, interrupted) = apply_plan(
+        &fixture,
+        &plan,
+        "interrupt",
+        &[(
+            "LOOM_FAULT_INJECT",
+            "convergence_interrupt_after_source_commit",
+        )],
+    );
+    assert!(
+        !output.status.success(),
+        "interrupt did not stop: {interrupted}"
+    );
+    let interrupted_commit = git(fixture.root.path(), &["rev-parse", "HEAD"]);
+    assert!(
+        fixture
+            .root
+            .path()
+            .join("state/transactions/convergence-demo.json")
+            .is_file()
+    );
+
+    let (output, recovered) = apply_plan(&fixture, &plan, "interrupt", &[]);
+    assert!(output.status.success(), "recovery failed: {recovered}");
+    assert_eq!(
+        recovered["data"]["applied"]["source_commit"],
+        json!(interrupted_commit.trim()),
+        "recovery replaced the durable source commit"
+    );
+    git(
+        fixture.root.path(),
+        &[
+            "merge-base",
+            "--is-ancestor",
+            interrupted_commit.trim(),
+            "HEAD",
+        ],
+    );
+    let count = git(
+        fixture.root.path(),
+        &[
+            "rev-list",
+            "--count",
+            "--grep=skill(demo): converge source",
+            "HEAD",
+        ],
+    );
+    assert_eq!(count.trim(), "1", "source commit duplicated after recovery");
+    assert_exact_retained_ledger(
+        &fixture
+            .root
+            .path()
+            .join("state/transactions/convergence-demo.json"),
+        "committed_artifacts_retained",
+    );
+}
+
+#[test]
+fn completed_retained_plan_is_archived_before_a_different_plan() {
+    let fixture = projected_fixture();
+    fs::write(
+        fixture.root.path().join("skills/demo/details.txt"),
+        "first convergence\n",
+    )
+    .expect("first source edit");
+    let (output, first) = plan_converge(&fixture, &[]);
+    assert!(output.status.success(), "first plan failed: {first}");
+    let (output, applied) = apply_plan(&fixture, &first, "first-plan", &[]);
+    assert!(output.status.success(), "first apply failed: {applied}");
+
+    fs::write(
+        fixture.root.path().join("skills/demo/details.txt"),
+        "second convergence\n",
+    )
+    .expect("second source edit");
+    let (output, second) = plan_converge(&fixture, &[]);
+    assert!(output.status.success(), "second plan failed: {second}");
+    assert_ne!(first["data"]["plan_id"], second["data"]["plan_id"]);
+    let (output, applied) = apply_plan(&fixture, &second, "second-plan", &[]);
+    assert!(output.status.success(), "second apply failed: {applied}");
+
+    let tx_dir = fixture.root.path().join("state/transactions");
+    let first_id = first["data"]["plan_id"].as_str().expect("first plan id");
+    assert!(
+        fs::read_dir(&tx_dir)
+            .expect("transaction directory")
+            .filter_map(Result::ok)
+            .any(|entry| entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with(&format!("retained-{first_id}-"))),
+        "first retained ledger was not archived"
+    );
+    assert_exact_retained_ledger(
+        &tx_dir.join("convergence-demo.json"),
+        "committed_artifacts_retained",
+    );
+}
+
+#[test]
+fn corrupt_terminal_ownership_ledger_blocks_a_different_plan() {
+    let fixture = projected_fixture();
+    fs::write(
+        fixture.root.path().join("skills/demo/details.txt"),
+        "first convergence\n",
+    )
+    .expect("first source edit");
+    let (output, first) = plan_converge(&fixture, &[]);
+    assert!(output.status.success(), "first plan failed: {first}");
+    let (output, applied) = apply_plan(&fixture, &first, "terminal-corrupt-first", &[]);
+    assert!(output.status.success(), "first apply failed: {applied}");
+    let journal_path = fixture
+        .root
+        .path()
+        .join("state/transactions/convergence-demo.json");
+    let mut journal: Value =
+        serde_json::from_slice(&fs::read(&journal_path).expect("journal")).expect("parse journal");
+    journal["ownership_attempts"][0]["state"] = json!("allocated");
+    fs::write(
+        &journal_path,
+        serde_json::to_vec_pretty(&journal).expect("encode journal"),
+    )
+    .expect("corrupt terminal ownership state");
+    fs::write(
+        fixture.root.path().join("skills/demo/details.txt"),
+        "second convergence\n",
+    )
+    .expect("second source edit");
+    let (output, second) = plan_converge(&fixture, &[]);
+    assert!(output.status.success(), "second plan failed: {second}");
+
+    let (output, rejected) = apply_plan(&fixture, &second, "terminal-corrupt-second", &[]);
+    assert!(
+        !output.status.success(),
+        "corrupt ledger was archived: {rejected}"
+    );
+    assert!(journal_path.exists(), "corrupt ledger was removed");
+    assert_eq!(
+        serde_json::from_slice::<Value>(&fs::read(&journal_path).expect("retained corrupt ledger"))
+            .expect("parse retained corrupt ledger")["ownership_attempts"][0]["state"],
+        json!("allocated")
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn interrupted_symlink_registry_recovery_is_single_commit() {
+    let fixture = projected_fixture_with_method("symlink");
+    fs::write(
+        fixture.root.path().join("skills/demo/details.txt"),
+        "interrupted symlink source\n",
+    )
+    .expect("edit source");
+    let (output, plan) = plan_converge(&fixture, &[]);
+    assert!(output.status.success(), "plan failed: {plan}");
+    let (output, interrupted) = apply_plan(
+        &fixture,
+        &plan,
+        "symlink-interrupt",
+        &[(
+            "LOOM_FAULT_INJECT",
+            "convergence_interrupt_committing_registry",
+        )],
+    );
+    assert!(!output.status.success(), "interrupt applied: {interrupted}");
+
+    let (output, recovered) = apply_plan(&fixture, &plan, "symlink-interrupt", &[]);
+    assert!(
+        output.status.success(),
+        "symlink recovery failed: {recovered}"
+    );
+    let projection = fixture.target.path().join("demo");
+    assert!(
+        fs::symlink_metadata(&projection)
+            .expect("symlink projection")
+            .file_type()
+            .is_symlink()
+    );
+    assert_eq!(
+        projection.canonicalize().expect("canonical projection"),
+        fixture
+            .root
+            .path()
+            .join("skills/demo")
+            .canonicalize()
+            .expect("canonical source")
+    );
+    let registry: Value = serde_json::from_slice(
+        &fs::read(fixture.root.path().join("state/registry/projections.json"))
+            .expect("read projections"),
+    )
+    .expect("parse projections");
+    assert_eq!(
+        registry["projections"][0]["source_tree_digest"],
+        Value::Null
+    );
+    assert_eq!(
+        registry["projections"][0]["materialized_tree_digest"],
+        Value::Null
+    );
+    for subject in [
+        "skill(demo): converge source",
+        "skill(demo): record convergence projections",
+    ] {
+        assert_eq!(
+            git(
+                fixture.root.path(),
+                &["rev-list", "--count", &format!("--grep={subject}"), "HEAD"]
+            )
+            .trim(),
+            "1",
+            "recovery duplicated {subject}"
+        );
+    }
+    assert_exact_retained_ledger(
+        &fixture
+            .root
+            .path()
+            .join("state/transactions/convergence-demo.json"),
+        "committed_artifacts_retained",
+    );
+}
+
+#[test]
+fn partial_cleanup_retry_does_not_rollback_commit() {
+    let fixture = projected_fixture();
+    fs::write(
+        fixture.root.path().join("skills/demo/details.txt"),
+        "cleanup-pending source\n",
+    )
+    .expect("edit source");
+    let (output, plan) = plan_converge(&fixture, &[]);
+    assert!(output.status.success(), "plan failed: {plan}");
+    let (output, interrupted) = apply_plan(
+        &fixture,
+        &plan,
+        "cleanup-pending",
+        &[("LOOM_FAULT_INJECT", "convergence_interrupt_during_cleanup")],
+    );
+    assert!(
+        !output.status.success(),
+        "cleanup interrupt passed: {interrupted}"
+    );
+    let committed_head = git(fixture.root.path(), &["rev-parse", "HEAD"]);
+    let committed_target = snapshot_tree(fixture.target.path());
+    assert!(
+        fixture
+            .root
+            .path()
+            .join("state/transactions/convergence-demo.json")
+            .is_file()
+    );
+
+    let (output, recovered) = apply_plan(&fixture, &plan, "cleanup-pending", &[]);
+    assert!(
+        output.status.success(),
+        "cleanup recovery failed: {recovered}"
+    );
+    assert_eq!(
+        git(fixture.root.path(), &["rev-parse", "HEAD"]),
+        committed_head
+    );
+    assert_eq!(snapshot_tree(fixture.target.path()), committed_target);
+    let count = git(
+        fixture.root.path(),
+        &[
+            "rev-list",
+            "--count",
+            "--grep=skill(demo): converge source",
+            "HEAD",
+        ],
+    );
+    assert_eq!(
+        count.trim(),
+        "1",
+        "cleanup recovery duplicated source commit"
+    );
+    assert_exact_retained_ledger(
+        &fixture
+            .root
+            .path()
+            .join("state/transactions/convergence-demo.json"),
+        "committed_artifacts_retained",
+    );
+}
+
+#[test]
+fn missing_create_executes_with_effect_guard() {
+    let fixture = projected_fixture();
+    fs::remove_dir_all(fixture.target.path().join("demo")).expect("remove projection path");
+    let path = fixture.root.path().join("state/registry/projections.json");
+    let mut projections: Value =
+        serde_json::from_slice(&fs::read(&path).expect("read projections")).expect("parse");
+    projections["projections"] = json!([]);
+    fs::write(
+        &path,
+        serde_json::to_vec_pretty(&projections).expect("encode"),
+    )
+    .expect("write");
+    git(
+        fixture.root.path(),
+        &["add", "-A", "state/registry/projections.json"],
+    );
+    git(
+        fixture.root.path(),
+        &["commit", "-m", "test: remove projection record"],
+    );
+    let (output, plan) = plan_converge(&fixture, &[]);
+    assert!(output.status.success(), "create plan failed: {plan}");
+    assert_eq!(plan["data"]["effects"][0]["effect"], json!("create"));
+    let (output, applied) = apply_plan(&fixture, &plan, "missing-create", &[]);
+    assert!(
+        output.status.success(),
+        "missing/create apply failed: {applied}"
+    );
+    assert!(fixture.target.path().join("demo/SKILL.md").is_file());
+}
+
+#[test]
+fn convergence_policy_is_fail_closed_before_t007() {
+    let fixture = projected_fixture();
+    let (output, plan) = plan_converge(&fixture, &[]);
+    assert!(output.status.success(), "plan failed: {plan}");
+    let plan_id = plan["data"]["plan_id"].as_str().expect("plan id");
+    mutate_plan_event(fixture.root.path(), plan_id, |stored| {
+        stored["safe_to_apply"] = json!(false);
+    });
+    let (output, blocked) = apply_plan(&fixture, &plan, "unsafe-policy", &[]);
+    assert!(!output.status.success(), "unsafe policy applied: {blocked}");
+    assert_eq!(
+        blocked["error"]["details"]["conflict"]["code"],
+        json!("CONVERGENCE_POLICY_WORKFLOW_REQUIRED")
+    );
+}
+
+#[test]
+fn required_approvals_are_fail_closed_before_t007() {
+    let fixture = projected_fixture();
+    write_skill(
+        fixture.root.path(),
+        "demo",
+        "---\nname: demo\ndescription: Use when testing convergence policy.\ncapabilities:\n  shell:\n    commands: [\"git\"]\n---\n# demo\n",
+    );
+    let (output, saved) = save_skill(fixture.root.path(), "demo");
+    assert!(output.status.success(), "save failed: {saved}");
+    let bindings: Value = serde_json::from_slice(
+        &fs::read(fixture.root.path().join("state/registry/bindings.json")).expect("read bindings"),
+    )
+    .expect("parse bindings");
+    let binding_id = bindings["bindings"][0]["binding_id"]
+        .as_str()
+        .expect("binding id");
+    let (output, projected) = skill_project(fixture.root.path(), "demo", binding_id, Some("copy"));
+    assert!(output.status.success(), "refresh failed: {projected}");
+    let (output, plan) = plan_converge(&fixture, &[]);
+    assert!(output.status.success(), "plan failed: {plan}");
+    assert!(
+        !plan["data"]["required_approvals"]
+            .as_array()
+            .expect("approvals")
+            .is_empty()
+    );
+    let (output, blocked) = apply_plan(&fixture, &plan, "approval-policy", &[]);
+    assert!(
+        !output.status.success(),
+        "approval policy applied: {blocked}"
+    );
+    assert_eq!(
+        blocked["error"]["details"]["conflict"]["code"],
+        json!("CONVERGENCE_POLICY_WORKFLOW_REQUIRED")
+    );
+}
+
+#[test]
+fn allocated_attempt_collision_is_abandoned_without_deletion() {
+    let fixture = projected_fixture();
+    let (output, plan) = plan_converge(&fixture, &[]);
+    assert!(output.status.success(), "plan failed: {plan}");
+    let fault = "convergence_interrupt_after_owner_root_creation";
+    let (output, interrupted) = apply_plan(
+        &fixture,
+        &plan,
+        "allocated-collision",
+        &[("LOOM_FAULT_INJECT", fault)],
+    );
+    assert!(!output.status.success(), "fault passed: {interrupted}");
+    let journal_path = fixture
+        .root
+        .path()
+        .join("state/transactions/convergence-demo.json");
+    let journal: Value =
+        serde_json::from_slice(&fs::read(&journal_path).expect("journal")).expect("parse journal");
+    let candidate = std::path::PathBuf::from(
+        journal["ownership_attempts"][0]["candidate_path"]
+            .as_str()
+            .expect("candidate"),
+    );
+    fs::write(candidate.join("foreign-keep"), "external\n").expect("foreign entry");
+    let (output, recovered) = apply_plan(&fixture, &plan, "allocated-collision", &[]);
+    assert!(output.status.success(), "retry failed: {recovered}");
+    assert_eq!(
+        fs::read_to_string(candidate.join("foreign-keep")).expect("preserved foreign entry"),
+        "external\n"
+    );
+    assert_exact_retained_ledger(&journal_path, "committed_artifacts_retained");
+}
+
+#[test]
+fn unrelated_legacy_source_staging_prefix_is_preserved() {
+    let fixture = projected_fixture();
+    let (output, initial) = plan_converge(&fixture, &[]);
+    assert!(output.status.success(), "initial plan failed: {initial}");
+    let instance = initial["data"]["effects"][0]["instance_id"]
+        .as_str()
+        .expect("instance id");
+    fs::write(
+        fixture.target.path().join("demo/details.txt"),
+        "projection input\n",
+    )
+    .expect("dirty projection");
+    let (output, plan) = plan_converge(&fixture, &["--from-projection", "--instance", instance]);
+    assert!(output.status.success(), "projection plan failed: {plan}");
+    let plan_id = plan["data"]["plan_id"].as_str().expect("plan id");
+    let collision = fixture.root.path().join(format!(
+        "skills/.loom-convergence-source-stage-{plan_id}.owner/stage"
+    ));
+    fs::create_dir_all(collision.parent().expect("collision parent")).expect("parent");
+    fs::write(&collision, "unowned-source-stage\n").expect("collision");
+    let (output, failed) = apply_plan(&fixture, &plan, "source-stage", &[]);
+    assert!(output.status.success(), "apply failed: {failed}");
+    assert_eq!(
+        fs::read_to_string(&collision).expect("preserved"),
+        "unowned-source-stage\n"
+    );
+}
+
+#[test]
+fn transaction_directories_are_exactly_retained() {
+    let fixture = projected_fixture();
+    let (output, plan) = plan_converge(&fixture, &[]);
+    assert!(output.status.success(), "plan failed: {plan}");
+    let (output, applied) = apply_plan(&fixture, &plan, "directory-cleanup", &[]);
+    assert!(output.status.success(), "apply failed: {applied}");
+    assert_exact_retained_ledger(
+        &fixture
+            .root
+            .path()
+            .join("state/transactions/convergence-demo.json"),
+        "committed_artifacts_retained",
+    );
+}
+
+fn assert_unrelated_commit_recovery(boundary: &str, recoverable: bool) {
+    let fixture = projected_fixture();
+    fs::write(
+        fixture.root.path().join("skills/demo/details.txt"),
+        "source edit\n",
+    )
+    .expect("edit source");
+    let (output, plan) = plan_converge(&fixture, &[]);
+    assert!(output.status.success(), "plan failed: {plan}");
+    let (output, interrupted) = apply_plan(
+        &fixture,
+        &plan,
+        boundary,
+        &[("LOOM_FAULT_INJECT", boundary)],
+    );
+    assert!(
+        !output.status.success(),
+        "boundary did not interrupt: {interrupted}"
+    );
+    fs::write(fixture.root.path().join("unrelated.txt"), "unrelated\n").expect("unrelated");
+    git(fixture.root.path(), &["add", "unrelated.txt"]);
+    git(
+        fixture.root.path(),
+        &["commit", "-m", "test: unrelated intervening commit"],
+    );
+    let unrelated_head = git(fixture.root.path(), &["rev-parse", "HEAD"]);
+    let (output, recovered) = apply_plan(&fixture, &plan, boundary, &[]);
+    assert!(
+        !output.status.success(),
+        "stale plan unexpectedly reapplied: {recovered}"
+    );
+    assert_eq!(
+        git(fixture.root.path(), &["rev-parse", "HEAD"]),
+        unrelated_head
+    );
+    let journal = fixture
+        .root
+        .path()
+        .join("state/transactions/convergence-demo.json");
+    if recoverable {
+        assert_eq!(
+            recovered["error"]["details"]["conflict"]["code"],
+            json!("PLAN_STALE")
+        );
+        assert!(
+            !journal.exists(),
+            "recovered source journal remained active: {recovered}"
+        );
+    } else {
+        assert!(
+            journal.is_file(),
+            "unrecovered registry journal disappeared"
+        );
+    }
+}
+
+#[test]
+fn committing_source_retires_before_stale_plan_rejection() {
+    assert_unrelated_commit_recovery("convergence_interrupt_committing_source", true);
+}
+
+#[test]
+fn committing_registry_rejects_unrelated_head() {
+    assert_unrelated_commit_recovery("convergence_interrupt_committing_registry", false);
+}
+
+#[test]
+fn owner_attempt_interruptions_recover_with_exact_retained_ledger() {
+    for fault in [
+        "convergence_interrupt_after_owner_root_creation",
+        "convergence_interrupt_after_owner_marker_write",
+    ] {
+        let fixture = projected_fixture();
+        let (output, plan) = plan_converge(&fixture, &[]);
+        assert!(output.status.success(), "plan failed: {plan}");
+        let (output, interrupted) =
+            apply_plan(&fixture, &plan, fault, &[("LOOM_FAULT_INJECT", fault)]);
+        assert!(
+            !output.status.success(),
+            "reservation fault passed: {interrupted}"
+        );
+        assert!(
+            fixture
+                .root
+                .path()
+                .join("state/transactions/convergence-demo.json")
+                .is_file()
+        );
+        let (output, recovered) = apply_plan(&fixture, &plan, fault, &[]);
+        assert!(
+            output.status.success(),
+            "reservation recovery failed: {recovered}"
+        );
+        let journal_path = fixture
+            .root
+            .path()
+            .join("state/transactions/convergence-demo.json");
+        let journal: Value =
+            serde_json::from_slice(&fs::read(&journal_path).expect("retained journal"))
+                .expect("parse retained journal");
+        assert_eq!(journal["phase"], json!("committed_artifacts_retained"));
+        let attempts = journal["ownership_attempts"]
+            .as_array()
+            .expect("attempt ledger");
+        assert!(!attempts.is_empty());
+        for attempt in attempts {
+            let state = attempt["state"].as_str().expect("attempt state");
+            let path = if state == "abandoned" {
+                attempt["candidate_path"].as_str().expect("candidate path")
+            } else {
+                assert_eq!(state, "retained");
+                attempt["destination"].as_str().expect("destination")
+            };
+            assert!(Path::new(path).exists(), "ledger path was removed: {path}");
+        }
+        let retained = fs::read(&journal_path).expect("retained journal bytes");
+        let head = git(fixture.root.path(), &["rev-parse", "HEAD"]);
+        let (output, replayed) = apply_plan(&fixture, &plan, fault, &[]);
+        assert!(
+            output.status.success(),
+            "terminal replay failed: {replayed}"
+        );
+        assert_eq!(git(fixture.root.path(), &["rev-parse", "HEAD"]), head);
+        assert_eq!(fs::read(&journal_path).expect("replayed journal"), retained);
+    }
+}
+
+#[test]
+fn journal_validation_precedes_all_cleanup() {
+    for mutation in ["artifact-root", "unknown-phase"] {
+        let fixture = projected_fixture();
+        let (output, plan) = plan_converge(&fixture, &[]);
+        assert!(output.status.success(), "plan failed: {plan}");
+        let fault = "convergence_interrupt_after_owner_marker_write";
+        let (output, interrupted) =
+            apply_plan(&fixture, &plan, mutation, &[("LOOM_FAULT_INJECT", fault)]);
+        assert!(!output.status.success(), "fault passed: {interrupted}");
+        let journal_path = fixture
+            .root
+            .path()
+            .join("state/transactions/convergence-demo.json");
+        let mut journal: Value = serde_json::from_slice(&fs::read(&journal_path).expect("journal"))
+            .expect("parse journal");
+        let sentinel = fixture.root.path().join("unowned-sentinel");
+        fs::create_dir(&sentinel).expect("sentinel root");
+        fs::write(
+            sentinel.join(".owner"),
+            format!("{}\n", plan["data"]["plan_id"].as_str().expect("plan id")),
+        )
+        .expect("sentinel owner bait");
+        fs::write(sentinel.join("keep"), "unowned\n").expect("sentinel");
+        if mutation == "artifact-root" {
+            journal["artifact_root"] = json!(sentinel.display().to_string());
+        } else {
+            journal["phase"] = json!("future_cleanup_phase");
+        }
+        fs::write(
+            &journal_path,
+            serde_json::to_vec_pretty(&journal).expect("encode journal"),
+        )
+        .expect("mutate journal");
+        let before = all_paths(fixture.root.path());
+        let (output, rejected) = apply_plan(&fixture, &plan, mutation, &[]);
+        assert!(
+            !output.status.success(),
+            "malicious journal applied: {rejected}"
+        );
+        assert_eq!(
+            all_paths(fixture.root.path()),
+            before,
+            "validation mutated paths"
+        );
+        assert_eq!(
+            fs::read_to_string(sentinel.join("keep")).expect("sentinel"),
+            "unowned\n"
+        );
+    }
+}
+
+#[test]
+fn rolled_back_cleanup_pending_retries_cleanup_only() {
+    let fixture = projected_fixture();
+    fs::write(
+        fixture.root.path().join("skills/demo/details.txt"),
+        "rollback cleanup source\n",
+    )
+    .expect("edit source");
+    let (output, plan) = plan_converge(&fixture, &[]);
+    assert!(output.status.success(), "plan failed: {plan}");
+    let original_head = git(fixture.root.path(), &["rev-parse", "HEAD"]);
+    let (output, failed) = apply_plan(
+        &fixture,
+        &plan,
+        "rollback-cleanup",
+        &[
+            ("LOOM_FAULT_INJECT", "convergence_after_registry_save"),
+            (
+                "LOOM_CLEANUP_FAULT_INJECT",
+                "convergence_interrupt_during_cleanup",
+            ),
+        ],
+    );
+    assert!(!output.status.success(), "rollback fault passed: {failed}");
+    assert_eq!(
+        git(fixture.root.path(), &["rev-parse", "HEAD"]),
+        original_head
+    );
+    let journal: Value = serde_json::from_slice(
+        &fs::read(
+            fixture
+                .root
+                .path()
+                .join("state/transactions/convergence-demo.json"),
+        )
+        .expect("journal"),
+    )
+    .expect("parse journal");
+    assert_eq!(journal["phase"], json!("rolled_back_cleanup_pending"));
+    let (output, recovered) = apply_plan(&fixture, &plan, "rollback-cleanup", &[]);
+    assert!(output.status.success(), "cleanup retry failed: {recovered}");
+    assert_eq!(
+        git(
+            fixture.root.path(),
+            &[
+                "rev-list",
+                "--count",
+                "--grep=skill(demo): converge source",
+                "HEAD"
+            ],
+        )
+        .trim(),
+        "1"
+    );
+}
+
+#[test]
+fn no_op_source_commit_matches_direct_and_recovery() {
+    let direct = projected_fixture();
+    let (output, direct_plan) = plan_converge(&direct, &[]);
+    assert!(output.status.success(), "direct plan failed: {direct_plan}");
+    let (output, direct_result) = apply_plan(&direct, &direct_plan, "direct-noop", &[]);
+    assert!(
+        output.status.success(),
+        "direct apply failed: {direct_result}"
+    );
+
+    let recovered = projected_fixture();
+    let (output, recovered_plan) = plan_converge(&recovered, &[]);
+    assert!(
+        output.status.success(),
+        "recovery plan failed: {recovered_plan}"
+    );
+    let fault = "convergence_interrupt_committing_source";
+    let (output, interrupted) = apply_plan(
+        &recovered,
+        &recovered_plan,
+        "recovered-noop",
+        &[("LOOM_FAULT_INJECT", fault)],
+    );
+    assert!(
+        !output.status.success(),
+        "no-op boundary passed: {interrupted}"
+    );
+    let (output, recovered_result) = apply_plan(&recovered, &recovered_plan, "recovered-noop", &[]);
+    assert!(
+        output.status.success(),
+        "no-op recovery failed: {recovered_result}"
+    );
+    assert_eq!(
+        direct_result["data"]["applied"]["source_commit"],
+        Value::Null
+    );
+    assert_eq!(
+        recovered_result["data"]["applied"]["source_commit"],
+        Value::Null
+    );
 }

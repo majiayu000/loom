@@ -19,7 +19,16 @@ pub(crate) fn activate_prepared_projection(
     _ctx: &AppContext,
     prepared: PreparedProjection,
 ) -> Result<ProjectionActivationOutput, CommandFailure> {
-    activate_prepared_projection_with_after_mutation(prepared, || Ok(()))
+    activate_prepared_projection_with_after_mutation(prepared, || {
+        if std::env::var("LOOM_FAULT_INJECT").ok().as_deref()
+            == Some("convergence_interrupt_after_projection_activation")
+        {
+            return Err(std::io::Error::other(
+                "fault injection: convergence_interrupt_after_projection_activation",
+            ));
+        }
+        Ok(())
+    })
 }
 
 fn activate_prepared_projection_with_after_mutation(

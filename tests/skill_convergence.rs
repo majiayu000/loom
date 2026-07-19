@@ -1,6 +1,26 @@
 mod common;
+#[path = "skill_convergence/additional_recovery.rs"]
+mod skill_convergence_additional_recovery;
 #[path = "skill_convergence/executor.rs"]
 mod skill_convergence_executor;
+#[path = "skill_convergence/executor_faults.rs"]
+mod skill_convergence_executor_faults;
+#[path = "skill_convergence/guards.rs"]
+mod skill_convergence_guards;
+#[path = "skill_convergence/ledger_assertions.rs"]
+mod skill_convergence_ledger_assertions;
+#[path = "skill_convergence/projection_activation_flags.rs"]
+mod skill_convergence_projection_activation_flags;
+#[path = "skill_convergence/recovery_identity.rs"]
+mod skill_convergence_recovery_identity;
+#[path = "skill_convergence/recovery_safety.rs"]
+mod skill_convergence_recovery_safety;
+#[path = "skill_convergence/registry_rollback.rs"]
+mod skill_convergence_registry_rollback;
+#[path = "skill_convergence/remaining_review.rs"]
+mod skill_convergence_remaining_review;
+#[path = "skill_convergence/source_only.rs"]
+mod skill_convergence_source_only;
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -190,8 +210,8 @@ fn exact_effect_plan() {
     assert_eq!(first["data"]["protocol_version"], json!("1.0"));
     assert_eq!(first["data"]["schema_version"], json!("1.2"));
     assert_eq!(first["data"]["operation"], json!("converge"));
-    assert_eq!(first["data"]["safe_to_apply"], json!(false));
-    assert_eq!(first["data"]["execution_enabled"], json!(false));
+    assert_eq!(first["data"]["safe_to_apply"], json!(true));
+    assert_eq!(first["data"]["execution_enabled"], json!(true));
     assert_eq!(first["data"]["requires_digest_confirmation"], json!(true));
     assert!(first["data"]["next_actions"].is_null());
     assert_ne!(first["data"]["plan_id"], second["data"]["plan_id"]);
@@ -224,6 +244,15 @@ fn exact_effect_plan() {
             .as_array()
             .is_some_and(|operations| operations.contains(&json!("converge"))),
         "authoritative schema must declare plan converge"
+    );
+    let converge_contract = &schema["allOf"][1]["then"]["properties"];
+    assert!(
+        converge_contract["execution_enabled"].is_null(),
+        "convergence execution_enabled must remain a runtime boolean"
+    );
+    assert!(
+        converge_contract["safe_to_apply"].is_null(),
+        "convergence safe_to_apply must remain a runtime boolean"
     );
 }
 
@@ -311,7 +340,7 @@ fn apply_requires_reviewed_plan_digest() {
         json!("PLAN_DIGEST_MISMATCH")
     );
 
-    let (output, disabled) = run_loom(
+    let (output, applied) = run_loom(
         fixture.root.path(),
         &[
             "apply",
@@ -322,23 +351,26 @@ fn apply_requires_reviewed_plan_digest() {
             "conv-reviewed",
         ],
     );
-    assert!(
-        !output.status.success(),
-        "planning tranche executed: {disabled}"
-    );
-    assert_eq!(disabled["error"]["code"], json!("POLICY_BLOCKED"));
-    assert_eq!(
-        disabled["error"]["details"]["conflict"]["code"],
-        json!("CONVERGENCE_EXECUTOR_UNAVAILABLE")
-    );
-    assert_eq!(
+    assert!(output.status.success(), "reviewed plan failed: {applied}");
+    assert_ne!(
         snapshot_tree(&fixture.root.path().join("state/registry")),
         domain_before
     );
-    assert_eq!(snapshot_tree(fixture.target.path()), target_before);
     assert_eq!(
+        skill_convergence_ledger_assertions::snapshot_without_ledgered_paths(
+            fixture.target.path(),
+            &fixture
+                .root
+                .path()
+                .join("state/transactions/convergence-demo.json"),
+            "committed_artifacts_retained",
+        ),
+        target_before
+    );
+    assert_ne!(
         git(fixture.root.path(), &["rev-parse", "HEAD"]),
-        head_before
+        head_before,
+        "successful convergence must commit updated projection registry state"
     );
 
     mutate_plan_event(fixture.root.path(), plan_id, |stored| {
@@ -754,45 +786,4 @@ fn dirty_side_conflicts() {
     }
 
     assert_ne!(first_instance, second_instance);
-}
-
-#[test]
-fn source_only_and_required_runtime() {
-    let root = TestDir::new("convergence-source-only");
-    write_skill(
-        root.path(),
-        "demo",
-        "---\nname: demo\ndescription: Use when testing source-only convergence.\n---\n# demo\n",
-    );
-    let (output, env) = save_skill(root.path(), "demo");
-    assert!(output.status.success(), "save failed: {env}");
-
-    let (output, source_only) = run_loom(root.path(), &["plan", "converge", "demo"]);
-    assert!(
-        output.status.success(),
-        "source-only plan failed: {source_only}"
-    );
-    assert_eq!(source_only["data"]["effects"], json!([]));
-    assert_eq!(
-        source_only["data"]["projection_state"],
-        json!("not_applicable")
-    );
-
-    let (output, required) = run_loom(
-        root.path(),
-        &["plan", "converge", "demo", "--require-runtime"],
-    );
-    assert!(
-        output.status.success(),
-        "blocked plan should remain reviewable: {required}"
-    );
-    assert_eq!(required["data"]["safe_to_apply"], json!(false));
-    assert_eq!(
-        required["data"]["conflicts"][0]["code"],
-        json!("RUNTIME_PROJECTION_REQUIRED")
-    );
-    assert_eq!(
-        required["data"]["required_axes"],
-        json!(["projections", "visibility"])
-    );
 }

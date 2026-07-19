@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use crate::fs_util::{exchange_paths_atomic, remove_path_if_exists, rename_no_replace_atomic};
+use crate::fs_util::{exchange_paths_atomic, rename_no_replace_atomic};
 use crate::state_model::RegistryProjectionInstance;
 use crate::types::ErrorCode;
 
@@ -434,9 +434,7 @@ impl ProjectionRollbackArtifact {
             "clean projection rollback artifact",
             self,
         )?;
-        remove_path_if_exists(&claim_path)
-            .map_err(map_io)
-            .map_err(|err| with_recovery_details(err, self))
+        Ok(())
     }
 }
 
@@ -706,9 +704,7 @@ fn cleanup_prepared_artifact(
         "prepared staging projection",
     )
     .map_err(|err| with_prepared_recovery_details(err, parts))?;
-    remove_path_if_exists(&claim_path)
-        .map_err(map_io)
-        .map_err(|err| with_prepared_recovery_details(err, parts))
+    Ok(())
 }
 
 fn with_prepared_recovery_details(

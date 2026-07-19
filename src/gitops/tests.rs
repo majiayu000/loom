@@ -1,4 +1,5 @@
 use super::*;
+use crate::sha256::{Sha256, to_hex};
 use crate::state::AppContext;
 use std::process::Command;
 use uuid::Uuid;
@@ -71,6 +72,461 @@ fn git_ok_with_env(dir: &Path, args: &[&str], envs: &[(&str, &str)]) -> String {
         String::from_utf8_lossy(&out.stderr)
     );
     String::from_utf8(out.stdout).expect("git stdout utf8")
+}
+
+fn file_sha256(path: &Path) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(&fs::read(path).expect("read digest input"));
+    format!("sha256:{}", to_hex(&hasher.finalize()))
+}
+
+#[test]
+fn prepared_index_install_rejects_tamper_before_active_mutation() {
+    let (ctx, dir) = fresh_repo("prepared-index-tamper");
+    let active_index = dir.join(".git/index");
+    let original_index = fs::read(&active_index).expect("original index");
+    let original_head = git_ok(&dir, &["rev-parse", "HEAD"]);
+    let backup = dir.join("index-backup");
+    fs::copy(&active_index, &backup).expect("index backup");
+    fs::write(dir.join("base.txt"), "reviewed\n").expect("reviewed source");
+    let prepared = dir.join("prepared-index");
+    assert!(
+        prepare_index_for_paths(&ctx, &backup, &prepared, &["base.txt"])
+            .expect("prepare alternate index")
+    );
+    let expected = file_sha256(&prepared);
+
+    fs::write(dir.join("tampered.txt"), "tampered\n").expect("tampered path");
+    let prepared_env = prepared.to_str().expect("prepared path");
+    git_ok_with_env(
+        &dir,
+        &["add", "--", "tampered.txt"],
+        &[("GIT_INDEX_FILE", prepared_env)],
+    );
+    let error = install_prepared_index_with_guard(&ctx, &prepared, &|candidate| {
+        if file_sha256(candidate) != expected {
+            return Err(anyhow!("prepared index digest mismatch"));
+        }
+        Ok(())
+    })
+    .expect_err("tampered prepared index must fail closed");
+
+    assert!(error.to_string().contains("prepared index digest mismatch"));
+    assert_eq!(
+        fs::read(&active_index).expect("active index"),
+        original_index
+    );
+    assert_eq!(git_ok(&dir, &["rev-parse", "HEAD"]), original_head);
+    fs::remove_dir_all(&dir).expect("remove test repository");
+}
+
+#[test]
+fn prepared_index_install_preserves_preexisting_lock() {
+    let (ctx, dir) = fresh_repo("prepared-index-existing-lock");
+    let active_index = dir.join(".git/index");
+    let prepared = dir.join("prepared-index");
+    fs::copy(&active_index, &prepared).expect("prepared index");
+    let lock = dir.join(".git/index.lock");
+    let owner_bytes = b"owned by another git process\n";
+    fs::write(&lock, owner_bytes).expect("preexisting index lock");
+
+    install_prepared_index_with_guard(&ctx, &prepared, &|_| Ok(()))
+        .expect_err("preexisting lock must block installation");
+
+    assert_eq!(fs::read(&lock).expect("preserved lock"), owner_bytes);
+    fs::remove_file(&lock).expect("remove test lock");
+    fs::remove_dir_all(&dir).expect("remove test repository");
+}
+
+#[test]
+fn prepared_index_install_preserves_byte_identical_foreign_lock() {
+    let (ctx, dir) = fresh_repo("prepared-index-identical-foreign-lock");
+    let active_index = dir.join(".git/index");
+    let original_index = fs::read(&active_index).expect("active index");
+    let prepared = dir.join("prepared-index");
+    fs::copy(&active_index, &prepared).expect("prepared index");
+    let lock = dir.join(".git/index.lock");
+    fs::copy(&prepared, &lock).expect("byte-identical foreign lock");
+
+    install_prepared_index_with_guard(&ctx, &prepared, &|_| Ok(()))
+        .expect_err("byte-identical foreign lock must block installation");
+
+    assert_eq!(fs::read(&lock).expect("preserved lock"), original_index);
+    assert_eq!(
+        fs::read(&active_index).expect("active index"),
+        original_index
+    );
+    fs::remove_file(&lock).expect("remove test lock");
+    fs::remove_dir_all(&dir).expect("remove test repository");
+}
+
+#[test]
+fn prepared_index_install_rejects_a_mutating_guard_without_evidence_damage() {
+    let (ctx, dir) = fresh_repo("prepared-index-mutating-guard");
+    let active_index = dir.join(".git/index");
+    let original_index = fs::read(&active_index).expect("active index");
+    let prepared = dir.join("prepared-index");
+    fs::copy(&active_index, &prepared).expect("prepared index");
+    let prepared_bytes = fs::read(&prepared).expect("prepared evidence");
+
+    install_prepared_index_with_guard(&ctx, &prepared, &|candidate| {
+        fs::write(candidate, b"mutated lock\n")?;
+        Ok(())
+    })
+    .expect_err("mutating guard must fail closed");
+
+    assert_eq!(
+        fs::read(&prepared).expect("prepared after guard"),
+        prepared_bytes
+    );
+    assert_eq!(
+        fs::read(&active_index).expect("active after guard"),
+        original_index
+    );
+    assert!(!dir.join(".git/index.lock").exists());
+    fs::remove_dir_all(&dir).expect("remove test repository");
+}
+
+#[test]
+fn prepared_index_install_rolls_back_a_lock_replaced_during_guard() {
+    let (ctx, dir) = fresh_repo("prepared-index-guard-lock-replacement");
+    let active_index = dir.join(".git/index");
+    let original_index = fs::read(&active_index).expect("active index");
+    let prepared = dir.join("prepared-index");
+    fs::copy(&active_index, &prepared).expect("prepared index");
+    let lock = dir.join(".git/index.lock");
+
+    install_prepared_index_with_guard(&ctx, &prepared, &|_| {
+        fs::remove_file(&lock)?;
+        fs::copy(&prepared, &lock)?;
+        Ok(())
+    })
+    .expect_err("foreign replacement must be rolled back");
+
+    assert_eq!(
+        fs::read(&active_index).expect("active index"),
+        original_index
+    );
+    assert_eq!(
+        fs::read(&lock).expect("preserved foreign lock"),
+        fs::read(&prepared).expect("prepared evidence")
+    );
+    fs::remove_file(&lock).expect("remove foreign lock");
+    fs::remove_dir_all(&dir).expect("remove test repository");
+}
+
+#[test]
+fn prepared_index_install_crash_helper() {
+    let Ok(()) = std::env::var("LOOM_TEST_INDEX_INSTALL_CRASH").map(|_| ()) else {
+        return;
+    };
+    let root = std::env::var_os("LOOM_TEST_INDEX_INSTALL_ROOT").expect("crash root");
+    let prepared = std::env::var_os("LOOM_TEST_INDEX_INSTALL_PREPARED").expect("prepared index");
+    let ctx = AppContext::new(Some(root.into())).expect("crash context");
+    let _ =
+        install_prepared_index_with_guard(&ctx, Path::new(&prepared), &|_| std::process::exit(92));
+    unreachable!("crash helper returned")
+}
+
+#[test]
+fn prepared_index_install_post_publish_crash_helper() {
+    let Ok(()) = std::env::var("LOOM_TEST_INDEX_INSTALL_CRASH_AFTER_PUBLISH").map(|_| ()) else {
+        return;
+    };
+    let root = std::env::var_os("LOOM_TEST_INDEX_INSTALL_ROOT").expect("crash root");
+    let prepared = std::env::var_os("LOOM_TEST_INDEX_INSTALL_PREPARED").expect("prepared index");
+    let ctx = AppContext::new(Some(root.into())).expect("crash context");
+    install_prepared_index_with_guard(&ctx, Path::new(&prepared), &|_| Ok(()))
+        .expect("post-publication crash hook did not exit");
+}
+
+#[test]
+fn prepared_index_publication_crash_leaves_an_exact_recoverable_lock() {
+    let (ctx, dir) = fresh_repo("published-lock");
+    let active_index = dir.join(".git/index");
+    let prepared = dir.join("prepared-index");
+    fs::copy(&active_index, &prepared).expect("prepared index");
+    let status = Command::new(std::env::current_exe().expect("test binary"))
+        .args([
+            "--exact",
+            "gitops::tests::prepared_index_install_crash_helper",
+            "--nocapture",
+        ])
+        .env("LOOM_TEST_INDEX_INSTALL_CRASH", "published-lock")
+        .env("LOOM_TEST_INDEX_INSTALL_ROOT", &dir)
+        .env("LOOM_TEST_INDEX_INSTALL_PREPARED", &prepared)
+        .status()
+        .expect("run crash helper");
+    assert_eq!(status.code(), Some(92));
+    let lock = dir.join(".git/index.lock");
+    assert_eq!(
+        fs::read(&lock).expect("published lock"),
+        fs::read(&prepared).unwrap()
+    );
+    assert!(
+        recover_prepared_index_lock_with_guard(&ctx, &prepared, &|_| Ok(()))
+            .expect("recover exact published lock")
+    );
+    assert!(!lock.exists());
+    super::prepared_index::assert_no_index_aux_paths(&prepared);
+    assert_eq!(
+        fs::read(&active_index).expect("installed index"),
+        fs::read(&prepared).unwrap()
+    );
+    let prepared_bytes = fs::read(&prepared).expect("independent prepared evidence");
+    fs::write(&active_index, b"later active mutation\n").expect("mutate active index inode");
+    assert_eq!(
+        fs::read(&prepared).expect("prepared after active mutation"),
+        prepared_bytes
+    );
+    fs::remove_dir_all(&dir).expect("remove test repository");
+}
+
+#[test]
+fn prepared_index_post_publication_crash_recovers_the_retained_claim() {
+    let (ctx, dir) = fresh_repo("post-publication-claim");
+    let active_index = dir.join(".git/index");
+    let prepared = dir.join("prepared-index");
+    fs::copy(&active_index, &prepared).expect("prepared index");
+    let status = Command::new(std::env::current_exe().expect("test binary"))
+        .args([
+            "--exact",
+            "gitops::tests::prepared_index_install_post_publish_crash_helper",
+            "--nocapture",
+        ])
+        .env("LOOM_TEST_INDEX_INSTALL_CRASH_AFTER_PUBLISH", "1")
+        .env("LOOM_TEST_INDEX_INSTALL_ROOT", &dir)
+        .env("LOOM_TEST_INDEX_INSTALL_PREPARED", &prepared)
+        .status()
+        .expect("run post-publication crash helper");
+    assert_eq!(status.code(), Some(93));
+    assert!(
+        dir.join(".git/index.lock").exists(),
+        "atomic exchange must keep the public lock occupied until recovery"
+    );
+    assert_eq!(
+        fs::read(&active_index).expect("published index"),
+        fs::read(&prepared).expect("prepared evidence")
+    );
+
+    assert!(
+        recover_prepared_index_lock_with_guard(&ctx, &prepared, &|_| Ok(()))
+            .expect("recover retained publication claim")
+    );
+    super::prepared_index::assert_no_index_aux_paths(&prepared);
+    fs::remove_dir_all(&dir).expect("remove test repository");
+}
+
+#[test]
+fn prepared_index_prepublication_rollback_marker_resumes() {
+    let (ctx, dir) = fresh_repo("prepublication-rollback-marker");
+    let active_index = dir.join(".git/index");
+    let prepared = dir.join("prepared-index");
+    fs::copy(&active_index, &prepared).expect("prepared index");
+    let lock = dir.join(".git/index.lock");
+    super::prepared_index::seed_owned_index_lock(&prepared, &lock);
+    let rollback = super::prepared_index::prepared_index_aux_path(&prepared, ".lock-rollback");
+    fs::hard_link(&active_index, &rollback).expect("durable rollback marker");
+    assert!(
+        recover_prepared_index_lock_with_guard(&ctx, &prepared, &|_| Ok(()))
+            .expect("resume before publication")
+    );
+    super::prepared_index::assert_no_index_aux_paths(&prepared);
+    fs::remove_dir_all(&dir).expect("remove test repository");
+}
+
+#[cfg(unix)]
+#[test]
+fn prepared_index_completed_foreign_rollback_is_idempotent() {
+    let (ctx, dir) = fresh_repo("completed-foreign-rollback");
+    let active_index = dir.join(".git/index");
+    let original_index = fs::read(&active_index).expect("active index");
+    let prepared = dir.join("prepared-index");
+    fs::copy(&active_index, &prepared).expect("prepared index");
+    let lock = dir.join(".git/index.lock");
+    super::prepared_index::seed_owned_index_lock(&prepared, &lock);
+    let rollback = super::prepared_index::prepared_index_aux_path(&prepared, ".lock-rollback");
+    fs::hard_link(&active_index, &rollback).expect("durable rollback marker");
+    fs::remove_file(&lock).expect("replace owned lock");
+    fs::copy(&prepared, &lock).expect("foreign exact lock");
+    crate::fs_util::exchange_paths_atomic(&lock, &active_index).expect("foreign publication");
+    crate::fs_util::exchange_paths_atomic(&lock, &active_index).expect("foreign rollback");
+    recover_prepared_index_lock_with_guard(&ctx, &prepared, &|_| Ok(()))
+        .expect_err("foreign lock must remain rejected");
+    assert_eq!(
+        fs::read(&active_index).expect("active index"),
+        original_index
+    );
+    assert_eq!(fs::read(&lock).expect("foreign lock"), original_index);
+    assert!(!rollback.exists());
+    fs::remove_file(&lock).expect("remove foreign lock");
+    fs::remove_dir_all(&dir).expect("remove test repository");
+}
+
+#[test]
+fn prepared_index_recovery_isolates_a_mutating_guard_from_its_owned_lock() {
+    for replacement in [false, true] {
+        let (ctx, dir) = fresh_repo("prepared-index-recovery-guard");
+        let active_index = dir.join(".git/index");
+        let original_index = fs::read(&active_index).expect("active index");
+        let prepared = dir.join("prepared-index");
+        fs::copy(&active_index, &prepared).expect("prepared index");
+        let prepared_bytes = fs::read(&prepared).expect("prepared evidence");
+        let lock = dir.join(".git/index.lock");
+        super::prepared_index::seed_owned_index_lock(&prepared, &lock);
+        let foreign = b"concurrently replaced foreign lock\n";
+
+        recover_prepared_index_lock_with_guard(&ctx, &prepared, &|candidate| {
+            if replacement {
+                fs::remove_file(candidate)?;
+            }
+            fs::write(candidate, foreign)?;
+            Ok(())
+        })
+        .expect_err("mutating recovery guard must fail closed");
+
+        assert_eq!(
+            fs::read(&prepared).expect("prepared after guard"),
+            prepared_bytes
+        );
+        assert_eq!(
+            fs::read(&active_index).expect("active after guard"),
+            original_index
+        );
+        assert!(!lock.exists(), "owned lock was not atomically cleaned");
+        super::prepared_index::assert_no_index_aux_paths(&prepared);
+        fs::remove_dir_all(&dir).expect("remove test repository");
+    }
+}
+
+#[test]
+fn prepared_index_lock_recovery_preserves_nonmatching_lock() {
+    let (ctx, dir) = fresh_repo("prepared-index-recovery-foreign-lock");
+    let prepared = dir.join("prepared-index");
+    fs::copy(dir.join(".git/index"), &prepared).expect("prepared index");
+    let lock = dir.join(".git/index.lock");
+    let foreign = b"foreign lock bytes\n";
+    fs::write(&lock, foreign).expect("foreign lock");
+
+    recover_prepared_index_lock_with_guard(&ctx, &prepared, &|_| Ok(()))
+        .expect_err("foreign lock must not be adopted");
+
+    assert_eq!(fs::read(&lock).expect("preserved foreign lock"), foreign);
+    fs::remove_file(&lock).expect("remove test lock");
+    fs::remove_dir_all(&dir).expect("remove test repository");
+}
+
+#[test]
+fn prepared_index_lock_recovery_preserves_byte_identical_unclaimed_lock() {
+    let (ctx, dir) = fresh_repo("prepared-index-recovery-identical-lock");
+    let prepared = dir.join("prepared-index");
+    fs::copy(dir.join(".git/index"), &prepared).expect("prepared index");
+    let lock = dir.join(".git/index.lock");
+    fs::copy(&prepared, &lock).expect("byte-identical unclaimed lock");
+
+    recover_prepared_index_lock_with_guard(&ctx, &prepared, &|_| Ok(()))
+        .expect_err("unclaimed lock must not be adopted by bytes alone");
+
+    assert_eq!(
+        fs::read(&lock).expect("preserved lock"),
+        fs::read(&prepared).expect("prepared evidence")
+    );
+    fs::remove_file(&lock).expect("remove test lock");
+    fs::remove_dir_all(&dir).expect("remove test repository");
+}
+
+#[test]
+fn prepared_index_recovery_collision_preserves_both_foreign_entries() {
+    let (ctx, dir) = fresh_repo("prepared-index-recovery-collision");
+    let prepared = dir.join("prepared-index");
+    fs::copy(dir.join(".git/index"), &prepared).expect("prepared index");
+    let lock = dir.join(".git/index.lock");
+    let capture = super::prepared_index::prepared_index_aux_path(&prepared, ".lock-capture");
+    let public_foreign = b"new public foreign lock\n";
+    let captured_foreign = b"captured foreign lock\n";
+    fs::write(&lock, public_foreign).expect("public foreign lock");
+    fs::write(&capture, captured_foreign).expect("captured foreign lock");
+
+    recover_prepared_index_lock_with_guard(&ctx, &prepared, &|_| Ok(()))
+        .expect_err("foreign restoration collision must fail closed");
+
+    assert_eq!(fs::read(&lock).expect("public lock"), public_foreign);
+    assert_eq!(fs::read(&capture).expect("captured lock"), captured_foreign);
+    fs::remove_dir_all(&dir).expect("remove test repository");
+}
+
+#[cfg(unix)]
+#[test]
+fn prepared_index_lock_recovery_rejects_an_exact_symlink() {
+    let (ctx, dir) = fresh_repo("prepared-index-recovery-symlink-lock");
+    let prepared = dir.join("prepared-index");
+    fs::copy(dir.join(".git/index"), &prepared).expect("prepared index");
+    let lock = dir.join(".git/index.lock");
+    std::os::unix::fs::symlink(&prepared, &lock).expect("symlink lock");
+    let active = fs::read(dir.join(".git/index")).expect("active index");
+
+    recover_prepared_index_lock_with_guard(&ctx, &prepared, &|_| Ok(()))
+        .expect_err("symlink lock must not be adopted");
+
+    assert!(
+        fs::symlink_metadata(&lock)
+            .expect("preserved lock")
+            .file_type()
+            .is_symlink()
+    );
+    assert_eq!(
+        fs::read(dir.join(".git/index")).expect("active index"),
+        active
+    );
+    fs::remove_file(&lock).expect("remove test lock");
+    fs::remove_dir_all(&dir).expect("remove test repository");
+}
+
+#[test]
+fn prepared_commit_ignores_late_worktree_tamper_without_moving_head_or_index() {
+    let (ctx, dir) = fresh_repo("prepared-commit-worktree-tamper");
+    let active_index = dir.join(".git/index");
+    let original_index = fs::read(&active_index).expect("original index");
+    let original_head = git_ok(&dir, &["rev-parse", "HEAD"]);
+    let backup = dir.join("index-backup");
+    fs::copy(&active_index, &backup).expect("index backup");
+    fs::write(dir.join("base.txt"), "reviewed\n").expect("reviewed source");
+    let prepared = dir.join("prepared-index");
+    assert!(
+        prepare_index_for_paths(&ctx, &backup, &prepared, &["base.txt"])
+            .expect("prepare alternate index")
+    );
+    fs::write(dir.join("base.txt"), "tampered-after-index\n").expect("late worktree tamper");
+
+    let commit_index = dir.join("prepared-commit-index");
+    let commit = create_prepared_commit(
+        &ctx,
+        &prepared,
+        &commit_index,
+        &["base.txt"],
+        original_head.trim(),
+        "prepared source",
+    )
+    .expect("create prepared commit object");
+    assert_eq!(
+        git_ok(&dir, &["show", &format!("{commit}:base.txt")]),
+        "reviewed\n"
+    );
+    let error = install_prepared_index_with_guard(&ctx, &prepared, &|_| {
+        if fs::read_to_string(dir.join("base.txt"))? != "reviewed\n" {
+            return Err(anyhow!("live source changed after preparation"));
+        }
+        Ok(())
+    })
+    .expect_err("late source drift must fail before index installation");
+
+    assert!(error.to_string().contains("live source changed"));
+    assert_eq!(
+        fs::read(&active_index).expect("active index"),
+        original_index
+    );
+    assert_eq!(git_ok(&dir, &["rev-parse", "HEAD"]), original_head);
+    fs::remove_dir_all(&dir).expect("remove test repository");
 }
 
 /// `ls-files -v` tag legend: H=cached, h=assume-unchanged, S=skip-worktree,

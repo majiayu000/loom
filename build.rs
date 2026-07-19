@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::SystemTime;
 
-use flate2::{Compression, GzBuilder};
+use zopfli::{Format, Options};
 
 const FRONTEND_INPUT_FILES: &[&str] = &[
     "package.json",
@@ -212,12 +212,9 @@ fn compress_dir_recursive_result(source: &Path, destination: &Path) -> io::Resul
 }
 
 fn compress_file(source: &Path, destination: &Path) -> io::Result<()> {
-    let mut input = File::open(source)?;
+    let input = File::open(source)?;
     let output = File::create(destination)?;
-    let mut encoder = GzBuilder::new().mtime(0).write(output, Compression::best());
-    io::copy(&mut input, &mut encoder)?;
-    encoder.finish()?;
-    Ok(())
+    zopfli::compress(Options::default(), Format::Gzip, input, output)
 }
 
 fn copy_dir_recursive_result(source: &Path, destination: &Path) -> std::io::Result<()> {

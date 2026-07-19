@@ -1,5 +1,6 @@
 use std::ffi::OsStr;
 use std::fs;
+use std::io;
 use std::path::Path;
 
 use anyhow::{Context, Result, anyhow};
@@ -8,7 +9,7 @@ use serde_json::json;
 use uuid::Uuid;
 use walkdir::WalkDir;
 
-use crate::fs_util::remove_path_if_exists;
+use crate::fs_util::{remove_path_if_exists, rename_no_replace_atomic, sync_parent_directory};
 use crate::gitops;
 use crate::state::AppContext;
 
@@ -76,6 +77,60 @@ pub(crate) fn restore_path_from_backup(path: &Path, backup: &serde_json::Value) 
     }
 }
 
+pub(crate) fn restore_path_from_backup_if_absent(
+    path: &Path,
+    candidate: &Path,
+    backup: &serde_json::Value,
+) -> Result<()> {
+    let backup_path = backup
+        .get("backup_path")
+        .and_then(serde_json::Value::as_str)
+        .map(Path::new)
+        .ok_or_else(|| anyhow!("backup record missing backup_path"))?;
+    let kind = backup
+        .get("kind")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| anyhow!("backup record missing kind"))?;
+    if fs::symlink_metadata(path).is_ok() {
+        return Err(anyhow!(
+            "refusing to replace recovery staging path {}",
+            path.display()
+        ));
+    }
+    if candidate.parent() != path.parent() || candidate == path {
+        return Err(anyhow!(
+            "rollback restore candidate must be a sibling of {}",
+            path.display()
+        ));
+    }
+    remove_path_if_exists(candidate)?;
+    match kind {
+        "dir" => {
+            fs::create_dir(candidate)?;
+            copy_dir_recursive_preserving_symlinks(backup_path, candidate)?;
+        }
+        "file" => {
+            let mut source = fs::File::open(backup_path)?;
+            let mut destination = fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(candidate)?;
+            io::copy(&mut source, &mut destination)?;
+        }
+        "symlink" => create_symlink_dir(&symlink_backup_target(backup_path)?, candidate)?,
+        other => return Err(anyhow!("unsupported backup kind '{}'", other)),
+    };
+    rename_no_replace_atomic(candidate, path).with_context(|| {
+        format!(
+            "failed to activate rollback restore {} at {}",
+            candidate.display(),
+            path.display()
+        )
+    })?;
+    sync_parent_directory(path)
+        .with_context(|| format!("failed to sync rollback restore at {}", path.display()))
+}
+
 pub(crate) fn backup_path_if_exists(
     ctx: &AppContext,
     path: &Path,
@@ -136,6 +191,36 @@ pub(crate) fn backup_path_if_exists(
     })))
 }
 
+pub(crate) fn create_declared_path_backup(path: &Path, backup: &serde_json::Value) -> Result<()> {
+    let backup_path = backup
+        .get("backup_path")
+        .and_then(serde_json::Value::as_str)
+        .map(Path::new)
+        .ok_or_else(|| anyhow!("backup record missing backup_path"))?;
+    let kind = backup
+        .get("kind")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| anyhow!("backup record missing kind"))?;
+    if fs::symlink_metadata(backup_path).is_ok() {
+        return Err(anyhow!(
+            "refusing to overwrite declared backup {}",
+            backup_path.display()
+        ));
+    }
+    match kind {
+        "dir" => copy_dir_recursive_preserving_symlinks(path, backup_path),
+        "file" => {
+            if let Some(parent) = backup_path.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            fs::copy(path, backup_path)?;
+            Ok(())
+        }
+        "symlink" => backup_symlink_metadata(path, backup_path),
+        other => Err(anyhow!("unsupported backup kind '{}'", other)),
+    }
+}
+
 fn backup_symlink_metadata(src: &Path, dst: &Path) -> Result<()> {
     fs::create_dir_all(dst)
         .with_context(|| format!("failed to create symlink backup dir {}", dst.display()))?;
@@ -157,6 +242,15 @@ fn backup_symlink_metadata(src: &Path, dst: &Path) -> Result<()> {
 }
 
 fn restore_symlink_backup(backup_path: &Path, dst: &Path) -> Result<()> {
+    let target = symlink_backup_target(backup_path)?;
+    if let Some(parent) = dst.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create restore parent {}", parent.display()))?;
+    }
+    create_symlink_dir(&target, dst)
+}
+
+fn symlink_backup_target(backup_path: &Path) -> Result<std::path::PathBuf> {
     let raw = fs::read_to_string(backup_path.join("symlink.json")).with_context(|| {
         format!(
             "failed to read symlink backup metadata under {}",
@@ -169,11 +263,7 @@ fn restore_symlink_backup(backup_path: &Path, dst: &Path) -> Result<()> {
         .get("target")
         .and_then(serde_json::Value::as_str)
         .ok_or_else(|| anyhow!("symlink backup missing target"))?;
-    if let Some(parent) = dst.parent() {
-        fs::create_dir_all(parent)
-            .with_context(|| format!("failed to create restore parent {}", parent.display()))?;
-    }
-    create_symlink_dir(Path::new(target), dst)
+    Ok(Path::new(target).to_path_buf())
 }
 
 pub(crate) fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<()> {
@@ -325,8 +415,76 @@ fn create_symlink_like(source_link: &Path, link_target: &Path, dst: &Path) -> Re
 
 #[cfg(test)]
 mod tests {
-    use super::copy_dir_recursive_without_symlinks;
+    use super::{copy_dir_recursive_without_symlinks, restore_path_from_backup_if_absent};
     use std::fs;
+
+    #[test]
+    fn interrupted_rollback_candidate_is_rebuilt_before_activation() -> anyhow::Result<()> {
+        let base = std::env::temp_dir().join(format!(
+            "loom-rollback-restore-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let backup = base.join("backup");
+        let owner = base.join("owner");
+        let stage = owner.join("stage");
+        let candidate = owner.join(".rollback-restore");
+        fs::create_dir_all(&backup)?;
+        fs::create_dir_all(&candidate)?;
+        fs::write(backup.join("complete.txt"), "complete\n")?;
+        fs::write(candidate.join("partial.txt"), "partial\n")?;
+        let evidence = serde_json::json!({
+            "backup_path": backup,
+            "kind": "dir",
+        });
+
+        restore_path_from_backup_if_absent(&stage, &candidate, &evidence)?;
+
+        assert_eq!(
+            fs::read_to_string(stage.join("complete.txt"))?,
+            "complete\n"
+        );
+        assert!(!stage.join("partial.txt").exists());
+        assert!(!candidate.exists());
+        fs::remove_dir_all(base)?;
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rollback_symlink_candidate_never_writes_through_a_preexisting_link() -> anyhow::Result<()> {
+        let base = std::env::temp_dir().join(format!(
+            "loom-rollback-symlink-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let backup = base.join("backup");
+        let owner = base.join("owner");
+        let stage = owner.join("stage");
+        let candidate = owner.join(".rollback-restore");
+        let sentinel = base.join("sentinel");
+        fs::create_dir_all(&backup)?;
+        fs::create_dir_all(&owner)?;
+        fs::create_dir_all(&sentinel)?;
+        fs::write(
+            backup.join("symlink.json"),
+            serde_json::to_vec(&serde_json::json!({"target": "../target"}))?,
+        )?;
+        std::os::unix::fs::symlink(&sentinel, &candidate)?;
+        let evidence = serde_json::json!({
+            "backup_path": backup,
+            "kind": "symlink",
+        });
+
+        restore_path_from_backup_if_absent(&stage, &candidate, &evidence)?;
+
+        assert_eq!(
+            fs::read_link(&stage)?,
+            std::path::PathBuf::from("../target")
+        );
+        assert!(!sentinel.join("symlink.json").exists());
+        assert!(!candidate.exists());
+        fs::remove_dir_all(base)?;
+        Ok(())
+    }
 
     #[test]
     fn copy_without_symlinks_skips_git_metadata_but_keeps_dotfiles() -> anyhow::Result<()> {

@@ -8,6 +8,25 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
 use std::path::Path;
 
+pub(crate) const fn atomic_path_exchange_supported() -> bool {
+    cfg!(any(
+        target_os = "macos",
+        target_os = "ios",
+        target_os = "linux",
+        target_os = "android"
+    ))
+}
+
+pub(crate) const fn atomic_no_replace_supported() -> bool {
+    cfg!(any(
+        target_os = "macos",
+        target_os = "ios",
+        target_os = "linux",
+        target_os = "android",
+        windows
+    ))
+}
+
 #[cfg(any(
     target_os = "macos",
     target_os = "ios",
@@ -251,7 +270,111 @@ pub fn write_atomic_bytes(path: &Path, contents: &[u8]) -> io::Result<()> {
         file.sync_all()?;
     }
 
-    rename_atomic(&tmp_path, path)
+    rename_atomic(&tmp_path, path)?;
+    sync_parent_directory(path)
+}
+
+/// Flush a directory after creating entries within it.
+///
+/// Windows requires both backup semantics to obtain a directory handle and
+/// write access for `FlushFileBuffers`. Filesystems that cannot provide a
+/// flushable directory handle fail closed rather than claiming durability.
+#[cfg(unix)]
+pub fn sync_directory(directory: &Path) -> io::Result<()> {
+    File::open(directory)?.sync_all()
+}
+
+#[cfg(windows)]
+pub fn sync_directory(directory: &Path) -> io::Result<()> {
+    use std::os::windows::fs::OpenOptionsExt;
+    use windows_sys::Win32::Foundation::GENERIC_WRITE;
+    use windows_sys::Win32::Storage::FileSystem::FILE_FLAG_BACKUP_SEMANTICS;
+
+    OpenOptions::new()
+        .access_mode(GENERIC_WRITE)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+        .open(directory)?
+        .sync_all()
+}
+
+#[cfg(not(any(unix, windows)))]
+pub fn sync_directory(_directory: &Path) -> io::Result<()> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "durable directory synchronization is unavailable",
+    ))
+}
+
+/// Persist the directory entry containing `path` after a create or rename.
+///
+/// File synchronization alone does not make a newly published name durable.
+/// Unsupported filesystems and platforms fail closed.
+pub fn sync_parent_directory(path: &Path) -> io::Result<()> {
+    let parent = path.parent().ok_or_else(|| {
+        io::Error::new(io::ErrorKind::InvalidInput, "path has no parent directory")
+    })?;
+    sync_directory(parent)
+}
+
+/// Persist an existing file and the publication of its directory entry.
+///
+/// Windows requires a handle opened with write access for `FlushFileBuffers`.
+pub fn sync_file_and_parent(path: &Path) -> io::Result<()> {
+    OpenOptions::new().write(true).open(path)?.sync_all()?;
+    sync_parent_directory(path)
+}
+
+/// Return whether both existing paths resolve to entries on the same filesystem.
+///
+/// Windows opens the resolved target (without `FILE_FLAG_OPEN_REPARSE_POINT`)
+/// so a junction or symlink cannot make a cross-volume activation appear local.
+#[cfg(unix)]
+pub(crate) fn paths_share_filesystem(left: &Path, right: &Path) -> io::Result<bool> {
+    use std::os::unix::fs::MetadataExt;
+
+    Ok(fs::metadata(left)?.dev() == fs::metadata(right)?.dev())
+}
+
+#[cfg(windows)]
+pub(crate) fn paths_share_filesystem(left: &Path, right: &Path) -> io::Result<bool> {
+    Ok(windows_volume_serial(left)? == windows_volume_serial(right)?)
+}
+
+#[cfg(windows)]
+fn windows_volume_serial(path: &Path) -> io::Result<u64> {
+    use std::os::windows::fs::OpenOptionsExt;
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Storage::FileSystem::{
+        FILE_FLAG_BACKUP_SEMANTICS, FILE_ID_INFO, FileIdInfo, GetFileInformationByHandleEx,
+    };
+
+    let handle = OpenOptions::new()
+        .access_mode(0)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+        .open(path)?;
+    let mut identity = FILE_ID_INFO::default();
+    // SAFETY: `handle` remains open for the call, while the output pointer and
+    // length describe a live, correctly aligned `FILE_ID_INFO` value.
+    let succeeded = unsafe {
+        GetFileInformationByHandleEx(
+            handle.as_raw_handle(),
+            FileIdInfo,
+            (&raw mut identity).cast(),
+            std::mem::size_of::<FILE_ID_INFO>() as u32,
+        )
+    };
+    if succeeded == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(identity.VolumeSerialNumber)
+}
+
+#[cfg(not(any(unix, windows)))]
+pub(crate) fn paths_share_filesystem(_left: &Path, _right: &Path) -> io::Result<bool> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "filesystem identity comparison is unavailable on this platform",
+    ))
 }
 
 /// Append newline-terminated records and sync the file.
@@ -458,6 +581,27 @@ mod tests {
         assert!(!src.exists());
         assert_eq!(fs::read(&dst).unwrap(), b"hello");
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn filesystem_comparison_accepts_entries_on_the_same_volume() -> io::Result<()> {
+        let dir = temp_dir("same-filesystem");
+        let child = dir.join("child");
+        fs::create_dir(&child)?;
+
+        assert!(paths_share_filesystem(&dir, &child)?);
+        fs::remove_dir_all(&dir)
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn directory_sync_uses_a_flushable_handle() -> io::Result<()> {
+        let dir = temp_dir("sync-directory");
+        fs::write(dir.join("entry"), b"durable")?;
+
+        sync_directory(&dir)?;
+        fs::remove_dir_all(dir)
     }
 
     #[cfg(any(

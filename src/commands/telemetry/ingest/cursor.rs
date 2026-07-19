@@ -392,6 +392,7 @@ fn unsupported_continuity_platform() -> CommandFailure {
 
 #[cfg(unix)]
 pub(super) fn source_generation_identity(
+    _file: &File,
     metadata: &Metadata,
 ) -> std::result::Result<String, CommandFailure> {
     use std::os::unix::fs::MetadataExt;
@@ -404,18 +405,47 @@ pub(super) fn source_generation_identity(
 
 #[cfg(windows)]
 pub(super) fn source_generation_identity(
+    file: &File,
     metadata: &Metadata,
 ) -> std::result::Result<String, CommandFailure> {
+    use std::mem::size_of;
     use std::os::windows::fs::MetadataExt;
+    use std::os::windows::io::AsRawHandle;
+
+    use windows_sys::Win32::Storage::FileSystem::{
+        FILE_ID_INFO, FileIdInfo, GetFileInformationByHandleEx,
+    };
+
+    let mut identity = FILE_ID_INFO::default();
+    let size = u32::try_from(size_of::<FILE_ID_INFO>()).map_err(|_| {
+        CommandFailure::new(
+            ErrorCode::InternalError,
+            "Windows file identity metadata size overflow",
+        )
+    })?;
+    // SAFETY: `file` remains open, and `identity` is a correctly sized,
+    // writable FILE_ID_INFO buffer for the duration of this call.
+    let succeeded = unsafe {
+        GetFileInformationByHandleEx(
+            file.as_raw_handle(),
+            FileIdInfo,
+            (&raw mut identity).cast(),
+            size,
+        )
+    };
+    if succeeded == 0 {
+        return Err(map_io(std::io::Error::last_os_error()));
+    }
 
     Ok(hash_fields(
         "loom.telemetry.source-generation.v2",
         &[
-            &metadata
-                .volume_serial_number()
-                .unwrap_or_default()
-                .to_string(),
-            &metadata.file_index().unwrap_or_default().to_string(),
+            &identity.VolumeSerialNumber.to_string(),
+            &identity
+                .FileId
+                .Identifier
+                .map(|byte| byte.to_string())
+                .join(":"),
             &metadata.creation_time().to_string(),
         ],
     ))
@@ -423,6 +453,7 @@ pub(super) fn source_generation_identity(
 
 #[cfg(not(any(unix, windows)))]
 pub(super) fn source_generation_identity(
+    _file: &File,
     _metadata: &Metadata,
 ) -> std::result::Result<String, CommandFailure> {
     Err(unsupported_continuity_platform())

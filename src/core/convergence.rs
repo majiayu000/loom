@@ -1,18 +1,18 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::sha256::{Sha256, to_hex};
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum ConvergenceInputDirection {
     Source,
     Projection,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum ConvergenceAxis {
     Projections,
@@ -20,7 +20,7 @@ pub(crate) enum ConvergenceAxis {
     Visibility,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub(crate) struct ConvergenceSelectors {
     pub agent: Option<String>,
     pub workspace: Option<String>,
@@ -28,7 +28,7 @@ pub(crate) struct ConvergenceSelectors {
     pub input_instance: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub(crate) struct SourceGuard {
     pub direction: ConvergenceInputDirection,
     pub registry_head: String,
@@ -36,7 +36,7 @@ pub(crate) struct SourceGuard {
     pub input_instance: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum ProjectionInputState {
     Clean,
@@ -70,7 +70,7 @@ impl ProjectionInputState {
     }
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub(crate) struct ProjectionInputEvidence {
     pub instance_id: String,
     pub method: String,
@@ -82,7 +82,7 @@ pub(crate) struct ProjectionInputEvidence {
     pub issue: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub(crate) struct ConvergenceInputEvidence {
     pub source_dirty_paths: Vec<String>,
     pub projections: Vec<ProjectionInputEvidence>,
@@ -90,7 +90,7 @@ pub(crate) struct ConvergenceInputEvidence {
     pub selected_input_tree_digest: String,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub(crate) struct ConvergencePreflightEvidence {
     pub input_direction: ConvergenceInputDirection,
     pub input_tree_digest: String,
@@ -99,21 +99,22 @@ pub(crate) struct ConvergencePreflightEvidence {
     pub mutation_allowed: bool,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub(crate) struct ConvergenceInputConflict {
     pub code: String,
     pub message: String,
     pub evidence: Value,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub(crate) struct RegistryGuard {
     pub initialized: bool,
     pub checkpoint_digest: Option<String>,
     pub checkpoint_updated_at: Option<String>,
+    pub projections_digest: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub(crate) struct ProjectionEffectPlan {
     pub instance_id: String,
     pub binding_id: String,
@@ -128,7 +129,7 @@ pub(crate) struct ProjectionEffectPlan {
     pub effect: String,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub(crate) struct VisibilityRequirement {
     pub agent: String,
     pub binding_id: String,
@@ -137,14 +138,14 @@ pub(crate) struct VisibilityRequirement {
     pub required: bool,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum RemotePolicy {
     NotRequested,
     Push,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub(crate) struct SkillConvergencePlan {
     pub plan_id: String,
     pub plan_digest: String,
@@ -318,6 +319,7 @@ fn registry_is_valid(value: &serde_json::Map<String, Value>) -> bool {
     field_is_bool(value, "initialized")
         && field_is_optional_string(value, "checkpoint_digest")
         && field_is_optional_string(value, "checkpoint_updated_at")
+        && field_is_optional_string(value, "projections_digest")
 }
 
 fn projection_effect_is_valid(value: &serde_json::Map<String, Value>) -> bool {

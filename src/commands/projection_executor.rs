@@ -21,9 +21,8 @@ use super::codex_visibility::projection_path_is_safe_symlink;
 use super::file_ops::{backup_path_if_exists, restore_path_from_backup};
 use super::fs_probe::probe_symlink;
 use super::helpers::{
-    commit_registry_state, ensure_skill_exists, map_git, map_io, map_project_io,
-    map_registry_state, projection_instance_id, projection_method_as_str,
-    validate_projection_method,
+    commit_registry_state, map_git, map_io, map_project_io, map_registry_state,
+    projection_instance_id, projection_method_as_str,
 };
 use super::projections::{
     apply_projection_observation, maybe_autosync_or_queue, observe_projection,
@@ -34,7 +33,6 @@ use super::skill_activation::resolve::{find_projection, find_rule};
 use super::skill_cmds::shared::{
     maybe_skill_fault, push_rollback_error, rollback_fault_active, rollback_registry_state,
 };
-use super::skill_safety::enforce_skill_safety;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[allow(
@@ -48,6 +46,7 @@ pub(crate) enum ProjectionExecutionContext {
 
 mod convergence;
 mod modes;
+mod prepared;
 mod staging_cleanup;
 #[cfg(test)]
 mod tests;
@@ -59,10 +58,18 @@ pub(crate) use convergence::{
     ProjectionRollbackArtifact, activate_prepared_projection, discard_prepared_projection,
 };
 use convergence::{map_ownership_fingerprint_error, projection_ownership_fingerprint};
+#[cfg(test)]
+pub(crate) use prepared::execute_projection;
+use prepared::{PreparedOwnerGuard, validate_execution_input};
+pub(crate) use prepared::{
+    PreparedProjectionStaging, convergence_projection_fingerprint,
+    execute_prepared_convergence_projection, execute_standalone_projection,
+    finish_convergence_projection, prepare_convergence_projection,
+};
 use staging_cleanup::{
-    StagingOwnership, cleanup_owned_staging, inject_convergence_anchor_failure,
-    inject_convergence_project_failure_replacement, inject_convergence_staging_mismatch,
-    observe_projection_path, preserve_unverified_staging,
+    StagingOwnership, cleanup_owned_staging, cleanup_projection_staging,
+    inject_convergence_anchor_failure, inject_convergence_project_failure_replacement,
+    inject_convergence_staging_mismatch, observe_projection_path, preserve_unverified_staging,
 };
 
 pub(crate) struct ProjectionExecutionInput {
@@ -97,6 +104,7 @@ pub(crate) struct ProjectionExecutionOutput {
     pub(crate) commit: Option<String>,
     pub(crate) meta: Meta,
     pub(crate) noop: bool,
+    pub(crate) activated: bool,
 }
 
 pub(crate) struct StandaloneProjectionExecutionOutput {
@@ -145,41 +153,13 @@ struct ProjectionRollback<'a> {
     targets_changed: bool,
 }
 
-#[allow(
-    dead_code,
-    reason = "the generic convergence entry point is consumed by SP524-T004"
-)]
-#[cfg(test)]
-pub(crate) fn execute_projection(
-    ctx: &AppContext,
-    paths: &RegistryStatePaths,
-    snapshot: &RegistrySnapshot,
-    input: ProjectionExecutionInput,
-) -> std::result::Result<ProjectionExecutionOutput, CommandFailure> {
-    match input.context {
-        ProjectionExecutionContext::Standalone => {
-            execute_projection_mode::<StandaloneMode>(ctx, paths, snapshot, input).map(|output| {
-                ProjectionExecutionOutput {
-                    projection: output.projection,
-                    prepared: None,
-                    backup: output.backup,
-                    commit: output.commit,
-                    meta: output.meta,
-                    noop: output.noop,
-                }
-            })
-        }
-        ProjectionExecutionContext::Convergence => {
-            execute_projection_mode::<ConvergenceMode>(ctx, paths, snapshot, input)
-        }
-    }
-}
-
 fn execute_projection_mode<M: ExecutionMode>(
     ctx: &AppContext,
     paths: &RegistryStatePaths,
     snapshot: &RegistrySnapshot,
     input: ProjectionExecutionInput,
+    prepared_staging: Option<PreparedProjectionStaging>,
+    prepared_owner_guard: Option<&mut PreparedOwnerGuard<'_>>,
 ) -> std::result::Result<M::Output, CommandFailure> {
     validate_execution_input(ctx, &input)?;
 
@@ -212,8 +192,14 @@ fn execute_projection_mode<M: ExecutionMode>(
         last_observed_error: None,
         updated_at: Some(now),
     };
-    let materialization =
-        materialize_projection::<M>(ctx, &input, existing_projection.as_ref(), &projection)?;
+    let materialization = materialize_projection::<M>(
+        ctx,
+        &input,
+        existing_projection.as_ref(),
+        &projection,
+        prepared_staging,
+        prepared_owner_guard,
+    )?;
 
     let state_changed = input.target_is_new
         || input.binding_is_new
@@ -400,64 +386,13 @@ fn execute_projection_mode<M: ExecutionMode>(
     ))
 }
 
-#[inline(always)]
-pub(crate) fn execute_standalone_projection(
-    ctx: &AppContext,
-    paths: &RegistryStatePaths,
-    snapshot: &RegistrySnapshot,
-    input: ProjectionExecutionInput,
-) -> std::result::Result<StandaloneProjectionExecutionOutput, CommandFailure> {
-    debug_assert_eq!(input.context, ProjectionExecutionContext::Standalone);
-    execute_projection_mode::<StandaloneMode>(ctx, paths, snapshot, input)
-}
-
-#[allow(dead_code, reason = "consumed by the SP524-T004 transaction")]
-pub(crate) fn execute_convergence_projection(
-    ctx: &AppContext,
-    paths: &RegistryStatePaths,
-    snapshot: &RegistrySnapshot,
-    input: ProjectionExecutionInput,
-) -> std::result::Result<ProjectionExecutionOutput, CommandFailure> {
-    debug_assert_eq!(input.context, ProjectionExecutionContext::Convergence);
-    execute_projection_mode::<ConvergenceMode>(ctx, paths, snapshot, input)
-}
-
-fn validate_execution_input(
-    ctx: &AppContext,
-    input: &ProjectionExecutionInput,
-) -> std::result::Result<(), CommandFailure> {
-    ensure_skill_exists(ctx, &input.skill)?;
-    if input.target.agent != input.binding.agent {
-        return Err(CommandFailure::new(
-            ErrorCode::TargetAgentMismatch,
-            format!(
-                "binding '{}' is for agent '{}' but target '{}' is for agent '{}'",
-                input.binding.binding_id,
-                input.binding.agent,
-                input.target.target_id,
-                input.target.agent
-            ),
-        ));
-    }
-    if input.target.ownership != crate::core::vocab::Ownership::Managed {
-        return Err(CommandFailure::new(
-            ErrorCode::TargetNotManaged,
-            format!(
-                "target '{}' has ownership '{}' and cannot be written",
-                input.target.target_id, input.target.ownership
-            ),
-        ));
-    }
-    validate_projection_method(&input.target, input.method)?;
-    enforce_skill_safety(ctx, &input.skill, &input.binding.policy_profile)?;
-    Ok(())
-}
-
 fn materialize_projection<M: ExecutionMode>(
     ctx: &AppContext,
     input: &ProjectionExecutionInput,
     existing_projection: Option<&RegistryProjectionInstance>,
     projection: &RegistryProjectionInstance,
+    prepared_staging: Option<PreparedProjectionStaging>,
+    mut prepared_owner_guard: Option<&mut PreparedOwnerGuard<'_>>,
 ) -> std::result::Result<MaterializationResult<M::Prepared>, CommandFailure> {
     let target_base = PathBuf::from(&input.target.path);
     fs::create_dir_all(&target_base).map_err(map_io)?;
@@ -469,11 +404,11 @@ fn materialize_projection<M: ExecutionMode>(
     };
     let path_exists =
         input.materialized_path.exists() || fs::symlink_metadata(&input.materialized_path).is_ok();
-    let replace_existing = input.replace_existing || M::CONVERGENCE;
+    let replace_existing = input.replace_existing;
 
     if path_exists
         && matches!(input.method, ProjectionMethod::Symlink)
-        && (M::CONVERGENCE || input.safe_existing_noop)
+        && ((M::CONVERGENCE && input.replace_existing) || input.safe_existing_noop)
         && projection_path_is_safe_symlink(&input.materialized_path, skill_src)
     {
         return Ok(MaterializationResult {
@@ -524,28 +459,50 @@ fn materialize_projection<M: ExecutionMode>(
     }
 
     let existing_digest = if M::CONVERGENCE && path_exists {
-        Some(
-            projection_ownership_fingerprint(&input.materialized_path)
-                .map_err(|err| map_ownership_fingerprint_error(err, &input.materialized_path))?,
-        )
+        match prepared_staging
+            .as_ref()
+            .and_then(|staging| staging.expected_live_fingerprint.clone())
+        {
+            Some(expected) => Some(expected),
+            None => Some(
+                projection_ownership_fingerprint(&input.materialized_path).map_err(|err| {
+                    map_ownership_fingerprint_error(err, &input.materialized_path)
+                })?,
+            ),
+        }
     } else {
         None
     };
 
-    let staging_path = if M::CONVERGENCE {
-        input.staging_path.clone().unwrap_or_else(|| {
-            target_base.join(format!(
-                ".loom-projection-stage-{}",
-                uuid::Uuid::new_v4().simple()
-            ))
-        })
-    } else {
-        target_base.join(format!(
-            ".loom-projection-stage-{}",
-            uuid::Uuid::new_v4().simple()
-        ))
-    };
+    if prepared_staging.is_some() && !M::CONVERGENCE {
+        return Err(CommandFailure::new(
+            ErrorCode::InternalError,
+            "prepared staging requires convergence mode",
+        ));
+    }
+    let expected_prepared_fingerprint = prepared_staging
+        .as_ref()
+        .map(|staging| staging.expected_fingerprint.clone());
+    let has_prepared_staging = prepared_staging.is_some();
+    let staging_path = prepared_staging
+        .map(|staging| staging.path)
+        .unwrap_or_else(|| {
+            if M::CONVERGENCE {
+                input.staging_path.clone().unwrap_or_else(|| {
+                    target_base.join(format!(
+                        ".loom-projection-stage-{}",
+                        uuid::Uuid::new_v4().simple()
+                    ))
+                })
+            } else {
+                target_base.join(format!(
+                    ".loom-projection-stage-{}",
+                    uuid::Uuid::new_v4().simple()
+                ))
+            }
+        });
     if M::CONVERGENCE
+        && !has_prepared_staging
         && (staging_path == input.materialized_path
             || staging_path.parent() != input.materialized_path.parent())
     {
@@ -554,7 +511,8 @@ fn materialize_projection<M: ExecutionMode>(
             "staging path must be a distinct sibling",
         ));
     }
-    if M::CONVERGENCE && fs::symlink_metadata(&staging_path).is_ok() {
+    let staging_exists = fs::symlink_metadata(&staging_path).is_ok();
+    if M::CONVERGENCE && staging_exists && !has_prepared_staging {
         return Err(CommandFailure::new(
             ErrorCode::ProjectionConflict,
             format!(
@@ -563,7 +521,27 @@ fn materialize_projection<M: ExecutionMode>(
             ),
         ));
     }
-    if let Err(err) = project_skill_to_target(skill_src, &staging_path, input.method) {
+    if has_prepared_staging && !staging_exists {
+        return Err(CommandFailure::new(
+            ErrorCode::StateCorrupt,
+            format!(
+                "prepared projection staging path is missing: {}",
+                staging_path.display()
+            ),
+        ));
+    }
+    if has_prepared_staging {
+        let guard = prepared_owner_guard.as_mut().ok_or_else(|| {
+            CommandFailure::new(
+                ErrorCode::InternalError,
+                "prepared staging owner guard is missing",
+            )
+        })?;
+        guard(&staging_path)?;
+    }
+    if !has_prepared_staging
+        && let Err(err) = project_skill_to_target(skill_src, &staging_path, input.method)
+    {
         if M::CONVERGENCE {
             inject_convergence_project_failure_replacement(input, &staging_path)?;
             return Err(preserve_unverified_staging(
@@ -581,7 +559,21 @@ fn materialize_projection<M: ExecutionMode>(
             return Err(preserve_unverified_staging(err, &staging_path));
         }
         match projection_ownership_fingerprint(&staging_path) {
-            Ok(digest) => Some(StagingOwnership::new(staging_path.clone(), digest)),
+            Ok(digest) => {
+                if expected_prepared_fingerprint
+                    .as_deref()
+                    .is_some_and(|expected| expected != digest)
+                {
+                    return Err(preserve_unverified_staging(
+                        CommandFailure::new(
+                            ErrorCode::ProjectionConflict,
+                            "prepared projection staging fingerprint changed",
+                        ),
+                        &staging_path,
+                    ));
+                }
+                Some(StagingOwnership::new(staging_path.clone(), digest))
+            }
             Err(err) => {
                 return Err(preserve_unverified_staging(
                     map_ownership_fingerprint_error(err, &staging_path),
@@ -690,12 +682,6 @@ fn replace_standalone_projection(
         return Err(map_io(err).with_rollback_errors(rollback_errors));
     }
     Ok(backup)
-}
-
-fn cleanup_projection_staging(path: &Path, errors: &mut Vec<Value>) {
-    if let Err(err) = remove_path_if_exists(path) {
-        push_rollback_error(errors, "remove_projection_staging", err);
-    }
 }
 
 fn save_projection_state(

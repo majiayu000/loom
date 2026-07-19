@@ -71,6 +71,9 @@ fn retire_registry_after_external_head(
         return Ok(None);
     }
     super::registry_commit::discard_retained_registry_index_locks(app, journal)?;
+    if !external_head_preserves_reviewed_boundaries(app, plan, journal)? {
+        return Ok(None);
+    }
     let mut errors = super::rollback::restore_registry_and_activated_projections(
         paths,
         plan,

@@ -1,3 +1,4 @@
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Result, anyhow};
@@ -5,7 +6,24 @@ use anyhow::{Result, anyhow};
 use crate::sha256::{Sha256, to_hex};
 
 use super::prepared_index::path_entry_exists;
-use super::{AppContext, resolve_git_index_path};
+use super::{AppContext, path_exists_or_is_tracked, resolve_git_index_path};
+
+pub(super) fn index_lock_path(index: &Path) -> PathBuf {
+    let mut name = OsString::from(index.as_os_str());
+    name.push(".lock");
+    PathBuf::from(name)
+}
+
+pub(super) fn eligible_paths(ctx: &AppContext, paths: &[&str]) -> Result<Vec<String>> {
+    paths
+        .iter()
+        .filter_map(|path| match path_exists_or_is_tracked(ctx, path) {
+            Ok(true) => Some(Ok((*path).to_string())),
+            Ok(false) => None,
+            Err(error) => Some(Err(error)),
+        })
+        .collect()
+}
 
 pub(super) fn prepared_index_aux_path(
     ctx: &AppContext,

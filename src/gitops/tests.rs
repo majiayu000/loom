@@ -116,6 +116,10 @@ fn prepared_index_install_rejects_tamper_before_active_mutation() {
         fs::read(&active_index).expect("active index"),
         original_index
     );
+    assert_eq!(
+        fs::read(dir.join(".git/index.lock")).expect("retained published lock"),
+        fs::read(&prepared).expect("prepared evidence")
+    );
     assert_eq!(git_ok(&dir, &["rev-parse", "HEAD"]), original_head);
     fs::remove_dir_all(&dir).expect("remove test repository");
 }
@@ -192,7 +196,10 @@ fn prepared_index_install_rejects_a_mutating_guard_without_evidence_damage() {
         fs::read(&active_index).expect("active after guard"),
         original_index
     );
-    assert!(!dir.join(".git/index.lock").exists());
+    assert_eq!(
+        fs::read(dir.join(".git/index.lock")).expect("retained mutated lock"),
+        b"mutated lock\n"
+    );
     fs::remove_dir_all(&dir).expect("remove test repository");
 }
 
@@ -251,7 +258,7 @@ fn prepared_index_publication_crash_leaves_an_exact_recoverable_lock() {
 }
 
 #[test]
-fn prepared_index_recovery_cleans_only_its_mutated_lock() {
+fn prepared_index_recovery_preserves_public_lock_after_guard_failure() {
     for replacement in [false, true] {
         let (ctx, dir) = fresh_repo("prepared-index-recovery-guard");
         let active_index = dir.join(".git/index");
@@ -280,12 +287,7 @@ fn prepared_index_recovery_cleans_only_its_mutated_lock() {
             fs::read(&active_index).expect("active after guard"),
             original_index
         );
-        if replacement {
-            assert_eq!(fs::read(&lock).expect("preserved foreign lock"), foreign);
-            fs::remove_file(&lock).expect("remove foreign lock");
-        } else {
-            assert!(!lock.exists(), "owned mutated lock was not cleaned");
-        }
+        assert_eq!(fs::read(&lock).expect("preserved public lock"), foreign);
         fs::remove_dir_all(&dir).expect("remove test repository");
     }
 }

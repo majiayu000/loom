@@ -208,16 +208,24 @@ fn prepare_declared_backup(
     })?;
     if !backup_path.exists() {
         create_declared_path_backup(original, backup).map_err(map_io)?;
+        maybe_skill_fault("convergence_interrupt_after_declared_backup")?;
     }
-    let actual = declared_backup_digest(backup_path, backup)?;
-    if actual != expected {
-        return Err(CommandFailure::new(
-            ErrorCode::StateCorrupt,
-            format!(
-                "existing declared backup {} does not match its journal digest",
-                backup_path.display()
-            ),
-        ));
+    let backup_is_exact = declared_backup_digest(backup_path, backup)
+        .ok()
+        .is_some_and(|actual| actual == expected);
+    if !backup_is_exact {
+        crate::fs_util::remove_path_if_exists(backup_path).map_err(map_io)?;
+        create_declared_path_backup(original, backup).map_err(map_io)?;
+        maybe_skill_fault("convergence_interrupt_after_declared_backup")?;
+        if declared_backup_digest(backup_path, backup)? != expected {
+            return Err(CommandFailure::new(
+                ErrorCode::StateCorrupt,
+                format!(
+                    "rebuilt declared backup {} is invalid",
+                    backup_path.display()
+                ),
+            ));
+        }
     }
     Ok(())
 }

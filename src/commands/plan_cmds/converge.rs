@@ -527,6 +527,7 @@ fn resolve_projection_effects(
                 updated_at: None,
             });
         let observation = observe_projection(ctx, &observed_projection);
+        let materialized_missing = observation.error_code == Some("materialized_missing");
         let effect = ProjectionEffectPlan {
             instance_id: instance_id.clone(),
             binding_id: binding.binding_id.clone(),
@@ -538,12 +539,14 @@ fn resolve_projection_effects(
             materialized_path: materialized_path.display().to_string(),
             source_tree_digest: source_digest.to_string(),
             materialized_tree_digest: observation.materialized_tree_digest,
-            effect: if existing.is_some()
-                || (rule.method == crate::cli::ProjectionMethod::Symlink
-                    && projection_path_is_safe_symlink(
-                        &materialized_path,
-                        &ctx.skill_path(&args.skill),
-                    )) {
+            effect: if !materialized_missing
+                && (existing.is_some()
+                    || (rule.method == crate::cli::ProjectionMethod::Symlink
+                        && projection_path_is_safe_symlink(
+                            &materialized_path,
+                            &ctx.skill_path(&args.skill),
+                        )))
+            {
                 "refresh".to_string()
             } else {
                 "create".to_string()

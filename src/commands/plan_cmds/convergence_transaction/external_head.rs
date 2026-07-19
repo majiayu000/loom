@@ -1,5 +1,20 @@
 use super::*;
 
+pub(super) fn retire_stale_pre_mutation_journal(
+    app: &App,
+    journal_path: &Path,
+    journal: &mut TransactionJournal,
+    failure: CommandFailure,
+) -> std::result::Result<CommandFailure, CommandFailure> {
+    journal.rollback_head = Some(gitops::head(&app.ctx).map_err(map_git)?);
+    journal.rollback_index_digest = Some(active_index_digest(app)?);
+    let errors = cleanup_declared_artifacts(journal_path, journal);
+    if errors.is_empty() {
+        archive_rolled_back_journal(journal_path, journal)?;
+    }
+    Ok(failure.with_rollback_errors(errors))
+}
+
 const MANAGED_REGISTRY_PATHS: &[&str] = &[
     "state/registry/bindings.json",
     "state/registry/rules.json",

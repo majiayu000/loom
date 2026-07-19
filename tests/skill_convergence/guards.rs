@@ -262,6 +262,30 @@ fn missing_symlink_refresh_is_stale_before_writes() {
 }
 
 #[test]
+fn reviewed_missing_refresh_is_recreated() {
+    let fixture = projected_fixture();
+    fs::remove_dir_all(fixture.target.path().join("demo")).expect("remove live projection");
+    let (output, plan) = plan_converge(&fixture, &[]);
+    assert!(
+        output.status.success(),
+        "missing refresh plan failed: {plan}"
+    );
+    assert_eq!(plan["data"]["effects"][0]["effect"], json!("create"));
+    assert_eq!(
+        plan["data"]["input"]["projections"][0]["state"],
+        json!("missing")
+    );
+    assert_eq!(plan["data"]["safe_to_apply"], json!(true));
+
+    let (output, applied) = apply_plan(&fixture, &plan, "missing-refresh", &[]);
+    assert!(
+        output.status.success(),
+        "missing refresh apply failed: {applied}"
+    );
+    assert!(fixture.target.path().join("demo/SKILL.md").is_file());
+}
+
+#[test]
 fn routing_drift_is_stale_before_writes() {
     for kind in ["rule-removed", "binding-inactive"] {
         let fixture = projected_fixture();

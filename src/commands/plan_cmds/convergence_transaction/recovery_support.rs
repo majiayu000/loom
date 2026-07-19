@@ -45,7 +45,18 @@ pub(super) fn recover_journal(
             return Ok(None);
         }
         TransactionPhase::Preparing | TransactionPhase::Prepared => {
-            let snapshot = super::guards::validate_pre_mutation_recovery_guards(app, plan)?;
+            let snapshot = match super::guards::validate_pre_mutation_recovery_guards(app, plan) {
+                Ok(snapshot) => snapshot,
+                Err(failure) if failure.code == ErrorCode::DependencyConflict => {
+                    return Err(super::external_head::retire_stale_pre_mutation_journal(
+                        app,
+                        journal_path,
+                        &mut journal,
+                        failure,
+                    )?);
+                }
+                Err(failure) => return Err(failure),
+            };
             if journal.phase == TransactionPhase::Preparing {
                 super::preparation::prepare_transaction_artifacts_from_snapshot(
                     app,

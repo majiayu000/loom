@@ -356,10 +356,11 @@ pub(super) fn rollback_uncommitted_source_only(
         .ok_or_else(|| corrupt("transaction Git index backup digest is missing"))?;
     if head != journal.previous_head {
         let live_source = skill_tree_digest(&app.ctx.skill_path(&plan.skill)).map_err(map_io)?;
-        if live_index != original_index
-            || live_source != plan.input.selected_input_tree_digest
+        let relative_source = PathBuf::from(format!("skills/{}", plan.skill));
+        if live_source != plan.input.selected_input_tree_digest
             || journal.source_head.is_some()
             || journal.source_commit.is_some()
+            || gitops::has_staged_changes_for_path(&app.ctx, &relative_source).map_err(map_git)?
         {
             return Err(recovery_stale(
                 "external HEAD does not preserve the uncommitted source boundary",
@@ -380,13 +381,18 @@ pub(super) fn rollback_uncommitted_source_only(
     }
     if journal.phase == TransactionPhase::CommittingSource {
         if live_index != original_index {
-            if journal.source_staged_index_digest.as_deref() != Some(live_index.as_str()) {
+            if head != journal.previous_head {
+                // A later commit may legitimately rewrite the index bytes while
+                // leaving no staged change on the transaction-owned source path.
+                // Preserve that external index after the path-level proof above.
+            } else if journal.source_staged_index_digest.as_deref() != Some(live_index.as_str()) {
                 return Err(recovery_stale(
                     "Git index is neither old nor transaction-staged during source recovery",
                 ));
+            } else {
+                gitops::restore_index_from_backup(&app.ctx, Path::new(&journal.index_backup))
+                    .map_err(map_git)?;
             }
-            gitops::restore_index_from_backup(&app.ctx, Path::new(&journal.index_backup))
-                .map_err(map_git)?;
         }
     }
     Ok(())

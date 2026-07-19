@@ -144,14 +144,11 @@ pub(super) fn recover_journal(
     {
         rollback_uncommitted_source_only(app, plan, &journal)?;
         let errors = cleanup_declared_artifacts(app, journal_path, &mut journal, false);
-        if errors.is_empty() {
-            return Ok(None);
-        }
-        return Err(CommandFailure::new(
-            ErrorCode::StateCorrupt,
-            "uncommitted source cleanup failed",
-        )
-        .with_rollback_errors(errors));
+        return super::source_recovery::finish_uncommitted_source_recovery(
+            journal_path,
+            &journal,
+            errors,
+        );
     }
     if source_is_committed(&journal) {
         reprove_source_boundary(app, plan, &journal)?;

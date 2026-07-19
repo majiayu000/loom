@@ -254,7 +254,8 @@ fn projection_source_swap_recovers_after_an_unrelated_external_head() {
     );
     assert_eq!(
         snapshot_tree(&fixture.root.path().join("skills/demo")),
-        original_source
+        original_source,
+        "source changed after rejected recovery: {rejected}"
     );
     assert!(
         !fixture

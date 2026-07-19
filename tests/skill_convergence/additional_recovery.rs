@@ -308,20 +308,7 @@ fn registry_recovery_adopts_only_its_durable_index_lock() {
         .as_str()
         .expect("registry commit");
     let source_head = journal["source_head"].as_str().expect("source head");
-    let commit_attempt = journal["registry_index_attempts"]
-        .as_array()
-        .expect("registry index attempts")
-        .iter()
-        .rev()
-        .find(|attempt| attempt["purpose"] == json!("commit"))
-        .expect("registry commit index attempt");
-    let prepared = Path::new(
-        commit_attempt["prepared_index"]
-            .as_str()
-            .expect("prepared index"),
-    );
-    fs::copy(prepared, fixture.root.path().join(".git/index.lock"))
-        .expect("simulate retained transaction lock");
+    assert!(fixture.root.path().join(".git/index.lock").is_file());
     git(
         fixture.root.path(),
         &["update-ref", "HEAD", registry_commit, source_head],
@@ -353,25 +340,14 @@ fn source_recovery_adopts_only_its_durable_index_lock() {
         &fixture,
         &plan,
         "source-lock-crash",
-        &[(
-            "LOOM_FAULT_INJECT",
-            "convergence_interrupt_after_staged_index_prepared",
-        )],
+        &[("LOOM_TEST_PREPARED_INDEX_FAIL_AFTER_PUBLICATION", "1")],
     );
     assert!(
         !output.status.success(),
-        "source index preparation did not stop: {interrupted}"
+        "source index publication did not stop: {interrupted}"
     );
-    let journal_path = fixture
-        .root
-        .path()
-        .join("state/transactions/convergence-demo.json");
-    let journal: Value =
-        serde_json::from_slice(&fs::read(journal_path).expect("journal")).expect("parse journal");
-    let prepared =
-        Path::new(journal["artifact_root"].as_str().expect("artifact root")).join("source-index");
     let lock = fixture.root.path().join(".git/index.lock");
-    fs::copy(&prepared, &lock).expect("simulate retained source index lock");
+    assert!(lock.is_file());
 
     let (output, recovered) = apply_plan(&fixture, &plan, "source-lock-crash", &[]);
     assert!(

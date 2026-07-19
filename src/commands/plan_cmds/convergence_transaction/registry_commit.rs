@@ -245,6 +245,10 @@ pub(super) fn align_registry_index(
             "recorded registry commit differs from HEAD",
         ));
     }
+    if let Some(attempt) = recover_recorded_registry_index_lock(app, journal, expected_head)? {
+        retain_registry_index_attempt(journal_path, journal, attempt)?;
+        return Ok(());
+    }
     let (attempt, base_index, prepared_index, _) =
         allocate_registry_indexes(journal_path, journal, "repair")?;
     gitops::snapshot_index_to(&app.ctx, &base_index).map_err(map_git)?;
@@ -288,6 +292,43 @@ pub(super) fn align_registry_index(
     gitops::install_prepared_index_with_guard(&app.ctx, &prepared_index, &guard)
         .map_err(super::index_lock_failure::map_install_error)?;
     retain_registry_index_attempt(journal_path, journal, attempt)
+}
+
+fn recover_recorded_registry_index_lock(
+    app: &App,
+    journal: &TransactionJournal,
+    expected_head: &str,
+) -> std::result::Result<Option<usize>, CommandFailure> {
+    for (index, attempt) in journal.registry_index_attempts.iter().enumerate().rev() {
+        if attempt.state != RegistryIndexAttemptState::Ready || attempt.changed != Some(true) {
+            continue;
+        }
+        let prepared = Path::new(&attempt.prepared_index);
+        if !gitops::prepared_index_claim_exists(&app.ctx, prepared).map_err(map_git)? {
+            continue;
+        }
+        let expected_index = attempt.prepared_digest.as_deref().ok_or_else(|| {
+            CommandFailure::new(
+                ErrorCode::StateCorrupt,
+                "recorded registry index claim has no prepared digest",
+            )
+        })?;
+        let base_index = attempt.base_digest.as_deref().ok_or_else(|| {
+            CommandFailure::new(
+                ErrorCode::StateCorrupt,
+                "recorded registry index claim has no base digest",
+            )
+        })?;
+        let recovered =
+            gitops::recover_prepared_index_lock_with_guard(&app.ctx, prepared, &|candidate| {
+                validate_index_install(app, candidate, expected_index, base_index, expected_head)
+            })
+            .map_err(super::index_lock_failure::map_install_error)?;
+        if recovered {
+            return Ok(Some(index));
+        }
+    }
+    Ok(None)
 }
 
 fn allocate_registry_indexes(

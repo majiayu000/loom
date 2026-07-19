@@ -80,6 +80,31 @@ fn file_sha256(path: &Path) -> String {
     format!("sha256:{}", to_hex(&hasher.finalize()))
 }
 
+fn seed_owned_index_lock(ctx: &AppContext, prepared: &Path, lock: &Path) {
+    let bytes = fs::read(prepared).expect("prepared index bytes");
+    let claim = super::prepared_index::prepared_index_aux_path(ctx, prepared, ".lock-claim")
+        .expect("claim path");
+    fs::hard_link(prepared, &claim).expect("durable index claim");
+    crate::fs_util::write_atomic_bytes(prepared, &bytes).expect("detach prepared evidence");
+    fs::hard_link(&claim, lock).expect("publish owned index lock");
+}
+
+fn assert_no_index_aux_paths(ctx: &AppContext, prepared: &Path) {
+    for suffix in [
+        ".lock-claim",
+        ".lock-capture",
+        ".lock-guard",
+        ".lock-publish",
+    ] {
+        assert!(
+            !super::prepared_index::prepared_index_aux_path(ctx, prepared, suffix)
+                .expect("auxiliary path")
+                .exists(),
+            "private index path remained after completion: {suffix}"
+        );
+    }
+}
+
 #[test]
 fn prepared_index_install_rejects_tamper_before_active_mutation() {
     let (ctx, dir) = fresh_repo("prepared-index-tamper");
@@ -174,6 +199,28 @@ fn prepared_index_install_crosses_filesystems_without_overwriting_the_lock() {
 }
 
 #[test]
+fn prepared_index_install_preserves_byte_identical_foreign_lock() {
+    let (ctx, dir) = fresh_repo("prepared-index-identical-foreign-lock");
+    let active_index = dir.join(".git/index");
+    let original_index = fs::read(&active_index).expect("active index");
+    let prepared = dir.join("prepared-index");
+    fs::copy(&active_index, &prepared).expect("prepared index");
+    let lock = dir.join(".git/index.lock");
+    fs::copy(&prepared, &lock).expect("byte-identical foreign lock");
+
+    install_prepared_index_with_guard(&ctx, &prepared, &|_| Ok(()))
+        .expect_err("byte-identical foreign lock must block installation");
+
+    assert_eq!(fs::read(&lock).expect("preserved lock"), original_index);
+    assert_eq!(
+        fs::read(&active_index).expect("active index"),
+        original_index
+    );
+    fs::remove_file(&lock).expect("remove test lock");
+    fs::remove_dir_all(&dir).expect("remove test repository");
+}
+
+#[test]
 fn prepared_index_install_rejects_a_mutating_guard_without_evidence_damage() {
     let (ctx, dir) = fresh_repo("prepared-index-mutating-guard");
     let active_index = dir.join(".git/index");
@@ -197,8 +244,11 @@ fn prepared_index_install_rejects_a_mutating_guard_without_evidence_damage() {
         original_index
     );
     assert_eq!(
-        fs::read(dir.join(".git/index.lock")).expect("retained mutated lock"),
-        b"mutated lock\n"
+        fs::read(dir.join(".git/index.lock")).expect("retained owned lock"),
+        prepared_bytes
+    );
+    assert!(
+        prepared_index_claim_exists(&ctx, &prepared).expect("inspect retained claim")
     );
     fs::remove_dir_all(&dir).expect("remove test repository");
 }
@@ -244,6 +294,7 @@ fn prepared_index_publication_crash_leaves_an_exact_recoverable_lock() {
             .expect("recover exact published lock")
     );
     assert!(!lock.exists());
+    assert_no_index_aux_paths(&ctx, &prepared);
     assert_eq!(
         fs::read(&active_index).expect("installed index"),
         fs::read(&prepared).unwrap()
@@ -258,7 +309,7 @@ fn prepared_index_publication_crash_leaves_an_exact_recoverable_lock() {
 }
 
 #[test]
-fn prepared_index_recovery_preserves_public_lock_after_guard_failure() {
+fn prepared_index_recovery_retains_owned_lock_after_mutating_guard() {
     for replacement in [false, true] {
         let (ctx, dir) = fresh_repo("prepared-index-recovery-guard");
         let active_index = dir.join(".git/index");
@@ -267,7 +318,7 @@ fn prepared_index_recovery_preserves_public_lock_after_guard_failure() {
         fs::copy(&active_index, &prepared).expect("prepared index");
         let prepared_bytes = fs::read(&prepared).expect("prepared evidence");
         let lock = dir.join(".git/index.lock");
-        fs::copy(&prepared, &lock).expect("exact recoverable lock");
+        seed_owned_index_lock(&ctx, &prepared, &lock);
         let foreign = b"concurrently replaced foreign lock\n";
 
         recover_prepared_index_lock_with_guard(&ctx, &prepared, &|candidate| {
@@ -287,7 +338,13 @@ fn prepared_index_recovery_preserves_public_lock_after_guard_failure() {
             fs::read(&active_index).expect("active after guard"),
             original_index
         );
-        assert_eq!(fs::read(&lock).expect("preserved public lock"), foreign);
+        assert_eq!(
+            fs::read(&lock).expect("retained owned lock"),
+            prepared_bytes
+        );
+        assert!(
+            prepared_index_claim_exists(&ctx, &prepared).expect("inspect retained claim")
+        );
         fs::remove_dir_all(&dir).expect("remove test repository");
     }
 }
@@ -306,6 +363,47 @@ fn prepared_index_lock_recovery_preserves_nonmatching_lock() {
 
     assert_eq!(fs::read(&lock).expect("preserved foreign lock"), foreign);
     fs::remove_file(&lock).expect("remove test lock");
+    fs::remove_dir_all(&dir).expect("remove test repository");
+}
+
+#[test]
+fn prepared_index_lock_recovery_preserves_byte_identical_unclaimed_lock() {
+    let (ctx, dir) = fresh_repo("prepared-index-recovery-identical-lock");
+    let prepared = dir.join("prepared-index");
+    fs::copy(dir.join(".git/index"), &prepared).expect("prepared index");
+    let lock = dir.join(".git/index.lock");
+    fs::copy(&prepared, &lock).expect("byte-identical unclaimed lock");
+
+    recover_prepared_index_lock_with_guard(&ctx, &prepared, &|_| Ok(()))
+        .expect_err("unclaimed lock must not be adopted by bytes alone");
+
+    assert_eq!(
+        fs::read(&lock).expect("preserved lock"),
+        fs::read(&prepared).expect("prepared evidence")
+    );
+    fs::remove_file(&lock).expect("remove test lock");
+    fs::remove_dir_all(&dir).expect("remove test repository");
+}
+
+#[test]
+fn prepared_index_recovery_collision_preserves_both_foreign_entries() {
+    let (ctx, dir) = fresh_repo("prepared-index-recovery-collision");
+    let prepared = dir.join("prepared-index");
+    fs::copy(dir.join(".git/index"), &prepared).expect("prepared index");
+    let lock = dir.join(".git/index.lock");
+    let capture =
+        super::prepared_index::prepared_index_aux_path(&ctx, &prepared, ".lock-capture")
+            .expect("capture path");
+    let public_foreign = b"new public foreign lock\n";
+    let captured_foreign = b"captured foreign lock\n";
+    fs::write(&lock, public_foreign).expect("public foreign lock");
+    fs::write(&capture, captured_foreign).expect("captured foreign lock");
+
+    recover_prepared_index_lock_with_guard(&ctx, &prepared, &|_| Ok(()))
+        .expect_err("foreign restoration collision must fail closed");
+
+    assert_eq!(fs::read(&lock).expect("public lock"), public_foreign);
+    assert_eq!(fs::read(&capture).expect("captured lock"), captured_foreign);
     fs::remove_dir_all(&dir).expect("remove test repository");
 }
 

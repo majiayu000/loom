@@ -128,7 +128,9 @@ pub fn install_prepared_index_with_guard(
         }
         #[cfg(debug_assertions)]
         if std::env::var_os("LOOM_TEST_ROLLBACK_INDEX_FAIL_AFTER_PUBLICATION").is_some()
-            && prepared_index.file_name().is_some_and(|name| name == "index")
+            && prepared_index
+                .file_name()
+                .is_some_and(|name| name == "index")
         {
             return Err(anyhow!("rollback index post-publication test failure"));
         }

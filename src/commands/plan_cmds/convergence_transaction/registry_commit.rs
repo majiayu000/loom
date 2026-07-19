@@ -178,14 +178,24 @@ pub(super) fn resume_ready_registry_index_lock(
     };
     let prepared_index = PathBuf::from(&ready.prepared_index);
     let expected_index = ready.prepared_digest.clone().ok_or_else(|| {
-        CommandFailure::new(ErrorCode::StateCorrupt, "prepared registry index digest is missing")
+        CommandFailure::new(
+            ErrorCode::StateCorrupt,
+            "prepared registry index digest is missing",
+        )
     })?;
     let base_index_digest = ready.base_digest.clone().ok_or_else(|| {
-        CommandFailure::new(ErrorCode::StateCorrupt, "base registry index digest is missing")
+        CommandFailure::new(
+            ErrorCode::StateCorrupt,
+            "base registry index digest is missing",
+        )
     })?;
     let commit = journal.registry_commit.clone().ok_or_else(|| {
-        CommandFailure::new(ErrorCode::StateCorrupt, "prepared registry commit is missing")
+        CommandFailure::new(
+            ErrorCode::StateCorrupt,
+            "prepared registry commit is missing",
+        )
     })?;
+    super::recovery_evidence::verify_registry_commit(app, plan, journal, &commit, source_head)?;
     let guard = |candidate: &Path| {
         validate_registry_result(app, plan, journal)
             .map_err(|error| anyhow::anyhow!(error.message))?;
@@ -194,13 +204,7 @@ pub(super) fn resume_ready_registry_index_lock(
         if head != source_head && head != commit {
             return Err(anyhow::anyhow!("registry recovery HEAD changed"));
         }
-        validate_index_install(
-            app,
-            candidate,
-            &expected_index,
-            &base_index_digest,
-            &head,
-        )?;
+        validate_index_install(app, candidate, &expected_index, &base_index_digest, &head)?;
         if head == source_head {
             gitops::move_head_if_unchanged(&app.ctx, &commit, source_head)?;
         }

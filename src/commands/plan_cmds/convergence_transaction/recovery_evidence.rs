@@ -567,7 +567,7 @@ fn projection_identity_state(
     }
 }
 
-fn verify_registry_commit(
+pub(super) fn verify_registry_commit(
     app: &App,
     plan: &SkillConvergencePlan,
     journal: &TransactionJournal,

@@ -132,6 +132,45 @@ pub(super) fn external_head_preserves_reviewed_boundaries(
     Ok(unchanged.status.success())
 }
 
+pub(super) fn validate_committed_managed_surfaces(
+    app: &App,
+    plan: &SkillConvergencePlan,
+    boundary: &str,
+) -> std::result::Result<(), CommandFailure> {
+    let head = gitops::head(&app.ctx).map_err(map_git)?;
+    if head != boundary {
+        let range = format!("{boundary}..{head}");
+        let mut args = vec!["diff", "--quiet", range.as_str(), "--"];
+        args.extend(MANAGED_REGISTRY_PATHS.iter().copied());
+        if !gitops::run_git_allow_failure(&app.ctx, &args)
+            .map_err(map_git)?
+            .status
+            .success()
+        {
+            return Err(recovery_stale(
+                "descendant changed a committed registry or policy boundary",
+            ));
+        }
+    }
+    for path in MANAGED_REGISTRY_PATHS {
+        for args in [
+            vec!["diff", "--quiet", "--", path],
+            vec!["diff", "--cached", "--quiet", "--", path],
+        ] {
+            if !gitops::run_git_allow_failure(&app.ctx, &args)
+                .map_err(map_git)?
+                .status
+                .success()
+            {
+                return Err(recovery_stale(
+                    "committed registry or policy surface has worktree drift",
+                ));
+            }
+        }
+    }
+    super::guards::validate_recovery_routing(app, plan)
+}
+
 pub(super) fn complete_durable_registry_noop(
     app: &App,
     plan: &SkillConvergencePlan,
@@ -156,6 +195,7 @@ pub(super) fn complete_durable_registry_noop(
         ));
     }
     super::recovery_evidence::reprove_source_boundary(app, plan, journal)?;
+    validate_committed_managed_surfaces(app, plan, source_head)?;
     super::recovery_support::validate_registry_result(app, plan, journal)?;
     let result = committed_result_with_registry(plan, journal, None);
     journal.result = Some(result.clone());

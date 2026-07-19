@@ -124,6 +124,12 @@ pub(super) fn replay_committed_retained(
     journal: &mut TransactionJournal,
 ) -> std::result::Result<Value, CommandFailure> {
     reprove_source_boundary(app, plan, journal)?;
+    let boundary = journal
+        .registry_commit
+        .as_deref()
+        .or(journal.source_head.as_deref())
+        .ok_or_else(|| corrupt("retained journal has no committed boundary"))?;
+    super::external_head::validate_committed_managed_surfaces(app, plan, boundary)?;
     let paths = RegistryStatePaths::from_app_context(&app.ctx);
     validate_mutated_surfaces(app, &paths, plan, journal)?;
     journal

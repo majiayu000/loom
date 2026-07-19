@@ -379,20 +379,18 @@ pub(super) fn rollback_uncommitted_source_only(
             restore_source_from_evidence(app, plan, journal)?;
         }
     }
-    if journal.phase == TransactionPhase::CommittingSource {
-        if live_index != original_index {
-            if head != journal.previous_head {
-                // A later commit may legitimately rewrite the index bytes while
-                // leaving no staged change on the transaction-owned source path.
-                // Preserve that external index after the path-level proof above.
-            } else if journal.source_staged_index_digest.as_deref() != Some(live_index.as_str()) {
-                return Err(recovery_stale(
-                    "Git index is neither old nor transaction-staged during source recovery",
-                ));
-            } else {
-                gitops::restore_index_from_backup(&app.ctx, Path::new(&journal.index_backup))
-                    .map_err(map_git)?;
-            }
+    if journal.phase == TransactionPhase::CommittingSource && live_index != original_index {
+        if head != journal.previous_head {
+            // A later commit may legitimately rewrite the index bytes while
+            // leaving no staged change on the transaction-owned source path.
+            // Preserve that external index after the path-level proof above.
+        } else if journal.source_staged_index_digest.as_deref() != Some(live_index.as_str()) {
+            return Err(recovery_stale(
+                "Git index is neither old nor transaction-staged during source recovery",
+            ));
+        } else {
+            gitops::restore_index_from_backup(&app.ctx, Path::new(&journal.index_backup))
+                .map_err(map_git)?;
         }
     }
     Ok(())

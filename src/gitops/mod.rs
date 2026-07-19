@@ -778,4 +778,6 @@ impl Drop for TempFile {
 }
 
 #[cfg(test)]
+mod prepared_index_concurrency_tests;
+#[cfg(test)]
 mod tests;

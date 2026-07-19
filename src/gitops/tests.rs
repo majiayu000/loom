@@ -4,7 +4,7 @@ use crate::state::AppContext;
 use std::process::Command;
 use uuid::Uuid;
 
-fn fresh_repo(label: &str) -> (AppContext, std::path::PathBuf) {
+pub(super) fn fresh_repo(label: &str) -> (AppContext, std::path::PathBuf) {
     let dir = std::env::temp_dir().join(format!("loom-gitops-{}-{}", label, Uuid::new_v4()));
     fs::create_dir_all(&dir).expect("create temp dir");
     for args in [

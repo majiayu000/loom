@@ -9,7 +9,11 @@ use std::io::{self, Write};
 use std::path::Path;
 
 mod index_lock_capture;
-pub use index_lock_capture::{capture_with_placeholder_atomic, restore_capture_atomic};
+#[cfg(windows)]
+pub use index_lock_capture::ExclusiveDeleteFile;
+#[cfg(unix)]
+pub use index_lock_capture::capture_with_placeholder_atomic;
+pub use index_lock_capture::{restore_capture_atomic, same_file_identity_paths};
 
 #[cfg(any(
     target_os = "macos",

@@ -165,7 +165,6 @@ impl ProjectionBackup {
         self.activated = active;
     }
 }
-
 pub(super) fn apply_convergence(
     app: &App,
     stored: &Value,

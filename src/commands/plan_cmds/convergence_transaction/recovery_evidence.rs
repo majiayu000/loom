@@ -163,6 +163,11 @@ pub(super) fn validate_mutated_surfaces(
     plan: &SkillConvergencePlan,
     journal: &mut TransactionJournal,
 ) -> std::result::Result<(), CommandFailure> {
+    let prior_installed = journal.installed_projections;
+    let restore_pending = journal
+        .projections
+        .iter()
+        .any(|projection| projection.activated && projection.restored_fingerprint.is_some());
     let mut activated = 0usize;
     let mut saw_old = false;
     for (index, effect) in plan.projections.iter().enumerate() {
@@ -172,6 +177,14 @@ pub(super) fn validate_mutated_surfaces(
             state,
             &mut saw_old,
         )?);
+    }
+    if activated < prior_installed
+        && journal.phase != TransactionPhase::RollingBack
+        && !restore_pending
+    {
+        return Err(recovery_stale(
+            "an installed projection no longer has transaction bytes",
+        ));
     }
     journal.installed_projections = activated;
 
@@ -321,7 +334,13 @@ pub(super) fn rollback_uncommitted_source_only(
     if head != journal.previous_head {
         let live_source = skill_tree_digest(&app.ctx.skill_path(&plan.skill)).map_err(map_io)?;
         let relative_source = PathBuf::from(format!("skills/{}", plan.skill));
-        if live_source != plan.input.selected_input_tree_digest
+        if !super::external_head::uncommitted_source_head_is_preserved(
+            app,
+            plan,
+            journal,
+            &head,
+            &relative_source,
+        )? || live_source != plan.input.selected_input_tree_digest
             || journal.source_head.is_some()
             || journal.source_commit.is_some()
             || gitops::has_staged_changes_for_path(&app.ctx, &relative_source).map_err(map_git)?

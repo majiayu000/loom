@@ -25,6 +25,56 @@ const MANAGED_REGISTRY_PATHS: &[&str] = &[
     "loom.lock",
 ];
 
+pub(super) fn uncommitted_source_head_is_preserved(
+    app: &App,
+    plan: &SkillConvergencePlan,
+    journal: &TransactionJournal,
+    head: &str,
+    relative_source: &Path,
+) -> std::result::Result<bool, CommandFailure> {
+    let ancestor = gitops::run_git_allow_failure(
+        &app.ctx,
+        &["merge-base", "--is-ancestor", &journal.previous_head, head],
+    )
+    .map_err(map_git)?;
+    if !ancestor.status.success() {
+        return Ok(false);
+    }
+    let range = format!("{}..{head}", journal.previous_head);
+    let source_path = relative_source.to_string_lossy();
+    let commits = gitops::run_git(
+        &app.ctx,
+        &["rev-list", "--reverse", &range, "--", source_path.as_ref()],
+    )
+    .map_err(map_git)?;
+    let commits = commits.lines().collect::<Vec<_>>();
+    if commits.is_empty() {
+        return Ok(true);
+    }
+    if commits.len() != 1
+        || journal.phase != TransactionPhase::CommittingSource
+        || journal.source_index_changed != Some(true)
+    {
+        return Ok(false);
+    }
+    let commit = commits[0];
+    if verify_commit(
+        app,
+        commit,
+        &journal.previous_head,
+        &format!("skill({}): converge source", plan.skill),
+        |path| path == source_path || path.starts_with(&format!("{source_path}/")),
+    )
+    .is_err()
+    {
+        return Ok(false);
+    }
+    Ok(
+        super::recovery_evidence::committed_skill_digest(app, commit, &plan.skill)?
+            == plan.input.selected_input_tree_digest,
+    )
+}
+
 pub(super) fn handle_external_registry_failure(
     app: &App,
     paths: &RegistryStatePaths,

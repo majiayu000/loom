@@ -42,6 +42,91 @@ fn interrupted_projection_activation_recovers_refresh() {
     );
 }
 
+#[test]
+fn multi_projection_restore_wal_is_restartable_between_items() {
+    let fixture = projected_fixture();
+    let (second, _) = add_copy_projection(&fixture, "restore-wal-second");
+    fs::write(
+        fixture.root.path().join("skills/demo/details.txt"),
+        "multi projection restore WAL\n",
+    )
+    .expect("edit source");
+    let (output, plan) = plan_converge(&fixture, &[]);
+    assert!(output.status.success(), "plan failed: {plan}");
+    assert_eq!(
+        plan["data"]["effects"]
+            .as_array()
+            .expect("projection effects")
+            .len(),
+        2
+    );
+
+    let key = "multi-projection-restore-wal";
+    let (output, interrupted) = apply_plan(
+        &fixture,
+        &plan,
+        key,
+        &[(
+            "LOOM_FAULT_INJECT",
+            "convergence_interrupt_after_projection_swap",
+        )],
+    );
+    assert!(
+        !output.status.success(),
+        "projection swap fault passed: {interrupted}"
+    );
+
+    let (output, wal_interrupted) = apply_plan(
+        &fixture,
+        &plan,
+        key,
+        &[
+            (
+                "LOOM_FAULT_INJECT",
+                "convergence_interrupt_after_projection_restore_wal",
+            ),
+            ("LOOM_TEST_CONVERGENCE_RESTORE_WAL_INDEX", "0"),
+        ],
+    );
+    assert!(
+        !output.status.success(),
+        "restore WAL fault passed: {wal_interrupted}"
+    );
+
+    let journal_path = fixture
+        .root
+        .path()
+        .join("state/transactions/convergence-demo.json");
+    let journal: Value =
+        serde_json::from_slice(&fs::read(&journal_path).expect("journal")).expect("parse journal");
+    let projections = journal["projections"].as_array().expect("projections");
+    assert_eq!(journal["installed_projections"], json!(1));
+    assert_eq!(
+        projections
+            .iter()
+            .filter(|projection| projection["activated"] == json!(true))
+            .count(),
+        1
+    );
+    assert!(
+        projections
+            .iter()
+            .all(|projection| projection["original_fingerprint"].as_str().is_some())
+    );
+
+    let (output, recovered) = apply_plan(&fixture, &plan, key, &[]);
+    assert!(
+        output.status.success(),
+        "restore WAL recovery failed: {recovered}"
+    );
+    for projection in [fixture.target.path().join("demo"), second] {
+        assert_eq!(
+            fs::read_to_string(projection.join("details.txt")).expect("restored projection"),
+            "multi projection restore WAL\n"
+        );
+    }
+}
+
 #[cfg(unix)]
 #[test]
 fn unregistered_safe_symlink_is_adopted_as_refresh() {

@@ -20,6 +20,7 @@ pub(super) fn interruption_fault_active() -> bool {
                 | "convergence_interrupt_after_staged_index_install"
                 | "convergence_interrupt_after_projection_activation"
                 | "convergence_interrupt_after_projection_swap"
+                | "convergence_interrupt_after_projection_restore_wal"
                 | "convergence_interrupt_after_registry_save_cas"
                 | "convergence_interrupt_before_registry_cas"
                 | "convergence_interrupt_after_reservation_pending_create"

@@ -107,11 +107,29 @@ pub(super) fn restore_activated_projection_at(
             prepare_projection_restore_fingerprint(&journal.projections[index], &journal.plan_id)?
     {
         journal.projections[index].restored_fingerprint = Some(fingerprint);
+        sync_installed_projection_count(journal);
         save_journal(journal_path, journal)?;
+        #[cfg(debug_assertions)]
+        if std::env::var("LOOM_TEST_CONVERGENCE_RESTORE_WAL_INDEX")
+            .ok()
+            .and_then(|value| value.parse::<usize>().ok())
+            == Some(index)
+        {
+            maybe_skill_fault("convergence_interrupt_after_projection_restore_wal")?;
+        }
     }
     restore_projection_from_evidence(&journal.projections[index], &journal.plan_id)?;
     journal.projections[index].mark_activated(false);
+    sync_installed_projection_count(journal);
     Ok(())
+}
+
+fn sync_installed_projection_count(journal: &mut TransactionJournal) {
+    journal.installed_projections = journal
+        .projections
+        .iter()
+        .filter(|projection| projection.is_activated())
+        .count();
 }
 
 pub(super) fn restore_activated_projections(
@@ -130,11 +148,7 @@ pub(super) fn restore_activated_projections(
             );
         }
     }
-    journal.installed_projections = journal
-        .projections
-        .iter()
-        .filter(|projection| projection.is_activated())
-        .count();
+    sync_installed_projection_count(journal);
     errors
 }
 
@@ -170,8 +184,6 @@ pub(super) fn restore_projections_for_resume(
         }
         if let Err(err) = restore_activated_projection_at(journal_path, journal, index) {
             push_rollback_error(&mut errors, "restore_projection_from_evidence", err.message);
-        } else {
-            journal.projections[index].original_fingerprint = None;
         }
         if !errors.is_empty() {
             return Err(CommandFailure::new(

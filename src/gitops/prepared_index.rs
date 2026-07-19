@@ -144,7 +144,11 @@ fn install_or_recover_prepared_index(
     crate::fs_util::sync_file_and_parent(prepared_index)?;
     remove_private_entry(&guarded)?;
     remove_private_entry(&publish)?;
-    reconcile_legacy_sentinel(&claim, &capture, &sentinel, &lock, &prepared_bytes)?;
+    if let Err(error) =
+        reconcile_legacy_sentinel(&claim, &capture, &sentinel, &lock, &prepared_bytes)
+    {
+        return Err(retained_lock_error(&lock, error));
+    }
 
     if recovery {
         match finish_completed_index_install(
@@ -172,7 +176,9 @@ fn install_or_recover_prepared_index(
             Err(error) => return Err(retained_lock_error(&lock, error)),
         }
     }
-    reconcile_private_capture(&claim, &capture, &lock, &prepared_bytes)?;
+    if let Err(error) = reconcile_private_capture(&claim, &capture, &lock, &prepared_bytes) {
+        return Err(retained_lock_error(&lock, error));
+    }
 
     if recovery && !path_entry_exists(&claim)? {
         return Err(anyhow!(

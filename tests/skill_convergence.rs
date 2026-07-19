@@ -9,6 +9,8 @@ mod skill_convergence_executor_faults;
 mod skill_convergence_guards;
 #[path = "skill_convergence/ledger_assertions.rs"]
 mod skill_convergence_ledger_assertions;
+#[path = "skill_convergence/projection_activation_flags.rs"]
+mod skill_convergence_projection_activation_flags;
 #[path = "skill_convergence/recovery_identity.rs"]
 mod skill_convergence_recovery_identity;
 #[path = "skill_convergence/recovery_safety.rs"]

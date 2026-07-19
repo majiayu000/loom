@@ -119,5 +119,85 @@ fn preparation_failure_retains_exact_artifact_ledger() {
         snapshot_tree(&fixture.root.path().join("state/backups")),
         backups
     );
-    assert_exact_retained_ledger(&journal, "rolled_back_artifacts_retained");
+    let retained = assert_exact_retained_ledger(&journal, "rolled_back_artifacts_retained");
+    assert_eq!(retained["rollback_head"], json!(head.trim()));
+    assert!(retained["rollback_index_digest"].as_str().is_some());
+
+    let (output, recovered) = apply_plan(&fixture, &plan, "prepare-fault", &[]);
+    assert!(
+        output.status.success(),
+        "preparation failure was not retryable: {recovered}"
+    );
+}
+
+#[test]
+fn partial_projection_preparation_retains_a_retryable_terminal_ledger() {
+    let fixture = projected_fixture();
+    add_copy_projection(&fixture, "partial-preparation");
+    fs::write(
+        fixture.root.path().join("skills/demo/details.txt"),
+        "partial preparation\n",
+    )
+    .expect("edit source");
+    let (output, plan) = plan_converge(&fixture, &[]);
+    assert!(output.status.success(), "plan failed: {plan}");
+    let (output, failed) = apply_plan(
+        &fixture,
+        &plan,
+        "partial-preparation",
+        &[(
+            "LOOM_FAULT_INJECT",
+            "convergence_fail_after_first_projection_stage",
+        )],
+    );
+    assert!(
+        !output.status.success(),
+        "preparation fault passed: {failed}"
+    );
+    let journal_path = fixture
+        .root
+        .path()
+        .join("state/transactions/convergence-demo.json");
+    let mut journal = assert_exact_retained_ledger(&journal_path, "rolled_back_artifacts_retained");
+    assert_eq!(journal["preparation_aborted"], json!(true));
+    let fingerprints = journal["projections"]
+        .as_array()
+        .expect("projections")
+        .iter()
+        .filter(|projection| projection["activated_fingerprint"].is_string())
+        .count();
+    assert_eq!(fingerprints, 1);
+    assert!(
+        journal["ownership_attempts"]
+            .as_array()
+            .expect("attempts")
+            .iter()
+            .all(|attempt| matches!(attempt["state"].as_str(), Some("abandoned" | "retained")))
+    );
+
+    let retained = fs::read(&journal_path).expect("retained journal");
+    let abandoned = journal["ownership_attempts"]
+        .as_array_mut()
+        .expect("attempts")
+        .iter_mut()
+        .find(|attempt| attempt["state"] == json!("abandoned"))
+        .expect("abandoned attempt");
+    abandoned["state"] = json!("ready");
+    fs::write(
+        &journal_path,
+        serde_json::to_vec_pretty(&journal).expect("encode tampered journal"),
+    )
+    .expect("tamper journal");
+    let (output, rejected) = apply_plan(&fixture, &plan, "partial-preparation", &[]);
+    assert!(
+        !output.status.success(),
+        "nonterminal attempt was accepted: {rejected}"
+    );
+    fs::write(&journal_path, retained).expect("restore retained journal");
+
+    let (output, recovered) = apply_plan(&fixture, &plan, "partial-preparation", &[]);
+    assert!(
+        output.status.success(),
+        "partial preparation was not retryable: {recovered}"
+    );
 }

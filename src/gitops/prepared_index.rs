@@ -118,8 +118,13 @@ pub fn recover_prepared_index_lock_with_guard(
 ) -> Result<bool> {
     let index = resolve_git_index_path(ctx, &[])?;
     let lock = index_lock_path(&index);
-    if !lock.exists() {
-        return Ok(false);
+    let metadata = match fs::symlink_metadata(&lock) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(error.into()),
+    };
+    if !metadata.file_type().is_file() {
+        return Err(anyhow!("existing Git index lock is not a regular file"));
     }
     if fs::read(&lock)? != fs::read(prepared_index)? {
         return Err(anyhow!(

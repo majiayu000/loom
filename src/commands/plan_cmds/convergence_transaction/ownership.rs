@@ -270,6 +270,7 @@ pub(super) fn retain_declared_attempts(journal: &mut TransactionJournal) -> Vec<
 }
 
 pub(super) fn ownership_attempts_match_journal(journal: &TransactionJournal) -> bool {
+    let terminal_preparation_rollback = is_pre_mutation_retained(journal);
     let mut expected = vec![(
         journal.artifact_root.as_str(),
         journal.artifact_owner_proof.as_str(),
@@ -288,16 +289,28 @@ pub(super) fn ownership_attempts_match_journal(journal: &TransactionJournal) -> 
         )
     }));
     expected.iter().all(|(destination, proof)| {
-        journal
+        let matching = journal
             .ownership_attempts
             .iter()
-            .filter(|attempt| {
-                attempt.destination == *destination
-                    && attempt.proof == *proof
-                    && attempt.state != OwnershipAttemptState::Abandoned
-            })
-            .count()
-            == 1
+            .filter(|attempt| attempt.destination == *destination && attempt.proof == *proof);
+        if terminal_preparation_rollback {
+            matching.clone().next().is_some()
+                && matching.clone().all(|attempt| {
+                    matches!(
+                        attempt.state,
+                        OwnershipAttemptState::Abandoned | OwnershipAttemptState::Retained
+                    )
+                })
+                && matching
+                    .filter(|attempt| attempt.state == OwnershipAttemptState::Retained)
+                    .count()
+                    <= 1
+        } else {
+            matching
+                .filter(|attempt| attempt.state != OwnershipAttemptState::Abandoned)
+                .count()
+                == 1
+        }
     }) && journal.ownership_attempts.iter().all(|attempt| {
         (matches!(
             attempt.state,
@@ -306,6 +319,25 @@ pub(super) fn ownership_attempts_match_journal(journal: &TransactionJournal) -> 
             attempt.destination == *destination && attempt.proof == *proof
         })) && attempt_is_well_formed(attempt, &journal.plan_id)
     })
+}
+
+pub(super) fn is_pre_mutation_retained(journal: &TransactionJournal) -> bool {
+    journal.preparation_aborted
+        && journal.phase == TransactionPhase::RolledBackArtifactsRetained
+        && journal.source_head.is_none()
+        && journal.source_commit.is_none()
+        && journal.source_staged_index_digest.is_none()
+        && journal.source_index_changed.is_none()
+        && journal.expected_projections.is_none()
+        && journal.registry_commit.is_none()
+        && journal.registry_staged_index_digest.is_none()
+        && journal.registry_index_attempts.is_empty()
+        && journal.result.is_none()
+        && journal.installed_projections == 0
+        && journal
+            .projections
+            .iter()
+            .all(|projection| !projection.is_activated())
 }
 
 fn ownership_failure(message: &str) -> CommandFailure {

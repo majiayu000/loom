@@ -55,28 +55,7 @@ pub(super) fn commit_convergence_source(
         validate_live_source(app, plan)?;
         let install =
             gitops::install_prepared_index_with_guard(&app.ctx, &prepared_index, &|candidate| {
-                validate_live_source(app, plan)
-                    .map_err(|error| anyhow::anyhow!(error.message.clone()))?;
-                let installed =
-                    file_digest(candidate).map_err(|error| anyhow::anyhow!(error.message))?;
-                if installed != staged {
-                    return Err(anyhow::anyhow!(
-                        "prepared Git index changed after its digest was persisted"
-                    ));
-                }
-                let live =
-                    active_index_digest(app).map_err(|error| anyhow::anyhow!(error.message))?;
-                if live != original {
-                    return Err(anyhow::anyhow!(
-                        "active Git index changed before prepared index installation"
-                    ));
-                }
-                if gitops::head(&app.ctx)? != journal.previous_head {
-                    return Err(anyhow::anyhow!(
-                        "HEAD changed before source index installation"
-                    ));
-                }
-                Ok(())
+                validate_source_index_install(app, plan, journal, candidate, &staged, &original)
             });
         if let Err(error) = install {
             let failure = map_git(error);
@@ -147,6 +126,63 @@ pub(super) fn commit_convergence_source(
     maybe_skill_fault("convergence_interrupt_after_source_commit")?;
     maybe_skill_fault("convergence_after_source_commit")?;
     Ok(commit)
+}
+
+pub(super) fn recover_source_index_lock_if_owned(
+    app: &App,
+    plan: &SkillConvergencePlan,
+    journal: &TransactionJournal,
+) -> std::result::Result<bool, CommandFailure> {
+    if journal.source_index_changed != Some(true) {
+        return Ok(false);
+    }
+    let staged = journal
+        .source_staged_index_digest
+        .as_deref()
+        .ok_or_else(|| {
+            CommandFailure::new(
+                ErrorCode::StateCorrupt,
+                "staged source index digest is missing",
+            )
+        })?;
+    let original = journal.index_backup_digest.as_deref().ok_or_else(|| {
+        CommandFailure::new(
+            ErrorCode::StateCorrupt,
+            "original Git index digest is missing",
+        )
+    })?;
+    let prepared = Path::new(&journal.artifact_root).join("source-index");
+    gitops::recover_prepared_index_lock_with_guard(&app.ctx, &prepared, &|candidate| {
+        validate_source_index_install(app, plan, journal, candidate, staged, original)
+    })
+    .map_err(map_git)
+}
+
+fn validate_source_index_install(
+    app: &App,
+    plan: &SkillConvergencePlan,
+    journal: &TransactionJournal,
+    candidate: &Path,
+    staged: &str,
+    original: &str,
+) -> anyhow::Result<()> {
+    validate_live_source(app, plan).map_err(|error| anyhow::anyhow!(error.message))?;
+    if file_digest(candidate).map_err(|error| anyhow::anyhow!(error.message))? != staged {
+        return Err(anyhow::anyhow!(
+            "prepared Git index changed after its digest was persisted"
+        ));
+    }
+    if active_index_digest(app).map_err(|error| anyhow::anyhow!(error.message))? != original {
+        return Err(anyhow::anyhow!(
+            "active Git index changed before prepared index installation"
+        ));
+    }
+    if gitops::head(&app.ctx)? != journal.previous_head {
+        return Err(anyhow::anyhow!(
+            "HEAD changed before source index installation"
+        ));
+    }
+    Ok(())
 }
 
 fn restore_source_after_external_head(

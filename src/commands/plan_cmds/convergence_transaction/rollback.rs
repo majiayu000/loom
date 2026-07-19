@@ -118,6 +118,27 @@ pub(super) fn restore_activated_projections(journal: &mut TransactionJournal) ->
     errors
 }
 
+pub(super) fn restore_activated_projections_durably(
+    journal_path: &Path,
+    journal: &mut TransactionJournal,
+) -> std::result::Result<(), CommandFailure> {
+    for index in (0..journal.projections.len()).rev() {
+        if !journal.projections[index].is_activated() {
+            continue;
+        }
+        journal.projections[index].mark_activated(false);
+        journal.installed_projections = journal
+            .projections
+            .iter()
+            .filter(|projection| projection.is_activated())
+            .count();
+        save_journal(journal_path, journal)?;
+        maybe_skill_fault("convergence_interrupt_after_durable_projection_restore_intent")?;
+        restore_projection_from_evidence(&journal.projections[index], &journal.plan_id)?;
+    }
+    Ok(())
+}
+
 pub(super) fn rollback_journal(
     app: &App,
     paths: &RegistryStatePaths,

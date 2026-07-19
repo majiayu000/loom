@@ -88,7 +88,8 @@ where
     before_atomic_restore(live);
     match artifact.backup.as_ref() {
         Some(backup) => {
-            restore_path_from_backup_if_absent(staging, backup).map_err(map_io)?;
+            let candidate = staging.with_file_name(".rollback-restore");
+            restore_path_from_backup_if_absent(staging, &candidate, backup).map_err(map_io)?;
             if !path_matches_backup(staging, backup)? {
                 return Err(recovery_conflict(
                     staging,

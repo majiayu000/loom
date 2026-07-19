@@ -6,9 +6,8 @@ pub(super) fn retire_stale_pre_mutation_journal(
     journal: &mut TransactionJournal,
     failure: CommandFailure,
 ) -> std::result::Result<CommandFailure, CommandFailure> {
-    journal.rollback_head = Some(gitops::head(&app.ctx).map_err(map_git)?);
-    journal.rollback_index_digest = Some(active_index_digest(app)?);
-    let errors = cleanup_declared_artifacts(journal_path, journal);
+    capture_current_rollback_evidence(app, journal)?;
+    let errors = cleanup_declared_artifacts(app, journal_path, journal, true);
     if errors.is_empty() {
         archive_rolled_back_journal(journal_path, journal)?;
     }
@@ -76,7 +75,7 @@ fn retire_registry_after_external_head(
         journal.registry_staged_index_digest = None;
         journal.rollback_head = Some(gitops::head(&app.ctx).map_err(map_git)?);
         journal.rollback_index_digest = Some(active_index_digest(app)?);
-        errors = cleanup_declared_artifacts(journal_path, journal);
+        errors = cleanup_declared_artifacts(app, journal_path, journal, false);
     }
     if errors.is_empty() {
         archive_rolled_back_journal(journal_path, journal)?;
@@ -169,7 +168,7 @@ pub(super) fn retire_uncommitted_noop_after_external_head(
     }
     journal.rollback_head = Some(head);
     journal.rollback_index_digest = Some(active_index_digest(app)?);
-    let errors = cleanup_declared_artifacts(journal_path, journal);
+    let errors = cleanup_declared_artifacts(app, journal_path, journal, false);
     if !errors.is_empty() {
         return Err(CommandFailure::new(
             ErrorCode::StateCorrupt,
@@ -179,4 +178,13 @@ pub(super) fn retire_uncommitted_noop_after_external_head(
     }
     archive_rolled_back_journal(journal_path, journal)?;
     Ok(true)
+}
+
+pub(super) fn capture_current_rollback_evidence(
+    app: &App,
+    journal: &mut TransactionJournal,
+) -> std::result::Result<(), CommandFailure> {
+    journal.rollback_head = Some(gitops::head(&app.ctx).map_err(map_git)?);
+    journal.rollback_index_digest = Some(active_index_digest(app)?);
+    Ok(())
 }

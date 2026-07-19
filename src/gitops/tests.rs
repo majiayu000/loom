@@ -223,6 +223,18 @@ fn prepared_index_install_crash_helper() {
 }
 
 #[test]
+fn prepared_index_install_post_publish_crash_helper() {
+    let Ok(()) = std::env::var("LOOM_TEST_INDEX_INSTALL_CRASH_AFTER_PUBLISH").map(|_| ()) else {
+        return;
+    };
+    let root = std::env::var_os("LOOM_TEST_INDEX_INSTALL_ROOT").expect("crash root");
+    let prepared = std::env::var_os("LOOM_TEST_INDEX_INSTALL_PREPARED").expect("prepared index");
+    let ctx = AppContext::new(Some(root.into())).expect("crash context");
+    install_prepared_index_with_guard(&ctx, Path::new(&prepared), &|_| Ok(()))
+        .expect("post-publication crash hook did not exit");
+}
+
+#[test]
 fn prepared_index_publication_crash_leaves_an_exact_recoverable_lock() {
     let (ctx, dir) = fresh_repo("published-lock");
     let active_index = dir.join(".git/index");
@@ -261,6 +273,38 @@ fn prepared_index_publication_crash_leaves_an_exact_recoverable_lock() {
         fs::read(&prepared).expect("prepared after active mutation"),
         prepared_bytes
     );
+    fs::remove_dir_all(&dir).expect("remove test repository");
+}
+
+#[test]
+fn prepared_index_post_publication_crash_recovers_the_retained_claim() {
+    let (ctx, dir) = fresh_repo("post-publication-claim");
+    let active_index = dir.join(".git/index");
+    let prepared = dir.join("prepared-index");
+    fs::copy(&active_index, &prepared).expect("prepared index");
+    let status = Command::new(std::env::current_exe().expect("test binary"))
+        .args([
+            "--exact",
+            "gitops::tests::prepared_index_install_post_publish_crash_helper",
+            "--nocapture",
+        ])
+        .env("LOOM_TEST_INDEX_INSTALL_CRASH_AFTER_PUBLISH", "1")
+        .env("LOOM_TEST_INDEX_INSTALL_ROOT", &dir)
+        .env("LOOM_TEST_INDEX_INSTALL_PREPARED", &prepared)
+        .status()
+        .expect("run post-publication crash helper");
+    assert_eq!(status.code(), Some(93));
+    assert!(!dir.join(".git/index.lock").exists());
+    assert_eq!(
+        fs::read(&active_index).expect("published index"),
+        fs::read(&prepared).expect("prepared evidence")
+    );
+
+    assert!(
+        recover_prepared_index_lock_with_guard(&ctx, &prepared, &|_| Ok(()))
+            .expect("recover retained publication claim")
+    );
+    assert_no_index_aux_paths(&prepared);
     fs::remove_dir_all(&dir).expect("remove test repository");
 }
 

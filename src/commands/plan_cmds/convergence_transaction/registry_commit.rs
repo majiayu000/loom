@@ -154,6 +154,10 @@ pub(super) fn align_registry_index(
     journal: &mut TransactionJournal,
     expected_head: &str,
 ) -> std::result::Result<(), CommandFailure> {
+    if let Some(attempt) = recover_recorded_registry_index_lock(app, journal, expected_head)? {
+        retain_registry_index_attempt(journal_path, journal, attempt)?;
+        return Ok(());
+    }
     let staged = gitops::run_git_allow_failure(
         &app.ctx,
         &["diff", "--cached", "--quiet", "--", REGISTRY_PATH],
@@ -164,10 +168,6 @@ pub(super) fn align_registry_index(
         return Ok(());
     }
     validate_registry_result(app, plan, journal)?;
-    if let Some(attempt) = recover_recorded_registry_index_lock(app, journal, expected_head)? {
-        retain_registry_index_attempt(journal_path, journal, attempt)?;
-        return Ok(());
-    }
     if let Some(recorded) = journal.registry_commit.as_deref()
         && recorded != expected_head
     {

@@ -133,6 +133,12 @@ fn install_or_recover_prepared_index(
         fs::hard_link(prepared_index, &claim)?;
         crate::fs_util::sync_parent_directory(&claim)?;
     }
+    if recovery && owned_paths_match(&claim, &index, &prepared_bytes)? {
+        release_owned_lock(&claim, &capture, &lock, &prepared_bytes)?;
+        remove_private_entry(&claim)?;
+        crate::fs_util::sync_parent_directory(&claim)?;
+        return Ok(true);
+    }
     crate::fs_util::write_atomic_bytes(prepared_index, &prepared_bytes)?;
     require_regular_exact(prepared_index, &prepared_bytes, "prepared Git index")?;
     reserve_public_lock(&claim, &capture, &lock, &prepared_bytes)?;
@@ -143,11 +149,13 @@ fn install_or_recover_prepared_index(
         require_regular_exact(&guarded, &prepared_bytes, "guarded Git index candidate")?;
         require_regular_exact(&claim, &prepared_bytes, "durable Git index claim")?;
         require_regular_exact(prepared_index, &prepared_bytes, "prepared Git index")?;
-        fs::hard_link(&claim, &publish)?;
-        crate::fs_util::sync_parent_directory(&publish)?;
-        crate::fs_util::rename_atomic(&publish, &index)?;
+        capture_owned_lock(&claim, &capture, &lock, &prepared_bytes)?;
+        crate::fs_util::rename_atomic(&capture, &index)?;
         crate::fs_util::sync_parent_directory(&index)?;
-        capture_and_remove_owned_lock(&claim, &capture, &lock, &prepared_bytes)?;
+        #[cfg(test)]
+        if std::env::var_os("LOOM_TEST_INDEX_INSTALL_CRASH_AFTER_PUBLISH").is_some() {
+            std::process::exit(93);
+        }
         remove_private_entry(&claim)?;
         crate::fs_util::sync_parent_directory(&claim)?;
         Ok(true)
@@ -156,7 +164,7 @@ fn install_or_recover_prepared_index(
     match result {
         Ok(recovered) => Ok(recovered),
         Err(error) => {
-            let cleanup = capture_and_remove_owned_lock(&claim, &capture, &lock, &prepared_bytes);
+            let cleanup = release_owned_lock(&claim, &capture, &lock, &prepared_bytes);
             match cleanup {
                 Ok(()) => {
                     remove_private_entry(&claim)?;
@@ -193,17 +201,40 @@ fn capture_and_remove_owned_lock(
     lock: &Path,
     expected: &[u8],
 ) -> Result<()> {
+    capture_owned_lock(claim, capture, lock, expected)?;
+    remove_private_entry(capture)?;
+    crate::fs_util::sync_parent_directory(capture)?;
+    Ok(())
+}
+
+fn capture_owned_lock(claim: &Path, capture: &Path, lock: &Path, expected: &[u8]) -> Result<()> {
     crate::fs_util::rename_no_replace_atomic(lock, capture)?;
     crate::fs_util::sync_parent_directory(lock)?;
     if captured_lock_is_owned(claim, capture, expected)? {
-        remove_private_entry(capture)?;
-        crate::fs_util::sync_parent_directory(capture)?;
         return Ok(());
     }
     restore_foreign_capture(capture, lock)?;
     Err(anyhow!(
         "existing Git index lock is not owned by the durable transaction claim"
     ))
+}
+
+fn release_owned_lock(claim: &Path, capture: &Path, lock: &Path, expected: &[u8]) -> Result<()> {
+    if path_entry_exists(capture)? {
+        if captured_lock_is_owned(claim, capture, expected)? {
+            remove_private_entry(capture)?;
+            crate::fs_util::sync_parent_directory(capture)?;
+            return Ok(());
+        }
+        restore_foreign_capture(capture, lock)?;
+        return Err(anyhow!(
+            "captured Git index lock is not owned by the durable transaction claim"
+        ));
+    }
+    if path_entry_exists(lock)? {
+        return capture_and_remove_owned_lock(claim, capture, lock, expected);
+    }
+    Ok(())
 }
 
 fn reconcile_private_capture(
@@ -247,6 +278,13 @@ fn captured_lock_is_owned(claim: &Path, capture: &Path, expected: &[u8]) -> Resu
         && same_file_identity(&claim_metadata, &capture_metadata)
         && fs::read(claim)? == expected
         && fs::read(capture)? == expected)
+}
+
+fn owned_paths_match(claim: &Path, candidate: &Path, expected: &[u8]) -> Result<bool> {
+    if !path_entry_exists(candidate)? {
+        return Ok(false);
+    }
+    captured_lock_is_owned(claim, candidate, expected)
 }
 
 fn read_regular_file(path: &Path, description: &str) -> Result<Vec<u8>> {

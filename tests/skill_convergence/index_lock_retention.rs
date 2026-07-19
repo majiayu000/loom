@@ -69,7 +69,7 @@ fn registry_post_guard_failure_recovers_the_moved_head_and_published_lock() {
         serde_json::from_slice(&fs::read(&journal_path).expect("journal")).expect("parse journal");
     assert_eq!(journal["phase"], json!("committing_registry"));
     assert_eq!(
-        git(fixture.root.path(), &["rev-parse", "HEAD"]),
+        git(fixture.root.path(), &["rev-parse", "HEAD"]).trim(),
         journal["registry_commit"].as_str().expect("registry commit")
     );
     assert!(fixture.root.path().join(".git/index.lock").is_file());

@@ -489,7 +489,7 @@ fn validate_journal(
         == journal
             .projections
             .iter()
-            .filter(|projection| projection.is_activated())
+            .filter(|projection| projection.is_activated() || projection.is_restore_pending())
             .count();
     valid &= validate_phase_invariants(journal);
     valid &= validate_expected_projections(plan, journal);

@@ -328,6 +328,112 @@ fn changed_source_pre_boundary_retires_after_an_unrelated_external_head() {
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn dangling_index_backup_is_rejected_without_following_its_target() {
+    use std::os::unix::fs::symlink;
+
+    let fixture = projected_fixture();
+    fs::write(
+        fixture.root.path().join("skills/demo/details.txt"),
+        "dangling index backup\n",
+    )
+    .expect("source edit");
+    let (output, plan) = plan_converge(&fixture, &[]);
+    assert!(output.status.success(), "plan failed: {plan}");
+    let key = "dangling-index-backup";
+    let (output, stopped) = apply(
+        &fixture,
+        &plan,
+        key,
+        Some("convergence_interrupt_after_index_snapshot"),
+    );
+    assert!(!output.status.success(), "snapshot fault passed: {stopped}");
+    let journal_path = fixture
+        .root
+        .path()
+        .join("state/transactions/convergence-demo.json");
+    let journal: Value =
+        serde_json::from_slice(&fs::read(&journal_path).expect("journal")).expect("parse journal");
+    let backup = PathBuf::from(journal["index_backup"].as_str().expect("index backup"));
+    fs::remove_file(&backup).expect("remove captured index");
+    let external = fixture.root.path().join("outside-index-target");
+    symlink(&external, &backup).expect("dangling index symlink");
+
+    let (output, rejected) = apply(&fixture, &plan, key, None);
+    assert!(
+        !output.status.success(),
+        "dangling backup resumed: {rejected}"
+    );
+    assert!(
+        !external.exists(),
+        "dangling target was created or overwritten"
+    );
+    assert!(
+        fs::symlink_metadata(&backup)
+            .expect("retained symlink")
+            .file_type()
+            .is_symlink()
+    );
+}
+
+#[test]
+fn projection_source_recovery_rejects_a_head_that_changed_the_source_path() {
+    let fixture = projected_fixture();
+    fs::write(
+        fixture.target.path().join("demo/details.txt"),
+        "externally committed projection source\n",
+    )
+    .expect("projection edit");
+    let (output, initial) = plan_converge(&fixture, &[]);
+    assert!(output.status.success(), "initial plan failed: {initial}");
+    let instance = initial["data"]["effects"][0]["instance_id"]
+        .as_str()
+        .expect("instance");
+    let (output, plan) = plan_converge(&fixture, &["--from-projection", "--instance", instance]);
+    assert!(output.status.success(), "projection plan failed: {plan}");
+    let key = "projection-source-changed-head";
+    let (output, stopped) = apply(
+        &fixture,
+        &plan,
+        key,
+        Some("convergence_interrupt_after_source_replacement"),
+    );
+    assert!(
+        !output.status.success(),
+        "source replacement fault passed: {stopped}"
+    );
+    let external_source = snapshot_tree(&fixture.root.path().join("skills/demo"));
+    git(fixture.root.path(), &["add", "skills/demo"]);
+    git(
+        fixture.root.path(),
+        &["commit", "-m", "test: external source boundary"],
+    );
+    let external_head = git(fixture.root.path(), &["rev-parse", "HEAD"]);
+
+    let (output, rejected) = apply(&fixture, &plan, key, None);
+    assert!(
+        !output.status.success(),
+        "source-changing head recovered: {rejected}"
+    );
+    assert_eq!(
+        git(fixture.root.path(), &["rev-parse", "HEAD"]),
+        external_head
+    );
+    assert_eq!(
+        snapshot_tree(&fixture.root.path().join("skills/demo")),
+        external_source,
+        "external committed source was overwritten"
+    );
+    assert!(
+        fixture
+            .root
+            .path()
+            .join("state/transactions/convergence-demo.json")
+            .is_file()
+    );
+}
+
 #[test]
 fn prepared_index_install_crash_restores_the_exact_original_index() {
     let fixture = projected_fixture();

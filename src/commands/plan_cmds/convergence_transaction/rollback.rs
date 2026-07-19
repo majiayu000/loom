@@ -3,6 +3,52 @@ use super::recovery_evidence::validate_mutated_surfaces;
 use super::registry_restore::restore_registry_projections_if_owned;
 use super::*;
 
+impl ProjectionBackup {
+    pub(super) fn fingerprint(&self) -> Option<&str> {
+        self.activated_fingerprint.as_deref().map(|value| {
+            value
+                .strip_prefix("active:")
+                .or_else(|| value.strip_prefix("restore:"))
+                .unwrap_or(value)
+        })
+    }
+
+    pub(super) fn is_activated(&self) -> bool {
+        self.activated_fingerprint
+            .as_deref()
+            .is_some_and(|value| value.starts_with("active:"))
+    }
+
+    pub(super) fn is_restore_pending(&self) -> bool {
+        self.activated_fingerprint
+            .as_deref()
+            .is_some_and(|value| value.starts_with("restore:"))
+    }
+
+    pub(super) fn mark_activated(&mut self, active: bool) {
+        let Some(value) = self.activated_fingerprint.as_mut() else {
+            return;
+        };
+        let digest = value
+            .strip_prefix("active:")
+            .or_else(|| value.strip_prefix("restore:"))
+            .unwrap_or(value)
+            .to_string();
+        *value = if active {
+            format!("active:{digest}")
+        } else {
+            digest
+        };
+    }
+
+    fn mark_restore_pending(&mut self) {
+        if self.is_activated() {
+            let digest = self.fingerprint().unwrap_or_default().to_string();
+            self.activated_fingerprint = Some(format!("restore:{digest}"));
+        }
+    }
+}
+
 pub(super) fn handle_transaction_failure(
     app: &App,
     paths: &RegistryStatePaths,
@@ -123,9 +169,17 @@ pub(super) fn restore_activated_projections_durably(
     journal: &mut TransactionJournal,
 ) -> std::result::Result<(), CommandFailure> {
     for index in (0..journal.projections.len()).rev() {
-        if !journal.projections[index].is_activated() {
+        if !journal.projections[index].is_activated()
+            && !journal.projections[index].is_restore_pending()
+        {
             continue;
         }
+        if journal.projections[index].is_activated() {
+            journal.projections[index].mark_restore_pending();
+            save_journal(journal_path, journal)?;
+            maybe_skill_fault("convergence_interrupt_after_durable_projection_restore_intent")?;
+        }
+        restore_projection_from_evidence(&journal.projections[index], &journal.plan_id)?;
         journal.projections[index].mark_activated(false);
         journal.installed_projections = journal
             .projections
@@ -133,8 +187,6 @@ pub(super) fn restore_activated_projections_durably(
             .filter(|projection| projection.is_activated())
             .count();
         save_journal(journal_path, journal)?;
-        maybe_skill_fault("convergence_interrupt_after_durable_projection_restore_intent")?;
-        restore_projection_from_evidence(&journal.projections[index], &journal.plan_id)?;
     }
     Ok(())
 }

@@ -634,6 +634,14 @@ fn resolve_platform_capability_conflicts_with(
     capabilities: AtomicPathCapabilities,
 ) -> Vec<ConvergenceInputConflict> {
     let mut conflicts = Vec::new();
+    if !capabilities.no_replace {
+        conflicts.push(ConvergenceInputConflict {
+            code: "PLATFORM_ATOMIC_TRANSACTION_OWNERSHIP_UNSUPPORTED".to_string(),
+            message: "this platform cannot atomically claim convergence transaction ownership"
+                .to_string(),
+            evidence: json!({ "required_operation": "atomic_no_replace" }),
+        });
+    }
     if *direction == ConvergenceInputDirection::Projection && !capabilities.exchange {
         conflicts.push(ConvergenceInputConflict {
             code: "PLATFORM_ATOMIC_SOURCE_EXCHANGE_UNSUPPORTED".to_string(),
@@ -744,4 +752,25 @@ pub(super) fn digest_value(value: &impl Serialize) -> std::result::Result<String
 
 fn corrupt_state(message: String) -> CommandFailure {
     CommandFailure::new(ErrorCode::StateCorrupt, message)
+}
+
+#[cfg(test)]
+mod platform_capability_tests {
+    use super::*;
+
+    #[test]
+    fn transaction_ownership_is_required_without_projection_effects() {
+        let conflicts = resolve_platform_capability_conflicts_with(
+            &ConvergenceInputDirection::Source,
+            &[],
+            Path::new("unused-source"),
+            AtomicPathCapabilities {
+                exchange: false,
+                no_replace: false,
+            },
+        );
+        assert!(conflicts.iter().any(|conflict| {
+            conflict.code == "PLATFORM_ATOMIC_TRANSACTION_OWNERSHIP_UNSUPPORTED"
+        }));
+    }
 }

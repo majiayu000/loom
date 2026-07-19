@@ -142,31 +142,6 @@ struct ProjectionBackup {
     activated_fingerprint: Option<String>,
 }
 
-impl ProjectionBackup {
-    fn fingerprint(&self) -> Option<&str> {
-        self.activated_fingerprint
-            .as_deref()
-            .map(|value| value.strip_prefix("active:").unwrap_or(value))
-    }
-
-    fn is_activated(&self) -> bool {
-        self.activated_fingerprint
-            .as_deref()
-            .is_some_and(|value| value.starts_with("active:"))
-    }
-
-    fn mark_activated(&mut self, active: bool) {
-        let Some(value) = self.activated_fingerprint.as_mut() else {
-            return;
-        };
-        if active && !value.starts_with("active:") {
-            value.insert_str(0, "active:");
-        } else if !active && value.starts_with("active:") {
-            value.drain(..7);
-        }
-    }
-}
-
 pub(super) fn apply_convergence(
     app: &App,
     stored: &Value,

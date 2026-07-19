@@ -151,3 +151,55 @@ fn recovery_restores_noncontiguous_activated_projection_flags() {
         .join("state/transactions/convergence-demo.json");
     assert_exact_retained_ledger(&journal_path, "committed_artifacts_retained");
 }
+
+#[cfg(unix)]
+#[test]
+fn restored_projection_concurrent_bytes_are_not_resealed() {
+    let fixture = projected_fixture();
+    fs::write(
+        fixture.root.path().join("skills/demo/details.txt"),
+        "transaction projection bytes\n",
+    )
+    .expect("source edit");
+    let (output, plan) = plan_converge(&fixture, &[]);
+    assert!(output.status.success(), "plan failed: {plan}");
+    let key = "concurrent-restored-projection";
+    let (output, stopped) = apply_plan(
+        &fixture,
+        &plan,
+        key,
+        &[(
+            "LOOM_FAULT_INJECT",
+            "convergence_interrupt_after_all_projection_swaps",
+        )],
+    );
+    assert!(
+        !output.status.success(),
+        "projection swap fault passed: {stopped}"
+    );
+    let (output, restore_stopped) = apply_plan(
+        &fixture,
+        &plan,
+        key,
+        &[(
+            "LOOM_FAULT_INJECT",
+            "convergence_interrupt_after_durable_projection_restore_intent",
+        )],
+    );
+    assert!(
+        !output.status.success(),
+        "projection restore fault passed: {restore_stopped}"
+    );
+    let live = fixture.target.path().join("demo/details.txt");
+    fs::write(&live, "concurrent user bytes\n").expect("concurrent projection edit");
+
+    let (output, rejected) = apply_plan(&fixture, &plan, key, &[]);
+    assert!(
+        !output.status.success(),
+        "concurrent bytes were resealed: {rejected}"
+    );
+    assert_eq!(
+        fs::read_to_string(&live).expect("preserved concurrent bytes"),
+        "concurrent user bytes\n"
+    );
+}

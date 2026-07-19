@@ -573,7 +573,7 @@ fn assert_unrelated_commit_recovery(boundary: &str, recoverable: bool) {
         );
         assert!(
             !journal.exists(),
-            "recovered source journal remained active"
+            "recovered source journal remained active: {recovered}"
         );
     } else {
         assert!(

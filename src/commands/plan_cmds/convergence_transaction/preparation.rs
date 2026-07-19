@@ -151,7 +151,18 @@ fn prepare_index_backup(
     journal: &mut TransactionJournal,
 ) -> std::result::Result<(), CommandFailure> {
     let backup = Path::new(&journal.index_backup);
-    if backup.exists() {
+    let backup_metadata = match fs::symlink_metadata(backup) {
+        Ok(metadata) => Some(metadata),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => return Err(map_io(error)),
+    };
+    if let Some(metadata) = backup_metadata {
+        if !metadata.file_type().is_file() {
+            return Err(CommandFailure::new(
+                ErrorCode::StateCorrupt,
+                "uncommitted transaction Git index backup is not a regular file",
+            ));
+        }
         if let Some(expected) = journal.index_backup_digest.as_deref() {
             let actual = file_digest(backup)?;
             if actual != expected {
@@ -161,13 +172,6 @@ fn prepare_index_backup(
                 ));
             }
             return Ok(());
-        }
-        let metadata = fs::symlink_metadata(backup).map_err(map_io)?;
-        if !metadata.file_type().is_file() {
-            return Err(CommandFailure::new(
-                ErrorCode::StateCorrupt,
-                "uncommitted transaction Git index backup is not a regular file",
-            ));
         }
         fs::remove_file(backup).map_err(map_io)?;
         crate::fs_util::sync_parent_directory(backup).map_err(map_io)?;
@@ -325,9 +329,21 @@ pub(super) fn refresh_projection_live_fingerprints(
 ) -> std::result::Result<(), CommandFailure> {
     for projection in &mut journal.projections {
         if let Some(backup) = projection.backup.as_mut() {
-            backup["fingerprint"] = json!(convergence_projection_fingerprint(Path::new(
-                &projection.materialized_path,
-            ))?);
+            let live = Path::new(&projection.materialized_path);
+            if !super::projection_recovery::path_matches_backup(live, backup)? {
+                return Err(CommandFailure::new(
+                    ErrorCode::ProjectionConflict,
+                    "restored projection changed before its live fingerprint was sealed",
+                ));
+            }
+            let fingerprint = convergence_projection_fingerprint(live)?;
+            if !super::projection_recovery::path_matches_backup(live, backup)? {
+                return Err(CommandFailure::new(
+                    ErrorCode::ProjectionConflict,
+                    "restored projection changed while its live fingerprint was sealed",
+                ));
+            }
+            backup["fingerprint"] = json!(fingerprint);
         }
     }
     save_journal(journal_path, journal)

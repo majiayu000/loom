@@ -164,9 +164,9 @@ pub(super) fn recover_journal(
             finish_committed_cleanup(journal_path, &mut journal)?;
             return Ok(Some(result));
         }
+        validate_rollback_evidence(app, plan, &journal)?;
         if journal.phase != TransactionPhase::PreparingProjections {
             validate_mutated_surfaces(app, &paths, plan, &mut journal)?;
-            validate_rollback_evidence(app, plan, &journal)?;
             if journal.phase == TransactionPhase::RotatingProjections {
                 rotate_projection_stages(journal_path, &mut journal)?;
             } else {

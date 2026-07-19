@@ -198,8 +198,8 @@ fn recovery_replays_rotation_and_post_exchange_activation_intent() {
         .root
         .path()
         .join("state/transactions/convergence-demo.json");
-    let rotated: Value = serde_json::from_slice(&fs::read(&journal_path).expect("journal"))
-        .expect("parse rotated journal");
+    let rotated_raw = fs::read(&journal_path).expect("journal");
+    let rotated: Value = serde_json::from_slice(&rotated_raw).expect("parse rotated journal");
     assert_eq!(rotated["phase"], json!("preparing_projections"));
     assert!(
         rotated["projections"]
@@ -224,6 +224,27 @@ fn recovery_replays_rotation_and_post_exchange_activation_intent() {
         .as_str()
         .expect("target staging")
         .to_string();
+    let backup = std::path::PathBuf::from(
+        rotated["projections"][target]["backup"]["backup_path"]
+            .as_str()
+            .expect("target backup"),
+    );
+    let tamper = backup.join("concurrent-tamper.txt");
+    let live_before = snapshot_tree(fixture.target.path());
+    fs::write(&tamper, "tamper\n").expect("tamper rollback backup");
+    let (output, rejected) = apply_plan(&fixture, &plan, key, &[]);
+    assert!(
+        !output.status.success(),
+        "tampered backup resumed: {rejected}"
+    );
+    assert_eq!(rejected["error"]["code"], json!("STATE_CORRUPT"));
+    assert_eq!(snapshot_tree(fixture.target.path()), live_before);
+    assert_eq!(
+        fs::read(&journal_path).expect("preserved journal"),
+        rotated_raw
+    );
+    fs::remove_file(tamper).expect("restore rollback backup");
+
     let (output, activation_stopped) = apply_plan(
         &fixture,
         &plan,

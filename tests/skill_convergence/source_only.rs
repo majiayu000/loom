@@ -242,7 +242,12 @@ fn source_only_policy_drift_is_rejected_before_mutation() {
 
 #[test]
 fn retained_replay_reproves_source_and_allows_unrelated_descendants() {
-    for source_drift in [false, true] {
+    for case in [
+        "unrelated-descendant",
+        "source-drift",
+        "dirty-policy",
+        "committed-policy",
+    ] {
         let fixture = source_only_fixture();
         fs::write(
             fixture.root.path().join("skills/demo/SKILL.md"),
@@ -251,12 +256,8 @@ fn retained_replay_reproves_source_and_allows_unrelated_descendants() {
         .expect("source edit");
         let (output, plan) = source_only_plan(&fixture);
         assert!(output.status.success(), "plan failed: {plan}");
-        let key = if source_drift {
-            "retained-drift"
-        } else {
-            "retained-descendant"
-        };
-        let (output, applied) = apply_plan(&fixture, &plan, key, &[]);
+        let key = format!("retained-{case}");
+        let (output, applied) = apply_plan(&fixture, &plan, &key, &[]);
         assert!(output.status.success(), "apply failed: {applied}");
         let journal_path = fixture
             .root
@@ -264,26 +265,45 @@ fn retained_replay_reproves_source_and_allows_unrelated_descendants() {
             .join("state/transactions/convergence-demo.json");
         let retained = fs::read(&journal_path).expect("retained journal");
 
-        if source_drift {
-            fs::write(
+        match case {
+            "source-drift" => fs::write(
                 fixture.root.path().join("skills/demo/SKILL.md"),
                 "---\nname: demo\ndescription: retained replay proof.\n---\n# drift\n",
             )
-            .expect("source drift");
-        } else {
-            fs::write(fixture.root.path().join("unrelated.txt"), "unrelated\n")
-                .expect("unrelated file");
-            git(fixture.root.path(), &["add", "unrelated.txt"]);
-            git(
-                fixture.root.path(),
-                &["commit", "-m", "test: unrelated retained descendant"],
-            );
+            .expect("source drift"),
+            "dirty-policy" | "committed-policy" => {
+                fs::create_dir_all(fixture.root.path().join("state/registry"))
+                    .expect("registry directory");
+                fs::write(
+                    fixture.root.path().join("state/registry/trust.json"),
+                    "{\"schema_version\":1,\"skills\":[]}\n",
+                )
+                .expect("policy drift");
+                if case == "committed-policy" {
+                    git(fixture.root.path(), &["add", "state/registry/trust.json"]);
+                    git(
+                        fixture.root.path(),
+                        &["commit", "-m", "test: committed retained policy drift"],
+                    );
+                }
+            }
+            "unrelated-descendant" => {
+                fs::write(fixture.root.path().join("unrelated.txt"), "unrelated\n")
+                    .expect("unrelated file");
+                git(fixture.root.path(), &["add", "unrelated.txt"]);
+                git(
+                    fixture.root.path(),
+                    &["commit", "-m", "test: unrelated retained descendant"],
+                );
+            }
+            _ => unreachable!(),
         }
         let replay_key = format!("{key}-replay");
         let (output, replayed) = apply_plan(&fixture, &plan, &replay_key, &[]);
+        let should_succeed = case == "unrelated-descendant";
         assert_eq!(
             output.status.success(),
-            !source_drift,
+            should_succeed,
             "unexpected retained replay result: {replayed}"
         );
         assert_eq!(
@@ -295,7 +315,7 @@ fn retained_replay_reproves_source_and_allows_unrelated_descendants() {
 
 #[test]
 fn durable_registry_noop_accepts_only_unchanged_descendants() {
-    for managed_drift in [false, true] {
+    for case in ["unrelated-descendant", "committed-policy", "dirty-policy"] {
         let fixture = source_only_fixture();
         let (output, target) = target_add(
             fixture.root.path(),
@@ -311,15 +331,11 @@ fn durable_registry_noop_accepts_only_unchanged_descendants() {
         .expect("source edit");
         let (output, plan) = source_only_plan(&fixture);
         assert!(output.status.success(), "plan failed: {plan}");
-        let key = if managed_drift {
-            "noop-managed-drift"
-        } else {
-            "noop-descendant"
-        };
+        let key = format!("noop-{case}");
         let (output, interrupted) = apply_plan(
             &fixture,
             &plan,
-            key,
+            &key,
             &[(
                 "LOOM_FAULT_INJECT",
                 "convergence_interrupt_committing_registry",
@@ -331,32 +347,35 @@ fn durable_registry_noop_accepts_only_unchanged_descendants() {
             .path()
             .join("state/transactions/convergence-demo.json");
         let retained = fs::read(&journal_path).expect("interrupted journal");
-        let relative = if managed_drift {
-            "state/registry/trust.json"
-        } else {
+        let relative = if case == "unrelated-descendant" {
             "unrelated.txt"
+        } else {
+            "state/registry/trust.json"
         };
         let path = fixture.root.path().join(relative);
-        if managed_drift {
-            fs::write(&path, "{\"schema_version\":1,\"skills\":[]}\n").expect("trust drift");
-        } else {
+        if case == "unrelated-descendant" {
             fs::write(&path, "unrelated\n").expect("unrelated file");
+        } else {
+            fs::write(&path, "{\"schema_version\":1,\"skills\":[]}\n").expect("trust drift");
         }
-        git(fixture.root.path(), &["add", relative]);
-        git(
-            fixture.root.path(),
-            &["commit", "-m", "test: descendant during no-op"],
-        );
+        if case != "dirty-policy" {
+            git(fixture.root.path(), &["add", relative]);
+            git(
+                fixture.root.path(),
+                &["commit", "-m", "test: descendant during no-op"],
+            );
+        }
 
         let replay_key = format!("{key}-replay");
         let (output, recovered) = apply_plan(&fixture, &plan, &replay_key, &[]);
+        let should_succeed = case == "unrelated-descendant";
         assert_eq!(
             output.status.success(),
-            !managed_drift,
+            should_succeed,
             "unexpected no-op recovery result: {recovered}; journal: {}",
             String::from_utf8_lossy(&retained)
         );
-        if managed_drift {
+        if !should_succeed {
             assert_eq!(
                 fs::read(&journal_path).expect("preserved journal"),
                 retained

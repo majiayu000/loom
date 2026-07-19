@@ -92,7 +92,7 @@ pub fn install_prepared_index_with_guard(
         if !metadata.file_type().is_file() {
             return Err(anyhow!("prepared Git index is not a regular file"));
         }
-        fs::File::open(prepared_index)?.sync_all()?;
+        crate::fs_util::sync_file_and_parent(prepared_index)?;
         let prepared_bytes = fs::read(prepared_index)?;
         fs::copy(prepared_index, &staging)?;
         crate::fs_util::sync_file_and_parent(&staging)?;
@@ -155,7 +155,7 @@ pub fn recover_prepared_index_lock_with_guard(
         ));
     }
     let prepared_bytes = fs::read(prepared_index)?;
-    fs::File::open(prepared_index)?.sync_all()?;
+    crate::fs_util::sync_file_and_parent(prepared_index)?;
     crate::fs_util::write_atomic_bytes(prepared_index, &prepared_bytes)?;
     guard(&lock)?;
     if fs::read(&lock)? != prepared_bytes || fs::read(prepared_index)? != prepared_bytes {
@@ -164,6 +164,7 @@ pub fn recover_prepared_index_lock_with_guard(
         ));
     }
     crate::fs_util::rename_atomic(&lock, &index)?;
+    crate::fs_util::sync_parent_directory(&index)?;
     Ok(true)
 }
 

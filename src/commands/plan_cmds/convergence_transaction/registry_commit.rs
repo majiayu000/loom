@@ -233,6 +233,10 @@ pub(super) fn align_registry_index(
     )
     .map_err(map_git)?;
     if staged.status.success() {
+        if let Some(attempt) = recover_recorded_registry_index_lock(app, journal, expected_head)? {
+            retain_registry_index_attempt(journal_path, journal, attempt)?;
+            return Ok(());
+        }
         retain_current_registry_index_attempt(journal_path, journal)?;
         return Ok(());
     }

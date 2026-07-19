@@ -142,6 +142,14 @@ fn install_or_recover_prepared_index(
     remove_private_entry(&guarded)?;
     remove_private_entry(&publish)?;
 
+    if recovery {
+        match finish_completed_index_install(&index, &claim, &capture, &lock, &prepared_bytes) {
+            Ok(true) => return Ok(true),
+            Ok(false) => {}
+            Err(error) => return Err(retained_lock_error(&lock, error)),
+        }
+    }
+
     if recovery && !path_entry_exists(&claim)? {
         return Err(anyhow!(
             "existing Git index lock has no durable transaction claim"
@@ -151,17 +159,29 @@ fn install_or_recover_prepared_index(
     create_or_validate_claim(&claim, &prepared_bytes)?;
     crate::fs_util::write_atomic_bytes(prepared_index, &prepared_bytes)?;
     require_regular_exact(prepared_index, &prepared_bytes, "prepared Git index")?;
-    reserve_public_lock(&claim, &capture, &lock, &prepared_bytes)?;
+    if let Err(error) = reserve_public_lock(&claim, &capture, &lock, &prepared_bytes) {
+        return match public_lock_is_owned(&claim, &lock, &prepared_bytes) {
+            Ok(true) => Err(retained_lock_error(&lock, error)),
+            Ok(false) => Err(error),
+            Err(inspect) => Err(retained_lock_error(
+                &lock,
+                anyhow!("{error:#}; additionally failed to inspect published lock: {inspect:#}"),
+            )),
+        };
+    }
 
-    crate::fs_util::write_atomic_bytes(&guarded, &prepared_bytes)?;
     let result = (|| {
+        injected_index_failure("before_guard_create")?;
+        crate::fs_util::write_atomic_bytes(&guarded, &prepared_bytes)?;
         #[cfg(debug_assertions)]
         if std::env::var_os("LOOM_TEST_PREPARED_INDEX_FAIL_AFTER_PUBLICATION").is_some() {
             return Err(anyhow!("prepared index post-publication test failure"));
         }
         #[cfg(debug_assertions)]
         if std::env::var_os("LOOM_TEST_ROLLBACK_INDEX_FAIL_AFTER_PUBLICATION").is_some()
-            && prepared_index.file_name().is_some_and(|name| name == "index")
+            && prepared_index
+                .file_name()
+                .is_some_and(|name| name == "index")
         {
             return Err(anyhow!("rollback index post-publication test failure"));
         }
@@ -181,16 +201,58 @@ fn install_or_recover_prepared_index(
         crate::fs_util::sync_parent_directory(&publish)?;
         crate::fs_util::rename_atomic(&publish, &index)?;
         crate::fs_util::sync_parent_directory(&index)?;
+        injected_index_failure("after_index_rename")?;
+        injected_index_crash("after_index_rename");
         capture_and_remove_owned_lock(&claim, &capture, &lock, &prepared_bytes)?;
+        injected_index_failure("after_lock_capture")?;
+        injected_index_crash("after_lock_capture");
+        remove_private_entry(&guarded)?;
         remove_private_entry(&claim)?;
         crate::fs_util::sync_parent_directory(&claim)?;
+        injected_index_failure("after_claim_remove")?;
+        injected_index_crash("after_claim_remove");
         Ok(true)
     })();
-    remove_private_entry(&guarded)?;
-    match result {
-        Ok(recovered) => Ok(recovered),
-        Err(error) => Err(retained_lock_error(&lock, error)),
+    let cleanup =
+        injected_index_failure("guard_cleanup").and_then(|()| remove_private_entry(&guarded));
+    match (result, cleanup) {
+        (Ok(recovered), Ok(())) => Ok(recovered),
+        (Ok(_), Err(cleanup)) => Err(cleanup),
+        (Err(error), Ok(())) => Err(retained_lock_error(&lock, error)),
+        (Err(error), Err(cleanup)) => Err(retained_lock_error(
+            &lock,
+            anyhow!("{error:#}; additionally failed to clean guard candidate: {cleanup:#}"),
+        )),
     }
+}
+
+fn finish_completed_index_install(
+    index: &Path,
+    claim: &Path,
+    capture: &Path,
+    lock: &Path,
+    expected: &[u8],
+) -> Result<bool> {
+    if !path_entry_exists(index)? || !path_entry_exists(claim)? {
+        return Ok(false);
+    }
+    let index_metadata = fs::symlink_metadata(index)?;
+    let claim_metadata = fs::symlink_metadata(claim)?;
+    if !index_metadata.file_type().is_file()
+        || !claim_metadata.file_type().is_file()
+        || !same_file_identity(&index_metadata, &claim_metadata)
+        || fs::read(index)? != expected
+        || fs::read(claim)? != expected
+    {
+        return Ok(false);
+    }
+    if path_entry_exists(lock)? {
+        capture_and_remove_owned_lock(claim, capture, lock, expected)?;
+    }
+    remove_private_entry(capture)?;
+    remove_private_entry(claim)?;
+    crate::fs_util::sync_parent_directory(claim)?;
+    Ok(true)
 }
 
 fn create_or_validate_claim(claim: &Path, prepared_bytes: &[u8]) -> Result<()> {
@@ -234,16 +296,49 @@ fn create_or_validate_claim(claim: &Path, prepared_bytes: &[u8]) -> Result<()> {
 fn reserve_public_lock(claim: &Path, capture: &Path, lock: &Path, expected: &[u8]) -> Result<()> {
     match fs::hard_link(claim, lock) {
         Ok(()) => {
+            injected_index_failure("after_lock_link")?;
             crate::fs_util::sync_parent_directory(lock)?;
             Ok(())
         }
         Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
             capture_and_remove_owned_lock(claim, capture, lock, expected)?;
             fs::hard_link(claim, lock)?;
+            injected_index_failure("after_lock_link")?;
             crate::fs_util::sync_parent_directory(lock)?;
             Ok(())
         }
         Err(error) => Err(error.into()),
+    }
+}
+
+fn public_lock_is_owned(claim: &Path, lock: &Path, expected: &[u8]) -> Result<bool> {
+    if !path_entry_exists(claim)? || !path_entry_exists(lock)? {
+        return Ok(false);
+    }
+    let claim_metadata = fs::symlink_metadata(claim)?;
+    let lock_metadata = fs::symlink_metadata(lock)?;
+    Ok(claim_metadata.file_type().is_file()
+        && lock_metadata.file_type().is_file()
+        && same_file_identity(&claim_metadata, &lock_metadata)
+        && fs::read(claim)? == expected
+        && fs::read(lock)? == expected)
+}
+
+fn injected_index_failure(point: &str) -> Result<()> {
+    #[cfg(debug_assertions)]
+    if std::env::var("LOOM_TEST_PREPARED_INDEX_FAILURE_POINT")
+        .ok()
+        .is_some_and(|configured| configured.split(',').any(|item| item == point))
+    {
+        return Err(anyhow!("prepared index injected failure at {point}"));
+    }
+    Ok(())
+}
+
+fn injected_index_crash(point: &str) {
+    #[cfg(debug_assertions)]
+    if std::env::var("LOOM_TEST_PREPARED_INDEX_CRASH_POINT").as_deref() == Ok(point) {
+        std::process::exit(93);
     }
 }
 

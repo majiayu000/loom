@@ -1,6 +1,34 @@
 use super::*;
 use crate::skill_convergence_executor::apply_plan;
 
+fn apply_plan_without_json(
+    fixture: &Fixture,
+    plan: &Value,
+    key: &str,
+    envs: &[(&str, &str)],
+) -> std::process::Output {
+    let plan_id = plan["data"]["plan_id"].as_str().expect("plan id");
+    let digest = plan["data"]["plan_digest"].as_str().expect("plan digest");
+    let mut command = Command::new(env!("CARGO_BIN_EXE_loom"));
+    command
+        .current_dir(fixture.root.path())
+        .arg("--json")
+        .arg("--root")
+        .arg(fixture.root.path())
+        .args([
+            "apply",
+            plan_id,
+            "--plan-digest",
+            digest,
+            "--idempotency-key",
+            key,
+        ]);
+    for (key, value) in envs {
+        command.env(key, value);
+    }
+    command.output().expect("run crashing loom apply")
+}
+
 #[test]
 fn post_publication_failure_keeps_recovery_phase_and_replays_the_lock() {
     let fixture = projected_fixture();
@@ -191,4 +219,107 @@ fn rolling_back_replays_a_published_index_restore_lock() {
         "rollback recovery failed: {recovered}"
     );
     assert!(!fixture.root.path().join(".git/index.lock").exists());
+}
+
+#[test]
+fn post_rename_crash_windows_resume_the_transaction() {
+    for point in [
+        "after_index_rename",
+        "after_lock_capture",
+        "after_claim_remove",
+    ] {
+        let fixture = projected_fixture();
+        fs::write(
+            fixture.root.path().join("skills/demo/details.txt"),
+            format!("post-rename crash at {point}\n"),
+        )
+        .expect("edit source");
+        let (output, plan) = plan_converge(&fixture, &[]);
+        assert!(output.status.success(), "plan failed: {plan}");
+        let key = format!("post-rename-crash-{point}");
+
+        let crashed = apply_plan_without_json(
+            &fixture,
+            &plan,
+            &key,
+            &[("LOOM_TEST_PREPARED_INDEX_CRASH_POINT", point)],
+        );
+        assert_eq!(
+            crashed.status.code(),
+            Some(93),
+            "crash point {point} did not fire: {}",
+            String::from_utf8_lossy(&crashed.stderr)
+        );
+
+        let (output, recovered) = apply_plan(&fixture, &plan, &key, &[]);
+        assert!(
+            output.status.success(),
+            "transaction did not recover after {point}: {recovered}"
+        );
+        assert!(!fixture.root.path().join(".git/index.lock").exists());
+        assert!(
+            fs::read_dir(fixture.root.path().join(".git"))
+                .expect("read git directory")
+                .all(|entry| !entry
+                    .expect("git directory entry")
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with(".loom-index-")),
+            "private index state remained after {point}"
+        );
+    }
+}
+
+#[test]
+fn post_publication_io_failures_keep_the_typed_recovery_route() {
+    let scenarios: &[(&str, &[(&str, &str)])] = &[
+        (
+            "after-lock-link",
+            &[("LOOM_TEST_PREPARED_INDEX_FAILURE_POINT", "after_lock_link")],
+        ),
+        (
+            "before-guard-create",
+            &[(
+                "LOOM_TEST_PREPARED_INDEX_FAILURE_POINT",
+                "before_guard_create",
+            )],
+        ),
+        (
+            "guard-cleanup",
+            &[
+                ("LOOM_TEST_PREPARED_INDEX_FAIL_AFTER_PUBLICATION", "1"),
+                ("LOOM_TEST_PREPARED_INDEX_FAILURE_POINT", "guard_cleanup"),
+            ],
+        ),
+    ];
+    for (name, envs) in scenarios {
+        let fixture = projected_fixture();
+        fs::write(
+            fixture.root.path().join("skills/demo/details.txt"),
+            format!("post-publication I/O failure at {name}\n"),
+        )
+        .expect("edit source");
+        let (output, plan) = plan_converge(&fixture, &[]);
+        assert!(output.status.success(), "plan failed: {plan}");
+        let key = format!("post-publication-io-{name}");
+
+        let (output, failed) = apply_plan(&fixture, &plan, &key, envs);
+        assert!(
+            !output.status.success(),
+            "failure {name} was ignored: {failed}"
+        );
+        assert_eq!(
+            failed["error"]["details"]["index_lock_retained"],
+            json!(true),
+            "failure {name} lost the typed retained marker"
+        );
+        assert!(fixture.root.path().join(".git/index.lock").is_file());
+
+        let (output, recovered) = apply_plan(&fixture, &plan, &key, &[]);
+        assert!(
+            output.status.success(),
+            "failure {name} did not recover: {recovered}"
+        );
+        assert!(!fixture.root.path().join(".git/index.lock").exists());
+    }
 }

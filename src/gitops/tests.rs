@@ -247,22 +247,25 @@ fn prepared_index_install_rejects_a_mutating_guard_without_evidence_damage() {
         fs::read(dir.join(".git/index.lock")).expect("retained owned lock"),
         prepared_bytes
     );
-    assert!(
-        prepared_index_claim_exists(&ctx, &prepared).expect("inspect retained claim")
-    );
+    assert!(prepared_index_claim_exists(&ctx, &prepared).expect("inspect retained claim"));
     fs::remove_dir_all(&dir).expect("remove test repository");
 }
 
 #[test]
 fn prepared_index_install_crash_helper() {
-    let Ok(()) = std::env::var("LOOM_TEST_INDEX_INSTALL_CRASH").map(|_| ()) else {
+    let crash_in_guard = std::env::var_os("LOOM_TEST_INDEX_INSTALL_CRASH").is_some();
+    if !crash_in_guard && std::env::var_os("LOOM_TEST_PREPARED_INDEX_CRASH_POINT").is_none() {
         return;
-    };
+    }
     let root = std::env::var_os("LOOM_TEST_INDEX_INSTALL_ROOT").expect("crash root");
     let prepared = std::env::var_os("LOOM_TEST_INDEX_INSTALL_PREPARED").expect("prepared index");
     let ctx = AppContext::new(Some(root.into())).expect("crash context");
-    let _ =
-        install_prepared_index_with_guard(&ctx, Path::new(&prepared), &|_| std::process::exit(92));
+    let _ = install_prepared_index_with_guard(&ctx, Path::new(&prepared), &|_| {
+        if crash_in_guard {
+            std::process::exit(92);
+        }
+        Ok(())
+    });
     unreachable!("crash helper returned")
 }
 
@@ -309,6 +312,41 @@ fn prepared_index_publication_crash_leaves_an_exact_recoverable_lock() {
 }
 
 #[test]
+fn prepared_index_post_rename_crashes_converge_without_stale_private_state() {
+    for point in [
+        "after_index_rename",
+        "after_lock_capture",
+        "after_claim_remove",
+    ] {
+        let (ctx, dir) = fresh_repo("post-rename-crash");
+        let active_index = dir.join(".git/index");
+        let prepared = dir.join("prepared-index");
+        fs::copy(&active_index, &prepared).expect("prepared index");
+        let expected = fs::read(&prepared).expect("prepared bytes");
+        let status = Command::new(std::env::current_exe().expect("test binary"))
+            .args([
+                "--exact",
+                "gitops::tests::prepared_index_install_crash_helper",
+                "--nocapture",
+            ])
+            .env("LOOM_TEST_PREPARED_INDEX_CRASH_POINT", point)
+            .env("LOOM_TEST_INDEX_INSTALL_ROOT", &dir)
+            .env("LOOM_TEST_INDEX_INSTALL_PREPARED", &prepared)
+            .status()
+            .expect("run crash helper");
+        assert_eq!(status.code(), Some(93), "crash point {point} did not fire");
+        assert_eq!(fs::read(&active_index).expect("installed index"), expected);
+
+        let recovered = recover_prepared_index_lock_with_guard(&ctx, &prepared, &|_| Ok(()))
+            .expect("recover post-rename crash");
+        assert_eq!(recovered, point != "after_claim_remove");
+        assert!(!dir.join(".git/index.lock").exists());
+        assert_no_index_aux_paths(&ctx, &prepared);
+        fs::remove_dir_all(&dir).expect("remove test repository");
+    }
+}
+
+#[test]
 fn prepared_index_recovery_retains_owned_lock_after_mutating_guard() {
     for replacement in [false, true] {
         let (ctx, dir) = fresh_repo("prepared-index-recovery-guard");
@@ -342,9 +380,7 @@ fn prepared_index_recovery_retains_owned_lock_after_mutating_guard() {
             fs::read(&lock).expect("retained owned lock"),
             prepared_bytes
         );
-        assert!(
-            prepared_index_claim_exists(&ctx, &prepared).expect("inspect retained claim")
-        );
+        assert!(prepared_index_claim_exists(&ctx, &prepared).expect("inspect retained claim"));
         fs::remove_dir_all(&dir).expect("remove test repository");
     }
 }
@@ -391,9 +427,8 @@ fn prepared_index_recovery_collision_preserves_both_foreign_entries() {
     let prepared = dir.join("prepared-index");
     fs::copy(dir.join(".git/index"), &prepared).expect("prepared index");
     let lock = dir.join(".git/index.lock");
-    let capture =
-        super::prepared_index::prepared_index_aux_path(&ctx, &prepared, ".lock-capture")
-            .expect("capture path");
+    let capture = super::prepared_index::prepared_index_aux_path(&ctx, &prepared, ".lock-capture")
+        .expect("capture path");
     let public_foreign = b"new public foreign lock\n";
     let captured_foreign = b"captured foreign lock\n";
     fs::write(&lock, public_foreign).expect("public foreign lock");

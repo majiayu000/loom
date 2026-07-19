@@ -340,6 +340,13 @@ fn restore_index_if_owned(
     })?;
     let live = active_index_digest(app)?;
     if live == original {
+        let backup = Path::new(&journal.index_backup);
+        if gitops::prepared_index_claim_exists(&app.ctx, backup)
+            .map_err(super::index_lock_failure::map_install_error)?
+        {
+            gitops::recover_prepared_index_lock_with_guard(&app.ctx, backup, &|_| Ok(()))
+                .map_err(super::index_lock_failure::map_install_error)?;
+        }
         return Ok(());
     }
     let rollback = journal.rollback_index_digest.as_deref().ok_or_else(|| {

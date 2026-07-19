@@ -96,7 +96,6 @@ fn assert_no_index_aux_paths(ctx: &AppContext, prepared: &Path) {
         ".lock-guard",
         ".lock-publish",
         ".lock-sentinel",
-        ".lock-sentinel.proof",
     ] {
         assert!(
             !super::prepared_index_paths::prepared_index_aux_path(ctx, prepared, suffix)
@@ -318,6 +317,7 @@ fn prepared_index_post_rename_crashes_converge_without_stale_private_state() {
     for point in [
         "after_index_rename",
         "after_lock_capture",
+        "after_capture_link",
         "after_claim_remove",
     ] {
         let (ctx, dir) = fresh_repo("post-rename-crash");
@@ -344,7 +344,7 @@ fn prepared_index_post_rename_crashes_converge_without_stale_private_state() {
             .expect("run crash helper");
         assert_eq!(status.code(), Some(93), "crash point {point} did not fire");
         let after_crash = fs::read(&active_index).expect("index after crash");
-        if point == "after_lock_capture" {
+        if matches!(point, "after_lock_capture" | "after_capture_link") {
             assert_eq!(after_crash, original);
         } else {
             assert_eq!(after_crash, expected);

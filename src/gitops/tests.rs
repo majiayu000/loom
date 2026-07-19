@@ -155,6 +155,33 @@ fn prepared_index_lock_recovery_preserves_nonmatching_lock() {
     fs::remove_dir_all(&dir).expect("remove test repository");
 }
 
+#[cfg(unix)]
+#[test]
+fn prepared_index_lock_recovery_rejects_an_exact_symlink() {
+    let (ctx, dir) = fresh_repo("prepared-index-recovery-symlink-lock");
+    let prepared = dir.join("prepared-index");
+    fs::copy(dir.join(".git/index"), &prepared).expect("prepared index");
+    let lock = dir.join(".git/index.lock");
+    std::os::unix::fs::symlink(&prepared, &lock).expect("symlink lock");
+    let active = fs::read(dir.join(".git/index")).expect("active index");
+
+    recover_prepared_index_lock_with_guard(&ctx, &prepared, &|_| Ok(()))
+        .expect_err("symlink lock must not be adopted");
+
+    assert!(
+        fs::symlink_metadata(&lock)
+            .expect("preserved lock")
+            .file_type()
+            .is_symlink()
+    );
+    assert_eq!(
+        fs::read(dir.join(".git/index")).expect("active index"),
+        active
+    );
+    fs::remove_file(&lock).expect("remove test lock");
+    fs::remove_dir_all(&dir).expect("remove test repository");
+}
+
 #[test]
 fn prepared_commit_ignores_late_worktree_tamper_without_moving_head_or_index() {
     let (ctx, dir) = fresh_repo("prepared-commit-worktree-tamper");

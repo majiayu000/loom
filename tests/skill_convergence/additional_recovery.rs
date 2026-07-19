@@ -338,6 +338,90 @@ fn registry_recovery_adopts_only_its_durable_index_lock() {
 }
 
 #[test]
+fn source_recovery_adopts_only_its_durable_index_lock() {
+    let fixture = projected_fixture();
+    fs::write(
+        fixture.root.path().join("skills/demo/details.txt"),
+        "source lock crash\n",
+    )
+    .expect("edit source");
+    let (output, plan) = plan_converge(&fixture, &[]);
+    assert!(output.status.success(), "plan failed: {plan}");
+    let (output, interrupted) = apply_plan(
+        &fixture,
+        &plan,
+        "source-lock-crash",
+        &[(
+            "LOOM_FAULT_INJECT",
+            "convergence_interrupt_after_staged_index_prepared",
+        )],
+    );
+    assert!(
+        !output.status.success(),
+        "source index preparation did not stop: {interrupted}"
+    );
+    let journal_path = fixture
+        .root
+        .path()
+        .join("state/transactions/convergence-demo.json");
+    let journal: Value =
+        serde_json::from_slice(&fs::read(journal_path).expect("journal")).expect("parse journal");
+    let prepared =
+        Path::new(journal["artifact_root"].as_str().expect("artifact root")).join("source-index");
+    let lock = fixture.root.path().join(".git/index.lock");
+    fs::copy(&prepared, &lock).expect("simulate retained source index lock");
+
+    let (output, recovered) = apply_plan(&fixture, &plan, "source-lock-crash", &[]);
+    assert!(
+        output.status.success(),
+        "owned source lock recovery failed: {recovered}"
+    );
+    assert!(!lock.exists());
+}
+
+#[test]
+fn source_recovery_preserves_a_foreign_index_lock() {
+    let fixture = projected_fixture();
+    fs::write(
+        fixture.root.path().join("skills/demo/details.txt"),
+        "foreign source lock\n",
+    )
+    .expect("edit source");
+    let (output, plan) = plan_converge(&fixture, &[]);
+    assert!(output.status.success(), "plan failed: {plan}");
+    let (output, interrupted) = apply_plan(
+        &fixture,
+        &plan,
+        "foreign-source-lock",
+        &[(
+            "LOOM_FAULT_INJECT",
+            "convergence_interrupt_after_staged_index_prepared",
+        )],
+    );
+    assert!(
+        !output.status.success(),
+        "source preparation passed: {interrupted}"
+    );
+    let lock = fixture.root.path().join(".git/index.lock");
+    let foreign = b"foreign index lock\n";
+    fs::write(&lock, foreign).expect("foreign lock");
+    let head = git(fixture.root.path(), &["rev-parse", "HEAD"]);
+    let index = fs::read(fixture.root.path().join(".git/index")).expect("active index");
+
+    let (output, rejected) = apply_plan(&fixture, &plan, "foreign-source-lock", &[]);
+    assert!(
+        !output.status.success(),
+        "foreign lock was adopted: {rejected}"
+    );
+    assert_eq!(fs::read(&lock).expect("preserved lock"), foreign);
+    assert_eq!(git(fixture.root.path(), &["rev-parse", "HEAD"]), head);
+    assert_eq!(
+        fs::read(fixture.root.path().join(".git/index")).expect("index"),
+        index
+    );
+}
+
+#[test]
 fn source_cas_does_not_adopt_a_following_external_head() {
     let fixture = projected_fixture();
     fs::write(

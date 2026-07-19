@@ -359,6 +359,7 @@ fn prepare_projection_stages_from(
             journal.projections[index].activated_fingerprint =
                 Some(convergence_projection_fingerprint(&materialized_path)?);
             save_journal(journal_path, journal)?;
+            maybe_skill_fault("convergence_fail_after_first_projection_stage")?;
             continue;
         }
         let owner = journal.projections[index].staging_owner.clone();
@@ -397,6 +398,7 @@ fn prepare_projection_stages_from(
         journal.projections[index].activated_fingerprint =
             Some(convergence_projection_fingerprint(&staging_path)?);
         save_journal(journal_path, journal)?;
+        maybe_skill_fault("convergence_fail_after_first_projection_stage")?;
     }
     Ok(())
 }

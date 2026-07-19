@@ -107,6 +107,8 @@ struct TransactionJournal {
     registry_index_attempts: Vec<registry_commit::RegistryIndexAttempt>,
     rollback_head: Option<String>,
     rollback_index_digest: Option<String>,
+    #[serde(default)]
+    preparation_aborted: bool,
     result: Option<Value>,
     phase: TransactionPhase,
 }
@@ -325,6 +327,7 @@ pub(super) fn apply_convergence(
         registry_index_attempts: Vec::new(),
         rollback_head: None,
         rollback_index_digest: None,
+        preparation_aborted: false,
         result: None,
         phase: TransactionPhase::Preparing,
     };
@@ -334,7 +337,7 @@ pub(super) fn apply_convergence(
         if interruption_fault_active() {
             return Err(err);
         }
-        let cleanup_errors = cleanup_declared_artifacts(&journal_path, &mut journal);
+        let cleanup_errors = cleanup_declared_artifacts(app, &journal_path, &mut journal, true);
         return Err(err.with_rollback_errors(cleanup_errors));
     }
     journal.phase = TransactionPhase::Prepared;
@@ -525,6 +528,7 @@ fn execute_local_transaction(
         maybe_skill_fault("convergence_after_projection_swap")?;
         maybe_skill_fault("convergence_interrupt_after_projection_swap")?;
     }
+    maybe_skill_fault("convergence_interrupt_after_all_projection_swaps")?;
     journal.expected_projections = Some(projections.clone());
     journal.phase = TransactionPhase::ProjectionsSwapped;
     save_journal(journal_path, journal)?;

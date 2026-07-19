@@ -94,6 +94,7 @@ pub(super) fn recover_journal(
             )? {
                 return Ok(None);
             }
+            super::source_commit::recover_source_index_lock_if_owned(app, plan, &journal)?;
             prove_source_boundary(app, plan, &mut journal)?;
         }
         TransactionPhase::RollingBack => {
@@ -138,7 +139,7 @@ pub(super) fn recover_journal(
     ) && !source_is_committed(&journal)
     {
         rollback_uncommitted_source_only(app, plan, &journal)?;
-        let errors = cleanup_declared_artifacts(journal_path, &mut journal);
+        let errors = cleanup_declared_artifacts(app, journal_path, &mut journal, false);
         if errors.is_empty() {
             return Ok(None);
         }
@@ -259,8 +260,10 @@ pub(super) fn source_is_committed(journal: &TransactionJournal) -> bool {
 }
 
 pub(super) fn cleanup_declared_artifacts(
+    app: &App,
     journal_path: &Path,
     journal: &mut TransactionJournal,
+    preparation_aborted: bool,
 ) -> Vec<Value> {
     let mut errors = Vec::new();
     if std::env::var("LOOM_CLEANUP_FAULT_INJECT").ok().as_deref()
@@ -278,8 +281,18 @@ pub(super) fn cleanup_declared_artifacts(
         return errors;
     }
     errors.extend(retain_declared_attempts(journal));
+    if errors.is_empty()
+        && let Err(error) = super::external_head::capture_current_rollback_evidence(app, journal)
+    {
+        push_rollback_error(
+            &mut errors,
+            "capture_declared_cleanup_boundary",
+            error.message,
+        );
+    }
     if errors.is_empty() {
         super::registry_commit::terminalize_registry_index_attempts(journal, false);
+        journal.preparation_aborted = preparation_aborted;
         journal.phase = TransactionPhase::RolledBackArtifactsRetained;
         if let Err(err) = save_journal(journal_path, journal) {
             push_rollback_error(
@@ -361,6 +374,7 @@ fn validate_journal(
                     &Path::new(&journal.artifact_root).join("source"),
                 )
                 && (journal.phase == TransactionPhase::Preparing
+                    || super::ownership::is_pre_mutation_retained(journal)
                     || journal
                         .source_activated_fingerprint
                         .as_deref()
@@ -401,6 +415,7 @@ fn validate_journal(
                 .as_deref()
                 .is_none_or(valid_sha256_digest)
             && (journal.phase == TransactionPhase::Preparing
+                || super::ownership::is_pre_mutation_retained(journal)
                 || artifact.fingerprint().is_some_and(valid_sha256_digest))
             && match effect.effect.as_str() {
                 "refresh" => {
@@ -500,7 +515,10 @@ pub(super) fn validate_phase_invariants(journal: &TransactionJournal) -> bool {
                 | TransactionPhase::CommittedCleanupPending
                 | TransactionPhase::CommittedArtifactsRetained
         );
+    let preparation_abort_phase =
+        !journal.preparation_aborted || super::ownership::is_pre_mutation_retained(journal);
     source_relation
+        && preparation_abort_phase
         && index_evidence
         && rollback_evidence
         && registry_evidence

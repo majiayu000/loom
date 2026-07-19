@@ -59,7 +59,8 @@ pub(super) fn prepare_projection_restore_fingerprint(
         // fingerprint, anything else here is an interrupted restore candidate.
         crate::fs_util::remove_path_if_exists(staging).map_err(map_io)?;
     }
-    restore_path_from_backup_if_absent(staging, backup).map_err(map_io)?;
+    let candidate = staging.with_file_name(".rollback-restore");
+    restore_path_from_backup_if_absent(staging, &candidate, backup).map_err(map_io)?;
     if !path_matches_backup(staging, backup)? {
         return Err(recovery_conflict(
             staging,

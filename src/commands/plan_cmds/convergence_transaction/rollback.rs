@@ -109,6 +109,7 @@ pub(super) fn restore_activated_projection_at(
         journal.projections[index].restored_fingerprint = Some(fingerprint);
         sync_installed_projection_count(journal);
         save_journal(journal_path, journal)?;
+        maybe_skill_fault("convergence_interrupt_after_durable_projection_restore_intent")?;
         #[cfg(debug_assertions)]
         if std::env::var("LOOM_TEST_CONVERGENCE_RESTORE_WAL_INDEX")
             .ok()

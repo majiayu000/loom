@@ -320,8 +320,14 @@ fn prepared_index_post_rename_crashes_converge_without_stale_private_state() {
     ] {
         let (ctx, dir) = fresh_repo("post-rename-crash");
         let active_index = dir.join(".git/index");
+        let original = fs::read(&active_index).expect("original index");
         let prepared = dir.join("prepared-index");
-        fs::copy(&active_index, &prepared).expect("prepared index");
+        fs::write(dir.join("base.txt"), format!("prepared at {point}\n"))
+            .expect("edit tracked path");
+        assert!(
+            prepare_index_for_paths(&ctx, &active_index, &prepared, &["base.txt"])
+                .expect("prepare changed index")
+        );
         let expected = fs::read(&prepared).expect("prepared bytes");
         let status = Command::new(std::env::current_exe().expect("test binary"))
             .args([
@@ -335,11 +341,17 @@ fn prepared_index_post_rename_crashes_converge_without_stale_private_state() {
             .status()
             .expect("run crash helper");
         assert_eq!(status.code(), Some(93), "crash point {point} did not fire");
-        assert_eq!(fs::read(&active_index).expect("installed index"), expected);
+        let after_crash = fs::read(&active_index).expect("index after crash");
+        if point == "after_lock_capture" {
+            assert_eq!(after_crash, original);
+        } else {
+            assert_eq!(after_crash, expected);
+        }
 
         let recovered = recover_prepared_index_lock_with_guard(&ctx, &prepared, &|_| Ok(()))
             .expect("recover post-rename crash");
         assert_eq!(recovered, point != "after_claim_remove");
+        assert_eq!(fs::read(&active_index).expect("recovered index"), expected);
         assert!(!dir.join(".git/index.lock").exists());
         assert_no_index_aux_paths(&ctx, &prepared);
         fs::remove_dir_all(&dir).expect("remove test repository");

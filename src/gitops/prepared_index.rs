@@ -197,15 +197,13 @@ fn install_or_recover_prepared_index(
         {
             return Err(anyhow!("registry index post-guard test failure"));
         }
-        fs::hard_link(&claim, &publish)?;
-        crate::fs_util::sync_parent_directory(&publish)?;
-        crate::fs_util::rename_atomic(&publish, &index)?;
+        capture_owned_lock(&claim, &capture, &lock, &prepared_bytes)?;
+        injected_index_failure("after_lock_capture")?;
+        injected_index_crash("after_lock_capture");
+        crate::fs_util::rename_atomic(&capture, &index)?;
         crate::fs_util::sync_parent_directory(&index)?;
         injected_index_failure("after_index_rename")?;
         injected_index_crash("after_index_rename");
-        capture_and_remove_owned_lock(&claim, &capture, &lock, &prepared_bytes)?;
-        injected_index_failure("after_lock_capture")?;
-        injected_index_crash("after_lock_capture");
         remove_private_entry(&guarded)?;
         remove_private_entry(&claim)?;
         crate::fs_util::sync_parent_directory(&claim)?;
@@ -348,11 +346,16 @@ fn capture_and_remove_owned_lock(
     lock: &Path,
     expected: &[u8],
 ) -> Result<()> {
+    capture_owned_lock(claim, capture, lock, expected)?;
+    remove_private_entry(capture)?;
+    crate::fs_util::sync_parent_directory(capture)?;
+    Ok(())
+}
+
+fn capture_owned_lock(claim: &Path, capture: &Path, lock: &Path, expected: &[u8]) -> Result<()> {
     crate::fs_util::rename_no_replace_atomic(lock, capture)?;
     crate::fs_util::sync_parent_directory(lock)?;
     if captured_lock_is_owned(claim, capture, expected)? {
-        remove_private_entry(capture)?;
-        crate::fs_util::sync_parent_directory(capture)?;
         return Ok(());
     }
     restore_foreign_capture(capture, lock)?;

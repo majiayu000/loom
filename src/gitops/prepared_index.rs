@@ -5,8 +5,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Result, anyhow};
 
-use crate::sha256::{Sha256, to_hex};
-
+use super::prepared_index_paths::prepared_index_aux_path;
 use super::{
     AppContext, path_exists_or_is_tracked, resolve_git_index_path, run_git,
     run_git_allow_failure_in_with_env, run_git_in_with_env,
@@ -116,6 +115,43 @@ pub fn recover_prepared_index_lock_with_guard(
     guard: &dyn Fn(&Path) -> Result<()>,
 ) -> Result<bool> {
     install_or_recover_prepared_index(ctx, prepared_index, guard, true)
+}
+
+/// Safely release a retained lock after the surrounding transaction has
+/// proved that its prepared index must be abandoned.
+pub fn discard_prepared_index_lock(ctx: &AppContext, prepared_index: &Path) -> Result<bool> {
+    let index = resolve_git_index_path(ctx, &[])?;
+    let lock = index_lock_path(&index);
+    let claim = prepared_index_aux_path(ctx, prepared_index, ".lock-claim")?;
+    if !path_entry_exists(&claim)? {
+        return Ok(false);
+    }
+    let capture = prepared_index_aux_path(ctx, prepared_index, ".lock-capture")?;
+    let sentinel = prepared_index_aux_path(ctx, prepared_index, ".lock-sentinel")?;
+    let guarded = prepared_index_aux_path(ctx, prepared_index, ".lock-guard")?;
+    let publish = prepared_index_aux_path(ctx, prepared_index, ".lock-publish")?;
+    let expected = read_regular_file(&claim, "durable Git index claim")?;
+    let result = (|| {
+        reconcile_legacy_sentinel(&claim, &capture, &sentinel, &lock, &expected)?;
+        if path_entry_exists(&capture)? {
+            if !captured_lock_is_owned(&claim, &capture, &expected)? {
+                return Err(anyhow!("unknown captured Git index lock was preserved"));
+            }
+            require_placeholder_lock(&lock)?;
+            remove_private_entry(&capture)?;
+            crate::fs_util::sync_parent_directory(&capture)?;
+        }
+        if path_entry_exists(&lock)? {
+            clear_completed_public_lock(&claim, &capture, &lock, &expected)?;
+        }
+        remove_private_entry(&guarded)?;
+        remove_private_entry(&publish)?;
+        remove_private_entry(&sentinel)?;
+        remove_private_entry(&claim)?;
+        crate::fs_util::sync_parent_directory(&claim)?;
+        Ok(true)
+    })();
+    result.map_err(|error| retained_lock_error(&lock, error))
 }
 
 fn install_or_recover_prepared_index(
@@ -627,52 +663,12 @@ fn remove_private_entry(path: &Path) -> Result<()> {
     }
 }
 
-fn path_entry_exists(path: &Path) -> Result<bool> {
+pub(super) fn path_entry_exists(path: &Path) -> Result<bool> {
     match fs::symlink_metadata(path) {
         Ok(_) => Ok(true),
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
         Err(error) => Err(error.into()),
     }
-}
-
-pub(super) fn prepared_index_aux_path(
-    ctx: &AppContext,
-    prepared_index: &Path,
-    suffix: &str,
-) -> Result<PathBuf> {
-    let index = resolve_git_index_path(ctx, &[])?;
-    let parent = index
-        .parent()
-        .ok_or_else(|| anyhow!("Git index has no parent: {}", index.display()))?;
-    let identity = prepared_index_identity(prepared_index);
-    Ok(parent.join(format!(".loom-index-{}{suffix}", &identity[..32])))
-}
-
-pub fn prepared_index_claim_exists(ctx: &AppContext, prepared_index: &Path) -> Result<bool> {
-    path_entry_exists(&prepared_index_aux_path(
-        ctx,
-        prepared_index,
-        ".lock-claim",
-    )?)
-}
-
-fn prepared_index_identity(path: &Path) -> String {
-    let mut hasher = Sha256::new();
-    #[cfg(unix)]
-    {
-        use std::os::unix::ffi::OsStrExt;
-        hasher.update(path.as_os_str().as_bytes());
-    }
-    #[cfg(windows)]
-    {
-        use std::os::windows::ffi::OsStrExt;
-        for unit in path.as_os_str().encode_wide() {
-            hasher.update(&unit.to_le_bytes());
-        }
-    }
-    #[cfg(not(any(unix, windows)))]
-    hasher.update(path.to_string_lossy().as_bytes());
-    to_hex(&hasher.finalize())
 }
 
 pub fn create_prepared_commit(

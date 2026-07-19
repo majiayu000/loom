@@ -48,6 +48,20 @@ pub(super) fn durable_registry_noop(journal: &TransactionJournal) -> bool {
         })
 }
 
+pub(super) fn discard_retained_registry_index_locks(
+    app: &App,
+    journal: &TransactionJournal,
+) -> std::result::Result<(), CommandFailure> {
+    for attempt in &journal.registry_index_attempts {
+        let prepared = Path::new(&attempt.prepared_index);
+        if gitops::prepared_index_claim_exists(&app.ctx, prepared).map_err(map_git)? {
+            gitops::discard_prepared_index_lock(&app.ctx, prepared)
+                .map_err(super::index_lock_failure::map_install_error)?;
+        }
+    }
+    Ok(())
+}
+
 pub(super) fn commit_convergence_registry(
     app: &App,
     plan: &SkillConvergencePlan,

@@ -82,7 +82,7 @@ fn file_sha256(path: &Path) -> String {
 
 fn seed_owned_index_lock(ctx: &AppContext, prepared: &Path, lock: &Path) {
     let bytes = fs::read(prepared).expect("prepared index bytes");
-    let claim = super::prepared_index::prepared_index_aux_path(ctx, prepared, ".lock-claim")
+    let claim = super::prepared_index_paths::prepared_index_aux_path(ctx, prepared, ".lock-claim")
         .expect("claim path");
     fs::hard_link(prepared, &claim).expect("durable index claim");
     crate::fs_util::write_atomic_bytes(prepared, &bytes).expect("detach prepared evidence");
@@ -98,7 +98,7 @@ fn assert_no_index_aux_paths(ctx: &AppContext, prepared: &Path) {
         ".lock-sentinel",
     ] {
         assert!(
-            !super::prepared_index::prepared_index_aux_path(ctx, prepared, suffix)
+            !super::prepared_index_paths::prepared_index_aux_path(ctx, prepared, suffix)
                 .expect("auxiliary path")
                 .exists(),
             "private index path remained after completion: {suffix}"
@@ -440,8 +440,9 @@ fn prepared_index_recovery_collision_preserves_both_foreign_entries() {
     let prepared = dir.join("prepared-index");
     fs::copy(dir.join(".git/index"), &prepared).expect("prepared index");
     let lock = dir.join(".git/index.lock");
-    let capture = super::prepared_index::prepared_index_aux_path(&ctx, &prepared, ".lock-capture")
-        .expect("capture path");
+    let capture =
+        super::prepared_index_paths::prepared_index_aux_path(&ctx, &prepared, ".lock-capture")
+            .expect("capture path");
     let public_foreign = b"new public foreign lock\n";
     let captured_foreign = b"captured foreign lock\n";
     fs::write(&lock, public_foreign).expect("public foreign lock");

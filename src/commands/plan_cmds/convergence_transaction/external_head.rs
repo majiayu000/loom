@@ -33,9 +33,6 @@ pub(super) fn handle_external_registry_failure(
     journal: &mut TransactionJournal,
     failure: CommandFailure,
 ) -> std::result::Result<CommandFailure, CommandFailure> {
-    if super::index_lock_failure::retained(&failure) {
-        return Ok(failure);
-    }
     let errors = retire_registry_after_external_head(app, paths, plan, journal_path, journal)?
         .unwrap_or_default();
     Ok(failure.with_rollback_errors(errors))
@@ -73,6 +70,7 @@ fn retire_registry_after_external_head(
     if !external_head_preserves_reviewed_boundaries(app, plan, journal)? {
         return Ok(None);
     }
+    super::registry_commit::discard_retained_registry_index_locks(app, journal)?;
     let mut errors = super::rollback::restore_registry_and_activated_projections(
         paths,
         plan,

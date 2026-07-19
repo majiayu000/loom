@@ -38,3 +38,23 @@ fn guard_replacement_preserves_a_byte_identical_foreign_lock() {
     fs::remove_file(&lock).expect("remove foreign lock");
     fs::remove_dir_all(&dir).expect("remove test repository");
 }
+
+#[test]
+fn retained_owned_lock_can_be_discarded_without_installing_the_index() {
+    let (ctx, dir) = super::tests::fresh_repo("prepared-index-discard");
+    let active = dir.join(".git/index");
+    let original = fs::read(&active).expect("active index");
+    let prepared = dir.join("prepared-index");
+    fs::copy(&active, &prepared).expect("prepared index");
+
+    install_prepared_index_with_guard(&ctx, &prepared, &|_| {
+        Err(anyhow::anyhow!("reject prepared index"))
+    })
+    .expect_err("guard rejection must retain the owned lock");
+    assert!(discard_prepared_index_lock(&ctx, &prepared).expect("discard retained lock"));
+
+    assert_eq!(fs::read(&active).expect("active index"), original);
+    assert!(!dir.join(".git/index.lock").exists());
+    assert!(!prepared_index_claim_exists(&ctx, &prepared).expect("inspect claim"));
+    fs::remove_dir_all(&dir).expect("remove test repository");
+}

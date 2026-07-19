@@ -3,11 +3,13 @@ mod history;
 mod history_impl;
 mod history_types;
 mod prepared_index;
+mod prepared_index_paths;
 
 pub use diff::*;
 pub use history::*;
 pub use history_types::*;
 pub use prepared_index::*;
+pub use prepared_index_paths::prepared_index_claim_exists;
 
 use std::fs::{self, OpenOptions};
 use std::io::Write;

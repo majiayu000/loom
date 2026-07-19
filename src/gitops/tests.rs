@@ -1,7 +1,6 @@
 use super::*;
 use crate::sha256::{Sha256, to_hex};
 use crate::state::AppContext;
-use std::io::{self, Read, Write};
 use std::process::Command;
 use uuid::Uuid;
 
@@ -140,121 +139,51 @@ fn prepared_index_install_preserves_preexisting_lock() {
 }
 
 #[test]
-fn prepared_index_install_never_publishes_a_partial_lock() {
-    let (ctx, dir) = fresh_repo("prepared-index-partial-copy");
-    let active_index = dir.join(".git/index");
-    let original_index = fs::read(&active_index).expect("active index");
-    let prepared = dir.join("prepared-index");
-    fs::copy(&active_index, &prepared).expect("prepared index");
-    let mut partial_copy = |source: &mut fs::File, destination: &mut fs::File| {
-        let mut bytes = [0_u8; 16];
-        let count = source.read(&mut bytes)?;
-        destination.write_all(&bytes[..count])?;
-        Err(io::Error::other("simulated interrupted copy"))
-    };
-
-    super::prepared_index::install_prepared_index_with_copy(
-        &ctx,
-        &prepared,
-        &|_| Ok(()),
-        &mut partial_copy,
-    )
-    .expect_err("partial copy must fail");
-
-    assert!(!dir.join(".git/index.lock").exists());
-    assert_eq!(
-        fs::read(&active_index).expect("active index"),
-        original_index
-    );
-    assert!(
-        fs::read_dir(dir.join(".git"))
-            .expect("git directory")
-            .filter_map(Result::ok)
-            .all(|entry| !entry
-                .file_name()
-                .to_string_lossy()
-                .starts_with("index.lock.loom-stage-"))
-    );
-    fs::remove_dir_all(&dir).expect("remove test repository");
-}
-
-#[test]
 fn prepared_index_install_crash_helper() {
-    let Ok(mode) = std::env::var("LOOM_TEST_INDEX_INSTALL_CRASH") else {
+    let Ok(()) = std::env::var("LOOM_TEST_INDEX_INSTALL_CRASH").map(|_| ()) else {
         return;
     };
     let root = std::env::var_os("LOOM_TEST_INDEX_INSTALL_ROOT").expect("crash root");
     let prepared = std::env::var_os("LOOM_TEST_INDEX_INSTALL_PREPARED").expect("prepared index");
     let ctx = AppContext::new(Some(root.into())).expect("crash context");
-    if mode == "partial-copy" {
-        let mut partial_copy = |source: &mut fs::File, destination: &mut fs::File| {
-            let mut bytes = [0_u8; 16];
-            let count = source.read(&mut bytes)?;
-            destination.write_all(&bytes[..count])?;
-            destination.sync_all()?;
-            std::process::exit(91);
-        };
-        let _ = super::prepared_index::install_prepared_index_with_copy(
-            &ctx,
-            Path::new(&prepared),
-            &|_| Ok(()),
-            &mut partial_copy,
-        );
-    } else {
-        assert_eq!(mode, "published-lock");
-        let _ = install_prepared_index_with_guard(&ctx, Path::new(&prepared), &|_| {
-            std::process::exit(92)
-        });
-    }
+    let _ =
+        install_prepared_index_with_guard(&ctx, Path::new(&prepared), &|_| std::process::exit(92));
     unreachable!("crash helper returned")
 }
 
 #[test]
-fn prepared_index_crashes_leave_only_recoverable_lock_states() {
-    for (mode, exit_code) in [("partial-copy", 91), ("published-lock", 92)] {
-        let (ctx, dir) = fresh_repo(mode);
-        let active_index = dir.join(".git/index");
-        let original_index = fs::read(&active_index).expect("active index");
-        let prepared = dir.join("prepared-index");
-        fs::copy(&active_index, &prepared).expect("prepared index");
-        let status = Command::new(std::env::current_exe().expect("test binary"))
-            .args([
-                "--exact",
-                "gitops::tests::prepared_index_install_crash_helper",
-                "--nocapture",
-            ])
-            .env("LOOM_TEST_INDEX_INSTALL_CRASH", mode)
-            .env("LOOM_TEST_INDEX_INSTALL_ROOT", &dir)
-            .env("LOOM_TEST_INDEX_INSTALL_PREPARED", &prepared)
-            .status()
-            .expect("run crash helper");
-        assert_eq!(status.code(), Some(exit_code));
-        let lock = dir.join(".git/index.lock");
-        if mode == "partial-copy" {
-            assert!(!lock.exists());
-            assert_eq!(
-                fs::read(&active_index).expect("active index"),
-                original_index
-            );
-            install_prepared_index_with_guard(&ctx, &prepared, &|_| Ok(()))
-                .expect("retry after partial staging crash");
-        } else {
-            assert_eq!(
-                fs::read(&lock).expect("published lock"),
-                fs::read(&prepared).unwrap()
-            );
-            assert!(
-                recover_prepared_index_lock_with_guard(&ctx, &prepared, &|_| Ok(()))
-                    .expect("recover exact published lock")
-            );
-        }
-        assert!(!lock.exists());
-        assert_eq!(
-            fs::read(&active_index).expect("installed index"),
-            fs::read(&prepared).unwrap()
-        );
-        fs::remove_dir_all(&dir).expect("remove test repository");
-    }
+fn prepared_index_publication_crash_leaves_an_exact_recoverable_lock() {
+    let (ctx, dir) = fresh_repo("published-lock");
+    let active_index = dir.join(".git/index");
+    let prepared = dir.join("prepared-index");
+    fs::copy(&active_index, &prepared).expect("prepared index");
+    let status = Command::new(std::env::current_exe().expect("test binary"))
+        .args([
+            "--exact",
+            "gitops::tests::prepared_index_install_crash_helper",
+            "--nocapture",
+        ])
+        .env("LOOM_TEST_INDEX_INSTALL_CRASH", "published-lock")
+        .env("LOOM_TEST_INDEX_INSTALL_ROOT", &dir)
+        .env("LOOM_TEST_INDEX_INSTALL_PREPARED", &prepared)
+        .status()
+        .expect("run crash helper");
+    assert_eq!(status.code(), Some(92));
+    let lock = dir.join(".git/index.lock");
+    assert_eq!(
+        fs::read(&lock).expect("published lock"),
+        fs::read(&prepared).unwrap()
+    );
+    assert!(
+        recover_prepared_index_lock_with_guard(&ctx, &prepared, &|_| Ok(()))
+            .expect("recover exact published lock")
+    );
+    assert!(!lock.exists());
+    assert_eq!(
+        fs::read(&active_index).expect("installed index"),
+        fs::read(&prepared).unwrap()
+    );
+    fs::remove_dir_all(&dir).expect("remove test repository");
 }
 
 #[test]

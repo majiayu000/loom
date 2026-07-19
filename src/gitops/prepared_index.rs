@@ -1,5 +1,5 @@
 use std::ffi::OsString;
-use std::fs::{self, OpenOptions};
+use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
@@ -80,34 +80,15 @@ pub fn install_prepared_index_with_guard(
     prepared_index: &Path,
     guard: &dyn Fn(&Path) -> Result<()>,
 ) -> Result<()> {
-    install_prepared_index_with_copy(ctx, prepared_index, guard, &mut io::copy)
-}
-
-pub(super) fn install_prepared_index_with_copy(
-    ctx: &AppContext,
-    prepared_index: &Path,
-    guard: &dyn Fn(&Path) -> Result<()>,
-    copy: &mut dyn FnMut(&mut fs::File, &mut fs::File) -> io::Result<u64>,
-) -> Result<()> {
     let index = resolve_git_index_path(ctx, &[])?;
     let lock = index_lock_path(&index);
-    let mut staging_name = OsString::from(lock.as_os_str());
-    staging_name.push(format!(".loom-stage-{}", uuid::Uuid::new_v4().hyphenated()));
-    let staging = PathBuf::from(staging_name);
-    let mut owns_staging = false;
     let mut owns_lock = false;
     let result = (|| {
-        let mut source = fs::File::open(prepared_index)?;
-        let mut destination = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&staging)?;
-        owns_staging = true;
-        copy(&mut source, &mut destination)?;
-        destination.sync_all()?;
-        drop(destination);
-        crate::fs_util::rename_no_replace_atomic(&staging, &lock)?;
-        owns_staging = false;
+        let metadata = fs::symlink_metadata(prepared_index)?;
+        if !metadata.file_type().is_file() {
+            return Err(anyhow!("prepared Git index is not a regular file"));
+        }
+        fs::hard_link(prepared_index, &lock)?;
         owns_lock = true;
         crate::fs_util::sync_parent_directory(&lock)?;
         guard(&lock)?;
@@ -117,18 +98,15 @@ pub(super) fn install_prepared_index_with_copy(
     })();
     match result {
         Ok(()) => Ok(()),
-        Err(error) if !owns_staging && !owns_lock => Err(error),
-        Err(error) => {
-            let owned = if owns_lock { &lock } else { &staging };
-            match fs::remove_file(owned) {
-                Ok(()) => Err(error),
-                Err(cleanup) if cleanup.kind() == io::ErrorKind::NotFound => Err(error),
-                Err(cleanup) => Err(anyhow!(
-                    "{error:#}; additionally failed to remove staged Git index '{}': {cleanup}",
-                    owned.display()
-                )),
-            }
-        }
+        Err(error) if !owns_lock => Err(error),
+        Err(error) => match fs::remove_file(&lock) {
+            Ok(()) => Err(error),
+            Err(cleanup) if cleanup.kind() == io::ErrorKind::NotFound => Err(error),
+            Err(cleanup) => Err(anyhow!(
+                "{error:#}; additionally failed to remove Git index lock '{}': {cleanup}",
+                lock.display()
+            )),
+        },
     }
 }
 

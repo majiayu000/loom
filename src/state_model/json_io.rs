@@ -335,8 +335,7 @@ fn recover_json_cas_platform(
             record_cas_decision(path, journal, expected, replacement, CasRecovery::Committed)
         }
         (live, None, Some(old)) if live == replacement && old != expected => {
-            replace_file_with_backup_windows(path, &backup, &candidate)?;
-            recover_json_cas_platform(path, journal, expected, replacement)
+            Err(std::io::Error::other("ambiguous JSON CAS retained"))
         }
         (live, Some(staged), None) if live != expected && staged == replacement => {
             record_cas_decision(path, journal, expected, replacement, CasRecovery::Aborted)
@@ -741,6 +740,42 @@ mod tests {
         fs::write(&path, &external).unwrap();
         assert!(read_json_file::<Value>(&path).is_ok());
         assert!(!journal.exists());
+        fs::remove_dir_all(root).expect("remove CAS restore fixture");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn cas_recovery_retains_untrusted_windows_backup() {
+        let root =
+            std::env::temp_dir().join(format!("loom-json-cas-restore-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).expect("create CAS restore fixture");
+        let path = root.join("state.json");
+        let expected = serialize_json_file(&json!({"value": "reviewed"})).unwrap();
+        let replacement = serialize_json_file(&json!({"value": "replacement"})).unwrap();
+        let external = serialize_json_file(&json!({"value": "external"})).unwrap();
+        let candidate = path.with_extension("loom-cas-candidate");
+        let backup = path.with_extension("loom-cas-backup");
+        let journal = path.with_extension("loom-cas-journal");
+
+        fs::write(&path, &replacement).unwrap();
+        fs::write(&backup, &external).unwrap();
+        fs::write(
+            &journal,
+            encode_cas_journal(0, expected.as_bytes(), replacement.as_bytes()),
+        )
+        .unwrap();
+        let retained_journal = fs::read(&journal).unwrap();
+
+        for _ in 0..2 {
+            let error =
+                read_json_file::<Value>(&path).expect_err("untrusted backup must fail closed");
+            assert!(error.to_string().contains("ambiguous JSON CAS retained"));
+            assert_eq!(fs::read(&path).unwrap(), replacement.as_bytes());
+            assert!(!candidate.exists());
+            assert_eq!(fs::read(&backup).unwrap(), external.as_bytes());
+            assert_eq!(fs::read(&journal).unwrap(), retained_journal);
+        }
+
         fs::remove_dir_all(root).expect("remove CAS restore fixture");
     }
 

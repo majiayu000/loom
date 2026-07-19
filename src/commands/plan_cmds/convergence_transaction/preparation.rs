@@ -320,6 +320,7 @@ pub(super) fn rotate_projection_stages(
         projection.activated_fingerprint = None;
         projection.activated = false;
         projection.original_fingerprint = None;
+        projection.restored_fingerprint = None;
     }
     save_journal(journal_path, journal)
 }

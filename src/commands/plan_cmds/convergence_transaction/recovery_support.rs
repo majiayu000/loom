@@ -2,7 +2,6 @@ use super::recovery_evidence::{
     reprove_source_boundary, rollback_uncommitted_source_only, validate_expected_projections,
     validate_mutated_surfaces, validate_rollback_evidence, validate_rolling_back_state,
 };
-use super::registry_restore::restore_registry_projections_if_owned;
 use super::*;
 
 pub(super) fn recover_journal(
@@ -102,7 +101,7 @@ pub(super) fn recover_journal(
             validate_mutated_surfaces(app, &paths, plan, &mut journal)?;
             validate_rollback_evidence(app, plan, &journal)?;
             validate_rolling_back_state(app, plan, &journal)?;
-            let errors = rollback_journal(app, &paths, plan, &mut journal);
+            let errors = rollback_journal(app, &paths, plan, journal_path, &mut journal);
             if !errors.is_empty() {
                 return Err(CommandFailure::new(
                     ErrorCode::StateCorrupt,
@@ -163,7 +162,7 @@ pub(super) fn recover_journal(
         }
         validate_mutated_surfaces(app, &paths, plan, &mut journal)?;
         validate_rollback_evidence(app, plan, &journal)?;
-        restore_projections_for_resume(&paths, plan, &mut journal)?;
+        super::rollback::restore_projections_for_resume(&paths, plan, journal_path, &mut journal)?;
         rotate_projection_stages(journal_path, &mut journal)?;
         journal.installed_projections = 0;
         journal.expected_projections = None;
@@ -187,7 +186,7 @@ pub(super) fn recover_journal(
         return Ok(Some(result));
     }
     validate_rollback_evidence(app, plan, &journal)?;
-    let errors = rollback_journal(app, &paths, plan, &mut journal);
+    let errors = rollback_journal(app, &paths, plan, journal_path, &mut journal);
     if !errors.is_empty() {
         return Err(CommandFailure::new(
             ErrorCode::StateCorrupt,
@@ -257,77 +256,6 @@ pub(super) fn apply_output(
 
 pub(super) fn source_is_committed(journal: &TransactionJournal) -> bool {
     journal.source_head.is_some()
-}
-
-pub(super) fn restore_projections_for_resume(
-    paths: &RegistryStatePaths,
-    plan: &SkillConvergencePlan,
-    journal: &mut TransactionJournal,
-) -> std::result::Result<(), CommandFailure> {
-    let mut errors = validate_transaction_artifacts(journal);
-    if !errors.is_empty() {
-        return Err(CommandFailure::new(
-            ErrorCode::StateCorrupt,
-            "committed source recovery artifact validation failed",
-        )
-        .with_rollback_errors(errors));
-    }
-    if plan.registry.initialized
-        && let Err(err) = restore_registry_projections_if_owned(paths, journal)
-    {
-        push_rollback_error(&mut errors, "restore_registry_projections", err.message);
-    }
-    if !errors.is_empty() {
-        return Err(CommandFailure::new(
-            ErrorCode::StateCorrupt,
-            "failed to prepare committed source recovery",
-        )
-        .with_rollback_errors(errors));
-    }
-    for index in (0..journal.projections.len()).rev() {
-        if !journal.projections[index].is_activated() {
-            continue;
-        }
-        if let Err(err) =
-            restore_projection_from_evidence(&journal.projections[index], &journal.plan_id)
-        {
-            push_rollback_error(&mut errors, "restore_projection_from_evidence", err.message);
-        } else {
-            journal.projections[index].mark_activated(false);
-            journal.projections[index].original_fingerprint = None;
-        }
-        if !errors.is_empty() {
-            return Err(CommandFailure::new(
-                ErrorCode::StateCorrupt,
-                "failed to prepare committed source recovery",
-            )
-            .with_rollback_errors(errors));
-        }
-    }
-    for projection in journal.projections.iter().rev() {
-        cleanup_owned_dir(
-            Path::new(&projection.staging_owner),
-            &journal.plan_id,
-            &projection.owner_proof,
-            &mut errors,
-        );
-        if !errors.is_empty() {
-            return Err(CommandFailure::new(
-                ErrorCode::StateCorrupt,
-                "failed to prepare committed source recovery",
-            )
-            .with_rollback_errors(errors));
-        }
-    }
-    if errors.is_empty() {
-        Ok(())
-    } else {
-        Err(CommandFailure::new(
-            ErrorCode::StateCorrupt,
-            "failed to prepare committed source recovery",
-        )
-        .with_rollback_errors(errors))
-    }
 }
 
 pub(super) fn cleanup_declared_artifacts(
@@ -468,6 +396,10 @@ fn validate_journal(
             && Path::new(&artifact.staging_path)
                 == Path::new(&artifact.staging_owner).join("stage")
             && owner_proof_is_valid(&plan.plan_id, &artifact.owner_proof)
+            && artifact
+                .restored_fingerprint
+                .as_deref()
+                .is_none_or(valid_sha256_digest)
             && (journal.phase == TransactionPhase::Preparing
                 || artifact.fingerprint().is_some_and(valid_sha256_digest))
             && match effect.effect.as_str() {

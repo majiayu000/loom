@@ -20,6 +20,7 @@ fn projection_artifact(label: &str, activated: bool) -> ProjectionBackup {
         activated_fingerprint: Some(format!("{label}-active")),
         activated,
         original_fingerprint: Some(format!("{label}-original")),
+        restored_fingerprint: None,
     }
 }
 
@@ -121,13 +122,29 @@ fn equal_content_backup_copy_restore_uses_retained_exchange_evidence() {
         activated_fingerprint: Some(activated.clone()),
         activated: true,
         original_fingerprint: Some(original.clone()),
+        restored_fingerprint: None,
     };
 
+    artifact.restored_fingerprint =
+        super::super::projection_recovery::prepare_projection_restore_fingerprint(
+            &artifact, plan_id,
+        )
+        .expect("prepare restore fingerprint");
+    let durable_restored = artifact
+        .restored_fingerprint
+        .clone()
+        .expect("durable restore fingerprint");
+    let pre_exchange = convergence_projection_fingerprint(&live).expect("pre-exchange live");
+    assert!(matches!(
+        projection_identity_state(&artifact, &pre_exchange),
+        Ok(ProjectionState::New)
+    ));
     super::super::projection_recovery::restore_projection_from_evidence(&artifact, plan_id)
         .expect("restore from durable backup copy");
     let restored = convergence_projection_fingerprint(&live).expect("restored fingerprint");
     assert_ne!(restored, original);
     assert_ne!(restored, activated);
+    assert_eq!(restored, durable_restored);
     assert_eq!(
         convergence_projection_fingerprint(&staging).expect("retained activated fingerprint"),
         activated
@@ -140,9 +157,35 @@ fn equal_content_backup_copy_restore_uses_retained_exchange_evidence() {
             .expect("reconcile restored copy")
     );
 
-    fs::write(live.join("external.txt"), "external\n").expect("change restored projection");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        let restored_file = live.join("SKILL.md");
+        let original_mode = fs::metadata(&restored_file)
+            .expect("restored metadata")
+            .permissions()
+            .mode();
+        fs::set_permissions(
+            &restored_file,
+            fs::Permissions::from_mode(original_mode ^ 0o100),
+        )
+        .expect("change restored mode");
+        let error = match same_content_projection_state(&live, &artifact) {
+            Ok(_) => panic!("metadata-only replacement must fail closed"),
+            Err(error) => error,
+        };
+        assert_eq!(error.code, ErrorCode::DependencyConflict);
+        fs::set_permissions(&restored_file, fs::Permissions::from_mode(original_mode))
+            .expect("restore mode");
+    }
+
+    let held_restored = root.0.join("held-restored");
+    fs::rename(&live, &held_restored).expect("replace restored inode");
+    fs::create_dir_all(&live).expect("create external replacement");
+    fs::write(live.join("SKILL.md"), "same\n").expect("write same external content");
     let error = match same_content_projection_state(&live, &artifact) {
-        Ok(_) => panic!("changed restored projection must fail closed"),
+        Ok(_) => panic!("same-content inode replacement must fail closed"),
         Err(error) => error,
     };
     assert_eq!(error.code, ErrorCode::DependencyConflict);

@@ -507,40 +507,18 @@ fn same_content_projection_state(
     path: &Path,
     artifact: &ProjectionBackup,
 ) -> std::result::Result<ProjectionState, CommandFailure> {
-    if retained_restore_proves_old(path, artifact)? {
-        return Ok(ProjectionState::Old);
-    }
     let live = convergence_projection_fingerprint(path)?;
     projection_identity_state(artifact, &live)
-}
-
-fn retained_restore_proves_old(
-    live: &Path,
-    artifact: &ProjectionBackup,
-) -> std::result::Result<bool, CommandFailure> {
-    let Some(backup) = artifact.backup.as_ref() else {
-        return Ok(false);
-    };
-    let staging = Path::new(&artifact.staging_path);
-    match fs::symlink_metadata(staging) {
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
-        Err(error) => return Err(map_io(error)),
-        Ok(_) => {}
-    }
-    let staging_identity = convergence_projection_fingerprint(staging)?;
-    if artifact.fingerprint() != Some(staging_identity.as_str()) {
-        return Ok(false);
-    }
-    super::projection_recovery::path_matches_backup(live, backup)
 }
 
 fn projection_identity_state(
     artifact: &ProjectionBackup,
     live: &str,
 ) -> std::result::Result<ProjectionState, CommandFailure> {
-    let original = artifact.original_fingerprint.as_deref() == Some(live);
+    let old = artifact.original_fingerprint.as_deref() == Some(live)
+        || artifact.restored_fingerprint.as_deref() == Some(live);
     let activated = artifact.fingerprint() == Some(live);
-    match (original, activated) {
+    match (old, activated) {
         (true, false) => Ok(ProjectionState::Old),
         (false, true) => Ok(ProjectionState::New),
         _ => Err(recovery_stale(

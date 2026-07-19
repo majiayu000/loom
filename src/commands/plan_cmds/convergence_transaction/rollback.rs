@@ -55,7 +55,7 @@ pub(super) fn handle_transaction_failure(
                 "message": error.message,
             }));
         } else {
-            errors = rollback_journal(app, paths, plan, journal);
+            errors = rollback_journal(app, paths, plan, journal_path, journal);
         }
     }
     if errors.is_empty()
@@ -83,6 +83,7 @@ pub(super) fn handle_transaction_failure(
 pub(super) fn restore_registry_and_activated_projections(
     paths: &RegistryStatePaths,
     plan: &SkillConvergencePlan,
+    journal_path: &Path,
     journal: &mut TransactionJournal,
 ) -> Vec<Value> {
     let mut errors = Vec::new();
@@ -92,22 +93,41 @@ pub(super) fn restore_registry_and_activated_projections(
         push_rollback_error(&mut errors, "restore_registry_projections", error.message);
         return errors;
     }
-    errors.extend(restore_activated_projections(journal));
+    errors.extend(restore_activated_projections(journal_path, journal));
     errors
 }
 
-pub(super) fn restore_activated_projections(journal: &mut TransactionJournal) -> Vec<Value> {
+pub(super) fn restore_activated_projection_at(
+    journal_path: &Path,
+    journal: &mut TransactionJournal,
+    index: usize,
+) -> std::result::Result<(), CommandFailure> {
+    if journal.projections[index].restored_fingerprint.is_none()
+        && let Some(fingerprint) =
+            prepare_projection_restore_fingerprint(&journal.projections[index], &journal.plan_id)?
+    {
+        journal.projections[index].restored_fingerprint = Some(fingerprint);
+        save_journal(journal_path, journal)?;
+    }
+    restore_projection_from_evidence(&journal.projections[index], &journal.plan_id)?;
+    journal.projections[index].mark_activated(false);
+    Ok(())
+}
+
+pub(super) fn restore_activated_projections(
+    journal_path: &Path,
+    journal: &mut TransactionJournal,
+) -> Vec<Value> {
     let mut errors = Vec::new();
-    for projection in journal.projections.iter_mut().rev() {
-        if projection.is_activated() {
-            match restore_projection_from_evidence(projection, &journal.plan_id) {
-                Ok(()) => projection.mark_activated(false),
-                Err(err) => push_rollback_error(
-                    &mut errors,
-                    "restore_projection_after_head_drift",
-                    err.message,
-                ),
-            }
+    for index in (0..journal.projections.len()).rev() {
+        if journal.projections[index].is_activated()
+            && let Err(err) = restore_activated_projection_at(journal_path, journal, index)
+        {
+            push_rollback_error(
+                &mut errors,
+                "restore_projection_after_head_drift",
+                err.message,
+            );
         }
     }
     journal.installed_projections = journal
@@ -118,10 +138,80 @@ pub(super) fn restore_activated_projections(journal: &mut TransactionJournal) ->
     errors
 }
 
+pub(super) fn restore_projections_for_resume(
+    paths: &RegistryStatePaths,
+    plan: &SkillConvergencePlan,
+    journal_path: &Path,
+    journal: &mut TransactionJournal,
+) -> std::result::Result<(), CommandFailure> {
+    let mut errors = validate_transaction_artifacts(journal);
+    if !errors.is_empty() {
+        return Err(CommandFailure::new(
+            ErrorCode::StateCorrupt,
+            "committed source recovery artifact validation failed",
+        )
+        .with_rollback_errors(errors));
+    }
+    if plan.registry.initialized
+        && let Err(err) = restore_registry_projections_if_owned(paths, journal)
+    {
+        push_rollback_error(&mut errors, "restore_registry_projections", err.message);
+    }
+    if !errors.is_empty() {
+        return Err(CommandFailure::new(
+            ErrorCode::StateCorrupt,
+            "failed to prepare committed source recovery",
+        )
+        .with_rollback_errors(errors));
+    }
+    for index in (0..journal.projections.len()).rev() {
+        if !journal.projections[index].is_activated() {
+            continue;
+        }
+        if let Err(err) = restore_activated_projection_at(journal_path, journal, index) {
+            push_rollback_error(&mut errors, "restore_projection_from_evidence", err.message);
+        } else {
+            journal.projections[index].original_fingerprint = None;
+        }
+        if !errors.is_empty() {
+            return Err(CommandFailure::new(
+                ErrorCode::StateCorrupt,
+                "failed to prepare committed source recovery",
+            )
+            .with_rollback_errors(errors));
+        }
+    }
+    for projection in journal.projections.iter().rev() {
+        cleanup_owned_dir(
+            Path::new(&projection.staging_owner),
+            &journal.plan_id,
+            &projection.owner_proof,
+            &mut errors,
+        );
+        if !errors.is_empty() {
+            return Err(CommandFailure::new(
+                ErrorCode::StateCorrupt,
+                "failed to prepare committed source recovery",
+            )
+            .with_rollback_errors(errors));
+        }
+    }
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(CommandFailure::new(
+            ErrorCode::StateCorrupt,
+            "failed to prepare committed source recovery",
+        )
+        .with_rollback_errors(errors))
+    }
+}
+
 pub(super) fn rollback_journal(
     app: &App,
     paths: &RegistryStatePaths,
     plan: &SkillConvergencePlan,
+    journal_path: &Path,
     journal: &mut TransactionJournal,
 ) -> Vec<Value> {
     let mut errors = Vec::new();
@@ -146,7 +236,7 @@ pub(super) fn rollback_journal(
     if rollback_fault(&mut errors, "convergence_interrupt_after_registry_restore") {
         return errors;
     }
-    errors.extend(restore_activated_projections(journal));
+    errors.extend(restore_activated_projections(journal_path, journal));
     if !errors.is_empty() {
         return errors;
     }

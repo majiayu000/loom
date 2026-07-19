@@ -58,7 +58,8 @@ use preparation::{
     rotate_projection_stages,
 };
 use projection_recovery::{
-    restore_projection_from_evidence, validate_projection_staging_fingerprint,
+    prepare_projection_restore_fingerprint, restore_projection_from_evidence,
+    validate_projection_staging_fingerprint,
 };
 use projection_view::projection_view_digest;
 use recovery_evidence::{
@@ -142,6 +143,8 @@ struct ProjectionBackup {
     activated: bool,
     #[serde(default)]
     original_fingerprint: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    restored_fingerprint: Option<String>,
 }
 
 impl ProjectionBackup {
@@ -269,6 +272,7 @@ pub(super) fn apply_convergence(
                 activated_fingerprint: None,
                 activated: false,
                 original_fingerprint: None,
+                restored_fingerprint: None,
             })
         })
         .collect::<std::result::Result<Vec<_>, CommandFailure>>()?;
@@ -513,7 +517,9 @@ fn execute_local_transaction(
             source_head,
             "HEAD changed during projection activation",
         ) {
-            return Err(error.with_rollback_errors(restore_activated_projections(journal)));
+            return Err(
+                error.with_rollback_errors(restore_activated_projections(journal_path, journal))
+            );
         }
         save_journal(journal_path, journal)?;
         maybe_skill_fault("convergence_after_projection_swap")?;
@@ -531,7 +537,9 @@ fn execute_local_transaction(
         .and_then(|_| validate_recovery_routing(app, plan))
         .and_then(|_| validate_mutated_surfaces(app, paths, plan, journal));
         if let Err(error) = save_guard {
-            return Err(error.with_rollback_errors(restore_activated_projections(journal)));
+            return Err(
+                error.with_rollback_errors(restore_activated_projections(journal_path, journal))
+            );
         }
         #[cfg(debug_assertions)]
         if let Some(milliseconds) = std::env::var("LOOM_TEST_CONVERGENCE_REGISTRY_SAVE_PAUSE_MS")
@@ -548,7 +556,7 @@ fn execute_local_transaction(
                 "registry projections changed during atomic replacement",
                 "PLAN_PROJECTION_DRIFT",
             )
-            .with_rollback_errors(restore_activated_projections(journal)));
+            .with_rollback_errors(restore_activated_projections(journal_path, journal)));
         }
         maybe_skill_fault("convergence_interrupt_after_registry_save_cas")?;
         if let Err(error) = require_head(

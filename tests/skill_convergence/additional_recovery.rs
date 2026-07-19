@@ -1,9 +1,22 @@
 use std::fs;
+use std::path::PathBuf;
 
 use serde_json::json;
 
 use super::*;
 use crate::skill_convergence_executor::apply_plan;
+
+fn seed_owned_index_lock(prepared: &Path, lock: &Path) {
+    let mut claim_name = prepared.as_os_str().to_os_string();
+    claim_name.push(".lock-claim");
+    let claim = PathBuf::from(claim_name);
+    let detached = prepared.with_extension("detached-index");
+    fs::hard_link(prepared, &claim).expect("durable index claim");
+    fs::copy(prepared, &detached).expect("copy detached evidence");
+    fs::remove_file(prepared).expect("detach prepared name");
+    fs::rename(&detached, prepared).expect("restore detached prepared evidence");
+    fs::hard_link(&claim, lock).expect("publish owned index lock");
+}
 
 #[test]
 fn interrupted_projection_activation_recovers_refresh() {
@@ -233,8 +246,7 @@ fn registry_recovery_adopts_only_its_durable_index_lock() {
             .as_str()
             .expect("prepared index"),
     );
-    fs::copy(prepared, fixture.root.path().join(".git/index.lock"))
-        .expect("simulate retained transaction lock");
+    seed_owned_index_lock(prepared, &fixture.root.path().join(".git/index.lock"));
     git(
         fixture.root.path(),
         &["update-ref", "HEAD", registry_commit, source_head],
@@ -284,7 +296,7 @@ fn source_recovery_adopts_only_its_durable_index_lock() {
     let prepared =
         Path::new(journal["artifact_root"].as_str().expect("artifact root")).join("source-index");
     let lock = fixture.root.path().join(".git/index.lock");
-    fs::copy(&prepared, &lock).expect("simulate retained source index lock");
+    seed_owned_index_lock(&prepared, &lock);
 
     let (output, recovered) = apply_plan(&fixture, &plan, "source-lock-crash", &[]);
     assert!(

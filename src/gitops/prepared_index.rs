@@ -80,45 +80,7 @@ pub fn install_prepared_index_with_guard(
     prepared_index: &Path,
     guard: &dyn Fn(&Path) -> Result<()>,
 ) -> Result<()> {
-    let index = resolve_git_index_path(ctx, &[])?;
-    let lock = index_lock_path(&index);
-    let mut owns_lock = false;
-    let result = (|| {
-        let metadata = fs::symlink_metadata(prepared_index)?;
-        if !metadata.file_type().is_file() {
-            return Err(anyhow!("prepared Git index is not a regular file"));
-        }
-        let prepared_bytes = fs::read(prepared_index)?;
-        OpenOptions::new()
-            .write(true)
-            .open(prepared_index)?
-            .sync_all()?;
-        fs::hard_link(prepared_index, &lock)?;
-        owns_lock = true;
-        crate::fs_util::sync_parent_directory(&lock)?;
-        crate::fs_util::write_atomic_bytes(prepared_index, &prepared_bytes)?;
-        guard(&lock)?;
-        if fs::read(&lock)? != prepared_bytes || fs::read(prepared_index)? != prepared_bytes {
-            return Err(anyhow!(
-                "prepared Git index changed during guarded installation"
-            ));
-        }
-        crate::fs_util::rename_atomic(&lock, &index)?;
-        crate::fs_util::sync_parent_directory(&index)?;
-        Ok(())
-    })();
-    match result {
-        Ok(()) => Ok(()),
-        Err(error) if !owns_lock => Err(error),
-        Err(error) => match fs::remove_file(&lock) {
-            Ok(()) => Err(error),
-            Err(cleanup) if cleanup.kind() == io::ErrorKind::NotFound => Err(error),
-            Err(cleanup) => Err(anyhow!(
-                "{error:#}; additionally failed to remove Git index lock '{}': {cleanup}",
-                lock.display()
-            )),
-        },
-    }
+    install_or_recover_prepared_index(ctx, prepared_index, guard, false).map(|_| ())
 }
 
 pub fn recover_prepared_index_lock_with_guard(
@@ -126,72 +88,206 @@ pub fn recover_prepared_index_lock_with_guard(
     prepared_index: &Path,
     guard: &dyn Fn(&Path) -> Result<()>,
 ) -> Result<bool> {
+    install_or_recover_prepared_index(ctx, prepared_index, guard, true)
+}
+
+fn install_or_recover_prepared_index(
+    ctx: &AppContext,
+    prepared_index: &Path,
+    guard: &dyn Fn(&Path) -> Result<()>,
+    recovery: bool,
+) -> Result<bool> {
     let index = resolve_git_index_path(ctx, &[])?;
     let lock = index_lock_path(&index);
-    let metadata = match fs::symlink_metadata(&lock) {
-        Ok(metadata) => metadata,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
-        Err(error) => return Err(error.into()),
-    };
-    if !metadata.file_type().is_file() {
-        return Err(anyhow!("existing Git index lock is not a regular file"));
+    let claim = prepared_index_aux_path(prepared_index, ".lock-claim");
+    let capture = prepared_index_aux_path(prepared_index, ".lock-capture");
+    let guarded = prepared_index_aux_path(prepared_index, ".lock-guard");
+    let publish = prepared_index_aux_path(prepared_index, ".lock-publish");
+
+    if recovery
+        && !path_entry_exists(&lock)?
+        && !path_entry_exists(&claim)?
+        && !path_entry_exists(&capture)?
+    {
+        return Ok(false);
     }
-    let owned_lock = fs::File::open(&lock)?;
-    let owned_identity = owned_lock.metadata()?;
-    if fs::read(&lock)? != fs::read(prepared_index)? {
-        return Err(anyhow!(
-            "existing Git index lock does not match durable transaction evidence"
-        ));
-    }
-    let prepared_bytes = fs::read(prepared_index)?;
+
+    let prepared_bytes = read_regular_file(prepared_index, "prepared Git index")?;
     OpenOptions::new()
         .write(true)
         .open(prepared_index)?
         .sync_all()?;
+    reconcile_private_capture(&claim, &capture, &lock, &prepared_bytes)?;
+    remove_private_entry(&guarded)?;
+    remove_private_entry(&publish)?;
+
+    if recovery && !path_entry_exists(&claim)? {
+        return Err(anyhow!(
+            "existing Git index lock has no durable transaction claim"
+        ));
+    }
+
+    if path_entry_exists(&claim)? {
+        require_regular_exact(&claim, &prepared_bytes, "durable Git index claim")?;
+    } else {
+        fs::hard_link(prepared_index, &claim)?;
+        crate::fs_util::sync_parent_directory(&claim)?;
+    }
     crate::fs_util::write_atomic_bytes(prepared_index, &prepared_bytes)?;
-    let guarded = (|| {
-        guard(&lock)?;
-        if fs::read(&lock)? != prepared_bytes || fs::read(prepared_index)? != prepared_bytes {
-            return Err(anyhow!(
-                "prepared Git index changed during guarded recovery"
-            ));
-        }
-        crate::fs_util::rename_atomic(&lock, &index)?;
+    require_regular_exact(prepared_index, &prepared_bytes, "prepared Git index")?;
+    reserve_public_lock(&claim, &capture, &lock, &prepared_bytes)?;
+
+    crate::fs_util::write_atomic_bytes(&guarded, &prepared_bytes)?;
+    let result = (|| {
+        guard(&guarded)?;
+        require_regular_exact(&guarded, &prepared_bytes, "guarded Git index candidate")?;
+        require_regular_exact(&claim, &prepared_bytes, "durable Git index claim")?;
+        require_regular_exact(prepared_index, &prepared_bytes, "prepared Git index")?;
+        fs::hard_link(&claim, &publish)?;
+        crate::fs_util::sync_parent_directory(&publish)?;
+        crate::fs_util::rename_atomic(&publish, &index)?;
         crate::fs_util::sync_parent_directory(&index)?;
+        capture_and_remove_owned_lock(&claim, &capture, &lock, &prepared_bytes)?;
+        remove_private_entry(&claim)?;
+        crate::fs_util::sync_parent_directory(&claim)?;
         Ok(true)
     })();
-    match guarded {
+    remove_private_entry(&guarded)?;
+    match result {
         Ok(recovered) => Ok(recovered),
-        Err(error) => Err(cleanup_guarded_lock(&lock, &owned_identity, error)),
+        Err(error) => {
+            let cleanup = capture_and_remove_owned_lock(&claim, &capture, &lock, &prepared_bytes);
+            match cleanup {
+                Ok(()) => {
+                    remove_private_entry(&claim)?;
+                    crate::fs_util::sync_parent_directory(&claim)?;
+                    Err(error)
+                }
+                Err(cleanup) => Err(anyhow!(
+                    "{error:#}; additionally failed to release Git index lock: {cleanup:#}"
+                )),
+            }
+        }
     }
 }
 
-fn cleanup_guarded_lock(
+fn reserve_public_lock(claim: &Path, capture: &Path, lock: &Path, expected: &[u8]) -> Result<()> {
+    match fs::hard_link(claim, lock) {
+        Ok(()) => {
+            crate::fs_util::sync_parent_directory(lock)?;
+            Ok(())
+        }
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+            capture_and_remove_owned_lock(claim, capture, lock, expected)?;
+            fs::hard_link(claim, lock)?;
+            crate::fs_util::sync_parent_directory(lock)?;
+            Ok(())
+        }
+        Err(error) => Err(error.into()),
+    }
+}
+
+fn capture_and_remove_owned_lock(
+    claim: &Path,
+    capture: &Path,
     lock: &Path,
-    owned_identity: &fs::Metadata,
-    error: anyhow::Error,
-) -> anyhow::Error {
-    let current = match fs::symlink_metadata(lock) {
-        Ok(current) => current,
-        Err(cleanup) if cleanup.kind() == io::ErrorKind::NotFound => return error,
-        Err(cleanup) => {
-            return anyhow!(
-                "{error:#}; additionally failed to inspect guarded Git index lock: {cleanup}"
-            );
-        }
-    };
-    if !same_file_identity(owned_identity, &current) {
-        return anyhow!(
-            "{error:#}; guarded Git index lock was concurrently replaced and was preserved"
-        );
+    expected: &[u8],
+) -> Result<()> {
+    crate::fs_util::rename_no_replace_atomic(lock, capture)?;
+    crate::fs_util::sync_parent_directory(lock)?;
+    if captured_lock_is_owned(claim, capture, expected)? {
+        remove_private_entry(capture)?;
+        crate::fs_util::sync_parent_directory(capture)?;
+        return Ok(());
     }
-    match fs::remove_file(lock) {
-        Ok(()) => error,
-        Err(cleanup) if cleanup.kind() == io::ErrorKind::NotFound => error,
-        Err(cleanup) => {
-            anyhow!("{error:#}; additionally failed to remove guarded Git index lock: {cleanup}")
-        }
+    restore_foreign_capture(capture, lock)?;
+    Err(anyhow!(
+        "existing Git index lock is not owned by the durable transaction claim"
+    ))
+}
+
+fn reconcile_private_capture(
+    claim: &Path,
+    capture: &Path,
+    lock: &Path,
+    expected: &[u8],
+) -> Result<()> {
+    if !path_entry_exists(capture)? {
+        return Ok(());
     }
+    if path_entry_exists(claim)? && captured_lock_is_owned(claim, capture, expected)? {
+        remove_private_entry(capture)?;
+        crate::fs_util::sync_parent_directory(capture)?;
+        return Ok(());
+    }
+    restore_foreign_capture(capture, lock)?;
+    Err(anyhow!(
+        "captured Git index lock is not owned by the durable transaction claim"
+    ))
+}
+
+fn restore_foreign_capture(capture: &Path, lock: &Path) -> Result<()> {
+    match crate::fs_util::rename_no_replace_atomic(capture, lock) {
+        Ok(()) => {
+            crate::fs_util::sync_parent_directory(lock)?;
+            Ok(())
+        }
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => Err(anyhow!(
+            "foreign Git index lock restoration collided; both lock entries were preserved"
+        )),
+        Err(error) => Err(error.into()),
+    }
+}
+
+fn captured_lock_is_owned(claim: &Path, capture: &Path, expected: &[u8]) -> Result<bool> {
+    let claim_metadata = fs::symlink_metadata(claim)?;
+    let capture_metadata = fs::symlink_metadata(capture)?;
+    Ok(claim_metadata.file_type().is_file()
+        && capture_metadata.file_type().is_file()
+        && same_file_identity(&claim_metadata, &capture_metadata)
+        && fs::read(claim)? == expected
+        && fs::read(capture)? == expected)
+}
+
+fn read_regular_file(path: &Path, description: &str) -> Result<Vec<u8>> {
+    let metadata = fs::symlink_metadata(path)?;
+    if !metadata.file_type().is_file() {
+        return Err(anyhow!("{description} is not a regular file"));
+    }
+    Ok(fs::read(path)?)
+}
+
+fn require_regular_exact(path: &Path, expected: &[u8], description: &str) -> Result<()> {
+    if read_regular_file(path, description)? != expected {
+        return Err(anyhow!("{description} changed during guarded installation"));
+    }
+    Ok(())
+}
+
+fn remove_private_entry(path: &Path) -> Result<()> {
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error.into()),
+    }
+}
+
+fn path_entry_exists(path: &Path) -> Result<bool> {
+    match fs::symlink_metadata(path) {
+        Ok(_) => Ok(true),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error.into()),
+    }
+}
+
+pub(super) fn prepared_index_aux_path(prepared_index: &Path, suffix: &str) -> PathBuf {
+    let mut name = OsString::from(prepared_index.as_os_str());
+    name.push(suffix);
+    PathBuf::from(name)
+}
+
+pub fn prepared_index_claim_exists(prepared_index: &Path) -> Result<bool> {
+    path_entry_exists(&prepared_index_aux_path(prepared_index, ".lock-claim"))
 }
 
 #[cfg(unix)]

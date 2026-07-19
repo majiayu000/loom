@@ -12,6 +12,8 @@ use super::{
     run_git_allow_failure_in_with_env, run_git_in_with_env,
 };
 
+const INDEX_LOCK_PLACEHOLDER: &[u8] = b"loom index lock placeholder\n";
+
 #[derive(Debug)]
 struct PreparedIndexLockRetained(String);
 
@@ -126,6 +128,7 @@ fn install_or_recover_prepared_index(
     let lock = index_lock_path(&index);
     let claim = prepared_index_aux_path(ctx, prepared_index, ".lock-claim")?;
     let capture = prepared_index_aux_path(ctx, prepared_index, ".lock-capture")?;
+    let sentinel = prepared_index_aux_path(ctx, prepared_index, ".lock-sentinel")?;
     let guarded = prepared_index_aux_path(ctx, prepared_index, ".lock-guard")?;
     let publish = prepared_index_aux_path(ctx, prepared_index, ".lock-publish")?;
 
@@ -133,22 +136,43 @@ fn install_or_recover_prepared_index(
         && !path_entry_exists(&lock)?
         && !path_entry_exists(&claim)?
         && !path_entry_exists(&capture)?
+        && !path_entry_exists(&sentinel)?
     {
         return Ok(false);
     }
     let prepared_bytes = read_regular_file(prepared_index, "prepared Git index")?;
     crate::fs_util::sync_file_and_parent(prepared_index)?;
-    reconcile_private_capture(&claim, &capture, &lock, &prepared_bytes)?;
     remove_private_entry(&guarded)?;
     remove_private_entry(&publish)?;
 
     if recovery {
-        match finish_completed_index_install(&index, &claim, &capture, &lock, &prepared_bytes) {
+        match finish_completed_index_install(
+            &index,
+            &claim,
+            &capture,
+            &sentinel,
+            &lock,
+            &prepared_bytes,
+        ) {
+            Ok(true) => return Ok(true),
+            Ok(false) => {}
+            Err(error) => return Err(retained_lock_error(&lock, error)),
+        }
+        match finish_captured_index_install(
+            &index,
+            &claim,
+            &capture,
+            &sentinel,
+            &lock,
+            &prepared_bytes,
+        ) {
             Ok(true) => return Ok(true),
             Ok(false) => {}
             Err(error) => return Err(retained_lock_error(&lock, error)),
         }
     }
+    reconcile_private_capture(&claim, &capture, &sentinel, &lock, &prepared_bytes)?;
+    remove_private_entry(&sentinel)?;
 
     if recovery && !path_entry_exists(&claim)? {
         return Err(anyhow!(
@@ -159,7 +183,7 @@ fn install_or_recover_prepared_index(
     create_or_validate_claim(&claim, &prepared_bytes)?;
     crate::fs_util::write_atomic_bytes(prepared_index, &prepared_bytes)?;
     require_regular_exact(prepared_index, &prepared_bytes, "prepared Git index")?;
-    if let Err(error) = reserve_public_lock(&claim, &capture, &lock, &prepared_bytes) {
+    if let Err(error) = reserve_public_lock(&claim, &lock, &prepared_bytes) {
         return match public_lock_is_owned(&claim, &lock, &prepared_bytes) {
             Ok(true) => Err(retained_lock_error(&lock, error)),
             Ok(false) => Err(error),
@@ -197,13 +221,14 @@ fn install_or_recover_prepared_index(
         {
             return Err(anyhow!("registry index post-guard test failure"));
         }
-        capture_owned_lock(&claim, &capture, &lock, &prepared_bytes)?;
+        capture_owned_lock(&claim, &capture, &sentinel, &lock, &prepared_bytes)?;
         injected_index_failure("after_lock_capture")?;
         injected_index_crash("after_lock_capture");
         crate::fs_util::rename_atomic(&capture, &index)?;
         crate::fs_util::sync_parent_directory(&index)?;
         injected_index_failure("after_index_rename")?;
         injected_index_crash("after_index_rename");
+        remove_placeholder_lock(&lock)?;
         remove_private_entry(&guarded)?;
         remove_private_entry(&claim)?;
         crate::fs_util::sync_parent_directory(&claim)?;
@@ -228,6 +253,7 @@ fn finish_completed_index_install(
     index: &Path,
     claim: &Path,
     capture: &Path,
+    sentinel: &Path,
     lock: &Path,
     expected: &[u8],
 ) -> Result<bool> {
@@ -245,9 +271,39 @@ fn finish_completed_index_install(
         return Ok(false);
     }
     if path_entry_exists(lock)? {
-        capture_and_remove_owned_lock(claim, capture, lock, expected)?;
+        if public_lock_is_owned(claim, lock, expected)? {
+            capture_owned_lock(claim, capture, sentinel, lock, expected)?;
+            remove_private_entry(capture)?;
+            crate::fs_util::sync_parent_directory(capture)?;
+        }
+        remove_placeholder_lock(lock)?;
     }
     remove_private_entry(capture)?;
+    remove_private_entry(sentinel)?;
+    remove_private_entry(claim)?;
+    crate::fs_util::sync_parent_directory(claim)?;
+    Ok(true)
+}
+
+fn finish_captured_index_install(
+    index: &Path,
+    claim: &Path,
+    capture: &Path,
+    sentinel: &Path,
+    lock: &Path,
+    expected: &[u8],
+) -> Result<bool> {
+    if !path_entry_exists(claim)?
+        || !path_entry_exists(capture)?
+        || !captured_lock_is_owned(claim, capture, expected)?
+    {
+        return Ok(false);
+    }
+    require_placeholder_lock(lock)?;
+    crate::fs_util::rename_atomic(capture, index)?;
+    crate::fs_util::sync_parent_directory(index)?;
+    remove_placeholder_lock(lock)?;
+    remove_private_entry(sentinel)?;
     remove_private_entry(claim)?;
     crate::fs_util::sync_parent_directory(claim)?;
     Ok(true)
@@ -291,7 +347,7 @@ fn create_or_validate_claim(claim: &Path, prepared_bytes: &[u8]) -> Result<()> {
     }
 }
 
-fn reserve_public_lock(claim: &Path, capture: &Path, lock: &Path, expected: &[u8]) -> Result<()> {
+fn reserve_public_lock(claim: &Path, lock: &Path, expected: &[u8]) -> Result<()> {
     match fs::hard_link(claim, lock) {
         Ok(()) => {
             injected_index_failure("after_lock_link")?;
@@ -299,11 +355,13 @@ fn reserve_public_lock(claim: &Path, capture: &Path, lock: &Path, expected: &[u8
             Ok(())
         }
         Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
-            capture_and_remove_owned_lock(claim, capture, lock, expected)?;
-            fs::hard_link(claim, lock)?;
-            injected_index_failure("after_lock_link")?;
-            crate::fs_util::sync_parent_directory(lock)?;
-            Ok(())
+            if public_lock_is_owned(claim, lock, expected)? {
+                Ok(())
+            } else {
+                Err(anyhow!(
+                    "existing Git index lock is not owned by the durable transaction claim"
+                ))
+            }
         }
         Err(error) => Err(error.into()),
     }
@@ -340,25 +398,28 @@ fn injected_index_crash(point: &str) {
     }
 }
 
-fn capture_and_remove_owned_lock(
+fn capture_owned_lock(
     claim: &Path,
     capture: &Path,
+    sentinel: &Path,
     lock: &Path,
     expected: &[u8],
 ) -> Result<()> {
-    capture_owned_lock(claim, capture, lock, expected)?;
-    remove_private_entry(capture)?;
-    crate::fs_util::sync_parent_directory(capture)?;
-    Ok(())
-}
-
-fn capture_owned_lock(claim: &Path, capture: &Path, lock: &Path, expected: &[u8]) -> Result<()> {
-    crate::fs_util::rename_no_replace_atomic(lock, capture)?;
+    create_private_entry(sentinel, INDEX_LOCK_PLACEHOLDER)?;
+    if let Err(error) = crate::fs_util::capture_with_placeholder_atomic(lock, sentinel, capture) {
+        return match remove_private_entry(sentinel) {
+            Ok(()) => Err(error.into()),
+            Err(cleanup) => Err(anyhow!(
+                "{error}; additionally failed to remove Git index lock sentinel: {cleanup:#}"
+            )),
+        };
+    }
     crate::fs_util::sync_parent_directory(lock)?;
     if captured_lock_is_owned(claim, capture, expected)? {
+        require_placeholder_lock(lock)?;
         return Ok(());
     }
-    restore_foreign_capture(capture, lock)?;
+    restore_foreign_capture(capture, sentinel, lock)?;
     Err(anyhow!(
         "existing Git index lock is not owned by the durable transaction claim"
     ))
@@ -367,6 +428,7 @@ fn capture_owned_lock(claim: &Path, capture: &Path, lock: &Path, expected: &[u8]
 fn reconcile_private_capture(
     claim: &Path,
     capture: &Path,
+    sentinel: &Path,
     lock: &Path,
     expected: &[u8],
 ) -> Result<()> {
@@ -374,27 +436,39 @@ fn reconcile_private_capture(
         return Ok(());
     }
     if path_entry_exists(claim)? && captured_lock_is_owned(claim, capture, expected)? {
-        remove_private_entry(capture)?;
-        crate::fs_util::sync_parent_directory(capture)?;
-        return Ok(());
+        return Err(anyhow!("captured transaction Git index requires recovery"));
     }
-    restore_foreign_capture(capture, lock)?;
+    restore_foreign_capture(capture, sentinel, lock)?;
     Err(anyhow!(
         "captured Git index lock is not owned by the durable transaction claim"
     ))
 }
 
-fn restore_foreign_capture(capture: &Path, lock: &Path) -> Result<()> {
-    match crate::fs_util::rename_no_replace_atomic(capture, lock) {
-        Ok(()) => {
-            crate::fs_util::sync_parent_directory(lock)?;
-            Ok(())
-        }
-        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => Err(anyhow!(
-            "foreign Git index lock restoration collided; both lock entries were preserved"
-        )),
-        Err(error) => Err(error.into()),
-    }
+fn restore_foreign_capture(capture: &Path, sentinel: &Path, lock: &Path) -> Result<()> {
+    require_placeholder_lock(lock)?;
+    crate::fs_util::restore_capture_atomic(lock, capture, sentinel)?;
+    crate::fs_util::sync_parent_directory(lock)?;
+    remove_private_entry(sentinel)
+}
+
+fn create_private_entry(path: &Path, bytes: &[u8]) -> Result<()> {
+    let mut file = OpenOptions::new().write(true).create_new(true).open(path)?;
+    file.write_all(bytes)?;
+    file.sync_all()?;
+    drop(file);
+    crate::fs_util::sync_parent_directory(path)?;
+    Ok(())
+}
+
+fn require_placeholder_lock(lock: &Path) -> Result<()> {
+    require_regular_exact(lock, INDEX_LOCK_PLACEHOLDER, "Git index lock placeholder")
+}
+
+fn remove_placeholder_lock(lock: &Path) -> Result<()> {
+    require_placeholder_lock(lock)?;
+    fs::remove_file(lock)?;
+    crate::fs_util::sync_parent_directory(lock)?;
+    Ok(())
 }
 
 fn captured_lock_is_owned(claim: &Path, capture: &Path, expected: &[u8]) -> Result<bool> {

@@ -95,6 +95,7 @@ fn assert_no_index_aux_paths(ctx: &AppContext, prepared: &Path) {
         ".lock-capture",
         ".lock-guard",
         ".lock-publish",
+        ".lock-sentinel",
     ] {
         assert!(
             !super::prepared_index::prepared_index_aux_path(ctx, prepared, suffix)

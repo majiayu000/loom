@@ -8,6 +8,9 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
 use std::path::Path;
 
+mod index_lock_capture;
+pub use index_lock_capture::{capture_with_placeholder_atomic, restore_capture_atomic};
+
 #[cfg(any(
     target_os = "macos",
     target_os = "ios",

@@ -258,16 +258,16 @@ fn recover_json_cas_platform(
 ) -> std::io::Result<CasRecovery> {
     let candidate = path.with_extension("loom-cas-candidate");
     let live = fs::read(path)?;
-    let staged = fs::read(&candidate).ok();
+    let staged = match fs::read(&candidate) {
+        Ok(staged) => Some(staged),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => return Err(error),
+    };
     let outcome =
         if live == expected && staged.as_deref().is_none_or(|staged| staged == replacement) {
             CasRecovery::Aborted
         } else if live == replacement && staged.as_deref().is_none_or(|staged| staged == expected) {
             CasRecovery::Committed
-        } else if live == replacement && staged.is_some() {
-            exchange_paths_atomic(&candidate, path)?;
-            sync_parent(path)?;
-            return recover_json_cas_platform(path, journal, expected, replacement);
         } else if staged.as_deref() == Some(replacement) {
             CasRecovery::Aborted
         } else {
@@ -701,11 +701,19 @@ mod tests {
         assert!(!journal.exists() && !candidate.exists());
 
         stage(&replacement, Some(&external));
-        assert_eq!(
-            read_json_file::<Value>(&path).unwrap(),
-            json!({"value": "external"})
-        );
-        assert!(!journal.exists() && !candidate.exists());
+        let retained_journal = fs::read(&journal).unwrap();
+        let error = read_json_file::<Value>(&path).expect_err("unknown candidate must fail closed");
+        assert!(error.to_string().contains("ambiguous JSON CAS retained"));
+        assert_eq!(fs::read(&path).unwrap(), replacement.as_bytes());
+        assert_eq!(fs::read(&candidate).unwrap(), external.as_bytes());
+        assert_eq!(fs::read(&journal).unwrap(), retained_journal);
+        assert!(read_json_file::<Value>(&path).is_err());
+        assert_eq!(fs::read(&path).unwrap(), replacement.as_bytes());
+        assert_eq!(fs::read(&candidate).unwrap(), external.as_bytes());
+        assert_eq!(fs::read(&journal).unwrap(), retained_journal);
+
+        fs::remove_file(&candidate).unwrap();
+        fs::remove_file(&journal).unwrap();
 
         stage(&external, Some(&expected));
         let error =

@@ -39,7 +39,10 @@ pub(super) fn reprove_source_boundary(
     }
 
     let head = gitops::head(&app.ctx).map_err(map_git)?;
-    if journal.phase == TransactionPhase::CommittedCleanupPending {
+    if matches!(
+        journal.phase,
+        TransactionPhase::CommittedCleanupPending | TransactionPhase::CommittedArtifactsRetained
+    ) {
         let result = journal
             .result
             .as_ref()
@@ -73,6 +76,26 @@ pub(super) fn reprove_source_boundary(
             source_head
         };
         require_ancestor(app, committed_boundary, &head)?;
+        require_clean_path(app, &format!("skills/{}", plan.skill))?;
+        let live_digest = skill_tree_digest(&app.ctx.skill_path(&plan.skill)).map_err(map_io)?;
+        if live_digest != plan.input.selected_input_tree_digest {
+            return Err(recovery_stale(
+                "source working tree differs from the committed boundary",
+            ));
+        }
+        return Ok(());
+    }
+    if journal.phase == TransactionPhase::CommittingRegistry
+        && super::registry_commit::durable_registry_noop(journal)
+    {
+        require_ancestor(app, source_head, &head)?;
+        require_clean_path(app, &format!("skills/{}", plan.skill))?;
+        let live_digest = skill_tree_digest(&app.ctx.skill_path(&plan.skill)).map_err(map_io)?;
+        if live_digest != plan.input.selected_input_tree_digest {
+            return Err(recovery_stale(
+                "source working tree differs from the no-op registry boundary",
+            ));
+        }
         return Ok(());
     }
     let registry_boundary = journal.phase == TransactionPhase::CommittingRegistry;
@@ -92,6 +115,20 @@ pub(super) fn reprove_source_boundary(
         ));
     }
     Ok(())
+}
+
+pub(super) fn replay_committed_retained(
+    app: &App,
+    plan: &SkillConvergencePlan,
+    journal: &mut TransactionJournal,
+) -> std::result::Result<Value, CommandFailure> {
+    reprove_source_boundary(app, plan, journal)?;
+    let paths = RegistryStatePaths::from_app_context(&app.ctx);
+    validate_mutated_surfaces(app, &paths, plan, journal)?;
+    journal
+        .result
+        .clone()
+        .ok_or_else(|| corrupt("retained journal has no result"))
 }
 
 fn require_ancestor(

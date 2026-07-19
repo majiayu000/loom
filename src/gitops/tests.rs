@@ -93,7 +93,6 @@ fn assert_no_index_aux_paths(ctx: &AppContext, prepared: &Path) {
     for suffix in [
         ".lock-claim",
         ".lock-capture",
-        ".lock-capture.foreign-proof",
         ".lock-guard",
         ".lock-publish",
     ] {

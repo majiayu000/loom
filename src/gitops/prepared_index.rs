@@ -1,7 +1,9 @@
-use std::ffi::OsString;
-use std::fs::{self, OpenOptions};
+use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
-use std::path::{Path, PathBuf};
+use std::path::Path;
+
+#[cfg(unix)]
+use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
 
 use anyhow::{Result, anyhow};
 
@@ -124,7 +126,6 @@ pub fn discard_prepared_index_lock(ctx: &AppContext, prepared_index: &Path) -> R
         return Ok(false);
     }
     let capture = prepared_index_aux_path(ctx, prepared_index, ".lock-capture")?;
-    let foreign_proof = foreign_capture_proof_path(&capture);
     let guarded = prepared_index_aux_path(ctx, prepared_index, ".lock-guard")?;
     let publish = prepared_index_aux_path(ctx, prepared_index, ".lock-publish")?;
     let expected = read_regular_file(&claim, "durable Git index claim")
@@ -136,9 +137,6 @@ pub fn discard_prepared_index_lock(ctx: &AppContext, prepared_index: &Path) -> R
         }
         remove_private_entry(&guarded)?;
         remove_private_entry(&publish)?;
-        if path_entry_exists(&foreign_proof)? {
-            return Err(anyhow!("foreign Git index capture proof was preserved"));
-        }
         remove_private_entry(&claim)?;
         crate::fs_util::sync_parent_directory(&claim)?;
         Ok(true)
@@ -156,7 +154,6 @@ fn install_or_recover_prepared_index(
     let lock = index_lock_path(&index);
     let claim = prepared_index_aux_path(ctx, prepared_index, ".lock-claim")?;
     let capture = prepared_index_aux_path(ctx, prepared_index, ".lock-capture")?;
-    let foreign_proof = foreign_capture_proof_path(&capture);
     let guarded = prepared_index_aux_path(ctx, prepared_index, ".lock-guard")?;
     let publish = prepared_index_aux_path(ctx, prepared_index, ".lock-publish")?;
 
@@ -164,7 +161,6 @@ fn install_or_recover_prepared_index(
         && !path_entry_exists(&lock)?
         && !path_entry_exists(&claim)?
         && !path_entry_exists(&capture)?
-        && !path_entry_exists(&foreign_proof)?
     {
         return Ok(false);
     }
@@ -483,18 +479,21 @@ fn capture_owned_lock(claim: &Path, capture: &Path, lock: &Path, expected: &[u8]
     crate::fs_util::sync_parent_directory(capture)?;
     injected_index_failure("after_capture_link")?;
     injected_index_crash("after_capture_link");
-    if public_lock_is_owned(claim, lock, expected)? {
-        return Ok(());
-    }
-    read_regular_file(lock, "foreign Git index lock")?;
-    let proof = foreign_capture_proof_path(capture);
-    fs::hard_link(lock, &proof)?;
-    crate::fs_util::sync_parent_directory(&proof)?;
+    let source = open_exchange_source(lock)?;
     crate::fs_util::capture_with_placeholder_atomic(lock, capture)?;
     crate::fs_util::sync_parent_directory(lock)?;
-    if public_lock_is_owned(claim, lock, expected)? && same_regular_file_identity(capture, &proof)?
+    if !open_file_matches_path(&source, capture)? {
+        return Err(anyhow!(
+            "Git index lock changed during atomic capture and was preserved"
+        ));
+    }
+    if captured_lock_is_owned(claim, capture, expected)?
+        && public_lock_is_owned(claim, lock, expected)?
     {
-        restore_foreign_capture(claim, capture, &proof, lock, expected)?;
+        return Ok(());
+    }
+    if public_lock_is_owned(claim, lock, expected)? {
+        restore_foreign_capture(claim, capture, lock, expected, &source)?;
     }
     Err(anyhow!(
         "existing Git index lock is not owned by the durable transaction claim"
@@ -508,48 +507,25 @@ fn reconcile_private_capture(
     lock: &Path,
     expected: &[u8],
 ) -> Result<()> {
-    let proof = foreign_capture_proof_path(capture);
-    let proof_exists = path_entry_exists(&proof)?;
     let capture_exists = path_entry_exists(capture)?;
-    if (capture_exists || proof_exists) && !path_entry_exists(claim)? {
+    if capture_exists && !path_entry_exists(claim)? {
         return Err(anyhow!(
             "captured Git index state has no durable transaction claim"
         ));
     }
     if !capture_exists {
-        if proof_exists {
-            if same_regular_file_identity(lock, &proof)? {
-                remove_private_entry(&proof)?;
-                crate::fs_util::sync_parent_directory(&proof)?;
-                return Ok(());
-            }
-            return Err(anyhow!(
-                "foreign Git index capture proof was preserved without its owner"
-            ));
-        }
         return Ok(());
     }
     let capture_owned = captured_lock_is_owned(claim, capture, expected)?;
     let lock_owned = public_lock_is_owned(claim, lock, expected)?;
-    match (capture_owned, lock_owned, proof_exists) {
-        (false, true, true) if same_regular_file_identity(capture, &proof)? => {
-            restore_foreign_capture(claim, capture, &proof, lock, expected)
-        }
-        (true, false, true) if same_regular_file_identity(lock, &proof)? => {
-            remove_private_entry(capture)?;
-            crate::fs_util::sync_parent_directory(capture)?;
-            remove_foreign_capture_proof(lock, &proof)
-        }
-        (_, _, true) => Err(anyhow!(
-            "foreign Git index capture proof did not match the recoverable state"
-        )),
-        (true, true, false) => Ok(()),
-        (true, false, false) => {
+    match (capture_owned, lock_owned) {
+        (true, true) => Ok(()),
+        (true, false) => {
             remove_private_entry(capture)?;
             crate::fs_util::sync_parent_directory(capture)?;
             Ok(())
         }
-        (false, _, false) => Err(anyhow!(
+        (false, _) => Err(anyhow!(
             "unknown captured Git index lock was preserved for recovery"
         )),
     }
@@ -562,7 +538,7 @@ fn reconcile_private_capture(
     _lock: &Path,
     _expected: &[u8],
 ) -> Result<()> {
-    if path_entry_exists(capture)? || path_entry_exists(&foreign_capture_proof_path(capture))? {
+    if path_entry_exists(capture)? {
         return Err(anyhow!(
             "captured Git index state is unsupported on this platform"
         ));
@@ -574,14 +550,13 @@ fn reconcile_private_capture(
 fn restore_foreign_capture(
     claim: &Path,
     capture: &Path,
-    proof: &Path,
     lock: &Path,
     expected: &[u8],
+    source: &File,
 ) -> Result<()> {
-    if !public_lock_is_owned(claim, lock, expected)? || !same_regular_file_identity(capture, proof)?
-    {
+    if !public_lock_is_owned(claim, lock, expected)? || !open_file_matches_path(source, capture)? {
         return Err(anyhow!(
-            "foreign Git index capture no longer matched its exchange proof"
+            "foreign Git index capture no longer matched its opened source"
         ));
     }
     crate::fs_util::restore_capture_atomic(lock, capture)?;
@@ -591,37 +566,37 @@ fn restore_foreign_capture(
             "Git index lock changed while restoring a foreign capture"
         ));
     }
-    remove_private_entry(capture)?;
-    crate::fs_util::sync_parent_directory(capture)?;
-    remove_foreign_capture_proof(lock, proof)
-}
-
-fn foreign_capture_proof_path(capture: &Path) -> PathBuf {
-    let mut path = OsString::from(capture.as_os_str());
-    path.push(".foreign-proof");
-    PathBuf::from(path)
-}
-
-fn same_regular_file_identity(left: &Path, right: &Path) -> Result<bool> {
-    if !path_entry_exists(left)? || !path_entry_exists(right)? {
-        return Ok(false);
-    }
-    let left_metadata = fs::symlink_metadata(left)?;
-    let right_metadata = fs::symlink_metadata(right)?;
-    Ok(left_metadata.file_type().is_file()
-        && right_metadata.file_type().is_file()
-        && crate::fs_util::same_file_identity_paths(left, right)?)
-}
-
-fn remove_foreign_capture_proof(owner: &Path, proof: &Path) -> Result<()> {
-    if !same_regular_file_identity(owner, proof)? {
+    if !open_file_matches_path(source, lock)? {
         return Err(anyhow!(
-            "foreign Git index capture proof no longer matched its owner"
+            "foreign Git index lock changed while it was restored"
         ));
     }
-    remove_private_entry(proof)?;
-    crate::fs_util::sync_parent_directory(proof)?;
+    remove_private_entry(capture)?;
+    crate::fs_util::sync_parent_directory(capture)?;
     Ok(())
+}
+
+#[cfg(unix)]
+fn open_exchange_source(path: &Path) -> Result<File> {
+    let file = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
+        .open(path)?;
+    if !file.metadata()?.is_file() {
+        return Err(anyhow!(
+            "Git index lock exchange source is not a regular file"
+        ));
+    }
+    Ok(file)
+}
+
+#[cfg(unix)]
+fn open_file_matches_path(file: &File, path: &Path) -> Result<bool> {
+    let opened = file.metadata()?;
+    let current = fs::symlink_metadata(path)?;
+    Ok(current.file_type().is_file()
+        && opened.dev() == current.dev()
+        && opened.ino() == current.ino())
 }
 
 fn captured_lock_is_owned(claim: &Path, capture: &Path, expected: &[u8]) -> Result<bool> {

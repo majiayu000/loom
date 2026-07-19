@@ -11,9 +11,9 @@ use std::path::Path;
 mod index_lock_capture;
 #[cfg(windows)]
 pub use index_lock_capture::ExclusiveDeleteFile;
+pub use index_lock_capture::same_file_identity_paths;
 #[cfg(unix)]
 pub use index_lock_capture::{capture_with_placeholder_atomic, restore_capture_atomic};
-pub use index_lock_capture::same_file_identity_paths;
 
 pub(crate) const fn atomic_path_exchange_supported() -> bool {
     cfg!(any(

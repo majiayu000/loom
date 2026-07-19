@@ -87,3 +87,58 @@ fn discard_preserves_a_foreign_byte_identical_placeholder() {
     );
     fs::remove_dir_all(&dir).expect("remove test repository");
 }
+
+#[test]
+fn recovery_preserves_capture_collision_behind_owned_lock() {
+    let (ctx, dir) = super::tests::fresh_repo("prepared-index-owned-lock-capture-collision");
+    let prepared = dir.join("prepared-index");
+    fs::copy(dir.join(".git/index"), &prepared).expect("prepared index");
+    let lock = dir.join(".git/index.lock");
+    super::tests::seed_owned_index_lock(&ctx, &prepared, &lock);
+    let capture =
+        super::prepared_index_paths::prepared_index_aux_path(&ctx, &prepared, ".lock-capture")
+            .expect("capture path");
+    fs::write(&capture, b"foreign capture collision\n").expect("foreign capture");
+
+    recover_prepared_index_lock_with_guard(&ctx, &prepared, &|_| Ok(()))
+        .expect_err("capture collision behind owned lock must fail closed");
+
+    assert_eq!(
+        fs::read(&lock).expect("owned public lock"),
+        fs::read(&prepared).expect("prepared bytes")
+    );
+    assert_eq!(
+        fs::read(&capture).expect("preserved capture"),
+        b"foreign capture collision\n"
+    );
+    fs::remove_dir_all(&dir).expect("remove test repository");
+}
+
+#[test]
+fn completed_recovery_preserves_a_foreign_capture_collision() {
+    let (ctx, dir) = super::tests::fresh_repo("prepared-index-completed-capture-collision");
+    let active = dir.join(".git/index");
+    let prepared = dir.join("prepared-index");
+    fs::copy(&active, &prepared).expect("prepared index");
+    let lock = dir.join(".git/index.lock");
+    super::tests::seed_owned_index_lock(&ctx, &prepared, &lock);
+    let claim =
+        super::prepared_index_paths::prepared_index_aux_path(&ctx, &prepared, ".lock-claim")
+            .expect("claim path");
+    fs::remove_file(&active).expect("replace active index");
+    fs::hard_link(&claim, &active).expect("publish claimed index");
+    let capture =
+        super::prepared_index_paths::prepared_index_aux_path(&ctx, &prepared, ".lock-capture")
+            .expect("capture path");
+    fs::write(&capture, b"foreign completed capture\n").expect("foreign capture");
+
+    recover_prepared_index_lock_with_guard(&ctx, &prepared, &|_| Ok(()))
+        .expect_err("completed publication must preserve a foreign capture");
+
+    assert_eq!(
+        fs::read(&capture).expect("preserved capture"),
+        b"foreign completed capture\n"
+    );
+    assert!(crate::fs_util::same_file_identity_paths(&active, &claim).expect("active claim"));
+    fs::remove_dir_all(&dir).expect("remove test repository");
+}

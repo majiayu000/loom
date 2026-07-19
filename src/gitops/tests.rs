@@ -80,7 +80,7 @@ fn file_sha256(path: &Path) -> String {
     format!("sha256:{}", to_hex(&hasher.finalize()))
 }
 
-fn seed_owned_index_lock(ctx: &AppContext, prepared: &Path, lock: &Path) {
+pub(super) fn seed_owned_index_lock(ctx: &AppContext, prepared: &Path, lock: &Path) {
     let bytes = fs::read(prepared).expect("prepared index bytes");
     let claim = super::prepared_index_paths::prepared_index_aux_path(ctx, prepared, ".lock-claim")
         .expect("claim path");
@@ -93,9 +93,9 @@ fn assert_no_index_aux_paths(ctx: &AppContext, prepared: &Path) {
     for suffix in [
         ".lock-claim",
         ".lock-capture",
+        ".lock-capture.foreign-proof",
         ".lock-guard",
         ".lock-publish",
-        ".lock-sentinel",
     ] {
         assert!(
             !super::prepared_index_paths::prepared_index_aux_path(ctx, prepared, suffix)
@@ -311,7 +311,6 @@ fn prepared_index_publication_crash_leaves_an_exact_recoverable_lock() {
     );
     fs::remove_dir_all(&dir).expect("remove test repository");
 }
-
 #[test]
 fn prepared_index_post_rename_crashes_converge_without_stale_private_state() {
     for point in [
@@ -349,7 +348,6 @@ fn prepared_index_post_rename_crashes_converge_without_stale_private_state() {
         } else {
             assert_eq!(after_crash, expected);
         }
-
         let recovered = recover_prepared_index_lock_with_guard(&ctx, &prepared, &|_| Ok(()))
             .expect("recover post-rename crash");
         assert_eq!(recovered, point != "after_claim_remove");

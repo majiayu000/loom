@@ -138,6 +138,39 @@ fn prepared_index_install_preserves_preexisting_lock() {
     fs::remove_dir_all(&dir).expect("remove test repository");
 }
 
+#[cfg(target_os = "linux")]
+#[test]
+fn prepared_index_install_crosses_filesystems_without_overwriting_the_lock() {
+    use std::os::unix::fs::MetadataExt;
+
+    let (ctx, dir) = fresh_repo("prepared-index-cross-filesystem");
+    let active_index = dir.join(".git/index");
+    let prepared_root = Path::new("/dev/shm").join(format!(
+        "loom-prepared-index-{}",
+        Uuid::new_v4()
+    ));
+    fs::create_dir(&prepared_root).expect("create cross-filesystem artifact root");
+    let prepared = prepared_root.join("prepared-index");
+    fs::copy(&active_index, &prepared).expect("copy prepared index");
+    assert_ne!(
+        fs::metadata(&prepared).expect("prepared metadata").dev(),
+        fs::metadata(&active_index).expect("active metadata").dev(),
+        "test requires /dev/shm and the repository to use different filesystems"
+    );
+    let expected = fs::read(&prepared).expect("prepared bytes");
+
+    install_prepared_index_with_guard(&ctx, &prepared, &|candidate| {
+        assert_eq!(fs::read(candidate)?, expected);
+        Ok(())
+    })
+    .expect("install cross-filesystem prepared index");
+
+    assert_eq!(fs::read(&active_index).expect("installed index"), expected);
+    assert!(!dir.join(".git/index.lock").exists());
+    fs::remove_dir_all(&prepared_root).expect("remove prepared index root");
+    fs::remove_dir_all(&dir).expect("remove test repository");
+}
+
 #[test]
 fn prepared_index_install_crash_helper() {
     let Ok(()) = std::env::var("LOOM_TEST_INDEX_INSTALL_CRASH").map(|_| ()) else {

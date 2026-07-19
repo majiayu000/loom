@@ -82,13 +82,22 @@ pub fn install_prepared_index_with_guard(
 ) -> Result<()> {
     let index = resolve_git_index_path(ctx, &[])?;
     let lock = index_lock_path(&index);
+    let lock_parent = lock
+        .parent()
+        .ok_or_else(|| anyhow!("Git index lock has no parent: {}", lock.display()))?;
+    let staging = lock_parent.join(format!(
+        ".loom-index-lock-staging-{}",
+        uuid::Uuid::new_v4()
+    ));
     let mut owns_lock = false;
     let result = (|| {
         let metadata = fs::symlink_metadata(prepared_index)?;
         if !metadata.file_type().is_file() {
             return Err(anyhow!("prepared Git index is not a regular file"));
         }
-        fs::hard_link(prepared_index, &lock)?;
+        fs::copy(prepared_index, &staging)?;
+        crate::fs_util::sync_file_and_parent(&staging)?;
+        crate::fs_util::rename_no_replace_atomic(&staging, &lock)?;
         owns_lock = true;
         crate::fs_util::sync_parent_directory(&lock)?;
         guard(&lock)?;
@@ -96,7 +105,7 @@ pub fn install_prepared_index_with_guard(
         crate::fs_util::sync_parent_directory(&index)?;
         Ok(())
     })();
-    match result {
+    let result = match result {
         Ok(()) => Ok(()),
         Err(error) if !owns_lock => Err(error),
         Err(error) => match fs::remove_file(&lock) {
@@ -105,6 +114,17 @@ pub fn install_prepared_index_with_guard(
             Err(cleanup) => Err(anyhow!(
                 "{error:#}; additionally failed to remove Git index lock '{}': {cleanup}",
                 lock.display()
+            )),
+        },
+    };
+    match fs::remove_file(&staging) {
+        Ok(()) => result,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => result,
+        Err(cleanup) => match result {
+            Ok(()) => Err(cleanup.into()),
+            Err(error) => Err(anyhow!(
+                "{error:#}; additionally failed to remove Git index lock staging '{}': {cleanup}",
+                staging.display()
             )),
         },
     }

@@ -542,21 +542,19 @@ fn reconcile_private_capture(
     if path_entry_exists(claim)? && captured_lock_is_owned(claim, capture, expected)? {
         return Err(anyhow!("captured transaction Git index requires recovery"));
     }
-    if require_regular_exact(
-        capture,
-        INDEX_LOCK_PLACEHOLDER,
-        "Git index lock placeholder",
-    )
-    .is_ok()
-        && public_lock_is_owned(claim, lock, expected)?
-    {
-        remove_private_entry(capture)?;
-        crate::fs_util::sync_parent_directory(capture)?;
-        return Ok(());
+    let capture_bytes = read_regular_file(capture, "captured Git index lock")?;
+    if capture_bytes == INDEX_LOCK_PLACEHOLDER {
+        if public_lock_is_owned(claim, lock, expected)? {
+            remove_private_entry(capture)?;
+            crate::fs_util::sync_parent_directory(capture)?;
+            return Ok(());
+        }
+        return Err(anyhow!(
+            "Git index lock placeholder has no matching owned public lock"
+        ));
     }
-    restore_foreign_capture(capture, lock)?;
     Err(anyhow!(
-        "captured Git index lock is not owned by the durable transaction claim"
+        "unknown captured Git index lock was preserved for recovery"
     ))
 }
 

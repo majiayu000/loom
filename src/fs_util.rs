@@ -8,6 +8,25 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
 use std::path::Path;
 
+pub(crate) const fn atomic_path_exchange_supported() -> bool {
+    cfg!(any(
+        target_os = "macos",
+        target_os = "ios",
+        target_os = "linux",
+        target_os = "android"
+    ))
+}
+
+pub(crate) const fn atomic_no_replace_supported() -> bool {
+    cfg!(any(
+        target_os = "macos",
+        target_os = "ios",
+        target_os = "linux",
+        target_os = "android",
+        windows
+    ))
+}
+
 #[cfg(any(
     target_os = "macos",
     target_os = "ios",

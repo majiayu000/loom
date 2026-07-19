@@ -608,19 +608,8 @@ struct AtomicPathCapabilities {
 impl AtomicPathCapabilities {
     fn current_platform() -> Self {
         Self {
-            exchange: cfg!(any(
-                target_os = "macos",
-                target_os = "ios",
-                target_os = "linux",
-                target_os = "android"
-            )),
-            no_replace: cfg!(any(
-                target_os = "macos",
-                target_os = "ios",
-                target_os = "linux",
-                target_os = "android",
-                windows
-            )),
+            exchange: crate::fs_util::atomic_path_exchange_supported(),
+            no_replace: crate::fs_util::atomic_no_replace_supported(),
         }
     }
 }

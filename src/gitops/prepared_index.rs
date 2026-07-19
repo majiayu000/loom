@@ -418,7 +418,7 @@ fn captured_lock_is_owned(claim: &Path, capture: &Path, expected: &[u8]) -> Resu
     let capture_metadata = fs::symlink_metadata(capture)?;
     Ok(claim_metadata.file_type().is_file()
         && capture_metadata.file_type().is_file()
-        && same_file_identity(&claim_metadata, &capture_metadata)
+        && same_file_identity(claim, capture)?
         && fs::read(claim)? == expected
         && fs::read(capture)? == expected)
 }
@@ -434,11 +434,11 @@ fn same_regular_file(left: &Path, right: &Path) -> Result<bool> {
     if !path_entry_exists(left)? || !path_entry_exists(right)? {
         return Ok(false);
     }
-    let left = fs::symlink_metadata(left)?;
-    let right = fs::symlink_metadata(right)?;
-    Ok(left.file_type().is_file()
-        && right.file_type().is_file()
-        && same_file_identity(&left, &right))
+    let left_metadata = fs::symlink_metadata(left)?;
+    let right_metadata = fs::symlink_metadata(right)?;
+    Ok(left_metadata.file_type().is_file()
+        && right_metadata.file_type().is_file()
+        && same_file_identity(left, right)?)
 }
 
 fn read_regular_file(path: &Path, description: &str) -> Result<Vec<u8>> {
@@ -508,25 +508,49 @@ pub(super) fn assert_no_index_aux_paths(prepared: &Path) {
 }
 
 #[cfg(unix)]
-fn same_file_identity(left: &fs::Metadata, right: &fs::Metadata) -> bool {
+fn same_file_identity(left: &Path, right: &Path) -> Result<bool> {
     use std::os::unix::fs::MetadataExt;
 
-    left.dev() == right.dev() && left.ino() == right.ino()
+    let left = fs::symlink_metadata(left)?;
+    let right = fs::symlink_metadata(right)?;
+    Ok(left.dev() == right.dev() && left.ino() == right.ino())
 }
 
 #[cfg(windows)]
-fn same_file_identity(left: &fs::Metadata, right: &fs::Metadata) -> bool {
-    use std::os::windows::fs::MetadataExt;
+fn same_file_identity(left: &Path, right: &Path) -> Result<bool> {
+    use std::mem::size_of;
+    use std::os::windows::io::AsRawHandle;
 
-    left.volume_serial_number().is_some()
-        && left.volume_serial_number() == right.volume_serial_number()
-        && left.file_index().is_some()
-        && left.file_index() == right.file_index()
+    use windows_sys::Win32::Storage::FileSystem::{
+        FILE_ID_INFO, FileIdInfo, GetFileInformationByHandleEx,
+    };
+
+    fn identity(path: &Path) -> Result<FILE_ID_INFO> {
+        let file = fs::File::open(path)?;
+        let mut identity = FILE_ID_INFO::default();
+        let succeeded = unsafe {
+            GetFileInformationByHandleEx(
+                file.as_raw_handle(),
+                FileIdInfo,
+                (&raw mut identity).cast(),
+                u32::try_from(size_of::<FILE_ID_INFO>())?,
+            )
+        };
+        if succeeded == 0 {
+            return Err(std::io::Error::last_os_error().into());
+        }
+        Ok(identity)
+    }
+
+    let left = identity(left)?;
+    let right = identity(right)?;
+    Ok(left.VolumeSerialNumber == right.VolumeSerialNumber
+        && left.FileId.Identifier == right.FileId.Identifier)
 }
 
 #[cfg(not(any(unix, windows)))]
-fn same_file_identity(_left: &fs::Metadata, _right: &fs::Metadata) -> bool {
-    false
+fn same_file_identity(_left: &Path, _right: &Path) -> Result<bool> {
+    Ok(false)
 }
 
 pub fn create_prepared_commit(

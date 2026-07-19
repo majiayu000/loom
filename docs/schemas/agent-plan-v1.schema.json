@@ -111,8 +111,7 @@
       "then": {
         "properties": {
           "schema_version": { "const": "1.2" },
-          "requires_digest_confirmation": { "const": true },
-          "execution_enabled": { "const": true }
+          "requires_digest_confirmation": { "const": true }
         },
         "required": [
           "plan_digest",

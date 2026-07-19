@@ -206,6 +206,128 @@ fn source_add_crash_restores_the_exact_original_index_before_retry() {
 }
 
 #[test]
+fn projection_source_swap_recovers_after_an_unrelated_external_head() {
+    let fixture = projected_fixture();
+    let (output, initial) = plan_converge(&fixture, &[]);
+    assert!(output.status.success(), "initial plan failed: {initial}");
+    let instance = initial["data"]["effects"][0]["instance_id"]
+        .as_str()
+        .expect("instance");
+    fs::write(
+        fixture.target.path().join("demo/details.txt"),
+        "reviewed projection source\n",
+    )
+    .expect("projection edit");
+    let original_source = snapshot_tree(&fixture.root.path().join("skills/demo"));
+    let (output, plan) = plan_converge(&fixture, &["--from-projection", "--instance", instance]);
+    assert!(output.status.success(), "projection plan failed: {plan}");
+    let key = "projection-source-external-head";
+    let (output, interrupted) = apply(
+        &fixture,
+        &plan,
+        key,
+        Some("convergence_interrupt_after_source_replacement"),
+    );
+    assert!(
+        !output.status.success(),
+        "source swap fault passed: {interrupted}"
+    );
+
+    git(
+        fixture.root.path(),
+        &[
+            "commit",
+            "--allow-empty",
+            "-m",
+            "test: unrelated external head",
+        ],
+    );
+    let external_head = git(fixture.root.path(), &["rev-parse", "HEAD"]);
+    let (output, rejected) = apply(&fixture, &plan, key, None);
+    assert!(
+        !output.status.success(),
+        "stale plan was accepted: {rejected}"
+    );
+    assert_eq!(
+        git(fixture.root.path(), &["rev-parse", "HEAD"]),
+        external_head
+    );
+    assert_eq!(
+        snapshot_tree(&fixture.root.path().join("skills/demo")),
+        original_source
+    );
+    assert!(
+        !fixture
+            .root
+            .path()
+            .join("state/transactions/convergence-demo.json")
+            .exists(),
+        "retired source-swap journal remained active"
+    );
+}
+
+#[test]
+fn changed_source_pre_boundary_retires_after_an_unrelated_external_head() {
+    let fixture = projected_fixture();
+    fs::write(
+        fixture.root.path().join("skills/demo/details.txt"),
+        "reviewed source edit\n",
+    )
+    .expect("source edit");
+    let reviewed_source = snapshot_tree(&fixture.root.path().join("skills/demo"));
+    let (output, plan) = plan_converge(&fixture, &[]);
+    assert!(output.status.success(), "plan failed: {plan}");
+    let key = "changed-source-external-head";
+    let (output, interrupted) = apply(
+        &fixture,
+        &plan,
+        key,
+        Some("convergence_interrupt_after_staged_index_prepared"),
+    );
+    assert!(
+        !output.status.success(),
+        "source index preparation fault passed: {interrupted}"
+    );
+
+    git(
+        fixture.root.path(),
+        &[
+            "commit",
+            "--allow-empty",
+            "-m",
+            "test: unrelated source head",
+        ],
+    );
+    let external_head = git(fixture.root.path(), &["rev-parse", "HEAD"]);
+    let active_index = fs::read(fixture.root.path().join(".git/index")).expect("active index");
+    let (output, rejected) = apply(&fixture, &plan, key, None);
+    assert!(
+        !output.status.success(),
+        "stale plan was accepted: {rejected}"
+    );
+    assert_eq!(
+        git(fixture.root.path(), &["rev-parse", "HEAD"]),
+        external_head
+    );
+    assert_eq!(
+        fs::read(fixture.root.path().join(".git/index")).expect("preserved index"),
+        active_index
+    );
+    assert_eq!(
+        snapshot_tree(&fixture.root.path().join("skills/demo")),
+        reviewed_source
+    );
+    assert!(
+        !fixture
+            .root
+            .path()
+            .join("state/transactions/convergence-demo.json")
+            .exists(),
+        "retired changed-source journal remained active"
+    );
+}
+
+#[test]
 fn prepared_index_install_crash_restores_the_exact_original_index() {
     let fixture = projected_fixture();
     fs::write(

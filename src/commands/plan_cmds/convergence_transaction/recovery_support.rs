@@ -84,7 +84,7 @@ pub(super) fn recover_journal(
         }
         TransactionPhase::CommittingSource => {
             let paths = RegistryStatePaths::from_app_context(&app.ctx);
-            if super::external_head::retire_uncommitted_noop_after_external_head(
+            if super::recovery_evidence::retire_uncommitted_source_after_external_head(
                 app,
                 &paths,
                 plan,

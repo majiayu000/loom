@@ -42,6 +42,17 @@ fn interrupted_projection_activation_recovers_refresh() {
         !output.status.success(),
         "activation did not stop: {interrupted}"
     );
+    let journal: Value = serde_json::from_slice(
+        &fs::read(
+            fixture
+                .root
+                .path()
+                .join("state/transactions/convergence-demo.json"),
+        )
+        .expect("journal"),
+    )
+    .expect("parse journal");
+    assert!(journal["projections"][0]["backup"]["fingerprint"].is_string());
 
     let (output, recovered) = apply_plan(&fixture, &plan, "projection-activation", &[]);
     assert!(
@@ -694,6 +705,47 @@ fn partial_declared_backup_is_rebuilt_on_preparation_recovery() {
         fs::read_to_string(fixture.target.path().join("demo/details.txt")).unwrap(),
         "declared backup recovery\n"
     );
+}
+
+#[test]
+fn partial_index_backup_is_rebuilt_before_digest_persistence() {
+    let fixture = projected_fixture();
+    fs::write(
+        fixture.root.path().join("skills/demo/details.txt"),
+        "index backup recovery\n",
+    )
+    .expect("source edit");
+    let (output, plan) = plan_converge(&fixture, &[]);
+    assert!(output.status.success(), "plan failed: {plan}");
+    let (output, stopped) = apply_plan(
+        &fixture,
+        &plan,
+        "partial-index-backup",
+        &[(
+            "LOOM_FAULT_INJECT",
+            "convergence_interrupt_after_index_snapshot",
+        )],
+    );
+    assert!(
+        !output.status.success(),
+        "index snapshot fault passed: {stopped}"
+    );
+    let journal_path = fixture
+        .root
+        .path()
+        .join("state/transactions/convergence-demo.json");
+    let journal: Value =
+        serde_json::from_slice(&fs::read(&journal_path).expect("journal")).expect("parse journal");
+    assert!(journal["index_backup_digest"].is_null());
+    let backup = Path::new(journal["index_backup"].as_str().expect("index backup"));
+    fs::write(backup, b"partial index\n").expect("corrupt partial index backup");
+
+    let (output, recovered) = apply_plan(&fixture, &plan, "partial-index-backup", &[]);
+    assert!(
+        output.status.success(),
+        "index backup recovery failed: {recovered}"
+    );
+    assert!(!fixture.root.path().join(".git/index.lock").exists());
 }
 
 #[cfg(unix)]

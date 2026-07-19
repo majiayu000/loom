@@ -252,7 +252,7 @@ pub(super) fn apply_convergence(
                 ".loom-projection-stage-{}-{index}-{generation}.owner",
                 plan.plan_id,
             ));
-            let backup = declared_backup(
+            let backup = preparation::declared_projection_backup(
                 materialized,
                 &artifact_dir.join(format!("projection-{index}")),
             )?;

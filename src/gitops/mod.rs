@@ -210,22 +210,31 @@ pub fn snapshot_index_to(ctx: &AppContext, backup_path: &Path) -> Result<()> {
             index_path.display()
         ));
     }
-    if backup_path.exists() {
-        return Err(anyhow!(
-            "refusing to overwrite index snapshot {}",
-            backup_path.display()
-        ));
-    }
     if let Some(parent) = backup_path.parent() {
         fs::create_dir_all(parent)?;
     }
-    fs::copy(&index_path, backup_path).with_context(|| {
+    let mut source = fs::File::open(&index_path)
+        .with_context(|| format!("open Git index {} for backup", index_path.display()))?;
+    let mut backup = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(backup_path)
+        .with_context(|| {
+            format!(
+                "create new Git index snapshot {}; refusing to follow or overwrite an existing entry",
+                backup_path.display()
+            )
+        })?;
+    std::io::copy(&mut source, &mut backup).with_context(|| {
         format!(
-            "back up git index from {} to {}",
+            "back up Git index from {} to {}",
             index_path.display(),
             backup_path.display()
         )
     })?;
+    backup
+        .sync_all()
+        .with_context(|| format!("sync Git index snapshot {}", backup_path.display()))?;
     Ok(())
 }
 

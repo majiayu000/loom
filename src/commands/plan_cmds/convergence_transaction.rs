@@ -26,10 +26,13 @@ use super::super::{App, CommandFailure};
 use super::converge::digest_value;
 use super::{PLAN_PROTOCOL_VERSION, plan_failure};
 
+mod aggregate_audit;
+mod commit_evidence;
 mod external_head;
 mod faults;
 mod guards;
 mod index_lock_failure;
+mod journal;
 mod ownership;
 mod ownership_state;
 mod preparation;
@@ -38,12 +41,14 @@ mod projection_view;
 mod recovery_evidence;
 mod recovery_support;
 mod registry_commit;
+mod registry_recovery;
 mod registry_restore;
 mod rollback;
 mod source_commit;
 mod source_recovery;
 use faults::interruption_fault_active;
-use guards::{validate_guards, validate_recovery_routing};
+use guards::{validate_guards, validate_recovery_routing, validate_recovery_routing_after_audit};
+use journal::{ProjectionBackup, TransactionJournal, TransactionPhase};
 #[cfg(test)]
 use ownership::reserve_owned_dir;
 use ownership::{
@@ -51,8 +56,7 @@ use ownership::{
     retain_declared_attempts, validate_owned_staging, validate_transaction_artifacts,
 };
 use ownership_state::{
-    OwnershipAttempt, allocate_attempt, archive_previous_terminal_journal,
-    archive_rolled_back_journal,
+    allocate_attempt, archive_previous_terminal_journal, archive_rolled_back_journal,
 };
 use preparation::{
     declared_backup, prepare_projection_stages, prepare_transaction_artifacts,
@@ -76,85 +80,6 @@ use source_recovery::{
 
 const SCHEMA_VERSION: &str = "1.3";
 
-#[derive(Debug, Serialize, Deserialize)]
-struct TransactionJournal {
-    plan_id: String,
-    skill: String,
-    previous_head: String,
-    artifact_root: String,
-    artifact_owner_proof: String,
-    ownership_attempts: Vec<OwnershipAttempt>,
-    index_backup: String,
-    index_backup_digest: Option<String>,
-    source_backup: Option<Value>,
-    source_staging: Option<String>,
-    source_owner_proof: Option<String>,
-    #[serde(default)]
-    source_activated_fingerprint: Option<String>,
-    projections: Vec<ProjectionBackup>,
-    original_projections: RegistryProjectionsFile,
-    installed_projections: usize,
-    expected_projections: Option<RegistryProjectionsFile>,
-    source_head: Option<String>,
-    source_commit: Option<String>,
-    source_staged_index_digest: Option<String>,
-    #[serde(default)]
-    source_index_changed: Option<bool>,
-    #[serde(default)]
-    registry_commit: Option<String>,
-    #[serde(default)]
-    registry_staged_index_digest: Option<String>,
-    #[serde(default)]
-    registry_index_attempts: Vec<registry_commit::RegistryIndexAttempt>,
-    rollback_head: Option<String>,
-    rollback_index_digest: Option<String>,
-    #[serde(default)]
-    preparation_aborted: bool,
-    result: Option<Value>,
-    phase: TransactionPhase,
-}
-
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, Eq, PartialEq)]
-#[serde(rename_all = "snake_case")]
-enum TransactionPhase {
-    Preparing,
-    Prepared,
-    ReplacingSource,
-    SourceReplaced,
-    CommittingSource,
-    SourceCommitted,
-    RotatingProjections,
-    PreparingProjections,
-    InstallingProjections,
-    ProjectionsSwapped,
-    CommittingRegistry,
-    RollingBack,
-    CommittedCleanupPending,
-    RolledBackCleanupPending,
-    CommittedArtifactsRetained,
-    RolledBackArtifactsRetained,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct ProjectionBackup {
-    materialized_path: String,
-    backup: Option<Value>,
-    staging_owner: String,
-    owner_proof: String,
-    staging_path: String,
-    #[serde(default)]
-    activated_fingerprint: Option<String>,
-    #[serde(default)]
-    activated: bool,
-    #[serde(default)]
-    activation_pending: bool,
-    #[serde(default)]
-    original_fingerprint: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    restored_fingerprint: Option<String>,
-    #[serde(default)]
-    restore_pending: bool,
-}
 pub(super) fn apply_convergence(
     app: &App,
     stored: &Value,
@@ -172,6 +97,8 @@ pub(super) fn apply_convergence(
             Some(cursor),
         )
     })?;
+    let idempotency_binding_digest =
+        aggregate_audit::binding_digest(&plan, idempotency_key_digest)?;
     if stored["safe_to_apply"] != json!(true) || !plan.required_approvals.is_empty() {
         return Err(plan_failure(
             ErrorCode::PolicyBlocked,
@@ -187,7 +114,14 @@ pub(super) fn apply_convergence(
     let journal_path = journal_path(app, &plan.skill);
     archive_previous_terminal_journal(app, &journal_path, &plan)?;
     if journal_path.exists()
-        && let Some(output) = recover_journal(app, &journal_path, &plan, request_id)?
+        && let Some(output) = recover_journal(
+            app,
+            &journal_path,
+            &plan,
+            idempotency_key_digest,
+            &idempotency_binding_digest,
+            request_id,
+        )?
     {
         return Ok(apply_output(&plan, cursor, idempotency_key_digest, output));
     }
@@ -293,6 +227,10 @@ pub(super) fn apply_convergence(
     }
     let mut journal = TransactionJournal {
         plan_id: plan.plan_id.clone(),
+        plan_digest: plan.plan_digest.clone(),
+        convergence_id: aggregate_audit::new_convergence_id(),
+        idempotency_key_digest: idempotency_key_digest.to_string(),
+        idempotency_binding_digest,
         skill: plan.skill.clone(),
         previous_head: plan.source.registry_head.clone(),
         artifact_root: artifact_dir.display().to_string(),
@@ -310,6 +248,12 @@ pub(super) fn apply_convergence(
             .map_or_else(empty_projections_file, |snapshot| {
                 snapshot.projections.clone()
             }),
+        original_operations: snapshot
+            .as_ref()
+            .map(|snapshot| snapshot.operations.clone()),
+        original_checkpoint: snapshot
+            .as_ref()
+            .map(|snapshot| snapshot.checkpoint.clone()),
         installed_projections: 0,
         expected_projections: None,
         source_head: None,
@@ -322,6 +266,10 @@ pub(super) fn apply_convergence(
         rollback_head: None,
         rollback_index_digest: None,
         preparation_aborted: false,
+        aggregate_operation_id: None,
+        aggregate_evidence: None,
+        aggregate_operation: None,
+        aggregate_checkpoint: None,
         result: None,
         phase: TransactionPhase::Preparing,
     };
@@ -396,7 +344,7 @@ fn execute_local_transaction(
         journal.phase = TransactionPhase::SourceReplaced;
         save_journal(journal_path, journal)?;
     }
-    let source_commit = if journal.source_head.is_some() {
+    let _source_commit = if journal.source_head.is_some() {
         journal.source_commit.clone()
     } else {
         source_commit::commit_convergence_source(app, plan, journal_path, journal)?
@@ -580,6 +528,11 @@ fn execute_local_transaction(
     maybe_skill_fault("convergence_after_registry_save")?;
     journal.phase = TransactionPhase::CommittingRegistry;
     save_journal(journal_path, journal)?;
+    if snapshot.is_some() {
+        aggregate_audit::record(paths, plan, journal_path, journal)?;
+    } else {
+        aggregate_audit::record_source_only(plan, journal_path, journal)?;
+    }
     let registry_commit = if snapshot.is_some() {
         match commit_convergence_registry(app, plan, journal_path, journal) {
             Ok(commit) => commit,
@@ -598,12 +551,14 @@ fn execute_local_transaction(
         None
     };
     maybe_skill_fault("convergence_interrupt_committing_registry")?;
-    Ok(json!({
-        "skill": plan.skill,
-        "source_commit": source_commit,
-        "registry_commit": registry_commit,
-        "projection_instances": applied,
-    }))
+    debug_assert_eq!(
+        applied,
+        plan.projections
+            .iter()
+            .map(|item| item.instance_id.clone())
+            .collect::<Vec<_>>()
+    );
+    Ok(aggregate_audit::result(plan, journal, registry_commit))
 }
 
 fn replace_source_from_projection(

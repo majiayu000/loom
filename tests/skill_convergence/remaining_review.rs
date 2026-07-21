@@ -637,7 +637,7 @@ fn external_head_between_registry_guard_and_json_cas_restores_owned_surfaces() {
             )
         });
         let mut entered_registry_save = false;
-        for _ in 0..200 {
+        for _ in 0..6_000 {
             if let Ok(raw) = fs::read(&journal_path)
                 && let Ok(journal) = serde_json::from_slice::<Value>(&raw)
                 && journal["phase"] == json!("projections_swapped")

@@ -242,9 +242,44 @@ pub(crate) fn record_registry_operation(
     effects: serde_json::Value,
 ) -> Result<String> {
     let op_id = format!("op_{}", Uuid::new_v4().simple());
+    record_registry_operation_with_id(paths, &op_id, intent, payload, effects)
+}
+
+pub(crate) fn record_registry_operation_with_id(
+    paths: &RegistryStatePaths,
+    op_id: &str,
+    intent: &str,
+    payload: serde_json::Value,
+    effects: serde_json::Value,
+) -> Result<String> {
+    if let Some(existing) = paths
+        .load_operations()?
+        .into_iter()
+        .find(|record| record.op_id == op_id)
+    {
+        if existing.intent != intent
+            || existing.status != "succeeded"
+            || existing.ack
+            || existing.payload != payload
+            || existing.effects != effects
+            || existing.last_error.is_some()
+        {
+            return Err(anyhow::anyhow!(
+                "registry operation '{}' conflicts with durable convergence evidence",
+                op_id
+            ));
+        }
+        let mut checkpoint = paths.load_checkpoint()?;
+        if checkpoint.last_scanned_op_id.as_deref() != Some(op_id) {
+            checkpoint.last_scanned_op_id = Some(op_id.to_string());
+            checkpoint.updated_at = Utc::now();
+            paths.save_checkpoint(&checkpoint)?;
+        }
+        return Ok(op_id.to_string());
+    }
     let now = Utc::now();
     let record = RegistryOperationRecord {
-        op_id: op_id.clone(),
+        op_id: op_id.to_string(),
         intent: intent.to_string(),
         status: "succeeded".to_string(),
         ack: false,
@@ -274,7 +309,7 @@ pub(crate) fn record_registry_operation(
         maybe_projection_fault("record_v3_operation_after_append")?;
 
         let mut checkpoint = paths.load_checkpoint()?;
-        checkpoint.last_scanned_op_id = Some(op_id.clone());
+        checkpoint.last_scanned_op_id = Some(op_id.to_string());
         checkpoint.updated_at = now;
         paths.save_checkpoint(&checkpoint)?;
         maybe_projection_fault("record_v3_operation_after_checkpoint")?;
@@ -293,7 +328,7 @@ pub(crate) fn record_registry_operation(
         return Err(err);
     }
 
-    Ok(op_id)
+    Ok(op_id.to_string())
 }
 
 pub(crate) fn record_registry_observation(

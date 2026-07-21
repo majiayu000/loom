@@ -3,6 +3,11 @@ use super::recovery_support::{validate_registry_result, verify_commit};
 use super::*;
 
 const REGISTRY_PATH: &str = "state/registry/projections.json";
+const REGISTRY_COMMIT_PATHS: [&str; 3] = [
+    REGISTRY_PATH,
+    super::aggregate_audit::OPERATIONS_PATH,
+    super::aggregate_audit::CHECKPOINT_PATH,
+];
 
 #[derive(Debug, Deserialize, Serialize)]
 pub(super) struct RegistryIndexAttempt {
@@ -90,9 +95,13 @@ pub(super) fn commit_convergence_registry(
     let base_index_digest = file_digest(&base_index)?;
     journal.registry_index_attempts[attempt].base_digest = Some(base_index_digest.clone());
     save_journal(journal_path, journal)?;
-    let changed =
-        gitops::prepare_index_for_paths(&app.ctx, &base_index, &prepared_index, &[REGISTRY_PATH])
-            .map_err(map_git)?;
+    let changed = gitops::prepare_index_for_paths(
+        &app.ctx,
+        &base_index,
+        &prepared_index,
+        &REGISTRY_COMMIT_PATHS,
+    )
+    .map_err(map_git)?;
     sync_registry_index(&prepared_index)?;
     let expected_index = file_digest(&prepared_index)?;
     journal.registry_index_attempts[attempt].prepared_digest = Some(expected_index.clone());
@@ -113,13 +122,13 @@ pub(super) fn commit_convergence_registry(
         &app.ctx,
         &prepared_index,
         &commit_index,
-        &[REGISTRY_PATH],
+        &REGISTRY_COMMIT_PATHS,
         &source_head,
         &message,
     )
     .map_err(map_git)?;
     verify_commit(app, &commit, &source_head, &message, |path| {
-        path == REGISTRY_PATH
+        REGISTRY_COMMIT_PATHS.contains(&path)
     })?;
     journal.registry_index_attempts[attempt].commit_digest = Some(file_digest(&commit_index)?);
     journal.registry_index_attempts[attempt].state = RegistryIndexAttemptState::Ready;
@@ -137,7 +146,8 @@ pub(super) fn commit_convergence_registry(
         gitops::install_prepared_index_with_guard(&app.ctx, &prepared_index, &|candidate| {
             validate_registry_result(app, plan, journal)
                 .map_err(|error| anyhow::anyhow!(error.message))?;
-            validate_recovery_routing(app, plan).map_err(|error| anyhow::anyhow!(error.message))?;
+            validate_recovery_routing_after_audit(app, plan, journal)
+                .map_err(|error| anyhow::anyhow!(error.message))?;
             validate_index_install(
                 app,
                 candidate,
@@ -213,7 +223,8 @@ pub(super) fn resume_ready_registry_index_lock(
     let guard = |candidate: &Path| {
         validate_registry_result(app, plan, journal)
             .map_err(|error| anyhow::anyhow!(error.message))?;
-        validate_recovery_routing(app, plan).map_err(|error| anyhow::anyhow!(error.message))?;
+        validate_recovery_routing_after_audit(app, plan, journal)
+            .map_err(|error| anyhow::anyhow!(error.message))?;
         let head = gitops::head(&app.ctx)?;
         if head != source_head && head != commit {
             return Err(anyhow::anyhow!("registry recovery HEAD changed"));
@@ -256,7 +267,15 @@ pub(super) fn align_registry_index(
     }
     let staged = gitops::run_git_allow_failure(
         &app.ctx,
-        &["diff", "--cached", "--quiet", "--", REGISTRY_PATH],
+        &[
+            "diff",
+            "--cached",
+            "--quiet",
+            "--",
+            REGISTRY_PATH,
+            super::aggregate_audit::OPERATIONS_PATH,
+            super::aggregate_audit::CHECKPOINT_PATH,
+        ],
     )
     .map_err(map_git)?;
     if staged.status.success() {
@@ -270,9 +289,13 @@ pub(super) fn align_registry_index(
     let base_index_digest = file_digest(&base_index)?;
     journal.registry_index_attempts[attempt].base_digest = Some(base_index_digest.clone());
     save_journal(journal_path, journal)?;
-    let changed =
-        gitops::prepare_index_for_paths(&app.ctx, &base_index, &prepared_index, &[REGISTRY_PATH])
-            .map_err(super::index_lock_failure::map_install_error)?;
+    let changed = gitops::prepare_index_for_paths(
+        &app.ctx,
+        &base_index,
+        &prepared_index,
+        &REGISTRY_COMMIT_PATHS,
+    )
+    .map_err(super::index_lock_failure::map_install_error)?;
     sync_registry_index(&prepared_index)?;
     let expected_index = file_digest(&prepared_index)?;
     journal.registry_index_attempts[attempt].prepared_digest = Some(expected_index.clone());

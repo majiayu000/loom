@@ -59,6 +59,18 @@ impl App {
             workspace.as_deref(),
             &source_digest,
         )?;
+        let visibility_agents = projections
+            .iter()
+            .map(|effect| effect.agent.clone())
+            .collect::<BTreeSet<_>>();
+        let resolved_visibility_agent =
+            args.agent
+                .map(|agent| agent.as_str().to_string())
+                .or_else(|| {
+                    (args.require_runtime && visibility_agents.len() == 1)
+                        .then(|| visibility_agents.iter().next().cloned())
+                        .flatten()
+                });
         validate_projection_input(args, &projections)?;
         let source_dirty_paths = source_replacement_risk_paths(&self.ctx, &args.skill)?;
         let projection_evidence =
@@ -107,7 +119,7 @@ impl App {
         let preflight_candidate = prepared_input.candidate_path(&args.skill);
         let preflight = self.convergence_preflight_evidence(
             &args.skill,
-            args.agent.map(|agent| agent.as_str()),
+            resolved_visibility_agent.as_deref(),
             workspace.as_deref(),
             direction.clone(),
             &selected_input_tree_digest,
@@ -152,18 +164,6 @@ impl App {
                 required: args.require_runtime,
             })
             .collect::<Vec<_>>();
-        let visibility_agents = visibility
-            .iter()
-            .map(|requirement| requirement.agent.clone())
-            .collect::<BTreeSet<_>>();
-        let resolved_visibility_agent =
-            args.agent
-                .map(|agent| agent.as_str().to_string())
-                .or_else(|| {
-                    (args.require_runtime && visibility_agents.len() == 1)
-                        .then(|| visibility_agents.iter().next().cloned())
-                        .flatten()
-                });
         let mut required_axes = BTreeSet::from([ConvergenceAxis::Projections]);
         if args.require_runtime {
             required_axes.insert(ConvergenceAxis::Visibility);

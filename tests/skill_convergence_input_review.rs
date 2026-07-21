@@ -516,3 +516,36 @@ fn selected_agent_scopes_projection_preflight_dependencies() {
         "claude preflight must not include codex-only dependencies: {selected}"
     );
 }
+
+#[test]
+fn derived_runtime_agent_scopes_projection_preflight_dependencies() {
+    let fixture = projected_fixture();
+    let agents = fixture.root.path().join("skills/demo/agents");
+    fs::create_dir_all(&agents).expect("create agent metadata");
+    fs::write(
+        agents.join("codex.yaml"),
+        "requires_tools: loom-selector-tool-that-does-not-exist\n",
+    )
+    .expect("write unrelated agent dependency");
+    let workspace = fixture.workspace.path().to_str().expect("workspace path");
+
+    let (output, plan) = run_loom(
+        fixture.root.path(),
+        &[
+            "plan",
+            "converge",
+            "demo",
+            "--workspace",
+            workspace,
+            "--profile",
+            "default",
+            "--require-runtime",
+        ],
+    );
+    assert!(output.status.success(), "derived agent plan failed: {plan}");
+    assert_eq!(plan["data"]["selectors"]["agent"], json!("claude"));
+    assert!(
+        !conflict_codes(&plan).contains(&"SOURCE_PREFLIGHT_BLOCKED"),
+        "derived claude preflight must not include codex-only dependencies: {plan}"
+    );
+}

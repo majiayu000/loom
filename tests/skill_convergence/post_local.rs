@@ -340,7 +340,10 @@ fn remote_ahead_preserves_recorded_commit_evidence() {
         &["remote", "add", "origin", remote_path],
     );
     git(fixture.root.path(), &["push", "origin", "HEAD:main"]);
-    git(peer.path(), &["clone", remote_path, "."]);
+    git(
+        peer.path(),
+        &["clone", "--branch", "main", remote_path, "."],
+    );
     git(peer.path(), &["config", "user.email", "test@example.com"]);
     git(peer.path(), &["config", "user.name", "Test User"]);
     fs::write(peer.path().join("remote-only.txt"), "remote advanced\n").expect("remote edit");

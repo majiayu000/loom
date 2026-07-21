@@ -4,7 +4,7 @@ use serde_json::{Value, json};
 
 use super::super::super::convergence_status::{ConvergenceRequest, collect_convergence_status};
 use super::super::super::helpers::{map_io, shell_arg};
-use super::super::super::sync_cmds::sync_push_internal;
+use super::super::super::sync_cmds::sync_push_convergence_internal;
 use super::*;
 use crate::core::convergence::{ConvergenceAxis, RemotePolicy, SkillConvergencePlan};
 
@@ -55,7 +55,7 @@ pub(super) fn complete(
             "evidence": {"policy": "not_requested"},
             "errors": [],
         }),
-        RemotePolicy::Push => match sync_push_internal(&app.ctx) {
+        RemotePolicy::Push => match sync_push_convergence_internal(&app.ctx) {
             Ok(result) => json!({
                 "state": "SYNCED",
                 "evidence": {"result": result},

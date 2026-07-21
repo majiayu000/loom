@@ -97,6 +97,17 @@ fn remote_failure_preserves_local_completion() {
             .is_some_and(|command| command.contains("$IDEMPOTENCY_KEY"))
     );
 
+    let (wrong_key_output, wrong_key) = apply_plan(&fixture, &plan, "different-key", &[]);
+    assert!(
+        !wrong_key_output.status.success(),
+        "different key must not own pending retry: {wrong_key}"
+    );
+    assert_eq!(wrong_key["error"]["code"], json!("DEPENDENCY_CONFLICT"));
+    assert_eq!(
+        wrong_key["error"]["details"]["conflict"]["code"],
+        json!("IDEMPOTENCY_KEY_REUSED")
+    );
+
     git(remote.path(), &["init", "--bare"]);
     let remote_path = remote.path().to_str().expect("remote path");
     git(
@@ -225,6 +236,185 @@ fn complete_requires_the_exact_planned_projection_set() {
         .map(|item| item["instance_id"].as_str().expect("observed instance"))
         .collect::<BTreeSet<_>>();
     assert_eq!(observed_ids, planned_ids);
+}
+
+#[test]
+fn runtime_required_derives_a_single_unambiguous_agent() {
+    let fixture = projected_fixture();
+    change_source(&fixture, "derived runtime agent\n");
+    let workspace = fixture.workspace.path().to_str().expect("workspace path");
+    let (output, plan) = common::run_loom(
+        fixture.root.path(),
+        &[
+            "plan",
+            "converge",
+            "demo",
+            "--workspace",
+            workspace,
+            "--profile",
+            "default",
+            "--require-runtime",
+        ],
+    );
+    assert!(output.status.success(), "plan failed: {plan}");
+    assert_eq!(plan["data"]["selectors"]["agent"], json!("claude"));
+    assert_eq!(plan["data"]["safe_to_apply"], json!(true));
+
+    let (output, applied) = apply_plan(&fixture, &plan, "derived-runtime-agent", &[]);
+    assert!(output.status.success(), "apply failed: {applied}");
+    assert_eq!(
+        applied["data"]["completion_blockers"],
+        json!(["visibility.restart_required"])
+    );
+    assert_eq!(
+        applied["data"]["convergence"]["visibility"]["state"],
+        json!("restart_required")
+    );
+}
+
+#[test]
+fn runtime_required_rejects_multiple_agents_without_a_selector() {
+    let fixture = projected_fixture();
+    let cursor_target = common::TestDir::new("convergence-cursor-target");
+    let (output, target) = target_add(
+        fixture.root.path(),
+        "cursor",
+        cursor_target.path(),
+        "managed",
+    );
+    assert!(output.status.success(), "target add failed: {target}");
+    let target_id = target["data"]["target"]["target_id"]
+        .as_str()
+        .expect("cursor target id");
+    let workspace = fixture.workspace.path().to_str().expect("workspace path");
+    let (output, binding) = binding_add(
+        fixture.root.path(),
+        "cursor",
+        "default",
+        "exact-path",
+        workspace,
+        target_id,
+    );
+    assert!(output.status.success(), "binding add failed: {binding}");
+    let binding_id = binding["data"]["binding"]["binding_id"]
+        .as_str()
+        .expect("cursor binding id");
+    let (output, projection) = skill_project(fixture.root.path(), "demo", binding_id, Some("copy"));
+    assert!(output.status.success(), "project failed: {projection}");
+
+    change_source(&fixture, "ambiguous runtime agents\n");
+    let (output, plan) = common::run_loom(
+        fixture.root.path(),
+        &[
+            "plan",
+            "converge",
+            "demo",
+            "--workspace",
+            workspace,
+            "--profile",
+            "default",
+            "--require-runtime",
+        ],
+    );
+    assert!(output.status.success(), "plan failed: {plan}");
+    assert_eq!(plan["data"]["safe_to_apply"], json!(false));
+    assert!(
+        plan["data"]["conflicts"]
+            .as_array()
+            .is_some_and(|conflicts| conflicts
+                .iter()
+                .any(|conflict| conflict["code"] == json!("RUNTIME_AGENT_AMBIGUOUS"))),
+        "missing runtime-agent conflict: {plan}"
+    );
+}
+
+#[test]
+fn remote_ahead_preserves_recorded_commit_evidence() {
+    let fixture = projected_fixture();
+    let remote = common::TestDir::new("convergence-ahead-remote");
+    let peer = common::TestDir::new("convergence-ahead-peer");
+    git(remote.path(), &["init", "--bare"]);
+    let remote_path = remote.path().to_str().expect("remote path");
+    git(
+        fixture.root.path(),
+        &["remote", "add", "origin", remote_path],
+    );
+    git(fixture.root.path(), &["push", "origin", "HEAD:main"]);
+    git(peer.path(), &["clone", remote_path, "."]);
+    git(peer.path(), &["config", "user.email", "test@example.com"]);
+    git(peer.path(), &["config", "user.name", "Test User"]);
+    fs::write(peer.path().join("remote-only.txt"), "remote advanced\n").expect("remote edit");
+    git(peer.path(), &["add", "remote-only.txt"]);
+    git(peer.path(), &["commit", "-m", "test: advance remote"]);
+    git(peer.path(), &["push", "origin", "HEAD:main"]);
+
+    change_source(&fixture, "local convergence after remote advance\n");
+    let (output, plan) = plan_converge(&fixture, &["--push-remote"]);
+    assert!(output.status.success(), "plan failed: {plan}");
+    let (output, applied) = apply_plan(&fixture, &plan, "remote-ahead", &[]);
+    assert!(output.status.success(), "partial apply failed: {applied}");
+    let data = &applied["data"];
+    assert_eq!(data["complete"], json!(false));
+    assert_eq!(
+        data["convergence"]["registry_transport"]["state"],
+        json!("PENDING_PUSH")
+    );
+    assert_eq!(
+        data["convergence"]["registry_transport"]["errors"][0]["code"],
+        json!("REMOTE_DIVERGED")
+    );
+    let source_commit = data["source"]["commit"].as_str().expect("source commit");
+    let registry_commit = data["applied"]["registry_commit"]
+        .as_str()
+        .expect("registry commit");
+    let ancestor = Command::new("git")
+        .current_dir(fixture.root.path())
+        .args(["merge-base", "--is-ancestor", source_commit, "HEAD"])
+        .output()
+        .expect("check local source ancestry");
+    assert!(
+        ancestor.status.success(),
+        "recorded source commit was rewritten"
+    );
+    let registry_ancestor = Command::new("git")
+        .current_dir(fixture.root.path())
+        .args(["merge-base", "--is-ancestor", registry_commit, "HEAD"])
+        .output()
+        .expect("check local registry ancestry");
+    assert!(
+        registry_ancestor.status.success(),
+        "recorded registry commit was rewritten"
+    );
+    let remote_ancestor = Command::new("git")
+        .arg("--git-dir")
+        .arg(remote.path())
+        .args([
+            "merge-base",
+            "--is-ancestor",
+            source_commit,
+            "refs/heads/main",
+        ])
+        .output()
+        .expect("check remote source ancestry");
+    assert!(
+        !remote_ancestor.status.success(),
+        "diverged transport must not push or rewrite convergence evidence"
+    );
+    let remote_registry_ancestor = Command::new("git")
+        .arg("--git-dir")
+        .arg(remote.path())
+        .args([
+            "merge-base",
+            "--is-ancestor",
+            registry_commit,
+            "refs/heads/main",
+        ])
+        .output()
+        .expect("check remote registry ancestry");
+    assert!(
+        !remote_registry_ancestor.status.success(),
+        "diverged transport must not push recorded registry evidence"
+    );
 }
 
 fn change_source(fixture: &Fixture, body: &str) {

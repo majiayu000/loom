@@ -87,6 +87,58 @@ pub(super) fn public_agent_capabilities(
         }),
         Meta::default(),
     );
+    let convergence_noop_source = Envelope::ok(
+        "apply",
+        "req-convergence-noop".to_string(),
+        json!({"source": {"commit": null, "direction": "source"}}),
+        Meta::default(),
+    );
+    let convergence_symlink = Envelope::ok(
+        "apply",
+        "req-convergence-symlink".to_string(),
+        json!({
+            "convergence": {
+                "projections": {
+                    "items": [{
+                        "instance_id": "symlink-fixture",
+                        "skill_id": "skill-fixture",
+                        "target_id": "target-fixture",
+                        "method": "symlink",
+                        "state": "converged",
+                        "source_digest": null,
+                        "materialized_digest": null,
+                    }],
+                },
+            },
+        }),
+        Meta::default(),
+    );
+    let convergence_not_requested = Envelope::ok(
+        "apply",
+        "req-convergence-local".to_string(),
+        json!({
+            "convergence": {
+                "registry_transport": {
+                    "state": "not_requested",
+                    "evidence": {"policy": "not_requested"},
+                },
+            },
+        }),
+        Meta::default(),
+    );
+    let convergence_synced = Envelope::ok(
+        "apply",
+        "req-convergence-synced".to_string(),
+        json!({
+            "convergence": {
+                "registry_transport": {
+                    "state": "SYNCED",
+                    "evidence": {"result": "pushed"},
+                },
+            },
+        }),
+        Meta::default(),
+    );
     let failure = Envelope::err_with_next_actions(
         "fixture.failure",
         "req-failure".to_string(),
@@ -100,6 +152,10 @@ pub(super) fn public_agent_capabilities(
         serde_json::to_value(durable_plan),
         serde_json::to_value(convergence_plan),
         serde_json::to_value(convergence_apply),
+        serde_json::to_value(convergence_noop_source),
+        serde_json::to_value(convergence_symlink),
+        serde_json::to_value(convergence_not_requested),
+        serde_json::to_value(convergence_synced),
         serde_json::to_value(failure),
     ];
     let mut shapes = BTreeMap::<String, (BTreeSet<String>, usize)>::new();
@@ -297,6 +353,11 @@ mod tests {
             "field:envelope.data.convergence.registry_transport:optional-object",
             "field:envelope.data.convergence.projections:optional-object",
             "field:envelope.data.convergence.visibility:optional-object",
+            "field:envelope.data.source.commit:null-or-string",
+            "field:envelope.data.convergence.projections.items[].source_digest:null-or-string",
+            "field:envelope.data.convergence.projections.items[].materialized_digest:null-or-string",
+            "field:envelope.data.convergence.registry_transport.evidence.policy:optional-string",
+            "field:envelope.data.convergence.registry_transport.evidence.result:optional-string",
         ] {
             assert!(capabilities.contains(field), "missing {field}");
         }

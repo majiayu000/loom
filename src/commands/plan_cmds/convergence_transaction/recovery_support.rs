@@ -3,6 +3,7 @@ use super::recovery_evidence::{
     validate_mutated_surfaces, validate_rollback_evidence, validate_rolling_back_state,
 };
 use super::*;
+use crate::core::convergence::RemotePolicy;
 use crate::next_action_trace::observe_next_actions;
 
 pub(super) fn recover_journal(
@@ -26,9 +27,10 @@ pub(super) fn recover_journal(
         journal.phase,
         TransactionPhase::CommittedCleanupPending | TransactionPhase::CommittedArtifactsRetained
     ) || journal.registry_commit.is_some();
-    let terminal_replay =
-        terminal_replay && super::aggregate_audit::plan_identity_is_valid(plan, &journal);
-    if !exact_identity && !terminal_replay {
+    let compatible_local_replay = terminal_replay
+        && plan.remote == RemotePolicy::NotRequested
+        && super::aggregate_audit::plan_identity_is_valid(plan, &journal);
+    if !exact_identity && !compatible_local_replay {
         return Err(plan_failure(
             ErrorCode::DependencyConflict,
             "convergence journal is bound to a different idempotency identity",

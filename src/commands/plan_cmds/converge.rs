@@ -152,6 +152,18 @@ impl App {
                 required: args.require_runtime,
             })
             .collect::<Vec<_>>();
+        let visibility_agents = visibility
+            .iter()
+            .map(|requirement| requirement.agent.clone())
+            .collect::<BTreeSet<_>>();
+        let resolved_visibility_agent =
+            args.agent
+                .map(|agent| agent.as_str().to_string())
+                .or_else(|| {
+                    (args.require_runtime && visibility_agents.len() == 1)
+                        .then(|| visibility_agents.iter().next().cloned())
+                        .flatten()
+                });
         let mut required_axes = BTreeSet::from([ConvergenceAxis::Projections]);
         if args.require_runtime {
             required_axes.insert(ConvergenceAxis::Visibility);
@@ -166,7 +178,7 @@ impl App {
             plan_digest: String::new(),
             skill: args.skill.clone(),
             selectors: ConvergenceSelectors {
-                agent: args.agent.map(|agent| agent.as_str().to_string()),
+                agent: resolved_visibility_agent,
                 workspace: workspace.map(|path| path.display().to_string()),
                 profile: args.profile.clone(),
                 input_instance: args.instance.clone(),
@@ -208,6 +220,13 @@ impl App {
             conflicts.push(json!({
                 "code": "RUNTIME_PROJECTION_REQUIRED",
                 "message": "--require-runtime resolved no active projection",
+            }));
+        }
+        if args.require_runtime && visibility_agents.len() > 1 {
+            conflicts.push(json!({
+                "code": "RUNTIME_AGENT_AMBIGUOUS",
+                "message": "--require-runtime resolved multiple agent runtimes; select one with --agent",
+                "agents": visibility_agents,
             }));
         }
         let risks = policy_risks(policy);

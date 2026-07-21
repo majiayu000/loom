@@ -78,13 +78,14 @@ pub(super) fn complete(
     };
 
     let visibility_state = visibility["state"].as_str();
+    let visibility_evidence_usable = axis_evidence_is_usable(&visibility);
     let visibility_required = plan.required_axes.contains(&ConvergenceAxis::Visibility);
     let restart_required = visibility_state == Some("restart_required");
     if visibility_required {
-        match visibility_state {
-            Some("visible") => {}
-            Some("restart_required") if plan.accept_restart_required => {}
-            Some("restart_required") => blockers.push("visibility.restart_required"),
+        match (visibility_evidence_usable, visibility_state) {
+            (true, Some("visible")) => {}
+            (true, Some("restart_required")) if plan.accept_restart_required => {}
+            (true, Some("restart_required")) => blockers.push("visibility.restart_required"),
             _ => blockers.push("visibility.evidence_incomplete"),
         }
     }
@@ -166,19 +167,68 @@ fn adapter_requires_reload_after_apply(visibility: &Value) -> bool {
         })
 }
 
-fn projection_evidence_is_complete(plan: &SkillConvergencePlan, projections: &Value) -> bool {
-    if projections["stale"] == json!(true)
-        || projections["errors"]
+fn axis_evidence_is_usable(axis: &Value) -> bool {
+    axis["stale"] == json!(false)
+        && axis["errors"]
             .as_array()
-            .is_none_or(|errors| !errors.is_empty())
-    {
+            .is_some_and(|errors| errors.is_empty())
+}
+
+fn projection_evidence_is_complete(plan: &SkillConvergencePlan, projections: &Value) -> bool {
+    if !axis_evidence_is_usable(projections) {
         return false;
     }
     match projections["state"].as_str() {
-        Some("converged") => !plan.projections.is_empty(),
-        Some("not_applicable") => plan.projections.is_empty(),
+        Some("converged") => {
+            exact_projection_evidence_matches(&plan.skill, &plan.projections, projections)
+        }
+        Some("not_applicable") => {
+            plan.projections.is_empty()
+                && projections["items"]
+                    .as_array()
+                    .is_some_and(|items| items.is_empty())
+                && projections["evidence"]["selected_count"] == json!(0)
+        }
         _ => false,
     }
+}
+
+fn exact_projection_evidence_matches(
+    skill: &str,
+    effects: &[crate::core::convergence::ProjectionEffectPlan],
+    projections: &Value,
+) -> bool {
+    let Some(items) = projections["items"].as_array() else {
+        return false;
+    };
+    if effects.is_empty()
+        || items.len() != effects.len()
+        || projections["evidence"]["selected_count"] != json!(effects.len())
+    {
+        return false;
+    }
+    effects.iter().all(|effect| {
+        let mut matching = items
+            .iter()
+            .filter(|item| item["instance_id"].as_str() == Some(effect.instance_id.as_str()))
+            .take(2);
+        matching.next().is_some_and(|item| {
+            item["skill_id"].as_str() == Some(skill)
+                && item["target_id"].as_str() == Some(effect.target_id.as_str())
+                && item["method"].as_str() == Some(effect.method.as_str())
+                && item["state"] == json!("converged")
+                && item["errors"]
+                    .as_array()
+                    .is_some_and(|errors| errors.is_empty())
+                && if effect.method == "symlink" {
+                    item["source_digest"].is_null() && item["materialized_digest"].is_null()
+                } else {
+                    item["source_digest"].as_str() == Some(effect.source_tree_digest.as_str())
+                        && item["materialized_digest"].as_str()
+                            == Some(effect.source_tree_digest.as_str())
+                }
+        }) && matching.next().is_none()
+    })
 }
 
 fn declared_local_evidence_is_complete(plan: &SkillConvergencePlan, local: &Value) -> bool {
@@ -217,4 +267,89 @@ fn visibility_recheck_command(app: &App, plan: &SkillConvergencePlan) -> String 
         command.push_str(&format!(" --agent {agent}"));
     }
     command
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+    use crate::core::convergence::ProjectionEffectPlan;
+
+    fn effect(instance_id: &str, target_id: &str) -> ProjectionEffectPlan {
+        ProjectionEffectPlan {
+            instance_id: instance_id.to_string(),
+            binding_id: format!("binding-{instance_id}"),
+            target_id: target_id.to_string(),
+            agent: "codex".to_string(),
+            profile: "default".to_string(),
+            method: "copy".to_string(),
+            ownership: "managed".to_string(),
+            materialized_path: format!("/target/{instance_id}"),
+            source_tree_digest: "source-digest".to_string(),
+            materialized_tree_digest: Some("old-digest".to_string()),
+            effect: "refresh".to_string(),
+        }
+    }
+
+    fn item(instance_id: &str, target_id: &str) -> Value {
+        json!({
+            "instance_id": instance_id,
+            "skill_id": "demo",
+            "target_id": target_id,
+            "method": "copy",
+            "state": "converged",
+            "source_digest": "source-digest",
+            "materialized_digest": "source-digest",
+            "errors": [],
+        })
+    }
+
+    #[test]
+    fn stale_or_error_visibility_evidence_is_not_usable() {
+        assert!(!axis_evidence_is_usable(&json!({
+            "state": "visible",
+            "stale": true,
+            "errors": [{"code": "evidence_changed_during_read"}],
+        })));
+        assert!(!axis_evidence_is_usable(&json!({
+            "state": "visible",
+            "stale": false,
+            "errors": [{"code": "adapter_failed"}],
+        })));
+        assert!(axis_evidence_is_usable(&json!({
+            "state": "visible",
+            "stale": false,
+            "errors": [],
+        })));
+    }
+
+    #[test]
+    fn projection_evidence_requires_every_exact_planned_effect() {
+        let effects = vec![
+            effect("projection-a", "target-a"),
+            effect("projection-b", "target-b"),
+        ];
+        let omitted = json!({
+            "evidence": {"selected_count": 1},
+            "items": [item("projection-a", "target-a")],
+        });
+        assert!(!exact_projection_evidence_matches(
+            "demo", &effects, &omitted
+        ));
+
+        let exact = json!({
+            "evidence": {"selected_count": 2},
+            "items": [item("projection-a", "target-a"), item("projection-b", "target-b")],
+        });
+        assert!(exact_projection_evidence_matches("demo", &effects, &exact));
+
+        let mut wrong_method = exact;
+        wrong_method["items"][1]["method"] = json!("symlink");
+        assert!(!exact_projection_evidence_matches(
+            "demo",
+            &effects,
+            &wrong_method
+        ));
+    }
 }

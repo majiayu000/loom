@@ -1,4 +1,4 @@
-use std::fs;
+use std::{collections::BTreeSet, fs};
 
 use serde_json::{Value, json};
 
@@ -194,6 +194,37 @@ fn complete_requires_declared_evidence() {
         json!(["visibility.evidence_incomplete"])
     );
     assert_eq!(data["outcome"], json!("local_complete_evidence_incomplete"));
+}
+
+#[test]
+fn complete_requires_the_exact_planned_projection_set() {
+    let fixture = projected_fixture();
+    let (_, second_instance) = add_copy_projection(&fixture, "second-post-local-target");
+    change_source(&fixture, "two exact projection effects\n");
+    let (output, plan) = plan_converge(&fixture, &[]);
+    assert!(output.status.success(), "plan failed: {plan}");
+    assert_eq!(plan["data"]["effects"].as_array().map(Vec::len), Some(2));
+
+    let planned_ids = plan["data"]["effects"]
+        .as_array()
+        .expect("planned effects")
+        .iter()
+        .map(|effect| effect["instance_id"].as_str().expect("planned instance"))
+        .collect::<BTreeSet<_>>();
+    assert!(planned_ids.contains(second_instance.as_str()));
+
+    let (output, applied) = apply_plan(&fixture, &plan, "exact-projection-set", &[]);
+    assert!(output.status.success(), "apply failed: {applied}");
+    let projections = &applied["data"]["convergence"]["projections"];
+    assert_eq!(applied["data"]["complete"], json!(true));
+    assert_eq!(projections["evidence"]["selected_count"], json!(2));
+    let observed_ids = projections["items"]
+        .as_array()
+        .expect("projection evidence")
+        .iter()
+        .map(|item| item["instance_id"].as_str().expect("observed instance"))
+        .collect::<BTreeSet<_>>();
+    assert_eq!(observed_ids, planned_ids);
 }
 
 fn change_source(fixture: &Fixture, body: &str) {

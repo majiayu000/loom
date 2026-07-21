@@ -45,6 +45,48 @@ pub(super) fn public_agent_capabilities(
         }),
         Meta::default(),
     );
+    let convergence_apply = Envelope::ok(
+        "apply",
+        "req-convergence-apply".to_string(),
+        json!({
+            "local_state": "complete",
+            "outcome": "local_complete_remote_pending_restart_required",
+            "completion_blockers": ["registry.remote_pending", "visibility.restart_required"],
+            "source": {"commit": "commit-fixture", "direction": "source"},
+            "convergence": {
+                "registry_transport": {
+                    "state": "PENDING_PUSH",
+                    "evidence": {"requested": true},
+                    "errors": [{"code": "PUSH_REJECTED", "message": "fixture"}],
+                },
+                "projections": {
+                    "state": "converged",
+                    "items": [{
+                        "instance_id": "projection-fixture",
+                        "skill_id": "skill-fixture",
+                        "target_id": "target-fixture",
+                        "method": "copy",
+                        "state": "converged",
+                        "source_digest": "digest-fixture",
+                        "materialized_digest": "digest-fixture",
+                        "errors": [{"code": "fixture_item_error", "message": "fixture"}],
+                    }],
+                    "evidence": {"selected_count": 1},
+                    "stale": false,
+                    "errors": [{"code": "fixture_projection_error", "message": "fixture"}],
+                },
+                "visibility": {
+                    "state": "restart_required",
+                    "evidence": {"reason": "adapter_reload_required_after_apply"},
+                    "stale": false,
+                    "errors": [{"code": "fixture_visibility_error", "message": "fixture"}],
+                },
+            },
+            "complete": false,
+            "next_actions": [{"cmd": "loom skill inspect skill-fixture", "reason": "fixture"}],
+        }),
+        Meta::default(),
+    );
     let failure = Envelope::err_with_next_actions(
         "fixture.failure",
         "req-failure".to_string(),
@@ -57,6 +99,7 @@ pub(super) fn public_agent_capabilities(
         serde_json::to_value(preflight),
         serde_json::to_value(durable_plan),
         serde_json::to_value(convergence_plan),
+        serde_json::to_value(convergence_apply),
         serde_json::to_value(failure),
     ];
     let mut shapes = BTreeMap::<String, (BTreeSet<String>, usize)>::new();
@@ -81,8 +124,38 @@ pub(super) fn public_agent_capabilities(
             .into_iter()
             .map(|code| format!("value:envelope.error.code:{}", code.as_str())),
     );
+    capabilities.extend(convergence_completion_values().map(str::to_string));
     capabilities.extend(semantic_capabilities(repo_root, &serialized)?);
     Ok(capabilities)
+}
+
+fn convergence_completion_values() -> impl Iterator<Item = &'static str> {
+    [
+        "value:envelope.data.local_state:complete",
+        "value:envelope.data.outcome:local_complete_restart_required",
+        "value:envelope.data.outcome:complete_with_restart_required",
+        "value:envelope.data.outcome:local_complete_remote_pending",
+        "value:envelope.data.outcome:local_complete_remote_pending_restart_required",
+        "value:envelope.data.outcome:local_complete_evidence_incomplete",
+        "value:envelope.data.outcome:complete",
+        "value:envelope.data.completion_blockers[]:registry.remote_pending",
+        "value:envelope.data.completion_blockers[]:visibility.restart_required",
+        "value:envelope.data.completion_blockers[]:visibility.evidence_incomplete",
+        "value:envelope.data.completion_blockers[]:projections.evidence_incomplete",
+        "value:envelope.data.completion_blockers[]:evidence.required_missing",
+        "value:envelope.data.convergence.registry_transport.state:not_requested",
+        "value:envelope.data.convergence.registry_transport.state:SYNCED",
+        "value:envelope.data.convergence.registry_transport.state:PENDING_PUSH",
+        "value:envelope.data.convergence.projections.state:converged",
+        "value:envelope.data.convergence.projections.state:not_applicable",
+        "value:envelope.data.convergence.visibility.state:visible",
+        "value:envelope.data.convergence.visibility.state:restart_required",
+        "value:envelope.data.convergence.visibility.state:not_visible",
+        "value:envelope.data.convergence.visibility.state:unsupported",
+        "value:envelope.data.convergence.visibility.state:unknown",
+        "value:envelope.data.convergence.visibility.state:error",
+    ]
+    .into_iter()
 }
 
 fn semantic_capabilities(
@@ -203,7 +276,7 @@ fn capability_kind(
 mod tests {
     use std::path::Path;
 
-    use super::public_agent_capabilities;
+    use super::{convergence_completion_values, public_agent_capabilities};
     use crate::types::ErrorCode;
 
     #[test]
@@ -215,5 +288,20 @@ mod tests {
         }
         assert!(capabilities.contains("field:envelope.error.next_actions[].cmd:string"));
         assert!(capabilities.contains("field:envelope.error.next_actions[].reason:string"));
+        for field in [
+            "field:envelope.data.local_state:optional-string",
+            "field:envelope.data.outcome:optional-string",
+            "field:envelope.data.completion_blockers:optional-array-string",
+            "field:envelope.data.complete:optional-boolean",
+            "field:envelope.data.convergence:optional-object",
+            "field:envelope.data.convergence.registry_transport:optional-object",
+            "field:envelope.data.convergence.projections:optional-object",
+            "field:envelope.data.convergence.visibility:optional-object",
+        ] {
+            assert!(capabilities.contains(field), "missing {field}");
+        }
+        for value in convergence_completion_values() {
+            assert!(capabilities.contains(value), "missing {value}");
+        }
     }
 }

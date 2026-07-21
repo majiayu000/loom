@@ -176,12 +176,6 @@ pub(super) fn complete(
     local["convergence"] = convergence;
     local["complete"] = json!(complete);
     local["next_actions"] = json!(next_actions);
-    if plan.remote == RemotePolicy::Push {
-        let remote_evidence = local["convergence"]["registry_transport"].clone();
-        if let Some(evidence) = local.get_mut("evidence") {
-            evidence["remote"] = remote_evidence;
-        }
-    }
     Ok(local)
 }
 

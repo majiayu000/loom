@@ -142,6 +142,9 @@ fn remote_failure_preserves_local_completion() {
             .as_str()
             .is_some_and(|command| command.contains("$IDEMPOTENCY_KEY"))
     );
+    let aggregate_effects = convergence_operation_effects(fixture.root.path());
+    assert_eq!(data["evidence"], aggregate_effects);
+    assert_eq!(data["evidence"]["remote"]["state"], json!("pending_push"));
 
     let (wrong_key_output, wrong_key) = apply_plan(&fixture, &plan, "different-key", &[]);
     assert!(
@@ -173,6 +176,12 @@ fn remote_failure_preserves_local_completion() {
     assert_eq!(
         retried_data["convergence"]["registry_transport"]["state"],
         json!("SYNCED")
+    );
+    assert_eq!(retried_data["evidence"], aggregate_effects);
+    assert_eq!(
+        retried_data["evidence"]["remote"]["state"],
+        json!("pending_push"),
+        "retry must not rewrite immutable aggregate evidence"
     );
     assert_eq!(
         common::operations_log(fixture.root.path())
@@ -538,6 +547,16 @@ fn remote_ahead_preserves_recorded_commit_evidence() {
 
 fn change_source(fixture: &Fixture, body: &str) {
     fs::write(fixture.root.path().join("skills/demo/details.txt"), body).expect("edit source");
+}
+
+fn convergence_operation_effects(root: &Path) -> Value {
+    let operations = common::operations_log(root)
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).expect("parse operation"))
+        .filter(|operation| operation["intent"] == json!("skill.converge"))
+        .collect::<Vec<_>>();
+    assert_eq!(operations.len(), 1, "expected one aggregate operation");
+    operations[0]["effects"].clone()
 }
 
 fn rewrite_fixture_agent(fixture: &Fixture, agent: &str) {

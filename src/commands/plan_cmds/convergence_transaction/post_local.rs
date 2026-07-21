@@ -1,5 +1,6 @@
 use std::path::Path;
 
+use chrono::Utc;
 use serde_json::{Value, json};
 
 use super::super::super::convergence_status::{ConvergenceRequest, collect_convergence_status};
@@ -7,6 +8,9 @@ use super::super::super::helpers::{map_io, shell_arg};
 use super::super::super::sync_cmds::sync_push_convergence_internal;
 use super::*;
 use crate::core::convergence::{ConvergenceAxis, RemotePolicy, SkillConvergencePlan};
+use crate::core::convergence_status::{AxisError, RegistryTransportState, RegistryTransportStatus};
+use crate::gitops;
+use crate::state_model::RegistryStatePaths;
 
 pub(super) fn collect_local_axes(
     app: &App,
@@ -50,17 +54,19 @@ pub(super) fn complete(
     let mut next_actions = Vec::new();
 
     let registry_transport = match plan.remote {
-        RemotePolicy::NotRequested => json!({
-            "state": "not_requested",
-            "evidence": {"policy": "not_requested"},
-            "errors": [],
-        }),
+        RemotePolicy::NotRequested => registry_transport_axis(
+            app,
+            RegistryTransportState::NotRequested,
+            json!({"policy": "not_requested"}),
+            Vec::new(),
+        )?,
         RemotePolicy::Push => match sync_push_convergence_internal(&app.ctx) {
-            Ok(result) => json!({
-                "state": "SYNCED",
-                "evidence": {"result": result},
-                "errors": [],
-            }),
+            Ok(result) => registry_transport_axis(
+                app,
+                RegistryTransportState::Synced,
+                json!({"result": result}),
+                Vec::new(),
+            )?,
             Err(error) => {
                 blockers.push("registry.remote_pending");
                 next_actions.push(json!({
@@ -68,14 +74,23 @@ pub(super) fn complete(
                     "reason": "retry the pending registry transport with the same immutable plan and idempotency key",
                     "idempotency_key_digest": key_digest,
                 }));
-                json!({
-                    "state": "PENDING_PUSH",
-                    "evidence": {"requested": true},
-                    "errors": [{"code": error.code.as_str(), "message": error.message}],
-                })
+                registry_transport_axis(
+                    app,
+                    RegistryTransportState::PendingPush,
+                    json!({"requested": true}),
+                    vec![AxisError::new(error.code.as_str(), error.message)],
+                )?
             }
         },
     };
+
+    if plan
+        .required_axes
+        .contains(&ConvergenceAxis::RegistryTransport)
+        && !transport_evidence_is_complete(&registry_transport)
+    {
+        blockers.push("registry_transport.evidence_incomplete");
+    }
 
     let visibility_state = visibility["state"].as_str();
     let visibility_evidence_usable = axis_evidence_is_usable(&visibility);
@@ -155,6 +170,39 @@ pub(super) fn complete(
         }
     }
     Ok(local)
+}
+
+fn registry_transport_axis(
+    app: &App,
+    state: RegistryTransportState,
+    mut evidence: Value,
+    errors: Vec<AxisError>,
+) -> std::result::Result<Value, CommandFailure> {
+    let observed_at = Utc::now();
+    evidence["observed_revision"] = json!(gitops::head(&app.ctx).ok());
+    evidence["checkpoint_updated_at"] = json!(
+        RegistryStatePaths::from_app_context(&app.ctx)
+            .maybe_load_snapshot()
+            .ok()
+            .flatten()
+            .map(|snapshot| snapshot.checkpoint.updated_at)
+    );
+    evidence["observed_at"] = json!(observed_at);
+    serde_json::to_value(RegistryTransportStatus {
+        state,
+        evidence,
+        observed_at,
+        stale: false,
+        errors,
+    })
+    .map_err(map_io)
+}
+
+fn transport_evidence_is_complete(axis: &Value) -> bool {
+    axis["stale"] == json!(false)
+        && axis["errors"].is_array()
+        && axis["observed_at"].as_str().is_some()
+        && axis["evidence"]["observed_at"].as_str().is_some()
 }
 
 fn adapter_requires_reload_after_apply(visibility: &Value) -> bool {

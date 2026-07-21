@@ -32,6 +32,20 @@ fn visibility_and_restart_states() {
         data["convergence"]["registry_transport"]["state"],
         json!("not_requested")
     );
+    let transport = &data["convergence"]["registry_transport"];
+    assert_eq!(transport["stale"], json!(false));
+    assert!(transport["observed_at"].as_str().is_some());
+    assert!(transport["evidence"]["observed_at"].as_str().is_some());
+    assert!(
+        transport["evidence"]["observed_revision"]
+            .as_str()
+            .is_some()
+    );
+    assert!(
+        transport["evidence"]["checkpoint_updated_at"]
+            .as_str()
+            .is_some()
+    );
     assert!(
         data["convergence"]["visibility"]["evidence"]["report"]["checks"]
             .as_array()
@@ -417,6 +431,31 @@ fn remote_ahead_preserves_recorded_commit_evidence() {
     assert!(
         !remote_registry_ancestor.status.success(),
         "diverged transport must not push recorded registry evidence"
+    );
+
+    let (sync_output, sync) = common::run_loom(fixture.root.path(), &["sync", "pull"]);
+    assert!(
+        sync_output.status.success(),
+        "ordinary sync pull should reproduce the evidence rewrite risk: {sync}"
+    );
+    let rewritten_source = Command::new("git")
+        .current_dir(fixture.root.path())
+        .args(["merge-base", "--is-ancestor", source_commit, "HEAD"])
+        .output()
+        .expect("check rewritten source ancestry");
+    assert!(
+        !rewritten_source.status.success(),
+        "fixture must rewrite the original convergence commit"
+    );
+
+    let (retry_output, retry) = apply_plan(&fixture, &plan, "remote-ahead", &[]);
+    assert!(
+        !retry_output.status.success(),
+        "remote retry pushed rewritten evidence: {retry}"
+    );
+    assert_eq!(
+        retry["error"]["details"]["conflict"]["code"],
+        json!("CONVERGENCE_COMMIT_EVIDENCE_STALE")
     );
 }
 

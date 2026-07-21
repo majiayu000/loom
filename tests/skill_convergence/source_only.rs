@@ -65,6 +65,20 @@ fn source_only_and_required_runtime() {
         required["data"]["required_axes"],
         json!(["projections", "visibility"])
     );
+
+    let plan_id = required["data"]["plan_id"].as_str().expect("plan id");
+    mutate_plan_event(fixture.root.path(), plan_id, |stored| {
+        stored["safe_to_apply"] = json!(true);
+    });
+    let (output, blocked) = apply_plan(&fixture, &required, "runtime-conflict-tamper", &[]);
+    assert!(
+        !output.status.success(),
+        "digest-covered runtime conflict was bypassed: {blocked}"
+    );
+    assert_eq!(
+        blocked["error"]["details"]["conflict"]["code"],
+        json!("CONVERGENCE_POLICY_WORKFLOW_REQUIRED")
+    );
 }
 
 #[test]

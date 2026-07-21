@@ -102,10 +102,13 @@ pub(super) fn apply_convergence(
     })?;
     let idempotency_binding_digest =
         aggregate_audit::binding_digest(&plan, idempotency_key_digest)?;
-    if stored["safe_to_apply"] != json!(true) || !plan.required_approvals.is_empty() {
+    if stored["safe_to_apply"] != json!(true)
+        || !plan.input_conflicts.is_empty()
+        || !plan.required_approvals.is_empty()
+    {
         return Err(plan_failure(
             ErrorCode::PolicyBlocked,
-            "convergence policy approvals are not executable in this tranche",
+            "convergence plan still has conflicts or policy approvals",
             "CONVERGENCE_POLICY_WORKFLOW_REQUIRED",
             false,
             vec!["wait for the reviewed policy execution workflow".to_string()],

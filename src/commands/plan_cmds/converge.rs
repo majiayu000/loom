@@ -154,6 +154,22 @@ impl App {
             resolve_platform_capability_conflicts(&direction, &projections, &canonical_source);
         let execution_enabled = platform_conflicts.is_empty();
         input_conflicts.extend(platform_conflicts);
+        if args.require_runtime && projections.is_empty() {
+            input_conflicts.push(ConvergenceInputConflict {
+                code: "RUNTIME_PROJECTION_REQUIRED".to_string(),
+                message: "--require-runtime resolved no active projection".to_string(),
+                evidence: json!({}),
+            });
+        }
+        if args.require_runtime && visibility_agents.len() > 1 {
+            input_conflicts.push(ConvergenceInputConflict {
+                code: "RUNTIME_AGENT_AMBIGUOUS".to_string(),
+                message:
+                    "--require-runtime resolved multiple agent runtimes; select one with --agent"
+                        .to_string(),
+                evidence: json!({"agents": visibility_agents}),
+            });
+        }
         let visibility = projections
             .iter()
             .map(|effect| VisibilityRequirement {
@@ -211,24 +227,11 @@ impl App {
         };
         plan.seal().map_err(map_io)?;
 
-        let mut conflicts = plan
+        let conflicts = plan
             .input_conflicts
             .iter()
             .map(|conflict| serde_json::to_value(conflict).map_err(map_io))
             .collect::<std::result::Result<Vec<_>, _>>()?;
-        if args.require_runtime && plan.projections.is_empty() {
-            conflicts.push(json!({
-                "code": "RUNTIME_PROJECTION_REQUIRED",
-                "message": "--require-runtime resolved no active projection",
-            }));
-        }
-        if args.require_runtime && visibility_agents.len() > 1 {
-            conflicts.push(json!({
-                "code": "RUNTIME_AGENT_AMBIGUOUS",
-                "message": "--require-runtime resolved multiple agent runtimes; select one with --agent",
-                "agents": visibility_agents,
-            }));
-        }
         let risks = policy_risks(policy);
         let safe_to_apply = conflicts.is_empty()
             && plan.required_approvals.is_empty()

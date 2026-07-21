@@ -56,7 +56,14 @@ pub(super) fn public_agent_capabilities(
             "convergence": {
                 "registry_transport": {
                     "state": "PENDING_PUSH",
-                    "evidence": {"requested": true},
+                    "evidence": {
+                        "requested": true,
+                        "observed_revision": "revision-fixture",
+                        "checkpoint_updated_at": "2026-07-21T00:00:00Z",
+                        "observed_at": "2026-07-21T00:00:01Z",
+                    },
+                    "observed_at": "2026-07-21T00:00:01Z",
+                    "stale": false,
                     "errors": [{"code": "PUSH_REJECTED", "message": "fixture"}],
                 },
                 "projections": {
@@ -83,7 +90,14 @@ pub(super) fn public_agent_capabilities(
                 },
             },
             "complete": false,
-            "next_actions": [{"cmd": "loom skill inspect skill-fixture", "reason": "fixture"}],
+            "next_actions": [
+                {"cmd": "loom skill inspect skill-fixture", "reason": "fixture"},
+                {
+                    "cmd": "loom apply plan-fixture --idempotency-key $IDEMPOTENCY_KEY",
+                    "reason": "retry remote transport",
+                    "idempotency_key_digest": "sha256:key-fixture",
+                },
+            ],
         }),
         Meta::default(),
     );
@@ -120,7 +134,14 @@ pub(super) fn public_agent_capabilities(
             "convergence": {
                 "registry_transport": {
                     "state": "not_requested",
-                    "evidence": {"policy": "not_requested"},
+                    "evidence": {
+                        "policy": "not_requested",
+                        "observed_revision": "revision-fixture",
+                        "checkpoint_updated_at": null,
+                        "observed_at": "2026-07-21T00:00:02Z",
+                    },
+                    "observed_at": "2026-07-21T00:00:02Z",
+                    "stale": false,
                 },
             },
         }),
@@ -133,7 +154,14 @@ pub(super) fn public_agent_capabilities(
             "convergence": {
                 "registry_transport": {
                     "state": "SYNCED",
-                    "evidence": {"result": "pushed"},
+                    "evidence": {
+                        "result": "pushed",
+                        "observed_revision": "revision-fixture",
+                        "checkpoint_updated_at": "2026-07-21T00:00:03Z",
+                        "observed_at": "2026-07-21T00:00:04Z",
+                    },
+                    "observed_at": "2026-07-21T00:00:04Z",
+                    "stale": false,
                 },
             },
         }),
@@ -358,6 +386,12 @@ mod tests {
             "field:envelope.data.convergence.projections.items[].materialized_digest:null-or-string",
             "field:envelope.data.convergence.registry_transport.evidence.policy:optional-string",
             "field:envelope.data.convergence.registry_transport.evidence.result:optional-string",
+            "field:envelope.data.convergence.registry_transport.evidence.observed_revision:optional-string",
+            "field:envelope.data.convergence.registry_transport.evidence.checkpoint_updated_at:null-or-string",
+            "field:envelope.data.convergence.registry_transport.evidence.observed_at:optional-string",
+            "field:envelope.data.convergence.registry_transport.observed_at:optional-string",
+            "field:envelope.data.convergence.registry_transport.stale:optional-boolean",
+            "field:envelope.data.next_actions[].idempotency_key_digest:optional-string",
         ] {
             assert!(capabilities.contains(field), "missing {field}");
         }

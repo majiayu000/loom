@@ -162,7 +162,7 @@ fn initialized_source_only_apply_uses_semantic_noop_registry_cas() {
         "source-only apply failed: {applied}"
     );
     assert!(applied["data"]["applied"]["source_commit"].is_string());
-    assert!(applied["data"]["applied"]["registry_commit"].is_null());
+    assert!(applied["data"]["applied"]["registry_commit"].is_string());
     assert_eq!(
         fs::read(&projections_path).expect("projections after"),
         projections_before
@@ -382,7 +382,7 @@ fn durable_registry_noop_accepts_only_unchanged_descendants() {
                 retained
             );
         } else {
-            assert!(recovered["data"]["applied"]["registry_commit"].is_null());
+            assert!(recovered["data"]["applied"]["registry_commit"].is_string());
         }
     }
 }

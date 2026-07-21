@@ -8,6 +8,8 @@ pub(super) fn recover_journal(
     app: &App,
     journal_path: &Path,
     plan: &SkillConvergencePlan,
+    key_digest: &str,
+    binding_digest: &str,
     request_id: &str,
 ) -> std::result::Result<Option<Value>, CommandFailure> {
     let raw = fs::read_to_string(journal_path).map_err(map_io)?;
@@ -17,6 +19,24 @@ pub(super) fn recover_journal(
             format!("invalid convergence journal: {err}"),
         )
     })?;
+    let exact_identity =
+        super::aggregate_audit::identity_is_valid(plan, &journal, key_digest, binding_digest);
+    let terminal_replay = matches!(
+        journal.phase,
+        TransactionPhase::CommittedCleanupPending | TransactionPhase::CommittedArtifactsRetained
+    ) || journal.registry_commit.is_some();
+    let terminal_replay =
+        terminal_replay && super::aggregate_audit::plan_identity_is_valid(plan, &journal);
+    if !exact_identity && !terminal_replay {
+        return Err(plan_failure(
+            ErrorCode::DependencyConflict,
+            "convergence journal is bound to a different idempotency identity",
+            "IDEMPOTENCY_KEY_REUSED",
+            false,
+            vec!["retry with the idempotency key that owns this convergence journal".to_string()],
+            None,
+        ));
+    }
     validate_journal(app, journal_path, plan, &journal)?;
     match journal.phase {
         TransactionPhase::CommittedArtifactsRetained => {
@@ -151,9 +171,18 @@ pub(super) fn recover_journal(
     }
     if source_is_committed(&journal) {
         reprove_source_boundary(app, plan, &journal)?;
-        validate_recovery_routing(app, plan)?;
+        if journal.aggregate_operation_id.is_some() {
+            validate_recovery_routing_after_audit(app, plan, &journal)?;
+        } else {
+            validate_recovery_routing(app, plan)?;
+        }
         if journal.phase == TransactionPhase::CommittingRegistry {
-            let registry_commit = prove_registry_boundary(app, plan, journal_path, &mut journal)?;
+            let registry_commit = super::registry_recovery::prove_registry_boundary(
+                app,
+                plan,
+                journal_path,
+                &mut journal,
+            )?;
             let result = committed_result_with_registry(plan, &journal, registry_commit);
             journal.result = Some(result.clone());
             journal.phase = TransactionPhase::CommittedCleanupPending;
@@ -257,10 +286,14 @@ pub(super) fn apply_output(
         "protocol_version": PLAN_PROTOCOL_VERSION,
         "schema_version": SCHEMA_VERSION,
         "plan_id": plan.plan_id,
+        "plan_digest": plan.plan_digest,
+        "convergence_id": output["convergence_id"],
         "idempotency_key_digest": key_digest,
+        "idempotency_binding_digest": output["idempotency_binding_digest"],
         "idempotent_replay": false,
         "plan_event_cursor": cursor,
         "applied": output,
+        "evidence": output["evidence"],
         "recovery": { "rollback_supported": true },
     })
 }
@@ -619,54 +652,6 @@ fn prove_source_boundary(
     Ok(())
 }
 
-fn prove_registry_boundary(
-    app: &App,
-    plan: &SkillConvergencePlan,
-    journal_path: &Path,
-    journal: &mut TransactionJournal,
-) -> std::result::Result<Option<String>, CommandFailure> {
-    let source_head = journal.source_head.clone().ok_or_else(|| {
-        CommandFailure::new(ErrorCode::StateCorrupt, "journal is missing source head")
-    })?;
-    let head = gitops::head(&app.ctx).map_err(map_git)?;
-    if !plan.registry.initialized {
-        if RegistryStatePaths::from_app_context(&app.ctx).exists() || head != source_head {
-            return Err(recovery_stale(
-                "source-only transaction unexpectedly changed registry state",
-            ));
-        }
-        return Ok(None);
-    }
-    validate_registry_result(app, plan, journal)?;
-    if let Some(commit) = super::registry_commit::resume_ready_registry_index_lock(
-        app,
-        plan,
-        journal_path,
-        journal,
-        &source_head,
-    )? {
-        return Ok(Some(commit));
-    }
-    if head == source_head {
-        return super::registry_commit::commit_convergence_registry(
-            app,
-            plan,
-            journal_path,
-            journal,
-        );
-    } else {
-        verify_commit(
-            app,
-            &head,
-            &source_head,
-            &format!("skill({}): record convergence projections", plan.skill),
-            |path| path == "state/registry/projections.json",
-        )?;
-        super::registry_commit::align_registry_index(app, plan, journal_path, journal, &head)?;
-    }
-    Ok(Some(head))
-}
-
 pub(super) fn verify_commit(
     app: &App,
     head: &str,
@@ -687,7 +672,10 @@ pub(super) fn verify_commit(
         || paths.lines().next().is_none()
         || !paths.lines().all(path_allowed)
     {
-        return Err(recovery_stale("HEAD is not the transaction-created commit"));
+        return Err(recovery_stale(&format!(
+            "HEAD is not the transaction-created commit: parent={parent:?} expected_parent={expected_parent:?} subject={subject:?} expected_subject={expected_subject:?} paths={:?}",
+            paths.lines().collect::<Vec<_>>()
+        )));
     }
     Ok(())
 }
@@ -749,12 +737,7 @@ pub(super) fn committed_result_with_registry(
     journal: &TransactionJournal,
     registry_commit: Option<String>,
 ) -> Value {
-    json!({
-        "skill": plan.skill,
-        "source_commit": journal.source_commit,
-        "registry_commit": registry_commit,
-        "projection_instances": plan.projections.iter().map(|item| item.instance_id.clone()).collect::<Vec<_>>(),
-    })
+    super::aggregate_audit::result(plan, journal, registry_commit)
 }
 
 pub(super) fn recovery_stale(message: &str) -> CommandFailure {

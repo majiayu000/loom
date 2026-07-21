@@ -7,6 +7,8 @@ mod skill_convergence_executor;
 mod skill_convergence_executor_faults;
 #[path = "skill_convergence/guards.rs"]
 mod skill_convergence_guards;
+#[path = "skill_convergence/idempotency_audit.rs"]
+mod skill_convergence_idempotency_audit;
 #[path = "skill_convergence/index_lock_retention.rs"]
 mod skill_convergence_index_lock_retention;
 #[path = "skill_convergence/ledger_assertions.rs"]

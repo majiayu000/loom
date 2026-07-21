@@ -134,6 +134,38 @@ pub(super) fn validate_recovery_routing(
     Ok(())
 }
 
+pub(super) fn validate_recovery_routing_after_audit(
+    app: &App,
+    plan: &SkillConvergencePlan,
+    journal: &TransactionJournal,
+) -> std::result::Result<(), CommandFailure> {
+    validate_routing_paths_clean(
+        app,
+        &[
+            "state/registry/bindings.json",
+            "state/registry/rules.json",
+            "state/registry/targets.json",
+            "state/registry/trust.json",
+            "state/registry/sources.json",
+            "loom.lock",
+        ],
+    )?;
+    let paths = RegistryStatePaths::from_app_context(&app.ctx);
+    let snapshot = paths.maybe_load_snapshot().map_err(map_registry_state)?;
+    if plan.registry.initialized != snapshot.is_some()
+        || !super::aggregate_audit::live_is_valid(&paths, journal)?
+    {
+        return Err(stale(
+            "registry aggregate audit changed after transaction intent",
+            "PLAN_CHECKPOINT_DRIFT",
+        ));
+    }
+    if let Some(snapshot) = snapshot.as_ref() {
+        validate_projection_routing(snapshot, plan)?;
+    }
+    Ok(())
+}
+
 fn validate_checkpoint_evidence(
     snapshot: &crate::state_model::RegistrySnapshot,
     plan: &SkillConvergencePlan,

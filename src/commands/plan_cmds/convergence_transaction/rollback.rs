@@ -1,6 +1,6 @@
 use super::ownership_state::OwnershipAttemptState;
 use super::recovery_evidence::validate_mutated_surfaces;
-use super::registry_restore::restore_registry_projections_if_owned;
+use super::registry_restore::restore_registry_state_if_owned;
 use super::*;
 
 impl ProjectionBackup {
@@ -113,7 +113,7 @@ pub(super) fn restore_registry_and_activated_projections(
 ) -> Vec<Value> {
     let mut errors = Vec::new();
     if plan.registry.initialized
-        && let Err(error) = restore_registry_projections_if_owned(paths, journal)
+        && let Err(error) = restore_registry_state_if_owned(paths, journal)
     {
         push_rollback_error(&mut errors, "restore_registry_projections", error.message);
         return errors;
@@ -220,7 +220,7 @@ pub(super) fn restore_projections_for_resume(
         .with_rollback_errors(errors));
     }
     if plan.registry.initialized
-        && let Err(err) = restore_registry_projections_if_owned(paths, journal)
+        && let Err(err) = restore_registry_state_if_owned(paths, journal)
     {
         push_rollback_error(&mut errors, "restore_registry_projections", err.message);
     }
@@ -296,7 +296,7 @@ pub(super) fn rollback_journal(
         return errors;
     }
     if plan.registry.initialized
-        && let Err(err) = restore_registry_projections_if_owned(paths, journal)
+        && let Err(err) = restore_registry_state_if_owned(paths, journal)
     {
         push_rollback_error(&mut errors, "restore_registry_projections", err.message);
         return errors;

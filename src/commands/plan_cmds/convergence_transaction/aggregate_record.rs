@@ -22,7 +22,6 @@ pub(super) fn record_convergence_operation(
     plan: &SkillConvergencePlan,
     identity: &ConvergenceApplyIdentity,
     source_commit: Option<&str>,
-    registry_commit: Option<&str>,
     projection_instances: &[String],
 ) -> std::result::Result<String, CommandFailure> {
     record_registry_operation(
@@ -36,9 +35,10 @@ pub(super) fn record_convergence_operation(
             "idempotency_binding_digest": identity.binding_digest,
             "skill": plan.skill,
         }),
+        // The registry commit hash is deliberately absent: this record is written into the
+        // very commit that would carry it. The hash is reported in the apply envelope.
         json!({
             "source_commit": source_commit,
-            "registry_commit": registry_commit,
             "projection_instances": projection_instances,
         }),
     )

@@ -8,8 +8,7 @@ pub(super) fn recover_journal(
     app: &App,
     journal_path: &Path,
     plan: &SkillConvergencePlan,
-    identity: &crate::commands::plan_cmds::ConvergenceApplyIdentity,
-    request_id: &str,
+    invocation: &ApplyInvocation<'_>,
 ) -> std::result::Result<Option<Value>, CommandFailure> {
     let raw = fs::read_to_string(journal_path).map_err(map_io)?;
     let mut journal: TransactionJournal = serde_json::from_str(&raw).map_err(|err| {
@@ -72,8 +71,7 @@ pub(super) fn recover_journal(
                 &paths,
                 snapshot.as_ref(),
                 plan,
-                identity,
-                request_id,
+                invocation,
                 journal_path,
                 &mut journal,
             )?;
@@ -179,7 +177,7 @@ pub(super) fn recover_journal(
             }
             maybe_skill_fault("convergence_interrupt_after_projection_generation_rotation")?;
         }
-        prepare_projection_stages(app, plan, request_id, journal_path, &mut journal)?;
+        prepare_projection_stages(app, plan, invocation.request_id, journal_path, &mut journal)?;
         journal.phase = TransactionPhase::SourceCommitted;
         save_journal(journal_path, &journal)?;
         let snapshot = paths.maybe_load_snapshot().map_err(map_registry_state)?;
@@ -188,8 +186,7 @@ pub(super) fn recover_journal(
             &paths,
             snapshot.as_ref(),
             plan,
-            identity,
-            request_id,
+            invocation,
             journal_path,
             &mut journal,
         )?;

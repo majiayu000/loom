@@ -58,17 +58,38 @@ impl App {
             )
         })?;
         validate_stored_plan_metadata(&stored)?;
-        if stored.kind == StoredPlanKind::Converge {
-            validate_confirmed_plan_digest(
+        let confirmed_plan_digest = if stored.kind == StoredPlanKind::Converge {
+            Some(validate_confirmed_plan_digest(
                 stored.plan,
                 stored.cursor,
                 args.plan_digest.as_deref(),
-            )?;
-        }
+            )?)
+        } else {
+            None
+        };
 
         let idempotency_key_digest = idempotency_key_digest(&args.idempotency_key);
-        if let Some(replay) = find_prior_apply(&events, &args.plan_id, &idempotency_key_digest)? {
-            return Ok((replay, Meta::default()));
+        let idempotency_binding_digest = idempotency_binding_digest(
+            &idempotency_key_digest,
+            &args.plan_id,
+            confirmed_plan_digest.as_deref().unwrap_or_default(),
+        );
+        if let Some(replay) = find_prior_apply(
+            &events,
+            &args.plan_id,
+            &idempotency_key_digest,
+            &idempotency_binding_digest,
+        )? {
+            let op_id = replay["applied"]["aggregate_op_id"]
+                .as_str()
+                .map(str::to_string);
+            return Ok((
+                replay,
+                Meta {
+                    op_id,
+                    ..Meta::default()
+                },
+            ));
         }
         if let Some(conflict) = find_key_conflict(&events, &args.plan_id, &idempotency_key_digest) {
             return Err(plan_failure(
@@ -85,10 +106,24 @@ impl App {
                 self,
                 stored.plan,
                 stored.cursor,
-                &idempotency_key_digest,
+                &ConvergenceApplyIdentity {
+                    key_digest: idempotency_key_digest.clone(),
+                    binding_digest: idempotency_binding_digest.clone(),
+                    plan_digest: confirmed_plan_digest.clone().unwrap_or_default(),
+                    convergence_id: convergence_id(&idempotency_binding_digest),
+                },
                 request_id,
             )?;
-            return Ok((output, Meta::default()));
+            let op_id = output["applied"]["aggregate_op_id"]
+                .as_str()
+                .map(str::to_string);
+            return Ok((
+                output,
+                Meta {
+                    op_id,
+                    ..Meta::default()
+                },
+            ));
         }
 
         validate_plan_guards(stored.plan, stored.cursor, &args.approvals, &self.ctx.root)?;
@@ -103,6 +138,7 @@ impl App {
                 "schema_version": PLAN_SCHEMA_VERSION,
                 "plan_id": args.plan_id,
                 "idempotency_key_digest": idempotency_key_digest,
+                "idempotency_binding_digest": idempotency_binding_digest,
                 "idempotent_replay": false,
                 "plan_event_cursor": stored.cursor,
                 "applied": use_data,
@@ -312,7 +348,7 @@ fn validate_confirmed_plan_digest(
     plan: &Value,
     cursor: usize,
     confirmed: Option<&str>,
-) -> std::result::Result<(), CommandFailure> {
+) -> std::result::Result<String, CommandFailure> {
     let expected = plan["plan_digest"].as_str().ok_or_else(|| {
         plan_failure(
             ErrorCode::StateCorrupt,
@@ -374,13 +410,22 @@ fn validate_confirmed_plan_digest(
             Some(cursor),
         ));
     }
-    Ok(())
+    Ok(expected.to_string())
+}
+
+/// Identity carried through a convergence apply so every persisted surface agrees.
+pub(crate) struct ConvergenceApplyIdentity {
+    pub key_digest: String,
+    pub binding_digest: String,
+    pub plan_digest: String,
+    pub convergence_id: String,
 }
 
 fn find_prior_apply(
     events: &[CommandEventRow],
     plan_id: &str,
     idempotency_key_digest: &str,
+    idempotency_binding_digest: &str,
 ) -> std::result::Result<Option<Value>, CommandFailure> {
     let Some(row) = events.iter().rev().find(|row| {
         row.event.cmd == "apply"
@@ -410,6 +455,21 @@ fn find_prior_apply(
             Some(row.cursor),
         )
     })?;
+    // The prior record must prove it was confirmed against the same immutable plan.
+    // A mismatch means the event log disagrees with the plan being applied; fail closed
+    // rather than replaying evidence that belongs to a different confirmation.
+    if let Some(recorded) = replay["idempotency_binding_digest"].as_str()
+        && recorded != idempotency_binding_digest
+    {
+        return Err(plan_failure(
+            ErrorCode::DependencyConflict,
+            "prior apply for this plan was confirmed against a different plan digest",
+            "IDEMPOTENCY_BINDING_MISMATCH",
+            false,
+            vec!["create and confirm a fresh convergence plan".to_string()],
+            Some(row.cursor),
+        ));
+    }
     scrub_legacy_apply_output(&mut replay);
     replay["idempotent_replay"] = json!(true);
     replay["replayed_from_event_cursor"] = json!(row.cursor);
@@ -645,6 +705,31 @@ fn idempotency_key_digest(key: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(key.as_bytes());
     format!("sha256:{}", to_hex(&hasher.finalize()))
+}
+
+/// Bind the idempotency key digest to the exact durable plan it was confirmed against.
+///
+/// `idempotency_key_digest` stays plan-independent so key reuse across plans is still
+/// detectable; the binding digest is what proves a replay targets the same immutable plan.
+fn idempotency_binding_digest(key_digest: &str, plan_id: &str, plan_digest: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(key_digest.as_bytes());
+    hasher.update(b"\n");
+    hasher.update(plan_id.as_bytes());
+    hasher.update(b"\n");
+    hasher.update(plan_digest.as_bytes());
+    format!("sha256:{}", to_hex(&hasher.finalize()))
+}
+
+/// Deterministic convergence identity for one (plan, idempotency binding) pair.
+///
+/// Deriving instead of minting keeps the id stable across crash recovery and event replay
+/// without another durable field to keep in sync.
+pub(crate) fn convergence_id(binding_digest: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(b"loom.convergence.v1\n");
+    hasher.update(binding_digest.as_bytes());
+    format!("conv_{}", &to_hex(&hasher.finalize())[..32])
 }
 
 fn plan_failure(

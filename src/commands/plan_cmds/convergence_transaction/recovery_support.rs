@@ -8,6 +8,7 @@ pub(super) fn recover_journal(
     app: &App,
     journal_path: &Path,
     plan: &SkillConvergencePlan,
+    identity: &crate::commands::plan_cmds::ConvergenceApplyIdentity,
     request_id: &str,
 ) -> std::result::Result<Option<Value>, CommandFailure> {
     let raw = fs::read_to_string(journal_path).map_err(map_io)?;
@@ -71,6 +72,7 @@ pub(super) fn recover_journal(
                 &paths,
                 snapshot.as_ref(),
                 plan,
+                identity,
                 request_id,
                 journal_path,
                 &mut journal,
@@ -186,6 +188,7 @@ pub(super) fn recover_journal(
             &paths,
             snapshot.as_ref(),
             plan,
+            identity,
             request_id,
             journal_path,
             &mut journal,
@@ -250,14 +253,17 @@ pub(super) fn validate_projection_guard(
 pub(super) fn apply_output(
     plan: &SkillConvergencePlan,
     cursor: usize,
-    key_digest: &str,
+    identity: &crate::commands::plan_cmds::ConvergenceApplyIdentity,
     output: Value,
 ) -> Value {
     json!({
         "protocol_version": PLAN_PROTOCOL_VERSION,
         "schema_version": SCHEMA_VERSION,
+        "convergence_id": identity.convergence_id,
         "plan_id": plan.plan_id,
-        "idempotency_key_digest": key_digest,
+        "plan_digest": identity.plan_digest,
+        "idempotency_key_digest": identity.key_digest,
+        "idempotency_binding_digest": identity.binding_digest,
         "idempotent_replay": false,
         "plan_event_cursor": cursor,
         "applied": output,

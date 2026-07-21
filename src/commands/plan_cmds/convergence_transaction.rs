@@ -26,10 +26,12 @@ use super::super::{App, CommandFailure};
 use super::converge::digest_value;
 use super::{PLAN_PROTOCOL_VERSION, plan_failure};
 
+mod aggregate_record;
 mod external_head;
 mod faults;
 mod guards;
 mod index_lock_failure;
+mod journal_types;
 mod ownership;
 mod ownership_state;
 mod preparation;
@@ -51,8 +53,7 @@ use ownership::{
     retain_declared_attempts, validate_owned_staging, validate_transaction_artifacts,
 };
 use ownership_state::{
-    OwnershipAttempt, allocate_attempt, archive_previous_terminal_journal,
-    archive_rolled_back_journal,
+    allocate_attempt, archive_previous_terminal_journal, archive_rolled_back_journal,
 };
 use preparation::{
     declared_backup, prepare_projection_stages, prepare_transaction_artifacts,
@@ -76,90 +77,12 @@ use source_recovery::{
 
 const SCHEMA_VERSION: &str = "1.3";
 
-#[derive(Debug, Serialize, Deserialize)]
-struct TransactionJournal {
-    plan_id: String,
-    skill: String,
-    previous_head: String,
-    artifact_root: String,
-    artifact_owner_proof: String,
-    ownership_attempts: Vec<OwnershipAttempt>,
-    index_backup: String,
-    index_backup_digest: Option<String>,
-    source_backup: Option<Value>,
-    source_staging: Option<String>,
-    source_owner_proof: Option<String>,
-    #[serde(default)]
-    source_activated_fingerprint: Option<String>,
-    projections: Vec<ProjectionBackup>,
-    original_projections: RegistryProjectionsFile,
-    installed_projections: usize,
-    expected_projections: Option<RegistryProjectionsFile>,
-    source_head: Option<String>,
-    source_commit: Option<String>,
-    source_staged_index_digest: Option<String>,
-    #[serde(default)]
-    source_index_changed: Option<bool>,
-    #[serde(default)]
-    registry_commit: Option<String>,
-    #[serde(default)]
-    registry_staged_index_digest: Option<String>,
-    #[serde(default)]
-    registry_index_attempts: Vec<registry_commit::RegistryIndexAttempt>,
-    rollback_head: Option<String>,
-    rollback_index_digest: Option<String>,
-    #[serde(default)]
-    preparation_aborted: bool,
-    result: Option<Value>,
-    phase: TransactionPhase,
-}
-
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, Eq, PartialEq)]
-#[serde(rename_all = "snake_case")]
-enum TransactionPhase {
-    Preparing,
-    Prepared,
-    ReplacingSource,
-    SourceReplaced,
-    CommittingSource,
-    SourceCommitted,
-    RotatingProjections,
-    PreparingProjections,
-    InstallingProjections,
-    ProjectionsSwapped,
-    CommittingRegistry,
-    RollingBack,
-    CommittedCleanupPending,
-    RolledBackCleanupPending,
-    CommittedArtifactsRetained,
-    RolledBackArtifactsRetained,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct ProjectionBackup {
-    materialized_path: String,
-    backup: Option<Value>,
-    staging_owner: String,
-    owner_proof: String,
-    staging_path: String,
-    #[serde(default)]
-    activated_fingerprint: Option<String>,
-    #[serde(default)]
-    activated: bool,
-    #[serde(default)]
-    activation_pending: bool,
-    #[serde(default)]
-    original_fingerprint: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    restored_fingerprint: Option<String>,
-    #[serde(default)]
-    restore_pending: bool,
-}
+use journal_types::{ProjectionBackup, TransactionJournal, TransactionPhase};
 pub(super) fn apply_convergence(
     app: &App,
     stored: &Value,
     cursor: usize,
-    idempotency_key_digest: &str,
+    identity: &super::ConvergenceApplyIdentity,
     request_id: &str,
 ) -> std::result::Result<Value, CommandFailure> {
     let plan: SkillConvergencePlan = serde_json::from_value(stored.clone()).map_err(|err| {
@@ -187,9 +110,9 @@ pub(super) fn apply_convergence(
     let journal_path = journal_path(app, &plan.skill);
     archive_previous_terminal_journal(app, &journal_path, &plan)?;
     if journal_path.exists()
-        && let Some(output) = recover_journal(app, &journal_path, &plan, request_id)?
+        && let Some(output) = recover_journal(app, &journal_path, &plan, identity, request_id)?
     {
-        return Ok(apply_output(&plan, cursor, idempotency_key_digest, output));
+        return Ok(apply_output(&plan, cursor, identity, output));
     }
     let snapshot = validate_guards(app, &plan, cursor)?;
     let paths = RegistryStatePaths::from_app_context(&app.ctx);
@@ -343,6 +266,7 @@ pub(super) fn apply_convergence(
         &paths,
         snapshot.as_ref(),
         &plan,
+        identity,
         request_id,
         &journal_path,
         &mut journal,
@@ -374,7 +298,7 @@ pub(super) fn apply_convergence(
         )
         .with_rollback_errors(cleanup_errors));
     }
-    Ok(apply_output(&plan, cursor, idempotency_key_digest, output))
+    Ok(apply_output(&plan, cursor, identity, output))
 }
 
 fn execute_local_transaction(
@@ -382,6 +306,7 @@ fn execute_local_transaction(
     paths: &RegistryStatePaths,
     snapshot: Option<&crate::state_model::RegistrySnapshot>,
     plan: &SkillConvergencePlan,
+    identity: &super::ConvergenceApplyIdentity,
     request_id: &str,
     journal_path: &Path,
     journal: &mut TransactionJournal,
@@ -598,11 +523,22 @@ fn execute_local_transaction(
         None
     };
     maybe_skill_fault("convergence_interrupt_committing_registry")?;
+    // One aggregate record per convergence, written only after every local axis committed so
+    // it can never claim more than what actually landed.
+    let aggregate_op_id = aggregate_record::record_convergence_operation(
+        paths,
+        plan,
+        identity,
+        source_commit.as_deref(),
+        registry_commit.as_deref(),
+        &applied,
+    )?;
     Ok(json!({
         "skill": plan.skill,
         "source_commit": source_commit,
         "registry_commit": registry_commit,
         "projection_instances": applied,
+        "aggregate_op_id": aggregate_op_id,
     }))
 }
 

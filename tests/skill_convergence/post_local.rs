@@ -52,6 +52,38 @@ fn visibility_and_restart_states() {
             .is_some_and(|checks| !checks.is_empty()),
         "visibility must come from an adapter reread: {applied}"
     );
+    let head = Command::new("git")
+        .current_dir(fixture.root.path())
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .expect("read final head");
+    assert!(head.status.success(), "read final head failed");
+    let head = String::from_utf8(head.stdout)
+        .expect("head utf8")
+        .trim()
+        .to_string();
+    let checkpoint: Value = serde_json::from_slice(
+        &fs::read(
+            fixture
+                .root
+                .path()
+                .join("state/registry/ops/checkpoint.json"),
+        )
+        .expect("read final checkpoint"),
+    )
+    .expect("parse final checkpoint");
+    for axis in ["registry_transport", "projections", "visibility"] {
+        assert_eq!(
+            data["convergence"][axis]["evidence"]["observed_revision"],
+            json!(head),
+            "{axis} revision must describe final live HEAD"
+        );
+        assert_eq!(
+            data["convergence"][axis]["evidence"]["checkpoint_updated_at"],
+            checkpoint["updated_at"],
+            "{axis} checkpoint must describe final live registry state"
+        );
+    }
 }
 
 #[test]
@@ -180,6 +212,51 @@ fn remote_pending_and_restart_blockers_compose() {
         data["next_actions"][1]["reason"]
             .as_str()
             .is_some_and(|reason| reason.contains("restart"))
+    );
+}
+
+#[test]
+fn remote_retry_rechecks_live_axes_before_push() {
+    let fixture = projected_fixture();
+    let remote = common::TestDir::new("convergence-retry-live-axes-remote");
+    change_source(&fixture, "pending retry must recheck projections\n");
+    let (output, plan) = plan_converge(&fixture, &["--push-remote"]);
+    assert!(output.status.success(), "plan failed: {plan}");
+    let (output, pending) = apply_plan(&fixture, &plan, "retry-live-axes", &[]);
+    assert!(output.status.success(), "pending apply failed: {pending}");
+    assert_eq!(
+        pending["data"]["completion_blockers"],
+        json!(["registry.remote_pending"])
+    );
+
+    fs::remove_dir_all(fixture.target.path().join("demo")).expect("remove live projection");
+    git(remote.path(), &["init", "--bare"]);
+    let remote_path = remote.path().to_str().expect("remote path");
+    git(
+        fixture.root.path(),
+        &["remote", "add", "origin", remote_path],
+    );
+
+    let (output, retried) = apply_plan(&fixture, &plan, "retry-live-axes", &[]);
+    assert!(output.status.success(), "partial retry failed: {retried}");
+    assert_eq!(retried["data"]["complete"], json!(false));
+    assert_eq!(
+        retried["data"]["completion_blockers"],
+        json!(["registry.remote_pending", "projections.evidence_incomplete"])
+    );
+    assert_eq!(
+        retried["data"]["convergence"]["registry_transport"]["errors"][0]["code"],
+        json!("local_evidence_incomplete")
+    );
+    let remote_head = Command::new("git")
+        .arg("--git-dir")
+        .arg(remote.path())
+        .args(["rev-parse", "refs/heads/main"])
+        .output()
+        .expect("inspect remote main");
+    assert!(
+        !remote_head.status.success(),
+        "retry pushed before revalidating the live projection"
     );
 }
 

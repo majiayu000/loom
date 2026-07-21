@@ -1,6 +1,5 @@
 use std::path::Path;
 
-use chrono::Utc;
 use serde_json::{Value, json};
 
 use super::super::super::convergence_status::{ConvergenceRequest, collect_convergence_status};
@@ -8,16 +7,31 @@ use super::super::super::helpers::{map_io, shell_arg};
 use super::super::super::sync_cmds::sync_push_convergence_internal;
 use super::*;
 use crate::core::convergence::{ConvergenceAxis, RemotePolicy, SkillConvergencePlan};
-use crate::core::convergence_status::{AxisError, RegistryTransportState, RegistryTransportStatus};
-use crate::gitops;
-use crate::state_model::RegistryStatePaths;
+use crate::core::convergence_status::{
+    AxisError, ConvergenceStatus, RegistryTransportState, RegistryTransportStatus, VisibilityState,
+};
+
+enum RegistryTransportOutcome {
+    NotRequested,
+    Synced(&'static str),
+    Pending(AxisError),
+}
 
 pub(super) fn collect_local_axes(
     app: &App,
     plan: &SkillConvergencePlan,
 ) -> std::result::Result<Value, CommandFailure> {
+    let status = collect_local_status(app, plan);
+    serde_json::to_value(json!({
+        "projections": status.projections,
+        "visibility": status.visibility,
+    }))
+    .map_err(map_io)
+}
+
+fn collect_local_status(app: &App, plan: &SkillConvergencePlan) -> ConvergenceStatus {
     let workspace = plan.selectors.workspace.as_deref().map(Path::new);
-    let collected = collect_convergence_status(
+    let mut status = collect_convergence_status(
         &app.ctx,
         ConvergenceRequest {
             skill: Some(&plan.skill),
@@ -25,20 +39,16 @@ pub(super) fn collect_local_axes(
             workspace,
             profile: plan.selectors.profile.as_deref(),
         },
-    );
-    let status = serde_json::to_value(collected.status).map_err(map_io)?;
-    let mut visibility = status["visibility"].clone();
-    if visibility["state"] == json!("visible")
+    )
+    .status;
+    if status.visibility.state == VisibilityState::Visible
         && !plan.projections.is_empty()
-        && adapter_requires_reload_after_apply(&visibility)
+        && adapter_requires_reload_after_apply(&status.visibility.evidence)
     {
-        visibility["state"] = json!("restart_required");
-        visibility["evidence"]["reason"] = json!("adapter_reload_required_after_apply");
+        status.visibility.state = VisibilityState::RestartRequired;
+        status.visibility.evidence["reason"] = json!("adapter_reload_required_after_apply");
     }
-    Ok(json!({
-        "projections": status["projections"],
-        "visibility": visibility,
-    }))
+    status
 }
 
 pub(super) fn complete(
@@ -47,53 +57,56 @@ pub(super) fn complete(
     key_digest: &str,
     mut local: Value,
 ) -> std::result::Result<Value, CommandFailure> {
-    let evidence = local.get("evidence").cloned().unwrap_or(Value::Null);
-    let projections = evidence["projections"].clone();
-    let visibility = evidence["visibility"].clone();
     let mut blockers = Vec::new();
     let mut next_actions = Vec::new();
-
-    let registry_transport = match plan.remote {
-        RemotePolicy::NotRequested => registry_transport_axis(
-            app,
-            RegistryTransportState::NotRequested,
-            json!({"policy": "not_requested"}),
-            Vec::new(),
-        )?,
+    let pre_transport = collect_local_status(app, plan);
+    let pre_projections = serde_json::to_value(&pre_transport.projections).map_err(map_io)?;
+    let pre_visibility = serde_json::to_value(&pre_transport.visibility).map_err(map_io)?;
+    let local_evidence_allows_transport = projection_evidence_is_complete(plan, &pre_projections)
+        && visibility_evidence_allows_transport(plan, &pre_visibility);
+    let transport_outcome = match plan.remote {
+        RemotePolicy::NotRequested => RegistryTransportOutcome::NotRequested,
+        RemotePolicy::Push if !local_evidence_allows_transport => {
+            RegistryTransportOutcome::Pending(AxisError::new(
+                "local_evidence_incomplete",
+                "required local convergence evidence changed before remote transport",
+            ))
+        }
         RemotePolicy::Push => match sync_push_convergence_internal(&app.ctx) {
-            Ok(result) => registry_transport_axis(
-                app,
-                RegistryTransportState::Synced,
-                json!({"result": result}),
-                Vec::new(),
-            )?,
-            Err(error) => {
-                blockers.push("registry.remote_pending");
-                next_actions.push(json!({
-                    "cmd": retry_command(app, plan),
-                    "reason": "retry the pending registry transport with the same immutable plan and idempotency key",
-                    "idempotency_key_digest": key_digest,
-                }));
-                registry_transport_axis(
-                    app,
-                    RegistryTransportState::PendingPush,
-                    json!({"requested": true}),
-                    vec![AxisError::new(error.code.as_str(), error.message)],
-                )?
-            }
+            Ok(result) => RegistryTransportOutcome::Synced(result),
+            Err(error) => RegistryTransportOutcome::Pending(AxisError::new(
+                error.code.as_str(),
+                error.message,
+            )),
         },
     };
+    let remote_pending = matches!(transport_outcome, RegistryTransportOutcome::Pending(_));
+    if remote_pending {
+        blockers.push("registry.remote_pending");
+        next_actions.push(json!({
+            "cmd": retry_command(app, plan),
+            "reason": "retry the pending registry transport with the same immutable plan and idempotency key",
+            "idempotency_key_digest": key_digest,
+        }));
+    }
+
+    let final_status = collect_local_status(app, plan);
+    let projections = serde_json::to_value(final_status.projections).map_err(map_io)?;
+    let visibility = serde_json::to_value(final_status.visibility).map_err(map_io)?;
+    let registry_transport =
+        registry_transport_axis(final_status.registry_transport, transport_outcome)?;
 
     if plan
         .required_axes
         .contains(&ConvergenceAxis::RegistryTransport)
-        && !transport_evidence_is_complete(&registry_transport)
+        && !transport_evidence_is_complete(plan, &registry_transport)
     {
         blockers.push("registry_transport.evidence_incomplete");
     }
 
     let visibility_state = visibility["state"].as_str();
-    let visibility_evidence_usable = axis_evidence_is_usable(&visibility);
+    let visibility_evidence_usable =
+        axis_evidence_is_usable(&visibility) && axis_freshness_is_complete(plan, &visibility);
     let visibility_required = plan.required_axes.contains(&ConvergenceAxis::Visibility);
     let restart_required = visibility_state == Some("restart_required");
     if visibility_required {
@@ -173,40 +186,51 @@ pub(super) fn complete(
 }
 
 fn registry_transport_axis(
-    app: &App,
-    state: RegistryTransportState,
-    mut evidence: Value,
-    errors: Vec<AxisError>,
+    mut status: RegistryTransportStatus,
+    outcome: RegistryTransportOutcome,
 ) -> std::result::Result<Value, CommandFailure> {
-    let observed_at = Utc::now();
-    evidence["observed_revision"] = json!(gitops::head(&app.ctx).ok());
-    evidence["checkpoint_updated_at"] = json!(
-        RegistryStatePaths::from_app_context(&app.ctx)
-            .maybe_load_snapshot()
-            .ok()
-            .flatten()
-            .map(|snapshot| snapshot.checkpoint.updated_at)
-    );
-    evidence["observed_at"] = json!(observed_at);
-    serde_json::to_value(RegistryTransportStatus {
-        state,
-        evidence,
-        observed_at,
-        stale: false,
-        errors,
-    })
-    .map_err(map_io)
+    status.evidence["observed_at"] = json!(status.observed_at);
+    let collected_has_errors = !status.errors.is_empty();
+    let mut freshness_errors = status
+        .errors
+        .into_iter()
+        .filter(|error| error.code == "evidence_changed_during_read")
+        .collect::<Vec<_>>();
+    match outcome {
+        RegistryTransportOutcome::NotRequested => {
+            status.state = RegistryTransportState::NotRequested;
+            status.evidence["policy"] = json!("not_requested");
+        }
+        RegistryTransportOutcome::Synced(result) => {
+            if status.state != RegistryTransportState::Synced
+                || collected_has_errors
+                || !freshness_errors.is_empty()
+                || status.stale
+            {
+                status.state = RegistryTransportState::Error;
+                freshness_errors.push(AxisError::new(
+                    "transport_postcondition_failed",
+                    "registry transport status did not confirm the completed push",
+                ));
+            }
+            status.evidence["result"] = json!(result);
+        }
+        RegistryTransportOutcome::Pending(error) => {
+            status.state = RegistryTransportState::PendingPush;
+            status.evidence["requested"] = json!(true);
+            freshness_errors.push(error);
+        }
+    }
+    status.errors = freshness_errors;
+    serde_json::to_value(status).map_err(map_io)
 }
 
-fn transport_evidence_is_complete(axis: &Value) -> bool {
-    axis["stale"] == json!(false)
-        && axis["errors"].is_array()
-        && axis["observed_at"].as_str().is_some()
-        && axis["evidence"]["observed_at"].as_str().is_some()
+fn transport_evidence_is_complete(plan: &SkillConvergencePlan, axis: &Value) -> bool {
+    axis_freshness_is_complete(plan, axis) && axis["state"] != json!("ERROR")
 }
 
 fn adapter_requires_reload_after_apply(visibility: &Value) -> bool {
-    visibility["evidence"]["report"]["checks"]
+    visibility["report"]["checks"]
         .as_array()
         .is_some_and(|checks| {
             checks
@@ -222,8 +246,26 @@ fn axis_evidence_is_usable(axis: &Value) -> bool {
             .is_some_and(|errors| errors.is_empty())
 }
 
+fn axis_freshness_is_complete(plan: &SkillConvergencePlan, axis: &Value) -> bool {
+    axis["stale"] == json!(false)
+        && axis["observed_at"].as_str().is_some()
+        && axis["evidence"]["observed_revision"].as_str().is_some()
+        && (!plan.registry.initialized
+            || axis["evidence"]["checkpoint_updated_at"].as_str().is_some())
+}
+
+fn visibility_evidence_allows_transport(plan: &SkillConvergencePlan, visibility: &Value) -> bool {
+    !plan.required_axes.contains(&ConvergenceAxis::Visibility)
+        || (axis_evidence_is_usable(visibility)
+            && axis_freshness_is_complete(plan, visibility)
+            && matches!(
+                visibility["state"].as_str(),
+                Some("visible" | "restart_required" | "not_visible" | "unsupported")
+            ))
+}
+
 fn projection_evidence_is_complete(plan: &SkillConvergencePlan, projections: &Value) -> bool {
-    if !axis_evidence_is_usable(projections) {
+    if !axis_evidence_is_usable(projections) || !axis_freshness_is_complete(plan, projections) {
         return false;
     }
     match projections["state"].as_str() {

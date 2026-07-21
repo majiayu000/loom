@@ -84,6 +84,7 @@ agent_capabilities = [
   "value:envelope.data.completion_blockers[]:evidence.required_missing",
   "value:envelope.data.completion_blockers[]:projections.evidence_incomplete",
   "value:envelope.data.completion_blockers[]:registry.remote_pending",
+  "value:envelope.data.completion_blockers[]:registry_transport.evidence_incomplete",
   "value:envelope.data.completion_blockers[]:visibility.evidence_incomplete",
   "value:envelope.data.completion_blockers[]:visibility.restart_required",
   "value:envelope.data.convergence.projections.state:converged",

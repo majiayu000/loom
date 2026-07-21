@@ -227,6 +227,7 @@ fn convergence_completion_values() -> impl Iterator<Item = &'static str> {
         "value:envelope.data.completion_blockers[]:visibility.evidence_incomplete",
         "value:envelope.data.completion_blockers[]:projections.evidence_incomplete",
         "value:envelope.data.completion_blockers[]:evidence.required_missing",
+        "value:envelope.data.completion_blockers[]:registry_transport.evidence_incomplete",
         "value:envelope.data.convergence.registry_transport.state:not_requested",
         "value:envelope.data.convergence.registry_transport.state:SYNCED",
         "value:envelope.data.convergence.registry_transport.state:PENDING_PUSH",

@@ -386,33 +386,3 @@ fn durable_registry_noop_accepts_only_unchanged_descendants() {
         }
     }
 }
-
-/// B-010: an uninitialized registry has no operations ledger and apply must not create one,
-/// so the aggregate audit record is explicitly not applicable rather than silently skipped.
-/// The convergence identity must still be reported.
-#[test]
-fn source_only_apply_reports_no_aggregate_record() {
-    let fixture = source_only_fixture();
-    fs::write(
-        fixture.root.path().join("skills/demo/details.txt"),
-        "source only audit\n",
-    )
-    .expect("edit source");
-
-    let (output, plan) = source_only_plan(&fixture);
-    assert!(output.status.success(), "source-only plan failed: {plan}");
-
-    let (output, applied) = apply_plan(&fixture, &plan, "source-only-audit-key", &[]);
-    assert!(output.status.success(), "source-only apply failed: {applied}");
-    assert!(
-        applied["data"]["convergence_id"]
-            .as_str()
-            .is_some_and(|id| id.starts_with("conv_")),
-        "source-only apply must still report a convergence id: {applied}"
-    );
-    assert_eq!(
-        applied["data"]["applied"]["aggregate_op_id"],
-        json!(null),
-        "an uninitialized registry has no aggregate operation record"
-    );
-}

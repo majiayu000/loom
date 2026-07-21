@@ -26,7 +26,6 @@ use super::super::{App, CommandFailure};
 use super::converge::digest_value;
 use super::{PLAN_PROTOCOL_VERSION, plan_failure};
 
-mod aggregate_record;
 mod external_head;
 mod faults;
 mod guards;
@@ -79,11 +78,6 @@ const SCHEMA_VERSION: &str = "1.3";
 
 use journal_types::{ProjectionBackup, TransactionJournal, TransactionPhase};
 
-/// Per-invocation identity and tracing carried through one convergence apply.
-pub(super) struct ApplyInvocation<'a> {
-    pub identity: &'a super::ConvergenceApplyIdentity,
-    pub request_id: &'a str,
-}
 pub(super) fn apply_convergence(
     app: &App,
     stored: &Value,
@@ -111,16 +105,12 @@ pub(super) fn apply_convergence(
             Some(cursor),
         ));
     }
-    let invocation = ApplyInvocation {
-        identity,
-        request_id,
-    };
     let _workspace_lock = app.ctx.lock_workspace().map_err(map_lock)?;
     let _skill_lock = app.ctx.lock_skill(&plan.skill).map_err(map_lock)?;
     let journal_path = journal_path(app, &plan.skill);
     archive_previous_terminal_journal(app, &journal_path, &plan)?;
     if journal_path.exists()
-        && let Some(output) = recover_journal(app, &journal_path, &plan, &invocation)?
+        && let Some(output) = recover_journal(app, &journal_path, &plan, request_id)?
     {
         return Ok(apply_output(&plan, cursor, identity, output));
     }
@@ -276,7 +266,7 @@ pub(super) fn apply_convergence(
         &paths,
         snapshot.as_ref(),
         &plan,
-        &invocation,
+        request_id,
         &journal_path,
         &mut journal,
     );
@@ -315,7 +305,7 @@ fn execute_local_transaction(
     paths: &RegistryStatePaths,
     snapshot: Option<&crate::state_model::RegistrySnapshot>,
     plan: &SkillConvergencePlan,
-    invocation: &ApplyInvocation<'_>,
+    request_id: &str,
     journal_path: &Path,
     journal: &mut TransactionJournal,
 ) -> std::result::Result<Value, CommandFailure> {
@@ -385,7 +375,7 @@ fn execute_local_transaction(
             "HEAD changed before projection activation",
         )?;
         source_commit::validate_live_source(app, plan)?;
-        let input = projection_input(snapshot, plan, effect, invocation.request_id)?;
+        let input = projection_input(snapshot, plan, effect, request_id)?;
         let output = if safe_symlink_noop {
             execute_prepared_convergence_projection(
                 &app.ctx,
@@ -531,27 +521,11 @@ fn execute_local_transaction(
         None
     };
     maybe_skill_fault("convergence_interrupt_committing_registry")?;
-    // One aggregate record per convergence, written after every local axis committed so it can
-    // never claim more than what actually landed. A source-only plan against an uninitialized
-    // registry (B-010) has no operations ledger and apply must not initialize one, so the
-    // record is genuinely not applicable there.
-    let aggregate_op_id = if snapshot.is_some() {
-        Some(aggregate_record::record_convergence_operation(
-            paths,
-            plan,
-            invocation.identity,
-            source_commit.as_deref(),
-            &applied,
-        )?)
-    } else {
-        None
-    };
     Ok(json!({
         "skill": plan.skill,
         "source_commit": source_commit,
         "registry_commit": registry_commit,
         "projection_instances": applied,
-        "aggregate_op_id": aggregate_op_id,
     }))
 }
 

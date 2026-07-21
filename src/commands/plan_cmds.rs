@@ -80,16 +80,7 @@ impl App {
             &idempotency_key_digest,
             &idempotency_binding_digest,
         )? {
-            let op_id = replay["applied"]["aggregate_op_id"]
-                .as_str()
-                .map(str::to_string);
-            return Ok((
-                replay,
-                Meta {
-                    op_id,
-                    ..Meta::default()
-                },
-            ));
+            return Ok((replay, Meta::default()));
         }
         if let Some(conflict) = find_key_conflict(&events, &args.plan_id, &idempotency_key_digest) {
             return Err(plan_failure(
@@ -114,16 +105,7 @@ impl App {
                 },
                 request_id,
             )?;
-            let op_id = output["applied"]["aggregate_op_id"]
-                .as_str()
-                .map(str::to_string);
-            return Ok((
-                output,
-                Meta {
-                    op_id,
-                    ..Meta::default()
-                },
-            ));
+            return Ok((output, Meta::default()));
         }
 
         validate_plan_guards(stored.plan, stored.cursor, &args.approvals, &self.ctx.root)?;

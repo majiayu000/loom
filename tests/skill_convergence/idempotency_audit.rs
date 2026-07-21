@@ -1,17 +1,8 @@
+use common::operations_log;
 use serde_json::json;
 
 use super::skill_convergence_executor::apply_plan;
 use super::*;
-use common::operations_log;
-
-fn converge_operations(root: &Path) -> Vec<Value> {
-    operations_log(root)
-        .lines()
-        .filter(|line| !line.trim().is_empty())
-        .map(|line| serde_json::from_str::<Value>(line).expect("operation record"))
-        .filter(|record| record["intent"] == json!("skill.converge"))
-        .collect()
-}
 
 #[test]
 fn idempotent_replay_and_key_conflict() {
@@ -35,12 +26,6 @@ fn idempotent_replay_and_key_conflict() {
         .to_string();
     let head_after_first = git(fixture.root.path(), &["rev-parse", "HEAD"]);
     let tree_after_first = snapshot_tree(fixture.target.path());
-    let converge_ops_after_first = converge_operations(fixture.root.path());
-    assert_eq!(
-        converge_ops_after_first.len(),
-        1,
-        "first apply must write exactly one aggregate converge operation"
-    );
 
     // Same key + same plan must replay the recorded result with zero new side effects.
     let (output, replay) = apply_plan(&fixture, &plan, "shared-key", &[]);
@@ -65,11 +50,6 @@ fn idempotent_replay_and_key_conflict() {
         tree_after_first,
         "replay must not re-run a projection swap"
     );
-    assert_eq!(
-        converge_operations(fixture.root.path()),
-        converge_ops_after_first,
-        "replay must not append another aggregate operation record"
-    );
 
     // Same key against a different plan must fail closed.
     let (output, second_plan) = plan_converge(&fixture, &[]);
@@ -88,11 +68,6 @@ fn idempotent_replay_and_key_conflict() {
     assert_eq!(
         conflict["error"]["details"]["conflict"]["code"],
         json!("IDEMPOTENCY_KEY_REUSED")
-    );
-    assert_eq!(
-        converge_operations(fixture.root.path()),
-        converge_ops_after_first,
-        "a blocked key reuse must not write an operation record"
     );
 }
 
@@ -149,32 +124,6 @@ fn convergence_evidence_is_complete() {
     assert!(
         applied_evidence["projection_instances"].is_array(),
         "projection evidence missing: {applied_evidence}"
-    );
-
-    // Exactly one aggregate operation record, bound to this convergence.
-    let ops = converge_operations(fixture.root.path());
-    assert_eq!(
-        ops.len(),
-        1,
-        "expected exactly one aggregate record: {ops:?}"
-    );
-    let record = &ops[0];
-    assert_eq!(record["payload"]["convergence_id"], json!(convergence_id));
-    assert_eq!(record["payload"]["plan_id"], json!(plan_id));
-    assert_eq!(record["payload"]["plan_digest"], json!(plan_digest));
-    assert_eq!(
-        record["payload"]["idempotency_binding_digest"],
-        json!(binding_digest)
-    );
-    assert_eq!(
-        record["effects"]["source_commit"],
-        applied_evidence["source_commit"]
-    );
-
-    // The aggregate op id must be reachable from the envelope meta.
-    assert_eq!(
-        applied["meta"]["op_id"], record["op_id"],
-        "envelope meta must surface the aggregate operation id"
     );
 
     // The raw idempotency key must never appear in any persisted state.

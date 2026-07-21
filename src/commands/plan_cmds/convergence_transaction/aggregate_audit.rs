@@ -39,34 +39,22 @@ fn operation_id(convergence_id: &str) -> String {
 pub(super) fn record(
     paths: &RegistryStatePaths,
     plan: &SkillConvergencePlan,
+    local_axes: &Value,
     journal_path: &Path,
     journal: &mut TransactionJournal,
 ) -> std::result::Result<(), CommandFailure> {
     let operation_id = operation_id(&journal.convergence_id);
-    let projections = plan
-        .projections
-        .iter()
-        .map(|effect| {
-            json!({
-                "instance_id": effect.instance_id,
-                "method": effect.method,
-                "effect": effect.effect,
-                "materialized_path": effect.materialized_path,
-            })
-        })
-        .collect::<Vec<_>>();
     let evidence = json!({
         "source": { "direction": plan.source.direction, "commit": journal.source_commit },
-        "projections": { "state": "converged", "items": projections },
+        "projections": local_axes["projections"],
         "registry_operation": { "state": "recorded", "operation_id": operation_id },
-        "visibility": { "state": "not_evaluated", "reason": "SP524-T006" },
+        "visibility": local_axes["visibility"],
         "remote": {
             "state": if matches!(plan.remote, crate::core::convergence::RemotePolicy::NotRequested) {
                 "not_requested"
             } else {
-                "not_evaluated"
+                "pending_push"
             },
-            "reason": "SP524-T006"
         },
         "recovery": { "state": "journaled", "journal_phase": "committing_registry" },
     });
@@ -104,22 +92,22 @@ pub(super) fn record(
 
 pub(super) fn record_source_only(
     plan: &SkillConvergencePlan,
+    local_axes: &Value,
     journal_path: &Path,
     journal: &mut TransactionJournal,
 ) -> std::result::Result<(), CommandFailure> {
     journal.aggregate_operation_id = None;
     journal.aggregate_evidence = Some(json!({
         "source": { "direction": plan.source.direction, "commit": journal.source_commit },
-        "projections": { "state": "not_applicable", "items": [] },
+        "projections": local_axes["projections"],
         "registry_operation": { "state": "not_applicable", "operation_id": null },
-        "visibility": { "state": "not_evaluated", "reason": "SP524-T006" },
+        "visibility": local_axes["visibility"],
         "remote": {
             "state": if matches!(plan.remote, crate::core::convergence::RemotePolicy::NotRequested) {
                 "not_requested"
             } else {
-                "not_evaluated"
+                "pending_push"
             },
-            "reason": "SP524-T006"
         },
         "recovery": { "state": "journaled", "journal_phase": "committing_registry" },
     }));

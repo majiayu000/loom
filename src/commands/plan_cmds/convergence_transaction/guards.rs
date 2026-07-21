@@ -1,6 +1,5 @@
 use super::super::converge::digest_value;
 use super::*;
-use crate::core::convergence::{ConvergenceAxis, RemotePolicy};
 
 pub(super) fn validate_guards(
     app: &App,
@@ -14,18 +13,6 @@ pub(super) fn validate_guards(
             "PLAN_NOT_SAFE_TO_APPLY",
             false,
             vec!["resolve conflicts and create a fresh plan".to_string()],
-            Some(cursor),
-        ));
-    }
-    if plan.remote != RemotePolicy::NotRequested
-        || plan.required_axes.contains(&ConvergenceAxis::Visibility)
-    {
-        return Err(plan_failure(
-            ErrorCode::PolicyBlocked,
-            "requested post-local convergence axes are not executable in this tranche",
-            "CONVERGENCE_POST_LOCAL_UNAVAILABLE",
-            false,
-            vec!["create a local-only convergence plan".to_string()],
             Some(cursor),
         ));
     }

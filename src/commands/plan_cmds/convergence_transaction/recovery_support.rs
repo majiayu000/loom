@@ -3,6 +3,7 @@ use super::recovery_evidence::{
     validate_mutated_surfaces, validate_rollback_evidence, validate_rolling_back_state,
 };
 use super::*;
+use crate::next_action_trace::observe_next_actions;
 
 pub(super) fn recover_journal(
     app: &App,
@@ -292,6 +293,16 @@ pub(super) fn apply_output(
         "idempotency_binding_digest": output["idempotency_binding_digest"],
         "idempotent_replay": false,
         "plan_event_cursor": cursor,
+        "local_state": output["local_state"],
+        "outcome": output["outcome"],
+        "completion_blockers": output["completion_blockers"],
+        "source": output["source"],
+        "convergence": output["convergence"],
+        "complete": output["complete"],
+        "next_actions": observe_next_actions(
+            "plan.converge.post_local",
+            output["next_actions"].clone(),
+        ),
         "applied": output,
         "evidence": output["evidence"],
         "recovery": { "rollback_supported": true },

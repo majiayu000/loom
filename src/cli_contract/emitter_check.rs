@@ -35,6 +35,14 @@ const REVIEWED_SINKS: &[(&str, &str)] = &[
         "pub(crate) next_actions: Vec<String>",
     ),
     (
+        "src/commands/plan_cmds/convergence_transaction/post_local.rs",
+        "local[\"next_actions\"] = json!(next_actions)",
+    ),
+    (
+        "src/commands/plan_cmds/convergence_transaction/recovery_support.rs",
+        "output[\"next_actions\"].clone()",
+    ),
+    (
         "src/commands/skill_deps.rs",
         "pub next_actions: Vec<String>",
     ),

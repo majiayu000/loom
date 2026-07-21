@@ -756,6 +756,7 @@ pub(super) fn committed_result_with_registry(
         "skill": plan.skill,
         "source_commit": journal.source_commit,
         "registry_commit": registry_commit,
+        "registry_operation": super::registry_operation_evidence(),
         "projection_instances": plan.projections.iter().map(|item| item.instance_id.clone()).collect::<Vec<_>>(),
     })
 }

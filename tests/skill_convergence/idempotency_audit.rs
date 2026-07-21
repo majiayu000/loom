@@ -84,6 +84,7 @@ fn convergence_evidence_is_complete() {
     assert!(output.status.success(), "plan failed: {plan}");
     let plan_id = plan["data"]["plan_id"].as_str().expect("plan id");
     let plan_digest = plan["data"]["plan_digest"].as_str().expect("plan digest");
+    let operations_before_apply = operations_log(fixture.root.path());
 
     let (output, applied) = apply_plan(&fixture, &plan, "evidence-key", &[]);
     assert!(output.status.success(), "apply failed: {applied}");
@@ -125,10 +126,56 @@ fn convergence_evidence_is_complete() {
         applied_evidence["projection_instances"].is_array(),
         "projection evidence missing: {applied_evidence}"
     );
+    assert_eq!(
+        applied_evidence["registry_operation"],
+        json!({
+            "state": "not_applicable",
+            "reason": "convergence_mode",
+        }),
+        "convergence must distinguish an inapplicable registry operation from missing evidence"
+    );
+    assert_eq!(
+        operations_log(fixture.root.path()),
+        operations_before_apply,
+        "convergence apply must not append a registry ops ledger row"
+    );
 
-    // The raw idempotency key must never appear in any persisted state.
+    // The terminal journal retains the same local evidence after commit.
+    let journal: Value = serde_json::from_str(
+        &std::fs::read_to_string(
+            fixture
+                .root
+                .path()
+                .join("state/transactions/convergence-demo.json"),
+        )
+        .expect("retained convergence journal"),
+    )
+    .expect("parse retained convergence journal");
+    assert_eq!(journal["phase"], json!("committed_artifacts_retained"));
+    assert_eq!(journal["plan_id"], json!(plan_id));
+    assert_eq!(
+        journal["result"]["registry_operation"], applied_evidence["registry_operation"],
+        "retained journal and result envelope must agree on registry operation applicability"
+    );
+
+    // The durable command event makes the result envelope discoverable by convergence_id.
     let events = std::fs::read_to_string(fixture.root.path().join("state/events/commands.jsonl"))
         .expect("command events");
+    let persisted_apply = events
+        .lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .find(|event| {
+            event["cmd"] == json!("apply")
+                && event["status"] == json!("succeeded")
+                && event["output"]["convergence_id"] == json!(convergence_id)
+        })
+        .expect("persisted convergence apply envelope");
+    assert_eq!(
+        persisted_apply["output"]["applied"]["registry_operation"],
+        applied_evidence["registry_operation"]
+    );
+
+    // The raw idempotency key must never appear in any persisted state.
     assert!(
         !events.contains("evidence-key"),
         "raw idempotency key leaked into the command event log"

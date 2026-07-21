@@ -525,8 +525,16 @@ fn execute_local_transaction(
         "skill": plan.skill,
         "source_commit": source_commit,
         "registry_commit": registry_commit,
+        "registry_operation": registry_operation_evidence(),
         "projection_instances": applied,
     }))
+}
+
+pub(super) fn registry_operation_evidence() -> Value {
+    json!({
+        "state": "not_applicable",
+        "reason": "convergence_mode",
+    })
 }
 
 fn replace_source_from_projection(

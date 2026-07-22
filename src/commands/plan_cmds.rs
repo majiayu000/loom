@@ -445,22 +445,6 @@ fn remote_transport_needs_retry(output: &Value) -> bool {
         })
 }
 
-#[cfg(test)]
-mod convergence_replay_tests {
-    use super::remote_transport_needs_retry;
-    use serde_json::json;
-
-    #[test]
-    fn transient_transport_postcondition_is_retryable() {
-        assert!(remote_transport_needs_retry(&json!({
-            "completion_blockers": ["registry_transport.evidence_incomplete"]
-        })));
-        assert!(!remote_transport_needs_retry(&json!({
-            "completion_blockers": ["visibility.restart_required"]
-        })));
-    }
-}
-
 fn find_key_conflict<'a>(
     events: &'a [CommandEventRow],
     plan_id: &str,
@@ -702,4 +686,20 @@ fn plan_failure(
         "suggested_actions": suggested_actions,
     });
     failure
+}
+
+#[cfg(test)]
+mod convergence_replay_tests {
+    use super::remote_transport_needs_retry;
+    use serde_json::json;
+
+    #[test]
+    fn transient_transport_postcondition_is_retryable() {
+        assert!(remote_transport_needs_retry(&json!({
+            "completion_blockers": ["registry_transport.evidence_incomplete"]
+        })));
+        assert!(!remote_transport_needs_retry(&json!({
+            "completion_blockers": ["visibility.restart_required"]
+        })));
+    }
 }

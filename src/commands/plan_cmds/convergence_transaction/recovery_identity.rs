@@ -1,4 +1,5 @@
 use super::*;
+use crate::core::convergence::RemotePolicy;
 
 pub(super) fn adopt_journal_identity(
     plan: &SkillConvergencePlan,
@@ -42,7 +43,21 @@ pub(super) fn adopt_journal_identity(
     ) || journal.registry_commit.is_some()
         || (journal.phase == TransactionPhase::CommittingRegistry
             && super::registry_commit::durable_registry_noop(journal));
-    if !exact_identity && !(terminal_replay && plan_identity_matches) {
+    let compatible_local_replay =
+        terminal_replay && plan.remote == RemotePolicy::NotRequested && plan_identity_matches;
+    if !exact_identity && !compatible_local_replay {
+        if key_digest != identity.key_digest {
+            return Err(plan_failure(
+                ErrorCode::DependencyConflict,
+                "convergence journal is owned by a different idempotency key",
+                "IDEMPOTENCY_KEY_REUSED",
+                false,
+                vec![
+                    "retry with the idempotency key that owns this convergence journal".to_string(),
+                ],
+                None,
+            ));
+        }
         return Err(mismatch());
     }
     identity.convergence_id = convergence_id.to_string();

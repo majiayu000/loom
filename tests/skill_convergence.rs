@@ -13,6 +13,8 @@ mod skill_convergence_idempotency_audit;
 mod skill_convergence_index_lock_retention;
 #[path = "skill_convergence/ledger_assertions.rs"]
 mod skill_convergence_ledger_assertions;
+#[path = "skill_convergence/post_local.rs"]
+mod skill_convergence_post_local;
 #[path = "skill_convergence/projection_activation_flags.rs"]
 mod skill_convergence_projection_activation_flags;
 #[path = "skill_convergence/recovery_identity.rs"]

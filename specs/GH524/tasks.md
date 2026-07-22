@@ -19,7 +19,7 @@ idempotency/recovery → visibility/remote → Agent Skill/Panel → full verifi
 - [x] `SP524-T005` Owner: idempotency/audit | Dependencies: SP524-T004 | Done when: key digest 绑定 plan id + digest，single `convergence_id` 与 aggregate evidence 持久化到 retained transaction journal + result envelope，replay 不重复副作用 | Verify: `cargo test --test skill_convergence -- idempotent_replay_and_key_conflict convergence_evidence_is_complete` | Covers: B-005, B-009, B-014
   - Completed: idempotency binding（key digest 绑定 plan id + plan digest，binding mismatch fail closed）与 derived `convergence_id`、replay 零副作用已落地。
   - Completed: aggregate evidence 使用 retained transaction journal + result envelope；convergence 模式不写 ops ledger，并在 envelope 中显式记录 `registry_operation.state=not_applicable`、`reason=convergence_mode`。
-- [ ] `SP524-T006` Owner: visibility/transport | Dependencies: SP524-T005, #522 implementation | Done when: post-write adapter visibility 与 remote-last phase 落地；未接受 restart 返回 `local_complete_restart_required`/`complete=false`，显式接受返回 `complete_with_restart_required`/`complete=true`，两者 visibility 均保持 `restart_required`；not_requested、remote pending 与 remote+restart 组合 blocker 精确返回 | Verify: `cargo test --test skill_convergence visibility_and_restart_states restart_required_acceptance_is_explicit remote_failure_preserves_local_completion remote_pending_and_restart_blockers_compose complete_requires_declared_evidence` | Covers: B-011, B-012, B-015
+- [x] `SP524-T006` Owner: visibility/transport | Dependencies: SP524-T005, #522 implementation | Done when: post-write adapter visibility 与 remote-last phase 落地；未接受 restart 返回 `local_complete_restart_required`/`complete=false`，显式接受返回 `complete_with_restart_required`/`complete=true`，两者 visibility 均保持 `restart_required`；not_requested、remote pending 与 remote+restart 组合 blocker 精确返回 | Verify: `cargo test --test skill_convergence visibility_and_restart_states restart_required_acceptance_is_explicit remote_failure_preserves_local_completion remote_pending_and_restart_blockers_compose complete_requires_declared_evidence` | Covers: B-011, B-012, B-015
 - [ ] `SP524-T007` Owner: policy/scope | Dependencies: SP524-T001..T006 | Done when: ownership、policy、approval、filesystem gates fail closed，apply 不扩大 plan selectors 或降级 method | Verify: `cargo test --test skill_convergence gates_do_not_degrade_or_expand` | Covers: B-001, B-006, B-013
 - [ ] `SP524-T008` Owner: Agent Skill/Panel/docs | Dependencies: SP524-T006, #523 gate | Done when: shipped Skill 使用 convergence happy path，Panel capability-gated，CLI/API docs 与 recovery 指引同步 | Verify: `cargo test --test shipped_registry_skill --test cli_surface && cd panel && bun test` | Covers: B-001, B-009, B-011, B-012, B-015
 
@@ -36,8 +36,9 @@ idempotency/recovery → visibility/remote → Agent Skill/Panel → full verifi
   explicit `restart_required` acceptance policy。
 - Completed implementation tranches: SP524-T001 typed planning/digest-confirmation boundary,
   SP524-T002 direction/input-preflight evidence, SP524-T003 projection executor mode,
-  SP524-T004 transaction/recovery, and SP524-T005 idempotency + aggregate evidence.
-- Remaining gates: SP524-T006..T010 implementation and implementation PR review/merge.
+  SP524-T004 transaction/recovery, SP524-T005 idempotency + aggregate evidence, and SP524-T006
+  visibility/transport evidence.
+- Remaining gates: SP524-T007..T010 implementation and implementation PR review/merge.
 
 ## B-009 aggregate evidence 持久面（决策 B，2026-07-22）
 

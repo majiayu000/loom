@@ -6,7 +6,7 @@ use super::skill_convergence_executor::apply_plan;
 use super::*;
 
 #[test]
-fn post_local_axes_are_not_reported_safe_to_apply() {
+fn post_local_axes_are_reported_safe_to_apply() {
     let fixture = projected_fixture();
     for args in [
         vec!["--push-remote"],
@@ -17,8 +17,8 @@ fn post_local_axes_are_not_reported_safe_to_apply() {
         assert!(output.status.success(), "plan failed: {plan}");
         assert_eq!(
             plan["data"]["safe_to_apply"],
-            json!(false),
-            "post-local plan was reported applyable: {plan}"
+            json!(true),
+            "post-local plan was not reported applyable: {plan}"
         );
     }
 }

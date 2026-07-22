@@ -165,13 +165,30 @@ pub(super) fn committed_result_with_registry(
     plan: &SkillConvergencePlan,
     journal: &TransactionJournal,
     registry_commit: Option<String>,
+    local_axes: &Value,
 ) -> Value {
+    let registry_operation = super::registry_operation_evidence();
+    let evidence = json!({
+        "source": { "direction": plan.source.direction, "commit": journal.source_commit },
+        "projections": local_axes["projections"],
+        "registry_operation": registry_operation,
+        "visibility": local_axes["visibility"],
+        "remote": {
+            "state": if matches!(plan.remote, crate::core::convergence::RemotePolicy::NotRequested) {
+                "not_requested"
+            } else {
+                "pending_push"
+            },
+        },
+        "recovery": { "state": "journaled", "journal_phase": "committing_registry" },
+    });
     json!({
         "skill": plan.skill,
         "source_commit": journal.source_commit,
         "registry_commit": registry_commit,
-        "registry_operation": super::registry_operation_evidence(),
+        "registry_operation": registry_operation,
         "projection_instances": plan.projections.iter().map(|item| item.instance_id.clone()).collect::<Vec<_>>(),
+        "evidence": evidence,
     })
 }
 

@@ -3,6 +3,7 @@ use super::recovery_evidence::{
     validate_mutated_surfaces, validate_rollback_evidence, validate_rolling_back_state,
 };
 use super::*;
+use crate::next_action_trace::observe_next_actions;
 
 pub(super) fn recover_journal(
     app: &App,
@@ -156,7 +157,9 @@ pub(super) fn recover_journal(
         validate_recovery_routing(app, plan)?;
         if journal.phase == TransactionPhase::CommittingRegistry {
             let registry_commit = prove_registry_boundary(app, plan, journal_path, &mut journal)?;
-            let result = committed_result_with_registry(plan, &journal, registry_commit);
+            let local_axes = super::post_local::collect_local_axes(app, plan)?;
+            let result =
+                committed_result_with_registry(plan, &journal, registry_commit, &local_axes);
             journal.result = Some(result.clone());
             journal.phase = TransactionPhase::CommittedCleanupPending;
             save_journal(journal_path, &journal)?;
@@ -265,6 +268,17 @@ pub(super) fn apply_output(
         "idempotency_binding_digest": identity.binding_digest,
         "idempotent_replay": false,
         "plan_event_cursor": cursor,
+        "local_state": output["local_state"],
+        "outcome": output["outcome"],
+        "completion_blockers": output["completion_blockers"],
+        "source": output["source"],
+        "convergence": output["convergence"],
+        "complete": output["complete"],
+        "evidence": output["evidence"],
+        "next_actions": observe_next_actions(
+            "plan.converge.post_local",
+            output["next_actions"].clone(),
+        ),
         "applied": output,
         "recovery": { "rollback_supported": true },
     })

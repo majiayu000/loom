@@ -265,7 +265,8 @@ pub(super) fn complete_durable_registry_noop(
     super::recovery_evidence::reprove_source_boundary(app, plan, journal)?;
     validate_committed_managed_surfaces(app, plan, source_head)?;
     super::registry_recovery::validate_registry_result(app, plan, journal)?;
-    let result = committed_result_with_registry(plan, journal, None);
+    let local_axes = super::post_local::collect_local_axes(app, plan)?;
+    let result = committed_result_with_registry(plan, journal, None, &local_axes);
     journal.result = Some(result.clone());
     journal.phase = TransactionPhase::CommittedCleanupPending;
     save_journal(journal_path, journal)?;

@@ -189,7 +189,7 @@ fn interrupted_recovery_rejects_a_different_idempotency_key() {
     assert_eq!(rejected["error"]["code"], json!("DEPENDENCY_CONFLICT"));
     assert_eq!(
         rejected["error"]["details"]["conflict"]["code"],
-        json!("IDEMPOTENCY_BINDING_MISMATCH")
+        json!("IDEMPOTENCY_KEY_REUSED")
     );
     assert_eq!(git(fixture.root.path(), &["rev-parse", "HEAD"]), head);
     assert_eq!(snapshot_tree(fixture.target.path()), tree);
@@ -237,7 +237,6 @@ fn convergence_evidence_is_complete() {
         json!(plan_digest),
         "apply evidence must carry the confirmed plan digest"
     );
-
     // The idempotency binding must be derived from key + plan id + plan digest,
     // and the raw key must never be persisted.
     let key_digest = data["idempotency_key_digest"].as_str().expect("key digest");

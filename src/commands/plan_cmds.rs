@@ -10,7 +10,6 @@ use crate::core::convergence::stored_plan_digest;
 use crate::envelope::Meta;
 use crate::gitops;
 use crate::next_action_trace::observe_next_actions;
-use crate::sha256::{Sha256, to_hex};
 use crate::types::ErrorCode;
 
 use super::event_store::{CommandEventRow, read_command_events};
@@ -22,8 +21,14 @@ use super::provenance::skill_tree_digest;
 use super::skill_policy::evaluate_skill_policy;
 use super::{App, CommandFailure};
 
+mod apply_identity;
 mod converge;
 mod convergence_transaction;
+
+use apply_identity::{
+    ConvergenceApplyIdentity, convergence_id, convergence_idempotency_binding_digest,
+    idempotency_binding_digest, idempotency_key_digest, replay_convergence_identity,
+};
 
 const PLAN_PROTOCOL_VERSION: &str = "1.0";
 const PLAN_SCHEMA_VERSION: &str = "1.0";
@@ -89,6 +94,22 @@ impl App {
             &idempotency_binding_digest,
             stored.kind == StoredPlanKind::Converge,
         )? {
+            if stored.kind == StoredPlanKind::Converge && remote_transport_needs_retry(&replay) {
+                let retry_identity = replay_convergence_identity(
+                    &replay,
+                    &idempotency_key_digest,
+                    &idempotency_binding_digest,
+                    confirmed_plan_digest.as_deref().unwrap_or_default(),
+                )?;
+                let output = convergence_transaction::retry_remote_transport(
+                    self,
+                    stored.plan,
+                    stored.cursor,
+                    &retry_identity,
+                    replay["applied"].clone(),
+                )?;
+                return Ok((output, Meta::default()));
+            }
             return Ok((replay, Meta::default()));
         }
         if let Some(conflict) = find_key_conflict(&events, &args.plan_id, &idempotency_key_digest) {
@@ -404,15 +425,6 @@ fn validate_confirmed_plan_digest(
     Ok(expected.to_string())
 }
 
-/// Identity carried through a convergence apply so every persisted surface agrees.
-#[derive(Clone, Debug)]
-pub(crate) struct ConvergenceApplyIdentity {
-    pub key_digest: String,
-    pub binding_digest: String,
-    pub plan_digest: String,
-    pub convergence_id: String,
-}
-
 fn find_prior_apply(
     events: &[CommandEventRow],
     plan_id: &str,
@@ -474,6 +486,19 @@ fn scrub_legacy_apply_output(output: &mut Value) {
     if let Some(recovery) = output.get_mut("recovery").and_then(Value::as_object_mut) {
         recovery.remove("rollback_token");
     }
+}
+
+fn remote_transport_needs_retry(output: &Value) -> bool {
+    output["completion_blockers"]
+        .as_array()
+        .is_some_and(|blockers| {
+            blockers.iter().any(|blocker| {
+                matches!(
+                    blocker.as_str(),
+                    Some("registry.remote_pending" | "registry_transport.evidence_incomplete")
+                )
+            })
+        })
 }
 
 fn find_key_conflict<'a>(
@@ -695,50 +720,6 @@ fn validate_idempotency_key(key: &str) -> std::result::Result<(), CommandFailure
     Ok(())
 }
 
-fn idempotency_key_digest(key: &str) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(key.as_bytes());
-    format!("sha256:{}", to_hex(&hasher.finalize()))
-}
-
-/// Bind the idempotency key digest to the exact durable plan it was confirmed against.
-///
-/// `idempotency_key_digest` stays plan-independent so key reuse across plans is still
-/// detectable; the binding digest is what proves a replay targets the same immutable plan.
-fn idempotency_binding_digest(key_digest: &str, plan_id: &str, plan_digest: &str) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(key_digest.as_bytes());
-    hasher.update(b"\n");
-    hasher.update(plan_id.as_bytes());
-    hasher.update(b"\n");
-    hasher.update(plan_digest.as_bytes());
-    format!("sha256:{}", to_hex(&hasher.finalize()))
-}
-
-fn convergence_idempotency_binding_digest(
-    key_digest: &str,
-    plan_id: &str,
-    plan_digest: &str,
-) -> std::result::Result<String, CommandFailure> {
-    converge::digest_value(&json!({
-        "kind": "loom.convergence.apply.v1",
-        "plan_id": plan_id,
-        "plan_digest": plan_digest,
-        "idempotency_key_digest": key_digest,
-    }))
-}
-
-/// Deterministic convergence identity for one (plan, idempotency binding) pair.
-///
-/// Deriving instead of minting keeps the id stable across crash recovery and event replay
-/// without another durable field to keep in sync.
-pub(crate) fn convergence_id(binding_digest: &str) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(b"loom.convergence.v1\n");
-    hasher.update(binding_digest.as_bytes());
-    format!("conv_{}", &to_hex(&hasher.finalize())[..32])
-}
-
 fn plan_failure(
     code: ErrorCode,
     message: impl Into<String>,
@@ -755,4 +736,20 @@ fn plan_failure(
         "suggested_actions": suggested_actions,
     });
     failure
+}
+
+#[cfg(test)]
+mod convergence_replay_tests {
+    use super::remote_transport_needs_retry;
+    use serde_json::json;
+
+    #[test]
+    fn transient_transport_postcondition_is_retryable() {
+        assert!(remote_transport_needs_retry(&json!({
+            "completion_blockers": ["registry_transport.evidence_incomplete"]
+        })));
+        assert!(!remote_transport_needs_retry(&json!({
+            "completion_blockers": ["visibility.restart_required"]
+        })));
+    }
 }

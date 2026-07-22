@@ -20,5 +20,5 @@ jq -e -s '
   all(.[]; has("payload"))
 ' "$trace_file" >/dev/null
 
-LOOM_CONTRACT_TRACE_INPUT="$trace_file" LOOM_CONTRACT_TRACE_EXPECTED_EMITTERS=58 \
+LOOM_CONTRACT_TRACE_INPUT="$trace_file" LOOM_CONTRACT_TRACE_EXPECTED_EMITTERS=59 \
   cargo test --test agent_contract_surfaces emitter_trace_payloads_parse -- --exact

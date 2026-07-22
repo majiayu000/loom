@@ -33,6 +33,7 @@ mod index_lock_failure;
 mod journal_types;
 mod ownership;
 mod ownership_state;
+mod post_local;
 mod preparation;
 mod projection_recovery;
 mod projection_view;
@@ -42,6 +43,7 @@ mod recovery_support;
 mod registry_commit;
 mod registry_recovery;
 mod registry_restore;
+mod remote_retry;
 mod rollback;
 mod source_commit;
 mod source_recovery;
@@ -71,6 +73,7 @@ use recovery_evidence::{
 use recovery_support::*;
 use registry_commit::{commit_convergence_registry, require_head};
 use registry_recovery::*;
+pub(super) use remote_retry::retry_remote_transport;
 use rollback::{finish_transaction, restore_activated_projections, rollback_journal};
 use source_recovery::{
     restore_source_after_activation_guard, restore_source_from_evidence,
@@ -98,10 +101,13 @@ pub(super) fn apply_convergence(
             Some(cursor),
         )
     })?;
-    if stored["safe_to_apply"] != json!(true) || !plan.required_approvals.is_empty() {
+    if stored["safe_to_apply"] != json!(true)
+        || !plan.input_conflicts.is_empty()
+        || !plan.required_approvals.is_empty()
+    {
         return Err(plan_failure(
             ErrorCode::PolicyBlocked,
-            "convergence policy approvals are not executable in this tranche",
+            "convergence plan still has conflicts or policy approvals",
             "CONVERGENCE_POLICY_WORKFLOW_REQUIRED",
             false,
             vec!["wait for the reviewed policy execution workflow".to_string()],
@@ -122,6 +128,7 @@ pub(super) fn apply_convergence(
             request_id,
         )?
     {
+        let output = post_local::complete(app, &plan, &effective_identity.key_digest, output)?;
         return Ok(apply_output(&plan, cursor, &effective_identity, output));
     }
     let snapshot = validate_guards(app, &plan, cursor)?;
@@ -311,6 +318,7 @@ pub(super) fn apply_convergence(
         )
         .with_rollback_errors(cleanup_errors));
     }
+    let output = post_local::complete(app, &plan, &identity.key_digest, output)?;
     Ok(apply_output(&plan, cursor, identity, output))
 }
 
@@ -333,11 +341,9 @@ fn execute_local_transaction(
         journal.phase = TransactionPhase::SourceReplaced;
         save_journal(journal_path, journal)?;
     }
-    let source_commit = if journal.source_head.is_some() {
-        journal.source_commit.clone()
-    } else {
-        source_commit::commit_convergence_source(app, plan, journal_path, journal)?
-    };
+    if journal.source_head.is_none() {
+        source_commit::commit_convergence_source(app, plan, journal_path, journal)?;
+    }
 
     let mut projections = snapshot.map_or_else(empty_projections_file, |snapshot| {
         snapshot.projections.clone()
@@ -534,14 +540,14 @@ fn execute_local_transaction(
     } else {
         None
     };
+    let local_axes = post_local::collect_local_axes(app, plan)?;
+    let result = committed_result_with_registry(plan, journal, registry_commit, &local_axes);
     maybe_skill_fault("convergence_interrupt_committing_registry")?;
-    Ok(json!({
-        "skill": plan.skill,
-        "source_commit": source_commit,
-        "registry_commit": registry_commit,
-        "registry_operation": registry_operation_evidence(),
-        "projection_instances": applied,
-    }))
+    debug_assert_eq!(
+        result["projection_instances"].as_array().map(Vec::len),
+        Some(applied.len())
+    );
+    Ok(result)
 }
 
 pub(super) fn registry_operation_evidence() -> Value {

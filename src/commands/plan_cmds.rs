@@ -10,7 +10,6 @@ use crate::core::convergence::stored_plan_digest;
 use crate::envelope::Meta;
 use crate::gitops;
 use crate::next_action_trace::observe_next_actions;
-use crate::sha256::{Sha256, to_hex};
 use crate::types::ErrorCode;
 
 use super::event_store::{CommandEventRow, read_command_events};
@@ -22,8 +21,14 @@ use super::provenance::skill_tree_digest;
 use super::skill_policy::evaluate_skill_policy;
 use super::{App, CommandFailure};
 
+mod apply_identity;
 mod converge;
 mod convergence_transaction;
+
+use apply_identity::{
+    ConvergenceApplyIdentity, convergence_id, convergence_idempotency_binding_digest,
+    idempotency_binding_digest, idempotency_key_digest, replay_convergence_identity,
+};
 
 const PLAN_PROTOCOL_VERSION: &str = "1.0";
 const PLAN_SCHEMA_VERSION: &str = "1.0";
@@ -58,22 +63,49 @@ impl App {
             )
         })?;
         validate_stored_plan_metadata(&stored)?;
-        if stored.kind == StoredPlanKind::Converge {
-            validate_confirmed_plan_digest(
+        let confirmed_plan_digest = if stored.kind == StoredPlanKind::Converge {
+            Some(validate_confirmed_plan_digest(
                 stored.plan,
                 stored.cursor,
                 args.plan_digest.as_deref(),
-            )?;
-        }
+            )?)
+        } else {
+            None
+        };
 
         let idempotency_key_digest = idempotency_key_digest(&args.idempotency_key);
-        if let Some(replay) = find_prior_apply(&events, &args.plan_id, &idempotency_key_digest)? {
+        let idempotency_binding_digest = if stored.kind == StoredPlanKind::Converge {
+            convergence_idempotency_binding_digest(
+                &idempotency_key_digest,
+                &args.plan_id,
+                confirmed_plan_digest.as_deref().unwrap_or_default(),
+            )?
+        } else {
+            idempotency_binding_digest(
+                &idempotency_key_digest,
+                &args.plan_id,
+                confirmed_plan_digest.as_deref().unwrap_or_default(),
+            )
+        };
+        if let Some(replay) = find_prior_apply(
+            &events,
+            &args.plan_id,
+            &idempotency_key_digest,
+            &idempotency_binding_digest,
+            stored.kind == StoredPlanKind::Converge,
+        )? {
             if stored.kind == StoredPlanKind::Converge && remote_transport_needs_retry(&replay) {
+                let retry_identity = replay_convergence_identity(
+                    &replay,
+                    &idempotency_key_digest,
+                    &idempotency_binding_digest,
+                    confirmed_plan_digest.as_deref().unwrap_or_default(),
+                )?;
                 let output = convergence_transaction::retry_remote_transport(
                     self,
                     stored.plan,
                     stored.cursor,
-                    &idempotency_key_digest,
+                    &retry_identity,
                     replay["applied"].clone(),
                 )?;
                 return Ok((output, Meta::default()));
@@ -95,7 +127,12 @@ impl App {
                 self,
                 stored.plan,
                 stored.cursor,
-                &idempotency_key_digest,
+                &ConvergenceApplyIdentity {
+                    key_digest: idempotency_key_digest.clone(),
+                    binding_digest: idempotency_binding_digest.clone(),
+                    plan_digest: confirmed_plan_digest.clone().unwrap_or_default(),
+                    convergence_id: convergence_id(&idempotency_binding_digest),
+                },
                 request_id,
             )?;
             return Ok((output, Meta::default()));
@@ -113,6 +150,7 @@ impl App {
                 "schema_version": PLAN_SCHEMA_VERSION,
                 "plan_id": args.plan_id,
                 "idempotency_key_digest": idempotency_key_digest,
+                "idempotency_binding_digest": idempotency_binding_digest,
                 "idempotent_replay": false,
                 "plan_event_cursor": stored.cursor,
                 "applied": use_data,
@@ -322,7 +360,7 @@ fn validate_confirmed_plan_digest(
     plan: &Value,
     cursor: usize,
     confirmed: Option<&str>,
-) -> std::result::Result<(), CommandFailure> {
+) -> std::result::Result<String, CommandFailure> {
     let expected = plan["plan_digest"].as_str().ok_or_else(|| {
         plan_failure(
             ErrorCode::StateCorrupt,
@@ -384,13 +422,15 @@ fn validate_confirmed_plan_digest(
             Some(cursor),
         ));
     }
-    Ok(())
+    Ok(expected.to_string())
 }
 
 fn find_prior_apply(
     events: &[CommandEventRow],
     plan_id: &str,
     idempotency_key_digest: &str,
+    idempotency_binding_digest: &str,
+    binding_required: bool,
 ) -> std::result::Result<Option<Value>, CommandFailure> {
     let Some(row) = events.iter().rev().find(|row| {
         row.event.cmd == "apply"
@@ -420,6 +460,22 @@ fn find_prior_apply(
             Some(row.cursor),
         )
     })?;
+    // The prior record must prove it was confirmed against the same immutable plan.
+    // A mismatch means the event log disagrees with the plan being applied; fail closed
+    // rather than replaying evidence that belongs to a different confirmation.
+    let recorded_binding = replay["idempotency_binding_digest"].as_str();
+    if recorded_binding.is_some_and(|recorded| recorded != idempotency_binding_digest)
+        || (binding_required && recorded_binding.is_none())
+    {
+        return Err(plan_failure(
+            ErrorCode::DependencyConflict,
+            "prior apply is missing or disagrees with the confirmed plan binding",
+            "IDEMPOTENCY_BINDING_MISMATCH",
+            false,
+            vec!["create and confirm a fresh convergence plan".to_string()],
+            Some(row.cursor),
+        ));
+    }
     scrub_legacy_apply_output(&mut replay);
     replay["idempotent_replay"] = json!(true);
     replay["replayed_from_event_cursor"] = json!(row.cursor);
@@ -662,12 +718,6 @@ fn validate_idempotency_key(key: &str) -> std::result::Result<(), CommandFailure
         ));
     }
     Ok(())
-}
-
-fn idempotency_key_digest(key: &str) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(key.as_bytes());
-    format!("sha256:{}", to_hex(&hasher.finalize()))
 }
 
 fn plan_failure(

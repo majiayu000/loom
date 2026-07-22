@@ -189,3 +189,155 @@ fn committing_registry_rejects_wrong_blob_with_expected_worktree_bytes() {
     );
     assert_eq!(git(fixture.root.path(), &["rev-parse", "HEAD"]), wrong_head);
 }
+
+#[test]
+fn committing_registry_accepts_verified_legacy_audit_paths() {
+    let fixture = projected_fixture();
+    fs::write(
+        fixture.root.path().join("skills/demo/details.txt"),
+        "legacy registry audit recovery\n",
+    )
+    .expect("source edit");
+    let (_, plan) = plan_converge(&fixture, &[]);
+    let key = "legacy-registry-audit";
+    let interrupted = apply_with_fault(
+        &fixture,
+        &plan,
+        key,
+        Some("convergence_interrupt_committing_registry"),
+    );
+    assert!(
+        interrupted.get("error").is_some(),
+        "fault did not interrupt"
+    );
+
+    let journal_path = fixture
+        .root
+        .path()
+        .join("state/transactions/convergence-demo.json");
+    let mut journal: Value =
+        serde_json::from_slice(&fs::read(&journal_path).expect("journal")).expect("parse journal");
+    let source_head = journal["source_head"]
+        .as_str()
+        .expect("source head")
+        .to_string();
+    let convergence_id = journal["convergence_id"].as_str().expect("convergence id");
+    let operation_id = format!(
+        "op_{}",
+        convergence_id
+            .strip_prefix("conv_")
+            .expect("namespaced convergence id")
+    );
+    let operations_path = fixture
+        .root
+        .path()
+        .join("state/registry/ops/operations.jsonl");
+    let checkpoint_path = fixture
+        .root
+        .path()
+        .join("state/registry/ops/checkpoint.json");
+    let original_operations = fs::read_to_string(&operations_path)
+        .expect("operations")
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| serde_json::from_str::<Value>(line).expect("operation"))
+        .collect::<Vec<_>>();
+    let original_checkpoint: Value =
+        serde_json::from_slice(&fs::read(&checkpoint_path).expect("checkpoint"))
+            .expect("parse checkpoint");
+    let evidence = json!({
+        "registry_operation": {
+            "state": "recorded",
+            "operation_id": operation_id,
+        },
+    });
+    let operation = json!({
+        "op_id": operation_id,
+        "intent": "skill.converge",
+        "status": "succeeded",
+        "ack": false,
+        "payload": {
+            "convergence_id": journal["convergence_id"],
+            "plan_id": journal["plan_id"],
+            "plan_digest": journal["plan_digest"],
+            "idempotency_binding_digest": journal["idempotency_binding_digest"],
+        },
+        "effects": evidence,
+        "created_at": "2026-07-22T05:30:00Z",
+        "updated_at": "2026-07-22T05:30:00Z",
+    });
+    let mut committed_operations = original_operations.clone();
+    committed_operations.push(operation.clone());
+    fs::write(
+        &operations_path,
+        format!(
+            "{}\n",
+            committed_operations
+                .iter()
+                .map(|value| serde_json::to_string(value).expect("encode operation"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        ),
+    )
+    .expect("write legacy operations");
+    let mut aggregate_checkpoint = original_checkpoint.clone();
+    aggregate_checkpoint["last_scanned_op_id"] = json!(operation_id);
+    aggregate_checkpoint["updated_at"] = json!("2026-07-22T05:30:00Z");
+    fs::write(
+        &checkpoint_path,
+        serde_json::to_vec_pretty(&aggregate_checkpoint).expect("encode checkpoint"),
+    )
+    .expect("write legacy checkpoint");
+
+    git(fixture.root.path(), &["reset", "--soft", &source_head]);
+    git(
+        fixture.root.path(),
+        &[
+            "add",
+            "state/registry/projections.json",
+            "state/registry/ops/operations.jsonl",
+            "state/registry/ops/checkpoint.json",
+        ],
+    );
+    git(
+        fixture.root.path(),
+        &[
+            "commit",
+            "-m",
+            "skill(demo): record convergence projections",
+        ],
+    );
+    let legacy_commit = git(fixture.root.path(), &["rev-parse", "HEAD"]);
+
+    journal["registry_commit"] = json!(legacy_commit.trim());
+    journal["original_operations"] = json!(original_operations);
+    journal["original_checkpoint"] = original_checkpoint;
+    journal["aggregate_operation_id"] = json!(operation_id);
+    journal["aggregate_evidence"] = evidence;
+    journal["aggregate_operation"] = operation;
+    journal["aggregate_checkpoint"] = aggregate_checkpoint;
+    fs::write(
+        &journal_path,
+        serde_json::to_vec_pretty(&journal).expect("encode legacy journal"),
+    )
+    .expect("write legacy journal");
+
+    let recovered = apply_with_fault(&fixture, &plan, key, None);
+    assert_eq!(
+        recovered["ok"],
+        json!(true),
+        "verified legacy commit did not recover: {recovered}"
+    );
+    assert!(recovered["error"].is_null());
+    assert_eq!(
+        recovered["data"]["applied"]["registry_operation"],
+        json!({
+            "state": "not_applicable",
+            "reason": "convergence_mode",
+        })
+    );
+    assert_eq!(
+        git(fixture.root.path(), &["rev-parse", "HEAD"]).trim(),
+        legacy_commit.trim()
+    );
+}

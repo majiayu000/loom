@@ -1,6 +1,6 @@
 use super::projection_recovery::path_matches_backup;
 use super::recovery_evidence::corrupt;
-use super::recovery_support::recovery_stale;
+use super::registry_recovery::recovery_stale;
 use super::*;
 
 pub(super) fn restore_source_from_evidence(

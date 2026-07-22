@@ -328,10 +328,7 @@ fn exact_projection_evidence_matches(
 }
 
 fn declared_local_evidence_is_complete(plan: &SkillConvergencePlan, local: &Value) -> bool {
-    local["convergence_id"].as_str().is_some()
-        && local["plan_digest"].as_str() == Some(plan.plan_digest.as_str())
-        && local["idempotency_binding_digest"].as_str().is_some()
-        && local["skill"].as_str() == Some(plan.skill.as_str())
+    local["skill"].as_str() == Some(plan.skill.as_str())
         && local["evidence"]["source"]["direction"].as_str().is_some()
         && local["evidence"]["projections"].is_object()
         && local["evidence"]["registry_operation"].is_object()

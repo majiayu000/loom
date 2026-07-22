@@ -121,10 +121,9 @@ pub(super) fn validate_recovery_routing(
     Ok(())
 }
 
-pub(super) fn validate_recovery_routing_after_audit(
+pub(super) fn validate_recovery_routing_after_legacy_audit(
     app: &App,
     plan: &SkillConvergencePlan,
-    journal: &TransactionJournal,
 ) -> std::result::Result<(), CommandFailure> {
     validate_routing_paths_clean(
         app,
@@ -137,18 +136,22 @@ pub(super) fn validate_recovery_routing_after_audit(
             "loom.lock",
         ],
     )?;
-    let paths = RegistryStatePaths::from_app_context(&app.ctx);
-    let snapshot = paths.maybe_load_snapshot().map_err(map_registry_state)?;
-    if plan.registry.initialized != snapshot.is_some()
-        || !super::aggregate_audit::live_is_valid(&paths, journal)?
-    {
+    let snapshot = RegistryStatePaths::from_app_context(&app.ctx)
+        .maybe_load_snapshot()
+        .map_err(map_registry_state)?;
+    if plan.registry.initialized != snapshot.is_some() {
         return Err(stale(
-            "registry aggregate audit changed after transaction intent",
+            "registry initialization changed during legacy recovery",
             "PLAN_CHECKPOINT_DRIFT",
         ));
     }
     if let Some(snapshot) = snapshot.as_ref() {
         validate_projection_routing(snapshot, plan)?;
+    } else if !plan.projections.is_empty() {
+        return Err(stale(
+            "projection routing disappeared during legacy recovery",
+            "PLAN_PROJECTION_DRIFT",
+        ));
     }
     Ok(())
 }

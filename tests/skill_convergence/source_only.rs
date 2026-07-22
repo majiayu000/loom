@@ -33,6 +33,26 @@ fn source_only_plan(fixture: &Fixture) -> (std::process::Output, Value) {
     run_loom(fixture.root.path(), &["plan", "converge", "demo"])
 }
 
+fn remove_succeeded_apply_event(root: &Path, plan_id: &str) {
+    let path = root.join("state/events/commands.jsonl");
+    let raw = fs::read_to_string(&path).expect("command events");
+    let mut removed = false;
+    let retained = raw
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .filter(|line| {
+            let event: Value = serde_json::from_str(line).expect("parse command event");
+            let matching = event["cmd"] == json!("apply")
+                && event["status"] == json!("succeeded")
+                && event["output"]["plan_id"] == json!(plan_id);
+            removed |= matching;
+            !matching
+        })
+        .collect::<Vec<_>>();
+    assert!(removed, "expected succeeded apply event");
+    fs::write(path, format!("{}\n", retained.join("\n"))).expect("rewrite command events");
+}
+
 #[test]
 fn source_only_and_required_runtime() {
     let fixture = source_only_fixture();
@@ -176,7 +196,7 @@ fn initialized_source_only_apply_uses_semantic_noop_registry_cas() {
         "source-only apply failed: {applied}"
     );
     assert!(applied["data"]["applied"]["source_commit"].is_string());
-    assert!(applied["data"]["applied"]["registry_commit"].is_string());
+    assert!(applied["data"]["applied"]["registry_commit"].is_null());
     assert_eq!(
         fs::read(&projections_path).expect("projections after"),
         projections_before
@@ -279,6 +299,10 @@ fn retained_replay_reproves_source_and_allows_unrelated_descendants() {
             .path()
             .join("state/transactions/convergence-demo.json");
         let retained = fs::read(&journal_path).expect("retained journal");
+        remove_succeeded_apply_event(
+            fixture.root.path(),
+            plan["data"]["plan_id"].as_str().expect("plan id"),
+        );
 
         match case {
             "source-drift" => fs::write(
@@ -313,8 +337,7 @@ fn retained_replay_reproves_source_and_allows_unrelated_descendants() {
             }
             _ => unreachable!(),
         }
-        let replay_key = format!("{key}-replay");
-        let (output, replayed) = apply_plan(&fixture, &plan, &replay_key, &[]);
+        let (output, replayed) = apply_plan(&fixture, &plan, &key, &[]);
         let should_succeed = case == "unrelated-descendant";
         assert_eq!(
             output.status.success(),
@@ -381,8 +404,7 @@ fn durable_registry_noop_accepts_only_unchanged_descendants() {
             );
         }
 
-        let replay_key = format!("{key}-replay");
-        let (output, recovered) = apply_plan(&fixture, &plan, &replay_key, &[]);
+        let (output, recovered) = apply_plan(&fixture, &plan, &key, &[]);
         let should_succeed = case == "unrelated-descendant";
         assert_eq!(
             output.status.success(),
@@ -396,7 +418,7 @@ fn durable_registry_noop_accepts_only_unchanged_descendants() {
                 retained
             );
         } else {
-            assert!(recovered["data"]["applied"]["registry_commit"].is_string());
+            assert!(recovered["data"]["applied"]["registry_commit"].is_null());
         }
     }
 }

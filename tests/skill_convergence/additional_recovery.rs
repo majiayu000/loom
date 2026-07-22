@@ -236,6 +236,67 @@ fn registry_cas_rejects_an_external_head_without_installing_index() {
     );
 }
 
+#[test]
+fn committed_registry_descendant_cannot_retire_recovery_evidence() {
+    let fixture = projected_fixture();
+    let registry_path = fixture.root.path().join("state/registry/projections.json");
+    let original_registry = fs::read(&registry_path).expect("original registry");
+    fs::write(
+        fixture.root.path().join("skills/demo/details.txt"),
+        "committed registry descendant\n",
+    )
+    .expect("edit source");
+    let (output, plan) = plan_converge(&fixture, &[]);
+    assert!(output.status.success(), "plan failed: {plan}");
+    let key = "committed-registry-descendant";
+    let (output, interrupted) = apply_plan(
+        &fixture,
+        &plan,
+        key,
+        &[(
+            "LOOM_FAULT_INJECT",
+            "convergence_interrupt_committing_registry",
+        )],
+    );
+    assert!(
+        !output.status.success(),
+        "apply did not stop: {interrupted}"
+    );
+
+    let journal_path = fixture
+        .root
+        .path()
+        .join("state/transactions/convergence-demo.json");
+    let journal: Value =
+        serde_json::from_slice(&fs::read(&journal_path).expect("journal")).expect("parse journal");
+    assert_eq!(journal["phase"], json!("committing_registry"));
+    assert!(journal["registry_commit"].is_string());
+
+    fs::write(&registry_path, original_registry).expect("restore original registry bytes");
+    git(
+        fixture.root.path(),
+        &["add", "state/registry/projections.json"],
+    );
+    git(
+        fixture.root.path(),
+        &["commit", "-m", "test: revert committed registry boundary"],
+    );
+    let descendant = git(fixture.root.path(), &["rev-parse", "HEAD"]);
+
+    let (output, rejected) = apply_plan(&fixture, &plan, key, &[]);
+    assert!(
+        !output.status.success(),
+        "managed descendant incorrectly retired recovery: {rejected}"
+    );
+    assert_eq!(rejected["error"]["code"], json!("DEPENDENCY_CONFLICT"));
+    assert_eq!(git(fixture.root.path(), &["rev-parse", "HEAD"]), descendant);
+    let preserved: Value =
+        serde_json::from_slice(&fs::read(journal_path).expect("preserved journal"))
+            .expect("parse preserved journal");
+    assert_eq!(preserved["phase"], json!("committing_registry"));
+    assert!(preserved["registry_commit"].is_string());
+}
+
 #[cfg(unix)]
 #[test]
 fn create_plan_rejects_safe_symlink_created_after_review() {

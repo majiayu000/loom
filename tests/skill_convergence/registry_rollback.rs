@@ -356,7 +356,7 @@ fn external_head_after_registry_commit_preparation_clears_orphan_evidence() {
             )
         });
         let mut prepared = false;
-        for _ in 0..6_000 {
+        for _ in 0..200 {
             if let Ok(raw) = fs::read(&journal_path)
                 && let Ok(journal) = serde_json::from_slice::<Value>(&raw)
                 && journal["phase"] == json!("committing_registry")

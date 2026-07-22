@@ -246,6 +246,14 @@ fn interrupted_symlink_registry_recovery_is_single_commit() {
         output.status.success(),
         "symlink recovery failed: {recovered}"
     );
+    assert_eq!(
+        recovered["data"]["applied"]["registry_operation"],
+        json!({
+            "state": "not_applicable",
+            "reason": "convergence_mode",
+        }),
+        "committed registry recovery must retain explicit operation applicability evidence"
+    );
     let projection = fixture.target.path().join("demo");
     assert!(
         fs::symlink_metadata(&projection)

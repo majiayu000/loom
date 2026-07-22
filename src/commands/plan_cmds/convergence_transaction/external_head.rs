@@ -19,7 +19,6 @@ const MANAGED_REGISTRY_PATHS: &[&str] = &[
     "state/registry/rules.json",
     "state/registry/targets.json",
     "state/registry/projections.json",
-    "state/registry/ops/operations.jsonl",
     "state/registry/ops/checkpoint.json",
     "state/registry/trust.json",
     "state/registry/sources.json",
@@ -96,19 +95,6 @@ pub(super) fn recover_registry_after_external_head(
     journal_path: &Path,
     journal: &mut TransactionJournal,
 ) -> std::result::Result<bool, CommandFailure> {
-    if let Some(commit) = journal.registry_commit.as_deref() {
-        let head = gitops::head(&app.ctx).map_err(map_git)?;
-        let committed_is_ancestor = gitops::run_git_allow_failure(
-            &app.ctx,
-            &["merge-base", "--is-ancestor", commit, &head],
-        )
-        .map_err(map_git)?
-        .status
-        .success();
-        if committed_is_ancestor {
-            return Ok(false);
-        }
-    }
     let Some(errors) =
         retire_registry_after_external_head(app, paths, plan, journal_path, journal)?
     else {
@@ -131,6 +117,20 @@ fn retire_registry_after_external_head(
     journal_path: &Path,
     journal: &mut TransactionJournal,
 ) -> std::result::Result<Option<Vec<Value>>, CommandFailure> {
+    if let Some(commit) = journal.registry_commit.as_deref() {
+        let head = gitops::head(&app.ctx).map_err(map_git)?;
+        if head != commit
+            && gitops::run_git_allow_failure(
+                &app.ctx,
+                &["merge-base", "--is-ancestor", commit, &head],
+            )
+            .map_err(map_git)?
+            .status
+            .success()
+        {
+            return Ok(None);
+        }
+    }
     if !external_head_preserves_reviewed_boundaries(app, plan, journal)? {
         return Ok(None);
     }
@@ -205,24 +205,6 @@ pub(super) fn validate_committed_managed_surfaces(
     plan: &SkillConvergencePlan,
     boundary: &str,
 ) -> std::result::Result<(), CommandFailure> {
-    validate_committed_managed_surface_state(app, boundary)?;
-    super::guards::validate_recovery_routing(app, plan)
-}
-
-pub(super) fn validate_committed_managed_surfaces_after_audit(
-    app: &App,
-    plan: &SkillConvergencePlan,
-    journal: &TransactionJournal,
-    boundary: &str,
-) -> std::result::Result<(), CommandFailure> {
-    validate_committed_managed_surface_state(app, boundary)?;
-    super::guards::validate_recovery_routing_after_audit(app, plan, journal)
-}
-
-fn validate_committed_managed_surface_state(
-    app: &App,
-    boundary: &str,
-) -> std::result::Result<(), CommandFailure> {
     let head = gitops::head(&app.ctx).map_err(map_git)?;
     if head != boundary {
         let range = format!("{boundary}..{head}");
@@ -254,7 +236,7 @@ fn validate_committed_managed_surface_state(
             }
         }
     }
-    Ok(())
+    super::guards::validate_recovery_routing(app, plan)
 }
 
 pub(super) fn complete_durable_registry_noop(
@@ -282,8 +264,9 @@ pub(super) fn complete_durable_registry_noop(
     }
     super::recovery_evidence::reprove_source_boundary(app, plan, journal)?;
     validate_committed_managed_surfaces(app, plan, source_head)?;
-    super::recovery_support::validate_registry_result(app, plan, journal)?;
-    let result = committed_result_with_registry(plan, journal, None);
+    super::registry_recovery::validate_registry_result(app, plan, journal)?;
+    let local_axes = super::post_local::collect_local_axes(app, plan)?;
+    let result = committed_result_with_registry(plan, journal, None, &local_axes);
     journal.result = Some(result.clone());
     journal.phase = TransactionPhase::CommittedCleanupPending;
     save_journal(journal_path, journal)?;

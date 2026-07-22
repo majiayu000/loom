@@ -26,13 +26,11 @@ use super::super::{App, CommandFailure};
 use super::converge::digest_value;
 use super::{PLAN_PROTOCOL_VERSION, plan_failure};
 
-mod aggregate_audit;
-mod commit_evidence;
 mod external_head;
 mod faults;
 mod guards;
 mod index_lock_failure;
-mod journal;
+mod journal_types;
 mod ownership;
 mod ownership_state;
 mod post_local;
@@ -40,8 +38,10 @@ mod preparation;
 mod projection_recovery;
 mod projection_view;
 mod recovery_evidence;
+mod recovery_identity;
 mod recovery_support;
 mod registry_commit;
+mod registry_commit_evidence;
 mod registry_recovery;
 mod registry_restore;
 mod remote_retry;
@@ -49,8 +49,7 @@ mod rollback;
 mod source_commit;
 mod source_recovery;
 use faults::interruption_fault_active;
-use guards::{validate_guards, validate_recovery_routing, validate_recovery_routing_after_audit};
-use journal::{ProjectionBackup, TransactionJournal, TransactionPhase};
+use guards::{validate_guards, validate_recovery_routing};
 #[cfg(test)]
 use ownership::reserve_owned_dir;
 use ownership::{
@@ -74,6 +73,7 @@ use recovery_evidence::{
 };
 use recovery_support::*;
 use registry_commit::{commit_convergence_registry, require_head};
+use registry_recovery::*;
 pub(super) use remote_retry::retry_remote_transport;
 use rollback::{finish_transaction, restore_activated_projections, rollback_journal};
 use source_recovery::{
@@ -83,11 +83,13 @@ use source_recovery::{
 
 const SCHEMA_VERSION: &str = "1.3";
 
+use journal_types::{ProjectionBackup, TransactionJournal, TransactionPhase};
+
 pub(super) fn apply_convergence(
     app: &App,
     stored: &Value,
     cursor: usize,
-    idempotency_key_digest: &str,
+    identity: &super::ConvergenceApplyIdentity,
     request_id: &str,
 ) -> std::result::Result<Value, CommandFailure> {
     let plan: SkillConvergencePlan = serde_json::from_value(stored.clone()).map_err(|err| {
@@ -100,8 +102,6 @@ pub(super) fn apply_convergence(
             Some(cursor),
         )
     })?;
-    let idempotency_binding_digest =
-        aggregate_audit::binding_digest(&plan, idempotency_key_digest)?;
     if stored["safe_to_apply"] != json!(true)
         || !plan.input_conflicts.is_empty()
         || !plan.required_approvals.is_empty()
@@ -119,18 +119,18 @@ pub(super) fn apply_convergence(
     let _skill_lock = app.ctx.lock_skill(&plan.skill).map_err(map_lock)?;
     let journal_path = journal_path(app, &plan.skill);
     archive_previous_terminal_journal(app, &journal_path, &plan)?;
+    let mut effective_identity = identity.clone();
     if journal_path.exists()
         && let Some(output) = recover_journal(
             app,
             &journal_path,
             &plan,
-            idempotency_key_digest,
-            &idempotency_binding_digest,
+            &mut effective_identity,
             request_id,
         )?
     {
-        let output = post_local::complete(app, &plan, idempotency_key_digest, output)?;
-        return Ok(apply_output(&plan, cursor, idempotency_key_digest, output));
+        let output = post_local::complete(app, &plan, &effective_identity.key_digest, output)?;
+        return Ok(apply_output(&plan, cursor, &effective_identity, output));
     }
     let snapshot = validate_guards(app, &plan, cursor)?;
     let paths = RegistryStatePaths::from_app_context(&app.ctx);
@@ -234,10 +234,10 @@ pub(super) fn apply_convergence(
     }
     let mut journal = TransactionJournal {
         plan_id: plan.plan_id.clone(),
-        plan_digest: plan.plan_digest.clone(),
-        convergence_id: aggregate_audit::new_convergence_id(),
-        idempotency_key_digest: idempotency_key_digest.to_string(),
-        idempotency_binding_digest,
+        plan_digest: Some(identity.plan_digest.clone()),
+        convergence_id: Some(identity.convergence_id.clone()),
+        idempotency_key_digest: Some(identity.key_digest.clone()),
+        idempotency_binding_digest: Some(identity.binding_digest.clone()),
         skill: plan.skill.clone(),
         previous_head: plan.source.registry_head.clone(),
         artifact_root: artifact_dir.display().to_string(),
@@ -255,12 +255,8 @@ pub(super) fn apply_convergence(
             .map_or_else(empty_projections_file, |snapshot| {
                 snapshot.projections.clone()
             }),
-        original_operations: snapshot
-            .as_ref()
-            .map(|snapshot| snapshot.operations.clone()),
-        original_checkpoint: snapshot
-            .as_ref()
-            .map(|snapshot| snapshot.checkpoint.clone()),
+        original_operations: None,
+        original_checkpoint: None,
         installed_projections: 0,
         expected_projections: None,
         source_head: None,
@@ -329,8 +325,8 @@ pub(super) fn apply_convergence(
         )
         .with_rollback_errors(cleanup_errors));
     }
-    let output = post_local::complete(app, &plan, idempotency_key_digest, output)?;
-    Ok(apply_output(&plan, cursor, idempotency_key_digest, output))
+    let output = post_local::complete(app, &plan, &identity.key_digest, output)?;
+    Ok(apply_output(&plan, cursor, identity, output))
 }
 
 fn execute_local_transaction(
@@ -352,11 +348,9 @@ fn execute_local_transaction(
         journal.phase = TransactionPhase::SourceReplaced;
         save_journal(journal_path, journal)?;
     }
-    let _source_commit = if journal.source_head.is_some() {
-        journal.source_commit.clone()
-    } else {
-        source_commit::commit_convergence_source(app, plan, journal_path, journal)?
-    };
+    if journal.source_head.is_none() {
+        source_commit::commit_convergence_source(app, plan, journal_path, journal)?;
+    }
 
     let mut projections = snapshot.map_or_else(empty_projections_file, |snapshot| {
         snapshot.projections.clone()
@@ -534,14 +528,8 @@ fn execute_local_transaction(
         }
     }
     maybe_skill_fault("convergence_after_registry_save")?;
-    let local_axes = post_local::collect_local_axes(app, plan)?;
     journal.phase = TransactionPhase::CommittingRegistry;
     save_journal(journal_path, journal)?;
-    if snapshot.is_some() {
-        aggregate_audit::record(paths, plan, &local_axes, journal_path, journal)?;
-    } else {
-        aggregate_audit::record_source_only(plan, &local_axes, journal_path, journal)?;
-    }
     let registry_commit = if snapshot.is_some() {
         match commit_convergence_registry(app, plan, journal_path, journal) {
             Ok(commit) => commit,
@@ -559,15 +547,21 @@ fn execute_local_transaction(
     } else {
         None
     };
+    let local_axes = post_local::collect_local_axes(app, plan)?;
+    let result = committed_result_with_registry(plan, journal, registry_commit, &local_axes);
     maybe_skill_fault("convergence_interrupt_committing_registry")?;
     debug_assert_eq!(
-        applied,
-        plan.projections
-            .iter()
-            .map(|item| item.instance_id.clone())
-            .collect::<Vec<_>>()
+        result["projection_instances"].as_array().map(Vec::len),
+        Some(applied.len())
     );
-    Ok(aggregate_audit::result(plan, journal, registry_commit))
+    Ok(result)
+}
+
+pub(super) fn registry_operation_evidence() -> Value {
+    json!({
+        "state": "not_applicable",
+        "reason": "convergence_mode",
+    })
 }
 
 fn replace_source_from_projection(

@@ -9,7 +9,7 @@ pub(in crate::commands::plan_cmds) fn retry_remote_transport(
     app: &App,
     stored: &Value,
     cursor: usize,
-    idempotency_key_digest: &str,
+    identity: &super::super::ConvergenceApplyIdentity,
     local: Value,
 ) -> std::result::Result<Value, CommandFailure> {
     let plan: SkillConvergencePlan = serde_json::from_value(stored.clone()).map_err(|err| {
@@ -22,11 +22,14 @@ pub(in crate::commands::plan_cmds) fn retry_remote_transport(
             Some(cursor),
         )
     })?;
-    let expected_binding = aggregate_audit::binding_digest(&plan, idempotency_key_digest)?;
+    let expected_binding = super::super::apply_identity::convergence_idempotency_binding_digest(
+        &identity.key_digest,
+        &plan.plan_id,
+        &plan.plan_digest,
+    )?;
     if plan.remote != RemotePolicy::Push
-        || local["convergence_id"].as_str().is_none()
-        || local["plan_digest"].as_str() != Some(plan.plan_digest.as_str())
-        || local["idempotency_binding_digest"].as_str() != Some(expected_binding.as_str())
+        || identity.plan_digest != plan.plan_digest
+        || identity.binding_digest != expected_binding
         || !post_local::retry_evidence_is_valid(&plan, &local)
     {
         return Err(plan_failure(
@@ -41,8 +44,8 @@ pub(in crate::commands::plan_cmds) fn retry_remote_transport(
     let _workspace_lock = app.ctx.lock_workspace().map_err(map_lock)?;
     let _skill_lock = app.ctx.lock_skill(&plan.skill).map_err(map_lock)?;
     require_recorded_commit_ancestry(app, &local, cursor)?;
-    let output = post_local::complete(app, &plan, idempotency_key_digest, local)?;
-    Ok(apply_output(&plan, cursor, idempotency_key_digest, output))
+    let output = post_local::complete(app, &plan, &identity.key_digest, local)?;
+    Ok(apply_output(&plan, cursor, identity, output))
 }
 
 fn require_recorded_commit_ancestry(

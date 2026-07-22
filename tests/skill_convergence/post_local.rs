@@ -110,9 +110,64 @@ fn restart_required_acceptance_is_explicit() {
 }
 
 #[test]
+fn interrupted_registry_recovery_retains_complete_b_evidence() {
+    let fixture = projected_fixture();
+    let convergence_operations_before = convergence_operation_count(fixture.root.path());
+    change_source(&fixture, "recovered post-local evidence\n");
+    let (output, plan) = plan_converge(&fixture, &[]);
+    assert!(output.status.success(), "plan failed: {plan}");
+    let key = "recovered-post-local-evidence";
+
+    let (output, interrupted) = apply_plan(
+        &fixture,
+        &plan,
+        key,
+        &[(
+            "LOOM_FAULT_INJECT",
+            "convergence_interrupt_committing_registry",
+        )],
+    );
+    assert!(!output.status.success(), "fault passed: {interrupted}");
+
+    let (output, recovered) = apply_plan(&fixture, &plan, key, &[]);
+    assert!(output.status.success(), "recovery failed: {recovered}");
+    let data = &recovered["data"];
+    assert_eq!(data["complete"], json!(true), "incomplete: {recovered}");
+    assert_eq!(data["outcome"], json!("complete"));
+    assert_eq!(
+        data["evidence"]["registry_operation"],
+        json!({"state": "not_applicable", "reason": "convergence_mode"})
+    );
+    for field in ["source", "projections", "visibility", "remote", "recovery"] {
+        assert!(
+            data["evidence"][field].is_object(),
+            "missing {field} evidence: {recovered}"
+        );
+    }
+    let journal: Value = serde_json::from_slice(
+        &fs::read(
+            fixture
+                .root
+                .path()
+                .join("state/transactions/convergence-demo.json"),
+        )
+        .expect("retained journal"),
+    )
+    .expect("parse retained journal");
+    assert_eq!(journal["phase"], json!("committed_artifacts_retained"));
+    assert_eq!(journal["result"]["evidence"], data["evidence"]);
+    assert_eq!(
+        convergence_operation_count(fixture.root.path()),
+        convergence_operations_before,
+        "recovery must not append a registry ops ledger row"
+    );
+}
+
+#[test]
 fn remote_failure_preserves_local_completion() {
     let fixture = projected_fixture();
     let remote = common::TestDir::new("convergence-remote-retry");
+    let convergence_operations_before = convergence_operation_count(fixture.root.path());
     change_source(&fixture, "remote pending bytes\n");
     let (output, plan) = plan_converge(&fixture, &["--push-remote"]);
     assert!(output.status.success(), "plan failed: {plan}");
@@ -142,9 +197,14 @@ fn remote_failure_preserves_local_completion() {
             .as_str()
             .is_some_and(|command| command.contains("$IDEMPOTENCY_KEY"))
     );
-    let aggregate_effects = convergence_operation_effects(fixture.root.path());
+    let aggregate_effects = data["evidence"].clone();
     assert_eq!(data["evidence"], aggregate_effects);
     assert_eq!(data["evidence"]["remote"]["state"], json!("pending_push"));
+    assert_eq!(
+        convergence_operation_count(fixture.root.path()),
+        convergence_operations_before,
+        "convergence must not append a registry ops ledger row"
+    );
 
     let (wrong_key_output, wrong_key) = apply_plan(&fixture, &plan, "different-key", &[]);
     assert!(
@@ -184,12 +244,9 @@ fn remote_failure_preserves_local_completion() {
         "retry must not rewrite immutable aggregate evidence"
     );
     assert_eq!(
-        common::operations_log(fixture.root.path())
-            .lines()
-            .filter(|line| line.contains("\"intent\":\"skill.converge\""))
-            .count(),
-        1,
-        "remote retry duplicated the aggregate operation"
+        convergence_operation_count(fixture.root.path()),
+        convergence_operations_before,
+        "remote retry must not append a registry ops ledger row"
     );
 }
 
@@ -571,14 +628,12 @@ fn change_source(fixture: &Fixture, body: &str) {
     fs::write(fixture.root.path().join("skills/demo/details.txt"), body).expect("edit source");
 }
 
-fn convergence_operation_effects(root: &Path) -> Value {
-    let operations = common::operations_log(root)
+fn convergence_operation_count(root: &Path) -> usize {
+    common::operations_log(root)
         .lines()
-        .map(|line| serde_json::from_str::<Value>(line).expect("parse operation"))
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
         .filter(|operation| operation["intent"] == json!("skill.converge"))
-        .collect::<Vec<_>>();
-    assert_eq!(operations.len(), 1, "expected one aggregate operation");
-    operations[0]["effects"].clone()
+        .count()
 }
 
 fn rewrite_fixture_agent(fixture: &Fixture, agent: &str) {

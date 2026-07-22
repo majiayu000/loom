@@ -1,5 +1,5 @@
 use super::recovery_evidence::{active_index_digest, committed_skill_digest, file_digest};
-use super::recovery_support::{recovery_stale, verify_commit};
+use super::registry_recovery::{recovery_stale, verify_commit};
 use super::*;
 
 pub(super) fn commit_convergence_source(

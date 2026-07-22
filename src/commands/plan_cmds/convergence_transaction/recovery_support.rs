@@ -3,15 +3,13 @@ use super::recovery_evidence::{
     validate_mutated_surfaces, validate_rollback_evidence, validate_rolling_back_state,
 };
 use super::*;
-use crate::core::convergence::RemotePolicy;
 use crate::next_action_trace::observe_next_actions;
 
 pub(super) fn recover_journal(
     app: &App,
     journal_path: &Path,
     plan: &SkillConvergencePlan,
-    key_digest: &str,
-    binding_digest: &str,
+    identity: &mut super::super::ConvergenceApplyIdentity,
     request_id: &str,
 ) -> std::result::Result<Option<Value>, CommandFailure> {
     let raw = fs::read_to_string(journal_path).map_err(map_io)?;
@@ -21,25 +19,7 @@ pub(super) fn recover_journal(
             format!("invalid convergence journal: {err}"),
         )
     })?;
-    let exact_identity =
-        super::aggregate_audit::identity_is_valid(plan, &journal, key_digest, binding_digest);
-    let terminal_replay = matches!(
-        journal.phase,
-        TransactionPhase::CommittedCleanupPending | TransactionPhase::CommittedArtifactsRetained
-    ) || journal.registry_commit.is_some();
-    let compatible_local_replay = terminal_replay
-        && plan.remote == RemotePolicy::NotRequested
-        && super::aggregate_audit::plan_identity_is_valid(plan, &journal);
-    if !exact_identity && !compatible_local_replay {
-        return Err(plan_failure(
-            ErrorCode::DependencyConflict,
-            "convergence journal is bound to a different idempotency identity",
-            "IDEMPOTENCY_KEY_REUSED",
-            false,
-            vec!["retry with the idempotency key that owns this convergence journal".to_string()],
-            None,
-        ));
-    }
+    super::recovery_identity::adopt_journal_identity(plan, &journal, identity)?;
     validate_journal(app, journal_path, plan, &journal)?;
     match journal.phase {
         TransactionPhase::CommittedArtifactsRetained => {
@@ -174,19 +154,16 @@ pub(super) fn recover_journal(
     }
     if source_is_committed(&journal) {
         reprove_source_boundary(app, plan, &journal)?;
-        if journal.aggregate_operation_id.is_some() {
-            validate_recovery_routing_after_audit(app, plan, &journal)?;
+        if super::registry_commit_evidence::legacy_audit_evidence_is_complete(&journal)? {
+            super::guards::validate_recovery_routing_after_legacy_audit(app, plan)?;
         } else {
             validate_recovery_routing(app, plan)?;
         }
         if journal.phase == TransactionPhase::CommittingRegistry {
-            let registry_commit = super::registry_recovery::prove_registry_boundary(
-                app,
-                plan,
-                journal_path,
-                &mut journal,
-            )?;
-            let result = committed_result_with_registry(plan, &journal, registry_commit);
+            let registry_commit = prove_registry_boundary(app, plan, journal_path, &mut journal)?;
+            let local_axes = super::post_local::collect_local_axes(app, plan)?;
+            let result =
+                committed_result_with_registry(plan, &journal, registry_commit, &local_axes);
             journal.result = Some(result.clone());
             journal.phase = TransactionPhase::CommittedCleanupPending;
             save_journal(journal_path, &journal)?;
@@ -282,17 +259,17 @@ pub(super) fn validate_projection_guard(
 pub(super) fn apply_output(
     plan: &SkillConvergencePlan,
     cursor: usize,
-    key_digest: &str,
+    identity: &crate::commands::plan_cmds::ConvergenceApplyIdentity,
     output: Value,
 ) -> Value {
     json!({
         "protocol_version": PLAN_PROTOCOL_VERSION,
         "schema_version": SCHEMA_VERSION,
+        "convergence_id": identity.convergence_id,
         "plan_id": plan.plan_id,
-        "plan_digest": plan.plan_digest,
-        "convergence_id": output["convergence_id"],
-        "idempotency_key_digest": key_digest,
-        "idempotency_binding_digest": output["idempotency_binding_digest"],
+        "plan_digest": identity.plan_digest,
+        "idempotency_key_digest": identity.key_digest,
+        "idempotency_binding_digest": identity.binding_digest,
         "idempotent_replay": false,
         "plan_event_cursor": cursor,
         "local_state": output["local_state"],
@@ -301,12 +278,12 @@ pub(super) fn apply_output(
         "source": output["source"],
         "convergence": output["convergence"],
         "complete": output["complete"],
+        "evidence": output["evidence"],
         "next_actions": observe_next_actions(
             "plan.converge.post_local",
             output["next_actions"].clone(),
         ),
         "applied": output,
-        "evidence": output["evidence"],
         "recovery": { "rollback_supported": true },
     })
 }
@@ -663,103 +640,4 @@ fn prove_source_boundary(
     }
     journal.phase = TransactionPhase::SourceCommitted;
     Ok(())
-}
-
-pub(super) fn verify_commit(
-    app: &App,
-    head: &str,
-    expected_parent: &str,
-    expected_subject: &str,
-    path_allowed: impl Fn(&str) -> bool,
-) -> std::result::Result<(), CommandFailure> {
-    let parent = gitops::run_git(&app.ctx, &["rev-parse", &format!("{head}^")]).map_err(map_git)?;
-    let subject =
-        gitops::run_git(&app.ctx, &["log", "-1", "--format=%s", head]).map_err(map_git)?;
-    let paths = gitops::run_git(
-        &app.ctx,
-        &["diff-tree", "--no-commit-id", "--name-only", "-r", head],
-    )
-    .map_err(map_git)?;
-    if parent != expected_parent
-        || subject != expected_subject
-        || paths.lines().next().is_none()
-        || !paths.lines().all(path_allowed)
-    {
-        return Err(recovery_stale(&format!(
-            "HEAD is not the transaction-created commit: parent={parent:?} expected_parent={expected_parent:?} subject={subject:?} expected_subject={expected_subject:?} paths={:?}",
-            paths.lines().collect::<Vec<_>>()
-        )));
-    }
-    Ok(())
-}
-
-pub(super) fn validate_registry_result(
-    app: &App,
-    plan: &SkillConvergencePlan,
-    journal: &TransactionJournal,
-) -> std::result::Result<(), CommandFailure> {
-    let paths = RegistryStatePaths::from_app_context(&app.ctx);
-    let snapshot = paths.load_snapshot().map_err(map_registry_state)?;
-    let expected = journal.expected_projections.as_ref().ok_or_else(|| {
-        CommandFailure::new(
-            ErrorCode::StateCorrupt,
-            "journal is missing expected projections",
-        )
-    })?;
-    if snapshot.projections != *expected {
-        return Err(recovery_stale(
-            "live registry differs from transaction evidence",
-        ));
-    }
-    for effect in &plan.projections {
-        let projection = snapshot
-            .projections
-            .projections
-            .iter()
-            .find(|item| {
-                item.instance_id == effect.instance_id
-                    && item.materialized_path == effect.materialized_path
-            })
-            .ok_or_else(|| recovery_stale("registry projection result is missing"))?;
-        let digest = effect.source_tree_digest.as_str();
-        let materialized_matches = if effect.method == "symlink" {
-            projection.materialized_tree_digest.is_none()
-                && projection_path_is_safe_symlink(
-                    Path::new(&effect.materialized_path),
-                    &app.ctx.skill_path(&plan.skill),
-                )
-        } else {
-            projection.materialized_tree_digest.as_deref() == Some(digest)
-        };
-        let source_matches = if effect.method == "symlink" {
-            projection.source_tree_digest.is_none()
-        } else {
-            projection.source_tree_digest.as_deref() == Some(digest)
-        };
-        if projection.method.as_str() != effect.method || !source_matches || !materialized_matches {
-            return Err(recovery_stale(
-                "registry projection evidence does not match the plan",
-            ));
-        }
-    }
-    Ok(())
-}
-
-pub(super) fn committed_result_with_registry(
-    plan: &SkillConvergencePlan,
-    journal: &TransactionJournal,
-    registry_commit: Option<String>,
-) -> Value {
-    super::aggregate_audit::result(plan, journal, registry_commit)
-}
-
-pub(super) fn recovery_stale(message: &str) -> CommandFailure {
-    plan_failure(
-        ErrorCode::DependencyConflict,
-        message,
-        "PLAN_STALE",
-        false,
-        vec!["inspect and resolve the interrupted convergence journal".to_string()],
-        None,
-    )
 }

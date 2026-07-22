@@ -16,7 +16,9 @@ idempotency/recovery → visibility/remote → Agent Skill/Panel → full verifi
 - [x] `SP524-T002` Owner: direction/source | Dependencies: SP524-T001 | Done when: canonical source 默认路径、projection instance 显式输入、双侧/多 projection dirty conflict 与 source preflight gates 完整 | Verify: `cargo test --test skill_convergence projection_input_requires_instance dirty_side_conflicts` | Covers: B-002, B-003, B-013
 - [x] `SP524-T003` Owner: projection executor | Dependencies: SP524-T001 | Done when: #497 executor 支持 Standalone/Convergence 内部模式，symlink 验证、copy 原子替换、materialize 重建均不产生 child commit/autosync | Verify: `cargo test --test skill_convergence symlink_copy_materialize` | Covers: B-007, B-008, B-009
 - [x] `SP524-T004` Owner: transaction/recovery | Dependencies: SP524-T002, SP524-T003 | Done when: workspace/Skill locks、HEAD/checkpoint/digest guards、staging、snapshot、逆序恢复与 interruption journal 落地；ownership attempts 按 allocated/ready/activated/abandoned/retained 持久化 exact path + manifest digest，terminal cleanup 保留可审计 evidence 且不执行 pathname-racy 自动删除；未来磁盘回收明确留给显式/manual GC | Verify: `cargo test --test skill_convergence stale_plan_and_lock_contention interrupted_recovery_is_single_commit owner_attempt_interruptions_recover_with_exact_retained_ledger crash_after_ready_proof_is_retryable_and_retains_exact_attempt nonexact_ready_attempts_block_activation_until_exact_retry local_faults_restore_all_surfaces preparation_failure_retains_exact_artifact_ledger` | Covers: B-006, B-008, B-014
-- [x] `SP524-T005` Owner: idempotency/audit | Dependencies: SP524-T004 | Done when: key digest 绑定 plan id + digest，single `convergence_id`/aggregate operation/evidence 落地，replay 不重复副作用 | Verify: `cargo test --test skill_convergence idempotent_replay_and_key_conflict convergence_evidence_is_complete` | Covers: B-005, B-009, B-014
+- [x] `SP524-T005` Owner: idempotency/audit | Dependencies: SP524-T004 | Done when: key digest 绑定 plan id + digest，single `convergence_id` 与 aggregate evidence 持久化到 retained transaction journal + result envelope，replay 不重复副作用 | Verify: `cargo test --test skill_convergence -- idempotent_replay_and_key_conflict convergence_evidence_is_complete` | Covers: B-005, B-009, B-014
+  - Completed: idempotency binding（key digest 绑定 plan id + plan digest，binding mismatch fail closed）与 derived `convergence_id`、replay 零副作用已落地。
+  - Completed: aggregate evidence 使用 retained transaction journal + result envelope；convergence 模式不写 ops ledger，并在 envelope 中显式记录 `registry_operation.state=not_applicable`、`reason=convergence_mode`。
 - [x] `SP524-T006` Owner: visibility/transport | Dependencies: SP524-T005, #522 implementation | Done when: post-write adapter visibility 与 remote-last phase 落地；未接受 restart 返回 `local_complete_restart_required`/`complete=false`，显式接受返回 `complete_with_restart_required`/`complete=true`，两者 visibility 均保持 `restart_required`；not_requested、remote pending 与 remote+restart 组合 blocker 精确返回 | Verify: `cargo test --test skill_convergence visibility_and_restart_states restart_required_acceptance_is_explicit remote_failure_preserves_local_completion remote_pending_and_restart_blockers_compose complete_requires_declared_evidence` | Covers: B-011, B-012, B-015
 - [ ] `SP524-T007` Owner: policy/scope | Dependencies: SP524-T001..T006 | Done when: ownership、policy、approval、filesystem gates fail closed，apply 不扩大 plan selectors 或降级 method | Verify: `cargo test --test skill_convergence gates_do_not_degrade_or_expand` | Covers: B-001, B-006, B-013
 - [ ] `SP524-T008` Owner: Agent Skill/Panel/docs | Dependencies: SP524-T006, #523 gate | Done when: shipped Skill 使用 convergence happy path，Panel capability-gated，CLI/API docs 与 recovery 指引同步 | Verify: `cargo test --test shipped_registry_skill --test cli_surface && cd panel && bun test` | Covers: B-001, B-009, B-011, B-012, B-015
@@ -33,5 +35,50 @@ idempotency/recovery → visibility/remote → Agent Skill/Panel → full verifi
 - Maintainer architecture gates resolved on 2026-07-16: `plan converge` + `apply` public workflow，
   explicit `restart_required` acceptance policy。
 - Completed implementation tranches: SP524-T001 typed planning/digest-confirmation boundary,
-  SP524-T002 direction/input-preflight evidence, and SP524-T003 projection executor mode.
-- Remaining gates: SP524-T004..T010 implementation and implementation PR review/merge.
+  SP524-T002 direction/input-preflight evidence, SP524-T003 projection executor mode,
+  SP524-T004 transaction/recovery, SP524-T005 idempotency + aggregate evidence, and SP524-T006
+  visibility/transport evidence.
+- Remaining gates: SP524-T007..T010 implementation and implementation PR review/merge.
+
+## B-009 aggregate evidence 持久面（决策 B，2026-07-22）
+
+B-009 本体保持不变：每次 apply 用单一 `convergence_id`，并在结果中逐项记录 required
+evidence。T005 中的 “aggregate operation record” 指 aggregate evidence record，不要求在 registry
+operations ledger 中新增一行。
+
+**实测证据**（本 worktree，projected fixture，apply 后 `git status --porcelain`）：
+
+- 不写聚合记录：registry 干净，只有未跟踪的 `state/events/`、`state/transactions/`。
+- 写聚合记录：`M state/registry/ops/checkpoint.json`、`M state/registry/ops/operations.jsonl`。
+
+原因链：
+
+1. `record_registry_operation`（`projections.rs:238`）同时追加 `operations.jsonl` 并更新
+   `checkpoint.json` 的 `last_scanned_op_id`。
+2. convergence 提交只暂存 `state/registry/projections.json`
+   （`registry_commit.rs:5` `REGISTRY_PATH`）与 `skills/<name>`
+   （`source_commit.rs:15`）。`state/registry/ops/` 不在任何 convergence 提交里。
+3. `validate_routing_paths_clean`（`guards.rs:154`）把
+   `state/registry/ops/checkpoint.json` 列为必须干净的 routing path，因此下一个 plan 报
+   `PLAN_CHECKPOINT_DRIFT`。
+4. convergence 模式本来就不写 ops ledger：`projection_executor.rs:267-288` 在
+   `M::CONVERGENCE` 分支提前 return，永远到不了 `:313` 的 `record_registry_operation`。
+   这正是 SP524-T003 “不产生 child commit/autosync” 的既定属性。
+
+三种写入位置均已实测（after registry commit / before registry commit / 与 projection
+同批次），分别为 122、59、57 通过（共 125）。位置调整不能解决，问题在提交范围本身。
+
+**决策 B 的持久化契约**：
+
+1. 成功 apply 的完整 result envelope 持久化到 command event log，并携带单一
+   `convergence_id`、`plan_id`、confirmed `plan_digest` 与 idempotency binding。
+2. transaction journal 在完成后保留为 `committed_artifacts_retained`，其 `result` 持久化 source
+   commit、registry commit、逐项 projection effect 与 registry operation applicability evidence。
+3. 读侧以 result envelope 的 `convergence_id` 为聚合键，并通过同一 envelope 的 `plan_id`/skill
+   关联 retained transaction journal；不读取或合成一条 registry ops ledger 记录。
+4. `applied.registry_operation` 必须显式为
+   `{ "state": "not_applicable", "reason": "convergence_mode" }`。该值表示 T003/B-007 规定的
+   模式语义；字段缺失仍是 required evidence 缺失，不能报告 complete。
+
+因此 convergence ops ledger 刻意留空；写入 ledger 会重新引入 T003 已移除的 child
+commit/autosync 耦合，并扩大 T004 rollback mutated-surface 契约。

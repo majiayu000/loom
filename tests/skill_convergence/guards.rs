@@ -5,6 +5,115 @@ use serde_json::{Value, json};
 use super::skill_convergence_executor::apply_plan;
 use super::*;
 
+#[path = "../../src/sha256.rs"]
+mod guard_sha256;
+
+const CONVERGENCE_DIGEST_FIELDS: [&str; 13] = [
+    "skill",
+    "selectors",
+    "source",
+    "input",
+    "preflight",
+    "input_conflicts",
+    "registry",
+    "projections",
+    "visibility",
+    "accept_restart_required",
+    "remote",
+    "required_axes",
+    "required_approvals",
+];
+
+fn reseal_plan_event(
+    fixture: &Fixture,
+    plan: &Value,
+    mut mutate: impl FnMut(&mut Value),
+) -> String {
+    let plan_id = plan["data"]["plan_id"].as_str().expect("plan id");
+    let mut resealed = None;
+    mutate_plan_event(fixture.root.path(), plan_id, |stored| {
+        mutate(stored);
+        let object = stored.as_object().expect("stored plan object");
+        let payload = CONVERGENCE_DIGEST_FIELDS
+            .into_iter()
+            .map(|field| (field.to_string(), object[field].clone()))
+            .collect::<serde_json::Map<_, _>>();
+        let mut hasher = guard_sha256::Sha256::new();
+        hasher.update(&serde_json::to_vec(&payload).expect("serialize plan digest payload"));
+        let digest = format!("sha256:{}", guard_sha256::to_hex(&hasher.finalize()));
+        stored["plan_digest"] = json!(digest);
+        resealed = stored["plan_digest"].as_str().map(str::to_string);
+    });
+    resealed.expect("resealed plan digest")
+}
+
+fn apply_resealed_plan(
+    fixture: &Fixture,
+    plan: &Value,
+    digest: &str,
+    key: &str,
+) -> (std::process::Output, Value) {
+    let plan_id = plan["data"]["plan_id"].as_str().expect("plan id");
+    run_loom(
+        fixture.root.path(),
+        &[
+            "apply",
+            plan_id,
+            "--plan-digest",
+            digest,
+            "--idempotency-key",
+            key,
+        ],
+    )
+}
+
+fn clear_review_blockers(stored: &mut Value) {
+    stored["safe_to_apply"] = json!(true);
+    stored["input_conflicts"] = json!([]);
+    stored["preflight"]["mutation_allowed"] = json!(true);
+    stored["preflight"]["regression_ids"] = json!([]);
+}
+
+struct MutationSnapshot {
+    head: String,
+    source: BTreeMap<String, Vec<u8>>,
+    registry: BTreeMap<String, Vec<u8>>,
+    target: BTreeMap<String, Vec<u8>>,
+}
+
+fn mutation_snapshot(fixture: &Fixture) -> MutationSnapshot {
+    MutationSnapshot {
+        head: git(fixture.root.path(), &["rev-parse", "HEAD"]),
+        source: snapshot_tree(&fixture.root.path().join("skills/demo")),
+        registry: snapshot_tree(&fixture.root.path().join("state/registry")),
+        target: snapshot_tree(fixture.target.path()),
+    }
+}
+
+fn assert_rejected_before_writes(fixture: &Fixture, before: MutationSnapshot) {
+    assert_eq!(
+        git(fixture.root.path(), &["rev-parse", "HEAD"]),
+        before.head
+    );
+    assert_eq!(
+        snapshot_tree(&fixture.root.path().join("skills/demo")),
+        before.source
+    );
+    assert_eq!(
+        snapshot_tree(&fixture.root.path().join("state/registry")),
+        before.registry
+    );
+    assert_eq!(snapshot_tree(fixture.target.path()), before.target);
+    assert!(
+        !fixture
+            .root
+            .path()
+            .join("state/transactions/convergence-demo.json")
+            .exists(),
+        "rejected gate created a convergence transaction"
+    );
+}
+
 #[test]
 fn post_local_axes_are_reported_safe_to_apply() {
     let fixture = projected_fixture();
@@ -398,5 +507,238 @@ fn projection_input_rejects_ignored_only_canonical_source_bytes() {
         blocked["data"]["input"]["source_dirty_paths"]
             .as_array()
             .is_some_and(|paths| paths.contains(&json!("skills/demo/private.txt")))
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn gates_do_not_degrade_or_expand() {
+    use std::os::unix::fs::symlink;
+
+    let ownership = projected_fixture();
+    let targets_path = ownership.root.path().join("state/registry/targets.json");
+    let mut targets: Value =
+        serde_json::from_slice(&fs::read(&targets_path).expect("read ownership targets"))
+            .expect("parse ownership targets");
+    targets["targets"][0]["ownership"] = json!("external");
+    fs::write(
+        &targets_path,
+        serde_json::to_vec_pretty(&targets).expect("encode ownership targets"),
+    )
+    .expect("write ownership target");
+    git(
+        ownership.root.path(),
+        &["add", "state/registry/targets.json"],
+    );
+    git(
+        ownership.root.path(),
+        &["commit", "-m", "test: make target externally owned"],
+    );
+    let (output, ownership_plan) = plan_converge(&ownership, &[]);
+    assert!(
+        output.status.success(),
+        "ownership plan failed: {ownership_plan}"
+    );
+    let digest = reseal_plan_event(&ownership, &ownership_plan, clear_review_blockers);
+    let before = mutation_snapshot(&ownership);
+    let (output, blocked) =
+        apply_resealed_plan(&ownership, &ownership_plan, &digest, "ownership-gate");
+    assert!(
+        !output.status.success(),
+        "external ownership applied: {blocked}"
+    );
+    assert_eq!(
+        blocked["error"]["details"]["conflict"]["code"],
+        json!("PLAN_OWNERSHIP_DRIFT")
+    );
+    assert!(blocked["error"]["details"]["effect"].is_object());
+    assert_rejected_before_writes(&ownership, before);
+
+    let method = projected_fixture();
+    let targets_path = method.root.path().join("state/registry/targets.json");
+    let mut targets: Value =
+        serde_json::from_slice(&fs::read(&targets_path).expect("read method targets"))
+            .expect("parse method targets");
+    targets["targets"][0]["capabilities"]["copy"] = json!(false);
+    fs::write(
+        &targets_path,
+        serde_json::to_vec_pretty(&targets).expect("encode method targets"),
+    )
+    .expect("write method target");
+    git(method.root.path(), &["add", "state/registry/targets.json"]);
+    git(
+        method.root.path(),
+        &["commit", "-m", "test: remove reviewed method capability"],
+    );
+    let (output, method_plan) = plan_converge(&method, &[]);
+    assert!(output.status.success(), "method plan failed: {method_plan}");
+    let digest = reseal_plan_event(&method, &method_plan, clear_review_blockers);
+    let before = mutation_snapshot(&method);
+    let (output, blocked) = apply_resealed_plan(&method, &method_plan, &digest, "method-gate");
+    assert!(
+        !output.status.success(),
+        "unsupported method applied: {blocked}"
+    );
+    assert_eq!(
+        blocked["error"]["details"]["conflict"]["code"],
+        json!("PLAN_METHOD_DRIFT")
+    );
+    assert_rejected_before_writes(&method, before);
+
+    let policy = projected_fixture();
+    let (output, policy_plan) = plan_converge(&policy, &[]);
+    assert!(output.status.success(), "policy plan failed: {policy_plan}");
+    let digest = reseal_plan_event(&policy, &policy_plan, |stored| {
+        stored["preflight"]["checks"]["policy_safe_capture_digest"] = json!("sha256:degraded");
+    });
+    let before = mutation_snapshot(&policy);
+    let (output, blocked) = apply_resealed_plan(&policy, &policy_plan, &digest, "policy-gate");
+    assert!(
+        !output.status.success(),
+        "degraded policy evidence applied: {blocked}"
+    );
+    assert_eq!(
+        blocked["error"]["details"]["conflict"]["code"],
+        json!("PLAN_POLICY_DRIFT")
+    );
+    assert_rejected_before_writes(&policy, before);
+
+    let approval = projected_fixture();
+    write_skill(
+        approval.root.path(),
+        "demo",
+        "---\nname: demo\ndescription: Use when testing approval drift.\ncapabilities:\n  shell:\n    commands: [\"git\"]\n---\n# demo\n",
+    );
+    let (output, saved) = save_skill(approval.root.path(), "demo");
+    assert!(
+        output.status.success(),
+        "approval source save failed: {saved}"
+    );
+    let bindings: Value = serde_json::from_slice(
+        &fs::read(approval.root.path().join("state/registry/bindings.json"))
+            .expect("read approval bindings"),
+    )
+    .expect("parse approval bindings");
+    let binding_id = bindings["bindings"][0]["binding_id"]
+        .as_str()
+        .expect("approval binding id");
+    let (output, projected) = skill_project(approval.root.path(), "demo", binding_id, Some("copy"));
+    assert!(
+        output.status.success(),
+        "approval refresh failed: {projected}"
+    );
+    let (output, approval_plan) = plan_converge(&approval, &[]);
+    assert!(
+        output.status.success(),
+        "approval plan failed: {approval_plan}"
+    );
+    let digest = reseal_plan_event(&approval, &approval_plan, |stored| {
+        clear_review_blockers(stored);
+        stored["required_approvals"] = json!([]);
+    });
+    let before = mutation_snapshot(&approval);
+    let (output, blocked) =
+        apply_resealed_plan(&approval, &approval_plan, &digest, "approval-gate");
+    assert!(
+        !output.status.success(),
+        "approval requirement removed: {blocked}"
+    );
+    assert_eq!(
+        blocked["error"]["details"]["conflict"]["code"],
+        json!("PLAN_APPROVAL_DRIFT")
+    );
+    assert_rejected_before_writes(&approval, before);
+
+    let selectors = projected_fixture();
+    add_copy_projection(&selectors, "selector-expansion");
+    let (output, selector_plan) = plan_converge(&selectors, &[]);
+    assert!(
+        output.status.success(),
+        "selector plan failed: {selector_plan}"
+    );
+    assert_eq!(
+        selector_plan["data"]["projections"]
+            .as_array()
+            .expect("sealed projections")
+            .len(),
+        2
+    );
+    let digest = reseal_plan_event(&selectors, &selector_plan, |stored| {
+        stored["projections"]
+            .as_array_mut()
+            .expect("projections")
+            .pop();
+        stored["visibility"]
+            .as_array_mut()
+            .expect("visibility")
+            .pop();
+    });
+    let before = mutation_snapshot(&selectors);
+    let (output, blocked) =
+        apply_resealed_plan(&selectors, &selector_plan, &digest, "selector-gate");
+    assert!(
+        !output.status.success(),
+        "selector scope expanded: {blocked}"
+    );
+    assert_eq!(
+        blocked["error"]["details"]["conflict"]["code"],
+        json!("PLAN_SELECTOR_SCOPE_DRIFT")
+    );
+    assert_rejected_before_writes(&selectors, before);
+
+    let fixture = projected_fixture();
+    let (output, plan) = plan_converge(&fixture, &[]);
+    assert!(output.status.success(), "plan failed: {plan}");
+    let reviewed_target = snapshot_tree(fixture.target.path());
+    let reviewed_head = git(fixture.root.path(), &["rev-parse", "HEAD"]);
+    let reviewed_source = snapshot_tree(&fixture.root.path().join("skills/demo"));
+    let reviewed_registry = snapshot_tree(&fixture.root.path().join("state/registry"));
+    let redirected = TestDir::new("convergence-redirected-target");
+    for (relative, bytes) in &reviewed_target {
+        let path = redirected.path().join(relative);
+        fs::create_dir_all(path.parent().expect("redirected file parent"))
+            .expect("create redirected parent");
+        fs::write(path, bytes).expect("copy reviewed target bytes");
+    }
+
+    fs::remove_dir_all(fixture.target.path()).expect("remove reviewed target root");
+    symlink(redirected.path(), fixture.target.path()).expect("redirect target root");
+    let (output, rejected) = apply_plan(&fixture, &plan, "filesystem-scope-drift", &[]);
+    assert_eq!(snapshot_tree(redirected.path()), reviewed_target);
+    assert_eq!(
+        git(fixture.root.path(), &["rev-parse", "HEAD"]),
+        reviewed_head
+    );
+    assert_eq!(
+        snapshot_tree(&fixture.root.path().join("skills/demo")),
+        reviewed_source
+    );
+    assert_eq!(
+        snapshot_tree(&fixture.root.path().join("state/registry")),
+        reviewed_registry
+    );
+    assert!(
+        !fixture
+            .root
+            .path()
+            .join("state/transactions/convergence-demo.json")
+            .exists()
+    );
+    fs::remove_file(fixture.target.path()).expect("remove redirected target root");
+    fs::create_dir_all(fixture.target.path()).expect("restore target root");
+    for (relative, bytes) in reviewed_target {
+        let path = fixture.target.path().join(relative);
+        fs::create_dir_all(path.parent().expect("restored file parent"))
+            .expect("create restored parent");
+        fs::write(path, bytes).expect("restore reviewed target bytes");
+    }
+
+    assert!(
+        !output.status.success(),
+        "filesystem scope redirection applied outside the reviewed target: {rejected}"
+    );
+    assert_eq!(
+        rejected["error"]["details"]["conflict"]["code"],
+        json!("PLAN_FILESYSTEM_SCOPE_DRIFT")
     );
 }

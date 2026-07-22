@@ -31,6 +31,9 @@ use super::super::provenance::{convergence_input_tree_digest, skill_tree_digest}
 use super::super::skill_improve::prepare_convergence_skill_input;
 use super::super::{App, CommandFailure};
 use super::{PLAN_PROTOCOL_VERSION, canonical_root, policy_risks, required_approvals};
+use policy_gate::seal_policy_gate;
+
+mod policy_gate;
 
 const CONVERGENCE_PLAN_SCHEMA_VERSION: &str = "1.2";
 
@@ -117,7 +120,7 @@ impl App {
         let policy = prepared_input.policy();
         let approvals = required_approvals(policy);
         let preflight_candidate = prepared_input.candidate_path(&args.skill);
-        let preflight = self.convergence_preflight_evidence(
+        let mut preflight = self.convergence_preflight_evidence(
             &args.skill,
             resolved_visibility_agent.as_deref(),
             workspace.as_deref(),
@@ -125,6 +128,7 @@ impl App {
             &selected_input_tree_digest,
             preflight_candidate.as_deref(),
         )?;
+        seal_policy_gate(&mut preflight, policy, &approvals)?;
         let selected_source_drift = if direction == ConvergenceInputDirection::Projection {
             !source_dirty_paths.is_empty()
                 || projection_evidence

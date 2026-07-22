@@ -2,11 +2,9 @@ use std::fs;
 
 use serde_json::{Value, json};
 
+use super::convergence_test_sha256 as guard_sha256;
 use super::skill_convergence_executor::apply_plan;
 use super::*;
-
-#[path = "../../src/sha256.rs"]
-mod guard_sha256;
 
 const CONVERGENCE_DIGEST_FIELDS: [&str; 13] = [
     "skill",

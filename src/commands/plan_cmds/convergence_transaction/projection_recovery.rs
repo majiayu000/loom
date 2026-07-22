@@ -66,6 +66,64 @@ impl ProjectionRecoveryScope {
             .rename_no_replace_to(&self.live_name, &self.owner, &self.stage_name)
             .map_err(map_io)
     }
+
+    fn staging_exists(&self) -> std::result::Result<bool, CommandFailure> {
+        self.owner.entry_exists(&self.stage_name).map_err(map_io)
+    }
+
+    fn remove_staging(&self) -> std::result::Result<(), CommandFailure> {
+        self.owner.remove_tree(&self.stage_name).map_err(map_io)
+    }
+
+    fn restore_staging_from_backup(
+        &self,
+        backup: &Value,
+    ) -> std::result::Result<(), CommandFailure> {
+        if self.staging_exists()? {
+            return Err(recovery_conflict(
+                Path::new(&self.stage_name),
+                "refusing to replace recovery staging path",
+            ));
+        }
+        let candidate = Path::new(".rollback-restore");
+        if self.owner.entry_exists(candidate).map_err(map_io)? {
+            self.owner.remove_tree(candidate).map_err(map_io)?;
+        }
+        let backup_path = backup["backup_path"]
+            .as_str()
+            .map(Path::new)
+            .ok_or_else(|| corrupt("projection backup path is missing"))?;
+        match backup["kind"].as_str() {
+            Some("dir") => {
+                self.owner.create_dir(candidate).map_err(map_io)?;
+                let destination = self.owner.open_dir(candidate).map_err(map_io)?;
+                crate::commands::file_ops::copy_dir_recursive_to_handle(
+                    backup_path,
+                    &destination,
+                    true,
+                )
+                .map_err(|error| CommandFailure::new(ErrorCode::IoError, error.to_string()))?;
+            }
+            Some("file") => self
+                .owner
+                .copy_file(backup_path, candidate)
+                .map_err(map_io)?,
+            Some("symlink") => {
+                let raw = fs::read_to_string(backup_path.join("symlink.json")).map_err(map_io)?;
+                let payload: Value = serde_json::from_str(&raw).map_err(map_io)?;
+                let target = payload["target"]
+                    .as_str()
+                    .map(Path::new)
+                    .ok_or_else(|| corrupt("projection symlink backup target is missing"))?;
+                self.owner.symlink(target, candidate).map_err(map_io)?;
+            }
+            _ => return Err(corrupt("projection backup kind is invalid")),
+        }
+        self.owner
+            .rename_no_replace_to(candidate, &self.owner, &self.stage_name)
+            .map_err(map_io)?;
+        self.owner.sync().map_err(map_io)
+    }
 }
 
 pub(super) fn restore_projection_from_evidence(
@@ -100,16 +158,18 @@ pub(super) fn prepare_projection_restore_fingerprint(
     }
     let live = Path::new(&artifact.materialized_path);
     let staging = Path::new(&artifact.staging_path);
+    let scope = ProjectionRecoveryScope::open(artifact)?;
     let expected = artifact
         .fingerprint()
         .ok_or_else(|| corrupt("projection activation fingerprint is missing"))?;
-    validate_owned_staging(live, staging, plan_id, &artifact.owner_proof)?;
+    scope.validate_owner(plan_id, &artifact.owner_proof)?;
     require_fingerprint(
         live,
         expected,
         "live projection before rollback preparation",
     )?;
-    if staging.try_exists().map_err(map_io)? {
+    test_projection_recovery_pause("before_restore_preparation_mutation")?;
+    if scope.staging_exists()? {
         let fingerprint = convergence_projection_fingerprint(staging)?;
         if artifact.original_fingerprint.as_deref() == Some(fingerprint.as_str()) {
             if !path_matches_backup(staging, backup)? {
@@ -123,10 +183,9 @@ pub(super) fn prepare_projection_restore_fingerprint(
         // The owner proof and exact live activation fingerprint above make this
         // declared private path safe to rebuild. With no persisted restore
         // fingerprint, anything else here is an interrupted restore candidate.
-        crate::fs_util::remove_path_if_exists(staging).map_err(map_io)?;
+        scope.remove_staging()?;
     }
-    let candidate = staging.with_file_name(".rollback-restore");
-    restore_path_from_backup_if_absent(staging, &candidate, backup).map_err(map_io)?;
+    scope.restore_staging_from_backup(backup)?;
     if !path_matches_backup(staging, backup)? {
         return Err(recovery_conflict(
             staging,
@@ -134,6 +193,42 @@ pub(super) fn prepare_projection_restore_fingerprint(
         ));
     }
     Ok(Some(convergence_projection_fingerprint(staging)?))
+}
+
+#[cfg(debug_assertions)]
+fn test_projection_recovery_pause(point: &str) -> std::result::Result<(), CommandFailure> {
+    if std::env::var("LOOM_TEST_CONVERGENCE_RECOVERY_SCOPE_PAUSE_POINT")
+        .ok()
+        .as_deref()
+        != Some(point)
+    {
+        return Ok(());
+    }
+    let directory = std::env::var_os("LOOM_TEST_CONVERGENCE_RECOVERY_SCOPE_PAUSE_DIR")
+        .map(PathBuf::from)
+        .ok_or_else(|| {
+            CommandFailure::new(
+                ErrorCode::IoError,
+                "projection recovery scope pause directory is absent",
+            )
+        })?;
+    fs::create_dir_all(&directory).map_err(map_io)?;
+    fs::write(directory.join("ready"), point).map_err(map_io)?;
+    for _ in 0..2_000 {
+        if directory.join("release").try_exists().map_err(map_io)? {
+            return Ok(());
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    Err(CommandFailure::new(
+        ErrorCode::IoError,
+        "projection recovery scope test pause timed out",
+    ))
+}
+
+#[cfg(not(debug_assertions))]
+fn test_projection_recovery_pause(_point: &str) -> std::result::Result<(), CommandFailure> {
+    Ok(())
 }
 
 fn restore_projection_with_hook<F>(
@@ -327,10 +422,14 @@ mod tests {
     }
 
     fn test_root() -> TestRoot {
-        TestRoot(std::env::temp_dir().join(format!(
-            "loom-convergence-recovery-test-{}",
-            uuid::Uuid::new_v4()
-        )))
+        TestRoot(
+            fs::canonicalize(std::env::temp_dir())
+                .expect("canonical temp directory")
+                .join(format!(
+                    "loom-convergence-recovery-test-{}",
+                    uuid::Uuid::new_v4()
+                )),
+        )
     }
 
     #[test]

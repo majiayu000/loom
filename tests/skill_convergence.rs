@@ -1,4 +1,6 @@
 mod common;
+#[path = "../src/sha256.rs"]
+mod convergence_test_sha256;
 #[path = "skill_convergence/additional_recovery.rs"]
 mod skill_convergence_additional_recovery;
 #[path = "skill_convergence/executor.rs"]
@@ -25,6 +27,8 @@ mod skill_convergence_recovery_safety;
 mod skill_convergence_registry_rollback;
 #[path = "skill_convergence/remaining_review.rs"]
 mod skill_convergence_remaining_review;
+#[path = "skill_convergence/request_scope.rs"]
+mod skill_convergence_request_scope;
 #[path = "skill_convergence/source_only.rs"]
 mod skill_convergence_source_only;
 

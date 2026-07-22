@@ -24,11 +24,13 @@ use super::{App, CommandFailure};
 mod apply_identity;
 mod converge;
 mod convergence_transaction;
+mod request_scope;
 
 use apply_identity::{
     ConvergenceApplyIdentity, convergence_id, convergence_idempotency_binding_digest,
     idempotency_binding_digest, idempotency_key_digest, replay_convergence_identity,
 };
+use request_scope::validate_convergence_request_scope;
 
 const PLAN_PROTOCOL_VERSION: &str = "1.0";
 const PLAN_SCHEMA_VERSION: &str = "1.0";
@@ -230,6 +232,7 @@ impl App {
 struct StoredPlan<'a> {
     cursor: usize,
     plan: &'a Value,
+    request_input: Option<&'a Value>,
     kind: StoredPlanKind,
 }
 
@@ -296,7 +299,7 @@ fn plan_use_args(plan: &Value) -> std::result::Result<UseArgs, CommandFailure> {
 }
 
 fn find_plan<'a>(events: &'a [CommandEventRow], plan_id: &str) -> Option<StoredPlan<'a>> {
-    events.iter().rev().find_map(|row| {
+    events.iter().enumerate().rev().find_map(|(index, row)| {
         let kind = match row.event.cmd.as_str() {
             "plan.use" => StoredPlanKind::Use,
             "plan.converge" => StoredPlanKind::Converge,
@@ -306,9 +309,19 @@ fn find_plan<'a>(events: &'a [CommandEventRow], plan_id: &str) -> Option<StoredP
             return None;
         }
         let plan = row.event.output.as_ref()?;
+        let request_input = events[..index]
+            .iter()
+            .rev()
+            .find(|candidate| {
+                candidate.event.cmd == row.event.cmd
+                    && candidate.event.request_id == row.event.request_id
+                    && candidate.event.status == "started"
+            })
+            .and_then(|candidate| candidate.event.input.as_ref());
         (plan["plan_id"].as_str() == Some(plan_id)).then_some(StoredPlan {
             cursor: row.cursor,
             plan,
+            request_input,
             kind,
         })
     })
@@ -344,7 +357,12 @@ fn validate_stored_plan_metadata(
         }
     };
     if valid {
-        return Ok(());
+        return match stored.kind {
+            StoredPlanKind::Use => Ok(()),
+            StoredPlanKind::Converge => {
+                validate_convergence_request_scope(stored.plan, stored.request_input, stored.cursor)
+            }
+        };
     }
     Err(plan_failure(
         ErrorCode::StateCorrupt,

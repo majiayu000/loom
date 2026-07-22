@@ -20,6 +20,28 @@ pub(crate) struct DirectoryHandle {
 impl DirectoryHandle {
     #[cfg(unix)]
     pub(crate) fn open(path: &Path) -> io::Result<Self> {
+        let mut current = if path.is_absolute() {
+            Self::open_anchor(Path::new("/"))?
+        } else {
+            Self::open_anchor(Path::new("."))?
+        };
+        for component in path.components() {
+            match component {
+                Component::RootDir | Component::CurDir => {}
+                Component::Normal(name) => current = current.open_child_dir(name)?,
+                _ => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        "opened directory path contains an unsupported component",
+                    ));
+                }
+            }
+        }
+        Ok(current)
+    }
+
+    #[cfg(unix)]
+    fn open_anchor(path: &Path) -> io::Result<Self> {
         let path = c_string(path.as_os_str())?;
         // SAFETY: `path` is a live NUL-terminated string. The returned fd is
         // immediately transferred to `File` on success.
@@ -46,9 +68,9 @@ impl DirectoryHandle {
     #[cfg(unix)]
     pub(crate) fn open_or_create(path: &Path) -> io::Result<Self> {
         let mut current = if path.is_absolute() {
-            Self::open(Path::new("/"))?
+            Self::open_anchor(Path::new("/"))?
         } else {
-            Self::open(Path::new("."))?
+            Self::open_anchor(Path::new("."))?
         };
         for component in path.components() {
             let name = match component {
@@ -583,7 +605,7 @@ mod tests {
 
     #[test]
     fn relative_write_stays_with_opened_directory_after_path_replacement() -> std::io::Result<()> {
-        let base = std::env::temp_dir().join(format!(
+        let base = std::fs::canonicalize(std::env::temp_dir())?.join(format!(
             "loom-directory-handle-{}",
             uuid::Uuid::new_v4().simple()
         ));
@@ -608,7 +630,7 @@ mod tests {
 
     #[test]
     fn relative_atomic_operations_use_both_opened_directories() -> std::io::Result<()> {
-        let base = std::env::temp_dir().join(format!(
+        let base = std::fs::canonicalize(std::env::temp_dir())?.join(format!(
             "loom-directory-rename-{}",
             uuid::Uuid::new_v4().simple()
         ));
@@ -625,6 +647,28 @@ mod tests {
 
         assert_eq!(fs::read(target_path.join("live/new"))?, b"new");
         assert_eq!(fs::read(owner_path.join("stage/old"))?, b"old");
+        fs::remove_dir_all(base)
+    }
+
+    #[test]
+    fn open_rejects_a_symlinked_ancestor() -> std::io::Result<()> {
+        let base = std::fs::canonicalize(std::env::temp_dir())?.join(format!(
+            "loom-directory-ancestor-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let real = base.join("real");
+        fs::create_dir_all(real.join("target"))?;
+        std::os::unix::fs::symlink(&real, base.join("substituted"))?;
+
+        let error = match DirectoryHandle::open(&base.join("substituted/target")) {
+            Ok(_) => panic!("symlinked ancestor must fail closed"),
+            Err(error) => error,
+        };
+
+        assert!(matches!(
+            error.raw_os_error(),
+            Some(libc::ELOOP | libc::ENOTDIR)
+        ));
         fs::remove_dir_all(base)
     }
 }

@@ -109,10 +109,12 @@ pub(super) fn complete(
         axis_evidence_is_usable(&visibility) && axis_freshness_is_complete(plan, &visibility);
     let visibility_required = plan.required_axes.contains(&ConvergenceAxis::Visibility);
     let restart_required = visibility_state == Some("restart_required");
+    let restart_accepted =
+        restart_evidence_is_acceptable(plan.accept_restart_required, &visibility);
     if visibility_required {
         match (visibility_evidence_usable, visibility_state) {
             (true, Some("visible")) => {}
-            (true, Some("restart_required")) if plan.accept_restart_required => {}
+            (true, Some("restart_required")) if restart_accepted => {}
             (true, Some("restart_required")) => blockers.push("visibility.restart_required"),
             _ => blockers.push("visibility.evidence_incomplete"),
         }
@@ -147,15 +149,21 @@ pub(super) fn complete(
     let complete = blockers.is_empty();
     let remote_pending = blockers.contains(&"registry.remote_pending");
     let restart_blocked = blockers.contains(&"visibility.restart_required");
-    let outcome = if remote_pending && restart_blocked {
+    let evidence_incomplete = blockers.iter().any(|blocker| {
+        !matches!(
+            *blocker,
+            "registry.remote_pending" | "visibility.restart_required"
+        )
+    });
+    let outcome = if evidence_incomplete {
+        "local_complete_evidence_incomplete"
+    } else if remote_pending && restart_blocked {
         "local_complete_remote_pending_restart_required"
     } else if remote_pending {
         "local_complete_remote_pending"
     } else if restart_blocked {
         "local_complete_restart_required"
-    } else if !complete {
-        "local_complete_evidence_incomplete"
-    } else if restart_required && plan.accept_restart_required {
+    } else if restart_accepted {
         "complete_with_restart_required"
     } else {
         "complete"
@@ -252,10 +260,14 @@ fn visibility_evidence_allows_transport(plan: &SkillConvergencePlan, visibility:
     !plan.required_axes.contains(&ConvergenceAxis::Visibility)
         || (axis_evidence_is_usable(visibility)
             && axis_freshness_is_complete(plan, visibility)
-            && matches!(
-                visibility["state"].as_str(),
-                Some("visible" | "restart_required" | "not_visible" | "unsupported")
-            ))
+            && (visibility["state"] == json!("visible")
+                || restart_evidence_is_acceptable(plan.accept_restart_required, visibility)))
+}
+
+fn restart_evidence_is_acceptable(accepted: bool, visibility: &Value) -> bool {
+    accepted
+        && visibility["state"] == json!("restart_required")
+        && visibility["evidence"]["report"]["visible"] == json!(true)
 }
 
 fn projection_evidence_is_complete(plan: &SkillConvergencePlan, projections: &Value) -> bool {
@@ -406,6 +418,22 @@ mod tests {
             "stale": false,
             "errors": [],
         })));
+    }
+
+    #[test]
+    fn restart_acceptance_requires_an_actually_visible_report() {
+        assert!(restart_evidence_is_acceptable(
+            true,
+            &json!({"state": "restart_required", "evidence": {"report": {"visible": true}}})
+        ));
+        assert!(!restart_evidence_is_acceptable(
+            true,
+            &json!({"state": "restart_required", "evidence": {"report": {"visible": false}}})
+        ));
+        assert!(!restart_evidence_is_acceptable(
+            false,
+            &json!({"state": "restart_required", "evidence": {"report": {"visible": true}}})
+        ));
     }
 
     #[test]

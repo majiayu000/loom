@@ -272,6 +272,13 @@ fn remote_retry_rechecks_live_axes_before_push() {
 #[test]
 fn complete_requires_declared_evidence() {
     let fixture = projected_fixture();
+    let remote = common::TestDir::new("convergence-required-visibility-remote");
+    git(remote.path(), &["init", "--bare"]);
+    let remote_path = remote.path().to_str().expect("remote path");
+    git(
+        fixture.root.path(),
+        &["remote", "add", "origin", remote_path],
+    );
     rewrite_fixture_agent(&fixture, "cursor");
     change_source(&fixture, "unsupported visibility evidence\n");
     let workspace = fixture.workspace.path().to_str().expect("workspace path");
@@ -288,6 +295,7 @@ fn complete_requires_declared_evidence() {
             "--profile",
             "default",
             "--require-runtime",
+            "--push-remote",
         ],
     );
     assert!(output.status.success(), "plan failed: {plan}");
@@ -302,9 +310,23 @@ fn complete_requires_declared_evidence() {
     assert_eq!(data["complete"], json!(false));
     assert_eq!(
         data["completion_blockers"],
-        json!(["visibility.evidence_incomplete"])
+        json!(["registry.remote_pending", "visibility.evidence_incomplete"])
     );
     assert_eq!(data["outcome"], json!("local_complete_evidence_incomplete"));
+    assert_eq!(
+        data["convergence"]["registry_transport"]["errors"][0]["code"],
+        json!("local_evidence_incomplete")
+    );
+    let remote_head = Command::new("git")
+        .arg("--git-dir")
+        .arg(remote.path())
+        .args(["rev-parse", "refs/heads/main"])
+        .output()
+        .expect("inspect remote main");
+    assert!(
+        !remote_head.status.success(),
+        "required visibility failure must block remote transport"
+    );
 }
 
 #[test]

@@ -68,7 +68,7 @@ impl App {
 
         let idempotency_key_digest = idempotency_key_digest(&args.idempotency_key);
         if let Some(replay) = find_prior_apply(&events, &args.plan_id, &idempotency_key_digest)? {
-            if stored.kind == StoredPlanKind::Converge && remote_transport_is_pending(&replay) {
+            if stored.kind == StoredPlanKind::Converge && remote_transport_needs_retry(&replay) {
                 let output = convergence_transaction::retry_remote_transport(
                     self,
                     stored.plan,
@@ -432,14 +432,33 @@ fn scrub_legacy_apply_output(output: &mut Value) {
     }
 }
 
-fn remote_transport_is_pending(output: &Value) -> bool {
+fn remote_transport_needs_retry(output: &Value) -> bool {
     output["completion_blockers"]
         .as_array()
         .is_some_and(|blockers| {
-            blockers
-                .iter()
-                .any(|blocker| blocker == "registry.remote_pending")
+            blockers.iter().any(|blocker| {
+                matches!(
+                    blocker.as_str(),
+                    Some("registry.remote_pending" | "registry_transport.evidence_incomplete")
+                )
+            })
         })
+}
+
+#[cfg(test)]
+mod convergence_replay_tests {
+    use super::remote_transport_needs_retry;
+    use serde_json::json;
+
+    #[test]
+    fn transient_transport_postcondition_is_retryable() {
+        assert!(remote_transport_needs_retry(&json!({
+            "completion_blockers": ["registry_transport.evidence_incomplete"]
+        })));
+        assert!(!remote_transport_needs_retry(&json!({
+            "completion_blockers": ["visibility.restart_required"]
+        })));
+    }
 }
 
 fn find_key_conflict<'a>(

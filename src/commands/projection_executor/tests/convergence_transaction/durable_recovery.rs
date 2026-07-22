@@ -333,7 +333,10 @@ fn prepared_activation_rejects_replaced_target_after_mutation() {
             .next()
             .is_none()
     );
-    assert!(held_target.join("demo/details.txt").is_file());
+    assert!(
+        !held_target.join("demo").exists(),
+        "post-mutation binding failure must roll back through the held target handle"
+    );
 }
 
 #[cfg(any(

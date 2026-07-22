@@ -140,7 +140,7 @@ fn append_command_finished_with_fault_tags(
         input: None,
         output: Some(redacted_value(envelope.data.clone())),
         durable_plan: (envelope.ok && matches!(cmd, "plan.use" | "plan.converge"))
-            .then(|| envelope.data.clone()),
+            .then(|| redacted_value(envelope.data.clone())),
         error: envelope
             .error
             .as_ref()
@@ -350,19 +350,20 @@ fn secret_span_at(raw: &str, start: usize) -> Option<usize> {
         return (token_end > token_start).then_some(token_end);
     }
 
-    for prefix in [
-        "github_pat_",
-        "ghp_",
-        "glpat-",
-        "sk-",
-        "xoxb-",
-        "xoxp-",
-        "xoxa-",
-        "ya29.",
+    for (prefix, minimum_suffix_length) in [
+        ("github_pat_", 8),
+        ("ghp_", 8),
+        ("glpat-", 8),
+        ("sk-", 8),
+        ("xoxb-", 8),
+        ("xoxp-", 8),
+        ("xoxa-", 8),
+        ("ya29.", 8),
     ] {
         if raw[start..].starts_with(prefix) {
             let token_end = secret_token_end(raw, start + prefix.len());
-            return (token_end > start + prefix.len()).then_some(token_end);
+            return (token_end - (start + prefix.len()) >= minimum_suffix_length)
+                .then_some(token_end);
         }
     }
 
@@ -426,16 +427,7 @@ fn key_is_sensitive(key: &str) -> bool {
 
 fn looks_like_secret(raw: &str) -> bool {
     let trimmed = raw.trim();
-    trimmed.starts_with("Bearer ")
-        || trimmed.starts_with("ghp_")
-        || trimmed.starts_with("github_pat_")
-        || trimmed.starts_with("glpat-")
-        || trimmed.starts_with("sk-")
-        || trimmed.starts_with("xoxb-")
-        || trimmed.starts_with("xoxp-")
-        || trimmed.starts_with("xoxa-")
-        || trimmed.starts_with("ya29.")
-        || (trimmed.starts_with("AKIA") && trimmed.len() >= 20)
+    secret_span_at(trimmed, 0) == Some(trimmed.len())
 }
 
 #[cfg(test)]
@@ -451,6 +443,7 @@ mod tests {
         COMMAND_EVENT_SCHEMA_VERSION, CommandEvent, append_command_event, redact_sensitive_string,
         redact_sensitive_strings, redact_url_userinfo,
     };
+    use crate::envelope::{Envelope, Meta};
     use crate::state::AppContext;
 
     #[test]
@@ -493,6 +486,40 @@ mod tests {
             redact_sensitive_string("mask-sk-not-a-token"),
             "mask-sk-not-a-token"
         );
+        assert_eq!(redact_sensitive_string("sk-demo"), "sk-demo");
+    }
+
+    #[test]
+    fn durable_plan_uses_the_same_secret_redaction_as_audit_output() {
+        let dir = std::env::temp_dir().join(format!(
+            "loom-command-events-durable-plan-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        fs::create_dir_all(&dir).expect("create temp root");
+        let ctx = AppContext::new(Some(dir.clone())).expect("create context");
+        let envelope = Envelope::ok(
+            "plan.converge",
+            "req-durable-plan-redaction".to_string(),
+            json!({
+                "request_scope": { "profile": "sk-demo" },
+                "note": "sk-reviewtoken",
+            }),
+            Meta::default(),
+        );
+
+        super::append_command_finished(&ctx, "plan.converge", &envelope, 0)
+            .expect("append finished plan event");
+        let event = super::read_command_events(&ctx)
+            .expect("read command events")
+            .pop()
+            .expect("finished event")
+            .event;
+        let durable = event.durable_plan.expect("durable plan");
+        assert_eq!(durable["request_scope"]["profile"], json!("sk-demo"));
+        assert_eq!(durable["note"], json!("<redacted>"));
+        assert_eq!(event.output.expect("audit output"), durable);
+
+        fs::remove_dir_all(&dir).expect("cleanup temp root");
     }
 
     #[test]

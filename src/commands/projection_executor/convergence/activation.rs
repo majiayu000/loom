@@ -62,16 +62,30 @@ fn activate_prepared_projection_with_after_mutation(
         if staging_digest.as_deref() == Some(&parts.staging_digest)
             && live_digest.as_deref() == Some(original_digest)
         {
+            let rollback_artifact = ProjectionRollbackArtifact::Exchanged {
+                materialized_path: parts.materialized_path.clone(),
+                backup_path: parts.staging_path.clone(),
+                activated_digest: parts.staging_digest.clone(),
+                original_digest: original_digest.clone(),
+            };
             if let Err(err) = scope.exchange() {
                 return Err(with_prepared_recovery_details(
                     map_atomic_exchange_error(err),
                     &parts,
                 ));
             }
-            after_mutation()
+            if let Err(error) = after_mutation()
                 .map_err(map_io)
-                .map_err(|err| with_prepared_recovery_details(err, &parts))?;
-            validate_scope_binding(&scope, &parts)?;
+                .map_err(|err| with_prepared_recovery_details(err, &parts))
+                .and_then(|_| validate_scope_binding(&scope, &parts))
+            {
+                return Err(rollback_after_mutation_failure(
+                    &scope,
+                    &rollback_artifact,
+                    error,
+                ));
+            }
+            rollback_artifact
         } else if staging_digest.as_deref() == Some(&parts.staging_digest) {
             return Err(cleanup_prepare_failure(
                 activation_state_mismatch(&parts, staging_digest, live_digest),
@@ -85,28 +99,42 @@ fn activate_prepared_projection_with_after_mutation(
                 staging_digest,
                 live_digest,
             ));
-        }
-        ProjectionRollbackArtifact::Exchanged {
-            materialized_path: parts.materialized_path.clone(),
-            backup_path: parts.staging_path.clone(),
-            activated_digest: parts.staging_digest.clone(),
-            original_digest: original_digest.clone(),
+        } else {
+            ProjectionRollbackArtifact::Exchanged {
+                materialized_path: parts.materialized_path.clone(),
+                backup_path: parts.staging_path.clone(),
+                activated_digest: parts.staging_digest.clone(),
+                original_digest: original_digest.clone(),
+            }
         }
     } else {
         let staging_digest = observed_digest(&parts.staging_path, &parts)?;
         let live_digest = observed_digest(&parts.materialized_path, &parts)?;
         validate_scope_binding(&scope, &parts)?;
         if staging_digest.as_deref() == Some(&parts.staging_digest) && live_digest.is_none() {
+            let rollback_artifact = ProjectionRollbackArtifact::Created {
+                materialized_path: parts.materialized_path.clone(),
+                rollback_path: parts.staging_path.clone(),
+                activated_digest: parts.staging_digest.clone(),
+            };
             if let Err(err) = scope.activate_create() {
                 return Err(with_prepared_recovery_details(
                     map_atomic_operation_error(err, &parts.materialized_path),
                     &parts,
                 ));
             }
-            after_mutation()
+            if let Err(error) = after_mutation()
                 .map_err(map_io)
-                .map_err(|err| with_prepared_recovery_details(err, &parts))?;
-            validate_scope_binding(&scope, &parts)?;
+                .map_err(|err| with_prepared_recovery_details(err, &parts))
+                .and_then(|_| validate_scope_binding(&scope, &parts))
+            {
+                return Err(rollback_after_mutation_failure(
+                    &scope,
+                    &rollback_artifact,
+                    error,
+                ));
+            }
+            rollback_artifact
         } else if staging_digest.as_deref() == Some(&parts.staging_digest) {
             return Err(cleanup_prepare_failure(
                 activation_state_mismatch(&parts, staging_digest, live_digest),
@@ -119,11 +147,12 @@ fn activate_prepared_projection_with_after_mutation(
                 staging_digest,
                 live_digest,
             ));
-        }
-        ProjectionRollbackArtifact::Created {
-            materialized_path: parts.materialized_path.clone(),
-            rollback_path: parts.staging_path.clone(),
-            activated_digest: parts.staging_digest.clone(),
+        } else {
+            ProjectionRollbackArtifact::Created {
+                materialized_path: parts.materialized_path.clone(),
+                rollback_path: parts.staging_path.clone(),
+                activated_digest: parts.staging_digest.clone(),
+            }
         }
     };
 
@@ -168,6 +197,29 @@ fn activate_prepared_projection_with_after_mutation(
         #[cfg(test)]
         fail_cleanup_once: false,
     })
+}
+
+fn rollback_after_mutation_failure(
+    scope: &super::PreparedProjectionScope,
+    artifact: &ProjectionRollbackArtifact,
+    failure: CommandFailure,
+) -> CommandFailure {
+    let rollback = match artifact {
+        ProjectionRollbackArtifact::Exchanged { .. } => scope.exchange(),
+        ProjectionRollbackArtifact::Created { .. } => scope.rollback_create(),
+        ProjectionRollbackArtifact::PendingCleanup { .. } => Err(std::io::Error::other(
+            "new activation unexpectedly has pending cleanup evidence",
+        )),
+    };
+    match rollback {
+        Ok(()) => failure,
+        Err(error) => failure.with_rollback_errors(vec![json!({
+            "step": "rollback_projection_after_post_mutation_failure",
+            "code": ErrorCode::IoError.as_str(),
+            "message": error.to_string(),
+            "artifact": artifact.evidence(),
+        })]),
+    }
 }
 
 fn validate_scope_binding(

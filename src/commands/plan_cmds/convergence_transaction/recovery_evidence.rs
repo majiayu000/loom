@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::Path;
 
-use super::recovery_support::{recovery_stale, verify_commit};
+use super::registry_recovery::{recovery_stale, verify_commit};
 use super::*;
 use crate::sha256::{Sha256, to_hex};
 

@@ -69,11 +69,19 @@ impl App {
         };
 
         let idempotency_key_digest = idempotency_key_digest(&args.idempotency_key);
-        let idempotency_binding_digest = idempotency_binding_digest(
-            &idempotency_key_digest,
-            &args.plan_id,
-            confirmed_plan_digest.as_deref().unwrap_or_default(),
-        );
+        let idempotency_binding_digest = if stored.kind == StoredPlanKind::Converge {
+            convergence_idempotency_binding_digest(
+                &idempotency_key_digest,
+                &args.plan_id,
+                confirmed_plan_digest.as_deref().unwrap_or_default(),
+            )?
+        } else {
+            idempotency_binding_digest(
+                &idempotency_key_digest,
+                &args.plan_id,
+                confirmed_plan_digest.as_deref().unwrap_or_default(),
+            )
+        };
         if let Some(replay) = find_prior_apply(
             &events,
             &args.plan_id,
@@ -397,6 +405,7 @@ fn validate_confirmed_plan_digest(
 }
 
 /// Identity carried through a convergence apply so every persisted surface agrees.
+#[derive(Clone, Debug)]
 pub(crate) struct ConvergenceApplyIdentity {
     pub key_digest: String,
     pub binding_digest: String,
@@ -704,6 +713,19 @@ fn idempotency_binding_digest(key_digest: &str, plan_id: &str, plan_digest: &str
     hasher.update(b"\n");
     hasher.update(plan_digest.as_bytes());
     format!("sha256:{}", to_hex(&hasher.finalize()))
+}
+
+fn convergence_idempotency_binding_digest(
+    key_digest: &str,
+    plan_id: &str,
+    plan_digest: &str,
+) -> std::result::Result<String, CommandFailure> {
+    converge::digest_value(&json!({
+        "kind": "loom.convergence.apply.v1",
+        "plan_id": plan_id,
+        "plan_digest": plan_digest,
+        "idempotency_key_digest": key_digest,
+    }))
 }
 
 /// Deterministic convergence identity for one (plan, idempotency binding) pair.

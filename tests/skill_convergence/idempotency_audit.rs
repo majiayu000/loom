@@ -142,6 +142,72 @@ fn convergence_replay_rejects_unbound_prior_event() {
 }
 
 #[test]
+fn interrupted_recovery_rejects_a_different_idempotency_key() {
+    let fixture = projected_fixture();
+    std::fs::write(
+        fixture.root.path().join("skills/demo/details.txt"),
+        "interrupted identity\n",
+    )
+    .expect("edit source");
+    let (output, plan) = plan_converge(&fixture, &[]);
+    assert!(output.status.success(), "plan failed: {plan}");
+
+    let (output, interrupted) = apply_plan(
+        &fixture,
+        &plan,
+        "original-key",
+        &[(
+            "LOOM_FAULT_INJECT",
+            "convergence_interrupt_after_source_commit",
+        )],
+    );
+    assert!(
+        !output.status.success(),
+        "apply did not stop: {interrupted}"
+    );
+    let head = git(fixture.root.path(), &["rev-parse", "HEAD"]);
+    let tree = snapshot_tree(fixture.target.path());
+    let journal_path = fixture
+        .root
+        .path()
+        .join("state/transactions/convergence-demo.json");
+    let journal = std::fs::read(&journal_path).expect("interrupted journal");
+    let journal_value: Value = serde_json::from_slice(&journal).expect("parse interrupted journal");
+    let convergence_id = journal_value["convergence_id"]
+        .as_str()
+        .expect("persisted convergence id")
+        .to_string();
+    assert_eq!(journal_value["plan_digest"], plan["data"]["plan_digest"]);
+    assert!(journal_value["idempotency_key_digest"].is_string());
+    assert!(journal_value["idempotency_binding_digest"].is_string());
+
+    let (output, rejected) = apply_plan(&fixture, &plan, "different-key", &[]);
+    assert!(
+        !output.status.success(),
+        "different key resumed the transaction: {rejected}"
+    );
+    assert_eq!(rejected["error"]["code"], json!("DEPENDENCY_CONFLICT"));
+    assert_eq!(
+        rejected["error"]["details"]["conflict"]["code"],
+        json!("IDEMPOTENCY_BINDING_MISMATCH")
+    );
+    assert_eq!(git(fixture.root.path(), &["rev-parse", "HEAD"]), head);
+    assert_eq!(snapshot_tree(fixture.target.path()), tree);
+    assert_eq!(
+        std::fs::read(&journal_path).expect("preserved journal"),
+        journal,
+        "identity rejection must not mutate recovery evidence"
+    );
+
+    let (output, recovered) = apply_plan(&fixture, &plan, "original-key", &[]);
+    assert!(
+        output.status.success(),
+        "owner recovery failed: {recovered}"
+    );
+    assert_eq!(recovered["data"]["convergence_id"], json!(convergence_id));
+}
+
+#[test]
 fn convergence_evidence_is_complete() {
     let fixture = projected_fixture();
     std::fs::write(

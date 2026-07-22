@@ -117,6 +117,20 @@ fn retire_registry_after_external_head(
     journal_path: &Path,
     journal: &mut TransactionJournal,
 ) -> std::result::Result<Option<Vec<Value>>, CommandFailure> {
+    if let Some(commit) = journal.registry_commit.as_deref() {
+        let head = gitops::head(&app.ctx).map_err(map_git)?;
+        if head != commit
+            && gitops::run_git_allow_failure(
+                &app.ctx,
+                &["merge-base", "--is-ancestor", commit, &head],
+            )
+            .map_err(map_git)?
+            .status
+            .success()
+        {
+            return Ok(None);
+        }
+    }
     if !external_head_preserves_reviewed_boundaries(app, plan, journal)? {
         return Ok(None);
     }
@@ -250,7 +264,7 @@ pub(super) fn complete_durable_registry_noop(
     }
     super::recovery_evidence::reprove_source_boundary(app, plan, journal)?;
     validate_committed_managed_surfaces(app, plan, source_head)?;
-    super::recovery_support::validate_registry_result(app, plan, journal)?;
+    super::registry_recovery::validate_registry_result(app, plan, journal)?;
     let result = committed_result_with_registry(plan, journal, None);
     journal.result = Some(result.clone());
     journal.phase = TransactionPhase::CommittedCleanupPending;

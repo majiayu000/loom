@@ -1,5 +1,5 @@
 use super::recovery_evidence::file_digest;
-use super::recovery_support::{validate_registry_result, verify_commit};
+use super::registry_recovery::{validate_registry_result, verify_commit};
 use super::*;
 
 const REGISTRY_PATH: &str = "state/registry/projections.json";

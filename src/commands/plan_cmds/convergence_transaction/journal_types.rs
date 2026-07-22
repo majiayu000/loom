@@ -9,6 +9,16 @@ use super::registry_commit;
 #[derive(Debug, Serialize, Deserialize)]
 pub(in crate::commands::plan_cmds::convergence_transaction) struct TransactionJournal {
     pub(in crate::commands::plan_cmds::convergence_transaction) plan_id: String,
+    #[serde(default)]
+    pub(in crate::commands::plan_cmds::convergence_transaction) plan_digest: Option<String>,
+    #[serde(default)]
+    pub(in crate::commands::plan_cmds::convergence_transaction) convergence_id: Option<String>,
+    #[serde(default)]
+    pub(in crate::commands::plan_cmds::convergence_transaction) idempotency_key_digest:
+        Option<String>,
+    #[serde(default)]
+    pub(in crate::commands::plan_cmds::convergence_transaction) idempotency_binding_digest:
+        Option<String>,
     pub(in crate::commands::plan_cmds::convergence_transaction) skill: String,
     pub(in crate::commands::plan_cmds::convergence_transaction) previous_head: String,
     pub(in crate::commands::plan_cmds::convergence_transaction) artifact_root: String,

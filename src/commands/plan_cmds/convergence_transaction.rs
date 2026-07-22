@@ -37,8 +37,10 @@ mod preparation;
 mod projection_recovery;
 mod projection_view;
 mod recovery_evidence;
+mod recovery_identity;
 mod recovery_support;
 mod registry_commit;
+mod registry_recovery;
 mod registry_restore;
 mod rollback;
 mod source_commit;
@@ -68,6 +70,7 @@ use recovery_evidence::{
 };
 use recovery_support::*;
 use registry_commit::{commit_convergence_registry, require_head};
+use registry_recovery::*;
 use rollback::{finish_transaction, restore_activated_projections, rollback_journal};
 use source_recovery::{
     restore_source_after_activation_guard, restore_source_from_evidence,
@@ -109,10 +112,17 @@ pub(super) fn apply_convergence(
     let _skill_lock = app.ctx.lock_skill(&plan.skill).map_err(map_lock)?;
     let journal_path = journal_path(app, &plan.skill);
     archive_previous_terminal_journal(app, &journal_path, &plan)?;
+    let mut effective_identity = identity.clone();
     if journal_path.exists()
-        && let Some(output) = recover_journal(app, &journal_path, &plan, request_id)?
+        && let Some(output) = recover_journal(
+            app,
+            &journal_path,
+            &plan,
+            &mut effective_identity,
+            request_id,
+        )?
     {
-        return Ok(apply_output(&plan, cursor, identity, output));
+        return Ok(apply_output(&plan, cursor, &effective_identity, output));
     }
     let snapshot = validate_guards(app, &plan, cursor)?;
     let paths = RegistryStatePaths::from_app_context(&app.ctx);
@@ -216,6 +226,10 @@ pub(super) fn apply_convergence(
     }
     let mut journal = TransactionJournal {
         plan_id: plan.plan_id.clone(),
+        plan_digest: Some(identity.plan_digest.clone()),
+        convergence_id: Some(identity.convergence_id.clone()),
+        idempotency_key_digest: Some(identity.key_digest.clone()),
+        idempotency_binding_digest: Some(identity.binding_digest.clone()),
         skill: plan.skill.clone(),
         previous_head: plan.source.registry_head.clone(),
         artifact_root: artifact_dir.display().to_string(),

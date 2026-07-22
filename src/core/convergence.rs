@@ -43,6 +43,14 @@ pub(crate) struct ConvergenceRequestScope {
     pub push_remote: bool,
 }
 
+impl ConvergenceRequestScope {
+    pub(crate) fn digest(&self) -> Result<String, serde_json::Error> {
+        let mut hasher = Sha256::new();
+        hasher.update(&serde_json::to_vec(self)?);
+        Ok(format!("sha256:{}", to_hex(&hasher.finalize())))
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub(crate) struct SourceGuard {
     pub direction: ConvergenceInputDirection,

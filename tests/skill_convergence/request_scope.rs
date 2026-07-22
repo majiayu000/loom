@@ -212,6 +212,44 @@ fn normalized_workspace_cannot_be_self_attested_by_the_resealed_plan() {
 }
 
 #[test]
+fn token_prefixed_profile_is_not_redacted_from_request_evidence() {
+    let fixture = projected_fixture();
+    let workspace = fixture.workspace.path().to_str().expect("workspace path");
+    let (output, plan) = run_loom(
+        fixture.root.path(),
+        &[
+            "plan",
+            "converge",
+            "demo",
+            "--agent",
+            "claude",
+            "--workspace",
+            workspace,
+            "--profile",
+            "sk-demo",
+        ],
+    );
+    assert!(output.status.success(), "plan failed: {plan}");
+    assert_eq!(plan["data"]["request_scope"]["profile"], json!("sk-demo"));
+
+    let (output, applied) = run_loom(
+        fixture.root.path(),
+        &[
+            "apply",
+            plan["data"]["plan_id"].as_str().expect("plan id"),
+            "--plan-digest",
+            plan["data"]["plan_digest"].as_str().expect("plan digest"),
+            "--idempotency-key",
+            "token-prefixed-profile",
+        ],
+    );
+    assert!(
+        output.status.success(),
+        "valid token-prefixed profile drifted: {applied}"
+    );
+}
+
+#[test]
 fn runtime_requirement_is_bound_to_the_started_plan_request() {
     let fixture = projected_fixture();
     let (output, plan) = plan_converge(

@@ -108,12 +108,18 @@ fn mutate_plan_event(root: &std::path::Path, plan_id: &str, mutate: impl FnOnce(
         .lines()
         .map(|line| {
             let mut event: Value = serde_json::from_str(line).expect("parse command event");
+            let stored_plan = event.get("durable_plan").unwrap_or(&event["output"]);
             if event["cmd"] == json!("plan.converge")
                 && event["status"] == json!("succeeded")
-                && event["output"]["plan_id"] == json!(plan_id)
+                && stored_plan["plan_id"] == json!(plan_id)
                 && let Some(mutate) = mutate.take()
             {
-                mutate(&mut event["output"]);
+                let stored_plan = if event.get("durable_plan").is_some() {
+                    &mut event["durable_plan"]
+                } else {
+                    &mut event["output"]
+                };
+                mutate(stored_plan);
             }
             serde_json::to_string(&event).expect("serialize command event")
         })

@@ -8,7 +8,7 @@ use crate::core::convergence::{ConvergenceInputDirection, ConvergenceRequestScop
 
 use super::{CommandFailure, ErrorCode, plan_failure};
 
-pub(super) fn convergence_request_scope(
+pub(crate) fn convergence_request_scope(
     args: &PlanConvergeArgs,
     workspace: Option<&Path>,
 ) -> ConvergenceRequestScope {
@@ -46,70 +46,17 @@ pub(super) fn validate_convergence_request_scope(
         .map_err(|_| {
         request_evidence_failure(cursor, "invalid digest-covered request scope")
     })?;
-    let started = request_scope_from_event(request, cursor)?;
-    if started != sealed || !request_scope_matches_plan(&sealed, plan) {
+    let started_digest = request
+        .get("request_scope_digest")
+        .and_then(Value::as_str)
+        .ok_or_else(|| request_evidence_failure(cursor, "invalid request_scope_digest evidence"))?;
+    let sealed_digest = sealed.digest().map_err(|_| {
+        request_evidence_failure(cursor, "unencodable digest-covered request scope")
+    })?;
+    if started_digest != sealed_digest || !request_scope_matches_plan(&sealed, plan) {
         return Err(request_scope_drift(cursor));
     }
     Ok(())
-}
-
-fn request_scope_from_event(
-    request: &serde_json::Map<String, Value>,
-    cursor: usize,
-) -> std::result::Result<ConvergenceRequestScope, CommandFailure> {
-    let string = |field: &str| {
-        request
-            .get(field)
-            .and_then(Value::as_str)
-            .map(str::to_string)
-            .ok_or_else(|| request_evidence_failure(cursor, &format!("invalid {field} evidence")))
-    };
-    let optional_string = |field: &str| match request.get(field) {
-        Some(Value::Null) => Ok(None),
-        Some(Value::String(value)) => Ok(Some(value.clone())),
-        _ => Err(request_evidence_failure(
-            cursor,
-            &format!("invalid {field} evidence"),
-        )),
-    };
-    let boolean = |field: &str| {
-        request
-            .get(field)
-            .and_then(Value::as_bool)
-            .ok_or_else(|| request_evidence_failure(cursor, &format!("invalid {field} evidence")))
-    };
-    let from_source = boolean("from_source")?;
-    let from_projection = boolean("from_projection")?;
-    if from_source && from_projection {
-        return Err(request_evidence_failure(
-            cursor,
-            "conflicting input direction evidence",
-        ));
-    }
-    let direction = if from_projection {
-        ConvergenceInputDirection::Projection
-    } else {
-        ConvergenceInputDirection::Source
-    };
-    let instance = optional_string("instance")?;
-    if (direction == ConvergenceInputDirection::Projection) != instance.is_some() {
-        return Err(request_evidence_failure(
-            cursor,
-            "inconsistent projection instance evidence",
-        ));
-    }
-    Ok(ConvergenceRequestScope {
-        skill: string("skill")?,
-        direction,
-        instance,
-        agent: optional_string("agent")?,
-        workspace_argument: optional_string("workspace")?,
-        workspace: optional_string("workspace_resolved")?,
-        profile: optional_string("profile")?,
-        require_runtime: boolean("require_runtime")?,
-        accept_restart_required: boolean("accept_restart_required")?,
-        push_remote: boolean("push_remote")?,
-    })
 }
 
 fn request_scope_matches_plan(scope: &ConvergenceRequestScope, plan: &Value) -> bool {

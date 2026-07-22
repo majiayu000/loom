@@ -24,7 +24,7 @@ use super::{App, CommandFailure};
 mod apply_identity;
 mod converge;
 mod convergence_transaction;
-mod request_scope;
+pub(super) mod request_scope;
 
 use apply_identity::{
     ConvergenceApplyIdentity, convergence_id, convergence_idempotency_binding_digest,
@@ -310,7 +310,11 @@ fn find_plan<'a>(events: &'a [CommandEventRow], plan_id: &str) -> Option<StoredP
         if row.event.status != "succeeded" {
             return None;
         }
-        let plan = row.event.output.as_ref()?;
+        let plan = row
+            .event
+            .durable_plan
+            .as_ref()
+            .or(row.event.output.as_ref())?;
         let request_input = events[..index]
             .iter()
             .rev()

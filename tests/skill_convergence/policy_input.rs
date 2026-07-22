@@ -20,21 +20,15 @@ const CONVERGENCE_DIGEST_FIELDS: [&str; 14] = [
     "required_approvals",
 ];
 
-fn reseal_projection_input_method(fixture: &Fixture, plan: &Value, method: &str) -> String {
+fn reseal_plan_event(
+    fixture: &Fixture,
+    plan: &Value,
+    mut mutate: impl FnMut(&mut Value),
+) -> String {
     let plan_id = plan["data"]["plan_id"].as_str().expect("plan id");
     let mut resealed = None;
     mutate_plan_event(fixture.root.path(), plan_id, |stored| {
-        let selected = stored["input"]["selected_projection_instance"]
-            .as_str()
-            .expect("selected projection")
-            .to_string();
-        let input = stored["input"]["projections"]
-            .as_array_mut()
-            .expect("projection inputs")
-            .iter_mut()
-            .find(|item| item["instance_id"].as_str() == Some(&selected))
-            .expect("selected projection input");
-        input["method"] = json!(method);
+        mutate(stored);
         let object = stored.as_object().expect("stored plan object");
         let payload = CONVERGENCE_DIGEST_FIELDS
             .into_iter()
@@ -47,6 +41,22 @@ fn reseal_projection_input_method(fixture: &Fixture, plan: &Value, method: &str)
         resealed = stored["plan_digest"].as_str().map(str::to_string);
     });
     resealed.expect("resealed plan digest")
+}
+
+fn reseal_projection_input_method(fixture: &Fixture, plan: &Value, method: &str) -> String {
+    reseal_plan_event(fixture, plan, |stored| {
+        let selected = stored["input"]["selected_projection_instance"]
+            .as_str()
+            .expect("selected projection")
+            .to_string();
+        let input = stored["input"]["projections"]
+            .as_array_mut()
+            .expect("projection inputs")
+            .iter_mut()
+            .find(|item| item["instance_id"].as_str() == Some(&selected))
+            .expect("selected projection input");
+        input["method"] = json!(method);
+    })
 }
 
 #[test]
@@ -83,6 +93,74 @@ fn unsupported_projection_input_method_fails_closed_before_policy_capture() {
     assert_eq!(
         rejected["error"]["details"]["conflict"]["code"],
         json!("PLAN_POLICY_DRIFT")
+    );
+    assert_eq!(
+        git(fixture.root.path(), &["rev-parse", "HEAD"]),
+        before_head
+    );
+    assert_eq!(
+        snapshot_tree(&fixture.root.path().join("skills/demo")),
+        before_source
+    );
+    assert_eq!(
+        snapshot_tree(&fixture.root.path().join("state/registry")),
+        before_registry
+    );
+    assert_eq!(snapshot_tree(fixture.target.path()), before_target);
+}
+
+#[test]
+fn resealed_plan_cannot_clear_non_policy_preflight_blockers() {
+    let fixture = projected_fixture();
+    let (output, initial) = plan_converge(&fixture, &[]);
+    assert!(output.status.success(), "initial plan failed: {initial}");
+    let instance = initial["data"]["effects"][0]["instance_id"]
+        .as_str()
+        .expect("projection instance");
+    fs::write(
+        fixture.target.path().join("demo/SKILL.md"),
+        "---\nname: wrong-name\n---\n# invalid projection input\n",
+    )
+    .expect("write invalid projection input");
+    let (output, blocked_plan) =
+        plan_converge(&fixture, &["--from-projection", "--instance", instance]);
+    assert!(
+        output.status.success(),
+        "blocked plan failed: {blocked_plan}"
+    );
+    assert_eq!(
+        blocked_plan["data"]["preflight"]["mutation_allowed"],
+        json!(false)
+    );
+
+    let digest = reseal_plan_event(&fixture, &blocked_plan, |stored| {
+        stored["safe_to_apply"] = json!(true);
+        stored["input_conflicts"] = json!([]);
+        stored["preflight"]["mutation_allowed"] = json!(true);
+        stored["preflight"]["regression_ids"] = json!([]);
+    });
+    let before_head = git(fixture.root.path(), &["rev-parse", "HEAD"]);
+    let before_source = snapshot_tree(&fixture.root.path().join("skills/demo"));
+    let before_registry = snapshot_tree(&fixture.root.path().join("state/registry"));
+    let before_target = snapshot_tree(fixture.target.path());
+    let (output, rejected) = run_loom(
+        fixture.root.path(),
+        &[
+            "apply",
+            blocked_plan["data"]["plan_id"].as_str().expect("plan id"),
+            "--plan-digest",
+            &digest,
+            "--idempotency-key",
+            "cleared-preflight-blockers",
+        ],
+    );
+    assert!(
+        !output.status.success(),
+        "cleared preflight applied: {rejected}"
+    );
+    assert_eq!(
+        rejected["error"]["details"]["conflict"]["code"],
+        json!("PLAN_PREFLIGHT_DRIFT")
     );
     assert_eq!(
         git(fixture.root.path(), &["rev-parse", "HEAD"]),

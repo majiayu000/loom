@@ -11,6 +11,7 @@ use crate::fs_util::{append_jsonl_raw, ensure_append_log, maybe_fault_inject_any
 use crate::state::AppContext;
 
 use super::agent_cmds::planning_helpers::normalize_path;
+use super::plan_cmds::request_scope::convergence_request_scope;
 
 const COMMAND_EVENT_SCHEMA_VERSION: u32 = 1;
 
@@ -27,6 +28,8 @@ pub(crate) struct CommandEvent {
     pub input: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub output: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub durable_plan: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -52,12 +55,15 @@ pub(crate) fn command_event_input(cli: &Cli, request_id: &str) -> Result<serde_j
             .pointer_mut("/command/Plan/command/Converge")
             .and_then(serde_json::Value::as_object_mut)
             .context("encoded converge command is missing its request object")?;
+        let workspace = args.workspace.as_ref().map(|path| normalize_path(path));
+        let scope = convergence_request_scope(args, workspace.as_deref());
         request.insert(
-            "workspace_resolved".to_string(),
-            args.workspace
-                .as_ref()
-                .map(|path| normalize_path(path).display().to_string())
-                .map_or(serde_json::Value::Null, serde_json::Value::String),
+            "request_scope_digest".to_string(),
+            serde_json::Value::String(
+                scope
+                    .digest()
+                    .context("failed to digest converge request scope")?,
+            ),
         );
     }
     redact_sensitive_strings(&mut input);
@@ -80,6 +86,7 @@ pub(crate) fn append_command_started(
         exit_code: None,
         input: Some(input),
         output: None,
+        durable_plan: None,
         error: None,
         side_effects: None,
         created_at: Utc::now(),
@@ -132,6 +139,8 @@ fn append_command_finished_with_fault_tags(
         exit_code: Some(exit_code),
         input: None,
         output: Some(redacted_value(envelope.data.clone())),
+        durable_plan: (envelope.ok && matches!(cmd, "plan.use" | "plan.converge"))
+            .then(|| envelope.data.clone()),
         error: envelope
             .error
             .as_ref()
@@ -543,6 +552,7 @@ mod tests {
                                 "payload": payload,
                             })),
                             output: None,
+                            durable_plan: None,
                             error: None,
                             side_effects: None,
                             created_at: Utc::now(),

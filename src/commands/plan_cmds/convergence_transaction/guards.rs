@@ -574,6 +574,22 @@ fn validate_policy_gate(
             "PLAN_POLICY_DRIFT",
         )
     })?;
+    let preflight_candidate = prepared.candidate_path(&plan.skill);
+    let mut fresh_preflight = app
+        .convergence_preflight_evidence(
+            &plan.skill,
+            plan.selectors.agent.as_deref(),
+            plan.selectors.workspace.as_deref().map(Path::new),
+            plan.source.direction.clone(),
+            &plan.input.selected_input_tree_digest,
+            preflight_candidate.as_deref(),
+        )
+        .map_err(|error| {
+            scope_failure(
+                format!("fresh preflight capture failed: {}", error.message),
+                "PLAN_PREFLIGHT_DRIFT",
+            )
+        })?;
     let policy = prepared.policy();
     let observed_policy_digest = digest_value(&serde_json::to_value(policy).map_err(map_io)?)?;
     let policy_digest = checks.get("policy_safe_capture_digest");
@@ -601,7 +617,54 @@ fn validate_policy_gate(
             "PLAN_APPROVAL_DRIFT",
         ));
     }
+    fresh_preflight.checks.extend([
+        (
+            "policy_safe_capture_digest".to_string(),
+            observed_policy_digest,
+        ),
+        ("policy_decision".to_string(), observed_decision.to_string()),
+        (
+            "policy_required_approvals_digest".to_string(),
+            observed_approvals,
+        ),
+    ]);
+    let sealed_non_policy = normalized_non_policy_checks(&plan.preflight.checks);
+    let fresh_non_policy = normalized_non_policy_checks(&fresh_preflight.checks);
+    if plan.preflight.input_direction != fresh_preflight.input_direction
+        || plan.preflight.input_tree_digest != fresh_preflight.input_tree_digest
+        || plan.preflight.regression_ids != fresh_preflight.regression_ids
+        || plan.preflight.mutation_allowed != fresh_preflight.mutation_allowed
+        || sealed_non_policy.is_none()
+        || sealed_non_policy != fresh_non_policy
+    {
+        let mut failure = scope_failure(
+            "sealed preflight evidence does not match the fresh full preflight",
+            "PLAN_PREFLIGHT_DRIFT",
+        );
+        failure.details["preflight_drift"] = json!({
+            "sealed": plan.preflight,
+            "fresh": fresh_preflight,
+        });
+        return Err(failure);
+    }
     Ok(())
+}
+
+fn normalized_non_policy_checks(
+    checks: &std::collections::BTreeMap<String, String>,
+) -> Option<std::collections::BTreeMap<String, String>> {
+    checks
+        .iter()
+        .filter(|(name, _)| name.as_str() != "source_drift" && !name.starts_with("policy_"))
+        .map(|(name, status)| {
+            let gate = match status.as_str() {
+                "pass" | "warning" | "skipped" => "non_blocking",
+                "fail" | "unknown" => "blocking",
+                _ => return None,
+            };
+            Some((name.clone(), gate.to_string()))
+        })
+        .collect()
 }
 
 fn sealed_digest_is_valid(value: &str) -> bool {

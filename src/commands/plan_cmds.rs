@@ -24,11 +24,13 @@ use super::{App, CommandFailure};
 mod apply_identity;
 mod converge;
 mod convergence_transaction;
+pub(super) mod request_scope;
 
 use apply_identity::{
     ConvergenceApplyIdentity, convergence_id, convergence_idempotency_binding_digest,
     idempotency_binding_digest, idempotency_key_digest, replay_convergence_identity,
 };
+use request_scope::validate_convergence_request_scope;
 
 const PLAN_PROTOCOL_VERSION: &str = "1.0";
 const PLAN_SCHEMA_VERSION: &str = "1.0";
@@ -64,11 +66,13 @@ impl App {
         })?;
         validate_stored_plan_metadata(&stored)?;
         let confirmed_plan_digest = if stored.kind == StoredPlanKind::Converge {
-            Some(validate_confirmed_plan_digest(
+            let digest = validate_confirmed_plan_digest(
                 stored.plan,
                 stored.cursor,
                 args.plan_digest.as_deref(),
-            )?)
+            )?;
+            validate_convergence_request_scope(stored.plan, stored.request_input, stored.cursor)?;
+            Some(digest)
         } else {
             None
         };
@@ -230,6 +234,7 @@ impl App {
 struct StoredPlan<'a> {
     cursor: usize,
     plan: &'a Value,
+    request_input: Option<&'a Value>,
     kind: StoredPlanKind,
 }
 
@@ -296,7 +301,7 @@ fn plan_use_args(plan: &Value) -> std::result::Result<UseArgs, CommandFailure> {
 }
 
 fn find_plan<'a>(events: &'a [CommandEventRow], plan_id: &str) -> Option<StoredPlan<'a>> {
-    events.iter().rev().find_map(|row| {
+    events.iter().enumerate().rev().find_map(|(index, row)| {
         let kind = match row.event.cmd.as_str() {
             "plan.use" => StoredPlanKind::Use,
             "plan.converge" => StoredPlanKind::Converge,
@@ -305,10 +310,24 @@ fn find_plan<'a>(events: &'a [CommandEventRow], plan_id: &str) -> Option<StoredP
         if row.event.status != "succeeded" {
             return None;
         }
-        let plan = row.event.output.as_ref()?;
+        let plan = row
+            .event
+            .durable_plan
+            .as_ref()
+            .or(row.event.output.as_ref())?;
+        let request_input = events[..index]
+            .iter()
+            .rev()
+            .find(|candidate| {
+                candidate.event.cmd == row.event.cmd
+                    && candidate.event.request_id == row.event.request_id
+                    && candidate.event.status == "started"
+            })
+            .and_then(|candidate| candidate.event.input.as_ref());
         (plan["plan_id"].as_str() == Some(plan_id)).then_some(StoredPlan {
             cursor: row.cursor,
             plan,
+            request_input,
             kind,
         })
     })
@@ -319,11 +338,16 @@ fn validate_stored_plan_metadata(
 ) -> std::result::Result<(), CommandFailure> {
     if stored.kind == StoredPlanKind::Converge
         && stored.plan["operation"] == json!("converge")
-        && stored.plan["schema_version"] == json!("1.1")
+        && stored.plan["schema_version"]
+            .as_str()
+            .is_some_and(|version| matches!(version, "1.1" | "1.2"))
     {
         return Err(plan_failure(
             ErrorCode::SchemaMismatch,
-            "stored convergence plan schema 1.1 cannot be applied by the schema 1.2 executor",
+            format!(
+                "stored convergence plan schema {} cannot be applied by the schema 1.3 executor",
+                stored.plan["schema_version"].as_str().unwrap_or("unknown")
+            ),
             "PLAN_SCHEMA_UNSUPPORTED",
             false,
             vec!["create and review a fresh convergence plan".to_string()],
@@ -338,7 +362,7 @@ fn validate_stored_plan_metadata(
         }
         StoredPlanKind::Converge => {
             stored.plan["operation"] == json!("converge")
-                && stored.plan["schema_version"] == json!("1.2")
+                && stored.plan["schema_version"] == json!("1.3")
                 && stored.plan["requires_digest_confirmation"] == json!(true)
                 && stored.plan["execution_enabled"] == json!(true)
         }

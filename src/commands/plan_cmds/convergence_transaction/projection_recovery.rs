@@ -1,6 +1,153 @@
 use super::super::super::projection_executor::convergence_projection_fingerprint;
 use super::recovery_evidence::corrupt;
 use super::*;
+use crate::fs_util::DirectoryHandle;
+
+struct ProjectionRecoveryScope {
+    target: DirectoryHandle,
+    owner: DirectoryHandle,
+    target_path: PathBuf,
+    owner_path: PathBuf,
+    live_name: PathBuf,
+    stage_name: PathBuf,
+    owner_name: PathBuf,
+}
+
+impl ProjectionRecoveryScope {
+    fn open(artifact: &ProjectionBackup) -> std::result::Result<Self, CommandFailure> {
+        let live = Path::new(&artifact.materialized_path);
+        let stage = Path::new(&artifact.staging_path);
+        let target_path = live
+            .parent()
+            .ok_or_else(|| corrupt("projection has no target root"))?;
+        let owner_path = stage
+            .parent()
+            .ok_or_else(|| corrupt("projection has no stage owner"))?;
+        if owner_path.parent() != Some(target_path) {
+            return Err(corrupt("projection stage owner escaped its target root"));
+        }
+        let target = DirectoryHandle::open(target_path).map_err(map_io)?;
+        let owner_name = owner_path
+            .file_name()
+            .map(PathBuf::from)
+            .ok_or_else(|| corrupt("projection stage owner has no file name"))?;
+        let owner = target.open_dir(&owner_name).map_err(map_io)?;
+        let live_name = live
+            .file_name()
+            .map(PathBuf::from)
+            .ok_or_else(|| corrupt("projection has no live file name"))?;
+        let stage_name = stage
+            .file_name()
+            .map(PathBuf::from)
+            .ok_or_else(|| corrupt("projection has no stage file name"))?;
+        Ok(Self {
+            target,
+            owner,
+            target_path: target_path.to_path_buf(),
+            owner_path: owner_path.to_path_buf(),
+            live_name,
+            stage_name,
+            owner_name,
+        })
+    }
+
+    fn validate_owner(
+        &self,
+        plan_id: &str,
+        proof: &str,
+    ) -> std::result::Result<(), CommandFailure> {
+        ownership::validate_owned_staging_at(&self.target, &self.owner_name, plan_id, proof)
+    }
+
+    fn validate_path_binding(&self) -> std::result::Result<(), CommandFailure> {
+        let target_matches = self
+            .target
+            .matches_path(&self.target_path)
+            .map_err(map_io)?;
+        let owner_matches = self.owner.matches_path(&self.owner_path).map_err(map_io)?;
+        if target_matches && owner_matches {
+            return Ok(());
+        }
+        Err(recovery_conflict(
+            &self.target_path,
+            "opened projection recovery scope no longer matches its path",
+        ))
+    }
+
+    fn exchange(&self) -> std::result::Result<(), CommandFailure> {
+        self.owner
+            .exchange_to(&self.stage_name, &self.target, &self.live_name)
+            .map_err(map_io)
+    }
+
+    fn retire_created(&self) -> std::result::Result<(), CommandFailure> {
+        self.target
+            .rename_no_replace_to(&self.live_name, &self.owner, &self.stage_name)
+            .map_err(map_io)
+    }
+
+    fn staging_exists(&self) -> std::result::Result<bool, CommandFailure> {
+        self.owner.entry_exists(&self.stage_name).map_err(map_io)
+    }
+
+    fn live_exists(&self) -> std::result::Result<bool, CommandFailure> {
+        self.target.entry_exists(&self.live_name).map_err(map_io)
+    }
+
+    fn remove_staging(&self) -> std::result::Result<(), CommandFailure> {
+        self.owner.remove_tree(&self.stage_name).map_err(map_io)
+    }
+
+    fn restore_staging_from_backup(
+        &self,
+        backup: &Value,
+    ) -> std::result::Result<(), CommandFailure> {
+        if self.staging_exists()? {
+            return Err(recovery_conflict(
+                Path::new(&self.stage_name),
+                "refusing to replace recovery staging path",
+            ));
+        }
+        let candidate = Path::new(".rollback-restore");
+        if self.owner.entry_exists(candidate).map_err(map_io)? {
+            self.owner.remove_tree(candidate).map_err(map_io)?;
+        }
+        let backup_path = backup["backup_path"]
+            .as_str()
+            .map(Path::new)
+            .ok_or_else(|| corrupt("projection backup path is missing"))?;
+        match backup["kind"].as_str() {
+            Some("dir") => {
+                self.owner.create_dir(candidate).map_err(map_io)?;
+                let destination = self.owner.open_dir(candidate).map_err(map_io)?;
+                crate::commands::file_ops::copy_dir_recursive_to_handle(
+                    backup_path,
+                    &destination,
+                    true,
+                )
+                .map_err(|error| CommandFailure::new(ErrorCode::IoError, error.to_string()))?;
+            }
+            Some("file") => self
+                .owner
+                .copy_file(backup_path, candidate)
+                .map_err(map_io)?,
+            Some("symlink") => {
+                let raw = fs::read_to_string(backup_path.join("symlink.json")).map_err(map_io)?;
+                let payload: Value = serde_json::from_str(&raw).map_err(map_io)?;
+                let target = payload["target"]
+                    .as_str()
+                    .map(Path::new)
+                    .ok_or_else(|| corrupt("projection symlink backup target is missing"))?;
+                self.owner.symlink(target, candidate).map_err(map_io)?;
+            }
+            _ => return Err(corrupt("projection backup kind is invalid")),
+        }
+        self.owner
+            .rename_no_replace_to(candidate, &self.owner, &self.stage_name)
+            .map_err(map_io)?;
+        self.owner.sync().map_err(map_io)
+    }
+}
 
 pub(super) fn restore_projection_from_evidence(
     artifact: &ProjectionBackup,
@@ -34,17 +181,23 @@ pub(super) fn prepare_projection_restore_fingerprint(
     }
     let live = Path::new(&artifact.materialized_path);
     let staging = Path::new(&artifact.staging_path);
+    let scope = ProjectionRecoveryScope::open(artifact)?;
     let expected = artifact
         .fingerprint()
         .ok_or_else(|| corrupt("projection activation fingerprint is missing"))?;
-    validate_owned_staging(live, staging, plan_id, &artifact.owner_proof)?;
+    scope.validate_owner(plan_id, &artifact.owner_proof)?;
+    scope.validate_path_binding()?;
     require_fingerprint(
         live,
         expected,
         "live projection before rollback preparation",
     )?;
-    if staging.try_exists().map_err(map_io)? {
+    scope.validate_path_binding()?;
+    test_projection_recovery_pause("before_restore_preparation_mutation")?;
+    scope.validate_path_binding()?;
+    if scope.staging_exists()? {
         let fingerprint = convergence_projection_fingerprint(staging)?;
+        scope.validate_path_binding()?;
         if artifact.original_fingerprint.as_deref() == Some(fingerprint.as_str()) {
             if !path_matches_backup(staging, backup)? {
                 return Err(recovery_conflict(
@@ -52,22 +205,62 @@ pub(super) fn prepare_projection_restore_fingerprint(
                     "retained original staging does not match durable backup evidence",
                 ));
             }
+            scope.validate_path_binding()?;
             return Ok(Some(fingerprint));
         }
         // The owner proof and exact live activation fingerprint above make this
         // declared private path safe to rebuild. With no persisted restore
         // fingerprint, anything else here is an interrupted restore candidate.
-        crate::fs_util::remove_path_if_exists(staging).map_err(map_io)?;
+        scope.validate_path_binding()?;
+        scope.remove_staging()?;
     }
-    let candidate = staging.with_file_name(".rollback-restore");
-    restore_path_from_backup_if_absent(staging, &candidate, backup).map_err(map_io)?;
+    scope.validate_path_binding()?;
+    scope.restore_staging_from_backup(backup)?;
     if !path_matches_backup(staging, backup)? {
         return Err(recovery_conflict(
             staging,
             "staged rollback backup does not match durable evidence",
         ));
     }
-    Ok(Some(convergence_projection_fingerprint(staging)?))
+    let fingerprint = convergence_projection_fingerprint(staging)?;
+    scope.validate_path_binding()?;
+    Ok(Some(fingerprint))
+}
+
+#[cfg(debug_assertions)]
+fn test_projection_recovery_pause(point: &str) -> std::result::Result<(), CommandFailure> {
+    if std::env::var("LOOM_TEST_CONVERGENCE_RECOVERY_SCOPE_PAUSE_POINT")
+        .ok()
+        .as_deref()
+        != Some(point)
+    {
+        return Ok(());
+    }
+    let directory = std::env::var_os("LOOM_TEST_CONVERGENCE_RECOVERY_SCOPE_PAUSE_DIR")
+        .map(PathBuf::from)
+        .ok_or_else(|| {
+            CommandFailure::new(
+                ErrorCode::IoError,
+                "projection recovery scope pause directory is absent",
+            )
+        })?;
+    fs::create_dir_all(&directory).map_err(map_io)?;
+    fs::write(directory.join("ready"), point).map_err(map_io)?;
+    for _ in 0..2_000 {
+        if directory.join("release").try_exists().map_err(map_io)? {
+            return Ok(());
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    Err(CommandFailure::new(
+        ErrorCode::IoError,
+        "projection recovery scope test pause timed out",
+    ))
+}
+
+#[cfg(not(debug_assertions))]
+fn test_projection_recovery_pause(_point: &str) -> std::result::Result<(), CommandFailure> {
+    Ok(())
 }
 
 fn restore_projection_with_hook<F>(
@@ -78,6 +271,20 @@ fn restore_projection_with_hook<F>(
 where
     F: FnOnce(&Path),
 {
+    restore_projection_with_hooks(artifact, plan_id, || {}, before_atomic_restore)
+}
+
+fn restore_projection_with_hooks<F, G>(
+    artifact: &ProjectionBackup,
+    plan_id: &str,
+    after_scope_open: F,
+    before_atomic_restore: G,
+) -> std::result::Result<(), CommandFailure>
+where
+    F: FnOnce(),
+    G: FnOnce(&Path),
+{
+    let scope = ProjectionRecoveryScope::open(artifact)?;
     let live = Path::new(&artifact.materialized_path);
     let staging = Path::new(&artifact.staging_path);
     let expected = artifact
@@ -93,10 +300,12 @@ where
     } else {
         None
     };
-    validate_owned_staging(live, staging, plan_id, &artifact.owner_proof)?;
+    scope.validate_owner(plan_id, &artifact.owner_proof)?;
+    after_scope_open();
+    scope.validate_path_binding()?;
 
-    let live_exists = live.try_exists().map_err(map_io)?;
-    let staging_exists = staging.try_exists().map_err(map_io)?;
+    let live_exists = scope.live_exists()?;
+    let staging_exists = scope.staging_exists()?;
     if staging_exists {
         if let Some(backup) = artifact.backup.as_ref()
             && live_exists
@@ -110,8 +319,10 @@ where
                 expected,
                 "live projection after interrupted activation",
             )?;
+            scope.validate_path_binding()?;
             before_atomic_restore(live);
-            exchange_paths_atomic(staging, live).map_err(map_io)?;
+            scope.validate_path_binding()?;
+            scope.exchange()?;
             require_fingerprint(staging, expected, "projection exchanged during rollback")?;
             require_fingerprint(live, restored, "restored live projection")?;
             if !path_matches_backup(live, backup)? {
@@ -120,6 +331,7 @@ where
                     "restored live projection does not match durable backup",
                 ));
             }
+            scope.validate_path_binding()?;
             return Ok(());
         }
         require_fingerprint(staging, expected, "retained rollback artifact")?;
@@ -136,6 +348,7 @@ where
         if let Some(restored) = restored {
             require_fingerprint(live, restored, "restored live projection")?;
         }
+        scope.validate_path_binding()?;
         return Ok(());
     }
     if !live_exists {
@@ -150,14 +363,16 @@ where
     }
 
     require_fingerprint(live, expected, "live projection before rollback")?;
+    scope.validate_path_binding()?;
     before_atomic_restore(live);
+    scope.validate_path_binding()?;
     if artifact.backup.is_some() {
         return Err(recovery_conflict(
             staging,
             "refresh rollback staging was not durably prepared",
         ));
     }
-    rename_no_replace_atomic(live, staging).map_err(map_io)?;
+    scope.retire_created()?;
     require_fingerprint(staging, expected, "projection removed during rollback")?;
     Ok(())
 }
@@ -260,10 +475,14 @@ mod tests {
     }
 
     fn test_root() -> TestRoot {
-        TestRoot(std::env::temp_dir().join(format!(
-            "loom-convergence-recovery-test-{}",
-            uuid::Uuid::new_v4()
-        )))
+        TestRoot(
+            fs::canonicalize(std::env::temp_dir())
+                .expect("canonical temp directory")
+                .join(format!(
+                    "loom-convergence-recovery-test-{}",
+                    uuid::Uuid::new_v4()
+                )),
+        )
     }
 
     #[test]
@@ -319,6 +538,32 @@ mod tests {
         assert_eq!(
             fs::read_to_string(retained.join("external.txt")).expect("retained race bytes"),
             "external\n"
+        );
+    }
+
+    #[test]
+    fn create_rollback_rejects_replaced_target_after_opening_scope() {
+        let root = test_root();
+        let artifact = create_artifact(&root, "transaction\n");
+        let original_target = root.0.join("live");
+        let held_target = root.0.join("held-live");
+
+        let error = restore_projection_with_hooks(
+            &artifact,
+            "plan-concurrent-live",
+            || {
+                fs::rename(&original_target, &held_target).expect("hold opened target");
+                fs::create_dir(&original_target).expect("install replacement target");
+            },
+            |_| {},
+        )
+        .expect_err("replacement target pathname must fail closed");
+
+        assert_eq!(error.code, ErrorCode::ProjectionConflict);
+        assert_eq!(
+            fs::read_to_string(held_target.join("demo/details.txt"))
+                .expect("preserved transaction bytes"),
+            "transaction\n"
         );
     }
 

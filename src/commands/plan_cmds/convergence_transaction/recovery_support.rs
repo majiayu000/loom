@@ -57,6 +57,7 @@ pub(super) fn recover_journal(
                 }
                 Err(failure) => return Err(failure),
             };
+            let target_scopes = super::preparation::open_projection_target_scopes(plan)?;
             if journal.phase == TransactionPhase::Preparing {
                 super::preparation::prepare_transaction_artifacts_from_snapshot(
                     app,
@@ -64,6 +65,7 @@ pub(super) fn recover_journal(
                     plan,
                     journal_path,
                     &mut journal,
+                    &target_scopes,
                 )?;
                 journal.phase = TransactionPhase::Prepared;
                 save_journal(journal_path, &journal)?;
@@ -77,6 +79,7 @@ pub(super) fn recover_journal(
                 request_id,
                 journal_path,
                 &mut journal,
+                &target_scopes,
             )?;
             journal.result = Some(result.clone());
             journal.phase = TransactionPhase::CommittedCleanupPending;
@@ -171,6 +174,7 @@ pub(super) fn recover_journal(
             return Ok(Some(result));
         }
         validate_rollback_evidence(app, plan, &journal)?;
+        let target_scopes = super::preparation::open_projection_target_scopes(plan)?;
         if journal.phase != TransactionPhase::PreparingProjections {
             validate_mutated_surfaces(app, &paths, plan, &mut journal)?;
             if journal.phase == TransactionPhase::RotatingProjections {
@@ -186,7 +190,14 @@ pub(super) fn recover_journal(
             }
             maybe_skill_fault("convergence_interrupt_after_projection_generation_rotation")?;
         }
-        prepare_projection_stages(app, plan, request_id, journal_path, &mut journal)?;
+        prepare_projection_stages(
+            app,
+            plan,
+            request_id,
+            journal_path,
+            &mut journal,
+            &target_scopes,
+        )?;
         journal.phase = TransactionPhase::SourceCommitted;
         save_journal(journal_path, &journal)?;
         let snapshot = paths.maybe_load_snapshot().map_err(map_registry_state)?;
@@ -198,6 +209,7 @@ pub(super) fn recover_journal(
             request_id,
             journal_path,
             &mut journal,
+            &target_scopes,
         )?;
         journal.result = Some(result.clone());
         journal.phase = TransactionPhase::CommittedCleanupPending;
@@ -338,7 +350,7 @@ pub(super) fn cleanup_declared_artifacts(
     errors
 }
 
-fn validate_journal(
+pub(super) fn validate_journal(
     app: &App,
     journal_path: &Path,
     plan: &SkillConvergencePlan,

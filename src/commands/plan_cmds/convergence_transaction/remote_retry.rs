@@ -1,16 +1,16 @@
+use std::fs;
+
 use serde_json::Value;
 
-use crate::core::convergence::{RemotePolicy, SkillConvergencePlan};
-use crate::gitops;
-
 use super::*;
+use crate::core::convergence::{RemotePolicy, SkillConvergencePlan};
 
 pub(in crate::commands::plan_cmds) fn retry_remote_transport(
     app: &App,
     stored: &Value,
     cursor: usize,
     identity: &super::super::ConvergenceApplyIdentity,
-    local: Value,
+    event_local: Value,
 ) -> std::result::Result<Value, CommandFailure> {
     let plan: SkillConvergencePlan = serde_json::from_value(stored.clone()).map_err(|err| {
         plan_failure(
@@ -30,7 +30,7 @@ pub(in crate::commands::plan_cmds) fn retry_remote_transport(
     if plan.remote != RemotePolicy::Push
         || identity.plan_digest != plan.plan_digest
         || identity.binding_digest != expected_binding
-        || !post_local::retry_evidence_is_valid(&plan, &local)
+        || !post_local::retry_evidence_is_valid(&plan, &event_local)
     {
         return Err(plan_failure(
             ErrorCode::StateCorrupt,
@@ -43,52 +43,31 @@ pub(in crate::commands::plan_cmds) fn retry_remote_transport(
     }
     let _workspace_lock = app.ctx.lock_workspace().map_err(map_lock)?;
     let _skill_lock = app.ctx.lock_skill(&plan.skill).map_err(map_lock)?;
-    require_recorded_commit_ancestry(app, &local, cursor)?;
-    let output = post_local::complete(app, &plan, &identity.key_digest, local)?;
-    Ok(apply_output(&plan, cursor, identity, output))
-}
-
-fn require_recorded_commit_ancestry(
-    app: &App,
-    local: &Value,
-    cursor: usize,
-) -> std::result::Result<(), CommandFailure> {
-    let head = gitops::head(&app.ctx).map_err(map_git)?;
-    for field in ["source_commit", "registry_commit"] {
-        let value = &local[field];
-        if value.is_null() {
-            continue;
-        }
-        let commit = value.as_str().ok_or_else(|| {
-            plan_failure(
-                ErrorCode::StateCorrupt,
-                format!("pending remote retry has invalid {field} evidence"),
-                "APPLY_EVENT_CORRUPT",
-                false,
-                vec!["inspect the retained convergence transaction".to_string()],
-                Some(cursor),
-            )
-        })?;
-        let ancestor = gitops::run_git_allow_failure(
-            &app.ctx,
-            &["merge-base", "--is-ancestor", commit, &head],
+    let journal_path = journal_path(app, &plan.skill);
+    let raw = fs::read_to_string(&journal_path).map_err(map_io)?;
+    let journal: TransactionJournal = serde_json::from_str(&raw).map_err(|error| {
+        CommandFailure::new(
+            ErrorCode::StateCorrupt,
+            format!("invalid convergence journal: {error}"),
         )
-        .map_err(map_git)?;
-        if !ancestor.status.success() {
-            return Err(plan_failure(
-                ErrorCode::DependencyConflict,
-                format!(
-                    "pending remote retry cannot prove recorded {field} {commit} is in live HEAD {head}"
-                ),
-                "CONVERGENCE_COMMIT_EVIDENCE_STALE",
-                false,
-                vec![
-                    "inspect the retained convergence evidence before any remote transport"
-                        .to_string(),
-                ],
-                Some(cursor),
-            ));
-        }
+    })?;
+    let mut durable_identity = identity.clone();
+    recovery_identity::adopt_journal_identity(&plan, &journal, &mut durable_identity)?;
+    recovery_support::validate_journal(app, &journal_path, &plan, &journal)?;
+    if journal.phase != TransactionPhase::CommittedArtifactsRetained {
+        return Err(CommandFailure::new(
+            ErrorCode::StateCorrupt,
+            "pending remote retry has no retained committed transaction",
+        ));
     }
-    Ok(())
+    let durable_local = journal.result.clone().ok_or_else(|| {
+        CommandFailure::new(
+            ErrorCode::StateCorrupt,
+            "retained convergence transaction has no committed result",
+        )
+    })?;
+    post_local::require_exact_transport_boundary(app, &plan, &durable_local)?;
+    recovery_evidence::reprove_source_boundary(app, &plan, &journal)?;
+    let output = post_local::complete(app, &plan, &durable_identity.key_digest, durable_local)?;
+    Ok(apply_output(&plan, cursor, &durable_identity, output))
 }

@@ -27,10 +27,12 @@ impl Drop for ConvergenceProjectionFixture {
 }
 
 fn convergence_projection_fixture() -> ConvergenceProjectionFixture {
-    let root = std::env::temp_dir().join(format!(
-        "loom-convergence-projection-executor-{}",
-        Uuid::new_v4().simple()
-    ));
+    let root = fs::canonicalize(std::env::temp_dir())
+        .expect("canonical temp directory")
+        .join(format!(
+            "loom-convergence-projection-executor-{}",
+            Uuid::new_v4().simple()
+        ));
     fs::create_dir_all(root.join("skills/demo")).expect("create skill");
     fs::write(
         root.join("skills/demo/SKILL.md"),

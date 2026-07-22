@@ -8,7 +8,9 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
 use std::path::Path;
 
+mod directory_handle;
 mod index_lock_capture;
+pub(crate) use directory_handle::DirectoryHandle;
 #[cfg(windows)]
 pub use index_lock_capture::ExclusiveDeleteFile;
 pub use index_lock_capture::same_file_identity_paths;
@@ -31,6 +33,15 @@ pub(crate) const fn atomic_no_replace_supported() -> bool {
         target_os = "linux",
         target_os = "android",
         windows
+    ))
+}
+
+pub(crate) const fn handle_relative_directory_operations_supported() -> bool {
+    cfg!(any(
+        target_os = "macos",
+        target_os = "ios",
+        target_os = "linux",
+        target_os = "android"
     ))
 }
 

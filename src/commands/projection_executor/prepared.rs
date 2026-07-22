@@ -1,3 +1,4 @@
+#[cfg(test)]
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -7,10 +8,12 @@ use crate::state::AppContext;
 use crate::state_model::{RegistrySnapshot, RegistryStatePaths};
 use crate::types::ErrorCode;
 
+#[cfg(test)]
+use super::super::projections::project_skill_to_target;
 use super::super::{
     CommandFailure,
     helpers::{ensure_skill_exists, map_project_io, validate_projection_method},
-    projections::project_skill_to_target,
+    projections::project_skill_to_target_at,
     skill_safety::enforce_skill_safety,
 };
 use super::convergence::{map_ownership_fingerprint_error, projection_ownership_fingerprint};
@@ -60,6 +63,7 @@ pub(crate) struct PreparedProjectionStaging {
     pub(super) path: PathBuf,
     pub(super) expected_fingerprint: String,
     pub(super) expected_live_fingerprint: Option<String>,
+    pub(super) scope: Option<super::PreparedProjectionScope>,
 }
 
 pub(super) type PreparedOwnerGuard<'a> = dyn FnMut(&Path) -> Result<(), CommandFailure> + 'a;
@@ -74,7 +78,13 @@ impl PreparedProjectionStaging {
             path,
             expected_fingerprint,
             expected_live_fingerprint,
+            scope: None,
         }
+    }
+
+    pub(crate) fn with_scope(mut self, scope: super::PreparedProjectionScope) -> Self {
+        self.scope = Some(scope);
+        self
     }
 }
 
@@ -109,6 +119,7 @@ pub(crate) fn execute_projection(
     }
 }
 
+#[cfg(test)]
 pub(crate) fn prepare_convergence_projection(
     _ctx: &AppContext,
     input: &ProjectionExecutionInput,
@@ -132,6 +143,30 @@ pub(crate) fn prepare_convergence_projection(
         ));
     }
     project_skill_to_target(source, staging_path, input.method)
+        .map_err(map_project_io(input.method))
+}
+
+pub(crate) fn prepare_convergence_projection_at(
+    _ctx: &AppContext,
+    input: &ProjectionExecutionInput,
+    source: &Path,
+    owner: &crate::fs_util::DirectoryHandle,
+    staging_name: &Path,
+) -> Result<(), CommandFailure> {
+    validate_projection_route(input)?;
+    if input.context != ProjectionExecutionContext::Convergence {
+        return Err(CommandFailure::new(
+            ErrorCode::InternalError,
+            "projection preparation requires convergence context",
+        ));
+    }
+    if owner.entry_exists(staging_name).map_err(super::map_io)? {
+        return Err(CommandFailure::new(
+            ErrorCode::StateCorrupt,
+            "declared projection staging entry already exists in opened owner directory",
+        ));
+    }
+    project_skill_to_target_at(source, owner, staging_name, input.method)
         .map_err(map_project_io(input.method))
 }
 

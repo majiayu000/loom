@@ -86,10 +86,14 @@ fn equal_content_partial_restore_uses_ownership_identity() {
 
 #[test]
 fn equal_content_backup_copy_restore_uses_retained_exchange_evidence() {
-    let root = TestRoot(std::env::temp_dir().join(format!(
-        "loom-equal-content-restore-{}",
-        uuid::Uuid::new_v4().simple()
-    )));
+    let root = TestRoot(
+        fs::canonicalize(std::env::temp_dir())
+            .expect("canonical temp directory")
+            .join(format!(
+                "loom-equal-content-restore-{}",
+                uuid::Uuid::new_v4().simple()
+            )),
+    );
     let live = root.0.join("target/demo");
     let held_original = root.0.join("held-original");
     let backup_path = root.0.join("backup");

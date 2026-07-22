@@ -3,13 +3,15 @@ use std::{fs, io};
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use serde_json::json;
 use uuid::Uuid;
 
-use crate::cli::Cli;
+use crate::cli::{Cli, Command, PlanCommand};
 use crate::envelope::Envelope;
 use crate::fs_util::{append_jsonl_raw, ensure_append_log, maybe_fault_inject_any};
 use crate::state::AppContext;
+
+use super::agent_cmds::planning_helpers::normalize_path;
+use super::plan_cmds::request_scope::convergence_request_scope;
 
 const COMMAND_EVENT_SCHEMA_VERSION: u32 = 1;
 
@@ -26,6 +28,8 @@ pub(crate) struct CommandEvent {
     pub input: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub output: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub durable_plan: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -39,20 +43,31 @@ pub(crate) struct CommandEventRow {
     pub event: CommandEvent,
 }
 
-pub(crate) fn command_event_input(cli: &Cli, request_id: &str) -> serde_json::Value {
+pub(crate) fn command_event_input(cli: &Cli, request_id: &str) -> Result<serde_json::Value> {
     let mut audit_cli = cli.clone();
     audit_cli.request_id = Some(request_id.to_string());
-    let mut input = serde_json::to_value(audit_cli).unwrap_or_else(|err| {
-        json!({
-            "serialization_error": err.to_string(),
-            "request_id": request_id,
-            "command": format!("{:?}", cli.command),
-            "json": cli.json,
-            "root": cli.root.as_ref().map(|root| root.display().to_string()),
-        })
-    });
+    let mut input = serde_json::to_value(audit_cli).context("failed to encode command input")?;
+    if let Command::Plan {
+        command: PlanCommand::Converge(args),
+    } = &cli.command
+    {
+        let request = input
+            .pointer_mut("/command/Plan/command/Converge")
+            .and_then(serde_json::Value::as_object_mut)
+            .context("encoded converge command is missing its request object")?;
+        let workspace = args.workspace.as_ref().map(|path| normalize_path(path));
+        let scope = convergence_request_scope(args, workspace.as_deref());
+        request.insert(
+            "request_scope_digest".to_string(),
+            serde_json::Value::String(
+                scope
+                    .digest()
+                    .context("failed to digest converge request scope")?,
+            ),
+        );
+    }
     redact_sensitive_strings(&mut input);
-    input
+    Ok(input)
 }
 
 pub(crate) fn append_command_started(
@@ -71,6 +86,7 @@ pub(crate) fn append_command_started(
         exit_code: None,
         input: Some(input),
         output: None,
+        durable_plan: None,
         error: None,
         side_effects: None,
         created_at: Utc::now(),
@@ -123,6 +139,8 @@ fn append_command_finished_with_fault_tags(
         exit_code: Some(exit_code),
         input: None,
         output: Some(redacted_value(envelope.data.clone())),
+        durable_plan: (envelope.ok && matches!(cmd, "plan.use" | "plan.converge"))
+            .then(|| durable_plan_value(cmd, &envelope.data)),
         error: envelope
             .error
             .as_ref()
@@ -224,6 +242,57 @@ pub(crate) fn redact_sensitive_string(raw: &str) -> String {
 fn redacted_value(mut value: serde_json::Value) -> serde_json::Value {
     redact_sensitive_strings(&mut value);
     value
+}
+
+fn durable_plan_value(cmd: &str, source: &serde_json::Value) -> serde_json::Value {
+    const CONVERGENCE_AUTHORITY_FIELDS: &[&str] = &[
+        "protocol_version",
+        "schema_version",
+        "plan_id",
+        "plan_digest",
+        "operation",
+        "requires_digest_confirmation",
+        "execution_enabled",
+        "skill",
+        "request_scope",
+        "selectors",
+        "source",
+        "input",
+        "preflight",
+        "input_conflicts",
+        "registry",
+        "projections",
+        "visibility",
+        "accept_restart_required",
+        "remote",
+        "required_axes",
+        "required_approvals",
+    ];
+    const USE_AUTHORITY_FIELDS: &[&str] = &[
+        "protocol_version",
+        "schema_version",
+        "plan_id",
+        "operation",
+        "required_approvals",
+        "guards",
+        "use_args",
+    ];
+
+    let mut durable = redacted_value(source.clone());
+    let authority_fields = match cmd {
+        "plan.converge" => CONVERGENCE_AUTHORITY_FIELDS,
+        "plan.use" => USE_AUTHORITY_FIELDS,
+        _ => return durable,
+    };
+    let (Some(source), Some(target)) = (source.as_object(), durable.as_object_mut()) else {
+        return durable;
+    };
+    for field in authority_fields {
+        if let Some(value) = source.get(*field) {
+            target.insert((*field).to_string(), value.clone());
+        }
+    }
+    durable
 }
 
 fn redact_url_userinfo(raw: &str) -> String {
@@ -332,19 +401,20 @@ fn secret_span_at(raw: &str, start: usize) -> Option<usize> {
         return (token_end > token_start).then_some(token_end);
     }
 
-    for prefix in [
-        "github_pat_",
-        "ghp_",
-        "glpat-",
-        "sk-",
-        "xoxb-",
-        "xoxp-",
-        "xoxa-",
-        "ya29.",
+    for (prefix, minimum_suffix_length) in [
+        ("github_pat_", 8),
+        ("ghp_", 8),
+        ("glpat-", 8),
+        ("sk-", 8),
+        ("xoxb-", 8),
+        ("xoxp-", 8),
+        ("xoxa-", 8),
+        ("ya29.", 8),
     ] {
         if raw[start..].starts_with(prefix) {
             let token_end = secret_token_end(raw, start + prefix.len());
-            return (token_end > start + prefix.len()).then_some(token_end);
+            return (token_end - (start + prefix.len()) >= minimum_suffix_length)
+                .then_some(token_end);
         }
     }
 
@@ -408,16 +478,7 @@ fn key_is_sensitive(key: &str) -> bool {
 
 fn looks_like_secret(raw: &str) -> bool {
     let trimmed = raw.trim();
-    trimmed.starts_with("Bearer ")
-        || trimmed.starts_with("ghp_")
-        || trimmed.starts_with("github_pat_")
-        || trimmed.starts_with("glpat-")
-        || trimmed.starts_with("sk-")
-        || trimmed.starts_with("xoxb-")
-        || trimmed.starts_with("xoxp-")
-        || trimmed.starts_with("xoxa-")
-        || trimmed.starts_with("ya29.")
-        || (trimmed.starts_with("AKIA") && trimmed.len() >= 20)
+    secret_span_at(trimmed, 0) == Some(trimmed.len())
 }
 
 #[cfg(test)]
@@ -433,6 +494,7 @@ mod tests {
         COMMAND_EVENT_SCHEMA_VERSION, CommandEvent, append_command_event, redact_sensitive_string,
         redact_sensitive_strings, redact_url_userinfo,
     };
+    use crate::envelope::{Envelope, Meta};
     use crate::state::AppContext;
 
     #[test]
@@ -475,6 +537,49 @@ mod tests {
             redact_sensitive_string("mask-sk-not-a-token"),
             "mask-sk-not-a-token"
         );
+        assert_eq!(redact_sensitive_string("sk-demo"), "sk-demo");
+    }
+
+    #[test]
+    fn durable_plan_preserves_authority_and_redacts_display_only_fields() {
+        let dir = std::env::temp_dir().join(format!(
+            "loom-command-events-durable-plan-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        fs::create_dir_all(&dir).expect("create temp root");
+        let ctx = AppContext::new(Some(dir.clone())).expect("create context");
+        let envelope = Envelope::ok(
+            "plan.converge",
+            "req-durable-plan-redaction".to_string(),
+            json!({
+                "request_scope": { "profile": "sk-reviewtoken" },
+                "selectors": { "profile": "sk-reviewtoken" },
+                "projections": [{ "profile": "sk-reviewtoken" }],
+                "note": "sk-reviewtoken",
+            }),
+            Meta::default(),
+        );
+
+        super::append_command_finished(&ctx, "plan.converge", &envelope, 0)
+            .expect("append finished plan event");
+        let event = super::read_command_events(&ctx)
+            .expect("read command events")
+            .pop()
+            .expect("finished event")
+            .event;
+        let durable = event.durable_plan.expect("durable plan");
+        assert_eq!(durable["request_scope"]["profile"], json!("sk-reviewtoken"));
+        assert_eq!(durable["selectors"]["profile"], json!("sk-reviewtoken"));
+        assert_eq!(
+            durable["projections"][0]["profile"],
+            json!("sk-reviewtoken")
+        );
+        assert_eq!(durable["note"], json!("<redacted>"));
+        let output = event.output.expect("audit output");
+        assert_eq!(output["request_scope"]["profile"], json!("<redacted>"));
+        assert_eq!(output["note"], json!("<redacted>"));
+
+        fs::remove_dir_all(&dir).expect("cleanup temp root");
     }
 
     #[test]
@@ -534,6 +639,7 @@ mod tests {
                                 "payload": payload,
                             })),
                             output: None,
+                            durable_plan: None,
                             error: None,
                             side_effects: None,
                             created_at: Utc::now(),

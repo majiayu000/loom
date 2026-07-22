@@ -29,6 +29,29 @@ pub(crate) struct ConvergenceSelectors {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ConvergenceRequestScope {
+    pub skill: String,
+    pub direction: ConvergenceInputDirection,
+    pub instance: Option<String>,
+    pub agent: Option<String>,
+    pub workspace_argument: Option<String>,
+    pub workspace: Option<String>,
+    pub profile: Option<String>,
+    pub require_runtime: bool,
+    pub accept_restart_required: bool,
+    pub push_remote: bool,
+}
+
+impl ConvergenceRequestScope {
+    pub(crate) fn digest(&self) -> Result<String, serde_json::Error> {
+        let mut hasher = Sha256::new();
+        hasher.update(&serde_json::to_vec(self)?);
+        Ok(format!("sha256:{}", to_hex(&hasher.finalize())))
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub(crate) struct SourceGuard {
     pub direction: ConvergenceInputDirection,
     pub registry_head: String,
@@ -150,6 +173,7 @@ pub(crate) struct SkillConvergencePlan {
     pub plan_id: String,
     pub plan_digest: String,
     pub skill: String,
+    pub request_scope: ConvergenceRequestScope,
     pub selectors: ConvergenceSelectors,
     pub source: SourceGuard,
     pub input: ConvergenceInputEvidence,
@@ -167,6 +191,7 @@ pub(crate) struct SkillConvergencePlan {
 #[derive(Serialize)]
 struct SkillConvergenceDigestPayload<'a> {
     skill: &'a str,
+    request_scope: &'a ConvergenceRequestScope,
     selectors: &'a ConvergenceSelectors,
     source: &'a SourceGuard,
     input: &'a ConvergenceInputEvidence,
@@ -190,6 +215,7 @@ impl SkillConvergencePlan {
     pub(crate) fn canonical_digest(&self) -> Result<String, serde_json::Error> {
         let payload = SkillConvergenceDigestPayload {
             skill: &self.skill,
+            request_scope: &self.request_scope,
             selectors: &self.selectors,
             source: &self.source,
             input: &self.input,
@@ -207,8 +233,9 @@ impl SkillConvergencePlan {
     }
 }
 
-const DIGEST_FIELDS: [&str; 13] = [
+const DIGEST_FIELDS: [&str; 14] = [
     "skill",
+    "request_scope",
     "selectors",
     "source",
     "input",
@@ -239,6 +266,7 @@ fn stored_plan_shape_is_valid(plan: &serde_json::Map<String, Value>) -> bool {
     field_is_string(plan, "plan_id")
         && field_is_string(plan, "plan_digest")
         && field_is_string(plan, "skill")
+        && field_object_matches(plan, "request_scope", request_scope_is_valid)
         && field_object_matches(plan, "selectors", selectors_are_valid)
         && field_object_matches(plan, "source", source_is_valid)
         && field_object_matches(plan, "input", input_is_valid)
@@ -251,6 +279,20 @@ fn stored_plan_shape_is_valid(plan: &serde_json::Map<String, Value>) -> bool {
         && field_is_one_of(plan, "remote", &["not_requested", "push"])
         && required_axes_are_valid(plan.get("required_axes"))
         && field_is_string_array(plan, "required_approvals")
+}
+
+fn request_scope_is_valid(value: &serde_json::Map<String, Value>) -> bool {
+    value.len() == 10
+        && field_is_string(value, "skill")
+        && field_is_one_of(value, "direction", &["source", "projection"])
+        && field_is_optional_string(value, "instance")
+        && field_is_optional_string(value, "agent")
+        && field_is_optional_string(value, "workspace_argument")
+        && field_is_optional_string(value, "workspace")
+        && field_is_optional_string(value, "profile")
+        && field_is_bool(value, "require_runtime")
+        && field_is_bool(value, "accept_restart_required")
+        && field_is_bool(value, "push_remote")
 }
 
 fn selectors_are_valid(value: &serde_json::Map<String, Value>) -> bool {

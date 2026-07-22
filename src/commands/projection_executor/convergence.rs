@@ -13,10 +13,14 @@ use super::super::projections::{apply_projection_observation, observe_projection
 use super::staging_cleanup::{CleanupClaim, claim_for_cleanup, path_entry_exists};
 
 mod activation;
+mod activation_output;
+mod directory_scope;
 mod ownership;
 #[cfg(test)]
 pub(crate) use activation::activate_after_mutation;
 pub(crate) use activation::{activate_prepared_projection, discard_prepared_projection};
+pub(crate) use activation_output::ProjectionActivationOutput;
+pub(crate) use directory_scope::PreparedProjectionScope;
 pub(super) use ownership::{map_ownership_fingerprint_error, projection_ownership_fingerprint};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -33,6 +37,7 @@ pub(crate) struct PreparedProjectionArtifact {
 #[must_use = "a prepared projection must be activated or explicitly discarded"]
 pub(crate) struct PreparedProjection {
     parts: Option<PreparedProjectionArtifact>,
+    scope: Option<PreparedProjectionScope>,
 }
 
 #[allow(
@@ -40,6 +45,7 @@ pub(crate) struct PreparedProjection {
     reason = "durable prepared evidence is consumed by the SP524-T004 transaction"
 )]
 impl PreparedProjection {
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn new(
         projection: RegistryProjectionInstance,
         source_path: PathBuf,
@@ -48,6 +54,7 @@ impl PreparedProjection {
         path_exists: bool,
         staging_digest: String,
         existing_digest: Option<String>,
+        scope: Option<PreparedProjectionScope>,
     ) -> Self {
         Self {
             parts: Some(PreparedProjectionArtifact {
@@ -59,6 +66,7 @@ impl PreparedProjection {
                 staging_digest,
                 existing_digest,
             }),
+            scope,
         }
     }
 
@@ -84,7 +92,18 @@ impl PreparedProjection {
     pub(crate) fn from_durable_artifact(artifact: PreparedProjectionArtifact) -> Self {
         Self {
             parts: Some(artifact),
+            scope: None,
         }
+    }
+
+    fn take_scope(
+        &mut self,
+        parts: &PreparedProjectionArtifact,
+    ) -> Result<PreparedProjectionScope, CommandFailure> {
+        self.scope
+            .take()
+            .map(Ok)
+            .unwrap_or_else(|| PreparedProjectionScope::open(parts).map_err(map_io))
     }
 
     fn take_parts(&mut self) -> PreparedProjectionArtifact {
@@ -193,6 +212,10 @@ impl ProjectionRollbackArtifact {
         }
     }
 
+    #[allow(
+        dead_code,
+        reason = "used by durable recovery and test-only direct artifacts"
+    )]
     pub(crate) fn rollback(&mut self) -> std::result::Result<(), CommandFailure> {
         self.prepare_rollback()?;
         self.cleanup_pending()
@@ -480,147 +503,6 @@ fn invalid_recovery_transition(
         ),
         artifact,
     )
-}
-
-#[must_use = "an activated projection must be finalized or rolled back"]
-pub(crate) struct ProjectionActivationOutput {
-    projection: Option<RegistryProjectionInstance>,
-    rollback_artifact: Option<ProjectionRollbackArtifact>,
-    #[cfg(test)]
-    fail_cleanup_once: bool,
-}
-
-#[allow(
-    dead_code,
-    reason = "durable rollback evidence is consumed by the SP524-T004 transaction"
-)]
-impl ProjectionActivationOutput {
-    pub(crate) fn projection(&self) -> &RegistryProjectionInstance {
-        self.projection
-            .as_ref()
-            .expect("activated projection must own its projection identity")
-    }
-
-    pub(crate) fn rollback_evidence(&self) -> Value {
-        self.rollback_artifact
-            .as_ref()
-            .expect("activated projection must own a rollback artifact")
-            .evidence()
-    }
-
-    pub(crate) fn durable_rollback_artifact(&self) -> &ProjectionRollbackArtifact {
-        self.rollback_artifact
-            .as_ref()
-            .expect("activated projection must own a rollback artifact")
-    }
-
-    pub(crate) fn into_durable_parts(
-        mut self,
-    ) -> (RegistryProjectionInstance, ProjectionRollbackArtifact) {
-        let projection = self
-            .projection
-            .take()
-            .expect("activated projection must own its projection identity");
-        let artifact = self
-            .rollback_artifact
-            .take()
-            .expect("activated projection must own a rollback artifact");
-        (projection, artifact)
-    }
-
-    pub(crate) fn from_durable_parts(
-        projection: RegistryProjectionInstance,
-        artifact: ProjectionRollbackArtifact,
-    ) -> Self {
-        Self {
-            projection: Some(projection),
-            rollback_artifact: Some(artifact),
-            #[cfg(test)]
-            fail_cleanup_once: false,
-        }
-    }
-
-    #[allow(
-        dead_code,
-        reason = "consumed by the SP524-T004 convergence transaction"
-    )]
-    pub(crate) fn rollback(&mut self) -> std::result::Result<(), CommandFailure> {
-        let artifact = self.rollback_artifact.as_mut().ok_or_else(|| {
-            CommandFailure::new(
-                ErrorCode::InternalError,
-                "activated projection has no rollback artifact",
-            )
-        })?;
-        artifact.prepare_rollback()?;
-        self.projection = None;
-        #[cfg(test)]
-        if self.fail_cleanup_once {
-            self.fail_cleanup_once = false;
-            return Err(with_recovery_details(
-                CommandFailure::new(
-                    ErrorCode::InternalError,
-                    "fault injected before rollback artifact cleanup",
-                ),
-                artifact,
-            ));
-        }
-        artifact.cleanup_pending()?;
-        self.rollback_artifact = None;
-        Ok(())
-    }
-
-    #[cfg(test)]
-    pub(crate) fn fail_cleanup_once_for_test(&mut self) {
-        self.fail_cleanup_once = true;
-    }
-
-    #[allow(
-        dead_code,
-        reason = "consumed by the SP524-T004 convergence transaction"
-    )]
-    pub(crate) fn finalize(
-        &mut self,
-    ) -> std::result::Result<RegistryProjectionInstance, CommandFailure> {
-        let artifact = self
-            .rollback_artifact
-            .as_mut()
-            .expect("activated projection must own a rollback artifact");
-        if matches!(
-            artifact,
-            ProjectionRollbackArtifact::PendingCleanup {
-                reason: PendingCleanupReason::RollbackExchanged
-                    | PendingCleanupReason::RollbackCreated,
-                ..
-            }
-        ) {
-            return Err(with_recovery_details(
-                CommandFailure::new(
-                    ErrorCode::ProjectionConflict,
-                    "cannot finalize after rollback took effect; retry rollback cleanup",
-                ),
-                artifact,
-            ));
-        }
-        artifact.finalize()?;
-        self.rollback_artifact = None;
-        Ok(self
-            .projection
-            .take()
-            .expect("activated projection must own its projection identity"))
-    }
-}
-
-impl Drop for ProjectionActivationOutput {
-    fn drop(&mut self) {
-        if let Some(artifact) = self.rollback_artifact.as_mut()
-            && let Err(err) = artifact.rollback()
-        {
-            eprintln!(
-                "loom: abandoned projection activation requires recovery: {}; details={}",
-                err.message, err.details
-            );
-        }
-    }
 }
 
 fn validate_prepared_digest(

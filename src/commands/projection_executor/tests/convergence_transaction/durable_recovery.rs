@@ -301,6 +301,44 @@ fn prepared_created_activation_recovers_after_rename_before_artifact() {
     assert!(!projection_path.exists());
 }
 
+#[test]
+fn prepared_activation_rejects_replaced_target_after_mutation() {
+    let fixture = convergence_projection_fixture();
+    let projection_path = fixture.root.join("live/copy/demo");
+    let target_path = fixture.root.join("live/copy");
+    let held_target = fixture.root.join("held-copy");
+    let output = execute_projection(
+        &fixture.ctx,
+        &fixture.paths,
+        &fixture.snapshot,
+        execution_input(&fixture, ProjectionMethod::Copy, projection_path),
+    )
+    .expect("prepare created projection");
+
+    let result = activate_after_mutation(output.prepared.expect("staging artifact"), || {
+        fs::rename(&target_path, &held_target)?;
+        fs::create_dir(&target_path)
+    });
+    let error = match result {
+        Err(error) => error,
+        Ok(_) => panic!("replacement target pathname must fail closed"),
+    };
+
+    assert_eq!(error.code, ErrorCode::ProjectionConflict);
+    assert!(error.message.contains("opened projection scope"));
+    assert!(
+        target_path
+            .read_dir()
+            .expect("replacement target")
+            .next()
+            .is_none()
+    );
+    assert!(
+        !held_target.join("demo").exists(),
+        "post-mutation binding failure must roll back through the held target handle"
+    );
+}
+
 #[cfg(any(
     target_os = "macos",
     target_os = "ios",

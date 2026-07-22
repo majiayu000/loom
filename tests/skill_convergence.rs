@@ -1,4 +1,6 @@
 mod common;
+#[path = "../src/sha256.rs"]
+mod convergence_test_sha256;
 #[path = "skill_convergence/additional_recovery.rs"]
 mod skill_convergence_additional_recovery;
 #[path = "skill_convergence/executor.rs"]
@@ -13,8 +15,12 @@ mod skill_convergence_idempotency_audit;
 mod skill_convergence_index_lock_retention;
 #[path = "skill_convergence/ledger_assertions.rs"]
 mod skill_convergence_ledger_assertions;
+#[path = "skill_convergence/policy_input.rs"]
+mod skill_convergence_policy_input;
 #[path = "skill_convergence/post_local.rs"]
 mod skill_convergence_post_local;
+#[path = "skill_convergence/post_local_transport.rs"]
+mod skill_convergence_post_local_transport;
 #[path = "skill_convergence/projection_activation_flags.rs"]
 mod skill_convergence_projection_activation_flags;
 #[path = "skill_convergence/recovery_identity.rs"]
@@ -25,6 +31,8 @@ mod skill_convergence_recovery_safety;
 mod skill_convergence_registry_rollback;
 #[path = "skill_convergence/remaining_review.rs"]
 mod skill_convergence_remaining_review;
+#[path = "skill_convergence/request_scope.rs"]
+mod skill_convergence_request_scope;
 #[path = "skill_convergence/source_only.rs"]
 mod skill_convergence_source_only;
 
@@ -133,11 +141,17 @@ fn mutate_plan_event(root: &Path, plan_id: &str, mut mutate: impl FnMut(&mut Val
         .lines()
         .map(|line| {
             let mut event: Value = serde_json::from_str(line).expect("parse command event");
+            let stored_plan = event.get("durable_plan").unwrap_or(&event["output"]);
             if event["cmd"] == json!("plan.converge")
                 && event["status"] == json!("succeeded")
-                && event["output"]["plan_id"] == json!(plan_id)
+                && stored_plan["plan_id"] == json!(plan_id)
             {
-                mutate(&mut event["output"]);
+                let stored_plan = if event.get("durable_plan").is_some() {
+                    &mut event["durable_plan"]
+                } else {
+                    &mut event["output"]
+                };
+                mutate(stored_plan);
                 changed = true;
             }
             serde_json::to_string(&event).expect("serialize command event")
@@ -214,7 +228,7 @@ fn exact_effect_plan() {
 
     assert_eq!(first["cmd"], json!("plan.converge"));
     assert_eq!(first["data"]["protocol_version"], json!("1.0"));
-    assert_eq!(first["data"]["schema_version"], json!("1.2"));
+    assert_eq!(first["data"]["schema_version"], json!("1.3"));
     assert_eq!(first["data"]["operation"], json!("converge"));
     assert_eq!(first["data"]["safe_to_apply"], json!(true));
     assert_eq!(first["data"]["execution_enabled"], json!(true));
@@ -242,14 +256,43 @@ fn exact_effect_plan() {
     assert!(
         schema["properties"]["schema_version"]["enum"]
             .as_array()
-            .is_some_and(|versions| versions.contains(&json!("1.2"))),
-        "authoritative schema must declare convergence schema 1.2"
+            .is_some_and(|versions| versions.contains(&json!("1.3"))),
+        "authoritative schema must declare convergence schema 1.3"
     );
     assert!(
         schema["properties"]["operation"]["enum"]
             .as_array()
             .is_some_and(|operations| operations.contains(&json!("converge"))),
         "authoritative schema must declare plan converge"
+    );
+    let request_scope = &schema["properties"]["request_scope"];
+    assert_eq!(request_scope["type"], json!("object"));
+    assert_eq!(request_scope["additionalProperties"], json!(false));
+    let request_scope_required = request_scope["required"]
+        .as_array()
+        .expect("request_scope required fields");
+    for field in [
+        "skill",
+        "direction",
+        "instance",
+        "agent",
+        "workspace_argument",
+        "workspace",
+        "profile",
+        "require_runtime",
+        "accept_restart_required",
+        "push_remote",
+    ] {
+        assert!(
+            request_scope_required.contains(&json!(field)),
+            "request_scope schema must require {field}"
+        );
+    }
+    assert!(
+        schema["allOf"][1]["then"]["required"]
+            .as_array()
+            .is_some_and(|required| required.contains(&json!("request_scope"))),
+        "convergence schema 1.3 must require request_scope"
     );
     let converge_contract = &schema["allOf"][1]["then"]["properties"];
     assert!(

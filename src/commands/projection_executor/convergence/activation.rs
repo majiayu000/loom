@@ -1,6 +1,5 @@
 use serde_json::json;
 
-use crate::fs_util::{exchange_paths_atomic, rename_no_replace_atomic};
 use crate::state::AppContext;
 use crate::types::ErrorCode;
 
@@ -50,9 +49,12 @@ fn activate_prepared_projection_with_after_mutation(
 ) -> Result<ProjectionActivationOutput, CommandFailure> {
     let mut prepared = prepared;
     let parts = prepared.take_parts();
-    let mut rollback_artifact = if parts.path_exists {
+    let scope = prepared.take_scope(&parts)?;
+    validate_scope_binding(&scope, &parts)?;
+    let rollback_artifact = if parts.path_exists {
         let staging_digest = observed_digest(&parts.staging_path, &parts)?;
         let live_digest = observed_digest(&parts.materialized_path, &parts)?;
+        validate_scope_binding(&scope, &parts)?;
         let original_digest = parts
             .existing_digest
             .as_ref()
@@ -60,15 +62,30 @@ fn activate_prepared_projection_with_after_mutation(
         if staging_digest.as_deref() == Some(&parts.staging_digest)
             && live_digest.as_deref() == Some(original_digest)
         {
-            if let Err(err) = exchange_paths_atomic(&parts.staging_path, &parts.materialized_path) {
-                return Err(cleanup_prepare_failure(
+            let rollback_artifact = ProjectionRollbackArtifact::Exchanged {
+                materialized_path: parts.materialized_path.clone(),
+                backup_path: parts.staging_path.clone(),
+                activated_digest: parts.staging_digest.clone(),
+                original_digest: original_digest.clone(),
+            };
+            if let Err(err) = scope.exchange() {
+                return Err(with_prepared_recovery_details(
                     map_atomic_exchange_error(err),
                     &parts,
                 ));
             }
-            after_mutation()
+            if let Err(error) = after_mutation()
                 .map_err(map_io)
-                .map_err(|err| with_prepared_recovery_details(err, &parts))?;
+                .map_err(|err| with_prepared_recovery_details(err, &parts))
+                .and_then(|_| validate_scope_binding(&scope, &parts))
+            {
+                return Err(rollback_after_mutation_failure(
+                    &scope,
+                    &rollback_artifact,
+                    error,
+                ));
+            }
+            rollback_artifact
         } else if staging_digest.as_deref() == Some(&parts.staging_digest) {
             return Err(cleanup_prepare_failure(
                 activation_state_mismatch(&parts, staging_digest, live_digest),
@@ -82,28 +99,42 @@ fn activate_prepared_projection_with_after_mutation(
                 staging_digest,
                 live_digest,
             ));
-        }
-        ProjectionRollbackArtifact::Exchanged {
-            materialized_path: parts.materialized_path,
-            backup_path: parts.staging_path,
-            activated_digest: parts.staging_digest,
-            original_digest: original_digest.clone(),
+        } else {
+            ProjectionRollbackArtifact::Exchanged {
+                materialized_path: parts.materialized_path.clone(),
+                backup_path: parts.staging_path.clone(),
+                activated_digest: parts.staging_digest.clone(),
+                original_digest: original_digest.clone(),
+            }
         }
     } else {
         let staging_digest = observed_digest(&parts.staging_path, &parts)?;
         let live_digest = observed_digest(&parts.materialized_path, &parts)?;
+        validate_scope_binding(&scope, &parts)?;
         if staging_digest.as_deref() == Some(&parts.staging_digest) && live_digest.is_none() {
-            if let Err(err) =
-                rename_no_replace_atomic(&parts.staging_path, &parts.materialized_path)
-            {
-                return Err(cleanup_prepare_failure(
+            let rollback_artifact = ProjectionRollbackArtifact::Created {
+                materialized_path: parts.materialized_path.clone(),
+                rollback_path: parts.staging_path.clone(),
+                activated_digest: parts.staging_digest.clone(),
+            };
+            if let Err(err) = scope.activate_create() {
+                return Err(with_prepared_recovery_details(
                     map_atomic_operation_error(err, &parts.materialized_path),
                     &parts,
                 ));
             }
-            after_mutation()
+            if let Err(error) = after_mutation()
                 .map_err(map_io)
-                .map_err(|err| with_prepared_recovery_details(err, &parts))?;
+                .map_err(|err| with_prepared_recovery_details(err, &parts))
+                .and_then(|_| validate_scope_binding(&scope, &parts))
+            {
+                return Err(rollback_after_mutation_failure(
+                    &scope,
+                    &rollback_artifact,
+                    error,
+                ));
+            }
+            rollback_artifact
         } else if staging_digest.as_deref() == Some(&parts.staging_digest) {
             return Err(cleanup_prepare_failure(
                 activation_state_mismatch(&parts, staging_digest, live_digest),
@@ -116,24 +147,33 @@ fn activate_prepared_projection_with_after_mutation(
                 staging_digest,
                 live_digest,
             ));
-        }
-        ProjectionRollbackArtifact::Created {
-            materialized_path: parts.materialized_path,
-            rollback_path: parts.staging_path,
-            activated_digest: parts.staging_digest,
+        } else {
+            ProjectionRollbackArtifact::Created {
+                materialized_path: parts.materialized_path.clone(),
+                rollback_path: parts.staging_path.clone(),
+                activated_digest: parts.staging_digest.clone(),
+            }
         }
     };
 
+    validate_scope_binding(&scope, &parts)?;
+    let observation = observe_projection_from_source(&parts.projection, &parts.source_path);
+    validate_scope_binding(&scope, &parts)?;
     let mut projection = parts.projection;
-    let observation = observe_projection_from_source(&projection, &parts.source_path);
     if observation.status != "healthy" {
         let mut rollback_errors = Vec::new();
-        if let Err(err) = rollback_artifact.rollback() {
+        let rollback = match rollback_artifact {
+            ProjectionRollbackArtifact::Exchanged { .. } => scope.exchange(),
+            ProjectionRollbackArtifact::Created { .. } => scope.rollback_create(),
+            ProjectionRollbackArtifact::PendingCleanup { .. } => Err(std::io::Error::other(
+                "new activation unexpectedly has pending cleanup evidence",
+            )),
+        };
+        if let Err(err) = rollback {
             rollback_errors.push(json!({
                 "step": "rollback_projection_activation",
-                "code": err.code.as_str(),
-                "message": err.message,
-                "details": err.details,
+                "code": ErrorCode::IoError.as_str(),
+                "message": err.to_string(),
                 "artifact": rollback_artifact.evidence(),
             }));
         }
@@ -153,9 +193,42 @@ fn activate_prepared_projection_with_after_mutation(
     Ok(ProjectionActivationOutput {
         projection: Some(projection),
         rollback_artifact: Some(rollback_artifact),
+        scope: Some(scope),
         #[cfg(test)]
         fail_cleanup_once: false,
     })
+}
+
+fn rollback_after_mutation_failure(
+    scope: &super::PreparedProjectionScope,
+    artifact: &ProjectionRollbackArtifact,
+    failure: CommandFailure,
+) -> CommandFailure {
+    let rollback = match artifact {
+        ProjectionRollbackArtifact::Exchanged { .. } => scope.exchange(),
+        ProjectionRollbackArtifact::Created { .. } => scope.rollback_create(),
+        ProjectionRollbackArtifact::PendingCleanup { .. } => Err(std::io::Error::other(
+            "new activation unexpectedly has pending cleanup evidence",
+        )),
+    };
+    match rollback {
+        Ok(()) => failure,
+        Err(error) => failure.with_rollback_errors(vec![json!({
+            "step": "rollback_projection_after_post_mutation_failure",
+            "code": ErrorCode::IoError.as_str(),
+            "message": error.to_string(),
+            "artifact": artifact.evidence(),
+        })]),
+    }
+}
+
+fn validate_scope_binding(
+    scope: &super::PreparedProjectionScope,
+    parts: &super::PreparedProjectionArtifact,
+) -> Result<(), CommandFailure> {
+    scope
+        .validate_path_binding()
+        .map_err(|error| with_prepared_recovery_details(error, parts))
 }
 
 #[cfg(test)]

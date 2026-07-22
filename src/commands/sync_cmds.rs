@@ -203,8 +203,50 @@ pub(crate) fn sync_push_internal(
 
 pub(crate) fn sync_push_convergence_internal(
     ctx: &AppContext,
+    expected_commit: &str,
 ) -> std::result::Result<&'static str, CommandFailure> {
-    sync_push_internal_with_rebase(ctx, false)
+    if !gitops::remote_exists(ctx) {
+        return Err(CommandFailure::new(
+            ErrorCode::ArgInvalid,
+            "remote origin not configured",
+        ));
+    }
+
+    let remote_main_exists =
+        gitops::fetch_origin_main_if_present(ctx).map_err(map_remote_unreachable)?;
+    if remote_main_exists {
+        let (_ahead, behind) =
+            gitops::ahead_behind_refs(ctx, "origin/main", expected_commit).map_err(map_git)?;
+        if behind > 0 {
+            return Err(CommandFailure::new(
+                ErrorCode::RemoteDiverged,
+                "remote main advanced after the convergence plan; refusing to rewrite recorded commit evidence",
+            ));
+        }
+    }
+    gitops::push_exact_main(ctx, expected_commit).map_err(map_push_rejected)?;
+    if !gitops::fetch_origin_main_if_present(ctx).map_err(map_remote_unreachable)? {
+        return Err(CommandFailure::new(
+            ErrorCode::RemoteUnreachable,
+            "remote main was missing after the convergence push",
+        ));
+    }
+    let observed_remote = gitops::resolve_ref(ctx, "origin/main").map_err(map_git)?;
+    if observed_remote != expected_commit {
+        let mut failure = CommandFailure::new(
+            ErrorCode::PushRejected,
+            "remote main did not confirm the exact convergence commit boundary",
+        );
+        failure.details = json!({
+            "conflict": {
+                "code": "CONVERGENCE_REMOTE_BOUNDARY_MISMATCH",
+                "expected_commit": expected_commit,
+                "observed_remote": observed_remote,
+            }
+        });
+        return Err(failure);
+    }
+    Ok("pushed_exact_convergence_commit")
 }
 
 fn sync_push_internal_with_rebase(

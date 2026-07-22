@@ -6,6 +6,10 @@ use super::*;
 use crate::skill_convergence_executor::apply_plan;
 
 #[cfg(unix)]
+#[path = "remaining_review/filesystem_scope.rs"]
+mod filesystem_scope;
+
+#[cfg(unix)]
 fn install_reference_transaction_hook(fixture: &Fixture, script: &str) {
     use std::os::unix::fs::PermissionsExt;
 
@@ -358,6 +362,58 @@ fn create_projection_materializes_a_missing_target_root() {
         "missing target root blocked apply: {applied}"
     );
     assert!(fixture.target.path().join("demo/SKILL.md").is_file());
+}
+
+#[test]
+fn missing_target_root_creation_is_preceded_by_a_durable_journal() {
+    let fixture = projected_fixture();
+    let registry_path = fixture.root.path().join("state/registry/projections.json");
+    let mut registry: Value = serde_json::from_slice(&fs::read(&registry_path).expect("registry"))
+        .expect("parse registry");
+    registry["projections"] = json!([]);
+    fs::write(
+        &registry_path,
+        serde_json::to_vec_pretty(&registry).expect("encode registry"),
+    )
+    .expect("clear registry projection");
+    git(
+        fixture.root.path(),
+        &["add", "state/registry/projections.json"],
+    );
+    git(
+        fixture.root.path(),
+        &["commit", "-m", "test: remove projection record"],
+    );
+    fs::remove_dir_all(fixture.target.path()).expect("remove target root");
+
+    let (output, plan) = plan_converge(&fixture, &[]);
+    assert!(output.status.success(), "create plan failed: {plan}");
+    let (output, interrupted) = apply_plan(
+        &fixture,
+        &plan,
+        "missing-target-root-journal",
+        &[(
+            "LOOM_FAULT_INJECT",
+            "convergence_interrupt_after_target_root_creation",
+        )],
+    );
+    assert!(
+        !output.status.success(),
+        "target-root interruption was ignored: {interrupted}"
+    );
+    assert!(
+        fixture.target.path().is_dir(),
+        "target root was not created"
+    );
+    let journal_path = fixture
+        .root
+        .path()
+        .join("state/transactions/convergence-demo.json");
+    let journal: Value = serde_json::from_slice(
+        &fs::read(&journal_path).expect("journal must precede target-root mutation"),
+    )
+    .expect("parse journal");
+    assert_eq!(journal["phase"], json!("preparing"));
 }
 
 #[test]

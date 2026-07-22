@@ -179,12 +179,27 @@ impl App {
         let mut audit_event_id = None;
         let mut audit_warnings = Vec::new();
         if audit_enabled {
-            let input = command_event_input(&cli, &request_id);
-            match prepare_command_event_store(&self.ctx) {
-                Ok(()) => match append_command_started(&self.ctx, cmd, input, &request_id) {
-                    Ok(event_id) => audit_event_id = Some(event_id),
+            match command_event_input(&cli, &request_id) {
+                Ok(input) => match prepare_command_event_store(&self.ctx) {
+                    Ok(()) => match append_command_started(&self.ctx, cmd, input, &request_id) {
+                        Ok(event_id) => audit_event_id = Some(event_id),
+                        Err(err) => {
+                            let warning = format!("failed to append command event: {}", err);
+                            if audit_required {
+                                let env = Envelope::err(
+                                    cmd,
+                                    request_id,
+                                    ErrorCode::AuditError,
+                                    warning,
+                                    json!({}),
+                                );
+                                return Ok((env, ErrorCode::AuditError.exit_code()));
+                            }
+                            audit_warnings.push(warning);
+                        }
+                    },
                     Err(err) => {
-                        let warning = format!("failed to append command event: {}", err);
+                        let warning = format!("failed to prepare command event log: {}", err);
                         if audit_required {
                             let env = Envelope::err(
                                 cmd,
@@ -199,7 +214,7 @@ impl App {
                     }
                 },
                 Err(err) => {
-                    let warning = format!("failed to prepare command event log: {}", err);
+                    let warning = format!("failed to encode command event input: {}", err);
                     if audit_required {
                         let env = Envelope::err(
                             cmd,

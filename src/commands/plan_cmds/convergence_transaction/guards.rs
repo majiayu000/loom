@@ -121,6 +121,41 @@ pub(super) fn validate_recovery_routing(
     Ok(())
 }
 
+pub(super) fn validate_recovery_routing_after_legacy_audit(
+    app: &App,
+    plan: &SkillConvergencePlan,
+) -> std::result::Result<(), CommandFailure> {
+    validate_routing_paths_clean(
+        app,
+        &[
+            "state/registry/bindings.json",
+            "state/registry/rules.json",
+            "state/registry/targets.json",
+            "state/registry/trust.json",
+            "state/registry/sources.json",
+            "loom.lock",
+        ],
+    )?;
+    let snapshot = RegistryStatePaths::from_app_context(&app.ctx)
+        .maybe_load_snapshot()
+        .map_err(map_registry_state)?;
+    if plan.registry.initialized != snapshot.is_some() {
+        return Err(stale(
+            "registry initialization changed during legacy recovery",
+            "PLAN_CHECKPOINT_DRIFT",
+        ));
+    }
+    if let Some(snapshot) = snapshot.as_ref() {
+        validate_projection_routing(snapshot, plan)?;
+    } else if !plan.projections.is_empty() {
+        return Err(stale(
+            "projection routing disappeared during legacy recovery",
+            "PLAN_PROJECTION_DRIFT",
+        ));
+    }
+    Ok(())
+}
+
 fn validate_checkpoint_evidence(
     snapshot: &crate::state_model::RegistrySnapshot,
     plan: &SkillConvergencePlan,

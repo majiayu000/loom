@@ -154,7 +154,11 @@ pub(super) fn recover_journal(
     }
     if source_is_committed(&journal) {
         reprove_source_boundary(app, plan, &journal)?;
-        validate_recovery_routing(app, plan)?;
+        if super::registry_commit_evidence::legacy_audit_evidence_is_complete(&journal)? {
+            super::guards::validate_recovery_routing_after_legacy_audit(app, plan)?;
+        } else {
+            validate_recovery_routing(app, plan)?;
+        }
         if journal.phase == TransactionPhase::CommittingRegistry {
             let registry_commit = prove_registry_boundary(app, plan, journal_path, &mut journal)?;
             let local_axes = super::post_local::collect_local_axes(app, plan)?;

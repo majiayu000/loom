@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::state_model::RegistryProjectionsFile;
+use crate::state_model::{RegistryOperationRecord, RegistryOpsCheckpoint, RegistryProjectionsFile};
 
 use super::ownership_state::OwnershipAttempt;
 use super::registry_commit;
@@ -36,6 +36,12 @@ pub(in crate::commands::plan_cmds::convergence_transaction) struct TransactionJo
     pub(in crate::commands::plan_cmds::convergence_transaction) projections: Vec<ProjectionBackup>,
     pub(in crate::commands::plan_cmds::convergence_transaction) original_projections:
         RegistryProjectionsFile,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(in crate::commands::plan_cmds::convergence_transaction) original_operations:
+        Option<Vec<RegistryOperationRecord>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(in crate::commands::plan_cmds::convergence_transaction) original_checkpoint:
+        Option<RegistryOpsCheckpoint>,
     pub(in crate::commands::plan_cmds::convergence_transaction) installed_projections: usize,
     pub(in crate::commands::plan_cmds::convergence_transaction) expected_projections:
         Option<RegistryProjectionsFile>,
@@ -58,6 +64,17 @@ pub(in crate::commands::plan_cmds::convergence_transaction) struct TransactionJo
         Option<String>,
     #[serde(default)]
     pub(in crate::commands::plan_cmds::convergence_transaction) preparation_aborted: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(in crate::commands::plan_cmds::convergence_transaction) aggregate_operation_id:
+        Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(in crate::commands::plan_cmds::convergence_transaction) aggregate_evidence: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(in crate::commands::plan_cmds::convergence_transaction) aggregate_operation:
+        Option<RegistryOperationRecord>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(in crate::commands::plan_cmds::convergence_transaction) aggregate_checkpoint:
+        Option<RegistryOpsCheckpoint>,
     pub(in crate::commands::plan_cmds::convergence_transaction) result: Option<Value>,
     pub(in crate::commands::plan_cmds::convergence_transaction) phase: TransactionPhase,
 }

@@ -71,7 +71,13 @@ pub(super) fn reprove_source_boundary(
             ));
         }
         let committed_boundary = if let Some(registry_commit) = recorded_registry {
-            verify_registry_commit(app, plan, journal, registry_commit, source_head)?;
+            super::registry_commit_evidence::verify_registry_commit(
+                app,
+                plan,
+                journal,
+                registry_commit,
+                source_head,
+            )?;
             registry_commit
         } else {
             source_head
@@ -106,7 +112,13 @@ pub(super) fn reprove_source_boundary(
                 "an intervening commit followed the source boundary",
             ));
         }
-        verify_registry_commit(app, plan, journal, &head, source_head)?;
+        super::registry_commit_evidence::verify_registry_commit(
+            app,
+            plan,
+            journal,
+            &head,
+            source_head,
+        )?;
     }
     require_clean_path(app, &format!("skills/{}", plan.skill))?;
     let live_digest = skill_tree_digest(&app.ctx.skill_path(&plan.skill)).map_err(map_io)?;
@@ -654,48 +666,6 @@ fn projection_identity_state(
     }
 }
 
-pub(super) fn verify_registry_commit(
-    app: &App,
-    plan: &SkillConvergencePlan,
-    journal: &TransactionJournal,
-    head: &str,
-    source_head: &str,
-) -> std::result::Result<(), CommandFailure> {
-    verify_commit(
-        app,
-        head,
-        source_head,
-        &format!("skill({}): record convergence projections", plan.skill),
-        |path| path == "state/registry/projections.json",
-    )?;
-    let expected = journal
-        .expected_projections
-        .as_ref()
-        .ok_or_else(|| corrupt("missing expected projections"))?;
-    let raw = gitops::run_git(
-        &app.ctx,
-        &["show", &format!("{head}:state/registry/projections.json")],
-    )
-    .map_err(map_git)?;
-    let committed: RegistryProjectionsFile = serde_json::from_str(&raw)
-        .map_err(|_| corrupt("registry commit projections are invalid"))?;
-    if committed != *expected {
-        return Err(recovery_stale(
-            "registry commit tree differs from transaction evidence",
-        ));
-    }
-    if matches!(
-        journal.phase,
-        TransactionPhase::CommittingRegistry | TransactionPhase::CommittedCleanupPending
-    ) && journal.registry_commit.as_deref() == Some(head)
-        && journal.registry_staged_index_digest.is_some()
-    {
-        Ok(())
-    } else {
-        require_clean_path(app, "state/registry/projections.json")
-    }
-}
-
 pub(super) fn committed_skill_digest(
     app: &App,
     head: &str,
@@ -774,7 +744,7 @@ pub(super) fn committed_skill_digest(
     Ok(format!("sha256:{}", to_hex(&hasher.finalize())))
 }
 
-fn require_clean_path(app: &App, path: &str) -> std::result::Result<(), CommandFailure> {
+pub(super) fn require_clean_path(app: &App, path: &str) -> std::result::Result<(), CommandFailure> {
     for args in [
         vec!["diff", "--quiet", "--", path],
         vec!["diff", "--cached", "--quiet", "--", path],

@@ -20,12 +20,12 @@ pub(super) fn prove_registry_boundary(
     }
     validate_registry_result(app, plan, journal)?;
     if let Some(commit) = journal.registry_commit.clone() {
-        verify_commit(
+        super::registry_commit_evidence::verify_registry_commit(
             app,
+            plan,
+            journal,
             &commit,
             &source_head,
-            &format!("skill({}): record convergence projections", plan.skill),
-            |path| path == "state/registry/projections.json",
         )?;
         if head == commit {
             if let Some(commit) = super::registry_commit::resume_ready_registry_index_lock(
@@ -73,12 +73,12 @@ pub(super) fn prove_registry_boundary(
             journal,
         );
     }
-    verify_commit(
+    super::registry_commit_evidence::verify_registry_commit(
         app,
+        plan,
+        journal,
         &head,
         &source_head,
-        &format!("skill({}): record convergence projections", plan.skill),
-        |path| path == "state/registry/projections.json",
     )?;
     super::registry_commit::align_registry_index(app, plan, journal_path, journal, &head)?;
     Ok(Some(head))

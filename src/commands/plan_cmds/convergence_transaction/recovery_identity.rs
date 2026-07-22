@@ -1,5 +1,4 @@
 use super::*;
-use crate::core::convergence::RemotePolicy;
 
 pub(super) fn adopt_journal_identity(
     plan: &SkillConvergencePlan,
@@ -19,13 +18,20 @@ pub(super) fn adopt_journal_identity(
             None,
         )
     };
-    let Some(convergence_id) = journal.convergence_id.as_deref().filter(|value| {
-        value
-            .strip_prefix("conv_")
-            .is_some_and(|suffix| !suffix.is_empty())
-    }) else {
-        return Err(mismatch());
+    let Some(convergence_id) = journal.convergence_id.as_deref() else {
+        return Err(CommandFailure::new(
+            ErrorCode::StateCorrupt,
+            "convergence journal is missing its convergence identity",
+        ));
     };
+    if !convergence_id.strip_prefix("conv_").is_some_and(|suffix| {
+        suffix.len() == 32 && suffix.bytes().all(|byte| byte.is_ascii_hexdigit())
+    }) {
+        return Err(CommandFailure::new(
+            ErrorCode::StateCorrupt,
+            "convergence journal has an invalid convergence identity",
+        ));
+    }
     let Some(key_digest) = journal.idempotency_key_digest.as_deref() else {
         return Err(mismatch());
     };
@@ -37,15 +43,7 @@ pub(super) fn adopt_journal_identity(
     let exact_identity = plan_identity_matches
         && key_digest == identity.key_digest
         && binding_digest == identity.binding_digest;
-    let terminal_replay = matches!(
-        journal.phase,
-        TransactionPhase::CommittedCleanupPending | TransactionPhase::CommittedArtifactsRetained
-    ) || journal.registry_commit.is_some()
-        || (journal.phase == TransactionPhase::CommittingRegistry
-            && super::registry_commit::durable_registry_noop(journal));
-    let compatible_local_replay =
-        terminal_replay && plan.remote == RemotePolicy::NotRequested && plan_identity_matches;
-    if !exact_identity && !compatible_local_replay {
+    if !exact_identity {
         if key_digest != identity.key_digest {
             return Err(plan_failure(
                 ErrorCode::DependencyConflict,

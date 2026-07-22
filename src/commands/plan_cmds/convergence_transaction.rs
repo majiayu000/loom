@@ -41,6 +41,7 @@ mod recovery_evidence;
 mod recovery_identity;
 mod recovery_support;
 mod registry_commit;
+mod registry_commit_evidence;
 mod registry_recovery;
 mod registry_restore;
 mod remote_retry;
@@ -254,6 +255,8 @@ pub(super) fn apply_convergence(
             .map_or_else(empty_projections_file, |snapshot| {
                 snapshot.projections.clone()
             }),
+        original_operations: None,
+        original_checkpoint: None,
         installed_projections: 0,
         expected_projections: None,
         source_head: None,
@@ -266,6 +269,10 @@ pub(super) fn apply_convergence(
         rollback_head: None,
         rollback_index_digest: None,
         preparation_aborted: false,
+        aggregate_operation_id: None,
+        aggregate_evidence: None,
+        aggregate_operation: None,
+        aggregate_checkpoint: None,
         result: None,
         phase: TransactionPhase::Preparing,
     };

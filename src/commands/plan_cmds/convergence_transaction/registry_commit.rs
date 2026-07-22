@@ -209,7 +209,13 @@ pub(super) fn resume_ready_registry_index_lock(
             "prepared registry commit is missing",
         )
     })?;
-    super::recovery_evidence::verify_registry_commit(app, plan, journal, &commit, source_head)?;
+    super::registry_commit_evidence::verify_registry_commit(
+        app,
+        plan,
+        journal,
+        &commit,
+        source_head,
+    )?;
     let guard = |candidate: &Path| {
         validate_registry_result(app, plan, journal)
             .map_err(|error| anyhow::anyhow!(error.message))?;

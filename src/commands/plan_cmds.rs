@@ -79,6 +79,7 @@ impl App {
             &args.plan_id,
             &idempotency_key_digest,
             &idempotency_binding_digest,
+            stored.kind == StoredPlanKind::Converge,
         )? {
             return Ok((replay, Meta::default()));
         }
@@ -408,6 +409,7 @@ fn find_prior_apply(
     plan_id: &str,
     idempotency_key_digest: &str,
     idempotency_binding_digest: &str,
+    binding_required: bool,
 ) -> std::result::Result<Option<Value>, CommandFailure> {
     let Some(row) = events.iter().rev().find(|row| {
         row.event.cmd == "apply"
@@ -440,12 +442,13 @@ fn find_prior_apply(
     // The prior record must prove it was confirmed against the same immutable plan.
     // A mismatch means the event log disagrees with the plan being applied; fail closed
     // rather than replaying evidence that belongs to a different confirmation.
-    if let Some(recorded) = replay["idempotency_binding_digest"].as_str()
-        && recorded != idempotency_binding_digest
+    let recorded_binding = replay["idempotency_binding_digest"].as_str();
+    if recorded_binding.is_some_and(|recorded| recorded != idempotency_binding_digest)
+        || (binding_required && recorded_binding.is_none())
     {
         return Err(plan_failure(
             ErrorCode::DependencyConflict,
-            "prior apply for this plan was confirmed against a different plan digest",
+            "prior apply is missing or disagrees with the confirmed plan binding",
             "IDEMPOTENCY_BINDING_MISMATCH",
             false,
             vec!["create and confirm a fresh convergence plan".to_string()],

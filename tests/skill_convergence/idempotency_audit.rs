@@ -4,6 +4,37 @@ use serde_json::json;
 use super::skill_convergence_executor::apply_plan;
 use super::*;
 
+fn replace_prior_apply_binding(root: &Path, replacement: Option<Value>) {
+    let path = root.join("state/events/commands.jsonl");
+    let raw = std::fs::read_to_string(&path).expect("read command events");
+    let mut replaced = false;
+    let lines = raw
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| {
+            let mut event: Value = serde_json::from_str(line).expect("parse command event");
+            if !replaced && event["cmd"] == json!("apply") && event["status"] == json!("succeeded")
+            {
+                let output = event["output"]
+                    .as_object_mut()
+                    .expect("apply output object");
+                match replacement.clone() {
+                    Some(value) => {
+                        output.insert("idempotency_binding_digest".to_string(), value);
+                    }
+                    None => {
+                        output.remove("idempotency_binding_digest");
+                    }
+                }
+                replaced = true;
+            }
+            serde_json::to_string(&event).expect("serialize command event")
+        })
+        .collect::<Vec<_>>();
+    assert!(replaced, "expected a prior succeeded apply event");
+    std::fs::write(path, format!("{}\n", lines.join("\n"))).expect("rewrite command events");
+}
+
 #[test]
 fn idempotent_replay_and_key_conflict() {
     let fixture = projected_fixture();
@@ -69,6 +100,45 @@ fn idempotent_replay_and_key_conflict() {
         conflict["error"]["details"]["conflict"]["code"],
         json!("IDEMPOTENCY_KEY_REUSED")
     );
+}
+
+#[test]
+fn convergence_replay_rejects_unbound_prior_event() {
+    for (case, replacement) in [
+        ("missing", None),
+        ("non-string", Some(json!({ "invalid": true }))),
+    ] {
+        let fixture = projected_fixture();
+        std::fs::write(
+            fixture.root.path().join("skills/demo/details.txt"),
+            format!("unbound replay {case}\n"),
+        )
+        .expect("edit source");
+        let (output, plan) = plan_converge(&fixture, &[]);
+        assert!(output.status.success(), "plan failed for {case}: {plan}");
+        let key = format!("unbound-{case}");
+        let (output, first) = apply_plan(&fixture, &plan, &key, &[]);
+        assert!(
+            output.status.success(),
+            "first apply failed for {case}: {first}"
+        );
+        let head = git(fixture.root.path(), &["rev-parse", "HEAD"]);
+        let tree = snapshot_tree(fixture.target.path());
+
+        replace_prior_apply_binding(fixture.root.path(), replacement);
+        let (output, rejected) = apply_plan(&fixture, &plan, &key, &[]);
+        assert!(
+            !output.status.success(),
+            "unbound prior event replayed for {case}: {rejected}"
+        );
+        assert_eq!(rejected["error"]["code"], json!("DEPENDENCY_CONFLICT"));
+        assert_eq!(
+            rejected["error"]["details"]["conflict"]["code"],
+            json!("IDEMPOTENCY_BINDING_MISMATCH")
+        );
+        assert_eq!(git(fixture.root.path(), &["rev-parse", "HEAD"]), head);
+        assert_eq!(snapshot_tree(fixture.target.path()), tree);
+    }
 }
 
 #[test]

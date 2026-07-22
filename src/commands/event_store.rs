@@ -140,7 +140,7 @@ fn append_command_finished_with_fault_tags(
         input: None,
         output: Some(redacted_value(envelope.data.clone())),
         durable_plan: (envelope.ok && matches!(cmd, "plan.use" | "plan.converge"))
-            .then(|| redacted_value(envelope.data.clone())),
+            .then(|| durable_plan_value(cmd, &envelope.data)),
         error: envelope
             .error
             .as_ref()
@@ -242,6 +242,57 @@ pub(crate) fn redact_sensitive_string(raw: &str) -> String {
 fn redacted_value(mut value: serde_json::Value) -> serde_json::Value {
     redact_sensitive_strings(&mut value);
     value
+}
+
+fn durable_plan_value(cmd: &str, source: &serde_json::Value) -> serde_json::Value {
+    const CONVERGENCE_AUTHORITY_FIELDS: &[&str] = &[
+        "protocol_version",
+        "schema_version",
+        "plan_id",
+        "plan_digest",
+        "operation",
+        "requires_digest_confirmation",
+        "execution_enabled",
+        "skill",
+        "request_scope",
+        "selectors",
+        "source",
+        "input",
+        "preflight",
+        "input_conflicts",
+        "registry",
+        "projections",
+        "visibility",
+        "accept_restart_required",
+        "remote",
+        "required_axes",
+        "required_approvals",
+    ];
+    const USE_AUTHORITY_FIELDS: &[&str] = &[
+        "protocol_version",
+        "schema_version",
+        "plan_id",
+        "operation",
+        "required_approvals",
+        "guards",
+        "use_args",
+    ];
+
+    let mut durable = redacted_value(source.clone());
+    let authority_fields = match cmd {
+        "plan.converge" => CONVERGENCE_AUTHORITY_FIELDS,
+        "plan.use" => USE_AUTHORITY_FIELDS,
+        _ => return durable,
+    };
+    let (Some(source), Some(target)) = (source.as_object(), durable.as_object_mut()) else {
+        return durable;
+    };
+    for field in authority_fields {
+        if let Some(value) = source.get(*field) {
+            target.insert((*field).to_string(), value.clone());
+        }
+    }
+    durable
 }
 
 fn redact_url_userinfo(raw: &str) -> String {
@@ -490,7 +541,7 @@ mod tests {
     }
 
     #[test]
-    fn durable_plan_uses_the_same_secret_redaction_as_audit_output() {
+    fn durable_plan_preserves_authority_and_redacts_display_only_fields() {
         let dir = std::env::temp_dir().join(format!(
             "loom-command-events-durable-plan-{}",
             uuid::Uuid::new_v4().simple()
@@ -501,7 +552,9 @@ mod tests {
             "plan.converge",
             "req-durable-plan-redaction".to_string(),
             json!({
-                "request_scope": { "profile": "sk-demo" },
+                "request_scope": { "profile": "sk-reviewtoken" },
+                "selectors": { "profile": "sk-reviewtoken" },
+                "projections": [{ "profile": "sk-reviewtoken" }],
                 "note": "sk-reviewtoken",
             }),
             Meta::default(),
@@ -515,9 +568,16 @@ mod tests {
             .expect("finished event")
             .event;
         let durable = event.durable_plan.expect("durable plan");
-        assert_eq!(durable["request_scope"]["profile"], json!("sk-demo"));
+        assert_eq!(durable["request_scope"]["profile"], json!("sk-reviewtoken"));
+        assert_eq!(durable["selectors"]["profile"], json!("sk-reviewtoken"));
+        assert_eq!(
+            durable["projections"][0]["profile"],
+            json!("sk-reviewtoken")
+        );
         assert_eq!(durable["note"], json!("<redacted>"));
-        assert_eq!(event.output.expect("audit output"), durable);
+        let output = event.output.expect("audit output");
+        assert_eq!(output["request_scope"]["profile"], json!("<redacted>"));
+        assert_eq!(output["note"], json!("<redacted>"));
 
         fs::remove_dir_all(&dir).expect("cleanup temp root");
     }

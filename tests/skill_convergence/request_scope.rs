@@ -226,11 +226,14 @@ fn token_prefixed_profile_is_not_redacted_from_request_evidence() {
             "--workspace",
             workspace,
             "--profile",
-            "sk-demo",
+            "sk-reviewtoken",
         ],
     );
     assert!(output.status.success(), "plan failed: {plan}");
-    assert_eq!(plan["data"]["request_scope"]["profile"], json!("sk-demo"));
+    assert_eq!(
+        plan["data"]["request_scope"]["profile"],
+        json!("sk-reviewtoken")
+    );
 
     let (output, applied) = run_loom(
         fixture.root.path(),

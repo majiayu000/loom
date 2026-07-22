@@ -5,6 +5,35 @@ use serde_json::{Value, json};
 use super::skill_convergence_executor::apply_plan;
 use super::*;
 
+fn replace_prior_apply_commit(root: &Path, replacement: &str) {
+    let path = root.join("state/events/commands.jsonl");
+    let raw = fs::read_to_string(&path).expect("read command events");
+    let mut replaced = false;
+    let lines = raw
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| {
+            let mut event: Value = serde_json::from_str(line).expect("parse command event");
+            if !replaced && event["cmd"] == json!("apply") && event["status"] == json!("succeeded")
+            {
+                let applied = event["output"]["applied"]
+                    .as_object_mut()
+                    .expect("apply local evidence");
+                let field = if applied.get("registry_commit").is_some_and(Value::is_string) {
+                    "registry_commit"
+                } else {
+                    "source_commit"
+                };
+                applied.insert(field.to_string(), json!(replacement));
+                replaced = true;
+            }
+            serde_json::to_string(&event).expect("serialize command event")
+        })
+        .collect::<Vec<_>>();
+    assert!(replaced, "expected a prior succeeded apply event");
+    fs::write(path, format!("{}\n", lines.join("\n"))).expect("rewrite command events");
+}
+
 #[test]
 fn remote_failure_preserves_local_completion() {
     let fixture = projected_fixture();
@@ -85,6 +114,12 @@ fn remote_failure_preserves_local_completion() {
         ],
     );
     let later_local_head = git(fixture.root.path(), &["rev-parse", "HEAD"]);
+    let durable_boundary = data["applied"]["registry_commit"]
+        .as_str()
+        .or_else(|| data["applied"]["source_commit"].as_str())
+        .expect("durable convergence boundary")
+        .to_string();
+    replace_prior_apply_commit(fixture.root.path(), later_local_head.trim());
     let convergence_id = data["convergence_id"].clone();
     let source_commit = data["source"]["commit"].clone();
     let (output, retried) = apply_plan(&fixture, &plan, "remote-pending", &[]);
@@ -130,6 +165,10 @@ fn remote_failure_preserves_local_completion() {
         .as_str()
         .or_else(|| retried_data["applied"]["source_commit"].as_str())
         .expect("recorded convergence boundary");
+    assert_eq!(
+        expected_boundary, durable_boundary,
+        "remote retry must reload the retained transaction boundary"
+    );
     assert_eq!(
         transport["evidence"]["pushed_commit"],
         json!(expected_boundary)

@@ -350,7 +350,7 @@ pub(super) fn cleanup_declared_artifacts(
     errors
 }
 
-fn validate_journal(
+pub(super) fn validate_journal(
     app: &App,
     journal_path: &Path,
     plan: &SkillConvergencePlan,

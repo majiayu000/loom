@@ -265,6 +265,35 @@ fn exact_effect_plan() {
             .is_some_and(|operations| operations.contains(&json!("converge"))),
         "authoritative schema must declare plan converge"
     );
+    let request_scope = &schema["properties"]["request_scope"];
+    assert_eq!(request_scope["type"], json!("object"));
+    assert_eq!(request_scope["additionalProperties"], json!(false));
+    let request_scope_required = request_scope["required"]
+        .as_array()
+        .expect("request_scope required fields");
+    for field in [
+        "skill",
+        "direction",
+        "instance",
+        "agent",
+        "workspace_argument",
+        "workspace",
+        "profile",
+        "require_runtime",
+        "accept_restart_required",
+        "push_remote",
+    ] {
+        assert!(
+            request_scope_required.contains(&json!(field)),
+            "request_scope schema must require {field}"
+        );
+    }
+    assert!(
+        schema["allOf"][1]["then"]["required"]
+            .as_array()
+            .is_some_and(|required| required.contains(&json!("request_scope"))),
+        "convergence schema 1.3 must require request_scope"
+    );
     let converge_contract = &schema["allOf"][1]["then"]["properties"];
     assert!(
         converge_contract["execution_enabled"].is_null(),

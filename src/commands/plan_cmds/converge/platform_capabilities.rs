@@ -53,7 +53,7 @@ fn resolve_with(
             evidence: json!({ "required_operation": "atomic_no_replace" }),
         });
     }
-    if !capabilities.directory_handles {
+    if !effects.is_empty() && !capabilities.directory_handles {
         conflicts.push(ConvergenceInputConflict {
             code: "PLATFORM_DIRECTORY_HANDLE_UNSUPPORTED".to_string(),
             message: "this platform cannot keep convergence filesystem operations bound to opened directories"
@@ -131,10 +131,42 @@ mod tests {
     }
 
     #[test]
-    fn directory_handles_are_required_even_for_source_only_plans() {
+    fn source_only_plans_do_not_require_projection_directory_handles() {
         let conflicts = resolve_with(
             &ConvergenceInputDirection::Source,
             &[],
+            Path::new("unused-source"),
+            PlatformCapabilities {
+                exchange: true,
+                no_replace: true,
+                directory_handles: false,
+            },
+        );
+        assert!(
+            !conflicts
+                .iter()
+                .any(|conflict| { conflict.code == "PLATFORM_DIRECTORY_HANDLE_UNSUPPORTED" })
+        );
+    }
+
+    #[test]
+    fn projection_effects_require_directory_handles() {
+        let effect = ProjectionEffectPlan {
+            instance_id: "inst_demo".to_string(),
+            binding_id: "bind_demo".to_string(),
+            target_id: "target_demo".to_string(),
+            agent: "codex".to_string(),
+            profile: "default".to_string(),
+            method: "copy".to_string(),
+            ownership: "managed".to_string(),
+            materialized_path: "unused-projection".to_string(),
+            source_tree_digest: "sha256:unused".to_string(),
+            materialized_tree_digest: None,
+            effect: "create".to_string(),
+        };
+        let conflicts = resolve_with(
+            &ConvergenceInputDirection::Source,
+            &[effect],
             Path::new("unused-source"),
             PlatformCapabilities {
                 exchange: true,

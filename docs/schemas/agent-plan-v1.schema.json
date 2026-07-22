@@ -72,6 +72,34 @@
       "type": "string",
       "pattern": "^sha256:[a-f0-9]{64}$"
     },
+    "request_scope": {
+      "type": "object",
+      "required": [
+        "skill",
+        "direction",
+        "instance",
+        "agent",
+        "workspace_argument",
+        "workspace",
+        "profile",
+        "require_runtime",
+        "accept_restart_required",
+        "push_remote"
+      ],
+      "properties": {
+        "skill": { "type": "string" },
+        "direction": { "enum": ["source", "projection"] },
+        "instance": { "type": ["string", "null"] },
+        "agent": { "type": ["string", "null"] },
+        "workspace_argument": { "type": ["string", "null"] },
+        "workspace": { "type": ["string", "null"] },
+        "profile": { "type": ["string", "null"] },
+        "require_runtime": { "type": "boolean" },
+        "accept_restart_required": { "type": "boolean" },
+        "push_remote": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
     "selectors": { "type": "object" },
     "source": { "type": "object" },
     "input": { "type": "object" },
@@ -115,6 +143,7 @@
         },
         "required": [
           "plan_digest",
+          "request_scope",
           "selectors",
           "source",
           "input",

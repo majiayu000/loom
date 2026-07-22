@@ -1,3 +1,5 @@
+use std::fs;
+
 use serde_json::Value;
 
 use super::*;
@@ -8,7 +10,7 @@ pub(in crate::commands::plan_cmds) fn retry_remote_transport(
     stored: &Value,
     cursor: usize,
     identity: &super::super::ConvergenceApplyIdentity,
-    local: Value,
+    event_local: Value,
 ) -> std::result::Result<Value, CommandFailure> {
     let plan: SkillConvergencePlan = serde_json::from_value(stored.clone()).map_err(|err| {
         plan_failure(
@@ -28,7 +30,7 @@ pub(in crate::commands::plan_cmds) fn retry_remote_transport(
     if plan.remote != RemotePolicy::Push
         || identity.plan_digest != plan.plan_digest
         || identity.binding_digest != expected_binding
-        || !post_local::retry_evidence_is_valid(&plan, &local)
+        || !post_local::retry_evidence_is_valid(&plan, &event_local)
     {
         return Err(plan_failure(
             ErrorCode::StateCorrupt,
@@ -41,7 +43,31 @@ pub(in crate::commands::plan_cmds) fn retry_remote_transport(
     }
     let _workspace_lock = app.ctx.lock_workspace().map_err(map_lock)?;
     let _skill_lock = app.ctx.lock_skill(&plan.skill).map_err(map_lock)?;
-    post_local::require_exact_transport_boundary(app, &plan, &local)?;
-    let output = post_local::complete(app, &plan, &identity.key_digest, local)?;
-    Ok(apply_output(&plan, cursor, identity, output))
+    let journal_path = journal_path(app, &plan.skill);
+    let raw = fs::read_to_string(&journal_path).map_err(map_io)?;
+    let journal: TransactionJournal = serde_json::from_str(&raw).map_err(|error| {
+        CommandFailure::new(
+            ErrorCode::StateCorrupt,
+            format!("invalid convergence journal: {error}"),
+        )
+    })?;
+    let mut durable_identity = identity.clone();
+    recovery_identity::adopt_journal_identity(&plan, &journal, &mut durable_identity)?;
+    recovery_support::validate_journal(app, &journal_path, &plan, &journal)?;
+    if journal.phase != TransactionPhase::CommittedArtifactsRetained {
+        return Err(CommandFailure::new(
+            ErrorCode::StateCorrupt,
+            "pending remote retry has no retained committed transaction",
+        ));
+    }
+    recovery_evidence::reprove_source_boundary(app, &plan, &journal)?;
+    let durable_local = journal.result.clone().ok_or_else(|| {
+        CommandFailure::new(
+            ErrorCode::StateCorrupt,
+            "retained convergence transaction has no committed result",
+        )
+    })?;
+    post_local::require_exact_transport_boundary(app, &plan, &durable_local)?;
+    let output = post_local::complete(app, &plan, &durable_identity.key_digest, durable_local)?;
+    Ok(apply_output(&plan, cursor, &durable_identity, output))
 }

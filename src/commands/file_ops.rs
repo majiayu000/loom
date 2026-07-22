@@ -9,7 +9,9 @@ use serde_json::json;
 use uuid::Uuid;
 use walkdir::WalkDir;
 
-use crate::fs_util::{remove_path_if_exists, rename_no_replace_atomic, sync_parent_directory};
+use crate::fs_util::{
+    DirectoryHandle, remove_path_if_exists, rename_no_replace_atomic, sync_parent_directory,
+};
 use crate::gitops;
 use crate::state::AppContext;
 
@@ -289,6 +291,46 @@ pub(crate) fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<()> {
 
 pub(crate) fn copy_dir_recursive_preserving_symlinks(src: &Path, dst: &Path) -> Result<()> {
     copy_dir_recursive_preserving_symlinks_impl(src, dst, false)
+}
+
+pub(crate) fn copy_dir_recursive_to_handle(
+    src: &Path,
+    dst: &DirectoryHandle,
+    preserve_symlinks: bool,
+) -> Result<()> {
+    if !src.exists() {
+        return Err(anyhow!("source does not exist: {}", src.display()));
+    }
+    for entry in WalkDir::new(src)
+        .follow_links(!preserve_symlinks)
+        .into_iter()
+    {
+        let entry = entry.with_context(|| format!("failed to walk {}", src.display()))?;
+        let relative = entry.path().strip_prefix(src)?;
+        if relative.as_os_str().is_empty() {
+            continue;
+        }
+        if entry.file_type().is_dir() {
+            dst.create_dir_all(relative)?;
+        } else if preserve_symlinks && entry.file_type().is_symlink() {
+            if let Some(parent) = relative.parent()
+                && !parent.as_os_str().is_empty()
+            {
+                dst.create_dir_all(parent)?;
+            }
+            let target = fs::read_link(entry.path())?;
+            dst.symlink(&target, relative)?;
+        } else if entry.file_type().is_file() {
+            if let Some(parent) = relative.parent()
+                && !parent.as_os_str().is_empty()
+            {
+                dst.create_dir_all(parent)?;
+            }
+            dst.copy_file(entry.path(), relative)?;
+        }
+    }
+    dst.sync()?;
+    Ok(())
 }
 
 pub(crate) fn copy_skill_tree_preserving_symlinks(src: &Path, dst: &Path) -> Result<()> {

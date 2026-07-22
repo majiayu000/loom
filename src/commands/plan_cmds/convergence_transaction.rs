@@ -15,9 +15,10 @@ use super::super::codex_visibility::projection_path_is_safe_symlink;
 use super::super::file_ops::{create_declared_path_backup, restore_path_from_backup_if_absent};
 use super::super::helpers::{map_git, map_io, map_lock, map_registry_state};
 use super::super::projection_executor::{
-    PreparedProjectionStaging, ProjectionExecutionContext, ProjectionExecutionInput,
-    convergence_projection_fingerprint, execute_prepared_convergence_projection,
-    finish_convergence_projection, prepare_convergence_projection,
+    PreparedProjectionScope, PreparedProjectionStaging, ProjectionExecutionContext,
+    ProjectionExecutionInput, convergence_projection_fingerprint,
+    execute_prepared_convergence_projection, finish_convergence_projection,
+    prepare_convergence_projection_at,
 };
 use super::super::projections::upsert_projection;
 use super::super::provenance::{materialized_tree_digest, skill_tree_digest};
@@ -60,8 +61,8 @@ use ownership_state::{
     allocate_attempt, archive_previous_terminal_journal, archive_rolled_back_journal,
 };
 use preparation::{
-    declared_backup, prepare_projection_stages, prepare_transaction_artifacts,
-    rotate_projection_stages,
+    declared_backup, open_projection_target_scopes, prepare_projection_stages,
+    prepare_transaction_artifacts, rotate_projection_stages,
 };
 use projection_recovery::{
     prepare_projection_restore_fingerprint, restore_projection_from_evidence,
@@ -278,7 +279,18 @@ pub(super) fn apply_convergence(
     };
     save_journal(&journal_path, &journal)?;
 
-    if let Err(err) = prepare_transaction_artifacts(app, &plan, &journal_path, &mut journal) {
+    let target_scopes = match open_projection_target_scopes(&plan) {
+        Ok(scopes) => scopes,
+        Err(err) if interruption_fault_active() => return Err(err),
+        Err(err) => {
+            let cleanup_errors = cleanup_declared_artifacts(app, &journal_path, &mut journal, true);
+            return Err(err.with_rollback_errors(cleanup_errors));
+        }
+    };
+
+    if let Err(err) =
+        prepare_transaction_artifacts(app, &plan, &journal_path, &mut journal, &target_scopes)
+    {
         if interruption_fault_active() {
             return Err(err);
         }
@@ -297,6 +309,7 @@ pub(super) fn apply_convergence(
         request_id,
         &journal_path,
         &mut journal,
+        &target_scopes,
     );
     let output = match result {
         Ok(output) => output,
@@ -329,6 +342,7 @@ pub(super) fn apply_convergence(
     Ok(apply_output(&plan, cursor, identity, output))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn execute_local_transaction(
     app: &App,
     paths: &RegistryStatePaths,
@@ -337,6 +351,7 @@ fn execute_local_transaction(
     request_id: &str,
     journal_path: &Path,
     journal: &mut TransactionJournal,
+    target_scopes: &[preparation::ProjectionTargetScope],
 ) -> std::result::Result<Value, CommandFailure> {
     if journal.source_head.is_none()
         && plan.source.direction == ConvergenceInputDirection::Projection
@@ -359,6 +374,9 @@ fn execute_local_transaction(
     journal.phase = TransactionPhase::InstallingProjections;
     save_journal(journal_path, journal)?;
     for index in 0..plan.projections.len() {
+        let target_scope = target_scopes.get(index).ok_or_else(|| {
+            CommandFailure::new(ErrorCode::StateCorrupt, "projection target scope is absent")
+        })?;
         let effect = &plan.projections[index];
         let live_path = PathBuf::from(&journal.projections[index].materialized_path);
         let safe_symlink_noop = effect.effect == "refresh"
@@ -419,6 +437,18 @@ fn execute_local_transaction(
             )?
         } else {
             validate_projection_staging_fingerprint(artifact)?;
+            let relative_owner = target_scope.relative_owner(Path::new(&artifact.staging_owner))?;
+            let owner_directory = target_scope
+                .directory()
+                .open_dir(&relative_owner)
+                .map_err(map_io)?;
+            let activation_scope = PreparedProjectionScope::new(
+                target_scope.directory().try_clone().map_err(map_io)?,
+                owner_directory,
+                target_scope.live_name().to_path_buf(),
+                PathBuf::from("stage"),
+                PathBuf::from(&artifact.staging_owner),
+            );
             let staging = PreparedProjectionStaging::new(
                 PathBuf::from(&artifact.staging_path),
                 artifact.fingerprint().map(str::to_string).ok_or_else(|| {
@@ -428,7 +458,8 @@ fn execute_local_transaction(
                     )
                 })?,
                 artifact.original_fingerprint.clone(),
-            );
+            )
+            .with_scope(activation_scope);
             execute_prepared_convergence_projection(
                 &app.ctx,
                 paths,

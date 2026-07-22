@@ -251,6 +251,92 @@ fn remote_failure_preserves_local_completion() {
 }
 
 #[test]
+fn remote_transport_rejects_unplanned_broad_sync_paths() {
+    let fixture = projected_fixture();
+    let remote = common::TestDir::new("convergence-remote-exact-scope");
+    git(remote.path(), &["init", "--bare"]);
+    let remote_path = remote.path().to_str().expect("remote path");
+    git(
+        fixture.root.path(),
+        &["remote", "add", "origin", remote_path],
+    );
+    change_source(&fixture, "remote exact scope\n");
+    let (output, plan) = plan_converge(&fixture, &["--push-remote"]);
+    assert!(output.status.success(), "plan failed: {plan}");
+    let reviewed_head = git(fixture.root.path(), &["rev-parse", "HEAD"]);
+
+    let gitignore = fixture.root.path().join(".gitignore");
+    let mut gitignore_bytes = fs::read_to_string(&gitignore).unwrap_or_default();
+    gitignore_bytes.push_str("unplanned-ignore\n");
+    fs::write(&gitignore, &gitignore_bytes).expect("dirty gitignore");
+    let gitattributes = fixture.root.path().join(".gitattributes");
+    fs::write(&gitattributes, "unplanned/** binary\n").expect("dirty gitattributes");
+    let registry_extra = fixture.root.path().join("state/registry/unplanned.json");
+    fs::write(&registry_extra, "{\"unplanned\":true}\n").expect("dirty registry");
+    let v3_extra = fixture.root.path().join("state/v3/unplanned");
+    fs::create_dir_all(v3_extra.parent().expect("v3 parent")).expect("create v3");
+    fs::write(&v3_extra, "unplanned v3\n").expect("dirty v3");
+    git(
+        fixture.root.path(),
+        &["add", ".gitattributes", "state/v3/unplanned"],
+    );
+
+    let (output, applied) = apply_plan(&fixture, &plan, "remote-exact-scope", &[]);
+    assert!(output.status.success(), "local apply failed: {applied}");
+    assert_eq!(applied["data"]["complete"], json!(false));
+    assert_eq!(
+        applied["data"]["completion_blockers"],
+        json!(["registry.remote_pending"])
+    );
+    assert_eq!(
+        applied["data"]["convergence"]["registry_transport"]["errors"][0]["code"],
+        json!("DEPENDENCY_CONFLICT")
+    );
+
+    let committed = git(
+        fixture.root.path(),
+        &["diff", "--name-only", reviewed_head.trim(), "HEAD"],
+    );
+    for path in [
+        ".gitignore",
+        ".gitattributes",
+        "state/registry/unplanned.json",
+        "state/v3/unplanned",
+    ] {
+        assert!(!committed.lines().any(|line| line == path));
+    }
+    assert_eq!(
+        fs::read_to_string(&gitignore).expect("gitignore"),
+        gitignore_bytes
+    );
+    assert_eq!(
+        fs::read_to_string(&gitattributes).expect("gitattributes"),
+        "unplanned/** binary\n"
+    );
+    assert_eq!(
+        fs::read_to_string(&registry_extra).expect("registry extra"),
+        "{\"unplanned\":true}\n"
+    );
+    assert_eq!(
+        fs::read_to_string(&v3_extra).expect("v3 extra"),
+        "unplanned v3\n"
+    );
+    let staged = git(fixture.root.path(), &["diff", "--cached", "--name-only"]);
+    assert!(staged.lines().any(|line| line == ".gitattributes"));
+    assert!(staged.lines().any(|line| line == "state/v3/unplanned"));
+    let remote_head = Command::new("git")
+        .arg("--git-dir")
+        .arg(remote.path())
+        .args(["rev-parse", "refs/heads/main"])
+        .output()
+        .expect("inspect remote main");
+    assert!(
+        !remote_head.status.success(),
+        "unplanned bytes reached remote main"
+    );
+}
+
+#[test]
 fn remote_pending_and_restart_blockers_compose() {
     let fixture = projected_fixture();
     change_source(&fixture, "two independent blockers\n");

@@ -2,6 +2,95 @@ use super::ownership_state::OwnershipAttemptState;
 use super::*;
 use crate::commands::file_ops::copy_skill_tree_preserving_symlinks;
 use crate::commands::provenance::convergence_input_tree_digest;
+use crate::fs_util::DirectoryHandle;
+
+pub(super) struct ProjectionTargetScope {
+    directory: DirectoryHandle,
+    live_name: std::ffi::OsString,
+    parent_path: PathBuf,
+}
+
+impl ProjectionTargetScope {
+    pub(super) fn directory(&self) -> &DirectoryHandle {
+        &self.directory
+    }
+
+    pub(super) fn live_name(&self) -> &Path {
+        Path::new(&self.live_name)
+    }
+
+    pub(super) fn relative_owner(
+        &self,
+        owner: &Path,
+    ) -> std::result::Result<PathBuf, CommandFailure> {
+        if owner.parent() != Some(self.parent_path.as_path()) {
+            return Err(CommandFailure::new(
+                ErrorCode::StateCorrupt,
+                "projection owner escaped its opened target directory",
+            ));
+        }
+        owner.file_name().map(PathBuf::from).ok_or_else(|| {
+            CommandFailure::new(ErrorCode::StateCorrupt, "projection owner has no file name")
+        })
+    }
+}
+
+pub(super) fn open_projection_target_scopes(
+    plan: &SkillConvergencePlan,
+) -> std::result::Result<Vec<ProjectionTargetScope>, CommandFailure> {
+    plan.projections
+        .iter()
+        .map(|effect| {
+            let materialized = Path::new(&effect.materialized_path);
+            let parent = materialized.parent().ok_or_else(|| {
+                CommandFailure::new(ErrorCode::StateCorrupt, "projection path has no parent")
+            })?;
+            let directory = DirectoryHandle::open_or_create(parent).map_err(map_io)?;
+            maybe_skill_fault("convergence_interrupt_after_target_root_creation")?;
+            let live_name = materialized.file_name().ok_or_else(|| {
+                CommandFailure::new(ErrorCode::StateCorrupt, "projection path has no file name")
+            })?;
+            Ok(ProjectionTargetScope {
+                directory,
+                live_name: live_name.to_os_string(),
+                parent_path: parent.to_path_buf(),
+            })
+        })
+        .collect()
+}
+
+#[cfg(debug_assertions)]
+fn test_target_scope_pause(point: &str) -> std::result::Result<(), CommandFailure> {
+    if std::env::var("LOOM_TEST_CONVERGENCE_TARGET_SCOPE_PAUSE_POINT")
+        .ok()
+        .as_deref()
+        != Some(point)
+    {
+        return Ok(());
+    }
+    let directory = std::env::var_os("LOOM_TEST_CONVERGENCE_TARGET_SCOPE_PAUSE_DIR")
+        .map(PathBuf::from)
+        .ok_or_else(|| {
+            CommandFailure::new(ErrorCode::IoError, "target scope pause directory is absent")
+        })?;
+    fs::create_dir_all(&directory).map_err(map_io)?;
+    fs::write(directory.join("ready"), point).map_err(map_io)?;
+    for _ in 0..2_000 {
+        if directory.join("release").try_exists().map_err(map_io)? {
+            return Ok(());
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    Err(CommandFailure::new(
+        ErrorCode::IoError,
+        "target scope test pause timed out",
+    ))
+}
+
+#[cfg(not(debug_assertions))]
+fn test_target_scope_pause(_point: &str) -> std::result::Result<(), CommandFailure> {
+    Ok(())
+}
 
 pub(super) fn declared_backup(
     path: &Path,
@@ -52,10 +141,18 @@ pub(super) fn prepare_transaction_artifacts(
     plan: &SkillConvergencePlan,
     journal_path: &Path,
     journal: &mut TransactionJournal,
+    target_scopes: &[ProjectionTargetScope],
 ) -> std::result::Result<(), CommandFailure> {
     let paths = RegistryStatePaths::from_app_context(&app.ctx);
     let snapshot = paths.maybe_load_snapshot().map_err(map_registry_state)?;
-    prepare_transaction_artifacts_from_snapshot(app, snapshot.as_ref(), plan, journal_path, journal)
+    prepare_transaction_artifacts_from_snapshot(
+        app,
+        snapshot.as_ref(),
+        plan,
+        journal_path,
+        journal,
+        target_scopes,
+    )
 }
 
 pub(super) fn prepare_transaction_artifacts_from_snapshot(
@@ -64,6 +161,7 @@ pub(super) fn prepare_transaction_artifacts_from_snapshot(
     plan: &SkillConvergencePlan,
     journal_path: &Path,
     journal: &mut TransactionJournal,
+    target_scopes: &[ProjectionTargetScope],
 ) -> std::result::Result<(), CommandFailure> {
     let artifact_root = journal.artifact_root.clone();
     let artifact_proof = journal.artifact_owner_proof.clone();
@@ -154,6 +252,7 @@ pub(super) fn prepare_transaction_artifacts_from_snapshot(
         journal_path,
         journal,
         &projection_source,
+        target_scopes,
     )
 }
 
@@ -279,6 +378,7 @@ pub(super) fn prepare_projection_stages(
     request_id: &str,
     journal_path: &Path,
     journal: &mut TransactionJournal,
+    target_scopes: &[ProjectionTargetScope],
 ) -> std::result::Result<(), CommandFailure> {
     let paths = RegistryStatePaths::from_app_context(&app.ctx);
     let snapshot = paths.maybe_load_snapshot().map_err(map_registry_state)?;
@@ -290,6 +390,7 @@ pub(super) fn prepare_projection_stages(
         journal_path,
         journal,
         &app.ctx.skill_path(&plan.skill),
+        target_scopes,
     )
 }
 
@@ -382,6 +483,7 @@ pub(super) fn refresh_projection_live_fingerprints(
     save_journal(journal_path, journal)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn prepare_projection_stages_from(
     app: &App,
     snapshot: Option<&crate::state_model::RegistrySnapshot>,
@@ -390,6 +492,7 @@ fn prepare_projection_stages_from(
     journal_path: &Path,
     journal: &mut TransactionJournal,
     source: &Path,
+    target_scopes: &[ProjectionTargetScope],
 ) -> std::result::Result<(), CommandFailure> {
     if plan.projections.is_empty() {
         return Ok(());
@@ -401,6 +504,9 @@ fn prepare_projection_stages_from(
         )
     })?;
     for (index, effect) in plan.projections.iter().enumerate() {
+        let scope = target_scopes.get(index).ok_or_else(|| {
+            CommandFailure::new(ErrorCode::StateCorrupt, "projection target scope is absent")
+        })?;
         let materialized_path = PathBuf::from(&journal.projections[index].materialized_path);
         if effect.effect == "refresh" {
             let live = convergence_projection_fingerprint(&materialized_path)?;
@@ -430,14 +536,21 @@ fn prepare_projection_stages_from(
         }
         let owner = journal.projections[index].staging_owner.clone();
         let proof = journal.projections[index].owner_proof.clone();
-        fs::create_dir_all(Path::new(&owner).parent().ok_or_else(|| {
-            CommandFailure::new(
-                ErrorCode::StateCorrupt,
-                "projection stage has no target root",
-            )
-        })?)
-        .map_err(map_io)?;
-        activate_owned_dir(journal_path, journal, Path::new(&owner), &proof)?;
+        let relative_owner = scope.relative_owner(Path::new(&owner))?;
+        test_target_scope_pause("before_owner_create")?;
+        ownership::activate_owned_dir_at(
+            journal_path,
+            journal,
+            scope.directory(),
+            &relative_owner,
+            Path::new(&owner),
+            &proof,
+        )?;
+        test_target_scope_pause("after_owner_ready")?;
+        let owner_directory = scope
+            .directory()
+            .open_dir(&relative_owner)
+            .map_err(map_io)?;
         let input = projection_input(snapshot, plan, effect, request_id)?;
         let stage_source = if effect.method == "symlink" {
             app.ctx.skill_path(&plan.skill)
@@ -446,7 +559,12 @@ fn prepare_projection_stages_from(
         };
         let staging_path = PathBuf::from(&journal.projections[index].staging_path);
         if let Some(expected) = journal.projections[index].fingerprint() {
-            validate_owned_staging(&materialized_path, &staging_path, &journal.plan_id, &proof)?;
+            ownership::validate_owned_staging_at(
+                scope.directory(),
+                &relative_owner,
+                &journal.plan_id,
+                &proof,
+            )?;
             if convergence_projection_fingerprint(&staging_path)? != expected {
                 return Err(CommandFailure::new(
                     ErrorCode::StateCorrupt,
@@ -455,11 +573,27 @@ fn prepare_projection_stages_from(
             }
             continue;
         }
-        if staging_path.try_exists().map_err(map_io)? {
-            validate_owned_staging(&materialized_path, &staging_path, &journal.plan_id, &proof)?;
-            crate::fs_util::remove_path_if_exists(&staging_path).map_err(map_io)?;
+        if owner_directory
+            .entry_exists(Path::new("stage"))
+            .map_err(map_io)?
+        {
+            ownership::validate_owned_staging_at(
+                scope.directory(),
+                &relative_owner,
+                &journal.plan_id,
+                &proof,
+            )?;
+            owner_directory
+                .remove_tree(Path::new("stage"))
+                .map_err(map_io)?;
         }
-        prepare_convergence_projection(&app.ctx, &input, &stage_source, &staging_path)?;
+        prepare_convergence_projection_at(
+            &app.ctx,
+            &input,
+            &stage_source,
+            &owner_directory,
+            Path::new("stage"),
+        )?;
         maybe_skill_fault("convergence_interrupt_after_projection_stage")?;
         journal.projections[index].activated_fingerprint =
             Some(convergence_projection_fingerprint(&staging_path)?);

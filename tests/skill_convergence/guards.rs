@@ -603,6 +603,33 @@ fn gates_do_not_degrade_or_expand() {
     );
     assert_rejected_before_writes(&policy, before);
 
+    let wrong_policy = projected_fixture();
+    let (output, wrong_policy_plan) = plan_converge(&wrong_policy, &[]);
+    assert!(
+        output.status.success(),
+        "valid-wrong policy plan failed: {wrong_policy_plan}"
+    );
+    let digest = reseal_plan_event(&wrong_policy, &wrong_policy_plan, |stored| {
+        stored["preflight"]["checks"]["policy_safe_capture_digest"] =
+            json!(format!("sha256:{}", "0".repeat(64)));
+    });
+    let before = mutation_snapshot(&wrong_policy);
+    let (output, blocked) = apply_resealed_plan(
+        &wrong_policy,
+        &wrong_policy_plan,
+        &digest,
+        "valid-wrong-policy-gate",
+    );
+    assert!(
+        !output.status.success(),
+        "valid but unrelated policy digest applied: {blocked}"
+    );
+    assert_eq!(
+        blocked["error"]["details"]["conflict"]["code"],
+        json!("PLAN_POLICY_DRIFT")
+    );
+    assert_rejected_before_writes(&wrong_policy, before);
+
     let approval = projected_fixture();
     write_skill(
         approval.root.path(),

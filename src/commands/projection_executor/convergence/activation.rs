@@ -1,6 +1,5 @@
 use serde_json::json;
 
-use crate::fs_util::{exchange_paths_atomic, rename_no_replace_atomic};
 use crate::state::AppContext;
 use crate::types::ErrorCode;
 
@@ -50,7 +49,8 @@ fn activate_prepared_projection_with_after_mutation(
 ) -> Result<ProjectionActivationOutput, CommandFailure> {
     let mut prepared = prepared;
     let parts = prepared.take_parts();
-    let mut rollback_artifact = if parts.path_exists {
+    let scope = prepared.take_scope(&parts)?;
+    let rollback_artifact = if parts.path_exists {
         let staging_digest = observed_digest(&parts.staging_path, &parts)?;
         let live_digest = observed_digest(&parts.materialized_path, &parts)?;
         let original_digest = parts
@@ -60,8 +60,8 @@ fn activate_prepared_projection_with_after_mutation(
         if staging_digest.as_deref() == Some(&parts.staging_digest)
             && live_digest.as_deref() == Some(original_digest)
         {
-            if let Err(err) = exchange_paths_atomic(&parts.staging_path, &parts.materialized_path) {
-                return Err(cleanup_prepare_failure(
+            if let Err(err) = scope.exchange() {
+                return Err(with_prepared_recovery_details(
                     map_atomic_exchange_error(err),
                     &parts,
                 ));
@@ -93,10 +93,8 @@ fn activate_prepared_projection_with_after_mutation(
         let staging_digest = observed_digest(&parts.staging_path, &parts)?;
         let live_digest = observed_digest(&parts.materialized_path, &parts)?;
         if staging_digest.as_deref() == Some(&parts.staging_digest) && live_digest.is_none() {
-            if let Err(err) =
-                rename_no_replace_atomic(&parts.staging_path, &parts.materialized_path)
-            {
-                return Err(cleanup_prepare_failure(
+            if let Err(err) = scope.activate_create() {
+                return Err(with_prepared_recovery_details(
                     map_atomic_operation_error(err, &parts.materialized_path),
                     &parts,
                 ));
@@ -128,12 +126,18 @@ fn activate_prepared_projection_with_after_mutation(
     let observation = observe_projection_from_source(&projection, &parts.source_path);
     if observation.status != "healthy" {
         let mut rollback_errors = Vec::new();
-        if let Err(err) = rollback_artifact.rollback() {
+        let rollback = match rollback_artifact {
+            ProjectionRollbackArtifact::Exchanged { .. } => scope.exchange(),
+            ProjectionRollbackArtifact::Created { .. } => scope.rollback_create(),
+            ProjectionRollbackArtifact::PendingCleanup { .. } => Err(std::io::Error::other(
+                "new activation unexpectedly has pending cleanup evidence",
+            )),
+        };
+        if let Err(err) = rollback {
             rollback_errors.push(json!({
                 "step": "rollback_projection_activation",
-                "code": err.code.as_str(),
-                "message": err.message,
-                "details": err.details,
+                "code": ErrorCode::IoError.as_str(),
+                "message": err.to_string(),
                 "artifact": rollback_artifact.evidence(),
             }));
         }
@@ -153,6 +157,7 @@ fn activate_prepared_projection_with_after_mutation(
     Ok(ProjectionActivationOutput {
         projection: Some(projection),
         rollback_artifact: Some(rollback_artifact),
+        scope: Some(scope),
         #[cfg(test)]
         fail_cleanup_once: false,
     })

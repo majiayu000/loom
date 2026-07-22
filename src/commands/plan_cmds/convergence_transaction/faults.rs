@@ -7,6 +7,7 @@ pub(super) fn interruption_fault_active() -> bool {
                 | "convergence_interrupt_committing_source"
                 | "convergence_interrupt_committing_registry"
                 | "convergence_interrupt_after_owner_root_creation"
+                | "convergence_interrupt_after_target_root_creation"
                 | "convergence_interrupt_after_owner_marker_write"
                 | "convergence_interrupt_before_index_snapshot"
                 | "convergence_interrupt_after_index_snapshot"

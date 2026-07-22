@@ -72,7 +72,9 @@ pub(super) fn complete(
                 "required local convergence evidence changed before remote transport",
             ))
         }
-        RemotePolicy::Push => match sync_push_convergence_internal(&app.ctx) {
+        RemotePolicy::Push => match validate_transport_scope(app)
+            .and_then(|()| sync_push_convergence_internal(&app.ctx))
+        {
             Ok(result) => RegistryTransportOutcome::Synced(result),
             Err(error) => RegistryTransportOutcome::Pending(AxisError::new(
                 error.code.as_str(),
@@ -185,6 +187,37 @@ pub(super) fn complete(
     local["complete"] = json!(complete);
     local["next_actions"] = json!(next_actions);
     Ok(local)
+}
+
+fn validate_transport_scope(app: &App) -> std::result::Result<(), CommandFailure> {
+    let status = gitops::run_git(
+        &app.ctx,
+        &[
+            "status",
+            "--porcelain=v1",
+            "--untracked-files=all",
+            "--",
+            ".gitignore",
+            ".gitattributes",
+            "state/registry",
+            "state/v3",
+        ],
+    )
+    .map_err(map_git)?;
+    if status.is_empty() {
+        return Ok(());
+    }
+    let mut failure = CommandFailure::new(
+        ErrorCode::DependencyConflict,
+        "unplanned registry transport paths changed after convergence planning",
+    );
+    failure.details = json!({
+        "conflict": {
+            "code": "CONVERGENCE_TRANSPORT_SCOPE_DRIFT",
+            "paths": status.lines().collect::<Vec<_>>(),
+        }
+    });
+    Err(failure)
 }
 
 fn registry_transport_axis(

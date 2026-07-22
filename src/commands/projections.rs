@@ -21,11 +21,12 @@ use crate::types::{ErrorCode, SyncState};
 use super::CommandFailure;
 use super::event_store::redact_sensitive_string;
 use super::file_ops::{
-    copy_dir_recursive, copy_dir_recursive_preserving_symlinks, create_symlink_dir,
+    copy_dir_recursive, copy_dir_recursive_preserving_symlinks, copy_dir_recursive_to_handle,
+    create_symlink_dir,
 };
 use super::helpers::{map_git, map_io};
 use super::sync_cmds::sync_push_internal;
-use crate::fs_util::{maybe_fault_inject, remove_path_if_exists};
+use crate::fs_util::{DirectoryHandle, maybe_fault_inject, remove_path_if_exists};
 
 mod observation;
 mod symlink_guard;
@@ -118,6 +119,36 @@ pub(crate) fn project_skill_to_target(
             Ok(())
         }
     }
+}
+
+pub(crate) fn project_skill_to_target_at(
+    src: &Path,
+    directory: &DirectoryHandle,
+    dst: &Path,
+    method: ProjectionMethod,
+) -> Result<()> {
+    if matches!(method, ProjectionMethod::Symlink) {
+        directory.symlink(src, dst)?;
+        directory.sync()?;
+        return Ok(());
+    }
+    let preserve_symlinks = matches!(method, ProjectionMethod::Copy);
+    ensure_projection_symlinks_contained(src, preserve_symlinks)?;
+    let temporary = PathBuf::from(format!(".loom-tmp-{}", Uuid::new_v4()));
+    directory.create_dir(&temporary)?;
+    let temporary_dir = directory.open_dir(&temporary)?;
+    if let Err(error) = copy_dir_recursive_to_handle(src, &temporary_dir, preserve_symlinks) {
+        drop(temporary_dir);
+        directory.remove_tree(&temporary)?;
+        return Err(error);
+    }
+    drop(temporary_dir);
+    if let Err(error) = directory.rename_no_replace_to(&temporary, directory, dst) {
+        directory.remove_tree(&temporary)?;
+        return Err(error.into());
+    }
+    directory.sync()?;
+    Ok(())
 }
 
 pub(crate) fn resolve_capture_projection(

@@ -122,6 +122,10 @@ fn digest(raw: &[u8]) -> String {
     format!("sha256:{}", to_hex(&hasher.finalize()))
 }
 
+pub(super) fn digest_bytes(raw: &[u8]) -> String {
+    digest(raw)
+}
+
 pub(super) fn archive_rolled_back_journal(
     path: &Path,
     journal: &TransactionJournal,

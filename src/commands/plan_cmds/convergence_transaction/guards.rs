@@ -1,7 +1,13 @@
 use super::super::converge::digest_value;
 use super::*;
 use crate::commands::agent_cmds::planning_helpers::workspace_matches;
+use crate::commands::skill_improve::prepare_convergence_skill_input;
 use crate::core::convergence::{ConvergenceAxis, RemotePolicy};
+
+enum PolicyCaptureSource {
+    PlannedInput,
+    CommittedSource,
+}
 
 pub(super) fn validate_guards(
     app: &App,
@@ -83,7 +89,7 @@ fn validate_pre_mutation_state(
             "PLAN_PROJECTION_DRIFT",
         ));
     }
-    validate_policy_gate(plan)?;
+    validate_policy_gate(app, plan, PolicyCaptureSource::PlannedInput)?;
     Ok(snapshot)
 }
 
@@ -121,6 +127,7 @@ pub(super) fn validate_recovery_routing(
             "PLAN_PROJECTION_DRIFT",
         ));
     }
+    validate_policy_gate(app, plan, PolicyCaptureSource::CommittedSource)?;
     Ok(())
 }
 
@@ -156,6 +163,7 @@ pub(super) fn validate_recovery_routing_after_legacy_audit(
             "PLAN_PROJECTION_DRIFT",
         ));
     }
+    validate_policy_gate(app, plan, PolicyCaptureSource::CommittedSource)?;
     Ok(())
 }
 
@@ -490,24 +498,83 @@ fn validate_missing_target_filesystem_scope(
     ))
 }
 
-fn validate_policy_gate(plan: &SkillConvergencePlan) -> std::result::Result<(), CommandFailure> {
+fn validate_policy_gate(
+    app: &App,
+    plan: &SkillConvergencePlan,
+    source: PolicyCaptureSource,
+) -> std::result::Result<(), CommandFailure> {
     let checks = &plan.preflight.checks;
-    let policy_digest = checks.get("policy_safe_capture_digest");
-    if !policy_digest.is_some_and(|digest| sealed_digest_is_valid(digest))
-        || checks.get("policy_decision").map(String::as_str) != Some("allowed")
+    if plan.preflight.input_direction != plan.source.direction
+        || plan.preflight.input_tree_digest != plan.input.selected_input_tree_digest
     {
         return Err(scope_failure(
-            "sealed policy evidence is missing, malformed, or blocked",
+            "sealed policy inputs are internally inconsistent",
             "PLAN_POLICY_DRIFT",
         ));
     }
-    let sealed_approvals = checks.get("policy_required_approvals_digest");
-    let observed_approvals = digest_value(&json!(plan.required_approvals))?;
-    if !sealed_approvals.is_some_and(|digest| sealed_digest_is_valid(digest))
-        || sealed_approvals != Some(&observed_approvals)
+
+    let selected = match source {
+        PolicyCaptureSource::PlannedInput
+            if plan.source.direction == ConvergenceInputDirection::Projection =>
+        {
+            let instance = plan.source.input_instance.as_deref().ok_or_else(|| {
+                scope_failure(
+                    "sealed projection policy input has no instance",
+                    "PLAN_POLICY_DRIFT",
+                )
+            })?;
+            Some(
+                plan.input
+                    .projections
+                    .iter()
+                    .find(|item| item.instance_id == instance)
+                    .ok_or_else(|| {
+                        scope_failure(
+                            "sealed projection policy input is absent",
+                            "PLAN_POLICY_DRIFT",
+                        )
+                    })?,
+            )
+        }
+        _ => None,
+    };
+    let prepared = prepare_convergence_skill_input(
+        &app.ctx,
+        &plan.skill,
+        selected.map(|item| Path::new(&item.materialized_path)),
+        selected.map(|item| item.method.as_str()),
+        &plan.input.selected_input_tree_digest,
+    )
+    .map_err(|error| {
+        scope_failure(
+            format!("fresh policy capture failed: {}", error.message),
+            "PLAN_POLICY_DRIFT",
+        )
+    })?;
+    let policy = prepared.policy();
+    let observed_policy_digest = digest_value(&serde_json::to_value(policy).map_err(map_io)?)?;
+    let policy_digest = checks.get("policy_safe_capture_digest");
+    let observed_decision = if policy.allowed { "allowed" } else { "blocked" };
+    if !policy_digest.is_some_and(|digest| sealed_digest_is_valid(digest))
+        || policy_digest != Some(&observed_policy_digest)
+        || checks.get("policy_decision").map(String::as_str) != Some(observed_decision)
+        || !policy.allowed
     {
         return Err(scope_failure(
-            "sealed approval requirements do not match the reviewed plan",
+            "sealed policy evidence does not match the fresh policy capture",
+            "PLAN_POLICY_DRIFT",
+        ));
+    }
+
+    let fresh_approvals = super::super::required_approvals(policy);
+    let sealed_approvals = checks.get("policy_required_approvals_digest");
+    let observed_approvals = digest_value(&json!(fresh_approvals))?;
+    if !sealed_approvals.is_some_and(|digest| sealed_digest_is_valid(digest))
+        || sealed_approvals != Some(&observed_approvals)
+        || fresh_approvals != plan.required_approvals
+    {
+        return Err(scope_failure(
+            "sealed approval requirements do not match the fresh policy capture",
             "PLAN_APPROVAL_DRIFT",
         ));
     }

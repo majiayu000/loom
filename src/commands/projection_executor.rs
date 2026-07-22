@@ -54,17 +54,20 @@ mod tests;
 use convergence::activate_after_mutation;
 #[allow(unused_imports)]
 pub(crate) use convergence::{
-    PreparedProjection, PreparedProjectionArtifact, ProjectionActivationOutput,
-    ProjectionRollbackArtifact, activate_prepared_projection, discard_prepared_projection,
+    PreparedProjection, PreparedProjectionArtifact, PreparedProjectionScope,
+    ProjectionActivationOutput, ProjectionRollbackArtifact, activate_prepared_projection,
+    discard_prepared_projection,
 };
 use convergence::{map_ownership_fingerprint_error, projection_ownership_fingerprint};
 #[cfg(test)]
 pub(crate) use prepared::execute_projection;
+#[cfg(test)]
+pub(crate) use prepared::prepare_convergence_projection;
 use prepared::{PreparedOwnerGuard, validate_execution_input};
 pub(crate) use prepared::{
     PreparedProjectionStaging, convergence_projection_fingerprint,
     execute_prepared_convergence_projection, execute_standalone_projection,
-    finish_convergence_projection, prepare_convergence_projection,
+    finish_convergence_projection, prepare_convergence_projection_at,
 };
 use staging_cleanup::{
     StagingOwnership, cleanup_owned_staging, cleanup_projection_staging,
@@ -391,19 +394,26 @@ fn materialize_projection<M: ExecutionMode>(
     input: &ProjectionExecutionInput,
     existing_projection: Option<&RegistryProjectionInstance>,
     projection: &RegistryProjectionInstance,
-    prepared_staging: Option<PreparedProjectionStaging>,
+    mut prepared_staging: Option<PreparedProjectionStaging>,
     mut prepared_owner_guard: Option<&mut PreparedOwnerGuard<'_>>,
 ) -> std::result::Result<MaterializationResult<M::Prepared>, CommandFailure> {
     let target_base = PathBuf::from(&input.target.path);
-    fs::create_dir_all(&target_base).map_err(map_io)?;
+    if !M::CONVERGENCE {
+        fs::create_dir_all(&target_base).map_err(map_io)?;
+    }
     let canonical_skill_src = ctx.skill_path(&input.skill);
     let skill_src = if M::CONVERGENCE {
         input.source_path.as_deref().unwrap_or(&canonical_skill_src)
     } else {
         &canonical_skill_src
     };
-    let path_exists =
-        input.materialized_path.exists() || fs::symlink_metadata(&input.materialized_path).is_ok();
+    let path_exists = if M::CONVERGENCE && prepared_staging.is_some() {
+        prepared_staging
+            .as_ref()
+            .is_some_and(|staging| staging.expected_live_fingerprint.is_some())
+    } else {
+        input.materialized_path.exists() || fs::symlink_metadata(&input.materialized_path).is_ok()
+    };
     let replace_existing = input.replace_existing;
 
     if path_exists
@@ -419,7 +429,7 @@ fn materialize_projection<M: ExecutionMode>(
         });
     }
 
-    if matches!(input.method, ProjectionMethod::Symlink) {
+    if !M::CONVERGENCE && matches!(input.method, ProjectionMethod::Symlink) {
         let probe = probe_symlink(&target_base);
         if !probe.supported {
             return Err(CommandFailure::new(
@@ -480,6 +490,9 @@ fn materialize_projection<M: ExecutionMode>(
             "prepared staging requires convergence mode",
         ));
     }
+    let prepared_scope = prepared_staging
+        .as_mut()
+        .and_then(|staging| staging.scope.take());
     let expected_prepared_fingerprint = prepared_staging
         .as_ref()
         .map(|staging| staging.expected_fingerprint.clone());
@@ -630,6 +643,7 @@ fn materialize_projection<M: ExecutionMode>(
                 path_exists,
                 staging_digest,
                 existing_digest,
+                prepared_scope,
             )),
             observation: Some(observation),
         });

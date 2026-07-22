@@ -1,6 +1,72 @@
 use super::super::super::projection_executor::convergence_projection_fingerprint;
 use super::recovery_evidence::corrupt;
 use super::*;
+use crate::fs_util::DirectoryHandle;
+
+struct ProjectionRecoveryScope {
+    target: DirectoryHandle,
+    owner: DirectoryHandle,
+    live_name: PathBuf,
+    stage_name: PathBuf,
+    owner_name: PathBuf,
+}
+
+impl ProjectionRecoveryScope {
+    fn open(artifact: &ProjectionBackup) -> std::result::Result<Self, CommandFailure> {
+        let live = Path::new(&artifact.materialized_path);
+        let stage = Path::new(&artifact.staging_path);
+        let target_path = live
+            .parent()
+            .ok_or_else(|| corrupt("projection has no target root"))?;
+        let owner_path = stage
+            .parent()
+            .ok_or_else(|| corrupt("projection has no stage owner"))?;
+        if owner_path.parent() != Some(target_path) {
+            return Err(corrupt("projection stage owner escaped its target root"));
+        }
+        let target = DirectoryHandle::open(target_path).map_err(map_io)?;
+        let owner_name = owner_path
+            .file_name()
+            .map(PathBuf::from)
+            .ok_or_else(|| corrupt("projection stage owner has no file name"))?;
+        let owner = target.open_dir(&owner_name).map_err(map_io)?;
+        let live_name = live
+            .file_name()
+            .map(PathBuf::from)
+            .ok_or_else(|| corrupt("projection has no live file name"))?;
+        let stage_name = stage
+            .file_name()
+            .map(PathBuf::from)
+            .ok_or_else(|| corrupt("projection has no stage file name"))?;
+        Ok(Self {
+            target,
+            owner,
+            live_name,
+            stage_name,
+            owner_name,
+        })
+    }
+
+    fn validate_owner(
+        &self,
+        plan_id: &str,
+        proof: &str,
+    ) -> std::result::Result<(), CommandFailure> {
+        ownership::validate_owned_staging_at(&self.target, &self.owner_name, plan_id, proof)
+    }
+
+    fn exchange(&self) -> std::result::Result<(), CommandFailure> {
+        self.owner
+            .exchange_to(&self.stage_name, &self.target, &self.live_name)
+            .map_err(map_io)
+    }
+
+    fn retire_created(&self) -> std::result::Result<(), CommandFailure> {
+        self.target
+            .rename_no_replace_to(&self.live_name, &self.owner, &self.stage_name)
+            .map_err(map_io)
+    }
+}
 
 pub(super) fn restore_projection_from_evidence(
     artifact: &ProjectionBackup,
@@ -78,6 +144,7 @@ fn restore_projection_with_hook<F>(
 where
     F: FnOnce(&Path),
 {
+    let scope = ProjectionRecoveryScope::open(artifact)?;
     let live = Path::new(&artifact.materialized_path);
     let staging = Path::new(&artifact.staging_path);
     let expected = artifact
@@ -93,7 +160,7 @@ where
     } else {
         None
     };
-    validate_owned_staging(live, staging, plan_id, &artifact.owner_proof)?;
+    scope.validate_owner(plan_id, &artifact.owner_proof)?;
 
     let live_exists = live.try_exists().map_err(map_io)?;
     let staging_exists = staging.try_exists().map_err(map_io)?;
@@ -111,7 +178,7 @@ where
                 "live projection after interrupted activation",
             )?;
             before_atomic_restore(live);
-            exchange_paths_atomic(staging, live).map_err(map_io)?;
+            scope.exchange()?;
             require_fingerprint(staging, expected, "projection exchanged during rollback")?;
             require_fingerprint(live, restored, "restored live projection")?;
             if !path_matches_backup(live, backup)? {
@@ -157,7 +224,7 @@ where
             "refresh rollback staging was not durably prepared",
         ));
     }
-    rename_no_replace_atomic(live, staging).map_err(map_io)?;
+    scope.retire_created()?;
     require_fingerprint(staging, expected, "projection removed during rollback")?;
     Ok(())
 }

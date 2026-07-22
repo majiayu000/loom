@@ -8,7 +8,9 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
 use std::path::Path;
 
+mod directory_handle;
 mod index_lock_capture;
+pub(crate) use directory_handle::DirectoryHandle;
 #[cfg(windows)]
 pub use index_lock_capture::ExclusiveDeleteFile;
 pub use index_lock_capture::same_file_identity_paths;

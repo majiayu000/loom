@@ -3,13 +3,14 @@ use std::{fs, io};
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use serde_json::json;
 use uuid::Uuid;
 
-use crate::cli::Cli;
+use crate::cli::{Cli, Command, PlanCommand};
 use crate::envelope::Envelope;
 use crate::fs_util::{append_jsonl_raw, ensure_append_log, maybe_fault_inject_any};
 use crate::state::AppContext;
+
+use super::agent_cmds::planning_helpers::normalize_path;
 
 const COMMAND_EVENT_SCHEMA_VERSION: u32 = 1;
 
@@ -39,20 +40,28 @@ pub(crate) struct CommandEventRow {
     pub event: CommandEvent,
 }
 
-pub(crate) fn command_event_input(cli: &Cli, request_id: &str) -> serde_json::Value {
+pub(crate) fn command_event_input(cli: &Cli, request_id: &str) -> Result<serde_json::Value> {
     let mut audit_cli = cli.clone();
     audit_cli.request_id = Some(request_id.to_string());
-    let mut input = serde_json::to_value(audit_cli).unwrap_or_else(|err| {
-        json!({
-            "serialization_error": err.to_string(),
-            "request_id": request_id,
-            "command": format!("{:?}", cli.command),
-            "json": cli.json,
-            "root": cli.root.as_ref().map(|root| root.display().to_string()),
-        })
-    });
+    let mut input = serde_json::to_value(audit_cli).context("failed to encode command input")?;
+    if let Command::Plan {
+        command: PlanCommand::Converge(args),
+    } = &cli.command
+    {
+        let request = input
+            .pointer_mut("/command/Plan/command/Converge")
+            .and_then(serde_json::Value::as_object_mut)
+            .context("encoded converge command is missing its request object")?;
+        request.insert(
+            "workspace_resolved".to_string(),
+            args.workspace
+                .as_ref()
+                .map(|path| normalize_path(path).display().to_string())
+                .map_or(serde_json::Value::Null, serde_json::Value::String),
+        );
+    }
     redact_sensitive_strings(&mut input);
-    input
+    Ok(input)
 }
 
 pub(crate) fn append_command_started(

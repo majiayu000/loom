@@ -46,7 +46,7 @@ pub(super) fn validate_convergence_request_scope(
         .map_err(|_| {
         request_evidence_failure(cursor, "invalid digest-covered request scope")
     })?;
-    let started = request_scope_from_event(request, sealed.workspace.clone(), cursor)?;
+    let started = request_scope_from_event(request, cursor)?;
     if started != sealed || !request_scope_matches_plan(&sealed, plan) {
         return Err(request_scope_drift(cursor));
     }
@@ -55,7 +55,6 @@ pub(super) fn validate_convergence_request_scope(
 
 fn request_scope_from_event(
     request: &serde_json::Map<String, Value>,
-    normalized_workspace: Option<String>,
     cursor: usize,
 ) -> std::result::Result<ConvergenceRequestScope, CommandFailure> {
     let string = |field: &str| {
@@ -105,7 +104,7 @@ fn request_scope_from_event(
         instance,
         agent: optional_string("agent")?,
         workspace_argument: optional_string("workspace")?,
-        workspace: normalized_workspace,
+        workspace: optional_string("workspace_resolved")?,
         profile: optional_string("profile")?,
         require_runtime: boolean("require_runtime")?,
         accept_restart_required: boolean("accept_restart_required")?,

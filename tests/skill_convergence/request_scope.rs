@@ -196,6 +196,22 @@ fn workspace_argument_and_normalized_binding_are_both_request_bound() {
 }
 
 #[test]
+fn normalized_workspace_cannot_be_self_attested_by_the_resealed_plan() {
+    let fixture = projected_fixture();
+    let (output, plan) = plan_converge(&fixture, &[]);
+    assert!(output.status.success(), "plan failed: {plan}");
+    let replacement = "/tmp/different-normalized-workspace";
+    let digest = reseal_plan_event(&fixture, &plan, |stored| {
+        stored["request_scope"]["workspace"] = json!(replacement);
+        stored["selectors"]["workspace"] = json!(replacement);
+    });
+
+    let (output, envelope) =
+        apply_resealed_plan(&fixture, &plan, &digest, "workspace-self-attestation-drift");
+    assert_request_scope_rejected(output, &envelope);
+}
+
+#[test]
 fn runtime_requirement_is_bound_to_the_started_plan_request() {
     let fixture = projected_fixture();
     let (output, plan) = plan_converge(

@@ -78,14 +78,14 @@ fn inventory_covers_public_surfaces() {
     assert!(report.surface_count >= 6);
     assert!(report.example_count >= report.surface_count);
     assert!(report.command_count > 100);
-    assert_eq!(report.next_action_emitter_count, 58);
+    assert_eq!(report.next_action_emitter_count, 59);
     assert_eq!(report.panel_mutation_count, 25);
 }
 
 #[test]
 fn emitter_inventory_is_complete() {
     let report = check_surface_inventory(std::path::Path::new(".")).expect("surface inventory");
-    assert_eq!(report.next_action_emitter_count, 58);
+    assert_eq!(report.next_action_emitter_count, 59);
 }
 
 #[test]

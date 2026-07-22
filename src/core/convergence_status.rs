@@ -8,6 +8,8 @@ use crate::types::SyncState;
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub(crate) enum RegistryTransportState {
+    #[serde(rename = "not_requested")]
+    NotRequested,
     Synced,
     PendingPush,
     Diverged,

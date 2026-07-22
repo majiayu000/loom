@@ -45,6 +45,169 @@ pub(super) fn public_agent_capabilities(
         }),
         Meta::default(),
     );
+    let convergence_apply = Envelope::ok(
+        "apply",
+        "req-convergence-apply".to_string(),
+        json!({
+            "local_state": "complete",
+            "outcome": "local_complete_remote_pending_restart_required",
+            "completion_blockers": ["registry.remote_pending", "visibility.restart_required"],
+            "source": {"commit": "commit-fixture", "direction": "source"},
+            "convergence": {
+                "registry_transport": {
+                    "state": "PENDING_PUSH",
+                    "evidence": {
+                        "requested": true,
+                        "observed_revision": "revision-fixture",
+                        "checkpoint_updated_at": "2026-07-21T00:00:00Z",
+                        "observed_at": "2026-07-21T00:00:01Z",
+                    },
+                    "observed_at": "2026-07-21T00:00:01Z",
+                    "stale": false,
+                    "errors": [{"code": "PUSH_REJECTED", "message": "fixture"}],
+                },
+                "projections": {
+                    "state": "converged",
+                    "items": [{
+                        "instance_id": "projection-fixture",
+                        "skill_id": "skill-fixture",
+                        "target_id": "target-fixture",
+                        "method": "copy",
+                        "state": "converged",
+                        "source_digest": "digest-fixture",
+                        "materialized_digest": "digest-fixture",
+                        "observed_at": "2026-07-21T00:00:01Z",
+                        "errors": [{"code": "fixture_item_error", "message": "fixture"}],
+                    }],
+                    "evidence": {
+                        "selected_count": 1,
+                        "observed_revision": "revision-fixture",
+                        "checkpoint_updated_at": "2026-07-21T00:00:00Z",
+                    },
+                    "observed_at": "2026-07-21T00:00:01Z",
+                    "stale": false,
+                    "errors": [{"code": "fixture_projection_error", "message": "fixture"}],
+                },
+                "visibility": {
+                    "state": "restart_required",
+                    "agent": "claude",
+                    "evidence": {
+                        "reason": "adapter_reload_required_after_apply",
+                        "observed_revision": "revision-fixture",
+                        "checkpoint_updated_at": "2026-07-21T00:00:00Z",
+                        "observed_at": "2026-07-21T00:00:01Z",
+                    },
+                    "observed_at": "2026-07-21T00:00:01Z",
+                    "stale": false,
+                    "errors": [{"code": "fixture_visibility_error", "message": "fixture"}],
+                },
+            },
+            "complete": false,
+            "next_actions": [
+                {"cmd": "loom skill inspect skill-fixture", "reason": "fixture"},
+                {
+                    "cmd": "loom apply plan-fixture --idempotency-key $IDEMPOTENCY_KEY",
+                    "reason": "retry remote transport",
+                    "idempotency_key_digest": "sha256:key-fixture",
+                },
+            ],
+        }),
+        Meta::default(),
+    );
+    let convergence_noop_source = Envelope::ok(
+        "apply",
+        "req-convergence-noop".to_string(),
+        json!({
+            "source": {"commit": null, "direction": "source"},
+            "convergence": {
+                "projections": {
+                    "state": "not_applicable",
+                    "evidence": {
+                        "selected_count": 0,
+                        "observed_revision": "revision-fixture",
+                        "checkpoint_updated_at": null,
+                    },
+                    "observed_at": "2026-07-21T00:00:02Z",
+                    "stale": false,
+                    "errors": [{"code": "fixture_projection_error", "message": "fixture"}],
+                },
+                "visibility": {
+                    "state": "unknown",
+                    "agent": null,
+                    "evidence": {
+                        "reason": "agent_not_selected",
+                        "observed_revision": "revision-fixture",
+                        "checkpoint_updated_at": null,
+                        "observed_at": "2026-07-21T00:00:02Z",
+                    },
+                    "observed_at": "2026-07-21T00:00:02Z",
+                    "stale": false,
+                    "errors": [{"code": "fixture_visibility_error", "message": "fixture"}],
+                },
+            },
+        }),
+        Meta::default(),
+    );
+    let convergence_symlink = Envelope::ok(
+        "apply",
+        "req-convergence-symlink".to_string(),
+        json!({
+            "convergence": {
+                "projections": {
+                    "items": [{
+                        "instance_id": "symlink-fixture",
+                        "skill_id": "skill-fixture",
+                        "target_id": "target-fixture",
+                        "method": "symlink",
+                        "state": "converged",
+                        "source_digest": null,
+                        "materialized_digest": null,
+                    }],
+                },
+            },
+        }),
+        Meta::default(),
+    );
+    let convergence_not_requested = Envelope::ok(
+        "apply",
+        "req-convergence-local".to_string(),
+        json!({
+            "convergence": {
+                "registry_transport": {
+                    "state": "not_requested",
+                    "evidence": {
+                        "policy": "not_requested",
+                        "observed_revision": "revision-fixture",
+                        "checkpoint_updated_at": null,
+                        "observed_at": "2026-07-21T00:00:02Z",
+                    },
+                    "observed_at": "2026-07-21T00:00:02Z",
+                    "stale": false,
+                },
+            },
+        }),
+        Meta::default(),
+    );
+    let convergence_synced = Envelope::ok(
+        "apply",
+        "req-convergence-synced".to_string(),
+        json!({
+            "convergence": {
+                "registry_transport": {
+                    "state": "SYNCED",
+                    "evidence": {
+                        "result": "pushed",
+                        "observed_revision": "revision-fixture",
+                        "checkpoint_updated_at": "2026-07-21T00:00:03Z",
+                        "observed_at": "2026-07-21T00:00:04Z",
+                    },
+                    "observed_at": "2026-07-21T00:00:04Z",
+                    "stale": false,
+                },
+            },
+        }),
+        Meta::default(),
+    );
     let failure = Envelope::err_with_next_actions(
         "fixture.failure",
         "req-failure".to_string(),
@@ -57,6 +220,11 @@ pub(super) fn public_agent_capabilities(
         serde_json::to_value(preflight),
         serde_json::to_value(durable_plan),
         serde_json::to_value(convergence_plan),
+        serde_json::to_value(convergence_apply),
+        serde_json::to_value(convergence_noop_source),
+        serde_json::to_value(convergence_symlink),
+        serde_json::to_value(convergence_not_requested),
+        serde_json::to_value(convergence_synced),
         serde_json::to_value(failure),
     ];
     let mut shapes = BTreeMap::<String, (BTreeSet<String>, usize)>::new();
@@ -81,8 +249,44 @@ pub(super) fn public_agent_capabilities(
             .into_iter()
             .map(|code| format!("value:envelope.error.code:{}", code.as_str())),
     );
+    capabilities.extend(convergence_completion_values().map(str::to_string));
     capabilities.extend(semantic_capabilities(repo_root, &serialized)?);
     Ok(capabilities)
+}
+
+fn convergence_completion_values() -> impl Iterator<Item = &'static str> {
+    [
+        "value:envelope.data.local_state:complete",
+        "value:envelope.data.outcome:local_complete_restart_required",
+        "value:envelope.data.outcome:complete_with_restart_required",
+        "value:envelope.data.outcome:local_complete_remote_pending",
+        "value:envelope.data.outcome:local_complete_remote_pending_restart_required",
+        "value:envelope.data.outcome:local_complete_evidence_incomplete",
+        "value:envelope.data.outcome:complete",
+        "value:envelope.data.completion_blockers[]:registry.remote_pending",
+        "value:envelope.data.completion_blockers[]:visibility.restart_required",
+        "value:envelope.data.completion_blockers[]:visibility.evidence_incomplete",
+        "value:envelope.data.completion_blockers[]:projections.evidence_incomplete",
+        "value:envelope.data.completion_blockers[]:evidence.required_missing",
+        "value:envelope.data.completion_blockers[]:registry_transport.evidence_incomplete",
+        "value:envelope.data.convergence.registry_transport.state:not_requested",
+        "value:envelope.data.convergence.registry_transport.state:SYNCED",
+        "value:envelope.data.convergence.registry_transport.state:PENDING_PUSH",
+        "value:envelope.data.convergence.projections.state:converged",
+        "value:envelope.data.convergence.projections.state:conflict",
+        "value:envelope.data.convergence.projections.state:drifted",
+        "value:envelope.data.convergence.projections.state:error",
+        "value:envelope.data.convergence.projections.state:missing",
+        "value:envelope.data.convergence.projections.state:not_applicable",
+        "value:envelope.data.convergence.projections.state:unknown",
+        "value:envelope.data.convergence.visibility.state:visible",
+        "value:envelope.data.convergence.visibility.state:restart_required",
+        "value:envelope.data.convergence.visibility.state:not_visible",
+        "value:envelope.data.convergence.visibility.state:unsupported",
+        "value:envelope.data.convergence.visibility.state:unknown",
+        "value:envelope.data.convergence.visibility.state:error",
+    ]
+    .into_iter()
 }
 
 fn semantic_capabilities(
@@ -203,7 +407,7 @@ fn capability_kind(
 mod tests {
     use std::path::Path;
 
-    use super::public_agent_capabilities;
+    use super::{convergence_completion_values, public_agent_capabilities};
     use crate::types::ErrorCode;
 
     #[test]
@@ -215,5 +419,40 @@ mod tests {
         }
         assert!(capabilities.contains("field:envelope.error.next_actions[].cmd:string"));
         assert!(capabilities.contains("field:envelope.error.next_actions[].reason:string"));
+        for field in [
+            "field:envelope.data.local_state:optional-string",
+            "field:envelope.data.outcome:optional-string",
+            "field:envelope.data.completion_blockers:optional-array-string",
+            "field:envelope.data.complete:optional-boolean",
+            "field:envelope.data.convergence:optional-object",
+            "field:envelope.data.convergence.registry_transport:optional-object",
+            "field:envelope.data.convergence.projections:optional-object",
+            "field:envelope.data.convergence.visibility:optional-object",
+            "field:envelope.data.source.commit:null-or-string",
+            "field:envelope.data.convergence.projections.items[].source_digest:null-or-string",
+            "field:envelope.data.convergence.projections.items[].materialized_digest:null-or-string",
+            "field:envelope.data.convergence.projections.items[].observed_at:optional-string",
+            "field:envelope.data.convergence.projections.evidence.observed_revision:optional-string",
+            "field:envelope.data.convergence.projections.evidence.checkpoint_updated_at:null-or-string",
+            "field:envelope.data.convergence.projections.observed_at:optional-string",
+            "field:envelope.data.convergence.visibility.agent:null-or-string",
+            "field:envelope.data.convergence.visibility.evidence.observed_revision:optional-string",
+            "field:envelope.data.convergence.visibility.evidence.checkpoint_updated_at:null-or-string",
+            "field:envelope.data.convergence.visibility.evidence.observed_at:optional-string",
+            "field:envelope.data.convergence.visibility.observed_at:optional-string",
+            "field:envelope.data.convergence.registry_transport.evidence.policy:optional-string",
+            "field:envelope.data.convergence.registry_transport.evidence.result:optional-string",
+            "field:envelope.data.convergence.registry_transport.evidence.observed_revision:optional-string",
+            "field:envelope.data.convergence.registry_transport.evidence.checkpoint_updated_at:null-or-string",
+            "field:envelope.data.convergence.registry_transport.evidence.observed_at:optional-string",
+            "field:envelope.data.convergence.registry_transport.observed_at:optional-string",
+            "field:envelope.data.convergence.registry_transport.stale:optional-boolean",
+            "field:envelope.data.next_actions[].idempotency_key_digest:optional-string",
+        ] {
+            assert!(capabilities.contains(field), "missing {field}");
+        }
+        for value in convergence_completion_values() {
+            assert!(capabilities.contains(value), "missing {value}");
+        }
     }
 }

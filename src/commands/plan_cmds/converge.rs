@@ -59,6 +59,18 @@ impl App {
             workspace.as_deref(),
             &source_digest,
         )?;
+        let visibility_agents = projections
+            .iter()
+            .map(|effect| effect.agent.clone())
+            .collect::<BTreeSet<_>>();
+        let resolved_visibility_agent =
+            args.agent
+                .map(|agent| agent.as_str().to_string())
+                .or_else(|| {
+                    (args.require_runtime && visibility_agents.len() == 1)
+                        .then(|| visibility_agents.iter().next().cloned())
+                        .flatten()
+                });
         validate_projection_input(args, &projections)?;
         let source_dirty_paths = source_replacement_risk_paths(&self.ctx, &args.skill)?;
         let projection_evidence =
@@ -107,7 +119,7 @@ impl App {
         let preflight_candidate = prepared_input.candidate_path(&args.skill);
         let preflight = self.convergence_preflight_evidence(
             &args.skill,
-            args.agent.map(|agent| agent.as_str()),
+            resolved_visibility_agent.as_deref(),
             workspace.as_deref(),
             direction.clone(),
             &selected_input_tree_digest,
@@ -142,6 +154,22 @@ impl App {
             resolve_platform_capability_conflicts(&direction, &projections, &canonical_source);
         let execution_enabled = platform_conflicts.is_empty();
         input_conflicts.extend(platform_conflicts);
+        if args.require_runtime && projections.is_empty() {
+            input_conflicts.push(ConvergenceInputConflict {
+                code: "RUNTIME_PROJECTION_REQUIRED".to_string(),
+                message: "--require-runtime resolved no active projection".to_string(),
+                evidence: json!({}),
+            });
+        }
+        if args.require_runtime && visibility_agents.len() > 1 {
+            input_conflicts.push(ConvergenceInputConflict {
+                code: "RUNTIME_AGENT_AMBIGUOUS".to_string(),
+                message:
+                    "--require-runtime resolved multiple agent runtimes; select one with --agent"
+                        .to_string(),
+                evidence: json!({"agents": visibility_agents}),
+            });
+        }
         let visibility = projections
             .iter()
             .map(|effect| VisibilityRequirement {
@@ -166,7 +194,7 @@ impl App {
             plan_digest: String::new(),
             skill: args.skill.clone(),
             selectors: ConvergenceSelectors {
-                agent: args.agent.map(|agent| agent.as_str().to_string()),
+                agent: resolved_visibility_agent,
                 workspace: workspace.map(|path| path.display().to_string()),
                 profile: args.profile.clone(),
                 input_instance: args.instance.clone(),
@@ -199,22 +227,14 @@ impl App {
         };
         plan.seal().map_err(map_io)?;
 
-        let mut conflicts = plan
+        let conflicts = plan
             .input_conflicts
             .iter()
             .map(|conflict| serde_json::to_value(conflict).map_err(map_io))
             .collect::<std::result::Result<Vec<_>, _>>()?;
-        if args.require_runtime && plan.projections.is_empty() {
-            conflicts.push(json!({
-                "code": "RUNTIME_PROJECTION_REQUIRED",
-                "message": "--require-runtime resolved no active projection",
-            }));
-        }
         let risks = policy_risks(policy);
         let safe_to_apply = conflicts.is_empty()
             && plan.required_approvals.is_empty()
-            && plan.remote == RemotePolicy::NotRequested
-            && !plan.required_axes.contains(&ConvergenceAxis::Visibility)
             && !risks.iter().any(|risk| risk["blocks_apply"] == json!(true));
 
         let mut output = serde_json::to_value(&plan).map_err(map_io)?;

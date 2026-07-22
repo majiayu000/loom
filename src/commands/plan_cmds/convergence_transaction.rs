@@ -35,6 +35,7 @@ mod index_lock_failure;
 mod journal;
 mod ownership;
 mod ownership_state;
+mod post_local;
 mod preparation;
 mod projection_recovery;
 mod projection_view;
@@ -43,6 +44,7 @@ mod recovery_support;
 mod registry_commit;
 mod registry_recovery;
 mod registry_restore;
+mod remote_retry;
 mod rollback;
 mod source_commit;
 mod source_recovery;
@@ -72,6 +74,7 @@ use recovery_evidence::{
 };
 use recovery_support::*;
 use registry_commit::{commit_convergence_registry, require_head};
+pub(super) use remote_retry::retry_remote_transport;
 use rollback::{finish_transaction, restore_activated_projections, rollback_journal};
 use source_recovery::{
     restore_source_after_activation_guard, restore_source_from_evidence,
@@ -99,10 +102,13 @@ pub(super) fn apply_convergence(
     })?;
     let idempotency_binding_digest =
         aggregate_audit::binding_digest(&plan, idempotency_key_digest)?;
-    if stored["safe_to_apply"] != json!(true) || !plan.required_approvals.is_empty() {
+    if stored["safe_to_apply"] != json!(true)
+        || !plan.input_conflicts.is_empty()
+        || !plan.required_approvals.is_empty()
+    {
         return Err(plan_failure(
             ErrorCode::PolicyBlocked,
-            "convergence policy approvals are not executable in this tranche",
+            "convergence plan still has conflicts or policy approvals",
             "CONVERGENCE_POLICY_WORKFLOW_REQUIRED",
             false,
             vec!["wait for the reviewed policy execution workflow".to_string()],
@@ -123,6 +129,7 @@ pub(super) fn apply_convergence(
             request_id,
         )?
     {
+        let output = post_local::complete(app, &plan, idempotency_key_digest, output)?;
         return Ok(apply_output(&plan, cursor, idempotency_key_digest, output));
     }
     let snapshot = validate_guards(app, &plan, cursor)?;
@@ -322,6 +329,7 @@ pub(super) fn apply_convergence(
         )
         .with_rollback_errors(cleanup_errors));
     }
+    let output = post_local::complete(app, &plan, idempotency_key_digest, output)?;
     Ok(apply_output(&plan, cursor, idempotency_key_digest, output))
 }
 
@@ -526,12 +534,13 @@ fn execute_local_transaction(
         }
     }
     maybe_skill_fault("convergence_after_registry_save")?;
+    let local_axes = post_local::collect_local_axes(app, plan)?;
     journal.phase = TransactionPhase::CommittingRegistry;
     save_journal(journal_path, journal)?;
     if snapshot.is_some() {
-        aggregate_audit::record(paths, plan, journal_path, journal)?;
+        aggregate_audit::record(paths, plan, &local_axes, journal_path, journal)?;
     } else {
-        aggregate_audit::record_source_only(plan, journal_path, journal)?;
+        aggregate_audit::record_source_only(plan, &local_axes, journal_path, journal)?;
     }
     let registry_commit = if snapshot.is_some() {
         match commit_convergence_registry(app, plan, journal_path, journal) {

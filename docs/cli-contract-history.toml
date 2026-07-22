@@ -47,3 +47,15 @@ version = "1.6.0"
 skill_range = ">=1.0.0,<2.0.0"
 change = "add read-only skill lifecycle statistics joining current bindings and normalized telemetry usage"
 migration_note = "Clients may consume skill stats counters and lifecycle categories; existing 1.x commands and fields remain compatible."
+
+[[contract]]
+version = "1.7.0"
+skill_range = ">=1.0.0,<2.0.0"
+change = "add post-write convergence visibility, remote transport outcomes, completion blockers, and retry guidance"
+migration_note = "Clients may consume structured partial convergence outcomes and retry pending remote transport with the same plan and idempotency key; existing 1.x commands and fields remain compatible."
+
+[[contract]]
+version = "1.8.0"
+skill_range = ">=1.0.0,<2.0.0"
+change = "complete convergence commit, projection digest, and registry transport evidence capability shapes"
+migration_note = "Clients may distinguish nullable no-op or symlink evidence and inspect registry transport policy and result fields; existing 1.x commands and fields remain compatible."

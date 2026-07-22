@@ -198,6 +198,19 @@ impl App {
 pub(crate) fn sync_push_internal(
     ctx: &AppContext,
 ) -> std::result::Result<&'static str, CommandFailure> {
+    sync_push_internal_with_rebase(ctx, true)
+}
+
+pub(crate) fn sync_push_convergence_internal(
+    ctx: &AppContext,
+) -> std::result::Result<&'static str, CommandFailure> {
+    sync_push_internal_with_rebase(ctx, false)
+}
+
+fn sync_push_internal_with_rebase(
+    ctx: &AppContext,
+    allow_rebase: bool,
+) -> std::result::Result<&'static str, CommandFailure> {
     if !gitops::remote_exists(ctx) {
         return Err(CommandFailure::new(
             ErrorCode::ArgInvalid,
@@ -227,6 +240,12 @@ pub(crate) fn sync_push_internal(
     if remote_main_exists {
         let (_ahead, behind) = gitops::ahead_behind_main(ctx).map_err(map_git)?;
         if behind > 0 {
+            if !allow_rebase {
+                return Err(CommandFailure::new(
+                    ErrorCode::RemoteDiverged,
+                    "remote main advanced after the convergence plan; refusing to rewrite recorded commit evidence",
+                ));
+            }
             gitops::pull_rebase_main(ctx).map_err(map_replay_conflict)?;
         }
     }

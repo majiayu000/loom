@@ -107,7 +107,7 @@ fn convergence_evidence_is_complete() {
         Some(1)
     );
     assert_eq!(evidence["registry_operation"]["state"], json!("recorded"));
-    assert_eq!(evidence["visibility"]["state"], json!("not_evaluated"));
+    assert_eq!(evidence["visibility"]["state"], json!("restart_required"));
     assert_eq!(evidence["remote"]["state"], json!("not_requested"));
     assert_eq!(evidence["recovery"]["state"], json!("journaled"));
 

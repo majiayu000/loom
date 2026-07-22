@@ -3,6 +3,8 @@ use super::recovery_evidence::{
     validate_mutated_surfaces, validate_rollback_evidence, validate_rolling_back_state,
 };
 use super::*;
+use crate::core::convergence::RemotePolicy;
+use crate::next_action_trace::observe_next_actions;
 
 pub(super) fn recover_journal(
     app: &App,
@@ -25,9 +27,10 @@ pub(super) fn recover_journal(
         journal.phase,
         TransactionPhase::CommittedCleanupPending | TransactionPhase::CommittedArtifactsRetained
     ) || journal.registry_commit.is_some();
-    let terminal_replay =
-        terminal_replay && super::aggregate_audit::plan_identity_is_valid(plan, &journal);
-    if !exact_identity && !terminal_replay {
+    let compatible_local_replay = terminal_replay
+        && plan.remote == RemotePolicy::NotRequested
+        && super::aggregate_audit::plan_identity_is_valid(plan, &journal);
+    if !exact_identity && !compatible_local_replay {
         return Err(plan_failure(
             ErrorCode::DependencyConflict,
             "convergence journal is bound to a different idempotency identity",
@@ -292,6 +295,16 @@ pub(super) fn apply_output(
         "idempotency_binding_digest": output["idempotency_binding_digest"],
         "idempotent_replay": false,
         "plan_event_cursor": cursor,
+        "local_state": output["local_state"],
+        "outcome": output["outcome"],
+        "completion_blockers": output["completion_blockers"],
+        "source": output["source"],
+        "convergence": output["convergence"],
+        "complete": output["complete"],
+        "next_actions": observe_next_actions(
+            "plan.converge.post_local",
+            output["next_actions"].clone(),
+        ),
         "applied": output,
         "evidence": output["evidence"],
         "recovery": { "rollback_supported": true },

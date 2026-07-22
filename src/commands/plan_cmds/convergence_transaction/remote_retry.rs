@@ -60,7 +60,6 @@ pub(in crate::commands::plan_cmds) fn retry_remote_transport(
             "pending remote retry has no retained committed transaction",
         ));
     }
-    recovery_evidence::reprove_source_boundary(app, &plan, &journal)?;
     let durable_local = journal.result.clone().ok_or_else(|| {
         CommandFailure::new(
             ErrorCode::StateCorrupt,
@@ -68,6 +67,7 @@ pub(in crate::commands::plan_cmds) fn retry_remote_transport(
         )
     })?;
     post_local::require_exact_transport_boundary(app, &plan, &durable_local)?;
+    recovery_evidence::reprove_source_boundary(app, &plan, &journal)?;
     let output = post_local::complete(app, &plan, &durable_identity.key_digest, durable_local)?;
     Ok(apply_output(&plan, cursor, &durable_identity, output))
 }

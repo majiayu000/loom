@@ -35,7 +35,7 @@ use platform_capabilities::resolve_platform_capability_conflicts;
 use policy_gate::seal_policy_gate;
 mod platform_capabilities;
 mod policy_gate;
-const CONVERGENCE_PLAN_SCHEMA_VERSION: &str = "1.2";
+const CONVERGENCE_PLAN_SCHEMA_VERSION: &str = "1.3";
 
 impl App {
     pub(super) fn cmd_plan_converge(

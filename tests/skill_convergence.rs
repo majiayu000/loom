@@ -15,8 +15,12 @@ mod skill_convergence_idempotency_audit;
 mod skill_convergence_index_lock_retention;
 #[path = "skill_convergence/ledger_assertions.rs"]
 mod skill_convergence_ledger_assertions;
+#[path = "skill_convergence/policy_input.rs"]
+mod skill_convergence_policy_input;
 #[path = "skill_convergence/post_local.rs"]
 mod skill_convergence_post_local;
+#[path = "skill_convergence/post_local_transport.rs"]
+mod skill_convergence_post_local_transport;
 #[path = "skill_convergence/projection_activation_flags.rs"]
 mod skill_convergence_projection_activation_flags;
 #[path = "skill_convergence/recovery_identity.rs"]
@@ -218,7 +222,7 @@ fn exact_effect_plan() {
 
     assert_eq!(first["cmd"], json!("plan.converge"));
     assert_eq!(first["data"]["protocol_version"], json!("1.0"));
-    assert_eq!(first["data"]["schema_version"], json!("1.2"));
+    assert_eq!(first["data"]["schema_version"], json!("1.3"));
     assert_eq!(first["data"]["operation"], json!("converge"));
     assert_eq!(first["data"]["safe_to_apply"], json!(true));
     assert_eq!(first["data"]["execution_enabled"], json!(true));
@@ -246,8 +250,8 @@ fn exact_effect_plan() {
     assert!(
         schema["properties"]["schema_version"]["enum"]
             .as_array()
-            .is_some_and(|versions| versions.contains(&json!("1.2"))),
-        "authoritative schema must declare convergence schema 1.2"
+            .is_some_and(|versions| versions.contains(&json!("1.3"))),
+        "authoritative schema must declare convergence schema 1.3"
     );
     assert!(
         schema["properties"]["operation"]["enum"]

@@ -13,7 +13,10 @@ use crate::core::convergence_status::{
 
 enum RegistryTransportOutcome {
     NotRequested,
-    Synced(&'static str),
+    Synced {
+        result: &'static str,
+        commit: String,
+    },
     Pending(AxisError),
 }
 
@@ -72,10 +75,10 @@ pub(super) fn complete(
                 "required local convergence evidence changed before remote transport",
             ))
         }
-        RemotePolicy::Push => match validate_transport_scope(app, plan, &local)
-            .and_then(|()| sync_push_convergence_internal(&app.ctx))
-        {
-            Ok(result) => RegistryTransportOutcome::Synced(result),
+        RemotePolicy::Push => match validate_transport_scope(app, plan, &local).and_then(|commit| {
+            sync_push_convergence_internal(&app.ctx, &commit).map(|result| (result, commit))
+        }) {
+            Ok((result, commit)) => RegistryTransportOutcome::Synced { result, commit },
             Err(error) => RegistryTransportOutcome::Pending(AxisError::new(
                 error.code.as_str(),
                 error.message,
@@ -193,7 +196,7 @@ fn validate_transport_scope(
     app: &App,
     plan: &SkillConvergencePlan,
     local: &Value,
-) -> std::result::Result<(), CommandFailure> {
+) -> std::result::Result<String, CommandFailure> {
     let status = gitops::run_git(
         &app.ctx,
         &[
@@ -228,11 +231,11 @@ pub(super) fn require_exact_transport_boundary(
     app: &App,
     plan: &SkillConvergencePlan,
     local: &Value,
-) -> std::result::Result<(), CommandFailure> {
+) -> std::result::Result<String, CommandFailure> {
     let expected_head = recorded_final_commit(plan, local)?;
     let live_head = gitops::head(&app.ctx).map_err(map_git)?;
     if live_head == expected_head {
-        return Ok(());
+        return Ok(expected_head.to_string());
     }
     let expected_is_ancestor = gitops::run_git_allow_failure(
         &app.ctx,
@@ -241,21 +244,16 @@ pub(super) fn require_exact_transport_boundary(
     .map_err(map_git)?
     .status
     .success();
-    let (code, message) = if expected_is_ancestor {
-        (
-            "CONVERGENCE_COMMIT_BOUNDARY_DRIFT",
-            "live HEAD moved past the exact convergence commit boundary",
-        )
-    } else {
-        (
-            "CONVERGENCE_COMMIT_EVIDENCE_STALE",
-            "live HEAD no longer contains the recorded convergence commit boundary",
-        )
-    };
-    let mut failure = CommandFailure::new(ErrorCode::DependencyConflict, message);
+    if expected_is_ancestor {
+        return Ok(expected_head.to_string());
+    }
+    let mut failure = CommandFailure::new(
+        ErrorCode::DependencyConflict,
+        "live HEAD no longer contains the recorded convergence commit boundary",
+    );
     failure.details = json!({
         "conflict": {
-            "code": code,
+            "code": "CONVERGENCE_COMMIT_EVIDENCE_STALE",
             "expected_head": expected_head,
             "live_head": live_head,
         }
@@ -292,7 +290,7 @@ fn registry_transport_axis(
     outcome: RegistryTransportOutcome,
 ) -> std::result::Result<Value, CommandFailure> {
     status.evidence["observed_at"] = json!(status.observed_at);
-    let collected_has_errors = !status.errors.is_empty();
+    let collected_errors = status.errors.clone();
     let mut freshness_errors = status
         .errors
         .into_iter()
@@ -303,19 +301,20 @@ fn registry_transport_axis(
             status.state = RegistryTransportState::NotRequested;
             status.evidence["policy"] = json!("not_requested");
         }
-        RegistryTransportOutcome::Synced(result) => {
-            if status.state != RegistryTransportState::Synced
-                || collected_has_errors
-                || !freshness_errors.is_empty()
-                || status.stale
-            {
-                status.state = RegistryTransportState::Error;
-                freshness_errors.push(AxisError::new(
-                    "transport_postcondition_failed",
-                    "registry transport status did not confirm the completed push",
-                ));
-            }
+        RegistryTransportOutcome::Synced { result, commit } => {
+            let collected_global_state = status.state;
+            status.evidence["global_observed_revision_before_scope_override"] =
+                status.evidence["observed_revision"].clone();
+            status.evidence["global_stale_before_scope_override"] = json!(status.stale);
+            status.evidence["global_errors_before_scope_override"] = json!(collected_errors);
+            status.state = RegistryTransportState::Synced;
+            status.stale = false;
+            status.evidence["observed_revision"] = json!(commit);
             status.evidence["result"] = json!(result);
+            status.evidence["scope"] = json!("exact_convergence_commit");
+            status.evidence["pushed_commit"] = json!(commit);
+            status.evidence["global_state_before_scope_override"] = json!(collected_global_state);
+            freshness_errors.clear();
         }
         RegistryTransportOutcome::Pending(error) => {
             status.state = RegistryTransportState::PendingPush;

@@ -8,8 +8,9 @@ use common::{TestDir, run_loom, write_skill};
 #[path = "../src/sha256.rs"]
 mod sha256;
 
-const CONVERGENCE_DIGEST_FIELDS: [&str; 13] = [
+const CONVERGENCE_DIGEST_FIELDS: [&str; 14] = [
     "skill",
+    "request_scope",
     "selectors",
     "source",
     "input",
@@ -283,6 +284,40 @@ fn stored_schema_1_1_convergence_plan_reports_migration() {
         !output.status.success(),
         "legacy schema unexpectedly ran: {applied}"
     );
+    assert_eq!(applied["error"]["code"], json!("SCHEMA_MISMATCH"));
+    assert_eq!(
+        applied["error"]["details"]["conflict"]["code"],
+        json!("PLAN_SCHEMA_UNSUPPORTED")
+    );
+}
+
+#[test]
+fn stored_schema_1_2_without_request_scope_reports_migration() {
+    let fixture = projected_fixture();
+    let (output, plan) = plan_converge(&fixture, &[]);
+    assert!(output.status.success(), "plan failed: {plan}");
+    let plan_id = plan["data"]["plan_id"].as_str().expect("plan id");
+    let digest = plan["data"]["plan_digest"].as_str().expect("plan digest");
+    mutate_plan_event(fixture.root.path(), plan_id, |stored| {
+        stored["schema_version"] = json!("1.2");
+        stored
+            .as_object_mut()
+            .expect("stored plan object")
+            .remove("request_scope");
+    });
+
+    let (output, applied) = run_loom(
+        fixture.root.path(),
+        &[
+            "apply",
+            plan_id,
+            "--plan-digest",
+            digest,
+            "--idempotency-key",
+            "schema-1-2-compat",
+        ],
+    );
+    assert!(!output.status.success(), "legacy schema ran: {applied}");
     assert_eq!(applied["error"]["code"], json!("SCHEMA_MISMATCH"));
     assert_eq!(
         applied["error"]["details"]["conflict"]["code"],

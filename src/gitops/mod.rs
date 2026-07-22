@@ -541,6 +541,23 @@ pub fn push_main_with_tags(ctx: &AppContext) -> Result<()> {
     Ok(())
 }
 
+pub fn push_exact_main(ctx: &AppContext, commit: &str) -> Result<()> {
+    if !matches!(commit.len(), 40 | 64) || !commit.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(anyhow!(
+            "exact main push requires a full hexadecimal commit OID"
+        ));
+    }
+    let commit_object = format!("{commit}^{{commit}}");
+    let exists = run_git_allow_failure(ctx, &["cat-file", "-e", &commit_object])?;
+    if !exists.status.success() {
+        return Err(anyhow!("exact main push OID is not a local commit"));
+    }
+    ensure_origin_remote_url_allowed(ctx)?;
+    let refspec = format!("{commit}:refs/heads/main");
+    run_git(ctx, &["push", "origin", &refspec])?;
+    Ok(())
+}
+
 pub fn pull_rebase_main(ctx: &AppContext) -> Result<()> {
     ensure_origin_remote_url_allowed(ctx)?;
     let output = run_git_allow_failure(ctx, &["pull", "--rebase", "origin", "main"])?;

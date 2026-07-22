@@ -35,6 +35,7 @@ pub(crate) struct ConvergenceRequestScope {
     pub direction: ConvergenceInputDirection,
     pub instance: Option<String>,
     pub agent: Option<String>,
+    pub workspace_argument: Option<String>,
     pub workspace: Option<String>,
     pub profile: Option<String>,
     pub require_runtime: bool,
@@ -273,11 +274,12 @@ fn stored_plan_shape_is_valid(plan: &serde_json::Map<String, Value>) -> bool {
 }
 
 fn request_scope_is_valid(value: &serde_json::Map<String, Value>) -> bool {
-    value.len() == 9
+    value.len() == 10
         && field_is_string(value, "skill")
         && field_is_one_of(value, "direction", &["source", "projection"])
         && field_is_optional_string(value, "instance")
         && field_is_optional_string(value, "agent")
+        && field_is_optional_string(value, "workspace_argument")
         && field_is_optional_string(value, "workspace")
         && field_is_optional_string(value, "profile")
         && field_is_bool(value, "require_runtime")

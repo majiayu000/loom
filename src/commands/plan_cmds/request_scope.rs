@@ -6,7 +6,6 @@ use serde_json::Value;
 use crate::cli::PlanConvergeArgs;
 use crate::core::convergence::{ConvergenceInputDirection, ConvergenceRequestScope};
 
-use super::super::agent_cmds::planning_helpers::normalize_path;
 use super::{CommandFailure, ErrorCode, plan_failure};
 
 pub(super) fn convergence_request_scope(
@@ -22,6 +21,10 @@ pub(super) fn convergence_request_scope(
         },
         instance: args.instance.clone(),
         agent: args.agent.map(|agent| agent.as_str().to_string()),
+        workspace_argument: args
+            .workspace
+            .as_ref()
+            .map(|path| path.display().to_string()),
         workspace: workspace.map(|path| path.display().to_string()),
         profile: args.profile.clone(),
         require_runtime: args.require_runtime,
@@ -39,11 +42,11 @@ pub(super) fn validate_convergence_request_scope(
         .and_then(|input| input.pointer("/command/Plan/command/Converge"))
         .and_then(Value::as_object)
         .ok_or_else(|| request_evidence_failure(cursor, "missing original request evidence"))?;
-    let started = request_scope_from_event(request, cursor)?;
     let sealed = serde_json::from_value::<ConvergenceRequestScope>(plan["request_scope"].clone())
         .map_err(|_| {
         request_evidence_failure(cursor, "invalid digest-covered request scope")
     })?;
+    let started = request_scope_from_event(request, sealed.workspace.clone(), cursor)?;
     if started != sealed || !request_scope_matches_plan(&sealed, plan) {
         return Err(request_scope_drift(cursor));
     }
@@ -52,6 +55,7 @@ pub(super) fn validate_convergence_request_scope(
 
 fn request_scope_from_event(
     request: &serde_json::Map<String, Value>,
+    normalized_workspace: Option<String>,
     cursor: usize,
 ) -> std::result::Result<ConvergenceRequestScope, CommandFailure> {
     let string = |field: &str| {
@@ -95,14 +99,13 @@ fn request_scope_from_event(
             "inconsistent projection instance evidence",
         ));
     }
-    let workspace = optional_string("workspace")?
-        .map(|value| normalize_path(Path::new(&value)).display().to_string());
     Ok(ConvergenceRequestScope {
         skill: string("skill")?,
         direction,
         instance,
         agent: optional_string("agent")?,
-        workspace,
+        workspace_argument: optional_string("workspace")?,
+        workspace: normalized_workspace,
         profile: optional_string("profile")?,
         require_runtime: boolean("require_runtime")?,
         accept_restart_required: boolean("accept_restart_required")?,

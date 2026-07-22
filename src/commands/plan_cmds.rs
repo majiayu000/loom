@@ -334,11 +334,16 @@ fn validate_stored_plan_metadata(
 ) -> std::result::Result<(), CommandFailure> {
     if stored.kind == StoredPlanKind::Converge
         && stored.plan["operation"] == json!("converge")
-        && stored.plan["schema_version"] == json!("1.1")
+        && stored.plan["schema_version"]
+            .as_str()
+            .is_some_and(|version| matches!(version, "1.1" | "1.2"))
     {
         return Err(plan_failure(
             ErrorCode::SchemaMismatch,
-            "stored convergence plan schema 1.1 cannot be applied by the schema 1.2 executor",
+            format!(
+                "stored convergence plan schema {} cannot be applied by the schema 1.3 executor",
+                stored.plan["schema_version"].as_str().unwrap_or("unknown")
+            ),
             "PLAN_SCHEMA_UNSUPPORTED",
             false,
             vec!["create and review a fresh convergence plan".to_string()],
@@ -353,7 +358,7 @@ fn validate_stored_plan_metadata(
         }
         StoredPlanKind::Converge => {
             stored.plan["operation"] == json!("converge")
-                && stored.plan["schema_version"] == json!("1.2")
+                && stored.plan["schema_version"] == json!("1.3")
                 && stored.plan["requires_digest_confirmation"] == json!(true)
                 && stored.plan["execution_enabled"] == json!(true)
         }

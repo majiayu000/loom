@@ -96,6 +96,7 @@ fn complete_request_scope_is_digest_covered() {
             "direction": "source",
             "instance": null,
             "agent": "claude",
+            "workspace_argument": fixture.workspace.path().display().to_string(),
             "workspace": fs::canonicalize(fixture.workspace.path())
                 .expect("canonical workspace")
                 .display()
@@ -106,6 +107,92 @@ fn complete_request_scope_is_digest_covered() {
             "push_remote": true,
         })
     );
+}
+
+#[test]
+fn relative_workspace_request_survives_apply_from_a_different_cwd() {
+    let fixture = projected_fixture();
+    let planning_cwd = fixture.workspace.path().parent().expect("workspace parent");
+    let relative_workspace = fixture
+        .workspace
+        .path()
+        .file_name()
+        .and_then(|name| name.to_str())
+        .expect("relative workspace");
+    let (output, plan) = common::run_loom_in_cwd(
+        fixture.root.path(),
+        planning_cwd,
+        &[
+            "plan",
+            "converge",
+            "demo",
+            "--agent",
+            "claude",
+            "--workspace",
+            relative_workspace,
+            "--profile",
+            "default",
+        ],
+    );
+    assert!(output.status.success(), "relative plan failed: {plan}");
+    assert_eq!(
+        plan["data"]["request_scope"]["workspace_argument"],
+        json!(relative_workspace)
+    );
+    assert_eq!(
+        plan["data"]["request_scope"]["workspace"],
+        json!(
+            fs::canonicalize(fixture.workspace.path())
+                .expect("canonical workspace")
+                .display()
+                .to_string()
+        )
+    );
+
+    let plan_id = plan["data"]["plan_id"].as_str().expect("plan id");
+    let digest = plan["data"]["plan_digest"].as_str().expect("plan digest");
+    let (output, applied) = common::run_loom_in_cwd(
+        fixture.root.path(),
+        fixture.root.path(),
+        &[
+            "apply",
+            plan_id,
+            "--plan-digest",
+            digest,
+            "--idempotency-key",
+            "relative-workspace-cross-cwd",
+        ],
+    );
+    assert!(
+        output.status.success(),
+        "reviewed relative workspace drifted across cwd: {applied}"
+    );
+}
+
+#[test]
+fn workspace_argument_and_normalized_binding_are_both_request_bound() {
+    for (field, replacement, key) in [
+        (
+            "workspace_argument",
+            "different-relative-workspace",
+            "workspace-argument-drift",
+        ),
+        (
+            "workspace",
+            "/tmp/different-normalized-workspace",
+            "workspace-binding-drift",
+        ),
+    ] {
+        let fixture = projected_fixture();
+        let (output, plan) = plan_converge(&fixture, &[]);
+        assert!(output.status.success(), "plan failed: {plan}");
+        let digest = reseal_plan_event(&fixture, &plan, |stored| {
+            stored["request_scope"][field] = json!(replacement);
+        });
+
+        let (output, envelope) = apply_resealed_plan(&fixture, &plan, &digest, key);
+        assert_request_scope_rejected(output, &envelope);
+    }
 }
 
 #[test]

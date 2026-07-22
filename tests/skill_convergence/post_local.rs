@@ -164,94 +164,7 @@ fn interrupted_registry_recovery_retains_complete_b_evidence() {
 }
 
 #[test]
-fn remote_failure_preserves_local_completion() {
-    let fixture = projected_fixture();
-    let remote = common::TestDir::new("convergence-remote-retry");
-    let convergence_operations_before = convergence_operation_count(fixture.root.path());
-    change_source(&fixture, "remote pending bytes\n");
-    let (output, plan) = plan_converge(&fixture, &["--push-remote"]);
-    assert!(output.status.success(), "plan failed: {plan}");
-
-    let (output, applied) = apply_plan(&fixture, &plan, "remote-pending", &[]);
-    assert!(output.status.success(), "partial apply failed: {applied}");
-    let data = &applied["data"];
-    assert_eq!(data["local_state"], json!("complete"));
-    assert_eq!(data["complete"], json!(false));
-    assert_eq!(data["outcome"], json!("local_complete_remote_pending"));
-    assert_eq!(
-        data["completion_blockers"],
-        json!(["registry.remote_pending"])
-    );
-    assert_eq!(
-        data["convergence"]["registry_transport"]["state"],
-        json!("PENDING_PUSH")
-    );
-    assert_eq!(
-        fs::read_to_string(fixture.target.path().join("demo/details.txt"))
-            .expect("read local projection"),
-        "remote pending bytes\n"
-    );
-    assert!(data["source"]["commit"].is_string());
-    assert!(
-        data["next_actions"][0]["cmd"]
-            .as_str()
-            .is_some_and(|command| command.contains("$IDEMPOTENCY_KEY"))
-    );
-    let aggregate_effects = data["evidence"].clone();
-    assert_eq!(data["evidence"], aggregate_effects);
-    assert_eq!(data["evidence"]["remote"]["state"], json!("pending_push"));
-    assert_eq!(
-        convergence_operation_count(fixture.root.path()),
-        convergence_operations_before,
-        "convergence must not append a registry ops ledger row"
-    );
-
-    let (wrong_key_output, wrong_key) = apply_plan(&fixture, &plan, "different-key", &[]);
-    assert!(
-        !wrong_key_output.status.success(),
-        "different key must not own pending retry: {wrong_key}"
-    );
-    assert_eq!(wrong_key["error"]["code"], json!("DEPENDENCY_CONFLICT"));
-    assert_eq!(
-        wrong_key["error"]["details"]["conflict"]["code"],
-        json!("IDEMPOTENCY_KEY_REUSED")
-    );
-
-    git(remote.path(), &["init", "--bare"]);
-    let remote_path = remote.path().to_str().expect("remote path");
-    git(
-        fixture.root.path(),
-        &["remote", "add", "origin", remote_path],
-    );
-    let convergence_id = data["convergence_id"].clone();
-    let source_commit = data["source"]["commit"].clone();
-    let (output, retried) = apply_plan(&fixture, &plan, "remote-pending", &[]);
-    assert!(output.status.success(), "remote retry failed: {retried}");
-    let retried_data = &retried["data"];
-    assert_eq!(retried_data["convergence_id"], convergence_id);
-    assert_eq!(retried_data["source"]["commit"], source_commit);
-    assert_eq!(retried_data["complete"], json!(true));
-    assert_eq!(retried_data["outcome"], json!("complete"));
-    assert_eq!(retried_data["completion_blockers"], json!([]));
-    assert_eq!(
-        retried_data["convergence"]["registry_transport"]["state"],
-        json!("SYNCED")
-    );
-    assert_eq!(retried_data["evidence"], aggregate_effects);
-    assert_eq!(
-        retried_data["evidence"]["remote"]["state"],
-        json!("pending_push"),
-        "retry must not rewrite immutable aggregate evidence"
-    );
-    assert_eq!(
-        convergence_operation_count(fixture.root.path()),
-        convergence_operations_before,
-        "remote retry must not append a registry ops ledger row"
-    );
-}
-
-#[test]
-fn remote_transport_rejects_unplanned_broad_sync_paths() {
+fn remote_transport_excludes_unplanned_broad_sync_paths() {
     let fixture = projected_fixture();
     let remote = common::TestDir::new("convergence-remote-exact-scope");
     git(remote.path(), &["init", "--bare"]);
@@ -292,6 +205,10 @@ fn remote_transport_rejects_unplanned_broad_sync_paths() {
         applied["data"]["convergence"]["registry_transport"]["errors"][0]["code"],
         json!("DEPENDENCY_CONFLICT")
     );
+    let recorded_boundary = applied["data"]["applied"]["registry_commit"]
+        .as_str()
+        .expect("recorded registry commit")
+        .to_string();
 
     let committed = git(
         fixture.root.path(),
@@ -349,14 +266,16 @@ fn remote_transport_rejects_unplanned_broad_sync_paths() {
         fixture.root.path(),
         &["commit", "-m", "test: commit unplanned transport paths"],
     );
+    let later_local_head = git(fixture.root.path(), &["rev-parse", "HEAD"]);
     let (retry_output, retry) = apply_plan(&fixture, &plan, "remote-exact-scope", &[]);
     assert!(
-        !retry_output.status.success(),
-        "retry pushed past the recorded convergence boundary: {retry}"
+        retry_output.status.success(),
+        "exact-boundary retry failed: {retry}"
     );
+    assert_eq!(retry["data"]["complete"], json!(true));
     assert_eq!(
-        retry["error"]["details"]["conflict"]["code"],
-        json!("CONVERGENCE_COMMIT_BOUNDARY_DRIFT")
+        retry["data"]["convergence"]["registry_transport"]["evidence"]["pushed_commit"],
+        json!(recorded_boundary)
     );
     let remote_head = Command::new("git")
         .arg("--git-dir")
@@ -364,10 +283,36 @@ fn remote_transport_rejects_unplanned_broad_sync_paths() {
         .args(["rev-parse", "refs/heads/main"])
         .output()
         .expect("inspect remote main after committed drift");
-    assert!(
-        !remote_head.status.success(),
-        "committed unplanned bytes reached remote main"
+    assert!(remote_head.status.success(), "remote main was not created");
+    assert_eq!(
+        String::from_utf8(remote_head.stdout)
+            .expect("remote head utf8")
+            .trim(),
+        recorded_boundary
     );
+    assert_ne!(later_local_head.trim(), recorded_boundary);
+    assert_eq!(
+        git(fixture.root.path(), &["rev-parse", "HEAD"]).trim(),
+        later_local_head.trim(),
+        "exact-boundary transport rewrote the later local HEAD"
+    );
+    let remote_tree = Command::new("git")
+        .arg("--git-dir")
+        .arg(remote.path())
+        .args(["ls-tree", "-r", "--name-only", "refs/heads/main"])
+        .output()
+        .expect("inspect remote main tree");
+    assert!(
+        remote_tree.status.success(),
+        "remote main tree is unreadable"
+    );
+    let remote_paths = String::from_utf8(remote_tree.stdout).expect("remote tree utf8");
+    for path in ["state/registry/unplanned.json", "state/v3/unplanned"] {
+        assert!(
+            !remote_paths.lines().any(|line| line == path),
+            "unplanned path reached exact remote boundary: {path}"
+        );
+    }
 }
 
 #[test]

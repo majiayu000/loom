@@ -538,11 +538,34 @@ fn validate_policy_gate(
         }
         _ => None,
     };
+    let selected_method = selected
+        .map(|item| {
+            let effect = plan
+                .projections
+                .iter()
+                .find(|effect| effect.instance_id == item.instance_id)
+                .ok_or_else(|| {
+                    scope_failure(
+                        "sealed projection policy input has no matching effect",
+                        "PLAN_POLICY_DRIFT",
+                    )
+                })?;
+            if item.method != effect.method
+                || !matches!(item.method.as_str(), "copy" | "materialize")
+            {
+                return Err(scope_failure(
+                    "sealed projection policy input has an unsupported method",
+                    "PLAN_POLICY_DRIFT",
+                ));
+            }
+            Ok(item.method.as_str())
+        })
+        .transpose()?;
     let prepared = prepare_convergence_skill_input(
         &app.ctx,
         &plan.skill,
         selected.map(|item| Path::new(&item.materialized_path)),
-        selected.map(|item| item.method.as_str()),
+        selected_method,
         &plan.input.selected_input_tree_digest,
     )
     .map_err(|error| {

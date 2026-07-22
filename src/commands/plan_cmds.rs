@@ -66,11 +66,13 @@ impl App {
         })?;
         validate_stored_plan_metadata(&stored)?;
         let confirmed_plan_digest = if stored.kind == StoredPlanKind::Converge {
-            Some(validate_confirmed_plan_digest(
+            let digest = validate_confirmed_plan_digest(
                 stored.plan,
                 stored.cursor,
                 args.plan_digest.as_deref(),
-            )?)
+            )?;
+            validate_convergence_request_scope(stored.plan, stored.request_input, stored.cursor)?;
+            Some(digest)
         } else {
             None
         };
@@ -357,12 +359,7 @@ fn validate_stored_plan_metadata(
         }
     };
     if valid {
-        return match stored.kind {
-            StoredPlanKind::Use => Ok(()),
-            StoredPlanKind::Converge => {
-                validate_convergence_request_scope(stored.plan, stored.request_input, stored.cursor)
-            }
-        };
+        return Ok(());
     }
     Err(plan_failure(
         ErrorCode::StateCorrupt,

@@ -19,6 +19,24 @@ pub(crate) struct DirectoryHandle {
 
 impl DirectoryHandle {
     #[cfg(unix)]
+    pub(crate) fn matches_path(&self, path: &Path) -> io::Result<bool> {
+        use std::os::unix::fs::MetadataExt;
+
+        let opened = self.file.metadata()?;
+        let current = match std::fs::metadata(path) {
+            Ok(current) => current,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
+            Err(error) => return Err(error),
+        };
+        Ok(opened.dev() == current.dev() && opened.ino() == current.ino())
+    }
+
+    #[cfg(not(unix))]
+    pub(crate) fn matches_path(&self, _path: &Path) -> io::Result<bool> {
+        Err(unsupported())
+    }
+
+    #[cfg(unix)]
     pub(crate) fn open(path: &Path) -> io::Result<Self> {
         let mut current = if path.is_absolute() {
             Self::open_anchor(Path::new("/"))?

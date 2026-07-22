@@ -8,6 +8,7 @@ use super::PreparedProjectionArtifact;
 pub(crate) struct PreparedProjectionScope {
     target_directory: DirectoryHandle,
     owner_directory: DirectoryHandle,
+    target_path: PathBuf,
     live_name: PathBuf,
     staging_name: PathBuf,
     owner_path: PathBuf,
@@ -17,6 +18,7 @@ impl PreparedProjectionScope {
     pub(crate) fn new(
         target_directory: DirectoryHandle,
         owner_directory: DirectoryHandle,
+        target_path: PathBuf,
         live_name: PathBuf,
         staging_name: PathBuf,
         owner_path: PathBuf,
@@ -24,6 +26,7 @@ impl PreparedProjectionScope {
         Self {
             target_directory,
             owner_directory,
+            target_path,
             live_name,
             staging_name,
             owner_path,
@@ -68,6 +71,7 @@ impl PreparedProjectionScope {
         Ok(Self::new(
             target_directory,
             owner_directory,
+            target_path.to_path_buf(),
             live_name,
             staging_name,
             owner_path.to_path_buf(),
@@ -98,10 +102,37 @@ impl PreparedProjectionScope {
         )
     }
 
+    pub(super) fn validate_path_binding(&self) -> Result<(), super::CommandFailure> {
+        let target_matches = self
+            .target_directory
+            .matches_path(&self.target_path)
+            .map_err(super::map_io)?;
+        let owner_matches = self
+            .owner_directory
+            .matches_path(&self.owner_path)
+            .map_err(super::map_io)?;
+        if target_matches && owner_matches {
+            return Ok(());
+        }
+        Err(super::CommandFailure::new(
+            crate::types::ErrorCode::ProjectionConflict,
+            "opened projection scope no longer matches its path",
+        ))
+    }
+
+    fn validate_artifact_binding(
+        &self,
+        artifact: &super::ProjectionRollbackArtifact,
+    ) -> Result<(), super::CommandFailure> {
+        self.validate_path_binding()
+            .map_err(|error| super::with_recovery_details(error, artifact))
+    }
+
     pub(super) fn prepare_rollback(
         &self,
         artifact: &mut super::ProjectionRollbackArtifact,
     ) -> Result<(), super::CommandFailure> {
+        self.validate_artifact_binding(artifact)?;
         match artifact.clone() {
             super::ProjectionRollbackArtifact::Exchanged {
                 materialized_path,
@@ -111,10 +142,12 @@ impl PreparedProjectionScope {
             } => {
                 let live = super::owned_digest(&materialized_path, artifact)?;
                 let backup = super::owned_digest(&backup_path, artifact)?;
+                self.validate_artifact_binding(artifact)?;
                 if live.as_deref() == Some(&activated_digest)
                     && backup.as_deref() == Some(&original_digest)
                 {
                     self.exchange().map_err(super::map_atomic_exchange_error)?;
+                    self.validate_artifact_binding(artifact)?;
                 } else if live.as_deref() != Some(&original_digest)
                     || backup.as_deref() != Some(&activated_digest)
                 {
@@ -135,10 +168,12 @@ impl PreparedProjectionScope {
             } => {
                 let live = super::owned_digest(&materialized_path, artifact)?;
                 let rollback = super::owned_digest(&rollback_path, artifact)?;
+                self.validate_artifact_binding(artifact)?;
                 if live.as_deref() == Some(&activated_digest) && rollback.is_none() {
                     self.rollback_create().map_err(|error| {
                         super::map_atomic_operation_error(error, &rollback_path)
                     })?;
+                    self.validate_artifact_binding(artifact)?;
                 } else if live.is_some() || rollback.as_deref() != Some(&activated_digest) {
                     return Err(super::rollback_state_mismatch(artifact, live, rollback));
                 }
@@ -166,6 +201,7 @@ impl PreparedProjectionScope {
         &self,
         artifact: &mut super::ProjectionRollbackArtifact,
     ) -> Result<(), super::CommandFailure> {
+        self.validate_artifact_binding(artifact)?;
         match artifact.clone() {
             super::ProjectionRollbackArtifact::Exchanged {
                 materialized_path,
@@ -179,6 +215,7 @@ impl PreparedProjectionScope {
                     "finalize live projection",
                     artifact,
                 )?;
+                self.validate_artifact_binding(artifact)?;
                 let backup_name = self.owner_entry(&backup_path)?;
                 let claim_name =
                     PathBuf::from(format!("{}.finalize-claim", backup_name.to_string_lossy()));
@@ -203,6 +240,7 @@ impl PreparedProjectionScope {
                     self.owner_directory
                         .rename_no_replace_to(&backup_name, &self.owner_directory, &claim_name)
                         .map_err(|error| super::map_atomic_operation_error(error, &backup_path))?;
+                    self.validate_artifact_binding(artifact)?;
                 }
                 let claim_path = self.owner_path.join(&claim_name);
                 if let Err(validation) = super::validate_owned_digest(
@@ -216,6 +254,7 @@ impl PreparedProjectionScope {
                         .map_err(|error| super::map_atomic_operation_error(error, &backup_path))?;
                     return Err(validation);
                 }
+                self.validate_artifact_binding(artifact)?;
                 *artifact = super::ProjectionRollbackArtifact::PendingCleanup {
                     materialized_path,
                     artifact_path: claim_path,
@@ -233,7 +272,8 @@ impl PreparedProjectionScope {
                 &activated_digest,
                 "finalize live projection",
                 artifact,
-            ),
+            )
+            .and_then(|()| self.validate_artifact_binding(artifact)),
             super::ProjectionRollbackArtifact::PendingCleanup {
                 reason: super::PendingCleanupReason::FinalizeExchanged,
                 ..
@@ -248,6 +288,7 @@ impl PreparedProjectionScope {
         &self,
         artifact: &mut super::ProjectionRollbackArtifact,
     ) -> Result<(), super::CommandFailure> {
+        self.validate_artifact_binding(artifact)?;
         let (artifact_path, expected_digest) = match artifact {
             super::ProjectionRollbackArtifact::PendingCleanup {
                 artifact_path,
@@ -287,6 +328,7 @@ impl PreparedProjectionScope {
             self.owner_directory
                 .rename_no_replace_to(&artifact_name, &self.owner_directory, &claim_name)
                 .map_err(|error| super::map_atomic_operation_error(error, &artifact_path))?;
+            self.validate_artifact_binding(artifact)?;
         } else if !claim_exists {
             return Ok(());
         }
@@ -295,7 +337,8 @@ impl PreparedProjectionScope {
             &expected_digest,
             "clean projection rollback artifact",
             artifact,
-        )
+        )?;
+        self.validate_artifact_binding(artifact)
     }
 
     fn owner_entry(&self, path: &Path) -> Result<PathBuf, super::CommandFailure> {

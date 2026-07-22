@@ -6,8 +6,9 @@ use super::convergence_test_sha256 as guard_sha256;
 use super::skill_convergence_executor::apply_plan;
 use super::*;
 
-const CONVERGENCE_DIGEST_FIELDS: [&str; 13] = [
+const CONVERGENCE_DIGEST_FIELDS: [&str; 14] = [
     "skill",
+    "request_scope",
     "selectors",
     "source",
     "input",

@@ -6,6 +6,8 @@ use crate::fs_util::DirectoryHandle;
 struct ProjectionRecoveryScope {
     target: DirectoryHandle,
     owner: DirectoryHandle,
+    target_path: PathBuf,
+    owner_path: PathBuf,
     live_name: PathBuf,
     stage_name: PathBuf,
     owner_name: PathBuf,
@@ -41,6 +43,8 @@ impl ProjectionRecoveryScope {
         Ok(Self {
             target,
             owner,
+            target_path: target_path.to_path_buf(),
+            owner_path: owner_path.to_path_buf(),
             live_name,
             stage_name,
             owner_name,
@@ -53,6 +57,21 @@ impl ProjectionRecoveryScope {
         proof: &str,
     ) -> std::result::Result<(), CommandFailure> {
         ownership::validate_owned_staging_at(&self.target, &self.owner_name, plan_id, proof)
+    }
+
+    fn validate_path_binding(&self) -> std::result::Result<(), CommandFailure> {
+        let target_matches = self
+            .target
+            .matches_path(&self.target_path)
+            .map_err(map_io)?;
+        let owner_matches = self.owner.matches_path(&self.owner_path).map_err(map_io)?;
+        if target_matches && owner_matches {
+            return Ok(());
+        }
+        Err(recovery_conflict(
+            &self.target_path,
+            "opened projection recovery scope no longer matches its path",
+        ))
     }
 
     fn exchange(&self) -> std::result::Result<(), CommandFailure> {
@@ -69,6 +88,10 @@ impl ProjectionRecoveryScope {
 
     fn staging_exists(&self) -> std::result::Result<bool, CommandFailure> {
         self.owner.entry_exists(&self.stage_name).map_err(map_io)
+    }
+
+    fn live_exists(&self) -> std::result::Result<bool, CommandFailure> {
+        self.target.entry_exists(&self.live_name).map_err(map_io)
     }
 
     fn remove_staging(&self) -> std::result::Result<(), CommandFailure> {
@@ -163,14 +186,18 @@ pub(super) fn prepare_projection_restore_fingerprint(
         .fingerprint()
         .ok_or_else(|| corrupt("projection activation fingerprint is missing"))?;
     scope.validate_owner(plan_id, &artifact.owner_proof)?;
+    scope.validate_path_binding()?;
     require_fingerprint(
         live,
         expected,
         "live projection before rollback preparation",
     )?;
+    scope.validate_path_binding()?;
     test_projection_recovery_pause("before_restore_preparation_mutation")?;
+    scope.validate_path_binding()?;
     if scope.staging_exists()? {
         let fingerprint = convergence_projection_fingerprint(staging)?;
+        scope.validate_path_binding()?;
         if artifact.original_fingerprint.as_deref() == Some(fingerprint.as_str()) {
             if !path_matches_backup(staging, backup)? {
                 return Err(recovery_conflict(
@@ -178,13 +205,16 @@ pub(super) fn prepare_projection_restore_fingerprint(
                     "retained original staging does not match durable backup evidence",
                 ));
             }
+            scope.validate_path_binding()?;
             return Ok(Some(fingerprint));
         }
         // The owner proof and exact live activation fingerprint above make this
         // declared private path safe to rebuild. With no persisted restore
         // fingerprint, anything else here is an interrupted restore candidate.
+        scope.validate_path_binding()?;
         scope.remove_staging()?;
     }
+    scope.validate_path_binding()?;
     scope.restore_staging_from_backup(backup)?;
     if !path_matches_backup(staging, backup)? {
         return Err(recovery_conflict(
@@ -192,7 +222,9 @@ pub(super) fn prepare_projection_restore_fingerprint(
             "staged rollback backup does not match durable evidence",
         ));
     }
-    Ok(Some(convergence_projection_fingerprint(staging)?))
+    let fingerprint = convergence_projection_fingerprint(staging)?;
+    scope.validate_path_binding()?;
+    Ok(Some(fingerprint))
 }
 
 #[cfg(debug_assertions)]
@@ -239,6 +271,19 @@ fn restore_projection_with_hook<F>(
 where
     F: FnOnce(&Path),
 {
+    restore_projection_with_hooks(artifact, plan_id, || {}, before_atomic_restore)
+}
+
+fn restore_projection_with_hooks<F, G>(
+    artifact: &ProjectionBackup,
+    plan_id: &str,
+    after_scope_open: F,
+    before_atomic_restore: G,
+) -> std::result::Result<(), CommandFailure>
+where
+    F: FnOnce(),
+    G: FnOnce(&Path),
+{
     let scope = ProjectionRecoveryScope::open(artifact)?;
     let live = Path::new(&artifact.materialized_path);
     let staging = Path::new(&artifact.staging_path);
@@ -256,9 +301,11 @@ where
         None
     };
     scope.validate_owner(plan_id, &artifact.owner_proof)?;
+    after_scope_open();
+    scope.validate_path_binding()?;
 
-    let live_exists = live.try_exists().map_err(map_io)?;
-    let staging_exists = staging.try_exists().map_err(map_io)?;
+    let live_exists = scope.live_exists()?;
+    let staging_exists = scope.staging_exists()?;
     if staging_exists {
         if let Some(backup) = artifact.backup.as_ref()
             && live_exists
@@ -272,7 +319,9 @@ where
                 expected,
                 "live projection after interrupted activation",
             )?;
+            scope.validate_path_binding()?;
             before_atomic_restore(live);
+            scope.validate_path_binding()?;
             scope.exchange()?;
             require_fingerprint(staging, expected, "projection exchanged during rollback")?;
             require_fingerprint(live, restored, "restored live projection")?;
@@ -282,6 +331,7 @@ where
                     "restored live projection does not match durable backup",
                 ));
             }
+            scope.validate_path_binding()?;
             return Ok(());
         }
         require_fingerprint(staging, expected, "retained rollback artifact")?;
@@ -298,6 +348,7 @@ where
         if let Some(restored) = restored {
             require_fingerprint(live, restored, "restored live projection")?;
         }
+        scope.validate_path_binding()?;
         return Ok(());
     }
     if !live_exists {
@@ -312,7 +363,9 @@ where
     }
 
     require_fingerprint(live, expected, "live projection before rollback")?;
+    scope.validate_path_binding()?;
     before_atomic_restore(live);
+    scope.validate_path_binding()?;
     if artifact.backup.is_some() {
         return Err(recovery_conflict(
             staging,
@@ -485,6 +538,32 @@ mod tests {
         assert_eq!(
             fs::read_to_string(retained.join("external.txt")).expect("retained race bytes"),
             "external\n"
+        );
+    }
+
+    #[test]
+    fn create_rollback_rejects_replaced_target_after_opening_scope() {
+        let root = test_root();
+        let artifact = create_artifact(&root, "transaction\n");
+        let original_target = root.0.join("live");
+        let held_target = root.0.join("held-live");
+
+        let error = restore_projection_with_hooks(
+            &artifact,
+            "plan-concurrent-live",
+            || {
+                fs::rename(&original_target, &held_target).expect("hold opened target");
+                fs::create_dir(&original_target).expect("install replacement target");
+            },
+            |_| {},
+        )
+        .expect_err("replacement target pathname must fail closed");
+
+        assert_eq!(error.code, ErrorCode::ProjectionConflict);
+        assert_eq!(
+            fs::read_to_string(held_target.join("demo/details.txt"))
+                .expect("preserved transaction bytes"),
+            "transaction\n"
         );
     }
 

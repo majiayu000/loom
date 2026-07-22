@@ -3,8 +3,9 @@ use serde_json::{Value, json};
 use super::convergence_test_sha256 as request_scope_sha256;
 use super::*;
 
-const CONVERGENCE_DIGEST_FIELDS: [&str; 13] = [
+const CONVERGENCE_DIGEST_FIELDS: [&str; 14] = [
     "skill",
+    "request_scope",
     "selectors",
     "source",
     "input",
@@ -72,6 +73,38 @@ fn assert_request_scope_rejected(output: std::process::Output, envelope: &Value)
     assert_eq!(
         envelope["error"]["details"]["conflict"]["code"],
         json!("PLAN_REQUEST_SCOPE_DRIFT")
+    );
+}
+
+#[test]
+fn complete_request_scope_is_digest_covered() {
+    let fixture = projected_fixture();
+    let (output, plan) = plan_converge(
+        &fixture,
+        &[
+            "--require-runtime",
+            "--accept-restart-required",
+            "--push-remote",
+        ],
+    );
+    assert!(output.status.success(), "plan failed: {plan}");
+
+    assert_eq!(
+        plan["data"]["request_scope"],
+        json!({
+            "skill": "demo",
+            "direction": "source",
+            "instance": null,
+            "agent": "claude",
+            "workspace": fs::canonicalize(fixture.workspace.path())
+                .expect("canonical workspace")
+                .display()
+                .to_string(),
+            "profile": "default",
+            "require_runtime": true,
+            "accept_restart_required": true,
+            "push_remote": true,
+        })
     );
 }
 

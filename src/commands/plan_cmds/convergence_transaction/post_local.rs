@@ -72,7 +72,7 @@ pub(super) fn complete(
                 "required local convergence evidence changed before remote transport",
             ))
         }
-        RemotePolicy::Push => match validate_transport_scope(app)
+        RemotePolicy::Push => match validate_transport_scope(app, plan, &local)
             .and_then(|()| sync_push_convergence_internal(&app.ctx))
         {
             Ok(result) => RegistryTransportOutcome::Synced(result),
@@ -189,7 +189,11 @@ pub(super) fn complete(
     Ok(local)
 }
 
-fn validate_transport_scope(app: &App) -> std::result::Result<(), CommandFailure> {
+fn validate_transport_scope(
+    app: &App,
+    plan: &SkillConvergencePlan,
+    local: &Value,
+) -> std::result::Result<(), CommandFailure> {
     let status = gitops::run_git(
         &app.ctx,
         &[
@@ -204,20 +208,83 @@ fn validate_transport_scope(app: &App) -> std::result::Result<(), CommandFailure
         ],
     )
     .map_err(map_git)?;
-    if status.is_empty() {
+    if !status.is_empty() {
+        let mut failure = CommandFailure::new(
+            ErrorCode::DependencyConflict,
+            "unplanned registry transport paths changed after convergence planning",
+        );
+        failure.details = json!({
+            "conflict": {
+                "code": "CONVERGENCE_TRANSPORT_SCOPE_DRIFT",
+                "paths": status.lines().collect::<Vec<_>>(),
+            }
+        });
+        return Err(failure);
+    }
+    require_exact_transport_boundary(app, plan, local)
+}
+
+pub(super) fn require_exact_transport_boundary(
+    app: &App,
+    plan: &SkillConvergencePlan,
+    local: &Value,
+) -> std::result::Result<(), CommandFailure> {
+    let expected_head = recorded_final_commit(plan, local)?;
+    let live_head = gitops::head(&app.ctx).map_err(map_git)?;
+    if live_head == expected_head {
         return Ok(());
     }
-    let mut failure = CommandFailure::new(
-        ErrorCode::DependencyConflict,
-        "unplanned registry transport paths changed after convergence planning",
-    );
+    let expected_is_ancestor = gitops::run_git_allow_failure(
+        &app.ctx,
+        &["merge-base", "--is-ancestor", expected_head, &live_head],
+    )
+    .map_err(map_git)?
+    .status
+    .success();
+    let (code, message) = if expected_is_ancestor {
+        (
+            "CONVERGENCE_COMMIT_BOUNDARY_DRIFT",
+            "live HEAD moved past the exact convergence commit boundary",
+        )
+    } else {
+        (
+            "CONVERGENCE_COMMIT_EVIDENCE_STALE",
+            "live HEAD no longer contains the recorded convergence commit boundary",
+        )
+    };
+    let mut failure = CommandFailure::new(ErrorCode::DependencyConflict, message);
     failure.details = json!({
         "conflict": {
-            "code": "CONVERGENCE_TRANSPORT_SCOPE_DRIFT",
-            "paths": status.lines().collect::<Vec<_>>(),
+            "code": code,
+            "expected_head": expected_head,
+            "live_head": live_head,
         }
     });
     Err(failure)
+}
+
+fn recorded_final_commit<'a>(
+    plan: &'a SkillConvergencePlan,
+    local: &'a Value,
+) -> std::result::Result<&'a str, CommandFailure> {
+    match &local["registry_commit"] {
+        Value::String(commit) => return Ok(commit),
+        Value::Null => {}
+        _ => {
+            return Err(CommandFailure::new(
+                ErrorCode::StateCorrupt,
+                "local convergence evidence has an invalid registry commit",
+            ));
+        }
+    }
+    match &local["source_commit"] {
+        Value::String(commit) => Ok(commit),
+        Value::Null => Ok(&plan.source.registry_head),
+        _ => Err(CommandFailure::new(
+            ErrorCode::StateCorrupt,
+            "local convergence evidence has an invalid source commit",
+        )),
+    }
 }
 
 fn registry_transport_axis(

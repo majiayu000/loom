@@ -1,9 +1,7 @@
 use serde_json::Value;
 
-use crate::core::convergence::{RemotePolicy, SkillConvergencePlan};
-use crate::gitops;
-
 use super::*;
+use crate::core::convergence::{RemotePolicy, SkillConvergencePlan};
 
 pub(in crate::commands::plan_cmds) fn retry_remote_transport(
     app: &App,
@@ -43,52 +41,7 @@ pub(in crate::commands::plan_cmds) fn retry_remote_transport(
     }
     let _workspace_lock = app.ctx.lock_workspace().map_err(map_lock)?;
     let _skill_lock = app.ctx.lock_skill(&plan.skill).map_err(map_lock)?;
-    require_recorded_commit_ancestry(app, &local, cursor)?;
+    post_local::require_exact_transport_boundary(app, &plan, &local)?;
     let output = post_local::complete(app, &plan, &identity.key_digest, local)?;
     Ok(apply_output(&plan, cursor, identity, output))
-}
-
-fn require_recorded_commit_ancestry(
-    app: &App,
-    local: &Value,
-    cursor: usize,
-) -> std::result::Result<(), CommandFailure> {
-    let head = gitops::head(&app.ctx).map_err(map_git)?;
-    for field in ["source_commit", "registry_commit"] {
-        let value = &local[field];
-        if value.is_null() {
-            continue;
-        }
-        let commit = value.as_str().ok_or_else(|| {
-            plan_failure(
-                ErrorCode::StateCorrupt,
-                format!("pending remote retry has invalid {field} evidence"),
-                "APPLY_EVENT_CORRUPT",
-                false,
-                vec!["inspect the retained convergence transaction".to_string()],
-                Some(cursor),
-            )
-        })?;
-        let ancestor = gitops::run_git_allow_failure(
-            &app.ctx,
-            &["merge-base", "--is-ancestor", commit, &head],
-        )
-        .map_err(map_git)?;
-        if !ancestor.status.success() {
-            return Err(plan_failure(
-                ErrorCode::DependencyConflict,
-                format!(
-                    "pending remote retry cannot prove recorded {field} {commit} is in live HEAD {head}"
-                ),
-                "CONVERGENCE_COMMIT_EVIDENCE_STALE",
-                false,
-                vec![
-                    "inspect the retained convergence evidence before any remote transport"
-                        .to_string(),
-                ],
-                Some(cursor),
-            ));
-        }
-    }
-    Ok(())
 }

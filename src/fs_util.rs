@@ -36,6 +36,15 @@ pub(crate) const fn atomic_no_replace_supported() -> bool {
     ))
 }
 
+pub(crate) const fn handle_relative_directory_operations_supported() -> bool {
+    cfg!(any(
+        target_os = "macos",
+        target_os = "ios",
+        target_os = "linux",
+        target_os = "android"
+    ))
+}
+
 #[cfg(any(
     target_os = "macos",
     target_os = "ios",

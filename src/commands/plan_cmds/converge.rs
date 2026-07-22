@@ -31,10 +31,10 @@ use super::super::provenance::{convergence_input_tree_digest, skill_tree_digest}
 use super::super::skill_improve::prepare_convergence_skill_input;
 use super::super::{App, CommandFailure};
 use super::{PLAN_PROTOCOL_VERSION, canonical_root, policy_risks, required_approvals};
+use platform_capabilities::resolve_platform_capability_conflicts;
 use policy_gate::seal_policy_gate;
-
+mod platform_capabilities;
 mod policy_gate;
-
 const CONVERGENCE_PLAN_SCHEMA_VERSION: &str = "1.2";
 
 impl App {
@@ -49,7 +49,6 @@ impl App {
                 format!("skill '{}' not found", args.skill),
             ));
         }
-
         let workspace = args.workspace.as_ref().map(|path| normalize_path(path));
         let paths = RegistryStatePaths::from_app_context(&self.ctx);
         let snapshot = paths.maybe_load_snapshot().map_err(map_registry_state)?;
@@ -191,12 +190,15 @@ impl App {
         if args.push_remote {
             required_axes.insert(ConvergenceAxis::RegistryTransport);
         }
-
         let plan_id = format!("plan_{}", Uuid::new_v4().simple());
         let mut plan = SkillConvergencePlan {
             plan_id,
             plan_digest: String::new(),
             skill: args.skill.clone(),
+            request_scope: super::request_scope::convergence_request_scope(
+                args,
+                workspace.as_deref(),
+            ),
             selectors: ConvergenceSelectors {
                 agent: resolved_visibility_agent,
                 workspace: workspace.map(|path| path.display().to_string()),
@@ -623,97 +625,6 @@ fn resolve_projection_route_conflicts(
         .collect()
 }
 
-#[derive(Clone, Copy)]
-struct AtomicPathCapabilities {
-    exchange: bool,
-    no_replace: bool,
-}
-
-impl AtomicPathCapabilities {
-    fn current_platform() -> Self {
-        Self {
-            exchange: crate::fs_util::atomic_path_exchange_supported(),
-            no_replace: crate::fs_util::atomic_no_replace_supported(),
-        }
-    }
-}
-
-fn resolve_platform_capability_conflicts(
-    direction: &ConvergenceInputDirection,
-    effects: &[ProjectionEffectPlan],
-    canonical_source: &Path,
-) -> Vec<ConvergenceInputConflict> {
-    resolve_platform_capability_conflicts_with(
-        direction,
-        effects,
-        canonical_source,
-        AtomicPathCapabilities::current_platform(),
-    )
-}
-
-fn resolve_platform_capability_conflicts_with(
-    direction: &ConvergenceInputDirection,
-    effects: &[ProjectionEffectPlan],
-    canonical_source: &Path,
-    capabilities: AtomicPathCapabilities,
-) -> Vec<ConvergenceInputConflict> {
-    let mut conflicts = Vec::new();
-    if !capabilities.no_replace {
-        conflicts.push(ConvergenceInputConflict {
-            code: "PLATFORM_ATOMIC_TRANSACTION_OWNERSHIP_UNSUPPORTED".to_string(),
-            message: "this platform cannot atomically claim convergence transaction ownership"
-                .to_string(),
-            evidence: json!({ "required_operation": "atomic_no_replace" }),
-        });
-    }
-    if *direction == ConvergenceInputDirection::Projection && !capabilities.exchange {
-        conflicts.push(ConvergenceInputConflict {
-            code: "PLATFORM_ATOMIC_SOURCE_EXCHANGE_UNSUPPORTED".to_string(),
-            message: "this platform cannot atomically replace the canonical source from a projection input"
-                .to_string(),
-            evidence: json!({ "required_operation": "atomic_path_exchange" }),
-        });
-    }
-
-    let unsupported_effects = effects
-        .iter()
-        .filter(|effect| {
-            let safe_symlink_noop = effect.effect == "refresh"
-                && effect.method == "symlink"
-                && projection_path_is_safe_symlink(
-                    Path::new(&effect.materialized_path),
-                    canonical_source,
-                );
-            projection_requires_unsupported_activation(effect, safe_symlink_noop, capabilities)
-        })
-        .map(|effect| effect.instance_id.clone())
-        .collect::<Vec<_>>();
-    if !unsupported_effects.is_empty() {
-        conflicts.push(ConvergenceInputConflict {
-            code: "PLATFORM_ATOMIC_PROJECTION_ACTIVATION_UNSUPPORTED".to_string(),
-            message: "this platform cannot atomically activate every planned projection"
-                .to_string(),
-            evidence: json!({ "projection_instances": unsupported_effects }),
-        });
-    }
-    conflicts
-}
-
-fn projection_requires_unsupported_activation(
-    effect: &ProjectionEffectPlan,
-    safe_symlink_noop: bool,
-    capabilities: AtomicPathCapabilities,
-) -> bool {
-    if safe_symlink_noop {
-        return false;
-    }
-    match effect.effect.as_str() {
-        "create" => !capabilities.no_replace,
-        "refresh" => !capabilities.exchange,
-        _ => true,
-    }
-}
-
 fn validate_projection_input(
     args: &PlanConvergeArgs,
     effects: &[ProjectionEffectPlan],
@@ -776,25 +687,4 @@ pub(super) fn digest_value(value: &impl Serialize) -> std::result::Result<String
 
 fn corrupt_state(message: String) -> CommandFailure {
     CommandFailure::new(ErrorCode::StateCorrupt, message)
-}
-
-#[cfg(test)]
-mod platform_capability_tests {
-    use super::*;
-
-    #[test]
-    fn transaction_ownership_is_required_without_projection_effects() {
-        let conflicts = resolve_platform_capability_conflicts_with(
-            &ConvergenceInputDirection::Source,
-            &[],
-            Path::new("unused-source"),
-            AtomicPathCapabilities {
-                exchange: false,
-                no_replace: false,
-            },
-        );
-        assert!(conflicts.iter().any(|conflict| {
-            conflict.code == "PLATFORM_ATOMIC_TRANSACTION_OWNERSHIP_UNSUPPORTED"
-        }));
-    }
 }

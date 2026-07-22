@@ -445,6 +445,15 @@ fn execute_local_transaction(
             let activation_scope = PreparedProjectionScope::new(
                 target_scope.directory().try_clone().map_err(map_io)?,
                 owner_directory,
+                live_path
+                    .parent()
+                    .ok_or_else(|| {
+                        CommandFailure::new(
+                            ErrorCode::StateCorrupt,
+                            "projection live path has no target directory",
+                        )
+                    })?
+                    .to_path_buf(),
                 target_scope.live_name().to_path_buf(),
                 PathBuf::from("stage"),
                 PathBuf::from(&artifact.staging_owner),

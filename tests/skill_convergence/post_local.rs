@@ -334,6 +334,40 @@ fn remote_transport_rejects_unplanned_broad_sync_paths() {
         !remote_head.status.success(),
         "unplanned bytes reached remote main"
     );
+
+    git(
+        fixture.root.path(),
+        &[
+            "add",
+            ".gitignore",
+            ".gitattributes",
+            "state/registry/unplanned.json",
+            "state/v3/unplanned",
+        ],
+    );
+    git(
+        fixture.root.path(),
+        &["commit", "-m", "test: commit unplanned transport paths"],
+    );
+    let (retry_output, retry) = apply_plan(&fixture, &plan, "remote-exact-scope", &[]);
+    assert!(
+        !retry_output.status.success(),
+        "retry pushed past the recorded convergence boundary: {retry}"
+    );
+    assert_eq!(
+        retry["error"]["details"]["conflict"]["code"],
+        json!("CONVERGENCE_COMMIT_BOUNDARY_DRIFT")
+    );
+    let remote_head = Command::new("git")
+        .arg("--git-dir")
+        .arg(remote.path())
+        .args(["rev-parse", "refs/heads/main"])
+        .output()
+        .expect("inspect remote main after committed drift");
+    assert!(
+        !remote_head.status.success(),
+        "committed unplanned bytes reached remote main"
+    );
 }
 
 #[test]

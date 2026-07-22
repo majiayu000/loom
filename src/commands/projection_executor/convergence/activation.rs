@@ -50,9 +50,11 @@ fn activate_prepared_projection_with_after_mutation(
     let mut prepared = prepared;
     let parts = prepared.take_parts();
     let scope = prepared.take_scope(&parts)?;
+    validate_scope_binding(&scope, &parts)?;
     let rollback_artifact = if parts.path_exists {
         let staging_digest = observed_digest(&parts.staging_path, &parts)?;
         let live_digest = observed_digest(&parts.materialized_path, &parts)?;
+        validate_scope_binding(&scope, &parts)?;
         let original_digest = parts
             .existing_digest
             .as_ref()
@@ -69,6 +71,7 @@ fn activate_prepared_projection_with_after_mutation(
             after_mutation()
                 .map_err(map_io)
                 .map_err(|err| with_prepared_recovery_details(err, &parts))?;
+            validate_scope_binding(&scope, &parts)?;
         } else if staging_digest.as_deref() == Some(&parts.staging_digest) {
             return Err(cleanup_prepare_failure(
                 activation_state_mismatch(&parts, staging_digest, live_digest),
@@ -84,14 +87,15 @@ fn activate_prepared_projection_with_after_mutation(
             ));
         }
         ProjectionRollbackArtifact::Exchanged {
-            materialized_path: parts.materialized_path,
-            backup_path: parts.staging_path,
-            activated_digest: parts.staging_digest,
+            materialized_path: parts.materialized_path.clone(),
+            backup_path: parts.staging_path.clone(),
+            activated_digest: parts.staging_digest.clone(),
             original_digest: original_digest.clone(),
         }
     } else {
         let staging_digest = observed_digest(&parts.staging_path, &parts)?;
         let live_digest = observed_digest(&parts.materialized_path, &parts)?;
+        validate_scope_binding(&scope, &parts)?;
         if staging_digest.as_deref() == Some(&parts.staging_digest) && live_digest.is_none() {
             if let Err(err) = scope.activate_create() {
                 return Err(with_prepared_recovery_details(
@@ -102,6 +106,7 @@ fn activate_prepared_projection_with_after_mutation(
             after_mutation()
                 .map_err(map_io)
                 .map_err(|err| with_prepared_recovery_details(err, &parts))?;
+            validate_scope_binding(&scope, &parts)?;
         } else if staging_digest.as_deref() == Some(&parts.staging_digest) {
             return Err(cleanup_prepare_failure(
                 activation_state_mismatch(&parts, staging_digest, live_digest),
@@ -116,14 +121,16 @@ fn activate_prepared_projection_with_after_mutation(
             ));
         }
         ProjectionRollbackArtifact::Created {
-            materialized_path: parts.materialized_path,
-            rollback_path: parts.staging_path,
-            activated_digest: parts.staging_digest,
+            materialized_path: parts.materialized_path.clone(),
+            rollback_path: parts.staging_path.clone(),
+            activated_digest: parts.staging_digest.clone(),
         }
     };
 
+    validate_scope_binding(&scope, &parts)?;
+    let observation = observe_projection_from_source(&parts.projection, &parts.source_path);
+    validate_scope_binding(&scope, &parts)?;
     let mut projection = parts.projection;
-    let observation = observe_projection_from_source(&projection, &parts.source_path);
     if observation.status != "healthy" {
         let mut rollback_errors = Vec::new();
         let rollback = match rollback_artifact {
@@ -161,6 +168,15 @@ fn activate_prepared_projection_with_after_mutation(
         #[cfg(test)]
         fail_cleanup_once: false,
     })
+}
+
+fn validate_scope_binding(
+    scope: &super::PreparedProjectionScope,
+    parts: &super::PreparedProjectionArtifact,
+) -> Result<(), CommandFailure> {
+    scope
+        .validate_path_binding()
+        .map_err(|error| with_prepared_recovery_details(error, parts))
 }
 
 #[cfg(test)]

@@ -118,8 +118,8 @@ loom --json --root "$ROOT" skill monitor-observed --once
 
 # 2) 日常 source 收敛：先计划并保存完整 JSON 供审阅
 PLAN_JSON=$(loom --json --root "$ROOT" plan converge "$SKILL" --from-source --agent codex --require-runtime)
-PLAN_ID=$(printf '%s' "$PLAN_JSON" | jq -er 'select(.ok == true and .data.execution_enabled == true and .data.safe_to_apply == true) | .data.plan_id')
-PLAN_DIGEST=$(printf '%s' "$PLAN_JSON" | jq -er '.data.plan_digest')
+PLAN_ID=$(printf '%s\n' "$PLAN_JSON" | jq -er 'select(.ok == true and .data.execution_enabled == true and .data.safe_to_apply == true and .data.requires_digest_confirmation == true) | .data.plan_id | select(type == "string" and length > 0)')
+PLAN_DIGEST=$(printf '%s\n' "$PLAN_JSON" | jq -er '.data.plan_digest | select(type == "string" and length > 0)')
 
 # 3) 人或上层 agent 审阅 effects/risks/conflicts/approvals 后执行
 loom --json --root "$ROOT" apply "$PLAN_ID" --plan-digest "$PLAN_DIGEST" --idempotency-key "$REQUEST_ID"

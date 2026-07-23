@@ -726,6 +726,14 @@ fn make_contract_policy_has_a_local_merge_base_fallback() {
 }
 
 #[test]
+fn agent_usage_plan_apply_example_fails_closed_on_incomplete_plan_identity() {
+    let guide = include_str!("../docs/AGENT_USAGE.md");
+    assert!(guide.contains(".data.requires_digest_confirmation == true"));
+    assert!(guide.contains(".data.plan_id | select(type == \"string\" and length > 0)"));
+    assert!(guide.contains(".data.plan_digest | select(type == \"string\" and length > 0)"));
+}
+
+#[test]
 fn contract_range_requires_migration_note_with_explicit_base() {
     let base = std::env::var("LOOM_CONTRACT_DIFF_BASE").unwrap_or_else(|_| "HEAD~1".to_string());
     check_contract_range_policy(std::path::Path::new("."), Some(&base))

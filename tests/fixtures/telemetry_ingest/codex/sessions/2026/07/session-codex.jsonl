@@ -10,3 +10,5 @@
 {"timestamp":"2026-07-01T10:07:30Z","type":"turn_context","payload":{"cwd":"/workspace/codex-turn"}}
 {"timestamp":"2026-07-01T10:07:40Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Please use $demo."}]}}
 {"timestamp":"2026-07-01T10:08:00Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"<skill>\n<name>demo</name>\n<path>/redacted/demo/SKILL.md</path>\nFixture body.\n</skill>"}]}}
+{"timestamp":"2026-07-01T10:09:00Z","type":"turn_context","payload":{"turn_id":"turn-3","cwd":"/workspace/codex-turn"}}
+{"timestamp":"2026-07-01T10:09:10Z","type":"response_item","payload":{"type":"function_call","name":"exec_command","call_id":"call-current-skill-read","arguments":"{\"cmd\":\"sed -n '1,240p' /home/user/.codex/skills/demo/SKILL.md\"}"}}

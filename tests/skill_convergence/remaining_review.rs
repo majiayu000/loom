@@ -599,7 +599,7 @@ fn noop_source_commit_retires_after_a_head_changed_during_index_preparation() {
             )
         });
         let mut entered_noop_source = false;
-        for _ in 0..200 {
+        for _ in 0..1_000 {
             if let Ok(raw) = fs::read(&journal_path)
                 && let Ok(journal) = serde_json::from_slice::<Value>(&raw)
                 && journal["phase"] == json!("committing_source")
@@ -693,7 +693,7 @@ fn external_head_between_registry_guard_and_json_cas_restores_owned_surfaces() {
             )
         });
         let mut entered_registry_save = false;
-        for _ in 0..200 {
+        for _ in 0..1_000 {
             if let Ok(raw) = fs::read(&journal_path)
                 && let Ok(journal) = serde_json::from_slice::<Value>(&raw)
                 && journal["phase"] == json!("projections_swapped")

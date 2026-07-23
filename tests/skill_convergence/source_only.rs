@@ -166,6 +166,68 @@ fn uninitialized_source_only_apply_and_recovery() {
 }
 
 #[test]
+fn source_only_first_remote_push_leaves_no_untracked_registry() {
+    let fixture = source_only_fixture();
+    let remote = TestDir::new("convergence-source-only-first-remote");
+    git(remote.path(), &["init", "--bare"]);
+    git(
+        fixture.root.path(),
+        &[
+            "remote",
+            "add",
+            "origin",
+            remote.path().to_str().expect("remote path"),
+        ],
+    );
+    fs::write(
+        fixture.root.path().join("skills/demo/SKILL.md"),
+        "---\nname: demo\ndescription: source-only first remote.\n---\n# changed\n",
+    )
+    .expect("edit source");
+    let (output, plan) = run_loom(
+        fixture.root.path(),
+        &["plan", "converge", "demo", "--push-remote"],
+    );
+    assert!(output.status.success(), "remote plan failed: {plan}");
+    assert!(!fixture.root.path().join("state/registry").exists());
+
+    let (output, applied) = apply_plan(&fixture, &plan, "source-only-first-remote", &[]);
+    assert!(output.status.success(), "remote apply failed: {applied}");
+    assert_eq!(applied["data"]["complete"], json!(true));
+    assert_eq!(
+        applied["data"]["convergence"]["registry_transport"]["state"],
+        json!("SYNCED")
+    );
+    assert!(!fixture.root.path().join("state/registry").exists());
+    let status = git(
+        fixture.root.path(),
+        &["status", "--porcelain", "--untracked-files=all"],
+    );
+    assert!(
+        !status.lines().any(|line| line.contains("state/registry")),
+        "transport left untracked registry state: {status}"
+    );
+    let remote_head = Command::new("git")
+        .arg("--git-dir")
+        .arg(remote.path())
+        .args(["rev-parse", "refs/heads/main"])
+        .output()
+        .expect("read remote head");
+    assert!(
+        remote_head.status.success(),
+        "remote main was not initialized"
+    );
+    assert_eq!(
+        String::from_utf8(remote_head.stdout)
+            .expect("remote head utf8")
+            .trim(),
+        applied["data"]["source"]["commit"]
+            .as_str()
+            .expect("source commit")
+    );
+}
+
+#[test]
 fn initialized_source_only_apply_uses_semantic_noop_registry_cas() {
     let fixture = source_only_fixture();
     let (output, target) = target_add(

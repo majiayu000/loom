@@ -60,6 +60,75 @@ fn local_faults_restore_all_surfaces() {
 }
 
 #[test]
+fn post_source_commit_fault_restores_all_surfaces_and_retries() {
+    let fixture = projected_fixture();
+    fs::write(
+        fixture.root.path().join("skills/demo/details.txt"),
+        "post-source fault\n",
+    )
+    .expect("edit source");
+    let (output, plan) = plan_converge(&fixture, &[]);
+    assert!(output.status.success(), "plan failed: {plan}");
+    let head = git(fixture.root.path(), &["rev-parse", "HEAD"]);
+    let source = snapshot_tree(&fixture.root.path().join("skills/demo"));
+    let target = snapshot_tree(fixture.target.path());
+    let registry = snapshot_tree(&fixture.root.path().join("state/registry"));
+
+    let (output, failed) = apply_plan(
+        &fixture,
+        &plan,
+        "post-source-fault",
+        &[("LOOM_FAULT_INJECT", "convergence_after_source_commit")],
+    );
+    assert!(
+        !output.status.success(),
+        "post-source fault passed: {failed}"
+    );
+    assert_eq!(git(fixture.root.path(), &["rev-parse", "HEAD"]), head);
+    assert_eq!(
+        snapshot_tree(&fixture.root.path().join("skills/demo")),
+        source
+    );
+    let journal = fixture
+        .root
+        .path()
+        .join("state/transactions/convergence-demo.json");
+    assert_eq!(
+        snapshot_without_ledgered_paths(
+            fixture.target.path(),
+            &journal,
+            "rolled_back_artifacts_retained",
+        ),
+        target
+    );
+    assert_eq!(
+        snapshot_tree(&fixture.root.path().join("state/registry")),
+        registry
+    );
+    assert_exact_retained_ledger(&journal, "rolled_back_artifacts_retained");
+
+    let (output, recovered) = apply_plan(&fixture, &plan, "post-source-fault", &[]);
+    assert!(
+        output.status.success(),
+        "post-source retry failed: {recovered}"
+    );
+    assert_eq!(recovered["data"]["complete"], json!(true));
+    assert_eq!(
+        git(
+            fixture.root.path(),
+            &[
+                "rev-list",
+                "--count",
+                "--grep=skill(demo): converge source",
+                "HEAD",
+            ],
+        )
+        .trim(),
+        "1"
+    );
+}
+
+#[test]
 fn preparation_failure_retains_exact_artifact_ledger() {
     let fixture = projected_fixture();
     fs::write(

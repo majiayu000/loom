@@ -19,7 +19,20 @@ use super::super::{PanelState, RemoteSetRequest, WorkspaceInitRequest};
 use super::common::{panel_command_envelope, panel_v1_ok};
 
 pub(in crate::panel) async fn v1_health() -> (StatusCode, Json<serde_json::Value>) {
-    panel_v1_ok("panel.health", json!({"service": "loom-panel"}))
+    panel_v1_ok(
+        "panel.health",
+        json!({
+            "service": "loom-panel",
+            "capabilities": {
+                "skill_convergence": {
+                    "plan": true,
+                    "apply": true,
+                    "requires_plan_digest": true,
+                    "remote_last": true
+                }
+            }
+        }),
+    )
 }
 
 pub(in crate::panel) async fn v1_overview(

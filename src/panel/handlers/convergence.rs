@@ -1,0 +1,65 @@
+use std::net::SocketAddr;
+
+use axum::{
+    Json,
+    extract::{ConnectInfo, Path as AxumPath, State},
+    http::{HeaderMap, StatusCode},
+};
+
+use crate::cli::{ApplyArgs, Command, PlanCommand, PlanConvergeArgs};
+
+use super::super::auth::{ensure_mutation_authorized, run_panel_command};
+use super::super::{ConvergenceApplyRequest, ConvergencePlanRequest, PanelState};
+
+pub(in crate::panel) async fn registry_convergence_plan(
+    AxumPath(skill_name): AxumPath<String>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    State(state): State<PanelState>,
+    Json(req): Json<ConvergencePlanRequest>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    if let Some(response) = ensure_mutation_authorized(&state, peer, &headers, "plan.converge") {
+        return response;
+    }
+    run_panel_command(
+        &state,
+        "plan.converge",
+        StatusCode::CREATED,
+        Command::Plan {
+            command: PlanCommand::Converge(PlanConvergeArgs {
+                skill: skill_name,
+                from_source: true,
+                from_projection: false,
+                instance: None,
+                agent: req.agent,
+                workspace: req.workspace,
+                profile: req.profile,
+                require_runtime: req.require_runtime,
+                accept_restart_required: req.accept_restart_required,
+                push_remote: req.push_remote,
+            }),
+        },
+    )
+}
+
+pub(in crate::panel) async fn registry_convergence_apply(
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    State(state): State<PanelState>,
+    Json(req): Json<ConvergenceApplyRequest>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    if let Some(response) = ensure_mutation_authorized(&state, peer, &headers, "apply") {
+        return response;
+    }
+    run_panel_command(
+        &state,
+        "apply",
+        StatusCode::OK,
+        Command::Apply(ApplyArgs {
+            plan_id: req.plan_id,
+            plan_digest: Some(req.plan_digest),
+            idempotency_key: req.idempotency_key,
+            approvals: req.approvals,
+        }),
+    )
+}

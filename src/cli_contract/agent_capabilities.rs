@@ -96,6 +96,32 @@ pub(super) fn public_agent_capabilities(
                         "observed_revision": "revision-fixture",
                         "checkpoint_updated_at": "2026-07-21T00:00:00Z",
                         "observed_at": "2026-07-21T00:00:01Z",
+                        "report": {
+                            "skill": "skill-fixture",
+                            "agent": "claude",
+                            "fidelity": "native",
+                            "visible": false,
+                            "checks": [
+                                {
+                                    "id": "claude_projection_visible",
+                                    "ok": true,
+                                    "severity": "error",
+                                    "message": "projection is visible",
+                                    "details": {"restart_required_after_apply": true},
+                                    "next_action": null,
+                                },
+                                {
+                                    "id": "claude_reload",
+                                    "ok": true,
+                                    "severity": "warning",
+                                    "message": "restart the runtime",
+                                    "details": {"restart_required_after_apply": true},
+                                    "next_action": "restart Claude or open a new session",
+                                },
+                            ],
+                            "next_actions": ["restart Claude or open a new session"],
+                            "restart_required": true,
+                        },
                     },
                     "observed_at": "2026-07-21T00:00:01Z",
                     "stale": false,
@@ -106,7 +132,7 @@ pub(super) fn public_agent_capabilities(
             "next_actions": [
                 {"cmd": "loom skill inspect skill-fixture", "reason": "fixture"},
                 {
-                    "cmd": "loom apply plan-fixture --idempotency-key $IDEMPOTENCY_KEY",
+                    "cmd": "loom apply plan-fixture --plan-digest sha256:plan-fixture --idempotency-key $IDEMPOTENCY_KEY",
                     "reason": "retry remote transport",
                     "idempotency_key_digest": "sha256:key-fixture",
                 },
@@ -216,7 +242,7 @@ pub(super) fn public_agent_capabilities(
         json!({"fixture": true}),
         vec![NextAction::new("loom workspace status", "inspect state")],
     );
-    let samples = [
+    let mut samples = vec![
         serde_json::to_value(preflight),
         serde_json::to_value(durable_plan),
         serde_json::to_value(convergence_plan),
@@ -227,6 +253,28 @@ pub(super) fn public_agent_capabilities(
         serde_json::to_value(convergence_synced),
         serde_json::to_value(failure),
     ];
+    for state in ["DIVERGED", "CONFLICTED", "LOCAL_ONLY", "ERROR"] {
+        samples.push(serde_json::to_value(Envelope::ok(
+            "apply",
+            format!("req-convergence-{state}"),
+            json!({
+                "convergence": {
+                    "registry_transport": {
+                        "state": state,
+                        "evidence": {
+                            "observed_revision": "revision-fixture",
+                            "checkpoint_updated_at": null,
+                            "observed_at": "2026-07-21T00:00:05Z",
+                        },
+                        "observed_at": "2026-07-21T00:00:05Z",
+                        "stale": false,
+                        "errors": [{"code": "fixture_transport_error", "message": "fixture"}],
+                    }
+                }
+            }),
+            Meta::default(),
+        )));
+    }
     let mut shapes = BTreeMap::<String, (BTreeSet<String>, usize)>::new();
     let mut serialized = Vec::new();
     for sample in samples {
@@ -272,6 +320,10 @@ fn convergence_completion_values() -> impl Iterator<Item = &'static str> {
         "value:envelope.data.convergence.registry_transport.state:not_requested",
         "value:envelope.data.convergence.registry_transport.state:SYNCED",
         "value:envelope.data.convergence.registry_transport.state:PENDING_PUSH",
+        "value:envelope.data.convergence.registry_transport.state:DIVERGED",
+        "value:envelope.data.convergence.registry_transport.state:CONFLICTED",
+        "value:envelope.data.convergence.registry_transport.state:LOCAL_ONLY",
+        "value:envelope.data.convergence.registry_transport.state:ERROR",
         "value:envelope.data.convergence.projections.state:converged",
         "value:envelope.data.convergence.projections.state:conflict",
         "value:envelope.data.convergence.projections.state:drifted",
@@ -302,8 +354,12 @@ fn semantic_capabilities(
     let declared_range = contract_range(&metadata, &metadata_path.display().to_string())?;
     ensure_contract_range_contains_version(&declared_range, CLI_CONTRACT_VERSION)?;
     let mut semantics = BTreeSet::new();
-    if samples.first().and_then(|value| value.get("ok")) == Some(&Value::Bool(true))
-        && samples.last().and_then(|value| value.get("ok")) == Some(&Value::Bool(false))
+    if samples
+        .iter()
+        .any(|value| value.get("ok") == Some(&Value::Bool(true)))
+        && samples
+            .iter()
+            .any(|value| value.get("ok") == Some(&Value::Bool(false)))
         && skill.contains("Treat only `ok=true` as success")
     {
         semantics.insert("semantic:success_requires_ok_true".to_string());
@@ -439,6 +495,21 @@ mod tests {
             "field:envelope.data.convergence.visibility.evidence.observed_revision:optional-string",
             "field:envelope.data.convergence.visibility.evidence.checkpoint_updated_at:null-or-string",
             "field:envelope.data.convergence.visibility.evidence.observed_at:optional-string",
+            "field:envelope.data.convergence.visibility.evidence.report:optional-object",
+            "field:envelope.data.convergence.visibility.evidence.report.skill:optional-string",
+            "field:envelope.data.convergence.visibility.evidence.report.agent:optional-string",
+            "field:envelope.data.convergence.visibility.evidence.report.fidelity:optional-string",
+            "field:envelope.data.convergence.visibility.evidence.report.visible:optional-boolean",
+            "field:envelope.data.convergence.visibility.evidence.report.checks:optional-array-object",
+            "field:envelope.data.convergence.visibility.evidence.report.checks[].id:optional-string",
+            "field:envelope.data.convergence.visibility.evidence.report.checks[].ok:optional-boolean",
+            "field:envelope.data.convergence.visibility.evidence.report.checks[].severity:optional-string",
+            "field:envelope.data.convergence.visibility.evidence.report.checks[].message:optional-string",
+            "field:envelope.data.convergence.visibility.evidence.report.checks[].details:optional-object",
+            "field:envelope.data.convergence.visibility.evidence.report.checks[].details.restart_required_after_apply:optional-boolean",
+            "field:envelope.data.convergence.visibility.evidence.report.checks[].next_action:null-or-string",
+            "field:envelope.data.convergence.visibility.evidence.report.next_actions:optional-array-string",
+            "field:envelope.data.convergence.visibility.evidence.report.restart_required:optional-boolean",
             "field:envelope.data.convergence.visibility.observed_at:optional-string",
             "field:envelope.data.convergence.registry_transport.evidence.policy:optional-string",
             "field:envelope.data.convergence.registry_transport.evidence.result:optional-string",

@@ -1,6 +1,6 @@
 # Loom Panel API Contract
 
-Updated: 2026-06-10
+Updated: 2026-07-23
 Status: Accepted for v1 Panel surface
 
 ## 1. Purpose
@@ -96,6 +96,11 @@ that omits `convergence`, Panel may display its legacy remote state only as
 registry transport; projection convergence and agent visibility must both be
 shown as `unknown`.
 
+`GET /api/v1/health.data.capabilities.skill_convergence` reports additive
+`plan`, `apply`, `requires_plan_digest`, and `remote_last` booleans. Panel must
+hide the convergence mutation unless `apply` is exactly `true`; a missing field
+is unsupported and must not be inferred from convergence status data.
+
 `GET /api/v1/sync/status` returns `data.registry_transport` and preserves
 `data.remote` as a compatibility mirror. Registry transport covers Git remote
 and operation backlog only.
@@ -145,17 +150,19 @@ POST /api/v1/bindings/{binding_id}/remove
 
 POST /api/v1/skills
 POST /api/v1/skills/import-observed
-POST /api/v1/skills/{skill_name}/save
-POST /api/v1/skills/{skill_name}/snapshot
+POST /api/v1/skills/{skill_name}/commit
+POST /api/v1/skills/{skill_name}/release-anchor
 POST /api/v1/skills/{skill_name}/release
 POST /api/v1/skills/{skill_name}/rollback
 POST /api/v1/skills/{skill_name}/use
+POST /api/v1/skills/{skill_name}/convergence/plan
+POST /api/v1/convergence/apply
 POST /api/v1/skills/{skill_name}/trash
 POST /api/v1/skills/trash/{trash_id}/restore
 POST /api/v1/skills/trash/{trash_id}/purge
 
 POST /api/v1/projections/project
-POST /api/v1/projections/capture
+POST /api/v1/projections/commit
 POST /api/v1/orphans/clean
 
 POST /api/v1/ops/retry
@@ -170,6 +177,14 @@ POST /api/v1/sync/replay
 Every mutation must pass through `ensure_mutation_authorized` and
 `run_panel_command`, preserving CLI locking, audit logging, error mapping, and
 envelope semantics.
+
+The convergence routes are one two-stage mutation. Plan persists only the
+immutable plan and audit record, and returns exact `plan_id`, `plan_digest`,
+effects, conflicts, risks, approvals, and gates for review. Apply requires the
+same id and digest plus a caller-held idempotency key. The Panel must not plan
+and apply in one click, widen selectors, treat `complete=false` as clean
+completion, or infer visibility from remote transport. Remote transport is the
+last phase; retries reuse the original authority tuple.
 
 ## 6. Rules
 

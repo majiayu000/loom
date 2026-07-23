@@ -20,7 +20,7 @@ Do not use this Skill for Loom.com videos, screen recording, video links, sharin
 
 ## Establish The Registry Boundary
 
-1. Run a read-only JSON command and require a valid `cli_contract_version` in the range declared by `loom.skill.toml` (`>=1.0.0,<2.0.0`). If the field is missing, invalid, or outside that range, stop all mutations; use only `loom --version`/`--help` for diagnosis and install the matching Loom release and shipped `loom-registry` Skill together. Check `loom <command> --help` for the command surface needed by the request. Never guess flags.
+1. Run a read-only JSON command and require a valid `cli_contract_version` in the range declared by `loom.skill.toml` (`>=1.9.0,<2.0.0`). If the field is missing, invalid, or outside that range, stop all mutations; use only `loom --version`/`--help` for diagnosis and install the matching Loom release and shipped `loom-registry` Skill together. Check `loom <command> --help` for the command surface needed by the request. Never guess flags.
 2. Obtain the intended registry root from the user or existing project context. Use a path such as `$HOME/.loom-registry` only when it is the user's established registry.
 3. Never use the Loom source-code checkout as the writable registry root.
 4. Run machine-facing commands in this form:
@@ -34,6 +34,19 @@ loom --json --root "$REGISTRY_ROOT" workspace status
 7. Read current state before proposing a mutation. Prefer `workspace status`, `workspace doctor`, `skill inspect`, `skill diagnose`, `skill visibility`, `target list`, `workspace binding list`, `sync status`, and `ops list` as appropriate.
 
 ## Plan Before Mutation
+
+For a normal canonical-source Skill edit, use the durable convergence workflow by default:
+
+```bash
+PLAN_JSON="$(loom --json --root "$REGISTRY_ROOT" plan converge "$SKILL" --from-source --require-runtime)"
+loom --json --root "$REGISTRY_ROOT" apply "$PLAN_ID" --plan-digest "$PLAN_DIGEST" --idempotency-key "$IDEMPOTENCY_KEY"
+```
+
+The first command is plan-only: it persists the immutable plan and command audit but must not commit source, update projections, change runtime visibility, or push a remote. Require `ok=true`, `data.execution_enabled=true`, `data.safe_to_apply=true`, non-empty `data.plan_id` and `data.plan_digest`, and `data.requires_digest_confirmation=true`. Review the exact selectors, effects, input conflicts, risks, required approvals, required axes, restart policy, and remote policy before extracting `PLAN_ID` and `PLAN_DIGEST` from the JSON. Never parse the example shell assignment as authorization and never invent missing fields.
+
+Apply only the reviewed `plan_id` with its exact `plan_digest` and a caller-held idempotency key. Reuse all three values for a retry; changing the key creates a different authority boundary. Do not expand the agent, workspace, profile, projection instance, runtime requirement, restart acceptance, or remote policy at apply time. If the plan reports conflicts, blocking risks, required approvals, `execution_enabled=false`, or `safe_to_apply=false`, do not apply.
+
+Remote transport is always last. `local_complete_remote_pending` means local source/projections were retained and the same immutable plan/key may retry transport; it is not full completion. `local_complete_restart_required` requires a restart or new session and recheck unless the reviewed plan explicitly accepted restart-required. Acceptance never changes `visibility.state` to `visible`. When both blockers exist, preserve both next actions and do not let remote `SYNCED` stand in for runtime visibility.
 
 Use `--dry-run` first for commands that support it, including projection, activation/deactivation, rollback, trash, orphan cleanup, reconcile, and sync changes. Do not assume every command accepts `--dry-run`; check `loom <command> --help` when uncertain.
 
@@ -57,6 +70,8 @@ loom --json --root "$REGISTRY_ROOT" agent preflight --agent codex --workspace "$
 Stop if preflight is blocked or `safe_to_run` is not true. If no matching binding exists, obtain authorization to persist a durable plan with `plan use`; review `safe_to_apply`, effects, risks, and approvals before showing or running its exact `apply` command. Do not place a real activation immediately after a dry-run.
 
 ## Manage Skill History
+
+Use the low-level commands below for explicit diagnosis and recovery after a typed convergence plan is blocked or returns a partial outcome. They do not replace the default `plan converge` + digest-confirmed `apply` happy path, and remote sync never proves current-session visibility.
 
 Use the current single-Skill lifecycle verbs:
 

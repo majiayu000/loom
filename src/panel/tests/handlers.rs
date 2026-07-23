@@ -1,13 +1,13 @@
 use super::*;
 use crate::cli::{AgentKind, ProjectionMethod};
 use crate::panel::handlers::{
-    OpsQuery, TelemetryReportQuery, registry_orphan_clean, registry_skill_trash_add,
-    registry_skill_trash_purge, registry_skill_trash_restore, registry_skill_use, remote_set,
-    v1_health, v1_info, v1_overview, v1_pending, v1_registry_ops, v1_registry_targets,
-    v1_skill_diagnose, v1_skill_inspect, v1_skill_trash, v1_skills, v1_telemetry_report,
-    v1_workspace_status,
+    OpsQuery, TelemetryReportQuery, registry_convergence_plan, registry_orphan_clean,
+    registry_skill_trash_add, registry_skill_trash_purge, registry_skill_trash_restore,
+    registry_skill_use, remote_set, v1_health, v1_info, v1_overview, v1_pending, v1_registry_ops,
+    v1_registry_targets, v1_skill_diagnose, v1_skill_inspect, v1_skill_trash, v1_skills,
+    v1_telemetry_report, v1_workspace_status,
 };
-use crate::panel::{TrashRestoreRequest, UseRequest};
+use crate::panel::{ConvergencePlanRequest, TrashRestoreRequest, UseRequest};
 use crate::state_model::{
     REGISTRY_SCHEMA_VERSION, RegistryBindingRule, RegistryOperationRecord,
     RegistryProjectionInstance, RegistryProjectionsFile, RegistryRulesFile,
@@ -298,7 +298,67 @@ async fn v1_health_returns_cli_envelope_shape() {
     assert_eq!(payload["cmd"], json!("panel.health"));
     assert_eq!(payload["error"], Value::Null);
     assert_eq!(payload["data"]["service"], json!("loom-panel"));
+    assert_eq!(
+        payload["data"]["capabilities"]["skill_convergence"],
+        json!({
+            "plan": true,
+            "apply": true,
+            "requires_plan_digest": true,
+            "remote_last": true
+        })
+    );
     assert_eq!(payload["meta"]["warnings"], json!([]));
+}
+
+#[tokio::test]
+async fn convergence_plan_route_returns_reviewable_digest_without_applying() {
+    let (root, state) = make_test_state();
+    write_registry_snapshot(&root, REGISTRY_SCHEMA_VERSION);
+    let skill_dir = root.join("skills/demo");
+    fs::create_dir_all(&skill_dir).expect("create skill dir");
+    fs::write(
+        skill_dir.join("SKILL.md"),
+        "---\nname: demo\ndescription: Demo convergence route.\n---\n# Demo\n",
+    )
+    .expect("write skill");
+    git_ok(&root, &["init"]);
+    git_ok(&root, &["config", "user.email", "panel@example.com"]);
+    git_ok(&root, &["config", "user.name", "Panel Test"]);
+    git_ok(&root, &["add", "."]);
+    git_ok(&root, &["commit", "-m", "fixture"]);
+    let before = fs::read_to_string(skill_dir.join("SKILL.md")).expect("read source before plan");
+
+    let (status, Json(payload)) = registry_convergence_plan(
+        AxumPath("demo".to_string()),
+        ConnectInfo(panel_peer()),
+        panel_headers(),
+        State(state),
+        Json(ConvergencePlanRequest {
+            agent: None,
+            workspace: None,
+            profile: None,
+            require_runtime: false,
+            accept_restart_required: false,
+            push_remote: false,
+        }),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::CREATED, "{payload}");
+    assert_eq!(payload["ok"], json!(true));
+    assert_eq!(payload["cmd"], json!("plan.converge"));
+    assert_eq!(payload["data"]["execution_enabled"], json!(true));
+    assert_eq!(payload["data"]["safe_to_apply"], json!(true));
+    assert_eq!(payload["data"]["requires_digest_confirmation"], json!(true));
+    assert!(payload["data"]["plan_id"].is_string());
+    assert!(payload["data"]["plan_digest"].is_string());
+    assert_eq!(
+        fs::read_to_string(skill_dir.join("SKILL.md")).expect("read source after plan"),
+        before,
+        "planning must not mutate the skill source"
+    );
+
+    cleanup_root(root);
 }
 
 #[tokio::test]

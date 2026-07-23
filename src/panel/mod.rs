@@ -82,6 +82,31 @@ pub(super) struct UseRequest {
 }
 
 #[derive(Debug, Deserialize)]
+pub(super) struct ConvergencePlanRequest {
+    #[serde(default)]
+    pub(super) agent: Option<AgentKind>,
+    #[serde(default)]
+    pub(super) workspace: Option<PathBuf>,
+    #[serde(default)]
+    pub(super) profile: Option<String>,
+    #[serde(default)]
+    pub(super) require_runtime: bool,
+    #[serde(default)]
+    pub(super) accept_restart_required: bool,
+    #[serde(default)]
+    pub(super) push_remote: bool,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct ConvergenceApplyRequest {
+    pub(super) plan_id: String,
+    pub(super) plan_digest: String,
+    pub(super) idempotency_key: String,
+    #[serde(default)]
+    pub(super) approvals: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
 pub(super) struct SkillAddRequest {
     pub(super) source: String,
     pub(super) name: String,
@@ -229,6 +254,14 @@ fn panel_router(state: PanelState) -> Router {
         )
         .route("/api/v1/skills/{skill_name}/inspect", get(v1_skill_inspect))
         .route("/api/v1/skills/{skill_name}/use", post(registry_skill_use))
+        .route(
+            "/api/v1/skills/{skill_name}/convergence/plan",
+            post(registry_convergence_plan),
+        )
+        .route(
+            "/api/v1/convergence/apply",
+            post(registry_convergence_apply),
+        )
         .route(
             "/api/v1/skills/{skill_name}/history",
             get(registry_skill_history),

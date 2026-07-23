@@ -372,20 +372,20 @@ fn public_lock_is_owned(claim: &Path, lock: &Path, expected: &[u8]) -> Result<bo
         && fs::read(lock)? == expected)
 }
 
-fn injected_index_failure(point: &str) -> Result<()> {
+fn injected_index_failure(_point: &str) -> Result<()> {
     #[cfg(debug_assertions)]
     if std::env::var("LOOM_TEST_PREPARED_INDEX_FAILURE_POINT")
         .ok()
-        .is_some_and(|configured| configured.split(',').any(|item| item == point))
+        .is_some_and(|configured| configured.split(',').any(|item| item == _point))
     {
-        return Err(anyhow!("prepared index injected failure at {point}"));
+        return Err(anyhow!("prepared index injected failure at {_point}"));
     }
     Ok(())
 }
 
-fn injected_index_crash(point: &str) {
+fn injected_index_crash(_point: &str) {
     #[cfg(debug_assertions)]
-    if std::env::var("LOOM_TEST_PREPARED_INDEX_CRASH_POINT").as_deref() == Ok(point) {
+    if std::env::var("LOOM_TEST_PREPARED_INDEX_CRASH_POINT").as_deref() == Ok(_point) {
         std::process::exit(93);
     }
 }

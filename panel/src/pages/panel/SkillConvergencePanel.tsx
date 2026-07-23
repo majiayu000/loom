@@ -46,6 +46,14 @@ export function SkillConvergencePanel({ skillName, supported, onApplied }: { ski
   const planDigest = typeof plan?.plan_digest === "string" ? plan.plan_digest : "";
   const planSafe = plan?.safe_to_apply === true && plan?.execution_enabled === true;
 
+  const invalidatePlan = () => {
+    setPlan(null);
+    setIdempotencyKey("");
+    setReviewed(false);
+    setMessage(null);
+    setError(null);
+  };
+
   const createPlan = async () => {
     setBusy(true);
     setError(null);
@@ -91,13 +99,13 @@ export function SkillConvergencePanel({ skillName, supported, onApplied }: { ski
       <div className="panel-head"><h3>Converge</h3><span className="panel-hint">reviewed plan → digest-confirmed apply</span></div>
       <div className="card-body" style={{ display: "grid", gap: 10 }}>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          <select aria-label="Convergence agent" value={agent} onChange={(event) => setAgent(event.target.value)} disabled={busy}>
+          <select aria-label="Convergence agent" value={agent} onChange={(event) => { setAgent(event.target.value); invalidatePlan(); }} disabled={busy}>
             <option value="">all selected runtimes</option>
             {AGENT_OPTIONS.map((option) => <option key={option.slug} value={option.slug}>{option.label}</option>)}
           </select>
-          <label className="chip"><input type="checkbox" checked={requireRuntime} onChange={(event) => { setRequireRuntime(event.target.checked); if (!event.target.checked) setAcceptRestart(false); }} disabled={busy} /> require runtime</label>
-          <label className="chip"><input type="checkbox" checked={acceptRestart} onChange={(event) => setAcceptRestart(event.target.checked)} disabled={busy || !requireRuntime} /> accept restart-required</label>
-          <label className="chip"><input type="checkbox" checked={pushRemote} onChange={(event) => setPushRemote(event.target.checked)} disabled={busy} /> push remote last</label>
+          <label className="chip"><input type="checkbox" checked={requireRuntime} onChange={(event) => { setRequireRuntime(event.target.checked); if (!event.target.checked) setAcceptRestart(false); invalidatePlan(); }} disabled={busy} /> require runtime</label>
+          <label className="chip"><input type="checkbox" checked={acceptRestart} onChange={(event) => { setAcceptRestart(event.target.checked); invalidatePlan(); }} disabled={busy || !requireRuntime} /> accept restart-required</label>
+          <label className="chip"><input type="checkbox" checked={pushRemote} onChange={(event) => { setPushRemote(event.target.checked); invalidatePlan(); }} disabled={busy} /> push remote last</label>
           <button className="btn-ghost sm" type="button" onClick={createPlan} disabled={busy}>{busy && !plan ? "planning…" : "Plan convergence"}</button>
         </div>
         {plan && <div className="mono" data-testid="convergence-plan-review"><div>plan_id: {planId || "missing"}</div><div>plan_digest: {planDigest || "missing"}</div><div>effects: {listLength(plan.effects)} · risks: {listLength(plan.risks)} · conflicts: {listLength(plan.input_conflicts)} · approvals: {listLength(plan.required_approvals)}</div><div>safe_to_apply: {String(plan.safe_to_apply === true)} · execution_enabled: {String(plan.execution_enabled === true)}</div>{(["effects", "risks", "input_conflicts", "required_approvals"] as const).map((field) => <details key={field}><summary>{field}</summary><pre style={{ whiteSpace: "pre-wrap" }}>{reviewValue(plan[field])}</pre></details>)}</div>}

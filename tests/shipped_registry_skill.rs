@@ -50,6 +50,9 @@ fn shipped_skill_has_collision_resistant_metadata_and_trigger_boundaries() {
     assert!(skill.contains("data.safe_to_apply=true"));
     assert!(skill.contains("plan converge"));
     assert!(skill.contains("--plan-digest"));
+    assert!(skill.contains("PLAN_ID=\"$(printf"));
+    assert!(skill.contains("PLAN_DIGEST=\"$(printf"));
+    assert!(skill.contains(".data.requires_digest_confirmation == true"));
     assert!(skill.contains("data.execution_enabled=true"));
     assert!(skill.contains("Remote transport is always last"));
     assert!(skill.contains("data.convergence"));

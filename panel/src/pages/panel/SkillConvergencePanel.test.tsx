@@ -33,4 +33,19 @@ describe("SkillConvergencePanel", () => {
     expect(screen.getByText(/visibility\.restart_required/)).toBeTruthy();
     expect(onApplied).toHaveBeenCalledTimes(1);
   });
+
+  it("invalidates the reviewed plan when a plan selector changes", async () => {
+    vi.spyOn(convergenceApi, "plan").mockResolvedValue({ ok: true, cmd: "plan.converge", request_id: "req-plan", data: { plan_id: "plan-1", plan_digest: "sha256:plan-1", safe_to_apply: true, execution_enabled: true } });
+    const apply = vi.spyOn(convergenceApi, "apply");
+    render(<SkillConvergencePanel skillName="demo" supported onApplied={() => undefined} />);
+
+    await userEvent.click(screen.getByRole("button", { name: "Plan convergence" }));
+    await userEvent.click(screen.getByRole("checkbox", { name: /I reviewed this exact plan/ }));
+    expect(screen.getByRole("button", { name: "Apply reviewed plan" })).toBeEnabled();
+
+    await userEvent.click(screen.getByRole("checkbox", { name: "push remote last" }));
+    expect(screen.queryByTestId("convergence-plan-review")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Apply reviewed plan" })).toBeNull();
+    expect(apply).not.toHaveBeenCalled();
+  });
 });

@@ -18,7 +18,7 @@ export function SkillMDetail({ skill, convergenceSupported, onApplied }: { skill
         <div><span>Latest rev</span><b>{skill.latestRev}</b><em>backend reported</em></div>
         <div><span>Targets</span><b>{targetCount}</b><em>observed + projected</em></div>
       </div>
-      <SkillConvergencePanel skillName={skill.name} supported={convergenceSupported} onApplied={onApplied} />
+      <SkillConvergencePanel key={skill.name} skillName={skill.name} supported={convergenceSupported} onApplied={onApplied} />
     </aside>
   );
 }

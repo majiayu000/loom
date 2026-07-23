@@ -531,17 +531,17 @@ classification = "executable"
 [[example]]
 id = "registry_skill.dry_run_policy"
 surface = "registry_skill"
-line_range = [38, 51]
+line_range = [38, 53]
 classification = "executable"
 [[example]]
 id = "registry_skill.mutation_preflight"
 surface = "registry_skill"
-line_range = [53, 61]
+line_range = [55, 63]
 classification = "executable"
 [[example]]
 id = "registry_skill.lifecycle"
 surface = "registry_skill"
-line_range = [63, 85]
+line_range = [65, 87]
 classification = "executable"
 [[example]]
 id = "releasing.archive_smoke"

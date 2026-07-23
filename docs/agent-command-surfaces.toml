@@ -63,6 +63,21 @@ agent_capabilities = [
   "field:envelope.data.convergence.visibility.evidence.observed_at:optional-string",
   "field:envelope.data.convergence.visibility.evidence.observed_revision:optional-string",
   "field:envelope.data.convergence.visibility.evidence.reason:optional-string",
+  "field:envelope.data.convergence.visibility.evidence.report:optional-object",
+  "field:envelope.data.convergence.visibility.evidence.report.agent:optional-string",
+  "field:envelope.data.convergence.visibility.evidence.report.checks:optional-array-object",
+  "field:envelope.data.convergence.visibility.evidence.report.checks[].details:optional-object",
+  "field:envelope.data.convergence.visibility.evidence.report.checks[].details.restart_required_after_apply:optional-boolean",
+  "field:envelope.data.convergence.visibility.evidence.report.checks[].id:optional-string",
+  "field:envelope.data.convergence.visibility.evidence.report.checks[].message:optional-string",
+  "field:envelope.data.convergence.visibility.evidence.report.checks[].next_action:null-or-string",
+  "field:envelope.data.convergence.visibility.evidence.report.checks[].ok:optional-boolean",
+  "field:envelope.data.convergence.visibility.evidence.report.checks[].severity:optional-string",
+  "field:envelope.data.convergence.visibility.evidence.report.fidelity:optional-string",
+  "field:envelope.data.convergence.visibility.evidence.report.next_actions:optional-array-string",
+  "field:envelope.data.convergence.visibility.evidence.report.restart_required:optional-boolean",
+  "field:envelope.data.convergence.visibility.evidence.report.skill:optional-string",
+  "field:envelope.data.convergence.visibility.evidence.report.visible:optional-boolean",
   "field:envelope.data.convergence.visibility.observed_at:optional-string",
   "field:envelope.data.convergence.visibility.stale:optional-boolean",
   "field:envelope.data.convergence.visibility.state:optional-string",
@@ -105,6 +120,10 @@ agent_capabilities = [
   "value:envelope.data.convergence.projections.state:unknown",
   "value:envelope.data.convergence.registry_transport.state:PENDING_PUSH",
   "value:envelope.data.convergence.registry_transport.state:SYNCED",
+  "value:envelope.data.convergence.registry_transport.state:CONFLICTED",
+  "value:envelope.data.convergence.registry_transport.state:DIVERGED",
+  "value:envelope.data.convergence.registry_transport.state:ERROR",
+  "value:envelope.data.convergence.registry_transport.state:LOCAL_ONLY",
   "value:envelope.data.convergence.registry_transport.state:not_requested",
   "value:envelope.data.convergence.visibility.state:error",
   "value:envelope.data.convergence.visibility.state:not_visible",
@@ -161,6 +180,8 @@ panel_mutations = [
   { id = "panel.skill.add", label_path = "panel/src/lib/operation_labels.ts", action_id = "skill.add", backend_route = "POST /api/v1/skills", handler = "registry_skill_add", binding = "cli_equivalent", cli_argv = ["loom", "skill", "add", "<source>", "--name", "contract-fixture"] },
   { id = "panel.skill.import_observed", label_path = "panel/src/lib/operation_labels.ts", action_id = "skill.import_observed", backend_route = "POST /api/v1/skills/import-observed", handler = "registry_skill_import_observed", binding = "cli_equivalent", cli_argv = ["loom", "skill", "import-observed", "--target", "<target_id>"] },
   { id = "panel.skill.use_apply", label_path = "panel/src/lib/operation_labels.ts", action_id = "use", backend_route = "POST /api/v1/skills/{skill_name}/use", handler = "registry_skill_use", binding = "cli_equivalent", cli_argv = ["loom", "use", "<skill>", "--agents", "claude", "--scope", "project", "--profile", "default", "--method", "symlink", "--apply"] },
+  { id = "panel.skill.convergence_plan", label_path = "panel/src/lib/operation_labels.ts", action_id = "plan.converge", backend_route = "POST /api/v1/skills/{skill_name}/convergence/plan", handler = "registry_convergence_plan", binding = "cli_equivalent", cli_argv = ["loom", "plan", "converge", "<skill>", "--from-source", "--agent", "claude", "--require-runtime"] },
+  { id = "panel.skill.convergence_apply", label_path = "panel/src/lib/operation_labels.ts", action_id = "apply", backend_route = "POST /api/v1/convergence/apply", handler = "registry_convergence_apply", binding = "cli_equivalent", cli_argv = ["loom", "apply", "<plan_id>", "--plan-digest", "sha256:contract-fixture", "--idempotency-key", "contract-fixture"] },
   { id = "panel.skill.trash_add", label_path = "panel/src/lib/operation_labels.ts", action_id = "skill.trash.add", backend_route = "POST /api/v1/skills/{skill_name}/trash", handler = "registry_skill_trash_add", binding = "cli_equivalent", cli_argv = ["loom", "skill", "trash", "add", "<skill>"] },
   { id = "panel.skill.trash_restore", label_path = "panel/src/lib/operation_labels.ts", action_id = "skill.trash.restore", backend_route = "POST /api/v1/skills/trash/{trash_id}/restore", handler = "registry_skill_trash_restore", binding = "cli_equivalent", cli_argv = ["loom", "skill", "trash", "restore", "<skill>", "--trash-id", "<trash_id>"] },
   { id = "panel.skill.trash_purge", label_path = "panel/src/lib/operation_labels.ts", action_id = "skill.trash.purge", backend_route = "POST /api/v1/skills/trash/{trash_id}/purge", handler = "registry_skill_trash_purge", binding = "cli_equivalent", cli_argv = ["loom", "skill", "trash", "purge", "<trash_id>"] },
@@ -192,7 +213,7 @@ next_action_emitters = [
   { id = "mcp.doctor.manual", source = "src/commands/mcp.rs#McpDoctorCommand.missing_skill.next_actions", shape = "string", fixture_ids = ["mcp_catalog_source_policy_and_manual_agent_mode_are_explicit"] },
   { id = "mcp.doctor.report", source = "src/commands/mcp.rs#McpDoctorCommand.report.next_actions", shape = "string", fixture_ids = ["doctor_uses_table_only_mcp_requirements_without_non_mcp_plan_noise"] },
   { id = "mcp.apply.response", source = "src/commands/mcp/apply/record.rs#record_apply_result.next_actions", shape = "string", fixture_ids = ["mcp_apply_overwrites_fuzzy_compatible_command"] },
-  { id = "plan.use.response", source = "src/commands/plan_cmds.rs#UsePlanCommand.execute.next_actions", shape = "string", fixture_ids = ["durable_plan_apply_blocks_missing_required_approval"] },
+  { id = "plan.use.response", source = "src/commands/plan_cmds/use_plan.rs#UsePlanCommand.execute.next_actions", shape = "string", fixture_ids = ["durable_plan_apply_blocks_missing_required_approval"] },
   { id = "plan.converge.post_local", source = "src/commands/plan_cmds/convergence_transaction/recovery_support.rs#apply_output.next_actions", shape = "object", fixture_ids = ["skill_convergence_post_local::remote_pending_and_restart_blockers_compose"] },
   { id = "provenance.outdated.row", source = "src/commands/provenance/outdated.rs#OutdatedRow.into_json.next_actions", shape = "string", fixture_ids = ["skill_provenance_outdated_distinguishes_unreachable_unpinned_and_invalid_sources"] },
   { id = "provenance.outdated.summary", source = "src/commands/provenance/outdated.rs#OutdatedCommand.summary.next_actions", shape = "string", fixture_ids = ["skill_provenance_outdated_distinguishes_unreachable_unpinned_and_invalid_sources"] },
@@ -455,47 +476,47 @@ classification = "output_example"
 [[example]]
 id = "agent_usage.protocol"
 surface = "agent_usage"
-line_range = [79, 100]
+line_range = [79, 110]
 classification = "executable"
 [[example]]
 id = "agent_usage.full_example"
 surface = "agent_usage"
-line_range = [112, 135]
+line_range = [112, 136]
 classification = "executable"
 [[example]]
 id = "single_skill.quickstart"
 surface = "single_skill_lifecycle"
-line_range = [37, 60]
+line_range = [37, 64]
 classification = "executable"
 [[example]]
 id = "single_skill.author_or_add"
 surface = "single_skill_lifecycle"
-line_range = [67, 73]
+line_range = [69, 76]
 classification = "executable"
 [[example]]
 id = "single_skill.add_name"
 surface = "single_skill_lifecycle"
-line_range = [74, 74]
+line_range = [78, 78]
 classification = "output_example"
 [[example]]
 id = "single_skill.add_examples"
 surface = "single_skill_lifecycle"
-line_range = [75, 81]
+line_range = [80, 83]
 classification = "executable"
 [[example]]
 id = "single_skill.validate"
 surface = "single_skill_lifecycle"
-line_range = [89, 94]
+line_range = [97, 106]
 classification = "executable"
 [[example]]
 id = "single_skill.activate_and_inspect"
 surface = "single_skill_lifecycle"
-line_range = [105, 124]
+line_range = [112, 136]
 classification = "executable"
 [[example]]
 id = "single_skill.evaluate_and_release"
 surface = "single_skill_lifecycle"
-line_range = [136, 161]
+line_range = [144, 173]
 classification = "executable"
 [[example]]
 id = "registry_skill.compatibility"
@@ -510,17 +531,17 @@ classification = "executable"
 [[example]]
 id = "registry_skill.dry_run_policy"
 surface = "registry_skill"
-line_range = [38, 38]
+line_range = [38, 53]
 classification = "executable"
 [[example]]
 id = "registry_skill.mutation_preflight"
 surface = "registry_skill"
-line_range = [52, 55]
+line_range = [55, 63]
 classification = "executable"
 [[example]]
 id = "registry_skill.lifecycle"
 surface = "registry_skill"
-line_range = [63, 68]
+line_range = [65, 87]
 classification = "executable"
 [[example]]
 id = "releasing.archive_smoke"
@@ -555,7 +576,7 @@ classification = "executable"
 [[example]]
 id = "api_contract.telemetry_report"
 surface = "api_contract"
-line_range = [194, 195]
+line_range = [208, 209]
 classification = "executable"
 [[example]]
 id = "cli_contract.generic_action_shape"

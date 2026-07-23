@@ -292,7 +292,7 @@ async function getJsonDataWithWarnings<T>(path: string, signal?: AbortSignal): P
   return unwrapReadResult<T>(path, await getJson<unknown>(path, signal));
 }
 
-async function postJson(path: string, body: unknown): Promise<CommandEnvelope> {
+export async function postJson(path: string, body: unknown): Promise<CommandEnvelope> {
   const res = await fetch(path, {
     method: "POST",
     headers: { "Content-Type": "application/json" },

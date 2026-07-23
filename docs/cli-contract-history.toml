@@ -59,3 +59,9 @@ version = "1.8.0"
 skill_range = ">=1.0.0,<2.0.0"
 change = "complete convergence commit, projection digest, and registry transport evidence capability shapes"
 migration_note = "Clients may distinguish nullable no-op or symlink evidence and inspect registry transport policy and result fields; existing 1.x commands and fields remain compatible."
+
+[[contract]]
+version = "1.9.0"
+skill_range = ">=1.9.0,<2.0.0"
+change = "ship capability-gated Panel convergence plan/apply and complete visibility and transport capability inventory"
+migration_note = "Install the 1.9-compatible loom-registry Skill with the matching binary; the Skill now defaults to digest-confirmed convergence apply and older 1.x binaries must remain read-only."

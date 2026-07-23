@@ -1,5 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
-import type { CSSProperties } from "react";
+import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import { usePanelData } from "../lib/api/usePanelData";
 import { api } from "../lib/api/client";
 import type { Op, PanelPageKey, Skill, Target } from "../lib/types";
@@ -7,6 +6,7 @@ import { FirstRunPage } from "./panel/FirstRunPage";
 import { DoctorPage } from "./panel/DoctorPage";
 import { OperationLogRow } from "./OperationLogRow";
 import { SkillMAuditHistory } from "./SkillMAuditHistory";
+import { SkillMDetail } from "./SkillMDetail";
 import { loadSkillMPreferences, saveSkillMPreferences } from "../lib/skillm_prefs";
 import {
   operationActionLabel,
@@ -294,7 +294,7 @@ export function SkillMPanel() {
           ) : (
             <>
               {view === "overview" && <Overview live={live} counts={counts} go={go} />}
-              {view === "skills" && <Skills skills={live.skills} targets={live.targets} query={query} setQuery={setQuery} selected={selected} setSelectedSkill={setSelectedSkill} />}
+              {view === "skills" && <Skills skills={live.skills} targets={live.targets} query={query} setQuery={setQuery} selected={selected} setSelectedSkill={setSelectedSkill} convergenceSupported={live.backendCapabilities?.skill_convergence?.apply === true} onApplied={live.refetch} />}
               {(view === "targets" || view === "bindings" || view === "projections") && <Plane live={live} tab={view} go={go} />}
               {(view === "ops" || view === "history") && <Ops live={live} history={view === "history"} go={go} confirm={setConfirm} />}
               {view === "sync" && <Sync live={live} confirm={setConfirm} />}
@@ -492,7 +492,7 @@ function Stat({ label, value, sub, icon, hot, onClick }: { label: string; value:
   );
 }
 
-function Skills({ skills, targets, query, setQuery, selected, setSelectedSkill }: { skills: Skill[]; targets: Target[]; query: string; setQuery: (value: string) => void; selected: Skill | null; setSelectedSkill: (name: string) => void }) {
+function Skills({ skills, targets, query, setQuery, selected, setSelectedSkill, convergenceSupported, onApplied }: { skills: Skill[]; targets: Target[]; query: string; setQuery: (value: string) => void; selected: Skill | null; setSelectedSkill: (name: string) => void; convergenceSupported: boolean; onApplied: () => void }) {
   const [source, setSource] = useState("all");
   const [sort, setSort] = useState("name");
   const tags = Array.from(new Set(skills.map((skill) => skill.tag))).slice(0, 8);
@@ -546,30 +546,9 @@ function Skills({ skills, targets, query, setQuery, selected, setSelectedSkill }
           })}
           {shown.length === 0 && <div className="lib-empty"><Icon d="lib" size={28} /><p>没有匹配当前筛选的 skill</p></div>}
         </div>
-        <SkillDetail skill={selected} />
+        <SkillMDetail skill={selected} convergenceSupported={convergenceSupported} onApplied={onApplied} />
       </div>
     </div>
-  );
-}
-
-function SkillDetail({ skill }: { skill: Skill | null }) {
-  if (!skill) {
-    return <aside className="skill-detail panel"><div className="panel-empty">选择一个 skill 查看来源、目标和投影统计。</div></aside>;
-  }
-  const targetCount = skill.targets.length + (skill.observedTargetIds?.length ?? 0);
-  return (
-    <aside className="skill-detail panel" aria-label={`${skill.name} detail`}>
-      <div className="det-head">
-        <div className="det-title"><Glyph>{skill.name}</Glyph><div><h2>{skill.name}</h2><p>{skill.description || "No backend description."}</p></div></div>
-        <span className="sec-badge good"><Icon d="shield" />{skill.sourceStatus}</span>
-      </div>
-      <div className="det-metrics">
-        <div><span>Bindings</span><b>{skill.bindingCount}</b><em>routing rules</em></div>
-        <div><span>Projections</span><b>{skill.projectionCount}</b><em>materialized edges</em></div>
-        <div><span>Latest rev</span><b>{skill.latestRev}</b><em>backend reported</em></div>
-        <div><span>Targets</span><b>{targetCount}</b><em>observed + projected</em></div>
-      </div>
-    </aside>
   );
 }
 

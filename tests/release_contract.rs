@@ -38,7 +38,7 @@ impl Fixture {
         }
         write_file(
             &skill.join("loom.skill.toml"),
-            "[compatibility]\ncli_contract = \">=1.0.0,<2.0.0\"\n",
+            "[compatibility]\ncli_contract = \">=1.9.0,<2.0.0\"\n",
         );
         write_file(&skill.join("SKILL.md"), "# Loom registry\n");
         write_file(&inventory, "[[surface]]\nid = \"fixture\"\n");
@@ -86,7 +86,7 @@ fn publish_command(fixture: &Fixture) -> Command {
         "--release-version",
         "0.1.5",
         "--contract-version",
-        "1.0.0",
+        CLI_CONTRACT_VERSION,
         "--target",
         "fixture-target",
     ]);
@@ -133,7 +133,7 @@ fn packaged_surface_fixture_matrix() {
     );
     let metadata = fs::read_to_string(bundle.join("skills/loom-registry/loom.skill.toml"))
         .expect("read packaged Skill metadata");
-    assert!(metadata.contains("cli_contract = \">=1.0.0,<2.0.0\""));
+    assert!(metadata.contains("cli_contract = \">=1.9.0,<2.0.0\""));
     assert!(contract_version_matches(">=1.0.0,<2.0.0", CLI_CONTRACT_VERSION).unwrap());
     let report = check_surface_inventory(Path::new("."))
         .expect("run the complete parser-backed fixture matrix");
@@ -203,8 +203,8 @@ fn packaged_contract_digests_match() {
     assert!(fixture.publish().status.success());
     assert!(fixture.verify().status.success());
     let data = manifest(&fixture.output.join("contract-manifest.json"));
-    assert_eq!(data["cli_contract_version"], "1.0.0");
-    assert_eq!(data["skill_cli_contract_range"], ">=1.0.0,<2.0.0");
+    assert_eq!(data["cli_contract_version"], CLI_CONTRACT_VERSION);
+    assert_eq!(data["skill_cli_contract_range"], ">=1.9.0,<2.0.0");
     for key in ["binary_sha256", "skill_tree_digest", "inventory_sha256"] {
         assert!(
             data[key]

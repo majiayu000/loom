@@ -4,7 +4,7 @@ use super::{InventoryError, PanelBinding, PanelMutation, validate_public_argv};
 
 const ROUTER_PATH: &str = "src/panel/mod.rs";
 const HANDLERS_ROOT: &str = "src/panel/handlers";
-const FRONTEND_CLIENT_PATH: &str = "panel/src/lib/api/client.ts";
+const FRONTEND_CLIENT_ROOT: &str = "panel/src/lib/api";
 
 pub fn check_panel_mutations(
     repo_root: &Path,
@@ -36,8 +36,7 @@ pub fn check_panel_mutations(
         )));
     }
 
-    let frontend_source = read(repo_root, FRONTEND_CLIENT_PATH)?;
-    let actual_frontend_routes = extract_frontend_post_routes(&frontend_source)?;
+    let actual_frontend_routes = frontend_post_routes(repo_root)?;
     let expected_frontend_routes = mutations
         .iter()
         .map(|mutation| {
@@ -163,7 +162,7 @@ fn post_handler(source: &str) -> Option<String> {
 
 fn extract_frontend_post_routes(source: &str) -> Result<BTreeSet<String>, InventoryError> {
     let api_source = source
-        .split_once("export const api = {")
+        .split_once("export const ")
         .map(|(_, source)| source)
         .unwrap_or_default();
     let mut routes = BTreeSet::new();
@@ -171,24 +170,44 @@ fn extract_frontend_post_routes(source: &str) -> Result<BTreeSet<String>, Invent
     while let Some(relative) = api_source[cursor..].find("postJson(") {
         let start = cursor + relative + "postJson".len();
         let end = balanced_end(api_source, start, '(', ')').ok_or_else(|| {
-            InventoryError::new(format!(
-                "{FRONTEND_CLIENT_PATH}: unterminated postJson call"
-            ))
+            InventoryError::new("frontend API module: unterminated postJson call")
         })?;
         let arguments = &api_source[start + 1..end];
         let route = first_string_or_template(arguments).ok_or_else(|| {
-            InventoryError::new(format!(
-                "{FRONTEND_CLIENT_PATH}: postJson route must be a string or template literal"
-            ))
+            InventoryError::new(
+                "frontend API module: postJson route must be a string or template literal",
+            )
         })?;
         if route.starts_with("/api/") {
             routes.insert(normalize_route(&route));
         }
         cursor = end + 1;
     }
+    Ok(routes)
+}
+
+fn frontend_post_routes(repo_root: &Path) -> Result<BTreeSet<String>, InventoryError> {
+    let root = repo_root.join(FRONTEND_CLIENT_ROOT);
+    let mut routes = BTreeSet::new();
+    for entry in walkdir::WalkDir::new(&root) {
+        let entry = entry.map_err(|error| InventoryError::new(error.to_string()))?;
+        if !entry.file_type().is_file()
+            || entry.path().extension().and_then(|value| value.to_str()) != Some("ts")
+            || entry
+                .path()
+                .file_name()
+                .and_then(|value| value.to_str())
+                .is_some_and(|name| name.ends_with(".test.ts"))
+        {
+            continue;
+        }
+        let source = fs::read_to_string(entry.path())
+            .map_err(|error| InventoryError::new(format!("{}: {error}", entry.path().display())))?;
+        routes.extend(extract_frontend_post_routes(&source)?);
+    }
     if routes.is_empty() {
         return Err(InventoryError::new(format!(
-            "{FRONTEND_CLIENT_PATH}: no frontend POST routes found"
+            "{FRONTEND_CLIENT_ROOT}: no frontend POST routes found"
         )));
     }
     Ok(routes)

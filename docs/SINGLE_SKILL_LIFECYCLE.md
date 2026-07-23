@@ -55,7 +55,11 @@ loom --json --root "$ROOT" workspace init --scan-existing
 loom --json --root "$ROOT" skill author new fixflow --template coding-workflow
 loom --json --root "$ROOT" skill lint fixflow --portable
 loom --json --root "$ROOT" skill lint fixflow --quality
-loom --json --root "$ROOT" skill activate fixflow --agent codex --scope user --dry-run
+PLAN_JSON=$(loom --json --root "$ROOT" plan converge fixflow --from-source --agent codex --require-runtime)
+# Review plan_id, plan_digest, effects, risks, conflicts, and approvals.
+PLAN_ID=$(printf '%s\n' "$PLAN_JSON" | jq -er 'select(.ok == true and .data.execution_enabled == true and .data.safe_to_apply == true and .data.requires_digest_confirmation == true) | .data.plan_id | select(type == "string" and length > 0)')
+PLAN_DIGEST=$(printf '%s\n' "$PLAN_JSON" | jq -er '.data.plan_digest | select(type == "string" and length > 0)')
+loom --json --root "$ROOT" apply "$PLAN_ID" --plan-digest "$PLAN_DIGEST" --idempotency-key "$REQUEST_ID"
 loom --json --root "$ROOT" skill visibility fixflow --agent codex
 ```
 
@@ -78,9 +82,17 @@ loom skill add /path/to/fixflow --name fixflow
 loom skill add github:owner/repo//skills/fixflow --name fixflow --ref v1.2.3
 ```
 
-Use `loom skill commit <skill> --from-source` after editing
-`skills/<skill>` inside the registry source. Use `--from-projection` only when
-the edit happened in a live projection and Loom requires an explicit side.
+After editing `skills/<skill>` inside the registry source, use `plan converge
+<skill> --from-source` and review its immutable plan before digest-confirmed
+`apply`. The plan-only phase writes no source commit, projection, live path, or
+remote effect. Use low-level `skill commit <skill> --from-source` only for explicit
+recovery. Use `--from-projection --instance <id>` only when a live projection is
+the reviewed input side.
+
+Apply retries reuse the same plan id, plan digest, and idempotency key. Remote
+transport runs after local commit/projection/visibility evidence. A remote
+pending or restart-required outcome is partial, not failure and not proof of
+current-session visibility; follow every returned blocker and next action.
 
 ## Validate
 
@@ -165,12 +177,14 @@ release.
 
 ## Current Command Status
 
-Current implemented commands include `skill author new`, `skill add`, `skill commit`,
+Current implemented commands include `plan converge`, digest-confirmed `apply`,
+`skill author new`, `skill add`, `skill commit`,
 `skill lint`, `skill deps`, `skill scan`, `skill activate`,
 `skill deactivate`, `skill active list`, `skill inspect`, `skill diagnose`,
 `skill visibility`, `skill eval`, `skill release`, `skill rollback`, `skill diff`,
 and `codex reconcile`.
 
-Future work may add richer Panel workflows and broader agent-specific visibility
-models. Do not assume a filesystem projection is visible to an agent unless a
-visibility or diagnose command proves the active-view chain.
+The Panel exposes the same two-stage convergence mutation only when backend
+health reports apply capability. Do not assume a filesystem projection or a
+remote `SYNCED` state is visible to an agent unless visibility or diagnose
+evidence proves the active-view chain.

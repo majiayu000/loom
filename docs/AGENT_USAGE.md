@@ -75,9 +75,9 @@ loom --json --root "$REGISTRY_ROOT" skill monitor-observed --once
 ## 4. 日常操作建议（Agent）
 
 1. 读取状态：`loom --json --root <registry_root> workspace status`
-2. 写入前规划：低风险已有 binding 的写入可用 `agent preflight`；需要 durable plan/idempotency 的 flow 用 `loom plan use` 后再 `loom apply`
+2. canonical source 修改默认用 `loom plan converge <skill> --from-source`；只有在 `execution_enabled=true`、`safe_to_apply=true` 且审阅 exact effects/risks/conflicts 后，才用返回的 `plan_id` + `plan_digest` + caller-held idempotency key 执行 `loom apply`
 3. 高风险写入预演：在 `skill project` / `skill rollback` / `skill trash add` / `skill trash purge` / `skill orphan clean` / `sync push` 后加 `--dry-run`；`skill rollback --preview` 仅作为兼容别名保留
-4. 保存 source 变更：`loom --json --root <registry_root> skill commit <skill> --from-source --message <message>`
+4. `skill commit` / `skill project` / `skill visibility` / `sync` 保留为 typed conflict、partial outcome 和人工 recovery 的低层命令，不替代默认 convergence happy path
 5. 创建恢复锚点：`loom --json --root <registry_root> skill release <skill> --anchor`
 6. 发布版本：`loom --json --root <registry_root> skill release <skill> vX.Y.Z --preflight --baseline <ref>`
 7. 差异检查：`loom --json --root <registry_root> skill diff <skill> <from> <to>`
@@ -91,6 +91,8 @@ loom --json --root "$REGISTRY_ROOT" skill monitor-observed --once
 - `agent preflight` 和 `--dry-run` 返回 `ok=true` 不代表可以直接写入；必须同时检查 `data.safe_to_run=true`。`plan use` 返回 `ok=true` 只表示 plan 已持久化；`apply` 前仍要检查 `required_approvals`。
 - `--dry-run` 只允许写 command audit，不应改变 registry ops、operation backlog、Git refs/index 或 live target 内容；`skill rollback --dry-run` 连 command audit 也不会追加。
 - `registry_transport.state=LOCAL_ONLY` 或 `PENDING_PUSH` 时，不应宣称“远端已同步”。即使为 `SYNCED`，也必须独立检查 projection convergence 与 agent visibility。
+- `plan converge` 是 plan-only boundary：除 immutable plan/command audit 外不得产生 domain mutation。apply 重试必须复用原 `plan_id`、`plan_digest` 和 idempotency key；remote 永远最后执行。
+- `local_complete_remote_pending` 保留已验证的本地结果并要求同一 authority 重试 transport；`local_complete_restart_required` 要求 restart/new session 后重查。显式接受 restart 只影响 completion blocker，不会把 visibility 改写成 `visible`。
 - 读命令（如 `workspace status`、`workspace doctor`、`target list`）不会修改 registry state、Git refs/index、live target 目录或 operation backlog；它们会写入 durable command event。registry 写操作审计以 `meta.op_id` / `/api/v1/ops` 为准。
 
 ## 6. 常见失败码处理
@@ -114,17 +116,16 @@ loom --json --root "$REGISTRY_ROOT" skill monitor-observed --once
 loom --json --root "$ROOT" workspace init --scan-existing
 loom --json --root "$ROOT" skill monitor-observed --once
 
-# 2) 日常保存 source 变更
-loom --json --root "$ROOT" skill commit "$SKILL" --from-source --message "$MESSAGE"
+# 2) 日常 source 收敛：先计划并保存完整 JSON 供审阅
+PLAN_JSON=$(loom --json --root "$ROOT" plan converge "$SKILL" --from-source --agent codex --require-runtime)
+PLAN_ID=$(printf '%s\n' "$PLAN_JSON" | jq -er 'select(.ok == true and .data.execution_enabled == true and .data.safe_to_apply == true and .data.requires_digest_confirmation == true) | .data.plan_id | select(type == "string" and length > 0)')
+PLAN_DIGEST=$(printf '%s\n' "$PLAN_JSON" | jq -er '.data.plan_digest | select(type == "string" and length > 0)')
 
-# 3) 写入前规划
-loom --json --root "$ROOT" agent preflight --agent codex --workspace "$PWD" --skill "$SKILL"
-PLAN_ID=$(loom --json --root "$ROOT" plan use "$SKILL" --agents codex --workspace "$PWD" | jq -r '.data.plan_id')
-loom --json --root "$ROOT" apply "$PLAN_ID" --idempotency-key "$REQUEST_ID"
-loom --json --root "$ROOT" sync push --dry-run
+# 3) 人或上层 agent 审阅 effects/risks/conflicts/approvals 后执行
+loom --json --root "$ROOT" apply "$PLAN_ID" --plan-digest "$PLAN_DIGEST" --idempotency-key "$REQUEST_ID"
 
-# 4) 同步
-loom --json --root "$ROOT" sync push
+# 4) 仅在 recovery 需要时使用低层状态/同步命令
+loom --json --root "$ROOT" workspace status
 ```
 
 ## 8. 人类快速入口

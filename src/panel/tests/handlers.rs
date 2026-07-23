@@ -3,9 +3,8 @@ use crate::cli::{AgentKind, ProjectionMethod};
 use crate::panel::handlers::{
     OpsQuery, TelemetryReportQuery, registry_orphan_clean, registry_skill_trash_add,
     registry_skill_trash_purge, registry_skill_trash_restore, registry_skill_use, remote_set,
-    v1_health, v1_info, v1_overview, v1_pending, v1_registry_ops, v1_registry_targets,
-    v1_skill_diagnose, v1_skill_inspect, v1_skill_trash, v1_skills, v1_telemetry_report,
-    v1_workspace_status,
+    v1_info, v1_overview, v1_pending, v1_registry_ops, v1_registry_targets, v1_skill_diagnose,
+    v1_skill_inspect, v1_skill_trash, v1_skills, v1_telemetry_report, v1_workspace_status,
 };
 use crate::panel::{TrashRestoreRequest, UseRequest};
 use crate::state_model::{
@@ -19,37 +18,7 @@ use axum::{
 };
 use chrono::Duration as ChrDuration;
 use serde_json::{Value, json};
-use std::{
-    net::{IpAddr, Ipv4Addr, SocketAddr},
-    path::Path,
-    process::Command,
-};
-
-fn git_ok(root: &Path, args: &[&str]) {
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(root)
-        .args(args)
-        .output()
-        .expect("run git");
-    assert!(
-        output.status.success(),
-        "git {:?} failed: stdout={} stderr={}",
-        args,
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-}
-
-fn panel_peer() -> SocketAddr {
-    SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 40000)
-}
-
-fn panel_headers() -> HeaderMap {
-    let mut headers = HeaderMap::new();
-    headers.insert("origin", HeaderValue::from_static("http://127.0.0.1:43117"));
-    headers
-}
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
 #[tokio::test]
 async fn v1_telemetry_report_returns_cli_read_model_without_audit_write() {
@@ -287,18 +256,6 @@ async fn v1_registry_ops_includes_release_anchor_history_audit_without_registry_
     );
 
     cleanup_root(root);
-}
-
-#[tokio::test]
-async fn v1_health_returns_cli_envelope_shape() {
-    let (status, Json(payload)) = v1_health().await;
-
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(payload["ok"], json!(true));
-    assert_eq!(payload["cmd"], json!("panel.health"));
-    assert_eq!(payload["error"], Value::Null);
-    assert_eq!(payload["data"]["service"], json!("loom-panel"));
-    assert_eq!(payload["meta"]["warnings"], json!([]));
 }
 
 #[tokio::test]

@@ -38,6 +38,7 @@ export interface PanelLiveData {
   convergence: ConvergenceStatusPayload | null;
   warnings: string[];
   health: HealthPayload | null;
+  backendCapabilities?: HealthPayload["capabilities"];
   counts: RegistryCounts;
   skills: Skill[];
   targets: Target[];
@@ -237,6 +238,7 @@ export function usePanelData(): PanelLiveData {
             convergence: convergenceWithLegacyFallback(workspaceStatus.data.convergence, workspaceStatus.data.remote ?? null),
             warnings: baseWarnings,
             health,
+            backendCapabilities: health.capabilities,
             counts: EMPTY_COUNTS,
             skills: [],
             targets: [],
@@ -314,6 +316,7 @@ export function usePanelData(): PanelLiveData {
           ),
           warnings,
           health,
+          backendCapabilities: health.capabilities,
           counts: registryData.counts ?? EMPTY_COUNTS,
           skills,
           targets,

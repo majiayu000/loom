@@ -23,6 +23,10 @@ archives, checksums, and provenance details on GitHub Releases.
 - Registry operations journal is now the single operation-log authority for
   sync replay, ops retry/purge, history repair, and Panel operation backlog
   reads; legacy `state/pending_ops.*` runtime state is no longer used.
+- CLI contract 1.9 ships the reviewed `plan converge` + digest-confirmed
+  `apply` workflow through the first-party Skill and a capability-gated Panel
+  surface. Install the matching binary and Skill together; older 1.x binaries
+  are outside the shipped Skill's mutation range.
 
 ### Fixed
 

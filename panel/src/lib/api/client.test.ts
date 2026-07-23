@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { api, ApiError } from "./client";
+import { convergenceApi } from "./convergence";
 
 describe("api.registryStatus", () => {
   afterEach(() => {
@@ -69,6 +70,12 @@ describe("api v1 routes", () => {
     await api.skillRelease("demo", { version: "v1" });
     await api.skillRollback("demo", { to: "HEAD~1" });
     await api.skillUse("demo", { agents: ["claude"], apply: false });
+    await convergenceApi.plan("demo", { agent: "claude", require_runtime: true });
+    await convergenceApi.apply({
+      plan_id: "plan-1",
+      plan_digest: "sha256:plan",
+      idempotency_key: "panel-key-1",
+    });
     await api.project({ skill: "demo", binding: "binding-1", target: "target-1", method: "symlink" });
     await api.commitProjection({ instance: "inst-1" });
     await api.orphanClean({ delete_live_paths: false });
@@ -93,6 +100,8 @@ describe("api v1 routes", () => {
       "/api/v1/skills/demo/release",
       "/api/v1/skills/demo/rollback",
       "/api/v1/skills/demo/use",
+      "/api/v1/skills/demo/convergence/plan",
+      "/api/v1/convergence/apply",
       "/api/v1/projections/project",
       "/api/v1/projections/commit",
       "/api/v1/orphans/clean",

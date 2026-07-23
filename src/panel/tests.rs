@@ -5,16 +5,52 @@ use crate::state_model::{
     RegistryBindingsFile, RegistryOpsCheckpoint, RegistryProjectionsFile, RegistryRulesFile,
     RegistrySchemaFile, RegistryStatePaths, RegistryTargetsFile,
 };
-use axum::{Json, extract::State, http::StatusCode};
+use axum::{
+    Json,
+    extract::State,
+    http::{HeaderMap, HeaderValue, StatusCode},
+};
 use chrono::Utc;
-use std::{fs, path::Path, sync::Arc};
+use std::{
+    fs,
+    net::{IpAddr, Ipv4Addr, SocketAddr},
+    path::Path,
+    process::Command,
+    sync::Arc,
+};
 use uuid::Uuid;
 
 mod assets;
+mod convergence;
 mod handlers;
 mod panel_import_observed;
 mod security;
 mod skill_read_model;
+
+fn git_ok(root: &Path, args: &[&str]) {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(args)
+        .output()
+        .expect("run git");
+    assert!(
+        output.status.success(),
+        "git {args:?} failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+fn panel_peer() -> SocketAddr {
+    SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 40000)
+}
+
+fn panel_headers() -> HeaderMap {
+    let mut headers = HeaderMap::new();
+    headers.insert("origin", HeaderValue::from_static("http://127.0.0.1:43117"));
+    headers
+}
 
 fn make_test_state() -> (std::path::PathBuf, PanelState) {
     let root = std::env::temp_dir().join(format!("loom-panel-test-{}", Uuid::new_v4()));

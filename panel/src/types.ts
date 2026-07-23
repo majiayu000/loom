@@ -17,6 +17,14 @@ import type { RegistryCheckpoint } from "./generated/RegistryCheckpoint";
 export type HealthPayload = {
   ok?: boolean;
   service?: string;
+  capabilities?: {
+    skill_convergence?: {
+      plan?: boolean;
+      apply?: boolean;
+      requires_plan_digest?: boolean;
+      remote_last?: boolean;
+    };
+  };
 };
 
 export type InfoPayload = {

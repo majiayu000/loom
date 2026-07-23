@@ -8,7 +8,7 @@ use axum::{
 
 use crate::cli::{ApplyArgs, Command, PlanCommand, PlanConvergeArgs};
 
-use super::super::auth::{ensure_mutation_authorized, run_panel_command};
+use super::super::auth::{ensure_mutation_authorized, error_envelope, run_panel_command};
 use super::super::{ConvergenceApplyRequest, ConvergencePlanRequest, PanelState};
 
 pub(in crate::panel) async fn registry_convergence_plan(
@@ -20,6 +20,18 @@ pub(in crate::panel) async fn registry_convergence_plan(
 ) -> (StatusCode, Json<serde_json::Value>) {
     if let Some(response) = ensure_mutation_authorized(&state, peer, &headers, "plan.converge") {
         return response;
+    }
+    if req.accept_restart_required && !req.require_runtime {
+        let request_id = uuid::Uuid::new_v4().to_string();
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(error_envelope(
+                "plan.converge",
+                &request_id,
+                "ARG_INVALID",
+                "accept_restart_required requires require_runtime",
+            )),
+        );
     }
     run_panel_command(
         &state,

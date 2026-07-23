@@ -486,37 +486,37 @@ classification = "executable"
 [[example]]
 id = "single_skill.quickstart"
 surface = "single_skill_lifecycle"
-line_range = [37, 62]
+line_range = [37, 64]
 classification = "executable"
 [[example]]
 id = "single_skill.author_or_add"
 surface = "single_skill_lifecycle"
-line_range = [67, 74]
+line_range = [69, 76]
 classification = "executable"
 [[example]]
 id = "single_skill.add_name"
 surface = "single_skill_lifecycle"
-line_range = [76, 76]
+line_range = [78, 78]
 classification = "output_example"
 [[example]]
 id = "single_skill.add_examples"
 surface = "single_skill_lifecycle"
-line_range = [78, 81]
+line_range = [80, 83]
 classification = "executable"
 [[example]]
 id = "single_skill.validate"
 surface = "single_skill_lifecycle"
-line_range = [95, 104]
+line_range = [97, 106]
 classification = "executable"
 [[example]]
 id = "single_skill.activate_and_inspect"
 surface = "single_skill_lifecycle"
-line_range = [110, 134]
+line_range = [112, 136]
 classification = "executable"
 [[example]]
 id = "single_skill.evaluate_and_release"
 surface = "single_skill_lifecycle"
-line_range = [142, 171]
+line_range = [144, 173]
 classification = "executable"
 [[example]]
 id = "registry_skill.compatibility"

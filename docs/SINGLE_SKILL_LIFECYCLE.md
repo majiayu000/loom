@@ -57,6 +57,8 @@ loom --json --root "$ROOT" skill lint fixflow --portable
 loom --json --root "$ROOT" skill lint fixflow --quality
 PLAN_JSON=$(loom --json --root "$ROOT" plan converge fixflow --from-source --agent codex --require-runtime)
 # Review plan_id, plan_digest, effects, risks, conflicts, and approvals.
+PLAN_ID=$(printf '%s\n' "$PLAN_JSON" | jq -er 'select(.ok == true and .data.execution_enabled == true and .data.safe_to_apply == true and .data.requires_digest_confirmation == true) | .data.plan_id | select(type == "string" and length > 0)')
+PLAN_DIGEST=$(printf '%s\n' "$PLAN_JSON" | jq -er '.data.plan_digest | select(type == "string" and length > 0)')
 loom --json --root "$ROOT" apply "$PLAN_ID" --plan-digest "$PLAN_DIGEST" --idempotency-key "$REQUEST_ID"
 loom --json --root "$ROOT" skill visibility fixflow --agent codex
 ```

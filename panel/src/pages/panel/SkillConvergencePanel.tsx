@@ -28,6 +28,17 @@ function reviewValue(value: unknown): string {
   return JSON.stringify(value ?? [], null, 2);
 }
 
+function nextActionText(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (value && typeof value === "object") {
+    const action = value as Record<string, unknown>;
+    const reason = typeof action.reason === "string" ? action.reason : "";
+    const command = typeof action.cmd === "string" ? action.cmd : "";
+    if (reason || command) return [reason, command].filter(Boolean).join(" — ");
+  }
+  return reviewValue(value);
+}
+
 export function SkillConvergencePanel({ skillName, supported, onApplied }: { skillName: string; supported: boolean; onApplied: () => void }) {
   const [agent, setAgent] = useState("");
   const [requireRuntime, setRequireRuntime] = useState(false);
@@ -85,7 +96,10 @@ export function SkillConvergencePanel({ skillName, supported, onApplied }: { ski
       const result = await convergenceApi.apply({ plan_id: planId, plan_digest: planDigest, idempotency_key: idempotencyKey, approvals: [] });
       const data = (result.data ?? {}) as Record<string, unknown>;
       const blockers = Array.isArray(data.completion_blockers) ? data.completion_blockers.filter((item): item is string => typeof item === "string") : [];
-      setMessage(data.complete === true ? "Convergence complete." : `Local apply recorded; blockers: ${blockers.join(", ") || "evidence incomplete"}.`);
+      const outcome = typeof data.outcome === "string" ? data.outcome : (data.complete === true ? "complete" : "partial");
+      const nextActions = Array.isArray(data.next_actions) ? data.next_actions.map(nextActionText) : [];
+      const status = data.complete === true ? `Convergence outcome: ${outcome}.` : `Local apply recorded; outcome: ${outcome}; blockers: ${blockers.join(", ") || "evidence incomplete"}.`;
+      setMessage(nextActions.length > 0 ? `${status} Next actions: ${nextActions.join(" · ")}` : status);
       onApplied();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
@@ -110,7 +124,7 @@ export function SkillConvergencePanel({ skillName, supported, onApplied }: { ski
         </div>
         {plan && <div className="mono" data-testid="convergence-plan-review"><div>plan_id: {planId || "missing"}</div><div>plan_digest: {planDigest || "missing"}</div><div>effects: {listLength(plan.effects)} · risks: {listLength(plan.risks)} · conflicts: {listLength(plan.input_conflicts)} · approvals: {listLength(plan.required_approvals)}</div><div>safe_to_apply: {String(plan.safe_to_apply === true)} · execution_enabled: {String(plan.execution_enabled === true)}</div>{(["effects", "risks", "input_conflicts", "required_approvals"] as const).map((field) => <details key={field}><summary>{field}</summary><pre style={{ whiteSpace: "pre-wrap" }}>{reviewValue(plan[field])}</pre></details>)}</div>}
         {plan && <label><input type="checkbox" checked={reviewed} onChange={(event) => setReviewed(event.target.checked)} disabled={!planSafe || busy} /> I reviewed this exact plan id, digest, effects, risks, conflicts, and approvals.</label>}
-        {plan && <div style={{ display: "flex", gap: 8 }}><input aria-label="Convergence idempotency key" value={idempotencyKey} onChange={(event) => setIdempotencyKey(event.target.value)} disabled={busy} /><button className="btn-grad sm" type="button" onClick={applyPlan} disabled={!planSafe || !reviewed || !planId || !planDigest || !idempotencyKey || busy}>{busy ? "applying…" : "Apply reviewed plan"}</button></div>}
+        {plan && <div style={{ display: "flex", gap: 8 }}><input aria-label="Convergence idempotency key" value={idempotencyKey} readOnly aria-readonly="true" disabled={busy} /><button className="btn-grad sm" type="button" onClick={applyPlan} disabled={!planSafe || !reviewed || !planId || !planDigest || !idempotencyKey || busy}>{busy ? "applying…" : "Apply reviewed plan"}</button></div>}
         {plan && !planSafe && <div className="mutation-note" data-tone="err">Plan is blocked; inspect conflicts, risks, and required approvals before retrying.</div>}
         {error && <div className="mutation-note" data-tone="err">{error}</div>}
         {message && <div className="mutation-note" data-tone="warn">{message}</div>}

@@ -25,8 +25,8 @@ idempotency/recovery → visibility/remote → Agent Skill/Panel → full verifi
 
 ## Verification Tasks
 
-- [ ] `SP524-T009` Owner: fault/E2E | Dependencies: SP524-T001..T008 | Done when: 三种 method、双 dirty、lock/stale、每个本地 fault point、remote unavailable、restart required、interrupt/retry 全部由 fresh fixtures 覆盖 | Verify: `cargo test --test skill_convergence --test reliability && ./scripts/e2e-agent-flow.sh` | Covers: B-003, B-005, B-006, B-007, B-008, B-010, B-011, B-012, B-014
-- [ ] `SP524-T010` Owner: final verification | Dependencies: SP524-T009 | Done when: Rust/Panel/full test/format/perf fresh pass，PR gate 证明未新增 `skill` leaf、`plan converge` 已登记 #523 inventory/contract minor 与 invariant coverage | Verify: `cargo check --workspace --all-targets --all-features && cargo test && cd panel && bun test && cd .. && cargo fmt --all -- --check && ./scripts/perf-smoke.sh` | Covers: B-004, B-009, B-013, B-015
+- [x] `SP524-T009` Owner: fault/E2E | Dependencies: SP524-T001..T008 | Done when: 三种 method、双 dirty、lock/stale、每个本地 fault point、remote unavailable、restart required、interrupt/retry 全部由 fresh fixtures 覆盖 | Verify: `cargo test --test skill_convergence --test reliability && ./scripts/e2e-agent-flow.sh` | Covers: B-003, B-005, B-006, B-007, B-008, B-010, B-011, B-012, B-014
+- [x] `SP524-T010` Owner: final verification | Dependencies: SP524-T009 | Done when: Rust/Panel/full test/format/perf fresh pass，PR gate 证明未新增 `skill` leaf、`plan converge` 已登记 #523 inventory/contract minor 与 invariant coverage | Verify: `cargo check --workspace --all-targets --all-features && cargo test && cd panel && bun test && cd .. && cargo fmt --all -- --check && ./scripts/perf-smoke.sh` | Covers: B-004, B-009, B-013, B-015
 
 ## Handoff
 

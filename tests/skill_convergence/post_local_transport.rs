@@ -203,6 +203,96 @@ fn remote_failure_preserves_local_completion() {
     );
 }
 
+#[test]
+fn finished_event_failure_retries_retained_remote_result_without_side_effects() {
+    let fixture = projected_fixture();
+    let remote = common::TestDir::new("convergence-post-transport-event-failure");
+    git(remote.path(), &["init", "--bare"]);
+    git(
+        fixture.root.path(),
+        &[
+            "remote",
+            "add",
+            "origin",
+            remote.path().to_str().expect("remote path"),
+        ],
+    );
+    change_source(&fixture, "post-transport audit failure\n");
+    let operations_before = convergence_operation_count(fixture.root.path());
+    let (output, plan) = plan_converge(&fixture, &["--push-remote"]);
+    assert!(output.status.success(), "plan failed: {plan}");
+
+    let (output, failed) = apply_plan(
+        &fixture,
+        &plan,
+        "post-transport-event-failure",
+        &[("LOOM_FAULT_INJECT", "command_event_append_finished")],
+    );
+    assert!(
+        !output.status.success(),
+        "audit fault unexpectedly passed: {failed}"
+    );
+    assert_eq!(failed["error"]["code"], json!("AUDIT_ERROR"));
+    let committed_head = git(fixture.root.path(), &["rev-parse", "HEAD"]);
+    let remote_head = Command::new("git")
+        .arg("--git-dir")
+        .arg(remote.path())
+        .args(["rev-parse", "refs/heads/main"])
+        .output()
+        .expect("read remote head after failed audit");
+    assert!(
+        remote_head.status.success(),
+        "transport did not finish before audit fault"
+    );
+    assert_eq!(
+        String::from_utf8(remote_head.stdout)
+            .expect("remote head utf8")
+            .trim(),
+        committed_head.trim()
+    );
+    assert_eq!(
+        convergence_operation_count(fixture.root.path()),
+        operations_before,
+        "convergence transport changed the shared operations ledger"
+    );
+    let journal_path = fixture
+        .root
+        .path()
+        .join("state/transactions/convergence-demo.json");
+    let retained_before = fs::read(&journal_path).expect("retained journal");
+
+    let (output, retried) = apply_plan(&fixture, &plan, "post-transport-event-failure", &[]);
+    assert!(output.status.success(), "retained retry failed: {retried}");
+    assert_eq!(retried["data"]["complete"], json!(true));
+    assert_eq!(retried["data"]["outcome"], json!("complete"));
+    assert_eq!(
+        git(fixture.root.path(), &["rev-parse", "HEAD"]),
+        committed_head
+    );
+    assert_eq!(
+        git(
+            fixture.root.path(),
+            &[
+                "rev-list",
+                "--count",
+                "--grep=skill(demo): converge source",
+                "HEAD",
+            ],
+        )
+        .trim(),
+        "1"
+    );
+    assert_eq!(
+        convergence_operation_count(fixture.root.path()),
+        operations_before
+    );
+    assert_eq!(
+        fs::read(&journal_path).expect("retained journal after retry"),
+        retained_before,
+        "post-local retry rewrote immutable retained evidence"
+    );
+}
+
 fn change_source(fixture: &Fixture, body: &str) {
     fs::write(fixture.root.path().join("skills/demo/details.txt"), body).expect("edit source");
 }

@@ -322,6 +322,78 @@ EOF
   printf 'E PASS claude=%s codex=%s\n' "$claude_dir" "$codex_dir"
 }
 
+scenario_f() {
+  local root="$ROOT_BASE/f"
+  local repo="$root/repo"
+  local seed="$root/seed/demo-skill-f"
+  local target_dir="$root/agent/.claude/skills"
+  local workspace="$root/workspace-f"
+  local target_json bind_json proj_json plan_json interrupted_json retry_json
+  local target_id bind_id materialized_path plan_id plan_digest interrupted_head final_head
+  local rc journal marker convergence_id
+  marker="convergence retry from scenario F"
+
+  mkdir -p "$seed" "$target_dir" "$workspace"
+  cat >"$seed/SKILL.md" <<'EOF'
+---
+name: demo-skill-f
+description: Use when exercising retained convergence retry end to end.
+---
+# Demo skill F
+seed line F
+EOF
+  printf 'initial details F\n' >"$seed/details.txt"
+
+  mkdir -p "$repo/skills/demo-skill-f"
+  cp "$seed/SKILL.md" "$seed/details.txt" "$repo/skills/demo-skill-f/"
+  assert_ok "$(run_json "$repo" skill commit demo-skill-f --from-source)" "F canonical source seed"
+  target_json="$(run_json "$repo" target add --agent claude --path "$target_dir" --ownership managed)"
+  assert_ok "$target_json" "F target add"
+  target_id="$(json_field "$target_json" '.data.target.target_id')"
+  bind_json="$(run_json "$repo" workspace binding add --agent claude --profile default --matcher-kind exact-path --matcher-value "$workspace" --target "$target_id")"
+  assert_ok "$bind_json" "F binding add"
+  bind_id="$(json_field "$bind_json" '.data.binding.binding_id')"
+  proj_json="$(run_json "$repo" skill project demo-skill-f --binding "$bind_id" --method copy)"
+  assert_ok "$proj_json" "F project"
+  materialized_path="$(json_field "$proj_json" '.data.projection.materialized_path')"
+
+  printf '\n%s\n' "$marker" >>"$repo/skills/demo-skill-f/details.txt"
+  plan_json="$(run_json "$repo" plan converge demo-skill-f --agent claude --workspace "$workspace")"
+  assert_ok "$plan_json" "F convergence plan"
+  plan_id="$(json_field "$plan_json" '.data.plan_id')"
+  plan_digest="$(json_field "$plan_json" '.data.plan_digest')"
+
+  set +e
+  interrupted_json="$(LOOM_FAULT_INJECT=convergence_interrupt_after_source_commit "$LOOM_BIN" --json --root "$repo" apply "$plan_id" --plan-digest "$plan_digest" --idempotency-key e2e-f-retained 2>/dev/null)"
+  rc=$?
+  set -e
+  if [[ $rc -eq 0 ]]; then
+    echo "FAILED [F interruption]: apply unexpectedly succeeded" >&2
+    exit 1
+  fi
+  assert_envelope "$interrupted_json" "F interrupted apply" "false"
+  [[ "$(json_field "$interrupted_json" '.error.code')" != "null" ]]
+  interrupted_head="$(git -C "$repo" rev-parse HEAD)"
+  journal="$repo/state/transactions/convergence-demo-skill-f.json"
+  [[ "$(jq -r '.phase' "$journal")" == "source_committed" ]]
+
+  retry_json="$(run_json "$repo" apply "$plan_id" --plan-digest "$plan_digest" --idempotency-key e2e-f-retained)"
+  assert_ok "$retry_json" "F retained-journal retry"
+  [[ "$(json_field "$retry_json" '.data.complete')" == "true" ]]
+  [[ "$(json_field "$retry_json" '.data.outcome')" == "complete" ]]
+  convergence_id="$(json_field "$retry_json" '.data.convergence_id')"
+  [[ "$convergence_id" != "null" && -n "$convergence_id" ]]
+  final_head="$(git -C "$repo" rev-parse HEAD)"
+  [[ "$interrupted_head" == "$(json_field "$retry_json" '.data.applied.source_commit')" ]]
+  [[ "$final_head" == "$(json_field "$retry_json" '.data.applied.registry_commit')" ]]
+  git -C "$repo" merge-base --is-ancestor "$interrupted_head" "$final_head"
+  [[ "$(git -C "$repo" rev-list --count --grep='skill(demo-skill-f): converge source' HEAD)" == "1" ]]
+  grep -q "$marker" "$materialized_path/details.txt"
+  [[ "$(jq -r '.phase' "$journal")" == "committed_artifacts_retained" ]]
+
+  printf 'F PASS plan=%s convergence=%s retained_retry=true\n' "$plan_id" "$convergence_id"
+}
+
 mkdir -p "$ROOT_BASE"
 echo "Running Loom agent E2E in: $ROOT_BASE"
 
@@ -330,6 +402,7 @@ scenario_b
 scenario_c
 scenario_d
 scenario_e
+scenario_f
 
 echo "ALL PASS"
 echo "Artifacts: $ROOT_BASE"

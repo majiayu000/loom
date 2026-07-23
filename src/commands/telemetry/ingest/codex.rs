@@ -1,10 +1,12 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 
 use super::{ImportedInvocation, ImportedRecord, ParseOutcome};
+
+mod tool_read;
 
 #[derive(Debug, Default)]
 pub(super) struct Context {
@@ -13,6 +15,7 @@ pub(super) struct Context {
     workspace: Option<PathBuf>,
     turn_id: Option<String>,
     mentioned_skills: BTreeMap<String, usize>,
+    read_skills: BTreeSet<String>,
     next_skill_ordinal: usize,
 }
 
@@ -24,6 +27,7 @@ pub(super) fn parse_record(value: &Value, context: &mut Context) -> ParseOutcome
             context.workspace = None;
             context.turn_id = None;
             context.mentioned_skills.clear();
+            context.read_skills.clear();
             context.next_skill_ordinal = 0;
             let Some(payload) = value.get("payload") else {
                 return ParseOutcome::Rejected("missing_session_metadata");
@@ -48,6 +52,7 @@ pub(super) fn parse_record(value: &Value, context: &mut Context) -> ParseOutcome
             context.workspace = context.session_workspace.clone();
             context.turn_id = None;
             context.mentioned_skills.clear();
+            context.read_skills.clear();
             context.next_skill_ordinal = 0;
             if let Some(payload) = value.get("payload") {
                 update_workspace(context, payload);
@@ -67,11 +72,16 @@ fn parse_response_item(value: &Value, context: &mut Context) -> ParseOutcome {
     let Some(payload) = value.get("payload") else {
         return ParseOutcome::Ignored;
     };
-    if payload.get("type").and_then(Value::as_str) != Some("message")
-        || payload.get("role").and_then(Value::as_str) != Some("user")
-    {
-        return ParseOutcome::Ignored;
+    match payload.get("type").and_then(Value::as_str) {
+        Some("message") if payload.get("role").and_then(Value::as_str) == Some("user") => {
+            parse_skill_injection(value, payload, context)
+        }
+        Some("function_call") => parse_skill_entrypoint_read(value, payload, context),
+        _ => ParseOutcome::Ignored,
     }
+}
+
+fn parse_skill_injection(value: &Value, payload: &Value, context: &mut Context) -> ParseOutcome {
     let texts = payload
         .get("content")
         .and_then(Value::as_array)
@@ -130,6 +140,59 @@ fn parse_response_item(value: &Value, context: &mut Context) -> ParseOutcome {
                 ImportedInvocation {
                     name: name.to_string(),
                     identity: format!("skill-injection-{ordinal}"),
+                    ordinal,
+                }
+            })
+            .collect(),
+    })
+}
+
+fn parse_skill_entrypoint_read(
+    value: &Value,
+    payload: &Value,
+    context: &mut Context,
+) -> ParseOutcome {
+    let names = tool_read::skill_entrypoint_names(payload)
+        .into_iter()
+        .filter(|name| !context.read_skills.contains(name))
+        .collect::<Vec<_>>();
+    if names.is_empty() {
+        return ParseOutcome::Ignored;
+    }
+    let Some(stable_record_key) = payload
+        .get("call_id")
+        .or_else(|| payload.get("id"))
+        .and_then(Value::as_str)
+        .filter(|key| !key.is_empty())
+    else {
+        return ParseOutcome::Rejected("missing_stable_record_key");
+    };
+    let Some(session_id) = context.session_id.as_deref() else {
+        return ParseOutcome::Rejected("missing_session_identity");
+    };
+    let Some(timestamp) = parse_timestamp(value) else {
+        return ParseOutcome::Rejected("invalid_timestamp");
+    };
+    let first_ordinal = context.next_skill_ordinal;
+    let Some(next_skill_ordinal) = context.next_skill_ordinal.checked_add(names.len()) else {
+        return ParseOutcome::Rejected("invocation_ordinal_overflow");
+    };
+    context.read_skills.extend(names.iter().cloned());
+    context.next_skill_ordinal = next_skill_ordinal;
+    ParseOutcome::Record(ImportedRecord {
+        stable_record_key: stable_record_key.to_string(),
+        session_id: session_id.to_string(),
+        workspace: context.workspace.clone(),
+        timestamp,
+        rejected_reasons: Vec::new(),
+        invocations: names
+            .into_iter()
+            .enumerate()
+            .map(|(offset, name)| {
+                let ordinal = first_ordinal + offset;
+                ImportedInvocation {
+                    name,
+                    identity: format!("skill-entrypoint-read-{ordinal}"),
                     ordinal,
                 }
             })
@@ -254,6 +317,53 @@ mod tests {
         };
         assert_eq!(record.session_id, "session");
         assert_eq!(record.invocations[0].name, "demo");
+    }
+
+    #[test]
+    fn current_exec_command_skill_read_is_parsed_once_per_turn() {
+        let mut context = Context::default();
+        for value in [
+            json!({"type":"session_meta","payload":{"id":"session","cwd":"/workspace"}}),
+            json!({"type":"turn_context","payload":{"turn_id":"turn-1"}}),
+        ] {
+            assert!(matches!(
+                parse_record(&value, &mut context),
+                ParseOutcome::Ignored
+            ));
+        }
+        let read = json!({
+            "timestamp":"2026-07-23T00:00:00Z",
+            "type":"response_item",
+            "payload":{
+                "type":"function_call",
+                "name":"exec_command",
+                "call_id":"call-1",
+                "arguments":serde_json::to_string(&json!({
+                    "cmd":"sed -n '1,240p' /home/user/.loom-registry/skills/demo/SKILL.md"
+                })).unwrap()
+            }
+        });
+        let ParseOutcome::Record(record) = parse_record(&read, &mut context) else {
+            panic!("current Codex skill entrypoint read must parse");
+        };
+        assert_eq!(record.stable_record_key, "call-1");
+        assert_eq!(record.invocations[0].name, "demo");
+        assert!(matches!(
+            parse_record(&read, &mut context),
+            ParseOutcome::Ignored
+        ));
+
+        assert!(matches!(
+            parse_record(
+                &json!({"type":"turn_context","payload":{"turn_id":"turn-2"}}),
+                &mut context,
+            ),
+            ParseOutcome::Ignored
+        ));
+        assert!(matches!(
+            parse_record(&read, &mut context),
+            ParseOutcome::Record(_)
+        ));
     }
 
     #[test]

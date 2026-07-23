@@ -490,9 +490,12 @@ Rules:
 13. Panel Telemetry consumes the same backend read model at
     `/api/v1/telemetry/report` and preserves missing evidence as missing.
 14. `telemetry ingest` accepts only tracked structured Claude/Codex invocation
-    anchors. Free-text mentions are not invocations; unknown identity-less
-    shapes and invalid observed names are counted under stable rejected reasons
-    without echoing raw values.
+    anchors. Current Codex logs use a stable function-call identity plus a read
+    of `SKILL.md` under a known local Skill root; repeated reads of the same
+    Skill in one turn count once. Free-text mentions, non-read commands, and
+    untrusted paths are not invocations. Unknown identity-less shapes and
+    invalid observed names are counted under stable rejected reasons without
+    echoing raw values.
 15. Durable ingest requires enabled telemetry. It scans source logs outside the
     workspace lock, then compare-and-commits deterministic event IDs and
     `state/telemetry/ingest_cursor.json` under the lock. Events are flushed

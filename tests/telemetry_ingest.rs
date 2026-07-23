@@ -57,7 +57,7 @@ fn parser_fixtures_and_repeated_ingest_are_deterministic() {
     );
     assert!(output.status.success(), "ingest failed: {envelope}");
     assert_eq!(envelope["cmd"], json!("telemetry.ingest"));
-    assert_eq!(envelope["data"]["ingested"], json!(6), "{envelope}");
+    assert_eq!(envelope["data"]["ingested"], json!(7), "{envelope}");
     assert_eq!(envelope["data"]["malformed"], json!(1));
     assert_eq!(envelope["data"]["rejected"]["count"], json!(3));
     assert_eq!(envelope["data"]["unmatched"].as_array().unwrap().len(), 2);
@@ -66,7 +66,7 @@ fn parser_fixtures_and_repeated_ingest_are_deterministic() {
     let events_path = root.path().join("state/telemetry/events.jsonl");
     let first = fs::read_to_string(&events_path).expect("read imported events");
     let events = first.lines().collect::<Vec<_>>();
-    assert_eq!(events.len(), 6);
+    assert_eq!(events.len(), 7);
     let ids = events
         .iter()
         .map(|line| {
@@ -76,7 +76,7 @@ fn parser_fixtures_and_repeated_ingest_are_deterministic() {
                 .to_string()
         })
         .collect::<std::collections::BTreeSet<_>>();
-    assert_eq!(ids.len(), 6, "same-time invocations need distinct ids");
+    assert_eq!(ids.len(), 7, "same-time invocations need distinct ids");
     assert!(!first.contains(&claude));
     assert!(!first.contains(&codex));
     assert!(!first.contains("/workspace/"));

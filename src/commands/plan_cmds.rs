@@ -1,30 +1,26 @@
 use std::collections::BTreeSet;
-use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use serde_json::{Value, json};
-use uuid::Uuid;
 
-use crate::cli::{ApplyArgs, PlanCommand, PlanUseArgs, UseArgs};
+use crate::cli::{ApplyArgs, PlanCommand, UseArgs};
 use crate::core::convergence::stored_plan_digest;
 use crate::envelope::Meta;
 use crate::gitops;
-use crate::next_action_trace::observe_next_actions;
 use crate::types::ErrorCode;
 
 use super::event_store::{CommandEventRow, read_command_events};
-use super::helpers::{
-    agent_kind_as_str, map_arg, map_git, map_io, projection_method_as_str, shell_arg,
-    validate_skill_name,
-};
+use super::helpers::{map_git, map_io, shell_arg};
 use super::provenance::skill_tree_digest;
-use super::skill_policy::evaluate_skill_policy;
 use super::{App, CommandFailure};
 
 mod apply_identity;
 mod converge;
 mod convergence_transaction;
 pub(super) mod request_scope;
+mod use_plan;
+
+use use_plan::{canonical_root, policy_risks, required_approvals};
 
 use apply_identity::{
     ConvergenceApplyIdentity, convergence_id, convergence_idempotency_binding_digest,
@@ -51,6 +47,23 @@ impl App {
         args: &ApplyArgs,
         request_id: &str,
     ) -> std::result::Result<(Value, Meta), CommandFailure> {
+        self.cmd_apply_for_kind(args, request_id, None)
+    }
+
+    pub(crate) fn cmd_apply_convergence(
+        &self,
+        args: &ApplyArgs,
+        request_id: &str,
+    ) -> std::result::Result<(Value, Meta), CommandFailure> {
+        self.cmd_apply_for_kind(args, request_id, Some(StoredPlanKind::Converge))
+    }
+
+    fn cmd_apply_for_kind(
+        &self,
+        args: &ApplyArgs,
+        request_id: &str,
+        expected_kind: Option<StoredPlanKind>,
+    ) -> std::result::Result<(Value, Meta), CommandFailure> {
         validate_plan_id(&args.plan_id)?;
         validate_idempotency_key(&args.idempotency_key)?;
         let events = read_command_events(&self.ctx).map_err(map_io)?;
@@ -65,6 +78,16 @@ impl App {
             )
         })?;
         validate_stored_plan_metadata(&stored)?;
+        if expected_kind.is_some_and(|kind| kind != stored.kind) {
+            return Err(plan_failure(
+                ErrorCode::ArgInvalid,
+                format!("plan '{}' is not a convergence plan", args.plan_id),
+                "PLAN_KIND_MISMATCH",
+                false,
+                vec!["create and review a fresh convergence plan".to_string()],
+                Some(stored.cursor),
+            ));
+        }
         let confirmed_plan_digest = if stored.kind == StoredPlanKind::Converge {
             let digest = validate_confirmed_plan_digest(
                 stored.plan,
@@ -172,63 +195,6 @@ impl App {
             },
         ))
     }
-
-    fn cmd_plan_use(
-        &self,
-        args: &PlanUseArgs,
-    ) -> std::result::Result<(Value, Meta), CommandFailure> {
-        validate_skill_name(&args.skill).map_err(map_arg)?;
-        if !self.ctx.skill_path(&args.skill).is_dir() {
-            return Err(CommandFailure::new(
-                ErrorCode::SkillNotFound,
-                format!("skill '{}' not found", args.skill),
-            ));
-        }
-        let registry_head = gitops::head(&self.ctx).map_err(map_git)?;
-        let source_digest = skill_tree_digest(&self.ctx.skill_path(&args.skill)).map_err(map_io)?;
-        let root = canonical_root(&self.ctx.root)?;
-        let use_args = use_args_from_plan(args, false)?;
-        let (use_plan, _) = self.cmd_use(&use_args, "")?;
-        let policy = evaluate_skill_policy(&self.ctx, &args.skill, "safe-capture")?;
-        let required_approvals = required_approvals(&policy);
-        let risks = policy_risks(&policy);
-        let plan_id = format!("plan_{}", Uuid::new_v4().simple());
-        let safe_to_apply = required_approvals.is_empty()
-            && !risks.iter().any(|risk| risk["blocks_apply"] == json!(true));
-        let apply_command = apply_command(&self.ctx.root, &plan_id, &required_approvals);
-
-        Ok((
-            json!({
-                "protocol_version": PLAN_PROTOCOL_VERSION,
-                "schema_version": PLAN_SCHEMA_VERSION,
-                "plan_id": plan_id,
-                "operation": "use",
-                "safe_to_apply": safe_to_apply,
-                "effects": use_plan["steps"].clone(),
-                "conflicts": [],
-                "risks": risks,
-                "required_approvals": required_approvals,
-                "recovery": { "rollback_supported": true },
-                "guards": {
-                    "root": root,
-                    "registry_head": registry_head,
-                    "skill": args.skill,
-                    "source_digest": source_digest,
-                    "agents": args.agents.iter().map(|agent| agent_kind_as_str(*agent)).collect::<Vec<_>>(),
-                    "workspace": use_args.workspace.as_ref().map(|path| path.display().to_string()),
-                    "scope": "project",
-                    "method": projection_method_as_str(args.method),
-                    "target_root": use_args.target_root.as_ref().map(|path| path.display().to_string()),
-                },
-                "use_args": serde_json::to_value(&use_args).map_err(map_io)?,
-                "next_actions": observe_next_actions(
-                    "plan.use.response",
-                    [format!("review this durable plan, then run `{}`", apply_command)],
-                ),
-            }),
-            Meta::default(),
-        ))
-    }
 }
 
 struct StoredPlan<'a> {
@@ -242,39 +208,6 @@ struct StoredPlan<'a> {
 enum StoredPlanKind {
     Use,
     Converge,
-}
-
-fn use_args_from_plan(
-    args: &PlanUseArgs,
-    apply: bool,
-) -> std::result::Result<UseArgs, CommandFailure> {
-    let workspace = match args.scope {
-        crate::cli::UseScope::User => args
-            .workspace
-            .as_ref()
-            .map(|path| absolute_path(path))
-            .transpose()?,
-        crate::cli::UseScope::Project => Some(match args.workspace.as_ref() {
-            Some(path) => absolute_path(path)?,
-            None => current_dir()?,
-        }),
-    };
-    let target_root = args
-        .target_root
-        .as_ref()
-        .map(|path| absolute_path(path))
-        .transpose()?;
-    Ok(UseArgs {
-        skill: args.skill.clone(),
-        agents: args.agents.clone(),
-        scope: args.scope,
-        workspace,
-        profile: args.profile.clone(),
-        method: args.method,
-        target_root,
-        adopt: false,
-        apply,
-    })
 }
 
 fn plan_use_args(plan: &Value) -> std::result::Result<UseArgs, CommandFailure> {
@@ -637,53 +570,6 @@ fn validate_plan_guards(
     Ok(())
 }
 
-fn required_approvals(policy: &super::skill_policy::SkillPolicyReport) -> Vec<String> {
-    let mut approvals = BTreeSet::new();
-    if policy.capabilities.filesystem.contains_key("write") {
-        approvals.insert("filesystem-write".to_string());
-    }
-    if !policy.capabilities.shell.is_empty() {
-        approvals.insert("shell".to_string());
-    }
-    if !policy.capabilities.network.is_empty() {
-        approvals.insert("network".to_string());
-    }
-    if !policy.capabilities.secrets.is_empty() {
-        approvals.insert("secrets".to_string());
-    }
-    if policy.summary.high_risk_count > 0 {
-        approvals.insert("policy-high-risk".to_string());
-    }
-    approvals.into_iter().collect()
-}
-
-fn policy_risks(policy: &super::skill_policy::SkillPolicyReport) -> Vec<Value> {
-    policy
-        .findings
-        .iter()
-        .map(|finding| {
-            json!({
-                "code": finding.id,
-                "risk_level": finding.risk_level,
-                "blocks_apply": finding.blocks_projection,
-                "details": finding.details,
-            })
-        })
-        .collect()
-}
-
-fn apply_command(root: &Path, plan_id: &str, approvals: &[String]) -> String {
-    let mut command = format!(
-        "loom --json --root {} apply {} --idempotency-key <key>",
-        shell_arg(root),
-        shell_arg(plan_id)
-    );
-    for approval in approvals {
-        command.push_str(&format!(" --approve {}", shell_arg(approval)));
-    }
-    command
-}
-
 fn collect_rollback_commands(use_data: &Value) -> Vec<String> {
     use_data["applied"]
         .as_array()
@@ -693,30 +579,6 @@ fn collect_rollback_commands(use_data: &Value) -> Vec<String> {
         .filter_map(Value::as_str)
         .map(str::to_string)
         .collect()
-}
-
-fn canonical_root(root: &Path) -> std::result::Result<String, CommandFailure> {
-    Ok(fs::canonicalize(root)
-        .map_err(map_io)?
-        .display()
-        .to_string())
-}
-
-fn absolute_path(path: &Path) -> std::result::Result<PathBuf, CommandFailure> {
-    if path.is_absolute() {
-        Ok(path.to_path_buf())
-    } else {
-        Ok(current_dir()?.join(path))
-    }
-}
-
-fn current_dir() -> std::result::Result<PathBuf, CommandFailure> {
-    std::env::current_dir().map_err(|err| {
-        CommandFailure::new(
-            ErrorCode::IoError,
-            format!("failed to resolve current workspace: {}", err),
-        )
-    })
 }
 
 fn validate_plan_id(plan_id: &str) -> std::result::Result<(), CommandFailure> {

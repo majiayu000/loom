@@ -5,10 +5,13 @@ use axum::{
     extract::{ConnectInfo, Path as AxumPath, State},
     http::{HeaderMap, StatusCode},
 };
+use serde_json::json;
 
 use crate::cli::{ApplyArgs, Command, PlanCommand, PlanConvergeArgs};
 
-use super::super::auth::{ensure_mutation_authorized, error_envelope, run_panel_command};
+use super::super::auth::{
+    ensure_mutation_authorized, error_envelope, run_panel_command, run_panel_service,
+};
 use super::super::{ConvergenceApplyRequest, ConvergencePlanRequest, PanelState};
 
 pub(in crate::panel) async fn registry_convergence_plan(
@@ -63,15 +66,20 @@ pub(in crate::panel) async fn registry_convergence_apply(
     if let Some(response) = ensure_mutation_authorized(&state, peer, &headers, "apply") {
         return response;
     }
-    run_panel_command(
-        &state,
-        "apply",
-        StatusCode::OK,
-        Command::Apply(ApplyArgs {
-            plan_id: req.plan_id,
-            plan_digest: Some(req.plan_digest),
-            idempotency_key: req.idempotency_key,
-            approvals: req.approvals,
-        }),
-    )
+    let args = ApplyArgs {
+        plan_id: req.plan_id,
+        plan_digest: Some(req.plan_digest),
+        idempotency_key: req.idempotency_key,
+        approvals: req.approvals,
+    };
+    let audit_input = json!({
+        "source": "panel",
+        "service": "convergence.apply",
+        "input": &args,
+    });
+    let app = crate::commands::App {
+        ctx: (*state.ctx).clone(),
+    };
+    let mut service = move |request_id: String| app.cmd_apply_convergence(&args, &request_id);
+    run_panel_service(&state, "apply", StatusCode::OK, audit_input, &mut service)
 }

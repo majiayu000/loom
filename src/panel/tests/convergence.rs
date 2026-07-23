@@ -1,6 +1,10 @@
 use super::*;
-use crate::panel::ConvergencePlanRequest;
-use crate::panel::handlers::{registry_convergence_plan, v1_health};
+use crate::cli::{
+    AgentKind, Command as LoomCommand, PlanCommand, PlanUseArgs, ProjectionMethod, UseScope,
+};
+use crate::panel::auth::run_panel_command;
+use crate::panel::handlers::{registry_convergence_apply, registry_convergence_plan, v1_health};
+use crate::panel::{ConvergenceApplyRequest, ConvergencePlanRequest};
 use crate::state_model::REGISTRY_SCHEMA_VERSION;
 use axum::{
     Json,
@@ -48,7 +52,7 @@ async fn convergence_plan_rejects_restart_acceptance_without_runtime_requirement
         AxumPath("demo".to_string()),
         ConnectInfo(panel_peer()),
         panel_headers(),
-        State(state),
+        State(state.clone()),
         Json(plan_request(true, false)),
     )
     .await;
@@ -85,7 +89,7 @@ async fn convergence_plan_route_returns_reviewable_digest_without_applying() {
         AxumPath("demo".to_string()),
         ConnectInfo(panel_peer()),
         panel_headers(),
-        State(state),
+        State(state.clone()),
         Json(plan_request(false, false)),
     )
     .await;
@@ -104,5 +108,96 @@ async fn convergence_plan_route_returns_reviewable_digest_without_applying() {
         "planning must not mutate the skill source"
     );
 
+    let plan_id = payload["data"]["plan_id"]
+        .as_str()
+        .expect("plan id")
+        .to_string();
+    let plan_digest = payload["data"]["plan_digest"]
+        .as_str()
+        .expect("plan digest")
+        .to_string();
+    let (apply_status, Json(applied)) = registry_convergence_apply(
+        ConnectInfo(panel_peer()),
+        panel_headers(),
+        State(state),
+        Json(ConvergenceApplyRequest {
+            plan_id: plan_id.clone(),
+            plan_digest,
+            idempotency_key: "panel-convergence-plan".to_string(),
+            approvals: Vec::new(),
+        }),
+    )
+    .await;
+    assert_eq!(apply_status, StatusCode::OK, "{applied}");
+    assert_eq!(applied["data"]["plan_id"], json!(plan_id));
+
+    cleanup_root(root);
+}
+
+#[tokio::test]
+async fn convergence_apply_rejects_non_convergence_durable_plan() {
+    let (root, state) = make_test_state();
+    write_registry_snapshot(&root, REGISTRY_SCHEMA_VERSION);
+    let skill_dir = root.join("skills/demo");
+    fs::create_dir_all(&skill_dir).expect("create skill dir");
+    fs::write(
+        skill_dir.join("SKILL.md"),
+        "---\nname: demo\ndescription: Demo use plan.\n---\n# Demo\n",
+    )
+    .expect("write skill");
+    git_ok(&root, &["init"]);
+    git_ok(&root, &["config", "user.email", "panel@example.com"]);
+    git_ok(&root, &["config", "user.name", "Panel Test"]);
+    git_ok(&root, &["add", "."]);
+    git_ok(&root, &["commit", "-m", "fixture"]);
+
+    let (plan_status, Json(plan)) = run_panel_command(
+        &state,
+        "plan.use",
+        StatusCode::CREATED,
+        LoomCommand::Plan {
+            command: PlanCommand::Use(PlanUseArgs {
+                skill: "demo".to_string(),
+                agents: vec![AgentKind::Claude],
+                scope: UseScope::Project,
+                workspace: Some(root.join("workspace")),
+                profile: "default".to_string(),
+                method: ProjectionMethod::Copy,
+                target_root: None,
+            }),
+        },
+    );
+    assert_eq!(plan_status, StatusCode::CREATED, "{plan}");
+    let plan_id = plan["data"]["plan_id"]
+        .as_str()
+        .expect("plan id")
+        .to_string();
+
+    let (status, Json(payload)) = registry_convergence_apply(
+        ConnectInfo(panel_peer()),
+        panel_headers(),
+        State(state),
+        Json(ConvergenceApplyRequest {
+            plan_id,
+            plan_digest: "sha256:not-a-convergence-digest".to_string(),
+            idempotency_key: "panel-use-plan".to_string(),
+            approvals: Vec::new(),
+        }),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{payload}");
+    assert_eq!(payload["error"]["code"], json!("ARG_INVALID"));
+    assert_eq!(
+        payload["error"]["details"]["conflict"]["code"],
+        json!("PLAN_KIND_MISMATCH")
+    );
+    assert!(!root.join("workspace/.claude/skills/demo").exists());
+    let events =
+        fs::read_to_string(root.join("state/events/commands.jsonl")).expect("read command events");
+    assert!(!events.lines().any(|line| {
+        let event: Value = serde_json::from_str(line).expect("parse command event");
+        event["cmd"] == json!("apply") && event["status"] == json!("succeeded")
+    }));
     cleanup_root(root);
 }

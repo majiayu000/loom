@@ -18,7 +18,7 @@ use crate::state::AppContext;
 use crate::state_model::{RegistryProjectionInstance, RegistrySnapshot, RegistryStatePaths};
 use crate::types::ErrorCode;
 
-use super::super::agent_cmds::planning_helpers::{normalize_path, workspace_matches};
+use super::super::agent_cmds::planning_helpers::normalize_path;
 use super::super::codex_visibility::projection_path_is_safe_symlink;
 use super::super::convergence_input::{
     projection_input_evidence, source_changed_since_revision, source_replacement_risk_paths,
@@ -509,13 +509,7 @@ fn resolve_projection_effects(
                 .profile
                 .as_ref()
                 .is_some_and(|profile| binding.profile_id != *profile)
-            || workspace.is_some_and(|path| {
-                !workspace_matches(
-                    binding.workspace_matcher.kind.as_str(),
-                    &binding.workspace_matcher.value,
-                    path,
-                )
-            })
+            || workspace.is_some_and(|path| !binding.workspace_matcher.matches_workspace(path))
         {
             continue;
         }

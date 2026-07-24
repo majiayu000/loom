@@ -519,28 +519,11 @@ fn projection_matches(
         return false;
     }
     if let Some(workspace) = request.workspace
-        && binding.is_none_or(|binding| !binding_matches_workspace(binding, workspace))
+        && binding.is_none_or(|binding| !binding.workspace_matcher.matches_workspace(workspace))
     {
         return false;
     }
     true
-}
-
-fn binding_matches_workspace(
-    binding: &crate::state_model::RegistryWorkspaceBinding,
-    workspace: &Path,
-) -> bool {
-    let matcher = &binding.workspace_matcher;
-    let workspace = std::fs::canonicalize(workspace).unwrap_or_else(|_| workspace.to_path_buf());
-    let matcher_path = Path::new(&matcher.value);
-    let matcher_path =
-        std::fs::canonicalize(matcher_path).unwrap_or_else(|_| matcher_path.to_path_buf());
-    match matcher.kind.as_str() {
-        "path_prefix" => workspace.starts_with(&matcher_path),
-        "exact_path" => workspace == matcher_path,
-        "name" => workspace.file_name().and_then(|name| name.to_str()) == Some(&matcher.value),
-        _ => false,
-    }
 }
 
 #[cfg(test)]

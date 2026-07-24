@@ -7,7 +7,7 @@ use serde_json::{Value, json};
 use crate::cli::{ActiveRecommendArgs, SkillSearchArgs};
 use crate::envelope::Meta;
 use crate::state::AppContext;
-use crate::state_model::{REGISTRY_SCHEMA_VERSION, RegistryStatePaths, RegistryWorkspaceBinding};
+use crate::state_model::{REGISTRY_SCHEMA_VERSION, RegistryStatePaths};
 use crate::types::ErrorCode;
 
 use super::helpers::{
@@ -370,7 +370,7 @@ fn recommendation_policy_context(
     }
     if let Some(workspace) = args.workspace.as_deref() {
         validate_recommend_workspace_path(workspace)?;
-        if !recommend_binding_matches_workspace(binding, workspace) {
+        if !binding.workspace_matcher.matches_workspace(workspace) {
             return Err(CommandFailure::new(
                 ErrorCode::ArgInvalid,
                 format!(
@@ -405,22 +405,6 @@ fn validate_recommend_workspace_path(workspace: &Path) -> std::result::Result<()
         ));
     }
     Ok(())
-}
-
-fn recommend_binding_matches_workspace(
-    binding: &RegistryWorkspaceBinding,
-    workspace: &Path,
-) -> bool {
-    let matcher = &binding.workspace_matcher;
-    match matcher.kind.as_str() {
-        "path_prefix" => workspace.starts_with(Path::new(&matcher.value)),
-        "exact_path" => workspace == Path::new(&matcher.value),
-        "name" => workspace
-            .file_name()
-            .and_then(|name| name.to_str())
-            .is_some_and(|name| name == matcher.value),
-        _ => false,
-    }
 }
 
 #[derive(Clone, Copy)]

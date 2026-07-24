@@ -24,7 +24,7 @@ use super::model::{
 use super::utils::{
     container_workspace_path, digest_file, digest_json, digest_str, normalize_clone_url,
     normalize_existing_or_raw, path_to_slash, shell_safe_segment, target_skill_path,
-    target_skill_path_relative, workspace_matches,
+    target_skill_path_relative,
 };
 
 pub(super) fn build_provision_plan(
@@ -170,13 +170,7 @@ fn collect_active_views(
         .bindings
         .iter()
         .filter(|binding| binding.active && binding.agent == agent)
-        .filter(|binding| {
-            workspace_matches(
-                binding.workspace_matcher.kind.as_str(),
-                &binding.workspace_matcher.value,
-                workspace,
-            )
-        })
+        .filter(|binding| binding.workspace_matcher.matches_workspace(workspace))
         .collect::<Vec<_>>();
     let mut grouped = BTreeMap::<(String, String, String, Option<String>), BTreeSet<String>>::new();
     for binding in matching_bindings {
@@ -385,13 +379,7 @@ fn collect_safety_policy_findings(
         .bindings
         .iter()
         .filter(|binding| binding.active && binding.agent == agent)
-        .filter(|binding| {
-            workspace_matches(
-                binding.workspace_matcher.kind.as_str(),
-                &binding.workspace_matcher.value,
-                workspace,
-            )
-        })
+        .filter(|binding| binding.workspace_matcher.matches_workspace(workspace))
     {
         for rule in snapshot
             .rules

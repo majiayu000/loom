@@ -463,19 +463,7 @@ fn binding_matches(binding: Option<&RegistryWorkspaceBinding>, selector: &Select
     let Some(workspace) = selector.workspace else {
         return true;
     };
-    let workspace = workspace.to_string_lossy();
-    let matcher = &binding.workspace_matcher;
-    match matcher.kind.as_str() {
-        "path_prefix" => Path::new(workspace.as_ref()).starts_with(Path::new(&matcher.value)),
-        "exact_path" => workspace == matcher.value,
-        "name" => {
-            Path::new(workspace.as_ref())
-                .file_name()
-                .and_then(|name| name.to_str())
-                == Some(matcher.value.as_str())
-        }
-        _ => false,
-    }
+    binding.workspace_matcher.matches_workspace(workspace)
 }
 
 fn runtime_findings(

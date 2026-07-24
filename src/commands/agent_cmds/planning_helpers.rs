@@ -147,15 +147,6 @@ pub(crate) fn normalize_path(path: &Path) -> PathBuf {
     absolute.canonicalize().unwrap_or(absolute)
 }
 
-pub(crate) fn workspace_matches(kind: &str, value: &str, workspace: &Path) -> bool {
-    match kind {
-        "path_prefix" => workspace.starts_with(normalize_path(Path::new(value))),
-        "exact_path" => workspace == normalize_path(Path::new(value)),
-        "name" => workspace.file_name().and_then(|name| name.to_str()) == Some(value),
-        _ => false,
-    }
-}
-
 pub(super) fn is_orphan_projection(projection: &RegistryProjectionInstance) -> bool {
     projection.binding_id.is_none() && projection.health == crate::core::vocab::Health::Orphaned
 }

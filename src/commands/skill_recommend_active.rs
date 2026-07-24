@@ -168,17 +168,9 @@ fn recommend_binding_matches_workspace(
     binding: &RegistryWorkspaceBinding,
     workspace: Option<&Path>,
 ) -> bool {
-    let Some(workspace) = workspace else {
-        return true;
-    };
-    match binding.workspace_matcher.kind.as_str() {
-        "path_prefix" => workspace.starts_with(Path::new(&binding.workspace_matcher.value)),
-        "exact_path" => workspace == Path::new(&binding.workspace_matcher.value),
-        "name" => {
-            workspace.file_name().and_then(|name| name.to_str())
-                == Some(binding.workspace_matcher.value.as_str())
-        }
-        _ => false,
+    match workspace {
+        None => true,
+        Some(workspace) => binding.workspace_matcher.matches_workspace(workspace),
     }
 }
 

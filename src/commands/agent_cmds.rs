@@ -21,7 +21,6 @@ use crate::gitops;
 use planning_helpers::{
     build_preflight_next_commands, is_orphan_projection, is_safe, normalize_path,
     push_target_risks, risk, rollback_impacted_projections, status_for, target_paths,
-    workspace_matches,
 };
 
 const ROLLBACK_PREVIEW_PATH_LIMIT: usize = 50;
@@ -43,11 +42,7 @@ impl App {
         for binding in snapshot.bindings.bindings.iter().filter(|binding| {
             binding.active
                 && binding.agent == agent
-                && workspace_matches(
-                    binding.workspace_matcher.kind.as_str(),
-                    &binding.workspace_matcher.value,
-                    &workspace,
-                )
+                && binding.workspace_matcher.matches_workspace(&workspace)
         }) {
             let matching_rules = args
                 .skill

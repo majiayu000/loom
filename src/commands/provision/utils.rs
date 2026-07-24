@@ -267,16 +267,6 @@ fn is_remote_clone_url(raw: &str) -> bool {
             .is_some()
 }
 
-pub(super) fn workspace_matches(kind: &str, value: &str, workspace: &Path) -> bool {
-    let workspace = normalize_existing_or_raw(workspace);
-    match kind {
-        "path_prefix" => workspace.starts_with(normalize_existing_or_raw(Path::new(value))),
-        "exact_path" => workspace == normalize_existing_or_raw(Path::new(value)),
-        "name" => workspace.file_name().and_then(|name| name.to_str()) == Some(value),
-        _ => false,
-    }
-}
-
 pub(super) fn digest_json<T: Serialize>(value: &T) -> std::result::Result<String, CommandFailure> {
     let raw = serde_json::to_vec(value).map_err(map_io)?;
     Ok(digest_bytes(&raw))

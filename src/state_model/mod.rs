@@ -154,6 +154,69 @@ pub struct RegistryWorkspaceMatcher {
     pub value: String,
 }
 
+impl RegistryWorkspaceMatcher {
+    /// Authoritative workspace-matching semantics, shared by every command so
+    /// that projection, convergence, recommendation, and inspection all agree
+    /// on which binding owns a given workspace.
+    ///
+    /// For the two path-based matcher kinds, both the workspace and the matcher
+    /// value are canonicalized (resolving symlinks and relative components)
+    /// before comparison; a path that cannot be canonicalized (e.g. it does not
+    /// exist yet) falls back to its own value. This matches the projection-side
+    /// semantics in `convergence_status`, which is the source of truth for what
+    /// actually gets projected.
+    pub fn matches_workspace(&self, workspace: &std::path::Path) -> bool {
+        use std::path::Path;
+
+        match self.kind {
+            MatcherKind::PathPrefix => canonicalize_workspace_path(workspace)
+                .starts_with(canonicalize_workspace_path(Path::new(&self.value))),
+            MatcherKind::ExactPath => {
+                canonicalize_workspace_path(workspace)
+                    == canonicalize_workspace_path(Path::new(&self.value))
+            }
+            MatcherKind::Name => {
+                workspace.file_name().and_then(|name| name.to_str()) == Some(self.value.as_str())
+            }
+        }
+    }
+}
+
+/// Normalize a workspace or matcher path so both sides of a comparison resolve
+/// symlinks and relative components consistently.
+///
+/// Plain `fs::canonicalize` only works on paths that exist, so a not-yet-created
+/// workspace would fall back to its raw string and (e.g. on macOS, where `/tmp`
+/// is a symlink to `/private/tmp`) fail to compare equal to an already-resolved
+/// matcher value. To avoid that, canonicalize the deepest existing ancestor and
+/// re-append the remaining, not-yet-existing suffix.
+fn canonicalize_workspace_path(path: &std::path::Path) -> std::path::PathBuf {
+    if let Ok(canonical) = std::fs::canonicalize(path) {
+        return canonical;
+    }
+
+    let mut probe = path.to_path_buf();
+    let mut suffix = Vec::new();
+    while !probe.exists() {
+        match probe.file_name() {
+            Some(name) => suffix.push(name.to_os_string()),
+            None => break,
+        }
+        if !probe.pop() {
+            break;
+        }
+    }
+
+    if let Ok(mut canonical) = std::fs::canonicalize(&probe) {
+        for component in suffix.iter().rev() {
+            canonical.push(component);
+        }
+        return canonical;
+    }
+
+    path.to_path_buf()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "../panel/src/generated/", rename = "RegistryRule")]
 pub struct RegistryBindingRule {
@@ -542,5 +605,72 @@ mod vocab_tests {
         let parsed = serde_json::from_str::<RegistryProjectionTarget>(target)
             .expect("unknown agent remains reader-compatible");
         assert_eq!(parsed.agent, "future-agent");
+    }
+}
+
+#[cfg(all(test, unix))]
+mod matches_workspace_tests {
+    use super::{MatcherKind, RegistryWorkspaceMatcher};
+    use std::os::unix::fs::symlink;
+    use std::path::PathBuf;
+
+    fn matcher(kind: MatcherKind, value: &str) -> RegistryWorkspaceMatcher {
+        RegistryWorkspaceMatcher {
+            kind,
+            value: value.to_string(),
+        }
+    }
+
+    fn scratch(tag: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "loom_match_{tag}_{}",
+            uuid::Uuid::new_v4().simple()
+        ))
+    }
+
+    // Regression: a workspace reached through a symlink must match a matcher that
+    // points at the real path. Before unification, the recommend/inspect copies
+    // used a raw `starts_with` and would NOT match here, while the projection
+    // side (canonicalize) would — so the two disagreed on binding ownership.
+    #[test]
+    fn path_prefix_matches_through_symlinked_workspace() {
+        let base = scratch("prefix");
+        let real = base.join("real");
+        std::fs::create_dir_all(real.join("proj")).expect("create real tree");
+        let link = base.join("link");
+        symlink(&real, &link).expect("create symlink");
+
+        let workspace_via_link = link.join("proj");
+        let m = matcher(MatcherKind::PathPrefix, real.to_str().unwrap());
+
+        // Documents the drift this fix removes: the raw form does not match.
+        assert!(
+            !workspace_via_link.starts_with(&real),
+            "raw path comparison would not match through the symlink"
+        );
+        // The unified, canonicalizing implementation resolves the symlink and matches.
+        assert!(
+            m.matches_workspace(&workspace_via_link),
+            "canonicalized matcher must match the symlinked workspace"
+        );
+
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn name_matches_final_component() {
+        let m = matcher(MatcherKind::Name, "my-workspace");
+        assert!(m.matches_workspace(std::path::Path::new("/home/x/my-workspace")));
+        assert!(!m.matches_workspace(std::path::Path::new("/home/x/other")));
+    }
+
+    #[test]
+    fn non_matching_prefix_is_rejected() {
+        let base = scratch("reject");
+        std::fs::create_dir_all(base.join("a")).expect("create tree");
+        std::fs::create_dir_all(base.join("b")).expect("create tree");
+        let m = matcher(MatcherKind::PathPrefix, base.join("a").to_str().unwrap());
+        assert!(!m.matches_workspace(&base.join("b")));
+        std::fs::remove_dir_all(&base).ok();
     }
 }

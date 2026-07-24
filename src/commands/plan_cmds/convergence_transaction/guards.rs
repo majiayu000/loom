@@ -1,6 +1,5 @@
 use super::super::converge::digest_value;
 use super::*;
-use crate::commands::agent_cmds::planning_helpers::workspace_matches;
 use crate::commands::skill_improve::prepare_convergence_skill_input;
 use crate::core::convergence::{ConvergenceAxis, RemotePolicy};
 
@@ -305,11 +304,7 @@ fn validate_sealed_scope(
                     .as_deref()
                     .is_some_and(|profile| binding.profile_id != profile)
                 || workspace.is_some_and(|workspace| {
-                    !workspace_matches(
-                        binding.workspace_matcher.kind.as_str(),
-                        &binding.workspace_matcher.value,
-                        workspace,
-                    )
+                    !binding.workspace_matcher.matches_workspace(workspace)
                 })
             {
                 return None;

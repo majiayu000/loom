@@ -11,4 +11,25 @@
 {"timestamp":"2026-07-01T10:07:40Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Please use $demo."}]}}
 {"timestamp":"2026-07-01T10:08:00Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"<skill>\n<name>demo</name>\n<path>/redacted/demo/SKILL.md</path>\nFixture body.\n</skill>"}]}}
 {"timestamp":"2026-07-01T10:09:00Z","type":"turn_context","payload":{"turn_id":"turn-3","cwd":"/workspace/codex-turn"}}
-{"timestamp":"2026-07-01T10:09:10Z","type":"response_item","payload":{"type":"function_call","name":"exec_command","call_id":"call-current-skill-read","arguments":"{\"cmd\":\"sed -n '1,240p' /home/user/.codex/skills/demo/SKILL.md\"}"}}
+{"timestamp":"2026-07-01T10:09:10Z","type":"response_item","payload":{"type":"function_call","name":"exec_command","call_id":"call-current-skill-read","arguments":"{\"cmd\":\"sed -n '1,240p' $HOME/.codex/skills/demo/SKILL.md\"}"}}
+{"timestamp":"2026-07-01T10:10:00Z","type":"turn_context","payload":{"turn_id":"turn-4","cwd":"/workspace/codex-turn"}}
+{"timestamp":"2026-07-01T10:10:10Z","type":"response_item","payload":{"type":"function_call","name":"exec_command","call_id":"call-segmented-read","arguments":"{\"cmd\":\"echo RAW_COMMAND_SENTINEL && cat \\\"$HOME/.agents/skills/demo/SKILL.md\\\" && rm \\\"$HOME/.codex/skills/rm-decoy/SKILL.md\\\"\"}"}}
+{"timestamp":"2026-07-01T10:11:00Z","type":"turn_context","payload":{"turn_id":"turn-5","cwd":"/workspace/codex-turn"}}
+{"timestamp":"2026-07-01T10:11:10Z","type":"response_item","payload":{"type":"function_call","name":"exec","call_id":"call-exec-read","arguments":"const result = await tools.exec_command({cmd:\"cat '$HOME/.claude/skills/demo/SKILL.md'\"});text(result.output);"}}
+{"timestamp":"2026-07-01T10:12:00Z","type":"turn_context","payload":{"turn_id":"turn-6","cwd":"/workspace/codex-turn"}}
+{"timestamp":"2026-07-01T10:12:10Z","type":"response_item","payload":{"type":"function_call","name":"exec_command","call_id":"call-free-text","arguments":"{\"cmd\":\"echo 'cat $HOME/.codex/skills/free-text/SKILL.md'; rm '$HOME/.agents/skills/rm-only/SKILL.md'\"}"}}
+{"timestamp":"2026-07-01T10:12:20Z","type":"response_item","payload":{"type":"function_call","name":"exec_command","call_id":"call-prefix-spoof","arguments":"{\"cmd\":\"cat '$HOME/.codex-not/.codex/skills/prefix-spoof/SKILL.md'\"}"}}
+{"timestamp":"2026-07-01T10:12:30Z","type":"response_item","payload":{"type":"function_call","name":"exec_command","call_id":"call-parent-dir","arguments":"{\"cmd\":\"cat '$HOME/.codex/skills/../escape/SKILL.md'\"}"}}
+{"timestamp":"2026-07-01T10:12:40Z","type":"response_item","payload":{"type":"function_call","name":"exec_command","call_id":"call-nested-root","arguments":"{\"cmd\":\"cat '$HOME/project/.codex/skills/nested-root/SKILL.md'\"}"}}
+{"timestamp":"2026-07-01T10:13:00Z","type":"turn_context","payload":{"turn_id":"turn-7","cwd":"/workspace/codex-turn"}}
+{"timestamp":"2026-07-01T10:13:10Z","type":"response_item","payload":{"type":"function_call","name":"exec_command","call_id":"call-malformed-json","arguments":"{"}}
+{"timestamp":"2026-07-01T10:13:20Z","type":"response_item","payload":{"type":"function_call","name":"exec_command","call_id":"call-missing-cmd","arguments":"{}"}}
+{"timestamp":"2026-07-01T10:13:30Z","type":"response_item","payload":{"type":"function_call","name":"exec_command","call_id":"call-invalid-cmd","arguments":"{\"cmd\":42}"}}
+{"timestamp":"2026-07-01T10:13:40Z","type":"response_item","payload":{"type":"function_call","name":"exec_command","call_id":"call-missing-arguments"}}
+{"timestamp":"2026-07-01T10:13:50Z","type":"response_item","payload":{"type":"function_call","name":"exec","call_id":"call-missing-nested-cmd","arguments":"await tools.exec_command({justification:\"missing cmd\"})"}}
+{"timestamp":"2026-07-01T10:14:00Z","type":"response_item","payload":{"type":"function_call","name":"exec","call_id":"call-exec-missing-arguments"}}
+{"timestamp":"2026-07-01T10:14:10Z","type":"response_item","payload":{"type":"function_call","name":"exec","call_id":"call-exec-invalid-arguments","arguments":{"cmd":"not source"}}}
+{"timestamp":"2026-07-01T10:14:20Z","type":"response_item","payload":{"type":"function_call","name":"exec","call_id":"call-exec-malformed-source","arguments":"const value = \""}}
+{"timestamp":"2026-07-01T10:14:30Z","type":"response_item","payload":{"type":"function_call","name":"exec","call_id":"call-exec-invalid-nested-cmd","arguments":"await tools.exec_command({cmd:42})"}}
+{"timestamp":"2026-07-01T10:14:40Z","type":"response_item","payload":{"type":"function_call","name":"exec","call_id":"call-exec-malformed-nested","arguments":"await tools.exec_command({cmd:\"cat $HOME/.codex/skills/demo/SKILL.md\"}"}}
+{"timestamp":"2026-07-01T10:14:50Z","type":"response_item","payload":{"type":"function_call","name":"exec","call_id":"call-exec-invalid-nested-arguments","arguments":"await tools.exec_command(command)"}}

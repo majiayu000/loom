@@ -1,0 +1,99 @@
+# GH600 Tech Spec - 安全解析 Codex tool-read telemetry
+
+Issue: https://github.com/majiayu000/loom/issues/600
+Product spec: `specs/GH600/product.md`
+Route: `write_spec`
+Status: implx auto implementation and local verification complete; independent review and exact-head CI pending
+
+## 1. 当前行为与锚点
+
+- `src/commands/telemetry/ingest/codex.rs:71` 仅把
+  `response_item.payload.type=function_call` 路由到 tool-read helper，并在有
+  names 后校验稳定 identity/session/timestamp；因此 helper 静默返回空集合会
+  把 recognized schema drift 伪装为 `Ignored`。
+- `src/commands/telemetry/ingest/codex/tool_read.rs:3` 返回裸 `Vec<String>`；
+  `exec_command` JSON 使用 `.ok()`，全文 read-token 搜索与全文 path 搜索互不
+  关联，trusted-root 判断是 substring。
+- `tests/fixtures/telemetry_ingest/codex/sessions/2026/07/session-codex.jsonl`
+  只有一个 `exec_command` 正例；`tests/telemetry_ingest.rs:36` 的 fixture
+  E2E 已断言 raw agent home/workspace 不持久化，但尚未覆盖 raw tool
+  command/path、`exec` 与 schema rejection。
+- `docs/LOOM_CLI_CONTRACT_OPERATIONS.md:492` 只声明 known root/read/non-read
+  的高层行为，尚未声明 segment association、actual-home component 校验和
+  recognized malformed schema 的 stable rejection。
+
+## 2. 设计
+
+1. 将 tool-read helper 改为 `Result<Vec<String>, &'static str>`。未知 function
+   name 返回空集合；recognized `exec_command`/`exec` 的 schema 错误返回稳定
+   reason，由 `codex.rs` 原样映射为 `ParseOutcome::Rejected`。
+2. `exec_command` 严格解析 `arguments` JSON object 与 string `cmd`。
+   `exec` 仅用保守 scanner 定位 `tools.exec_command(...)` 调用并提取 object
+   中的 quoted `cmd` string；字符串/注释中仅出现 `exec_command`、缺失
+   `cmd`、非 string `cmd` 或无法闭合的结构均 fail closed。
+3. 使用 std-only shell tokenizer：
+   - 在 single/double quotes 与 escape 状态外识别 `;`、换行、`&&`、`||`、
+     `|` 为 segment boundary；
+   - 每个 segment 去引号并生成 word tokens；
+   - 仅当首个 command token 是 B-002 read verb 时检查该 segment 的 operands；
+   - command substitution、backtick、未闭合 quote/escape 等无法保守解释的
+     segment 不授权 invocation。
+4. trusted path validator 从 `HOME`（Windows fallback `USERPROFILE`）构造
+   roots，支持语义等价的 `~`、`$HOME`、`${HOME}` 前缀；先拒绝任何
+   `ParentDir`，再做 lexical normalization 和 `Path::strip_prefix`。普通 roots
+   接受 root 下以 `<skill>/SKILL.md` 结尾的 normalized descendant（兼容
+   `.system/<skill>` 等既有布局）；plugin cache 接受 component-aware
+   `<home>/.codex/plugins/cache/**/skills/<skill>/SKILL.md`，且 `skills`
+   之前至少有 plugin cache 子组件。
+5. 保留 `codex::Context.read_skills` 的 per-turn 去重与现有
+   `skill-entrypoint-read-<ordinal>` identity。拒绝发生时不更新去重集合或
+   ordinal，合法 retry 仍可解析。
+6. 扩展 unit tests 与 tracked session fixture，覆盖：
+   `exec_command`/`exec` 正例、quoted paths、chain/pipeline operand 隔离、
+   free text、非 read、伪前缀、`..`、nested `.codex`、plugin cache 和全部
+   recognized schema drift。E2E 断言 stable rejected counts、合法 invocation
+   counts、重复 ingest 幂等及 raw command/path/prompt 不持久化。
+7. 同步 CLI contract；若文档行号变化，更新
+   `docs/agent-command-surfaces.toml` 的既有 line-range 元数据，不新增命令面。
+
+## 3. 风险与回滚
+
+- 保守 tokenizer 允许 false negative，不允许 false positive；未知复杂 shell
+  语法保持不计数，不作为“尽力猜测”的理由。
+- home env 缺失时 trusted roots 为空，合法 read 不计数；不会扩大信任范围。
+- 这是 parser/fixture/docs additive correction，无持久化 schema migration。
+  回滚该 commit 即恢复旧 parser；已写 events 仍符合既有 telemetry schema。
+
+## 4. Product-to-Test Mapping
+
+| Behavior invariant | Implementation area | Verification |
+| --- | --- | --- |
+| B-001 | `tool_read.rs` segment/token scanner | `cargo test --locked commands::telemetry::ingest::codex::tool_read::tests::read_paths_are_bound_to_their_command_segment` |
+| B-002 | `tool_read.rs` recognized verbs + exec extractors | `cargo test --locked commands::telemetry::ingest::codex::tool_read::tests::exec_and_exec_command_extract_supported_reads` |
+| B-003 | `tool_read.rs` normalized actual-home path validator | `cargo test --locked commands::telemetry::ingest::codex::tool_read::tests::trusted_paths_are_component_aware` |
+| B-004 | `tool_read.rs` typed parse result + `codex.rs` rejection routing | `cargo test --locked commands::telemetry::ingest::codex::tests::recognized_tool_schema_drift_is_rejected` |
+| B-005 | `codex.rs` Context dedupe and stable record construction | `cargo test --locked commands::telemetry::ingest::codex::tests::current_exec_command_skill_read_is_parsed_once_per_turn` |
+| B-006 | existing redaction/event/cursor path + expanded E2E assertions | `cargo test --locked --test telemetry_ingest codex_tool_reads_are_precise_rejected_and_private` |
+| B-007 | existing structured injection parser/tests | `cargo test --locked commands::telemetry::ingest::codex::tests::rollout_context_and_structured_skill_are_parsed` |
+| B-008 | unit negative matrix + E2E fixture | `cargo test --locked commands::telemetry::ingest::codex && cargo test --locked --test telemetry_ingest` |
+
+## 5. 验证计划
+
+1. focused red：先加入 B-001/B-003/B-004/B-006 负例并确认现实现失败。
+2. focused green：
+   `cargo test --locked commands::telemetry::ingest::codex` 与
+   `cargo test --locked --test telemetry_ingest codex_tool_reads_are_precise_rejected_and_private`。
+3. 交付验证：
+   `cargo fmt --all -- --check`、
+   `cargo check --locked`、
+   `cargo test --locked commands::telemetry::ingest::codex`、
+   `cargo test --locked --test telemetry_ingest`、`git diff --check`。
+4. 审计 durable `events.jsonl`、cursor 与 envelope，确认 fixture raw
+   command/path/prompt 字符串均无命中。
+
+## 6. Planned Changes Manifest
+
+<!-- specrail-requires-planned-changes-v1 -->
+<!-- specrail-planned-changes
+{"version":1,"issue":600,"complete":true,"paths":["src/commands/telemetry/ingest/codex.rs","src/commands/telemetry/ingest/codex/tool_read.rs","tests/telemetry_ingest.rs","tests/fixtures/telemetry_ingest/codex/sessions/2026/07/session-codex.jsonl","docs/LOOM_CLI_CONTRACT_OPERATIONS.md","docs/agent-command-surfaces.toml","specs/GH600/product.md","specs/GH600/tech.md","specs/GH600/tasks.md"],"spec_refs":["specs/GH600/product.md#4-行为不变量","specs/GH600/tech.md#5-验证计划"]}
+-->

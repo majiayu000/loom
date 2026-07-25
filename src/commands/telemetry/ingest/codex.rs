@@ -152,10 +152,13 @@ fn parse_skill_entrypoint_read(
     payload: &Value,
     context: &mut Context,
 ) -> ParseOutcome {
-    let names = tool_read::skill_entrypoint_names(payload)
-        .into_iter()
-        .filter(|name| !context.read_skills.contains(name))
-        .collect::<Vec<_>>();
+    let names = match tool_read::skill_entrypoint_names(payload) {
+        Ok(names) => names,
+        Err(reason) => return ParseOutcome::Rejected(reason),
+    }
+    .into_iter()
+    .filter(|name| !context.read_skills.contains(name))
+    .collect::<Vec<_>>();
     if names.is_empty() {
         return ParseOutcome::Ignored;
     }
@@ -339,7 +342,7 @@ mod tests {
                 "name":"exec_command",
                 "call_id":"call-1",
                 "arguments":serde_json::to_string(&json!({
-                    "cmd":"sed -n '1,240p' /home/user/.loom-registry/skills/demo/SKILL.md"
+                    "cmd":"sed -n '1,240p' $HOME/.loom-registry/skills/demo/SKILL.md"
                 })).unwrap()
             }
         });
@@ -363,6 +366,71 @@ mod tests {
         assert!(matches!(
             parse_record(&read, &mut context),
             ParseOutcome::Record(_)
+        ));
+    }
+
+    #[test]
+    fn recognized_tool_schema_drift_is_rejected() {
+        let mut context = Context::default();
+        for value in [
+            json!({"type":"session_meta","payload":{"id":"session","cwd":"/workspace"}}),
+            json!({"type":"turn_context","payload":{"turn_id":"turn-1"}}),
+        ] {
+            assert!(matches!(
+                parse_record(&value, &mut context),
+                ParseOutcome::Ignored
+            ));
+        }
+
+        let cases = [
+            (
+                json!({"type":"response_item","payload":{
+                    "type":"function_call","name":"exec_command","arguments":"{"
+                }}),
+                "malformed_exec_command_arguments",
+            ),
+            (
+                json!({"type":"response_item","payload":{
+                    "type":"function_call","name":"exec_command","arguments":"{}"
+                }}),
+                "missing_exec_command_cmd",
+            ),
+            (
+                json!({"type":"response_item","payload":{
+                    "type":"function_call","name":"exec_command",
+                    "arguments":serde_json::to_string(&json!({"cmd":42})).unwrap()
+                }}),
+                "invalid_exec_command_cmd",
+            ),
+            (
+                json!({"type":"response_item","payload":{
+                    "type":"function_call","name":"exec_command"
+                }}),
+                "missing_exec_command_arguments",
+            ),
+            (
+                json!({"type":"response_item","payload":{
+                    "type":"function_call","name":"exec",
+                    "arguments":"await tools.exec_command({justification:\"missing cmd\"})"
+                }}),
+                "missing_nested_exec_command_cmd",
+            ),
+        ];
+        for (value, expected) in cases {
+            assert!(
+                matches!(parse_record(&value, &mut context), ParseOutcome::Rejected(reason) if reason == expected),
+                "expected stable rejection {expected}"
+            );
+        }
+
+        assert!(matches!(
+            parse_record(
+                &json!({"type":"response_item","payload":{
+                    "type":"function_call","name":"unknown_tool","arguments":42
+                }}),
+                &mut context,
+            ),
+            ParseOutcome::Ignored
         ));
     }
 

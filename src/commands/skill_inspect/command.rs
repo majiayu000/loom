@@ -84,7 +84,7 @@ impl App {
             source_exists,
             snapshot.as_ref(),
             selector,
-        );
+        )?;
         let mut next_actions = build_next_actions(&args.skill, &spec, &runtime, source_exists);
         if spec.findings.iter().any(|finding| {
             finding["severity"].as_str() == Some("error")
@@ -115,7 +115,7 @@ impl App {
             source_exists,
             snapshot.as_ref(),
             selector,
-        );
+        )?;
         let convergence = collect_convergence_status(
             &self.ctx,
             ConvergenceRequest {

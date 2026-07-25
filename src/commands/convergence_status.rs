@@ -284,12 +284,23 @@ fn collect_projections(
             errors: Vec::new(),
         };
     };
-    let selected = snapshot
-        .projections
-        .projections
-        .iter()
-        .filter(|projection| projection_matches(&snapshot, projection, request))
-        .collect::<Vec<_>>();
+    let mut selected = Vec::new();
+    for projection in &snapshot.projections.projections {
+        match projection_matches(&snapshot, projection, request) {
+            Ok(true) => selected.push(projection),
+            Ok(false) => {}
+            Err(err) => {
+                return ProjectionConvergenceStatus {
+                    state: ProjectionConvergenceState::Error,
+                    items: Vec::new(),
+                    evidence: projection_evidence(freshness, 0),
+                    observed_at,
+                    stale: false,
+                    errors: vec![AxisError::new("IO_ERROR", err.to_string())],
+                };
+            }
+        }
+    }
     if selected.is_empty() {
         return ProjectionConvergenceStatus {
             state: ProjectionConvergenceState::NotApplicable,
@@ -487,12 +498,12 @@ fn projection_matches(
     snapshot: &RegistrySnapshot,
     projection: &RegistryProjectionInstance,
     request: ConvergenceRequest<'_>,
-) -> bool {
+) -> std::io::Result<bool> {
     if request
         .skill
         .is_some_and(|skill| projection.skill_id != skill)
     {
-        return false;
+        return Ok(false);
     }
     if let Some(agent) = request.agent {
         let projection_agent = snapshot
@@ -506,7 +517,7 @@ fn projection_matches(
                     .map(|binding| binding.agent.as_str())
             });
         if projection_agent != Some(agent) {
-            return false;
+            return Ok(false);
         }
     }
     let binding = projection
@@ -516,14 +527,17 @@ fn projection_matches(
     if let Some(profile) = request.profile
         && binding.is_none_or(|binding| binding.profile_id != profile)
     {
-        return false;
+        return Ok(false);
     }
-    if let Some(workspace) = request.workspace
-        && binding.is_none_or(|binding| !binding.workspace_matcher.matches_workspace(workspace))
-    {
-        return false;
+    if let Some(workspace) = request.workspace {
+        let Some(binding) = binding else {
+            return Ok(false);
+        };
+        if !binding.workspace_matcher.matches_workspace(workspace)? {
+            return Ok(false);
+        }
     }
-    true
+    Ok(true)
 }
 
 #[cfg(test)]

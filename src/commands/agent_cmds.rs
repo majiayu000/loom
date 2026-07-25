@@ -39,11 +39,16 @@ impl App {
         let mut risks = Vec::new();
         let mut matches = Vec::new();
 
-        for binding in snapshot.bindings.bindings.iter().filter(|binding| {
-            binding.active
-                && binding.agent == agent
-                && binding.workspace_matcher.matches_workspace(&workspace)
-        }) {
+        for binding in &snapshot.bindings.bindings {
+            if !binding.active
+                || binding.agent != agent
+                || !binding
+                    .workspace_matcher
+                    .matches_workspace(&workspace)
+                    .map_err(map_io)?
+            {
+                continue;
+            }
             let matching_rules = args
                 .skill
                 .as_deref()

@@ -165,13 +165,18 @@ fn collect_active_views(
         .iter()
         .map(|target| (target.target_id.as_str(), target))
         .collect::<BTreeMap<_, _>>();
-    let matching_bindings = snapshot
-        .bindings
-        .bindings
-        .iter()
-        .filter(|binding| binding.active && binding.agent == agent)
-        .filter(|binding| binding.workspace_matcher.matches_workspace(workspace))
-        .collect::<Vec<_>>();
+    let mut matching_bindings = Vec::new();
+    for binding in &snapshot.bindings.bindings {
+        if binding.active
+            && binding.agent == agent
+            && binding
+                .workspace_matcher
+                .matches_workspace(workspace)
+                .map_err(super::super::helpers::map_io)?
+        {
+            matching_bindings.push(binding);
+        }
+    }
     let mut grouped = BTreeMap::<(String, String, String, Option<String>), BTreeSet<String>>::new();
     for binding in matching_bindings {
         let mut saw_rule = false;
@@ -374,13 +379,16 @@ fn collect_safety_policy_findings(
         return Ok(());
     };
     let mut checked = BTreeSet::new();
-    for binding in snapshot
-        .bindings
-        .bindings
-        .iter()
-        .filter(|binding| binding.active && binding.agent == agent)
-        .filter(|binding| binding.workspace_matcher.matches_workspace(workspace))
-    {
+    for binding in &snapshot.bindings.bindings {
+        if !binding.active
+            || binding.agent != agent
+            || !binding
+                .workspace_matcher
+                .matches_workspace(workspace)
+                .map_err(super::super::helpers::map_io)?
+        {
+            continue;
+        }
         for rule in snapshot
             .rules
             .rules

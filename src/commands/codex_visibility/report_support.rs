@@ -4,7 +4,9 @@ use serde_json::Value;
 
 use crate::state_model::{RegistryBindingRule, RegistrySnapshot, RegistryWorkspaceBinding};
 
-use super::{CODEX_AGENT, CodexVisibilityCheck, normalize_existing_or_raw};
+use super::super::CommandFailure;
+use super::super::helpers::map_io;
+use super::{CODEX_AGENT, CodexVisibilityCheck};
 
 pub(super) fn active_rules_for_skill(
     snapshot: &RegistrySnapshot,
@@ -12,27 +14,33 @@ pub(super) fn active_rules_for_skill(
     agent: &str,
     workspace: Option<&Path>,
     profile: Option<&str>,
-) -> Vec<RegistryBindingRule> {
-    snapshot
+) -> std::result::Result<Vec<RegistryBindingRule>, CommandFailure> {
+    let mut rules = Vec::new();
+    for rule in snapshot
         .rules
         .rules
         .iter()
         .filter(|rule| rule.skill_id == skill)
-        .filter_map(|rule| {
-            let binding = snapshot.binding(&rule.binding_id)?;
-            let target = snapshot.target(&rule.target_id)?;
-            if binding.agent == agent
-                && binding.active
-                && target.agent == agent
-                && profile.is_none_or(|profile| binding.profile_id == profile)
-                && workspace.is_none_or(|workspace| binding_matches_workspace(binding, workspace))
-            {
-                Some(rule.clone())
-            } else {
-                None
+    {
+        let Some(binding) = snapshot.binding(&rule.binding_id) else {
+            continue;
+        };
+        let Some(target) = snapshot.target(&rule.target_id) else {
+            continue;
+        };
+        if binding.agent == agent
+            && binding.active
+            && target.agent == agent
+            && profile.is_none_or(|profile| binding.profile_id == profile)
+            && match workspace {
+                None => true,
+                Some(workspace) => binding_matches_workspace(binding, workspace)?,
             }
-        })
-        .collect()
+        {
+            rules.push(rule.clone());
+        }
+    }
+    Ok(rules)
 }
 
 pub(super) fn reconcile_next_action(agent: &str) -> String {
@@ -54,14 +62,15 @@ pub(super) fn reload_check_id(agent: &str) -> String {
 pub(super) fn binding_matches_workspace(
     binding: &RegistryWorkspaceBinding,
     workspace: &Path,
-) -> bool {
-    let expected = normalize_existing_or_raw(workspace);
+) -> std::result::Result<bool, CommandFailure> {
     let matcher = &binding.workspace_matcher;
     match matcher.kind.as_str() {
-        "path_prefix" => expected.starts_with(normalize_existing_or_raw(Path::new(&matcher.value))),
-        "exact_path" => expected == normalize_existing_or_raw(Path::new(&matcher.value)),
-        "name" => true,
-        _ => false,
+        "path_prefix" | "exact_path" => matcher.matches_workspace(workspace).map_err(map_io),
+        // Visibility treats every name matcher as user-scoped. Legacy registry
+        // snapshots store the profile name (for example `default`) here rather
+        // than the activation command's newer `user` marker.
+        "name" => Ok(true),
+        _ => Ok(false),
     }
 }
 

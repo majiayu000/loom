@@ -14,6 +14,7 @@ use crate::cli::{
     WorkflowCommand, WorkflowCreateArgs, WorkflowPlanArgs, WorkflowPreflightArgs, WorkflowRunArgs,
     WorkflowShowArgs,
 };
+use crate::core::vocab::MatcherKind;
 use crate::envelope::Meta;
 use crate::gitops;
 use crate::next_action_trace::observe_next_actions;
@@ -212,7 +213,7 @@ impl App {
 
             let digest = skill_tree_digest(&skill_path).map_err(map_io)?;
             skill_digests.insert(node.skill_id.clone(), digest.clone());
-            let active = skill_active_for_workspace(&snapshot, &node.skill_id, &agent, &workspace);
+            let active = skill_active_for_workspace(&snapshot, &node.skill_id, &agent, &workspace)?;
             if !active {
                 activation_steps.push(json!({
                     "node_id": node.id,
@@ -562,15 +563,21 @@ fn skill_active_for_workspace(
     skill: &str,
     agent: &str,
     workspace: &Path,
-) -> bool {
-    snapshot.bindings.bindings.iter().any(|binding| {
-        binding.agent == agent
-            && binding.active
-            && binding_matches_workspace(
-                binding.workspace_matcher.kind.as_str(),
-                &binding.workspace_matcher.value,
-                workspace,
-            )
+) -> std::result::Result<bool, CommandFailure> {
+    for binding in &snapshot.bindings.bindings {
+        if binding.agent != agent || !binding.active {
+            continue;
+        }
+        // `name=user` is a user-scope marker, not a project basename matcher.
+        let workspace_matches = if binding.workspace_matcher.kind == MatcherKind::Name {
+            binding.workspace_matcher.value == "user"
+        } else {
+            binding
+                .workspace_matcher
+                .matches_workspace(workspace)
+                .map_err(map_io)?
+        };
+        if workspace_matches
             && snapshot.rules.rules.iter().any(|rule| {
                 rule.binding_id == binding.binding_id
                     && rule.skill_id == skill
@@ -580,16 +587,11 @@ fn skill_active_for_workspace(
                             && projection.health == crate::core::vocab::Health::Healthy
                     })
             })
-    })
-}
-
-fn binding_matches_workspace(kind: &str, value: &str, workspace: &Path) -> bool {
-    match kind {
-        "path_prefix" => workspace.starts_with(Path::new(value)),
-        "exact_path" => workspace == Path::new(value),
-        "name" => value == "user",
-        _ => false,
+        {
+            return Ok(true);
+        }
     }
+    Ok(false)
 }
 
 fn add_policy_approvals(policy: &SkillPolicyReport, approvals: &mut BTreeSet<String>) {

@@ -9,6 +9,7 @@ use serde_json::{Value, json};
 use crate::state::AppContext;
 use crate::state_model::RegistrySnapshot;
 
+use super::super::CommandFailure;
 use super::super::skill_eval::{SkillEvalVersion, skill_eval_version};
 use super::super::skill_safety::{SkillTrustMetadata, evaluate_skill_safety_with_policy};
 use super::Selector;
@@ -43,12 +44,15 @@ pub(super) fn build_safety_evidence(
     source_exists: bool,
     snapshot: Option<&RegistrySnapshot>,
     selector: Selector<'_>,
-) -> Value {
+) -> std::result::Result<Value, CommandFailure> {
     if !source_exists {
-        return safety_unavailable(trust, "skill source directory is missing");
+        return Ok(safety_unavailable(
+            trust,
+            "skill source directory is missing",
+        ));
     }
-    let profile = policy_profile_for_inspect(skill, snapshot, selector);
-    match evaluate_skill_safety_with_policy(ctx, skill, "inspect", false, &profile) {
+    let profile = policy_profile_for_inspect(skill, snapshot, selector)?;
+    let evidence = match evaluate_skill_safety_with_policy(ctx, skill, "inspect", false, &profile) {
         Ok(evaluation) => {
             let report = evaluation.report;
             let trust = &report.trust;
@@ -82,7 +86,8 @@ pub(super) fn build_safety_evidence(
             })
         }
         Err(err) => safety_unavailable(trust, err.message),
-    }
+    };
+    Ok(evidence)
 }
 
 fn quality_from_report(
@@ -287,9 +292,9 @@ fn policy_profile_for_inspect(
     skill: &str,
     snapshot: Option<&RegistrySnapshot>,
     selector: Selector<'_>,
-) -> String {
+) -> std::result::Result<String, CommandFailure> {
     let Some(snapshot) = snapshot else {
-        return DEFAULT_POLICY_PROFILE.to_string();
+        return Ok(DEFAULT_POLICY_PROFILE.to_string());
     };
     let mut profiles = BTreeSet::new();
     for projection in &snapshot.projections.projections {
@@ -301,7 +306,7 @@ fn policy_profile_for_inspect(
             .binding_id
             .as_deref()
             .and_then(|binding_id| snapshot.binding(binding_id))
-            && super::binding_matches(Some(binding), &selector)
+            && super::binding_matches(Some(binding), &selector)?
         {
             profiles.insert(binding.policy_profile.clone());
         }
@@ -316,7 +321,7 @@ fn policy_profile_for_inspect(
             continue;
         }
         let binding = snapshot.binding(&rule.binding_id);
-        if super::binding_matches(binding, &selector)
+        if super::binding_matches(binding, &selector)?
             && let Some(binding) = binding
         {
             profiles.insert(binding.policy_profile.clone());
@@ -327,13 +332,13 @@ fn policy_profile_for_inspect(
             if selector
                 .agent
                 .is_none_or(|agent| binding.agent.as_str() == agent)
-                && super::binding_matches(Some(binding), &selector)
+                && super::binding_matches(Some(binding), &selector)?
             {
                 profiles.insert(binding.policy_profile.clone());
             }
         }
     }
-    profile_by_priority(&profiles)
+    Ok(profile_by_priority(&profiles))
 }
 
 fn projection_agent_matches(

@@ -509,7 +509,14 @@ fn resolve_projection_effects(
                 .profile
                 .as_ref()
                 .is_some_and(|profile| binding.profile_id != *profile)
-            || workspace.is_some_and(|path| !binding.workspace_matcher.matches_workspace(path))
+        {
+            continue;
+        }
+        if let Some(workspace) = workspace
+            && !binding
+                .workspace_matcher
+                .matches_workspace(workspace)
+                .map_err(super::super::helpers::map_io)?
         {
             continue;
         }

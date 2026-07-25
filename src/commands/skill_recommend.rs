@@ -56,7 +56,7 @@ impl App {
                 workspace: args.workspace.as_deref(),
             },
             args.for_task || args.workspace.is_some(),
-        );
+        )?;
         if args.active {
             results.retain(|result| {
                 result["skill"]["projection_summary"]["count"]
@@ -148,7 +148,7 @@ impl App {
                     workspace: args.workspace.as_deref(),
                 },
                 true,
-            );
+            )?;
             let recommendations = recommendation_results(
                 &self.ctx,
                 &args.query,
@@ -226,7 +226,7 @@ impl App {
                 workspace: args.workspace.as_deref(),
             },
             true,
-        );
+        )?;
         let skillsets = load_skillsets_value(&self.ctx)?;
         let recommendation_context = RecommendationContext {
             agent: Some(args.agent.trim()),
@@ -370,7 +370,11 @@ fn recommendation_policy_context(
     }
     if let Some(workspace) = args.workspace.as_deref() {
         validate_recommend_workspace_path(workspace)?;
-        if !binding.workspace_matcher.matches_workspace(workspace) {
+        if !binding
+            .workspace_matcher
+            .matches_workspace(workspace)
+            .map_err(super::helpers::map_io)?
+        {
             return Err(CommandFailure::new(
                 ErrorCode::ArgInvalid,
                 format!(

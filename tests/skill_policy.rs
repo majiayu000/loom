@@ -119,6 +119,18 @@ fn skill_policy_reports_declared_capabilities_and_heuristic_risks() {
 }
 
 #[test]
+fn skill_policy_missing_skill_returns_typed_error() {
+    let root = TestDir::new("skill-policy-missing");
+
+    let (output, env) = run_loom(root.path(), &["skill", "policy", "missing"]);
+
+    assert!(!output.status.success(), "policy should fail: {env}");
+    assert_eq!(env["ok"], json!(false));
+    assert_eq!(env["error"]["code"], json!("SKILL_NOT_FOUND"));
+    assert!(!root.path().join("state/registry").exists());
+}
+
+#[test]
 fn skill_project_blocks_deny_risky_policy_before_projection_write() {
     let root = TestDir::new("skill-policy-block");
     let source = TestDir::new("skill-policy-block-source");

@@ -22,16 +22,16 @@ pub(super) fn skill_names_with_home(commands: &[String], home: Option<&Path>) ->
     };
     let mut names = Vec::new();
     for command in commands {
-        let mut variable_home_is_trusted = true;
+        let mut home_expansion_is_trusted = true;
         for segment in shell_segments(command) {
             if mutates_home(&segment.words) {
-                variable_home_is_trusted = false;
+                home_expansion_is_trusted = false;
             }
             if segment.conditional {
                 continue;
             }
             for operand in path_operands(&segment.words) {
-                if let Some(name) = trusted_skill_name(operand, home, variable_home_is_trusted)
+                if let Some(name) = trusted_skill_name(operand, home, home_expansion_is_trusted)
                     && !names.iter().any(|existing| existing == &name)
                 {
                     names.push(name);
@@ -430,9 +430,9 @@ fn actual_home() -> Option<PathBuf> {
 fn trusted_skill_name(
     raw: &ShellWord,
     home: &Path,
-    variable_home_is_trusted: bool,
+    home_expansion_is_trusted: bool,
 ) -> Option<String> {
-    let normalized = normalize_path(&expand_home(raw, home, variable_home_is_trusted)?)?;
+    let normalized = normalize_path(&expand_home(raw, home, home_expansion_is_trusted)?)?;
     let ordinary_roots = [
         home.join(".codex/skills"),
         home.join(".agents/skills"),
@@ -459,7 +459,7 @@ fn trusted_skill_name(
         .then(|| suffix[0].to_string())
 }
 
-fn expand_home(raw: &ShellWord, home: &Path, variable_home_is_trusted: bool) -> Option<PathBuf> {
+fn expand_home(raw: &ShellWord, home: &Path, home_expansion_is_trusted: bool) -> Option<PathBuf> {
     for (prefix, tilde) in [
         ("~/", true),
         ("~\\", true),
@@ -468,7 +468,7 @@ fn expand_home(raw: &ShellWord, home: &Path, variable_home_is_trusted: bool) -> 
         ("${HOME}/", false),
         ("${HOME}\\", false),
     ] {
-        if (tilde || variable_home_is_trusted) && raw.expandable_prefix(prefix, tilde) {
+        if home_expansion_is_trusted && raw.expandable_prefix(prefix, tilde) {
             return Some(join_home(
                 home,
                 &raw.text[prefix.len()..],
@@ -649,11 +649,13 @@ mod tests {
     }
 
     #[test]
-    fn home_mutation_makes_later_variable_reads_untrusted() {
+    fn home_mutation_makes_all_later_home_expansions_untrusted() {
         for command in [
             "HOME=/tmp; cat $HOME/.codex/skills/assigned/SKILL.md",
+            "HOME=/tmp; cat ~/.codex/skills/tilde-assigned/SKILL.md",
             "unset HOME; cat $HOME/.codex/skills/unset/SKILL.md",
             "export USERPROFILE=/tmp; cat $HOME/.codex/skills/profile/SKILL.md",
+            r"set USERPROFILE=C:\tmp; Get-Content ~\.codex\skills\windows-tilde\SKILL.md",
         ] {
             assert!(names(command).is_empty(), "{command}");
         }

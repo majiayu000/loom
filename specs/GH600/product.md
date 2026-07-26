@@ -40,7 +40,8 @@ shell chain 中的删除 operand、伪造 trusted-root 前缀和损坏的 tool s
    必须保留 quote/escape provenance：single-quoted 或 escaped `$HOME` 是
    literal，不得展开；double-quoted `$HOME` 只按 shell variable 语义展开。
    heredoc body、无法证明执行的 `&&`/`||` segment 不得计数；反斜杠换行必须
-   按 shell continuation 移除，HOME/USERPROFILE 被修改后变量路径 fail closed。
+   按 shell continuation 移除；HOME/USERPROFILE 被修改后 `~` 与变量形式等
+   所有 home-derived prefix 必须共用 untrusted/fail-closed 状态。
 2. **B-002** 支持的 read verb 是闭集
    `{cat, sed, head, tail, less, more, bat, get-content}`，匹配忽略 ASCII
    大小写但要求完整 command token。`exec_command` 读取其 JSON `cmd`；

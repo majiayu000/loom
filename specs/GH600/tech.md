@@ -66,7 +66,8 @@ Status: implx auto implementation and local verification complete; independent r
 - 保守 tokenizer 允许 false negative，不允许 false positive；未知复杂 shell
   语法保持不计数，不作为“尽力猜测”的理由。
 - home env 缺失时 trusted roots 为空，候选 read 按 `Ignored` 不计数且不产生
-  rejection；HOME/USERPROFILE mutation 后变量路径也保持 untrusted。
+  rejection；HOME/USERPROFILE mutation 后 `~` 与变量 home prefix 均保持
+  untrusted。
 - 这是 parser/fixture/docs additive correction，无持久化 schema migration。
   回滚该 commit 即恢复旧 parser；已写 events 仍符合既有 telemetry schema。
 

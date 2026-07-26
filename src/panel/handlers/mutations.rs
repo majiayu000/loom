@@ -28,13 +28,6 @@ use super::super::{
     TargetAddRequest, TrashRestoreRequest, UseRequest,
 };
 
-fn policy_profile_looks_sane(value: &str) -> bool {
-    (1..=64).contains(&value.len())
-        && value
-            .chars()
-            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_')
-}
-
 fn panel_service_reused() -> CommandFailure {
     CommandFailure::new(
         ErrorCode::InternalError,
@@ -98,7 +91,7 @@ pub(in crate::panel) async fn registry_binding_add(
     let policy_profile = req
         .policy_profile
         .unwrap_or_else(|| "safe-capture".to_string());
-    if !policy_profile_looks_sane(&policy_profile) {
+    if !crate::validation::is_valid_policy_profile(&policy_profile) {
         let request_id = uuid::Uuid::new_v4().to_string();
         return (
             StatusCode::BAD_REQUEST,

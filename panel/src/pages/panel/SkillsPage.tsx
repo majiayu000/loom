@@ -773,11 +773,6 @@ const formInputStyle: React.CSSProperties = {
   minWidth: 0,
 };
 
-const fullWidthButtonStyle: React.CSSProperties = {
-  width: "100%",
-  justifyContent: "center",
-};
-
 const skillDescriptionStyle: React.CSSProperties = {
   maxWidth: 420,
   marginTop: 3,

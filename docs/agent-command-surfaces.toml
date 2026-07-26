@@ -318,18 +318,18 @@ examples = [
   { id = "cli_contract_operations.project_output", surface = "cli_contract_operations", line_range = [397, 397], classification = "executable" },
   { id = "cli_contract_operations.diff", surface = "cli_contract_operations", line_range = [423, 424], classification = "executable" },
   { id = "cli_contract_operations.telemetry", surface = "cli_contract_operations", line_range = [439, 448], classification = "executable" },
-  { id = "cli_contract_operations.use", surface = "cli_contract_operations", line_range = [522, 522], classification = "executable" },
-  { id = "cli_contract_operations.plan_apply", surface = "cli_contract_operations", line_range = [544, 547], classification = "executable" },
-  { id = "cli_contract_operations.sync_status", surface = "cli_contract_operations", line_range = [575, 575], classification = "executable" },
-  { id = "cli_contract_operations.sync_push", surface = "cli_contract_operations", line_range = [587, 587], classification = "executable" },
-  { id = "cli_contract_operations.sync_pull", surface = "cli_contract_operations", line_range = [597, 597], classification = "executable" },
-  { id = "cli_contract_operations.sync_replay", surface = "cli_contract_operations", line_range = [605, 605], classification = "executable" },
-  { id = "cli_contract_operations.ops_list", surface = "cli_contract_operations", line_range = [615, 615], classification = "executable" },
-  { id = "cli_contract_operations.ops_retry", surface = "cli_contract_operations", line_range = [644, 644], classification = "executable" },
-  { id = "cli_contract_operations.ops_purge", surface = "cli_contract_operations", line_range = [652, 652], classification = "executable" },
-  { id = "cli_contract_operations.ops_diagnose", surface = "cli_contract_operations", line_range = [660, 660], classification = "executable" },
-  { id = "cli_contract_operations.ops_repair", surface = "cli_contract_operations", line_range = [668, 668], classification = "executable" },
-  { id = "cli_contract_operations.acceptance_flow", surface = "cli_contract_operations", line_range = [726, 730], classification = "executable" },
+  { id = "cli_contract_operations.use", surface = "cli_contract_operations", line_range = [525, 525], classification = "executable" },
+  { id = "cli_contract_operations.plan_apply", surface = "cli_contract_operations", line_range = [547, 550], classification = "executable" },
+  { id = "cli_contract_operations.sync_status", surface = "cli_contract_operations", line_range = [578, 578], classification = "executable" },
+  { id = "cli_contract_operations.sync_push", surface = "cli_contract_operations", line_range = [590, 590], classification = "executable" },
+  { id = "cli_contract_operations.sync_pull", surface = "cli_contract_operations", line_range = [600, 600], classification = "executable" },
+  { id = "cli_contract_operations.sync_replay", surface = "cli_contract_operations", line_range = [608, 608], classification = "executable" },
+  { id = "cli_contract_operations.ops_list", surface = "cli_contract_operations", line_range = [618, 618], classification = "executable" },
+  { id = "cli_contract_operations.ops_retry", surface = "cli_contract_operations", line_range = [647, 647], classification = "executable" },
+  { id = "cli_contract_operations.ops_purge", surface = "cli_contract_operations", line_range = [655, 655], classification = "executable" },
+  { id = "cli_contract_operations.ops_diagnose", surface = "cli_contract_operations", line_range = [663, 663], classification = "executable" },
+  { id = "cli_contract_operations.ops_repair", surface = "cli_contract_operations", line_range = [671, 671], classification = "executable" },
+  { id = "cli_contract_operations.acceptance_flow", surface = "cli_contract_operations", line_range = [729, 733], classification = "executable" },
 ]
 [[surface]]
 id = "readme"
@@ -586,27 +586,27 @@ classification = "output_example"
 [[example]]
 id = "cli_contract_operations.use_apply_name"
 surface = "cli_contract_operations"
-line_range = [550, 550]
+line_range = [553, 553]
 classification = "output_example"
 [[example]]
 id = "cli_contract_operations.convergence_plan_name"
 surface = "cli_contract_operations"
-line_range = [552, 552]
+line_range = [555, 555]
 classification = "output_example"
 [[example]]
 id = "cli_contract_operations.convergence_apply_boundary"
 surface = "cli_contract_operations"
-line_range = [554, 554]
+line_range = [557, 557]
 classification = "output_example"
 [[example]]
 id = "cli_contract_operations.rejected_shapes"
 surface = "cli_contract_operations"
-line_range = [744, 745]
+line_range = [747, 748]
 classification = "legacy"
 [[example]]
 id = "cli_contract_operations.acceptance"
 surface = "cli_contract_operations"
-line_range = [746, 757]
+line_range = [749, 760]
 classification = "executable"
 [[example]]
 id = "complete_guide.current_commands"
@@ -968,3 +968,83 @@ id = "plan_codex_active_view.open_question"
 surface = "plan_codex_active_view"
 line_range = [832, 832]
 classification = "legacy"
+[[example]]
+id = "cli_contract_operations.backup_export"
+surface = "cli_contract_operations"
+line_range = [764, 764]
+classification = "executable"
+[[example]]
+id = "cli_contract_operations.backup_inspect"
+surface = "cli_contract_operations"
+line_range = [779, 779]
+classification = "executable"
+[[example]]
+id = "cli_contract_operations.backup_restore"
+surface = "cli_contract_operations"
+line_range = [789, 789]
+classification = "executable"
+[[example]]
+id = "cli_contract_operations.monitor_alias"
+surface = "cli_contract_operations"
+line_range = [805, 805]
+classification = "executable"
+[[example]]
+id = "cli_contract_operations.binding_show"
+surface = "cli_contract_operations"
+line_range = [817, 817]
+classification = "executable"
+[[example]]
+id = "cli_contract_operations.workspace_remote"
+surface = "cli_contract_operations"
+line_range = [827, 828]
+classification = "executable"
+[[example]]
+id = "cli_contract_operations.skill_history"
+surface = "cli_contract_operations"
+line_range = [838, 838]
+classification = "executable"
+[[example]]
+id = "cli_contract_operations.skill_trash"
+surface = "cli_contract_operations"
+line_range = [853, 856]
+classification = "executable"
+[[example]]
+id = "cli_contract_operations.skill_orphan"
+surface = "cli_contract_operations"
+line_range = [870, 871]
+classification = "executable"
+[[example]]
+id = "cli_contract_operations.skill_watch"
+surface = "cli_contract_operations"
+line_range = [883, 883]
+classification = "executable"
+[[example]]
+id = "cli_contract_operations.skill_discovery"
+surface = "cli_contract_operations"
+line_range = [901, 902]
+classification = "executable"
+[[example]]
+id = "cli_contract_operations.index"
+surface = "cli_contract_operations"
+line_range = [919, 919]
+classification = "executable"
+[[example]]
+id = "cli_contract_operations.active_recommend"
+surface = "cli_contract_operations"
+line_range = [927, 927]
+classification = "executable"
+[[example]]
+id = "cli_contract_operations.agent_preflight"
+surface = "cli_contract_operations"
+line_range = [939, 939]
+classification = "executable"
+[[example]]
+id = "cli_contract_operations.agent_reconcile"
+surface = "cli_contract_operations"
+line_range = [954, 954]
+classification = "executable"
+[[example]]
+id = "cli_contract_operations.panel"
+surface = "cli_contract_operations"
+line_range = [970, 970]
+classification = "executable"

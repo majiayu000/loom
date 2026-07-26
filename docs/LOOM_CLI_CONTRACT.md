@@ -1,6 +1,6 @@
 # Loom registry model CLI Contract
 
-Updated: 2026-07-21
+Updated: 2026-07-26
 Status: Implemented
 
 Every JSON envelope includes independent SemVer field `cli_contract_version`. The current contract is `1.9.0`; compatibility history and shipped-Skill ranges live in `docs/cli-contract-history.toml` and `skills/loom-registry/loom.skill.toml`.
@@ -809,7 +809,7 @@ Rules:
 
 ## Continued contract
 
-Sections 11.1.5 through 19 remain normative and continue in
+Sections 11.1.5 through 26 remain normative and continue in
 [LOOM_CLI_CONTRACT_OPERATIONS.md](LOOM_CLI_CONTRACT_OPERATIONS.md).
 
 ## GH542 skill lifecycle statistics

@@ -1,6 +1,6 @@
 # Loom CLI Contract: extended command and workflow surfaces
 
-This normative file continues sections 11.1.5 through 19 of
+This normative file continues sections 11.1.5 through 26 of
 [LOOM_CLI_CONTRACT.md](LOOM_CLI_CONTRACT.md).
 
 ### 11.1.5 `instruction scan`, `instruction show`, `instruction classify`, `instruction doctor`, `instruction migrate-plan`
@@ -490,9 +490,12 @@ Rules:
 13. Panel Telemetry consumes the same backend read model at
     `/api/v1/telemetry/report` and preserves missing evidence as missing.
 14. `telemetry ingest` accepts only tracked structured Claude/Codex invocation
-    anchors. Free-text mentions are not invocations; unknown identity-less
-    shapes and invalid observed names are counted under stable rejected reasons
-    without echoing raw values.
+    anchors. Codex reads require stable turn/call identity, conservative top-level
+    UTF-8 exec calls, provenance-aware shell state, and real per-verb operands.
+    Dormant JS, heredocs, skipped conditionals, mutated/missing home, escaped home,
+    option/program values, spoofed roots, traversal, free text, and non-read
+    operands are ignored. Windows home separators and valid continuations remain
+    supported; malformed schemas use stable reasons without echoing raw values.
 15. Durable ingest requires enabled telemetry. It scans source logs outside the
     workspace lock, then compare-and-commits deterministic event IDs and
     `state/telemetry/ingest_cursor.json` under the lock. Events are flushed
@@ -755,3 +758,219 @@ The CLI contract is acceptable only if:
 3. every response needed by agents is available in `--json`
 4. no core workflow depends on path guessing
 5. projection and commit errors are structured and typed
+
+## 20. Backup Commands
+
+### 20.1 `backup export`
+
+```bash
+loom --json --root <root> backup export [--output <path>] [--format tar] [--include-target-cache]
+```
+
+Creates a portable registry backup artifact.
+
+Rules:
+
+1. `--output` defaults to `<root>/backups/loom-backup-<timestamp>.tar`
+2. `--format` currently supports only `tar`
+3. `--include-target-cache` additionally includes registry-owned target cache data when present
+4. exporting does not mutate registry state and does not return an `op_id`
+
+### 20.2 `backup inspect`
+
+```bash
+loom --json --root <root> backup inspect <artifact>
+```
+
+Read-only.
+
+Validates a backup artifact and reports its contents without extracting into the registry root.
+
+### 20.3 `backup restore`
+
+```bash
+loom --json --root <root> backup restore <artifact> [--force-empty-root]
+```
+
+Write command.
+
+Rules:
+
+1. restores a backup artifact into a new empty registry root
+2. a destination root that already contains registry data is rejected
+3. `--force-empty-root` permits a destination root that contains only safe empty scaffolding
+
+## 21. Observation Alias
+
+### 21.1 `monitor`
+
+```bash
+loom --json --root <root> monitor [--target <target-id>] [--once] [--interval-seconds <seconds>]
+```
+
+Write command.
+
+`monitor` is the short top-level alias for `skill monitor-observed` and follows the same rules: it imports new observed skills, updates existing registry copies when materialized content differs, and never deletes registry skills when an observed directory disappears. `--once` runs one scan and exits; without it, the command polls every `--interval-seconds` (default 30). `--target` must reference an observed target when supplied.
+
+## 22. Workspace Binding and Remote Surfaces
+
+### 22.1 `workspace binding show`
+
+```bash
+loom --json --root <root> workspace binding show <binding-id>
+```
+
+Read-only.
+
+Returns one binding with its rules and projections. An unknown id fails with `BINDING_NOT_FOUND` and a `workspace binding list` next action.
+
+### 22.2 `workspace remote set` and `workspace remote status`
+
+```bash
+loom --json --root <root> workspace remote set <url>
+loom --json --root <root> workspace remote status
+```
+
+`workspace remote set` is a write command that configures the registry Git remote URL. `workspace remote status` is read-only and reports the remote URL, tracking state, and sync state.
+
+## 23. Skill Maintenance Commands
+
+### 23.1 `skill history`
+
+```bash
+loom --json --root <root> skill history <skill> [--limit <n>] [--from <rev>] [--to <rev>] [--include-diff-stat] [--include-ops]
+```
+
+Read-only.
+
+Rules:
+
+1. returns registry Git history for the skill source, bounded by `--limit` (default 30)
+2. `--from` narrows history to the `<from>..<to>` revision range; `--to` defaults to `HEAD`
+3. `--include-diff-stat` adds per-commit short diff statistics
+4. `--include-ops` adds the registry operations introduced by each history commit
+
+### 23.2 `skill trash`
+
+```bash
+loom --json --root <root> skill trash add <skill> [--dry-run]
+loom --json --root <root> skill trash list
+loom --json --root <root> skill trash restore <skill> [--trash-id <id>]
+loom --json --root <root> skill trash purge <trash-id> [--dry-run]
+```
+
+Rules:
+
+1. `skill trash add` moves the canonical skill source into Git-tracked trash instead of deleting it; `--dry-run` shows the plan without moving files, writing registry state, or committing
+2. `skill trash list` is read-only and returns trash entry ids
+3. `skill trash restore` restores the newest trash entry for the skill unless `--trash-id` selects a specific entry
+4. `skill trash purge` permanently removes one trash entry by id; `--dry-run` shows the plan without deleting files
+5. unknown trash entries fail with `TRASH_ENTRY_NOT_FOUND`
+
+### 23.3 `skill orphan`
+
+```bash
+loom --json --root <root> skill orphan list
+loom --json --root <root> skill orphan clean [--delete-live-paths] [--dry-run]
+```
+
+Rules:
+
+1. `skill orphan list` is read-only and returns orphaned projection records
+2. `skill orphan clean` removes orphaned projection records; `--dry-run` shows the cleanup plan without modifying registry state or live files
+3. `--delete-live-paths` additionally deletes validated live projection directories; without it, live paths stay in place
+
+### 23.4 `skill watch`
+
+```bash
+loom --json --root <root> skill watch [<skill>] [--debounce-ms <ms>] [--max-batch <n>] [--dry-run] [--once]
+```
+
+Write command.
+
+Rules:
+
+1. watches the named registry skill, or all registry skills when the positional is omitted
+2. autosaves stable edits after changes stay quiet for `--debounce-ms` milliseconds (default 3000)
+3. one autosave batch allows at most `--max-batch` changed paths (default 20)
+4. `--dry-run` prints the autosave plan without committing
+5. `--once` runs one scan and exits; without it, the command keeps watching
+
+## 24. Discovery Commands
+
+### 24.1 `skill recommend` and `skill resolve`
+
+```bash
+loom --json --root <root> skill recommend "<query>" [--for-task] [--agent <agent>] [--workspace <path>] [--explain]
+loom --json --root <root> skill resolve "<query>" [--for-task] [--agent <agent>] [--workspace <path>]
+```
+
+Read-only.
+
+Rules:
+
+1. the query is matched lexically against skill id, description, tags, and warnings
+2. `--for-task` treats the query as a task and includes deterministic selection metadata
+3. `--workspace` boosts skills whose binding matcher covers the workspace path
+4. `--semantic` requests local semantic retrieval and falls back to lexical mode when no local provider exists
+5. `--explain` includes recommendation explanations, skillset candidates, and safety/risk inputs
+6. additional filters are `--profile`, `--status`, `--trust`, `--binding`, `--policy-profile`, and `--active`
+
+### 24.2 `index`
+
+```bash
+loom --json --root <root> index <build|status> [--provider <none|local>] [--no-embeddings]
+```
+
+`index build` writes derived local recommendation indexes under `state/index/` and keeps them out of Git history. `index status` is read-only. The `local` provider falls back to no embeddings until configured; `--no-embeddings` skips embedding records even when a local provider is configured.
+
+### 24.3 `active recommend`
+
+```bash
+loom --json --root <root> active recommend "<task-description>" --agent <agent> [--workspace <path>] [--binding <binding-id>] [--desired-skill <skill>]
+```
+
+Read-only.
+
+Compares the agent's current active view against the desired active state for a task and returns a plan without mutation. `--binding` disambiguates when multiple bindings match; `--desired-skill` supplies explicit desired skills to compare against the active view.
+
+## 25. Agent Automation Commands
+
+### 25.1 `agent preflight`
+
+```bash
+loom --json --root <root> agent preflight --agent <agent> --workspace <path> [--skill <skill>] [--method <symlink|copy|materialize>]
+```
+
+Read-only planning command.
+
+Rules:
+
+1. resolves selectors and risks for an agent workspace before any write
+2. requires an existing workspace binding created with `workspace binding add`; when several active bindings match the workspace, the response asks for an explicit `binding_id`
+3. `--method` supplies the projection method used when no rule exists (default `symlink`)
+4. the response is a plan; it never mutates registry state or live targets
+
+### 25.2 `agent reconcile`
+
+```bash
+loom --json --root <root> agent reconcile --agent <agent> [--binding <binding-id>] [--target <target-id>] [--dry-run]
+```
+
+Read-only planning command.
+
+Rules:
+
+1. plans active-view reconciliation for the agent without mutation; responses always report `dry_run: true`
+2. `--binding` and `--target` filter the reconciliation scope
+3. `--allowlist` is reserved for future legacy cleanup and is not applied
+
+## 26. Panel Command
+
+### 26.1 `panel`
+
+```bash
+loom --json --root <root> panel [--port <port>]
+```
+
+Serves the local registry control panel over HTTP on `--port` (default 43117) and runs until interrupted. A failed bind returns a structured envelope with `cmd: "panel"`, `error.code: "IO_ERROR"`, and `error.details.stage: "panel.serve"` at exit code 5.

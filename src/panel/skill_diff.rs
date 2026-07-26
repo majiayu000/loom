@@ -15,9 +15,7 @@ pub(super) use crate::validation::{is_safe_git_ref, is_valid_skill_name};
 
 /// Returns the SHA of the second-newest commit that touched `skill_path`, if any.
 pub(super) fn skill_parent_rev(root: &std::path::Path, skill_path: &str) -> Option<String> {
-    let out = std::process::Command::new("git")
-        .arg("-C")
-        .arg(root)
+    let out = crate::gitops::hardened_git_command(root, crate::gitops::FileProtocol::Blocked)
         .arg("log")
         .arg("--format=%H")
         .arg("-n")
@@ -37,9 +35,7 @@ pub(super) fn skill_parent_rev(root: &std::path::Path, skill_path: &str) -> Opti
 }
 
 fn skill_exists_in_rev(root: &std::path::Path, rev: &str, skill_path: &str) -> bool {
-    let out = std::process::Command::new("git")
-        .arg("-C")
-        .arg(root)
+    let out = crate::gitops::hardened_git_command(root, crate::gitops::FileProtocol::Blocked)
         .arg("ls-tree")
         .arg("--name-only")
         .arg(rev)
@@ -51,9 +47,7 @@ fn skill_exists_in_rev(root: &std::path::Path, rev: &str, skill_path: &str) -> b
 }
 
 fn resolve_rev(root: &std::path::Path, rev: &str) -> Option<String> {
-    let out = std::process::Command::new("git")
-        .arg("-C")
-        .arg(root)
+    let out = crate::gitops::hardened_git_command(root, crate::gitops::FileProtocol::Blocked)
         .arg("rev-parse")
         .arg(rev)
         .output()
@@ -366,7 +360,11 @@ pub(super) async fn registry_skill_diff(
 
     const MAX_DIFF_BYTES: usize = 4 * 1024 * 1024; // 4 MiB
 
-    let mut child = match tokio::process::Command::new("git")
+    let mut cmd = tokio::process::Command::new("git");
+    cmd.args(crate::gitops::hardened_config_args(
+        crate::gitops::FileProtocol::Blocked,
+    ));
+    let mut child = match cmd
         .arg("-C")
         .arg(&state.ctx.root)
         .arg("diff")

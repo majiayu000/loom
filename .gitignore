@@ -8,6 +8,7 @@
 /state/pending_ops.jsonl
 panel/node_modules/
 panel/dist/
+panel/coverage/
 target/
 .omx/
 # Ignore mutable registry content in the tool checkout, but ship the scoped

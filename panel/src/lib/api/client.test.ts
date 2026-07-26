@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { api, ApiError } from "./client";
+import { api, type ApiError } from "./client";
 import { convergenceApi } from "./convergence";
 
 describe("api.registryStatus", () => {

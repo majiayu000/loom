@@ -1,6 +1,6 @@
 import type { PanelDataMode, PanelLiveData } from "./api/usePanelData";
 import { formatActionNeededBadge, formatQueuedWrites, summarizeOps } from "./count_labels";
-import type { Binding, Op, PanelPageKey, ProjectionLink, ProjectionMethod, Skill, Target } from "./types";
+import type { Binding, Op, PanelPageKey, ProjectionLink, Skill, Target } from "./types";
 import type { RegistryProjection } from "../generated/RegistryProjection";
 
 export type FieldState = "available" | "unavailable";

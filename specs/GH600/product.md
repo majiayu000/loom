@@ -39,14 +39,17 @@ shell chain 中的删除 operand、伪造 trusted-root 前缀和损坏的 tool s
    segment 的 `rm` operand 或无法保守分词的 command 均不得产生调用。token
    必须保留 quote/escape provenance：single-quoted 或 escaped `$HOME` 是
    literal，不得展开；double-quoted `$HOME` 只按 shell variable 语义展开。
+   heredoc body、无法证明执行的 `&&`/`||` segment 不得计数；反斜杠换行必须
+   按 shell continuation 移除，HOME/USERPROFILE 被修改后变量路径 fail closed。
 2. **B-002** 支持的 read verb 是闭集
    `{cat, sed, head, tail, less, more, bat, get-content}`，匹配忽略 ASCII
    大小写但要求完整 command token。`exec_command` 读取其 JSON `cmd`；
-   `exec` 只读取可保守提取的 nested `exec_command` 的 `cmd`，其他函数或
-   仅含相似文本的源码不授权路径。每个 verb 必须使用自身的闭集 option
+   `exec` 只读取可保守提取的顶层 awaited/direct nested `exec_command` 的
+   UTF-8 `cmd`；dormant function/control-flow body 或仅含相似文本的源码不
+   授权路径。每个 verb 必须使用自身的闭集 option
    grammar 识别真实 file operands；sed program、option value、未知/歧义
-   option 和 help/version short-circuit 均不得成为 Skill path，`--` 之后才
-   按 literal operand 处理。
+   option 和 help/version short-circuit 均不得成为 Skill path；tail
+   `--follow[=name|descriptor]` 与 `--` literal operands 按各自语义处理。
 3. **B-003** trusted roots 必须从进程实际 home 构造，并以 normalized、
    component-aware `Path` 校验：
    `.codex/skills`、`.agents/skills`、`.claude/skills`、
@@ -60,7 +63,8 @@ shell chain 中的删除 operand、伪造 trusted-root 前缀和损坏的 tool s
    fallback 静默变为 `Ignored`；reason 不得包含 raw 输入。
 5. **B-005** 有稳定 function-call identity、session identity 和 timestamp
    的合法读取产生既有 `skill.invocation`；同一 turn 同名 Skill 至多一次，
-   新 turn 可再次计数，event identity 不依赖 raw command/path。
+   相同 `turn_id` 的重复 context 不重置去重/ordinal，新 turn 可再次计数，
+   event identity 不依赖 raw command/path。
 6. **B-006** durable telemetry 只持久化 validated Skill name、既有 hashed
    workspace/session identity 与 redacted event 字段；raw command、raw
    path、prompt、tool arguments、source content 及 rejected raw value 均不得
@@ -79,14 +83,16 @@ shell chain 中的删除 operand、伪造 trusted-root 前缀和损坏的 tool s
 1. `exec_command` 与 `exec` 对实际 home 下受信任 roots 的读取均产生调用，
    同 turn 去重。
 2. chain/pipeline/quoting fixture 证明只有 read segment 自身的真实 file
-   operand 被计数，single-quoted/escaped home 与 option/program values 不计数。
+   operand 被计数；heredoc、skipped conditional、dormant JS、HOME mutation、
+   single-quoted/escaped home 与 option/program values 不计数。
 3. prefix spoof、`..`、无关 nested `.codex` 与 plugin-cache 伪路径均不计数。
 4. malformed JSON、arguments 类型漂移、缺失/错误 `cmd` 均按稳定 reason
    进入 `rejected`。
 5. legacy structured injection 现有测试保持通过。
 6. end-to-end events/cursor/envelope 不包含 fixture 的 raw command/path/prompt。
 7. focused tests、`cargo check --locked` 与指定 telemetry ingest 集成测试通过。
-8. 八个 read verb 均有正例；缺失 home 的 E2E 返回成功且不计 tool read/rejection。
+8. 八个 read verb、UTF-8/non-ASCII home、Windows separator 与 continuation
+   均有正例；缺失 home 的 E2E 返回成功且不计 tool read/rejection。
 
 ## 6. 边界清单
 

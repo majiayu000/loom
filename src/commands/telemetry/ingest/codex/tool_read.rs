@@ -46,24 +46,84 @@ fn extract_nested_exec_commands(source: &str) -> Result<Vec<String>, &'static st
     const CALL: &str = "tools.exec_command";
     let bytes = source.as_bytes();
     let mut index = 0usize;
+    let mut statement_start = 0usize;
+    let mut braces = 0usize;
+    let mut brackets = 0usize;
+    let mut parentheses = 0usize;
     let mut commands = Vec::new();
     while index < bytes.len() {
         match bytes[index] {
             b'/' if bytes.get(index + 1) == Some(&b'/') => {
+                let comment = index;
                 index = skip_js_line_comment(bytes, index + 2);
+                if braces == 0
+                    && brackets == 0
+                    && parentheses == 0
+                    && source[statement_start..comment].trim().is_empty()
+                {
+                    statement_start = index;
+                }
             }
             b'/' if bytes.get(index + 1) == Some(&b'*') => {
+                let comment = index;
                 index =
                     skip_js_block_comment(bytes, index + 2).ok_or("malformed_exec_arguments")?;
+                if braces == 0
+                    && brackets == 0
+                    && parentheses == 0
+                    && source[statement_start..comment].trim().is_empty()
+                {
+                    statement_start = index;
+                }
             }
             b'\'' | b'"' => {
                 index = skip_js_string(bytes, index).ok_or("malformed_exec_arguments")?;
             }
             b'`' => return Err("malformed_exec_arguments"),
+            b'{' => {
+                braces = braces.checked_add(1).ok_or("malformed_exec_arguments")?;
+                index += 1;
+            }
+            b'}' => {
+                braces = braces.checked_sub(1).ok_or("malformed_exec_arguments")?;
+                index += 1;
+            }
+            b'[' => {
+                brackets = brackets.checked_add(1).ok_or("malformed_exec_arguments")?;
+                index += 1;
+            }
+            b']' => {
+                brackets = brackets.checked_sub(1).ok_or("malformed_exec_arguments")?;
+                index += 1;
+            }
+            b'(' => {
+                parentheses = parentheses
+                    .checked_add(1)
+                    .ok_or("malformed_exec_arguments")?;
+                index += 1;
+            }
+            b')' => {
+                parentheses = parentheses
+                    .checked_sub(1)
+                    .ok_or("malformed_exec_arguments")?;
+                index += 1;
+            }
+            b';' if braces == 0 && brackets == 0 && parentheses == 0 => {
+                index += 1;
+                statement_start = index;
+            }
             _ if bytes.get(index..index + CALL.len()) == Some(CALL.as_bytes())
                 && token_start_boundary(bytes, index)
                 && token_end_boundary(bytes, index + CALL.len()) =>
             {
+                if braces != 0
+                    || brackets != 0
+                    || parentheses != 0
+                    || !is_direct_exec_prefix(&source[statement_start..index])
+                {
+                    index += CALL.len();
+                    continue;
+                }
                 index += CALL.len();
                 index = skip_ascii_whitespace(bytes, index);
                 if bytes.get(index) != Some(&b'(') {
@@ -86,7 +146,32 @@ fn extract_nested_exec_commands(source: &str) -> Result<Vec<String>, &'static st
             _ => index += 1,
         }
     }
-    Ok(commands)
+    (braces == 0 && brackets == 0 && parentheses == 0)
+        .then_some(commands)
+        .ok_or("malformed_exec_arguments")
+}
+
+fn is_direct_exec_prefix(prefix: &str) -> bool {
+    let prefix = prefix.trim();
+    if matches!(prefix, "" | "await") {
+        return true;
+    }
+    ["const", "let", "var"].iter().any(|declaration| {
+        let Some(rest) = prefix.strip_prefix(declaration) else {
+            return false;
+        };
+        if !rest.starts_with(char::is_whitespace) {
+            return false;
+        }
+        let Some((name, value)) = rest.trim().split_once('=') else {
+            return false;
+        };
+        let name = name.trim();
+        !name.is_empty()
+            && name.bytes().all(is_js_identifier_continue)
+            && is_js_identifier_start(name.as_bytes()[0])
+            && matches!(value.trim(), "" | "await")
+    })
 }
 
 fn extract_cmd_property(object: &str) -> Result<String, &'static str> {
@@ -199,7 +284,11 @@ fn parse_js_string(bytes: &[u8], start: usize) -> Option<(String, usize)> {
                 value.push(char::from(byte));
                 index += 1;
             }
-            _ => return None,
+            _ => {
+                let character = std::str::from_utf8(&bytes[index..]).ok()?.chars().next()?;
+                value.push(character);
+                index += character.len_utf8();
+            }
         }
     }
     None
@@ -286,7 +375,7 @@ mod tests {
 
     use serde_json::{Value, json};
 
-    use super::skill_entrypoint_names;
+    use super::{extract_nested_exec_commands, skill_entrypoint_names};
 
     fn payload(name: &str, command: &str) -> Value {
         json!({
@@ -376,6 +465,44 @@ mod tests {
             "arguments":"text(\"tools.exec_command({cmd: cat $HOME/.codex/skills/fake/SKILL.md})\")"
         });
         assert!(skill_entrypoint_names(&text_only).unwrap().is_empty());
+    }
+
+    #[test]
+    fn exec_accepts_utf8_strings() {
+        let command = "cat \"/Users/测试/.codex/skills/demo/SKILL.md\"";
+        let source = format!(
+            "// @exec: {{\"yield_time_ms\":30000}}\nconst r = await tools.exec_command({{cmd:{}, note:\"中文\"}});",
+            serde_json::to_string(command).unwrap()
+        );
+        let commands = extract_nested_exec_commands(&source).unwrap();
+        assert_eq!(commands, [command]);
+        assert_eq!(
+            super::shell::skill_names_with_home(
+                &commands,
+                Some(std::path::Path::new("/Users/测试"))
+            ),
+            ["demo"]
+        );
+    }
+
+    #[test]
+    fn exec_ignores_calls_in_dormant_javascript() {
+        for arguments in [
+            "const unused = () => tools.exec_command({cmd:\"cat $HOME/.codex/skills/callback/SKILL.md\"});",
+            "if (false) { tools.exec_command({cmd:\"cat $HOME/.codex/skills/branch/SKILL.md\"}); }",
+            "false && tools.exec_command({cmd:\"cat $HOME/.codex/skills/short-circuit/SKILL.md\"});",
+        ] {
+            let value = json!({
+                "type":"function_call",
+                "name":"exec",
+                "call_id":"call-dormant",
+                "arguments":arguments
+            });
+            assert!(
+                skill_entrypoint_names(&value).unwrap().is_empty(),
+                "{arguments}"
+            );
+        }
     }
 
     #[test]

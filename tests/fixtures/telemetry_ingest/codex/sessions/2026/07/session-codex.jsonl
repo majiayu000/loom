@@ -13,7 +13,7 @@
 {"timestamp":"2026-07-01T10:09:00Z","type":"turn_context","payload":{"turn_id":"turn-3","cwd":"/workspace/codex-turn"}}
 {"timestamp":"2026-07-01T10:09:10Z","type":"response_item","payload":{"type":"function_call","name":"exec_command","call_id":"call-current-skill-read","arguments":"{\"cmd\":\"sed -n '1,240p' $HOME/.codex/skills/demo/SKILL.md\"}"}}
 {"timestamp":"2026-07-01T10:10:00Z","type":"turn_context","payload":{"turn_id":"turn-4","cwd":"/workspace/codex-turn"}}
-{"timestamp":"2026-07-01T10:10:10Z","type":"response_item","payload":{"type":"function_call","name":"exec_command","call_id":"call-segmented-read","arguments":"{\"cmd\":\"echo RAW_COMMAND_SENTINEL && cat \\\"$HOME/.agents/skills/demo/SKILL.md\\\" && rm \\\"$HOME/.codex/skills/rm-decoy/SKILL.md\\\"\"}"}}
+{"timestamp":"2026-07-01T10:10:10Z","type":"response_item","payload":{"type":"function_call","name":"exec_command","call_id":"call-segmented-read","arguments":"{\"cmd\":\"echo RAW_COMMAND_SENTINEL; cat \\\"$HOME/.agents/skills/demo/SKILL.md\\\" && rm \\\"$HOME/.codex/skills/rm-decoy/SKILL.md\\\"\"}"}}
 {"timestamp":"2026-07-01T10:11:00Z","type":"turn_context","payload":{"turn_id":"turn-5","cwd":"/workspace/codex-turn"}}
 {"timestamp":"2026-07-01T10:11:10Z","type":"response_item","payload":{"type":"function_call","name":"exec","call_id":"call-exec-read","arguments":"const result = await tools.exec_command({cmd:\"cat \\\"$HOME/.claude/skills/demo/SKILL.md\\\"\"});text(result.output);"}}
 {"timestamp":"2026-07-01T10:12:00Z","type":"turn_context","payload":{"turn_id":"turn-6","cwd":"/workspace/codex-turn"}}

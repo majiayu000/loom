@@ -490,12 +490,12 @@ Rules:
 13. Panel Telemetry consumes the same backend read model at
     `/api/v1/telemetry/report` and preserves missing evidence as missing.
 14. `telemetry ingest` accepts only tracked structured Claude/Codex invocation
-    anchors. Current Codex logs require stable call identity, provenance-aware
-    shell words, and per-verb classification of real file operands. Single-quoted
-    or escaped home variables, option/program values, help/version, spoofed roots,
-    parent traversal, free text, and non-read operands are not invocations;
-    missing home leaves reads untrusted/ignored. Recognized malformed tool schemas
-    and invalid observed names use stable reasons without echoing raw values.
+    anchors. Codex reads require stable turn/call identity, conservative top-level
+    UTF-8 exec calls, provenance-aware shell state, and real per-verb operands.
+    Dormant JS, heredocs, skipped conditionals, mutated/missing home, escaped home,
+    option/program values, spoofed roots, traversal, free text, and non-read
+    operands are ignored. Windows home separators and valid continuations remain
+    supported; malformed schemas use stable reasons without echoing raw values.
 15. Durable ingest requires enabled telemetry. It scans source logs outside the
     workspace lock, then compare-and-commits deterministic event IDs and
     `state/telemetry/ingest_cursor.json` under the lock. Events are flushed

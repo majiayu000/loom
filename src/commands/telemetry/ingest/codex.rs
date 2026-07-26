@@ -50,16 +50,22 @@ pub(super) fn parse_record(value: &Value, context: &mut Context) -> ParseOutcome
         }
         Some("turn_context") => {
             context.workspace = context.session_workspace.clone();
-            context.turn_id = None;
-            context.mentioned_skills.clear();
-            context.read_skills.clear();
-            context.next_skill_ordinal = 0;
-            if let Some(payload) = value.get("payload") {
+            let payload = value.get("payload");
+            let incoming_turn_id = payload
+                .and_then(|payload| payload.get("turn_id"))
+                .and_then(Value::as_str)
+                .map(str::to_string);
+            let same_stable_turn = incoming_turn_id
+                .as_deref()
+                .is_some_and(|turn_id| context.turn_id.as_deref() == Some(turn_id));
+            if !same_stable_turn {
+                context.turn_id = incoming_turn_id;
+                context.mentioned_skills.clear();
+                context.read_skills.clear();
+                context.next_skill_ordinal = 0;
+            }
+            if let Some(payload) = payload {
                 update_workspace(context, payload);
-                context.turn_id = payload
-                    .get("turn_id")
-                    .and_then(Value::as_str)
-                    .map(str::to_string);
             }
             ParseOutcome::Ignored
         }
@@ -353,6 +359,19 @@ mod tests {
         assert_eq!(record.invocations[0].name, "demo");
         assert!(matches!(
             parse_record(&read, &mut context),
+            ParseOutcome::Ignored
+        ));
+        assert!(matches!(
+            parse_record(
+                &json!({"type":"turn_context","payload":{"turn_id":"turn-1"}}),
+                &mut context,
+            ),
+            ParseOutcome::Ignored
+        ));
+        let mut repeated_read = read.clone();
+        repeated_read["payload"]["call_id"] = json!("call-2");
+        assert!(matches!(
+            parse_record(&repeated_read, &mut context),
             ParseOutcome::Ignored
         ));
 

@@ -18,6 +18,7 @@ use super::helpers::{
 use super::projections::{
     maybe_autosync_or_queue, record_registry_observation, record_registry_operation,
 };
+use super::skill_cmds::shared::{maybe_push_rollback_fault, push_rollback_error};
 use super::skill_compile::compiled_activation_candidates;
 use super::skill_safety::enforce_skill_safety;
 use super::telemetry::{record_skill_activation_telemetry, telemetry_warning};
@@ -250,14 +251,21 @@ impl App {
         ) {
             Ok(op_id) => op_id,
             Err(err) => {
-                paths
-                    .save_bindings_rules_projections(
+                let mut rollback_errors = Vec::new();
+                if !maybe_push_rollback_fault(&mut rollback_errors, "restore_registry_state")
+                    && let Err(restore_err) = paths.save_bindings_rules_projections(
                         &original_bindings,
                         &original_rules,
                         &original_projections,
                     )
-                    .map_err(map_registry_state)?;
-                return Err(map_registry_state(err));
+                {
+                    push_rollback_error(
+                        &mut rollback_errors,
+                        "restore_registry_state",
+                        restore_err,
+                    );
+                }
+                return Err(map_registry_state(err).with_rollback_errors(rollback_errors));
             }
         };
         record_registry_observation(

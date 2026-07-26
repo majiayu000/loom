@@ -257,14 +257,14 @@ impl App {
             let post_meta = match post_commit {
                 Ok(result) => result,
                 Err(err) => {
-                    rollback_import_after_commit(
+                    let rollback_errors = rollback_import_after_commit(
                         &self.ctx,
                         &paths,
                         &registry_backup,
                         &previous_head,
                         &imported_rels,
                     );
-                    return Err(err);
+                    return Err(err.with_rollback_errors(rollback_errors));
                 }
             };
             meta = post_meta;
@@ -661,7 +661,7 @@ impl App {
             let post_meta = match post_commit {
                 Ok(result) => result,
                 Err(err) => {
-                    rollback_monitor_after_commit(
+                    let rollback_errors = rollback_monitor_after_commit(
                         &self.ctx,
                         &paths,
                         &registry_backup,
@@ -670,7 +670,7 @@ impl App {
                         &update_rollbacks,
                     );
                     cleanup_staging();
-                    return Err(err);
+                    return Err(err.with_rollback_errors(rollback_errors));
                 }
             };
             meta = post_meta;

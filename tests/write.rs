@@ -702,3 +702,55 @@ fn target_add_uses_parent_context_for_generic_skills_leaf() {
         Value::String("target_claude_claude_work_skills".to_string())
     );
 }
+
+#[test]
+fn target_add_reports_registry_restore_failure_after_operation_log_failure() {
+    let root = TestDir::new("registry-target-add-oplog-restore-failure-visibility");
+    let target_path = root.path().join("live/claude-project-a");
+    let target_path_arg = target_path.to_string_lossy().into_owned();
+
+    let (output, env) = run_loom_with_env(
+        root.path(),
+        &[
+            ("LOOM_FAULT_INJECT", "record_v3_operation_after_append"),
+            ("LOOM_ROLLBACK_FAULT_INJECT", "restore_registry_state"),
+        ],
+        &[
+            "target",
+            "add",
+            "--agent",
+            "claude",
+            "--path",
+            &target_path_arg,
+            "--ownership",
+            "managed",
+        ],
+    );
+
+    assert!(
+        !output.status.success(),
+        "target add unexpectedly succeeded with injected operation-log failure"
+    );
+    assert_eq!(env["ok"], Value::Bool(false));
+    let rollback_steps: Vec<String> = env["error"]["details"]["rollback_errors"]
+        .as_array()
+        .expect("rollback errors array")
+        .iter()
+        .filter_map(|error| error["step"].as_str().map(ToString::to_string))
+        .collect();
+    assert!(
+        rollback_steps
+            .iter()
+            .any(|step| step == "restore_registry_state"),
+        "expected restore_registry_state rollback error to be visible: {}",
+        env
+    );
+    assert!(
+        env["error"]["details"]["original_error"]["message"]
+            .as_str()
+            .expect("original error message")
+            .contains("record_v3_operation_after_append"),
+        "original operation-log failure must stay visible alongside rollback errors: {}",
+        env
+    );
+}

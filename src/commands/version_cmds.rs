@@ -55,10 +55,11 @@ impl App {
         let registry_layout_backup =
             backup_registry_layout(&self.ctx, &paths).map_err(map_registry_state)?;
         if let Err(err) = paths.ensure_layout() {
-            restore_registry_layout_best_effort(&paths, &registry_layout_backup);
+            let mut rollback_errors =
+                restore_registry_layout_best_effort(&paths, &registry_layout_backup);
             remove_registry_layout_backups_best_effort(&registry_layout_backup);
-            let _ = gitops::restore_index(&self.ctx, &previous_index);
-            return Err(map_registry_state(err));
+            rollback_errors.extend(restore_index_best_effort(&self.ctx, &previous_index));
+            return Err(map_registry_state(err).with_rollback_errors(rollback_errors));
         }
 
         if let Err(err) = gitops::create_annotated_tag(
@@ -66,10 +67,11 @@ impl App {
             &tag,
             &format!("release {} {}", args.skill, version),
         ) {
-            restore_registry_layout_best_effort(&paths, &registry_layout_backup);
+            let mut rollback_errors =
+                restore_registry_layout_best_effort(&paths, &registry_layout_backup);
             remove_registry_layout_backups_best_effort(&registry_layout_backup);
-            let _ = gitops::restore_index(&self.ctx, &previous_index);
-            return Err(map_git(err));
+            rollback_errors.extend(restore_index_best_effort(&self.ctx, &previous_index));
+            return Err(map_git(err).with_rollback_errors(rollback_errors));
         }
 
         let post_audit: std::result::Result<(Option<String>, Meta), CommandFailure> = (|| {
@@ -173,15 +175,15 @@ impl App {
         if let Err(err) =
             gitops::checkout_path_from_ref(&self.ctx, &reference, Path::new(&skill_rel))
         {
-            restore_path_best_effort(
+            let mut rollback_errors = restore_path_best_effort(
                 &skill_path,
                 skill_backup.as_ref(),
                 "restore_skill_path",
                 "remove_skill_path",
             );
             remove_backup_path_best_effort(skill_backup.as_ref());
-            let _ = gitops::restore_index(&self.ctx, &previous_index);
-            return Err(map_git(err));
+            rollback_errors.extend(restore_index_best_effort(&self.ctx, &previous_index));
+            return Err(map_git(err).with_rollback_errors(rollback_errors));
         }
         if let Err(err) = gitops::stage_path(&self.ctx, Path::new(&skill_rel)) {
             let mut rollback_errors = restore_path_best_effort(
@@ -198,20 +200,24 @@ impl App {
         let changed = match gitops::has_staged_changes_for_path(&self.ctx, Path::new(&skill_rel)) {
             Ok(changed) => changed,
             Err(err) => {
-                restore_path_best_effort(
+                let mut rollback_errors = restore_path_best_effort(
                     &skill_path,
                     skill_backup.as_ref(),
                     "restore_skill_path",
                     "remove_skill_path",
                 );
                 remove_backup_path_best_effort(skill_backup.as_ref());
-                let _ = gitops::restore_index(&self.ctx, &previous_index);
-                return Err(map_git(err));
+                rollback_errors.extend(restore_index_best_effort(&self.ctx, &previous_index));
+                return Err(map_git(err).with_rollback_errors(rollback_errors));
             }
         };
         if !changed {
             remove_backup_path_best_effort(skill_backup.as_ref());
-            let _ = gitops::restore_index(&self.ctx, &previous_index);
+            let index_cleanup_warnings: Vec<String> =
+                restore_index_best_effort(&self.ctx, &previous_index)
+                    .into_iter()
+                    .map(|error| format!("noop cleanup rollback failed: {}", error))
+                    .collect();
             let paths = RegistryStatePaths::from_app_context(&self.ctx);
             let registry_existed_before = paths.exists() || paths.legacy_state_dir_exists();
             let (projection_reconciliation, warnings) = if registry_existed_before {
@@ -234,7 +240,7 @@ impl App {
                     "noop": true
                 }),
                 Meta {
-                    warnings,
+                    warnings: index_cleanup_warnings.into_iter().chain(warnings).collect(),
                     ..Meta::default()
                 },
             ));
@@ -245,17 +251,20 @@ impl App {
         let registry_layout_backup =
             backup_registry_layout(&self.ctx, &paths).map_err(map_registry_state)?;
         if let Err(err) = paths.ensure_layout() {
-            restore_path_best_effort(
+            let mut rollback_errors = restore_path_best_effort(
                 &skill_path,
                 skill_backup.as_ref(),
                 "restore_skill_path",
                 "remove_skill_path",
             );
             remove_backup_path_best_effort(skill_backup.as_ref());
-            restore_registry_layout_best_effort(&paths, &registry_layout_backup);
+            rollback_errors.extend(restore_registry_layout_best_effort(
+                &paths,
+                &registry_layout_backup,
+            ));
             remove_registry_layout_backups_best_effort(&registry_layout_backup);
-            let _ = gitops::restore_index(&self.ctx, &previous_index);
-            return Err(map_registry_state(err));
+            rollback_errors.extend(restore_index_best_effort(&self.ctx, &previous_index));
+            return Err(map_registry_state(err).with_rollback_errors(rollback_errors));
         }
 
         let previous_short = previous_head.chars().take(12).collect::<String>();
@@ -266,17 +275,20 @@ impl App {
             &recovery_ref,
             &format!("recovery before rollback {}", args.skill),
         ) {
-            restore_path_best_effort(
+            let mut rollback_errors = restore_path_best_effort(
                 &skill_path,
                 skill_backup.as_ref(),
                 "restore_skill_path",
                 "remove_skill_path",
             );
             remove_backup_path_best_effort(skill_backup.as_ref());
-            restore_registry_layout_best_effort(&paths, &registry_layout_backup);
+            rollback_errors.extend(restore_registry_layout_best_effort(
+                &paths,
+                &registry_layout_backup,
+            ));
             remove_registry_layout_backups_best_effort(&registry_layout_backup);
-            let _ = gitops::restore_index(&self.ctx, &previous_index);
-            return Err(map_git(err));
+            rollback_errors.extend(restore_index_best_effort(&self.ctx, &previous_index));
+            return Err(map_git(err).with_rollback_errors(rollback_errors));
         }
 
         let message = format!("rollback({}): restore from {}", args.skill, reference);
@@ -284,17 +296,20 @@ impl App {
             Ok(commit) => commit,
             Err(err) => {
                 delete_tag_best_effort(self, &recovery_ref);
-                restore_path_best_effort(
+                let mut rollback_errors = restore_path_best_effort(
                     &skill_path,
                     skill_backup.as_ref(),
                     "restore_skill_path",
                     "remove_skill_path",
                 );
                 remove_backup_path_best_effort(skill_backup.as_ref());
-                restore_registry_layout_best_effort(&paths, &registry_layout_backup);
+                rollback_errors.extend(restore_registry_layout_best_effort(
+                    &paths,
+                    &registry_layout_backup,
+                ));
                 remove_registry_layout_backups_best_effort(&registry_layout_backup);
-                let _ = gitops::restore_index(&self.ctx, &previous_index);
-                return Err(map_git(err));
+                rollback_errors.extend(restore_index_best_effort(&self.ctx, &previous_index));
+                return Err(map_git(err).with_rollback_errors(rollback_errors));
             }
         };
 

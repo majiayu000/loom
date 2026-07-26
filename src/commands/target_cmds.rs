@@ -12,10 +12,10 @@ use crate::state_model::RegistryProjectionTarget;
 use crate::types::ErrorCode;
 
 use super::helpers::{
-    agent_kind_as_str, commit_registry_state, map_io, map_lock, map_registry_state,
-    target_capabilities, target_ownership_as_str, unique_target_id_for_agent,
+    agent_kind_as_str, map_io, map_lock, map_registry_state, target_capabilities,
+    target_ownership_as_str, unique_target_id_for_agent,
 };
-use super::projections::{maybe_autosync_or_queue, record_registry_operation};
+use super::registry_txn::{RegistryTxnCommit, RegistryTxnState, RegistryWriteTxn};
 use super::{App, CommandFailure};
 
 impl App {
@@ -164,51 +164,35 @@ impl App {
         targets
             .targets
             .sort_by(|left, right| left.target_id.cmp(&right.target_id));
-        paths.save_targets(&targets).map_err(map_registry_state)?;
-
-        let op_id = match record_registry_operation(
+        let outcome = self.registry_write_txn(
             &paths,
-            "target.add",
-            json!({
-                "target_id": target.target_id,
-                "agent": target.agent,
-                "agent_source": agent_source,
-                "path": target.path,
-                "ownership": target.ownership,
-                "request_id": request_id
-            }),
-            json!({
-                "target_id": target.target_id
-            }),
-        ) {
-            Ok(op_id) => op_id,
-            Err(err) => {
-                paths
-                    .save_targets(&original_targets)
-                    .with_context(|| {
-                        format!(
-                            "failed to rollback targets after operation-log failure: {}",
-                            err
-                        )
-                    })
-                    .map_err(map_registry_state)?;
-                return Err(map_registry_state(err));
-            }
-        };
-        let commit = commit_registry_state(&self.ctx, &format!("target({}): add", target_id))?;
-        let mut meta = Meta {
-            op_id: Some(op_id),
-            ..Meta::default()
-        };
-        if let Some(commit) = &commit {
-            maybe_autosync_or_queue(
-                &self.ctx,
-                "target.add",
+            RegistryWriteTxn {
+                op_name: "target.add",
                 request_id,
-                json!({"target_id": target.target_id, "commit": commit}),
-                &mut meta,
-            )?;
-        }
+                state: RegistryTxnState::Targets {
+                    next: targets,
+                    original: original_targets,
+                },
+                op_payload: json!({
+                    "target_id": target.target_id,
+                    "agent": target.agent,
+                    "agent_source": agent_source,
+                    "path": target.path,
+                    "ownership": target.ownership,
+                    "request_id": request_id
+                }),
+                op_effects: json!({
+                    "target_id": target.target_id
+                }),
+                op_failure_note: None,
+                commit: Some(RegistryTxnCommit {
+                    message: format!("target({}): add", target_id),
+                    autosync_payload: json!({"target_id": target.target_id}),
+                }),
+            },
+        )?;
+        let commit = outcome.commit;
+        let meta = outcome.meta;
         let mut target_value = serde_json::to_value(&target).map_err(|err| {
             CommandFailure::new(
                 ErrorCode::InternalError,
@@ -278,52 +262,35 @@ impl App {
         targets.targets[index].ownership = crate::core::vocab::Ownership::Managed;
         targets.targets[index].capabilities = target_capabilities(TargetOwnership::Managed);
         let target = targets.targets[index].clone();
-        paths.save_targets(&targets).map_err(map_registry_state)?;
-
-        let op_id = match record_registry_operation(
+        let outcome = self.registry_write_txn(
             &paths,
-            "target.adopt",
-            json!({
-                "target_id": target.target_id,
-                "agent": target.agent,
-                "path": target.path,
-                "previous_ownership": previous_ownership,
-                "ownership": target.ownership,
-                "request_id": request_id
-            }),
-            json!({
-                "target_id": target.target_id
-            }),
-        ) {
-            Ok(op_id) => op_id,
-            Err(err) => {
-                paths
-                    .save_targets(&original_targets)
-                    .with_context(|| {
-                        format!(
-                            "failed to rollback targets after operation-log failure: {}",
-                            err
-                        )
-                    })
-                    .map_err(map_registry_state)?;
-                return Err(map_registry_state(err));
-            }
-        };
-        let commit =
-            commit_registry_state(&self.ctx, &format!("target({}): adopt", target.target_id))?;
-        let mut meta = Meta {
-            op_id: Some(op_id),
-            ..Meta::default()
-        };
-        if let Some(commit) = &commit {
-            maybe_autosync_or_queue(
-                &self.ctx,
-                "target.adopt",
+            RegistryWriteTxn {
+                op_name: "target.adopt",
                 request_id,
-                json!({"target_id": target.target_id, "commit": commit}),
-                &mut meta,
-            )?;
-        }
+                state: RegistryTxnState::Targets {
+                    next: targets,
+                    original: original_targets,
+                },
+                op_payload: json!({
+                    "target_id": target.target_id,
+                    "agent": target.agent,
+                    "path": target.path,
+                    "previous_ownership": previous_ownership,
+                    "ownership": target.ownership,
+                    "request_id": request_id
+                }),
+                op_effects: json!({
+                    "target_id": target.target_id
+                }),
+                op_failure_note: None,
+                commit: Some(RegistryTxnCommit {
+                    message: format!("target({}): adopt", target.target_id),
+                    autosync_payload: json!({"target_id": target.target_id}),
+                }),
+            },
+        )?;
+        let commit = outcome.commit;
+        let meta = outcome.meta;
         Ok((
             json!({
                 "target": decorate_target_for_output(&target, &adapters),
@@ -380,50 +347,31 @@ impl App {
             .targets
             .targets
             .retain(|item| item.target_id != args.target_id);
-        paths
-            .save_targets(&snapshot.targets)
-            .map_err(map_registry_state)?;
-
-        let op_id = match record_registry_operation(
+        let outcome = self.registry_write_txn(
             &paths,
-            "target.remove",
-            json!({
-                "target_id": target.target_id,
-                "request_id": request_id
-            }),
-            json!({
-                "target_id": target.target_id
-            }),
-        ) {
-            Ok(op_id) => op_id,
-            Err(err) => {
-                paths
-                    .save_targets(&original_targets)
-                    .with_context(|| {
-                        format!(
-                            "failed to rollback targets after operation-log failure: {}",
-                            err
-                        )
-                    })
-                    .map_err(map_registry_state)?;
-                return Err(map_registry_state(err));
-            }
-        };
-        let commit =
-            commit_registry_state(&self.ctx, &format!("target({}): remove", args.target_id))?;
-        let mut meta = Meta {
-            op_id: Some(op_id),
-            ..Meta::default()
-        };
-        if let Some(commit) = &commit {
-            maybe_autosync_or_queue(
-                &self.ctx,
-                "target.remove",
+            RegistryWriteTxn {
+                op_name: "target.remove",
                 request_id,
-                json!({"target_id": target.target_id, "commit": commit}),
-                &mut meta,
-            )?;
-        }
+                state: RegistryTxnState::Targets {
+                    next: snapshot.targets,
+                    original: original_targets,
+                },
+                op_payload: json!({
+                    "target_id": target.target_id,
+                    "request_id": request_id
+                }),
+                op_effects: json!({
+                    "target_id": target.target_id
+                }),
+                op_failure_note: None,
+                commit: Some(RegistryTxnCommit {
+                    message: format!("target({}): remove", args.target_id),
+                    autosync_payload: json!({"target_id": target.target_id}),
+                }),
+            },
+        )?;
+        let commit = outcome.commit;
+        let meta = outcome.meta;
 
         Ok((
             json!({

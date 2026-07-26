@@ -1,23 +1,14 @@
 import React from "react";
-import { afterAll, expect, test } from "vitest";
-import { renderToStaticMarkup } from "react-dom/server";
+import { expect, test } from "vitest";
 import { act, create, type ReactTestInstance, type ReactTestRenderer } from "react-test-renderer";
-import { LiveDataBanner } from "../PanelApp";
 import { BindingsPage } from "./BindingsPage";
-import { HistoryPage, bucket } from "./HistoryPage";
+import { HistoryPage } from "./HistoryPage";
 import { TargetsPage } from "./TargetsPage";
 import { SettingsPage } from "./SettingsPage";
-import { OverviewPage } from "./OverviewPage";
 import { DoctorPage } from "./DoctorPage";
-import { FirstRunPage } from "./FirstRunPage";
-import { ProjectionsPage } from "./ProjectionsPage";
-import { SkillsPage } from "./SkillsPage";
-import { BindingAddForm } from "../../components/panel/forms/BindingAddForm";
-import { api, type BindingShowPayload, type CommandEnvelope, type DoctorPayload, type OpsPayload, type TargetShowPayload, type RegistryOperationRecord } from "../../lib/api/client";
-import type { Binding, Skill, Target } from "../../lib/types";
-import type { RegistryProjection } from "../../generated/RegistryProjection";
+import { api } from "../../lib/api/client";
 
-import { bindingPayload, buttonByLabel, clickableRows, doctorPayload, flush, makeBinding, makeOperation, makeOrphanProjection, makeSkill, makeTarget, markup, opsPayload, targetPayload, textOf } from "./panel_state_test_utils";
+import { bindingPayload, buttonByLabel, clickableRows, doctorPayload, flush, makeBinding, makeOperation, makeSkill, makeTarget, markup, opsPayload, targetPayload, textOf } from "./panel_state_test_utils";
 test("HistoryPage refetches when a panel mutation completes", async () => {
   const originalOps = api.ops;
   const seen: string[] = [];

@@ -65,3 +65,9 @@ version = "1.9.0"
 skill_range = ">=1.9.0,<2.0.0"
 change = "ship capability-gated Panel convergence plan/apply and complete visibility and transport capability inventory"
 migration_note = "Install the 1.9-compatible loom-registry Skill with the matching binary; the Skill now defaults to digest-confirmed convergence apply and older 1.x binaries must remain read-only."
+
+[[contract]]
+version = "1.10.0"
+skill_range = ">=1.9.0,<2.0.0"
+change = "share the merged ops activity read model between the panel registry ops endpoint and ops list --activity"
+migration_note = "Clients may consume the merged registry/audit activity feed via ops list --activity with limit/offset pagination; existing 1.x commands and fields remain compatible."

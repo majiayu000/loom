@@ -17,6 +17,8 @@ mod mcp;
 mod meta;
 #[cfg(test)]
 mod observed_tests;
+mod ops_activity;
+pub(crate) use ops_activity::build_ops_activity;
 mod org_policy;
 mod package_export;
 mod plan_cmds;

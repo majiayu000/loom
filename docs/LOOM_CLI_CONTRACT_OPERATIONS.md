@@ -641,6 +641,20 @@ local branch and cached `origin/loom-history`. This command does not fetch, so
 the tracking ref can be stale. Parse or Git read failures return a structured
 error instead of silently reporting zero.
 
+With `--activity` the command instead returns the merged activity read model
+shared with the panel `/api/registry/ops` endpoint:
+
+```bash
+loom --json --root <root> ops list --activity [--limit <n>] [--offset <n>]
+```
+
+Read-only. `data.operations` contains newest-first summary rows merged from
+registry operation records and `loom-history` audit events, with `count`,
+`registry_count`, `audit_count`, `loaded_count`, `offset`, `limit`,
+`has_more`, and `checkpoint` pagination metadata. `--limit` is clamped to
+`1..=250` (default `100`). Requires initialized registry state
+(`STATE_NOT_INITIALIZED` otherwise).
+
 ### 14.2 `ops retry`
 
 ```bash

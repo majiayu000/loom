@@ -291,7 +291,7 @@ pub(crate) fn command_name(command: &Command) -> &'static str {
             SyncCommand::Replay => "sync.replay",
         },
         Command::Ops { command } => match command {
-            OpsCommand::List => "ops.list",
+            OpsCommand::List(_) => "ops.list",
             OpsCommand::Retry => "ops.retry",
             OpsCommand::Purge => "ops.purge",
             OpsCommand::History { command } => match command {

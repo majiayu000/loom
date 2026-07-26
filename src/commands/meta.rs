@@ -249,7 +249,7 @@ pub(crate) fn command_meta(command: &Command) -> CommandMeta {
             CommandMeta::new(true, durable, !durable)
         }
         Command::Ops { command } => match command {
-            OpsCommand::List => CommandMeta::new(true, false, false),
+            OpsCommand::List(_) => CommandMeta::new(true, false, false),
             OpsCommand::Retry | OpsCommand::Purge => CommandMeta::new(true, true, false),
             OpsCommand::History { command } => {
                 let durable = !matches!(command, OpsHistoryCommand::Diagnose);

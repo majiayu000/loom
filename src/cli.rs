@@ -472,7 +472,7 @@ pub struct OrphanCleanArgs {
 #[derive(Debug, Clone, Subcommand, Serialize)]
 pub enum OpsCommand {
     #[command(about = "List replayable registry operations")]
-    List,
+    List(OpsListArgs),
     #[command(about = "Retry replayable registry operations")]
     Retry,
     #[command(about = "Purge completed operation records")]
@@ -482,6 +482,22 @@ pub enum OpsCommand {
         #[command(subcommand)]
         command: OpsHistoryCommand,
     },
+}
+
+#[derive(Debug, Clone, Default, Args, Serialize)]
+pub struct OpsListArgs {
+    /// Show the merged activity read model (registry operations plus
+    /// loom-history audit events) instead of the pending backlog.
+    #[arg(long)]
+    pub activity: bool,
+
+    /// Maximum number of activity rows to return (requires --activity).
+    #[arg(long, requires = "activity")]
+    pub limit: Option<usize>,
+
+    /// Number of activity rows to skip (requires --activity).
+    #[arg(long, requires = "activity")]
+    pub offset: Option<usize>,
 }
 
 #[derive(Debug, Clone, Subcommand, Serialize)]

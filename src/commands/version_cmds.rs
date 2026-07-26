@@ -411,6 +411,8 @@ impl App {
         args: &DiffArgs,
     ) -> std::result::Result<(serde_json::Value, Meta), CommandFailure> {
         validate_skill_name(&args.skill).map_err(map_arg)?;
+        validate_diff_ref_arg("from", &args.from)?;
+        validate_diff_ref_arg("to", &args.to)?;
         ensure_skill_exists(&self.ctx, &args.skill)?;
         if args.security {
             return Ok((
@@ -426,6 +428,16 @@ impl App {
             Meta::default(),
         ))
     }
+}
+
+fn validate_diff_ref_arg(name: &str, value: &str) -> std::result::Result<(), CommandFailure> {
+    if crate::validation::is_safe_git_ref(value) {
+        return Ok(());
+    }
+    Err(CommandFailure::new(
+        ErrorCode::ArgInvalid,
+        format!("<{}> must be a safe Git revision", name),
+    ))
 }
 
 fn delete_tag_best_effort(app: &App, tag: &str) {

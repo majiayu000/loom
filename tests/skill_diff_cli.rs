@@ -1,6 +1,7 @@
 mod common;
 
 use std::path::Path;
+use std::process::Command;
 
 use serde_json::{Value, json};
 
@@ -22,6 +23,20 @@ fn save_two_revisions(root: &Path) {
     write_skill(root, "demo", "# Demo\n\nv2\n");
     let (output, env) = save_skill(root, "demo");
     assert_success(&output, &env, "save v2");
+}
+
+fn create_named_git_ref(root: &Path, args: &[&str]) {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(args)
+        .output()
+        .expect("run git");
+    assert!(
+        output.status.success(),
+        "git {args:?} failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 }
 
 #[test]
@@ -47,6 +62,38 @@ fn skill_diff_reports_source_patch_between_revisions() {
         "diff should show removed line: {diff}"
     );
     assert!(diff.contains("+v2"), "diff should show added line: {diff}");
+}
+
+#[test]
+fn skill_diff_accepts_git_valid_ref_characters() {
+    let root = TestDir::new("skill-diff-valid-refs");
+    save_two_revisions(root.path());
+    create_named_git_ref(root.path(), &["branch", "feature@v1", "HEAD~1"]);
+    create_named_git_ref(root.path(), &["tag", "release+candidate", "HEAD"]);
+    create_named_git_ref(root.path(), &["branch", "发布/v1", "HEAD~1"]);
+
+    for from in ["feature@v1", "发布/v1"] {
+        let (output, env) = run_loom(
+            root.path(),
+            &["skill", "diff", "demo", from, "release+candidate"],
+        );
+        assert_success(&output, &env, from);
+        assert_eq!(env["ok"], json!(true));
+    }
+
+    let (output, env) = run_loom(
+        root.path(),
+        &[
+            "skill",
+            "diff",
+            "demo",
+            "--security",
+            "feature@v1",
+            "release+candidate",
+        ],
+    );
+    assert_success(&output, &env, "security diff with Git-valid refs");
+    assert_eq!(env["ok"], json!(true));
 }
 
 #[test]

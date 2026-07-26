@@ -6,9 +6,11 @@
 //! - Skill names: ASCII `[A-Za-z0-9._-]`, not `.` or `..`, at most
 //!   [`MAX_SKILL_NAME_LEN`] bytes. The charset excludes `/` and `\\`, so a
 //!   valid name is always a single path component.
-//! - Git revisions: ASCII `[A-Za-z0-9._/~^-]`, no leading `-` (prevents
-//!   option injection into `git` argv), no leading/trailing `.`, no `..`
-//!   (prevents range smuggling), at most [`MAX_GIT_REF_LEN`] bytes.
+//! - Git revisions: no leading `-` (prevents option injection into `git`
+//!   argv), no leading/trailing `.`, no `..` (prevents range smuggling), no
+//!   control/whitespace or Git-forbidden ref characters, and at most
+//!   [`MAX_GIT_REF_LEN`] bytes. Git remains the authority for whether a
+//!   syntactically safe revision exists.
 //! - Policy profiles: `[a-z0-9_-]{1,64}`.
 
 use anyhow::{Result, anyhow};
@@ -56,8 +58,10 @@ pub(crate) fn is_valid_skill_name(skill: &str) -> bool {
 
 /// Returns `true` when `rev` is safe to pass to `git` as a revision argument.
 ///
-/// Rejects option-shaped values (leading `-`), revision ranges (`..`), and
-/// leading/trailing `.` in addition to enforcing an ASCII whitelist.
+/// Rejects option-shaped values (leading `-`), revision ranges (`..`),
+/// leading/trailing `.`, reflog selectors, control/whitespace, and characters
+/// Git forbids in ref names. Other characters are safe because Git is invoked
+/// with an argument array rather than through a shell.
 pub(crate) fn is_safe_git_ref(rev: &str) -> bool {
     !rev.is_empty()
         && rev.len() <= MAX_GIT_REF_LEN
@@ -65,19 +69,9 @@ pub(crate) fn is_safe_git_ref(rev: &str) -> bool {
         && !rev.starts_with('.')
         && !rev.ends_with('.')
         && !rev.contains("..")
-        && rev.bytes().all(|b| {
-            matches!(
-                b,
-                b'a'..=b'z'
-                    | b'A'..=b'Z'
-                    | b'0'..=b'9'
-                    | b'.'
-                    | b'_'
-                    | b'-'
-                    | b'/'
-                    | b'~'
-                    | b'^'
-            )
+        && !rev.contains("@{")
+        && rev.chars().all(|ch| {
+            !ch.is_control() && !ch.is_whitespace() && !matches!(ch, '\\' | ':' | '?' | '*' | '[')
         })
 }
 
@@ -147,13 +141,17 @@ mod tests {
             "v1.0.0",
             "abc123def",
             "feature_branch-2",
+            "feature@v1",
+            "release+candidate",
+            "team/release=rc,1",
+            "发布/v1",
         ] {
             assert!(is_safe_git_ref(rev), "{rev:?} should be accepted");
         }
     }
 
     #[test]
-    fn git_ref_rejects_option_shaped_and_range_values() {
+    fn git_ref_rejects_unsafe_and_git_forbidden_values() {
         for rev in [
             "",
             "-p",
@@ -163,9 +161,12 @@ mod tests {
             ".hidden",
             "trailing.",
             "a b",
-            "rev;rm -rf",
-            "$(cmd)",
             "rev\nother",
+            "HEAD@{1}",
+            "main:skills/demo",
+            "feature/*",
+            "feature?[x]",
+            "bad\\ref",
             "a".repeat(257).as_str(),
         ] {
             assert!(!is_safe_git_ref(rev), "{rev:?} should be rejected");

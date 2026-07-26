@@ -262,10 +262,10 @@ pub(crate) fn command_name(command: &Command) -> &'static str {
             WorkflowCommand::Preflight(_) => "workflow.preflight",
             WorkflowCommand::Run(_) => "workflow.run",
         },
-        Command::Index(args) if args.action == "build" => "index.build",
-        Command::Index(args) if args.action == "status" => "index.status",
+        Command::Index(args) if args.is_build_action() => "index.build",
+        Command::Index(args) if args.is_status_action() => "index.status",
         Command::Index(_) => "index",
-        Command::Active(args) if args.action == "recommend" => "active.recommend",
+        Command::Active(args) if args.is_recommend_action() => "active.recommend",
         Command::Active(_) => "active",
         Command::Sync { command } => match command {
             SyncCommand::Status => "sync.status",

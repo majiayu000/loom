@@ -1,0 +1,18 @@
+fix(commands): surface rollback failures and unify registry write transactions
+
+Rollback failures across registry write commands were silently swallowed:
+version_cmds dropped 8 restore_index results, skill_cmds/shared void rollback
+helpers discarded every restore error, and the six verbatim operation-log
+rollback blocks lost the original error when the restore itself failed.
+
+- Add App::registry_write_txn to unify the shared write-transaction tail
+  (save state, record operation, visible rollback on failure, commit
+  registry state, autosync) and route target add/adopt/remove, workspace
+  binding add/remove, and skill orphan clean through it.
+- Return rollback error lists from shared/file_ops rollback helpers and
+  attach them via CommandFailure::with_rollback_errors in save, observed
+  import/monitor, skill_new, deactivate, and version commands.
+- Surface noop-path index restore failures as meta warnings.
+- Add regression tests for rollback-failure visibility (release tag
+  conflict + restore_git_index fault; target add operation-log failure +
+  restore_registry_state fault).

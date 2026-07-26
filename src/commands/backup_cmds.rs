@@ -704,20 +704,8 @@ fn clone_bundle_to(bundle_path: &Path, dst: &Path) -> Result<()> {
 }
 
 fn git_base(cwd: &Path) -> Command {
-    let mut command = Command::new("git");
-    command
-        .current_dir(cwd)
-        .arg("-c")
-        .arg("commit.gpgsign=false")
-        .arg("-c")
-        .arg("tag.gpgSign=false")
-        .arg("-c")
-        .arg("protocol.file.allow=always")
-        .arg("-c")
-        .arg("protocol.https.allow=always")
-        .arg("-c")
-        .arg("protocol.ssh.allow=always");
-    command
+    // File-transport opt-in: restoring a backup clones from a local bundle.
+    gitops::hardened_git_command(cwd, gitops::FileProtocol::Allowed)
 }
 
 fn run_git_command(mut command: Command, action: &str) -> Result<String> {

@@ -902,7 +902,7 @@ Rules:
 
 ```bash
 loom --json --root <root> skill recommend "<query>" [--agent <agent>] [--workspace <path>] [--explain]
-loom --json --root <root> skill resolve "<query>" [--for-task] [--agent <agent>] [--workspace <path>]
+loom --json --root <root> skill resolve "<query>" [--agent <agent>] [--workspace <path>]
 ```
 
 Read-only.
@@ -910,7 +910,7 @@ Read-only.
 Rules:
 
 1. the query is matched lexically against skill id, description, tags, and warnings
-2. `skill recommend` ignores the legacy `--for-task` flag and never emits selection metadata; `skill resolve --for-task` enables deterministic task selection
+2. `skill recommend` ignores the legacy `--for-task` flag and never emits selection metadata; `skill resolve` always performs deterministic task selection, while `--for-task` remains an accepted compatibility spelling with no behavioral effect
 3. `--workspace` boosts skills whose binding matcher covers the workspace path
 4. `--semantic` requests local semantic retrieval and falls back to lexical mode when no local provider exists
 5. `--explain` includes recommendation explanations, skillset candidates, and safety/risk inputs

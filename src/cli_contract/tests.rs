@@ -1,6 +1,10 @@
 use std::{collections::BTreeSet, ffi::OsString};
 
-use clap::{Arg, ArgAction, Command, CommandFactory, builder::PossibleValue, error::ErrorKind};
+use clap::{
+    Arg, ArgAction, Command, CommandFactory,
+    builder::{PossibleValue, PossibleValuesParser},
+    error::ErrorKind,
+};
 
 use crate::cli::Cli;
 
@@ -111,16 +115,8 @@ fn public_command_paths_derive_typed_positional_actions() {
 fn contract_command_lines(contract: &str) -> Result<Vec<String>, String> {
     let mut commands = Vec::new();
     let mut continued: Option<String> = None;
-    let top_level = public_command_paths()
-        .into_iter()
-        .filter(|path| path.split_whitespace().count() == 2)
-        .collect::<BTreeSet<_>>();
-    let mut rejected_shapes = false;
     for line in contract.lines() {
         let trimmed = line.trim();
-        if trimmed.starts_with("## ") {
-            rejected_shapes = trimmed == "## 18. Rejected CLI Shapes";
-        }
         if let Some(command) = continued.as_mut() {
             command.push(' ');
             command.push_str(trimmed.trim_end_matches('\\').trim_end());
@@ -133,16 +129,6 @@ fn contract_command_lines(contract: &str) -> Result<Vec<String>, String> {
                 continued = Some(command);
             } else {
                 commands.push(command);
-            }
-        }
-        if !rejected_shapes {
-            for code in line.split('`').skip(1).step_by(2) {
-                if !code.starts_with("loom ") {
-                    let candidate = format!("loom {code}");
-                    if top_level.contains(&candidate) {
-                        commands.push(format!("{candidate} --help"));
-                    }
-                }
             }
         }
     }
@@ -323,6 +309,14 @@ fn longer_command_does_not_document_direct_parent_path() {
 }
 
 #[test]
+fn prose_inline_code_does_not_document_an_executable_command() {
+    let paths = vec!["loom init".to_string()];
+    let missing = missing_contract_paths(&paths, "Run `init` before continuing.")
+        .expect("inline prose fixture");
+    assert_eq!(missing, paths.iter().collect::<Vec<_>>());
+}
+
+#[test]
 fn typed_action_metadata_preserves_runtime_validation() {
     for argv in [
         vec!["loom", "index", "unsupported"],
@@ -347,6 +341,38 @@ fn command_schema_optional_additions_are_additive() {
     );
     assert!(base.is_subset(&with_flag));
     assert!(with_flag.len() > base.len());
+}
+
+#[test]
+fn positional_action_values_change_schema_snapshot() {
+    let snapshot = |values| {
+        fixture_capabilities(
+            Command::new("loom").subcommand(
+                Command::new("demo").arg(
+                    Arg::new("action")
+                        .index(1)
+                        .value_parser(PossibleValuesParser::new(values)),
+                ),
+            ),
+        )
+    };
+    let original = snapshot(["build", "status"]);
+    let renamed = snapshot(["build", "inspect"]);
+    let removed = fixture_capabilities(
+        Command::new("loom").subcommand(Command::new("demo").arg(Arg::new("action").index(1))),
+    );
+    assert_ne!(original, renamed, "renaming an action must change snapshot");
+    assert_ne!(
+        original, removed,
+        "removing typed actions must change snapshot"
+    );
+    assert!(original.contains("argument-value:loom/demo:action:status"));
+    assert!(renamed.contains("argument-value:loom/demo:action:inspect"));
+    assert!(
+        !removed
+            .iter()
+            .any(|capability| capability.starts_with("argument-value:loom/demo:action:"))
+    );
 }
 
 #[test]

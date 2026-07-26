@@ -1,6 +1,8 @@
 use std::{collections::BTreeSet, ffi::OsString};
 
-use clap::{Arg, ArgAction, Command, builder::PossibleValue, error::ErrorKind};
+use clap::{Arg, ArgAction, Command, CommandFactory, builder::PossibleValue, error::ErrorKind};
+
+use crate::cli::Cli;
 
 use super::{
     PublicArgv, PublicArgvError, PublicArgvErrorKind, command_schema_capabilities,
@@ -52,23 +54,58 @@ fn command_schema_ignores_fixture_values() {
     );
 }
 
+fn typed_positional_action_paths() -> BTreeSet<String> {
+    fn visit(command: &Command, prefix: &mut Vec<String>, paths: &mut BTreeSet<String>) {
+        for subcommand in command
+            .get_subcommands()
+            .filter(|subcommand| !subcommand.is_hide_set() && subcommand.get_name() != "help")
+        {
+            prefix.push(subcommand.get_name().to_string());
+            for action in subcommand
+                .get_positionals()
+                .filter(|argument| argument.get_id() == "action")
+                .flat_map(Arg::get_possible_values)
+                .filter(|value| !value.is_hide_set())
+            {
+                paths.insert(format!("{} {}", prefix.join(" "), action.get_name()));
+            }
+            visit(subcommand, prefix, paths);
+            prefix.pop();
+        }
+    }
+
+    let mut root = Cli::command();
+    root.build();
+    let mut paths = BTreeSet::new();
+    visit(&root, &mut vec!["loom".to_string()], &mut paths);
+    paths
+}
+
 #[test]
-fn public_command_paths_include_dispatched_positional_actions() {
-    let paths = public_command_paths();
-    for expected in [
-        "loom index build",
-        "loom index status",
-        "loom active recommend",
-    ] {
+fn public_command_paths_derive_typed_positional_actions() {
+    let typed_actions = typed_positional_action_paths();
+    for parent in ["loom index", "loom active"] {
         assert!(
-            paths.iter().any(|path| path == expected),
-            "public command paths missing positional action {expected:?}"
+            typed_actions
+                .iter()
+                .any(|path| path.starts_with(&format!("{parent} "))),
+            "{parent} must expose typed positional action metadata"
         );
     }
-    let direct = public_direct_command_paths();
+    let paths = public_command_paths().into_iter().collect::<BTreeSet<_>>();
+    assert!(
+        typed_actions.is_subset(&paths),
+        "public command paths missing typed positional actions: {:?}",
+        typed_actions.difference(&paths).collect::<Vec<_>>()
+    );
+    let direct = public_direct_command_paths()
+        .into_iter()
+        .collect::<BTreeSet<_>>();
+    assert!(typed_actions.is_subset(&direct));
     assert!(direct.iter().any(|path| path == "loom skill compile"));
-    assert!(!direct.iter().any(|path| path == "loom skill"));
-    assert!(!direct.iter().any(|path| path == "loom index"));
+    for parent in ["loom skill", "loom index", "loom active"] {
+        assert!(!direct.contains(parent));
+    }
 }
 
 fn contract_command_lines(contract: &str) -> Result<Vec<String>, String> {
@@ -142,28 +179,52 @@ fn parsed_contract_path(argv: Vec<String>) -> Result<String, String> {
     if argv.iter().any(|argument| argument == "--help") {
         return Ok(path.join(" "));
     }
-    if matches!(path.as_slice(), [loom, command] if loom == "loom" && command == "index") {
-        let index = argv
-            .iter()
-            .position(|token| token == "index")
-            .ok_or_else(|| "parsed index command has no index token".to_string())?;
-        let action = argv
-            .get(index + 1)
-            .filter(|action| matches!(action.as_str(), "build" | "status"))
-            .ok_or_else(|| format!("invalid documented index action in {argv:?}"))?;
-        path.push(action.clone());
-    } else if matches!(path.as_slice(), [loom, command] if loom == "loom" && command == "active") {
-        let index = argv
-            .iter()
-            .position(|token| token == "active")
-            .ok_or_else(|| "parsed active command has no active token".to_string())?;
-        let action = argv
-            .get(index + 1)
-            .filter(|action| action.as_str() == "recommend")
-            .ok_or_else(|| format!("invalid documented active action in {argv:?}"))?;
-        path.push(action.clone());
+    if let Some(action) = parsed_positional_action(&argv, &path)? {
+        path.push(action);
     }
     Ok(path.join(" "))
+}
+
+fn parsed_positional_action(
+    argv: &[String],
+    command_path: &[String],
+) -> Result<Option<String>, String> {
+    let mut root = Cli::command();
+    root.build();
+    let root_matches = root
+        .clone()
+        .try_get_matches_from(argv)
+        .map_err(|error| error.to_string())?;
+    let mut command = &root;
+    let mut matches = &root_matches;
+    for segment in command_path.iter().skip(1) {
+        command = command
+            .get_subcommands()
+            .find(|candidate| candidate.get_name() == segment)
+            .ok_or_else(|| format!("parsed command segment {segment:?} is absent from schema"))?;
+        matches = matches
+            .subcommand_matches(segment)
+            .ok_or_else(|| format!("parsed command segment {segment:?} is absent from matches"))?;
+    }
+    let Some(action_argument) = command
+        .get_positionals()
+        .find(|argument| argument.get_id() == "action")
+    else {
+        return Ok(None);
+    };
+    let possible_values = action_argument.get_possible_values();
+    if possible_values.is_empty() {
+        return Ok(None);
+    }
+    let action = matches
+        .get_one::<String>("action")
+        .ok_or_else(|| format!("documented positional action is absent in {argv:?}"))?;
+    possible_values
+        .into_iter()
+        .any(|value| value.matches(action, false))
+        .then(|| action.clone())
+        .ok_or_else(|| format!("invalid documented positional action in {argv:?}"))
+        .map(Some)
 }
 
 fn documented_contract_paths(contract: &str) -> Result<BTreeSet<String>, String> {
@@ -259,6 +320,17 @@ fn longer_command_does_not_document_direct_parent_path() {
     let missing =
         missing_contract_paths(&paths, "loom skill compile list demo").expect("parse fixture");
     assert_eq!(missing, paths.iter().collect::<Vec<_>>());
+}
+
+#[test]
+fn typed_action_metadata_preserves_runtime_validation() {
+    for argv in [
+        vec!["loom", "index", "unsupported"],
+        vec!["loom", "active", "unsupported", "task", "--agent", "codex"],
+    ] {
+        validate_public_argv(argv)
+            .expect("unknown positional action must reach runtime validation");
+    }
 }
 
 #[test]

@@ -29,12 +29,6 @@ pub use trace_check::{NextActionTraceReport, check_next_action_trace};
 
 pub const CLI_CONTRACT_VERSION: &str = "1.9.0";
 
-const POSITIONAL_ACTION_PATHS: &[&str] = &[
-    "loom index build",
-    "loom index status",
-    "loom active recommend",
-];
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct ContractVersion {
     pub major: u64,
@@ -205,6 +199,9 @@ pub fn public_command_paths() -> Vec<String> {
         {
             prefix.push(subcommand.get_name().to_string());
             paths.push(prefix.join(" "));
+            for action in positional_action_values(subcommand) {
+                paths.push(format!("{} {action}", prefix.join(" ")));
+            }
             visit(subcommand, prefix, paths);
             prefix.pop();
         }
@@ -214,15 +211,11 @@ pub fn public_command_paths() -> Vec<String> {
     root.build();
     let mut paths = Vec::new();
     visit(&root, &mut vec!["loom".to_string()], &mut paths);
-    paths.extend(
-        POSITIONAL_ACTION_PATHS
-            .iter()
-            .map(|path| (*path).to_string()),
-    );
     paths
 }
 
-pub fn public_direct_command_paths() -> Vec<String> {
+#[cfg(test)]
+fn public_direct_command_paths() -> Vec<String> {
     fn visit(command: &Command, prefix: &mut Vec<String>, paths: &mut Vec<String>) {
         for subcommand in command
             .get_subcommands()
@@ -230,11 +223,11 @@ pub fn public_direct_command_paths() -> Vec<String> {
         {
             prefix.push(subcommand.get_name().to_string());
             let path = prefix.join(" ");
-            if !subcommand.is_subcommand_required_set()
-                && !matches!(path.as_str(), "loom index" | "loom active")
-            {
-                paths.push(path);
+            let actions = positional_action_values(subcommand);
+            if actions.is_empty() && !subcommand.is_subcommand_required_set() {
+                paths.push(path.clone());
             }
+            paths.extend(actions.into_iter().map(|action| format!("{path} {action}")));
             visit(subcommand, prefix, paths);
             prefix.pop();
         }
@@ -242,16 +235,23 @@ pub fn public_direct_command_paths() -> Vec<String> {
 
     let mut root = Cli::command();
     root.build();
-    let mut paths = POSITIONAL_ACTION_PATHS
-        .iter()
-        .map(|path| (*path).to_string())
-        .collect::<Vec<_>>();
+    let mut paths = Vec::new();
     visit(&root, &mut vec!["loom".to_string()], &mut paths);
     paths
 }
 
-#[doc(hidden)]
-pub fn contract_example_argv_variants(command: &str) -> Vec<Vec<String>> {
+fn positional_action_values(command: &Command) -> Vec<String> {
+    command
+        .get_positionals()
+        .filter(|argument| argument.get_id() == "action")
+        .flat_map(Arg::get_possible_values)
+        .filter(|value| !value.is_hide_set())
+        .map(|value| value.get_name().to_string())
+        .collect()
+}
+
+#[cfg(test)]
+fn contract_example_argv_variants(command: &str) -> Vec<Vec<String>> {
     surface_check::command_variants(command, ExampleClassification::Executable)
 }
 

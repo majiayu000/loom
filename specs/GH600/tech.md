@@ -31,11 +31,14 @@ Status: implx auto implementation and local verification complete; independent r
    `exec` 仅用保守 scanner 定位 `tools.exec_command(...)` 调用并提取 object
    中的 quoted `cmd` string；字符串/注释中仅出现 `exec_command`、缺失
    `cmd`、非 string `cmd` 或无法闭合的结构均 fail closed。
-3. 使用 std-only shell tokenizer：
+3. `tool_read/shell.rs` 使用 std-only shell tokenizer 与 operand classifier：
    - 在 single/double quotes 与 escape 状态外识别 `;`、换行、`&&`、`||`、
      `|` 为 segment boundary；
-   - 每个 segment 去引号并生成 word tokens；
-   - 仅当首个 command token 是 B-002 read verb 时检查该 segment 的 operands；
+   - 每个 word 保留 single/double/unquoted/escaped provenance；仅 unquoted
+     `~` 及 unquoted/double-quoted `$HOME`/`${HOME}` 可展开；
+   - 每个 B-002 verb 使用独立的闭集 flag/value/program/path-option grammar，
+     `sed` program、option value、unknown option、help/version 不进入 operands，
+     `--` 显式终止 option parsing；
    - command substitution、backtick、未闭合 quote/escape 等无法保守解释的
      segment 不授权 invocation。
 4. trusted path validator 从 `HOME`（Windows fallback `USERPROFILE`）构造
@@ -60,7 +63,8 @@ Status: implx auto implementation and local verification complete; independent r
 
 - 保守 tokenizer 允许 false negative，不允许 false positive；未知复杂 shell
   语法保持不计数，不作为“尽力猜测”的理由。
-- home env 缺失时 trusted roots 为空，合法 read 不计数；不会扩大信任范围。
+- home env 缺失时 trusted roots 为空，候选 read 按 `Ignored` 不计数且不产生
+  rejection；不会扩大信任范围。
 - 这是 parser/fixture/docs additive correction，无持久化 schema migration。
   回滚该 commit 即恢复旧 parser；已写 events 仍符合既有 telemetry schema。
 
@@ -68,14 +72,14 @@ Status: implx auto implementation and local verification complete; independent r
 
 | Behavior invariant | Implementation area | Verification |
 | --- | --- | --- |
-| B-001 | `tool_read.rs` segment/token scanner | `cargo test --locked commands::telemetry::ingest::codex::tool_read::tests::read_paths_are_bound_to_their_command_segment` |
-| B-002 | `tool_read.rs` recognized verbs + exec extractors | `cargo test --locked commands::telemetry::ingest::codex::tool_read::tests::exec_and_exec_command_extract_supported_reads` |
+| B-001 | `tool_read/shell.rs` provenance-aware segment/token scanner | `cargo test --locked commands::telemetry::ingest::codex::tool_read::shell::tests::quote_and_escape_provenance_controls_home_expansion` |
+| B-002 | per-verb operand grammar + exec extractors | `cargo test --locked commands::telemetry::ingest::codex::tool_read::shell::tests::every_supported_verb_has_an_unambiguous_positive && cargo test --locked commands::telemetry::ingest::codex::tool_read::shell::tests::programs_options_and_short_circuits_are_not_paths` |
 | B-003 | `tool_read.rs` normalized actual-home path validator | `cargo test --locked commands::telemetry::ingest::codex::tool_read::tests::trusted_paths_are_component_aware` |
 | B-004 | `tool_read.rs` typed parse result + `codex.rs` rejection routing | `cargo test --locked commands::telemetry::ingest::codex::tests::recognized_tool_schema_drift_is_rejected` |
 | B-005 | `codex.rs` Context dedupe and stable record construction | `cargo test --locked commands::telemetry::ingest::codex::tests::current_exec_command_skill_read_is_parsed_once_per_turn` |
 | B-006 | existing redaction/event/cursor path + expanded E2E assertions | `cargo test --locked --test telemetry_ingest codex_tool_reads_are_precise_rejected_and_private` |
 | B-007 | existing structured injection parser/tests | `cargo test --locked commands::telemetry::ingest::codex::tests::rollout_context_and_structured_skill_are_parsed` |
-| B-008 | unit negative matrix + E2E fixture | `cargo test --locked commands::telemetry::ingest::codex && cargo test --locked --test telemetry_ingest` |
+| B-008 | unit missing-home/negative matrix + E2E fixture | `cargo test --locked commands::telemetry::ingest::codex::tool_read::shell::tests::missing_home_keeps_reads_untrusted_and_ignored && cargo test --locked --test telemetry_ingest` |
 
 ## 5. 验证计划
 
@@ -95,5 +99,5 @@ Status: implx auto implementation and local verification complete; independent r
 
 <!-- specrail-requires-planned-changes-v1 -->
 <!-- specrail-planned-changes
-{"version":1,"issue":600,"complete":true,"paths":["src/commands/telemetry/ingest/codex.rs","src/commands/telemetry/ingest/codex/tool_read.rs","tests/telemetry_ingest.rs","tests/fixtures/telemetry_ingest/codex/sessions/2026/07/session-codex.jsonl","docs/LOOM_CLI_CONTRACT_OPERATIONS.md","docs/agent-command-surfaces.toml","specs/GH600/product.md","specs/GH600/tech.md","specs/GH600/tasks.md"],"spec_refs":["specs/GH600/product.md#4-行为不变量","specs/GH600/tech.md#5-验证计划"]}
+{"version":1,"issue":600,"complete":true,"paths":["src/commands/telemetry/ingest/codex.rs","src/commands/telemetry/ingest/codex/tool_read.rs","src/commands/telemetry/ingest/codex/tool_read/shell.rs","tests/telemetry_ingest.rs","tests/fixtures/telemetry_ingest/codex/sessions/2026/07/session-codex.jsonl","docs/LOOM_CLI_CONTRACT_OPERATIONS.md","docs/agent-command-surfaces.toml","specs/GH600/product.md","specs/GH600/tech.md","specs/GH600/tasks.md"],"spec_refs":["specs/GH600/product.md#4-行为不变量","specs/GH600/tech.md#5-验证计划"]}
 -->

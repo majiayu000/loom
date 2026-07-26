@@ -36,12 +36,17 @@ shell chain 中的删除 operand、伪造 trusted-root 前缀和损坏的 tool s
 1. **B-001** read verb 只能授权同一 simple command segment 中的 path
    operands。quoted token 与 `;`、换行、`&&`、`||`、pipeline 等 control
    operator 必须按 segment 处理；`echo`/free-text 中出现 read verb、另一个
-   segment 的 `rm` operand 或无法保守分词的 command 均不得产生调用。
+   segment 的 `rm` operand 或无法保守分词的 command 均不得产生调用。token
+   必须保留 quote/escape provenance：single-quoted 或 escaped `$HOME` 是
+   literal，不得展开；double-quoted `$HOME` 只按 shell variable 语义展开。
 2. **B-002** 支持的 read verb 是闭集
    `{cat, sed, head, tail, less, more, bat, get-content}`，匹配忽略 ASCII
    大小写但要求完整 command token。`exec_command` 读取其 JSON `cmd`；
    `exec` 只读取可保守提取的 nested `exec_command` 的 `cmd`，其他函数或
-   仅含相似文本的源码不授权路径。
+   仅含相似文本的源码不授权路径。每个 verb 必须使用自身的闭集 option
+   grammar 识别真实 file operands；sed program、option value、未知/歧义
+   option 和 help/version short-circuit 均不得成为 Skill path，`--` 之后才
+   按 literal operand 处理。
 3. **B-003** trusted roots 必须从进程实际 home 构造，并以 normalized、
    component-aware `Path` 校验：
    `.codex/skills`、`.agents/skills`、`.claude/skills`、
@@ -65,19 +70,23 @@ shell chain 中的删除 operand、伪造 trusted-root 前缀和损坏的 tool s
    unmatched name validation 或 existing report 行为。
 8. **B-008** schema 合法但不含受支持 read、路径不受信任或与 Skill 读取
    无关的 function call 仍是 `Ignored`，不得伪造 rejection 或 invocation；
-   正负例必须同时由 unit 与 end-to-end fixture 固化。
+   `HOME`/`USERPROFILE` 均缺失时所有候选路径保持 untrusted/`Ignored`，不得
+   产生 `missing_home` rejection；正负例必须同时由 unit 与 end-to-end
+   fixture 固化。
 
 ## 5. 验收标准
 
 1. `exec_command` 与 `exec` 对实际 home 下受信任 roots 的读取均产生调用，
    同 turn 去重。
-2. chain/pipeline/quoting fixture 证明只有 read segment 自身的 operand 被计数。
+2. chain/pipeline/quoting fixture 证明只有 read segment 自身的真实 file
+   operand 被计数，single-quoted/escaped home 与 option/program values 不计数。
 3. prefix spoof、`..`、无关 nested `.codex` 与 plugin-cache 伪路径均不计数。
 4. malformed JSON、arguments 类型漂移、缺失/错误 `cmd` 均按稳定 reason
    进入 `rejected`。
 5. legacy structured injection 现有测试保持通过。
 6. end-to-end events/cursor/envelope 不包含 fixture 的 raw command/path/prompt。
 7. focused tests、`cargo check --locked` 与指定 telemetry ingest 集成测试通过。
+8. 八个 read verb 均有正例；缺失 home 的 E2E 返回成功且不计 tool read/rejection。
 
 ## 6. 边界清单
 

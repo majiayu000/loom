@@ -971,80 +971,80 @@ classification = "legacy"
 [[example]]
 id = "cli_contract_operations.backup_export"
 surface = "cli_contract_operations"
-line_range = [764, 764]
+line_range = [767, 767]
 classification = "executable"
 [[example]]
 id = "cli_contract_operations.backup_inspect"
 surface = "cli_contract_operations"
-line_range = [779, 779]
+line_range = [782, 782]
 classification = "executable"
 [[example]]
 id = "cli_contract_operations.backup_restore"
 surface = "cli_contract_operations"
-line_range = [789, 789]
+line_range = [792, 792]
 classification = "executable"
 [[example]]
 id = "cli_contract_operations.monitor_alias"
 surface = "cli_contract_operations"
-line_range = [805, 805]
+line_range = [808, 808]
 classification = "executable"
 [[example]]
 id = "cli_contract_operations.binding_show"
 surface = "cli_contract_operations"
-line_range = [817, 817]
+line_range = [820, 820]
 classification = "executable"
 [[example]]
 id = "cli_contract_operations.workspace_remote"
 surface = "cli_contract_operations"
-line_range = [827, 828]
+line_range = [830, 831]
 classification = "executable"
 [[example]]
 id = "cli_contract_operations.skill_history"
 surface = "cli_contract_operations"
-line_range = [838, 838]
+line_range = [841, 841]
 classification = "executable"
 [[example]]
 id = "cli_contract_operations.skill_trash"
 surface = "cli_contract_operations"
-line_range = [853, 856]
+line_range = [856, 859]
 classification = "executable"
 [[example]]
 id = "cli_contract_operations.skill_orphan"
 surface = "cli_contract_operations"
-line_range = [870, 871]
+line_range = [873, 874]
 classification = "executable"
 [[example]]
 id = "cli_contract_operations.skill_watch"
 surface = "cli_contract_operations"
-line_range = [883, 883]
+line_range = [886, 886]
 classification = "executable"
 [[example]]
 id = "cli_contract_operations.skill_discovery"
 surface = "cli_contract_operations"
-line_range = [901, 902]
+line_range = [904, 905]
 classification = "executable"
 [[example]]
 id = "cli_contract_operations.index"
 surface = "cli_contract_operations"
-line_range = [919, 919]
+line_range = [922, 922]
 classification = "executable"
 [[example]]
 id = "cli_contract_operations.active_recommend"
 surface = "cli_contract_operations"
-line_range = [927, 927]
+line_range = [930, 930]
 classification = "executable"
 [[example]]
 id = "cli_contract_operations.agent_preflight"
 surface = "cli_contract_operations"
-line_range = [939, 939]
+line_range = [942, 942]
 classification = "executable"
 [[example]]
 id = "cli_contract_operations.agent_reconcile"
 surface = "cli_contract_operations"
-line_range = [954, 954]
+line_range = [957, 957]
 classification = "executable"
 [[example]]
 id = "cli_contract_operations.panel"
 surface = "cli_contract_operations"
-line_range = [970, 970]
+line_range = [973, 973]
 classification = "executable"

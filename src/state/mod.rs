@@ -1,8 +1,10 @@
+mod errors;
 pub(crate) mod journal;
 mod lock;
 mod ops;
 mod registry_ops;
 
+pub use errors::{LockError, ToolRepoRootError};
 pub use ops::OpsAuditOperation;
 pub use registry_ops::OperationCounts;
 
@@ -21,6 +23,13 @@ use crate::fs_util::write_atomic;
 use crate::gemini_cli;
 
 pub const DEFAULT_REGISTRY_DIR: &str = ".loom-registry";
+
+fn lock_busy(name: &str) -> anyhow::Error {
+    LockError::Busy {
+        name: name.to_string(),
+    }
+    .into()
+}
 
 type InProcMap = Arc<Mutex<HashMap<String, (PathBuf, std::thread::ThreadId, usize, String)>>>;
 
@@ -306,10 +315,10 @@ impl AppContext {
 
     pub fn ensure_not_loom_tool_repo_root(&self) -> Result<()> {
         if is_loom_tool_repo_root(&self.root) {
-            anyhow::bail!(
-                "ARG_INVALID:refusing write operations in Loom tool repository root '{}'; use --root <separate skill registry repo>",
-                self.root.display()
-            );
+            return Err(ToolRepoRootError {
+                root: self.root.display().to_string(),
+            }
+            .into());
         }
         Ok(())
     }
@@ -371,19 +380,19 @@ impl AppContext {
                     {
                         let map = self.in_proc.lock().expect("in_proc mutex poisoned");
                         if map.contains_key(name) {
-                            anyhow::bail!("LOCK_BUSY:{}", name);
+                            return Err(lock_busy(name));
                         }
                     }
                     if try_reap_stale_lock(&lock_path)? {
                         continue;
                     }
-                    anyhow::bail!("LOCK_BUSY:{}", name);
+                    return Err(lock_busy(name));
                 }
                 Err(err) => return Err(err).context("failed to acquire lock"),
             }
         }
 
-        anyhow::bail!("LOCK_BUSY:{}", name)
+        Err(lock_busy(name))
     }
 
     pub fn ensure_gitignore_entries(&self) -> Result<()> {

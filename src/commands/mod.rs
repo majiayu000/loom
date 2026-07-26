@@ -168,12 +168,13 @@ impl App {
         let audit_enabled = command_meta.records_audit()
             && (audit_required || self.ctx.ensure_not_loom_tool_repo_root().is_ok());
         if audit_required && let Err(err) = self.ctx.ensure_not_loom_tool_repo_root() {
-            let message = err.to_string();
-            let message = message
-                .strip_prefix("ARG_INVALID:")
-                .map(str::trim)
-                .unwrap_or(&message);
-            let env = Envelope::err(cmd, request_id, ErrorCode::ArgInvalid, message, json!({}));
+            let env = Envelope::err(
+                cmd,
+                request_id,
+                ErrorCode::ArgInvalid,
+                err.to_string(),
+                json!({}),
+            );
             return Ok((env, ErrorCode::ArgInvalid.exit_code()));
         }
         let mut audit_event_id = None;
@@ -460,12 +461,13 @@ impl App {
         F: FnMut(String) -> std::result::Result<(serde_json::Value, Meta), CommandFailure> + ?Sized,
     {
         if let Err(err) = self.ctx.ensure_not_loom_tool_repo_root() {
-            let message = err.to_string();
-            let message = message
-                .strip_prefix("ARG_INVALID:")
-                .map(str::trim)
-                .unwrap_or(&message);
-            let env = Envelope::err(cmd, request_id, ErrorCode::ArgInvalid, message, json!({}));
+            let env = Envelope::err(
+                cmd,
+                request_id,
+                ErrorCode::ArgInvalid,
+                err.to_string(),
+                json!({}),
+            );
             return (env, ErrorCode::ArgInvalid.exit_code());
         }
 

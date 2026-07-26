@@ -105,6 +105,14 @@ impl ErrorCode {
         }
     }
 
+    /// Parse a wire error code previously produced by [`ErrorCode::as_str`].
+    ///
+    /// Returns `None` for transport-only codes that have no CLI counterpart
+    /// (for example the panel's `UNAUTHORIZED`).
+    pub fn from_wire(value: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|code| code.as_str() == value)
+    }
+
     pub fn exit_code(self) -> i32 {
         match self {
             Self::ArgInvalid => 2,

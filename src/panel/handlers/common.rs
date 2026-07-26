@@ -5,7 +5,7 @@ use serde_json::json;
 use crate::commands::CommandFailure;
 use crate::envelope::Envelope;
 
-use super::super::auth::{status_for_error_code, status_for_registry_error_payload};
+use super::super::auth::{status_for_error, status_for_registry_error_payload};
 
 pub(super) const DEFAULT_OPS_PAGE_SIZE: usize = 100;
 pub(super) const MAX_OPS_PAGE_SIZE: usize = 250;
@@ -35,7 +35,7 @@ pub(super) fn panel_command_envelope(
             Json(json!(Envelope::ok(cmd, request_id, data, meta))),
         ),
         Err(err) => (
-            status_for_error_code(Some(err.code.as_str())),
+            status_for_error(err.code),
             Json(json!(Envelope::err(
                 cmd,
                 request_id,

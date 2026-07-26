@@ -21,7 +21,7 @@ use crate::state_model::RegistryStatePaths;
 use crate::types::ErrorCode;
 
 use super::file_ops::copy_dir_recursive_preserving_symlinks;
-use super::helpers::{map_git, map_io, map_lock, map_registry_state};
+use super::helpers::{map_arg, map_git, map_io, map_lock, map_registry_state};
 use super::{App, CommandFailure};
 
 const BACKUP_SCHEMA_VERSION: u32 = 1;
@@ -211,9 +211,7 @@ impl App {
     fn require_backup_source_ready(
         &self,
     ) -> std::result::Result<crate::state_model::RegistrySnapshot, CommandFailure> {
-        self.ctx
-            .ensure_not_loom_tool_repo_root()
-            .map_err(map_arg_error)?;
+        self.ctx.ensure_not_loom_tool_repo_root().map_err(map_arg)?;
         if !self.ctx.root.is_dir() {
             return Err(CommandFailure::new(
                 ErrorCode::ArgInvalid,
@@ -424,7 +422,7 @@ fn inspect_backup_artifact(
     let mut archive = Archive::new(file);
     for entry in archive.entries().map_err(map_io)? {
         let mut entry = entry.map_err(map_io)?;
-        validate_archive_entry(&entry).map_err(map_arg_error)?;
+        validate_archive_entry(&entry).map_err(map_arg)?;
         if !entry.unpack_in(temp.path()).map_err(map_io)? {
             return Err(CommandFailure::new(
                 ErrorCode::ArgInvalid,
@@ -537,7 +535,7 @@ fn validate_restore_root(
     AppContext::new(Some(root.to_path_buf()))
         .map_err(map_io)?
         .ensure_not_loom_tool_repo_root()
-        .map_err(map_arg_error)?;
+        .map_err(map_arg)?;
     let metadata = match fs::symlink_metadata(root) {
         Ok(metadata) => metadata,
         Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(()),
@@ -762,14 +760,4 @@ fn parent_or_cwd(path: &Path) -> &Path {
     path.parent()
         .filter(|parent| !parent.as_os_str().is_empty())
         .unwrap_or_else(|| Path::new("."))
-}
-
-fn map_arg_error(err: anyhow::Error) -> CommandFailure {
-    let message = err.to_string();
-    let message = message
-        .strip_prefix("ARG_INVALID:")
-        .map(str::trim)
-        .unwrap_or(&message)
-        .to_string();
-    CommandFailure::new(ErrorCode::ArgInvalid, message)
 }

@@ -16,7 +16,8 @@ use uuid::Uuid;
 use crate::cli::{Cli, Command};
 use crate::error_actions::default_next_actions;
 use crate::state::AppContext;
-use crate::state_model::RegistryStatePaths;
+use crate::state_model::{RegistryStateError, RegistryStatePaths};
+use crate::types::ErrorCode;
 
 use super::PanelState;
 
@@ -210,35 +211,63 @@ pub(crate) fn run_panel_service(
     (status, Json(payload))
 }
 
-pub(crate) fn status_for_error_code(code: Option<&str>) -> StatusCode {
-    match code.unwrap_or("INTERNAL_ERROR") {
-        "ARG_INVALID" | "STATE_NOT_INITIALIZED" => StatusCode::BAD_REQUEST,
-        "SKILL_NOT_FOUND" | "BINDING_NOT_FOUND" | "TARGET_NOT_FOUND" | "TRASH_ENTRY_NOT_FOUND" => {
-            StatusCode::NOT_FOUND
-        }
-        "TARGET_NOT_MANAGED"
-        | "TARGET_AGENT_MISMATCH"
-        | "PROJECTION_CONFLICT"
-        | "PROJECTION_METHOD_UNSUPPORTED"
-        | "POLICY_BLOCKED"
-        | "CAPTURE_CONFLICT" => StatusCode::CONFLICT,
-        "LOCK_BUSY"
-        | "DEPENDENCY_CONFLICT"
-        | "REMOTE_DIVERGED"
-        | "PUSH_REJECTED"
-        | "REPLAY_CONFLICT" => StatusCode::CONFLICT,
-        "UNAUTHORIZED" => StatusCode::FORBIDDEN,
-        "REMOTE_UNREACHABLE" => StatusCode::BAD_GATEWAY,
-        _ => StatusCode::INTERNAL_SERVER_ERROR,
+/// Transport-only error code the panel emits for rejected requests. It has no
+/// [`ErrorCode`] counterpart because the CLI never produces it.
+const UNAUTHORIZED_CODE: &str = "UNAUTHORIZED";
+
+/// HTTP status for every CLI error code.
+///
+/// The match is exhaustive on purpose: adding an [`ErrorCode`] variant fails
+/// the build here instead of silently defaulting to 500.
+pub(crate) fn status_for_error(code: ErrorCode) -> StatusCode {
+    match code {
+        ErrorCode::ArgInvalid | ErrorCode::StateNotInitialized => StatusCode::BAD_REQUEST,
+        ErrorCode::SkillNotFound
+        | ErrorCode::BindingNotFound
+        | ErrorCode::TargetNotFound
+        | ErrorCode::TrashEntryNotFound => StatusCode::NOT_FOUND,
+        ErrorCode::TargetNotManaged
+        | ErrorCode::TargetAgentMismatch
+        | ErrorCode::ProjectionConflict
+        | ErrorCode::ProjectionMethodUnsupported
+        | ErrorCode::PolicyBlocked
+        | ErrorCode::CaptureConflict
+        | ErrorCode::LockBusy
+        | ErrorCode::DependencyConflict
+        | ErrorCode::RemoteDiverged
+        | ErrorCode::PushRejected
+        | ErrorCode::ReplayConflict => StatusCode::CONFLICT,
+        ErrorCode::RemoteUnreachable => StatusCode::BAD_GATEWAY,
+        ErrorCode::InitError
+        | ErrorCode::SchemaMismatch
+        | ErrorCode::StateCorrupt
+        | ErrorCode::ProviderNotFound
+        | ErrorCode::EvalFailed
+        | ErrorCode::CommitDirectionAmbiguous
+        | ErrorCode::AuditError
+        | ErrorCode::QueueBlocked
+        | ErrorCode::AdapterInvalid
+        | ErrorCode::GitError
+        | ErrorCode::IoError
+        | ErrorCode::InternalError => StatusCode::INTERNAL_SERVER_ERROR,
     }
 }
 
-pub(crate) fn status_for_registry_state_load_error(code: Option<&str>) -> StatusCode {
+pub(crate) fn status_for_error_code(code: Option<&str>) -> StatusCode {
     match code {
-        Some("ARG_INVALID" | "STATE_NOT_INITIALIZED") => StatusCode::BAD_REQUEST,
-        Some("SCHEMA_MISMATCH" | "STATE_CORRUPT") => StatusCode::INTERNAL_SERVER_ERROR,
-        _ => status_for_error_code(code),
+        Some(UNAUTHORIZED_CODE) => StatusCode::FORBIDDEN,
+        Some(code) => {
+            ErrorCode::from_wire(code).map_or(StatusCode::INTERNAL_SERVER_ERROR, status_for_error)
+        }
+        None => StatusCode::INTERNAL_SERVER_ERROR,
     }
+}
+
+/// Registry snapshot load failures use the shared error-code table: bad input
+/// (`ARG_INVALID`, `STATE_NOT_INITIALIZED`) is a 400, unreadable state
+/// (`SCHEMA_MISMATCH`, `STATE_CORRUPT`) is a 500.
+pub(crate) fn status_for_registry_state_load_error(code: Option<&str>) -> StatusCode {
+    status_for_error_code(code)
 }
 
 pub(crate) fn status_for_registry_error_payload(payload: &serde_json::Value) -> StatusCode {
@@ -294,13 +323,8 @@ pub(super) fn load_registry_snapshot(
             ),
         )),
         Err(err) => {
-            let message = err.to_string();
-            let code = if message.contains("schema version mismatch") {
-                "SCHEMA_MISMATCH"
-            } else {
-                "STATE_CORRUPT"
-            };
-            Err(registry_error(cmd, code, message))
+            let code = RegistryStateError::classify(&err);
+            Err(registry_error(cmd, code.as_str(), err.to_string()))
         }
     }
 }

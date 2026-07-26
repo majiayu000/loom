@@ -13,6 +13,17 @@ const HISTORY: &str = "docs/cli-contract-history.toml";
 const CONTRACT_SOURCE: &str = "src/cli_contract.rs";
 const LEGACY_COMMAND_TREE_SNAPSHOT_VERSION: u64 = 1;
 const COMMAND_TREE_SNAPSHOT_VERSION: u64 = 2;
+const V1_TO_V2_REMOVED_CAPABILITIES: [&str; 2] = [
+    "cli:argument-core:loom/active:action:sha256:a810c9f01597d8268e8fd2d03e447f27ba6e1b2f617d50613a399656d6fc5dfb",
+    "cli:argument-core:loom/index:action:sha256:a810c9f01597d8268e8fd2d03e447f27ba6e1b2f617d50613a399656d6fc5dfb",
+];
+const V1_TO_V2_ADDED_CAPABILITIES: [&str; 5] = [
+    "cli:argument-core:loom/active:action:sha256:26d4a6dbdab5ab57f1fb0ea539c5e95205e7a2ed63aa11ab9e092d8984f5445b",
+    "cli:argument-core:loom/index:action:sha256:26d4a6dbdab5ab57f1fb0ea539c5e95205e7a2ed63aa11ab9e092d8984f5445b",
+    "cli:argument-value:loom/active:action:recommend",
+    "cli:argument-value:loom/index:action:build",
+    "cli:argument-value:loom/index:action:status",
+];
 
 pub fn check_contract_range_policy(
     repo_root: &Path,
@@ -293,59 +304,18 @@ fn is_v1_to_v2_action_snapshot_migration(
     base: &BTreeSet<String>,
     current: &BTreeSet<String>,
 ) -> bool {
-    const CORE_IDENTITIES: [&str; 2] = [
-        "cli:argument-core:loom/active:action",
-        "cli:argument-core:loom/index:action",
-    ];
-    const ACTION_VALUES: [&str; 3] = [
-        "cli:argument-value:loom/active:action:recommend",
-        "cli:argument-value:loom/index:action:build",
-        "cli:argument-value:loom/index:action:status",
-    ];
-
     let removed = base
         .difference(current)
         .map(String::as_str)
-        .collect::<Vec<_>>();
+        .collect::<BTreeSet<_>>();
     let added = current
         .difference(base)
         .map(String::as_str)
-        .collect::<Vec<_>>();
-    let removed_identities = removed
-        .iter()
-        .filter_map(|capability| argument_core_identity(capability))
         .collect::<BTreeSet<_>>();
-    let added_identities = added
-        .iter()
-        .filter_map(|capability| argument_core_identity(capability))
-        .collect::<BTreeSet<_>>();
-    let expected_identities = CORE_IDENTITIES.into_iter().collect::<BTreeSet<_>>();
-    let added_values = added
-        .iter()
-        .copied()
-        .filter(|capability| capability.starts_with("cli:argument-value:"))
-        .collect::<BTreeSet<_>>();
-    let expected_values = ACTION_VALUES.into_iter().collect::<BTreeSet<_>>();
+    let expected_removed = V1_TO_V2_REMOVED_CAPABILITIES.into_iter().collect();
+    let expected_added = V1_TO_V2_ADDED_CAPABILITIES.into_iter().collect();
 
-    removed.len() == 2
-        && added.len() == 5
-        && removed_identities == expected_identities
-        && added_identities == expected_identities
-        && added_values == expected_values
-        && CORE_IDENTITIES.into_iter().all(|identity| {
-            [base, current].into_iter().all(|capabilities| {
-                capabilities
-                    .iter()
-                    .filter(|capability| argument_core_identity(capability) == Some(identity))
-                    .count()
-                    == 1
-            })
-        })
-}
-
-fn argument_core_identity(capability: &str) -> Option<&str> {
-    let (identity, hash) = capability.rsplit_once(":sha256:")?;
-    (identity.starts_with("cli:argument-core:") && !hash.is_empty()).then_some(identity)
+    removed == expected_removed && added == expected_added
 }
 
 fn enforce_capability_version(
@@ -485,7 +455,8 @@ mod tests {
     use std::collections::BTreeSet;
 
     use super::{
-        ContractVersion, enforce_capability_transition, enforce_capability_version,
+        ContractVersion, V1_TO_V2_ADDED_CAPABILITIES, V1_TO_V2_REMOVED_CAPABILITIES,
+        enforce_capability_transition, enforce_capability_version,
         ensure_contract_range_contains_version,
     };
 
@@ -648,22 +619,19 @@ mod tests {
     }
 
     fn v1_action_snapshot() -> BTreeSet<String> {
-        BTreeSet::from([
-            "cli:argument-core:loom/active:action:sha256:active-v1".to_string(),
-            "cli:argument-core:loom/index:action:sha256:index-v1".to_string(),
-            "cli:command:loom".to_string(),
-        ])
+        V1_TO_V2_REMOVED_CAPABILITIES
+            .into_iter()
+            .chain(["cli:command:loom"])
+            .map(str::to_string)
+            .collect()
     }
 
     fn v2_action_snapshot() -> BTreeSet<String> {
-        BTreeSet::from([
-            "cli:argument-core:loom/active:action:sha256:active-v2".to_string(),
-            "cli:argument-core:loom/index:action:sha256:index-v2".to_string(),
-            "cli:argument-value:loom/active:action:recommend".to_string(),
-            "cli:argument-value:loom/index:action:build".to_string(),
-            "cli:argument-value:loom/index:action:status".to_string(),
-            "cli:command:loom".to_string(),
-        ])
+        V1_TO_V2_ADDED_CAPABILITIES
+            .into_iter()
+            .chain(["cli:command:loom"])
+            .map(str::to_string)
+            .collect()
     }
 
     #[test]
@@ -708,6 +676,27 @@ mod tests {
             Some(2),
         )
         .expect_err("the migration must not hide extra additions");
+        assert!(error.to_string().contains("major bump"), "{error}");
+    }
+
+    #[test]
+    fn action_snapshot_v1_to_v2_rejects_non_whitelisted_core_hash() {
+        let base = v1_action_snapshot();
+        let mut current = v2_action_snapshot();
+        current.remove(V1_TO_V2_ADDED_CAPABILITIES[0]);
+        current.insert(
+            "cli:argument-core:loom/active:action:sha256:0000000000000000000000000000000000000000000000000000000000000000"
+                .to_string(),
+        );
+        let error = enforce_capability_transition(
+            version(1, 9, 0),
+            version(1, 9, 0),
+            &base,
+            &current,
+            Some(1),
+            Some(2),
+        )
+        .expect_err("a non-whitelisted action hash must follow normal major-version policy");
         assert!(error.to_string().contains("major bump"), "{error}");
     }
 

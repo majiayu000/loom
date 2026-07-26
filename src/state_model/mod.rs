@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 mod json_io;
 mod persistence;
 use std::collections::HashSet;
@@ -450,30 +448,6 @@ impl RegistrySnapshot {
             .projections
             .iter()
             .filter(|projection| projection.binding_id.as_deref() == Some(binding_id))
-            .cloned()
-            .collect()
-    }
-
-    pub fn target_rules(&self, target_id: &str) -> Vec<RegistryBindingRule> {
-        self.target_relations(target_id)
-            .rules
-            .into_iter()
-            .cloned()
-            .collect()
-    }
-
-    pub fn target_projections(&self, target_id: &str) -> Vec<RegistryProjectionInstance> {
-        self.target_relations(target_id)
-            .projections
-            .into_iter()
-            .cloned()
-            .collect()
-    }
-
-    pub fn target_bindings(&self, target_id: &str) -> Vec<RegistryWorkspaceBinding> {
-        self.target_relations(target_id)
-            .bindings
-            .into_iter()
             .cloned()
             .collect()
     }

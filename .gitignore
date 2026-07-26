@@ -2,6 +2,9 @@
 /state/
 # Local Claude Code session worktrees; shared .claude config remains trackable.
 /.claude/worktrees/
+# Local agent run logs and external tool runtime state; not repo content.
+/artifacts/
+/.specrail/
 /state/locks/
 /state/panel.log
 /state/targets.json

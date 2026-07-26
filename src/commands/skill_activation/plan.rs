@@ -9,7 +9,8 @@ use crate::state_model::{
     RegistryProjectionInstance, RegistryProjectionTarget, RegistryWorkspaceBinding,
 };
 
-use super::super::helpers::projection_method_as_str;
+use super::super::CommandFailure;
+use super::super::helpers::{map_io, projection_method_as_str};
 use super::resolve::{ActivationResolved, scope_str};
 
 #[derive(Debug, Serialize)]
@@ -182,19 +183,26 @@ pub(super) fn binding_matches_scope(
     binding: &RegistryWorkspaceBinding,
     scope: ActivationScope,
     workspace: Option<&Path>,
-) -> bool {
+) -> std::result::Result<bool, CommandFailure> {
     match scope {
+        // User bindings use a scope marker. It is intentionally not interpreted
+        // as the final component of a project workspace.
         ActivationScope::User => {
-            binding.workspace_matcher.kind == "name" && binding.workspace_matcher.value == "user"
+            Ok(binding.workspace_matcher.kind == "name"
+                && binding.workspace_matcher.value == "user")
         }
         ActivationScope::Project => {
             let Some(workspace) = workspace else {
-                return false;
+                return Ok(false);
             };
             match binding.workspace_matcher.kind.as_str() {
-                "path_prefix" => workspace.starts_with(Path::new(&binding.workspace_matcher.value)),
-                "exact_path" => workspace == Path::new(&binding.workspace_matcher.value),
-                _ => false,
+                "path_prefix" | "exact_path" => binding
+                    .workspace_matcher
+                    .matches_workspace(workspace)
+                    .map_err(map_io),
+                // A project selector never consumes the user-scope marker.
+                "name" => Ok(false),
+                _ => Ok(false),
             }
         }
     }
@@ -219,4 +227,93 @@ fn action(
 
 fn projection_exists_for_plan(resolved: &ActivationResolved) -> bool {
     resolved.materialized_path.exists() || fs::symlink_metadata(&resolved.materialized_path).is_ok()
+}
+
+#[cfg(all(test, unix))]
+mod workspace_matcher_tests {
+    use super::binding_matches_scope;
+    use crate::cli::ActivationScope;
+    use crate::core::vocab::MatcherKind;
+    use crate::state_model::{RegistryWorkspaceBinding, RegistryWorkspaceMatcher};
+    use crate::types::ErrorCode;
+    use std::os::unix::fs::symlink;
+    use std::path::Path;
+
+    fn binding(kind: MatcherKind, value: &Path) -> RegistryWorkspaceBinding {
+        RegistryWorkspaceBinding {
+            binding_id: "binding-test".to_string(),
+            agent: "codex".into(),
+            profile_id: "default".to_string(),
+            workspace_matcher: RegistryWorkspaceMatcher {
+                kind,
+                value: value.display().to_string(),
+            },
+            default_target_id: "target-test".to_string(),
+            policy_profile: "safe-capture".to_string(),
+            active: true,
+            created_at: None,
+        }
+    }
+
+    #[test]
+    fn project_scope_uses_authoritative_symlink_matching() {
+        let base = std::env::temp_dir().join(format!(
+            "loom_activation_match_{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let real = base.join("real");
+        std::fs::create_dir_all(real.join("project")).expect("create project");
+        let link = base.join("link");
+        symlink(&real, &link).expect("create workspace symlink");
+        let binding = binding(MatcherKind::PathPrefix, &real);
+
+        assert!(
+            binding_matches_scope(
+                &binding,
+                ActivationScope::Project,
+                Some(&link.join("project")),
+            )
+            .expect("project matcher")
+        );
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn user_scope_marker_is_not_a_project_basename_matcher() {
+        let binding = binding(MatcherKind::Name, Path::new("user"));
+        assert!(
+            binding_matches_scope(&binding, ActivationScope::User, None)
+                .expect("user scope marker")
+        );
+        assert!(
+            !binding_matches_scope(
+                &binding,
+                ActivationScope::Project,
+                Some(Path::new("/workspace/user")),
+            )
+            .expect("project scope")
+        );
+    }
+
+    #[test]
+    fn project_scope_maps_symlink_loop_to_io_error() {
+        let base = std::env::temp_dir().join(format!(
+            "loom_activation_loop_{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        std::fs::create_dir_all(&base).expect("create loop root");
+        let left = base.join("left");
+        let right = base.join("right");
+        symlink(&right, &left).expect("create first loop edge");
+        symlink(&left, &right).expect("create second loop edge");
+        let binding = binding(MatcherKind::ExactPath, &left);
+
+        let err = binding_matches_scope(&binding, ActivationScope::Project, Some(&left))
+            .expect_err("loop must reach command error");
+        assert_eq!(err.code, ErrorCode::IoError);
+
+        std::fs::remove_file(&left).ok();
+        std::fs::remove_file(&right).ok();
+        std::fs::remove_dir_all(&base).ok();
+    }
 }

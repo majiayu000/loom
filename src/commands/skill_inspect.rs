@@ -234,7 +234,7 @@ fn build_runtime_status(
     source_exists: bool,
     snapshot: Option<&RegistrySnapshot>,
     selector: Selector<'_>,
-) -> BTreeMap<String, RuntimeStatus> {
+) -> std::result::Result<BTreeMap<String, RuntimeStatus>, CommandFailure> {
     let agents = runtime_agents(skill, snapshot, selector.agent);
     agents
         .into_iter()
@@ -246,8 +246,8 @@ fn build_runtime_status(
                 source_exists,
                 snapshot,
                 &selector,
-            );
-            (agent, status)
+            )?;
+            Ok((agent, status))
         })
         .collect()
 }
@@ -299,9 +299,9 @@ fn classify_agent_runtime(
     source_exists: bool,
     snapshot: Option<&RegistrySnapshot>,
     selector: &Selector<'_>,
-) -> RuntimeStatus {
+) -> std::result::Result<RuntimeStatus, CommandFailure> {
     let Some(snapshot) = snapshot else {
-        return RuntimeStatus {
+        return Ok(RuntimeStatus {
             installed_in_registry: source_exists,
             active_rule_present: false,
             projected_to_target: false,
@@ -321,11 +321,11 @@ fn classify_agent_runtime(
                 "registry state is not initialized; runtime projection state is not checked",
                 None,
             )],
-        };
+        });
     };
 
-    let rules = matching_rules(snapshot, skill, agent, selector);
-    let projections = matching_projections(snapshot, skill, agent, selector);
+    let rules = matching_rules(snapshot, skill, agent, selector)?;
+    let projections = matching_projections(snapshot, skill, agent, selector)?;
     let primary_rule = rules.first();
     let primary_projection = projections.first();
     let primary_target = primary_projection
@@ -367,7 +367,7 @@ fn classify_agent_runtime(
         "not_checked"
     };
 
-    RuntimeStatus {
+    Ok(RuntimeStatus {
         installed_in_registry: source_exists,
         active_rule_present: !rules.is_empty(),
         projected_to_target: projected,
@@ -382,7 +382,7 @@ fn classify_agent_runtime(
         health: primary_projection.map(|projection| projection.health.to_string()),
         truth_level: "registry_projection".to_string(),
         findings,
-    }
+    })
 }
 
 fn matching_rules<'a>(
@@ -390,17 +390,17 @@ fn matching_rules<'a>(
     skill: &str,
     agent: &str,
     selector: &Selector<'_>,
-) -> Vec<&'a RegistryBindingRule> {
-    snapshot
-        .rules
-        .rules
-        .iter()
-        .filter(|rule| {
-            rule.skill_id == skill
-                && rule_agent(snapshot, rule).as_deref() == Some(agent)
-                && binding_matches(snapshot.binding(&rule.binding_id), selector)
-        })
-        .collect()
+) -> std::result::Result<Vec<&'a RegistryBindingRule>, CommandFailure> {
+    let mut rules = Vec::new();
+    for rule in &snapshot.rules.rules {
+        if rule.skill_id == skill
+            && rule_agent(snapshot, rule).as_deref() == Some(agent)
+            && binding_matches(snapshot.binding(&rule.binding_id), selector)?
+        {
+            rules.push(rule);
+        }
+    }
+    Ok(rules)
 }
 
 fn matching_projections<'a>(
@@ -408,33 +408,33 @@ fn matching_projections<'a>(
     skill: &str,
     agent: &str,
     selector: &Selector<'_>,
-) -> Vec<&'a RegistryProjectionInstance> {
-    snapshot
-        .projections
-        .projections
-        .iter()
-        .filter(|projection| {
-            let projection_agent = snapshot
-                .target(&projection.target_id)
-                .map(|target| target.agent.as_str())
-                .or_else(|| {
-                    projection
-                        .binding_id
-                        .as_deref()
-                        .and_then(|binding_id| snapshot.binding(binding_id))
-                        .map(|binding| binding.agent.as_str())
-                });
-            projection.skill_id == skill
-                && projection_agent.is_none_or(|projection_agent| projection_agent == agent)
-                && binding_matches(
-                    projection
-                        .binding_id
-                        .as_deref()
-                        .and_then(|binding_id| snapshot.binding(binding_id)),
-                    selector,
-                )
-        })
-        .collect()
+) -> std::result::Result<Vec<&'a RegistryProjectionInstance>, CommandFailure> {
+    let mut projections = Vec::new();
+    for projection in &snapshot.projections.projections {
+        let projection_agent = snapshot
+            .target(&projection.target_id)
+            .map(|target| target.agent.as_str())
+            .or_else(|| {
+                projection
+                    .binding_id
+                    .as_deref()
+                    .and_then(|binding_id| snapshot.binding(binding_id))
+                    .map(|binding| binding.agent.as_str())
+            });
+        if projection.skill_id == skill
+            && projection_agent.is_none_or(|projection_agent| projection_agent == agent)
+            && binding_matches(
+                projection
+                    .binding_id
+                    .as_deref()
+                    .and_then(|binding_id| snapshot.binding(binding_id)),
+                selector,
+            )?
+        {
+            projections.push(projection);
+        }
+    }
+    Ok(projections)
 }
 
 fn rule_agent(snapshot: &RegistrySnapshot, rule: &RegistryBindingRule) -> Option<String> {
@@ -448,34 +448,28 @@ fn rule_agent(snapshot: &RegistrySnapshot, rule: &RegistryBindingRule) -> Option
         })
 }
 
-fn binding_matches(binding: Option<&RegistryWorkspaceBinding>, selector: &Selector<'_>) -> bool {
+fn binding_matches(
+    binding: Option<&RegistryWorkspaceBinding>,
+    selector: &Selector<'_>,
+) -> std::result::Result<bool, CommandFailure> {
     let Some(binding) = binding else {
-        return selector.workspace.is_none() && selector.profile.is_none();
+        return Ok(selector.workspace.is_none() && selector.profile.is_none());
     };
     if !binding.active {
-        return false;
+        return Ok(false);
     }
     if let Some(profile) = selector.profile
         && binding.profile_id != profile
     {
-        return false;
+        return Ok(false);
     }
     let Some(workspace) = selector.workspace else {
-        return true;
+        return Ok(true);
     };
-    let workspace = workspace.to_string_lossy();
-    let matcher = &binding.workspace_matcher;
-    match matcher.kind.as_str() {
-        "path_prefix" => Path::new(workspace.as_ref()).starts_with(Path::new(&matcher.value)),
-        "exact_path" => workspace == matcher.value,
-        "name" => {
-            Path::new(workspace.as_ref())
-                .file_name()
-                .and_then(|name| name.to_str())
-                == Some(matcher.value.as_str())
-        }
-        _ => false,
-    }
+    binding
+        .workspace_matcher
+        .matches_workspace(workspace)
+        .map_err(map_io)
 }
 
 fn runtime_findings(

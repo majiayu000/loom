@@ -328,7 +328,7 @@ impl App {
             {
                 continue;
             }
-            if !binding_matches_scope(binding, args.scope, workspace.as_deref()) {
+            if !binding_matches_scope(binding, args.scope, workspace.as_deref())? {
                 continue;
             }
             for rule in snapshot

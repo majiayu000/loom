@@ -46,16 +46,15 @@ pub(crate) fn active_view(
         }
         Some(binding)
     } else {
-        let candidates = snapshot
-            .bindings
-            .bindings
-            .iter()
-            .filter(|binding| {
-                binding.agent == agent
-                    && binding.active
-                    && recommend_binding_matches_workspace(binding, workspace)
-            })
-            .collect::<Vec<_>>();
+        let mut candidates = Vec::new();
+        for binding in &snapshot.bindings.bindings {
+            if binding.agent == agent
+                && binding.active
+                && recommend_binding_matches_workspace(binding, workspace)?
+            {
+                candidates.push(binding);
+            }
+        }
         if candidates.len() > 1 {
             return Err(CommandFailure::new(
                 ErrorCode::ArgInvalid,
@@ -167,18 +166,13 @@ pub(crate) fn activation_plan_delta(
 fn recommend_binding_matches_workspace(
     binding: &RegistryWorkspaceBinding,
     workspace: Option<&Path>,
-) -> bool {
-    let Some(workspace) = workspace else {
-        return true;
-    };
-    match binding.workspace_matcher.kind.as_str() {
-        "path_prefix" => workspace.starts_with(Path::new(&binding.workspace_matcher.value)),
-        "exact_path" => workspace == Path::new(&binding.workspace_matcher.value),
-        "name" => {
-            workspace.file_name().and_then(|name| name.to_str())
-                == Some(binding.workspace_matcher.value.as_str())
-        }
-        _ => false,
+) -> std::result::Result<bool, CommandFailure> {
+    match workspace {
+        None => Ok(true),
+        Some(workspace) => binding
+            .workspace_matcher
+            .matches_workspace(workspace)
+            .map_err(super::helpers::map_io),
     }
 }
 

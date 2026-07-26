@@ -1,6 +1,5 @@
 use super::super::converge::digest_value;
 use super::*;
-use crate::commands::agent_cmds::planning_helpers::workspace_matches;
 use crate::commands::skill_improve::prepare_convergence_skill_input;
 use crate::core::convergence::{ConvergenceAxis, RemotePolicy};
 
@@ -280,47 +279,49 @@ fn validate_sealed_scope(
     plan: &SkillConvergencePlan,
 ) -> std::result::Result<(), CommandFailure> {
     let workspace = plan.selectors.workspace.as_deref().map(Path::new);
-    let mut resolved = snapshot
+    let mut resolved = Vec::new();
+    for rule in snapshot
         .rules
         .rules
         .iter()
         .filter(|rule| rule.skill_id == plan.skill)
-        .filter_map(|rule| {
-            let Some(binding) = snapshot.binding(&rule.binding_id) else {
-                return Some((
-                    rule.binding_id.clone(),
-                    rule.target_id.clone(),
-                    "missing_binding".to_string(),
-                ));
-            };
-            if !binding.active
-                || plan
-                    .selectors
-                    .agent
-                    .as_deref()
-                    .is_some_and(|agent| binding.agent.as_str() != agent)
-                || plan
-                    .selectors
-                    .profile
-                    .as_deref()
-                    .is_some_and(|profile| binding.profile_id != profile)
-                || workspace.is_some_and(|workspace| {
-                    !workspace_matches(
-                        binding.workspace_matcher.kind.as_str(),
-                        &binding.workspace_matcher.value,
-                        workspace,
-                    )
-                })
-            {
-                return None;
-            }
-            Some((
+    {
+        let Some(binding) = snapshot.binding(&rule.binding_id) else {
+            resolved.push((
                 rule.binding_id.clone(),
                 rule.target_id.clone(),
-                rule.method.as_str().to_string(),
-            ))
-        })
-        .collect::<Vec<_>>();
+                "missing_binding".to_string(),
+            ));
+            continue;
+        };
+        if !binding.active
+            || plan
+                .selectors
+                .agent
+                .as_deref()
+                .is_some_and(|agent| binding.agent.as_str() != agent)
+            || plan
+                .selectors
+                .profile
+                .as_deref()
+                .is_some_and(|profile| binding.profile_id != profile)
+        {
+            continue;
+        }
+        if let Some(workspace) = workspace
+            && !binding
+                .workspace_matcher
+                .matches_workspace(workspace)
+                .map_err(crate::commands::helpers::map_io)?
+        {
+            continue;
+        }
+        resolved.push((
+            rule.binding_id.clone(),
+            rule.target_id.clone(),
+            rule.method.as_str().to_string(),
+        ));
+    }
     let mut sealed = plan
         .projections
         .iter()

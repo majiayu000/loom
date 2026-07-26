@@ -165,7 +165,7 @@ pub(crate) fn build_agent_visibility_report(
     } else {
         None
     };
-    Ok(build_visibility_report_from_parts(VisibilityBuildParts {
+    build_visibility_report_from_parts(VisibilityBuildParts {
         ctx,
         skill,
         agent,
@@ -174,7 +174,7 @@ pub(crate) fn build_agent_visibility_report(
         config,
         workspace,
         profile,
-    }))
+    })
 }
 
 pub(crate) fn normalize_existing_or_raw(path: &Path) -> PathBuf {
@@ -216,7 +216,9 @@ struct VisibilityBuildParts<'a> {
     profile: Option<&'a str>,
 }
 
-fn build_visibility_report_from_parts(parts: VisibilityBuildParts<'_>) -> CodexVisibilityReport {
+fn build_visibility_report_from_parts(
+    parts: VisibilityBuildParts<'_>,
+) -> std::result::Result<CodexVisibilityReport, CommandFailure> {
     let VisibilityBuildParts {
         ctx,
         skill,
@@ -266,7 +268,7 @@ fn build_visibility_report_from_parts(parts: VisibilityBuildParts<'_>) -> CodexV
     let mut trusted_independent_projection_ok = false;
     let mut project_projection_ok = false;
     if let Some(snapshot) = snapshot {
-        let rules = active_rules_for_skill(snapshot, skill, agent, workspace, profile);
+        let rules = active_rules_for_skill(snapshot, skill, agent, workspace, profile)?;
         rule_count = rules.len();
         checks.push(check(
             &format!("{agent}_active_rule_exists"),
@@ -357,7 +359,7 @@ fn build_visibility_report_from_parts(parts: VisibilityBuildParts<'_>) -> CodexV
         next_actions.insert(reconcile_action);
     }
 
-    CodexVisibilityReport {
+    Ok(CodexVisibilityReport {
         skill: skill.to_string(),
         agent: agent.to_string(),
         fidelity: Some(adapter.fidelity.as_str().to_string()),
@@ -368,7 +370,7 @@ fn build_visibility_report_from_parts(parts: VisibilityBuildParts<'_>) -> CodexV
             next_actions.into_iter().collect(),
         ),
         restart_required: false,
-    }
+    })
 }
 
 fn add_rule_visibility_checks(

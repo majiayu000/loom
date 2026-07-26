@@ -11,6 +11,7 @@ use crate::next_action_trace::observe_next_actions;
 use crate::state::AppContext;
 use crate::state_model::{
     RegistryProjectionTarget, RegistrySnapshot, RegistryStatePaths, RegistryTrustFile,
+    RegistryWorkspaceMatcher,
 };
 use crate::types::ErrorCode;
 
@@ -554,7 +555,7 @@ pub(crate) fn score_and_filter_skills(
     query: &str,
     filters: SkillDiscoveryFilters<'_>,
     include_workspace_boost: bool,
-) -> Vec<Value> {
+) -> std::result::Result<Vec<Value>, CommandFailure> {
     let tokens = tokenize(query);
     let mut results = Vec::new();
 
@@ -563,7 +564,7 @@ pub(crate) fn score_and_filter_skills(
             continue;
         }
         let (score, inputs) =
-            score_skill(skill, &tokens, filters.workspace, include_workspace_boost);
+            score_skill(skill, &tokens, filters.workspace, include_workspace_boost)?;
         if score == 0 {
             continue;
         }
@@ -584,7 +585,7 @@ pub(crate) fn score_and_filter_skills(
                 .cmp(b["skill"]["skill_id"].as_str().unwrap_or_default())
         })
     });
-    results
+    Ok(results)
 }
 
 fn passes_filters(skill: &Value, filters: &SkillDiscoveryFilters<'_>) -> bool {
@@ -616,7 +617,7 @@ fn score_skill(
     tokens: &[String],
     workspace: Option<&Path>,
     include_workspace_boost: bool,
-) -> (i64, Vec<Value>) {
+) -> std::result::Result<(i64, Vec<Value>), CommandFailure> {
     let mut score = 0;
     let mut inputs = Vec::new();
     for token in tokens {
@@ -629,7 +630,7 @@ fn score_skill(
     }
     if include_workspace_boost
         && let Some(workspace) = workspace
-        && workspace_matches(skill, workspace)
+        && workspace_matches(skill, workspace)?
     {
         score += 4;
         inputs.push(json!({
@@ -638,7 +639,7 @@ fn score_skill(
             "reason": "workspace matched a binding matcher",
         }));
     }
-    (score, inputs)
+    Ok((score, inputs))
 }
 
 fn add_field_score(
@@ -677,26 +678,29 @@ fn add_array_score(
     }
 }
 
-pub(crate) fn workspace_matches(skill: &Value, workspace: &Path) -> bool {
-    let workspace = workspace.to_string_lossy();
+pub(crate) fn workspace_matches(
+    skill: &Value,
+    workspace: &Path,
+) -> std::result::Result<bool, CommandFailure> {
     let Some(matchers) = skill["workspace_matchers"].as_array() else {
-        return false;
+        return Ok(false);
     };
-    matchers.iter().any(|matcher| {
-        let kind = matcher["kind"].as_str();
-        let value = matcher["value"].as_str().unwrap_or_default();
-        match kind {
-            Some("path_prefix") => workspace.starts_with(value),
-            Some("exact_path") => workspace == value,
-            Some("name") => {
-                Path::new(workspace.as_ref())
-                    .file_name()
-                    .and_then(|name| name.to_str())
-                    == Some(value)
-            }
-            _ => false,
+    for matcher in matchers {
+        let matcher =
+            serde_json::from_value::<RegistryWorkspaceMatcher>(matcher.clone()).map_err(|err| {
+                CommandFailure::new(
+                    ErrorCode::StateCorrupt,
+                    format!("invalid serialized registry workspace matcher: {err}"),
+                )
+            })?;
+        if matcher
+            .matches_workspace(workspace)
+            .map_err(super::helpers::map_io)?
+        {
+            return Ok(true);
         }
-    })
+    }
+    Ok(false)
 }
 
 fn value_array_contains(value: &Value, expected: &str) -> bool {
@@ -718,4 +722,46 @@ pub(crate) fn tokenize(query: &str) -> Vec<String> {
         tokens.push(query.trim().to_ascii_lowercase());
     }
     tokens
+}
+
+#[cfg(all(test, unix))]
+mod workspace_matcher_tests {
+    use super::workspace_matches;
+    use crate::types::ErrorCode;
+    use serde_json::json;
+    use std::os::unix::fs::symlink;
+
+    #[test]
+    fn serialized_inventory_matcher_uses_authoritative_symlink_semantics() {
+        let base = std::env::temp_dir().join(format!(
+            "loom_inventory_match_{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let real = base.join("real");
+        std::fs::create_dir_all(real.join("project")).expect("create project");
+        let link = base.join("link");
+        symlink(&real, &link).expect("create workspace symlink");
+        let skill = json!({
+            "workspace_matchers": [{
+                "kind": "path_prefix",
+                "value": real.display().to_string(),
+            }],
+        });
+
+        assert!(workspace_matches(&skill, &link.join("project")).expect("inventory matcher"));
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn malformed_serialized_inventory_matcher_fails_closed() {
+        let skill = json!({
+            "workspace_matchers": [{
+                "kind": "path_prefix"
+            }],
+        });
+
+        let err = workspace_matches(&skill, std::path::Path::new("/workspace"))
+            .expect_err("missing matcher value must fail");
+        assert_eq!(err.code, ErrorCode::StateCorrupt);
+    }
 }

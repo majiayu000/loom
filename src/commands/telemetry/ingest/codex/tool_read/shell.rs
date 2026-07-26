@@ -46,18 +46,25 @@ enum Expansion {
 struct ShellWord {
     text: String,
     parts: Vec<(Expansion, String)>,
+    fragment_boundary: bool,
 }
 
 impl ShellWord {
     fn push(&mut self, ch: char, expansion: Expansion) {
         self.text.push(ch);
-        if let Some((mode, text)) = self.parts.last_mut()
+        if !self.fragment_boundary
+            && let Some((mode, text)) = self.parts.last_mut()
             && *mode == expansion
         {
             text.push(ch);
         } else {
             self.parts.push((expansion, ch.to_string()));
         }
+        self.fragment_boundary = false;
+    }
+
+    fn begin_fragment(&mut self) {
+        self.fragment_boundary = true;
     }
 
     fn expandable_prefix(&self, prefix: &str, tilde: bool) -> bool {
@@ -86,12 +93,16 @@ fn shell_segments(command: &str) -> Vec<Vec<ShellWord>> {
             Some('\'') => {
                 if ch == '\'' {
                     quote = None;
+                    word.begin_fragment();
                 } else {
                     word.push(ch, Expansion::None);
                 }
             }
             Some('"') => match ch {
-                '"' => quote = None,
+                '"' => {
+                    quote = None;
+                    word.begin_fragment();
+                }
                 '\\' => match chars.next() {
                     Some(escaped @ ('$' | '"' | '\\')) => word.push(escaped, Expansion::None),
                     Some('\n') => {}
@@ -107,6 +118,7 @@ fn shell_segments(command: &str) -> Vec<Vec<ShellWord>> {
             },
             _ => match ch {
                 '\'' | '"' => {
+                    word.begin_fragment();
                     quote = Some(ch);
                     word_started = true;
                 }
@@ -438,6 +450,10 @@ mod tests {
             r"cat \$HOME/.codex/skills/escaped/SKILL.md",
             r#"cat "\$HOME/.codex/skills/double-escaped/SKILL.md""#,
             r#"cat "~/.codex/skills/quoted-tilde/SKILL.md""#,
+            r#"cat "$H""OME/.codex/skills/split-name/SKILL.md""#,
+            r#"cat "${HO}""ME/.codex/skills/split-braced/SKILL.md""#,
+            r#"cat "$HO"'ME/.codex/skills/mixed/SKILL.md'"#,
+            r#"cat "$"'HOME/.codex/skills/mixed-dollar/SKILL.md'"#,
         ] {
             assert!(names(command).is_empty(), "{command}");
         }

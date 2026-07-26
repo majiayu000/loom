@@ -1,11 +1,12 @@
-use std::ffi::OsString;
+use std::{collections::BTreeSet, ffi::OsString};
 
 use clap::{Arg, ArgAction, Command, builder::PossibleValue, error::ErrorKind};
 
 use super::{
     PublicArgv, PublicArgvError, PublicArgvErrorKind, command_schema_capabilities,
-    command_tree_capabilities, inspect_display_matches, inspect_public_matches,
-    inspect_requested_visibility, public_command_schema_capabilities, validate_public_argv,
+    command_tree_capabilities, contract_example_argv_variants, inspect_display_matches,
+    inspect_public_matches, inspect_requested_visibility, public_command_paths,
+    public_command_schema_capabilities, public_direct_command_paths, validate_public_argv,
 };
 
 fn fixture_capabilities(command: Command) -> std::collections::BTreeSet<String> {
@@ -49,6 +50,215 @@ fn command_schema_ignores_fixture_values() {
         public_command_schema_capabilities(&alpha.command_path).expect("alpha schema"),
         public_command_schema_capabilities(&beta.command_path).expect("beta schema")
     );
+}
+
+#[test]
+fn public_command_paths_include_dispatched_positional_actions() {
+    let paths = public_command_paths();
+    for expected in [
+        "loom index build",
+        "loom index status",
+        "loom active recommend",
+    ] {
+        assert!(
+            paths.iter().any(|path| path == expected),
+            "public command paths missing positional action {expected:?}"
+        );
+    }
+    let direct = public_direct_command_paths();
+    assert!(direct.iter().any(|path| path == "loom skill compile"));
+    assert!(!direct.iter().any(|path| path == "loom skill"));
+    assert!(!direct.iter().any(|path| path == "loom index"));
+}
+
+fn contract_command_lines(contract: &str) -> Result<Vec<String>, String> {
+    let mut commands = Vec::new();
+    let mut continued: Option<String> = None;
+    let top_level = public_command_paths()
+        .into_iter()
+        .filter(|path| path.split_whitespace().count() == 2)
+        .collect::<BTreeSet<_>>();
+    let mut rejected_shapes = false;
+    for line in contract.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("## ") {
+            rejected_shapes = trimmed == "## 18. Rejected CLI Shapes";
+        }
+        if let Some(command) = continued.as_mut() {
+            command.push(' ');
+            command.push_str(trimmed.trim_end_matches('\\').trim_end());
+            if !trimmed.ends_with('\\') {
+                commands.push(continued.take().expect("continued command exists"));
+            }
+        } else if trimmed.starts_with("loom ") {
+            let command = trimmed.trim_end_matches('\\').trim_end().to_string();
+            if trimmed.ends_with('\\') {
+                continued = Some(command);
+            } else {
+                commands.push(command);
+            }
+        }
+        if !rejected_shapes {
+            for code in line.split('`').skip(1).step_by(2) {
+                if !code.starts_with("loom ") {
+                    let candidate = format!("loom {code}");
+                    if top_level.contains(&candidate) {
+                        commands.push(format!("{candidate} --help"));
+                    }
+                }
+            }
+        }
+    }
+    continued.map_or(Ok(commands), |command| {
+        Err(format!("unterminated command continuation: {command}"))
+    })
+}
+
+fn inline_contract_commands(contract: &str) -> Vec<String> {
+    let mut commands = Vec::new();
+    let mut rejected_shapes = false;
+    for line in contract.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("## ") {
+            rejected_shapes = trimmed == "## 18. Rejected CLI Shapes";
+        }
+        if !rejected_shapes {
+            commands.extend(
+                line.split('`')
+                    .skip(1)
+                    .step_by(2)
+                    .filter(|code| code.starts_with("loom ") && !code.contains("..."))
+                    .map(str::to_string),
+            );
+        }
+    }
+    commands
+}
+
+fn parsed_contract_path(argv: Vec<String>) -> Result<String, String> {
+    let mut path = validate_public_argv(argv.clone())
+        .map_err(|error| format!("{error:?}"))?
+        .command_path;
+    if argv.iter().any(|argument| argument == "--help") {
+        return Ok(path.join(" "));
+    }
+    if matches!(path.as_slice(), [loom, command] if loom == "loom" && command == "index") {
+        let index = argv
+            .iter()
+            .position(|token| token == "index")
+            .ok_or_else(|| "parsed index command has no index token".to_string())?;
+        let action = argv
+            .get(index + 1)
+            .filter(|action| matches!(action.as_str(), "build" | "status"))
+            .ok_or_else(|| format!("invalid documented index action in {argv:?}"))?;
+        path.push(action.clone());
+    } else if matches!(path.as_slice(), [loom, command] if loom == "loom" && command == "active") {
+        let index = argv
+            .iter()
+            .position(|token| token == "active")
+            .ok_or_else(|| "parsed active command has no active token".to_string())?;
+        let action = argv
+            .get(index + 1)
+            .filter(|action| action.as_str() == "recommend")
+            .ok_or_else(|| format!("invalid documented active action in {argv:?}"))?;
+        path.push(action.clone());
+    }
+    Ok(path.join(" "))
+}
+
+fn documented_contract_paths(contract: &str) -> Result<BTreeSet<String>, String> {
+    let mut documented = BTreeSet::new();
+    for command in contract_command_lines(contract)? {
+        let mut parsed_any = false;
+        let mut errors = Vec::new();
+        let required_choices = if command.contains("<build|status>") {
+            vec![
+                command.replace("<build|status>", "build"),
+                command.replace("<build|status>", "status"),
+            ]
+        } else {
+            vec![command.clone()]
+        };
+        for choice in required_choices {
+            for argv in contract_example_argv_variants(&choice) {
+                match parsed_contract_path(argv) {
+                    Ok(path) => {
+                        documented.insert(path);
+                        parsed_any = true;
+                    }
+                    Err(error) => errors.push(error),
+                }
+            }
+        }
+        if !parsed_any {
+            return Err(format!(
+                "all variants of documented command {command:?} failed to parse: {errors:?}"
+            ));
+        }
+    }
+    for command in inline_contract_commands(contract) {
+        for argv in contract_example_argv_variants(&command) {
+            if let Ok(path) = parsed_contract_path(argv) {
+                documented.insert(path);
+            }
+        }
+    }
+    Ok(documented)
+}
+
+fn missing_contract_paths<'a>(
+    paths: &'a [String],
+    contract: &str,
+) -> Result<Vec<&'a String>, String> {
+    let documented = documented_contract_paths(contract)?;
+    let direct = public_direct_command_paths()
+        .into_iter()
+        .collect::<BTreeSet<_>>();
+    Ok(paths
+        .iter()
+        .filter(|path| {
+            if direct.contains(path.as_str()) {
+                !documented.contains(path.as_str())
+            } else {
+                let descendant = format!("{path} ");
+                !documented
+                    .iter()
+                    .any(|candidate| candidate.starts_with(&descendant))
+            }
+        })
+        .collect())
+}
+
+#[test]
+fn contract_docs_track_exact_public_command_paths() {
+    let contract = concat!(
+        include_str!("../../docs/LOOM_CLI_CONTRACT.md"),
+        include_str!("../../docs/LOOM_CLI_CONTRACT_OPERATIONS.md")
+    );
+    let paths = public_command_paths();
+    assert!(
+        paths.len() > 100,
+        "public command path enumeration looks truncated: {} paths",
+        paths.len()
+    );
+    let missing = missing_contract_paths(&paths, contract).expect("contract examples must parse");
+    assert!(
+        missing.is_empty(),
+        "CLI contract docs are missing exact command paths:\n{}",
+        missing
+            .iter()
+            .map(|path| format!("  {path}"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+}
+
+#[test]
+fn longer_command_does_not_document_direct_parent_path() {
+    let paths = vec!["loom skill compile".to_string()];
+    let missing =
+        missing_contract_paths(&paths, "loom skill compile list demo").expect("parse fixture");
+    assert_eq!(missing, paths.iter().collect::<Vec<_>>());
 }
 
 #[test]

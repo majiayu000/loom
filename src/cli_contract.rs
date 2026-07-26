@@ -189,6 +189,28 @@ pub(crate) fn public_command_schema_capabilities(
     command_schema_capabilities(&root, command_path)
 }
 
+/// Enumerate every public (non-hidden) command path in the CLI surface,
+/// prefixed with the binary name, e.g. `loom skill trash restore`.
+pub fn public_command_paths() -> Vec<String> {
+    fn visit(command: &Command, prefix: &mut Vec<String>, paths: &mut Vec<String>) {
+        for subcommand in command
+            .get_subcommands()
+            .filter(|subcommand| !subcommand.is_hide_set() && subcommand.get_name() != "help")
+        {
+            prefix.push(subcommand.get_name().to_string());
+            paths.push(prefix.join(" "));
+            visit(subcommand, prefix, paths);
+            prefix.pop();
+        }
+    }
+
+    let mut root = Cli::command();
+    root.build();
+    let mut paths = Vec::new();
+    visit(&root, &mut vec!["loom".to_string()], &mut paths);
+    paths
+}
+
 pub(crate) fn public_command_tree_capabilities() -> Result<BTreeSet<String>, PublicArgvError> {
     let mut root = Cli::command();
     root.build();

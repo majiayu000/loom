@@ -90,36 +90,35 @@ fn cli_contract_docs_track_current_surface() {
     );
     let readme = include_str!("../README.md");
 
-    for command in [
-        "`init`",
-        "`backup`",
-        "`monitor`",
-        "`use`",
-        "`plan`",
-        "`apply`",
-        "`workspace`",
-        "`target`",
-        "`skill`",
-        "`skillset`",
-        "`telemetry`",
-        "`provider`",
-        "`catalog`",
-        "`package`",
-        "`mcp`",
-        "`provision`",
-        "`instruction`",
-        "`workflow`",
-        "`sync`",
-        "`ops`",
-        "`agent`",
-        "`codex`",
-        "`panel`",
-    ] {
-        assert!(
-            contract.contains(command),
-            "CLI contract missing top-level command {command}"
-        );
-    }
+    let paths = skillloom::cli_contract::public_command_paths();
+    assert!(
+        paths.len() > 100,
+        "public command path enumeration looks truncated: {} paths",
+        paths.len()
+    );
+    // Contract examples interleave global flags between `loom` and the
+    // command path (`loom --json --root <root> skill list`); strip them so
+    // every enumerated path can be matched as a contiguous string.
+    let normalized = contract
+        .replace("--json ", "")
+        .replace("--pretty ", "")
+        .replace("--root <root> ", "")
+        .replace("--root <abs-path> ", "")
+        .replace("--root \"$ROOT\" ", "");
+    let missing: Vec<&String> = paths
+        .iter()
+        .filter(|path| !normalized.contains(path.as_str()))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "CLI contract docs are missing {} command paths:\n{}",
+        missing.len(),
+        missing
+            .iter()
+            .map(|path| format!("  {path}"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
 
     for stale in [
         "workspace status [--binding",

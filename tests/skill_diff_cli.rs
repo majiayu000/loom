@@ -11,8 +11,9 @@ use common::{TestDir, run_loom, write_skill};
 fn assert_success(output: &std::process::Output, env: &Value, context: &str) {
     assert!(
         output.status.success(),
-        "{context} failed: {env} stderr={}",
-        String::from_utf8_lossy(&output.stderr)
+        "{context} failed: {env} stderr={} stdout={}",
+        String::from_utf8_lossy(&output.stderr),
+        String::from_utf8_lossy(&output.stdout)
     );
 }
 
@@ -121,8 +122,27 @@ fn skill_diff_unknown_skill_fails_without_side_effects() {
 }
 
 #[test]
+fn skill_diff_unknown_revision_fails_with_git_error() {
+    let root = TestDir::new("skill-diff-bad-rev");
+    save_two_revisions(root.path());
+
+    let (output, env) = run_loom(
+        root.path(),
+        &["skill", "diff", "demo", "no-such-revision", "HEAD"],
+    );
+
+    assert!(!output.status.success(), "diff unexpectedly succeeded");
+    assert_eq!(env["ok"], json!(false));
+    assert_eq!(env["error"]["code"], json!("GIT_ERROR"));
+}
+
+// Regression guard: `skill diff` used to forward `from`/`to` straight to
+// `git diff`, so an option-shaped revision such as `--output=<path>` was
+// executed by Git and wrote an arbitrary file. Revision arguments are now
+// validated by `is_safe_git_ref` in src/validation.rs.
+#[test]
 fn skill_diff_rejects_option_shaped_revision_arguments() {
-    let root = TestDir::new("skill-diff-inject");
+    let root = TestDir::new("skill-diff-unsafe-rev");
     save_two_revisions(root.path());
 
     let injected = root.path().join("injected.txt");
@@ -135,8 +155,9 @@ fn skill_diff_rejects_option_shaped_revision_arguments() {
 
     assert!(
         !output.status.success(),
-        "option-shaped revision unexpectedly accepted: {env}"
+        "option-shaped revision must be rejected: {env}"
     );
+    assert_eq!(env["ok"], json!(false));
     assert_eq!(env["error"]["code"], json!("ARG_INVALID"));
     assert!(
         env["error"]["message"]
@@ -147,7 +168,8 @@ fn skill_diff_rejects_option_shaped_revision_arguments() {
     );
     assert!(
         !injected.exists(),
-        "revision argument must never reach git as an option"
+        "revision argument must never reach git as an option: git wrote {}",
+        injected.display()
     );
 }
 
@@ -176,10 +198,12 @@ fn skill_diff_security_rejects_option_shaped_revision_arguments() {
         !output.status.success(),
         "option-shaped revision unexpectedly accepted by --security: {env}"
     );
+    assert_eq!(env["ok"], json!(false));
     assert_eq!(env["error"]["code"], json!("ARG_INVALID"));
     assert!(
         !injected.exists(),
-        "revision argument must never reach git as an option"
+        "revision argument must never reach git as an option: git wrote {}",
+        injected.display()
     );
 }
 
@@ -197,20 +221,6 @@ fn skill_diff_rejects_revision_range_arguments() {
         !output.status.success(),
         "range revision unexpectedly accepted"
     );
-    assert_eq!(env["error"]["code"], json!("ARG_INVALID"));
-}
-
-#[test]
-fn skill_diff_unknown_revision_fails_with_git_error() {
-    let root = TestDir::new("skill-diff-bad-rev");
-    save_two_revisions(root.path());
-
-    let (output, env) = run_loom(
-        root.path(),
-        &["skill", "diff", "demo", "no-such-revision", "HEAD"],
-    );
-
-    assert!(!output.status.success(), "diff unexpectedly succeeded");
     assert_eq!(env["ok"], json!(false));
-    assert_eq!(env["error"]["code"], json!("GIT_ERROR"));
+    assert_eq!(env["error"]["code"], json!("ARG_INVALID"));
 }

@@ -45,8 +45,8 @@ jobs:
         with:
           tool: cargo-nextest
 
+      # Rust tests embed panel assets through build.rs, so Bun is required on both OS legs.
       - name: Setup Bun
-        if: matrix.os == 'ubuntu-latest'
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.3.14

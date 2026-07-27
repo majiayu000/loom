@@ -1,7 +1,39 @@
 use std::path::PathBuf;
 
-use clap::Args;
+use clap::{
+    Arg, Args, Command, ValueEnum,
+    builder::{PossibleValue, StringValueParser, TypedValueParser},
+};
 use serde::Serialize;
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum ActiveAction {
+    Recommend,
+}
+
+#[derive(Clone)]
+struct ActiveActionParser;
+
+impl TypedValueParser for ActiveActionParser {
+    type Value = String;
+
+    fn parse_ref(
+        &self,
+        command: &Command,
+        argument: Option<&Arg>,
+        value: &std::ffi::OsStr,
+    ) -> Result<Self::Value, clap::Error> {
+        StringValueParser::new().parse_ref(command, argument, value)
+    }
+
+    fn possible_values(&self) -> Option<Box<dyn Iterator<Item = PossibleValue> + '_>> {
+        Some(Box::new(
+            ActiveAction::value_variants()
+                .iter()
+                .filter_map(ValueEnum::to_possible_value),
+        ))
+    }
+}
 
 #[derive(Debug, Clone, Args, Serialize)]
 pub struct SkillSearchArgs {
@@ -56,6 +88,7 @@ pub struct SkillSearchArgs {
 #[derive(Debug, Clone, Args, Serialize)]
 pub struct ActiveRecommendArgs {
     /// Action to run: recommend.
+    #[arg(value_parser = ActiveActionParser, hide_possible_values = true)]
     pub action: String,
 
     /// Task description for the desired active state.
@@ -76,4 +109,21 @@ pub struct ActiveRecommendArgs {
     /// Explicit desired skills to compare against the active view.
     #[arg(long = "desired-skill")]
     pub desired_skills: Vec<String>,
+}
+
+impl ActiveRecommendArgs {
+    pub(crate) fn is_recommend_action(&self) -> bool {
+        ActiveAction::Recommend
+            .to_possible_value()
+            .is_some_and(|value| value.matches(&self.action, false))
+    }
+
+    pub(crate) fn expected_actions(&self) -> String {
+        ActiveAction::value_variants()
+            .iter()
+            .filter_map(ValueEnum::to_possible_value)
+            .map(|value| value.get_name().to_string())
+            .collect::<Vec<_>>()
+            .join(" or ")
+    }
 }

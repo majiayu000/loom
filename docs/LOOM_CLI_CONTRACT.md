@@ -3,7 +3,7 @@
 Updated: 2026-07-26
 Status: Implemented
 
-Every JSON envelope includes independent SemVer field `cli_contract_version`. The current contract is `1.9.0`; compatibility history and shipped-Skill ranges live in `docs/cli-contract-history.toml` and `skills/loom-registry/loom.skill.toml`.
+Every JSON envelope includes independent SemVer field `cli_contract_version`. The current contract is `1.10.0`; compatibility history and shipped-Skill ranges live in `docs/cli-contract-history.toml` and `skills/loom-registry/loom.skill.toml`.
 
 ## 1. Purpose
 
@@ -852,3 +852,11 @@ second time. All counters use checked arithmetic and overflow fails with
 `STATE_CORRUPT` naming the aggregate field. Missing or malformed registry,
 telemetry config, or event I/O returns an error; empty, all-malformed, or
 filter-empty inputs return the complete zero/empty shape.
+
+## Registry initialization
+
+```bash
+loom --json --root <root> init
+```
+
+`init` initializes the default registry and scans existing agent skill directories.

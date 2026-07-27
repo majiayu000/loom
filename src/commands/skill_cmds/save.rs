@@ -44,8 +44,7 @@ impl App {
             None
         };
         if let Err(err) = paths.ensure_layout() {
-            let mut failure = map_registry_state(err);
-            rollback_registry_layout_after_failure(
+            let mut rollback_errors = rollback_registry_layout_after_failure(
                 &self.ctx,
                 &paths,
                 had_registry_layout,
@@ -54,14 +53,9 @@ impl App {
             );
             if let Err(reset_err) = gitops::run_git(&self.ctx, &["reset", "HEAD", "--", &skill_rel])
             {
-                failure.details = json!({
-                    "rollback_errors": [{
-                        "step": "reset_staged_skill",
-                        "message": reset_err.to_string(),
-                    }]
-                });
+                push_rollback_error(&mut rollback_errors, "reset_staged_skill", reset_err);
             }
-            return Err(failure);
+            return Err(map_registry_state(err).with_rollback_errors(rollback_errors));
         }
         let registry_backup = snapshot_registry_audit_state(&paths).map_err(map_registry_state)?;
         let message = args
@@ -81,57 +75,55 @@ impl App {
         ) {
             Ok(op_id) => op_id,
             Err(err) => {
-                let _ =
-                    gitops::run_git_allow_failure(&self.ctx, &["reset", "HEAD", "--", &skill_rel]);
-                rollback_registry_audit_after_failure(
+                let rollback_errors = rollback_save_after_failure(
                     &self.ctx,
                     &paths,
                     &registry_backup,
                     had_registry_layout,
                     had_legacy_layout,
                     legacy_layout_backup.as_ref(),
+                    &skill_rel,
                 );
-                return Err(map_registry_state(err));
+                return Err(map_registry_state(err).with_rollback_errors(rollback_errors));
             }
         };
         if let Err(err) = maybe_skill_fault("skill_save_after_operation") {
-            let _ = gitops::run_git_allow_failure(&self.ctx, &["reset", "HEAD", "--", &skill_rel]);
-            rollback_registry_audit_after_failure(
+            let rollback_errors = rollback_save_after_failure(
                 &self.ctx,
                 &paths,
                 &registry_backup,
                 had_registry_layout,
                 had_legacy_layout,
                 legacy_layout_backup.as_ref(),
+                &skill_rel,
             );
-            return Err(err);
+            return Err(err.with_rollback_errors(rollback_errors));
         }
         if let Err(err) = stage_registry_state(&self.ctx, &paths) {
-            let _ = gitops::run_git_allow_failure(&self.ctx, &["reset", "HEAD", "--", &skill_rel]);
-            rollback_registry_audit_after_failure(
+            let rollback_errors = rollback_save_after_failure(
                 &self.ctx,
                 &paths,
                 &registry_backup,
                 had_registry_layout,
                 had_legacy_layout,
                 legacy_layout_backup.as_ref(),
+                &skill_rel,
             );
-            return Err(err);
+            return Err(err.with_rollback_errors(rollback_errors));
         }
         let commit = match gitops::commit(&self.ctx, &message) {
             Ok(commit) => commit,
             Err(err) => {
-                let _ =
-                    gitops::run_git_allow_failure(&self.ctx, &["reset", "HEAD", "--", &skill_rel]);
-                rollback_registry_audit_after_failure(
+                let rollback_errors = rollback_save_after_failure(
                     &self.ctx,
                     &paths,
                     &registry_backup,
                     had_registry_layout,
                     had_legacy_layout,
                     legacy_layout_backup.as_ref(),
+                    &skill_rel,
                 );
-                return Err(map_git(err));
+                return Err(map_git(err).with_rollback_errors(rollback_errors));
             }
         };
         let mut meta = Meta {
@@ -152,4 +144,34 @@ impl App {
             meta,
         ))
     }
+}
+
+fn rollback_save_after_failure(
+    ctx: &crate::state::AppContext,
+    paths: &RegistryStatePaths,
+    registry_backup: &RegistryAuditStateBackup,
+    had_registry_layout: bool,
+    had_legacy_layout: bool,
+    legacy_layout_backup: Option<&serde_json::Value>,
+    skill_rel: &str,
+) -> Vec<Value> {
+    let mut errors = Vec::new();
+    match gitops::run_git_allow_failure(ctx, &["reset", "HEAD", "--", skill_rel]) {
+        Ok(output) if output.status.success() => {}
+        Ok(output) => push_rollback_error(
+            &mut errors,
+            "reset_staged_skill",
+            String::from_utf8_lossy(&output.stderr).trim(),
+        ),
+        Err(err) => push_rollback_error(&mut errors, "reset_staged_skill", err),
+    }
+    errors.extend(rollback_registry_audit_after_failure(
+        ctx,
+        paths,
+        registry_backup,
+        had_registry_layout,
+        had_legacy_layout,
+        legacy_layout_backup,
+    ));
+    errors
 }

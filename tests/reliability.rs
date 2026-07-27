@@ -39,6 +39,15 @@ fn read_registry_operations(root: &Path) -> Vec<Value> {
         .collect()
 }
 
+fn rollback_error_steps(env: &Value) -> Vec<String> {
+    env["error"]["details"]["rollback_errors"]
+        .as_array()
+        .expect("rollback errors array")
+        .iter()
+        .filter_map(|error| error["step"].as_str().map(ToString::to_string))
+        .collect()
+}
+
 fn run_git<I, S>(args: I) -> Output
 where
     I: IntoIterator<Item = S>,
@@ -1817,5 +1826,44 @@ fn skill_add_rolls_back_on_commit_failure_and_cleans_staged_path() {
     assert!(
         status.trim().is_empty(),
         "staged residue for skills/demo should be cleaned up: {status}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn skill_add_reports_rollback_removal_failure_after_commit_failure() {
+    let root = TestDir::new("skill-add-visible-rollback-failure");
+    let source = make_skill_source(root.path(), "source-visible-rollback-failure");
+
+    let remote = root.path().join("origin.git");
+    git_ok(["init", "--bare", remote.to_str().unwrap()]);
+    run_loom_ok(
+        root.path(),
+        &["workspace", "remote", "set", remote.to_str().unwrap()],
+    );
+
+    let hook = root.path().join(".git/hooks/pre-commit");
+    fs::create_dir_all(hook.parent().unwrap()).expect("create hooks dir");
+    fs::write(&hook, "#!/bin/sh\nexit 1\n").expect("write pre-commit hook");
+    #[allow(clippy::permissions_set_readonly_false)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = fs::metadata(&hook).expect("hook metadata").permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&hook, perms).expect("set hook executable");
+    }
+
+    let (output, env) = run_loom_with_env(
+        root.path(),
+        &[("LOOM_ROLLBACK_FAULT_INJECT", "remove_added_skill")],
+        &["skill", "add", source.to_str().unwrap(), "--name", "demo"],
+    );
+
+    assert!(!output.status.success(), "skill add unexpectedly succeeded");
+    assert_eq!(env["ok"], Value::Bool(false));
+    assert_eq!(rollback_error_steps(&env), vec!["remove_added_skill"]);
+    assert!(
+        root.path().join("skills/demo").exists(),
+        "injected rollback failure should leave evidence of the partial mutation"
     );
 }

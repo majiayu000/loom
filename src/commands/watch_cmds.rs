@@ -19,6 +19,7 @@ use super::projections::{
     RegistryAuditStateBackup, record_registry_operation, restore_registry_audit_state,
     snapshot_registry_audit_state,
 };
+use super::skill_cmds::shared::unstage_registry_state;
 use super::{App, CommandFailure};
 use walkdir::WalkDir;
 
@@ -756,17 +757,18 @@ fn rollback_autosave_registry_audit_after_failure(
     had_registry_layout: bool,
     had_legacy_layout: bool,
 ) -> Vec<Value> {
-    let rollback_errors = restore_registry_audit_state_best_effort(paths, registry_backup);
-    if !had_registry_layout && !had_legacy_layout {
-        let _ = remove_path_if_exists(&paths.registry_dir);
+    let mut rollback_errors = restore_registry_audit_state_best_effort(paths, registry_backup);
+    if !had_registry_layout
+        && !had_legacy_layout
+        && let Err(err) = remove_path_if_exists(&paths.registry_dir)
+    {
+        rollback_errors.push(json!({
+            "step": "remove_registry_layout",
+            "message": err.to_string(),
+        }));
     }
-    unstage_registry_state(ctx);
+    rollback_errors.extend(unstage_registry_state(ctx));
     rollback_errors
-}
-
-fn unstage_registry_state(ctx: &AppContext) {
-    let _ = gitops::run_git_allow_failure(ctx, &["reset", "HEAD", "--", "state/registry"]);
-    let _ = gitops::run_git_allow_failure(ctx, &["reset", "HEAD", "--", "state/v3"]);
 }
 
 fn merge_watch_meta(target: &mut Meta, source: Meta) {

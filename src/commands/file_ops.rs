@@ -40,9 +40,46 @@ pub(crate) fn read_git_field(
 // Rollback / backup / copy helpers
 // ---------------------------------------------------------------------------
 
-pub(crate) fn rollback_added_skill(ctx: &AppContext, skill_rel: &str, dst: &Path) {
-    let _ = remove_path_if_exists(dst);
-    let _ = gitops::run_git_allow_failure(ctx, &["reset", "HEAD", "--", skill_rel]);
+pub(crate) fn rollback_added_skill(
+    ctx: &AppContext,
+    skill_rel: &str,
+    dst: &Path,
+) -> Vec<serde_json::Value> {
+    let mut errors = Vec::new();
+    if rollback_fault_active("remove_added_skill") {
+        errors.push(serde_json::json!({
+            "step": "remove_added_skill",
+            "message": "fault injected at remove_added_skill",
+        }));
+    } else if let Err(err) = remove_path_if_exists(dst) {
+        errors.push(serde_json::json!({
+            "step": "remove_added_skill",
+            "message": err.to_string(),
+        }));
+    }
+    if rollback_fault_active("unstage_added_skill") {
+        errors.push(serde_json::json!({
+            "step": "unstage_added_skill",
+            "message": "fault injected at unstage_added_skill",
+        }));
+        return errors;
+    }
+    match gitops::run_git_allow_failure(ctx, &["reset", "HEAD", "--", skill_rel]) {
+        Ok(output) if output.status.success() => {}
+        Ok(output) => errors.push(serde_json::json!({
+            "step": "unstage_added_skill",
+            "message": String::from_utf8_lossy(&output.stderr).trim(),
+        })),
+        Err(err) => errors.push(serde_json::json!({
+            "step": "unstage_added_skill",
+            "message": err.to_string(),
+        })),
+    }
+    errors
+}
+
+fn rollback_fault_active(tag: &str) -> bool {
+    std::env::var("LOOM_ROLLBACK_FAULT_INJECT").ok().as_deref() == Some(tag)
 }
 
 pub(crate) fn restore_path_from_backup(path: &Path, backup: &serde_json::Value) -> Result<()> {

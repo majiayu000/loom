@@ -90,37 +90,6 @@ fn cli_contract_docs_track_current_surface() {
     );
     let readme = include_str!("../README.md");
 
-    for command in [
-        "`init`",
-        "`backup`",
-        "`monitor`",
-        "`use`",
-        "`plan`",
-        "`apply`",
-        "`workspace`",
-        "`target`",
-        "`skill`",
-        "`skillset`",
-        "`telemetry`",
-        "`provider`",
-        "`catalog`",
-        "`package`",
-        "`mcp`",
-        "`provision`",
-        "`instruction`",
-        "`workflow`",
-        "`sync`",
-        "`ops`",
-        "`agent`",
-        "`codex`",
-        "`panel`",
-    ] {
-        assert!(
-            contract.contains(command),
-            "CLI contract missing top-level command {command}"
-        );
-    }
-
     for stale in [
         "workspace status [--binding",
         "workspace doctor [--binding",

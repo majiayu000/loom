@@ -2,9 +2,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsStr;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
-use std::process::{Command, Output, Stdio};
+use std::process::Output;
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -748,27 +748,10 @@ fn join_checked_subdir(base: &Path, subdir: &str) -> PathBuf {
 }
 
 fn run_git_in(repo_dir: &Path, args: &[&str]) -> Result<String> {
-    let output = run_git_allow_failure_in(repo_dir, args)?;
-    if !output.status.success() {
-        return Err(anyhow!(
-            "git {:?} failed: {}",
-            args,
-            String::from_utf8_lossy(&output.stderr).trim()
-        ));
-    }
-    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    // File-transport opt-in: skill sources may be local git repositories.
+    gitops::run_git_in_dir(repo_dir, gitops::FileProtocol::Allowed, args)
 }
 
 fn run_git_allow_failure_in(repo_dir: &Path, args: &[&str]) -> Result<Output> {
-    Command::new("git")
-        .current_dir(repo_dir)
-        .arg("-c")
-        .arg("commit.gpgsign=false")
-        .arg("-c")
-        .arg("protocol.file.allow=always")
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .args(args)
-        .output()
-        .with_context(|| format!("failed to run git {:?}", args))
+    gitops::run_git_allow_failure_in_dir(repo_dir, gitops::FileProtocol::Allowed, args)
 }

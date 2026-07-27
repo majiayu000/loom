@@ -1,6 +1,6 @@
 use std::fs;
 use std::path::Path;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
 use chrono::{DateTime, Utc};
 use serde_json::{Value, json};
@@ -421,11 +421,8 @@ fn git_remote_for_source(source: &SourceDescriptor) -> Option<String> {
 }
 
 fn resolve_git_head(remote: &str) -> std::result::Result<String, String> {
-    let output = Command::new("git")
-        .arg("-c")
-        .arg("commit.gpgsign=false")
-        .arg("-c")
-        .arg("protocol.file.allow=always")
+    // File-transport opt-in: sources may point at local git repositories.
+    let output = crate::gitops::hardened_git_command_no_dir(crate::gitops::FileProtocol::Allowed)
         .arg("ls-remote")
         .arg(remote)
         .arg("HEAD")

@@ -330,6 +330,14 @@ pub(crate) fn security_diff_report(
     to: &str,
 ) -> std::result::Result<Value, CommandFailure> {
     validate_skill_name(skill).map_err(map_arg)?;
+    for (name, value) in [("from", from), ("to", to)] {
+        if !crate::validation::is_safe_git_ref(value) {
+            return Err(CommandFailure::new(
+                ErrorCode::ArgInvalid,
+                format!("<{}> must be a safe Git revision", name),
+            ));
+        }
+    }
     let skill_rel = format!("skills/{skill}");
     let raw = gitops::run_git(ctx, &["diff", "--name-status", from, to, "--", &skill_rel])
         .map_err(map_git)?;

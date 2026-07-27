@@ -57,16 +57,16 @@ fn parser_fixtures_and_repeated_ingest_are_deterministic() {
     );
     assert!(output.status.success(), "ingest failed: {envelope}");
     assert_eq!(envelope["cmd"], json!("telemetry.ingest"));
-    assert_eq!(envelope["data"]["ingested"], json!(6), "{envelope}");
+    assert_eq!(envelope["data"]["ingested"], json!(17), "{envelope}");
     assert_eq!(envelope["data"]["malformed"], json!(1));
-    assert_eq!(envelope["data"]["rejected"]["count"], json!(3));
+    assert_eq!(envelope["data"]["rejected"]["count"], json!(14));
     assert_eq!(envelope["data"]["unmatched"].as_array().unwrap().len(), 2);
     assert!(!envelope.to_string().contains("bad/name"));
 
     let events_path = root.path().join("state/telemetry/events.jsonl");
     let first = fs::read_to_string(&events_path).expect("read imported events");
     let events = first.lines().collect::<Vec<_>>();
-    assert_eq!(events.len(), 6);
+    assert_eq!(events.len(), 17);
     let ids = events
         .iter()
         .map(|line| {
@@ -76,7 +76,7 @@ fn parser_fixtures_and_repeated_ingest_are_deterministic() {
                 .to_string()
         })
         .collect::<std::collections::BTreeSet<_>>();
-    assert_eq!(ids.len(), 6, "same-time invocations need distinct ids");
+    assert_eq!(ids.len(), 17, "same-time invocations need distinct ids");
     assert!(!first.contains(&claude));
     assert!(!first.contains(&codex));
     assert!(!first.contains("/workspace/"));
@@ -110,6 +110,95 @@ fn parser_fixtures_and_repeated_ingest_are_deterministic() {
     assert_eq!(second["data"]["ingested"], json!(0));
     assert_eq!(second["data"]["sources_reset"]["count"], json!(0));
     assert_eq!(fs::read_to_string(events_path).unwrap(), first);
+}
+
+#[test]
+fn codex_tool_reads_are_precise_rejected_and_private() {
+    let root = TestDir::new("telemetry-ingest-codex-tool-read");
+    let homes = TestDir::new("telemetry-ingest-codex-tool-read-homes");
+    let (_, codex) = fixture_homes(&homes);
+    write_skill(
+        root.path(),
+        "demo",
+        "---\nname: demo\ndescription: Fixture skill.\n---\n# Demo\n",
+    );
+    run_loom_with_env(
+        root.path(),
+        &[("LOOM_CODEX_HOME", &codex)],
+        &["telemetry", "enable", "--local-only"],
+    );
+    let no_home_output = Command::new(env!("CARGO_BIN_EXE_loom"))
+        .env_remove("HOME")
+        .env_remove("USERPROFILE")
+        .env("LOOM_CODEX_HOME", &codex)
+        .arg("--json")
+        .arg("--root")
+        .arg(root.path())
+        .args(["telemetry", "ingest", "--agent", "codex", "--dry-run"])
+        .output()
+        .expect("run no-home ingest");
+    let no_home: Value = serde_json::from_slice(&no_home_output.stdout).unwrap();
+    assert!(no_home_output.status.success(), "{no_home}");
+    assert_eq!(no_home["data"]["ingested"], json!(3), "{no_home}");
+    assert_eq!(no_home["data"]["rejected"]["count"], json!(12));
+    let (output, envelope) = run_loom_with_env(
+        root.path(),
+        &[("LOOM_CODEX_HOME", &codex)],
+        &["telemetry", "ingest", "--agent", "codex"],
+    );
+    assert!(output.status.success(), "ingest failed: {envelope}");
+    assert_eq!(envelope["data"]["ingested"], json!(14), "{envelope}");
+    assert_eq!(envelope["data"]["rejected"]["count"], json!(12));
+    for reason in [
+        "malformed_exec_command_arguments",
+        "missing_exec_command_cmd",
+        "invalid_exec_command_cmd",
+        "missing_exec_command_arguments",
+        "missing_nested_exec_command_cmd",
+        "missing_exec_arguments",
+        "invalid_exec_arguments",
+        "malformed_exec_arguments",
+        "invalid_nested_exec_command_cmd",
+        "malformed_nested_exec_command",
+        "invalid_nested_exec_command_arguments",
+    ] {
+        assert_eq!(
+            envelope["data"]["rejected"]["reasons"][reason],
+            json!(1),
+            "{reason}: {envelope}"
+        );
+    }
+    let events = fs::read_to_string(root.path().join("state/telemetry/events.jsonl")).unwrap();
+    let cursor =
+        fs::read_to_string(root.path().join("state/telemetry/ingest_cursor.json")).unwrap();
+    let durable = format!("{events}\n{cursor}\n{envelope}");
+    for private in [
+        "RAW_COMMAND_SENTINEL",
+        "rm-decoy",
+        "free-text",
+        "prefix-spoof",
+        "nested-root",
+        "single-quoted",
+        "escaped-home",
+        "sed-program",
+        "head-value",
+        "tail-value",
+        "less-value",
+        "more-value",
+        "bat-value",
+        "get-value",
+        "missing cmd",
+        "Fixture body",
+        "$HOME/",
+        &codex,
+    ] {
+        assert!(
+            !durable.contains(private),
+            "durable telemetry leaked {private}"
+        );
+    }
+    assert!(!events.contains(r#""observed_skill_name":"rm-decoy""#));
+    assert!(!events.contains(r#""observed_skill_name":"escape""#));
 }
 
 #[test]

@@ -1,7 +1,7 @@
 use std::cmp::{Ordering, Reverse};
 use std::collections::BinaryHeap;
 use std::io::{BufRead, BufReader};
-use std::path::{Component, Path};
+use std::path::Path;
 
 use axum::{
     Json,
@@ -17,14 +17,6 @@ use crate::state_model::{RegistryObservationEvent, RegistryStatePaths};
 
 const MAX_HISTORY_WARNINGS: usize = 20;
 const MAX_HISTORY_WARNING_DETAILS: usize = MAX_HISTORY_WARNINGS - 1;
-
-fn skill_name_looks_sane(name: &str) -> bool {
-    !name.is_empty()
-        && name.len() <= 255
-        && Path::new(name)
-            .components()
-            .all(|component| matches!(component, Component::Normal(_)))
-}
 
 /// Wrapper that orders `RegistryObservationEvent` by `observed_at` (ascending) so
 /// that a `BinaryHeap<Reverse<OrdEvent>>` acts as a min-heap keyed by time.
@@ -129,13 +121,13 @@ pub(super) async fn registry_skill_history(
     State(state): State<PanelState>,
 ) -> (StatusCode, Json<serde_json::Value>) {
     const CMD: &str = "registry.skill.history";
-    if !skill_name_looks_sane(&skill_name) {
+    if !crate::validation::is_valid_skill_name(&skill_name) {
         return (
             StatusCode::BAD_REQUEST,
             registry_error(
                 CMD,
                 "ARG_INVALID",
-                "skill name must be a single path segment".to_string(),
+                "skill name must contain only [a-zA-Z0-9._-]".to_string(),
             ),
         );
     }
@@ -466,7 +458,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn accepts_inventory_skill_with_spaces_and_unicode() {
+    async fn rejects_skill_names_with_spaces_and_unicode() {
+        // Centralized validation (crate::validation) enforces the strict
+        // ASCII whitelist shared with the CLI, so names with spaces or
+        // non-ASCII characters are rejected even if they exist on disk.
         let root = std::env::temp_dir().join(format!("loom-hist-unicode-{}", Uuid::new_v4()));
         fs::create_dir_all(&root).unwrap();
         let _paths = setup_registry(&root);
@@ -477,11 +472,9 @@ mod tests {
         let (status, Json(payload)) =
             registry_skill_history(AxumPath(skill_name.to_string()), State(state)).await;
 
-        assert_eq!(status, StatusCode::OK);
-        assert_eq!(payload["ok"], json!(true));
-        assert_eq!(payload["data"]["skill"], json!(skill_name));
-        assert_eq!(payload["data"]["count"], json!(0));
-        assert!(payload["data"]["events"].as_array().unwrap().is_empty());
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(payload["ok"], json!(false));
+        assert_eq!(payload["error"]["code"], json!("ARG_INVALID"));
 
         let _ = fs::remove_dir_all(&root);
     }

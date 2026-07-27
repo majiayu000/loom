@@ -15,6 +15,7 @@ mod sha256;
 mod state;
 mod state_model;
 mod types;
+mod validation;
 #[path = "core/vocab.rs"]
 mod vocab;
 

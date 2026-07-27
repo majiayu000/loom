@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use uuid::Uuid;
 
 use crate::cli::{AgentKind, BindingAddArgs, Command, ProjectionMethod, WorkspaceMatcherKind};
@@ -51,24 +51,7 @@ pub(crate) fn ensure_skill_exists(
     Ok(())
 }
 
-pub(crate) fn validate_skill_name(skill: &str) -> Result<()> {
-    if skill.is_empty() {
-        return Err(anyhow!("skill name cannot be empty"));
-    }
-    if skill == "." || skill == ".." {
-        return Err(anyhow!("skill name cannot be '.' or '..'"));
-    }
-    if skill
-        .chars()
-        .any(|ch| !(ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.')))
-    {
-        return Err(anyhow!(
-            "skill name '{}' contains unsupported characters; use [A-Za-z0-9._-]",
-            skill
-        ));
-    }
-    Ok(())
-}
+pub(crate) use crate::validation::validate_skill_name;
 
 // ---------------------------------------------------------------------------
 // Command name dispatch
@@ -138,22 +121,10 @@ pub(crate) fn validate_non_empty(
 }
 
 pub(crate) fn validate_policy_profile(value: &str) -> std::result::Result<(), CommandFailure> {
-    if !(1..=64).contains(&value.len()) {
-        return Err(CommandFailure::new(
-            ErrorCode::ArgInvalid,
-            "--policy-profile must be 1-64 characters",
-        ));
+    match crate::validation::policy_profile_error(value) {
+        Some(message) => Err(CommandFailure::new(ErrorCode::ArgInvalid, message)),
+        None => Ok(()),
     }
-    if !value
-        .chars()
-        .all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || matches!(ch, '-' | '_'))
-    {
-        return Err(CommandFailure::new(
-            ErrorCode::ArgInvalid,
-            "--policy-profile must match [a-z0-9_-]{1,64}",
-        ));
-    }
-    Ok(())
 }
 
 pub(crate) fn validate_projection_method(

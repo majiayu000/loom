@@ -7,11 +7,10 @@ use axum::{
 };
 use serde::Deserialize;
 
-use crate::cli::TelemetryReportArgs;
-use crate::commands::App;
+use crate::cli::{Command, TelemetryCommand, TelemetryReportArgs};
 
 use super::super::PanelState;
-use super::common::panel_command_envelope;
+use super::super::auth::run_panel_command;
 
 #[derive(Debug, Default, Deserialize)]
 pub(in crate::panel) struct TelemetryReportQuery {
@@ -43,9 +42,13 @@ pub(in crate::panel) async fn v1_telemetry_report(
     Query(query): Query<TelemetryReportQuery>,
     State(state): State<PanelState>,
 ) -> (StatusCode, Json<serde_json::Value>) {
-    let app = App {
-        ctx: state.ctx.as_ref().clone(),
-    };
     let args = TelemetryReportArgs::from(query);
-    panel_command_envelope("telemetry.report", app.cmd_telemetry_report(&args))
+    run_panel_command(
+        &state,
+        "telemetry.report",
+        StatusCode::OK,
+        Command::Telemetry {
+            command: TelemetryCommand::Report(args),
+        },
+    )
 }

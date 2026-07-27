@@ -377,9 +377,26 @@ pub(super) fn reset_command_created_commits(
     errors
 }
 
-pub(super) fn unstage_registry_state(ctx: &crate::state::AppContext) {
-    let _ = gitops::run_git_allow_failure(ctx, &["reset", "HEAD", "--", "state/registry"]);
-    let _ = gitops::run_git_allow_failure(ctx, &["reset", "HEAD", "--", "state/v3"]);
+pub(crate) fn unstage_registry_state(ctx: &crate::state::AppContext) -> Vec<Value> {
+    let mut errors = Vec::new();
+    for (path, step) in [
+        ("state/registry", "unstage_registry_state"),
+        ("state/v3", "unstage_legacy_registry_state"),
+    ] {
+        if maybe_push_rollback_fault(&mut errors, step) {
+            continue;
+        }
+        match gitops::run_git_allow_failure(ctx, &["reset", "HEAD", "--", path]) {
+            Ok(output) if output.status.success() => {}
+            Ok(output) => push_rollback_error(
+                &mut errors,
+                step,
+                String::from_utf8_lossy(&output.stderr).trim(),
+            ),
+            Err(err) => push_rollback_error(&mut errors, step, err),
+        }
+    }
+    errors
 }
 
 pub(super) fn stage_registry_state(
@@ -458,7 +475,7 @@ pub(super) fn rollback_registry_layout_after_failure(
         push_rollback_error(&mut errors, "remove_registry_layout", err);
     }
     remove_backup_path_best_effort(legacy_layout_backup);
-    unstage_registry_state(ctx);
+    errors.extend(unstage_registry_state(ctx));
     errors
 }
 
@@ -499,7 +516,7 @@ pub(super) fn rollback_import_after_commit(
     {
         push_rollback_error(&mut errors, "restore_registry_audit_state", err);
     }
-    unstage_registry_state(ctx);
+    errors.extend(unstage_registry_state(ctx));
     errors
 }
 
@@ -522,7 +539,7 @@ pub(super) fn rollback_monitor_after_commit(
     {
         push_rollback_error(&mut errors, "restore_registry_audit_state", err);
     }
-    unstage_registry_state(ctx);
+    errors.extend(unstage_registry_state(ctx));
     errors
 }
 
@@ -541,7 +558,17 @@ pub(super) fn rollback_monitor_changes(
         {
             push_rollback_error(&mut errors, "restore_monitor_update", err);
         }
-        let _ = gitops::run_git_allow_failure(ctx, &["reset", "HEAD", "--", &update.skill_rel]);
+        if !maybe_push_rollback_fault(&mut errors, "unstage_monitor_update") {
+            match gitops::run_git_allow_failure(ctx, &["reset", "HEAD", "--", &update.skill_rel]) {
+                Ok(output) if output.status.success() => {}
+                Ok(output) => push_rollback_error(
+                    &mut errors,
+                    "unstage_monitor_update",
+                    String::from_utf8_lossy(&output.stderr).trim(),
+                ),
+                Err(err) => push_rollback_error(&mut errors, "unstage_monitor_update", err),
+            }
+        }
     }
 
     errors.extend(rollback_imported_skills(ctx, imported_rels));

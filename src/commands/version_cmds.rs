@@ -130,7 +130,7 @@ impl App {
                 ));
                 remove_registry_layout_backups_best_effort(&registry_layout_backup);
                 rollback_errors.extend(restore_index_best_effort(&self.ctx, &previous_index));
-                delete_tag_best_effort(self, &tag);
+                rollback_errors.extend(delete_tag_best_effort(self, &tag, "delete_release_tag"));
                 return Err(err.with_rollback_errors(rollback_errors));
             }
         };
@@ -295,13 +295,14 @@ impl App {
         let commit = match gitops::commit(&self.ctx, &message) {
             Ok(commit) => commit,
             Err(err) => {
-                delete_tag_best_effort(self, &recovery_ref);
-                let mut rollback_errors = restore_path_best_effort(
+                let mut rollback_errors =
+                    delete_tag_best_effort(self, &recovery_ref, "delete_recovery_tag");
+                rollback_errors.extend(restore_path_best_effort(
                     &skill_path,
                     skill_backup.as_ref(),
                     "restore_skill_path",
                     "remove_skill_path",
-                );
+                ));
                 remove_backup_path_best_effort(skill_backup.as_ref());
                 rollback_errors.extend(restore_registry_layout_best_effort(
                     &paths,
@@ -371,8 +372,8 @@ impl App {
                 result
             }
             Err(err) => {
-                let mut rollback_errors = Vec::new();
-                delete_tag_best_effort(self, &recovery_ref);
+                let mut rollback_errors =
+                    delete_tag_best_effort(self, &recovery_ref, "delete_recovery_tag");
                 rollback_errors.extend(reset_command_created_commit_best_effort(
                     self,
                     &previous_head,
@@ -455,8 +456,21 @@ fn validate_diff_ref_arg(name: &str, value: &str) -> std::result::Result<(), Com
     ))
 }
 
-fn delete_tag_best_effort(app: &App, tag: &str) {
-    let _ = gitops::run_git_allow_failure(&app.ctx, &["tag", "-d", tag]);
+fn delete_tag_best_effort(app: &App, tag: &str, step: &str) -> Vec<Value> {
+    let mut errors = Vec::new();
+    if maybe_push_rollback_fault(&mut errors, step) {
+        return errors;
+    }
+    match gitops::run_git_allow_failure(&app.ctx, &["tag", "-d", tag]) {
+        Ok(output) if output.status.success() => {}
+        Ok(output) => push_rollback_error(
+            &mut errors,
+            step,
+            String::from_utf8_lossy(&output.stderr).trim(),
+        ),
+        Err(err) => push_rollback_error(&mut errors, step, err),
+    }
+    errors
 }
 
 fn reset_command_created_commit_best_effort(app: &App, previous_head: &str) -> Vec<Value> {

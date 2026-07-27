@@ -287,3 +287,50 @@ fn monitor_observed_reports_pre_commit_restore_failure() {
         "injected restore failure should leave evidence of the partial update"
     );
 }
+
+#[cfg(unix)]
+#[test]
+fn monitor_observed_reports_pre_commit_unstage_failure() {
+    let root = TestDir::new("monitor-observed-visible-unstage-failure");
+    let observed = root.path().join("observed-skills");
+
+    write_file(&observed.join("alpha/SKILL.md"), "# alpha\n");
+    let (target_output, target_env) = target_add(root.path(), "claude", &observed, "observed");
+    assert!(target_output.status.success(), "target add failed");
+    let target_id = target_env["data"]["target"]["target_id"]
+        .as_str()
+        .expect("target id")
+        .to_string();
+    let (first_output, _) = run_loom(
+        root.path(),
+        &[
+            "skill",
+            "monitor-observed",
+            "--once",
+            "--target",
+            &target_id,
+        ],
+    );
+    assert!(first_output.status.success(), "initial monitor failed");
+
+    write_file(&observed.join("alpha/SKILL.md"), "# alpha\n\nupdated\n");
+    install_failing_pre_commit_hook(root.path());
+    let (output, env) = run_loom_with_env(
+        root.path(),
+        &[("LOOM_ROLLBACK_FAULT_INJECT", "unstage_monitor_update")],
+        &[
+            "skill",
+            "monitor-observed",
+            "--once",
+            "--target",
+            &target_id,
+        ],
+    );
+
+    assert!(
+        !output.status.success(),
+        "faulted monitor unexpectedly succeeded"
+    );
+    assert_eq!(env["ok"], Value::Bool(false));
+    assert_eq!(rollback_error_steps(&env), vec!["unstage_monitor_update"]);
+}

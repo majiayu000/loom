@@ -56,6 +56,15 @@ fn registry_array_len(root: &Path, file_name: &str, key: &str) -> usize {
     value[key].as_array().map(Vec::len).unwrap_or(0)
 }
 
+fn rollback_error_steps(env: &Value) -> Vec<String> {
+    env["error"]["details"]["rollback_errors"]
+        .as_array()
+        .expect("rollback errors array")
+        .iter()
+        .filter_map(|error| error["step"].as_str().map(ToString::to_string))
+        .collect()
+}
+
 #[test]
 fn target_add_bootstraps_registry_state_and_records_op() {
     let root = TestDir::new("registry-target-add");
@@ -127,6 +136,28 @@ fn skill_save_rolls_back_registry_operation_after_audit_failure() {
     assert!(
         git_ok(root.path(), &["log", "--oneline", "--", "skills/demo"]).is_empty(),
         "skill commit should be rolled back"
+    );
+}
+
+#[test]
+fn skill_save_reports_registry_unstage_rollback_errors() {
+    let root = TestDir::new("registry-skill-save-unstage-rollback-error");
+    write_skill(root.path(), "demo", "# demo\n\nv1\n");
+
+    let (output, env) = run_loom_with_env(
+        root.path(),
+        &[
+            ("LOOM_FAULT_INJECT", "skill_save_after_operation"),
+            ("LOOM_ROLLBACK_FAULT_INJECT", "unstage_registry_state"),
+        ],
+        &["skill", "commit", "demo", "--from-source"],
+    );
+
+    assert!(!output.status.success(), "save unexpectedly succeeded");
+    assert_eq!(env["ok"], Value::Bool(false));
+    assert!(
+        rollback_error_steps(&env).contains(&"unstage_registry_state".to_string()),
+        "missing registry unstage rollback error: {env}"
     );
 }
 

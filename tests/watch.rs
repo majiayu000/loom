@@ -501,3 +501,29 @@ fn skill_watch_once_reports_audit_restore_rollback_errors() {
         "missing rollback error details: {env}"
     );
 }
+
+#[test]
+fn skill_watch_once_reports_registry_unstage_rollback_errors() {
+    let root = TestDir::new("skill-watch-unstage-rollback-errors");
+    write_skill(root.path(), "demo", "# demo\n\nv1\n");
+    assert!(save_skill(root.path(), "demo").0.status.success());
+    write_skill(root.path(), "demo", "# demo\n\nv2\n");
+
+    let (output, env) = run_loom_with_env(
+        root.path(),
+        &[
+            ("LOOM_FAULT_INJECT", "record_v3_operation_after_checkpoint"),
+            ("LOOM_ROLLBACK_FAULT_INJECT", "unstage_registry_state"),
+        ],
+        &["skill", "watch", "demo", "--once", "--debounce-ms", "0"],
+    );
+
+    assert!(
+        !output.status.success(),
+        "faulted watch unexpectedly succeeded"
+    );
+    assert!(
+        rollback_error_steps(&env).contains(&"unstage_registry_state".to_string()),
+        "missing registry unstage rollback error: {env}"
+    );
+}

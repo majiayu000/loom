@@ -291,9 +291,32 @@ async fn v1_overview_returns_workspace_status_payload() {
 
     assert_eq!(status, StatusCode::OK);
     assert_eq!(payload["ok"], json!(true));
-    assert_eq!(payload["cmd"], json!("panel.overview"));
+    assert_eq!(payload["cmd"], json!("workspace.status"));
     assert_eq!(payload["data"]["registered_targets"]["count"], json!(0));
     assert!(payload["data"]["remote"].is_object());
+
+    cleanup_root(root);
+}
+
+#[tokio::test]
+async fn v1_overview_records_command_audit_like_cli_workspace_status() {
+    let (root, state) = make_test_state();
+
+    let (status, Json(payload)) = v1_overview(State(state)).await;
+
+    assert_eq!(status, StatusCode::OK, "{payload}");
+    assert_eq!(payload["ok"], json!(true));
+    let raw = fs::read_to_string(root.join("state/events/commands.jsonl"))
+        .expect("read command event log");
+    let events = raw
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).expect("parse command event"))
+        .collect::<Vec<_>>();
+    assert_eq!(events.len(), 2);
+    assert_eq!(events[0]["cmd"], json!("workspace.status"));
+    assert_eq!(events[0]["status"], json!("started"));
+    assert_eq!(events[1]["cmd"], json!("workspace.status"));
+    assert_eq!(events[1]["status"], json!("succeeded"));
 
     cleanup_root(root);
 }

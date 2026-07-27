@@ -1,6 +1,6 @@
 import { afterAll } from "vitest";
 import { act, type ReactTestInstance, type ReactTestRenderer } from "react-test-renderer";
-import { api, type BindingShowPayload, type CommandEnvelope, type DoctorPayload, type OpsPayload, type TargetShowPayload, type RegistryOperationRecord } from "../../lib/api/client";
+import type { BindingShowPayload, DoctorPayload, OpsPayload, TargetShowPayload, RegistryOperationRecord } from "../../lib/api/client";
 import type { Binding, Skill, Target } from "../../lib/types";
 import type { RegistryProjection } from "../../generated/RegistryProjection";
 

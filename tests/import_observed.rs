@@ -46,6 +46,27 @@ fn git_head(root: &Path) -> String {
     String::from_utf8_lossy(&output.stdout).trim().to_string()
 }
 
+fn rollback_error_steps(env: &Value) -> Vec<String> {
+    env["error"]["details"]["rollback_errors"]
+        .as_array()
+        .expect("rollback errors array")
+        .iter()
+        .filter_map(|error| error["step"].as_str().map(ToString::to_string))
+        .collect()
+}
+
+#[cfg(unix)]
+fn install_failing_pre_commit_hook(root: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+
+    let hook = root.join(".git/hooks/pre-commit");
+    fs::create_dir_all(hook.parent().expect("hook parent")).expect("create hooks dir");
+    fs::write(&hook, "#!/bin/sh\nexit 1\n").expect("write pre-commit hook");
+    let mut permissions = fs::metadata(&hook).expect("hook metadata").permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&hook, permissions).expect("set hook executable");
+}
+
 fn imported_skill_names(env: &Value) -> Vec<String> {
     let mut names = env["data"]["imported"]
         .as_array()
@@ -287,4 +308,41 @@ fn skill_import_observed_rolls_back_commit_after_operation_failure() {
     assert_eq!(git_head(root.path()), head_before);
     assert!(!root.path().join("skills/alpha").exists());
     assert!(!git_path_exists(root.path(), "skills/alpha/SKILL.md"));
+}
+
+#[cfg(unix)]
+#[test]
+fn skill_import_observed_reports_pre_commit_rollback_failure() {
+    let root = TestDir::new("import-observed-visible-rollback-failure");
+    let observed = root.path().join("observed-skills");
+    write_file(&observed.join("alpha/SKILL.md"), "# alpha\n");
+
+    let (target_output, target_env) = target_add(root.path(), "claude", &observed, "observed");
+    assert!(
+        target_output.status.success(),
+        "target add failed: {}",
+        String::from_utf8_lossy(&target_output.stderr)
+    );
+    let target_id = target_env["data"]["target"]["target_id"]
+        .as_str()
+        .expect("target id")
+        .to_string();
+    install_failing_pre_commit_hook(root.path());
+
+    let (output, env) = run_loom_with_env(
+        root.path(),
+        &[("LOOM_ROLLBACK_FAULT_INJECT", "remove_added_skill")],
+        &["skill", "import-observed", "--target", &target_id],
+    );
+
+    assert!(
+        !output.status.success(),
+        "faulted import unexpectedly succeeded"
+    );
+    assert_eq!(env["ok"], Value::Bool(false));
+    assert_eq!(rollback_error_steps(&env), vec!["remove_added_skill"]);
+    assert!(
+        root.path().join("skills/alpha").exists(),
+        "injected rollback failure should leave evidence of the partial import"
+    );
 }

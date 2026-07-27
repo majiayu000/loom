@@ -86,7 +86,7 @@ export function ProjectionsPage({ projections, targets, bindings, readOnly, onMu
   };
 
   const project = () => {
-    if (!selected || !selected.binding_id || !canProject) return;
+    if (!selected?.binding_id || !canProject) return;
     action.run(
       "re-project",
       () =>

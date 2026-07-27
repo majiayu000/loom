@@ -1,24 +1,22 @@
 import React from "react";
-import { afterAll, expect, test } from "vitest";
+import { expect, test } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { act, create, type ReactTestInstance, type ReactTestRenderer } from "react-test-renderer";
 import { LiveDataBanner } from "../PanelApp";
 import { BindingsPage } from "./BindingsPage";
-import { HistoryPage, bucket } from "./HistoryPage";
-import { TargetsPage } from "./TargetsPage";
+import { bucket } from "./HistoryPage";
 import { SettingsPage } from "./SettingsPage";
 import { OverviewPage } from "./OverviewPage";
-import { DoctorPage } from "./DoctorPage";
 import { FirstRunPage } from "./FirstRunPage";
 import { ProjectionsPage } from "./ProjectionsPage";
 import { SkillsPage } from "./SkillsPage";
 import { BindingAddForm } from "../../components/panel/forms/BindingAddForm";
-import { api, type BindingShowPayload, type CommandEnvelope, type DoctorPayload, type OpsPayload, type TargetShowPayload, type RegistryOperationRecord } from "../../lib/api/client";
-import type { Binding, Skill, Target } from "../../lib/types";
+import { api, type CommandEnvelope } from "../../lib/api/client";
+import type { Skill } from "../../lib/types";
 import type { RegistryProjection } from "../../generated/RegistryProjection";
 import { ZERO_OPERATION_COUNTS } from "../../types";
 
-import { bindingPayload, buttonByLabel, clickableRows, doctorPayload, flush, makeBinding, makeOperation, makeOrphanProjection, makeSkill, makeTarget, markup, opsPayload, targetPayload, textOf } from "./panel_state_test_utils";
+import { bindingPayload, buttonByLabel, clickableRows, flush, makeBinding, makeOperation, makeOrphanProjection, makeSkill, makeTarget, markup } from "./panel_state_test_utils";
 test("HistoryPage treats succeeded operations as successful", () => {
   expect(bucket(makeOperation("succeeded", false))).toBe("ok");
 });

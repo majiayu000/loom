@@ -104,22 +104,22 @@ impl App {
         let skill_rel = format!("skills/{}", args.name);
         let provenance = provenance_record_for_skill(&args.name, source.descriptor, &dst)?;
         if let Err(err) = save_record_and_lock(&self.ctx, provenance) {
-            rollback_added_skill(&self.ctx, &skill_rel, &dst);
-            return Err(err);
+            let rollback_errors = rollback_added_skill(&self.ctx, &skill_rel, &dst);
+            return Err(err.with_rollback_errors(rollback_errors));
         }
         if let Err(err) = gitops::stage_path(&self.ctx, Path::new(&skill_rel)) {
-            rollback_added_skill(&self.ctx, &skill_rel, &dst);
-            return Err(map_git(err));
+            let rollback_errors = rollback_added_skill(&self.ctx, &skill_rel, &dst);
+            return Err(map_git(err).with_rollback_errors(rollback_errors));
         }
         if let Err(err) = stage_provenance_paths(&self.ctx) {
-            rollback_added_skill(&self.ctx, &skill_rel, &dst);
-            return Err(err);
+            let rollback_errors = rollback_added_skill(&self.ctx, &skill_rel, &dst);
+            return Err(err.with_rollback_errors(rollback_errors));
         }
         let staged = match gitops::has_staged_changes_for_path(&self.ctx, Path::new(&skill_rel)) {
             Ok(staged) => staged,
             Err(err) => {
-                rollback_added_skill(&self.ctx, &skill_rel, &dst);
-                return Err(map_git(err));
+                let rollback_errors = rollback_added_skill(&self.ctx, &skill_rel, &dst);
+                return Err(map_git(err).with_rollback_errors(rollback_errors));
             }
         };
         if staged {
@@ -127,8 +127,8 @@ impl App {
             let commit = match gitops::commit(&self.ctx, &message) {
                 Ok(commit) => commit,
                 Err(err) => {
-                    rollback_added_skill(&self.ctx, &skill_rel, &dst);
-                    return Err(map_git(err));
+                    let rollback_errors = rollback_added_skill(&self.ctx, &skill_rel, &dst);
+                    return Err(map_git(err).with_rollback_errors(rollback_errors));
                 }
             };
             if let Err(err) = maybe_autosync_or_queue(
@@ -138,8 +138,8 @@ impl App {
                 json!({"skill": args.name, "commit": commit}),
                 &mut meta,
             ) {
-                rollback_added_skill(&self.ctx, &skill_rel, &dst);
-                return Err(err);
+                let rollback_errors = rollback_added_skill(&self.ctx, &skill_rel, &dst);
+                return Err(err.with_rollback_errors(rollback_errors));
             }
         }
 

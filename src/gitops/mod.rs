@@ -5,6 +5,7 @@ mod history_types;
 mod prepared_commit;
 mod prepared_index;
 mod prepared_index_paths;
+mod runner;
 mod snapshot;
 
 pub use diff::*;
@@ -13,12 +14,15 @@ pub use history_types::*;
 pub use prepared_commit::*;
 pub use prepared_index::*;
 pub use prepared_index_paths::prepared_index_claim_exists;
+pub(crate) use runner::{
+    FileProtocol, hardened_config_args, hardened_git_command, hardened_git_command_no_dir,
+    run_git_allow_failure_in_dir, run_git_in_dir,
+};
 pub use snapshot::snapshot_index_to;
 
 use std::fs::{self, OpenOptions};
-use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output, Stdio};
+use std::process::Output;
 
 use anyhow::{Context, Result, anyhow};
 
@@ -41,44 +45,9 @@ fn run_git_raw_in_with_env_and_input(
     input: Option<&[u8]>,
     args: &[&str],
 ) -> Result<Output> {
-    let mut command = Command::new("git");
-    command
-        .current_dir(repo_dir)
-        .arg("-c")
-        .arg("commit.gpgsign=false")
-        .arg("-c")
-        .arg("tag.gpgSign=false")
-        .arg("-c")
-        .arg("protocol.allow=never")
-        .arg("-c")
-        .arg("protocol.https.allow=always")
-        .arg("-c")
-        .arg("protocol.ssh.allow=always");
-    command.arg("-c").arg("protocol.file.allow=always");
-    command
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .args(args);
-    for (key, value) in envs {
-        command.env(key, value);
-    }
-    if input.is_some() {
-        command.stdin(Stdio::piped());
-    }
-
-    let mut child = command
-        .spawn()
-        .with_context(|| format!("failed to run git {:?}", args))?;
-    if let Some(bytes) = input {
-        let mut stdin = child.stdin.take().context("failed to open git stdin")?;
-        stdin
-            .write_all(bytes)
-            .with_context(|| format!("failed to write git stdin for {:?}", args))?;
-    }
-
-    child
-        .wait_with_output()
-        .with_context(|| format!("failed to read git output for {:?}", args))
+    // The loom registry supports local-path remotes (see `validate_git_url`),
+    // so internal gitops calls keep the explicit `file` transport opt-in.
+    runner::run_git_raw(repo_dir, FileProtocol::Allowed, envs, input, args)
 }
 
 pub fn run_git(ctx: &AppContext, args: &[&str]) -> Result<String> {

@@ -358,15 +358,15 @@ impl InstallBackups {
         skill: &str,
         dst: &Path,
     ) -> Vec<Value> {
-        let mut errors = Vec::new();
-        rollback_added_skill(ctx, &format!("skills/{skill}"), dst);
+        let skill_rel = format!("skills/{skill}");
+        let mut errors = rollback_added_skill(ctx, &skill_rel, dst);
         self.sources.restore(&mut errors);
         self.lock.restore(&mut errors);
         self.trust.restore(&mut errors);
         if let Err(err) = restore_registry_audit_state(paths, &self.audit) {
             errors.push(json!({"step": "restore_registry_audit_state", "error": err.to_string()}));
         }
-        let _ = gitops::run_git_allow_failure(
+        match gitops::run_git_allow_failure(
             ctx,
             &[
                 "reset",
@@ -378,7 +378,17 @@ impl InstallBackups {
                 TRUST_REL,
                 "state/registry",
             ],
-        );
+        ) {
+            Ok(output) if output.status.success() => {}
+            Ok(output) => errors.push(json!({
+                "step": "unstage_provider_install",
+                "message": String::from_utf8_lossy(&output.stderr).trim(),
+            })),
+            Err(err) => errors.push(json!({
+                "step": "unstage_provider_install",
+                "message": err.to_string(),
+            })),
+        }
         errors
     }
 }

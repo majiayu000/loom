@@ -118,11 +118,6 @@ impl RegistryStatePaths {
         Ok(())
     }
 
-    pub fn load_or_init_snapshot(&self) -> Result<RegistrySnapshot> {
-        self.ensure_layout()?;
-        self.load_snapshot()
-    }
-
     pub fn load_snapshot(&self) -> Result<RegistrySnapshot> {
         let schema = self.load_schema()?;
         validate_schema_version(schema.schema_version)?;
@@ -231,11 +226,6 @@ impl RegistryStatePaths {
         read_json_file(&self.checkpoint_file)
     }
 
-    pub fn load_observations_file(&self, name: &str) -> Result<Vec<RegistryObservationEvent>> {
-        let instance_id = name.strip_suffix(".jsonl").unwrap_or(name);
-        read_json_lines(&self.observation_file_for_instance(instance_id)?)
-    }
-
     pub fn observation_file_for_instance(&self, instance_id: &str) -> Result<PathBuf> {
         validate_observation_instance_id(instance_id)?;
         Ok(self.observations_dir.join(format!("{instance_id}.jsonl")))
@@ -256,6 +246,9 @@ impl RegistryStatePaths {
         write_json_file(&self.bindings_file, value)
     }
 
+    /// Test-only helper: production code persists rules atomically via
+    /// `save_bindings_rules_projections`.
+    #[cfg(test)]
     pub fn save_rules(&self, value: &RegistryRulesFile) -> Result<()> {
         write_json_file(&self.rules_file, value)
     }
@@ -554,8 +547,11 @@ mod tests {
         assert!(snapshot.target("target_claude").is_some());
         assert_eq!(snapshot.binding_rules("binding_project_a").len(), 1);
         assert_eq!(snapshot.binding_projections("binding_project_a").len(), 1);
-        assert_eq!(snapshot.target_rules("target_claude").len(), 2);
-        assert_eq!(snapshot.target_projections("target_claude").len(), 2);
+        assert_eq!(snapshot.target_relations("target_claude").rules.len(), 2);
+        assert_eq!(
+            snapshot.target_relations("target_claude").projections.len(),
+            2
+        );
 
         let target_relations = snapshot.target_relations("target_claude");
         let target_binding_ids: Vec<_> = target_relations

@@ -27,7 +27,7 @@ pub use panel_check::check_panel_mutations;
 pub use surface_check::{SurfaceCheckReport, check_surface_inventory};
 pub use trace_check::{NextActionTraceReport, check_next_action_trace};
 
-pub const CLI_CONTRACT_VERSION: &str = "1.9.0";
+pub const CLI_CONTRACT_VERSION: &str = "1.10.0";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct ContractVersion {
@@ -187,6 +187,72 @@ pub(crate) fn public_command_schema_capabilities(
     let mut root = Cli::command();
     root.build();
     command_schema_capabilities(&root, command_path)
+}
+
+/// Enumerate every public (non-hidden) command path in the CLI surface,
+/// prefixed with the binary name, e.g. `loom skill trash restore`.
+pub fn public_command_paths() -> Vec<String> {
+    fn visit(command: &Command, prefix: &mut Vec<String>, paths: &mut Vec<String>) {
+        for subcommand in command
+            .get_subcommands()
+            .filter(|subcommand| !subcommand.is_hide_set() && subcommand.get_name() != "help")
+        {
+            prefix.push(subcommand.get_name().to_string());
+            paths.push(prefix.join(" "));
+            for action in positional_action_values(subcommand) {
+                paths.push(format!("{} {action}", prefix.join(" ")));
+            }
+            visit(subcommand, prefix, paths);
+            prefix.pop();
+        }
+    }
+
+    let mut root = Cli::command();
+    root.build();
+    let mut paths = Vec::new();
+    visit(&root, &mut vec!["loom".to_string()], &mut paths);
+    paths
+}
+
+#[cfg(test)]
+fn public_direct_command_paths() -> Vec<String> {
+    fn visit(command: &Command, prefix: &mut Vec<String>, paths: &mut Vec<String>) {
+        for subcommand in command
+            .get_subcommands()
+            .filter(|subcommand| !subcommand.is_hide_set() && subcommand.get_name() != "help")
+        {
+            prefix.push(subcommand.get_name().to_string());
+            let path = prefix.join(" ");
+            let actions = positional_action_values(subcommand);
+            if actions.is_empty() && !subcommand.is_subcommand_required_set() {
+                paths.push(path.clone());
+            }
+            paths.extend(actions.into_iter().map(|action| format!("{path} {action}")));
+            visit(subcommand, prefix, paths);
+            prefix.pop();
+        }
+    }
+
+    let mut root = Cli::command();
+    root.build();
+    let mut paths = Vec::new();
+    visit(&root, &mut vec!["loom".to_string()], &mut paths);
+    paths
+}
+
+fn positional_action_values(command: &Command) -> Vec<String> {
+    command
+        .get_positionals()
+        .filter(|argument| argument.get_id() == "action")
+        .flat_map(Arg::get_possible_values)
+        .filter(|value| !value.is_hide_set())
+        .map(|value| value.get_name().to_string())
+        .collect()
+}
+
+#[cfg(test)]
+fn contract_example_argv_variants(command: &str) -> Vec<Vec<String>> {
+    surface_check::command_variants(command, ExampleClassification::Executable)
 }
 
 pub(crate) fn public_command_tree_capabilities() -> Result<BTreeSet<String>, PublicArgvError> {

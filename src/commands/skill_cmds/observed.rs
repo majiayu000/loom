@@ -163,16 +163,16 @@ impl App {
 
                 if let Err(err) = fs::rename(&staging_skill, &dst) {
                     cleanup_staging();
-                    rollback_imported_skills(&self.ctx, &imported_rels);
-                    return Err(map_io(err));
+                    let rollback_errors = rollback_imported_skills(&self.ctx, &imported_rels);
+                    return Err(map_io(err).with_rollback_errors(rollback_errors));
                 }
 
                 let skill_rel = format!("skills/{}", skill_id);
                 if let Err(err) = gitops::stage_path(&self.ctx, Path::new(&skill_rel)) {
                     cleanup_staging();
-                    rollback_imported_skills(&self.ctx, &imported_rels);
-                    rollback_added_skill(&self.ctx, &skill_rel, &dst);
-                    return Err(map_git(err));
+                    let mut rollback_errors = rollback_imported_skills(&self.ctx, &imported_rels);
+                    rollback_errors.extend(rollback_added_skill(&self.ctx, &skill_rel, &dst));
+                    return Err(map_git(err).with_rollback_errors(rollback_errors));
                 }
                 imported_rels.push(skill_rel);
                 let mut imported_item = json!({
@@ -203,8 +203,8 @@ impl App {
                 }
                 Ok(false) => {}
                 Err(err) => {
-                    rollback_imported_skills(&self.ctx, &imported_rels);
-                    return Err(map_git(err));
+                    let rollback_errors = rollback_imported_skills(&self.ctx, &imported_rels);
+                    return Err(map_git(err).with_rollback_errors(rollback_errors));
                 }
             }
         }
@@ -220,8 +220,8 @@ impl App {
             let commit = match gitops::commit(&self.ctx, &message) {
                 Ok(commit) => commit,
                 Err(err) => {
-                    rollback_imported_skills(&self.ctx, &imported_rels);
-                    return Err(map_git(err));
+                    let rollback_errors = rollback_imported_skills(&self.ctx, &imported_rels);
+                    return Err(map_git(err).with_rollback_errors(rollback_errors));
                 }
             };
             let post_commit = (|| -> std::result::Result<Meta, CommandFailure> {
@@ -531,22 +531,51 @@ impl App {
                         fs::create_dir_all(parent).map_err(map_io)?;
                     }
                     if let Err(err) = fs::rename(&dst, &previous) {
-                        rollback_monitor_changes(&self.ctx, &imported_rels, &update_rollbacks);
+                        let rollback_errors =
+                            rollback_monitor_changes(&self.ctx, &imported_rels, &update_rollbacks);
                         cleanup_staging();
-                        return Err(map_io(err));
+                        return Err(map_io(err).with_rollback_errors(rollback_errors));
                     }
                     if let Err(err) = fs::rename(&staging_skill, &dst) {
-                        let _ = fs::rename(&previous, &dst);
-                        rollback_monitor_changes(&self.ctx, &imported_rels, &update_rollbacks);
+                        let mut rollback_errors = Vec::new();
+                        if let Err(restore_err) = fs::rename(&previous, &dst) {
+                            push_rollback_error(
+                                &mut rollback_errors,
+                                "restore_current_monitor_update",
+                                restore_err,
+                            );
+                        }
+                        rollback_errors.extend(rollback_monitor_changes(
+                            &self.ctx,
+                            &imported_rels,
+                            &update_rollbacks,
+                        ));
                         cleanup_staging();
-                        return Err(map_io(err));
+                        return Err(map_io(err).with_rollback_errors(rollback_errors));
                     }
                     if let Err(err) = gitops::stage_path(&self.ctx, Path::new(&skill_rel)) {
-                        let _ = remove_path_if_exists(&dst);
-                        let _ = fs::rename(&previous, &dst);
-                        rollback_monitor_changes(&self.ctx, &imported_rels, &update_rollbacks);
+                        let mut rollback_errors = Vec::new();
+                        if let Err(remove_err) = remove_path_if_exists(&dst) {
+                            push_rollback_error(
+                                &mut rollback_errors,
+                                "remove_current_monitor_update",
+                                remove_err,
+                            );
+                        }
+                        if let Err(restore_err) = fs::rename(&previous, &dst) {
+                            push_rollback_error(
+                                &mut rollback_errors,
+                                "restore_current_monitor_update",
+                                restore_err,
+                            );
+                        }
+                        rollback_errors.extend(rollback_monitor_changes(
+                            &self.ctx,
+                            &imported_rels,
+                            &update_rollbacks,
+                        ));
                         cleanup_staging();
-                        return Err(map_git(err));
+                        return Err(map_git(err).with_rollback_errors(rollback_errors));
                     }
                     update_rollbacks.push(MonitorUpdateRollback {
                         skill_rel: skill_rel.clone(),
@@ -557,15 +586,20 @@ impl App {
                     updated.push(item);
                 } else {
                     if let Err(err) = fs::rename(&staging_skill, &dst) {
-                        rollback_monitor_changes(&self.ctx, &imported_rels, &update_rollbacks);
+                        let rollback_errors =
+                            rollback_monitor_changes(&self.ctx, &imported_rels, &update_rollbacks);
                         cleanup_staging();
-                        return Err(map_io(err));
+                        return Err(map_io(err).with_rollback_errors(rollback_errors));
                     }
                     if let Err(err) = gitops::stage_path(&self.ctx, Path::new(&skill_rel)) {
-                        rollback_added_skill(&self.ctx, &skill_rel, &dst);
-                        rollback_monitor_changes(&self.ctx, &imported_rels, &update_rollbacks);
+                        let mut rollback_errors = rollback_added_skill(&self.ctx, &skill_rel, &dst);
+                        rollback_errors.extend(rollback_monitor_changes(
+                            &self.ctx,
+                            &imported_rels,
+                            &update_rollbacks,
+                        ));
                         cleanup_staging();
-                        return Err(map_git(err));
+                        return Err(map_git(err).with_rollback_errors(rollback_errors));
                     }
                     imported_rels.push(skill_rel.clone());
                     changed_rels.push(skill_rel);
@@ -583,9 +617,10 @@ impl App {
                 }
                 Ok(false) => {}
                 Err(err) => {
-                    rollback_monitor_changes(&self.ctx, &imported_rels, &update_rollbacks);
+                    let rollback_errors =
+                        rollback_monitor_changes(&self.ctx, &imported_rels, &update_rollbacks);
                     cleanup_staging();
-                    return Err(map_git(err));
+                    return Err(map_git(err).with_rollback_errors(rollback_errors));
                 }
             }
         }
@@ -608,9 +643,10 @@ impl App {
             let commit = match gitops::commit(&self.ctx, &message) {
                 Ok(commit) => commit,
                 Err(err) => {
-                    rollback_monitor_changes(&self.ctx, &imported_rels, &update_rollbacks);
+                    let rollback_errors =
+                        rollback_monitor_changes(&self.ctx, &imported_rels, &update_rollbacks);
                     cleanup_staging();
-                    return Err(map_git(err));
+                    return Err(map_git(err).with_rollback_errors(rollback_errors));
                 }
             };
             let post_commit = (|| -> std::result::Result<Meta, CommandFailure> {

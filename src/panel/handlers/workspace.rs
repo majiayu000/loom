@@ -8,7 +8,7 @@ use axum::{
 use serde_json::json;
 
 use crate::cli::{Command, RemoteCommand, SyncCommand, WorkspaceCommand, WorkspaceInitArgs};
-use crate::commands::{App, redact_sensitive_string};
+use crate::commands::redact_sensitive_string;
 use crate::state::resolve_agent_skill_dirs;
 use crate::state_model::RegistryStatePaths;
 
@@ -16,7 +16,7 @@ use super::super::auth::{
     ensure_mutation_authorized, error_envelope, registry_ok_with_warnings, run_panel_command,
 };
 use super::super::{PanelState, RemoteSetRequest, WorkspaceInitRequest};
-use super::common::{panel_command_envelope, panel_v1_ok};
+use super::common::panel_v1_ok;
 
 pub(in crate::panel) async fn v1_health() -> (StatusCode, Json<serde_json::Value>) {
     panel_v1_ok(
@@ -38,10 +38,14 @@ pub(in crate::panel) async fn v1_health() -> (StatusCode, Json<serde_json::Value
 pub(in crate::panel) async fn v1_overview(
     State(state): State<PanelState>,
 ) -> (StatusCode, Json<serde_json::Value>) {
-    let app = App {
-        ctx: state.ctx.as_ref().clone(),
-    };
-    panel_command_envelope("panel.overview", app.cmd_status())
+    run_panel_command(
+        &state,
+        "workspace.status",
+        StatusCode::OK,
+        Command::Workspace {
+            command: WorkspaceCommand::Status,
+        },
+    )
 }
 
 pub(in crate::panel) async fn v1_workspace_status(

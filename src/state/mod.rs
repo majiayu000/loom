@@ -567,12 +567,11 @@ fn write_history_segment_if_missing(path: &Path, raw: &str) -> Result<()> {
     Ok(())
 }
 
+/// Detects the Loom tool's own source repository purely from runtime evidence:
+/// a `Cargo.toml` declaring the `skillloom` package next to the expected source
+/// layout. No compile-time paths are consulted, so a user registry that merely
+/// shares the build machine's directory path is never rejected.
 fn is_loom_tool_repo_root(root: &Path) -> bool {
-    let manifest_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    if canonicalize_or_self(root) == canonicalize_or_self(&manifest_root) {
-        return true;
-    }
-
     let cargo_toml = root.join("Cargo.toml");
     if !cargo_toml.exists() {
         return false;
@@ -584,10 +583,6 @@ fn is_loom_tool_repo_root(root: &Path) -> bool {
     }
 
     package_name_from_cargo_toml(&cargo_toml).is_some_and(|name| name == "skillloom")
-}
-
-fn canonicalize_or_self(path: &Path) -> PathBuf {
-    fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
 fn package_name_from_cargo_toml(path: &Path) -> Option<String> {

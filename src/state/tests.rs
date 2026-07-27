@@ -167,3 +167,77 @@ fn lock_drop_does_not_remove_replaced_lock_file() {
 
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+fn write_tool_repo_layout(dir: &Path, package_name: &str) {
+    std::fs::create_dir_all(dir.join("src/commands")).unwrap();
+    std::fs::write(
+        dir.join("Cargo.toml"),
+        format!(
+            "[package]\nname = \"{}\"\nversion = \"0.1.0\"\n",
+            package_name
+        ),
+    )
+    .unwrap();
+    std::fs::write(dir.join("src/main.rs"), "fn main() {}\n").unwrap();
+    std::fs::write(dir.join("src/commands/mod.rs"), "").unwrap();
+}
+
+#[test]
+fn loom_tool_repo_layout_is_detected() {
+    let dir = std::env::temp_dir().join(format!(
+        "loom-guard-detect-{}",
+        uuid::Uuid::new_v4().simple()
+    ));
+    write_tool_repo_layout(&dir, "skillloom");
+
+    assert!(is_loom_tool_repo_root(&dir));
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn other_package_with_same_layout_is_not_flagged() {
+    let dir = std::env::temp_dir().join(format!(
+        "loom-guard-other-pkg-{}",
+        uuid::Uuid::new_v4().simple()
+    ));
+    write_tool_repo_layout(&dir, "some-other-cli");
+
+    assert!(!is_loom_tool_repo_root(&dir));
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn plain_directory_is_not_flagged_regardless_of_path_name() {
+    // The guard must rely only on directory contents; a registry placed at a
+    // path that happens to match the build machine's checkout (e.g. a CI
+    // runner path baked in at compile time) has no Cargo.toml and must pass.
+    let dir = std::env::temp_dir().join(format!(
+        "loom-guard-plain-{}",
+        uuid::Uuid::new_v4().simple()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+
+    assert!(!is_loom_tool_repo_root(&dir));
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn cargo_toml_without_main_layout_is_not_flagged() {
+    let dir = std::env::temp_dir().join(format!(
+        "loom-guard-no-src-{}",
+        uuid::Uuid::new_v4().simple()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("Cargo.toml"),
+        "[package]\nname = \"skillloom\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+
+    assert!(!is_loom_tool_repo_root(&dir));
+
+    let _ = std::fs::remove_dir_all(&dir);
+}

@@ -13,9 +13,9 @@ use super::json_io::{
 use super::{
     REGISTRY_SCHEMA_VERSION, RegistryBindingsFile, RegistryObservationEvent,
     RegistryOperationRecord, RegistryOpsCheckpoint, RegistryProjectionsFile, RegistryRulesFile,
-    RegistrySchemaFile, RegistrySnapshot, RegistryStatePaths, RegistryTargetsFile,
-    RegistryTrustFile, empty_bindings_file, empty_projections_file, empty_rules_file,
-    empty_targets_file, empty_trust_file,
+    RegistrySchemaFile, RegistrySnapshot, RegistryStateError, RegistryStatePaths,
+    RegistryTargetsFile, RegistryTrustFile, empty_bindings_file, empty_projections_file,
+    empty_rules_file, empty_targets_file, empty_trust_file,
 };
 
 impl RegistryStatePaths {
@@ -302,11 +302,11 @@ impl RegistryStatePaths {
 
 fn validate_schema_version(version: u32) -> Result<()> {
     if version != REGISTRY_SCHEMA_VERSION {
-        return Err(anyhow!(
-            "registry schema version mismatch: expected {}, got {}",
-            REGISTRY_SCHEMA_VERSION,
-            version
-        ));
+        return Err(RegistryStateError::SchemaMismatch {
+            expected: REGISTRY_SCHEMA_VERSION,
+            actual: version,
+        }
+        .into());
     }
     Ok(())
 }

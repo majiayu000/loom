@@ -4,9 +4,9 @@ use anyhow::Result;
 use uuid::Uuid;
 
 use crate::cli::{AgentKind, BindingAddArgs, Command, ProjectionMethod, WorkspaceMatcherKind};
-use crate::state::AppContext;
+use crate::state::{AppContext, ToolRepoRootError};
 use crate::state_model::{
-    RegistryProjectionTarget, RegistryTargetCapabilities, RegistryTargetsFile,
+    RegistryProjectionTarget, RegistryStateError, RegistryTargetCapabilities, RegistryTargetsFile,
 };
 use crate::types::ErrorCode;
 
@@ -334,11 +334,10 @@ pub(crate) fn map_git(err: anyhow::Error) -> CommandFailure {
 }
 
 pub(crate) fn map_lock(err: anyhow::Error) -> CommandFailure {
-    let message = err.to_string();
-    if let Some(rest) = message.strip_prefix("ARG_INVALID:") {
-        return CommandFailure::new(ErrorCode::ArgInvalid, rest.trim());
+    if err.downcast_ref::<ToolRepoRootError>().is_some() {
+        return CommandFailure::new(ErrorCode::ArgInvalid, err.to_string());
     }
-    CommandFailure::new(ErrorCode::LockBusy, message)
+    CommandFailure::new(ErrorCode::LockBusy, err.to_string())
 }
 
 pub(crate) fn map_remote_unreachable(err: anyhow::Error) -> CommandFailure {
@@ -354,10 +353,5 @@ pub(crate) fn map_replay_conflict(err: anyhow::Error) -> CommandFailure {
 }
 
 pub(crate) fn map_registry_state(err: anyhow::Error) -> CommandFailure {
-    let message = err.to_string();
-    if message.contains("schema version mismatch") {
-        CommandFailure::new(ErrorCode::SchemaMismatch, message)
-    } else {
-        CommandFailure::new(ErrorCode::StateCorrupt, message)
-    }
+    CommandFailure::new(RegistryStateError::classify(&err), err.to_string())
 }

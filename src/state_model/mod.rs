@@ -1,5 +1,9 @@
+mod errors;
 mod json_io;
 mod persistence;
+
+pub use errors::RegistryStateError;
+
 use std::collections::HashSet;
 
 use chrono::{DateTime, Utc};

@@ -852,3 +852,11 @@ second time. All counters use checked arithmetic and overflow fails with
 `STATE_CORRUPT` naming the aggregate field. Missing or malformed registry,
 telemetry config, or event I/O returns an error; empty, all-malformed, or
 filter-empty inputs return the complete zero/empty shape.
+
+## Registry initialization
+
+```bash
+loom --json --root <root> init
+```
+
+`init` initializes the default registry and scans existing agent skill directories.

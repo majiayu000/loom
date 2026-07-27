@@ -11,7 +11,19 @@ use super::{ContractVersion, InventoryError, contract_version_matches, parse_con
 const SKILL_METADATA: &str = "skills/loom-registry/loom.skill.toml";
 const HISTORY: &str = "docs/cli-contract-history.toml";
 const CONTRACT_SOURCE: &str = "src/cli_contract.rs";
-const COMMAND_TREE_SNAPSHOT_VERSION: u64 = 1;
+const LEGACY_COMMAND_TREE_SNAPSHOT_VERSION: u64 = 1;
+const COMMAND_TREE_SNAPSHOT_VERSION: u64 = 2;
+const V1_TO_V2_REMOVED_CAPABILITIES: [&str; 2] = [
+    "cli:argument-core:loom/active:action:sha256:a810c9f01597d8268e8fd2d03e447f27ba6e1b2f617d50613a399656d6fc5dfb",
+    "cli:argument-core:loom/index:action:sha256:a810c9f01597d8268e8fd2d03e447f27ba6e1b2f617d50613a399656d6fc5dfb",
+];
+const V1_TO_V2_ADDED_CAPABILITIES: [&str; 5] = [
+    "cli:argument-core:loom/active:action:sha256:26d4a6dbdab5ab57f1fb0ea539c5e95205e7a2ed63aa11ab9e092d8984f5445b",
+    "cli:argument-core:loom/index:action:sha256:26d4a6dbdab5ab57f1fb0ea539c5e95205e7a2ed63aa11ab9e092d8984f5445b",
+    "cli:argument-value:loom/active:action:recommend",
+    "cli:argument-value:loom/index:action:build",
+    "cli:argument-value:loom/index:action:status",
+];
 
 pub fn check_contract_range_policy(
     repo_root: &Path,
@@ -238,7 +250,10 @@ fn command_tree_snapshot_version(raw: &str, location: &str) -> Result<Option<u64
             "{location}: command_tree_snapshot_version must be positive"
         ))
     })?;
-    if value != COMMAND_TREE_SNAPSHOT_VERSION {
+    if !matches!(
+        value,
+        LEGACY_COMMAND_TREE_SNAPSHOT_VERSION | COMMAND_TREE_SNAPSHOT_VERSION
+    ) {
         return Err(InventoryError::new(format!(
             "{location}: unsupported command_tree_snapshot_version {value}"
         )));
@@ -260,7 +275,18 @@ fn enforce_capability_transition(
                 "removing command_tree_snapshot_version requires a contract major bump",
             ));
         }
-        (None, Some(COMMAND_TREE_SNAPSHOT_VERSION)) => {
+        (Some(base), Some(current)) if current < base => {
+            return Err(InventoryError::new(
+                "command_tree_snapshot_version must not move backwards",
+            ));
+        }
+        (Some(LEGACY_COMMAND_TREE_SNAPSHOT_VERSION), Some(COMMAND_TREE_SNAPSHOT_VERSION))
+            if current_version == base_version
+                && is_v1_to_v2_action_snapshot_migration(base, current) =>
+        {
+            return Ok(());
+        }
+        (None, Some(_)) => {
             let removed = base.difference(current).next().is_some();
             let has_non_cli_addition = current
                 .difference(base)
@@ -272,6 +298,24 @@ fn enforce_capability_transition(
         _ => {}
     }
     enforce_capability_version(base_version, current_version, base, current)
+}
+
+fn is_v1_to_v2_action_snapshot_migration(
+    base: &BTreeSet<String>,
+    current: &BTreeSet<String>,
+) -> bool {
+    let removed = base
+        .difference(current)
+        .map(String::as_str)
+        .collect::<BTreeSet<_>>();
+    let added = current
+        .difference(base)
+        .map(String::as_str)
+        .collect::<BTreeSet<_>>();
+    let expected_removed = V1_TO_V2_REMOVED_CAPABILITIES.into_iter().collect();
+    let expected_added = V1_TO_V2_ADDED_CAPABILITIES.into_iter().collect();
+
+    removed == expected_removed && added == expected_added
 }
 
 fn enforce_capability_version(
@@ -411,7 +455,8 @@ mod tests {
     use std::collections::BTreeSet;
 
     use super::{
-        ContractVersion, enforce_capability_transition, enforce_capability_version,
+        ContractVersion, V1_TO_V2_ADDED_CAPABILITIES, V1_TO_V2_REMOVED_CAPABILITIES,
+        enforce_capability_transition, enforce_capability_version,
         ensure_contract_range_contains_version,
     };
 
@@ -571,6 +616,137 @@ mod tests {
         )
         .expect_err("an established tree snapshot marker must not disappear");
         assert!(error.to_string().contains("snapshot_version"), "{error}");
+    }
+
+    fn v1_action_snapshot() -> BTreeSet<String> {
+        V1_TO_V2_REMOVED_CAPABILITIES
+            .into_iter()
+            .chain(["cli:command:loom"])
+            .map(str::to_string)
+            .collect()
+    }
+
+    fn v2_action_snapshot() -> BTreeSet<String> {
+        V1_TO_V2_ADDED_CAPABILITIES
+            .into_iter()
+            .chain(["cli:command:loom"])
+            .map(str::to_string)
+            .collect()
+    }
+
+    #[test]
+    fn action_snapshot_v1_to_v2_is_an_exact_one_time_migration() {
+        let base = v1_action_snapshot();
+        let current = v2_action_snapshot();
+        enforce_capability_transition(
+            version(1, 9, 0),
+            version(1, 9, 0),
+            &base,
+            &current,
+            Some(1),
+            Some(2),
+        )
+        .expect("the exact action snapshot migration is allowed once");
+
+        let mut missing = current;
+        missing.remove("cli:argument-value:loom/index:action:status");
+        let error = enforce_capability_transition(
+            version(1, 9, 0),
+            version(1, 9, 0),
+            &base,
+            &missing,
+            Some(1),
+            Some(2),
+        )
+        .expect_err("an incomplete action snapshot migration must fail");
+        assert!(error.to_string().contains("major bump"), "{error}");
+    }
+
+    #[test]
+    fn action_snapshot_v1_to_v2_rejects_extra_capabilities() {
+        let base = v1_action_snapshot();
+        let mut current = v2_action_snapshot();
+        current.insert("cli:command:loom/extra".to_string());
+        let error = enforce_capability_transition(
+            version(1, 9, 0),
+            version(1, 9, 0),
+            &base,
+            &current,
+            Some(1),
+            Some(2),
+        )
+        .expect_err("the migration must not hide extra additions");
+        assert!(error.to_string().contains("major bump"), "{error}");
+    }
+
+    #[test]
+    fn action_snapshot_v1_to_v2_rejects_non_whitelisted_core_hash() {
+        let base = v1_action_snapshot();
+        let mut current = v2_action_snapshot();
+        current.remove(V1_TO_V2_ADDED_CAPABILITIES[0]);
+        current.insert(
+            "cli:argument-core:loom/active:action:sha256:0000000000000000000000000000000000000000000000000000000000000000"
+                .to_string(),
+        );
+        let error = enforce_capability_transition(
+            version(1, 9, 0),
+            version(1, 9, 0),
+            &base,
+            &current,
+            Some(1),
+            Some(2),
+        )
+        .expect_err("a non-whitelisted action hash must follow normal major-version policy");
+        assert!(error.to_string().contains("major bump"), "{error}");
+    }
+
+    #[test]
+    fn action_snapshot_v2_future_removal_requires_a_major_bump() {
+        let base = v2_action_snapshot();
+        let mut current = base.clone();
+        current.remove("cli:argument-value:loom/index:action:status");
+        let error = enforce_capability_transition(
+            version(1, 9, 0),
+            version(1, 9, 0),
+            &base,
+            &current,
+            Some(2),
+            Some(2),
+        )
+        .expect_err("future action removal must remain breaking");
+        assert!(error.to_string().contains("major bump"), "{error}");
+
+        let mut renamed = base.clone();
+        renamed.remove("cli:argument-value:loom/index:action:status");
+        renamed.insert("cli:argument-value:loom/index:action:inspect".to_string());
+        let error = enforce_capability_transition(
+            version(1, 9, 0),
+            version(1, 9, 0),
+            &base,
+            &renamed,
+            Some(2),
+            Some(2),
+        )
+        .expect_err("future action rename must remain breaking");
+        assert!(error.to_string().contains("major bump"), "{error}");
+    }
+
+    #[test]
+    fn command_tree_snapshot_version_downgrade_fails() {
+        let capabilities = v2_action_snapshot();
+        let error = enforce_capability_transition(
+            version(2, 0, 0),
+            version(2, 0, 0),
+            &capabilities,
+            &capabilities,
+            Some(2),
+            Some(1),
+        )
+        .expect_err("snapshot marker downgrade must fail");
+        assert!(
+            error.to_string().contains("must not move backwards"),
+            "{error}"
+        );
     }
 
     #[test]

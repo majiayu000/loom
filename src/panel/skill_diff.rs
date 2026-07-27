@@ -11,39 +11,7 @@ use tokio::io::AsyncReadExt;
 use super::auth::{registry_error, registry_ok};
 use super::{DiffParams, PanelState};
 
-pub(super) fn is_safe_git_ref(rev: &str) -> bool {
-    let len = rev.len();
-    !rev.is_empty()
-        && len <= 256
-        && !rev.starts_with('-')
-        && !rev.starts_with('.')
-        && !rev.ends_with('.')
-        && !rev.contains("..")
-        && rev.bytes().all(|b| {
-            matches!(
-                b,
-                b'a'..=b'z'
-                    | b'A'..=b'Z'
-                    | b'0'..=b'9'
-                    | b'.'
-                    | b'_'
-                    | b'-'
-                    | b'/'
-                    | b'~'
-                    | b'^'
-            )
-        })
-}
-
-pub(super) fn is_valid_skill_name(name: &str) -> bool {
-    !name.is_empty()
-        && name != "."
-        && name != ".."
-        && name.len() <= 128
-        && name
-            .bytes()
-            .all(|b| matches!(b, b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'-' | b'_' | b'.'))
-}
+pub(super) use crate::validation::{is_safe_git_ref, is_valid_skill_name};
 
 /// Returns the SHA of the second-newest commit that touched `skill_path`, if any.
 pub(super) fn skill_parent_rev(root: &std::path::Path, skill_path: &str) -> Option<String> {

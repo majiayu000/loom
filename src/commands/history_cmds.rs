@@ -124,35 +124,13 @@ impl App {
 }
 
 fn validate_history_ref_arg(name: &str, value: &str) -> std::result::Result<(), CommandFailure> {
-    if is_safe_history_ref(value) {
+    if crate::validation::is_safe_git_ref(value) {
         return Ok(());
     }
     Err(CommandFailure::new(
         ErrorCode::ArgInvalid,
         format!("--{} must be a safe Git revision", name),
     ))
-}
-
-fn is_safe_history_ref(value: &str) -> bool {
-    let len = value.len();
-    !value.is_empty()
-        && len <= 256
-        && !value.starts_with('-')
-        && !value.contains("..")
-        && value.bytes().all(|byte| {
-            matches!(
-                byte,
-                b'a'..=b'z'
-                    | b'A'..=b'Z'
-                    | b'0'..=b'9'
-                    | b'.'
-                    | b'_'
-                    | b'-'
-                    | b'/'
-                    | b'~'
-                    | b'^'
-            )
-        })
 }
 
 #[derive(Debug)]

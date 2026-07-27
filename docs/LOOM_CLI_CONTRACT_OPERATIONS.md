@@ -838,7 +838,7 @@ loom --json --root <root> workspace remote status
 ### 23.1 `skill history`
 
 ```bash
-loom --json --root <root> skill history <skill> [--limit <n>] [--from <rev>] [--to <rev>] [--include-diff-stat] [--include-ops]
+loom --json --root <root> skill history <skill> [--limit <n>] [--from <rev>] [--to <rev>] [--include-diff-stat]
 ```
 
 Read-only.
@@ -848,7 +848,7 @@ Rules:
 1. returns registry Git history for the skill source, bounded by `--limit` (default 30)
 2. `--from` narrows history to the `<from>..<to>` revision range; `--to` defaults to `HEAD`
 3. `--include-diff-stat` adds per-commit short diff statistics
-4. `--include-ops` adds the registry operations introduced by each history commit
+4. registry operations introduced by each history commit are included by default; `--include-ops` is accepted as an explicit compatibility spelling
 
 ### 23.2 `skill trash`
 
@@ -901,8 +901,8 @@ Rules:
 ### 24.1 `skill recommend` and `skill resolve`
 
 ```bash
-loom --json --root <root> skill recommend "<query>" [--for-task] [--agent <agent>] [--workspace <path>] [--explain]
-loom --json --root <root> skill resolve "<query>" [--for-task] [--agent <agent>] [--workspace <path>]
+loom --json --root <root> skill recommend "<query>" [--agent <agent>] [--workspace <path>] [--explain]
+loom --json --root <root> skill resolve "<query>" [--agent <agent>] [--workspace <path>]
 ```
 
 Read-only.
@@ -910,7 +910,7 @@ Read-only.
 Rules:
 
 1. the query is matched lexically against skill id, description, tags, and warnings
-2. `--for-task` treats the query as a task and includes deterministic selection metadata
+2. `skill recommend` ignores the legacy `--for-task` flag and never emits selection metadata; `skill resolve` always performs deterministic task selection, while `--for-task` remains an accepted compatibility spelling with no behavioral effect
 3. `--workspace` boosts skills whose binding matcher covers the workspace path
 4. `--semantic` requests local semantic retrieval and falls back to lexical mode when no local provider exists
 5. `--explain` includes recommendation explanations, skillset candidates, and safety/risk inputs

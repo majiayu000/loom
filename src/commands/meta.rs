@@ -362,7 +362,7 @@ pub(crate) fn command_descriptor(command: &Command) -> CommandDescriptor {
             SyncCommand::Replay => desc("sync.replay", CommandMeta::DURABLE),
         },
         Command::Ops { command } => match command {
-            OpsCommand::List => desc("ops.list", CommandMeta::RECORDED),
+            OpsCommand::List(_) => desc("ops.list", CommandMeta::RECORDED),
             OpsCommand::Retry => desc("ops.retry", CommandMeta::DURABLE),
             OpsCommand::Purge => desc("ops.purge", CommandMeta::DURABLE),
             OpsCommand::History { command } => match command {

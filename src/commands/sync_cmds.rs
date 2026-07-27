@@ -9,10 +9,14 @@ use crate::gitops;
 use crate::state::AppContext;
 use crate::types::ErrorCode;
 
+use crate::state_model::RegistryStatePaths;
+
 use super::convergence_status::registry_transport_status;
 use super::helpers::{
-    map_git, map_io, map_lock, map_push_rejected, map_remote_unreachable, map_replay_conflict,
+    map_git, map_io, map_lock, map_push_rejected, map_registry_state, map_remote_unreachable,
+    map_replay_conflict,
 };
+use super::ops_activity::build_ops_activity;
 use super::projections::remote_status_payload;
 use super::{App, CommandFailure};
 
@@ -101,7 +105,31 @@ impl App {
         command: &OpsCommand,
     ) -> std::result::Result<(serde_json::Value, Meta), CommandFailure> {
         match command {
-            OpsCommand::List => {
+            OpsCommand::List(args) if args.activity => {
+                let paths = RegistryStatePaths::from_app_context(&self.ctx);
+                let snapshot = paths
+                    .maybe_load_snapshot()
+                    .map_err(map_registry_state)?
+                    .ok_or_else(|| {
+                        CommandFailure::new(
+                            ErrorCode::StateNotInitialized,
+                            format!(
+                                "registry state not initialized under {}",
+                                paths.registry_dir.display()
+                            ),
+                        )
+                    })?;
+                let page = build_ops_activity(&self.ctx, &snapshot, args.limit, args.offset)
+                    .map_err(map_io)?;
+                Ok((
+                    page.data,
+                    Meta {
+                        warnings: page.warnings,
+                        ..Meta::default()
+                    },
+                ))
+            }
+            OpsCommand::List(_) => {
                 let report = self
                     .ctx
                     .read_existing_registry_ops_report()
